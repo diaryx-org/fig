@@ -582,3 +582,22 @@ fn yaml_flow_mapping_with_a_block_scalar_member_is_not_accepted_on_reparse() {
     // Negative numbers and quoted dash-led text are untouched.
     assert!(fig::Document::parse(b"a: [-1, '- q']\n", Format::Yaml).is_ok());
 }
+
+#[test]
+#[cfg(feature = "yaml")]
+fn yaml_set_seeds_a_nested_path_into_an_empty_document() {
+    // A fresh, empty file is the `mkdir -p for config` case: a null root is a
+    // container waiting to exist, not data standing in the way.
+    let mut ed = Editor::open(b"", Format::Yaml).unwrap();
+    ed.set_value(
+        &[Segment::Key("meta"), Segment::Key("title")],
+        "Hi",
+    )
+    .unwrap();
+    assert_eq!(ed.source().unwrap(), "meta:\n  title: Hi\n");
+
+    // A scalar standing where a parent mapping should be is still never clobbered.
+    let mut ed = Editor::open(b"a: 1\n", Format::Yaml).unwrap();
+    assert!(ed.set_value(&[Segment::Key("a"), Segment::Key("b")], 2i64).is_err());
+    assert_eq!(ed.source().unwrap(), "a: 1\n");
+}

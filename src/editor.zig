@@ -229,20 +229,21 @@ pub fn Editor(comptime Language: type) type {
         /// rejected with `NotAMapping`. Missing *intermediate* containers are
         /// auto-vivified (`mkdir -p` for config): if the parent mapping doesn't
         /// exist yet, `set` seeds it — and any of ITS missing ancestors, deepest
-        /// first — as an empty map, then lands the leaf. Vivification fires only
-        /// when an intermediate KEY is genuinely absent (`NotFound`); a segment
-        /// that resolves to a non-map scalar is a real type error (`NotAMapping`)
-        /// and is never clobbered. Seeds are flow `{}`; for the dotted-key formats
-        /// (fig/TOML) `fig fmt` canonicalizes the resulting `a = { b = { c = v }}`
-        /// chain to `a.b.c = v`.
+        /// first — as an empty map, then lands the leaf. Vivification fires when
+        /// an intermediate key is genuinely absent (`NotFound`), or when what
+        /// stands in its place is an EMPTY node — a null, i.e. a bare `key:` or an
+        /// empty document's root, which is a container waiting to exist. A
+        /// segment that resolves to a non-map SCALAR is a real type error
+        /// (`NotAMapping`) and is never clobbered. See `emptyMapLiteral` for what
+        /// a seed is spelled as per format (YAML block, flow `{}` elsewhere).
         ///
         /// Vivify-then-land is atomic as a whole: if the leaf cannot be placed
         /// after a seed has been spliced, the seed is rolled back, so a failed
-        /// `set` leaves the document byte-for-byte as it was. The seeds being
-        /// FLOW containers has one consequence callers see: a block-spelled
-        /// value (a YAML block sequence or mapping) cannot land inside one, and
-        /// is refused with `BlockValueIntoFlow` rather than spliced into text
-        /// that no longer means what was written.
+        /// `set` leaves the document byte-for-byte as it was. Where the seeds are
+        /// FLOW containers (every format but YAML) that has one consequence
+        /// callers see: a block-spelled value cannot land inside one, and is
+        /// refused with `BlockValueIntoFlow` rather than spliced into text that
+        /// no longer means what was written.
         ///
         /// Delegates to `replaceValAtPath`, so the replace case inherits that
         /// op's YAML value reframing (inline↔block) and merge-key COW.
@@ -312,7 +313,20 @@ pub fn Editor(comptime Language: type) type {
                     // vivifying through it would only trade today's clear
                     // `NotFound` for a confusing `EmptyInlineContainer` one
                     // step later, after already splicing the `{}` in.
-                    if (Language != Ini and Language != Plist and Language != NestedText and path.len >= 2 and insert_err == error.NotFound) {
+                    //
+                    // `NotAMapping` joins `NotFound` as vivifiable in exactly
+                    // one shape: when what stands in the way is an EMPTY node (a
+                    // null), not a scalar. Navigating *through* a null fails the
+                    // same way navigating through a scalar does, but they are
+                    // opposite cases — a null is "nothing here yet" (an empty
+                    // document's root, or a bare `key:`), which `insertKey`
+                    // promotes to a real mapping, while a scalar is real data.
+                    // Without this, a nested `set` on an empty document failed
+                    // outright, though `set` is documented to seed one.
+                    const vivifiable = insert_err == error.NotFound or
+                        (insert_err == error.NotAMapping and
+                            self.blockedByEmptyNode(path[0 .. path.len - 1]));
+                    if (Language != Ini and Language != Plist and Language != NestedText and path.len >= 2 and vivifiable) {
                         // Vivify-then-insert is TWO splices, so it needs a
                         // snapshot of its own: each `replaceAtSpan` is
                         // individually atomic, but if the leaf insert fails
@@ -342,6 +356,25 @@ pub fn Editor(comptime Language: type) type {
                     } else return replace_err;
                 };
             };
+        }
+
+        /// Whether what blocks navigation to `path` is an EMPTY node — a null —
+        /// rather than real data. Walks back from `path` to the deepest prefix
+        /// that still resolves and reports whether that node is a null; an
+        /// unresolvable path with a null root (an empty document) counts too.
+        ///
+        /// This is the distinction `set`'s vivify guard needs and `NotAMapping`
+        /// alone cannot make: a null is a container waiting to exist, which
+        /// `insertKey` promotes, while a scalar standing where a mapping should
+        /// be is data that must never be clobbered.
+        fn blockedByEmptyNode(self: *Self, path: []const AST.PathSegment) bool {
+            const parsed = self.getParsed() catch return false;
+            var len = path.len;
+            while (len > 0) : (len -= 1) {
+                const node = parsed.ast.getValByPath(path[0..len]) catch continue;
+                return node.kind == .null_;
+            }
+            return parsed.ast.nodes[parsed.ast.root].kind == .null_;
         }
 
         /// Restore the source to `backup` and reparse, undoing a compound
@@ -2431,6 +2464,31 @@ test "set auto-vivifies missing intermediate containers" {
     const leaf = try ed.getParsed();
     const v = try leaf.ast.getValByPath(&.{ .{ .key = "missing" }, .{ .key = "leaf" } });
     try testing.expectEqualStrings("2", v.kind.number.raw);
+}
+
+test "set vivifies a nested path through an empty node" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    // A null is a container waiting to exist, not data — so navigation failing
+    // through one is vivifiable, unlike failing through a scalar (next test).
+    // An empty document's root:
+    try expectSet(Yaml, .v1_2_2, "", &.{ .{ .key = "a" }, .{ .key = "b" } }, "1", "a:\n  b: 1\n");
+    try expectSet(
+        Yaml,
+        .v1_2_2,
+        "",
+        &.{ .{ .key = "a" }, .{ .key = "b" }, .{ .key = "c" } },
+        "1",
+        "a:\n  b:\n    c: 1\n",
+    );
+    // And a bare `key:` standing where an intermediate mapping should be.
+    try expectSet(
+        Yaml,
+        .v1_2_2,
+        "title: t\na:\n",
+        &.{ .{ .key = "a" }, .{ .key = "b" }, .{ .key = "c" } },
+        "1",
+        "title: t\na:\n  b:\n    c: 1\n",
+    );
 }
 
 test "set does not clobber a scalar standing where a parent map should be" {

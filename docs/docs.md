@@ -8,6 +8,7 @@ contents
 > * [Testing](testing.md)
 > * [VERSIONING](VERSIONING.md)
 > * [Upcoming breaking changes](BREAKING-CHANGES.md)
+> * [Proposals](proposals/proposals.md)
 > * [Devlog](devlogs/devlogs.md)
 > * [fig CLI via npm/npx](npm-wasi.md)
 > * [fig in Rust](rust.md)

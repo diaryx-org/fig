@@ -25,7 +25,12 @@ name: Release (crate)
 # below): it publishes whatever Cargo.toml says and no-ops if that exact
 # version is already out.
 #
-# Required repository secret:
+# Authentication: crates.io Trusted Publishing (OIDC) is preferred — the job
+# trades its `id-token` identity for a short-lived registry token, so nothing
+# long-lived is stored. It requires a trusted-publisher entry on crates.io naming
+# this repo and this workflow file.
+#
+# Fallback repository secret (used when that exchange doesn't succeed):
 # CARGO_REGISTRY_TOKEN  — crates.io API token with publish rights (already set)
 on:
   workflow_dispatch: {}
@@ -96,6 +101,18 @@ jobs:
     # source-build fallback tree) are present in every packaged tarball.
     - name: Vendor the Zig source and licenses into the crates
       run: zig build vendor-rust
+    # crates.io Trusted Publishing: exchange this job's OIDC identity (what the
+    # workflow-level `id-token: write` above grants) for a short-lived registry
+    # token, so no long-lived API token has to sit in repository secrets. The
+    # exchange needs a matching trusted-publisher entry on the crates.io side,
+    # naming this repository AND this workflow file — which is why the step is
+    # `continue-on-error`: if that entry is missing, renamed, or not yet added for
+    # a new crate, this fails soft and the publish below still authenticates with
+    # `CARGO_REGISTRY_TOKEN`. Delete the fallback once every crate in the graph
+    # has a trusted publisher configured.
+    - id: auth
+      uses: rust-lang/crates-io-auth-action@v1
+      continue-on-error: true
     # Publish the whole graph bottom-up — crates.io rejects an upload whose
     # dependencies aren't already indexed, so the order is:
     # payload crates -> fig-sys -> fig-macros -> fig
@@ -109,7 +126,8 @@ jobs:
     # re-run after a partial publish skips the crates that already landed.
     - name: Publish to crates.io (bottom-up)
       working-directory: bindings/rust
-      env: { CARGO_REGISTRY_TOKEN: '${{ secrets.CARGO_REGISTRY_TOKEN }}' }
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
       run: |
         set -uo pipefail
         publish() {

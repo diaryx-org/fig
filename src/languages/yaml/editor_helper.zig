@@ -184,6 +184,84 @@ test "yaml insert key with indentless sequence value" {
     try expectSource(&ed, "a: 1\ntags:\n- x\n- y\n");
 }
 
+test "yaml insert key with single-entry mapping value descends like a multi-entry one" {
+    // A one-entry mapping renders `k: v` — one line, no dash — so shape alone
+    // can't tell it from a scalar. Spliced inline it would read `meta: x: 1`,
+    // which is not YAML; it has to descend exactly like the two-entry value in
+    // the test above.
+    var ed = try newYamlEditor("a: 1\n");
+    defer ed.deinit();
+    try ed.insertKey(&.{}, "meta", "x: 1\n");
+    try expectSource(&ed, "a: 1\nmeta:\n  x: 1\n");
+}
+
+test "yaml insert key with single-entry mapping value nests under an existing key" {
+    var ed = try newYamlEditor("root:\n  x: 1\n");
+    defer ed.deinit();
+    try ed.insertKey(&.{.{ .key = "root" }}, "y", "k: v\n");
+    try expectSource(&ed, "root:\n  x: 1\n  y:\n    k: v\n");
+}
+
+test "yaml replacing a value with a single-entry mapping reframes it to block" {
+    var ed = try newYamlEditor("a: 1\nb: 2\n");
+    defer ed.deinit();
+    try ed.replaceValAtPath(&.{.{ .key = "a" }}, "k: v\n");
+    try expectSource(&ed, "a:\n  k: v\nb: 2\n");
+}
+
+test "yaml promoting a null value takes a block value, not just a scalar" {
+    // `promoteNullToMapping` writes the new entry through `writeMapValue`, so a
+    // block value descends instead of being jammed inline after the `:`.
+    var ed = try newYamlEditor("k:\n");
+    defer ed.deinit();
+    try ed.insertKey(&.{.{ .key = "k" }}, "n", "x: 1\n");
+    try expectSource(&ed, "k:\n  n:\n    x: 1\n");
+
+    var seq = try newYamlEditor("k:\n");
+    defer seq.deinit();
+    try seq.insertKey(&.{.{ .key = "k" }}, "n", "- q\n");
+    try expectSource(&seq, "k:\n  n:\n  - q\n");
+}
+
+// --- flow containers refuse block values ---
+
+test "yaml insert into a flow mapping refuses a block value" {
+    // `{a: 1, b: - q}` is not the sequence that was asked for — and a lenient
+    // reader would take it as the string `"- q"`, losing it silently. Refuse
+    // before splicing, naming the reason.
+    var ed = try newYamlEditor("env: {a: 1}\n");
+    defer ed.deinit();
+    try std.testing.expectError(error.BlockValueIntoFlow, ed.insertKey(&.{.{ .key = "env" }}, "b", "- q\n"));
+    try expectSource(&ed, "env: {a: 1}\n"); // untouched
+
+    // Same for a block mapping, a block scalar, and an empty flow target.
+    try std.testing.expectError(error.BlockValueIntoFlow, ed.insertKey(&.{.{ .key = "env" }}, "b", "k: v\n"));
+    try std.testing.expectError(error.BlockValueIntoFlow, ed.insertKey(&.{.{ .key = "env" }}, "b", "|\n  text\n"));
+    var empty = try newYamlEditor("env: {}\n");
+    defer empty.deinit();
+    try std.testing.expectError(error.BlockValueIntoFlow, empty.insertKey(&.{.{ .key = "env" }}, "b", "- q\n"));
+    try expectSource(&empty, "env: {}\n");
+}
+
+test "yaml appending to a flow sequence refuses a block value" {
+    var ed = try newYamlEditor("a: [1]\n");
+    defer ed.deinit();
+    try std.testing.expectError(error.BlockValueIntoFlow, ed.appendToSeq(&.{.{ .key = "a" }}, "- q\n"));
+    try std.testing.expectError(error.BlockValueIntoFlow, ed.prependToSeq(&.{.{ .key = "a" }}, "k: v\n"));
+    try expectSource(&ed, "a: [1]\n");
+}
+
+test "yaml flow inserts still take scalars and flow containers" {
+    // The guard is about BLOCK spelling only: flow values and scalars — including
+    // quoted text that merely looks dash- or colon-led — splice as before.
+    var ed = try newYamlEditor("env: {a: 1}\n");
+    defer ed.deinit();
+    try ed.insertKey(&.{.{ .key = "env" }}, "b", "[x, y]");
+    try ed.insertKey(&.{.{ .key = "env" }}, "c", "{k: v}");
+    try ed.insertKey(&.{.{ .key = "env" }}, "d", "'- q'");
+    try expectSource(&ed, "env: {a: 1, b: [x, y], c: {k: v}, d: '- q'}\n");
+}
+
 // --- delete key + trivia ---
 
 test "yaml delete middle key" {

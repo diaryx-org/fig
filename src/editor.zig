@@ -229,12 +229,21 @@ pub fn Editor(comptime Language: type) type {
         /// rejected with `NotAMapping`. Missing *intermediate* containers are
         /// auto-vivified (`mkdir -p` for config): if the parent mapping doesn't
         /// exist yet, `set` seeds it — and any of ITS missing ancestors, deepest
-        /// first — as an empty map, then lands the leaf. Vivification fires only
-        /// when an intermediate KEY is genuinely absent (`NotFound`); a segment
-        /// that resolves to a non-map scalar is a real type error (`NotAMapping`)
-        /// and is never clobbered. Seeds are flow `{}`; for the dotted-key formats
-        /// (fig/TOML) `fig fmt` canonicalizes the resulting `a = { b = { c = v }}`
-        /// chain to `a.b.c = v`.
+        /// first — as an empty map, then lands the leaf. Vivification fires when
+        /// an intermediate key is genuinely absent (`NotFound`), or when what
+        /// stands in its place is an EMPTY node — a null, i.e. a bare `key:` or an
+        /// empty document's root, which is a container waiting to exist. A
+        /// segment that resolves to a non-map SCALAR is a real type error
+        /// (`NotAMapping`) and is never clobbered. See `emptyMapLiteral` for what
+        /// a seed is spelled as per format (YAML block, flow `{}` elsewhere).
+        ///
+        /// Vivify-then-land is atomic as a whole: if the leaf cannot be placed
+        /// after a seed has been spliced, the seed is rolled back, so a failed
+        /// `set` leaves the document byte-for-byte as it was. Where the seeds are
+        /// FLOW containers (every format but YAML) that has one consequence
+        /// callers see: a block-spelled value cannot land inside one, and is
+        /// refused with `BlockValueIntoFlow` rather than spliced into text that
+        /// no longer means what was written.
         ///
         /// Delegates to `replaceValAtPath`, so the replace case inherits that
         /// op's YAML value reframing (inline↔block) and merge-key COW.
@@ -262,6 +271,13 @@ pub fn Editor(comptime Language: type) type {
                 const key_text = try self.formatInsertKey(path[path.len - 1].key);
                 defer self.allocator.free(key_text);
                 self.insertKey(path[0 .. path.len - 1], key_text, value_text) catch |insert_err| {
+                    // One insert failure is more informative than any replace
+                    // error can be, so it is NOT swallowed by the fallback
+                    // below: the parent was found and IS a mapping, just a flow
+                    // one that cannot hold this value. Reporting the replace's
+                    // `NotFound` there would send the caller looking for a
+                    // missing key that isn't the problem.
+                    if (insert_err == error.BlockValueIntoFlow) return insert_err;
                     // The parent mapping itself is missing (an intermediate key
                     // is absent — `NotFound`, NOT the `NotAMapping` of a scalar
                     // standing where a map should be, which must never be
@@ -297,20 +313,109 @@ pub fn Editor(comptime Language: type) type {
                     // vivifying through it would only trade today's clear
                     // `NotFound` for a confusing `EmptyInlineContainer` one
                     // step later, after already splicing the `{}` in.
-                    if (Language != Ini and Language != Plist and Language != NestedText and path.len >= 2 and insert_err == error.NotFound) {
-                        try self.set(path[0 .. path.len - 1], emptyMapLiteral());
-                        try self.insertKey(path[0 .. path.len - 1], key_text, value_text);
+                    //
+                    // `NotAMapping` joins `NotFound` as vivifiable in exactly
+                    // one shape: when what stands in the way is an EMPTY node (a
+                    // null), not a scalar. Navigating *through* a null fails the
+                    // same way navigating through a scalar does, but they are
+                    // opposite cases — a null is "nothing here yet" (an empty
+                    // document's root, or a bare `key:`), which `insertKey`
+                    // promotes to a real mapping, while a scalar is real data.
+                    // Without this, a nested `set` on an empty document failed
+                    // outright, though `set` is documented to seed one.
+                    const vivifiable = insert_err == error.NotFound or
+                        (insert_err == error.NotAMapping and
+                            self.blockedByEmptyNode(path[0 .. path.len - 1]));
+                    if (Language != Ini and Language != Plist and Language != NestedText and path.len >= 2 and vivifiable) {
+                        // Vivify-then-insert is TWO splices, so it needs a
+                        // snapshot of its own: each `replaceAtSpan` is
+                        // individually atomic, but if the leaf insert fails
+                        // after the ancestor seed landed, that seed is a
+                        // half-finished edit no caller asked for — one that
+                        // makes `Err` mean "nothing happened" a lie, and a
+                        // retry an edit against an unexpected document.
+                        // Restore, and report the failure as the whole `set`
+                        // failing.
+                        //
+                        // Written as two `catch`es rather than one helper
+                        // wrapping both splices: `set` recurses through the seed
+                        // below, and routing that recursion through a helper
+                        // makes the two functions' inferred error sets depend on
+                        // each other (a comptime dependency loop).
+                        const parent = path[0 .. path.len - 1];
+                        const backup = try self.allocator.dupe(u8, self.source.items);
+                        defer self.allocator.free(backup);
+                        self.set(parent, emptyMapLiteral()) catch |seed_err| {
+                            try self.restoreSource(backup);
+                            return seed_err;
+                        };
+                        self.insertKey(parent, key_text, value_text) catch |leaf_err| {
+                            try self.restoreSource(backup);
+                            return leaf_err;
+                        };
                     } else return replace_err;
                 };
             };
         }
 
-        /// The empty-map value literal `set` splices to auto-vivify a missing
-        /// parent. Every editable format accepts a flow `{}` as an empty mapping
-        /// value (fig/YAML flow map, JSON object, TOML inline table); ZON spells
-        /// it `.{}`. Reparse-validated at the splice site like any other value.
+        /// Whether what blocks navigation to `path` is an EMPTY node — a null —
+        /// rather than real data. Walks back from `path` to the deepest prefix
+        /// that still resolves and reports whether that node is a null; an
+        /// unresolvable path with a null root (an empty document) counts too.
+        ///
+        /// This is the distinction `set`'s vivify guard needs and `NotAMapping`
+        /// alone cannot make: a null is a container waiting to exist, which
+        /// `insertKey` promotes, while a scalar standing where a mapping should
+        /// be is data that must never be clobbered.
+        fn blockedByEmptyNode(self: *Self, path: []const AST.PathSegment) bool {
+            const parsed = self.getParsed() catch return false;
+            var len = path.len;
+            while (len > 0) : (len -= 1) {
+                const node = parsed.ast.getValByPath(path[0..len]) catch continue;
+                return node.kind == .null_;
+            }
+            return parsed.ast.nodes[parsed.ast.root].kind == .null_;
+        }
+
+        /// Restore the source to `backup` and reparse, undoing a compound
+        /// (multi-splice) op. `backup` is a snapshot of source that parsed, so
+        /// the reparse only fails on OOM. Capacity is retained from before the
+        /// edits (>= `backup.len`), so the refill cannot fail — the same
+        /// reasoning `replaceAtSpan`'s own rollback rests on.
+        fn restoreSource(self: *Self, backup: []const u8) !void {
+            self.source.clearRetainingCapacity();
+            self.source.appendSliceAssumeCapacity(backup);
+            try self.reparse();
+        }
+
+        /// The empty-mapping seed `set` splices to auto-vivify a missing parent.
+        /// Reparse-validated at the splice site like any other value.
+        ///
+        /// Most formats use the flow `{}` literal, which every one of them
+        /// accepts as an empty mapping value (JSON object, TOML inline table, fig
+        /// flow map); ZON spells it `.{}`.
+        ///
+        /// YAML seeds with NOTHING instead — a bare `key:`, i.e. a null value.
+        /// Both spellings are valid YAML for "no entries yet", but they are not
+        /// interchangeable as a *seed*: a flow `{}` can only ever be extended
+        /// with flow members, so every block-spelled value landing under a
+        /// vivified ancestor had to be refused (`BlockValueIntoFlow`) — a fresh
+        /// nested path could hold scalars and nothing else. A null value has the
+        /// opposite property: `insertKey` promotes it to a real block mapping
+        /// (`promoteNullToMapping`), which takes block and inline values alike.
+        /// So YAML's seed is the empty one, and `set` at a fresh nested path
+        /// produces the block containers the format is normally written in:
+        ///
+        ///     set(a.b.c, 1)  ->  a:        (not  a: {b: {c: 1}})
+        ///                          b:
+        ///                            c: 1
+        ///
+        /// The dotted-key formats (fig/TOML) deliberately keep `{}`: there, the
+        /// flow chain is the idiomatic intermediate form, and `fig fmt`
+        /// canonicalizes `a = { b = { c = v }}` to `a.b.c = v`.
         fn emptyMapLiteral() []const u8 {
             if (comptime Language == Zon) return ".{}";
+            if (comptime Language == Yaml) return "";
             return "{}";
         }
 
@@ -1376,21 +1481,86 @@ pub fn Editor(comptime Language: type) type {
             return fig_edit.reorderContainers(self, order);
         }
 
-        /// Append `: value` for a mapping entry whose key is already written at
-        /// column `col`. Scalars and block scalars stay inline (`key: value`);
-        /// a multi-line block collection goes on the following lines, indented
-        /// (a nested mapping at `col + 2`, an indentless sequence at `col`).
-        pub fn writeMapValue(self: *Self, out: *std.ArrayList(u8), col: usize, value_text: []const u8) !void {
+        /// How a splice's `value_text` is *spelled* — whether it stands as an
+        /// inline value right after `key<sep>`, or is a block construct that has
+        /// to descend onto the following lines.
+        ///
+        /// A splice carries only text, so this is the classification the framing
+        /// decisions hang off. The container cases are settled by PARSING the
+        /// text rather than sniffing its shape: a one-entry block mapping
+        /// (`k: v`) is a single line with no dash and no line break, so shape
+        /// alone cannot tell it from a scalar — and splicing it inline yields
+        /// `key: k: v`, which is not YAML at all. That indistinguishability is
+        /// the whole reason this enum exists.
+        const ValueShape = enum {
+            /// A scalar, a flow container (`[a, b]` / `{k: v}`), or a quoted
+            /// string: splices directly after the separator.
+            inline_,
+            /// A block-scalar header (`|`/`>`): also splices after the separator
+            /// (its body is already indented), but has no flow spelling.
+            block_scalar,
+            /// A block sequence (`- a`), which descends at the KEY's own column.
+            block_seq,
+            /// A block mapping (`k: v`), which descends indented under the key.
+            block_map,
+        };
+
+        /// Classify `value_text` for the framing decisions (see `ValueShape`).
+        fn valueShape(self: *Self, value_text: []const u8) ValueShape {
             const v = stripTrailingNewline(value_text);
             const nl = std.mem.indexOfScalar(u8, v, '\n');
             const first_line = std.mem.trimStart(u8, if (nl) |i| v[0..i] else v, " ");
-            const is_block_scalar = first_line.len > 0 and (first_line[0] == '|' or first_line[0] == '>');
+            if (first_line.len == 0) return .inline_;
+            if (first_line[0] == '|' or first_line[0] == '>') return .block_scalar;
             // A block sequence is recognizable even on a single line (`- a`); it
-            // must still descend, since `key: - a` is invalid. A scalar value
-            // (no line break, not a sequence dash) stays inline. (A serialized
+            // must still descend, since `key: - a` is invalid. (A serialized
             // scalar that would read as a dash is quoted, so this is safe.)
-            const is_seq = std.mem.startsWith(u8, first_line, "- ") or std.mem.eql(u8, first_line, "-");
-            if (is_block_scalar or (nl == null and !is_seq)) {
+            if (std.mem.startsWith(u8, first_line, "- ") or std.mem.eql(u8, first_line, "-")) return .block_seq;
+            if (nl != null) return .block_map;
+            return if (self.singleLineIsBlockMapping(first_line)) .block_map else .inline_;
+        }
+
+        /// Whether single-line `text` is a block MAPPING entry (`k: v`) rather
+        /// than a scalar — the one shape that cannot be told apart by sniffing,
+        /// so it is read by the language's own parser.
+        ///
+        /// YAML-only: it is the only editable format whose block mapping has a
+        /// single-line spelling that reaches these splice paths. The flat
+        /// formats (dotenv/.properties/INI) route through here too, and there a
+        /// `k: v` value is genuinely just scalar text — so they must keep
+        /// splicing it inline.
+        fn singleLineIsBlockMapping(self: *Self, text: []const u8) bool {
+            if (comptime Language != Yaml) return false;
+            // A flow container also parses as a mapping/sequence but must stay
+            // inline; a quoted scalar parses as a string. Both are settled by
+            // the opening byte, cheaper than a parse.
+            switch (text[0]) {
+                '{', '[', '"', '\'' => return false,
+                else => {},
+            }
+            var parser: Language.Parser = .{ .allocator = self.allocator };
+            var doc = Language.parse(&parser, text, self.format) catch return false;
+            defer doc.deinit(self.allocator);
+            return doc.ast.nodes[doc.ast.root].kind == .mapping;
+        }
+
+        /// Append `: value` for a mapping entry whose key is already written at
+        /// column `col`. Scalars and block scalars stay inline (`key: value`);
+        /// a block collection goes on the following lines, indented (a nested
+        /// mapping at `col + 2`, an indentless sequence at `col`).
+        pub fn writeMapValue(self: *Self, out: *std.ArrayList(u8), col: usize, value_text: []const u8) !void {
+            const v = stripTrailingNewline(value_text);
+            const shape = self.valueShape(v);
+            const is_seq = shape == .block_seq;
+            // No value at all — a bare `key:` (YAML's null, and the seed `set`
+            // vivifies missing ancestors with). The separator's padding is
+            // trimmed so the line doesn't end in whitespace; formats whose
+            // separator carries no padding (`KEY=`) are unaffected.
+            if (v.len == 0) {
+                try out.appendSlice(self.allocator, std.mem.trimEnd(u8, kv_sep, " "));
+                return;
+            }
+            if (shape == .inline_ or shape == .block_scalar) {
                 try out.appendSlice(self.allocator, kv_sep);
                 try reindentInto(out, self.allocator, v, col);
                 return;
@@ -1439,11 +1609,13 @@ pub fn Editor(comptime Language: type) type {
                 try self.replaceAtSpan(null_span, out.items);
                 return;
             }
+            // `writeMapValue` emits the separator itself, so a block value
+            // (`- a`, `k: v`) descends onto the following lines instead of being
+            // jammed inline after the `:` — where it would not parse.
             if (is_root) {
                 // Empty document: the whole source becomes a single entry.
                 try out.appendSlice(self.allocator, key_text);
-                try out.appendSlice(self.allocator, ": ");
-                try reindentInto(&out, self.allocator, value_text, 0);
+                try self.writeMapValue(&out, 0, value_text);
                 try out.append(self.allocator, '\n');
                 try self.replaceAtSpan(Span.init(0, source.len), out.items);
                 return;
@@ -1454,9 +1626,28 @@ pub fn Editor(comptime Language: type) type {
             try out.append(self.allocator, '\n');
             try out.appendNTimes(self.allocator, ' ', child_col);
             try out.appendSlice(self.allocator, key_text);
-            try out.appendSlice(self.allocator, ": ");
-            try reindentInto(&out, self.allocator, value_text, child_col);
+            try self.writeMapValue(&out, child_col, value_text);
             try self.replaceAtSpan(null_span, out.items);
+        }
+
+        /// Reject `value_text` that has no flow spelling before it is spliced
+        /// into a `{…}`/`[…]` container. A flow container holds one line of
+        /// comma-separated members: a block sequence (`- a`), a block mapping
+        /// (`k: v`), a block scalar (`|`), or anything multi-line means something
+        /// else entirely — or nothing at all — once wrapped in braces.
+        ///
+        /// The reparse in `replaceAtSpan` is the general safety net for a bad
+        /// splice, but it cannot be the one that catches this: `{b: - a}` is
+        /// text a lenient reader may well accept as the STRING `"- a"`, so the
+        /// document still parses and the sequence is silently gone. Refuse up
+        /// front instead, and refuse with a name that says why, rather than
+        /// leaving the caller a generic parse failure to interpret.
+        ///
+        /// A caller that needs a block value under a flow container has to
+        /// render the value in flow (fig's binding: `flow = 1`) or expand the
+        /// container to block form first.
+        fn requireFlowValue(self: *Self, value_text: []const u8) !void {
+            if (self.valueShape(value_text) != .inline_) return error.BlockValueIntoFlow;
         }
 
         /// Insert a `key: value` entry into a brace-delimited (flow) mapping,
@@ -1466,6 +1657,7 @@ pub fn Editor(comptime Language: type) type {
         /// the last member's value, newline, member indent, `key: value`). A
         /// compact single-line mapping keeps the inline `", key: value"` style.
         fn insertFlowMapEntry(self: *Self, parsed: Document, node: AST.Node, span: Span, non_empty: bool, key_text: []const u8, value_text: []const u8) !void {
+            try self.requireFlowValue(value_text);
             const source = self.source.items;
             if (non_empty) {
                 const last = (try parsed.ast.lastChild(&node)).?;
@@ -1517,6 +1709,7 @@ pub fn Editor(comptime Language: type) type {
         /// empty-flow-map tests already splice (no space added around a
         /// freshly-created single member).
         fn insertFlowEntry(self: *Self, span: Span, key_text: []const u8, value_text: []const u8) !void {
+            try self.requireFlowValue(value_text);
             var out: std.ArrayList(u8) = .empty;
             defer out.deinit(self.allocator);
             try out.appendSlice(self.allocator, key_text);
@@ -1535,6 +1728,7 @@ pub fn Editor(comptime Language: type) type {
         /// one-per-line style, indented to match the first item — mirroring
         /// `insertFlowMapEntry`'s multi-line handling.
         fn insertFlowItem(self: *Self, parsed: Document, node: AST.Node, span: Span, non_empty: bool, value_text: []const u8) !void {
+            try self.requireFlowValue(value_text);
             var out: std.ArrayList(u8) = .empty;
             defer out.deinit(self.allocator);
             const source = self.source.items;
@@ -1560,6 +1754,7 @@ pub fn Editor(comptime Language: type) type {
         }
 
         fn prependFlowItem(self: *Self, parsed: Document, node: AST.Node, span: Span, non_empty: bool, value_text: []const u8) !void {
+            try self.requireFlowValue(value_text);
             var out: std.ArrayList(u8) = .empty;
             defer out.deinit(self.allocator);
             try out.appendSlice(self.allocator, value_text);
@@ -2271,6 +2466,31 @@ test "set auto-vivifies missing intermediate containers" {
     try testing.expectEqualStrings("2", v.kind.number.raw);
 }
 
+test "set vivifies a nested path through an empty node" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    // A null is a container waiting to exist, not data — so navigation failing
+    // through one is vivifiable, unlike failing through a scalar (next test).
+    // An empty document's root:
+    try expectSet(Yaml, .v1_2_2, "", &.{ .{ .key = "a" }, .{ .key = "b" } }, "1", "a:\n  b: 1\n");
+    try expectSet(
+        Yaml,
+        .v1_2_2,
+        "",
+        &.{ .{ .key = "a" }, .{ .key = "b" }, .{ .key = "c" } },
+        "1",
+        "a:\n  b:\n    c: 1\n",
+    );
+    // And a bare `key:` standing where an intermediate mapping should be.
+    try expectSet(
+        Yaml,
+        .v1_2_2,
+        "title: t\na:\n",
+        &.{ .{ .key = "a" }, .{ .key = "b" }, .{ .key = "c" } },
+        "1",
+        "title: t\na:\n  b:\n    c: 1\n",
+    );
+}
+
 test "set does not clobber a scalar standing where a parent map should be" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     var ed: Editor(Yaml) = .{ .allocator = testing.allocator, .format = .v1_2_2 };
@@ -2280,6 +2500,113 @@ test "set does not clobber a scalar standing where a parent map should be" {
     // error (`NotAMapping`), not a missing key to vivify — `a: 1` stays intact.
     try testing.expectError(error.NotAMapping, ed.set(&.{ .{ .key = "a" }, .{ .key = "b" } }, "2"));
     try testing.expectEqualStrings("a: 1\n", ed.source.items);
+}
+
+test "set lands a single-entry mapping value like any other mapping value" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    // A one-entry map renders `k: v` — the shape a scalar has — so every splice
+    // path used to read it as one and fail. All three branches of `set` (insert,
+    // nested insert, replace) must treat it as the block mapping it is, exactly
+    // as they already treated a two-entry map.
+    try expectSet(Yaml, .v1_2_2, "a: 1\n", &.{.{ .key = "fresh" }}, "k: v\n", "a: 1\nfresh:\n  k: v\n");
+    try expectSet(
+        Yaml,
+        .v1_2_2,
+        "outer:\n  inner: 1\n",
+        &.{ .{ .key = "outer" }, .{ .key = "added" } },
+        "k: v\n",
+        "outer:\n  inner: 1\n  added:\n    k: v\n",
+    );
+    try expectSet(Yaml, .v1_2_2, "a: 1\n", &.{.{ .key = "a" }}, "k: v\n", "a:\n  k: v\n");
+}
+
+test "set rolls back a vivified ancestor when the leaf insert fails" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    var ed: Editor(Yaml) = .{ .allocator = testing.allocator, .format = .v1_2_2 };
+    try ed.init("title: t\n");
+    defer ed.deinit();
+    // Malformed value text: `a` is seeded, then the leaf insert's reparse
+    // rejects it. Two splices, one outcome — `Err` has to mean the document is
+    // untouched, or a caller that retries is editing a document it never asked
+    // for. Without the rollback the seeded `a:` would survive.
+    try testing.expectError(
+        error.UnexpectedToken,
+        ed.set(&.{ .{ .key = "a" }, .{ .key = "b" } }, "[unclosed"),
+    );
+    try testing.expectEqualStrings("title: t\n", ed.source.items);
+}
+
+test "set reports the flow container, not a missing key, when a block value can't land" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    var ed: Editor(Yaml) = .{ .allocator = testing.allocator, .format = .v1_2_2 };
+    try ed.init("a: {b: 1}\n");
+    defer ed.deinit();
+    // The parent exists and IS a mapping — just a flow one. Falling back to the
+    // replace branch's `NotFound` would send the caller after a key that isn't
+    // the problem.
+    try testing.expectError(
+        error.BlockValueIntoFlow,
+        ed.set(&.{ .{ .key = "a" }, .{ .key = "c" } }, "- q\n"),
+    );
+    try testing.expectEqualStrings("a: {b: 1}\n", ed.source.items);
+}
+
+test "yaml set vivifies a fresh nested path as BLOCK containers" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    // YAML seeds missing ancestors as bare `key:` (null), which `insertKey`
+    // promotes to a real block mapping — so a fresh nested path reads like
+    // hand-written YAML instead of a flow chain (`a: {b: {c: 1}}`).
+    try expectSet(
+        Yaml,
+        .v1_2_2,
+        "title: t\n",
+        &.{ .{ .key = "a" }, .{ .key = "b" }, .{ .key = "c" } },
+        "1",
+        "title: t\na:\n  b:\n    c: 1\n",
+    );
+    // And the payoff: a BLOCK value now lands at a fresh nested path, which no
+    // flow seed could ever hold.
+    try expectSet(
+        Yaml,
+        .v1_2_2,
+        "title: t\n",
+        &.{ .{ .key = "a" }, .{ .key = "b" } },
+        "- q\n",
+        "title: t\na:\n  b:\n  - q\n",
+    );
+    try expectSet(
+        Yaml,
+        .v1_2_2,
+        "title: t\n",
+        &.{ .{ .key = "a" }, .{ .key = "b" } },
+        "k: v\n",
+        "title: t\na:\n  b:\n    k: v\n",
+    );
+    // The seeded line carries no trailing whitespace.
+    try testing.expect(std.mem.indexOf(u8, "title: t\na:\n  b:\n    c: 1\n", " \n") == null);
+}
+
+test "non-YAML formats keep vivifying through flow seeds" {
+    // The empty seed is YAML-specific: `a =` is not a TOML value, and the flow
+    // chain is the idiomatic intermediate form for the dotted-key formats.
+    if (comptime build_options.lang_toml) {
+        try expectSet(
+            Toml,
+            .TOML_1_0,
+            "title = 't'\n",
+            &.{ .{ .key = "a" }, .{ .key = "b" } },
+            "1",
+            "title = 't'\na = { b = 1 }\n",
+        );
+    }
+    try expectSet(
+        json.Language,
+        .JSON,
+        "{\"t\": 1}",
+        &.{ .{ .key = "a" }, .{ .key = "b" } },
+        "2",
+        "{\"t\": 1, \"a\": {\"b\": 2}}",
+    );
 }
 
 test "fig set vivifies a nested path from an empty document" {

@@ -815,6 +815,9 @@ fn editStatus(err: anyerror) FigStatus {
         // scalar ops, inserting a key/table that already exists). These are caller
         // errors, not malformed-source reparse failures.
         error.NotATable, error.NotAnInlineArray, error.NotAnArrayOfTables, error.TableExists, error.DuplicateKey, error.CannotDeleteTable, error.MergeOnlyKey => .invalid_argument,
+        // A block-spelled value (`- a`, `k: v`, `|`) was handed to a splice into
+        // a flow `{…}`/`[…]` container, which has no way to hold it.
+        error.BlockValueIntoFlow => .invalid_argument,
         // The target dialect has no comment syntax (strict JSON).
         error.CommentsUnsupported => .unsupported_format,
         // A trailing comment was given multi-line text.
@@ -2386,10 +2389,15 @@ pub const FigSerializeOptions = extern struct {
     /// builder has no source envelopes to decode). Appended after
     /// `strip_comments`, so older callers keep the lossy default.
     lossless: u8 = 0,
-    /// TOML only: the column budget driving its inline-vs-expanded layout. A
-    /// mapping/array that renders within `width` columns stays inline
+    /// TOML, YAML, and fig: the column budget driving their inline-vs-expanded
+    /// layout. A mapping/array that renders within `width` columns stays inline
     /// (`k = { ... }` / `[a, b]`); a wider one expands to a `[section]` / a
-    /// wrapped array. 0 is treated as the default (80). Appended after `lossless`,
+    /// wrapped array / block lines. For YAML the budget governs NESTED containers
+    /// only — a root mapping/sequence always renders block.
+    ///
+    /// 0 is treated as the default (80), NOT as "never inline": a C caller that
+    /// zero-initializes this struct (`{0}` plus a valid `size`) must not silently
+    /// get block layout everywhere. Pass 1 to force block. Appended after `lossless`,
     /// so older callers (smaller `size`) keep the 80-column default. Two bytes, so
     /// the struct gains trailing padding to a 12-byte size.
     width: u16 = 80,

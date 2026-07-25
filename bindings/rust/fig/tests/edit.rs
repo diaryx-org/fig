@@ -479,3 +479,125 @@ fn fig_dialect_frontmatter_embed_round_trips() {
     fm.set(&[Segment::Key("title")], "Yo").unwrap();
     assert_eq!(fm.render().unwrap(), "```fig\ntitle = Yo\n```\nbody\n");
 }
+
+// ── YAML container splices (regressions from downstream `set_meta_in_text`) ──
+
+#[test]
+#[cfg(feature = "yaml")]
+fn yaml_single_entry_map_sets_like_a_multi_entry_one() {
+    // A one-entry map renders `k: v`, which is shaped exactly like a scalar —
+    // so every splice path used to read it as one and fail, while the same call
+    // with two entries succeeded. Insert, nested insert, and replace must all
+    // treat it as the mapping it is.
+    use fig::Value;
+    let one = || Value::Map(vec![(Value::Str("k".into()), Value::Str("v".into()))]);
+
+    let mut ed = Editor::open(b"title: t\n", Format::Yaml).unwrap();
+    ed.set_value(&[Segment::Key("fresh")], one()).unwrap();
+    assert_eq!(ed.source().unwrap(), "title: t\nfresh:\n  k: v\n");
+
+    let mut ed = Editor::open(b"title: t\na:\n  b: 1\n", Format::Yaml).unwrap();
+    ed.set_value(&[Segment::Key("a"), Segment::Key("c")], one()).unwrap();
+    assert_eq!(ed.source().unwrap(), "title: t\na:\n  b: 1\n  c:\n    k: v\n");
+
+    let mut ed = Editor::open(b"title: t\nfresh: 0\n", Format::Yaml).unwrap();
+    ed.set_value(&[Segment::Key("fresh")], one()).unwrap();
+    assert_eq!(ed.source().unwrap(), "title: t\nfresh:\n  k: v\n");
+
+    // A null-valued key is a mapping waiting to happen — block values land in it.
+    let mut ed = Editor::open(b"title: t\na:\n", Format::Yaml).unwrap();
+    ed.set_value(&[Segment::Key("a"), Segment::Key("b")], one()).unwrap();
+    assert_eq!(ed.source().unwrap(), "title: t\na:\n  b:\n    k: v\n");
+    let mut ed = Editor::open(b"title: t\na:\n", Format::Yaml).unwrap();
+    ed.set_value(
+        &[Segment::Key("a"), Segment::Key("b")],
+        fig::Value::Seq(vec![fig::Value::Str("q".into())]),
+    )
+    .unwrap();
+    assert_eq!(ed.source().unwrap(), "title: t\na:\n  b:\n  - q\n");
+}
+
+#[test]
+#[cfg(feature = "yaml")]
+fn yaml_block_value_into_a_flow_container_errs_instead_of_corrupting() {
+    // `a: {b: - a}` is not the sequence that was written — a lenient reader
+    // takes it as the string "- a", so returning `Ok` here loses data silently.
+    // The edit must be refused, and the document left byte-for-byte alone.
+    use fig::Value;
+    let seq = || Value::Seq(vec![Value::Str("a".into())]);
+
+    // Into an existing flow mapping.
+    let mut ed = Editor::open(b"title: t\na: {b: 1}\n", Format::Yaml).unwrap();
+    let err = ed.set_value(&[Segment::Key("a"), Segment::Key("c")], seq()).unwrap_err();
+    assert!(matches!(err, fig::Error::InvalidArgument), "{err:?}");
+    assert_eq!(ed.source().unwrap(), "title: t\na: {b: 1}\n");
+
+    // A flow container the caller has to have written themselves is the only way
+    // to reach this now: ancestors `set` creates are block (see the test below).
+    let mut ed = Editor::open(b"title: t\na: {}\n", Format::Yaml).unwrap();
+    let err = ed.set_value(&[Segment::Key("a"), Segment::Key("b")], seq()).unwrap_err();
+    assert!(matches!(err, fig::Error::InvalidArgument), "{err:?}");
+    assert_eq!(ed.source().unwrap(), "title: t\na: {}\n");
+}
+
+#[test]
+#[cfg(feature = "yaml")]
+fn yaml_set_vivifies_a_fresh_nested_path_as_block_containers() {
+    // Ancestors `set` creates are block mappings, so a fresh nested path reads
+    // like hand-written YAML — and, unlike a flow seed, can hold a block value.
+    use fig::Value;
+
+    let mut ed = Editor::open(b"title: t\n", Format::Yaml).unwrap();
+    ed.set_value(
+        &[Segment::Key("a"), Segment::Key("b"), Segment::Key("c")],
+        1i64,
+    )
+    .unwrap();
+    assert_eq!(ed.source().unwrap(), "title: t\na:\n  b:\n    c: 1\n");
+
+    let mut ed = Editor::open(b"title: t\n", Format::Yaml).unwrap();
+    ed.set_value(
+        &[Segment::Key("a"), Segment::Key("b")],
+        Value::Seq(vec![Value::Str("q".into())]),
+    )
+    .unwrap();
+    assert_eq!(ed.source().unwrap(), "title: t\na:\n  b:\n  - q\n");
+
+    let mut ed = Editor::open(b"title: t\n", Format::Yaml).unwrap();
+    ed.set_value(
+        &[Segment::Key("a"), Segment::Key("b")],
+        Value::Map(vec![(Value::Str("k".into()), Value::Str("v".into()))]),
+    )
+    .unwrap();
+    assert_eq!(ed.source().unwrap(), "title: t\na:\n  b:\n    k: v\n");
+}
+
+#[test]
+#[cfg(feature = "yaml")]
+fn yaml_flow_mapping_with_a_block_scalar_member_is_not_accepted_on_reparse() {
+    // The reparse safety net's own regression: `{b: - a}` must not parse as a
+    // string, or every flow splice loses its rollback.
+    assert!(fig::Document::parse(b"a: {b: - a}\n", Format::Yaml).is_err());
+    assert!(fig::Document::parse(b"a: [- x]\n", Format::Yaml).is_err());
+    // Negative numbers and quoted dash-led text are untouched.
+    assert!(fig::Document::parse(b"a: [-1, '- q']\n", Format::Yaml).is_ok());
+}
+
+#[test]
+#[cfg(feature = "yaml")]
+fn yaml_set_seeds_a_nested_path_into_an_empty_document() {
+    // A fresh, empty file is the `mkdir -p for config` case: a null root is a
+    // container waiting to exist, not data standing in the way.
+    let mut ed = Editor::open(b"", Format::Yaml).unwrap();
+    ed.set_value(
+        &[Segment::Key("meta"), Segment::Key("title")],
+        "Hi",
+    )
+    .unwrap();
+    assert_eq!(ed.source().unwrap(), "meta:\n  title: Hi\n");
+
+    // A scalar standing where a parent mapping should be is still never clobbered.
+    let mut ed = Editor::open(b"a: 1\n", Format::Yaml).unwrap();
+    assert!(ed.set_value(&[Segment::Key("a"), Segment::Key("b")], 2i64).is_err());
+    assert_eq!(ed.source().unwrap(), "a: 1\n");
+}

@@ -153,7 +153,30 @@ impl Editor {
     /// only the trailing key is absent. Folds the common
     /// `replace_value` → (on [`Error::NotFound`]) `insert_value` two-step into a
     /// single call. `path` must end in a key (it only ever creates a mapping
-    /// entry); a missing intermediate container surfaces as [`Error::NotFound`].
+    /// entry).
+    ///
+    /// Missing intermediate containers are created for you (`mkdir -p` for
+    /// config). For YAML they are created as **block** mappings, so a fresh
+    /// nested path reads like hand-written YAML and accepts any value:
+    ///
+    /// ```text
+    /// set_value(a.b.c, 1)  ->  a:
+    ///                            b:
+    ///                              c: 1
+    /// ```
+    ///
+    /// The dotted-key formats (TOML, fig) instead seed the idiomatic flow chain
+    /// (`a = { b = 1 }`), which `fig fmt` canonicalizes to `a.b = 1`.
+    ///
+    /// Two things to know:
+    ///
+    /// * A **flow** container cannot hold a block-spelled value. Setting a map or
+    ///   sequence *into a flow container the document already has*
+    ///   (`a: {b: 1}`, `a: {}`) fails with [`Error::InvalidArgument`] rather than
+    ///   writing something that no longer means what was passed in. Expand the
+    ///   container to block form first, or pass a value that renders in flow.
+    /// * A failed `set_value` is a no-op: any container created on the way is
+    ///   rolled back, so `Err` always means the document is unchanged.
     pub fn set_value(&mut self, path: &[Segment], value: impl Into<Value>) -> Result<(), Error> {
         let val = value_text(&value.into(), self.format)?;
         let p = to_ffi_path(path);

@@ -93,7 +93,8 @@ impl From<Format> for ffi::FigFormat {
 /// [`Format::Zon`] (`zig fmt` multi-line vs. inline `.{ a, b }`), and
 /// [`Format::Toml`] (gates array wrapping); `indent` by [`Format::Json`] and
 /// [`Format::Toml`]'s wrapped arrays; `width` by the inline-vs-expanded (flow vs.
-/// block) layout of [`Format::Toml`], [`Format::Yaml`], and [`Format::Fig`].
+/// block) layout of [`Format::Toml`], [`Format::Yaml`], and [`Format::Fig`] — with
+/// the caveats on [`width`](SerializeOptions::width) itself.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SerializeOptions {
     /// `true`: multi-line, indented output. `false`: compact single-line output
@@ -117,6 +118,17 @@ pub struct SerializeOptions {
     /// `width` columns stays inline (flow: `k = { … }` / `[a, b]`); a wider one
     /// expands to a `[section]`, a wrapped array, or block form. Default `80`.
     /// Ignored by the other formats.
+    ///
+    /// Two limits to know before reaching for this as a "render block" lever:
+    ///
+    /// * **`0` means "unset", not "never inline".** It resolves to the default
+    ///   `80` at the C ABI, where zero-initialized option structs are ordinary.
+    ///   Pass `1` to force block layout.
+    /// * **For YAML the budget applies to nested containers only.** A *root*
+    ///   map or sequence always renders block, whatever the width — so
+    ///   `Value::Map([("k", "v")]).serialize_with(Yaml, …)` is `"k: v\n"` at
+    ///   every setting, and a width change first becomes visible one level in
+    ///   (`a: { k: v }` vs `a:\n  k: v`).
     pub width: u16,
 }
 
@@ -148,8 +160,10 @@ impl SerializeOptions {
         Self { strip_comments: true, ..self }
     }
 
-    /// This style with the given TOML inline-vs-section column budget (see
-    /// `width`). Builder-style, e.g. `SerializeOptions::default().width(120)`.
+    /// This style with the given inline-vs-expanded column budget for
+    /// TOML/YAML/fig (see [`width`](Self::width) for its two limits — `0` is
+    /// "unset", and YAML's root is always block). Builder-style, e.g.
+    /// `SerializeOptions::default().width(120)`, or `.width(1)` to force block.
     pub fn width(self, width: u16) -> Self {
         Self { width, ..self }
     }

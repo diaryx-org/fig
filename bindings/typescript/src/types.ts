@@ -46,8 +46,8 @@ export enum Format {
  *  options renders exactly as before. `pretty` is honored by `Format.Json`
  *  (multi-line vs. minified), `Format.Zon` (`zig fmt` multi-line vs. inline
  *  `.{ a, b }`), and `Format.Toml` (gates array wrapping); `indent` by
- *  `Format.Json` and `Format.Toml`'s wrapped arrays; `width` by `Format.Toml`'s
- *  inline-vs-section layout. `Format.Yaml` renders with its own fixed layout. */
+ *  `Format.Json` and `Format.Toml`'s wrapped arrays; `width` by the
+ *  inline-vs-expanded layout of `Format.Toml`, `Format.Yaml`, and `Format.Fig`. */
 export interface SerializeOptions {
   /** `true` (default): multi-line, indented output. `false`: compact
    *  single-line output with no insignificant whitespace. For TOML, `false`
@@ -65,10 +65,17 @@ export interface SerializeOptions {
    *  (lossy — an unrepresentable value throws `UnsupportedFormat`). Ignored by
    *  the value `serialize` (a built value has no source envelopes). */
   lossless?: boolean;
-  /** `Format.Toml` only: the column budget for its inline-vs-expanded layout. A
-   *  mapping/array that renders within `width` columns stays inline
-   *  (`k = { … }` / `[a, b]`); a wider one expands to a `[section]` / a wrapped
-   *  array. Defaults to `80`. Ignored by the other formats. */
+  /** The column budget for the inline-vs-expanded layout of `Format.Toml`,
+   *  `Format.Yaml`, and `Format.Fig`. A mapping/array that renders within
+   *  `width` columns stays inline (`k = { … }` / `[a, b]`); a wider one expands
+   *  to a `[section]` / a wrapped array / block lines. Defaults to `80`. Ignored
+   *  by the other formats.
+   *
+   *  Two limits before reaching for this as a "render block" lever: `0` means
+   *  *unset* (it resolves to the default `80`, since zero-initialized option
+   *  structs are ordinary across the C ABI) — pass `1` to force block; and for
+   *  YAML the budget governs NESTED containers only, as a root mapping/sequence
+   *  always renders block. */
   width?: number;
 }
 

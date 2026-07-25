@@ -112,6 +112,16 @@ pub fn Editor(comptime Language: type) type {
         source: std.ArrayList(u8) = .empty,
         document: ?Document = null,
         format: Language.Type = Language.default_type,
+        /// Set by `replaceAtSpan` when the reparse it does after splicing
+        /// FAILED — i.e. the caller's replacement text, not the document it
+        /// went into, is what doesn't parse (the document parsed at `init`,
+        /// and every edit routes through that one splice gate). The error
+        /// itself can't say this: it is an ordinary parse error, identical to
+        /// what a malformed input file produces. Callers that hand a user's
+        /// raw text through — the CLI's `edit`/`set`/`insert` — read this to
+        /// blame the text instead of the file. Cleared at the top of each
+        /// splice, so it always describes the most recent one.
+        splice_rejected: bool = false,
 
         pub fn getParsed(self: *const Self) !Document {
             return self.document orelse {
@@ -136,12 +146,16 @@ pub fn Editor(comptime Language: type) type {
             const backup = try self.allocator.dupe(u8, self.source.items);
             defer self.allocator.free(backup);
 
+            self.splice_rejected = false;
             try self.replaceSource(span, replacement);
             self.reparse() catch |err| {
                 // Restore byte-for-byte. Capacity is retained from before the
                 // edit (>= backup.len), so the refill cannot fail.
                 self.source.clearRetainingCapacity();
                 self.source.appendSliceAssumeCapacity(backup);
+                // `backup` parsed at `init`, so the only new thing in the
+                // buffer was `replacement`: it is what `err` is about.
+                self.splice_rejected = true;
                 return err;
             };
         }

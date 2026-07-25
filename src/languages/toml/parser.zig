@@ -102,6 +102,13 @@ pub const ParseError = error{
     BadEscape,
     InvalidUnicode,
     InvalidNumber,
+    /// A bareword in value position that isn't even shaped like a number
+    /// (`rev = cc5e7e51`, `name = hello`). Split out of `InvalidNumber`
+    /// because the tokenizer funnels EVERY non-`true`/`false` bareword into
+    /// a `.number` token, so the number-grammar advice ("check the radix
+    /// prefix…") is actively misleading here — the real fix is quotes. See
+    /// `parseValue`.
+    UnquotedString,
     InvalidDatetime,
     InvalidKey,
     DuplicateKey,
@@ -129,7 +136,8 @@ pub fn describe(code: Error) []const u8 {
         error.UnclosedString => "unclosed string; a single-line string cannot contain a literal newline — close the quote, or use a triple-quoted string (`\"\"\"`/`'''`) for multi-line text",
         error.BadEscape => "invalid escape; basic strings support \\b \\t \\n \\f \\r \\\" \\\\ \\uXXXX \\UXXXXXXXX — use a literal string ('...') for raw text with backslashes",
         error.InvalidUnicode => "invalid unicode escape; the hex digits do not form a valid Unicode codepoint",
-        error.InvalidNumber => "not a valid TOML number; check the radix prefix, digit grouping (a single `_` between digits, none leading/trailing), and that there is no leading zero",
+        error.InvalidNumber => "not a valid TOML number; if this is text (a version, an id), quote it — TOML has no bare strings. Otherwise check the radix prefix, digit grouping (a single `_` between digits, none leading/trailing), and that there is no leading zero",
+        error.UnquotedString => "TOML has no bare strings: a value that is not a number, boolean, date, array, or inline table must be quoted (`\"...\"`, or `'...'` for raw text)",
         error.InvalidDatetime => "not a valid RFC 3339 date/time",
         error.InvalidKey => "invalid key; a bare key allows only letters, digits, `-`, and `_` — quote it for anything else",
         error.DuplicateKey => "this key or table conflicts with one already defined; a TOML key or table may be defined only once",
@@ -153,6 +161,7 @@ pub fn shortLabel(code: Error) []const u8 {
         error.BadEscape => "invalid escape",
         error.InvalidUnicode => "invalid unicode escape",
         error.InvalidNumber => "invalid number",
+        error.UnquotedString => "needs quotes",
         error.InvalidDatetime => "invalid datetime",
         error.InvalidKey => "invalid key",
         error.DuplicateKey => "duplicate key/table",
@@ -828,7 +837,23 @@ fn parseValue(self: *Parser) ParserError!AST.Node.Id {
         .number => {
             _ = self.advance();
             const raw = self.tokenText(tok);
-            const kind = try classifyNumber(raw);
+            const kind = classifyNumber(raw) catch |err| {
+                // The cursor already moved past the offending token, so pin
+                // its span explicitly (see `failSpan`) — otherwise the caret
+                // lands on whatever follows the bad value.
+                //
+                // The tokenizer emits `.number` for every bareword that isn't
+                // `true`/`false` (see `lexBareword`), so this branch catches
+                // unquoted TEXT as often as it catches a malformed number.
+                // Re-label the ones that never even started out number-shaped
+                // so the report names the actual fix (quotes) instead of
+                // teaching number grammar at someone who meant a string.
+                const code: Error = if (err == error.InvalidNumber and !looksNumeric(raw))
+                    error.UnquotedString
+                else
+                    err;
+                return self.failSpan(tok.span.start, tok.span.end, code);
+            };
             // Store the value in canonical, format-independent form (decimal,
             // no underscores) so TOML→JSON/YAML conversion is direct. The
             // original source text is still recoverable via node_spans, so a
@@ -1093,6 +1118,18 @@ fn appendUnicode(self: *Parser, out: *std.ArrayList(u8), inner: []const u8, at: 
 // ── Number validation / classification ──────────────────────────────────────
 
 const NumberKind = @FieldType(AST.Node.Kind.Number, "kind");
+
+/// Whether `raw` was plausibly *meant* as a number: it starts with a digit
+/// (after an optional sign), or is one of TOML's spelled-out floats. Used only
+/// to pick which diagnostic a failed `classifyNumber` deserves — `1.2.3` and
+/// `0x1g` are botched numbers, `cc5e7e51` and `hello` are unquoted strings.
+fn looksNumeric(raw: []const u8) bool {
+    var body = raw;
+    if (body.len > 0 and (body[0] == '+' or body[0] == '-')) body = body[1..];
+    if (body.len == 0) return false;
+    if (eqAny(body, &.{ "inf", "nan" })) return true;
+    return ascii.isDigit(body[0]);
+}
 
 fn classifyNumber(raw: []const u8) ParserError!NumberKind {
     if (raw.len == 0) return error.InvalidNumber;
@@ -1534,6 +1571,26 @@ test "parseCollecting still finds a second, genuinely separate error after an un
     // One for the unclosed array (however it's attributed), one for `bad2 =`
     // — but not a third for `alsogood`, which is perfectly valid.
     try testing.expectEqual(@as(usize, 2), report.errors.len);
+}
+
+test "an unquoted text value is reported as needing quotes, not as a bad number" {
+    const a = testing.allocator;
+    // Every bareword tokenizes as `.number`, so this used to surface as
+    // `InvalidNumber` — number-grammar advice for what is plainly a string.
+    for ([_][]const u8{
+        "rev = cc5e7e518c1d95e5c1288418f072bd7e351ef62d\n",
+        "name = hello\n",
+        "branch = -main\n",
+        "arr = [ ok ]\n",
+        "t = { k = word }\n",
+    }) |src| {
+        try testing.expectError(error.UnquotedString, parse(a, src, .TOML_1_0));
+    }
+    // A value that really was aimed at the number grammar keeps the number
+    // diagnostic (its `describe` now mentions quoting as the other option).
+    for ([_][]const u8{ "v = 1.2.3\n", "h = 0x1g\n", "z = 01\n" }) |src| {
+        try testing.expectError(error.InvalidNumber, parse(a, src, .TOML_1_0));
+    }
 }
 
 test "describe and shortLabel cover every Error variant" {

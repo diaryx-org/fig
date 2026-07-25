@@ -354,6 +354,86 @@ pub const CliConfig = struct {
     requested_help: bool = false,
 };
 
+/// The caller-supplied text an action splices into the document, plus what it
+/// takes to report it: which file it was going into, and which format that
+/// file is (null under `--detect`, where only the handler resolves it). `text`
+/// is null when the action carries several (`set --seq`). Read only by
+/// `main`'s `error.InvalidEditText` path — see `diag_report.reportBadEditText`.
+pub const SplicedText = struct {
+    file: []const u8,
+    format: ?Format,
+    kind: EditTextKind,
+    text: ?[]const u8,
+};
+
+/// What a piece of spliced text was meant to be — only ever used to word the
+/// report in `diag_report.reportBadEditText` ("the new value" vs "the new key").
+pub const EditTextKind = enum {
+    value,
+    key,
+    comment,
+
+    pub fn noun(self: EditTextKind) []const u8 {
+        return switch (self) {
+            .value => "value",
+            .key => "key",
+            .comment => "comment text",
+        };
+    }
+};
+
+/// The spliced text `config`'s action carries, or null for the actions that
+/// splice none (`delete`, and the read-only ones) — those can't produce an
+/// `InvalidEditText` in the first place.
+pub fn splicedText(config: CliConfig) ?SplicedText {
+    return switch (config.options) {
+        .edit => |o| .{
+            .file = o.file,
+            .format = if (o.detect) null else o.format,
+            // `--key` makes the argument a replacement KEY, not a value.
+            .kind = if (o.key) .key else .value,
+            .text = o.replacement,
+        },
+        .set => |o| .{
+            .file = o.file,
+            .format = if (o.detect) null else o.format,
+            .kind = .value,
+            .text = if (o.seq) null else o.value,
+        },
+        .insert => |o| .{
+            .file = o.file,
+            .format = if (o.detect) null else o.format,
+            .kind = .value,
+            .text = o.value,
+        },
+        .comment => |o| .{
+            .file = o.file,
+            .format = if (o.detect) null else o.format,
+            .kind = .comment,
+            .text = o.text,
+        },
+        else => null,
+    };
+}
+
+/// The single file `config`'s action works on, when it has exactly one — so a
+/// failure that escapes the action can at least name it (see
+/// `diag_report.reportUnhandled`). Null for `check`, which takes a list and
+/// reports per file itself, and for the file-less actions.
+pub fn targetFile(config: CliConfig) ?[]const u8 {
+    return switch (config.options) {
+        .edit => |o| o.file,
+        .set => |o| o.file,
+        .insert => |o| o.file,
+        .delete => |o| o.file,
+        .get => |o| o.file,
+        .comment => |o| o.file,
+        .fmt => |o| o.file,
+        .convert => |o| o.file,
+        .help, .version, .check => null,
+    };
+}
+
 pub const ArgError = error{ UnsupportedFileFormat, MissingEditArgument, MissingSetArgument, MissingInsertArgument, MissingDeleteArgument, MissingGetArgument, MissingCommentArgument, MissingCheckArgument, MissingFmtArgument, MissingConvertArgument, OutOfMemory, Overflow, InvalidCharacter, InvalidPath };
 
 /// Result of mapping a file extension to a parse strategy. `embed_detect` is

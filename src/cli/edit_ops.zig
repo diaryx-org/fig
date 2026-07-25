@@ -37,6 +37,27 @@ pub fn applyEdit(
     var editor: fig.Editor(Lang) = .{ .allocator = allocator, .format = dialect };
     try editor.init(content);
     defer editor.deinit();
+    applyOp(Lang, &editor, path, text, op) catch |err| {
+        // `init` parsed `content`, so a parse failure from here on is about
+        // the text the caller spliced in, not the file — and it arrives as a
+        // plain `InvalidNumber`/`UnexpectedToken`/… that reads as if the FILE
+        // were malformed. Re-label it so the CLI can blame (and quote) the
+        // argument instead; see `diag_report.printBadEditText`.
+        if (editor.splice_rejected) return error.InvalidEditText;
+        return err;
+    };
+    return allocator.dupe(u8, editor.source.items);
+}
+
+/// The op dispatch behind `applyEdit`, split out only so its errors can be
+/// caught in one place there.
+fn applyOp(
+    comptime Lang: type,
+    editor: *fig.Editor(Lang),
+    path: []fig.AST.PathSegment,
+    text: []const u8,
+    op: EditOp,
+) !void {
     switch (op) {
         .replace_value => try editor.replaceValAtPath(path, text),
         .replace_key => try editor.replaceKeyAtPath(path, text),
@@ -52,7 +73,6 @@ pub fn applyEdit(
         .delete_key => try editor.deleteKey(path),
         .remove_seq_item => |index| try editor.removeSeqItem(path, index),
     }
-    return allocator.dupe(u8, editor.source.items);
 }
 
 pub fn applyToFile(
@@ -426,6 +446,33 @@ test "applyEdit performs the structural ops on YAML" {
         defer t.allocator.free(ri);
         try t.expectEqualStrings("- x\n- z\n", ri);
     }
+}
+
+test "applyEdit blames the spliced text, not the file, when the edit won't parse" {
+    if (comptime !build_options.lang_toml) return error.SkipZigTest;
+    const t = std.testing;
+    const T = fig.Language.TOML;
+    const dia = T.default_type;
+
+    // The file parses; the replacement (a git sha, unquoted) doesn't. The
+    // underlying `UnquotedString` would read as if `rev.toml` were malformed,
+    // so it comes back as `InvalidEditText` for `main` to report against the
+    // argument instead.
+    var p = [_]fig.AST.PathSegment{.{ .key = "rev" }};
+    try t.expectError(error.InvalidEditText, applyEdit(T, t.allocator, "rev = \"old\"\n", &p, "cc5e7e51", .replace_value, dia));
+    // Same for `set`'s upsert path and for a new key's value.
+    var q = [_]fig.AST.PathSegment{.{ .key = "new" }};
+    try t.expectError(error.InvalidEditText, applyEdit(T, t.allocator, "rev = \"old\"\n", &q, "cc5e7e51", .set, dia));
+
+    // A failure that ISN'T about the text keeps its own error: nothing was
+    // spliced, so there is no argument to blame.
+    var missing = [_]fig.AST.PathSegment{.{ .key = "nope" }};
+    try t.expectError(error.NotFound, applyEdit(T, t.allocator, "rev = \"old\"\n", &missing, "\"x\"", .replace_value, dia));
+
+    // And a valid literal still lands.
+    const ok = try applyEdit(T, t.allocator, "rev = \"old\"\n", &p, "\"cc5e7e51\"", .replace_value, dia);
+    defer t.allocator.free(ok);
+    try t.expectEqualStrings("rev = \"cc5e7e51\"\n", ok);
 }
 
 test "applyEdit set upserts a scalar and reconciles a sequence on YAML" {

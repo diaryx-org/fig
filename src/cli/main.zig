@@ -167,19 +167,44 @@ pub fn main(init: std.process.Init) !void {
 
     const a = init.arena.allocator();
 
-    // Now, act on config
+    // Now, act on config. One failure is intercepted here rather than left to
+    // escape as a bare `error: <ErrorName>`: an edit whose spliced TEXT is
+    // what doesn't parse (`fig edit c.toml dep.rev cc5e7e51` — a git sha the
+    // TOML parser can only read as a malformed number). `edit_ops.applyEdit`
+    // tags that case; this is the only place that knows which argument the
+    // text came from, so it is where the report is written. See
+    // `diag_report.reportBadEditText`.
+    dispatch(a, io, &stdout_terminal, &stderr_terminal, config) catch |err| switch (err) {
+        error.InvalidEditText => {
+            const spliced = types.splicedText(config).?;
+            diag_report.reportBadEditText(&stderr_terminal, spliced.file, spliced.format, spliced.kind, spliced.text);
+        },
+        // Everything an action didn't report itself stops HERE with a plain
+        // line, instead of escaping to the Zig runtime's default handler.
+        // Letting it escape printed a bare `error: <ErrorName>` plus an
+        // unreadable stack trace through the runtime's OWN stderr writer —
+        // which, sharing fd 2 positionally with `stderr_terminal`, clobbers
+        // whatever this process already wrote (the same hazard documented for
+        // `std.log` above, and in `diag_report`). The most common one by far
+        // is a parse failure on the target file itself, so the report points
+        // at `fig check`, which renders the real `file:line:col` diagnostic.
+        else => diag_report.reportUnhandled(&stderr_terminal, err, types.targetFile(config), config.binary_name),
+    };
+}
+
+fn dispatch(a: std.mem.Allocator, io: Io, stdout_terminal: *Io.Terminal, stderr_terminal: *Io.Terminal, config: types.CliConfig) !void {
     return switch (config.action) {
-        .help => actions.runHelp(&stderr_terminal, config.binary_name),
-        .version => actions.runVersion(&stdout_terminal, cli_version, core_version, epoch),
-        .edit => actions.runEdit(a, io, &stdout_terminal, config.binary_name, config.options.edit),
-        .set => actions.runSet(a, io, &stdout_terminal, &stderr_terminal, config.binary_name, config.options.set),
-        .insert => actions.runInsert(a, io, &stdout_terminal, &stderr_terminal, config.binary_name, config.options.insert),
-        .delete => actions.runDelete(a, io, &stdout_terminal, &stderr_terminal, config.binary_name, config.options.delete),
-        .get => actions.runGet(a, io, &stdout_terminal, &stderr_terminal, config.binary_name, config.options.get),
-        .comment => actions.runComment(a, io, &stdout_terminal, &stderr_terminal, config.binary_name, config.options.comment),
-        .check => actions.runCheck(a, io, &stdout_terminal, &stderr_terminal, config.binary_name, config.options.check),
-        .fmt => actions.runFmt(a, io, &stdout_terminal, &stderr_terminal, config.binary_name, config.options.fmt),
-        .convert => actions.runConvert(a, io, &stdout_terminal, &stderr_terminal, config.binary_name, config.options.convert),
+        .help => actions.runHelp(stderr_terminal, config.binary_name),
+        .version => actions.runVersion(stdout_terminal, cli_version, core_version, epoch),
+        .edit => actions.runEdit(a, io, stdout_terminal, config.binary_name, config.options.edit),
+        .set => actions.runSet(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.set),
+        .insert => actions.runInsert(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.insert),
+        .delete => actions.runDelete(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.delete),
+        .get => actions.runGet(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.get),
+        .comment => actions.runComment(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.comment),
+        .check => actions.runCheck(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.check),
+        .fmt => actions.runFmt(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.fmt),
+        .convert => actions.runConvert(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.convert),
     };
 }
 

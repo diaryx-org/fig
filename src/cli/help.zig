@@ -35,6 +35,9 @@ pub const Help = struct {
         try term.writer.print(
             \\Usage: {s} edit [--key] <file> <path> <replacement>
             \\  --key: edit the object key at path instead of the value
+            \\  replacement: a literal in the target format (YAML/TOML/ZON/figl
+            \\    verbatim; JSON is quoted as a string). A string therefore needs
+            \\    its own quotes, INSIDE the shell's: '"v2.1.0"'
             \\  path format: dot syntax for keys, bracket syntax for indices
             \\    example: school.class[0].student[3]
             \\  .md/.markdown files: edits the frontmatter/endmatter in place —

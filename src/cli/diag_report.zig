@@ -9,6 +9,10 @@ const std = @import("std");
 const fig = @import("fig");
 const Io = std.Io;
 
+const types = @import("types.zig");
+const Format = types.Format;
+const EditTextKind = types.EditTextKind;
+
 /// Print a teaching report straight to `term`, cargo/rustc-style:
 ///   <label>: <message>
 ///   --> <file>:<line>:<col>
@@ -118,6 +122,135 @@ pub fn reportParseError(term: *Io.Terminal, source: []const u8, file: []const u8
     try printDiag(term, source, file, offset, end, "error", .red, message, short_label);
     try term.writer.flush();
     std.process.exit(2);
+}
+
+/// The binary's last line of defense: report an error that reached `main`
+/// without any handler of its own, then exit(1). Named errors that a user can
+/// actually act on get a sentence; the rest print their name (as the escaping
+/// path used to) but without the stack trace that came with it — and, when the
+/// action worked on one file, with a pointer at `fig check`, which renders the
+/// real `file:line:col` report for the overwhelmingly common cause: the file
+/// doesn't parse. See `main`'s call site for why nothing is left to escape.
+pub fn reportUnhandled(term: *Io.Terminal, err: anyerror, file: ?[]const u8, binary_name: []const u8) noreturn {
+    reportUnhandledImpl(term, err, file, binary_name) catch {};
+    term.writer.flush() catch {};
+    std.process.exit(1);
+}
+
+fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, binary_name: []const u8) !void {
+    try term.setColor(.red);
+    try term.writer.writeAll("error");
+    try term.setColor(.reset);
+    switch (err) {
+        error.FileNotFound => try term.writer.print(": no such file: {s}\n", .{file orelse "(unknown)"}),
+        error.AccessDenied => try term.writer.print(": permission denied: {s}\n", .{file orelse "(unknown)"}),
+        error.IsDir => try term.writer.print(": {s} is a directory\n", .{file orelse "(unknown)"}),
+        // The editor's navigation failures — the path, not the document.
+        error.NotFound => try term.writer.writeAll(": no such path in the document (`get` it to see what's there)\n"),
+        error.NotAMapping => try term.writer.writeAll(": a segment of this path is not a mapping, so it has no keys to address\n"),
+        error.NotASequence => try term.writer.writeAll(": a segment of this path is not a sequence, so it has no indices to address\n"),
+        error.IndexOutOfBounds => try term.writer.writeAll(": that index is past the end of the sequence\n"),
+        else => {
+            try term.writer.print(": {s}\n", .{@errorName(err)});
+            if (file) |f| {
+                try term.setColor(.blue);
+                try term.writer.writeAll("note");
+                try term.setColor(.reset);
+                try term.writer.print(": if {s} itself does not parse, `{s} check {s}` says where.\n", .{ f, binary_name, f });
+            }
+        },
+    }
+}
+
+/// How a format takes the caller's text, which decides what the fix is when
+/// the text turns out not to fit: spliced in verbatim as source (so a string
+/// needs its own quotes), wrapped as a JSON string (so `"`/`\` need escaping),
+/// or written as raw characters (so only the format's own separators can break
+/// it). Mirrors the per-format branches in `edit_ops` — the JSON family goes
+/// through `jsonifyEdit`, NestedText/plist RENDER the text rather than splice
+/// it, everything else takes it as a literal.
+const SpliceStyle = enum { literal, json_string, raw };
+
+fn spliceStyle(format: Format) SpliceStyle {
+    return switch (format) {
+        .json, .jsonc, .json5 => .json_string,
+        .toml, .yaml, .yml, .zon, .fig => .literal,
+        .ini, .dotenv, .properties, .plist, .xml, .nestedtext => .raw,
+        // Neither has an in-place editor, so no edit text ever reaches here.
+        .canonical, .gron => .literal,
+    };
+}
+
+/// Report an edit whose *argument* — not the file — is what doesn't parse, and
+/// exit(2). `edit`/`set`/`insert` splice the text the user typed straight into
+/// the document, so when the reparse fails the underlying error describes the
+/// spliced bytes ("not a valid TOML number" for a git sha) while pointing at a
+/// file the user believes is fine. `edit_ops.applyEdit` turns that case into
+/// `error.InvalidEditText` (it knows the document parsed before the splice);
+/// this is where it becomes a message that names the argument and the fix.
+///
+/// `format` is null under `--detect`, where the resolved format isn't known
+/// here — the wording then stays format-agnostic rather than risk naming the
+/// wrong one. `text` is null for `set --seq`, whose several values give
+/// nothing single to quote back.
+pub fn reportBadEditText(term: *Io.Terminal, file: []const u8, format: ?Format, kind: EditTextKind, text: ?[]const u8) noreturn {
+    reportBadEditTextImpl(term, file, format, kind, text) catch {};
+    term.writer.flush() catch {};
+    std.process.exit(2);
+}
+
+fn reportBadEditTextImpl(term: *Io.Terminal, file: []const u8, format: ?Format, kind: EditTextKind, text: ?[]const u8) !void {
+    // Long text (a pasted blob, a whole inline table) would bury the message;
+    // enough is shown to recognize which argument is meant.
+    const max_shown = 120;
+    const shown: ?[]const u8 = if (text) |t| t[0..@min(t.len, max_shown)] else null;
+    const elided = if (text) |t| t.len > max_shown else false;
+
+    try term.setColor(.red);
+    try term.writer.writeAll("error");
+    try term.setColor(.reset);
+    if (shown) |s|
+        try term.writer.print(": `{s}{s}` is not a valid {s} ", .{ s, if (elided) "…" else "", kind.noun() })
+    else
+        try term.writer.print(": one of the new values is not valid ", .{});
+    if (format) |f|
+        try term.writer.print("for {s} ({s})\n", .{ file, @tagName(f) })
+    else
+        try term.writer.print("for {s}\n", .{file});
+
+    const style = if (format) |f| spliceStyle(f) else .literal;
+    try term.setColor(.blue);
+    try term.writer.writeAll("note");
+    try term.setColor(.reset);
+    switch (style) {
+        .literal => try term.writer.print(
+            ": the {s} is spliced in verbatim, as source text — so it has to stand on its own as a valid {s} literal.\n",
+            .{ kind.noun(), if (format) |f| @tagName(f) else "document" },
+        ),
+        .json_string => try term.writer.print(
+            ": the {s} is inserted as a JSON string, so a `\"` or `\\` inside it must be escaped.\n",
+            .{kind.noun()},
+        ),
+        .raw => try term.writer.print(
+            ": the {s} is written out as-is, so it cannot contain a line break or this format's own separators.\n",
+            .{kind.noun()},
+        ),
+    }
+
+    // The overwhelmingly common case: text that needed quotes and lost the
+    // ones the shell ate. Only offered when the text isn't already quoted —
+    // re-suggesting quotes on `"..."` would just be wrong.
+    if (style == .literal and kind != .comment) if (shown) |s| {
+        if (s.len > 0 and s[0] != '"' and s[0] != '\'') {
+            try term.setColor(.blue);
+            try term.writer.writeAll("help");
+            try term.setColor(.reset);
+            try term.writer.print(
+                ": for a string, pass the quotes too — your shell strips the ones you type: '\"{s}{s}\"'\n",
+                .{ s, if (elided) "…" else "" },
+            );
+        }
+    };
 }
 
 /// A scalar/null value reaching the fig printer as a document root has no

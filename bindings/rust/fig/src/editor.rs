@@ -153,7 +153,20 @@ impl Editor {
     /// only the trailing key is absent. Folds the common
     /// `replace_value` → (on [`Error::NotFound`]) `insert_value` two-step into a
     /// single call. `path` must end in a key (it only ever creates a mapping
-    /// entry); a missing intermediate container surfaces as [`Error::NotFound`].
+    /// entry).
+    ///
+    /// Missing intermediate containers are created for you, as flow containers
+    /// (`a: {b: {c: 1}}` for YAML). Two consequences worth knowing:
+    ///
+    /// * A flow container cannot hold a block-spelled value, so setting a map or
+    ///   sequence at a path whose ancestors had to be created — or into a flow
+    ///   container the document already had — fails with
+    ///   [`Error::InvalidArgument`] rather than writing something that no longer
+    ///   means what was passed in. Scalars are unaffected. Create the
+    ///   intermediate containers in block form first (set a scalar, then the
+    ///   nested value) when you need a block container at a fresh path.
+    /// * A failed `set_value` is a no-op: any container created on the way is
+    ///   rolled back, so `Err` always means the document is unchanged.
     pub fn set_value(&mut self, path: &[Segment], value: impl Into<Value>) -> Result<(), Error> {
         let val = value_text(&value.into(), self.format)?;
         let p = to_ffi_path(path);

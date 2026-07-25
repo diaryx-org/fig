@@ -1177,12 +1177,23 @@ fn parseFlowNode(self: *Parser) ParserError!AST.Node.Id {
 
 /// A plain scalar inside flow may not begin with a comment indicator, and the
 /// indicators `-`/`?`/`:` are valid first characters only when followed by
-/// plain-safe content — a bare one (here, abutting a flow indicator) is not.
+/// plain-safe content — a bare one (here, abutting a flow indicator) is not,
+/// and neither is one followed by a space (spec: an indicator character starts
+/// a plain scalar only `unless followed by non-space`, `ns-plain-first`).
+///
+/// The `- ` case is why this matters beyond pedantry: the tokenizer does not
+/// emit a dash indicator inside flow (`- ` is only a block-sequence entry), so
+/// without this check `{b: - a}` reads as the STRING `"- a"`. Every writer that
+/// splices a block sequence into a flow mapping then produces a document that
+/// parses, round-trips, and has quietly lost its sequence — and conformant
+/// readers reject the file outright.
 fn invalidFlowScalar(source: []const u8) bool {
     if (source.len == 0) return true;
     if (source[0] == '#') return true;
-    if (source.len == 1) return source[0] == '-' or source[0] == '?' or source[0] == ':';
-    return false;
+    const indicator = source[0] == '-' or source[0] == '?' or source[0] == ':';
+    if (!indicator) return false;
+    if (source.len == 1) return true;
+    return source[1] == ' ' or source[1] == '\t';
 }
 
 fn parseFlowSequence(self: *Parser) ParserError!AST.Node.Id {
@@ -3340,6 +3351,30 @@ test "yaml rejects comment inside a flow plain scalar" {
     // A comment line breaks a multi-line flow scalar; the text after it is then a
     // second element with no separating comma, which is invalid.
     try testParserError("[ word1\n  # xxx\n  word2 ]\n", error.UnexpectedToken);
+}
+
+test "yaml rejects a flow plain scalar starting with an indicator plus space" {
+    // `-`/`?`/`:` start a plain scalar only when NOT followed by a space. The
+    // `- ` case is the one with teeth: the tokenizer emits no dash indicator
+    // inside flow, so accepting this would read a spliced-in block sequence as
+    // the string `"- a"` — a document that round-trips with the sequence gone,
+    // and that conformant readers reject outright.
+    try testParserError("a: {b: - a}\n", error.UnexpectedToken);
+    try testParserError("a: [- x]\n", error.UnexpectedToken);
+    try testParserError("a: {b: 1, c: - q}\n", error.UnexpectedToken);
+    try testParserError("a: [1, - q]\n", error.UnexpectedToken);
+    try testParserError("a: {b: ? k}\n", error.UnexpectedToken);
+}
+
+test "yaml flow plain scalars may still start with an indicator before non-space" {
+    // The rule is about the FOLLOWING byte, so negative numbers, dash-led words,
+    // and a quoted `- a` are all untouched.
+    const doc = try Parser.parse(testing.allocator, "a: [-1, -x, '- q', x - y]\n", .v1_2_2);
+    defer doc.deinit(testing.allocator);
+    try testing.expectEqualSlices(u8, "-1", (try doc.ast.getValByPath(&.{ .{ .key = "a" }, .{ .index = 0 } })).kind.number.raw);
+    try testing.expectEqualSlices(u8, "-x", (try doc.ast.getValByPath(&.{ .{ .key = "a" }, .{ .index = 1 } })).kind.string);
+    try testing.expectEqualSlices(u8, "- q", (try doc.ast.getValByPath(&.{ .{ .key = "a" }, .{ .index = 2 } })).kind.string);
+    try testing.expectEqualSlices(u8, "x - y", (try doc.ast.getValByPath(&.{ .{ .key = "a" }, .{ .index = 3 } })).kind.string);
 }
 
 test "yaml flow mapping with explicit keys and empty values" {

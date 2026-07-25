@@ -622,8 +622,8 @@ FigStatus fig_value_serialize(FigValue *value, FigNodeId root, int format,
 // Output style for fig_value_serialize_opts. A NULL options pointer selects the
 // defaults shown here (identical output to fig_value_serialize). `pretty` is
 // honored by JSON, ZON, and TOML (array wrapping); `indent` by JSON and TOML's
-// wrapped arrays; `width` by TOML's inline-vs-section layout. YAML renders with
-// its own fixed layout.
+// wrapped arrays; `width` by the inline-vs-expanded layout of TOML, YAML, and
+// fig.
 typedef struct FigSerializeOptions {
   // Set this to sizeof(FigSerializeOptions). It is the struct's version tag:
   // fig may append fields in later releases, and reads a given field only when
@@ -649,10 +649,14 @@ typedef struct FigSerializeOptions {
   // FIG_STATUS_UNSUPPORTED_FORMAT. Ignored by fig_value_serialize_opts. Appended
   // after `strip_comments`; older callers keep the lossy default.
   uint8_t lossless;
-  // TOML only: the column budget for its inline-vs-expanded layout. A
-  // mapping/array that renders within `width` columns stays inline
-  // (k = { ... } / [a, b]); a wider one expands to a [section] / a wrapped array.
-  // 0 => default 80. Appended after `lossless`; older callers (smaller `size`)
+  // TOML, YAML, and fig: the column budget for their inline-vs-expanded layout.
+  // A mapping/array that renders within `width` columns stays inline
+  // (k = { ... } / [a, b]); a wider one expands to a [section] / a wrapped array
+  // / block lines. For YAML the budget governs NESTED containers only -- a root
+  // mapping/sequence always renders block.
+  // 0 => default 80, NOT "never inline": a zero-initialized struct (with a valid
+  // `size`) must not silently mean block everywhere. Pass 1 to force block.
+  // Appended after `lossless`; older callers (smaller `size`)
   // keep the 80-column default. uint16_t, so the struct pads to a 12-byte size.
   uint16_t width;
   // fig_value_serialize_opts + FIG_FORMAT_FIG only: nonzero renders a container

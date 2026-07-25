@@ -326,3 +326,48 @@ fn fig_dialect_serializes_and_parses_back() {
         },
     );
 }
+
+#[test]
+#[cfg(feature = "yaml")]
+fn yaml_width_controls_nested_flow_vs_block_and_zero_means_unset() {
+    // Pins what the `width` docs promise for YAML, since all three claims are
+    // easy to mistake for "width does nothing here".
+    use fig::SerializeOptions;
+    let nested = map(vec![
+        ("a", map(vec![("k", "v".into())])),
+        ("z", 1i64.into()),
+    ]);
+
+    // Default budget: the small nested mapping stays flow.
+    assert_eq!(
+        nested.serialize(Format::Yaml).unwrap(),
+        "a: { k: v }\nz: 1\n"
+    );
+    // A tight budget expands it to block lines.
+    assert_eq!(
+        nested
+            .serialize_with(Format::Yaml, SerializeOptions::default().width(1))
+            .unwrap(),
+        "a:\n  k: v\nz: 1\n"
+    );
+    // Width 0 is the C ABI's "unset" sentinel, NOT "never inline": it resolves
+    // back to the 80-column default.
+    assert_eq!(
+        nested
+            .serialize_with(Format::Yaml, SerializeOptions::default().width(0))
+            .unwrap(),
+        nested.serialize(Format::Yaml).unwrap()
+    );
+
+    // A ROOT container ignores the budget entirely — always block. This is the
+    // one that reads as "width is a no-op for YAML" if probed at the top level.
+    let root = map(vec![("k", "v".into())]);
+    for w in [80u16, 1, 0] {
+        assert_eq!(
+            root.serialize_with(Format::Yaml, SerializeOptions::default().width(w))
+                .unwrap(),
+            "k: v\n",
+            "root should be block at width {w}"
+        );
+    }
+}

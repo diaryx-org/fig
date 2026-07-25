@@ -50,10 +50,15 @@ pub const SerializeFormat = enum { json, jsonc, json5, yaml, toml, zon, xml, can
 ///   * `indent` — JSON/JSON5 spaces per level, and the per-level indent of TOML's
 ///     wrapped arrays. ZON keeps its idiomatic four-space block indent; YAML has
 ///     its own fixed layout.
-///   * `width` — TOML only: the column budget that decides whether a mapping
-///     renders as an inline table (`k = { ... }`) or a `[section]`, and whether an
-///     array stays on one line or wraps. A value/line that fits within `width`
-///     stays inline; one that exceeds it expands.
+///   * `width` — TOML, YAML, and fig: the column budget that decides whether a
+///     container renders inline (TOML's inline table `k = { ... }` / a one-line
+///     array; YAML's flow `k: {a: 1}` / `[a, b]`; fig's flow spellings) or
+///     expands (a `[section]`, a wrapped array, block lines). A value that fits
+///     within `width` stays inline; one that exceeds it expands. Two things to
+///     know for YAML: the budget applies to NESTED containers only — a root
+///     mapping/sequence always renders block — and `0` is not "never inline"
+///     but the C ABI's "unset" sentinel (see `FigSerializeOptions.width`),
+///     which resolves back to 80. Use `1` to force block layout.
 ///   * `strip_comments` — every format: drop the AST's carried comments instead
 ///     of emitting them. Honored uniformly (it blanks the comment side-table
 ///     before printing), so it works even for the formats whose printers take no
@@ -65,9 +70,11 @@ pub const SerializeOptions = struct {
     /// Spaces per indentation level when `pretty` is set (JSON; TOML wrapped
     /// arrays).
     indent: u8 = 2,
-    /// Column budget for TOML's inline-vs-expanded layout decision. Anything that
-    /// renders within this many columns stays inline; wider values expand to
-    /// sections / wrapped arrays. Ignored by the other formats.
+    /// Column budget for the inline-vs-expanded layout decision of TOML, YAML,
+    /// and fig. Anything that renders within this many columns stays inline;
+    /// wider values expand to sections / wrapped arrays / block lines. Ignored by
+    /// the other formats. `1` is the way to say "always block"; `0` reads as
+    /// "unset" across the C ABI and resolves to 80.
     width: u16 = 80,
     /// `true`: do not emit comments carried on the AST (a clean, comment-free
     /// render). `false` (default): preserve them where the target format allows.

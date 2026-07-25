@@ -532,17 +532,44 @@ fn yaml_block_value_into_a_flow_container_errs_instead_of_corrupting() {
     assert!(matches!(err, fig::Error::InvalidArgument), "{err:?}");
     assert_eq!(ed.source().unwrap(), "title: t\na: {b: 1}\n");
 
-    // At a fresh nested path, whose ancestors `set` seeds as flow `{}`. The
-    // failed edit must also roll that seed back — `Err` means nothing happened.
-    let mut ed = Editor::open(b"title: t\n", Format::Yaml).unwrap();
+    // A flow container the caller has to have written themselves is the only way
+    // to reach this now: ancestors `set` creates are block (see the test below).
+    let mut ed = Editor::open(b"title: t\na: {}\n", Format::Yaml).unwrap();
     let err = ed.set_value(&[Segment::Key("a"), Segment::Key("b")], seq()).unwrap_err();
     assert!(matches!(err, fig::Error::InvalidArgument), "{err:?}");
-    assert_eq!(ed.source().unwrap(), "title: t\n");
+    assert_eq!(ed.source().unwrap(), "title: t\na: {}\n");
+}
 
-    // Scalars still ride the flow seeds all the way down.
+#[test]
+#[cfg(feature = "yaml")]
+fn yaml_set_vivifies_a_fresh_nested_path_as_block_containers() {
+    // Ancestors `set` creates are block mappings, so a fresh nested path reads
+    // like hand-written YAML — and, unlike a flow seed, can hold a block value.
+    use fig::Value;
+
     let mut ed = Editor::open(b"title: t\n", Format::Yaml).unwrap();
-    ed.set_value(&[Segment::Key("a"), Segment::Key("b")], 1i64).unwrap();
-    assert_eq!(ed.source().unwrap(), "title: t\na: {b: 1}\n");
+    ed.set_value(
+        &[Segment::Key("a"), Segment::Key("b"), Segment::Key("c")],
+        1i64,
+    )
+    .unwrap();
+    assert_eq!(ed.source().unwrap(), "title: t\na:\n  b:\n    c: 1\n");
+
+    let mut ed = Editor::open(b"title: t\n", Format::Yaml).unwrap();
+    ed.set_value(
+        &[Segment::Key("a"), Segment::Key("b")],
+        Value::Seq(vec![Value::Str("q".into())]),
+    )
+    .unwrap();
+    assert_eq!(ed.source().unwrap(), "title: t\na:\n  b:\n  - q\n");
+
+    let mut ed = Editor::open(b"title: t\n", Format::Yaml).unwrap();
+    ed.set_value(
+        &[Segment::Key("a"), Segment::Key("b")],
+        Value::Map(vec![(Value::Str("k".into()), Value::Str("v".into()))]),
+    )
+    .unwrap();
+    assert_eq!(ed.source().unwrap(), "title: t\na:\n  b:\n    k: v\n");
 }
 
 #[test]

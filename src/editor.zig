@@ -355,12 +355,34 @@ pub fn Editor(comptime Language: type) type {
             try self.reparse();
         }
 
-        /// The empty-map value literal `set` splices to auto-vivify a missing
-        /// parent. Every editable format accepts a flow `{}` as an empty mapping
-        /// value (fig/YAML flow map, JSON object, TOML inline table); ZON spells
-        /// it `.{}`. Reparse-validated at the splice site like any other value.
+        /// The empty-mapping seed `set` splices to auto-vivify a missing parent.
+        /// Reparse-validated at the splice site like any other value.
+        ///
+        /// Most formats use the flow `{}` literal, which every one of them
+        /// accepts as an empty mapping value (JSON object, TOML inline table, fig
+        /// flow map); ZON spells it `.{}`.
+        ///
+        /// YAML seeds with NOTHING instead — a bare `key:`, i.e. a null value.
+        /// Both spellings are valid YAML for "no entries yet", but they are not
+        /// interchangeable as a *seed*: a flow `{}` can only ever be extended
+        /// with flow members, so every block-spelled value landing under a
+        /// vivified ancestor had to be refused (`BlockValueIntoFlow`) — a fresh
+        /// nested path could hold scalars and nothing else. A null value has the
+        /// opposite property: `insertKey` promotes it to a real block mapping
+        /// (`promoteNullToMapping`), which takes block and inline values alike.
+        /// So YAML's seed is the empty one, and `set` at a fresh nested path
+        /// produces the block containers the format is normally written in:
+        ///
+        ///     set(a.b.c, 1)  ->  a:        (not  a: {b: {c: 1}})
+        ///                          b:
+        ///                            c: 1
+        ///
+        /// The dotted-key formats (fig/TOML) deliberately keep `{}`: there, the
+        /// flow chain is the idiomatic intermediate form, and `fig fmt`
+        /// canonicalizes `a = { b = { c = v }}` to `a.b.c = v`.
         fn emptyMapLiteral() []const u8 {
             if (comptime Language == Zon) return ".{}";
+            if (comptime Language == Yaml) return "";
             return "{}";
         }
 
@@ -1497,6 +1519,14 @@ pub fn Editor(comptime Language: type) type {
             const v = stripTrailingNewline(value_text);
             const shape = self.valueShape(v);
             const is_seq = shape == .block_seq;
+            // No value at all — a bare `key:` (YAML's null, and the seed `set`
+            // vivifies missing ancestors with). The separator's padding is
+            // trimmed so the line doesn't end in whitespace; formats whose
+            // separator carries no padding (`KEY=`) are unaffected.
+            if (v.len == 0) {
+                try out.appendSlice(self.allocator, std.mem.trimEnd(u8, kv_sep, " "));
+                return;
+            }
             if (shape == .inline_ or shape == .block_scalar) {
                 try out.appendSlice(self.allocator, kv_sep);
                 try reindentInto(out, self.allocator, v, col);
@@ -2437,13 +2467,13 @@ test "set rolls back a vivified ancestor when the leaf insert fails" {
     var ed: Editor(Yaml) = .{ .allocator = testing.allocator, .format = .v1_2_2 };
     try ed.init("title: t\n");
     defer ed.deinit();
-    // Vivifying `a` seeds a FLOW `{}`, which cannot hold a block value — so the
-    // leaf insert fails after the seed already landed. Two splices, one
-    // outcome: `Err` has to mean the document is untouched, or a caller that
-    // retries is editing a document it never asked for.
+    // Malformed value text: `a` is seeded, then the leaf insert's reparse
+    // rejects it. Two splices, one outcome — `Err` has to mean the document is
+    // untouched, or a caller that retries is editing a document it never asked
+    // for. Without the rollback the seeded `a:` would survive.
     try testing.expectError(
-        error.BlockValueIntoFlow,
-        ed.set(&.{ .{ .key = "a" }, .{ .key = "b" } }, "- q\n"),
+        error.UnexpectedToken,
+        ed.set(&.{ .{ .key = "a" }, .{ .key = "b" } }, "[unclosed"),
     );
     try testing.expectEqualStrings("title: t\n", ed.source.items);
 }
@@ -2463,17 +2493,61 @@ test "set reports the flow container, not a missing key, when a block value can'
     try testing.expectEqualStrings("a: {b: 1}\n", ed.source.items);
 }
 
-test "set still vivifies and lands an inline value at a fresh nested path" {
+test "yaml set vivifies a fresh nested path as BLOCK containers" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
-    // The guard is about block spelling only: a scalar (or flow container) still
-    // rides the flow seeds all the way down.
+    // YAML seeds missing ancestors as bare `key:` (null), which `insertKey`
+    // promotes to a real block mapping — so a fresh nested path reads like
+    // hand-written YAML instead of a flow chain (`a: {b: {c: 1}}`).
     try expectSet(
         Yaml,
         .v1_2_2,
         "title: t\n",
         &.{ .{ .key = "a" }, .{ .key = "b" }, .{ .key = "c" } },
         "1",
-        "title: t\na: {b: {c: 1}}\n",
+        "title: t\na:\n  b:\n    c: 1\n",
+    );
+    // And the payoff: a BLOCK value now lands at a fresh nested path, which no
+    // flow seed could ever hold.
+    try expectSet(
+        Yaml,
+        .v1_2_2,
+        "title: t\n",
+        &.{ .{ .key = "a" }, .{ .key = "b" } },
+        "- q\n",
+        "title: t\na:\n  b:\n  - q\n",
+    );
+    try expectSet(
+        Yaml,
+        .v1_2_2,
+        "title: t\n",
+        &.{ .{ .key = "a" }, .{ .key = "b" } },
+        "k: v\n",
+        "title: t\na:\n  b:\n    k: v\n",
+    );
+    // The seeded line carries no trailing whitespace.
+    try testing.expect(std.mem.indexOf(u8, "title: t\na:\n  b:\n    c: 1\n", " \n") == null);
+}
+
+test "non-YAML formats keep vivifying through flow seeds" {
+    // The empty seed is YAML-specific: `a =` is not a TOML value, and the flow
+    // chain is the idiomatic intermediate form for the dotted-key formats.
+    if (comptime build_options.lang_toml) {
+        try expectSet(
+            Toml,
+            .TOML_1_0,
+            "title = 't'\n",
+            &.{ .{ .key = "a" }, .{ .key = "b" } },
+            "1",
+            "title = 't'\na = { b = 1 }\n",
+        );
+    }
+    try expectSet(
+        json.Language,
+        .JSON,
+        "{\"t\": 1}",
+        &.{ .{ .key = "a" }, .{ .key = "b" } },
+        "2",
+        "{\"t\": 1, \"a\": {\"b\": 2}}",
     );
 }
 

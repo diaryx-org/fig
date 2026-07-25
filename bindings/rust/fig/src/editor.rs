@@ -155,16 +155,26 @@ impl Editor {
     /// single call. `path` must end in a key (it only ever creates a mapping
     /// entry).
     ///
-    /// Missing intermediate containers are created for you, as flow containers
-    /// (`a: {b: {c: 1}}` for YAML). Two consequences worth knowing:
+    /// Missing intermediate containers are created for you (`mkdir -p` for
+    /// config). For YAML they are created as **block** mappings, so a fresh
+    /// nested path reads like hand-written YAML and accepts any value:
     ///
-    /// * A flow container cannot hold a block-spelled value, so setting a map or
-    ///   sequence at a path whose ancestors had to be created — or into a flow
-    ///   container the document already had — fails with
-    ///   [`Error::InvalidArgument`] rather than writing something that no longer
-    ///   means what was passed in. Scalars are unaffected. Create the
-    ///   intermediate containers in block form first (set a scalar, then the
-    ///   nested value) when you need a block container at a fresh path.
+    /// ```text
+    /// set_value(a.b.c, 1)  ->  a:
+    ///                            b:
+    ///                              c: 1
+    /// ```
+    ///
+    /// The dotted-key formats (TOML, fig) instead seed the idiomatic flow chain
+    /// (`a = { b = 1 }`), which `fig fmt` canonicalizes to `a.b = 1`.
+    ///
+    /// Two things to know:
+    ///
+    /// * A **flow** container cannot hold a block-spelled value. Setting a map or
+    ///   sequence *into a flow container the document already has*
+    ///   (`a: {b: 1}`, `a: {}`) fails with [`Error::InvalidArgument`] rather than
+    ///   writing something that no longer means what was passed in. Expand the
+    ///   container to block form first, or pass a value that renders in flow.
     /// * A failed `set_value` is a no-op: any container created on the way is
     ///   rolled back, so `Err` always means the document is unchanged.
     pub fn set_value(&mut self, path: &[Segment], value: impl Into<Value>) -> Result<(), Error> {

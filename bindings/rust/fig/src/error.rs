@@ -6,9 +6,14 @@ use crate::ffi;
 ///
 /// Implements [`std::error::Error`], and (with the `serde` feature)
 /// [`serde::de::Error`]/[`serde::ser::Error`] so it can flow through serde.
+///
+/// `#[non_exhaustive]`: new failure modes get their own variant as the core grows
+/// them, so a `match` needs a `_` arm (or an `Err(e) => …` catch-all). Building a
+/// variant — as the derive macros do — is unaffected.
 #[derive(Debug)]
 // `Number`/`Message` are only constructed on the serde paths.
 #[cfg_attr(not(feature = "serde"), allow(dead_code))]
+#[non_exhaustive]
 pub enum Error {
     /// A null or otherwise invalid argument reached the C ABI.
     InvalidArgument,
@@ -58,6 +63,7 @@ pub enum Error {
 
 /// Details of a parse failure, projected from the C ABI's `FigError`.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ParseError {
     /// A human-readable message. Currently the core's error name (e.g.
     /// `"UnclosedObject"`); a richer message may follow in a later release.

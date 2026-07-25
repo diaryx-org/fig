@@ -11,6 +11,7 @@ use crate::ffi;
 
 /// What kind of loss a [`Warning`] describes. Mirrors `FigWarningCode`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum WarningCode {
     /// A carried comment is not emitted at all.
     CommentDropped,
@@ -38,6 +39,7 @@ impl WarningCode {
 
 /// Why a [`Warning`]'s loss happens. Mirrors `FigWarningCause`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum WarningCause {
     /// The target format inherently cannot represent it.
     FormatLimitation,
@@ -59,6 +61,7 @@ impl WarningCause {
 
 /// One lossy event a serialization would produce.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Warning {
     pub code: WarningCode,
     pub cause: WarningCause,

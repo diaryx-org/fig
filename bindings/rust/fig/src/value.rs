@@ -17,6 +17,7 @@ use crate::ffi;
 /// The kind of a format-specific [`Value::Extended`] scalar. Mirrors the core's
 /// `ExtKind` and the C ABI's `FigExtKind`; the discriminants match that ABI.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ExtKind {
     /// TOML offset date-time, e.g. `1979-05-27T07:32:00Z`.
     OffsetDateTime,

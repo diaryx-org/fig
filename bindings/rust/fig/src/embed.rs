@@ -24,6 +24,7 @@ use crate::{Format, SerializeOptions, ffi};
 /// (`FrontmatterJson` is the `;;;` block, `FrontmatterFig` is the ```` ```fig ````
 /// fenced block); the rest are grouped by container.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum EmbedType {
     /// `---` … `---`/`...` bare YAML frontmatter.
     FrontmatterYaml,
@@ -168,6 +169,7 @@ impl From<ffi::FigSpan> for Span {
 /// parsed). `body` is the host prose outside the fences — the suffix after the
 /// close fence for frontmatter, the prefix before the open fence for endmatter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Region {
     pub open_fence: Span,
     pub content: Span,

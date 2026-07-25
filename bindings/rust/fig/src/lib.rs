@@ -58,7 +58,11 @@ use ffi::{FIG_NODE_NONE, FigNodeId, FigNodeKind};
 /// `Json`/`Jsonc`/`Json5` share one core behind the `json` feature. (The core
 /// also has a reader-only XML format, but it has no writable `Format` variant
 /// and so is not exposed here.)
+///
+/// `#[non_exhaustive]`: the core gains formats over time, so a `match` needs a
+/// `_` arm. Constructing a variant is unaffected.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Format {
     Json,
     Jsonc,
@@ -96,6 +100,7 @@ impl From<Format> for ffi::FigFormat {
 /// block) layout of [`Format::Toml`], [`Format::Yaml`], and [`Format::Fig`] — with
 /// the caveats on [`width`](SerializeOptions::width) itself.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct SerializeOptions {
     /// `true`: multi-line, indented output. `false`: compact single-line output
     /// with no insignificant whitespace. For TOML, `false` keeps every array on
@@ -138,6 +143,11 @@ impl Default for SerializeOptions {
     }
 }
 
+/// `SerializeOptions` is `#[non_exhaustive]`, so it is built from one of the
+/// three constructors below and then narrowed with the chainable setters —
+/// `SerializeOptions::default().width(1).strip_comments()` — rather than by
+/// struct literal. Every field has a setter here; a future field can be added
+/// without a breaking release.
 impl SerializeOptions {
     /// Compact single-line output with no insignificant whitespace.
     pub fn compact() -> Self {
@@ -147,6 +157,13 @@ impl SerializeOptions {
     /// Pretty-printed output with the given number of spaces per indent level.
     pub fn pretty(indent: u8) -> Self {
         Self { pretty: true, indent, ..Self::default() }
+    }
+
+    /// This style with the given spaces-per-indent-level (see `indent`). The
+    /// chainable twin of the [`pretty`](Self::pretty) constructor, for setting
+    /// the indent on options you already have.
+    pub fn indent(self, indent: u8) -> Self {
+        Self { indent, ..self }
     }
 
     /// This style with `lossless` enabled (see the field). Builder-style so
@@ -187,6 +204,7 @@ impl From<SerializeOptions> for ffi::FigSerializeOptions {
 
 /// The linked fig library's version, from [`version`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct Version {
     pub major: u8,
     pub minor: u8,
@@ -219,6 +237,7 @@ pub fn version_string() -> &'static str {
 /// serializes; the core's reader-only XML is not surfaced here) and build-time
 /// gating (a format compiled out reports all-false).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct Capabilities {
     /// [`Document::parse`] accepts this format.
     pub read: bool,

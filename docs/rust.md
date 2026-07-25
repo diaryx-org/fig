@@ -35,6 +35,7 @@ production as a `serde` replacement.
 - [Errors](#errors)
 - [Managing resources](#managing-resources)
 - [API reference](#api-reference)
+- [Forward compatibility (`#[non_exhaustive]`)](#forward-compatibility-non_exhaustive)
 
 ## Install
 
@@ -490,13 +491,36 @@ text to outlive the next edit — the borrow checker enforces this for you.
 - [`Embed`] — frontmatter/embed editor: `open`, `open_or_init`, `extract`, `render`, `replace_body`, and the edit methods.
 - [`Value`] — the owned value tree; `serialize`/`serialize_with`/`diagnose`, plus `From` impls.
 - `Segment<'a>` — path step (`Key(&str)` / `Index(usize)`), with `From<&str>`/`From<usize>`.
-- `SerializeOptions` — output style (`compact()`, `pretty(n)`, `.width(n)`, `.strip_comments()`, `.lossless()`).
+- `SerializeOptions` — output style (`compact()`, `pretty(n)`, `.indent(n)`, `.width(n)`, `.strip_comments()`, `.lossless()`).
 - `Warning` / `Region` / `Span` / `Extracted` / `Version` / `Capabilities` / `ParseError`.
 
 **Enums**
 
 - `Format`, `ExtKind`, `EmbedType`, `WarningCode`, `WarningCause` — plain data enums.
 - `Error` — the returned error type.
+
+## Forward compatibility (`#[non_exhaustive]`)
+
+Since **3.0.0**, the public types that grow with the core are `#[non_exhaustive]`:
+`Format`, `EmbedType`, `ExtKind`, `Error`, `WarningCode`, `WarningCause`,
+`SerializeOptions`, `Version`, `Capabilities`, `Warning`, `ParseError`, `Region`.
+fig adds formats, statuses, and diagnostics regularly; marking these means such an
+addition is a **minor** release instead of a major one.
+
+What it asks of you:
+
+- **Match with a wildcard.** `match format { Format::Yaml => …, _ => … }`.
+  Constructing a variant is unaffected — only exhaustive matching needs the `_`.
+- **Build `SerializeOptions` from a constructor plus setters**, not a struct
+  literal: `SerializeOptions::default().width(1).strip_comments()`. Every field has
+  a setter, and reading fields (`opts.width`) is unchanged.
+- **Returned structs are read-only to you.** `Version`, `Capabilities`, `Warning`,
+  `ParseError`, and `Region` come from the library; their fields stay public and
+  readable, you just can't build one yourself.
+
+[`Value`] and `Segment` are deliberately **exhaustive**: they are the data model,
+and matching a `Value` without a wildcard is the normal way to consume it. Adding
+a variant to either would be a real breaking change, and is treated as one.
 
 **Traits** *(the `derive` feature)*
 

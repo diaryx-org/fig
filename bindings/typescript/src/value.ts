@@ -159,14 +159,20 @@ function isArrayIndexKey(key: string): boolean {
   return Number(key) < 0xffffffff;
 }
 
-/** Format a float the way fig's serializer reads it back: `.nan`/`.inf`, and a
- *  trailing `.0` so an integer-valued float stays a float. Mirrors the Rust
- *  binding's `format_float`. */
+/** Format a float the way fig's serializer reads it back: `.nan`/`.inf`, and
+ *  always a fractional part or an exponent so an integer-valued float stays a
+ *  float. Mirrors the Rust binding's `format_float`.
+ *
+ *  `String()` already picks decimal vs. scientific sensibly (unlike Rust's
+ *  `Display`, which never uses an exponent), so only the mantissa needs the
+ *  padding: `1e+300` reads back as an *int* in the formats whose float grammar
+ *  wants a `.` (YAML 1.1), for the same reason `1` does. */
 function formatFloat(f: number): string {
   if (Number.isNaN(f)) return ".nan";
   if (!Number.isFinite(f)) return f < 0 ? "-.inf" : ".inf";
   const s = String(f);
-  return /^-?\d+$/.test(s) ? `${s}.0` : s;
+  if (/^-?\d+$/.test(s)) return `${s}.0`;
+  return s.replace(/^(-?\d+)e/, "$1.0e");
 }
 
 /** Build `value` into the open value handle bottom-up (children first),

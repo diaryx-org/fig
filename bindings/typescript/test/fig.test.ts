@@ -163,6 +163,16 @@ test("large integers survive as bigint", () => {
   assert.equal(round, big);
 });
 
+test("float text stays a float in scientific notation", () => {
+  // A bare-integer mantissa (`1e+300`) would read back as an int, the same way
+  // `1` does — so it gets the `.0` too.
+  assert.equal(serialize(V.float(1e300), Format.Json), "1.0e+300\n");
+  assert.equal(serialize(V.float(1e-7), Format.Json), "1.0e-7\n");
+  assert.equal(serialize(V.float(1.5e-7), Format.Json), "1.5e-7\n");
+  assert.equal(serialize(V.float(1), Format.Json), "1.0\n");
+  assert.equal(serialize(V.float(0.1), Format.Json), "0.1\n");
+});
+
 test("Editor inserts while preserving the rest", () => {
   using ed = Editor.open("a: 1\nb: 2\n", Format.Yaml);
   ed.insertValue([], "c", 3);

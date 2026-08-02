@@ -351,9 +351,17 @@ pub(crate) fn parse_yaml_float(raw: &str) -> Option<f64> {
 }
 
 /// Format a float as the text fig stores in `number.raw`: YAML's `.inf`/`.nan`
-/// for the specials, and a trailing `.0` so an integral value still reads back
-/// as a float. (fig's value API takes float text rather than a `double`, so the
-/// canonical formatting lives here until a typed float entry point is added.)
+/// for the specials, and always a fractional part or an exponent so an integral
+/// value still reads back as a float. (fig's value API takes float text rather
+/// than a `double`, so the canonical formatting lives here until a typed float
+/// entry point is added.)
+///
+/// Notation is picked the way ryu — and so `serde_json` — picks it: plain
+/// decimal only while the value's decimal exponent stays in a readable band,
+/// scientific outside it. Rust's own `Display` never uses an exponent, so it
+/// would spell `1e300` as 301 literal digits and `1e-7` as `0.0000001`; both
+/// are valid but neither is practical. Digits come from `Display`/`LowerExp`
+/// either way, which are shortest-round-trip, so the value is unchanged.
 fn format_float(f: f64) -> String {
     if f.is_nan() {
         return ".nan".to_string();
@@ -361,12 +369,30 @@ fn format_float(f: f64) -> String {
     if f.is_infinite() {
         return if f < 0.0 { "-.inf" } else { ".inf" }.to_string();
     }
-    let s = f.to_string();
-    // Ensure the value reads back as a float, not an integer.
-    if s.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
-        format!("{s}.0")
+
+    // `{:e}` normalizes the mantissa to `[1, 10)`, so its exponent `e` gives
+    // `kk = e + 1` with `10^(kk-1) <= |f| < 10^kk` — the quantity ryu bands.
+    let sci = format!("{f:e}");
+    let (mantissa, exponent) = sci.split_once('e').expect("LowerExp always writes an `e`");
+    let e: i32 = exponent.parse().expect("LowerExp writes a decimal exponent");
+    let kk = e + 1;
+
+    // ryu's `pretty` band for f64: decimal while `-5 < kk <= 16`.
+    if (-4..=16).contains(&kk) {
+        let s = f.to_string();
+        // Ensure the value reads back as a float, not an integer.
+        if s.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
+            format!("{s}.0")
+        } else {
+            s
+        }
+    } else if mantissa.contains('.') {
+        sci
     } else {
-        s
+        // `1e300` -> `1.0e300`: a bare-integer mantissa reads back as an *int*
+        // in the formats whose float grammar wants a `.` (YAML 1.1), so pad it
+        // for the same reason the decimal branch appends `.0`.
+        format!("{mantissa}.0e{exponent}")
     }
 }
 
@@ -487,6 +513,59 @@ mod tests {
             v.serialize(Format::Yaml).unwrap(),
             "s: |-\n  multi\n  line\n"
         );
+    }
+
+    // Rust's `Display` never uses an exponent, so an unbanded `f.to_string()`
+    // would write `1e300` as 301 literal digits and `1e-7` as `0.0000001`.
+    #[test]
+    fn float_text_switches_to_scientific_outside_the_readable_band() {
+        assert_eq!(format_float(1e300), "1.0e300");
+        assert_eq!(format_float(-1e300), "-1.0e300");
+        assert_eq!(format_float(1e-7), "1.0e-7");
+        assert_eq!(format_float(1.5e-7), "1.5e-7");
+        assert_eq!(format_float(f64::MAX), "1.7976931348623157e308");
+        assert_eq!(format_float(5e-324), "5.0e-324");
+
+        // Inside the band, plain decimal — including the `.0` that keeps an
+        // integral value a float. The band edges are ryu's: `10^16` is the
+        // first magnitude to go scientific, `10^-6` the first below.
+        assert_eq!(format_float(0.0), "0.0");
+        assert_eq!(format_float(-0.0), "-0.0");
+        assert_eq!(format_float(1.0), "1.0");
+        assert_eq!(format_float(0.1), "0.1");
+        assert_eq!(format_float(1e-5), "0.00001");
+        assert_eq!(format_float(1e-6), "1.0e-6");
+        assert_eq!(format_float(1e15), "1000000000000000.0");
+        assert_eq!(format_float(1e16), "1.0e16");
+
+        assert_eq!(format_float(f64::NAN), ".nan");
+        assert_eq!(format_float(f64::INFINITY), ".inf");
+        assert_eq!(format_float(f64::NEG_INFINITY), "-.inf");
+    }
+
+    // Every spelling above must survive the round trip as the same `f64`.
+    #[test]
+    fn float_text_round_trips_bit_exactly() {
+        for f in [
+            1e300,
+            -1e300,
+            1e-7,
+            1.5e-7,
+            f64::MAX,
+            5e-324,
+            0.0,
+            -0.0,
+            0.1,
+            1e-6,
+            1e15,
+            1e16,
+            123456789012345680000.0,
+        ] {
+            let text = format_float(f);
+            let back = parse_yaml_float(&text)
+                .unwrap_or_else(|| panic!("`{text}` must parse back as a float"));
+            assert_eq!(back.to_bits(), f.to_bits(), "round trip of `{text}`");
+        }
     }
 
     #[test]

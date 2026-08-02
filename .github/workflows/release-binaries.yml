@@ -1,11 +1,12 @@
 name: Release binaries
 # Build + attach prebuilt CLI binaries for the platforms homebrew.yml doesn't
 # cover: Windows (x86_64) and a WASI module (wasm32-wasi) runnable under any
-# WASI host (wasmtime, wasmer, ...). The macOS universal binary + Linux
-# binaries + Homebrew tap bump live in homebrew.yml instead — the tap's
-# bump-formula job needs the Linux tarballs ready in the same workflow run
-# (via `needs:`) to hash them, which two independent workflows on the same tag
-# can't guarantee relative to each other.
+# WASI host (wasmtime, wasmer, ...), plus the generated build_options.zig that
+# a build-system-free build needs (see the `wasi-options` step in build.zig).
+# The macOS universal binary + Linux binaries + Homebrew tap bump live in
+# homebrew.yml instead — the tap's bump-formula job needs the Linux tarballs
+# ready in the same workflow run (via `needs:`) to hash them, which two
+# independent workflows on the same tag can't guarantee relative to each other.
 #
 # Neither of these route through a package manager (yet) — plain zip/wasm
 # attached straight to the GitHub Release, downloaded by hand. Both are
@@ -40,6 +41,14 @@ jobs:
       run: |
         zig build wasi --prefix zig-out/wasi
         cp zig-out/wasi/bin/fig-wasi.wasm fig-wasi.wasm
+    # Not a build artifact but a *source* file: the `build_options` module, which
+    # `zig build` normally generates in-cache. A Zig hosted on wasm32-wasi has no
+    # build runner to generate it, so it ships alongside the binaries and gets
+    # named on the `build-exe` command line.
+    - name: Emit build_options.zig
+      run: |
+        zig build wasi-options --prefix zig-out/wasi-options
+        cp zig-out/wasi-options/build_options.zig build_options.zig
     - name: Attach to the GitHub Release
       uses: softprops/action-gh-release@v3
       with:
@@ -47,3 +56,4 @@ jobs:
         files: |
           fig-windows-x86_64.zip
           fig-wasi.wasm
+          build_options.zig

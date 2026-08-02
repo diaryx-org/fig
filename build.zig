@@ -75,7 +75,18 @@ pub fn build(b: *std.Build) void {
     // The user-facing `-D` configuration, baked into the one shared
     // `build_options` module every artifact imports.
     const cfg = Options.resolve(b);
-    const options_mod = Options.addFigOptions(b, cfg, ver).createModule();
+    const fig_options = Options.addFigOptions(b, cfg, ver);
+    const options_mod = fig_options.createModule();
+
+    // The same module written out as a source file, for building the CLI
+    // without a build system: a Zig compiled to wasm32-wasi has `build`
+    // compiled out, and WASI preview 1 cannot spawn a build runner anyway, so
+    // `build_options` has to arrive as a plain .zig file the `build-exe`
+    // command line can name. Emitting it from `fig_options` rather than
+    // hand-maintaining a copy is what keeps it from drifting. Attached to each
+    // `cli/v*` release by .github/workflows/release-binaries.yml.
+    const wasi_options_step = b.step("wasi-options", "Write build_options.zig for a build-system-free build");
+    wasi_options_step.dependOn(&b.addInstallFileWithDir(fig_options.getOutput(), .prefix, "build_options.zig").step);
 
     const ctx: Context = .{
         .b = b,

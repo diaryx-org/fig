@@ -24,3 +24,6 @@ src/languages/yaml/spec-1.1-tag-repository.md
 src/languages/yaml/spec-1.1.md
 *.wasm
 src/languages/yaml/spec.md
+
+#
+build_options.zig

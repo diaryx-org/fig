@@ -35,7 +35,7 @@ fi
 
 # Three modules: root (the CLI) depends on fig (the library) and build_options;
 # fig depends on build_options. Each --dep applies to the -M that follow
-exec "$ZIG" build-exe \
+"$ZIG" build-exe \
     --dep fig --dep build_options -Mroot=src/cli/main.zig \
     --dep build_options -Mfig=src/root.zig \
     -Mbuild_options=build_options.zig \

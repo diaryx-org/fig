@@ -107,11 +107,19 @@ fn appendEscaped(allocator: std.mem.Allocator, out: *std.ArrayList(u8), s: []con
 /// a freshly rendered typed element. The node's span is the whole
 /// `<type>…</type>`, so this swaps the element wholesale — the plist analogue of
 /// the line-oriented formats' in-place value splice.
-pub fn plistReplaceValue(self: *PlistEditor, parsed: Document, node: AST.Node, replacement: []const u8) !void {
+///
+/// Takes the full `replaceValAtPath` hook signature (see
+/// `editor.Editor.replaceValAtPath`); `path` and `node` are the generic
+/// engine's, unused here — `span` is already `node`'s extent, and a plist value
+/// element is swapped whole whether it sits under a key or an array index.
+pub fn plistReplaceValue(self: *PlistEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, span: Span, replacement: []const u8) !void {
+    _ = parsed;
+    _ = path;
+    _ = node;
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(self.allocator);
     try renderValue(self.allocator, &out, replacement);
-    try self.replaceAtSpan(parsed.span(node), out.items);
+    try self.replaceAtSpan(span, out.items);
 }
 
 // ── insert (dict) / append+prepend (array) ─────────────────────────────────────
@@ -119,7 +127,12 @@ pub fn plistReplaceValue(self: *PlistEditor, parsed: Document, node: AST.Node, r
 /// Insert `<key>key_text</key>` + rendered value as a new entry in the `<dict>`
 /// at `dict`. Appends after the last existing entry (matching its indent), or
 /// expands an empty `<dict/>`/`<dict></dict>` into the multi-line form.
-pub fn plistInsertKey(self: *PlistEditor, parsed: Document, dict: AST.Node, key_text: []const u8, value_text: []const u8) !void {
+///
+/// Takes the full `insertKey` hook signature (see `editor.Editor.insertKey`);
+/// `path` and `span` are the generic engine's, unused here.
+pub fn plistInsertKey(self: *PlistEditor, parsed: Document, path: []const AST.PathSegment, dict: AST.Node, span: Span, key_text: []const u8, value_text: []const u8) !void {
+    _ = path;
+    _ = span;
     if (dict.kind != .mapping) return error.NotAMapping;
     const source = self.source.items;
 

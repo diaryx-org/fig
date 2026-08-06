@@ -80,6 +80,58 @@ pub const Language = struct {
             .empty_map_literal = null,
         };
     }
+
+    // ── Editing hooks ────────────────────────────────────────────────────────
+    //
+    // Operations this format takes over from the generic splice engine.
+    // `Editor` dispatches on PRESENCE — `@hasDecl(Language, "insertKey")` — so
+    // declaring one here is the whole of opting in, and every operation not
+    // named below runs the generic implementation. Each signature is fixed by
+    // the `editor.Editor` method of the same name; see its doc comment.
+    //
+    // plist overrides more than any other format, and for one reason: an entry
+    // is a PAIR OF SIBLING ELEMENTS (`<key>k</key>` then a typed value element)
+    // on separate lines, not a `key<sep>value` line, so almost nothing in the
+    // line-oriented generic engine fits. Only the line-based delete/remove
+    // paths ride the generic code, which they can once `comment_style` is
+    // `.xml_comment`. The logic lives in `editor_helper.zig` (which holds this
+    // format's editor tests too); this block is the DECLARATION of which
+    // operations are overridden.
+    const edit = @import("editor_helper.zig");
+
+    /// A `<dict>` entry is two sibling elements, so this appends a rendered
+    /// `<key>`/value pair rather than splicing a `key<sep>value` line — and
+    /// expands an empty `<dict/>` into its multi-line form.
+    pub const insertKey = edit.plistInsertKey;
+
+    /// There are no bare scalar literals here — a value is always a typed
+    /// wrapper element — so `replacement` is rendered into one (fig `sniffBare`
+    /// typing, or spliced verbatim when it already looks like `<…>`) and
+    /// swapped for the whole element.
+    pub const replaceValAtPath = edit.plistReplaceValue;
+
+    // All six comment ops. A plist comment is a `<!-- ... -->` PAIR, not a
+    // line prefixed by a marker, so none of the generic marker-scanning paths
+    // apply — which is why `syntax` declares `line_comment = null` here: with
+    // every one of these delegated, a marker is never read, and a null makes a
+    // dropped delegation fail loudly rather than splice a half-open comment.
+    pub const addLeadingComment = edit.plistAddLeadingComment;
+    pub const deleteLeadingComments = edit.plistDeleteLeadingComments;
+    pub const getLeadingComment = edit.plistGetLeadingComment;
+    pub const setTrailingComment = edit.plistSetTrailingComment;
+    pub const deleteTrailingComment = edit.plistDeleteTrailingComment;
+    pub const getTrailingComment = edit.plistGetTrailingComment;
+
+    /// An `<array>` item is a whole typed element, so `value_text` is rendered
+    /// into one and spliced at the existing children's indent — or, for an
+    /// empty `<array/>`, expanded into the multi-line form first.
+    ///
+    /// These are the BLOCK arm only, which is all plist ever reaches: a
+    /// container's span runs from its opening `<` (see `parser.zig`'s
+    /// `extent`), so the generic `isFlow` sniff ahead of them is always false,
+    /// and `block_seq_editable` is the default true.
+    pub const appendToSeq = edit.plistAppendItem;
+    pub const prependToSeq = edit.plistPrependItem;
 };
 
 // Test discovery: importing `plist.zig` (from root.zig) pulls in every plist

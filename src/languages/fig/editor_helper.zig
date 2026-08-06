@@ -160,7 +160,16 @@ fn appendKeyValueTail(self: *FigEditor, out: *std.ArrayList(u8), key_depth: usiz
 /// value edit. A trailing comment on the rewritten entry line is not preserved
 /// when re-framing (rare on a machine-spliced value); the reparse net still
 /// guards correctness.
-pub fn reframeMappingValue(self: *FigEditor, parsed: Document, path: []const AST.PathSegment, val_span: Span, replacement: []const u8) !void {
+///
+/// The `replaceValAtPath` hook (see `editor.Editor.replaceValAtPath`), so it
+/// owns every target — but only a MAPPING VALUE has an inline slot that a block
+/// container cannot occupy. A sequence item or the document root takes the
+/// generic direct splice, here rather than in the engine. `node` is unused: the
+/// decision is `path`'s to make.
+pub fn reframeMappingValue(self: *FigEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, val_span: Span, replacement: []const u8) !void {
+    _ = node;
+    if (path.len == 0 or std.meta.activeTag(path[path.len - 1]) != .key)
+        return self.replaceAtSpan(val_span, replacement);
     const source = self.source.items;
     const key_node = try parsed.ast.getKeyByPath(path);
     const key_span = parsed.span(key_node);
@@ -179,6 +188,21 @@ pub fn reframeMappingValue(self: *FigEditor, parsed: Document, path: []const AST
     try self.replaceAtSpan(val_span, replacement);
 }
 
+/// Refuse a line-based delete of an entry whose value is a BLOCK (non-flow)
+/// mapping or sequence — fig's twin of TOML's `CannotDeleteTable`.
+///
+/// The `deleteKeyGuard` hook (see `editor.Editor.deleteKey`). Such a container
+/// may be re-entered and scattered (DESIGN.md, "Re-entering a path to add new
+/// keys is fine"), so a line-based delete risks swallowing an interleaved
+/// foreign sibling; `deleteContainer` is the operation that handles it. A flow
+/// (`{…}`/`[…]`) value is always tightly contiguous and deletes normally.
+pub fn containerDeleteGuard(self: *FigEditor, parsed: Document, node: AST.Node, span: Span) !void {
+    _ = span;
+    const val = parsed.ast.nodes[node.kind.keyvalue.value];
+    if ((val.kind == .mapping or val.kind == .sequence) and !isFlow(self.source.items, parsed.span(val)))
+        return error.CannotDeleteContainer;
+}
+
 // ============================================================================
 // insertKey — `Editor(Fig).insertKey`'s fig branch
 // ============================================================================
@@ -189,7 +213,11 @@ pub fn reframeMappingValue(self: *FigEditor, parsed: Document, path: []const AST
 /// after the mapping's last child's own full extent (safe even if `node`
 /// itself is a re-entered/scattered container — see module doc comment) with
 /// a marker-prefix copied from an existing child.
-pub fn figInsertKey(self: *FigEditor, parsed: Document, node: AST.Node, span: Span, is_root: bool, key_text: []const u8, value_text: []const u8) !void {
+///
+/// Takes the full `insertKey` hook signature (see `editor.Editor.insertKey`).
+pub fn figInsertKey(self: *FigEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, span: Span, key_text: []const u8, value_text: []const u8) !void {
+    // An empty path is the document root, whose keys carry zero markers.
+    const is_root = path.len == 0;
     if (node.kind != .mapping) return error.NotAMapping;
     const source = self.source.items;
     if (isFlow(source, span))

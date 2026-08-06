@@ -3,11 +3,14 @@
 //! Mirrors `toml/editor_helper.zig`: the format-specific arm of the generic
 //! engine lives here, next to the tests that exercise it, so `editor.zig` stays
 //! format-agnostic. The logic below is the YAML reference layer (merge-key
-//! detection, anchored-value spans) plus block-mapping value reframing; the
-//! generic engine calls into it from its `if (Language == Yaml)` branches. The
-//! tests cover the public `Editor(Yaml)` surface end-to-end — alias copy-on-write
-//! / opt-in follow / merge materialization, inline<->block value reframing,
-//! comment-aware delete/move, and block/flow sequence ops.
+//! detection, anchored-value spans) plus block-mapping value reframing, reached
+//! as HOOKS: `yaml.zig` declares each on its `Language` and the generic engine
+//! dispatches on `@hasDecl`, naming no format. See that file's "Editing hooks"
+//! block for which operations YAML takes over and why.
+//!
+//! The tests cover the public `Editor(Yaml)` surface end-to-end — alias
+//! copy-on-write / opt-in follow / merge materialization, inline<->block value
+//! reframing, comment-aware delete/move, and block/flow sequence ops.
 
 const std = @import("std");
 
@@ -19,8 +22,8 @@ const Yaml = @import("yaml.zig").Language;
 const log = std.log.scoped(.editor);
 
 /// The concrete editor these reference-layer ops drive. The public methods on
-/// `editor.Editor(Yaml)` stay in `editor.zig` (they are shared, comptime-branched
-/// entry points); these are the YAML-only pieces they delegate to. `columnOf` is
+/// `editor.Editor(Yaml)` stay in `editor.zig` (they are the shared, generic
+/// entry points); these are the YAML-only pieces they hand off to. `columnOf` is
 /// a shared source-coordinate utility defined in `editor.zig`.
 const YamlEditor = editor.Editor(Yaml);
 const columnOf = editor.columnOf;
@@ -30,7 +33,16 @@ const columnOf = editor.columnOf;
 /// Replace a mapping key's value, re-emitting `: value` through `writeMapValue`
 /// so the new value's framing (inline scalar vs block collection on following
 /// lines) is always valid regardless of the old value's shape.
-pub fn reframeMappingValue(self: *YamlEditor, parsed: Document, path: []const AST.PathSegment, val_span: Span, replacement: []const u8) !void {
+///
+/// The `replaceValAtPath` hook (see `editor.Editor.replaceValAtPath`), so it
+/// owns every target — but only a MAPPING VALUE can change between inline and
+/// block framing. A sequence item or the document root has no `key:` to
+/// re-emit, so those take the generic direct splice, here rather than in the
+/// engine. `node` is unused: the decision is `path`'s to make.
+pub fn reframeMappingValue(self: *YamlEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, val_span: Span, replacement: []const u8) !void {
+    _ = node;
+    if (path.len == 0 or std.meta.activeTag(path[path.len - 1]) != .key)
+        return self.replaceAtSpan(val_span, replacement);
     const source = self.source.items;
     const key_node = try parsed.ast.getKeyByPath(path);
     const key_span = parsed.span(key_node);
@@ -57,6 +69,24 @@ pub fn mergeSuppliesKey(parsed: Document, path: []const AST.PathSegment) !bool {
     const parent = parsed.ast.getValByPath(path[0 .. path.len - 1]) catch return false;
     if (parent.kind != .mapping) return false;
     return (parsed.ast.mergedChild(parent, path[path.len - 1].key) catch return false) != null;
+}
+
+/// Follow-mode replace: when the target is an alias (`b: *x`), edit the
+/// ANCHORED value instead, so every alias to that anchor reflects the change.
+///
+/// The `replaceValAtPathFollowing` hook (see
+/// `editor.Editor.replaceValAtPathFollowing`). A non-alias target is handed
+/// straight back to the plain `replaceValAtPath`, which is that op's documented
+/// contract — so the whole of "following" is this one branch, and the reference
+/// layer stays out of the generic engine. `span` is unused: the alias arm
+/// splices the anchored node's span, not the alias's.
+pub fn replaceAliasTarget(self: *YamlEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, span: Span, replacement: []const u8) !void {
+    _ = span;
+    if (node.kind == .alias) {
+        const target = parsed.ast.nodes[try parsed.ast.resolveAlias(node)];
+        return self.replaceAtSpan(valueSpanWithoutProps(self, parsed, target), replacement);
+    }
+    return self.replaceValAtPath(path, replacement);
 }
 
 /// The span of `node`'s value bytes, excluding any leading `&anchor`/`!tag`

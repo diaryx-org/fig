@@ -52,6 +52,30 @@ pub const Language = struct {
             .block_seq_editable = false,
         };
     }
+
+    // ── Editing hooks ────────────────────────────────────────────────────────
+    //
+    // Operations this format takes over from the generic splice engine.
+    // `Editor` dispatches on PRESENCE — `@hasDecl(Language, "insertKey")` — so
+    // declaring one here is the whole of opting in, and every operation not
+    // named below runs the generic implementation. Each signature is fixed by
+    // the `editor.Editor` method of the same name; see its doc comment.
+    //
+    // The logic lives in `editor_helper.zig` (which holds this format's editor
+    // tests too), not here: this block is the DECLARATION of which operations
+    // are overridden, so a reader can see a format's whole answer in one struct
+    // without opening the helper.
+    const edit = @import("editor_helper.zig");
+
+    /// TOML splits a logical table across scattered `[header]` and dotted-key
+    /// lines, so a new entry has to land at the end of the intended table's own
+    /// header region — never after a sub-table header, which would silently
+    /// reparent it.
+    pub const insertKey = edit.tomlInsertKey;
+
+    /// A `[header]` table has no contiguous line span, so the generic
+    /// line-based delete would remove its header and orphan the body.
+    pub const deleteKeyGuard = edit.tableDeleteGuard;
 };
 
 // Test discovery for the TOML module: importing `toml.zig` (from root.zig) pulls

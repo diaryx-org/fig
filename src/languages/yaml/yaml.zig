@@ -57,6 +57,34 @@ pub const Language = struct {
             .single_line_block_mapping = true,
         };
     }
+
+    // ── Editing hooks ────────────────────────────────────────────────────────
+    //
+    // Operations this format takes over from the generic splice engine.
+    // `Editor` dispatches on PRESENCE — `@hasDecl(Language, "insertKey")` — so
+    // declaring one here is the whole of opting in, and every operation not
+    // named below runs the generic implementation. Each signature is fixed by
+    // the `editor.Editor` method of the same name; see its doc comment.
+    //
+    // The logic lives in `editor_helper.zig` (which holds this format's editor
+    // tests too), not here: this block is the DECLARATION of which operations
+    // are overridden, so a reader can see a format's whole answer in one struct
+    // without opening the helper.
+    const edit = @import("editor_helper.zig");
+
+    /// A block collection has no inline `k: <block>` spelling, so the whole
+    /// `: value` is re-emitted and the new value's framing follows its own
+    /// shape — which a splice into the old value's slot cannot do (`k: []` to a
+    /// block list).
+    pub const replaceValAtPath = edit.reframeMappingValue;
+
+    /// A `<<` merge supplies keys the mapping never spells out, so a key can
+    /// resolve without any physical entry to edit or delete.
+    pub const keyIsInherited = edit.mergeSuppliesKey;
+
+    /// YAML alone has a reference layer, so it alone can distinguish following
+    /// an alias to its anchor from severing it.
+    pub const replaceValAtPathFollowing = edit.replaceAliasTarget;
 };
 
 // Test discovery: importing `yaml.zig` (from root.zig) pulls in every YAML

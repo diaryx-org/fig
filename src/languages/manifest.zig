@@ -10,6 +10,13 @@
 //! `caps`, `name` and `extensions`, and the generic engine reads them instead
 //! of asking what it is. See `docs/proposals/language-interface.md`.
 //!
+//! This module is the PARAMETER half of that interface — the answers a format
+//! can give as a value. The other half is operations it takes over outright,
+//! which are declared as hooks in the "Editing hooks" block of each
+//! `<lang>/<lang>.zig` and dispatched by `@hasDecl` from `editor.zig`; they
+//! need no types here, because a hook's signature is fixed by the `Editor`
+//! method it overrides.
+//!
 //! This module is deliberately a LEAF: it imports nothing, not even `std`.
 //! `language.zig` re-exports these types and every `<lang>/<lang>.zig` imports
 //! them, so anything pulled in here would be pulled into all eleven language

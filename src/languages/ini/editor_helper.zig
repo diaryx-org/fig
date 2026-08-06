@@ -17,9 +17,9 @@
 //!     file opening directly with `[section]` would otherwise make `isFlow`
 //!     see the `[` and misdetect the root as a bracket-delimited flow
 //!     container (the same hazard TOML's tables have, which is why TOML
-//!     bypasses the same switch in `editor.zig`'s `insertKey`).
-//!   - `isSectionHeaderLine`: backs the `deleteKey` guard (in `editor.zig`)
-//!     that refuses to line-delete a `[section]` entry — its span is
+//!     declares an `insertKey` hook of its own too).
+//!   - `sectionDeleteGuard` (over `isSectionHeaderLine`): the `deleteKey`
+//!     guard that refuses to line-delete a `[section]` entry — its span is
 //!     anchored at the FIRST occurrence's header only (see this module's
 //!     sibling `parser.zig`), so a reopened section's later entries would be
 //!     orphaned into misparsed content if the "table" were deleted this way.
@@ -27,11 +27,11 @@
 //!
 //! Unlike TOML/fig, INI does NOT get its own `set` auto-vivify path — it has
 //! no literal spelling for "an empty nested mapping" (`{}` is just a
-//! two-character STRING value in INI, not a container), so `editor.zig`'s
-//! `set` simply excludes INI from that recursion (`Language != Ini`) rather
-//! than risk writing a nonsense `section = {}` root key. That's a one-token
-//! absence-of-capability check, not per-language logic to delegate, so it
-//! stays inline there — see the comment on `set`.
+//! two-character STRING value in INI, not a container), so there is nothing
+//! for a seed to splice and `set` refuses rather than write a nonsense
+//! `section = {}` root key. That is an ABSENCE of syntax, not logic to
+//! delegate, so it is declared as `syntax().empty_map_literal = null` in
+//! `ini.zig` — see `manifest.Syntax.empty_map_literal`.
 
 const std = @import("std");
 const testing = std.testing;
@@ -54,11 +54,28 @@ const firstNonSpace = editor.firstNonSpace;
 /// check INI doesn't need (see the module doc). `node.kind` must already be
 /// `.mapping`; anything else is a real type error, not a container to insert
 /// into (e.g. a path landing on a plain scalar key).
-pub fn iniInsertKey(self: *IniEditor, parsed: Document, node: AST.Node, key_text: []const u8, value_text: []const u8) !void {
+///
+/// Takes the full `insertKey` hook signature (see `editor.Editor.insertKey`);
+/// `path` and `span` are the generic engine's, unused here.
+pub fn iniInsertKey(self: *IniEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, span: Span, key_text: []const u8, value_text: []const u8) !void {
+    _ = path;
+    _ = span;
     return switch (node.kind) {
         .mapping => self.insertBlockKey(parsed, node, key_text, value_text),
         else => error.NotAMapping,
     };
+}
+
+/// Refuse a line-based delete of a `[section]` entry — INI's twin of TOML's
+/// `CannotDeleteTable`.
+///
+/// The `deleteKeyGuard` hook (see `editor.Editor.deleteKey`). A section's span
+/// is anchored at its FIRST occurrence's header only, so deleting that line
+/// would orphan a reopened section's later entries into misparsed content.
+pub fn sectionDeleteGuard(self: *IniEditor, parsed: Document, node: AST.Node, span: Span) !void {
+    _ = parsed;
+    _ = node;
+    if (isSectionHeaderLine(self.source.items, span)) return error.CannotDeleteSection;
 }
 
 /// Whether the entry at `span` is a `[section]` header line — i.e. whether

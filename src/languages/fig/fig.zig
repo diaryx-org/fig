@@ -55,6 +55,41 @@ pub const Language = struct {
             .structural_indent = true,
         };
     }
+
+    // ── Editing hooks ────────────────────────────────────────────────────────
+    //
+    // Operations this format takes over from the generic splice engine.
+    // `Editor` dispatches on PRESENCE — `@hasDecl(Language, "insertKey")` — so
+    // declaring one here is the whole of opting in, and every operation not
+    // named below runs the generic implementation. Each signature is fixed by
+    // the `editor.Editor` method of the same name; see its doc comment.
+    //
+    // The logic lives in `editor_helper.zig` (which holds this format's editor
+    // tests too), not here: this block is the DECLARATION of which operations
+    // are overridden, so a reader can see a format's whole answer in one struct
+    // without opening the helper.
+    const edit = @import("editor_helper.zig");
+
+    /// A block insert copies the anchor line's `>` marker prefix (section depth
+    /// is load-bearing, see `Syntax.structural_indent`) and lands after the
+    /// last child's full extent, which stays correct for a re-entered or
+    /// scattered container.
+    pub const insertKey = edit.figInsertKey;
+
+    /// A block container may be re-entered and scattered, so a line delete
+    /// risks swallowing an interleaved foreign sibling.
+    pub const deleteKeyGuard = edit.containerDeleteGuard;
+
+    /// A block map or sequence value has no inline `key = <block>` spelling —
+    /// section headers, `> ` and `* ` lines only parse standalone — so it is
+    /// re-framed onto the following lines as a nested section instead.
+    pub const replaceValAtPath = edit.reframeMappingValue;
+
+    /// A block sequence item is a `* ` line carrying the same `>` marker-run
+    /// prefix as its siblings, which the generic `dashColumn`/`insertSeqLine`
+    /// pair — sized for a plain-whitespace indent — would drop.
+    pub const appendToSeq = edit.figAppendSeqLine;
+    pub const prependToSeq = edit.figPrependSeqLine;
 };
 
 // Test discovery: importing `fig.zig` (from root.zig) pulls in every fig

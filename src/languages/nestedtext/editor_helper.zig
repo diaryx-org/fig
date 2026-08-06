@@ -266,7 +266,12 @@ pub fn seqItemLineStart(source: []const u8, parsed: Document, path: []const AST.
 /// root promoted from an empty document (`.null_`), or an existing non-empty
 /// block mapping. See the module doc for why a childless (inline `{}`)
 /// mapping is declined rather than expanded.
-pub fn ntInsertKey(self: *NtEditor, parsed: Document, node: AST.Node, key_text: []const u8, value_text: []const u8) !void {
+///
+/// Takes the full `insertKey` hook signature (see `editor.Editor.insertKey`);
+/// `path` and `span` are the generic engine's, unused here.
+pub fn ntInsertKey(self: *NtEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, span: Span, key_text: []const u8, value_text: []const u8) !void {
+    _ = path;
+    _ = span;
     const source = self.source.items;
     switch (node.kind) {
         .null_ => {
@@ -314,7 +319,14 @@ fn appendKeyLine(allocator: std.mem.Allocator, out: *std.ArrayList(u8), col: usi
 /// why a direct span splice (as most other languages' generic path does)
 /// can't work here. Overwrites whatever the old value's shape was (scalar or
 /// a whole nested container) with the new scalar `replacement` wholesale.
-pub fn ntReplaceValue(self: *NtEditor, parsed: Document, path: []const AST.PathSegment, span: Span, replacement: []const u8) !void {
+///
+/// Takes the full `replaceValAtPath` hook signature (see
+/// `editor.Editor.replaceValAtPath`); `node` is the generic engine's, unused
+/// here — `span` is already its extent, and the reframe is keyed off `path`'s
+/// final segment (`.key`, `.index`, or the path-less root), all three of which
+/// this handles.
+pub fn ntReplaceValue(self: *NtEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, span: Span, replacement: []const u8) !void {
+    _ = node;
     const source = self.source.items;
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(self.allocator);

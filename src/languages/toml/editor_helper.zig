@@ -323,10 +323,35 @@ pub fn isTomlBareKey(name: []const u8) bool {
 // ============================================================================
 //
 // These drive the editor's splice engine (`self.replaceAtSpan`, which reparses
-// and rolls back on failure) using the region helpers above. `editor.zig` keeps
-// only thin public wrappers (`Editor(Toml).deleteTable` etc.) that forward here,
-// plus the comptime `if (Language == Toml)` branches that call into these for
-// the shared ops (e.g. `insertKey`).
+// and rolls back on failure) using the region helpers above. They are reached
+// two different ways:
+//
+//   * The SHARED ops — `insertKey`, the delete guard — are HOOKS: `toml.zig`
+//     declares each on its `Language` and the generic engine dispatches on
+//     `@hasDecl`, naming no format. See that file's "Editing hooks" block.
+//   * The EXCLUSIVE whole-table ops (`deleteTable`, `moveTable`, …) have no
+//     generic counterpart to override, so `editor.zig` keeps thin public
+//     wrappers (`Editor(Toml).deleteTable` etc.) that forward here, guarded by
+//     `@compileError` for the other ten formats.
+
+/// Refuse a line-based delete of a `[header]` table or `[[array]]` element.
+///
+/// The `deleteKeyGuard` hook (see `editor.Editor.deleteKey`). Such a table has
+/// no contiguous line span — its body is assembled from headers scattered
+/// through the file — so the generic delete would remove the header line alone
+/// and leave the rest behind, reparented into whatever table precedes it. Only
+/// scalar, array, inline-table and dotted entries delete cleanly; `deleteTable`
+/// is the operation that handles the rest, via `gatherTableRegions`.
+///
+/// Detected by the entry's line starting with `[`, which a `key = value` never
+/// does.
+pub fn tableDeleteGuard(self: *TomlEditor, parsed: Document, node: AST.Node, span: Span) !void {
+    _ = parsed;
+    _ = node;
+    const source = self.source.items;
+    const fns = firstNonSpace(source, lineStartBefore(source, span.start));
+    if (fns < source.len and source[fns] == '[') return error.CannotDeleteTable;
+}
 
 // --- TOML structural inserts ---
 //
@@ -336,7 +361,12 @@ pub fn isTomlBareKey(name: []const u8) bool {
 // its last direct (non-`[header]`) entry, before any sub-table header opens —
 // never after a sub-table, which would silently reparent it. `key_text`/
 // `value_text` are verbatim TOML literals.
-pub fn tomlInsertKey(self: *TomlEditor, parsed: Document, node: AST.Node, span: Span, is_root: bool, key_text: []const u8, value_text: []const u8) !void {
+//
+// Takes the full `insertKey` hook signature (see `editor.Editor.insertKey`).
+pub fn tomlInsertKey(self: *TomlEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, span: Span, key_text: []const u8, value_text: []const u8) !void {
+    // An empty path is the document root — the one table with no `[header]`
+    // line to insert after.
+    const is_root = path.len == 0;
     if (node.kind != .mapping) return error.NotAMapping;
     const source = self.source.items;
     // Inline table `{ … }`: splice a `key = value` inside the braces.

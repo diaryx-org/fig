@@ -18,68 +18,48 @@ const log = std.log.scoped(.editor);
 // (and from every `<lang>/<lang>.zig`) pulls in nothing else.
 const lang = @import("languages/manifest.zig");
 
-// Format-specific editing logic the generic engine delegates to from its
-// `if (Language == Toml/Yaml/Fig/Ini)` branches: TOML's multi-region gather +
-// whole-table ops, YAML's reference-layer / block-framing helpers, fig's
-// marker-prefix-copying block/flow insert + append/prepend, and INI's
-// isFlow-bypassing key insert + section-header delete guard. See each
-// module's header for the split rationale. These modules also hold that
-// language's editor tests, so editor-test code lives next to the concern it
-// exercises.
+// The OPERATIONS half of the interface — the part `syntax` can't express.
+//
+// Where a format's editing need is a value (a separator, a marker, whether
+// block sequences are editable), it is declared on `Language.syntax` and read
+// above. Where it is LOGIC, the format declares a hook: a `pub` decl on its
+// `Language` struct named for the operation it takes over. This engine
+// dispatches on presence —
+//
+//     if (@hasDecl(Language, "insertKey")) return Language.insertKey(...);
+//
+// — so it names no format at all. Each hook's signature is fixed by its one
+// call site and documented on the method it overrides; the implementations
+// live in `<lang>/editor_helper.zig` (which also holds that language's editor
+// tests, so editor-test code sits next to the concern it exercises), and the
+// DECLARATION of which operations a format overrides, with the reason, sits in
+// the "Editing hooks" block of its `<lang>/<lang>.zig`. See
+// `docs/proposals/language-interface.md`.
+//
+// What remains below is what hook dispatch does not reach:
+//
+//   * `toml_edit`/`fig_edit` back the EXCLUSIVE operations — the whole-table
+//     and whole-container ops only those two formats have, which are `pub fn`s
+//     on this struct guarded by `@compileError` rather than hooks. Zig has no
+//     conditional container-level declarations (`usingnamespace` was removed
+//     in 0.15), so an op cannot un-declare itself for the other ten formats;
+//     `@hasDecl(Language, "deleteTable")` on the MANIFEST is the queryable
+//     fact, and it costs nothing extra.
+//   * `zon_edit.appendFieldName` is reached through `key_style`, as the
+//     rendering half of a syntax parameter rather than an operation override.
+//   * The bare language tags are used by this file's OWN tests, and by the
+//     `Language != Toml`/`!= Fig` guards on those exclusive operations.
 const toml_edit = @import("languages/toml/editor_helper.zig");
-const yaml_edit = @import("languages/yaml/editor_helper.zig");
 const fig_edit = @import("languages/fig/editor_helper.zig");
 const zon_edit = @import("languages/zon/editor_helper.zig");
-// Language tags used by the comptime branches above.
 const Toml = @import("languages/toml/toml.zig").Language;
-const Yaml = @import("languages/yaml/yaml.zig").Language;
 const Fig = @import("languages/fig/fig.zig").Language;
-// ZON's editing needs were always small parameter swaps (comment marker,
-// key/value separator, key-quoting rule, container shape) rather than the
-// structural logic TOML/YAML/Fig delegate out — and now that those swaps are
-// declared on `zon.Language.syntax`, this engine holds NO ZON branch at all:
-// the tag below survives only for this file's own tests. Its one piece of
-// real logic, `zon_edit.appendFieldName` (the dotted-key quoting rule, shared
-// with the printer's), is reached through `key_style`.
+const Yaml = @import("languages/yaml/yaml.zig").Language;
 const Zon = @import("languages/zon/zon.zig").Language;
-// dotenv/.properties are flat-only (no nesting, no flow, no block scalars):
-// the generic block-mapping path (`insertBlockKey`/`writeMapValue`) already
-// covers everything they need once the separator is right — no dedicated
-// editor_helper module, unlike TOML/YAML/Fig's structural quirks. Like ZON,
-// they now have no branch here either; the separator comes from the manifest,
-// and these tags remain only for the tests below.
 const Dotenv = @import("languages/dotenv/dotenv.zig").Language;
 const Properties = @import("languages/properties/properties.zig").Language;
-// INI's one level of `[section]` nesting needs a little real per-language
-// dispatch logic (unlike dotenv/.properties' pure parameter swaps), so —
-// like TOML/YAML/fig — that lives in its own editor_helper.zig, next to the
-// concern it exercises; see that module's header for the split rationale.
-const ini_edit = @import("languages/ini/editor_helper.zig");
 const Ini = @import("languages/ini/ini.zig").Language;
-// plist is the odd one out: XML-based, so an entry is a *pair of sibling
-// elements* (`<key>k</key>` then a typed value element) on separate lines, not
-// a `key<sep>value` line. Almost nothing in the line-oriented generic engine
-// fits, so — even more than TOML/YAML/fig — plist delegates its structural ops
-// (value render+replace, dict key insert, array append/prepend) wholesale to
-// `plist_edit`; only the line-based delete/remove paths (which happen to match
-// once `comment_style` is `.xml_comment`) ride the generic code. See that
-// module's header. Comments are `<!-- ... -->`, handled there too.
-const plist_edit = @import("languages/plist/editor_helper.zig");
 const Plist = @import("languages/plist/plist.zig").Language;
-// NestedText: block-indented like YAML/fig, but its sequence items carry no
-// keyvalue-shaped wrapper node (unlike mapping entries), so a nested/empty
-// item value's own span can start on a LATER line than its `-` dash —
-// something no other block format here does (YAML's block-sequence items in
-// practice always keep some token on the dash's own line). That breaks the
-// generic engine's assumption that an item's span starts on its own tag line
-// in several places (append/prepend/remove/move/reorder, and the two leading-
-// comment ops keyed by `.index`), so those get NestedText branches below
-// delegating to `nt_edit`'s dash-position-aware helpers. Insert/set also
-// delegate wholesale: NestedText's own-line-vs-nested-`>`-block value framing
-// and 4-space nesting convention don't fit `writeMapValue`/`insertBlockKey`
-// (YAML/fig-shaped: 2-space nesting, bare `:` continuation) — see
-// `nt_edit`'s module doc.
-const nt_edit = @import("languages/nestedtext/editor_helper.zig");
 const NestedText = @import("languages/nestedtext/nestedtext.zig").Language;
 
 pub fn Editor(comptime Language: type) type {
@@ -105,6 +85,26 @@ pub fn Editor(comptime Language: type) type {
         /// `entryBlockStart`, none of which needs a comptime value.
         fn syntax(self: *const Self) lang.Syntax {
             return Language.syntax(self.format);
+        }
+
+        /// Whether `path`'s final segment names a key the document RESOLVES but
+        /// no physical entry declares — one supplied by the format's reference
+        /// layer, which path navigation does not follow and therefore reports
+        /// as `NotFound`.
+        ///
+        /// **Hook** `keyIsInherited(parsed, path) !bool`. Declared by YAML
+        /// alone, where a `<<` merge supplies keys its own mapping never spells
+        /// out. With no hook the answer is false, which is correct for every
+        /// format that has no reference layer — so the two `NotFound` recovery
+        /// sites below need no language test of their own.
+        ///
+        /// A predicate rather than a recovery hook, because only the QUESTION
+        /// is the language's: `replaceValAtPath` answers it by shadowing the
+        /// inherited key with a local entry (copy-on-write) and `deleteKey` by
+        /// refusing outright, and both of those policies are generic.
+        fn keyIsInherited(parsed: Document, path: []const AST.PathSegment) !bool {
+            if (!@hasDecl(Language, "keyIsInherited")) return false;
+            return Language.keyIsInherited(parsed, path);
         }
 
         allocator: std.mem.Allocator,
@@ -166,53 +166,41 @@ pub fn Editor(comptime Language: type) type {
         /// span. A key supplied only by a `<<` merge is materialized locally,
         /// shadowing the merge. Use `replaceValAtPathFollowing` to edit through to
         /// a shared anchor instead.
+        ///
+        /// **Hook** `replaceValAtPath(self, parsed, path, node, span,
+        /// replacement) !void` — replaces the splice below wholesale, for a
+        /// format where `replacement` cannot go into the old value's slot
+        /// verbatim. Two distinct reasons, both declared:
+        ///
+        ///   * The slot is not a bare literal. plist wraps every value in a
+        ///     typed element (`<integer>42</integer>`), and NestedText frames
+        ///     one either rest-of-line or as a nested `>`-block — so the text
+        ///     has to be RENDERED, not spliced.
+        ///   * The slot's shape can change. YAML and fig re-emit the whole
+        ///     `key<sep>value` so a block collection can descend onto the
+        ///     following lines where the old value was inline (`k: []` → a
+        ///     block list), which a span splice cannot express. Both take the
+        ///     direct splice for a non-mapping target, inside the hook.
+        ///
+        /// A hook receives the resolved `node` and its `span`, so it never
+        /// repeats the path walk; a format that declares none (JSON, TOML, ZON,
+        /// INI, dotenv, `.properties`) has a literal syntax that splices
+        /// verbatim in place.
         pub fn replaceValAtPath(self: *Self, path: []const AST.PathSegment, replacement: []const u8) !void {
             const parsed = try self.getParsed();
             const node = parsed.ast.getValByPath(path) catch |err| {
-                // A merge-only key surfaces as NotFound (default nav doesn't follow
-                // `<<`); COW it by inserting a local `key: value` that shadows the
-                // merge.
-                if (Language == Yaml and err == error.NotFound and try yaml_edit.mergeSuppliesKey(parsed, path)) {
+                // An inherited key surfaces as NotFound (path nav doesn't follow
+                // the reference layer); copy-on-write it by inserting a local
+                // `key: value` entry that shadows what it inherits from.
+                if (err == error.NotFound and try keyIsInherited(parsed, path)) {
                     try self.insertKey(path[0 .. path.len - 1], path[path.len - 1].key, replacement);
                     return;
                 }
                 return err;
             };
             const span = parsed.span(node);
-            // plist has no bare scalar literals — a value is a typed wrapper
-            // element (`<integer>42</integer>`) — so `replacement` is rendered
-            // into one (fig `sniffBare` typing, or spliced verbatim when it is
-            // already `<…>`) and swapped for the whole value element's span.
-            if (Language == Plist) return plist_edit.plistReplaceValue(self, parsed, node, replacement);
-            // NestedText: `replacement` is always a raw scalar (this format
-            // has no typed/quoted literal syntax to splice verbatim the way
-            // YAML/TOML/fig do) that must be RENDERED into same-line or
-            // nested `>`-block form depending on its shape (empty/multiline
-            // forces nested) — and, unlike a direct span splice, the
-            // replacement may need to change the value from same-line to
-            // nested or back, which means reframing from the key/dash
-            // through the old value's end. Handles `.key`, `.index`, and the
-            // (path-less) whole-document root uniformly. See `nt_edit`.
-            if (Language == NestedText) return nt_edit.ntReplaceValue(self, parsed, path, span, replacement);
-            // For a YAML mapping value, reframe the whole `: value` so the new
-            // value is correctly shaped whatever its form — a scalar stays
-            // inline, a block collection descends onto the following lines —
-            // rather than splicing into the old value's slot, which can't
-            // change inline<->block (e.g. `k: []` -> a block list). JSON has no
-            // block style, so it keeps the direct splice.
-            if (Language == Yaml and path.len > 0 and std.meta.activeTag(path[path.len - 1]) == .key) {
-                try yaml_edit.reframeMappingValue(self, parsed, path, span, replacement);
-                return;
-            }
-            // Fig's twin: a block map/sequence value has no inline `key = <block>`
-            // spelling (section headers / `> ` / `* ` lines only parse
-            // standalone), so re-frame it onto the following lines as a nested
-            // section. An inline value (flow container / scalar) keeps the direct
-            // splice inside `reframeMappingValue`.
-            if (Language == Fig and path.len > 0 and std.meta.activeTag(path[path.len - 1]) == .key) {
-                try fig_edit.reframeMappingValue(self, parsed, path, span, replacement);
-                return;
-            }
+            if (@hasDecl(Language, "replaceValAtPath"))
+                return Language.replaceValAtPath(self, parsed, path, node, span, replacement);
             try self.replaceAtSpan(span, replacement);
         }
 
@@ -420,27 +408,36 @@ pub fn Editor(comptime Language: type) type {
         /// so every alias to that anchor reflects the change. The `&name` (and any
         /// tag) prefix is preserved — only the anchored value's bytes are
         /// replaced. A non-alias target behaves exactly like `replaceValAtPath`.
+        ///
+        /// **Hook** `replaceValAtPathFollowing(self, parsed, path, node, span,
+        /// replacement) !void`, same signature as `replaceValAtPath`'s. Declared
+        /// by YAML alone, because YAML alone HAS a reference layer: with no
+        /// hook, "following" and not following are the same operation, which is
+        /// exactly what the fall-through below expresses.
         pub fn replaceValAtPathFollowing(self: *Self, path: []const AST.PathSegment, replacement: []const u8) !void {
             const parsed = try self.getParsed();
             const node = parsed.ast.getValByPath(path) catch {
                 return self.replaceValAtPath(path, replacement);
             };
-            if (Language == Yaml and node.kind == .alias) {
-                const target = parsed.ast.nodes[try parsed.ast.resolveAlias(node)];
-                try self.replaceAtSpan(yaml_edit.valueSpanWithoutProps(self, parsed, target), replacement);
-                return;
-            }
+            if (@hasDecl(Language, "replaceValAtPathFollowing"))
+                return Language.replaceValAtPathFollowing(self, parsed, path, node, parsed.span(node), replacement);
             try self.replaceValAtPath(path, replacement);
         }
 
+        /// Rename the key at `path`, leaving its value untouched.
+        ///
+        /// **Hook** `replaceKeyAtPath(self, parsed, path, replacement) !void` —
+        /// replaces this op wholesale, before the key node is resolved, for a
+        /// format where a key's span is not the whole of its syntax. Declared by
+        /// NestedText: a plain key's span excludes its trailing `:` (so a
+        /// plain-to-plain rename splices directly, as below), but a MULTILINE
+        /// key (`: key\n: continued`) has no separator colon in the source at
+        /// all, so converting between the two forms means adding or dropping
+        /// one.
         pub fn replaceKeyAtPath(self: *Self, path: []const AST.PathSegment, replacement: []const u8) !void {
             const parsed = try self.getParsed();
-            // NestedText: a plain key's span excludes its trailing `:` (so a
-            // plain-to-plain rename can splice directly, below), but a
-            // MULTILINE key's span (`: key\n: continued`) has no separator
-            // colon anywhere in the source at all — converting between the
-            // two forms means adding or dropping one. See `nt_edit.ntReplaceKey`.
-            if (Language == NestedText) return nt_edit.ntReplaceKey(self, parsed, path, replacement);
+            if (@hasDecl(Language, "replaceKeyAtPath"))
+                return Language.replaceKeyAtPath(self, parsed, path, replacement);
             const node = try parsed.ast.getKeyByPath(path);
             const span = parsed.span(node);
             try self.replaceAtSpan(span, replacement);
@@ -455,6 +452,14 @@ pub fn Editor(comptime Language: type) type {
         // compute a byte position from a node's span, splice the comment text,
         // reparse. The reparse is the safety net (`replaceAtSpan` rolls back if
         // the result no longer parses).
+        //
+        // **Hooks.** Each of the six ops below dispatches to a `Language`
+        // declaration of the same name when one exists, passing exactly its own
+        // arguments (`self, path` — plus `text` for the two setters) and handing
+        // over the operation entirely; the marker lookup and the whole generic
+        // body are skipped. plist declares all six, because a plist comment is a
+        // `<!-- ... -->` PAIR rather than a line carrying a marker, so none of
+        // the marker-scanning below has anything to scan for.
 
         /// The line-comment marker for the dialect this document is being read
         /// as, or null when that dialect forbids comments (strict JSON) — in
@@ -474,6 +479,24 @@ pub fn Editor(comptime Language: type) type {
             return self.syntax().trailing_comment;
         }
 
+        /// The line a leading-comment op anchors on: the node's own line start,
+        /// which for a mapping entry is its key's line.
+        ///
+        /// **Hook** `seqItemLineStart(source, parsed, path) !usize` — consulted
+        /// only when `path`'s final segment is an `.index`. Declared by
+        /// NestedText alone: its sequence items carry no keyvalue-shaped
+        /// wrapper node, so a nested or empty item's value span can begin on a
+        /// LATER line than the item's own `-` dash, and a comment anchored on
+        /// `span.start`'s line would land inside the item rather than above it.
+        /// Every other block format keeps some token on the dash's own line, so
+        /// `lineStartBefore` is already the dash's line there.
+        fn leadingCommentLineStart(self: *const Self, parsed: Document, path: []const AST.PathSegment, span: Span) !usize {
+            const source = self.source.items;
+            if (@hasDecl(Language, "seqItemLineStart") and path.len > 0 and std.meta.activeTag(path[path.len - 1]) == .index)
+                return Language.seqItemLineStart(source, parsed, path);
+            return lineStartBefore(source, span.start);
+        }
+
         /// Add an own-line comment ABOVE the node at `path` — the key's line for a
         /// mapping entry, else the node's own line — matched to that line's
         /// indentation. It lands at the BOTTOM of any existing leading comment
@@ -481,20 +504,13 @@ pub fn Editor(comptime Language: type) type {
         /// each line becomes its own comment line. Returns `CommentsUnsupported`
         /// for a dialect without comment syntax (strict JSON).
         pub fn addLeadingComment(self: *Self, path: []const AST.PathSegment, text: []const u8) !void {
-            if (Language == Plist) return plist_edit.plistAddLeadingComment(self, path, text);
+            if (@hasDecl(Language, "addLeadingComment")) return Language.addLeadingComment(self, path, text);
             const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
             const parsed = try self.getParsed();
             const node = try parsed.ast.getNodeByPath(path);
             const span = parsed.span(node);
             const source = self.source.items;
-            // A NestedText sequence item has no keyvalue-shaped wrapper node
-            // (see the module doc at this file's top), so when `path` names
-            // one, `node`'s span may start on a nested/later line rather than
-            // the item's own `-` line — anchor on the dash's line instead.
-            const line_start = if (Language == NestedText and path.len > 0 and std.meta.activeTag(path[path.len - 1]) == .index)
-                try nt_edit.seqItemLineStart(source, parsed, path)
-            else
-                lineStartBefore(source, span.start);
+            const line_start = try self.leadingCommentLineStart(parsed, path, span);
             // A format whose line prefix is STRUCTURAL (fig's `>` marker run)
             // copies the raw prefix; everywhere else it is pure whitespace.
             // See `Syntax.structural_indent`.
@@ -541,7 +557,7 @@ pub fn Editor(comptime Language: type) type {
         /// dialect without comment syntax (strict JSON), `MultilineComment` if
         /// `text` contains a newline.
         pub fn setTrailingComment(self: *Self, path: []const AST.PathSegment, text: []const u8) !void {
-            if (Language == Plist) return plist_edit.plistSetTrailingComment(self, path, text);
+            if (@hasDecl(Language, "setTrailingComment")) return Language.setTrailingComment(self, path, text);
             const marker = self.trailingCommentMarker() orelse return error.CommentsUnsupported;
             if (std.mem.indexOfScalar(u8, text, '\n') != null) return error.MultilineComment;
             const win = try self.trailingCommentWindow(path);
@@ -574,16 +590,13 @@ pub fn Editor(comptime Language: type) type {
         /// the node has none. Returns `CommentsUnsupported` for a dialect without
         /// comment syntax (strict JSON).
         pub fn deleteLeadingComments(self: *Self, path: []const AST.PathSegment) !void {
-            if (Language == Plist) return plist_edit.plistDeleteLeadingComments(self, path);
+            if (@hasDecl(Language, "deleteLeadingComments")) return Language.deleteLeadingComments(self, path);
             _ = self.lineCommentMarker() orelse return error.CommentsUnsupported;
             const parsed = try self.getParsed();
             const node = try parsed.ast.getNodeByPath(path);
             const span = parsed.span(node);
             const source = self.source.items;
-            const line_start = if (Language == NestedText and path.len > 0 and std.meta.activeTag(path[path.len - 1]) == .index)
-                try nt_edit.seqItemLineStart(source, parsed, path)
-            else
-                lineStartBefore(source, span.start);
+            const line_start = try self.leadingCommentLineStart(parsed, path, span);
             const block_start = commentBlockStart(source, line_start, self.syntax().comment_style);
             if (block_start == line_start) return; // nothing above to remove
             try self.replaceAtSpan(Span.init(block_start, line_start), "");
@@ -593,7 +606,7 @@ pub fn Editor(comptime Language: type) type {
         /// A no-op when there is none. Returns `CommentsUnsupported` for a dialect
         /// without comment syntax (strict JSON).
         pub fn deleteTrailingComment(self: *Self, path: []const AST.PathSegment) !void {
-            if (Language == Plist) return plist_edit.plistDeleteTrailingComment(self, path);
+            if (@hasDecl(Language, "deleteTrailingComment")) return Language.deleteTrailingComment(self, path);
             const marker = self.trailingCommentMarker() orelse return error.CommentsUnsupported;
             const win = try self.trailingCommentWindow(path);
             const source = self.source.items;
@@ -612,16 +625,13 @@ pub fn Editor(comptime Language: type) type {
         /// ""). The caller owns the returned bytes. Returns `CommentsUnsupported`
         /// for a dialect without comment syntax (strict JSON).
         pub fn getLeadingComment(self: *Self, path: []const AST.PathSegment) !?[]u8 {
-            if (Language == Plist) return plist_edit.plistGetLeadingComment(self, path);
+            if (@hasDecl(Language, "getLeadingComment")) return Language.getLeadingComment(self, path);
             const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
             const parsed = try self.getParsed();
             const node = try parsed.ast.getNodeByPath(path);
             const span = parsed.span(node);
             const source = self.source.items;
-            const line_start = if (Language == NestedText and path.len > 0 and std.meta.activeTag(path[path.len - 1]) == .index)
-                try nt_edit.seqItemLineStart(source, parsed, path)
-            else
-                lineStartBefore(source, span.start);
+            const line_start = try self.leadingCommentLineStart(parsed, path, span);
             const block_start = commentBlockStart(source, line_start, self.syntax().comment_style);
             if (block_start == line_start) return null; // no block above
 
@@ -647,7 +657,7 @@ pub fn Editor(comptime Language: type) type {
         /// which yields ""). The caller owns the returned bytes. Returns
         /// `CommentsUnsupported` for a dialect without comment syntax (strict JSON).
         pub fn getTrailingComment(self: *Self, path: []const AST.PathSegment) !?[]u8 {
-            if (Language == Plist) return plist_edit.plistGetTrailingComment(self, path);
+            if (@hasDecl(Language, "getTrailingComment")) return Language.getTrailingComment(self, path);
             const marker = self.trailingCommentMarker() orelse return error.CommentsUnsupported;
             const win = try self.trailingCommentWindow(path);
             const source = self.source.items;
@@ -672,21 +682,19 @@ pub fn Editor(comptime Language: type) type {
         /// root). Appends after the mapping's last entry for block mappings, or
         /// inside the braces for flow `{}`. If `path` resolves to a `null` value
         /// (a bare `key:`), promotes it to a one-entry nested mapping.
+        ///
+        /// **Hook** `insertKey(self, parsed, path, node, span, key_text,
+        /// value_text) !void` — replaces this op wholesale: `node` is already
+        /// resolved from `path` and `span` is its extent, and the hook owns
+        /// everything below, including the flow/block decision. Declared by
+        /// TOML, fig, INI, plist and NestedText.
         pub fn insertKey(self: *Self, path: []const AST.PathSegment, key_text: []const u8, value_text: []const u8) !void {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
             const span = parsed.span(node);
             const source = self.source.items;
-            if (Language == Toml)
-                return toml_edit.tomlInsertKey(self, parsed, node, span, path.len == 0, key_text, value_text);
-            if (Language == Fig)
-                return fig_edit.figInsertKey(self, parsed, node, span, path.len == 0, key_text, value_text);
-            if (Language == Ini)
-                return ini_edit.iniInsertKey(self, parsed, node, key_text, value_text);
-            if (Language == Plist)
-                return plist_edit.plistInsertKey(self, parsed, node, key_text, value_text);
-            if (Language == NestedText)
-                return nt_edit.ntInsertKey(self, parsed, node, key_text, value_text);
+            if (@hasDecl(Language, "insertKey"))
+                return Language.insertKey(self, parsed, path, node, span, key_text, value_text);
             switch (node.kind) {
                 .mapping => |first| {
                     if (isFlow(source, span)) {
@@ -713,41 +721,24 @@ pub fn Editor(comptime Language: type) type {
         pub fn deleteKey(self: *Self, path: []const AST.PathSegment) !void {
             const parsed = try self.getParsed();
             const node = parsed.ast.getNodeByPath(path) catch |err| {
-                // A key that exists only via a `<<` merge has no physical line to
-                // delete, and there is no YAML syntax to un-inherit it — deleting
-                // the merge source is a different operation. Refuse explicitly.
-                if (Language == Yaml and err == error.NotFound and try yaml_edit.mergeSuppliesKey(parsed, path))
+                // A key with no physical entry of its own — inherited through
+                // the format's reference layer — has no line to delete, and
+                // there is no syntax to un-inherit it; deleting the source it
+                // comes from is a different operation. Refuse explicitly rather
+                // than report it missing.
+                if (err == error.NotFound and try keyIsInherited(parsed, path))
                     return error.MergeOnlyKey;
                 return err;
             };
             if (node.kind != .keyvalue) return error.NotAMapping;
             const span = parsed.span(node);
             const source = self.source.items;
-            // A TOML `[header]` table or `[[array]]` element has no contiguous
-            // line span (its body is assembled from scattered headers), so a
-            // line-based delete would only remove the header key. Refuse it; only
-            // scalar/array/inline-table/dotted entries delete cleanly. (Detected
-            // by the entry's line starting with `[`, which a normal `key = value`
-            // never does.)
-            if (Language == Toml) {
-                const fns = firstNonSpace(source, lineStartBefore(source, span.start));
-                if (fns < source.len and source[fns] == '[') return error.CannotDeleteTable;
-            }
-            // INI's `[section]` twin of the same hazard (see `ini_edit.isSectionHeaderLine`).
-            if (Language == Ini and ini_edit.isSectionHeaderLine(source, span))
-                return error.CannotDeleteSection;
-            // A fig block (non-flow) mapping/sequence value may be a
-            // re-entered/scattered container (DESIGN.md "Re-entering a path
-            // to add new keys is fine") — TOML's `CannotDeleteTable` twin,
-            // refusing rather than risk swallowing an interleaved foreign
-            // sibling on a scattered container's line-based delete. A flow
-            // (`{…}`/`[…]`) value is always tightly contiguous, so it deletes
-            // normally below.
-            if (Language == Fig) {
-                const val = parsed.ast.nodes[node.kind.keyvalue.value];
-                if ((val.kind == .mapping or val.kind == .sequence) and !isFlow(source, parsed.span(val)))
-                    return error.CannotDeleteContainer;
-            }
+            // The language's veto, before anything is spliced. Every declared
+            // guard today refuses the same hazard: an entry whose value is a
+            // SCATTERED container, assembled from lines elsewhere in the file,
+            // so the line-based delete below would remove only the piece it can
+            // see and orphan or misparse the rest.
+            if (@hasDecl(Language, "deleteKeyGuard")) try Language.deleteKeyGuard(self, parsed, node, span);
             // A flow (`{...}`) mapping stores its entries comma-separated, not
             // one-per-line, so the line-based delete below (sized for a *block*
             // mapping's one-entry-per-line shape) mishandles it in three ways:
@@ -809,11 +800,17 @@ pub fn Editor(comptime Language: type) type {
         }
 
         /// Append `value_text` as a new item to the sequence at `path`.
+        ///
+        /// **Hook** `appendToSeq(self, parsed, node, value_text) !void` — takes
+        /// over the BLOCK arm only. A flow (`[…]`) sequence is comma-delimited
+        /// the same way in every format that has one, so it keeps the generic
+        /// path, and a format whose block sequences aren't editable at all
+        /// (`block_seq_editable`, i.e. TOML) has already refused above. Declared
+        /// by plist, fig and NestedText.
         pub fn appendToSeq(self: *Self, path: []const AST.PathSegment, value_text: []const u8) !void {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
             if (node.kind != .sequence) return error.NotASequence;
-            if (Language == Plist) return plist_edit.plistAppendItem(self, parsed, node, value_text);
             const span = parsed.span(node);
             const source = self.source.items;
             if (isFlow(source, span)) {
@@ -824,15 +821,7 @@ pub fn Editor(comptime Language: type) type {
             // A non-flow TOML sequence is an array-of-tables; use
             // `appendTableToArray` for those. (TOML has no block scalar array.)
             if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
-            if (Language == Fig) return fig_edit.figAppendSeqLine(self, parsed, node, value_text);
-            // NestedText: a nested/empty-valued item's span doesn't start on
-            // its own `-` line (see the module doc at this file's top), so
-            // `dashColumn` — which reads the column off `first_item`'s own
-            // line — can't be trusted; `nt_edit` derives the dash's line
-            // straight from the sequence node's own span instead, and also
-            // renders a multiline/empty value as a nested `>`-block rather
-            // than `insertSeqLine`'s bare reindent.
-            if (Language == NestedText) return nt_edit.ntAppendItem(self, parsed, node, value_text);
+            if (@hasDecl(Language, "appendToSeq")) return Language.appendToSeq(self, parsed, node, value_text);
             const last = (try parsed.ast.lastChild(&node)) orelse return error.NotASequence;
             const first_item = (try parsed.ast.child(&node)).?;
             const dash_col = dashColumn(source, parsed.span(first_item).start);
@@ -841,11 +830,13 @@ pub fn Editor(comptime Language: type) type {
         }
 
         /// Insert `value_text` before the first item of the sequence at `path`.
+        ///
+        /// **Hook** `prependToSeq(self, parsed, node, value_text) !void` — the
+        /// block-arm twin of `appendToSeq`'s, on the same terms.
         pub fn prependToSeq(self: *Self, path: []const AST.PathSegment, value_text: []const u8) !void {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
             if (node.kind != .sequence) return error.NotASequence;
-            if (Language == Plist) return plist_edit.plistPrependItem(self, parsed, node, value_text);
             const span = parsed.span(node);
             const source = self.source.items;
             if (isFlow(source, span)) {
@@ -853,8 +844,7 @@ pub fn Editor(comptime Language: type) type {
                 return;
             }
             if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
-            if (Language == Fig) return fig_edit.figPrependSeqLine(self, parsed, node, value_text);
-            if (Language == NestedText) return nt_edit.ntPrependItem(self, parsed, node, value_text);
+            if (@hasDecl(Language, "prependToSeq")) return Language.prependToSeq(self, parsed, node, value_text);
             const first_item = (try parsed.ast.child(&node)) orelse return error.NotASequence;
             const first_start = parsed.span(first_item).start;
             const line_start = lineStartBefore(source, first_start);
@@ -867,6 +857,11 @@ pub fn Editor(comptime Language: type) type {
         /// `parsePath` produces for the `[-]`/`[$]` append token — and means
         /// "the last item" here, so `contents[-]` deletes symmetrically with
         /// how it appends.
+        ///
+        /// **Hook** `removeSeqItem(self, parsed, node, item, prev) !void` —
+        /// takes over the block arm, on the same terms as `appendToSeq`'s. It
+        /// is handed the resolved `item` and its predecessor rather than the
+        /// index, so the walk below is done once, here.
         pub fn removeSeqItem(self: *Self, path: []const AST.PathSegment, index: usize) !void {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
@@ -874,10 +869,11 @@ pub fn Editor(comptime Language: type) type {
             const span = parsed.span(node);
             const source = self.source.items;
             // Walk to the target item, keeping `prev` (its immediate
-            // preceding sibling, or null when it's first) alongside — both
-            // the existing `is_first` flag (for the flow path) and
-            // NestedText's dash-position lookup (for the block path) need it,
-            // and computing it here avoids a second O(n) walk in `nt_edit`.
+            // preceding sibling, or null when it's first) alongside — both the
+            // `is_first` flag (for the flow path) and the block hook (whose
+            // callers may need to find the item's own line relative to its
+            // predecessor) need it, and computing it here keeps the walk to a
+            // single pass rather than repeating it inside the hook.
             var item = (try parsed.ast.child(&node)) orelse return error.NotFound;
             var prev: ?AST.Node = null;
             if (index == std.math.maxInt(usize)) {
@@ -898,7 +894,7 @@ pub fn Editor(comptime Language: type) type {
                 return;
             }
             if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
-            if (Language == NestedText) return nt_edit.ntRemoveSeqItem(self, parsed, node, item, prev);
+            if (@hasDecl(Language, "removeSeqItem")) return Language.removeSeqItem(self, parsed, node, item, prev);
             const line_start = commentBlockStart(source, lineStartBefore(source, item_span.start), self.syntax().comment_style);
             const del_end = lineEndAfter(source, item_span.end -| 1);
             try self.replaceAtSpan(Span.init(line_start, del_end), "");
@@ -1239,13 +1235,13 @@ pub fn Editor(comptime Language: type) type {
                 return;
             }
             if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
-            // NestedText's block boundaries can't be recovered from
-            // `spans.items[i].start` alone (a nested/empty item's span
-            // doesn't start on its own `-` line — see the module doc), so it
-            // gets its own block-start computation in `nt_edit`; the tiling/
-            // permutation/splice underneath is identical, so it reuses this
-            // file's own `Block`/`fullOrder`/`appendBlockSep`.
-            if (Language == NestedText) return nt_edit.ntReorderSeqItems(self, parsed, node, order);
+            // Hook `reorderSeqItems(self, parsed, node, order) !void`, taking
+            // over the block arm — for a format whose item block boundaries
+            // can't be recovered from `spans.items[i].start` alone. The tiling/
+            // permutation/splice underneath is format-independent, so a hook is
+            // expected to reuse this file's `Block`/`fullOrder`/`appendBlockSep`
+            // rather than reimplement them.
+            if (@hasDecl(Language, "reorderSeqItems")) return Language.reorderSeqItems(self, parsed, node, order);
             var blocks: std.ArrayList(Block) = .empty;
             defer blocks.deinit(self.allocator);
             for (spans.items) |s| {

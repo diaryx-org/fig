@@ -44,6 +44,56 @@ pub const Language = struct {
             .empty_map_literal = null,
         };
     }
+
+    // ── Editing hooks ────────────────────────────────────────────────────────
+    //
+    // Operations this format takes over from the generic splice engine.
+    // `Editor` dispatches on PRESENCE — `@hasDecl(Language, "insertKey")` — so
+    // declaring one here is the whole of opting in, and every operation not
+    // named below runs the generic implementation. Each signature is fixed by
+    // the `editor.Editor` method of the same name; see its doc comment.
+    //
+    // The logic lives in `editor_helper.zig` (which holds this format's editor
+    // tests too), not here: this block is the DECLARATION of which operations
+    // are overridden, so a reader can see a format's whole answer in one struct
+    // without opening the helper.
+    const edit = @import("editor_helper.zig");
+
+    /// Values are framed either rest-of-line or as a nested `>`-block, on a
+    /// 4-space nesting convention — neither of which the YAML/fig-shaped
+    /// generic block insert (2-space, bare `:` continuation) can write.
+    pub const insertKey = edit.ntInsertKey;
+
+    /// `replacement` is always a raw scalar (this format has no typed or quoted
+    /// literal syntax to splice verbatim) and has to be RENDERED same-line or
+    /// as a nested `>`-block per its shape — and since that shape may differ
+    /// from the old value's, the reframe runs from the key or dash through the
+    /// old value's end rather than over the value span alone.
+    pub const replaceValAtPath = edit.ntReplaceValue;
+
+    /// A plain key's span excludes its trailing `:` while a multiline key has
+    /// no separator colon at all, so converting between the two forms means
+    /// adding or dropping one.
+    pub const replaceKeyAtPath = edit.ntReplaceKey;
+
+    /// A nested or empty item's value span can begin on a later line than its
+    /// own `-` dash, so a leading comment keyed by `.index` anchors on the
+    /// dash's line rather than on the span's.
+    pub const seqItemLineStart = edit.seqItemLineStart;
+
+    /// `dashColumn` reads the item column off the first item's OWN line, which
+    /// a nested or empty-valued item doesn't have — so the dash's line is
+    /// derived from the sequence node's span instead. Also renders a multiline
+    /// or empty value as a nested `>`-block rather than `insertSeqLine`'s bare
+    /// reindent.
+    pub const appendToSeq = edit.ntAppendItem;
+    pub const prependToSeq = edit.ntPrependItem;
+    pub const removeSeqItem = edit.ntRemoveSeqItem;
+
+    /// Item block boundaries can't be recovered from each item span's start
+    /// here, so this computes its own; the tiling, permutation and splice
+    /// underneath are the generic engine's, reused as-is.
+    pub const reorderSeqItems = edit.ntReorderSeqItems;
 };
 
 // Test discovery: importing `nestedtext.zig` (from root.zig) pulls in every

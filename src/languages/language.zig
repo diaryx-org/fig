@@ -356,21 +356,39 @@ pub fn validate(comptime Lang: type) void {
     }
 }
 
+/// Every compiled-in language, as a comptime list to iterate.
+///
+/// The set of formats written down ONCE, so anything that has to do something
+/// per-format — `validate` below, the CLI's extension table — cannot fall out
+/// of step with the set that actually exists. A gated-out format is ABSENT
+/// here rather than present as `void`, so a consumer needs no gate of its own.
+///
+/// This is the "comptime registry with something to iterate" the proposal's §7
+/// names as what the manifest unlocks. It does not by itself retire the five
+/// parallel format enumerations — those are per-DIALECT and this is
+/// per-LANGUAGE — but a consumer that is genuinely per-language now has one
+/// list to walk instead of eleven `build_options` tests to repeat.
+pub const compiled: []const type = blk: {
+    var list: []const type = &.{};
+    if (build_options.lang_json) list = list ++ [_]type{JSON};
+    if (build_options.lang_yaml) list = list ++ [_]type{YAML};
+    if (build_options.lang_toml) list = list ++ [_]type{TOML};
+    if (build_options.lang_zon) list = list ++ [_]type{ZON};
+    if (build_options.lang_xml) list = list ++ [_]type{XML};
+    if (build_options.lang_fig) list = list ++ [_]type{FIG};
+    if (build_options.lang_ini) list = list ++ [_]type{INI};
+    if (build_options.lang_dotenv) list = list ++ [_]type{DOTENV};
+    if (build_options.lang_properties) list = list ++ [_]type{PROPERTIES};
+    if (build_options.lang_plist) list = list ++ [_]type{PLIST};
+    if (build_options.lang_nestedtext) list = list ++ [_]type{NESTEDTEXT};
+    break :blk list;
+};
+
 // Validate every compiled-in language, including the read-only ones that no
 // `Editor()` instantiation would otherwise reach. Runs whenever this file is
 // analyzed, which is whenever anything touches a format at all.
 comptime {
-    if (build_options.lang_json) validate(JSON);
-    if (build_options.lang_yaml) validate(YAML);
-    if (build_options.lang_toml) validate(TOML);
-    if (build_options.lang_zon) validate(ZON);
-    if (build_options.lang_xml) validate(XML);
-    if (build_options.lang_fig) validate(FIG);
-    if (build_options.lang_ini) validate(INI);
-    if (build_options.lang_dotenv) validate(DOTENV);
-    if (build_options.lang_properties) validate(PROPERTIES);
-    if (build_options.lang_plist) validate(PLIST);
-    if (build_options.lang_nestedtext) validate(NESTEDTEXT);
+    for (compiled) |Lang| validate(Lang);
 }
 
 test "detect identifies each compiled-in format by content" {

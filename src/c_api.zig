@@ -10,6 +10,10 @@ const Span = @import("util/span.zig");
 const Embed = @import("embed.zig");
 const Editor = @import("editor.zig").Editor;
 const build_options = @import("build_options");
+/// The language registry, for `fig_format_capabilities` to read each format's
+/// declared `caps` instead of restating them. A gated-out format is `void`
+/// here, which is what makes the build gate implicit in `capsOf`.
+const Languages = @import("languages/language.zig");
 // Gated formats collapse to `void`; every reference below is behind the matching
 // `build_options.lang_*` comptime guard so the parser/printer never compiles in.
 // JSON is gateable too — the editor union and the parse/capability switches all
@@ -180,26 +184,49 @@ pub const FigCapability = enum(u32) {
 /// `format` value. JSON/JSONC/JSON5 are always fully supported. Lets a host pick
 /// a working format up front instead of probing via `unsupported_format` returns.
 pub export fn fig_format_capabilities(format: c_int) u32 {
-    const read = @intFromEnum(FigCapability.read);
-    const edit = @intFromEnum(FigCapability.edit);
-    const serialize = @intFromEnum(FigCapability.serialize);
     return switch (format) {
         @intFromEnum(FigFormat.json),
         @intFromEnum(FigFormat.jsonc),
         @intFromEnum(FigFormat.json5),
-        => if (comptime build_options.lang_json) read | edit | serialize else 0,
-        @intFromEnum(FigFormat.yaml) => if (comptime build_options.lang_yaml) read | edit | serialize else 0,
-        @intFromEnum(FigFormat.toml) => if (comptime build_options.lang_toml) read | edit | serialize else 0,
-        @intFromEnum(FigFormat.zon) => if (comptime build_options.lang_zon) read | edit | serialize else 0,
-        @intFromEnum(FigFormat.xml) => if (comptime build_options.lang_xml) read | serialize else 0,
-        @intFromEnum(FigFormat.fig) => if (comptime build_options.lang_fig) read | edit | serialize else 0,
-        @intFromEnum(FigFormat.ini) => if (comptime build_options.lang_ini) read | edit | serialize else 0,
-        @intFromEnum(FigFormat.dotenv) => if (comptime build_options.lang_dotenv) read | edit | serialize else 0,
-        @intFromEnum(FigFormat.properties) => if (comptime build_options.lang_properties) read | edit | serialize else 0,
-        @intFromEnum(FigFormat.plist) => if (comptime build_options.lang_plist) read | edit | serialize else 0,
-        @intFromEnum(FigFormat.nestedtext) => if (comptime build_options.lang_nestedtext) read | edit | serialize else 0,
+        => comptime capsOf(Languages.JSON),
+        @intFromEnum(FigFormat.yaml) => comptime capsOf(Languages.YAML),
+        @intFromEnum(FigFormat.toml) => comptime capsOf(Languages.TOML),
+        @intFromEnum(FigFormat.zon) => comptime capsOf(Languages.ZON),
+        @intFromEnum(FigFormat.xml) => comptime capsOf(Languages.XML),
+        @intFromEnum(FigFormat.fig) => comptime capsOf(Languages.FIG),
+        @intFromEnum(FigFormat.ini) => comptime capsOf(Languages.INI),
+        @intFromEnum(FigFormat.dotenv) => comptime capsOf(Languages.DOTENV),
+        @intFromEnum(FigFormat.properties) => comptime capsOf(Languages.PROPERTIES),
+        @intFromEnum(FigFormat.plist) => comptime capsOf(Languages.PLIST),
+        @intFromEnum(FigFormat.nestedtext) => comptime capsOf(Languages.NESTEDTEXT),
         else => 0,
     };
+}
+
+/// The `FigCapability` bits `Lang` declares, or 0 when it is compiled out.
+///
+/// The values come from `Lang.caps` — the format's own declaration in
+/// `<lang>/<lang>.zig`, required and checked by `language.validate` — rather
+/// than being spelled a second time here. This switch WAS that second spelling,
+/// and the drift it invited was silent both ways: a format gaining an editor
+/// without its bit being set here reads as uneditable to every C host, and a
+/// bit set here for support that does not exist sends hosts down a path that
+/// fails with `unsupported_format`.
+///
+/// No `build_options.lang_*` test either: a compiled-out format is already
+/// `void` in `languages/language.zig`, which is the same fact the gate stated.
+///
+/// What is NOT generated, and cannot be, is the mapping above — `FigFormat` is
+/// per-DIALECT (json/jsonc/json5 are three ABI values over one `Language`)
+/// while `caps` is per-LANGUAGE, so the two are different tables and only the
+/// second lives in the manifest. See the proposal's §8.5.
+fn capsOf(comptime Lang: type) u32 {
+    if (Lang == void) return 0;
+    var bits: u32 = 0;
+    if (Lang.caps.read) bits |= @intFromEnum(FigCapability.read);
+    if (Lang.caps.edit) bits |= @intFromEnum(FigCapability.edit);
+    if (Lang.caps.serialize) bits |= @intFromEnum(FigCapability.serialize);
+    return bits;
 }
 
 /// A handle to a `fig` document. (See `DocumentHandle` and `handle.*` declaration in `fig_parse`)

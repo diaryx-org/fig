@@ -63,11 +63,15 @@ pub const KeyStyle = enum {
 
 /// What `fig` can do with a format, as declared by the format itself.
 ///
-/// Hand-maintained a second time in `c_api.fig_format_capabilities`, which is
-/// the drift this is eventually meant to close — see the proposal's §7. Note
-/// that `caps` is per-LANGUAGE while the C ABI's `FigFormat` is per-dialect
-/// (json/jsonc/json5 all map to this one `Language`), so the two are not the
-/// same table and the mapping between them cannot be generated from here.
+/// The single source: `c_api.fig_format_capabilities` reads these bits rather
+/// than restating them, so the C ABI cannot disagree with the format about what
+/// the format can do. It used to be hand-maintained in both places, and drifted
+/// silently in both directions — see the proposal's §7 and §12.
+///
+/// What the C ABI still spells out for itself is the MAPPING: `FigFormat` is
+/// per-dialect (json/jsonc/json5 are three ABI values over this one `Language`)
+/// while `caps` is per-language, so the two are different tables and only this
+/// one lives here.
 pub const Caps = struct {
     /// `parse` accepts this format. True for every language in tree.
     read: bool = true,

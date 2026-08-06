@@ -87,27 +87,79 @@ pub fn detectLanguageFromFileEnding(file_path: []const u8) ?Detected {
         return .{ .format = .yaml, .embed_detect = true };
     }
 
-    // `.figl` is the authoring dialect's canonical extension; `.fig` is
-    // still accepted for back-compat. (The canonical form deliberately owns
-    // no extension; select it with `--input canonical`.)
-    if (std.mem.eql(u8, ext, "figl")) return .{ .format = .fig };
-    if (std.mem.eql(u8, ext, "fig")) return .{ .format = .fig };
+    // An extension that names a `Format` member IS that format. Tried first so
+    // every token the enum already spells keeps its exact meaning — notably
+    // `yml`, which is its own member rather than an alias of `yaml`, and the
+    // format-only members (`canonical`, `gron`) that no `Language` declares.
+    if (std.meta.stringToEnum(Format, ext)) |format| return .{ .format = format };
 
-    // A dotenv file is conventionally named exactly `.env` — this function's
-    // dot-split (on the LAST `.`) gives that an "extension" of literal `env`,
-    // which doesn't match the `Format.dotenv` enum member name the generic
-    // `stringToEnum` lookup below relies on. (A multi-suffix variant like
-    // `.env.production` isn't recognized here — its last-dot extension is
-    // `production` — pass `--input dotenv` explicitly for those.)
-    if (std.mem.eql(u8, ext, "env")) return .{ .format = .dotenv };
+    // Otherwise ask the languages. Each declares the extensions it owns
+    // (`Language.extensions`), which is where the ones that DON'T match an enum
+    // member name live: `.figl` (fig's canonical extension — `.fig` is the
+    // back-compat spelling, and matches the enum anyway), `.env` (dotenv files
+    // are conventionally named exactly `.env`, so the last-dot split gives a
+    // literal `env`), and `.nt` (NestedText's conventional extension). Those
+    // three used to be hand-written special cases here; they are now the
+    // formats' own declarations, so a new format's extension arrives with it.
+    //
+    // Not recognized here, before or now: multi-suffix variants like
+    // `.env.production`, whose last-dot extension is `production`. Pass
+    // `--input dotenv` for those. The canonical form deliberately owns no
+    // extension at all — select it with `--input canonical`.
+    if (extensionFormat(ext)) |format| return .{ .format = format };
 
-    // NestedText's conventional extension is `.nt`, which doesn't match the
-    // `Format.nestedtext` enum member name either — same `.env`-style
-    // special case.
-    if (std.mem.eql(u8, ext, "nt")) return .{ .format = .nestedtext };
+    return null;
+}
 
-    const format = std.meta.stringToEnum(Format, ext) orelse return null;
-    return .{ .format = format };
+/// The `Format` owning file extension `ext`, per the languages' own
+/// `extensions` declarations, or null.
+///
+/// The `Language`→`Format` pairing below is hand-written and cannot be
+/// generated: `Format` is per-DIALECT (json/jsonc/json5/yml are separate
+/// members over two `Language`s) while `extensions` is per-LANGUAGE, so a
+/// language maps to whichever member is its DEFAULT spelling. What the manifest
+/// removes is the extension list itself. The comptime loop below fails the
+/// build if a compiled-in language is missing from the pairing, so adding a
+/// format cannot silently skip this table.
+fn extensionFormat(ext: []const u8) ?Format {
+    inline for (ext_pairs) |pair| {
+        if (pair[0] != void) {
+            for (pair[0].extensions) |owned| {
+                if (std.mem.eql(u8, owned, ext)) return pair[1];
+            }
+        }
+    }
+    return null;
+}
+
+/// Each `Language` and the `Format` member that is its default spelling. A
+/// gated-out language is `void` here and skipped.
+const ext_pairs = .{
+    .{ fig.Language.JSON, Format.json },
+    .{ fig.Language.YAML, Format.yaml },
+    .{ fig.Language.TOML, Format.toml },
+    .{ fig.Language.ZON, Format.zon },
+    .{ fig.Language.XML, Format.xml },
+    .{ fig.Language.FIG, Format.fig },
+    .{ fig.Language.INI, Format.ini },
+    .{ fig.Language.DOTENV, Format.dotenv },
+    .{ fig.Language.PROPERTIES, Format.properties },
+    .{ fig.Language.PLIST, Format.plist },
+    .{ fig.Language.NESTEDTEXT, Format.nestedtext },
+};
+
+// A language missing from `ext_pairs` would silently stop resolving by
+// extension — the failure would look like "that file just isn't detected",
+// which is exactly the kind of quiet gap this proposal exists to remove. So
+// walk the registry instead of trusting the table to be complete.
+comptime {
+    outer: for (fig.Language.compiled) |Lang| {
+        for (ext_pairs) |pair| {
+            if (pair[0] == Lang) continue :outer;
+        }
+        @compileError("cli/args.zig `ext_pairs` is missing the language '" ++ Lang.name ++
+            "', so its declared extensions would never resolve");
+    }
 }
 
 /// Map a `--embed <archetype>` flag value to its `Embed.Type`. Lets any

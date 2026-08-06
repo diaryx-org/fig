@@ -2,7 +2,7 @@
 title = A declared Language interface
 description = Replacing editor.zig's per-language type tests with a manifest each format declares, checked by Language.validate
 created = 2026-08-05
-updated = 2026-08-05
+updated = 2026-08-06
 part_of = [proposals](proposals.md)
 ```
 
@@ -12,6 +12,10 @@ part_of = [proposals](proposals.md)
 > catalogue in §2 was taken against `main` at 5c7b97b (fig 2.5.3) and is the
 > part of this document worth keeping even if the rest is rejected — it is the
 > first written-down account of what a format actually has to supply.
+>
+> **§8 corrects §3, §4, §5 and §7 against the same commit.** One claim in §3 —
+> that exclusive operations can stop existing — does not compile on the pinned
+> Zig, and Step 4 rests on it. Read §8 before acting on any of those sections.
 
 `Language.validate` ([src/languages/language.zig][validate]) states a
 four-declaration contract: `Type`, `default_type`, `parse`, `print`. That is
@@ -330,6 +334,133 @@ switches keyed on them. A manifest gives a comptime registry something to
 iterate. That is a bigger line-count win than everything above, and a worse
 place to start, because it changes the C ABI surface.
 
+## 8. Review corrections (2026-08-06)
+
+Reviewed against the same commit the body was written against, 5c7b97b.
+
+§2 survives intact. The 65 type-test sites, the 35 public operations, the
+182/51/27 `build_options.lang_*` gates, and every line number in the §2 tables
+land on the site they name. So does the comptime-cycle argument in §3:
+[`ini/editor_helper.zig`][ini_edit] line 46 declares `Editor(Ini)` while
+[editor.zig][editor] line 45 imports `ini_edit`. So do the `.env`/`.nt` special
+cases §6 proposes to retire ([cli/args.zig][args], lines 102 and 107). Step 3's
+coverage claim is real: roughly 295 tests across the eight `editor_helper`
+modules, the largest being yaml (94), toml (63) and fig (61).
+
+Four things in §3–§7 are wrong, and three arguments the body could have made
+are missing.
+
+### 8.1 Exclusive operations cannot un-declare themselves (§3)
+
+> Under the manifest, `Editor(L)` declares it only when `@hasDecl(L,
+> "deleteTable")` — so `@hasDecl(Editor(Yaml), "deleteTable")` is *false*
+
+Zig has no conditional container-level declarations. `usingnamespace` was the
+only mechanism that ever provided them, and it was removed in 0.15;
+[build.zig.zon][zon_manifest] pins `minimum_zig_version = "0.16.0"`, where the
+keyword no longer parses. The nearest workaround is a namespace field —
+
+```zig
+pub const tables = if (@hasDecl(L, "deleteTable")) TomlTableOps(Self) else struct {};
+```
+
+— which relocates every call site to `Ed.tables.deleteTable(...)`, the C ABI's
+included. That is a worse trade than the `@compileError` it replaces.
+
+The claimed *benefit* survives without any of it. `@hasDecl(Language,
+"deleteTable")` — on the manifest, where §3 already puts the hook — is the fact
+a binding or the C ABI wants to query, and `Editor` never has to change to
+provide it. So the capability §3 argues for is real and free; the mechanism it
+proposes is neither.
+
+**Consequence for §5: Step 4 drops.** §2E's nine sites are the cheapest in the
+document to leave exactly as they are.
+
+### 8.2 Step 1's bridge does not cover the comment markers (§5)
+
+The bridge assertion proves what §5 claims for the four comptime constants. It
+cannot work for `lineCommentMarker`/`trailingCommentMarker`, which are the two
+sites §2A already singled out as awkward. They branch on the runtime
+`self.format` ([editor.zig][editor] line 489), so there is no comptime value to
+assert against, and asserting against `syntax(Language.default_type)` inspects
+only strict JSON — the single dialect whose answer is `null`, and therefore the
+one that proves least.
+
+Covering them honestly needs `inline for (std.meta.tags(Language.Type))` plus a
+comptime-callable extraction of the current logic — which is itself a change to
+`editor.zig`, and so breaks Step 1's "change nothing" promise for exactly these
+two functions. Either exempt them explicitly or move them into Step 2. As
+written Step 1 claims a proof it does not deliver, in the one place §2A
+predicted the difficulty would be.
+
+### 8.3 The allowlist inventory is incomplete (§4)
+
+§4's required set is `Type, default_type, Parser, parse, print, name,
+extensions, caps, syntax`. Every language today also declares `printNode` (all
+but plist and xml, whose `print` is written inline), and yaml declares
+`materialize` and `TagMode` besides. A closed allowlist built from §4's list
+rejects the entire tree on the day it lands. Job 2 is the highest-value item in
+the document by its own argument, so its inventory has to be exact — taken from
+the decls that exist, not from the ones the design remembers.
+
+Two smaller notes on the same section: §3 labels five declarations "existing
+four", and §4 promotes `Parser` to required, which [`validate`][validate] does
+not check today. The tightening is right; it should be named as one.
+
+### 8.4 `validate` never runs for a read-only format (§4)
+
+Its only call site is [editor.zig][editor] line 74, inside `Editor()`. XML has
+no editor, so `validate(Xml)` is never instantiated and XML's manifest would go
+unchecked — the enforcement point would miss the one format whose `caps` field
+carries the most information. §4 needs a second call site: a comptime loop over
+the compiled-in languages in [`language.zig`][validate], which already names
+them all.
+
+Relatedly, requiring `syntax` unconditionally is wrong for a format that cannot
+be edited. The required set should key off `caps.edit`, which is an extension of
+job 3's coherence rules rather than a new mechanism.
+
+### 8.5 What the manifest can actually generate (§7)
+
+The generated part of `fig_format_capabilities` ([c_api.zig][c_api]) is eleven
+hand-written `read | edit | serialize` triples. The `build_options` gate stays,
+and so does the `FigFormat`→`Language` mapping — which is the part that has
+actually drifted before, as the comment at [cli/args.zig][args] line 546
+records. `FigFormat` is per-dialect (json/jsonc/json5 all map to one `Language`)
+while `caps` is per-language, so that mapping cannot be generated from this
+manifest. A real win, but "cannot drift" claims more than it buys.
+
+### 8.6 Three arguments the body leaves on the table
+
+**The import list is the concrete form of the claim.** `editor.zig` hard-imports
+nine language type tags and eight helper modules (lines 21–71). `@hasDecl`
+dispatch deletes all seventeen. That is what "generic over a closed set rather
+than over an interface" cashes out to, and it is more persuasive than the site
+count — a reader can check it in one screen.
+
+**`syntax(Type)`'s cost is lower than §3 concedes.** Every use of `kv_sep` and
+`comment_style` is an `appendSlice` call or an argument to
+`commentBlockStart`/`entryBlockStart`. None requires a comptime value — no array
+lengths, no `++`, no switch prongs. The runtime switch is the entire cost, with
+nothing downstream of it.
+
+**The vivify merge is provable, not merely plausible.** `emptyMapLiteral` has
+exactly one call site, [editor.zig][editor] line 348, inside the vivify branch
+itself. Folding §2B's INI/plist/NestedText exclusion into `empty_map_literal:
+?[]const u8 = null` is therefore behaviour-preserving by construction. Worth
+stating, because it is the one place in §2 where a capability opt-out and a
+syntax parameter collapse into a single field — which is the whole thesis of
+§2C's "push traits down into parameters", demonstrated rather than asserted.
+
+### 8.7 Net
+
+Steps 1 and 2 stand, including §5's argument that they are worth doing alone.
+Step 3 remains the real risk and the body is honest about it. Step 4 should go
+(§8.1). §4 is the right idea and needs §8.3 and §8.4 before it is implementable.
+
 [validate]: /src/languages/language.zig
 [editor]: /src/editor.zig
 [c_api]: /src/c_api.zig
+[args]: /src/cli/args.zig
+[ini_edit]: /src/languages/ini/editor_helper.zig
+[zon_manifest]: /build.zig.zon

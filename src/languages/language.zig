@@ -44,19 +44,23 @@ pub const NESTEDTEXT = if (build_options.lang_nestedtext) @import("nestedtext/ne
 // spellings) that today live scattered across six files as switches nothing
 // cross-checks.
 //
-// As of this stage FIVE of those enums are REIFIED from it rather than merely
-// pinned against it — `Detected` below, `cli.Format`, `AST.SerializeFormat`,
-// `deserialize.Format` and `Embed.InnerFormat` are all `@Enum` over
-// `namesOf(…)` — along with `cli/args.zig`'s extension table. The one that
-// remains hand-written, `c_api.FigFormat` (Stage 7), still carries the
-// `comptime` asserts that fail the build the moment it and the registry
-// disagree. Every per-dialect FACT is now read rather than restated: the CLI's
+// As of this stage ALL SIX of those enums are REIFIED from it rather than
+// merely pinned against it — `Detected` below, `cli.Format`,
+// `AST.SerializeFormat`, `deserialize.Format`, `Embed.InnerFormat` and
+// `c_api.FigFormat` are all `@Enum` over `namesOf(…)` — along with
+// `cli/args.zig`'s extension table. The C ABI's enum is the one built over
+// `abi_value` rather than over member positions, since its integers are a
+// permanent contract; what remains hand-written beside it is a literal pin of
+// those integers, plus `zig build abi-check` diffing the same values against
+// fig.h. Every per-dialect FACT is now read rather than restated: the CLI's
 // dispatch takes the splice style, empty-document seed and `--spec` strings,
 // the serializer takes the printer names (`ast/serialize_options.zig`, whose
 // three switches are one `inline else` each over
 // `@field(d.Lang.Printer, d.print_name)`), and `embed.zig` takes the embedded
 // spellings — its four literal builders and two tag/MIME resolvers are one
-// `inline` over the registry each.
+// `inline` over the registry each. `c_api.zig` reads the rest: `abi_value` for
+// the enum, `Lang` for parser/capability/editor dispatch, and `dialect` for the
+// three JSON ABI values that share one language.
 
 /// `Lang.Type` when `Lang` is compiled in, `void` when it is gated out.
 ///
@@ -204,8 +208,9 @@ fn Entry(comptime L: type) type {
 /// Two properties of this table are frozen, and both are load-bearing:
 ///
 ///   * ORDER. It IS the member order of every enum derived from it
-///     (`Detected`, `cli.Format`, `SerializeFormat`, `deserialize.Format`
-///     and `Embed.InnerFormat` already; `c_api.FigFormat` in Stage 7), and
+///     (`Detected`, `cli.Format`, `SerializeFormat`, `deserialize.Format`,
+///     `Embed.InnerFormat` and `c_api.FigFormat` — the last of which takes its
+///     member order from here but its VALUES from `abi_value`), and
 ///     reproduces the pre-registry `cli.Format` order minus its two
 ///     non-registry members (`canonical`, which is not a `Language` at all,
 ///     and `gron`, a CLI-only projection — both spliced back by hand at their
@@ -257,6 +262,9 @@ pub const dialects = .{
     Entry(JSON){
         .name = "json5",
         .dialect = dial(JSON, "JSON5"),
+        // 7, not 6: JSON5 was added to the C ABI after XML, and a released
+        // value is appended rather than inserted. Same for `fig` at 8 and the
+        // five below it — the reason this enum's numbering is not its order.
         .abi_value = 7,
         .splice = .json_string,
         .empty_doc_seed = "{}\n",
@@ -326,6 +334,8 @@ pub const dialects = .{
     },
     Entry(FIG){
         .name = "fig",
+        // The native authoring dialect (src/languages/fig/DESIGN.md): read,
+        // written and edited by every surface.
         .abi_value = 8,
         .splice = .literal,
         .empty_doc_seed = "",
@@ -342,24 +352,32 @@ pub const dialects = .{
     },
     Entry(INI){
         .name = "ini",
+        // Untyped scalars: the grammar carries no type information, so
+        // `port = 8080` reads back as the STRING "8080".
         .abi_value = 9,
         .splice = .raw,
         .empty_doc_seed = "",
     },
     Entry(DOTENV){
         .name = "dotenv",
+        // A flat string map and nothing more: no nesting, untyped scalars. A
+        // nested value tree cannot be represented, and serializing one warns.
         .abi_value = 10,
         .splice = .raw,
         .empty_doc_seed = "",
     },
     Entry(PROPERTIES){
         .name = "properties",
+        // Flat and untyped, the same representational limits as dotenv.
         .abi_value = 11,
         .splice = .raw,
         .empty_doc_seed = "",
     },
     Entry(PLIST){
         .name = "plist",
+        // Genuinely typed and nested (dict/array/string/integer/real/bool,
+        // with date/data carried on the `extended` scalar) — the one XML-shaped
+        // format here that is also a full value model.
         .abi_value = 12,
         .splice = .raw,
         // DELIBERATE DEVIATION from `cli/edit_ops.zig`'s `emptyDocSeed`, which
@@ -374,6 +392,7 @@ pub const dialects = .{
     },
     Entry(NESTEDTEXT){
         .name = "nestedtext",
+        // Nested (dict/list) but deliberately untyped — every leaf is a string.
         .abi_value = 13,
         .splice = .raw,
         .empty_doc_seed = "",
@@ -516,11 +535,12 @@ pub fn enumValues(comptime member_names: []const [:0]const u8) [member_names.len
 /// non-registry members (`canonical`, `gron`) are positioned by hand and only
 /// have to still exist.
 ///
-/// Stage 3 reified away its callers — `cli.Format`, `AST.SerializeFormat`,
-/// `deserialize.Format` and `Detected` are now BUILT from `namesOf`/`namesWith`
-/// rather than checked against them, which is the stronger statement. It stays
-/// for any enum that must remain hand-written and still restate the registry in
-/// order (`c_api.FigFormat` uses the unordered twin below until Stage 7).
+/// Reification has since taken every caller — `cli.Format`,
+/// `AST.SerializeFormat`, `deserialize.Format`, `Detected`,
+/// `Embed.InnerFormat` and `c_api.FigFormat` are all BUILT from
+/// `namesOf`/`namesWith` rather than checked against them, which is the
+/// stronger statement. It stays for the next enum that must remain
+/// hand-written and still restate the registry in order.
 pub fn assertDerivedEnum(
     comptime E: type,
     comptime want: []const [:0]const u8,
@@ -559,39 +579,11 @@ pub fn assertDerivedEnum(
     }
 }
 
-/// `assertDerivedEnum` without the ordering claim: the member SET must match,
-/// the order is the enum's own business. For `c_api.FigFormat`, the one enum
-/// whose order is deliberately not the registry's (it is ordered by ABI
-/// history) and the one still hand-written, until Stage 7 reifies it.
-pub fn assertEnumMembers(
-    comptime E: type,
-    comptime want: []const [:0]const u8,
-    comptime what: []const u8,
-) void {
-    comptime {
-        @setEvalBranchQuota(20_000);
-        for (@typeInfo(E).@"enum".fields) |f| {
-            var found = false;
-            for (want) |w| {
-                if (std.mem.eql(u8, w, f.name)) found = true;
-            }
-            if (!found)
-                @compileError(what ++ " has the member '" ++ f.name ++
-                    "' with no format-registry entry of that name");
-        }
-        for (want) |w| {
-            if (!@hasField(E, w))
-                @compileError(what ++ " has no member for the registry entry '" ++ w ++ "'");
-        }
-    }
-}
-
 // The registry's self-consistency, plus the one derived enum that lives in this
-// file. The cross-module pins — `cli.Format`, `c_api.FigFormat`,
-// `AST.SerializeFormat`, `deserialize.Format`, `Embed.InnerFormat` — cannot be
-// written here (this file sits BELOW all five, and reaching up would invert the
-// dependency), so each lives beside the enum it pins and calls the helpers
-// above.
+// file. What each derived enum still states for itself — the `--spec` spellings
+// beside `resolveSpec`, the ABI integers beside `c_api.FigFormat` — cannot be
+// written here (this file sits BELOW all of them, and reaching up would invert
+// the dependency), so each lives beside the enum it pins.
 comptime {
     @setEvalBranchQuota(50_000);
 
@@ -653,9 +645,9 @@ comptime {
                 "' selects a dialect other than the one its call sites pass today");
     }
 
-    // `entryFor` itself, which nothing else calls until Stage 3 — an unused
-    // comptime function is an unanalyzed one, and a lookup that does not
-    // compile is not a lookup the next stage can build a dispatch idiom on.
+    // `entryFor` itself: the lookup every derived dispatch in the CLI, the
+    // serializer, `embed.zig` and the C ABI opens with, checked here so a
+    // build that touches a format at all also proves the lookup works.
     if (entryFor("json").abi_value != 1 or entryFor("nestedtext").abi_value != 13)
         @compileError("`entryFor` does not return the entry it was asked for");
 

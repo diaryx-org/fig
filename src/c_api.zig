@@ -10,53 +10,22 @@ const Span = @import("util/span.zig");
 const Embed = @import("embed.zig");
 const Editor = @import("editor.zig").Editor;
 const build_options = @import("build_options");
-/// The language registry, for `fig_format_capabilities` to read each format's
-/// declared `caps` instead of restating them. A gated-out format is `void`
-/// here, which is what makes the build gate implicit in `capsOf`.
+/// The language registry (`languages/language.zig`'s `dialects`): the table
+/// `FigFormat` is reified from, and the one every dispatch in this file reads.
+/// A gated-out format is `void` in it — that is the build gate, and it is why
+/// this file no longer names a single `languages/<lang>/…` module directly.
+/// There is nothing left here to keep behind a `build_options.lang_*` test by
+/// hand: each derived arm's first statement is the `d.Lang == void` guard, and
+/// a `void` language has no parser, printer, dialect or `caps` to reach past
+/// it.
 const Languages = @import("languages/language.zig");
-// Gated formats collapse to `void`; every reference below is behind the matching
-// `build_options.lang_*` comptime guard so the parser/printer never compiles in.
-// JSON is gateable too — the editor union and the parse/capability switches all
-// guard their JSON-family arms.
-const JsonParser = if (build_options.lang_json) @import("languages/json/parser.zig") else void;
-const JsonType = if (build_options.lang_json) @import("languages/json/json.zig").Type else void;
-const JsonLang = if (build_options.lang_json) @import("languages/json/json.zig").Language else void;
-const YamlParser = if (build_options.lang_yaml) @import("languages/yaml/parser.zig") else void;
-const YamlType = if (build_options.lang_yaml) @import("languages/yaml/yaml.zig").Type else void;
-const YamlLang = if (build_options.lang_yaml) @import("languages/yaml/yaml.zig").Language else void;
-const TomlParser = if (build_options.lang_toml) @import("languages/toml/parser.zig") else void;
-const TomlType = if (build_options.lang_toml) @import("languages/toml/toml.zig").Type else void;
-const TomlLang = if (build_options.lang_toml) @import("languages/toml/toml.zig").Language else void;
-const ZonParser = if (build_options.lang_zon) @import("languages/zon/parser.zig") else void;
-const ZonType = if (build_options.lang_zon) @import("languages/zon/zon.zig").Type else void;
-const ZonLang = if (build_options.lang_zon) @import("languages/zon/zon.zig").Language else void;
-const XmlParser = if (build_options.lang_xml) @import("languages/xml/parser.zig") else void;
-const XmlType = if (build_options.lang_xml) @import("languages/xml/xml.zig").Type else void;
-const FigDialectParser = if (build_options.lang_fig) @import("languages/fig/parser.zig") else void;
-const FigDialectType = if (build_options.lang_fig) @import("languages/fig/fig.zig").Type else void;
-const FigDialectLang = if (build_options.lang_fig) @import("languages/fig/fig.zig").Language else void;
-const IniParser = if (build_options.lang_ini) @import("languages/ini/parser.zig") else void;
-const IniType = if (build_options.lang_ini) @import("languages/ini/ini.zig").Type else void;
-const IniLang = if (build_options.lang_ini) @import("languages/ini/ini.zig").Language else void;
-const DotenvParser = if (build_options.lang_dotenv) @import("languages/dotenv/parser.zig") else void;
-const DotenvType = if (build_options.lang_dotenv) @import("languages/dotenv/dotenv.zig").Type else void;
-const DotenvLang = if (build_options.lang_dotenv) @import("languages/dotenv/dotenv.zig").Language else void;
-const PropertiesParser = if (build_options.lang_properties) @import("languages/properties/parser.zig") else void;
-const PropertiesType = if (build_options.lang_properties) @import("languages/properties/properties.zig").Type else void;
-const PropertiesLang = if (build_options.lang_properties) @import("languages/properties/properties.zig").Language else void;
-const PlistParser = if (build_options.lang_plist) @import("languages/plist/parser.zig") else void;
-const PlistType = if (build_options.lang_plist) @import("languages/plist/plist.zig").Type else void;
-const PlistLang = if (build_options.lang_plist) @import("languages/plist/plist.zig").Language else void;
-const NestedTextParser = if (build_options.lang_nestedtext) @import("languages/nestedtext/parser.zig") else void;
-const NestedTextType = if (build_options.lang_nestedtext) @import("languages/nestedtext/nestedtext.zig").Type else void;
-const NestedTextLang = if (build_options.lang_nestedtext) @import("languages/nestedtext/nestedtext.zig").Language else void;
-// Cross-format conversion helpers used by `fig_document_serialize`. `Lossless` is
-// format-agnostic (always compiled in); `materialize` is YAML-only, so it follows
-// the gated-import pattern above (collapses to `void` when YAML is off, and every
-// reference to it sits behind the matching comptime guard).
+// Cross-format conversion helpers used by `fig_document_serialize`. `Lossless`
+// is format-agnostic (always compiled in); collapsing YAML's reference layer is
+// reached through the registry as `Lang.materialize` (an optional `Language`
+// decl only YAML declares — see `prepareDocumentAst`) rather than through a
+// gated import of its own.
 const Lossless = @import("lossless.zig");
 const Diagnostics = @import("diagnostics.zig");
-const YamlMaterialize = if (build_options.lang_yaml) @import("languages/yaml/materialize.zig") else void;
 
 /// Logging for the C ABI build (this file is the static-lib root, so its
 /// `std_options` wins). The default `std.log` handler writes to stderr via
@@ -86,67 +55,78 @@ pub const FigStatus = enum(c_int) {
     internal_error = 255,
 };
 
-/// Translation of fig.Language.Type to C ABI. Not every function accepts every
-/// member: `fig_parse` accepts all of them; the serializer (`fig_value_serialize`)
-/// accepts all of them; the editor (`fig_editor_*`) supports every member EXCEPT
-/// `xml` (which returns `unsupported_format` — no in-place XML editor yet). Use
-/// `fig_format_capabilities` to query the exact support in a given build (JSONC =
-/// plain-JSON syntax with comments).
-pub const FigFormat = enum(c_int) {
-    json = 1,
-    jsonc = 2,
-    yaml = 3,
-    toml = 4,
-    zon = 5,
-    /// Read and serialize, not edit: accepted by `fig_parse` and
-    /// `fig_value_serialize`; rejected by `fig_editor_*` with
-    /// `unsupported_format` (no in-place XML editor yet).
-    xml = 6,
-    /// JSON5: read, written, and edited (via `fig_editor_*`). Appended (not
-    /// inserted) to keep the ABI values of the existing members stable.
-    json5 = 7,
-    /// The native `fig` authoring dialect (see src/languages/fig/DESIGN.md).
-    /// Read, written, and edited (via `fig_editor_*`). Appended, same as JSON5.
-    fig = 8,
-    /// INI (`[section]` + `key = value`, `;`/`#` comments). Read, written, and
-    /// edited. Scalars are untyped strings — the grammar carries no type info,
-    /// so `port = 8080` reads back as the string `"8080"`. Appended, stable.
-    ini = 9,
-    /// dotenv / `.env` (flat `KEY=value`, optional `export`, `"`/`'` quoting).
-    /// Read, written, and edited. Flat string map only — no nesting, untyped
-    /// scalars; a nested value tree cannot be represented (serialize warns).
-    dotenv = 10,
-    /// Java `.properties` (flat `key=value`/`:`/space, backslash escapes, line
-    /// continuation, `#`/`!` comments). Read, written, and edited. Flat and
-    /// untyped, same representational limits as dotenv.
-    properties = 11,
-    /// Apple XML property list (`<plist><dict>…</dict></plist>`). Read, written,
-    /// and edited. Genuinely typed and nested (dict/array/string/integer/real/
-    /// bool, with date/data on the `extended` scalar).
-    plist = 12,
-    /// NestedText (https://nestedtext.org). Read, written, and edited. Nested
-    /// (dict/list) but deliberately untyped — every leaf is a string.
-    nestedtext = 13,
+/// Translation of `fig.Language.Type` to the C ABI, REIFIED from the format
+/// registry: one member per `Languages.dialects` entry, named for the entry and
+/// valued at its `abi_value`. Two facts about the result are worth stating,
+/// since neither is visible in the two lines that build it:
+///
+///   * The VALUES are the ABI, and a released one is permanent — which is
+///     exactly why they are registry DATA rather than member positions. They
+///     run 1,2,7 down the JSON family because JSON5 was appended after XML,
+///     and 8..13 for the members that arrived later still. `zig build
+///     abi-check` diffs them against fig.h's `FIG_FORMAT_*` enumerators in
+///     both directions, and the literal pin below restates them a third time.
+///   * The member ORDER is now the registry's (json, jsonc, json5, yaml, …)
+///     rather than the ABI-value order this enum used to be written in.
+///     Nothing depends on it — what a compiled caller holds is the value, and
+///     every switch over this enum is either named-arm or `inline else`.
+///
+/// Not every function accepts every member: `fig_parse` and the serializers
+/// (`fig_value_serialize`, `fig_document_serialize`) accept all of them, while
+/// the editor (`fig_editor_*`) accepts every member EXCEPT `xml` — which has a
+/// reader and a writer but no in-place editor yet, and so returns
+/// `unsupported_format`. That exception is not spelled here either: it is
+/// `XML.caps.edit`, which `fig_editor_create` reads. A format compiled out of
+/// this build is rejected the same way. `fig_format_capabilities` reports the
+/// exact support in a given build; the per-format prose (what each dialect is,
+/// and what it can and cannot represent) lives on the registry entries and in
+/// fig.h. JSONC = plain-JSON syntax with comments.
+pub const FigFormat = @Enum(c_int, .exhaustive, format_names, &format_abi_values);
+
+const format_names = Languages.namesOf(.all);
+
+/// `FigFormat`'s tag values: each registry entry's frozen `abi_value`, in
+/// registry order (so index-for-index with `format_names`).
+const format_abi_values = blk: {
+    var values: [format_names.len]c_int = undefined;
+    var i: usize = 0;
+    for (Languages.dialects) |d| {
+        values[i] = d.abi_value;
+        i += 1;
+    }
+    break :blk values;
 };
 
-// The ABI pin. `FigFormat` is the one derived enum whose ORDER is not the
-// registry's — it is ABI history (JSON5 and fig were appended after XML), and
-// the values are what a compiled caller holds — so membership is checked as a
-// SET and the integers are checked one by one. Together with `zig build
-// abi-check`, which compares the same registry values against fig.h's
-// `FIG_FORMAT_*` enumerators, this makes the C ABI's format numbering
-// build-enforced from three directions: the registry, this enum, and the
-// header. Stage 7 reifies this enum from the registry; until then the assert
-// is what keeps the two in step.
+// The ABI pin, restated as LITERALS. `FigFormat` is now built FROM the registry,
+// so asserting that the two agree would be circular — checking a derivation
+// against what it derives from proves nothing. What is left to state is the
+// contract itself: these thirteen names carry these thirteen integers,
+// permanently, because that pairing is what every compiled caller holds. With
+// `zig build abi-check` (registry vs fig.h's `FIG_FORMAT_*`, both directions)
+// the numbering stays pinned from three independent directions: this literal
+// table, the header, and the registry that now feeds the enum.
 comptime {
-    Languages.assertEnumMembers(FigFormat, Languages.namesOf(.all), "c_api.FigFormat");
-    for (Languages.dialects) |d| {
-        const got = @intFromEnum(@field(FigFormat, d.name));
-        if (got != d.abi_value)
-            @compileError("FigFormat." ++ d.name ++ " is " ++
-                std.fmt.comptimePrint("{d}", .{got}) ++ " but the format registry says " ++
-                std.fmt.comptimePrint("{d}", .{d.abi_value}) ++
-                " — a released ABI value is permanent, so one of the two is a mistake");
+    const pinned = .{
+        .{ "json", 1 },        .{ "jsonc", 2 },       .{ "yaml", 3 },
+        .{ "toml", 4 },        .{ "zon", 5 },         .{ "xml", 6 },
+        .{ "json5", 7 },       .{ "fig", 8 },         .{ "ini", 9 },
+        .{ "dotenv", 10 },     .{ "properties", 11 }, .{ "plist", 12 },
+        .{ "nestedtext", 13 },
+    };
+    if (@typeInfo(FigFormat).@"enum".fields.len != pinned.len)
+        @compileError("`FigFormat` no longer has exactly " ++
+            std.fmt.comptimePrint("{d}", .{pinned.len}) ++ " members — a format added to the" ++
+            " registry is a new C ABI value, so it must be added to this pin (and to fig.h) too");
+    for (pinned) |p| {
+        if (!@hasField(FigFormat, p[0]))
+            @compileError("`FigFormat` has no member '" ++ p[0] ++
+                "' — a released ABI member cannot be renamed or dropped");
+        const got = @intFromEnum(@field(FigFormat, p[0]));
+        if (got != p[1])
+            @compileError("`FigFormat." ++ p[0] ++ "` is " ++
+                std.fmt.comptimePrint("{d}", .{got}) ++ " but the released C ABI says " ++
+                std.fmt.comptimePrint("{d}", .{p[1]}) ++
+                " — a released ABI value is permanent, so the registry entry is the mistake");
     }
 }
 
@@ -206,22 +186,13 @@ pub const FigCapability = enum(u32) {
 /// `format` value. JSON/JSONC/JSON5 are always fully supported. Lets a host pick
 /// a working format up front instead of probing via `unsupported_format` returns.
 pub export fn fig_format_capabilities(format: c_int) u32 {
-    return switch (format) {
-        @intFromEnum(FigFormat.json),
-        @intFromEnum(FigFormat.jsonc),
-        @intFromEnum(FigFormat.json5),
-        => comptime capsOf(Languages.JSON),
-        @intFromEnum(FigFormat.yaml) => comptime capsOf(Languages.YAML),
-        @intFromEnum(FigFormat.toml) => comptime capsOf(Languages.TOML),
-        @intFromEnum(FigFormat.zon) => comptime capsOf(Languages.ZON),
-        @intFromEnum(FigFormat.xml) => comptime capsOf(Languages.XML),
-        @intFromEnum(FigFormat.fig) => comptime capsOf(Languages.FIG),
-        @intFromEnum(FigFormat.ini) => comptime capsOf(Languages.INI),
-        @intFromEnum(FigFormat.dotenv) => comptime capsOf(Languages.DOTENV),
-        @intFromEnum(FigFormat.properties) => comptime capsOf(Languages.PROPERTIES),
-        @intFromEnum(FigFormat.plist) => comptime capsOf(Languages.PLIST),
-        @intFromEnum(FigFormat.nestedtext) => comptime capsOf(Languages.NESTEDTEXT),
-        else => 0,
+    @setEvalBranchQuota(30_000);
+    // An unknown integer reports nothing, which is also what a `void` (compiled
+    // out) language reports — `capsOf` returns 0 for it, so the build gate needs
+    // no test of its own here.
+    const f = std.enums.fromInt(FigFormat, format) orelse return 0;
+    return switch (f) {
+        inline else => |tag| comptime capsOf(Languages.entryFor(@tagName(tag)).Lang),
     };
 }
 
@@ -238,10 +209,12 @@ pub export fn fig_format_capabilities(format: c_int) u32 {
 /// No `build_options.lang_*` test either: a compiled-out format is already
 /// `void` in `languages/language.zig`, which is the same fact the gate stated.
 ///
-/// What is NOT generated, and cannot be, is the mapping above — `FigFormat` is
+/// The mapping above is no longer hand-written either: `FigFormat` is
 /// per-DIALECT (json/jsonc/json5 are three ABI values over one `Language`)
-/// while `caps` is per-LANGUAGE, so the two are different tables and only the
-/// second lives in the manifest. See the proposal's §8.5.
+/// while `caps` is per-LANGUAGE, and the bridge between the two tables is the
+/// format registry's `Lang` field — so the caller looks the entry up by member
+/// name and hands its language straight to this function. See the proposal's
+/// §8.5.
 fn capsOf(comptime Lang: type) u32 {
     if (Lang == void) return 0;
     var bits: u32 = 0;
@@ -386,6 +359,7 @@ pub export fn fig_parse_ex(
     out_doc: ?*?*FigDocument,
     out_err: ?*FigError,
 ) FigStatus {
+    @setEvalBranchQuota(30_000);
     const out = out_doc orelse return fillError(out_err, .invalid_argument, "out_doc is null");
     out.* = null;
 
@@ -396,22 +370,8 @@ pub export fn fig_parse_ex(
     const input = sliceOf(input_ptr, input_len) orelse
         return fillError(out_err, .invalid_argument, "null input with nonzero length");
 
-    const fig_format: FigFormat = switch (format) {
-        @intFromEnum(FigFormat.json) => .json,
-        @intFromEnum(FigFormat.jsonc) => .jsonc,
-        @intFromEnum(FigFormat.json5) => .json5,
-        @intFromEnum(FigFormat.yaml) => .yaml,
-        @intFromEnum(FigFormat.toml) => .toml,
-        @intFromEnum(FigFormat.zon) => .zon,
-        @intFromEnum(FigFormat.xml) => .xml,
-        @intFromEnum(FigFormat.fig) => .fig,
-        @intFromEnum(FigFormat.ini) => .ini,
-        @intFromEnum(FigFormat.dotenv) => .dotenv,
-        @intFromEnum(FigFormat.properties) => .properties,
-        @intFromEnum(FigFormat.plist) => .plist,
-        @intFromEnum(FigFormat.nestedtext) => .nestedtext,
-        else => return fillError(out_err, .unsupported_format, "unsupported or unknown format"),
-    };
+    const fig_format = std.enums.fromInt(FigFormat, format) orelse
+        return fillError(out_err, .unsupported_format, "unsupported or unknown format");
 
     const allocator = activeAllocator();
 
@@ -427,71 +387,17 @@ pub export fn fig_parse_ex(
     // name is the best diagnostic available until per-parser span plumbing lands;
     // `byte_offset`/`line`/`column` stay 0 for now.
     const doc = switch (fig_format) {
-        .json => if (comptime build_options.lang_json)
-            JsonParser.parse(allocator, source, JsonType.JSON) catch |err|
-                return parseFailed(out_err, err, source, handle)
-        else
-            return formatDisabled(out_err, source, handle),
-        .jsonc => if (comptime build_options.lang_json)
-            JsonParser.parse(allocator, source, JsonType.JSONC) catch |err|
-                return parseFailed(out_err, err, source, handle)
-        else
-            return formatDisabled(out_err, source, handle),
-        .json5 => if (comptime build_options.lang_json)
-            JsonParser.parse(allocator, source, JsonType.JSON5) catch |err|
-                return parseFailed(out_err, err, source, handle)
-        else
-            return formatDisabled(out_err, source, handle),
-        .yaml => if (comptime build_options.lang_yaml)
-            YamlParser.parse(allocator, source, YamlType.v1_2_2) catch |err|
-                return parseFailed(out_err, err, source, handle)
-        else
-            return formatDisabled(out_err, source, handle),
-        .toml => if (comptime build_options.lang_toml)
-            TomlParser.parse(allocator, source, TomlType.TOML_1_1) catch |err|
-                return parseFailed(out_err, err, source, handle)
-        else
-            return formatDisabled(out_err, source, handle),
-        .zon => if (comptime build_options.lang_zon)
-            ZonParser.parse(allocator, source, ZonType.ZON) catch |err|
-                return parseFailed(out_err, err, source, handle)
-        else
-            return formatDisabled(out_err, source, handle),
-        .xml => if (comptime build_options.lang_xml)
-            XmlParser.parse(allocator, source, XmlType.XML_1_0) catch |err|
-                return parseFailed(out_err, err, source, handle)
-        else
-            return formatDisabled(out_err, source, handle),
-        .fig => if (comptime build_options.lang_fig)
-            FigDialectParser.parse(allocator, source, FigDialectType.Fig) catch |err|
-                return parseFailed(out_err, err, source, handle)
-        else
-            return formatDisabled(out_err, source, handle),
-        .ini => if (comptime build_options.lang_ini)
-            IniParser.parse(allocator, source, IniType.INI) catch |err|
-                return parseFailed(out_err, err, source, handle)
-        else
-            return formatDisabled(out_err, source, handle),
-        .dotenv => if (comptime build_options.lang_dotenv)
-            DotenvParser.parse(allocator, source, DotenvType.DOTENV) catch |err|
-                return parseFailed(out_err, err, source, handle)
-        else
-            return formatDisabled(out_err, source, handle),
-        .properties => if (comptime build_options.lang_properties)
-            PropertiesParser.parse(allocator, source, PropertiesType.PROPERTIES) catch |err|
-                return parseFailed(out_err, err, source, handle)
-        else
-            return formatDisabled(out_err, source, handle),
-        .plist => if (comptime build_options.lang_plist)
-            PlistParser.parse(allocator, source, PlistType.XML) catch |err|
-                return parseFailed(out_err, err, source, handle)
-        else
-            return formatDisabled(out_err, source, handle),
-        .nestedtext => if (comptime build_options.lang_nestedtext)
-            NestedTextParser.parse(allocator, source, NestedTextType.NESTEDTEXT) catch |err|
-                return parseFailed(out_err, err, source, handle)
-        else
-            return formatDisabled(out_err, source, handle),
+        inline else => |f| blk: {
+            const d = comptime Languages.entryFor(@tagName(f));
+            // The void guard first: a format compiled out of this build has no
+            // parser to call, and reporting that is `formatDisabled`.
+            if (comptime d.Lang == void) return formatDisabled(out_err, source, handle);
+            // `d.dialect` is the language default for every entry but the JSON
+            // trio, which is the whole reason the registry carries it — three
+            // ABI values (json/jsonc/json5) over one parser.
+            break :blk d.Lang.Parser.parse(allocator, source, d.dialect) catch |err|
+                return parseFailed(out_err, err, source, handle);
+        },
     };
 
     handle.* = .{
@@ -881,25 +787,31 @@ pub const FigEditor = opaque {};
 
 // The editor backends, shared by the document editor and the embed editor: a
 // tagged union with one variant per editable language COMPILED INTO THIS BUILD
-// (json/yaml/toml/fig/zon; xml is not editable). The type is assembled from
+// (json/yaml/toml/zon/fig/…; xml is not editable). The type is assembled from
 // only the enabled languages — rather than carrying `void` placeholder fields —
 // so the `inline else` switches over `handle.inner` stay valid: every variant
-// has a real `Editor` payload to act on. Building it from a list (instead of
-// enumerating the 2^5 enable combinations by hand) is what keeps adding a gate
-// cheap.
+// has a real `Editor` payload to act on.
+//
+// Both halves of "editable and enabled" are read rather than restated:
+// `Languages.compiled` is already the enabled list (a gated-out language is
+// absent from it), and `caps.edit` is the format's own declaration of whether
+// an `Editor` can be instantiated for it — the same bit `fig_editor_create`
+// tests and `fig_format_capabilities` reports. This is per-LANGUAGE, not
+// per-dialect: the three JSON dialects share one variant, which is what makes
+// `@unionInit(EditorUnion, d.Lang.name, …)` in `fig_editor_create` land jsonc
+// and json5 on the `json` backend with their own `format` payload.
+//
+// The variant ORDER is `compiled`'s (it was hand-written as json, yaml, toml,
+// fig, zon, … before). Nothing observes it: the tag is internal, never
+// serialized, never crosses the ABI, and every switch over the union is
+// `inline else`.
 const editor_variants = blk: {
     const Variant = struct { name: [:0]const u8, Lang: type };
     var variants: []const Variant = &.{};
-    if (build_options.lang_json) variants = variants ++ &[_]Variant{.{ .name = "json", .Lang = JsonLang }};
-    if (build_options.lang_yaml) variants = variants ++ &[_]Variant{.{ .name = "yaml", .Lang = YamlLang }};
-    if (build_options.lang_toml) variants = variants ++ &[_]Variant{.{ .name = "toml", .Lang = TomlLang }};
-    if (build_options.lang_fig) variants = variants ++ &[_]Variant{.{ .name = "fig", .Lang = FigDialectLang }};
-    if (build_options.lang_zon) variants = variants ++ &[_]Variant{.{ .name = "zon", .Lang = ZonLang }};
-    if (build_options.lang_ini) variants = variants ++ &[_]Variant{.{ .name = "ini", .Lang = IniLang }};
-    if (build_options.lang_dotenv) variants = variants ++ &[_]Variant{.{ .name = "dotenv", .Lang = DotenvLang }};
-    if (build_options.lang_properties) variants = variants ++ &[_]Variant{.{ .name = "properties", .Lang = PropertiesLang }};
-    if (build_options.lang_plist) variants = variants ++ &[_]Variant{.{ .name = "plist", .Lang = PlistLang }};
-    if (build_options.lang_nestedtext) variants = variants ++ &[_]Variant{.{ .name = "nestedtext", .Lang = NestedTextLang }};
+    for (Languages.compiled) |Lang| {
+        if (!Lang.caps.edit) continue;
+        variants = variants ++ &[_]Variant{.{ .name = Lang.name, .Lang = Lang }};
+    }
     break :blk variants;
 };
 
@@ -951,6 +863,7 @@ pub export fn fig_editor_create(
     format: c_int,
     out_editor: ?*?*FigEditor,
 ) FigStatus {
+    @setEvalBranchQuota(30_000);
     const out = out_editor orelse return .invalid_argument;
     out.* = null;
 
@@ -958,48 +871,41 @@ pub export fn fig_editor_create(
     // document; a non-null pointer with a length is read as-is.
     const slice = sliceOf(input_ptr, input_len) orelse return .invalid_argument;
 
-    const fig_format: FigFormat = switch (format) {
-        @intFromEnum(FigFormat.json) => if (comptime build_options.lang_json) .json else return .unsupported_format,
-        @intFromEnum(FigFormat.jsonc) => if (comptime build_options.lang_json) .jsonc else return .unsupported_format,
-        @intFromEnum(FigFormat.json5) => if (comptime build_options.lang_json) .json5 else return .unsupported_format,
-        @intFromEnum(FigFormat.yaml) => if (comptime build_options.lang_yaml) .yaml else return .unsupported_format,
-        @intFromEnum(FigFormat.toml) => if (comptime build_options.lang_toml) .toml else return .unsupported_format,
-        @intFromEnum(FigFormat.fig) => if (comptime build_options.lang_fig) .fig else return .unsupported_format,
-        @intFromEnum(FigFormat.zon) => if (comptime build_options.lang_zon) .zon else return .unsupported_format,
-        @intFromEnum(FigFormat.ini) => if (comptime build_options.lang_ini) .ini else return .unsupported_format,
-        @intFromEnum(FigFormat.dotenv) => if (comptime build_options.lang_dotenv) .dotenv else return .unsupported_format,
-        @intFromEnum(FigFormat.properties) => if (comptime build_options.lang_properties) .properties else return .unsupported_format,
-        @intFromEnum(FigFormat.plist) => if (comptime build_options.lang_plist) .plist else return .unsupported_format,
-        @intFromEnum(FigFormat.nestedtext) => if (comptime build_options.lang_nestedtext) .nestedtext else return .unsupported_format,
-        else => return .unsupported_format,
-    };
+    const fig_format = std.enums.fromInt(FigFormat, format) orelse return .unsupported_format;
 
     const allocator = activeAllocator();
+    // The backend is chosen BEFORE the handle is allocated, so the three ways a
+    // format can be refused — unknown value, compiled out, no in-place editor —
+    // all return without anything to free. `activeAllocator` itself allocates
+    // nothing.
+    const inner: EditorUnion = switch (fig_format) {
+        inline else => |f| blk: {
+            const d = comptime Languages.entryFor(@tagName(f));
+            // Compiled out of this build, and — the xml case — a format with a
+            // reader and a writer but no in-place editor. Both are the same
+            // answer to a caller, and both are read rather than listed: a
+            // `void` language has no `Editor` instantiation, and `caps.edit` is
+            // the format's own declaration (`EditorUnion` is built from exactly
+            // this pair of tests, so a variant is guaranteed to exist below).
+            if (comptime d.Lang == void) return .unsupported_format;
+            if (comptime !d.Lang.caps.edit) return .unsupported_format;
+            // Keyed by the LANGUAGE name, so all three JSON dialects land on the
+            // one `json` variant and separate by payload: jsonc and json5 carry
+            // their own `format`, which is what makes the JSON5 editor accept
+            // unquoted keys, trailing commas and `//` comments (it splices
+            // source in place, so all of that survives untouched outside the
+            // edited span). For every other entry `d.dialect` IS
+            // `Lang.default_type`, which is the field's default.
+            break :blk @unionInit(EditorUnion, d.Lang.name, .{ .allocator = allocator, .format = d.dialect });
+        },
+    };
+
     const handle = allocator.create(EditorHandle) catch return .out_of_memory;
     handle.allocator = allocator;
     // Field-by-field init (not a struct literal), so set the read scratch buffer's
     // default explicitly — otherwise destroy frees uninitialized memory.
     handle.scratch = .empty;
-    handle.inner = switch (fig_format) {
-        .yaml => if (comptime build_options.lang_yaml) .{ .yaml = .{ .allocator = allocator } } else unreachable,
-        .json => if (comptime build_options.lang_json) .{ .json = .{ .allocator = allocator } } else unreachable,
-        .jsonc => if (comptime build_options.lang_json) .{ .json = .{ .allocator = allocator, .format = .JSONC } } else unreachable,
-        // JSON5 edits route through the same generic JSON editor, just in the
-        // JSON5 dialect (unquoted keys, trailing commas, `//` comments). The
-        // editor splices source in place, so all of that survives untouched
-        // outside the edited span.
-        .json5 => if (comptime build_options.lang_json) .{ .json = .{ .allocator = allocator, .format = .JSON5 } } else unreachable,
-        .toml => if (comptime build_options.lang_toml) .{ .toml = .{ .allocator = allocator } } else unreachable,
-        .fig => if (comptime build_options.lang_fig) .{ .fig = .{ .allocator = allocator } } else unreachable,
-        .zon => if (comptime build_options.lang_zon) .{ .zon = .{ .allocator = allocator } } else unreachable,
-        .ini => if (comptime build_options.lang_ini) .{ .ini = .{ .allocator = allocator } } else unreachable,
-        .dotenv => if (comptime build_options.lang_dotenv) .{ .dotenv = .{ .allocator = allocator } } else unreachable,
-        .properties => if (comptime build_options.lang_properties) .{ .properties = .{ .allocator = allocator } } else unreachable,
-        .plist => if (comptime build_options.lang_plist) .{ .plist = .{ .allocator = allocator } } else unreachable,
-        .nestedtext => if (comptime build_options.lang_nestedtext) .{ .nestedtext = .{ .allocator = allocator } } else unreachable,
-        // Filtered out by the format switch above; XML editing is not yet wired.
-        .xml => unreachable,
-    };
+    handle.inner = inner;
 
     switch (handle.inner) {
         inline else => |*e| e.init(slice) catch |err| {
@@ -1627,10 +1533,10 @@ fn embedFrom(em: ?*FigEmbed) ?*EmbedHandle {
 /// `embedHandleFromHost`/`fig_embed_render`).
 fn embedInnerSupported(t: Embed.Type) bool {
     return switch (Embed.innerFormat(t)) {
-        .yaml => build_options.lang_yaml,
-        .json => build_options.lang_json,
-        .fig => build_options.lang_fig,
-        .toml => build_options.lang_toml,
+        // `InnerFormat` is itself reified from the registry, so its members are
+        // registry entries by name and "compiled into this build" is the same
+        // `Lang == void` test every other dispatch here opens with.
+        inline else => |f| comptime Languages.entryFor(@tagName(f)).Lang != void,
     };
 }
 
@@ -1657,10 +1563,13 @@ fn embedHandleFromHost(
         .region = region,
         .body_before = Embed.bodyIsBefore(t),
         .editor = switch (Embed.innerFormat(t)) {
-            .yaml => if (comptime build_options.lang_yaml) .{ .yaml = .{ .allocator = allocator } } else unreachable,
-            .json => if (comptime build_options.lang_json) .{ .json = .{ .allocator = allocator } } else unreachable,
-            .fig => if (comptime build_options.lang_fig) .{ .fig = .{ .allocator = allocator } } else unreachable,
-            .toml => if (comptime build_options.lang_toml) .{ .toml = .{ .allocator = allocator } } else unreachable,
+            inline else => |f| blk: {
+                const d = comptime Languages.entryFor(@tagName(f));
+                // `embedInnerSupported` is the caller's precondition, so a
+                // gated-out inner format never reaches here.
+                if (comptime d.Lang == void) unreachable;
+                break :blk @unionInit(EditorUnion, d.Lang.name, .{ .allocator = allocator, .format = d.dialect });
+            },
         },
     };
     // Decode the content for editing. For `<code>` this entity-decodes into an
@@ -2235,22 +2144,18 @@ fn extKindOf(kind: c_int) ?AST.Node.Kind.Extended.ExtKind {
 /// diagnose silently accepts it). The `FormatDisabled` arms in the printers
 /// remain as defense-in-depth for any path that bypasses this map.
 fn serializeFormatOf(format: c_int) ?AST.SerializeFormat {
-    return switch (format) {
-        @intFromEnum(FigFormat.json) => if (comptime build_options.lang_json) .json else null,
-        // JSONC writes plain-JSON syntax plus `//`/`/* */` comments.
-        @intFromEnum(FigFormat.jsonc) => if (comptime build_options.lang_json) .jsonc else null,
-        @intFromEnum(FigFormat.json5) => if (comptime build_options.lang_json) .json5 else null,
-        @intFromEnum(FigFormat.yaml) => if (comptime build_options.lang_yaml) .yaml else null,
-        @intFromEnum(FigFormat.toml) => if (comptime build_options.lang_toml) .toml else null,
-        @intFromEnum(FigFormat.zon) => if (comptime build_options.lang_zon) .zon else null,
-        @intFromEnum(FigFormat.xml) => if (comptime build_options.lang_xml) .xml else null,
-        @intFromEnum(FigFormat.fig) => if (comptime build_options.lang_fig) .fig else null,
-        @intFromEnum(FigFormat.ini) => if (comptime build_options.lang_ini) .ini else null,
-        @intFromEnum(FigFormat.dotenv) => if (comptime build_options.lang_dotenv) .dotenv else null,
-        @intFromEnum(FigFormat.properties) => if (comptime build_options.lang_properties) .properties else null,
-        @intFromEnum(FigFormat.plist) => if (comptime build_options.lang_plist) .plist else null,
-        @intFromEnum(FigFormat.nestedtext) => if (comptime build_options.lang_nestedtext) .nestedtext else null,
-        else => null,
+    @setEvalBranchQuota(30_000);
+    const f = std.enums.fromInt(FigFormat, format) orelse return null;
+    return switch (f) {
+        inline else => |tag| {
+            const d = comptime Languages.entryFor(@tagName(tag));
+            if (comptime d.Lang == void) return null;
+            // Both enums are reified from the registry, so a member of one is a
+            // member of the other under the same name — `SerializeFormat`
+            // additionally carries `canonical`, which no `FigFormat` value maps
+            // to (see this function's callers, which never see it).
+            return @field(AST.SerializeFormat, d.name);
+        },
     };
 }
 
@@ -2607,23 +2512,42 @@ pub export fn fig_document_serialize(
 /// Errors: `OutOfMemory`, or an un-collapsible YAML reference layer from
 /// `materialize` — both mapped via `convertStatus` at the call site.
 fn prepareDocumentAst(handle: *DocumentHandle, fmt: AST.SerializeFormat, options: ?*const FigSerializeOptions, arena: std.mem.Allocator) !*const AST {
-    const src_is_yaml = handle.format == .yaml;
-    const dst_is_yaml = fmt == .yaml;
+    @setEvalBranchQuota(30_000);
 
-    // Leaving YAML: collapse the reference layer first (strict tag mode, matching
-    // the CLI default — unknown/custom tags become `unsupported_format`).
-    const base_ast: *const AST = if (src_is_yaml and !dst_is_yaml) blk: {
-        if (comptime build_options.lang_yaml) {
+    // Whether the source dialect is being written back out AS ITSELF while
+    // carrying a reference layer — the YAML→YAML case, where the layer already
+    // round-trips and both passes below would only strip it. Derived rather
+    // than named: a language declares `materialize` exactly when it has such a
+    // layer (an optional `Language` decl — see `Decls.optional` in
+    // languages/language.zig), and YAML is the only one in tree that does.
+    const ref_layer_round_trip = switch (handle.format) {
+        inline else => |f| blk: {
+            const d = comptime Languages.entryFor(@tagName(f));
+            if (comptime d.Lang == void or !@hasDecl(d.Lang, "materialize")) break :blk false;
+            break :blk fmt == @field(AST.SerializeFormat, d.name);
+        },
+    };
+
+    // Leaving that dialect for another: collapse the reference layer first
+    // (strict tag mode, matching the CLI default — unknown/custom tags become
+    // `unsupported_format`).
+    const base_ast: *const AST = if (ref_layer_round_trip) &handle.document.ast else switch (handle.format) {
+        inline else => |f| blk: {
+            const d = comptime Languages.entryFor(@tagName(f));
+            // A gated-out source language cannot be `handle.format` at all (the
+            // document was parsed by it), and a language with no reference layer
+            // has nothing to collapse.
+            if (comptime d.Lang == void or !@hasDecl(d.Lang, "materialize")) break :blk &handle.document.ast;
             const mat = try arena.create(AST);
-            mat.* = try YamlMaterialize.materialize(arena, &handle.document.ast, .strict);
+            mat.* = try d.Lang.materialize(arena, &handle.document.ast, .strict);
             break :blk mat;
-        } else unreachable; // src_is_yaml ⇒ YAML was compiled in
-    } else &handle.document.ast;
+        },
+    };
 
     // Lossless: decode any `$fig` envelopes in the source back to real kinds, then
     // re-encode for the target. Skipped for YAML→YAML (its reference layer already
     // round-trips, and the core-AST passes would strip it).
-    if (losslessRequested(options) and !(src_is_yaml and dst_is_yaml)) {
+    if (losslessRequested(options) and !ref_layer_round_trip) {
         // `.canonical` is never yielded by `serializeFormatOf`, so `targetFor`
         // returning null for it here is moot in practice; every other null
         // arm is real (see `Lossless.targetFor`'s doc comment for the
@@ -2638,6 +2562,28 @@ fn prepareDocumentAst(handle: *DocumentHandle, fmt: AST.SerializeFormat, options
         return encoded;
     }
     return base_ast;
+}
+
+// What the two `handle.format == .yaml` / `fmt == .yaml` tests above USED to
+// say, pinned as a literal so replacing them with a derivation is a checked
+// claim rather than an asserted one: of the languages compiled into this build,
+// `yaml` is the only one that declares `materialize`. The dispatch is already
+// general — a second language growing a reference layer would be collapsed
+// correctly without another edit there — so this pin exists to make that a
+// DELIBERATE change (extend the list here) rather than a silent one.
+comptime {
+    for (Languages.dialects) |d| {
+        if (d.Lang == void) continue;
+        const declares = @hasDecl(d.Lang, "materialize");
+        const expected = std.mem.eql(u8, d.name, "yaml");
+        if (declares and !expected)
+            @compileError("'" ++ d.name ++ "' now declares `materialize`, so `prepareDocumentAst`" ++
+                " collapses its reference layer on the way out — correct, but new: add it to this" ++
+                " pin once that is what you meant");
+        if (!declares and expected)
+            @compileError("`yaml` no longer declares `materialize`, so `fig_document_serialize` has" ++
+                " stopped collapsing its reference layer when leaving YAML");
+    }
 }
 
 // ==================

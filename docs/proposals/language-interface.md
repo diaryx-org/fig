@@ -8,11 +8,11 @@ part_of = [proposals](proposals.md)
 
 # A declared Language interface
 
-> **Status: Steps 1 and 2 implemented; Steps 3–5 not started, Step 4
-> withdrawn.** The manifest exists (`src/languages/manifest.zig`), all eleven
-> formats declare one, and the §2A/§2B/§2C parameter branches are gone from
-> `editor.zig`. See §9 for exactly what landed and the two places the plan
-> below was not followed.
+> **Status: Steps 1, 2 and 3 implemented; Step 4 withdrawn, Step 5 not
+> started.** The manifest exists (`src/languages/manifest.zig`), all eleven
+> formats declare one, and `editor.zig` no longer names a format outside its
+> own tests and §2E's nine `@compileError` guards. See §9 for what Steps 1–2
+> landed and §10 for Step 3.
 >
 > The site catalogue in §2 was taken against `main` at 5c7b97b (fig 2.5.3) and
 > remains the reference account of what a format has to supply; its line
@@ -20,7 +20,8 @@ part_of = [proposals](proposals.md)
 >
 > **§8 corrects §3, §4, §5 and §7 against the same commit.** One claim in §3 —
 > that exclusive operations can stop existing — does not compile on the pinned
-> Zig, and Step 4 rested on it. Read §8 before acting on those sections.
+> Zig, and Step 4 rested on it. Read §8 before acting on those sections; §10.3
+> corrects one more of §8's own claims.
 
 `Language.validate` ([src/languages/language.zig][validate]) states a
 four-declaration contract: `Type`, `default_type`, `parse`, `print`. That is
@@ -521,6 +522,181 @@ Verification: `zig build check` is byte-identical to the pre-change baseline
 conformance corpus is at baseline, and three language-gating configurations
 build. Both bridge and registry loop were confirmed live by deliberately
 breaking a manifest value and a required declaration.
+
+## 10. Outcome, Step 3 (2026-08-06)
+
+All 32 §2D sites are gone. `editor.zig` now contains **no `if (Language == X)`
+at all**: the nine `Language != Toml`/`!= Fig` guards on §2E's exclusive
+operations remain, exactly as §8.1 concluded they should, and the language tags
+otherwise survive only for this file's own tests.
+
+**Shape.** A format declares a hook as a `pub` decl on its `Language` struct,
+named for the `Editor` method it takes over, in an "Editing hooks" block below
+`syntax`. The engine dispatches on presence:
+
+```zig
+if (@hasDecl(Language, "insertKey"))
+    return Language.insertKey(self, parsed, path, node, span, key_text, value_text);
+```
+
+Seventeen distinct hook names, thirty declarations, across six formats —
+plist 10, NestedText 8, fig 5, YAML 3, TOML 2, INI 2. The bodies stay in
+`<lang>/editor_helper.zig`; what moved onto `<lang>/<lang>.zig` is the
+declaration *and the reason*, which is where §5's Step 0 wanted the rationale
+comments to land. Each hook's signature is fixed by its single call site and
+documented on the method it overrides, in a `**Hook**` paragraph.
+
+The comptime-cycle argument in §3 holds up: `<lang>/<lang>.zig` importing its
+own `editor_helper.zig` — which imports `editor.zig`, which imports
+`<lang>/<lang>.zig` — resolves, because `@hasDecl` does not force the decl's
+value and the declaration itself is lazy.
+
+### 10.1 Four things the plan did not anticipate
+
+**A predicate hook, not an operation override.** §2D filed YAML's two
+merge-key sites under "guards and recoveries", and §3 offers only whole-op
+replacement for them. But the two sites do *different* things with the same
+answer — `replaceValAtPath` shadows the inherited key with a local entry,
+`deleteKey` refuses with `MergeOnlyKey` — so what is language-specific is the
+QUESTION, not the policy. It landed as `keyIsInherited(parsed, path) !bool`,
+consulted through a private `Editor` wrapper that returns false when no hook
+exists. That default is the whole reason both `NotFound` recovery sites now
+carry no language test: a format with no reference layer answers false, which
+is correct rather than merely convenient.
+
+**Three sites collapsed before dispatch, not after.** §2's site count assumes
+one dispatch per branch. Two hooks beat that: `seqItemLineStart`'s three
+identical guards became one private `leadingCommentLineStart`, and
+`keyIsInherited`'s two became one private wrapper. Five §2D/§2C sites, three
+dispatch points. That is a real reduction the plan had no way to predict from
+counting branches, and it argues for reading the sites before pricing the work.
+
+**`deleteKeyGuard` moved code out of `editor.zig`, not just dispatch.** TOML's
+`CannotDeleteTable` and fig's `CannotDeleteContainer` were written *inline* in
+`deleteKey`, not delegated — only INI's was a helper call. Unifying the three
+under one hook meant lifting TOML's and fig's logic into their
+`editor_helper.zig` as `tableDeleteGuard`/`containerDeleteGuard`. The three
+turn out to refuse the same hazard in three grammars — an entry whose value is
+a SCATTERED container that a line-based delete would half-remove — which is
+now stated once, at the dispatch.
+
+**One dispatch position had to move.** plist's `appendToSeq`/`prependToSeq`
+branches sat *above* the generic `isFlow` and `block_seq_editable` checks while
+fig's and NestedText's sat below, and one hook cannot occupy two positions. It
+was unified at the lower position, which is behaviour-preserving for plist by
+construction rather than by testing: a plist container's span runs from its
+opening `<` (`plist/parser.zig`'s `extent`), so `isFlow` — which tests for `{`,
+`[` or `.{` — is false for every plist node, and `block_seq_editable` is the
+declared default. This is the only place in Step 3 where the transformation was
+not purely mechanical.
+
+### 10.2 Signature normalization
+
+A hook has one call site, so it has one signature, so the per-format helpers
+had to converge on it. Five changes, all mechanical:
+
+- The three narrow `insertKey` helpers (INI, plist, NestedText) widened to the
+  full `(self, parsed, path, node, span, key_text, value_text)`.
+- TOML's and fig's `insertKey` dropped their `is_root: bool` parameter and
+  derive it as `path.len == 0`, removing an argument that could disagree with
+  the `path` beside it.
+- YAML's and fig's `reframeMappingValue` absorbed the
+  `activeTag(path[path.len - 1]) == .key` guard that used to sit in the engine,
+  falling through to `self.replaceAtSpan` themselves. The guard was never
+  generic — it is the statement "only a mapping value can change framing",
+  which is a claim about those two grammars.
+- plist's and NestedText's replace helpers widened to the same
+  `(self, parsed, path, node, span, replacement)`.
+- YAML's alias-follow branch became `replaceAliasTarget`, which hands a
+  non-alias target back to `self.replaceValAtPath` — which is precisely
+  `replaceValAtPathFollowing`'s documented contract, so the fall-through in the
+  engine and the fall-through in the hook say the same thing.
+
+Ignored parameters (`_ = path; _ = span;`) are the cost, and they are worth
+paying: a uniform signature is what §4's typed checks will have to assert
+against, and a hook that receives the engine's full context can be re-scoped
+later without touching the call site.
+
+### 10.3 §8.6's import claim was too strong
+
+> `editor.zig` hard-imports nine language type tags and eight helper modules
+> (lines 21–71). `@hasDecl` dispatch deletes all seventeen.
+
+Four of seventeen. The helper imports for YAML, INI, plist and NestedText are
+gone; `toml_edit` and `fig_edit` stay for §2E's exclusive operations, and
+`zon_edit` stays because `appendFieldName` is reached through `key_style` — the
+rendering half of a syntax parameter, not an operation override. All nine tags
+stay: `Toml` and `Fig` for the §2E guards, the rest because `editor.zig`'s own
+tests instantiate `Editor(Yaml)`, `Editor(Zon)` and so on.
+
+The underlying claim survives in the form that matters, and is stronger than a
+count: **`editor.zig`'s non-test code names no format except in §2E's nine
+compile-error guards.** The remaining imports are not couplings of the engine
+to a format — they are the exclusive-operation surface and the test surface,
+both of which are supposed to name formats.
+
+### 10.4 §6's open question, answered
+
+> Under that rule only plist and NestedText clearly keep hooks throughout …
+> TOML and fig are borderline and should be decided during Step 3.
+
+Both kept hooks, and for different reasons. TOML's two are genuinely
+structural: `insertKey` has to scan a table's header region to find where a new
+entry attaches without being reparented, which is not a knob. fig's five are
+less clear-cut — `appendToSeq`/`prependToSeq` exist to copy the `>` marker-run
+prefix, and `structural_indent` already declares that trait as a parameter, so
+generalizing `insertSeqLine` to consult it would plausibly retire both. That
+was not attempted here: it changes generic code rather than moving it, which is
+a different risk than the rest of Step 3, and it should be its own change.
+
+The parameter/hook line held everywhere else. Nothing that landed as a hook
+looks like a knob in retrospect, and the ZON case that motivated §2C's
+"push traits down" stayed retired — ZON still declares no hooks at all.
+
+### 10.5 What Step 5 now knows
+
+§5 deferred hardening `validate` until "the hook set is empirically known
+rather than guessed". It now is: seventeen names, listed above, plus the
+required set §9 already enforces and the `printNode`/`materialize`/`TagMode`
+decls §8.3 catalogued.
+
+The typo hazard §4 argues from is not hypothetical, and was confirmed live:
+renaming NestedText's `insertKey` declaration to `insertkey` **compiles
+cleanly**, silently falls back to the generic block insert, and is caught only
+because NestedText happens to have tests over that exact path. A format
+overriding an operation *because the generic one corrupts its files* is exactly
+the case where the fallback is worst and the coverage is least certain. §4's
+job 2 is the fix, and it is now specifiable rather than guessable.
+
+Two smaller notes for that work. `keyIsInherited` and `seqItemLineStart` are
+not `Editor` method names — they are a predicate and a sub-computation — so an
+allowlist cannot be derived mechanically from `Editor`'s public surface. And
+§9's reason for not adding typed checks inside `Editor()` still stands:
+`@TypeOf(Language.insertKey)` names `Editor(Language)`, so the typed and
+coherence checks belong in `language.zig`'s registry loop, where no
+instantiation is in flight.
+
+### 10.6 Verification
+
+`zig build check` is byte-identical to the pre-change baseline — 2278/2281,
+3 skipped, the one failure the pre-existing TypeScript-binding test, which
+fails the same way on the parent commit. Every conformance corpus is at
+baseline, plist and NestedText included (both only compile under `zig build
+conformance`, which was run after every hook family rather than only at the
+end). Four language-gating configurations build: all optional formats off;
+everything on including plist, xml and canonical; plist on with NestedText and
+INI off; and the default. Configurations that disable json, yaml, toml or fig
+fail on the CLI and LSP's hard dependencies on those formats — on clean `main`
+as well, so they are not gating configurations this change can be held to.
+
+Dispatch was confirmed live by the typo experiment in §10.5: with one hook
+declaration misspelled, three NestedText tests fail with the generic
+implementation's output. Nothing about the hook set is inferred from the fact
+that the suite passes.
+
+**§7's payoff is still not collected.** `fig_format_capabilities` spells out
+its eleven triples by hand and `cli/args.zig` still special-cases `.env` and
+`.nt`. That is untouched by Step 3 and remains the cheapest work left.
 
 [manifest]: /src/languages/manifest.zig
 [validate]: /src/languages/language.zig

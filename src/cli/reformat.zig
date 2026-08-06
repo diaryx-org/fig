@@ -42,23 +42,7 @@ pub fn reformatSlice(
     };
     try reports.reportWarnings(term, content, file_path, quiet, strict);
 
-    const target: fig.AST.SerializeFormat = switch (format) {
-        .json => .json,
-        .jsonc => .jsonc,
-        .json5 => .json5,
-        .yaml, .yml => .yaml,
-        .toml => .toml,
-        .zon => .zon,
-        .canonical => .canonical,
-        .fig => .fig,
-        .xml => .xml,
-        .ini => .ini,
-        .dotenv => .dotenv,
-        .properties => .properties,
-        .plist => .plist,
-        .nestedtext => .nestedtext,
-        .gron => unreachable, // rejected up front above
-    };
+    const target: fig.AST.SerializeFormat = types.toSerializeFormat(format) orelse unreachable; // rejected up front above
 
     if (!quiet or strict) {
         const warnings = try fig.Diagnostics.analyze(allocator, &doc.ast, doc.ast.root, target, .{
@@ -161,16 +145,11 @@ pub fn convertSlice(
     } else &doc.ast;
 
     const ast: *const fig.AST = if (lossless and !(src_is_yaml and dst_is_yaml)) blk: {
-        const maybe_target: ?fig.Lossless.Target = switch (to) {
-            .json, .jsonc, .json5, .gron => .json,
-            .yaml, .yml => .yaml,
-            .toml => .toml,
-            .zon => .zon,
-            // XML has no envelope of its own — see the matching comment on the
-            // `.get` action's twin switch above. INI/dotenv/plist are the
-            // same story.
-            .canonical, .fig, .xml, .ini, .dotenv, .properties, .plist, .nestedtext => null,
-        };
+        // `to` is never `.gron` here (rejected up front above), so it always
+        // has a `SerializeFormat` counterpart — see `Lossless.targetFor` for
+        // the per-format rationale (JSON5 reuse, canonical/fig decode-only,
+        // XML/INI/dotenv/properties/plist/NestedText's lack of an envelope).
+        const maybe_target: ?fig.Lossless.Target = fig.Lossless.targetFor(types.toSerializeFormat(to) orelse unreachable);
         const decoded = try allocator.create(fig.AST);
         decoded.* = try fig.Lossless.decode(allocator, base_ast);
         const target = maybe_target orelse break :blk decoded;
@@ -179,23 +158,7 @@ pub fn convertSlice(
         break :blk encoded;
     } else base_ast;
 
-    const target: fig.AST.SerializeFormat = switch (to) {
-        .json => .json,
-        .jsonc => .jsonc,
-        .json5 => .json5,
-        .yaml, .yml => .yaml,
-        .toml => .toml,
-        .zon => .zon,
-        .canonical => .canonical,
-        .fig => .fig,
-        .xml => .xml,
-        .ini => .ini,
-        .dotenv => .dotenv,
-        .properties => .properties,
-        .plist => .plist,
-        .nestedtext => .nestedtext,
-        .gron => unreachable, // rejected up front above
-    };
+    const target: fig.AST.SerializeFormat = types.toSerializeFormat(to) orelse unreachable; // rejected up front above
 
     if (!quiet or strict) {
         const warnings = try fig.Diagnostics.analyze(allocator, ast, ast.root, target, .{

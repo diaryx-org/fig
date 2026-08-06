@@ -345,39 +345,18 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     // losslessly already. The passes operate on a core AST, so any
     // non-YAML source (or a materialized YAML source) is safe.
     const ast: *const fig.AST = if (opts.lossless and !(src_is_yaml and dst_is_yaml)) blk: {
-        const maybe_target: ?fig.Lossless.Target = switch (to) {
-            // JSON5 reuses the JSON envelope target. It could hold
-            // Infinity/NaN natively, so this is conservative (those ride
-            // in a `$fig` envelope) but still fully lossless.
-            // gron's value layer is JSON, so it shares the JSON envelope
-            // target: an unrepresentable value (a TOML datetime, etc.)
-            // rides in a `$fig` envelope that prints as a JSON object.
-            .json, .jsonc, .json5, .gron => .json,
-            .yaml, .yml => .yaml,
-            .toml => .toml,
-            .zon => .zon,
-            // Canonical encodes every node kind directly, so no envelope
-            // is needed on output — only decode envelopes found in input.
-            // fig shares canonical's node model (same AST, no distinct
-            // envelope value-space of its own), so it gets the same
-            // decode-only treatment; a node fig can't natively spell
-            // (non-string key, YAML alias, scalar root) is the
-            // documented "no authoring spelling" gap — fall to
-            // `canonical`/`--lossless` with a different `--to` instead.
-            // (A scalar root specifically makes the fig printer hard-error
-            // with `FigUnrepresentableRoot` rather than emit non-conforming
-            // text — see `languages/fig/printer.zig`'s `root`.)
-            // XML has no envelope of its own either: every scalar
-            // collapses to element/attribute text regardless (see
-            // `languages/xml/printer.zig`), so an envelope couldn't
-            // preserve anything a plain print doesn't already lose. INI is
-            // the same story (also no typed scalars of its own). plist DOES
-            // have typed scalars, but has no `Lossless.Target` envelope of
-            // its own yet either — a separate future phase, same boundary
-            // as XML/INI/dotenv/properties today. NestedText is the same
-            // story (also no typed scalars, no envelope of its own).
-            .canonical, .fig, .xml, .ini, .dotenv, .properties, .plist, .nestedtext => null,
-        };
+        // gron is CLI-only — it has no `SerializeFormat`/`Lossless.Target` of
+        // its own — but its value layer is JSON, so it shares the JSON
+        // envelope target: an unrepresentable value (a TOML datetime, etc.)
+        // rides in a `$fig` envelope that prints as a JSON object. Every
+        // other format maps through its `SerializeFormat` counterpart (see
+        // `Lossless.targetFor` for the rest of the rationale: JSON5 reuse,
+        // canonical/fig decode-only, XML/INI/dotenv/properties/plist/
+        // NestedText's lack of an envelope of their own).
+        const maybe_target: ?fig.Lossless.Target = if (to == .gron)
+            .json
+        else
+            fig.Lossless.targetFor(types.toSerializeFormat(to) orelse unreachable); // gron handled above
         const decoded = try a.create(fig.AST);
         decoded.* = try fig.Lossless.decode(a, base_ast);
         const target = maybe_target orelse break :blk decoded;
@@ -400,23 +379,7 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
         return;
     }
 
-    const target: fig.AST.SerializeFormat = switch (to) {
-        .json => .json,
-        .jsonc => .jsonc,
-        .json5 => .json5,
-        .yaml, .yml => .yaml,
-        .toml => .toml,
-        .zon => .zon,
-        .canonical => .canonical,
-        .fig => .fig,
-        .xml => .xml,
-        .ini => .ini,
-        .dotenv => .dotenv,
-        .properties => .properties,
-        .plist => .plist,
-        .nestedtext => .nestedtext,
-        .gron => unreachable, // handled by the early return above
-    };
+    const target: fig.AST.SerializeFormat = types.toSerializeFormat(to) orelse unreachable; // handled by the early return above
 
     // Surface everything the conversion would silently lose (comments
     // dropped/degraded, values dropped/degraded) — unless `--quiet`. The

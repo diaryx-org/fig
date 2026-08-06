@@ -28,6 +28,32 @@ const gron = @import("gron.zig");
 // `AST.SerializeFormat` counterpart.
 pub const Format = enum { json, jsonc, json5, yaml, yml, toml, zon, xml, canonical, fig, gron, ini, dotenv, properties, plist, nestedtext };
 
+/// The `AST.SerializeFormat` counterpart of a CLI format, or null for gron (a
+/// CLI-only projection with no serializer — the `get`/`fmt`/`convert` handlers
+/// intercept it before reaching the serializer dispatch; see each call site's
+/// own early return/`orelse unreachable`). `yml` collapses onto `yaml`, same
+/// as gron's `.gron` mapping to `.json` in the callers that still need one
+/// (the lossless-envelope target switches) — every other member is identity.
+pub fn toSerializeFormat(f: Format) ?fig.AST.SerializeFormat {
+    return switch (f) {
+        .json => .json,
+        .jsonc => .jsonc,
+        .json5 => .json5,
+        .yaml, .yml => .yaml,
+        .toml => .toml,
+        .zon => .zon,
+        .canonical => .canonical,
+        .fig => .fig,
+        .xml => .xml,
+        .ini => .ini,
+        .dotenv => .dotenv,
+        .properties => .properties,
+        .plist => .plist,
+        .nestedtext => .nestedtext,
+        .gron => null,
+    };
+}
+
 pub const CliAction = enum {
     help,
     version,

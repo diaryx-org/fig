@@ -2603,21 +2603,12 @@ fn prepareDocumentAst(handle: *DocumentHandle, fmt: AST.SerializeFormat, options
     // re-encode for the target. Skipped for YAML→YAML (its reference layer already
     // round-trips, and the core-AST passes would strip it).
     if (losslessRequested(options) and !(src_is_yaml and dst_is_yaml)) {
-        const target: ?Lossless.Target = switch (fmt) {
-            .json, .jsonc, .json5 => .json,
-            .yaml => .yaml,
-            .toml => .toml,
-            .zon => .zon,
-            // None of these has a `Lossless.Target` counterpart, so all fall
-            // through to decode-only (no envelope on output): `.canonical` is
-            // never yielded by `serializeFormatOf`; `.fig` has no envelope
-            // encoding of its own yet; and XML/INI/dotenv/.properties/plist/
-            // NestedText have no type-carrying envelope to encode into — their
-            // scalars are plain text (or, for plist, a fixed DTD-typed element),
-            // so an envelope couldn't preserve anything an envelope-free print
-            // doesn't already lose.
-            .canonical, .fig, .xml, .ini, .dotenv, .properties, .plist, .nestedtext => null,
-        };
+        // `.canonical` is never yielded by `serializeFormatOf`, so `targetFor`
+        // returning null for it here is moot in practice; every other null
+        // arm is real (see `Lossless.targetFor`'s doc comment for the
+        // per-format rationale — `.fig`, XML/INI/dotenv/.properties/plist/
+        // NestedText have no envelope of their own to encode into).
+        const target: ?Lossless.Target = Lossless.targetFor(fmt);
         const decoded = try arena.create(AST);
         decoded.* = try Lossless.decode(arena, base_ast);
         const t = target orelse return decoded;

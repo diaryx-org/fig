@@ -52,6 +52,27 @@ const sentinel = "$fig";
 /// `yml` to `yaml` for capability purposes (same type system).
 pub const Target = enum { json, yaml, toml, zon };
 
+/// The `Target` a serialize format's envelope pass should use, or null when
+/// `fmt` has no `Target` counterpart at all. JSON5 reuses the JSON envelope
+/// target — it could hold `Infinity`/`NaN` natively, so this is conservative
+/// (those ride in a `$fig` envelope regardless) but still fully lossless.
+/// `canonical` and `fig` encode/decode every node kind directly, so neither
+/// needs an envelope on output (only input envelopes get decoded) — same as
+/// XML, INI, dotenv, `.properties`, plist, and NestedText, none of which has
+/// a typed-scalar envelope of its own (a plain print already loses nothing
+/// an envelope could have preserved). Callers with a CLI-only format on top
+/// of `SerializeFormat` (gron, `yml`) resolve their own arm before/via
+/// `toSerializeFormat` and consult this for everything else.
+pub fn targetFor(fmt: AST.SerializeFormat) ?Target {
+    return switch (fmt) {
+        .json, .jsonc, .json5 => .json,
+        .yaml => .yaml,
+        .toml => .toml,
+        .zon => .zon,
+        .canonical, .fig, .xml, .ini, .dotenv, .properties, .plist, .nestedtext => null,
+    };
+}
+
 pub const Error = Allocator.Error;
 
 /// Does `target` need the lossless envelope to represent `kind` without loss?

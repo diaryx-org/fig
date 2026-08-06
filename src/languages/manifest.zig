@@ -93,48 +93,46 @@ pub const Caps = struct {
 /// registry entry in `language.zig` carries `?EmbedSpellings`, and null is the
 /// statement that the format has no embedded form.
 ///
-/// NOTHING READS THIS YET. `embed.zig`'s four literal tables
+/// These fields ARE `embed.zig`'s spelling tables: its four literal builders
 /// (`fencedLiteral`/`frontmatterLiteral`/`scriptLiteral`/`codeLiteral`) and its
-/// two resolvers (`formatFromLangTag`/`formatFromScriptMime`) are still
-/// hand-written switches; deriving them from these fields is Stage 6 of the
-/// format-registry work. Until then this is a declaration that the comptime
-/// asserts pin and the compiler carries, so the values here must reproduce
-/// `embed.zig`'s exactly.
+/// two resolvers (`formatFromLangTag`/`formatFromScriptMime`) are one
+/// `inline`-over-the-registry each, so a value changed here changes the bytes
+/// a host document is written with and the spellings it is read back from.
 pub const EmbedSpellings = struct {
     /// The ```` ```<tag> ```` info-string this format writes for a fenced
     /// block, WITHOUT the backticks — `embed.zig`'s `fencedLiteral` is
     /// ```` "```" ++ fence_tag ````. Also the canonical spelling
-    /// `formatFromLangTag` resolves (Stage 6).
+    /// `formatFromLangTag` resolves.
     fence_tag: []const u8,
 
     /// Extra `<tag>` spellings `formatFromLangTag` accepts for this format on
-    /// READ but never writes — `yml` for YAML, `figl` for fig (Stage 6).
-    /// Matched case-insensitively, like the canonical tag.
+    /// READ but never writes — `yml` for YAML, `figl` for fig. Matched
+    /// case-insensitively, like the canonical tag.
     fence_aliases: []const []const u8 = &.{},
 
     /// The WHOLE `---<lang>` frontmatter opener, not just the tag: YAML's is a
     /// bare `---` (the ecosystem default — an untagged frontmatter block IS
     /// YAML), while every other format tags it. The one field here that is a
     /// literal rather than a token, because that asymmetry has no token to
-    /// carry it. Consumed by Stage 6's `frontmatterLiteral`.
+    /// carry it. `frontmatterLiteral` emits it verbatim.
     frontmatter: []const u8,
 
     /// The `type` attribute an `html_script` block is written with —
-    /// `scriptLiteral` is `<script type="` ++ script_mime ++ `">`. Consumed by
-    /// Stage 6, along with `formatFromScriptMime`'s canonical arm.
+    /// `scriptLiteral` is `<script type="` ++ script_mime ++ `">`. Also
+    /// `formatFromScriptMime`'s canonical arm.
     script_mime: []const u8,
 
     /// Extra `type` MIMEs `formatFromScriptMime` accepts on READ but never
     /// writes — `application/x-yaml`/`text/yaml`, `application/ld+json`,
-    /// `application/fig` (Stage 6). Matched case-insensitively.
+    /// `application/fig`. Matched case-insensitively.
     script_mime_aliases: []const []const u8 = &.{},
 
     /// The `class` token an `html_code` block is written with —
     /// `codeLiteral` is `<pre><code class="` ++ code_class ++ `">`. Note fig's
     /// is `language-figl` while its fence tag is `fig`: the two spellings
-    /// genuinely differ in `embed.zig` today. On READ the class token's
-    /// `language-`/`lang-` suffix is resolved by `formatFromLangTag`, so
-    /// `fence_aliases` covers reading and this covers writing (Stage 6).
+    /// genuinely differ. On READ the class token's `language-`/`lang-`
+    /// suffix is resolved by `formatFromLangTag`, so `fence_aliases` covers
+    /// reading and this covers writing.
     code_class: []const u8,
 };
 

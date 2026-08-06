@@ -44,18 +44,19 @@ pub const NESTEDTEXT = if (build_options.lang_nestedtext) @import("nestedtext/ne
 // spellings) that today live scattered across six files as switches nothing
 // cross-checks.
 //
-// As of this stage FOUR of those enums are REIFIED from it rather than merely
-// pinned against it — `Detected` below, `cli.Format`, `AST.SerializeFormat`
-// and `deserialize.Format` are all `@Enum` over `namesOf(…)` — along with
-// `cli/args.zig`'s extension table. The two that remain hand-written,
-// `c_api.FigFormat` (Stage 7) and `Embed.InnerFormat` (Stage 6), still carry
-// the `comptime` asserts that fail the build the moment they and the registry
-// disagree. Of the per-dialect FACTS, the CLI's dispatch now READS the splice
-// style, empty-document seed and `--spec` strings, and the serializer reads the
-// printer names (`ast/serialize_options.zig`, whose three switches are one
-// `inline else` each over `@field(d.Lang.Printer, d.print_name)`); only the
-// embedded spellings are still asserted rather than consumed, and their
-// switches are converted in Stage 6.
+// As of this stage FIVE of those enums are REIFIED from it rather than merely
+// pinned against it — `Detected` below, `cli.Format`, `AST.SerializeFormat`,
+// `deserialize.Format` and `Embed.InnerFormat` are all `@Enum` over
+// `namesOf(…)` — along with `cli/args.zig`'s extension table. The one that
+// remains hand-written, `c_api.FigFormat` (Stage 7), still carries the
+// `comptime` asserts that fail the build the moment it and the registry
+// disagree. Every per-dialect FACT is now read rather than restated: the CLI's
+// dispatch takes the splice style, empty-document seed and `--spec` strings,
+// the serializer takes the printer names (`ast/serialize_options.zig`, whose
+// three switches are one `inline else` each over
+// `@field(d.Lang.Printer, d.print_name)`), and `embed.zig` takes the embedded
+// spellings — its four literal builders and two tag/MIME resolvers are one
+// `inline` over the registry each.
 
 /// `Lang.Type` when `Lang` is compiled in, `void` when it is gated out.
 ///
@@ -188,8 +189,11 @@ fn Entry(comptime L: type) type {
         specs: []const SpecName(L) = &.{},
 
         /// How this format spells itself inside a host document, or null when
-        /// it has no embedded form (`Embed.InnerFormat` is exactly the four
-        /// entries where this is non-null). Consumed in Stage 6.
+        /// it has no embedded form (`Embed.InnerFormat` is REIFIED from
+        /// exactly the entries where this is non-null). `embed.zig` builds
+        /// every fence, frontmatter marker, `<script type>` and `<code class>`
+        /// it writes — and every tag/MIME it accepts on read — out of these
+        /// fields, so they are the spelling, not a description of it.
         embed: ?manifest.EmbedSpellings = null,
     };
 }
@@ -201,7 +205,7 @@ fn Entry(comptime L: type) type {
 ///
 ///   * ORDER. It IS the member order of every enum derived from it
 ///     (`Detected`, `cli.Format`, `SerializeFormat`, `deserialize.Format`
-///     already; `Embed.InnerFormat` and `c_api.FigFormat` in Stages 6-7), and
+///     and `Embed.InnerFormat` already; `c_api.FigFormat` in Stage 7), and
 ///     reproduces the pre-registry `cli.Format` order minus its two
 ///     non-registry members (`canonical`, which is not a `Language` at all,
 ///     and `gron`, a CLI-only projection — both spliced back by hand at their
@@ -556,9 +560,9 @@ pub fn assertDerivedEnum(
 }
 
 /// `assertDerivedEnum` without the ordering claim: the member SET must match,
-/// the order is the enum's own business. For the two enums whose order is
-/// deliberately not the registry's (`c_api.FigFormat`, ordered by ABI history;
-/// `Embed.InnerFormat`, internal-only and reordered in Stage 6).
+/// the order is the enum's own business. For `c_api.FigFormat`, the one enum
+/// whose order is deliberately not the registry's (it is ordered by ABI
+/// history) and the one still hand-written, until Stage 7 reifies it.
 pub fn assertEnumMembers(
     comptime E: type,
     comptime want: []const [:0]const u8,

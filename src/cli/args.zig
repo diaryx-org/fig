@@ -192,31 +192,47 @@ comptime {
 /// unknown name.
 pub fn embedTypeFromName(name: []const u8) ?fig.Embed.Type {
     const eql = std.mem.eql;
-    // Markdown `---<lang>` frontmatter (bare `---` ⇒ yaml).
+
+    // The four PARAMETRIC families, derived: every embeddable format is
+    // reachable in every parametric container as `<container>-<format>`. The
+    // container half is this file's own spelling (there is no container
+    // registry — `Embed.Type`'s union tags are it); the `<format>` half is the
+    // registry entry's name, which is also the `InnerFormat` member name, so a
+    // format that grows an embedded spelling arrives here with all of its
+    // archetype names at once.
+    inline for (@typeInfo(fig.Embed.InnerFormat).@"enum".fields) |field| {
+        const f: fig.Embed.InnerFormat = @enumFromInt(field.value);
+        // `md-yaml` is deliberately not a spelling: a bare `---` block IS YAML
+        // frontmatter, so it answers to `frontmatter`/`frontmatter-yaml` below
+        // — which is what the `--help` prose documents and what `set`'s
+        // open-or-init default resolves to.
+        if (comptime !eql(u8, field.name, "yaml")) {
+            if (eql(u8, name, "md-" ++ field.name)) return .{ .frontmatter = f };
+        }
+        if (eql(u8, name, "fenced-" ++ field.name)) return .{ .fenced = f };
+        if (eql(u8, name, "html-script-" ++ field.name)) return .{ .html_script = f };
+        if (eql(u8, name, "html-code-" ++ field.name)) return .{ .html_code = f };
+    }
+
+    // The rest are not `<container>-<format>` pairs and do not derive: legacy
+    // spellings that predate the parametric families, and the blessed presets
+    // whose delimiter is its own distinct token rather than a language tag.
+    //
+    // Markdown `---` frontmatter (bare ⇒ yaml; see the `md-yaml` note above).
     if (eql(u8, name, "frontmatter") or eql(u8, name, "frontmatter-yaml")) return .{ .frontmatter = .yaml };
-    if (eql(u8, name, "md-json")) return .{ .frontmatter = .json };
-    if (eql(u8, name, "md-toml")) return .{ .frontmatter = .toml };
-    if (eql(u8, name, "md-fig")) return .{ .frontmatter = .fig };
-    // Fenced ```<lang> (`frontmatter-fig` is the legacy alias of `fenced-fig`).
-    if (eql(u8, name, "fenced-yaml")) return .{ .fenced = .yaml };
-    if (eql(u8, name, "fenced-json")) return .{ .fenced = .json };
-    if (eql(u8, name, "fenced-toml")) return .{ .fenced = .toml };
-    if (eql(u8, name, "fenced-fig") or eql(u8, name, "frontmatter-fig")) return .{ .fenced = .fig };
+    // `frontmatter-fig` is the legacy alias of `fenced-fig` — it names a FENCED
+    // block, not `---fig` frontmatter, which is why it cannot ride the loop.
+    if (eql(u8, name, "frontmatter-fig")) return .{ .fenced = .fig };
     // Blessed distinct-delimiter presets (`frontmatter-json/-toml` are the
     // historical names for the `;;;`/`+++` blocks).
     if (eql(u8, name, "semicolons") or eql(u8, name, "frontmatter-json")) return .semicolons_json;
     if (eql(u8, name, "plus") or eql(u8, name, "frontmatter-toml")) return .plus_toml;
     if (eql(u8, name, "endmatter") or eql(u8, name, "endmatter-yaml")) return .endmatter_yaml;
-    // HTML `<script type="application/<lang>">` data islands.
-    if (eql(u8, name, "html-script") or eql(u8, name, "html-script-fig")) return .{ .html_script = .fig };
-    if (eql(u8, name, "html-script-yaml")) return .{ .html_script = .yaml };
-    if (eql(u8, name, "html-script-json")) return .{ .html_script = .json };
-    if (eql(u8, name, "html-script-toml")) return .{ .html_script = .toml };
-    // HTML `<pre><code class="language-<lang>">` visible code blocks.
-    if (eql(u8, name, "html-code") or eql(u8, name, "html-code-fig")) return .{ .html_code = .fig };
-    if (eql(u8, name, "html-code-yaml")) return .{ .html_code = .yaml };
-    if (eql(u8, name, "html-code-json")) return .{ .html_code = .json };
-    if (eql(u8, name, "html-code-toml")) return .{ .html_code = .toml };
+    // The bare container names, whose default format is fig rather than the
+    // registry's first entry — a deliberate choice this project made, not a
+    // fact the registry states.
+    if (eql(u8, name, "html-script")) return .{ .html_script = .fig };
+    if (eql(u8, name, "html-code")) return .{ .html_code = .fig };
     return null;
 }
 
@@ -231,12 +247,15 @@ pub const embed_archetype_names = "frontmatter, md-json, md-toml, md-fig, fenced
 /// keeping a same-named-extension guess that doesn't match the archetype —
 /// e.g. `--embed frontmatter-fig` on a `.md` file, whose extension alone
 /// says nothing about which archetype it actually is).
+///
+/// A name identity, not a mapping: both enums draw their members from the same
+/// format registry, so an `InnerFormat` member and the `Format` member it means
+/// are the same string by construction. (`Format` is the larger of the two —
+/// every embeddable format is a CLI format, but not every CLI format has an
+/// embedded spelling — so `@field` is total in this direction only.)
 pub fn embedFormat(t: fig.Embed.Type) Format {
     return switch (fig.Embed.innerFormat(t)) {
-        .yaml => .yaml,
-        .json => .json,
-        .fig => .fig,
-        .toml => .toml,
+        inline else => |f| @field(Format, @tagName(f)),
     };
 }
 
@@ -1121,6 +1140,36 @@ test "embedTypeFromName maps archetype names" {
     try t.expectEqual(@as(?fig.Embed.Type, .plus_toml), embedTypeFromName("frontmatter-toml"));
     try t.expectEqual(@as(?fig.Embed.Type, .endmatter_yaml), embedTypeFromName("endmatter"));
     try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("bogus"));
+
+    // The parametric families are derived over the format registry, so the
+    // ACCEPTED SET is what needs pinning rather than any one row: all four
+    // formats in each of the three `<container>-<format>` families, plus the
+    // three-of-four `md-<format>` one, and nothing else.
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = .json }), embedTypeFromName("fenced-json"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = .toml }), embedTypeFromName("fenced-toml"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = .fig }), embedTypeFromName("fenced-fig"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = .json }), embedTypeFromName("md-json"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = .fig }), embedTypeFromName("md-fig"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = .fig }), embedTypeFromName("html-script"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = .fig }), embedTypeFromName("html-script-fig"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = .yaml }), embedTypeFromName("html-script-yaml"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = .json }), embedTypeFromName("html-script-json"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = .toml }), embedTypeFromName("html-script-toml"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = .fig }), embedTypeFromName("html-code"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = .fig }), embedTypeFromName("html-code-fig"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = .yaml }), embedTypeFromName("html-code-yaml"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = .json }), embedTypeFromName("html-code-json"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = .toml }), embedTypeFromName("html-code-toml"));
+    try t.expectEqual(@as(?fig.Embed.Type, .semicolons_json), embedTypeFromName("semicolons"));
+    try t.expectEqual(@as(?fig.Embed.Type, .plus_toml), embedTypeFromName("plus"));
+    try t.expectEqual(@as(?fig.Embed.Type, .endmatter_yaml), embedTypeFromName("endmatter-yaml"));
+
+    // Deliberately NOT spellings: `md-yaml` (a bare `---` block IS YAML
+    // frontmatter — `frontmatter`/`frontmatter-yaml` name it), and the
+    // container names that never had a bare form.
+    try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("md-yaml"));
+    try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("fenced"));
+    try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("md"));
 }
 
 test "detectLanguageFromFileEnding: .md/.markdown defer the archetype to a runtime sniff" {

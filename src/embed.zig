@@ -62,16 +62,58 @@ const Match = union(enum) {
 /// carries one of these as its parameter (`fenced`/`frontmatter`/`html_script`);
 /// the blessed presets each pin one. Named so callers outside this file can name
 /// it too — see `innerFormat`.
-pub const InnerFormat = enum { yaml, json, fig, toml };
+///
+/// Derived from the format registry: its members are exactly the entries
+/// carrying an `EmbedSpellings` (`languages/language.zig`'s `dialects`), in
+/// registry order — json, yaml, toml, fig. That order is NOT the one the
+/// hand-written enum this replaces had (yaml, json, fig, toml), which is
+/// harmless precisely here and nowhere else: `InnerFormat` is internal — it has
+/// no ABI value (the C `FigEmbedType` mirror carries its own frozen integers),
+/// no CLI token, and no `@intFromEnum`/`@enumFromInt`/`EnumArray` reader
+/// anywhere in the tree — so reordering it is a pure renumbering of values
+/// nothing observes.
+pub const InnerFormat = @Enum(
+    Language.EnumTag(inner_format_names),
+    .exhaustive,
+    inner_format_names,
+    &Language.enumValues(inner_format_names),
+);
 
-// Pinned against the format registry: this enum's members are exactly the
-// entries carrying `EmbedSpellings`. MEMBERSHIP only, deliberately — this is
-// the one derived enum whose order is not the registry's, and it is also the
-// only one where that is harmless: it is internal (no ABI value, no CLI token,
-// no `@intFromEnum` dependency), so Stage 6 reifies it into registry order —
-// json, yaml, toml, fig — as a pure renumbering.
+const inner_format_names = Language.namesOf(.embeddable);
+
+// Membership is now true by construction, so what is left to state is the
+// INTENT the registry's `embed` fields encode: which formats have an embedded
+// spelling at all. Dropping one would silently delete an archetype family
+// (every `--embed fenced-<lang>`/`md-<lang>` spelling of it), and adding a
+// fifth is a real decision — the CLI's `--embed` names, the C `FigEmbedType`
+// mirror and the `--help` prose all have to grow with it.
 comptime {
-    Language.assertEnumMembers(InnerFormat, Language.namesOf(.embeddable), "Embed.InnerFormat");
+    if (inner_format_names.len != 4)
+        @compileError("the set of formats with an embedded spelling changed — `cli/args.zig`'s" ++
+            " `embedTypeFromName` legacy aliases, `embed_archetype_names`, and `c_api.zig`'s" ++
+            " `FigEmbedType` all enumerate them by hand and must grow (or shrink) with it");
+    for ([_][]const u8{ "json", "yaml", "toml", "fig" }) |want| {
+        if (!@hasField(InnerFormat, want))
+            @compileError("the format-registry entry '" ++ want ++ "' no longer declares an" ++
+                " `embed` spelling, so its embedded form has silently disappeared");
+    }
+    // `initRegion` seeds a freshly created region with `empty_doc_seed`, and it
+    // has nowhere to report a format that refuses to be created from scratch:
+    // its whole job is to synthesize a block. A format that can be embedded
+    // must therefore have an empty form (`null` is XML's answer, and XML has no
+    // embedded spelling), which is what makes the `.?` there total.
+    for (inner_format_names) |n| {
+        if (Language.entryFor(n).empty_doc_seed == null)
+            @compileError("the format-registry entry '" ++ n ++ "' has an embedded spelling but no" ++
+                " `empty_doc_seed`, so `Embed.initRegion` has nothing to seed a new region with");
+    }
+}
+
+/// The `EmbedSpellings` of the registry entry `f` names. Total over
+/// `InnerFormat` by construction: its members ARE the entries carrying one, so
+/// the `.?` cannot fire.
+fn spellings(comptime f: InnerFormat) @TypeOf(Language.entryFor(@tagName(f)).embed.?) {
+    return comptime Language.entryFor(@tagName(f)).embed.?;
 }
 
 /// Resolve a `fenced`/`frontmatter` language tag (a code-fence info string's
@@ -79,56 +121,62 @@ comptime {
 /// this project understands, so a ```` ```python ```` code sample or a `---foo`
 /// line is left alone rather than mistaken for embedded config. `yml`/`figl` are
 /// accepted spellings of `yaml`/`fig`.
+///
+/// The accepted spellings are the registry's `fence_tag` plus its
+/// `fence_aliases`, per entry. Tag sets are disjoint across formats, so the
+/// order this walks them in is not observable.
 fn formatFromLangTag(tag: []const u8) ?InnerFormat {
     const eq = std.ascii.eqlIgnoreCase;
-    if (eq(tag, "yaml") or eq(tag, "yml")) return .yaml;
-    if (eq(tag, "json")) return .json;
-    if (eq(tag, "toml")) return .toml;
-    if (eq(tag, "fig") or eq(tag, "figl")) return .fig;
+    inline for (@typeInfo(InnerFormat).@"enum".fields) |field| {
+        const f: InnerFormat = @enumFromInt(field.value);
+        const s = comptime spellings(f);
+        if (eq(tag, s.fence_tag)) return f;
+        inline for (s.fence_aliases) |alias| {
+            if (eq(tag, alias)) return f;
+        }
+    }
     return null;
 }
 
 /// Resolve an HTML `<script type>` MIME to a config format, or null. Accepts the
 /// canonical `application/<lang>` plus a few established aliases (`ld+json` for
 /// JSON-LD, `application/figl` for the fig authoring dialect, `x-yaml`/`text/*`
-/// for YAML). Mirrors `formatFromLangTag` for the HTML projection.
+/// for YAML). Mirrors `formatFromLangTag` for the HTML projection — the
+/// registry's `script_mime` plus its `script_mime_aliases`, per entry.
 fn formatFromScriptMime(mime: []const u8) ?InnerFormat {
     const eq = std.ascii.eqlIgnoreCase;
-    if (eq(mime, "application/yaml") or eq(mime, "application/x-yaml") or eq(mime, "text/yaml")) return .yaml;
-    if (eq(mime, "application/json") or eq(mime, "application/ld+json")) return .json;
-    if (eq(mime, "application/toml")) return .toml;
-    if (eq(mime, "application/figl") or eq(mime, "application/fig")) return .fig;
+    inline for (@typeInfo(InnerFormat).@"enum".fields) |field| {
+        const f: InnerFormat = @enumFromInt(field.value);
+        const s = comptime spellings(f);
+        if (eq(mime, s.script_mime)) return f;
+        inline for (s.script_mime_aliases) |alias| {
+            if (eq(mime, alias)) return f;
+        }
+    }
     return null;
 }
 
 /// The canonical ```` ```<lang> ```` open fence a `fenced` archetype emits.
 fn fencedLiteral(f: InnerFormat) []const u8 {
     return switch (f) {
-        .yaml => "```yaml",
-        .json => "```json",
-        .toml => "```toml",
-        .fig => "```fig",
+        inline else => |x| comptime "```" ++ spellings(x).fence_tag,
     };
 }
 
 /// The canonical `---<lang>` open a `frontmatter` archetype emits — a bare `---`
-/// for YAML (the ecosystem default), a tagged `---<lang>` otherwise.
+/// for YAML (the ecosystem default), a tagged `---<lang>` otherwise. The one
+/// literal the registry carries whole rather than as a token, because that
+/// asymmetry has no token to carry it (see `EmbedSpellings.frontmatter`).
 fn frontmatterLiteral(f: InnerFormat) []const u8 {
     return switch (f) {
-        .yaml => "---",
-        .json => "---json",
-        .toml => "---toml",
-        .fig => "---fig",
+        inline else => |x| comptime spellings(x).frontmatter,
     };
 }
 
 /// The canonical `<script type="…">` open tag an `html_script` archetype emits.
 fn scriptLiteral(f: InnerFormat) []const u8 {
     return switch (f) {
-        .yaml => "<script type=\"application/yaml\">",
-        .json => "<script type=\"application/json\">",
-        .toml => "<script type=\"application/toml\">",
-        .fig => "<script type=\"application/figl\">",
+        inline else => |x| comptime "<script type=\"" ++ spellings(x).script_mime ++ "\">",
     };
 }
 
@@ -136,10 +184,7 @@ fn scriptLiteral(f: InnerFormat) []const u8 {
 /// emits (closed by `</code></pre>`).
 fn codeLiteral(f: InnerFormat) []const u8 {
     return switch (f) {
-        .yaml => "<pre><code class=\"language-yaml\">",
-        .json => "<pre><code class=\"language-json\">",
-        .toml => "<pre><code class=\"language-toml\">",
-        .fig => "<pre><code class=\"language-figl\">",
+        inline else => |x| comptime "<pre><code class=\"" ++ spellings(x).code_class ++ "\">",
     };
 }
 
@@ -694,16 +739,18 @@ pub fn initRegion(allocator: Allocator, source: []const u8, t: Type) !Initialize
     const a = archetypeOf(t);
     const open_tok = delimLiteral(a.open);
     const close_tok = delimLiteral(a.close);
-    // The empty inner document seeded between the fences. JSON gets a trailing
-    // newline so the close fence stays on its own line after the flow-mapping
-    // insert (which preserves it); YAML's, fig's, and TOML's block inserts emit
-    // their own newline, so their empty content needs none. Those three all seed
-    // empty because an empty document is a valid empty map / empty root table
-    // (see `fig/parser.zig`'s `buildRoot`), so a subsequent set/insert lands the
-    // first key into it.
+    // The empty inner document seeded between the fences — the format
+    // registry's `empty_doc_seed`, which is also what a from-scratch `fig set`
+    // writes into a brand-new FILE of that format (`cli/edit_ops.zig`'s
+    // `emptyDocSeed`), so a fresh region and a fresh file can no longer
+    // disagree. JSON gets a trailing newline so the close fence stays on its
+    // own line after the flow-mapping insert (which preserves it); YAML's,
+    // fig's, and TOML's block inserts emit their own newline, so their empty
+    // content needs none. Those three all seed empty because an empty document
+    // is a valid empty map / empty root table (see `fig/parser.zig`'s
+    // `buildRoot`), so a subsequent set/insert lands the first key into it.
     const seed: []const u8 = switch (a.inner) {
-        .yaml, .fig, .toml => "",
-        .json => "{}\n",
+        inline else => |f| comptime Language.entryFor(@tagName(f)).empty_doc_seed.?,
     };
 
     var host: std.ArrayList(u8) = .empty;
@@ -796,25 +843,20 @@ pub fn parseSpan(allocator: Allocator, source: []const u8, content: Span, t: Typ
     return parseSlice(allocator, Span.of(u8, content, source), archetypeOf(t).inner);
 }
 
-/// Parse a raw content slice as `inner`.
+/// Parse a raw content slice as `inner` — the shared per-format parse behind
+/// `extract`/`parseSpan`, dispatched through the format registry. A format
+/// compiled out of this build is still an `InnerFormat` member (registry
+/// entries are build-invariant, so an embed region is still *located* and
+/// *retyped* in a build that cannot parse it); the void guard is what turns
+/// reaching its parser into `error.FormatDisabled`.
 fn parseSlice(allocator: Allocator, slice: []const u8, inner: InnerFormat) !Document {
     return switch (inner) {
-        .yaml => if (comptime build_options.lang_yaml) blk: {
-            var parser = Language.YAML.Parser{ .allocator = allocator };
-            break :blk Language.YAML.parse(&parser, slice, Language.YAML.default_type);
-        } else error.FormatDisabled,
-        .json => if (comptime build_options.lang_json) blk: {
-            var parser = Language.JSON.Parser{ .allocator = allocator };
-            break :blk Language.JSON.parse(&parser, slice, Language.JSON.default_type);
-        } else error.FormatDisabled,
-        .fig => if (comptime build_options.lang_fig) blk: {
-            var parser = Language.FIG.Parser{ .allocator = allocator };
-            break :blk Language.FIG.parse(&parser, slice, Language.FIG.default_type);
-        } else error.FormatDisabled,
-        .toml => if (comptime build_options.lang_toml) blk: {
-            var parser = Language.TOML.Parser{ .allocator = allocator };
-            break :blk Language.TOML.parse(&parser, slice, Language.TOML.default_type);
-        } else error.FormatDisabled,
+        inline else => |f| {
+            const d = comptime Language.entryFor(@tagName(f));
+            if (comptime d.Lang == void) return error.FormatDisabled;
+            var parser = d.Lang.Parser{ .allocator = allocator };
+            return d.Lang.parse(&parser, slice, d.dialect);
+        },
     };
 }
 
@@ -1162,6 +1204,55 @@ test "innerFormat reports each archetype's content format" {
     try testing.expectEqual(InnerFormat.yaml, innerFormat(.{ .fenced = .yaml }));
     try testing.expectEqual(InnerFormat.json, innerFormat(.{ .fenced = .json }));
     try testing.expectEqual(InnerFormat.toml, innerFormat(.{ .fenced = .toml }));
+}
+
+test "the four spelling tables are derived, and still spell exactly what they used to" {
+    // `fencedLiteral`/`frontmatterLiteral`/`scriptLiteral`/`codeLiteral` and the
+    // two resolvers are built from the format registry's `EmbedSpellings`. These
+    // are the BYTES a host document is written with and read back from, so they
+    // are pinned here literally rather than re-derived — a test that recomputed
+    // them from the registry would agree with any change at all.
+    try testing.expectEqualStrings("```yaml", fencedLiteral(.yaml));
+    try testing.expectEqualStrings("```json", fencedLiteral(.json));
+    try testing.expectEqualStrings("```toml", fencedLiteral(.toml));
+    try testing.expectEqualStrings("```fig", fencedLiteral(.fig));
+
+    try testing.expectEqualStrings("---", frontmatterLiteral(.yaml)); // bare: untagged IS yaml
+    try testing.expectEqualStrings("---json", frontmatterLiteral(.json));
+    try testing.expectEqualStrings("---toml", frontmatterLiteral(.toml));
+    try testing.expectEqualStrings("---fig", frontmatterLiteral(.fig));
+
+    try testing.expectEqualStrings("<script type=\"application/yaml\">", scriptLiteral(.yaml));
+    try testing.expectEqualStrings("<script type=\"application/json\">", scriptLiteral(.json));
+    try testing.expectEqualStrings("<script type=\"application/toml\">", scriptLiteral(.toml));
+    try testing.expectEqualStrings("<script type=\"application/figl\">", scriptLiteral(.fig));
+
+    try testing.expectEqualStrings("<pre><code class=\"language-yaml\">", codeLiteral(.yaml));
+    try testing.expectEqualStrings("<pre><code class=\"language-json\">", codeLiteral(.json));
+    try testing.expectEqualStrings("<pre><code class=\"language-toml\">", codeLiteral(.toml));
+    // `language-figl`, while the fence tag is `fig` — the two genuinely differ.
+    try testing.expectEqualStrings("<pre><code class=\"language-figl\">", codeLiteral(.fig));
+
+    // Canonical tags, the read-only aliases, case folding, and a non-config tag.
+    try testing.expectEqual(InnerFormat.yaml, formatFromLangTag("yaml"));
+    try testing.expectEqual(InnerFormat.yaml, formatFromLangTag("yml"));
+    try testing.expectEqual(InnerFormat.yaml, formatFromLangTag("YAML"));
+    try testing.expectEqual(InnerFormat.json, formatFromLangTag("json"));
+    try testing.expectEqual(InnerFormat.toml, formatFromLangTag("toml"));
+    try testing.expectEqual(InnerFormat.fig, formatFromLangTag("fig"));
+    try testing.expectEqual(InnerFormat.fig, formatFromLangTag("figl"));
+    try testing.expectEqual(@as(?InnerFormat, null), formatFromLangTag("python"));
+    try testing.expectEqual(@as(?InnerFormat, null), formatFromLangTag("endmatter"));
+
+    try testing.expectEqual(InnerFormat.yaml, formatFromScriptMime("application/yaml"));
+    try testing.expectEqual(InnerFormat.yaml, formatFromScriptMime("application/x-yaml"));
+    try testing.expectEqual(InnerFormat.yaml, formatFromScriptMime("text/yaml"));
+    try testing.expectEqual(InnerFormat.json, formatFromScriptMime("application/json"));
+    try testing.expectEqual(InnerFormat.json, formatFromScriptMime("application/ld+json"));
+    try testing.expectEqual(InnerFormat.toml, formatFromScriptMime("application/toml"));
+    try testing.expectEqual(InnerFormat.fig, formatFromScriptMime("application/figl"));
+    try testing.expectEqual(InnerFormat.fig, formatFromScriptMime("application/fig"));
+    try testing.expectEqual(@as(?InnerFormat, null), formatFromScriptMime("text/javascript"));
 }
 
 test "extract: TOML frontmatter (+++ fences) locates and parses" {

@@ -8,11 +8,12 @@ part_of = [proposals](proposals.md)
 
 # A declared Language interface
 
-> **Status: Steps 1, 2 and 3 implemented; Step 4 withdrawn, Step 5 not
-> started.** The manifest exists (`src/languages/manifest.zig`), all eleven
-> formats declare one, and `editor.zig` no longer names a format outside its
-> own tests and §2E's nine `@compileError` guards. See §9 for what Steps 1–2
-> landed and §10 for Step 3.
+> **Status: Steps 1, 2, 3 and 5 implemented; Step 4 withdrawn.** The manifest
+> exists (`src/languages/manifest.zig`), all eleven formats declare one,
+> `editor.zig` no longer names a format outside its own tests and §2E's nine
+> `@compileError` guards, and `validate` enforces a closed declaration set
+> checked by `zig build validate-check`. See §9 for Steps 1–2, §10 for Step 3,
+> §11 for Step 5. What remains of this proposal is §7's payoff alone.
 >
 > The site catalogue in §2 was taken against `main` at 5c7b97b (fig 2.5.3) and
 > remains the reference account of what a format has to supply; its line
@@ -698,6 +699,134 @@ that the suite passes.
 its eleven triples by hand and `cli/args.zig` still special-cases `.env` and
 `.nt`. That is untouched by Step 3 and remains the cheapest work left.
 
+## 11. Outcome, Step 5 (2026-08-06)
+
+`validate` now enforces a closed declaration set and four coherence rules, and
+`zig build validate-check` asserts that it actually refuses. Step 5 was
+supposed to be last; it went second-to-last because **Step 3 made the hazard it
+closes strictly worse.** Before hooks, a mistyped format name
+(`if (Language == Plsit)`) could not compile. After hooks, `pub const insertkey`
+compiles, silently runs the generic implementation the format overrode
+*because that implementation corrupts its files*, and the first symptom is a
+bad write. Step 3's win was not fully paid for until this landed.
+
+### 11.1 The inventory, taken rather than remembered
+
+§8.3's warning — that an allowlist built from §4's remembered list "rejects the
+entire tree on the day it lands" — was taken seriously: the set was extracted by
+a throwaway comptime probe over `@typeInfo(Lang).@"struct".decls`, not by
+reading files. Three things came out of it that a careful reading would have got
+wrong:
+
+- **`decls` lists only PUBLIC declarations.** The `const edit =
+  @import("editor_helper.zig")` that opens every hooks block is invisible to the
+  allowlist and needs no exemption. Had that gone the other way, every format
+  would have needed a special case.
+- **The distinct hook count is 17, not the 18 §10 first claimed.** Thirty
+  declarations across six formats, but `insertKey`, `replaceValAtPath`,
+  `appendToSeq`, `prependToSeq` and `deleteKeyGuard` each recur. §10 has been
+  corrected.
+- **plist has no `printNode`,** matching §8.3 exactly, and xml has neither
+  `printNode` nor `syntax` — the read-only case `required_edit` exists for.
+
+### 11.2 §4's own coherence rule was wrong
+
+> `trailing_comment == null` alongside a declared `setTrailingComment` is a
+> contradiction.
+
+plist is exactly that pair, and plist is correct. It declares
+`trailing_comment = null` because `<!-- ... -->` is a delimiter pair with no
+leader, and hooks all six comment ops precisely so the null is never read. A
+hook does not consult the marker; a null marker beside a hook is not a
+contradiction, it is the hook making the marker irrelevant.
+
+The useful rule is the near-opposite, and it is the one now enforced: with no
+line-comment marker in **any** dialect, every comment op is either hooked or
+permanently `CommentsUnsupported`, so hooking *some but not all* is a dropped
+delegation rather than a decision. `plist.zig` already wrote down the fear this
+addresses — "if a delegation were ever dropped, the op fails loudly with
+`CommentsUnsupported`" — and this turns that runtime refusal into a compile
+error.
+
+The four rules that landed: a trailing marker with no line marker (pre-existing);
+`caps.edit = false` beside any editing hook; a block-sequence hook under
+`block_seq_editable = false`, which the engine refuses before ever reaching;
+and the comment rule above. The last two are dead-code checks, provable from
+where §10's dispatch sits — a hook the engine cannot call is a silent no-op,
+and silent is the whole problem.
+
+### 11.3 Typed hook checks were considered and not built
+
+§4 job 1 wants declarations "present and correctly typed". Presence is now
+enforced; typing is not, and the reason is empirical rather than budgetary. Two
+probes:
+
+- Binding a hook to a **wrong-signature** function already fails loudly, at the
+  call site: `editor.zig:697: expected 3 argument(s), found 7`. A typed check in
+  `validate` would move that message, not create it.
+- Binding a hook to the **wrong function of the right signature** —
+  `appendToSeq = ntPrependItem` — compiles, and no type system catches it. Three
+  NestedText tests do.
+
+So typed checks sit between an error that is already loud and an error they
+cannot see. The detection gap was the *name*, and the allowlist closes it. This
+is recorded rather than left implicit because "correctly typed" reads like an
+omission otherwise.
+
+§9's constraint still holds and is why this is not merely deferred:
+`@TypeOf(Language.insertKey)` names `Editor(Language)`, so any typed check must
+run from the registry loop, never from inside `Editor()`.
+
+### 11.4 The harness (§6's open question, closed)
+
+> Zig has no built-in way to assert that a `@compileError` fires, so the thing
+> §4 rests on cannot be unit-tested in tree.
+
+[`tools/validate-check.zig`][vcheck] is the `tools/` script §6 proposed. Nine
+fixture languages, each with one deliberate defect, each compiled with
+`zig build-obj` and asserted to fail *with the message its rule should produce*
+— matching on a substring chosen to pin the rule rather than the phrasing. Wired
+to `zig build validate-check` and into `zig build check`.
+
+Two design points worth keeping:
+
+**The positive control is load-bearing.** Case 0 is a well-formed fixture that
+must COMPILE. Without it, a probe that stops building for an unrelated reason
+turns every negative case green while testing nothing — the characteristic
+failure of compile-failure suites. It is not a hypothetical: it fired twice
+during development, both times on module wiring, and reported harness breakage
+instead of nine false passes. The harness was also meta-tested by disabling the
+allowlist in `validate`, which turned exactly the two cases that rule owns red
+and left the other seven alone.
+
+**The fixture module has to be rooted at `src/root.zig`.** A probe in a work
+directory cannot `@import` an absolute path outside its module path, and rooting
+the module at `languages/language.zig` puts `src/document.zig` and
+`src/editor.zig` — which the language modules reach for — outside it. The
+fixture's `build_options` compiles every real format out, so `language.zig`'s
+registry loop skips all eleven and the fixture is the only thing under test.
+
+### 11.5 Verification
+
+`zig build check` is at baseline plus the new step — 2278/2281, 3 skipped, the
+one failure still the TypeScript-binding test, which needs Node 24 (spun off
+separately; it is a dev-environment floor, not a product bug, since `dist/*.js`
+carries no raw `using`). Conformance at baseline. Four language-gating
+configurations build. `validate-check` reports 9/9.
+
+One incidental cost: the closed-set scan is `decls × known-names` per format
+across eleven formats, which exceeds Zig's default 1000-branch comptime budget,
+so `validate` raises it to 20,000. That is a per-evaluation quota, not a leak.
+
+**What is left of this proposal is §7's payoff and nothing else.**
+`fig_format_capabilities` still spells out its eleven `read | edit | serialize`
+triples by hand and `cli/args.zig` still special-cases `.env` and `.nt`, while
+`caps` and `extensions` sit declared, validated and unread. Per §8.5 it is a
+smaller win than the body claims — the `FigFormat`→`Language` mapping is
+per-dialect and cannot be generated from here — but it is now the only step
+still standing.
+
+[vcheck]: /tools/validate-check.zig
 [manifest]: /src/languages/manifest.zig
 [validate]: /src/languages/language.zig
 [editor]: /src/editor.zig

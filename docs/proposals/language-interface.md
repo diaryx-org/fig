@@ -17,6 +17,10 @@ part_of = [proposals](proposals.md)
 > consumers rather than restated. See §9 for Steps 1–2, §10 for Step 3, §11 for
 > Step 5, §12 for §7's payoff.
 >
+> Implemented on `main` after fig 2.5.3, and not yet in a release — this is
+> internal structure, so it carries no API or ABI change (`abi-check`: 86
+> symbols, unchanged). Update this line with the version that ships it.
+>
 > The follow-on this proposal names but does not attempt — the five parallel
 > format enumerations and the `build_options` switches keyed on them — remains
 > open and should be its own proposal (§7, §12.4).

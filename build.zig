@@ -93,6 +93,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .strip = strip,
+        .cfg = cfg,
         .options_mod = options_mod,
         .ver = ver,
     };

@@ -19,6 +19,11 @@ target: std.Build.ResolvedTarget,
 optimize: std.builtin.OptimizeMode,
 /// Whether to strip debug info (`-Dstrip`, defaulting to on for ReleaseSmall).
 strip: bool,
+/// The resolved `-D` configuration behind `options_mod`. The module is what
+/// artifacts IMPORT; this is the same values readable by the build script
+/// itself, for decisions the build graph has to make rather than the compiled
+/// code — chiefly whether to build an artifact at all.
+cfg: Options.BuildOptions,
 /// The one `build_options` module instance, shared by every artifact. Built
 /// once because `addOptions` per-module would generate a fresh module from the
 /// same generated file, which Zig rejects ("file belongs to two modules").

@@ -32,6 +32,26 @@ Now the code is compiled!
   <p>By default, <code>fig</code> compiles in "Debug" mode, which essentially means "as quickly as possible." There are lots of different ways to compile `fig`. The default build command gives you everything you need, but you can make the binary smaller with <code>zig build -Doptimize=ReleaseSmall</code>, or faster with <code>zig build -Doptimize=ReleaseFast</code>. The binary distributed to users through packages like Homebrew are compiled with <code>zig build -Doptimize=ReleaseSafe</code>, which provides extra safety in case of bugs or crashes, and a good balance of binary size and speed.</p>
 </details>
 
+<details>
+  <summary>Leaving formats out</summary>
+
+Each format is a build flag, so a build can carry only the formats it needs —
+useful for a smaller binary or a smaller audit surface. Every one of them can be
+turned off independently:
+
+```sh
+zig build -Dyaml=false -Dtoml=false -Dnestedtext=false
+```
+
+A format left out is compiled out entirely, not merely hidden: its parser and
+printer are never built, `fig_format_capabilities` reports `0` for it over the C
+ABI, and asking the CLI to read one fails with `FormatDisabled`. `zig build -h`
+lists the full set with their defaults — note that `plist`, `xml` and
+`canonical` are opt-**in** (`-Dplist=true`), and that `-Dfig=false` also drops
+`fig-lsp`, which is a language server for the fig dialect and has nothing to
+serve without it.
+</details>
+
 In the `fig` folder, a new folder called `zig-out` has been created.
 - The command-line tool is at `zig-out/bin/fig`.
 - The library file is at `zig-out/bin/libfig.a`.

@@ -305,29 +305,20 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
             from = try parse_dispatch.resolveFormatFromContent(a, content, opts.file);
             if (!opts.output_explicit) to = from;
         }
-        var fig_report: fig.Language.FIG.Parser.Report = .{};
-        var json_report: fig.Language.JSON.Parser.Report = .{};
-        var toml_report: fig.Language.TOML.Parser.Report = .{};
-        const parsed = parse_dispatch.parseSliceAs(from, .{}, a, content, false, .{ .fig = &fig_report, .json = &json_report, .toml = &toml_report }) catch |err| {
+        var reports: parse_dispatch.Reports = .{};
+        const parsed = parse_dispatch.parseSliceAs(from, .{}, a, content, false, &reports) catch |err| {
             // A parse failure renders as a `file:line:col` teaching
             // message (DESIGN.md: every diagnostic names the fix) and
             // exits cleanly — no error-return trace for a user typo.
             // Only fig/JSON/TOML fill a report so far; every other
             // format still falls through to the bare `return err`.
-            if (fig_report.diag) |d|
-                try diag_report.reportParseError(stderr_term, content, opts.file, d.offset, d.end, fig.Language.FIG.Parser.describe(d.code), fig.Language.FIG.Parser.shortLabel(d.code));
-            if (json_report.diag) |d|
-                try diag_report.reportParseError(stderr_term, content, opts.file, d.offset, d.end, fig.Language.JSON.Parser.describe(d.code), fig.Language.JSON.Parser.shortLabel(d.code));
-            if (toml_report.diag) |d|
-                try diag_report.reportParseError(stderr_term, content, opts.file, d.offset, d.end, fig.Language.TOML.Parser.describe(d.code), fig.Language.TOML.Parser.shortLabel(d.code));
+            try reports.reportDiagnostics(stderr_term, content, opts.file);
             return err;
         };
         // Authoring-time lints (parse-time warnings) ride the same
         // `--quiet`/`--strict` contract as the serialize-side
         // diagnostics below: quiet silences, strict aborts.
-        try diag_report.handleParseWarnings(stderr_term, content, opts.file, "fig authoring", fig_report.warnings, fig.Language.FIG.Parser.Warning.describeWarning, fig.Language.FIG.Parser.Warning.shortLabel, opts.quiet, opts.strict);
-        try diag_report.handleParseWarnings(stderr_term, content, opts.file, "JSON authoring", json_report.warnings, fig.Language.JSON.Parser.Warning.describeWarning, fig.Language.JSON.Parser.Warning.shortLabel, opts.quiet, opts.strict);
-        try diag_report.handleParseWarnings(stderr_term, content, opts.file, "TOML authoring", toml_report.warnings, fig.Language.TOML.Parser.Warning.describeWarning, fig.Language.TOML.Parser.Warning.shortLabel, opts.quiet, opts.strict);
+        try reports.reportWarnings(stderr_term, content, opts.file, opts.quiet, opts.strict);
         break :blk parsed;
     };
 

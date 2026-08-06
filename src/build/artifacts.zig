@@ -55,24 +55,33 @@ pub fn add(ctx: Context) Result {
 
     // fig-lsp: a Language Server (LSP over stdio) that wraps the fig parser to
     // publish its teaching diagnostics to editors. Thin shell over `mod`.
-    const lsp_exe = b.addExecutable(.{
-        .name = "fig-lsp",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/lsp/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .strip = strip,
-            .imports = &.{
-                .{ .name = "fig", .module = mod },
-            },
-        }),
-    });
-    lsp_exe.root_module.addImport("build_options", options_mod);
-    b.installArtifact(lsp_exe);
+    //
+    // Built only with `-Dfig` (the default). This is a language server FOR the
+    // fig authoring dialect — it names `Language.FIG.Parser` at file scope and
+    // has nothing to serve without it — so a fig-less build drops the artifact
+    // rather than compiling a server that could never answer. That is why the
+    // gate is here in the build graph and not a `comptime` branch in the
+    // source: the source has no meaningful fig-less form to compile.
+    if (ctx.cfg.lang_fig) {
+        const lsp_exe = b.addExecutable(.{
+            .name = "fig-lsp",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/lsp/main.zig"),
+                .target = target,
+                .optimize = optimize,
+                .strip = strip,
+                .imports = &.{
+                    .{ .name = "fig", .module = mod },
+                },
+            }),
+        });
+        lsp_exe.root_module.addImport("build_options", options_mod);
+        b.installArtifact(lsp_exe);
 
-    const lsp_run = b.addRunArtifact(lsp_exe);
-    const lsp_run_step = b.step("run-lsp", "Run the fig language server (LSP over stdio)");
-    lsp_run_step.dependOn(&lsp_run.step);
+        const lsp_run = b.addRunArtifact(lsp_exe);
+        const lsp_run_step = b.step("run-lsp", "Run the fig language server (LSP over stdio)");
+        lsp_run_step.dependOn(&lsp_run.step);
+    }
 
     const c_lib = addCApiLibrary(b, .static, target, optimize, strip, options_mod);
     const install_c_lib = b.addInstallArtifact(c_lib, .{});

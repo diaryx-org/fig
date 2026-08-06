@@ -35,21 +35,12 @@ pub fn reformatSlice(
         return error.UnsupportedGronFmt;
     }
 
-    var fig_report: fig.Language.FIG.Parser.Report = .{};
-    var json_report: fig.Language.JSON.Parser.Report = .{};
-    var toml_report: fig.Language.TOML.Parser.Report = .{};
-    const doc = parse_dispatch.parseSliceAs(format, .{}, allocator, content, false, .{ .fig = &fig_report, .json = &json_report, .toml = &toml_report }) catch |err| {
-        if (fig_report.diag) |d|
-            try diag_report.reportParseError(term, content, file_path, d.offset, d.end, fig.Language.FIG.Parser.describe(d.code), fig.Language.FIG.Parser.shortLabel(d.code));
-        if (json_report.diag) |d|
-            try diag_report.reportParseError(term, content, file_path, d.offset, d.end, fig.Language.JSON.Parser.describe(d.code), fig.Language.JSON.Parser.shortLabel(d.code));
-        if (toml_report.diag) |d|
-            try diag_report.reportParseError(term, content, file_path, d.offset, d.end, fig.Language.TOML.Parser.describe(d.code), fig.Language.TOML.Parser.shortLabel(d.code));
+    var reports: parse_dispatch.Reports = .{};
+    const doc = parse_dispatch.parseSliceAs(format, .{}, allocator, content, false, &reports) catch |err| {
+        try reports.reportDiagnostics(term, content, file_path);
         return err;
     };
-    try diag_report.handleParseWarnings(term, content, file_path, "fig authoring", fig_report.warnings, fig.Language.FIG.Parser.Warning.describeWarning, fig.Language.FIG.Parser.Warning.shortLabel, quiet, strict);
-    try diag_report.handleParseWarnings(term, content, file_path, "JSON authoring", json_report.warnings, fig.Language.JSON.Parser.Warning.describeWarning, fig.Language.JSON.Parser.Warning.shortLabel, quiet, strict);
-    try diag_report.handleParseWarnings(term, content, file_path, "TOML authoring", toml_report.warnings, fig.Language.TOML.Parser.Warning.describeWarning, fig.Language.TOML.Parser.Warning.shortLabel, quiet, strict);
+    try reports.reportWarnings(term, content, file_path, quiet, strict);
 
     const target: fig.AST.SerializeFormat = switch (format) {
         .json => .json,
@@ -148,21 +139,12 @@ pub fn convertSlice(
         return error.UnsupportedGronFmt;
     }
 
-    var fig_report: fig.Language.FIG.Parser.Report = .{};
-    var json_report: fig.Language.JSON.Parser.Report = .{};
-    var toml_report: fig.Language.TOML.Parser.Report = .{};
-    const doc = parse_dispatch.parseSliceAs(from, .{}, allocator, content, false, .{ .fig = &fig_report, .json = &json_report, .toml = &toml_report }) catch |err| {
-        if (fig_report.diag) |d|
-            try diag_report.reportParseError(term, content, file_path, d.offset, d.end, fig.Language.FIG.Parser.describe(d.code), fig.Language.FIG.Parser.shortLabel(d.code));
-        if (json_report.diag) |d|
-            try diag_report.reportParseError(term, content, file_path, d.offset, d.end, fig.Language.JSON.Parser.describe(d.code), fig.Language.JSON.Parser.shortLabel(d.code));
-        if (toml_report.diag) |d|
-            try diag_report.reportParseError(term, content, file_path, d.offset, d.end, fig.Language.TOML.Parser.describe(d.code), fig.Language.TOML.Parser.shortLabel(d.code));
+    var reports: parse_dispatch.Reports = .{};
+    const doc = parse_dispatch.parseSliceAs(from, .{}, allocator, content, false, &reports) catch |err| {
+        try reports.reportDiagnostics(term, content, file_path);
         return err;
     };
-    try diag_report.handleParseWarnings(term, content, file_path, "fig authoring", fig_report.warnings, fig.Language.FIG.Parser.Warning.describeWarning, fig.Language.FIG.Parser.Warning.shortLabel, quiet, strict);
-    try diag_report.handleParseWarnings(term, content, file_path, "JSON authoring", json_report.warnings, fig.Language.JSON.Parser.Warning.describeWarning, fig.Language.JSON.Parser.Warning.shortLabel, quiet, strict);
-    try diag_report.handleParseWarnings(term, content, file_path, "TOML authoring", toml_report.warnings, fig.Language.TOML.Parser.Warning.describeWarning, fig.Language.TOML.Parser.Warning.shortLabel, quiet, strict);
+    try reports.reportWarnings(term, content, file_path, quiet, strict);
 
     // Converting YAML to a non-YAML format resolves the reference layer first
     // (aliases → copies, merges → flattened, tags applied/dropped). YAML→YAML

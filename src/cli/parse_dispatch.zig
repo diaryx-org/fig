@@ -13,6 +13,10 @@ const args_mod = @import("args.zig");
 
 const Format = types.Format;
 const Io = std.Io;
+/// The language registry. A gated-out format is `void` here, which is what the
+/// `DialectOf`/`ReportOf` helpers below key off instead of repeating a
+/// `build_options` test per field.
+const L = fig.Language;
 
 /// The canonical oracle format is opt-in (`-Dcanonical=true`) and otherwise
 /// compiled out of the CLI — but always present in a test build. Mirrors the
@@ -25,9 +29,25 @@ const canonical_enabled = build_options.lang_canonical or @import("builtin").is_
 /// the `Format` itself (json/jsonc/json5); ZON/XML/native have one grammar each,
 /// so they need no field here.
 pub const Spec = struct {
-    toml: fig.Language.TOML.Type = fig.Language.TOML.default_type,
-    yaml: fig.Language.YAML.Type = fig.Language.YAML.default_type,
+    toml: DialectOf(L.TOML) = defaultDialect(L.TOML),
+    yaml: DialectOf(L.YAML) = defaultDialect(L.YAML),
 };
+
+/// `Lang.Type` when `Lang` is compiled in, `void` when it is gated out.
+///
+/// A `-D<lang>=false` build resolves that language to `void` in
+/// `languages/language.zig`, and `void` has no `.Type` — so a field naming one
+/// directly fails to compile in exactly the builds the flag exists to produce.
+/// Routing the type through here keeps `Spec`'s shape identical in every build:
+/// the gated-out field becomes a zero-bit `void` that nothing reads, because
+/// every consumer already sits behind the same `build_options` test.
+fn DialectOf(comptime Lang: type) type {
+    return if (Lang == void) void else Lang.Type;
+}
+
+fn defaultDialect(comptime Lang: type) DialectOf(Lang) {
+    return if (Lang == void) {} else Lang.default_type;
+}
 
 /// Resolve a `--spec` version string against the format it will parse. Null
 /// `spec_str` yields the default spec. Errors when the version is unknown for
@@ -39,13 +59,20 @@ pub fn resolveSpec(format: Format, spec_str: ?[]const u8) error{UnsupportedSpec}
     const s = spec_str orelse return .{};
     const eq = std.mem.eql;
     return switch (format) {
-        .toml => if (eq(u8, s, "1.0") or eq(u8, s, "1.0.0"))
+        // A gated-out language has no dialect to select, so `--spec` against it
+        // is as inapplicable as `--spec` against JSON — the same
+        // `UnsupportedSpec` the format list at the bottom returns.
+        .toml => if (comptime !build_options.lang_toml)
+            error.UnsupportedSpec
+        else if (eq(u8, s, "1.0") or eq(u8, s, "1.0.0"))
             .{ .toml = .TOML_1_0 }
         else if (eq(u8, s, "1.1") or eq(u8, s, "1.1.0"))
             .{ .toml = .TOML_1_1 }
         else
             error.UnsupportedSpec,
-        .yaml, .yml => if (eq(u8, s, "1.2") or eq(u8, s, "1.2.2"))
+        .yaml, .yml => if (comptime !build_options.lang_yaml)
+            error.UnsupportedSpec
+        else if (eq(u8, s, "1.2") or eq(u8, s, "1.2.2"))
             .{ .yaml = .v1_2_2 }
         else if (eq(u8, s, "1.1") or eq(u8, s, "1.1.0"))
             .{ .yaml = .v1_1 }
@@ -55,16 +82,98 @@ pub fn resolveSpec(format: Format, spec_str: ?[]const u8) error{UnsupportedSpec}
     };
 }
 
-/// Per-language parse-report out-parameters for `parseSliceAs` — one optional
-/// pointer per language that has grown the rich diagnostic layer (position +
-/// teaching messages, authoring-time warnings; see `languages/fig/parser.zig`'s
-/// `Report` and `languages/json/parser.zig`'s twin). Grows by one field as
-/// YAML gains its own `Report` type; every existing caller is unaffected (each
-/// field defaults to `null`, meaning "don't collect this language's report").
-pub const ParseReports = struct {
-    fig: ?*fig.Language.FIG.Parser.Report = null,
-    json: ?*fig.Language.JSON.Parser.Report = null,
-    toml: ?*fig.Language.TOML.Parser.Report = null,
+/// The languages that have grown the rich diagnostic layer — position +
+/// teaching message, authoring-time warnings (see `languages/fig/parser.zig`'s
+/// `Report` and its JSON/TOML twins) — each with the label its warnings are
+/// announced under. Every other format still reports a bare error name.
+///
+/// One list, walked by all four of `Reports`' methods, so a language joining
+/// the diagnostic layer is added here and nowhere else.
+const reporting = .{
+    .{ "fig", L.FIG, "fig authoring" },
+    .{ "json", L.JSON, "JSON authoring" },
+    .{ "toml", L.TOML, "TOML authoring" },
+};
+
+/// A language's `Parser.Report` when it is compiled in, `void` when gated out.
+/// Same reasoning as `DialectOf`.
+fn ReportOf(comptime Lang: type) type {
+    return if (Lang == void) void else Lang.Parser.Report;
+}
+
+fn emptyReport(comptime Lang: type) ReportOf(Lang) {
+    return if (Lang == void) {} else .{};
+}
+
+/// The parse reports the CLI collects, as one value a caller declares, hands to
+/// `parseSliceAs`, and then asks to render itself.
+///
+/// This was three loose locals plus ten lines of hand-written rendering,
+/// repeated at four call sites — which was also four places for a gated-out
+/// language's `Report` type to fail to exist. Bundling puts the `void` handling
+/// in `ReportOf` and the rendering in the methods below, so a `-D<lang>=false`
+/// build drops that language's arm from every consumer at once.
+pub const Reports = struct {
+    fig: ReportOf(L.FIG) = emptyReport(L.FIG),
+    json: ReportOf(L.JSON) = emptyReport(L.JSON),
+    toml: ReportOf(L.TOML) = emptyReport(L.TOML),
+
+    /// Print a `file:line:col` teaching message for each language that recorded
+    /// a single parse diagnostic. At most one ever has: only the format that
+    /// was actually parsed fills a report.
+    pub fn reportDiagnostics(self: *const Reports, term: *Io.Terminal, source: []const u8, file: []const u8) !void {
+        inline for (reporting) |r| {
+            if (comptime r[1] != void) {
+                const P = r[1].Parser;
+                if (@field(self, r[0]).diag) |d|
+                    try diag_report.reportParseError(term, source, file, d.offset, d.end, P.describe(d.code), P.shortLabel(d.code));
+            }
+        }
+    }
+
+    /// Announce authoring-time lints under each language's label. These ride
+    /// the same `--quiet`/`--strict` contract as the serialize-side
+    /// diagnostics: quiet silences, strict aborts.
+    pub fn reportWarnings(self: *const Reports, term: *Io.Terminal, source: []const u8, file: []const u8, quiet: bool, strict: bool) !void {
+        inline for (reporting) |r| {
+            if (comptime r[1] != void) {
+                const W = r[1].Parser.Warning;
+                try diag_report.handleParseWarnings(term, source, file, r[2], @field(self, r[0]).warnings, W.describeWarning, W.shortLabel, quiet, strict);
+            }
+        }
+    }
+
+    /// Every recorded error, rendered into the language-agnostic shape
+    /// `checkOne`'s caller prints — the `recover` path, where one parse reports
+    /// every error in the file rather than stopping at the first. Falls back to
+    /// the single `diag` when a language recorded one but no error list. Null
+    /// when no language recorded anything.
+    pub fn renderErrors(self: *const Reports, allocator: std.mem.Allocator) !?[]const fig.ParseDiagnostic.Rendered {
+        inline for (reporting) |r| {
+            if (comptime r[1] != void) {
+                const P = r[1].Parser;
+                const rep = @field(self, r[0]);
+                if (rep.errors.len > 0)
+                    return try diag_report.renderAll(allocator, rep.errors, P.describe, P.shortLabel);
+                if (rep.diag) |d|
+                    return try diag_report.renderAll(allocator, &[_]P.Diagnostic{d}, P.describe, P.shortLabel);
+            }
+        }
+        return null;
+    }
+
+    /// The warnings twin of `renderErrors`.
+    pub fn renderWarnings(self: *const Reports, allocator: std.mem.Allocator) !?[]const fig.ParseDiagnostic.Rendered {
+        inline for (reporting) |r| {
+            if (comptime r[1] != void) {
+                const W = r[1].Parser.Warning;
+                const rep = @field(self, r[0]);
+                if (rep.warnings.len > 0)
+                    return try diag_report.renderAll(allocator, rep.warnings, W.describeWarning, W.shortLabel);
+            }
+        }
+        return null;
+    }
 };
 
 /// Parse already-read `content` as the CLI `format` under `spec`. The
@@ -79,15 +188,14 @@ pub const ParseReports = struct {
 /// (authoring-time lints) always; `errors` (every failure, source order) when
 /// `recover`. Only the `.fig`, `.json`/`.jsonc`/`.json5`, and `.toml` branches
 /// fill one; the other formats keep their bare error-name reporting for now.
-pub fn parseSliceAs(format: Format, spec: Spec, allocator: std.mem.Allocator, content: []const u8, recover: bool, reports: ParseReports) !fig.Document {
+pub fn parseSliceAs(format: Format, spec: Spec, allocator: std.mem.Allocator, content: []const u8, recover: bool, reports: *Reports) !fig.Document {
     return switch (format) {
-        .json => if (comptime build_options.lang_json) parseJson(allocator, content, .JSON, recover, reports.json) else error.FormatDisabled,
-        .jsonc => if (comptime build_options.lang_json) parseJson(allocator, content, .JSONC, recover, reports.json) else error.FormatDisabled,
-        .json5 => if (comptime build_options.lang_json) parseJson(allocator, content, .JSON5, recover, reports.json) else error.FormatDisabled,
+        .json => if (comptime build_options.lang_json) parseJson(allocator, content, .JSON, recover, &reports.json) else error.FormatDisabled,
+        .jsonc => if (comptime build_options.lang_json) parseJson(allocator, content, .JSONC, recover, &reports.json) else error.FormatDisabled,
+        .json5 => if (comptime build_options.lang_json) parseJson(allocator, content, .JSON5, recover, &reports.json) else error.FormatDisabled,
         .yaml, .yml => if (comptime build_options.lang_yaml) fig.Language.YAML.Parser.parse(allocator, content, spec.yaml) else error.FormatDisabled,
         .toml => if (comptime build_options.lang_toml) blk: {
-            var local: fig.Language.TOML.Parser.Report = .{};
-            const r = reports.toml orelse &local;
+            const r = &reports.toml;
             break :blk if (recover)
                 fig.Language.TOML.Parser.parseCollecting(allocator, content, spec.toml, r)
             else
@@ -97,8 +205,7 @@ pub fn parseSliceAs(format: Format, spec: Spec, allocator: std.mem.Allocator, co
         .xml => if (comptime build_options.lang_xml) fig.Language.XML.Parser.parse(allocator, content, fig.Language.XML.default_type) else error.FormatDisabled,
         .canonical => if (comptime canonical_enabled) fig.Canonical.parse(allocator, content) else error.FormatDisabled,
         .fig => if (comptime build_options.lang_fig) blk: {
-            var local: fig.Language.FIG.Parser.Report = .{};
-            const r = reports.fig orelse &local;
+            const r = &reports.fig;
             // `recover` collects the whole file's errors (`check`); otherwise
             // stop at the first (`get`/convert only needs to fail once).
             break :blk if (recover)
@@ -120,13 +227,11 @@ pub fn parseSliceAs(format: Format, spec: Spec, allocator: std.mem.Allocator, co
 /// The three JSON dialects share one parser/`Report` type, differing only in
 /// `jtype` — factored out of `parseSliceAs` so its `.json`/`.jsonc`/`.json5`
 /// arms don't triplicate the recover-vs-single-shot dispatch.
-pub fn parseJson(allocator: std.mem.Allocator, content: []const u8, jtype: fig.Language.JSON.Type, recover: bool, report: ?*fig.Language.JSON.Parser.Report) !fig.Document {
-    var local: fig.Language.JSON.Parser.Report = .{};
-    const r = report orelse &local;
+pub fn parseJson(allocator: std.mem.Allocator, content: []const u8, jtype: L.JSON.Type, recover: bool, report: *L.JSON.Parser.Report) !fig.Document {
     return if (recover)
-        fig.Language.JSON.Parser.parseCollecting(allocator, content, jtype, r)
+        L.JSON.Parser.parseCollecting(allocator, content, jtype, report)
     else
-        fig.Language.JSON.Parser.parseWithReport(allocator, content, jtype, r);
+        L.JSON.Parser.parseWithReport(allocator, content, jtype, report);
 }
 
 /// Map a `Language.detect` result to the CLI `Format`. `Detected` has no
@@ -231,36 +336,16 @@ pub fn checkOne(allocator: std.mem.Allocator, io: Io, file: []const u8, override
         _ = try fig.Embed.extract(allocator, content, embed_type);
     } else {
         diag_source.* = content;
-        var fig_report: fig.Language.FIG.Parser.Report = .{};
-        var json_report: fig.Language.JSON.Parser.Report = .{};
-        var toml_report: fig.Language.TOML.Parser.Report = .{};
+        var reports: Reports = .{};
         // `recover` so a file reports EVERY error in one pass (a language
         // server squiggles them all; `check` shouldn't hide errors 2..N behind
         // the first). Formats without a report yet stop at their first error
         // and fall back to the generic `file: ErrorName` line below.
-        _ = parseSliceAs(format, spec, allocator, content, true, .{ .fig = &fig_report, .json = &json_report, .toml = &toml_report }) catch |err| {
-            if (fig_report.errors.len > 0) {
-                diag_errors.* = try diag_report.renderAll(allocator, fig_report.errors, fig.Language.FIG.Parser.describe, fig.Language.FIG.Parser.shortLabel);
-            } else if (fig_report.diag) |d| {
-                diag_errors.* = try diag_report.renderAll(allocator, &[_]fig.Language.FIG.Parser.Diagnostic{d}, fig.Language.FIG.Parser.describe, fig.Language.FIG.Parser.shortLabel);
-            } else if (json_report.errors.len > 0) {
-                diag_errors.* = try diag_report.renderAll(allocator, json_report.errors, fig.Language.JSON.Parser.describe, fig.Language.JSON.Parser.shortLabel);
-            } else if (json_report.diag) |d| {
-                diag_errors.* = try diag_report.renderAll(allocator, &[_]fig.Language.JSON.Parser.Diagnostic{d}, fig.Language.JSON.Parser.describe, fig.Language.JSON.Parser.shortLabel);
-            } else if (toml_report.errors.len > 0) {
-                diag_errors.* = try diag_report.renderAll(allocator, toml_report.errors, fig.Language.TOML.Parser.describe, fig.Language.TOML.Parser.shortLabel);
-            } else if (toml_report.diag) |d| {
-                diag_errors.* = try diag_report.renderAll(allocator, &[_]fig.Language.TOML.Parser.Diagnostic{d}, fig.Language.TOML.Parser.describe, fig.Language.TOML.Parser.shortLabel);
-            }
+        _ = parseSliceAs(format, spec, allocator, content, true, &reports) catch |err| {
+            diag_errors.* = try reports.renderErrors(allocator);
             return err;
         };
-        if (fig_report.warnings.len > 0) {
-            diag_warnings.* = try diag_report.renderAll(allocator, fig_report.warnings, fig.Language.FIG.Parser.Warning.describeWarning, fig.Language.FIG.Parser.Warning.shortLabel);
-        } else if (json_report.warnings.len > 0) {
-            diag_warnings.* = try diag_report.renderAll(allocator, json_report.warnings, fig.Language.JSON.Parser.Warning.describeWarning, fig.Language.JSON.Parser.Warning.shortLabel);
-        } else if (toml_report.warnings.len > 0) {
-            diag_warnings.* = try diag_report.renderAll(allocator, toml_report.warnings, fig.Language.TOML.Parser.Warning.describeWarning, fig.Language.TOML.Parser.Warning.shortLabel);
-        }
+        diag_warnings.* = try reports.renderWarnings(allocator);
     }
     return format;
 }

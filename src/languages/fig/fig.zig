@@ -22,12 +22,13 @@ pub const Type = enum {
 pub const Language = struct {
     pub const Type = fig.Type;
     pub const Parser = fig.Parser;
+    pub const Printer = fig.Printer;
     pub const default_type: fig.Type = .Fig;
     pub fn parse(parser: *fig.Parser, input: []const u8, format: fig.Type) !Document {
         return fig.Parser.parse(parser.allocator, input, format);
     }
-    pub const print = Printer.print;
-    pub const printNode = Printer.printNode;
+    pub const print = fig.Printer.print;
+    pub const printNode = fig.Printer.printNode;
 
     pub const name = "fig";
     /// `.figl` is the authoring dialect's canonical extension; `.fig` is still

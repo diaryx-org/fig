@@ -50,9 +50,12 @@ pub const NESTEDTEXT = if (build_options.lang_nestedtext) @import("nestedtext/ne
 // `cli/args.zig`'s extension table. The two that remain hand-written,
 // `c_api.FigFormat` (Stage 7) and `Embed.InnerFormat` (Stage 6), still carry
 // the `comptime` asserts that fail the build the moment they and the registry
-// disagree. The per-dialect FACTS (splice style, empty-document seed, `--spec`
-// strings, printer names, embedded spellings) are still asserted rather than
-// consumed; those switches are converted in Stages 4-6.
+// disagree. Of the per-dialect FACTS, the CLI's dispatch now READS the splice
+// style, empty-document seed and `--spec` strings, and the serializer reads the
+// printer names (`ast/serialize_options.zig`, whose three switches are one
+// `inline else` each over `@field(d.Lang.Printer, d.print_name)`); only the
+// embedded spellings are still asserted rather than consumed, and their
+// switches are converted in Stage 6.
 
 /// `Lang.Type` when `Lang` is compiled in, `void` when it is gated out.
 ///
@@ -162,12 +165,19 @@ fn Entry(comptime L: type) type {
         /// key can just be inserted into it.
         empty_doc_seed: ?[]const u8,
 
-        /// The `Printer` declaration that writes a whole document in this
+        /// The `Lang.Printer` declaration that writes a whole document in this
         /// dialect, and the one that writes a single node. Two names rather
         /// than one because the JSON family shares a printer and separates its
         /// dialects by entry point (`print`/`printc`/`print5`), and YAML's
-        /// document printer is `printWith`. Consumed in Stage 5, when
-        /// `Printer` joins the `Language` interface.
+        /// document printer is `printWith`.
+        ///
+        /// These ARE the serializer's dispatch: `ast/serialize_options.zig`
+        /// calls `@field(d.Lang.Printer, d.print_name)(writer, ast, options)`
+        /// (and the `print_node_name` twin) for every entry, so a wrong name
+        /// here is a compile error rather than a wrong output. There is no
+        /// separate fragment name: `serializeFragmentWith` uses `print_name`
+        /// for every dialect but fig, whose `printFragment` takes an explicit
+        /// arm there for the reason documented on that function.
         print_name: [:0]const u8 = "print",
         print_node_name: [:0]const u8 = "printNode",
 
@@ -803,9 +813,16 @@ fn tryParse(comptime Lang: type, allocator: Allocator, input: []const u8, t: Lan
 /// hook the list does not know is a hook no format can declare.
 const Decls = struct {
     /// Required of every format, editable or not.
+    ///
+    /// `Printer` is the format's printer MODULE, and is distinct from the
+    /// optional `printNode` decl below: the module is what the serializer
+    /// dispatches through (`ast/serialize_options.zig` reaches
+    /// `@field(d.Lang.Printer, d.print_name)` for every registry entry), so
+    /// every format must expose one even when — as with plist and xml — its
+    /// `Language` wraps only the module's `print`.
     const required = [_][]const u8{
-        "Type",         "Parser", "default_type", "parse", "print",
-        "name", "extensions",     "caps",
+        "Type",  "Parser", "Printer",    "default_type", "parse",
+        "print", "name",   "extensions", "caps",
     };
 
     /// Required of an editable format only. `syntax` describes how the generic
@@ -883,7 +900,8 @@ pub fn validate(comptime Lang: type) void {
 
         // The original four, plus `Parser` — which `tryParse` and `Editor`
         // have both required in practice for as long as they have existed,
-        // and which this now states.
+        // and which this now states — plus `Printer`, which the serializer's
+        // registry-derived dispatch requires in exactly the same way.
         // `@typeName` rather than `Lang.name` here and in `required_edit`:
         // `name` is itself one of the declarations being checked, so it cannot
         // be relied on to identify the format that is missing it.

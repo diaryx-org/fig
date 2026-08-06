@@ -43,6 +43,7 @@ pub const Type = enum {
 pub const Language = struct {
     pub const Type = xml.Type;
     pub const Parser = xml.Parser;
+    pub const Printer = xml.Printer;
     pub const default_type: xml.Type = .XML_1_0;
 
     pub fn parse(parser: *xml.Parser, input: []const u8, format: xml.Type) !Document {

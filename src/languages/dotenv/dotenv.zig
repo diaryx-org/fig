@@ -16,12 +16,13 @@ pub const Type = enum {
 pub const Language = struct {
     pub const Type = dotenv.Type;
     pub const Parser = dotenv.Parser;
+    pub const Printer = dotenv.Printer;
     pub const default_type: dotenv.Type = .DOTENV;
     pub fn parse(parser: *dotenv.Parser, input: []const u8, format: dotenv.Type) !Document {
         return dotenv.Parser.parse(parser.allocator, input, format);
     }
-    pub const print = Printer.print;
-    pub const printNode = Printer.printNode;
+    pub const print = dotenv.Printer.print;
+    pub const printNode = dotenv.Printer.printNode;
 
     pub const name = "dotenv";
     /// A dotenv file is conventionally named exactly `.env`, whose last-dot

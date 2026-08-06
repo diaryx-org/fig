@@ -33,6 +33,7 @@ pub const Type = enum {
 pub const Language = struct {
     pub const Type = plist.Type;
     pub const Parser = plist.Parser;
+    pub const Printer = plist.Printer;
     pub const default_type: plist.Type = .XML;
 
     pub fn parse(parser: *plist.Parser, input: []const u8, format: plist.Type) !Document {

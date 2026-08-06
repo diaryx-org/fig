@@ -8,25 +8,20 @@ const build_options = @import("build_options");
 
 const AST = @import("ast.zig");
 const Node = AST.Node;
-/// The format registry, for the comptime assert under `SerializeFormat` alone —
-/// this file dispatches to the printer modules directly and takes nothing else
-/// from the language layer.
+/// The format registry. `SerializeFormat`'s members come from it, and so does
+/// every dispatch arm below: a registry entry names the language whose
+/// `Printer` module prints the dialect (`entry.Lang.Printer`) and the two
+/// declarations in it that do the printing (`entry.print_name`,
+/// `entry.print_node_name`). No printer is imported by path here any more —
+/// `canonical`'s is the one exception, since canonical is not a `Language`.
 const Language = @import("../languages/language.zig");
 
-// Printers are pulled in only for the formats compiled into this build. A gated
-// format's `*Printer` is `void`, so the matching `serialize` arm below (guarded
-// by the same comptime flag) is never analyzed and the printer never compiles.
-const JsonPrinter = if (build_options.lang_json) @import("../languages/json/printer.zig") else void;
-const YamlPrinter = if (build_options.lang_yaml) @import("../languages/yaml/printer.zig") else void;
-const TomlPrinter = if (build_options.lang_toml) @import("../languages/toml/printer.zig") else void;
-const ZonPrinter = if (build_options.lang_zon) @import("../languages/zon/printer.zig") else void;
-const FigPrinter = if (build_options.lang_fig) @import("../languages/fig/printer.zig") else void;
-const XmlPrinter = if (build_options.lang_xml) @import("../languages/xml/printer.zig") else void;
-const IniPrinter = if (build_options.lang_ini) @import("../languages/ini/printer.zig") else void;
-const DotenvPrinter = if (build_options.lang_dotenv) @import("../languages/dotenv/printer.zig") else void;
-const PropertiesPrinter = if (build_options.lang_properties) @import("../languages/properties/printer.zig") else void;
-const PlistPrinter = if (build_options.lang_plist) @import("../languages/plist/printer.zig") else void;
-const NestedtextPrinter = if (build_options.lang_nestedtext) @import("../languages/nestedtext/printer.zig") else void;
+// Printers reach this file only through the registry, and only for the formats
+// compiled into this build: a gated-out language collapses its entry's `Lang`
+// to `void`, the void guard that opens every arm below returns
+// `error.FormatDisabled` before anything reads `Lang.Printer`, and the printer
+// never compiles.
+//
 // The canonical form is the AST's own 1:1 oracle encoding. It is not exposed
 // through the C ABI or any binding, so it is opt-in (`-Dcanonical=true`) like
 // xml — but ALWAYS compiled for a test build (`is_test`), since the suite leans
@@ -176,23 +171,23 @@ pub fn serialize(self: *const AST, writer: *Writer, format: SerializeFormat) Ser
 
 /// Render the whole AST to `writer`, controlling output style via `options`.
 pub fn serializeWith(self: *const AST, writer: *Writer, format: SerializeFormat, options: SerializeOptions) SerializeError!void {
+    @setEvalBranchQuota(30_000);
     var buf: AST = undefined;
     const ast = commentView(self, options, &buf);
     return switch (format) {
-        .json => if (comptime build_options.lang_json) JsonPrinter.print(writer, ast, options) else error.FormatDisabled,
-        .jsonc => if (comptime build_options.lang_json) JsonPrinter.printc(writer, ast, options) else error.FormatDisabled,
-        .json5 => if (comptime build_options.lang_json) JsonPrinter.print5(writer, ast, options) else error.FormatDisabled,
-        .yaml => if (comptime build_options.lang_yaml) YamlPrinter.printWith(writer, ast, options) else error.FormatDisabled,
-        .toml => if (comptime build_options.lang_toml) TomlPrinter.print(writer, ast, options) else error.FormatDisabled,
-        .zon => if (comptime build_options.lang_zon) ZonPrinter.print(writer, ast, options) else error.FormatDisabled,
-        .xml => if (comptime build_options.lang_xml) XmlPrinter.print(writer, ast, options) else error.FormatDisabled,
+        // The AST's own 1:1 oracle encoding — not a `Language`, so not a
+        // registry entry, so its own arm. Its printer also takes no options
+        // (the canonical form has exactly one spelling).
         .canonical => if (comptime canonical_enabled) CanonicalPrinter.print(writer, ast) else error.FormatDisabled,
-        .fig => if (comptime build_options.lang_fig) FigPrinter.print(writer, ast, options) else error.FormatDisabled,
-        .ini => if (comptime build_options.lang_ini) IniPrinter.print(writer, ast, options) else error.FormatDisabled,
-        .dotenv => if (comptime build_options.lang_dotenv) DotenvPrinter.print(writer, ast, options) else error.FormatDisabled,
-        .properties => if (comptime build_options.lang_properties) PropertiesPrinter.print(writer, ast, options) else error.FormatDisabled,
-        .plist => if (comptime build_options.lang_plist) PlistPrinter.print(writer, ast, options) else error.FormatDisabled,
-        .nestedtext => if (comptime build_options.lang_nestedtext) NestedtextPrinter.print(writer, ast, options) else error.FormatDisabled,
+        inline else => |f| {
+            const d = comptime Language.entryFor(@tagName(f));
+            if (comptime d.Lang == void) return error.FormatDisabled;
+            // `print_name` is what separates the three JSON dialects, which
+            // share one printer module and differ only by entry point
+            // (`print`/`printc`/`print5`), and what routes YAML to its
+            // options-taking `printWith`.
+            return @field(d.Lang.Printer, d.print_name)(writer, ast, options);
+        },
     };
 }
 
@@ -200,31 +195,36 @@ pub fn serializeWith(self: *const AST, writer: *Writer, format: SerializeFormat,
 /// style via `options`. Identical to `serializeWith` for every format except
 /// `fig`: JSON/YAML/ZON/canonical already treat a scalar/null root as a fine
 /// value to render (e.g. `9090`), and TOML falls back to an inline fragment —
-/// but fig's `.fig => FigPrinter.print` deliberately errors
-/// `FigUnrepresentableRoot` on a bare scalar/null root, since a *whole fig
-/// document* (`fig fmt`, `fig get`, `fig_document_serialize`) can't be spelled
-/// that way. A value fragment built by the caller (`fig_value_serialize_opts`,
-/// backing the editors' `replace`/`set`) is never asked to stand alone as a
-/// document — it's spliced into existing source — so it uses
-/// `FigPrinter.printFragment` instead, which allows that root.
+/// but fig's document printer (`fig/printer.zig`'s `print`, which
+/// `serializeWith` reaches) deliberately errors `FigUnrepresentableRoot` on a
+/// bare scalar/null root, since a *whole fig document* (`fig fmt`, `fig get`,
+/// `fig_document_serialize`) can't be spelled that way. A value fragment built
+/// by the caller (`fig_value_serialize_opts`, backing the editors'
+/// `replace`/`set`) is never asked to stand alone as a document — it's spliced
+/// into existing source — so it uses that module's `printFragment` instead,
+/// which allows that root.
 pub fn serializeFragmentWith(self: *const AST, writer: *Writer, format: SerializeFormat, options: SerializeOptions) SerializeError!void {
+    @setEvalBranchQuota(30_000);
     var buf: AST = undefined;
     const ast = commentView(self, options, &buf);
     return switch (format) {
-        .json => if (comptime build_options.lang_json) JsonPrinter.print(writer, ast, options) else error.FormatDisabled,
-        .jsonc => if (comptime build_options.lang_json) JsonPrinter.printc(writer, ast, options) else error.FormatDisabled,
-        .json5 => if (comptime build_options.lang_json) JsonPrinter.print5(writer, ast, options) else error.FormatDisabled,
-        .yaml => if (comptime build_options.lang_yaml) YamlPrinter.printWith(writer, ast, options) else error.FormatDisabled,
-        .toml => if (comptime build_options.lang_toml) TomlPrinter.print(writer, ast, options) else error.FormatDisabled,
-        .zon => if (comptime build_options.lang_zon) ZonPrinter.print(writer, ast, options) else error.FormatDisabled,
-        .xml => if (comptime build_options.lang_xml) XmlPrinter.print(writer, ast, options) else error.FormatDisabled,
         .canonical => if (comptime canonical_enabled) CanonicalPrinter.print(writer, ast) else error.FormatDisabled,
-        .fig => if (comptime build_options.lang_fig) FigPrinter.printFragment(writer, ast, options) else error.FormatDisabled,
-        .ini => if (comptime build_options.lang_ini) IniPrinter.print(writer, ast, options) else error.FormatDisabled,
-        .dotenv => if (comptime build_options.lang_dotenv) DotenvPrinter.print(writer, ast, options) else error.FormatDisabled,
-        .properties => if (comptime build_options.lang_properties) PropertiesPrinter.print(writer, ast, options) else error.FormatDisabled,
-        .plist => if (comptime build_options.lang_plist) PlistPrinter.print(writer, ast, options) else error.FormatDisabled,
-        .nestedtext => if (comptime build_options.lang_nestedtext) NestedtextPrinter.print(writer, ast, options) else error.FormatDisabled,
+        // The one format whose fragment entry point differs from its document
+        // one — see this function's doc comment for why. The registry's
+        // `print_name` names the DOCUMENT printer, which is the right entry
+        // point for every other dialect here (including YAML, whose
+        // `printWith` serves both), so fig takes an explicit arm rather than
+        // the registry carrying a second name.
+        .fig => {
+            const d = comptime Language.entryFor("fig");
+            if (comptime d.Lang == void) return error.FormatDisabled;
+            return d.Lang.Printer.printFragment(writer, ast, options);
+        },
+        inline else => |f| {
+            const d = comptime Language.entryFor(@tagName(f));
+            if (comptime d.Lang == void) return error.FormatDisabled;
+            return @field(d.Lang.Printer, d.print_name)(writer, ast, options);
+        },
     };
 }
 
@@ -235,22 +235,19 @@ pub fn serializeNode(self: *const AST, writer: *Writer, format: SerializeFormat,
 
 /// Render the subtree rooted at `id`, controlling output style via `options`.
 pub fn serializeNodeWith(self: *const AST, writer: *Writer, format: SerializeFormat, id: Node.Id, options: SerializeOptions) SerializeError!void {
+    @setEvalBranchQuota(30_000);
     var buf: AST = undefined;
     const ast = commentView(self, options, &buf);
     return switch (format) {
-        .json => if (comptime build_options.lang_json) JsonPrinter.printNode(writer, ast, id, 0, options) else error.FormatDisabled,
-        .jsonc => if (comptime build_options.lang_json) JsonPrinter.printNodec(writer, ast, id, 0, options) else error.FormatDisabled,
-        .json5 => if (comptime build_options.lang_json) JsonPrinter.printNode5(writer, ast, id, 0, options) else error.FormatDisabled,
-        .yaml => if (comptime build_options.lang_yaml) YamlPrinter.printNode(writer, ast, id, 0, options) else error.FormatDisabled,
-        .toml => if (comptime build_options.lang_toml) TomlPrinter.printNode(writer, ast, id, 0, options) else error.FormatDisabled,
-        .zon => if (comptime build_options.lang_zon) ZonPrinter.printNode(writer, ast, id, 0, options) else error.FormatDisabled,
-        .xml => if (comptime build_options.lang_xml) XmlPrinter.printNode(writer, ast, id, 0, options) else error.FormatDisabled,
         .canonical => if (comptime canonical_enabled) CanonicalPrinter.printNode(writer, ast, id, 0) else error.FormatDisabled,
-        .fig => if (comptime build_options.lang_fig) FigPrinter.printNode(writer, ast, id, 0, options) else error.FormatDisabled,
-        .ini => if (comptime build_options.lang_ini) IniPrinter.printNode(writer, ast, id, 0, options) else error.FormatDisabled,
-        .dotenv => if (comptime build_options.lang_dotenv) DotenvPrinter.printNode(writer, ast, id, 0, options) else error.FormatDisabled,
-        .properties => if (comptime build_options.lang_properties) PropertiesPrinter.printNode(writer, ast, id, 0, options) else error.FormatDisabled,
-        .plist => if (comptime build_options.lang_plist) PlistPrinter.printNode(writer, ast, id, 0, options) else error.FormatDisabled,
-        .nestedtext => if (comptime build_options.lang_nestedtext) NestedtextPrinter.printNode(writer, ast, id, 0, options) else error.FormatDisabled,
+        inline else => |f| {
+            const d = comptime Language.entryFor(@tagName(f));
+            if (comptime d.Lang == void) return error.FormatDisabled;
+            // `printNode` on the printer MODULE, which every format has —
+            // including plist and xml, whose `Language` declares no `printNode`
+            // of its own (their `print` is written inline; see `Decls.optional`
+            // in languages/language.zig).
+            return @field(d.Lang.Printer, d.print_node_name)(writer, ast, id, 0, options);
+        },
     };
 }

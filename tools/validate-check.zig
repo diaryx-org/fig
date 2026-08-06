@@ -27,7 +27,7 @@
 //!
 //! That is not hypothetical: it fired twice while this file was being written,
 //! both times on the module wiring below, and both times it was the only thing
-//! standing between "9/9 ok" and nine cases proving nothing.
+//! standing between an all-green scoreboard and every case proving nothing.
 //!
 //! Adding a rule to `validate` means adding a case here. The two are a pair.
 
@@ -80,6 +80,16 @@ const cases = [_]Case{
         .expect = "must define name",
     },
     .{
+        // The same rule as above, on the decl that joined `Decls.required`
+        // when the serializer's dispatch became registry-derived: `Printer` is
+        // the printer MODULE (`@field(Lang.Printer, entry.print_name)`), which
+        // every format must expose even when — like plist and xml — its
+        // `Language` declares no `printNode` of its own.
+        .name = "missing required decl (Printer)",
+        .omit = "Printer",
+        .expect = "must define Printer",
+    },
+    .{
         .name = "missing syntax on an editable format",
         .omit = "syntax",
         .expect = "has caps.edit and must define syntax",
@@ -124,10 +134,10 @@ const cases = [_]Case{
 /// A `Language` with nothing wrong with it. Each case perturbs exactly one
 /// thing, so any failure is attributable to that one thing.
 ///
-/// Deliberately minimal: `parse`/`print`/`Parser` are never CALLED here (no
-/// `Editor` is instantiated, and `validate` checks only that the declarations
-/// exist), so they are stubs. That is the point — the fixture exercises the
-/// contract, not an implementation of it.
+/// Deliberately minimal: `parse`/`print`/`Parser`/`Printer` are never CALLED
+/// here (no `Editor` is instantiated, and `validate` checks only that the
+/// declarations exist), so they are stubs. That is the point — the fixture
+/// exercises the contract, not an implementation of it.
 fn buildProbe(allocator: std.mem.Allocator, case: Case) ![]u8 {
     const default_syntax =
         \\.comment_style = .hash, .line_comment = "#",
@@ -149,6 +159,8 @@ fn buildProbe(allocator: std.mem.Allocator, case: Case) ![]u8 {
     try buf.appendSlice(allocator, "pub const Language = struct {\n");
     try buf.appendSlice(allocator, "    pub const Type = enum { Only };\n");
     try buf.appendSlice(allocator, "    pub const Parser = struct {};\n");
+    if (!std.mem.eql(u8, case.omit, "Printer"))
+        try buf.appendSlice(allocator, "    pub const Printer = struct {};\n");
     try buf.appendSlice(allocator, "    pub const default_type: Type = .Only;\n");
     try buf.appendSlice(allocator, "    pub fn parse() void {}\n");
     try buf.appendSlice(allocator, "    pub fn print() void {}\n");

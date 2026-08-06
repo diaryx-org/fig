@@ -15,12 +15,13 @@ pub const Type = enum {
 pub const Language = struct {
     pub const Type = json.Type;
     pub const Parser = json.Parser;
+    pub const Printer = json.Printer;
     pub const default_type: json.Type = .JSON;
     pub fn parse(parser: *json.Parser, input: []const u8, format: json.Type) !Document {
         return json.Parser.parse(parser.allocator, input, format);
     }
-    pub const print = Printer.print;
-    pub const printNode = Printer.printNode;
+    pub const print = json.Printer.print;
+    pub const printNode = json.Printer.printNode;
 
     pub const name = "json";
     pub const extensions: []const []const u8 = &.{ "json", "jsonc", "json5" };

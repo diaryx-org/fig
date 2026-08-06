@@ -15,12 +15,13 @@ pub const Type = enum {
 pub const Language = struct {
     pub const Type = zon.Type;
     pub const Parser = zon.Parser;
+    pub const Printer = zon.Printer;
     pub const default_type: zon.Type = .ZON;
     pub fn parse(parser: *zon.Parser, input: []const u8, format: zon.Type) !Document {
         return zon.Parser.parse(parser.allocator, input, format);
     }
-    pub const print = Printer.print;
-    pub const printNode = Printer.printNode;
+    pub const print = zon.Printer.print;
+    pub const printNode = zon.Printer.printNode;
 
     pub const name = "zon";
     pub const extensions: []const []const u8 = &.{"zon"};

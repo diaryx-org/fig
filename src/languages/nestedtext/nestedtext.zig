@@ -16,12 +16,13 @@ pub const Type = enum {
 pub const Language = struct {
     pub const Type = nestedtext.Type;
     pub const Parser = nestedtext.Parser;
+    pub const Printer = nestedtext.Printer;
     pub const default_type: nestedtext.Type = .NESTEDTEXT;
     pub fn parse(parser: *nestedtext.Parser, input: []const u8, format: nestedtext.Type) !Document {
         return nestedtext.Parser.parse(parser.allocator, input, format);
     }
-    pub const print = Printer.print;
-    pub const printNode = Printer.printNode;
+    pub const print = nestedtext.Printer.print;
+    pub const printNode = nestedtext.Printer.printNode;
 
     pub const name = "nestedtext";
     pub const extensions: []const []const u8 = &.{"nt"};

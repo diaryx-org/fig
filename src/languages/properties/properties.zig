@@ -16,12 +16,13 @@ pub const Type = enum {
 pub const Language = struct {
     pub const Type = properties.Type;
     pub const Parser = properties.Parser;
+    pub const Printer = properties.Printer;
     pub const default_type: properties.Type = .PROPERTIES;
     pub fn parse(parser: *properties.Parser, input: []const u8, format: properties.Type) !Document {
         return properties.Parser.parse(parser.allocator, input, format);
     }
-    pub const print = Printer.print;
-    pub const printNode = Printer.printNode;
+    pub const print = properties.Printer.print;
+    pub const printNode = properties.Printer.printNode;
 
     pub const name = "properties";
     pub const extensions: []const []const u8 = &.{"properties"};

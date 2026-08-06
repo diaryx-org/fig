@@ -18,12 +18,13 @@ pub const Type = enum {
 pub const Language = struct {
     pub const Type = toml.Type;
     pub const Parser = toml.Parser;
+    pub const Printer = toml.Printer;
     pub const default_type: toml.Type = .TOML_1_1;
     pub fn parse(parser: *toml.Parser, input: []const u8, format: toml.Type) !Document {
         return toml.Parser.parse(parser.allocator, input, format);
     }
-    pub const print = Printer.print;
-    pub const printNode = Printer.printNode;
+    pub const print = toml.Printer.print;
+    pub const printNode = toml.Printer.printNode;
 
     pub const name = "toml";
     pub const extensions: []const []const u8 = &.{"toml"};

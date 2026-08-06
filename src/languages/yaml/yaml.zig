@@ -23,12 +23,13 @@ pub const Type = enum {
 pub const Language = struct {
     pub const Type = yaml.Type;
     pub const Parser = yaml.Parser;
+    pub const Printer = yaml.Printer;
     pub const default_type: yaml.Type = .v1_2_2;
     pub fn parse(parser: *yaml.Parser, input: []const u8, format: yaml.Type) !Document {
         return yaml.Parser.parse(parser.allocator, input, format);
     }
-    pub const print = Printer.print;
-    pub const printNode = Printer.printNode;
+    pub const print = yaml.Printer.print;
+    pub const printNode = yaml.Printer.printNode;
     /// Collapse the reference layer (aliases/merges/tags/anchors) into a core AST
     /// before handing it to a non-YAML printer. Optional Language decl: callers
     /// gate on `@hasDecl(Lang, "materialize")`.

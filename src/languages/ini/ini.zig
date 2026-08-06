@@ -17,12 +17,13 @@ pub const Type = enum {
 pub const Language = struct {
     pub const Type = ini.Type;
     pub const Parser = ini.Parser;
+    pub const Printer = ini.Printer;
     pub const default_type: ini.Type = .INI;
     pub fn parse(parser: *ini.Parser, input: []const u8, format: ini.Type) !Document {
         return ini.Parser.parse(parser.allocator, input, format);
     }
-    pub const print = Printer.print;
-    pub const printNode = Printer.printNode;
+    pub const print = ini.Printer.print;
+    pub const printNode = ini.Printer.printNode;
 
     pub const name = "ini";
     pub const extensions: []const []const u8 = &.{"ini"};

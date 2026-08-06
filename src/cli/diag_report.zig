@@ -24,7 +24,8 @@ const EditTextKind = types.EditTextKind;
 /// word and the highlight+`short_label` in `color`, and the `-->` pointer plus
 /// the `N |` gutter in blue. Language-agnostic (every field is plain data —
 /// see `fig.ParseDiagnostic.Rendered`), so every covered language (fig, JSON,
-/// TOML/YAML to come) renders through this one function; only `renderAll`'s
+/// TOML, INI, dotenv, `.properties`, NestedText; YAML to come) renders through
+/// this one function; only `renderAll`'s
 /// per-language `describe`/`shortLabel` calls differ. This is a CLI-only
 /// sibling of a language's own `Diagnostic.renderAlloc`/`Warning.renderAlloc`
 /// (see `languages/fig/parser.zig`'s private `renderReportAlloc`, which still
@@ -116,7 +117,7 @@ pub fn renderAll(a: std.mem.Allocator, items: anytype, comptime describeFn: anyt
 /// Render one parse failure as a `printDiag` teaching report and exit(2) — the
 /// `get`-time twin of `check`'s per-error loop, for the single diagnostic a
 /// non-recovering parse produces. Shared by every language with a `Report`
-/// (fig, JSON; TOML/YAML to come) so `get`'s error path doesn't repeat this
+/// (every one whose parser declares `parseWithReport`) so `get`'s error path doesn't repeat this
 /// print-flush-exit sequence per language.
 pub fn reportParseError(term: *Io.Terminal, source: []const u8, file: []const u8, offset: usize, end: ?usize, message: []const u8, short_label: []const u8) !void {
     try printDiag(term, source, file, offset, end, "error", .red, message, short_label);
@@ -162,43 +163,22 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
     }
 }
 
-/// How a format takes the caller's text, which decides what the fix is when
-/// the text turns out not to fit: spliced in verbatim as source (so a string
-/// needs its own quotes), wrapped as a JSON string (so `"`/`\` need escaping),
-/// or written as raw characters (so only the format's own separators can break
-/// it). Mirrors the per-format branches in `edit_ops` — the JSON family goes
-/// through `jsonifyEdit`, NestedText/plist RENDER the text rather than splice
-/// it, everything else takes it as a literal.
-const SpliceStyle = enum { literal, json_string, raw };
+/// How a format takes the caller's text, which decides what the fix is when the
+/// text turns out not to fit: spliced in verbatim as source (so a string needs
+/// its own quotes), wrapped as a JSON string (so `"`/`\` need escaping), or
+/// written as raw characters (so only the format's own separators can break
+/// it). Read straight off the format registry, which is also what
+/// `edit_ops.route` acts on — so the note printed here and the splice the user
+/// actually got cannot describe two different things.
+const SpliceStyle = fig.Language.SpliceStyle;
 
 fn spliceStyle(format: Format) SpliceStyle {
+    @setEvalBranchQuota(30_000);
     return switch (format) {
-        .json, .jsonc, .json5 => .json_string,
-        .toml, .yaml, .zon, .fig => .literal,
-        .ini, .dotenv, .properties, .plist, .xml, .nestedtext => .raw,
         // Neither has an in-place editor, so no edit text ever reaches here.
         .canonical, .gron => .literal,
+        inline else => |f| comptime fig.Language.entryFor(@tagName(f)).splice,
     };
-}
-
-// The format registry declares the same semantic per dialect
-// (`Language.SpliceStyle`), and Stage 4 deletes the switch above in favour of
-// it. Pinned by running it: every registry entry must agree with the arm that
-// answers for it today, so the swap is provably a no-op. The two members
-// with no registry entry (`canonical`/`gron`) are unreachable here for
-// their own reasons, stated above.
-comptime {
-    @setEvalBranchQuota(10_000);
-    for (fig.Language.dialects) |d| {
-        const want: SpliceStyle = switch (d.splice) {
-            .literal => .literal,
-            .json_string => .json_string,
-            .raw => .raw,
-        };
-        if (spliceStyle(@field(Format, d.name)) != want)
-            @compileError("the format registry's splice style for '" ++ d.name ++
-                "' disagrees with `spliceStyle` in this file");
-    }
 }
 
 /// Report an edit whose *argument* — not the file — is what doesn't parse, and

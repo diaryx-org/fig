@@ -49,82 +49,18 @@ pub fn runEdit(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, binary_n
     defer if (!std.mem.eql(u8, opts.file, "-")) input.close(io);
 
     const op: EditOp = if (opts.key) .replace_key else .replace_value;
+    // Value/key replacement is the same span splice for every editable format
+    // — a value or key node has a tight, contiguous span, so the generic
+    // editor handles even a TOML table assembled from scattered headers — so
+    // it routes through the shared editor dispatch like every other edit. That
+    // is also where the JSON family's requoting of the replacement, XML's
+    // reader-only refusal and the canonical/gron refusals now live; see
+    // `edit_ops.route`.
     if (try args_mod.resolveEmbedType(io, a, input, opts.embed, opts.detect_embed)) |embed_type| {
         try edit_ops.applyToEmbed(a, io, input, embed_type, opts.path, opts.replacement, op);
-    } else switch (if (opts.detect) try parse_dispatch.detectFileFormat(io, a, opts.file) else opts.format) {
-        .json, .jsonc, .json5 => |f| if (comptime build_options.lang_json) {
-            const replacement = try std.fmt.allocPrint(a, "\"{s}\"", .{opts.replacement});
-            try edit_ops.applyToFile(fig.Language.JSON, a, io, input, opts.path, replacement, op, edit_ops.jsonDialect(f));
-        } else return error.FormatDisabled,
-        .yaml => if (comptime build_options.lang_yaml) {
-            try edit_ops.applyToFile(fig.Language.YAML, a, io, input, opts.path, opts.replacement, op, fig.Language.YAML.default_type);
-        } else return error.FormatDisabled,
-        // TOML value/key replacement: a value or key node has a tight,
-        // contiguous span (the parser's node_spans point at the original
-        // source bytes), so the generic span-splice editor handles it
-        // even when the owning table is assembled from scattered headers.
-        // The replacement is taken verbatim as a TOML literal, like YAML
-        // and ZON. (Structural inserts/deletes that must place text
-        // relative to a scattered table are still unsupported.)
-        .toml => if (comptime build_options.lang_toml)
-            try edit_ops.applyToFile(fig.Language.TOML, a, io, input, opts.path, opts.replacement, op, fig.Language.TOML.default_type)
-        else
-            return error.FormatDisabled,
-        // ZON edits take the replacement verbatim (a literal ZON value),
-        // like YAML — the editor splices and reparses it.
-        .zon => if (comptime build_options.lang_zon)
-            try edit_ops.applyToFile(fig.Language.ZON, a, io, input, opts.path, opts.replacement, op, fig.Language.ZON.default_type)
-        else
-            return error.FormatDisabled,
-        // XML is reader-only: no in-place editor yet.
-        .xml => return error.UnsupportedXmlEdit,
-        // INI: root/section key replace-value takes the replacement verbatim
-        // as a literal, same as TOML/YAML/fig/ZON/dotenv/.properties.
-        .ini => if (comptime build_options.lang_ini)
-            try edit_ops.applyToFile(fig.Language.INI, a, io, input, opts.path, opts.replacement, op, fig.Language.INI.default_type)
-        else
-            return error.FormatDisabled,
-        // dotenv/.properties: flat `KEY=value`, no nesting — the generic
-        // block-mapping editor handles them directly (see `Editor`'s
-        // `kv_sep`). The replacement is taken verbatim as a literal, same as
-        // YAML/TOML/fig/ZON (only the JSON family needs requoting).
-        .dotenv => if (comptime build_options.lang_dotenv)
-            try edit_ops.applyToFile(fig.Language.DOTENV, a, io, input, opts.path, opts.replacement, op, fig.Language.DOTENV.default_type)
-        else
-            return error.FormatDisabled,
-        .properties => if (comptime build_options.lang_properties)
-            try edit_ops.applyToFile(fig.Language.PROPERTIES, a, io, input, opts.path, opts.replacement, op, fig.Language.PROPERTIES.default_type)
-        else
-            return error.FormatDisabled,
-        // plist: unlike generic XML, plist HAS an in-place editor
-        // (`Editor(Plist)`). The replacement is rendered into a typed value
-        // element (fig `sniffBare` typing, or spliced verbatim when it already
-        // starts with `<`) — see `languages/plist/editor_helper.zig`.
-        .plist => if (comptime build_options.lang_plist)
-            try edit_ops.applyToFile(fig.Language.PLIST, a, io, input, opts.path, opts.replacement, op, fig.Language.PLIST.default_type)
-        else
-            return error.FormatDisabled,
-        // The canonical form is a parse/print pair with no span-splicing
-        // editor; convert via `get` instead of editing in place.
-        .canonical => return error.UnsupportedCanonicalEdit,
-        // fig value/key replacement: `Editor(Fig)` splices the exact
-        // node span (`Fig.Parser` now tracks real spans — see
-        // `fig/parser.zig`'s "AST assembly" section), same as TOML.
-        // The replacement is taken verbatim as a fig literal.
-        .fig => if (comptime build_options.lang_fig)
-            try edit_ops.applyToFile(fig.Language.FIG, a, io, input, opts.path, opts.replacement, op, fig.Language.FIG.default_type)
-        else
-            return error.FormatDisabled,
-        // gron is a CLI-only get/echo format with no in-place editor.
-        .gron => return error.UnsupportedGronEdit,
-        // NestedText: `Editor(NestedText)` renders the replacement as a raw
-        // scalar (same-line or a nested `>`-block, per its shape) rather than
-        // splicing it verbatim as syntax — this format has no typed/quoted
-        // literal to splice in the first place. See `nt_edit.ntReplaceValue`.
-        .nestedtext => if (comptime build_options.lang_nestedtext)
-            try edit_ops.applyToFile(fig.Language.NESTEDTEXT, a, io, input, opts.path, opts.replacement, op, fig.Language.NESTEDTEXT.default_type)
-        else
-            return error.FormatDisabled,
+    } else {
+        const resolved = if (opts.detect) try parse_dispatch.detectFileFormat(io, a, opts.file) else opts.format;
+        try edit_ops.applyToFileAs(a, io, input, resolved, opts.path, opts.replacement, op);
     }
 }
 
@@ -310,8 +246,9 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
             // A parse failure renders as a `file:line:col` teaching
             // message (DESIGN.md: every diagnostic names the fix) and
             // exits cleanly — no error-return trace for a user typo.
-            // Only fig/JSON/TOML fill a report so far; every other
-            // format still falls through to the bare `return err`.
+            // Every language whose parser has a `parseWithReport` fills
+            // one (see `parse_dispatch.reporting`); the rest fall through
+            // to the bare `return err` and its generic error name.
             try reports.reportDiagnostics(stderr_term, content, opts.file);
             return err;
         };
@@ -475,61 +412,19 @@ pub fn runComment(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
             try edit_ops.getCommentFromEmbed(a, io, input, embed_type, opts.path, opts.inline_comment)
         else switch (resolved) {
             // Strict JSON has no comment syntax: there can be nothing to get.
+            // The one refusal the shared dispatch can't state, because it is
+            // about a DIALECT of an otherwise comment-carrying language — and
+            // it is a message-and-exit(2), not an error value.
             .json => {
                 try stderr_term.writer.print("error: strict JSON has no comments; use a .jsonc or .json5 file instead.\n", .{});
                 try stderr_term.writer.flush();
                 std.process.exit(2);
             },
-            .jsonc, .json5 => |f| if (comptime build_options.lang_json) try edit_ops.getCommentFromFile(fig.Language.JSON, a, io, input, opts.path, opts.inline_comment, edit_ops.jsonDialect(f)) else return error.FormatDisabled,
-            .yaml => if (comptime build_options.lang_yaml)
-                try edit_ops.getCommentFromFile(fig.Language.YAML, a, io, input, opts.path, opts.inline_comment, fig.Language.YAML.default_type)
-            else
-                return error.FormatDisabled,
-            .toml => if (comptime build_options.lang_toml)
-                try edit_ops.getCommentFromFile(fig.Language.TOML, a, io, input, opts.path, opts.inline_comment, fig.Language.TOML.default_type)
-            else
-                return error.FormatDisabled,
-            .zon => if (comptime build_options.lang_zon)
-                try edit_ops.getCommentFromFile(fig.Language.ZON, a, io, input, opts.path, opts.inline_comment, fig.Language.ZON.default_type)
-            else
-                return error.FormatDisabled,
-            .xml => return error.UnsupportedXmlEdit,
-            // A leading (own-line, above-the-key) comment reads fine; `--inline`
-            // surfaces `error.CommentsUnsupported` from the editor — INI has no
-            // same-line trailing comment syntax (see `Editor`'s
-            // `trailingCommentMarker`).
-            .ini => if (comptime build_options.lang_ini)
-                try edit_ops.getCommentFromFile(fig.Language.INI, a, io, input, opts.path, opts.inline_comment, fig.Language.INI.default_type)
-            else
-                return error.FormatDisabled,
-            .dotenv => if (comptime build_options.lang_dotenv)
-                try edit_ops.getCommentFromFile(fig.Language.DOTENV, a, io, input, opts.path, opts.inline_comment, fig.Language.DOTENV.default_type)
-            else
-                return error.FormatDisabled,
-            .properties => if (comptime build_options.lang_properties)
-                try edit_ops.getCommentFromFile(fig.Language.PROPERTIES, a, io, input, opts.path, opts.inline_comment, fig.Language.PROPERTIES.default_type)
-            else
-                return error.FormatDisabled,
-            // plist comments are `<!-- ... -->`; both leading (own-line) and
-            // `--inline` trailing reads are supported (see `plist_edit`).
-            .plist => if (comptime build_options.lang_plist)
-                try edit_ops.getCommentFromFile(fig.Language.PLIST, a, io, input, opts.path, opts.inline_comment, fig.Language.PLIST.default_type)
-            else
-                return error.FormatDisabled,
-            .canonical => return error.UnsupportedCanonicalEdit,
-            .fig => if (comptime build_options.lang_fig)
-                try edit_ops.getCommentFromFile(fig.Language.FIG, a, io, input, opts.path, opts.inline_comment, fig.Language.FIG.default_type)
-            else
-                return error.FormatDisabled,
-            .gron => return error.UnsupportedGronEdit,
-            // A leading (own-line) comment reads fine; `--inline` surfaces
-            // `error.CommentsUnsupported` from the editor — NestedText has no
-            // same-line trailing comment syntax (see `Editor`'s
-            // `trailingCommentMarker`), matching INI.
-            .nestedtext => if (comptime build_options.lang_nestedtext)
-                try edit_ops.getCommentFromFile(fig.Language.NESTEDTEXT, a, io, input, opts.path, opts.inline_comment, fig.Language.NESTEDTEXT.default_type)
-            else
-                return error.FormatDisabled,
+            // Everything else reads its comment through the shared editor
+            // dispatch. A format whose grammar has no same-line comment (INI,
+            // NestedText) still answers a leading-comment read and surfaces
+            // `error.CommentsUnsupported` from the editor under `--inline`.
+            else => try edit_ops.getCommentAs(a, io, input, resolved, opts.path, opts.inline_comment),
         };
         // Print the comment followed by a newline. An absent comment (null)
         // and a present-but-empty one both print just the newline — the CLI
@@ -552,58 +447,18 @@ pub fn runComment(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
         try edit_ops.applyToEmbed(a, io, input, embed_type, opts.path, opts.text, op);
     } else switch (resolved) {
         // Strict JSON has no comment syntax: fail with a clear message
-        // rather than letting the editor surface a bare error.
+        // rather than letting the editor surface a bare error. Same explicit
+        // arm, and the same reason, as the `--get` branch above.
         .json => {
             try stderr_term.writer.print("error: strict JSON has no comments; use a .jsonc or .json5 file instead.\n", .{});
             try stderr_term.writer.flush();
             std.process.exit(2);
         },
-        // JSONC/JSON5 accept `//` comments (reparsed under the dialect).
-        .jsonc, .json5 => |f| if (comptime build_options.lang_json) try edit_ops.applyToFile(fig.Language.JSON, a, io, input, opts.path, opts.text, op, edit_ops.jsonDialect(f)) else return error.FormatDisabled,
-        .yaml => if (comptime build_options.lang_yaml)
-            try edit_ops.applyToFile(fig.Language.YAML, a, io, input, opts.path, opts.text, op, fig.Language.YAML.default_type)
-        else
-            return error.FormatDisabled,
-        .toml => if (comptime build_options.lang_toml)
-            try edit_ops.applyToFile(fig.Language.TOML, a, io, input, opts.path, opts.text, op, fig.Language.TOML.default_type)
-        else
-            return error.FormatDisabled,
-        .zon => if (comptime build_options.lang_zon)
-            try edit_ops.applyToFile(fig.Language.ZON, a, io, input, opts.path, opts.text, op, fig.Language.ZON.default_type)
-        else
-            return error.FormatDisabled,
-        .xml => return error.UnsupportedXmlEdit,
-        // `add`/`delete` leading comment ops work; `--inline` set/delete
-        // surfaces `error.CommentsUnsupported` (see the `--get` branch above).
-        .ini => if (comptime build_options.lang_ini)
-            try edit_ops.applyToFile(fig.Language.INI, a, io, input, opts.path, opts.text, op, fig.Language.INI.default_type)
-        else
-            return error.FormatDisabled,
-        .dotenv => if (comptime build_options.lang_dotenv)
-            try edit_ops.applyToFile(fig.Language.DOTENV, a, io, input, opts.path, opts.text, op, fig.Language.DOTENV.default_type)
-        else
-            return error.FormatDisabled,
-        .properties => if (comptime build_options.lang_properties)
-            try edit_ops.applyToFile(fig.Language.PROPERTIES, a, io, input, opts.path, opts.text, op, fig.Language.PROPERTIES.default_type)
-        else
-            return error.FormatDisabled,
-        // plist: full in-place editing (insert/delete/comment) via `Editor(Plist)`.
-        .plist => if (comptime build_options.lang_plist)
-            try edit_ops.applyToFile(fig.Language.PLIST, a, io, input, opts.path, opts.text, op, fig.Language.PLIST.default_type)
-        else
-            return error.FormatDisabled,
-        .canonical => return error.UnsupportedCanonicalEdit,
-        .fig => if (comptime build_options.lang_fig)
-            try edit_ops.applyToFile(fig.Language.FIG, a, io, input, opts.path, opts.text, op, fig.Language.FIG.default_type)
-        else
-            return error.FormatDisabled,
-        .gron => return error.UnsupportedGronEdit,
-        // `add`/`delete` leading comment ops work; `--inline` set/delete
-        // surfaces `error.CommentsUnsupported` (see the `--get` branch above).
-        .nestedtext => if (comptime build_options.lang_nestedtext)
-            try edit_ops.applyToFile(fig.Language.NESTEDTEXT, a, io, input, opts.path, opts.text, op, fig.Language.NESTEDTEXT.default_type)
-        else
-            return error.FormatDisabled,
+        // Everything else goes through the shared editor dispatch — JSONC/
+        // JSON5's `//` comments reparse under their own dialect there, and
+        // `--inline` set/delete on a format with no same-line comment syntax
+        // surfaces `error.CommentsUnsupported` from the editor.
+        else => try edit_ops.applyToFileAs(a, io, input, resolved, opts.path, opts.text, op),
     }
 }
 

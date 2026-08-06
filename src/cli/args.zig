@@ -1124,6 +1124,10 @@ test "embedTypeFromName maps archetype names" {
 }
 
 test "detectLanguageFromFileEnding: .md/.markdown defer the archetype to a runtime sniff" {
+    // The extension table is derived from each compiled-in language's own
+    // `extensions`, so a gated-out language contributes none — `.yaml`/`.figl`
+    // below simply have no entry in a build without YAML/fig.
+    if (comptime !(build_options.lang_yaml and build_options.lang_fig)) return error.SkipZigTest;
     const t = std.testing;
     const md = detectLanguageFromFileEnding("post.md").?;
     try t.expectEqual(Format.yaml, md.format);

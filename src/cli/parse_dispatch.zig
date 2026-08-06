@@ -48,66 +48,93 @@ pub const defaultDialect = fig.Language.defaultDialect;
 /// single-grammar). YAML selects 1.2.2 (default) or 1.1; the versions differ in
 /// scalar type resolution (see `scalarKind1_1` in the YAML parser).
 pub fn resolveSpec(format: Format, spec_str: ?[]const u8) error{UnsupportedSpec}!Spec {
+    @setEvalBranchQuota(30_000);
     const s = spec_str orelse return .{};
-    const eq = std.mem.eql;
     return switch (format) {
-        // A gated-out language has no dialect to select, so `--spec` against it
-        // is as inapplicable as `--spec` against JSON — the same
-        // `UnsupportedSpec` the format list at the bottom returns.
-        .toml => if (comptime !build_options.lang_toml)
-            error.UnsupportedSpec
-        else if (eq(u8, s, "1.0") or eq(u8, s, "1.0.0"))
-            .{ .toml = .TOML_1_0 }
-        else if (eq(u8, s, "1.1") or eq(u8, s, "1.1.0"))
-            .{ .toml = .TOML_1_1 }
-        else
-            error.UnsupportedSpec,
-        .yaml => if (comptime !build_options.lang_yaml)
-            error.UnsupportedSpec
-        else if (eq(u8, s, "1.2") or eq(u8, s, "1.2.2"))
-            .{ .yaml = .v1_2_2 }
-        else if (eq(u8, s, "1.1") or eq(u8, s, "1.1.0"))
-            .{ .yaml = .v1_1 }
-        else
-            error.UnsupportedSpec,
-        .json, .jsonc, .json5, .zon, .xml, .canonical, .fig, .gron, .ini, .dotenv, .properties, .plist, .nestedtext => error.UnsupportedSpec,
+        // Neither is a registry entry, and neither has a version to name: the
+        // canonical oracle grammar is the AST's own 1:1 encoding, and gron is a
+        // projection of JSON.
+        .canonical, .gron => error.UnsupportedSpec,
+        inline else => |f| {
+            const d = comptime L.entryFor(@tagName(f));
+            // Two ways `--spec` is inapplicable, and they report identically:
+            // a gated-out language has no dialect to select at all, and a
+            // single-grammar one (the JSON family — strictness is the format
+            // NAME here — plus ZON/XML/fig/INI/dotenv/.properties/plist/
+            // NestedText) has no version to select between.
+            if (comptime d.Lang == void or d.specs.len == 0) return error.UnsupportedSpec;
+            inline for (d.specs) |v| {
+                if (std.mem.eql(u8, s, v.name)) {
+                    // `Spec`'s field per language is named for the registry
+                    // entry, which for both multi-version languages is also
+                    // the language's own name.
+                    var out: Spec = .{};
+                    @field(out, d.name) = v.dialect;
+                    return out;
+                }
+            }
+            return error.UnsupportedSpec;
+        },
     };
 }
 
-// The format registry's `specs` tables, pinned against the switch above by
-// running it — every version string the registry lists must resolve, and must
-// resolve to the dialect the registry says, so Stage 4 can replace the arms
-// with a table walk and know the behaviour is unchanged. The reverse direction
-// (a version string `resolveSpec` accepts that the registry omits) can't be
-// enumerated from here, so it gets the one probe a format with NO registry
-// specs must still reject.
-//
-// This lives here rather than in `language.zig` because `resolveSpec` is the
-// source of truth being pinned, and it is a CLI function — the registry sits
-// below the CLI and cannot reach up to it.
+// `Spec`'s completeness against the registry, both directions: the hand-written
+// fields above are what `resolveSpec` fills and what `parseSliceAs` reads, so
+// an entry that grew a `--spec` table without a field here would resolve into
+// nothing, and a field here with no registry versions would never be written.
 comptime {
     @setEvalBranchQuota(20_000);
     for (fig.Language.dialects) |d| {
-        // A gated-out language has no dialect to compare against, and
-        // `resolveSpec` refuses `--spec` for it outright (see the arms above).
-        if (d.Lang == void) continue;
-        const format = @field(Format, d.name);
-        for (d.specs) |s| {
-            const got = resolveSpec(format, s.name) catch @compileError(
-                "resolveSpec rejects `--spec " ++ s.name ++ "` for '" ++ d.name ++
-                    "', which the format registry lists as one of its versions",
-            );
-            // `Spec`'s field per language is named for the format, which for
-            // the two multi-version languages IS the entry name.
-            if (@field(got, d.name) != s.dialect)
-                @compileError("the format registry's `--spec " ++ s.name ++ "` for '" ++ d.name ++
-                    "' selects a different dialect than resolveSpec does");
+        if (d.specs.len == 0) continue;
+        if (!@hasField(Spec, d.name))
+            @compileError("the format registry lists `--spec` versions for '" ++ d.name ++
+                "', but `Spec` in this file has no field of that name for `resolveSpec` to fill");
+        if (@FieldType(Spec, d.name) != DialectOf(d.Lang))
+            @compileError("`Spec." ++ d.name ++ "` is not the dialect type the format registry's" ++
+                " versions for '" ++ d.name ++ "' select");
+    }
+    for (@typeInfo(Spec).@"struct".fields) |f| {
+        if (fig.Language.entryFor(f.name).specs.len == 0)
+            @compileError("`Spec` has the field '" ++ f.name ++ "', but the format registry lists no" ++
+                " `--spec` versions for it — nothing would ever fill it");
+    }
+}
+
+// The version STRINGS themselves, pinned as literals. `resolveSpec` now derives
+// its behaviour from the registry, so asserting the two agree would be circular
+// — what is left to state is the user-facing contract the registry is now the
+// only home for: exactly these spellings are accepted, in this order, for these
+// two languages and no others. (The dialect each selects is checked by the
+// registry's own asserts in `language.zig`; here only the names are build-
+// invariant, since a gated-out language still lists them.)
+comptime {
+    @setEvalBranchQuota(20_000);
+    const expected = .{
+        .{ "toml", [_][]const u8{ "1.0", "1.0.0", "1.1", "1.1.0" } },
+        .{ "yaml", [_][]const u8{ "1.2", "1.2.2", "1.1", "1.1.0" } },
+    };
+    for (expected) |e| {
+        const got = fig.Language.entryFor(e[0]).specs;
+        if (got.len != e[1].len)
+            @compileError("the format registry no longer lists exactly " ++
+                std.fmt.comptimePrint("{d}", .{e[1].len}) ++ " `--spec` versions for '" ++ e[0] ++ "'");
+        for (got, e[1]) |g, w| {
+            if (!std.mem.eql(u8, g.name, w))
+                @compileError("the format registry's `--spec` versions for '" ++ e[0] ++
+                    "' no longer read `" ++ w ++ "` where they did — `fig check --spec` is a" ++
+                    " user-facing contract, so a spelling cannot change or move silently");
         }
-        if (d.specs.len == 0) {
-            _ = resolveSpec(format, "1.0") catch continue;
-            @compileError("resolveSpec accepts `--spec 1.0` for '" ++ d.name ++
-                "', but the format registry lists no versions for it");
+    }
+    for (fig.Language.dialects) |d| {
+        if (d.specs.len == 0) continue;
+        var known = false;
+        for (expected) |e| {
+            if (std.mem.eql(u8, e[0], d.name)) known = true;
         }
+        if (!known)
+            @compileError("'" ++ d.name ++ "' grew a `--spec` version table — add its expected" ++
+                " spellings to the pin above (and a `Spec` field, which the assert before this" ++
+                " one already demanded)");
     }
 }
 
@@ -118,10 +145,26 @@ comptime {
 ///
 /// One list, walked by all four of `Reports`' methods, so a language joining
 /// the diagnostic layer is added here and nowhere else.
+///
+/// MEMBERSHIP IS NOT DECIDED HERE. `parseSliceAs` routes a language through the
+/// report layer exactly when its `Parser` declares `parseWithReport`, so this
+/// list only supplies the LABEL each language's authoring-time lints are
+/// announced under — the completeness assert below fails the build if the two
+/// ever disagree. That is how INI/dotenv/`.properties`/NestedText joined: their
+/// parsers already produced positions and teaching messages, and nothing but
+/// this table's silence was keeping the CLI from printing them.
+///
+/// Not every member fills every column: NestedText's `Report` is a lone `diag`
+/// (no error list, no `Warning` type), so the methods below skip what a given
+/// language does not have rather than demanding one report shape from all.
 const reporting = .{
     .{ "fig", L.FIG, "fig authoring" },
     .{ "json", L.JSON, "JSON authoring" },
     .{ "toml", L.TOML, "TOML authoring" },
+    .{ "ini", L.INI, "INI authoring" },
+    .{ "dotenv", L.DOTENV, "dotenv authoring" },
+    .{ "properties", L.PROPERTIES, ".properties authoring" },
+    .{ "nestedtext", L.NESTEDTEXT, "NestedText authoring" },
 };
 
 /// A language's `Parser.Report` when it is compiled in, `void` when gated out.
@@ -146,6 +189,10 @@ pub const Reports = struct {
     fig: ReportOf(L.FIG) = emptyReport(L.FIG),
     json: ReportOf(L.JSON) = emptyReport(L.JSON),
     toml: ReportOf(L.TOML) = emptyReport(L.TOML),
+    ini: ReportOf(L.INI) = emptyReport(L.INI),
+    dotenv: ReportOf(L.DOTENV) = emptyReport(L.DOTENV),
+    properties: ReportOf(L.PROPERTIES) = emptyReport(L.PROPERTIES),
+    nestedtext: ReportOf(L.NESTEDTEXT) = emptyReport(L.NESTEDTEXT),
 
     /// Print a `file:line:col` teaching message for each language that recorded
     /// a single parse diagnostic. At most one ever has: only the format that
@@ -163,9 +210,13 @@ pub const Reports = struct {
     /// Announce authoring-time lints under each language's label. These ride
     /// the same `--quiet`/`--strict` contract as the serialize-side
     /// diagnostics: quiet silences, strict aborts.
+    ///
+    /// Skips a language whose parser has no `Warning` type at all (NestedText):
+    /// it reports errors but has grown no authoring lints, so there is nothing
+    /// to announce rather than an empty list to walk.
     pub fn reportWarnings(self: *const Reports, term: *Io.Terminal, source: []const u8, file: []const u8, quiet: bool, strict: bool) !void {
         inline for (reporting) |r| {
-            if (comptime r[1] != void) {
+            if (comptime r[1] != void and @hasDecl(r[1].Parser, "Warning")) {
                 const W = r[1].Parser.Warning;
                 try diag_report.handleParseWarnings(term, source, file, r[2], @field(self, r[0]).warnings, W.describeWarning, W.shortLabel, quiet, strict);
             }
@@ -182,8 +233,14 @@ pub const Reports = struct {
             if (comptime r[1] != void) {
                 const P = r[1].Parser;
                 const rep = @field(self, r[0]);
-                if (rep.errors.len > 0)
-                    return try diag_report.renderAll(allocator, rep.errors, P.describe, P.shortLabel);
+                // A language whose parser has no `parseCollecting` never fills
+                // an error list (NestedText), so its `Report` doesn't carry
+                // one — the single `diag` below is all it can offer, which is
+                // exactly the fallback this arm already had.
+                if (comptime @hasField(@TypeOf(rep), "errors")) {
+                    if (rep.errors.len > 0)
+                        return try diag_report.renderAll(allocator, rep.errors, P.describe, P.shortLabel);
+                }
                 if (rep.diag) |d|
                     return try diag_report.renderAll(allocator, &[_]P.Diagnostic{d}, P.describe, P.shortLabel);
             }
@@ -191,10 +248,11 @@ pub const Reports = struct {
         return null;
     }
 
-    /// The warnings twin of `renderErrors`.
+    /// The warnings twin of `renderErrors`. Skips the languages with no
+    /// `Warning` type, same as `reportWarnings`.
     pub fn renderWarnings(self: *const Reports, allocator: std.mem.Allocator) !?[]const fig.ParseDiagnostic.Rendered {
         inline for (reporting) |r| {
-            if (comptime r[1] != void) {
+            if (comptime r[1] != void and @hasDecl(r[1].Parser, "Warning")) {
                 const W = r[1].Parser.Warning;
                 const rep = @field(self, r[0]);
                 if (rep.warnings.len > 0)
@@ -205,6 +263,37 @@ pub const Reports = struct {
     }
 };
 
+// `Reports`/`reporting` completeness against the registry. `parseSliceAs` picks
+// its parse flavour by DECLARATION — a `Parser` with `parseWithReport` gets a
+// report sink — so a language that grows one joins the diagnostic layer whether
+// or not anybody remembered to give it a field here. This is what turns that
+// silent omission (the bug fixed in this stage: four languages produced
+// positions and messages the CLI threw away) into a build failure that names
+// the language.
+comptime {
+    @setEvalBranchQuota(20_000);
+    for (fig.Language.dialects) |d| {
+        if (d.Lang == void) continue;
+        if (!@hasDecl(d.Lang.Parser, "parseWithReport")) continue;
+        if (!@hasField(Reports, d.Lang.name))
+            @compileError("`" ++ d.Lang.name ++ "`'s parser declares `parseWithReport`, so `parseSliceAs`" ++
+                " routes it through the report layer — but `Reports` has no `" ++ d.Lang.name ++
+                "` field for the report to land in");
+        var listed = false;
+        for (reporting) |r| {
+            if (std.mem.eql(u8, r[0], d.Lang.name)) listed = true;
+        }
+        if (!listed)
+            @compileError("`" ++ d.Lang.name ++ "` fills a parse report, but `reporting` has no row for" ++
+                " it — its diagnostics would be collected and then never printed. Add one, with the" ++
+                " label its authoring-time warnings should be announced under");
+    }
+    for (reporting) |r| {
+        if (!@hasField(Reports, r[0]))
+            @compileError("`reporting` lists '" ++ r[0] ++ "', which `Reports` has no field for");
+    }
+}
+
 /// Parse already-read `content` as the CLI `format` under `spec`. The
 /// content-based parser the `get` and `check` actions use: reading the input
 /// once means detection and parsing share the same bytes, so a piped stdin is
@@ -214,53 +303,45 @@ pub const Reports = struct {
 ///
 /// `reports` (fields optional) receives each covered language's own parse
 /// report — `diag` on failure (position + teaching message), `warnings`
-/// (authoring-time lints) always; `errors` (every failure, source order) when
-/// `recover`. Only the `.fig`, `.json`/`.jsonc`/`.json5`, and `.toml` branches
-/// fill one; the other formats keep their bare error-name reporting for now.
+/// (authoring-time lints) where the language has them; `errors` (every failure,
+/// source order) when `recover` and the parser can recover. Which languages
+/// those are is not a list anybody maintains: it is every one whose `Parser`
+/// declares `parseWithReport`, resolved per arm below.
 pub fn parseSliceAs(format: Format, spec: Spec, allocator: std.mem.Allocator, content: []const u8, recover: bool, reports: *Reports) !fig.Document {
+    @setEvalBranchQuota(30_000);
     return switch (format) {
-        .json => if (comptime build_options.lang_json) parseJson(allocator, content, .JSON, recover, &reports.json) else error.FormatDisabled,
-        .jsonc => if (comptime build_options.lang_json) parseJson(allocator, content, .JSONC, recover, &reports.json) else error.FormatDisabled,
-        .json5 => if (comptime build_options.lang_json) parseJson(allocator, content, .JSON5, recover, &reports.json) else error.FormatDisabled,
-        .yaml => if (comptime build_options.lang_yaml) fig.Language.YAML.Parser.parse(allocator, content, spec.yaml) else error.FormatDisabled,
-        .toml => if (comptime build_options.lang_toml) blk: {
-            const r = &reports.toml;
-            break :blk if (recover)
-                fig.Language.TOML.Parser.parseCollecting(allocator, content, spec.toml, r)
-            else
-                fig.Language.TOML.Parser.parseWithReport(allocator, content, spec.toml, r);
-        } else error.FormatDisabled,
-        .zon => if (comptime build_options.lang_zon) fig.Language.ZON.Parser.parse(allocator, content, fig.Language.ZON.default_type) else error.FormatDisabled,
-        .xml => if (comptime build_options.lang_xml) fig.Language.XML.Parser.parse(allocator, content, fig.Language.XML.default_type) else error.FormatDisabled,
+        // The AST's own 1:1 oracle grammar — not a `Language`, so not a
+        // registry entry, so its own arm.
         .canonical => if (comptime canonical_enabled) fig.Canonical.parse(allocator, content) else error.FormatDisabled,
-        .fig => if (comptime build_options.lang_fig) blk: {
-            const r = &reports.fig;
-            // `recover` collects the whole file's errors (`check`); otherwise
-            // stop at the first (`get`/convert only needs to fail once).
-            break :blk if (recover)
-                fig.Language.FIG.Parser.parseCollecting(allocator, content, fig.Language.FIG.default_type, r)
-            else
-                fig.Language.FIG.Parser.parseWithReport(allocator, content, fig.Language.FIG.default_type, r);
-        } else error.FormatDisabled,
         // gron ("ungron") reconstructs the AST from its `path = value` lines,
         // reusing the JSON parser for each RHS — so it needs JSON compiled in.
         .gron => if (comptime build_options.lang_json) gron.parseDocument(allocator, content) else error.FormatDisabled,
-        .ini => if (comptime build_options.lang_ini) fig.Language.INI.Parser.parse(allocator, content, fig.Language.INI.default_type) else error.FormatDisabled,
-        .dotenv => if (comptime build_options.lang_dotenv) fig.Language.DOTENV.Parser.parse(allocator, content, fig.Language.DOTENV.default_type) else error.FormatDisabled,
-        .properties => if (comptime build_options.lang_properties) fig.Language.PROPERTIES.Parser.parse(allocator, content, fig.Language.PROPERTIES.default_type) else error.FormatDisabled,
-        .plist => if (comptime build_options.lang_plist) fig.Language.PLIST.Parser.parse(allocator, content, fig.Language.PLIST.default_type) else error.FormatDisabled,
-        .nestedtext => if (comptime build_options.lang_nestedtext) fig.Language.NESTEDTEXT.Parser.parse(allocator, content, fig.Language.NESTEDTEXT.default_type) else error.FormatDisabled,
-    };
-}
+        inline else => |f| {
+            const d = comptime L.entryFor(@tagName(f));
+            if (comptime d.Lang == void) return error.FormatDisabled;
+            const P = d.Lang.Parser;
 
-/// The three JSON dialects share one parser/`Report` type, differing only in
-/// `jtype` — factored out of `parseSliceAs` so its `.json`/`.jsonc`/`.json5`
-/// arms don't triplicate the recover-vs-single-shot dispatch.
-pub fn parseJson(allocator: std.mem.Allocator, content: []const u8, jtype: L.JSON.Type, recover: bool, report: *L.JSON.Parser.Report) !fig.Document {
-    return if (recover)
-        L.JSON.Parser.parseCollecting(allocator, content, jtype, report)
-    else
-        L.JSON.Parser.parseWithReport(allocator, content, jtype, report);
+            // Which grammar version to parse under. `--spec` picks it for the
+            // languages that expose one (`Spec` carries a field named for the
+            // entry); otherwise the entry's own dialect — which is exactly
+            // what splits one JSON parser into the json/jsonc/json5 formats.
+            const dialect = if (comptime @hasField(Spec, d.name)) @field(spec, d.name) else d.dialect;
+
+            // Parse flavour, chosen by what the parser DECLARES rather than by
+            // a list of languages: no report at all, a report, or a report
+            // that keeps going after the first error. `recover` collects the
+            // whole file's errors (`check`); otherwise the parse stops at the
+            // first (`get`/`fmt`/`convert` only need to fail once).
+            if (comptime !@hasDecl(P, "parseWithReport")) return P.parse(allocator, content, dialect);
+            // The sink is keyed by LANGUAGE, not by dialect: the three JSON
+            // formats share one parser and one `Report`.
+            const sink = &@field(reports, d.Lang.name);
+            if (comptime @hasDecl(P, "parseCollecting")) {
+                if (recover) return P.parseCollecting(allocator, content, dialect, sink);
+            }
+            return P.parseWithReport(allocator, content, dialect, sink);
+        },
+    };
 }
 
 /// Map a `Language.detect` result to the CLI `Format`. `Detected` has no
@@ -328,7 +409,8 @@ pub fn detectFileFormat(io: Io, allocator: std.mem.Allocator, file_path: []const
 /// known — an unknown/inapplicable version is reported like a parse error. When
 /// the extension implies an embedded region (e.g. markdown frontmatter) the
 /// inner document is extracted and parsed. Any IO/parse/spec error propagates to
-/// the caller, which reports it — except fig and JSON: a parse failure fills
+/// the caller, which reports it — except for the languages in the report layer
+/// (`reporting` above): there, a parse failure fills
 /// `diag_errors` with every diagnostic rendered into the language-agnostic
 /// `ParseDiagnostic.Rendered` shape, and a clean parse may fill `diag_warnings`
 /// the same way (both borrow `diag_source`, which is set alongside them). The
@@ -380,6 +462,11 @@ pub fn checkOne(allocator: std.mem.Allocator, io: Io, file: []const u8, override
 }
 
 test "resolveSpec maps YAML version strings" {
+    // Every assertion below names a YAML dialect, which a `-Dyaml=false` build
+    // has no enum to spell — the version STRINGS survive gating (the registry
+    // still lists them), but `resolveSpec` refuses them, so there is nothing
+    // here left to check.
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const t = std.testing;
     // Default (no --spec) yields each language's default; YAML default is 1.2.2.
     try t.expectEqual(fig.Language.YAML.default_type, (try resolveSpec(.yaml, null)).yaml);

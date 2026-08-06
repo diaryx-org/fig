@@ -289,72 +289,164 @@ pub fn jsonifyEdit(allocator: std.mem.Allocator, op: EditOp, text: []const u8) !
     return .{ .text = text_out, .op = op_out };
 }
 
-/// Map the CLI's JSON-family `Format` to the parser dialect the editor reparses
-/// under, so editing a JSONC/JSON5 file keeps its comments valid on reparse.
-pub fn jsonDialect(format: Format) fig.Language.JSON.Type {
-    return switch (format) {
-        .jsonc => .JSONC,
-        .json5 => .JSON5,
-        else => .JSON,
-    };
-}
-
 /// The minimal valid empty document for `format`, used to seed a file `set`
 /// creates from scratch before landing its first key. `null` means the format
-/// has no empty-document form to seed into — the non-editable/projection formats
-/// (XML/canonical/gron) — so a from-scratch `set` on it is refused before any
-/// file is created. fig, like YAML/TOML, seeds from an empty file: an empty fig
-/// document parses as an empty map (see `buildRoot`), so the first `set` lands
-/// its key into it. JSON5 shares JSON's `{}` seed — its in-place edit routes
-/// through the same generic engine as JSON/JSONC (see `applyStructuralEdit`).
+/// has no empty-document form to seed into, so a from-scratch `set` on it is
+/// refused before any file is created — generic XML (a document needs a root
+/// element this layer cannot name) and the two non-`Language` projections.
+///
+/// Every seed now comes from the format registry's `empty_doc_seed`, which is
+/// also what `Embed.initRegion` writes into a freshly created region, so the
+/// two can no longer drift. The seeds themselves and the reasoning behind each
+/// (why an empty STRING is a valid seed for YAML/TOML/fig/INI/dotenv/
+/// `.properties`/NestedText but `{}`/`.{}` is needed for JSON/ZON) are
+/// documented on the entries in `languages/language.zig`.
+///
+/// Deliberately NOT gated on `d.Lang == void`: a seed is plain build-invariant
+/// data, and a gated-out language's from-scratch `set` still fails — with
+/// `FormatDisabled` from the edit itself, after the seeded file is rolled back
+/// (see `runSet`) — rather than with the "no empty-document form" message,
+/// which would be a false statement about the format.
 pub fn emptyDocSeed(format: Format) ?[]const u8 {
     return switch (format) {
-        .json, .jsonc, .json5 => "{}\n",
-        // dotenv/.properties/ini all parse an empty file as an empty (but
-        // present) root mapping — same empty-string seed as YAML/TOML/fig —
-        // so `set` can create one from scratch and land its first root-level
-        // key into it. (INI's own auto-vivify guard in `Editor.set` only
-        // matters for a 2+-segment path creating a brand-new SECTION; a
-        // single root-level key from an empty file is unaffected.)
-        .yaml, .toml, .fig, .dotenv, .properties, .ini => "",
-        .zon => ".{}\n",
-        // An empty NestedText file parses as `.null_` (see `nestedtext/
-        // parser.zig`), and `Editor(NestedText)`'s `insertKey` promotes that
-        // root straight to a one-entry mapping (see its `nt_edit.ntInsertKey`)
-        // — same empty-string seed as YAML/TOML/fig/dotenv/.properties/ini.
-        .nestedtext => "",
-        .xml, .canonical, .gron, .plist => null,
+        // The canonical oracle grammar is a parse/print pair and gron is a
+        // projection; neither is a stored format anyone creates from scratch.
+        .canonical, .gron => null,
+        inline else => |f| comptime fig.Language.entryFor(@tagName(f)).empty_doc_seed,
     };
 }
 
-// The format registry declares the same seed per dialect
-// (`Entry.empty_doc_seed`), and Stage 4 deletes the switch above in favour of
-// it. Pinned by running it — with ONE deliberate exemption: the registry gives
-// plist `"<dict>\n</dict>\n"` where this returns null, which is fix #1 of the
-// registry plan (a from-scratch `fig set` on a `.plist` refuses today, and a
-// bare `<dict>` is a document plist parses). That behaviour change lands in
-// Stage 4 with its own CLI test; asserting equality here would forbid the
-// registry from stating the fix, so plist is skipped and everything else is
-// held byte-for-byte.
-comptime {
-    @setEvalBranchQuota(10_000);
-    for (fig.Language.dialects) |d| {
-        if (std.mem.eql(u8, d.name, "plist")) continue;
-        const here = emptyDocSeed(@field(Format, d.name));
-        const there = d.empty_doc_seed;
-        const same = if (here) |h| (there != null and std.mem.eql(u8, h, there.?)) else there == null;
-        if (!same)
-            @compileError("the format registry's empty-document seed for '" ++ d.name ++
-                "' disagrees with `emptyDocSeed` in this file");
+/// What the CLI wants done to a document, independent of which language it
+/// turns out to be — the payload of `route` below.
+pub const EditRequest = union(enum) {
+    /// Splice an edit into the file in place. `text`/`op` are exactly what
+    /// `applyToFile` takes.
+    apply: struct { path: []fig.AST.PathSegment, text: []const u8, op: EditOp },
+    /// Read one comment back without writing (`comment --get`).
+    get_comment: struct { path: []fig.AST.PathSegment, inline_comment: bool },
+};
+
+/// THE editor dispatch: the one place a CLI `Format` becomes "which language
+/// module, which dialect, and is this format editable at all". Every editing
+/// entry point in the CLI goes through it — `edit`'s value/key replacement,
+/// `set`/`insert`/`delete`'s structural ops (via `applyStructuralEdit`), and
+/// both halves of `comment` — so the per-format knowledge below is stated once
+/// rather than in four parallel switches that could disagree.
+///
+/// Returns the comment for a `get_comment` request (null when there is none)
+/// and always null for an `apply`; the thin wrappers below give each caller the
+/// signature it actually wants.
+///
+/// The three per-format facts, all derived:
+///
+///   * WHETHER the format can be edited at all — `Lang.caps.edit`. Generic XML
+///     is the only registered language that cannot (it has a reader and a
+///     writer but no span-splicing editor); the assert below keeps that true.
+///     plist, despite being XML-based, is a strict typed subset with a real
+///     editor (`Editor(Plist)` renders typed value elements and `<!-- -->`
+///     comments), which is why it routes here like everything else.
+///   * HOW the edit text is spliced — `Entry.splice`. The JSON family is
+///     `.json_string`, so its text and any inserted key are requoted through
+///     `jsonifyEdit` first (strict JSON has no bare literals); every other
+///     format takes the text as it stands, whether that means splicing it
+///     verbatim as source (`.literal`: YAML/TOML/ZON/fig) or rendering it
+///     (`.raw`: INI/dotenv/`.properties`, and plist/NestedText, which build a
+///     value element or a scalar rather than splicing syntax).
+///   * WHICH dialect to reparse under — `Entry.dialect`, which is what keeps a
+///     JSONC/JSON5 file's comments valid on reparse and what used to be the
+///     hand-written `jsonDialect`.
+///
+/// The formats' own remaining quirks live with their editors, not here:
+/// `Editor(Ini)` refuses to line-delete a scattered `[section]` header and to
+/// auto-vivify a brand-new section (INI has no empty-mapping literal);
+/// `Editor(NestedText)` declines a same-line trailing comment (no such spelling
+/// in the grammar) and an insert into an empty inline `{}`/`[]`.
+pub fn route(
+    allocator: std.mem.Allocator,
+    io: Io,
+    file: Io.File,
+    format: Format,
+    req: EditRequest,
+) !?[]u8 {
+    @setEvalBranchQuota(30_000);
+    switch (format) {
+        // The canonical form is a parse/print pair with no span-splicing
+        // editor; convert via `get` instead of editing in place.
+        .canonical => return error.UnsupportedCanonicalEdit,
+        // gron is a CLI-only get/echo projection with no in-place editor.
+        .gron => return error.UnsupportedGronEdit,
+        inline else => |f| {
+            const d = comptime fig.Language.entryFor(@tagName(f));
+            if (comptime d.Lang == void) return error.FormatDisabled;
+            if (comptime !d.Lang.caps.edit) return error.UnsupportedXmlEdit;
+            switch (req) {
+                .get_comment => |g| return getCommentFromFile(d.Lang, allocator, io, file, g.path, g.inline_comment, d.dialect),
+                .apply => |ap| {
+                    if (comptime d.splice == .json_string) {
+                        const j = try jsonifyEdit(allocator, ap.op, ap.text);
+                        try applyToFile(d.Lang, allocator, io, file, ap.path, j.text, j.op, d.dialect);
+                    } else {
+                        try applyToFile(d.Lang, allocator, io, file, ap.path, ap.text, ap.op, d.dialect);
+                    }
+                    return null;
+                },
+            }
+        },
     }
 }
 
-/// Shared per-format routing for the structural `insert`/`delete` actions —
-/// the `edit` handler's format switch, minus the value-replacement specifics.
-/// JSON-family inputs requote the inserted key/value via `jsonifyEdit`; YAML,
-/// TOML, and ZON take the text verbatim as a literal. `embed` routes through the
-/// host-document splicer instead. `op` already encodes which editor primitive
-/// runs and `path` is the container path it operates on.
+// `error.UnsupportedXmlEdit` names a format, so it can only stay honest while
+// XML is the only format it can be raised for. It is also what the CLI's
+// unhandled-error reporting and the docs call the "generic XML is reader-only"
+// refusal (see `languages/xml/xml.zig`'s module doc).
+//
+// Only compiled-in languages are visible here, and XML itself is opt-in
+// (`-Dxml=true`) — so this bites in the all-languages builds (`zig build
+// conformance`, the `-Dxml=true` configs), which is where a new language is
+// scored anyway.
+comptime {
+    for (fig.Language.dialects) |d| {
+        if (d.Lang == void or d.Lang.caps.edit) continue;
+        if (!std.mem.eql(u8, d.name, "xml"))
+            @compileError("'" ++ d.name ++ "' declares `caps.edit = false`, so the editor dispatch" ++
+                " above now refuses it with `error.UnsupportedXmlEdit` — an error named after a" ++
+                " format it is not about. Rename that error to something format-neutral (and" ++
+                " update `runEdit`/`runComment`/`applyStructuralEdit`'s callers with it) before" ++
+                " adding a second non-editable language");
+    }
+}
+
+/// Apply an in-place edit to `file` as `format`. The wrapper every writing
+/// action uses; see `route` for what it derives.
+pub fn applyToFileAs(
+    allocator: std.mem.Allocator,
+    io: Io,
+    file: Io.File,
+    format: Format,
+    path: []fig.AST.PathSegment,
+    text: []const u8,
+    op: EditOp,
+) !void {
+    _ = try route(allocator, io, file, format, .{ .apply = .{ .path = path, .text = text, .op = op } });
+}
+
+/// Read one comment back from `file` as `format` without writing — the
+/// `comment --get` wrapper around `route`.
+pub fn getCommentAs(
+    allocator: std.mem.Allocator,
+    io: Io,
+    file: Io.File,
+    format: Format,
+    path: []fig.AST.PathSegment,
+    inline_comment: bool,
+) !?[]u8 {
+    return route(allocator, io, file, format, .{ .get_comment = .{ .path = path, .inline_comment = inline_comment } });
+}
+
+/// Shared per-format routing for the structural `set`/`insert`/`delete`
+/// actions: `embed` routes through the host-document splicer, everything else
+/// through `route`. `op` already encodes which editor primitive runs and `path`
+/// is the container path it operates on.
 pub fn applyStructuralEdit(
     allocator: std.mem.Allocator,
     io: Io,
@@ -366,73 +458,7 @@ pub fn applyStructuralEdit(
     op: EditOp,
 ) !void {
     if (embed) |embed_type| return applyToEmbed(allocator, io, input, embed_type, path, text, op);
-    switch (resolved) {
-        .json, .jsonc, .json5 => |f| if (comptime build_options.lang_json) {
-            const j = try jsonifyEdit(allocator, op, text);
-            try applyToFile(fig.Language.JSON, allocator, io, input, path, j.text, j.op, jsonDialect(f));
-        } else return error.FormatDisabled,
-        .yaml => if (comptime build_options.lang_yaml)
-            try applyToFile(fig.Language.YAML, allocator, io, input, path, text, op, fig.Language.YAML.default_type)
-        else
-            return error.FormatDisabled,
-        .toml => if (comptime build_options.lang_toml)
-            try applyToFile(fig.Language.TOML, allocator, io, input, path, text, op, fig.Language.TOML.default_type)
-        else
-            return error.FormatDisabled,
-        .zon => if (comptime build_options.lang_zon)
-            try applyToFile(fig.Language.ZON, allocator, io, input, path, text, op, fig.Language.ZON.default_type)
-        else
-            return error.FormatDisabled,
-        .xml => return error.UnsupportedXmlEdit,
-        // INI: one level of `[section]` nesting on top of the same flat
-        // `key = value` shape as dotenv/.properties. `Editor(Ini)` carries
-        // its own small guards (see `editor.zig`'s `Ini` branches) for the
-        // two things that genuinely need them: refusing to line-delete a
-        // scattered `[section]` header, and refusing to auto-vivify a
-        // brand-new section via `set` (INI has no empty-mapping literal to
-        // do that with) — everything else (root/section key insert-replace-
-        // delete, leading comments) flows through the generic engine.
-        .ini => if (comptime build_options.lang_ini)
-            try applyToFile(fig.Language.INI, allocator, io, input, path, text, op, fig.Language.INI.default_type)
-        else
-            return error.FormatDisabled,
-        // dotenv/.properties: flat `KEY=value` only (no nesting/sequences),
-        // so the generic block-mapping editor covers every op the CLI
-        // exposes here — `=` separator + the first-insert-into-an-empty-
-        // mapping fix live in `Editor`'s `kv_sep`/`insertBlockKey`.
-        .dotenv => if (comptime build_options.lang_dotenv)
-            try applyToFile(fig.Language.DOTENV, allocator, io, input, path, text, op, fig.Language.DOTENV.default_type)
-        else
-            return error.FormatDisabled,
-        .properties => if (comptime build_options.lang_properties)
-            try applyToFile(fig.Language.PROPERTIES, allocator, io, input, path, text, op, fig.Language.PROPERTIES.default_type)
-        else
-            return error.FormatDisabled,
-        // plist: XML-based but a strict, typed subset, so it (unlike generic
-        // `.xml`) has a real span-splicing editor. `Editor(Plist)` renders
-        // typed value elements and uses `<!-- -->` comments; see
-        // `languages/plist/editor_helper.zig`.
-        .plist => if (comptime build_options.lang_plist)
-            try applyToFile(fig.Language.PLIST, allocator, io, input, path, text, op, fig.Language.PLIST.default_type)
-        else
-            return error.FormatDisabled,
-        .canonical => return error.UnsupportedCanonicalEdit,
-        .fig => if (comptime build_options.lang_fig)
-            try applyToFile(fig.Language.FIG, allocator, io, input, path, text, op, fig.Language.FIG.default_type)
-        else
-            return error.FormatDisabled,
-        .gron => return error.UnsupportedGronEdit,
-        // NestedText: `Editor(NestedText)` covers insert/set/delete/append/
-        // prepend/remove/move/reorder plus leading (own-line) comments; a
-        // same-line trailing comment has no spelling in this grammar (see
-        // `nestedtext/editor_helper.zig`'s `trailingCommentMarker` override),
-        // and inserting into a genuinely empty inline `{}`/`[]` is declined
-        // with `error.EmptyInlineContainer` rather than guessed at.
-        .nestedtext => if (comptime build_options.lang_nestedtext)
-            try applyToFile(fig.Language.NESTEDTEXT, allocator, io, input, path, text, op, fig.Language.NESTEDTEXT.default_type)
-        else
-            return error.FormatDisabled,
-    }
+    return applyToFileAs(allocator, io, input, resolved, path, text, op);
 }
 
 test "applyEdit performs the structural ops on YAML" {
@@ -606,10 +632,26 @@ test "applyEdit performs the structural ops on .properties, including from-empty
     try t.expectEqualStrings("foo=bar\n", out);
 }
 
-test "emptyDocSeed: dotenv/.properties/ini seed empty like YAML/TOML/fig" {
-    try std.testing.expectEqualStrings("", emptyDocSeed(.dotenv).?);
-    try std.testing.expectEqualStrings("", emptyDocSeed(.properties).?);
-    try std.testing.expectEqualStrings("", emptyDocSeed(.ini).?);
+// The seeds as literals, now that the registry (not the switch above) is where
+// they are written. Cheap, build-invariant, and the one thing the round-trip
+// tests below can't state: that the seed for a format they don't exercise is
+// still exactly these bytes. plist's is fix #1 of the registry work — it was
+// `null` here before the switch became a registry read.
+test "emptyDocSeed: every seed is the byte string the registry declares" {
+    const t = std.testing;
+    try t.expectEqualStrings("{}\n", emptyDocSeed(.json).?);
+    try t.expectEqualStrings("{}\n", emptyDocSeed(.jsonc).?);
+    try t.expectEqualStrings("{}\n", emptyDocSeed(.json5).?);
+    try t.expectEqualStrings(".{}\n", emptyDocSeed(.zon).?);
+    try t.expectEqualStrings("<dict>\n</dict>\n", emptyDocSeed(.plist).?);
+    // An empty file already parses as an empty (but present) root mapping for
+    // all of these, so the first key can just be inserted into it.
+    for ([_]Format{ .yaml, .toml, .fig, .dotenv, .properties, .ini, .nestedtext }) |f|
+        try t.expectEqualStrings("", emptyDocSeed(f).?);
+    // No empty-document form: a from-scratch `set` is refused before a file
+    // lands on disk.
+    for ([_]Format{ .xml, .canonical, .gron }) |f|
+        try t.expectEqual(@as(?[]const u8, null), emptyDocSeed(f));
 }
 
 test "jsonifyEdit quotes inserted key and value, leaves deletes bare" {
@@ -645,10 +687,9 @@ test "jsonifyEdit quotes inserted key and value, leaves deletes bare" {
 // `Editor(json.Language)` with `.format = .JSON5` fully supports every
 // structural op (see `languages/json/editor_helper.zig`). These exercise the
 // CLI's own dispatch path — `jsonifyEdit` requoting text/keys, then
-// `applyEdit` reparsing under `jsonDialect(.json5) == .JSON5` — the same
-// two calls `applyStructuralEdit`/`runEdit` make, so a re-introduced gate
-// would only be caught by hitting this path, not by the lower-level editor
-// tests alone.
+// `applyEdit` reparsing under the `json5` registry entry's dialect (`.JSON5`)
+// — the same two calls `route` makes, so a re-introduced gate would only be
+// caught by hitting this path, not by the lower-level editor tests alone.
 test "applyEdit performs the structural ops on JSON5 via the CLI's jsonify+dialect path" {
     if (comptime !build_options.lang_json) return error.SkipZigTest;
     const t = std.testing;
@@ -656,7 +697,7 @@ test "applyEdit performs the structural ops on JSON5 via the CLI's jsonify+diale
     defer arena.deinit();
     const a = arena.allocator();
     const J = fig.Language.JSON;
-    const dia = jsonDialect(.json5);
+    const dia = comptime fig.Language.entryFor("json5").dialect;
     try t.expectEqual(J.Type.JSON5, dia);
 
     // insert_key requotes both the new key and value, landing valid JSON5
@@ -691,6 +732,10 @@ test "applyEdit performs the structural ops on JSON5 via the CLI's jsonify+diale
 }
 
 test "emptyDocSeed: seedable formats round-trip a first `set`, others refuse" {
+    // Names YAML/JSON/TOML/fig dialects and parsers directly, so it has
+    // nothing left to assert in a build without them.
+    if (comptime !(build_options.lang_yaml and build_options.lang_json and
+        build_options.lang_toml and build_options.lang_fig)) return error.SkipZigTest;
     const t = std.testing;
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
@@ -712,7 +757,7 @@ test "emptyDocSeed: seedable formats round-trip a first `set`, others refuse" {
 
     // JSON5: same `{}` seed as JSON, reparsed under the JSON5 dialect — its
     // in-place edit is no longer gated off (see the dedicated JSON5 test above).
-    const json5 = try applyEdit(fig.Language.JSON, a, emptyDocSeed(.json5).?, &path, jv.text, jv.op, jsonDialect(.json5));
+    const json5 = try applyEdit(fig.Language.JSON, a, emptyDocSeed(.json5).?, &path, jv.text, jv.op, comptime fig.Language.entryFor("json5").dialect);
     try t.expect(std.mem.indexOf(u8, json5, "\"hello\"") != null);
     try t.expect(std.mem.indexOf(u8, json5, "\"world\"") != null);
 
@@ -728,4 +773,34 @@ test "emptyDocSeed: seedable formats round-trip a first `set`, others refuse" {
     // form, so the create is refused before a file lands.
     try t.expectEqual(@as(?[]const u8, null), emptyDocSeed(.gron));
     try t.expectEqual(@as(?[]const u8, null), emptyDocSeed(.canonical));
+    try t.expectEqual(@as(?[]const u8, null), emptyDocSeed(.xml));
+}
+
+// Fix #1 of the format-registry work: `emptyDocSeed(.plist)` used to be null,
+// so `fig set missing.plist key value` refused ("plist has no empty-document
+// form") even though `Editor(Plist)` can edit one and the parser accepts a bare
+// `<dict>` root. The registry now declares the seed, and this reproduces the
+// on-disk path in memory — `createSeededFile(seed)` then `applyStructuralEdit`
+// — and checks the result is a plist that reparses with the new key in it.
+test "emptyDocSeed: plist seeds a document a from-scratch `set` lands into" {
+    if (comptime !build_options.lang_plist) return error.SkipZigTest;
+    const t = std.testing;
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const P = fig.Language.PLIST;
+
+    const seed = emptyDocSeed(.plist) orelse return error.TestExpectedSeed;
+    // The seed alone must already be a valid plist — `createSeededFile` writes
+    // it before anything reads it back.
+    _ = try P.Parser.parse(a, seed, P.default_type);
+
+    var path = [_]fig.AST.PathSegment{.{ .key = "somekey" }};
+    const out = try applyEdit(P, a, seed, &path, "someval", .set, P.default_type);
+    try t.expect(std.mem.indexOf(u8, out, "<key>somekey</key>") != null);
+
+    // And the edited bytes reparse, with the value reachable at its path.
+    const doc = try P.Parser.parse(a, out, P.default_type);
+    const node = try doc.ast.getValByPath(&path);
+    try t.expectEqualStrings("someval", node.kind.string);
 }

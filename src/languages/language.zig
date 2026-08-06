@@ -150,8 +150,81 @@ fn tryParse(comptime Lang: type, allocator: Allocator, input: []const u8, t: Lan
     return true;
 }
 
+/// Every declaration a `Language` may carry. `validate` rejects anything not
+/// named here, which is the whole point of the list: `@hasDecl` dispatch is
+/// silent about names it does not recognize, so without a closed set an author
+/// who writes `insertkey` gets a format that COMPILES, quietly runs the generic
+/// implementation it meant to override, and corrupts a file on the first edit.
+/// That was reproduced on the tree, not imagined — see the proposal's §10.5.
+///
+/// Adding a hook to `editor.zig` means adding its name here too. That is the
+/// deliberate cost of the check, and the compiler charges it immediately: a
+/// hook the list does not know is a hook no format can declare.
+const Decls = struct {
+    /// Required of every format, editable or not.
+    const required = [_][]const u8{
+        "Type",         "Parser", "default_type", "parse", "print",
+        "name", "extensions",     "caps",
+    };
+
+    /// Required of an editable format only. `syntax` describes how the generic
+    /// splice engine writes this format; asking a read-only format for one is
+    /// asking it to describe an editing surface it does not have.
+    const required_edit = [_][]const u8{"syntax"};
+
+    /// Permitted, not required.
+    ///
+    ///   * `printNode` — every format but plist and xml, whose `print` is
+    ///     written inline.
+    ///   * `materialize`/`TagMode` — YAML only: collapsing the reference layer
+    ///     before a non-YAML printer sees the tree. Callers already gate on
+    ///     `@hasDecl(Lang, "materialize")`.
+    const optional = [_][]const u8{ "printNode", "materialize", "TagMode" };
+
+    /// Editing hooks. Declaring one takes over `editor.Editor`'s method of the
+    /// same name — except `keyIsInherited` (a predicate the engine queries) and
+    /// `seqItemLineStart` (a sub-computation), which are named for what they
+    /// answer rather than for a method. Signatures are documented on the
+    /// `Editor` method each overrides; see `editor.zig`.
+    const hooks = [_][]const u8{
+        "insertKey",         "deleteKeyGuard",
+        "replaceValAtPath",  "replaceValAtPathFollowing",
+        "replaceKeyAtPath",  "keyIsInherited",
+        "seqItemLineStart",  "appendToSeq",
+        "prependToSeq",      "removeSeqItem",
+        "reorderSeqItems",   "addLeadingComment",
+        "deleteLeadingComments", "getLeadingComment",
+        "setTrailingComment", "deleteTrailingComment",
+        "getTrailingComment",
+    };
+
+    fn has(comptime set: []const []const u8, comptime name: []const u8) bool {
+        for (set) |k| if (std.mem.eql(u8, k, name)) return true;
+        return false;
+    }
+
+    fn known(comptime name: []const u8) bool {
+        return has(&required, name) or has(&required_edit, name) or
+            has(&optional, name) or has(&hooks, name);
+    }
+
+    /// The known name `name` differs from only by letter case, or null.
+    ///
+    /// Not a general edit distance — deliberately. Every name above is
+    /// camelCase, so the typo that actually costs something is a capitalization
+    /// slip (`insertkey`, `appendtoseq`), and that is the one this catches. A
+    /// wilder misspelling still fails; it just fails without a suggestion.
+    fn nearest(comptime name: []const u8) ?[]const u8 {
+        for ([_][]const []const u8{ &required, &required_edit, &optional, &hooks }) |set| {
+            for (set) |k| if (std.ascii.eqlIgnoreCase(k, name)) return k;
+        }
+        return null;
+    }
+};
+
 /// The enforcement point for the `Language` contract: every declaration a
-/// format must supply, plus the coherence rules between them.
+/// format must supply, the closed set it may supply, plus the coherence rules
+/// between them.
 ///
 /// `Editor()` calls this for the format it is generic over, but that is not
 /// enough on its own — a read-only format has no editor, so `validate(XML)`
@@ -160,27 +233,23 @@ fn tryParse(comptime Lang: type, allocator: Allocator, input: []const u8, t: Lan
 /// over every compiled-in language, editable or not.
 pub fn validate(comptime Lang: type) void {
     comptime {
+        // Every check here is a linear scan over a name list, and the closed-set
+        // check runs one such scan PER declaration — so the work is roughly
+        // `decls × known-names` per format, times eleven formats from the
+        // registry loop below. That clears the default 1000-branch budget
+        // comfortably; the quota is per-evaluation, not a leak.
+        @setEvalBranchQuota(20_000);
+
         // The original four, plus `Parser` — which `tryParse` and `Editor`
         // have both required in practice for as long as they have existed,
         // and which this now states.
-        if (!@hasDecl(Lang, "Type"))
-            @compileError("Language must define Type");
-        if (!@hasDecl(Lang, "default_type"))
-            @compileError("Language must define default_type");
-        if (!@hasDecl(Lang, "Parser"))
-            @compileError("Language must define Parser");
-        if (!@hasDecl(Lang, "parse"))
-            @compileError("Language must define parse");
-        if (!@hasDecl(Lang, "print"))
-            @compileError("Language must define print");
-
-        // Identity.
-        if (!@hasDecl(Lang, "name"))
-            @compileError("Language must define name");
-        if (!@hasDecl(Lang, "extensions"))
-            @compileError("Language must define extensions");
-        if (!@hasDecl(Lang, "caps"))
-            @compileError("Language must define caps");
+        // `@typeName` rather than `Lang.name` here and in `required_edit`:
+        // `name` is itself one of the declarations being checked, so it cannot
+        // be relied on to identify the format that is missing it.
+        for (Decls.required) |name| {
+            if (!@hasDecl(Lang, name))
+                @compileError(@typeName(Lang) ++ " must define " ++ name);
+        }
         if (@TypeOf(Lang.caps) != Caps)
             @compileError("Language.caps must be a language.Caps");
 
@@ -189,8 +258,10 @@ pub fn validate(comptime Lang: type) void {
         // it. Requiring it unconditionally would be asking a read-only
         // format to describe an editing surface it does not have.
         if (Lang.caps.edit) {
-            if (!@hasDecl(Lang, "syntax"))
-                @compileError("Language with caps.edit must define syntax");
+            for (Decls.required_edit) |name| {
+                if (!@hasDecl(Lang, name))
+                    @compileError(@typeName(Lang) ++ " has caps.edit and must define " ++ name);
+            }
 
             // Coherence: a format cannot have a same-line trailing comment
             // marker without having a comment syntax at all. Checked over
@@ -199,6 +270,87 @@ pub fn validate(comptime Lang: type) void {
                 const s: Syntax = Lang.syntax(t);
                 if (s.trailing_comment != null and s.line_comment == null)
                     @compileError("Language declares a trailing comment marker but no line comment marker");
+            }
+        }
+
+        // The closed set. `@typeInfo(...).decls` lists only PUBLIC
+        // declarations, so a format's private helpers — the
+        // `const edit = @import("editor_helper.zig")` each hooks block opens
+        // with — are invisible here and need no exemption.
+        for (@typeInfo(Lang).@"struct".decls) |d| {
+            if (Decls.known(d.name)) continue;
+            @compileError("Language '" ++ Lang.name ++ "' declares unknown '" ++ d.name ++ "'" ++
+                if (Decls.nearest(d.name)) |near|
+                    " — did you mean '" ++ near ++ "'?"
+                else
+                    ". Editing hooks must be named for the `editor.Editor` method they" ++
+                        " override, and added to `Decls.hooks` in language.zig.");
+        }
+
+        // Coherence: a format that says it cannot be edited must not declare
+        // editing behaviour. Without this, `caps.edit = false` and a live hook
+        // can disagree indefinitely — nothing else reads both.
+        if (!Lang.caps.edit) {
+            for (Decls.hooks) |name| {
+                if (@hasDecl(Lang, name))
+                    @compileError("Language '" ++ Lang.name ++ "' declares caps.edit = false" ++
+                        " but supplies the editing hook '" ++ name ++ "'");
+            }
+            return;
+        }
+
+        // The remaining rules are about hooks being REACHABLE. Both follow from
+        // where `editor.zig` dispatches, so both are dead-code checks rather
+        // than taste: a hook the engine can never call is a silent no-op, and
+        // silent is the failure mode this whole section exists to remove.
+
+        // A block-sequence hook sits below `editor.zig`'s
+        // `block_seq_editable` refusal, so a format that declares no editable
+        // block sequences in any dialect can never reach one.
+        var any_block_seq = false;
+        var any_line_comment = false;
+        for (std.meta.tags(Lang.Type)) |t| {
+            const s: Syntax = Lang.syntax(t);
+            if (s.block_seq_editable) any_block_seq = true;
+            if (s.line_comment != null) any_line_comment = true;
+        }
+        if (!any_block_seq) {
+            for ([_][]const u8{ "appendToSeq", "prependToSeq", "removeSeqItem", "reorderSeqItems" }) |name| {
+                if (@hasDecl(Lang, name))
+                    @compileError("Language '" ++ Lang.name ++ "' declares block_seq_editable = false" ++
+                        " but supplies '" ++ name ++ "', which the engine refuses before reaching");
+            }
+        }
+
+        // Comment hooks, the other direction. With no line-comment marker in
+        // ANY dialect, every comment op is either hooked or permanently
+        // `CommentsUnsupported` — so hooking SOME is almost certainly a
+        // dropped delegation rather than a decision. plist is the case this
+        // guards: `<!-- ... -->` is a delimiter pair with no leader, so it
+        // declares null and hooks all six deliberately (see `plist.zig`), and
+        // this makes losing one a compile error instead of a runtime refusal.
+        //
+        // Note this is the OPPOSITE of the rule the proposal's §4 proposed —
+        // "trailing_comment == null alongside a declared setTrailingComment is
+        // a contradiction". plist is exactly that pair, and is correct. A hook
+        // does not read the marker, so a null marker beside a hook is not a
+        // contradiction; it is the hook making the marker irrelevant.
+        if (!any_line_comment) {
+            const comment_hooks = [_][]const u8{
+                "addLeadingComment",  "deleteLeadingComments", "getLeadingComment",
+                "setTrailingComment", "deleteTrailingComment", "getTrailingComment",
+            };
+            var declared = 0;
+            for (comment_hooks) |name| {
+                if (@hasDecl(Lang, name)) declared += 1;
+            }
+            if (declared != 0 and declared != comment_hooks.len) {
+                for (comment_hooks) |name| {
+                    if (!@hasDecl(Lang, name))
+                        @compileError("Language '" ++ Lang.name ++ "' has no line-comment marker" ++
+                            " in any dialect and hooks some comment ops but not '" ++ name ++
+                            "', which can then only ever return CommentsUnsupported");
+                }
             }
         }
     }

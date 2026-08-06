@@ -13,6 +13,8 @@ const artifacts = @import("artifacts.zig");
 pub const Deps = struct {
     /// From `tools`: generated-file staleness guard.
     check_figl_step: *std.Build.Step,
+    /// From `tools`: the `Language` contract's compile-failure cases.
+    validate_check_step: *std.Build.Step,
     /// From `tests`: the unit-test suite.
     test_step: *std.Build.Step,
     /// From `tests`: the conformance run.
@@ -143,6 +145,10 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     check_step.dependOn(semver_check_step);
     check_step.dependOn(version_floor_step);
     check_step.dependOn(deps.check_figl_step);
+    // The negative half of the `Language` contract. `test`/`conformance` cover
+    // what a well-formed manifest DOES; this covers what `validate` refuses,
+    // which nothing inside a test binary can reach — see tools/validate-check.zig.
+    check_step.dependOn(deps.validate_check_step);
 
     // cargo-semver-checks guards the native Rust public surface. Mirror CI: pick
     // the most recent `rust/v*` tag as the baseline — the Rust crate's own

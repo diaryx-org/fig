@@ -13,6 +13,11 @@ pub const Result = struct {
     /// The generated-file staleness guard (`build.zig.zon` + the workflows),
     /// which `zig build check` runs.
     check_figl_step: *std.Build.Step,
+    /// The `Language` contract's compile-failure cases, which `zig build check`
+    /// runs. Not part of `test`/`conformance`: asserting a `@compileError`
+    /// means compiling something that must NOT build, which a test binary
+    /// cannot host.
+    validate_check_step: *std.Build.Step,
 };
 
 pub fn add(ctx: Context, arts: artifacts.Result) Result {
@@ -167,5 +172,38 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     const check_figl_step = b.step("check-figl", "Fail if build.zig.zon / .github/workflows/*.yml are stale relative to their .figl sources");
     check_figl_step.dependOn(&check_figl_run.step);
 
-    return .{ .check_figl_step = check_figl_step };
+    // The `Language` contract's negative tests. `language.validate` is a wall
+    // of `@compileError`, and Zig cannot assert that one fires from inside
+    // `zig build test` — a test that triggers a compile error doesn't fail, it
+    // takes the whole suite's build down. So the refusals are covered from
+    // outside instead: this tool writes deliberately-broken fixture languages
+    // to a work directory and runs `zig build-obj` over each, asserting the
+    // compile fails with the message the matching rule should produce. See its
+    // module doc, and the proposal's §6, which asked for exactly this.
+    //
+    // Shells out to the same `zig` running the build (`b.graph.zig_exe`), so
+    // the fixtures are checked against the toolchain in use rather than
+    // whatever is first on PATH. Side-effecting: it writes and re-writes one
+    // probe file per case, and its result depends on `src/languages/` state
+    // that isn't a declared input, so it must not be served from cache.
+    const validate_check = b.addExecutable(.{
+        .name = "validate_check",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/validate-check.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const validate_check_run = b.addRunArtifact(validate_check);
+    validate_check_run.addArg(b.graph.zig_exe);
+    validate_check_run.addArg(b.pathFromRoot("."));
+    validate_check_run.addArg(b.pathFromRoot(".zig-cache/validate-check"));
+    validate_check_run.has_side_effects = true;
+    const validate_check_step = b.step("validate-check", "Assert language.validate REJECTS malformed Language manifests (compile-failure cases)");
+    validate_check_step.dependOn(&validate_check_run.step);
+
+    return .{
+        .check_figl_step = check_figl_step,
+        .validate_check_step = validate_check_step,
+    };
 }

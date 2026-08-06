@@ -105,6 +105,7 @@ pub fn build(b: *std.Build) void {
     const tests_result = tests.add(ctx, arts);
     checks.add(ctx, arts, .{
         .check_figl_step = tools_result.check_figl_step,
+        .validate_check_step = tools_result.validate_check_step,
         .test_step = tests_result.test_step,
         .conformance_step = tests_result.conformance_step,
     });

@@ -221,8 +221,9 @@ pub fn Editor(comptime Language: type) type {
         /// stands in its place is an EMPTY node — a null, i.e. a bare `key:` or an
         /// empty document's root, which is a container waiting to exist. A
         /// segment that resolves to a non-map SCALAR is a real type error
-        /// (`NotAMapping`) and is never clobbered. See `emptyMapLiteral` for what
-        /// a seed is spelled as per format (YAML block, flow `{}` elsewhere).
+        /// (`NotAMapping`) and is never clobbered. See `Syntax.empty_map_literal`
+        /// for what a seed is spelled as per format (YAML block, flow `{}`
+        /// elsewhere).
         ///
         /// Vivify-then-land is atomic as a whole: if the leaf cannot be placed
         /// after a seed has been spliced, the seed is rolled back, so a failed
@@ -272,7 +273,7 @@ pub fn Editor(comptime Language: type) type {
                     // seed any missing ancestor deepest-first — then retry the
                     // leaf insert into the now-existing parent.
                     //
-                    // INI can't take part: `emptyMapLiteral` is a value-literal
+                    // INI can't take part: `Syntax.empty_map_literal` is a value-literal
                     // sentinel (`{}`/`.{}`), and that spelling is only safe
                     // because it's ALSO genuinely valid syntax for "an empty
                     // mapping" in every other editable format (a real JSON
@@ -1311,8 +1312,9 @@ pub fn Editor(comptime Language: type) type {
         /// Insert `key_text<kv_sep>value_text` as a new entry in the block
         /// (non-flow) mapping `mapping`, after its last existing entry (or,
         /// if it has none, at a language-appropriate fallback point — see
-        /// below). `pub` so `ini_edit.iniInsertKey` (INI's `isFlow`-bypassing
-        /// `insertKey`) can reuse it directly rather than duplicate it.
+        /// below). `pub` so `ini/editor_helper.zig`'s `iniInsertKey` (INI's
+        /// `isFlow`-bypassing `insertKey`) can reuse it directly rather than
+        /// duplicate it.
         pub fn insertBlockKey(self: *Self, parsed: Document, mapping: AST.Node, key_text: []const u8, value_text: []const u8) !void {
             const source = self.source.items;
             // Every currently-supported block-mapping language represents an
@@ -2656,7 +2658,7 @@ test "properties deleteKey removes the only entry, leaving an empty file" {
 //
 // Basic root-level/parameter sanity checks only — the same level of coverage
 // TOML/fig/ZON leave here (one "uses the right marker" test apiece). The
-// section-nesting behavior (`ini_edit.iniInsertKey`/`isSectionHeaderLine`,
+// section-nesting behavior (`iniInsertKey`/`isSectionHeaderLine`,
 // the `set` auto-vivify exclusion) is exercised in `ini/editor_helper.zig`,
 // next to that logic.
 

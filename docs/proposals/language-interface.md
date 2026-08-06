@@ -477,8 +477,8 @@ Step 3 remains the real risk and the body is honest about it. Step 4 should go
 
 ## 9. Outcome (2026-08-06)
 
-Steps 1 and 2 landed together, as two commits so the bridge in §5's Step 1
-exists in history with CI green against both halves.
+Steps 1 and 2 landed together, as a single commit (8767a41) — evidently
+squashed, since §5's Step 1 bridge does not exist separately in history.
 
 **What is in tree.** [`src/languages/manifest.zig`][manifest] defines `Syntax`,
 `Caps`, `CommentStyle` and `KeyStyle`. It is a leaf — it imports nothing, not
@@ -494,7 +494,7 @@ from a comptime registry loop over the compiled-in languages as well as from
 **23 of the 65 type-test sites are gone**, not the 26 §5 predicted. The gap is
 the three NestedText `.index` sites (§2's 537, 629, 667): §2C files them under
 micro-parameters, but each calls `nt_edit.seqItemLineStart`, so they are hooks
-and belong to Step 3. Every one of the 41 remaining sites is §2D or §2E.
+and belong to Step 3. Every one of the 42 remaining sites is §2D or §2E.
 
 `editor.zig` now holds **no ZON, dotenv or `.properties` branch at all** —
 those three tags survive only in its own tests. That is §8.6's import argument
@@ -925,10 +925,10 @@ should be separate: the five parallel format enumerations (`Language.Detected`,
 `cli.Format`, `c_api.FigFormat`, `serialize_options.Format`,
 `Embed.InnerFormat`) and the `build_options.lang_*` switches keyed on them —
 182 sites in `c_api.zig`, 51 in `ast/serialize_options.zig`, 27 in `embed.zig`,
-plus roughly 119 in `src/cli` and `src/lsp` that make four of the eleven
-`-D<lang>=false` flags fail to build. That is a bigger line-count win than
-everything here and a worse place to have started, because it changes the C ABI
-surface. It now has a registry to build on.
+plus roughly 119 in `src/cli` and `src/lsp` (the four `-D<lang>=false` flags
+that used to fail to build there are now fixed, separately). That is a bigger
+line-count win than everything here and a worse place to have started, because
+it changes the C ABI surface. It now has a registry to build on.
 
 [vcheck]: /tools/validate-check.zig
 [manifest]: /src/languages/manifest.zig

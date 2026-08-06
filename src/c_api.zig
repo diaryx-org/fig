@@ -98,8 +98,9 @@ pub const FigFormat = enum(c_int) {
     yaml = 3,
     toml = 4,
     zon = 5,
-    /// Reader-only: accepted by `fig_parse`; rejected by `fig_editor_*` and
-    /// `fig_value_serialize` (no XML writer yet) with `unsupported_format`.
+    /// Read and serialize, not edit: accepted by `fig_parse` and
+    /// `fig_value_serialize`; rejected by `fig_editor_*` with
+    /// `unsupported_format` (no in-place XML editor yet).
     xml = 6,
     /// JSON5: read, written, and edited (via `fig_editor_*`). Appended (not
     /// inserted) to keep the ABI values of the existing members stable.

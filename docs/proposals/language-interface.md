@@ -8,12 +8,18 @@ part_of = [proposals](proposals.md)
 
 # A declared Language interface
 
-> **Status: Steps 1, 2, 3 and 5 implemented; Step 4 withdrawn.** The manifest
-> exists (`src/languages/manifest.zig`), all eleven formats declare one,
-> `editor.zig` no longer names a format outside its own tests and §2E's nine
-> `@compileError` guards, and `validate` enforces a closed declaration set
-> checked by `zig build validate-check`. See §9 for Steps 1–2, §10 for Step 3,
-> §11 for Step 5. What remains of this proposal is §7's payoff alone.
+> **Status: COMPLETE.** Steps 1, 2, 3 and 5 implemented, Step 4 withdrawn
+> (§8.1), §7's payoff collected. The manifest exists
+> (`src/languages/manifest.zig`), all eleven formats declare one, `editor.zig`
+> no longer names a format outside its own tests and §2E's nine `@compileError`
+> guards, `validate` enforces a closed declaration set checked by
+> `zig build validate-check`, and `caps`/`extensions` are read by their
+> consumers rather than restated. See §9 for Steps 1–2, §10 for Step 3, §11 for
+> Step 5, §12 for §7's payoff.
+>
+> The follow-on this proposal names but does not attempt — the five parallel
+> format enumerations and the `build_options` switches keyed on them — remains
+> open and should be its own proposal (§7, §12.4).
 >
 > The site catalogue in §2 was taken against `main` at 5c7b97b (fig 2.5.3) and
 > remains the reference account of what a format has to supply; its line
@@ -825,6 +831,100 @@ triples by hand and `cli/args.zig` still special-cases `.env` and `.nt`, while
 smaller win than the body claims — the `FigFormat`→`Language` mapping is
 per-dialect and cannot be generated from here — but it is now the only step
 still standing.
+
+## 12. Outcome, §7's payoff (2026-08-06)
+
+`caps` and `extensions` were declared and validated from Step 1 onward but read
+by nothing — the two consumers §7 names kept their own copies. Both now read
+the manifest, and both are checked.
+
+### 12.1 `caps` → `fig_format_capabilities`
+
+The eleven hand-written `read | edit | serialize` triples in
+[`c_api.zig`][c_api] are gone; the function reads each format's declared `caps`.
+The drift this closes was silent in *both* directions — a format gaining an
+editor without its bit being set reads as uneditable to every C host, and a bit
+set for support that doesn't exist sends hosts down a path that ends in
+`unsupported_format`.
+
+Two things fell out that §8.5 did not predict:
+
+**The `build_options` gate went away too.** §8.5 says "the `build_options` gate
+stays". It doesn't need to: a compiled-out format is already `void` in
+`language.zig`, so `if (Lang == void) return 0` expresses the same fact the
+eleven `if (comptime build_options.lang_*)` tests did. The function now names no
+build option at all.
+
+**The existing test became a real cross-check.** `fig_format_capabilities
+reports the per-format matrix` spells its expectations out by hand,
+independently of the implementation — so leaving it untouched turns it from a
+tautology into a genuine second opinion. Confirmed by flipping TOML's
+`caps.serialize` to false: the test fails with `expected 7, found 3`. Flipping
+XML's `caps.edit` to true is caught even earlier, by Step 5's coherence rule
+(`caps.edit` without `syntax`), which is the two halves of this work
+compounding rather than either one alone.
+
+What is NOT generated, exactly as §8.5 says: the `FigFormat`→`Language` mapping.
+`FigFormat` is per-dialect (json/jsonc/json5 are three ABI values over one
+`Language`) while `caps` is per-language, so they are different tables and only
+the second lives in the manifest.
+
+### 12.2 `extensions` → `cli/args.zig`
+
+The `.figl`, `.env` and `.nt` special cases are gone, replaced by a lookup over
+each language's declared `extensions`.
+
+The ordering is the whole of the care required here. `std.meta.stringToEnum`
+runs FIRST and the manifest lookup is the fallback — which is not the obvious
+arrangement, and is what makes the change behaviour-preserving. `cli.Format` has
+members no `Language` owns (`canonical`, `gron`) and, more sharply, `yml` is its
+own member rather than an alias of `yaml`, handled as a distinct value at eight
+sites in `actions.zig`/`diag_report.zig`. A manifest-first lookup would have
+quietly rerouted every `.yml` file to `Format.yaml`. Enum-first leaves every
+extension that names a member exactly as it was, and lets the manifest answer
+only for the three that never did.
+
+Verified end-to-end against the built CLI for `.yaml`, `.yml`, `.env`, `.nt`,
+`.figl`, `.fig`, `.toml`, `.ini`, `.json` and `.properties`, and by diffing
+`.figl` behaviour against the pre-change binary.
+
+### 12.3 A registry, which is the part that generalizes
+
+Both consumers need a per-language table, and a table can go stale as easily as
+a copied value — so `language.zig` now exposes `compiled`, the comptime list of
+compiled-in languages, with gated-out formats absent rather than `void`. Its
+own `validate` loop iterates it instead of repeating eleven `build_options`
+tests, and `cli/args.zig` walks it to fail the build if a language is missing
+from the extension table. That check is not decoration: a language absent from
+the table would simply stop resolving by extension, and the symptom — "that
+file just isn't detected" — is precisely the quiet kind this proposal exists to
+remove.
+
+This is the "comptime registry [with] something to iterate" §7 names as what
+the manifest unlocks. Worth being precise about its reach: it is per-LANGUAGE,
+and the five parallel enumerations are per-DIALECT, so it does not retire them.
+What it does is make the per-language half a solved problem, which is the half
+both of §7's consumers needed.
+
+### 12.4 Verification, and what is left
+
+`zig build check` at baseline (2278/2281, 3 skipped, the one failure still the
+Node-24 TypeScript test), conformance at baseline, `validate-check` 9/9, four
+language-gating configurations build, and `abi-check` reports the C ABI
+unchanged at 86 symbols — this touched what `fig_format_capabilities` returns
+for a *misdeclared* format, never its exported surface. Both new checks were
+confirmed to bite: dropping NestedText from the extension table fails the build
+by name, and flipping a `caps` bit fails the C ABI matrix test.
+
+**This proposal is done.** What it deliberately leaves is what §7 always said
+should be separate: the five parallel format enumerations (`Language.Detected`,
+`cli.Format`, `c_api.FigFormat`, `serialize_options.Format`,
+`Embed.InnerFormat`) and the `build_options.lang_*` switches keyed on them —
+182 sites in `c_api.zig`, 51 in `ast/serialize_options.zig`, 27 in `embed.zig`,
+plus roughly 119 in `src/cli` and `src/lsp` that make four of the eleven
+`-D<lang>=false` flags fail to build. That is a bigger line-count win than
+everything here and a worse place to have started, because it changes the C ABI
+surface. It now has a registry to build on.
 
 [vcheck]: /tools/validate-check.zig
 [manifest]: /src/languages/manifest.zig

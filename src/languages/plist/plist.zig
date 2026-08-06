@@ -3,6 +3,7 @@ const std = @import("std");
 const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
 const Writer = std.Io.Writer;
+const lang = @import("../manifest.zig");
 
 pub const Parser = @import("parser.zig");
 pub const Printer = @import("printer.zig");
@@ -40,6 +41,44 @@ pub const Language = struct {
 
     pub fn print(writer: *Writer, ast: *const AST) !void {
         return plist.Printer.print(writer, ast, .{});
+    }
+
+    pub const name = "plist";
+    pub const extensions: []const []const u8 = &.{"plist"};
+    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
+
+    /// plist declares the least of any editable format, because it delegates
+    /// the most: an entry is a PAIR of sibling elements (`<key>k</key>` then
+    /// a typed value element), not a `key<sep>value` line, so almost nothing
+    /// in the line-oriented generic engine applies and the structural ops go
+    /// wholesale to `plist/editor_helper.zig`. What is declared here is what
+    /// the line-based delete/remove paths — which do ride the generic code —
+    /// actually consult.
+    pub fn syntax(t: plist.Type) lang.Syntax {
+        _ = t;
+        return .{
+            // The owned-block SCANNER does run for plist — the line-based
+            // delete/remove paths use it — and recognizes own-line
+            // `<!-- ... -->`.
+            .comment_style = .xml_comment,
+            // No line-comment MARKER, because plist has none: `<!-- -->` is a
+            // delimiter pair, not a leader, and `renderLineComments` can only
+            // write a leader. All six comment ops delegate to
+            // `plist/editor_helper.zig` before either of these is consulted,
+            // so this is never read today. Declaring null rather than a
+            // plausible-looking `"<!--"` keeps that honest: if a delegation
+            // were ever dropped, the op fails loudly with
+            // `CommentsUnsupported` instead of splicing a half-open comment
+            // into the document.
+            .line_comment = null,
+            .trailing_comment = null,
+            // Unused: no generic path writes a plist entry. Declared as the
+            // shared default rather than left to mean something.
+            .kv_sep = ": ",
+            // No bare literal for an empty dict that the generic seed could
+            // splice — a value is always a typed wrapper element.
+            .empty_map_literal = null,
+        };
     }
 };
 

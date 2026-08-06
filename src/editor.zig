@@ -10,6 +10,14 @@ const json = @import("languages/json/json.zig");
 const json_string = @import("util/json_string.zig");
 const log = std.log.scoped(.editor);
 
+// The declared half of the Language interface — `Syntax`, `Caps`,
+// `CommentStyle`. Every surface-syntax parameter this engine used to select
+// with an `if (Language == X)` branch now comes from `Language.syntax(t)`
+// instead; see `languages/manifest.zig` and
+// `docs/proposals/language-interface.md`. A leaf module, so importing it here
+// (and from every `<lang>/<lang>.zig`) pulls in nothing else.
+const lang = @import("languages/manifest.zig");
+
 // Format-specific editing logic the generic engine delegates to from its
 // `if (Language == Toml/Yaml/Fig/Ini)` branches: TOML's multi-region gather +
 // whole-table ops, YAML's reference-layer / block-framing helpers, fig's
@@ -26,16 +34,20 @@ const zon_edit = @import("languages/zon/editor_helper.zig");
 const Toml = @import("languages/toml/toml.zig").Language;
 const Yaml = @import("languages/yaml/yaml.zig").Language;
 const Fig = @import("languages/fig/fig.zig").Language;
-// ZON's editing needs are small parameter swaps (comment marker, key/value
-// separator, key-quoting rule, container shape) rather than the structural
-// logic TOML/YAML/Fig delegate out — so, like JSON, it has no dedicated
-// per-op helpers here; only `zon_edit.appendZonFieldName` (the ZON dotted-key
-// quoting rule, shared with the printer's) lives in its editor_helper module.
+// ZON's editing needs were always small parameter swaps (comment marker,
+// key/value separator, key-quoting rule, container shape) rather than the
+// structural logic TOML/YAML/Fig delegate out — and now that those swaps are
+// declared on `zon.Language.syntax`, this engine holds NO ZON branch at all:
+// the tag below survives only for this file's own tests. Its one piece of
+// real logic, `zon_edit.appendFieldName` (the dotted-key quoting rule, shared
+// with the printer's), is reached through `key_style`.
 const Zon = @import("languages/zon/zon.zig").Language;
 // dotenv/.properties are flat-only (no nesting, no flow, no block scalars):
 // the generic block-mapping path (`insertBlockKey`/`writeMapValue`) already
 // covers everything they need once the separator is right — no dedicated
-// editor_helper module, unlike TOML/YAML/Fig's structural quirks.
+// editor_helper module, unlike TOML/YAML/Fig's structural quirks. Like ZON,
+// they now have no branch here either; the separator comes from the manifest,
+// and these tags remain only for the tests below.
 const Dotenv = @import("languages/dotenv/dotenv.zig").Language;
 const Properties = @import("languages/properties/properties.zig").Language;
 // INI's one level of `[section]` nesting needs a little real per-language
@@ -75,38 +87,25 @@ pub fn Editor(comptime Language: type) type {
     return struct {
         const Self = @This();
 
-        // Which leading-comment syntax this language uses, so the owned-comment
-        // scan in delete/move (`commentBlockStart`) recognizes the right marker.
-        // JSON/JSONC/JSON5 and ZON use `//` (ZON, like Zig); YAML, TOML,
-        // dotenv, and .properties use `#`; INI uses `;` (see its printer.zig —
-        // it accepts a leading `#` on read too, but always WRITES `;`, so
-        // that's the marker the editor's own inserts/scans use). Plain JSON
-        // has no comments, but `.slashes` is harmless there since no `//`
-        // line can exist.
-        const comment_style: CommentStyle = if (Language == json.Language or Language == Zon)
-            .slashes
-        else if (Language == Ini)
-            .semicolon
-        else if (Language == Plist)
-            .xml_comment
-        else
-            .hash;
-
-        // The mapping key/value separator spliced by the generic flow-entry
-        // insert helpers (`insertFlowMapEntry`/`insertFlowEntry`) AND by
-        // `writeMapValue`'s block-insert path. Every editable format but ZON
-        // and the flat `KEY=value` formats writes `key: value`; ZON's
-        // struct-field syntax is `.key = value`; dotenv/.properties always
-        // print a bare `=` with no surrounding spaces, while INI always pads
-        // it (`key = value`) — see each printer.zig.
-        const kv_sep: []const u8 = if (Language == Zon)
-            " = "
-        else if (Language == Dotenv or Language == Properties)
-            "="
-        else if (Language == Ini)
-            " = "
-        else
-            ": ";
+        /// Everything this format declares about its own surface syntax, for
+        /// the dialect the document is currently being read as. Replaces the
+        /// per-language `if (Language == X)` parameter branches this file used
+        /// to carry — the values now live on `<lang>/<lang>.zig`, checked by
+        /// `language.validate`. See `languages/manifest.zig`.
+        ///
+        /// Indexed by `self.format` rather than fixed at comptime because the
+        /// comment markers genuinely vary by dialect (strict JSON has no
+        /// comment syntax; JSONC and JSON5 do), and every splice is reparsed
+        /// under whichever dialect the editor is holding. The rest of the
+        /// struct is dialect-invariant today; a TOML 1.0/1.1 or YAML
+        /// 1.1/1.2.2 *editing* divergence would land here if one appeared.
+        ///
+        /// Cost is one runtime switch and it stops there: every consumer is an
+        /// `appendSlice` or an argument to `commentBlockStart`/
+        /// `entryBlockStart`, none of which needs a comptime value.
+        fn syntax(self: *const Self) lang.Syntax {
+            return Language.syntax(self.format);
+        }
 
         allocator: std.mem.Allocator,
         source: std.ArrayList(u8) = .empty,
@@ -326,7 +325,13 @@ pub fn Editor(comptime Language: type) type {
                     const vivifiable = insert_err == error.NotFound or
                         (insert_err == error.NotAMapping and
                             self.blockedByEmptyNode(path[0 .. path.len - 1]));
-                    if (Language != Ini and Language != Plist and Language != NestedText and path.len >= 2 and vivifiable) {
+                    // A format with no `empty_map_literal` has no literal
+                    // spelling for "an empty nested mapping" to seed WITH, so
+                    // it cannot vivify at all — INI, plist and NestedText.
+                    // The opt-out and the seed are one declaration because
+                    // this is the literal's only consumer.
+                    const seed = self.syntax().empty_map_literal;
+                    if (seed != null and path.len >= 2 and vivifiable) {
                         // Vivify-then-insert is TWO splices, so it needs a
                         // snapshot of its own: each `replaceAtSpan` is
                         // individually atomic, but if the leaf insert fails
@@ -345,7 +350,7 @@ pub fn Editor(comptime Language: type) type {
                         const parent = path[0 .. path.len - 1];
                         const backup = try self.allocator.dupe(u8, self.source.items);
                         defer self.allocator.free(backup);
-                        self.set(parent, emptyMapLiteral()) catch |seed_err| {
+                        self.set(parent, seed.?) catch |seed_err| {
                             try self.restoreSource(backup);
                             return seed_err;
                         };
@@ -388,57 +393,26 @@ pub fn Editor(comptime Language: type) type {
             try self.reparse();
         }
 
-        /// The empty-mapping seed `set` splices to auto-vivify a missing parent.
-        /// Reparse-validated at the splice site like any other value.
-        ///
-        /// Most formats use the flow `{}` literal, which every one of them
-        /// accepts as an empty mapping value (JSON object, TOML inline table, fig
-        /// flow map); ZON spells it `.{}`.
-        ///
-        /// YAML seeds with NOTHING instead — a bare `key:`, i.e. a null value.
-        /// Both spellings are valid YAML for "no entries yet", but they are not
-        /// interchangeable as a *seed*: a flow `{}` can only ever be extended
-        /// with flow members, so every block-spelled value landing under a
-        /// vivified ancestor had to be refused (`BlockValueIntoFlow`) — a fresh
-        /// nested path could hold scalars and nothing else. A null value has the
-        /// opposite property: `insertKey` promotes it to a real block mapping
-        /// (`promoteNullToMapping`), which takes block and inline values alike.
-        /// So YAML's seed is the empty one, and `set` at a fresh nested path
-        /// produces the block containers the format is normally written in:
-        ///
-        ///     set(a.b.c, 1)  ->  a:        (not  a: {b: {c: 1}})
-        ///                          b:
-        ///                            c: 1
-        ///
-        /// The dotted-key formats (fig/TOML) deliberately keep `{}`: there, the
-        /// flow chain is the idiomatic intermediate form, and `fig fmt`
-        /// canonicalizes `a = { b = { c = v }}` to `a.b.c = v`.
-        fn emptyMapLiteral() []const u8 {
-            if (comptime Language == Zon) return ".{}";
-            if (comptime Language == Yaml) return "";
-            return "{}";
-        }
-
         /// Render a logical mapping key into this format's key syntax for the
-        /// `set` insert branch. Strict-JSON-family keys must be quoted and escaped
-        /// (`b` → `"b"`); YAML/TOML splice the key verbatim, as `insertKey`'s other
-        /// callers do. ZON's struct-field syntax always carries a leading `.`
-        /// (`b` → `.b`, quoted as `.@"has space"` when not a bare identifier).
+        /// `set` insert branch, as the format's declared `key_style` says —
+        /// see `Syntax.KeyStyle` for what each spelling is and why.
         /// Always returns an owned slice (the caller frees it).
         fn formatInsertKey(self: *Self, key: []const u8) ![]u8 {
-            if (comptime Language == json.Language) {
-                var w = std.Io.Writer.Allocating.init(self.allocator);
-                defer w.deinit();
-                try json_string.writeQuoted(&w.writer, key);
-                return self.allocator.dupe(u8, w.written());
+            switch (self.syntax().key_style) {
+                .json_quoted => {
+                    var w = std.Io.Writer.Allocating.init(self.allocator);
+                    defer w.deinit();
+                    try json_string.writeQuoted(&w.writer, key);
+                    return self.allocator.dupe(u8, w.written());
+                },
+                .zon_field => {
+                    var out: std.ArrayList(u8) = .empty;
+                    defer out.deinit(self.allocator);
+                    try zon_edit.appendFieldName(&out, self.allocator, key);
+                    return out.toOwnedSlice(self.allocator);
+                },
+                .verbatim => return self.allocator.dupe(u8, key),
             }
-            if (comptime Language == Zon) {
-                var out: std.ArrayList(u8) = .empty;
-                defer out.deinit(self.allocator);
-                try zon_edit.appendFieldName(&out, self.allocator, key);
-                return out.toOwnedSlice(self.allocator);
-            }
-            return self.allocator.dupe(u8, key);
         }
 
         /// Like `replaceValAtPath`, but follow into the reference layer: when the
@@ -482,39 +456,22 @@ pub fn Editor(comptime Language: type) type {
         // reparse. The reparse is the safety net (`replaceAtSpan` rolls back if
         // the result no longer parses).
 
-        /// The line-comment marker for this language/dialect, or null when the
-        /// dialect forbids comments (strict JSON). `self.format` distinguishes
-        /// strict JSON from JSONC/JSON5, which the marker choice must honor since
-        /// the splice is reparsed under that same dialect.
+        /// The line-comment marker for the dialect this document is being read
+        /// as, or null when that dialect forbids comments (strict JSON) — in
+        /// which case the comment ops return `CommentsUnsupported`. Indexed by
+        /// `self.format` because the splice is reparsed under that same
+        /// dialect. See `Syntax.line_comment`.
         fn lineCommentMarker(self: *const Self) ?[]const u8 {
-            if (comptime Language == json.Language) {
-                // `//` is valid in JSONC/JSON5 but not strict JSON.
-                return if (self.format == .JSON) null else "//";
-            }
-            // ZON uses Zig's `//`; YAML and TOML use `#`.
-            if (comptime Language == Zon) return "//";
-            if (comptime Language == Ini) return ";";
-            return "#";
+            return self.syntax().line_comment;
         }
 
-        /// The marker for a same-line TRAILING comment specifically — distinct
-        /// from `lineCommentMarker` because INI's leading (own-line, above the
-        /// key) comments are real and safe, but it has no same-line trailing
-        /// comment syntax at all: a `;`/`#` after a value on the SAME line is
-        /// literal value text, not a comment (see `ini/parser.zig`'s "a value
-        /// runs to end of line" and the printer's own doc, which renders a
-        /// "trailing" comment as its own `;` line immediately after the entry
-        /// rather than inline). Splicing one in anyway would silently corrupt
-        /// the value on reread, so trailing ops are refused for INI here —
-        /// every other language's trailing marker is the same as its leading one.
+        /// The marker for a same-line TRAILING comment specifically, or null
+        /// for a format that has no such syntax (INI, NestedText — where a
+        /// `;`/`#` after a value is literal value text). Distinct from
+        /// `lineCommentMarker`, which those two formats do have. See
+        /// `Syntax.trailing_comment` for the full reasoning.
         fn trailingCommentMarker(self: *const Self) ?[]const u8 {
-            // NestedText joins INI here: a `#`/`;` after a value on the SAME
-            // line is literal rest-of-line value text, not a comment (see
-            // `nestedtext/parser.zig`'s "rest-of-line values are 100%
-            // literal" and the printer's own doc) — a trailing comment can
-            // only ever be its own `#` line immediately after the entry.
-            if (comptime Language == Ini or Language == NestedText) return null;
-            return self.lineCommentMarker();
+            return self.syntax().trailing_comment;
         }
 
         /// Add an own-line comment ABOVE the node at `path` — the key's line for a
@@ -538,16 +495,13 @@ pub fn Editor(comptime Language: type) type {
                 try nt_edit.seqItemLineStart(source, parsed, path)
             else
                 lineStartBefore(source, span.start);
-            // fig's `#`-only comment line needs the same `>` marker-run prefix
-            // as the line it anchors above (comment depth is load-bearing for
-            // attachment — DESIGN.md "Comments") — `firstNonSpace` would stop
-            // at the `>` and yield bare whitespace, dropping the markers
-            // entirely. `span.start` already sits right after that prefix for
-            // every fig node (see `TNode.span`'s doc comment in
-            // `fig/parser.zig`), so slicing back to the line start recovers it
-            // exactly. Every other language's prefix is pure whitespace, where
-            // `firstNonSpace` and `span.start` agree anyway.
-            const indent = if (Language == Fig) source[line_start..span.start] else source[line_start..firstNonSpace(source, line_start)];
+            // A format whose line prefix is STRUCTURAL (fig's `>` marker run)
+            // copies the raw prefix; everywhere else it is pure whitespace.
+            // See `Syntax.structural_indent`.
+            const indent = if (self.syntax().structural_indent)
+                source[line_start..span.start]
+            else
+                source[line_start..firstNonSpace(source, line_start)];
 
             var buf: std.ArrayList(u8) = .empty;
             defer buf.deinit(self.allocator);
@@ -630,7 +584,7 @@ pub fn Editor(comptime Language: type) type {
                 try nt_edit.seqItemLineStart(source, parsed, path)
             else
                 lineStartBefore(source, span.start);
-            const block_start = commentBlockStart(source, line_start, comment_style);
+            const block_start = commentBlockStart(source, line_start, self.syntax().comment_style);
             if (block_start == line_start) return; // nothing above to remove
             try self.replaceAtSpan(Span.init(block_start, line_start), "");
         }
@@ -668,7 +622,7 @@ pub fn Editor(comptime Language: type) type {
                 try nt_edit.seqItemLineStart(source, parsed, path)
             else
                 lineStartBefore(source, span.start);
-            const block_start = commentBlockStart(source, line_start, comment_style);
+            const block_start = commentBlockStart(source, line_start, self.syntax().comment_style);
             if (block_start == line_start) return null; // no block above
 
             var out: std.ArrayList(u8) = .empty;
@@ -824,12 +778,13 @@ pub fn Editor(comptime Language: type) type {
                     prev = item;
                     item = parsed.ast.next(&item) orelse return error.NotFound;
                 }
-                // ZON's struct-field key span starts at the bare identifier, not
-                // the leading `.` (see `insertFlowMapEntry`'s doc on the same
-                // quirk) — back up over it so the splice carries `.name` as a
-                // unit rather than stranding a bare `.` next to a survivor.
-                const entry_start = if (Language == Zon and span.start > 0 and source[span.start - 1] == '.')
-                    span.start - 1
+                // A key span that EXCLUDES the format's key sigil — ZON's
+                // leading `.`, whose span starts at the bare identifier (see
+                // `insertFlowMapEntry`'s doc on the same quirk) — is backed up
+                // over so the splice carries `.name` as a unit rather than
+                // stranding a bare `.` next to a survivor.
+                const entry_start = if (self.syntax().key_sigil) |sigil|
+                    if (span.start > 0 and source[span.start - 1] == sigil) span.start - 1 else span.start
                 else
                     span.start;
                 // When the entry begins its own physical line, absorb any owned
@@ -843,12 +798,12 @@ pub fn Editor(comptime Language: type) type {
                 // the entry itself keeps the survivors' indentation intact.
                 const line_start = lineStartBefore(source, entry_start);
                 const on_own_line = firstNonSpace(source, line_start) == entry_start;
-                const cbs = if (on_own_line) commentBlockStart(source, line_start, comment_style) else line_start;
+                const cbs = if (on_own_line) commentBlockStart(source, line_start, self.syntax().comment_style) else line_start;
                 const del_start = if (cbs < line_start) cbs else entry_start;
                 return self.removeFlowItem(Span.init(del_start, span.end), prev == null);
             }
             const line_start = lineStartBefore(source, span.start);
-            const del_start = commentBlockStart(source, line_start, comment_style);
+            const del_start = commentBlockStart(source, line_start, self.syntax().comment_style);
             const del_end = lineEndAfter(source, span.end -| 1);
             try self.replaceAtSpan(Span.init(del_start, del_end), "");
         }
@@ -868,7 +823,7 @@ pub fn Editor(comptime Language: type) type {
             }
             // A non-flow TOML sequence is an array-of-tables; use
             // `appendTableToArray` for those. (TOML has no block scalar array.)
-            if (Language == Toml) return error.NotAnInlineArray;
+            if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
             if (Language == Fig) return fig_edit.figAppendSeqLine(self, parsed, node, value_text);
             // NestedText: a nested/empty-valued item's span doesn't start on
             // its own `-` line (see the module doc at this file's top), so
@@ -897,7 +852,7 @@ pub fn Editor(comptime Language: type) type {
                 try self.prependFlowItem(parsed, node, span, node.kind.sequence != null, value_text);
                 return;
             }
-            if (Language == Toml) return error.NotAnInlineArray;
+            if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
             if (Language == Fig) return fig_edit.figPrependSeqLine(self, parsed, node, value_text);
             if (Language == NestedText) return nt_edit.ntPrependItem(self, parsed, node, value_text);
             const first_item = (try parsed.ast.child(&node)) orelse return error.NotASequence;
@@ -942,9 +897,9 @@ pub fn Editor(comptime Language: type) type {
                 try self.removeFlowItem(item_span, is_first);
                 return;
             }
-            if (Language == Toml) return error.NotAnInlineArray;
+            if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
             if (Language == NestedText) return nt_edit.ntRemoveSeqItem(self, parsed, node, item, prev);
-            const line_start = commentBlockStart(source, lineStartBefore(source, item_span.start), comment_style);
+            const line_start = commentBlockStart(source, lineStartBefore(source, item_span.start), self.syntax().comment_style);
             const del_end = lineEndAfter(source, item_span.end -| 1);
             try self.replaceAtSpan(Span.init(line_start, del_end), "");
         }
@@ -1163,9 +1118,9 @@ pub fn Editor(comptime Language: type) type {
             if (dest.kind != .keyvalue) return error.NotAMapping;
             const source = self.source.items;
             try self.moveBlock(
-                entryBlockStart(source, parsed.span(src), comment_style),
+                entryBlockStart(source, parsed.span(src), self.syntax().comment_style),
                 entryBlockEnd(source, parsed.span(src)),
-                entryBlockStart(source, parsed.span(dest), comment_style),
+                entryBlockStart(source, parsed.span(dest), self.syntax().comment_style),
             );
         }
 
@@ -1227,7 +1182,7 @@ pub fn Editor(comptime Language: type) type {
                     else => return error.InvalidDocument,
                 };
                 try entry_keys.append(self.allocator, key);
-                try blocks.append(self.allocator, .{ .start = entryBlockStart(source, parsed.span(cur), comment_style), .end = 0 });
+                try blocks.append(self.allocator, .{ .start = entryBlockStart(source, parsed.span(cur), self.syntax().comment_style), .end = 0 });
                 last_end = entryBlockEnd(source, parsed.span(cur));
                 cur = parsed.ast.next(&cur) orelse break;
             }
@@ -1283,7 +1238,7 @@ pub fn Editor(comptime Language: type) type {
                 try self.reorderFlowItems(spans.items, order);
                 return;
             }
-            if (Language == Toml) return error.NotAnInlineArray;
+            if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
             // NestedText's block boundaries can't be recovered from
             // `spans.items[i].start` alone (a nested/empty item's span
             // doesn't start on its own `-` line — see the module doc), so it
@@ -1294,7 +1249,7 @@ pub fn Editor(comptime Language: type) type {
             var blocks: std.ArrayList(Block) = .empty;
             defer blocks.deinit(self.allocator);
             for (spans.items) |s| {
-                try blocks.append(self.allocator, .{ .start = entryBlockStart(source, s, comment_style), .end = 0 });
+                try blocks.append(self.allocator, .{ .start = entryBlockStart(source, s, self.syntax().comment_style), .end = 0 });
             }
             const last_end = entryBlockEnd(source, spans.items[spans.items.len - 1]);
             tileBlocks(blocks.items, last_end);
@@ -1524,13 +1479,11 @@ pub fn Editor(comptime Language: type) type {
         /// than a scalar — the one shape that cannot be told apart by sniffing,
         /// so it is read by the language's own parser.
         ///
-        /// YAML-only: it is the only editable format whose block mapping has a
-        /// single-line spelling that reaches these splice paths. The flat
-        /// formats (dotenv/.properties/INI) route through here too, and there a
-        /// `k: v` value is genuinely just scalar text — so they must keep
-        /// splicing it inline.
+        /// Only asked of a format that declares `single_line_block_mapping`
+        /// (YAML alone today); everywhere else a `k: v` value is genuinely
+        /// just scalar text and must keep splicing inline. See that field.
         fn singleLineIsBlockMapping(self: *Self, text: []const u8) bool {
-            if (comptime Language != Yaml) return false;
+            if (!self.syntax().single_line_block_mapping) return false;
             // A flow container also parses as a mapping/sequence but must stay
             // inline; a quoted scalar parses as a string. Both are settled by
             // the opening byte, cheaper than a parse.
@@ -1557,11 +1510,11 @@ pub fn Editor(comptime Language: type) type {
             // trimmed so the line doesn't end in whitespace; formats whose
             // separator carries no padding (`KEY=`) are unaffected.
             if (v.len == 0) {
-                try out.appendSlice(self.allocator, std.mem.trimEnd(u8, kv_sep, " "));
+                try out.appendSlice(self.allocator, std.mem.trimEnd(u8, self.syntax().kv_sep, " "));
                 return;
             }
             if (shape == .inline_ or shape == .block_scalar) {
-                try out.appendSlice(self.allocator, kv_sep);
+                try out.appendSlice(self.allocator, self.syntax().kv_sep);
                 try reindentInto(out, self.allocator, v, col);
                 return;
             }
@@ -1596,16 +1549,19 @@ pub fn Editor(comptime Language: type) type {
             const source = self.source.items;
             var out: std.ArrayList(u8) = .empty;
             defer out.deinit(self.allocator);
-            // ZON has no bare `key: value` document form (unlike YAML/JSON5,
-            // whose root can be a keyless top-level mapping): a `null` value —
-            // root or nested — promotes in place to a flow `.{ key = value }`
-            // container, so this needs no `is_root`/descend distinction.
-            if (comptime Language == Zon) {
-                try out.appendSlice(self.allocator, ".{ ");
+            // A format with no bare `key: value` document form (ZON — unlike
+            // YAML/JSON5, whose root can be a keyless top-level mapping)
+            // promotes a `null` value in place to a flow container, root or
+            // nested alike, so this needs no `is_root`/descend distinction.
+            const syn = self.syntax();
+            if (!syn.bare_document_mapping) {
+                try out.appendSlice(self.allocator, syn.flow_map_open);
+                try out.append(self.allocator, ' ');
                 try out.appendSlice(self.allocator, key_text);
-                try out.appendSlice(self.allocator, kv_sep);
+                try out.appendSlice(self.allocator, syn.kv_sep);
                 try out.appendSlice(self.allocator, value_text);
-                try out.appendSlice(self.allocator, " }");
+                try out.append(self.allocator, ' ');
+                try out.appendSlice(self.allocator, syn.flow_map_close);
                 try self.replaceAtSpan(null_span, out.items);
                 return;
             }
@@ -1680,7 +1636,7 @@ pub fn Editor(comptime Language: type) type {
                     try out.appendSlice(self.allocator, ",\n");
                     try out.appendNTimes(self.allocator, ' ', col);
                     try out.appendSlice(self.allocator, key_text);
-                    try out.appendSlice(self.allocator, kv_sep);
+                    try out.appendSlice(self.allocator, self.syntax().kv_sep);
                     try out.appendSlice(self.allocator, value_text);
                     try self.replaceAtSpan(Span.init(last_end, last_end), out.items);
                     return;
@@ -1695,7 +1651,7 @@ pub fn Editor(comptime Language: type) type {
                 defer out.deinit(self.allocator);
                 try out.appendSlice(self.allocator, ", ");
                 try out.appendSlice(self.allocator, key_text);
-                try out.appendSlice(self.allocator, kv_sep);
+                try out.appendSlice(self.allocator, self.syntax().kv_sep);
                 try out.appendSlice(self.allocator, value_text);
                 try self.replaceAtSpan(Span.init(last_end, last_end), out.items);
                 return;
@@ -1713,7 +1669,7 @@ pub fn Editor(comptime Language: type) type {
             var out: std.ArrayList(u8) = .empty;
             defer out.deinit(self.allocator);
             try out.appendSlice(self.allocator, key_text);
-            try out.appendSlice(self.allocator, kv_sep);
+            try out.appendSlice(self.allocator, self.syntax().kv_sep);
             try out.appendSlice(self.allocator, value_text);
             const at = flowOpenEnd(self.source.items, span); // just after '{' (or ZON's '.{')
             try self.replaceAtSpan(Span.init(at, at), out.items);
@@ -1917,7 +1873,12 @@ pub fn flowOpenEnd(source: []const u8, span: Span) usize {
 
 /// Comment syntax for the owned-comment scan: `#` line comments (YAML/TOML) vs
 /// `//` line comments and `/* */` blocks (JSON5/JSONC).
-pub const CommentStyle = enum { hash, slashes, semicolon, xml_comment };
+///
+/// Re-exported from the language manifest, where it moved so a
+/// `<lang>/<lang>.zig` can name it in its own `syntax` without importing the
+/// editor. Kept here because `toml/editor_helper.zig` and its siblings reach
+/// it as `editor.CommentStyle`.
+pub const CommentStyle = lang.CommentStyle;
 
 /// Grow `line_start` upward to absorb an entry's owned comment block: the
 /// contiguous run of comment lines immediately above, with no intervening blank

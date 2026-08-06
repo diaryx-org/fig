@@ -10,6 +10,7 @@
 
 const fig = @This();
 const Document = @import("../../document.zig");
+const lang = @import("../manifest.zig");
 
 pub const Parser = @import("parser.zig");
 pub const Printer = @import("printer.zig");
@@ -27,6 +28,33 @@ pub const Language = struct {
     }
     pub const print = Printer.print;
     pub const printNode = Printer.printNode;
+
+    pub const name = "fig";
+    /// `.figl` is the authoring dialect's canonical extension; `.fig` is still
+    /// accepted for back-compat. (The canonical form deliberately owns no
+    /// extension — select it with `--input canonical`.)
+    pub const extensions: []const []const u8 = &.{ "figl", "fig" };
+    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
+
+    pub fn syntax(t: fig.Type) lang.Syntax {
+        _ = t;
+        return .{
+            .comment_style = .hash,
+            .line_comment = "#",
+            .trailing_comment = "#",
+            // fig spells an entry `key = value`, but as with TOML the paths
+            // where that matters delegate to `fig/editor_helper.zig`; `": "`
+            // is what the shared helpers were already using here.
+            .kv_sep = ": ",
+            // A dotted-key format: the flow chain is the idiomatic
+            // intermediate form, and `fig fmt` canonicalizes it back.
+            .empty_map_literal = "{}",
+            // The `>` marker run that opens a line is section depth, not
+            // whitespace — a comment inserted above a line must repeat it or
+            // it detaches. See `Syntax.structural_indent`.
+            .structural_indent = true,
+        };
+    }
 };
 
 // Test discovery: importing `fig.zig` (from root.zig) pulls in every fig

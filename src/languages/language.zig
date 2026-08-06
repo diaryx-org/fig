@@ -1,8 +1,19 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const build_options = @import("build_options");
+const manifest = @import("manifest.zig");
 
 pub const Language = @This();
+
+// The declared half of the interface, re-exported so a caller needs only this
+// file. The definitions live in `manifest.zig` because it is a leaf — every
+// `<lang>/<lang>.zig` imports it to spell its own `syntax`, and this file
+// imports each of them in turn, so the types cannot live here without the
+// manifest depending on the languages that declare it.
+pub const CommentStyle = manifest.CommentStyle;
+pub const KeyStyle = manifest.KeyStyle;
+pub const Caps = manifest.Caps;
+pub const Syntax = manifest.Syntax;
 
 // Per-language gates: a compiled-out format resolves to `void`, so its module is
 // never referenced and never built. Every call site that touches a gated
@@ -139,19 +150,75 @@ fn tryParse(comptime Lang: type, allocator: Allocator, input: []const u8, t: Lan
     return true;
 }
 
+/// The enforcement point for the `Language` contract: every declaration a
+/// format must supply, plus the coherence rules between them.
+///
+/// `Editor()` calls this for the format it is generic over, but that is not
+/// enough on its own — a read-only format has no editor, so `validate(XML)`
+/// would never be instantiated and XML's manifest would go unchecked. The
+/// `comptime` block below this function closes that gap by running `validate`
+/// over every compiled-in language, editable or not.
 pub fn validate(comptime Lang: type) void {
     comptime {
+        // The original four, plus `Parser` — which `tryParse` and `Editor`
+        // have both required in practice for as long as they have existed,
+        // and which this now states.
         if (!@hasDecl(Lang, "Type"))
             @compileError("Language must define Type");
-
         if (!@hasDecl(Lang, "default_type"))
             @compileError("Language must define default_type");
-
+        if (!@hasDecl(Lang, "Parser"))
+            @compileError("Language must define Parser");
         if (!@hasDecl(Lang, "parse"))
             @compileError("Language must define parse");
         if (!@hasDecl(Lang, "print"))
             @compileError("Language must define print");
+
+        // Identity.
+        if (!@hasDecl(Lang, "name"))
+            @compileError("Language must define name");
+        if (!@hasDecl(Lang, "extensions"))
+            @compileError("Language must define extensions");
+        if (!@hasDecl(Lang, "caps"))
+            @compileError("Language must define caps");
+        if (@TypeOf(Lang.caps) != Caps)
+            @compileError("Language.caps must be a language.Caps");
+
+        // `syntax` describes how the generic splice engine writes this
+        // format, so it is required exactly when there is an editor to read
+        // it. Requiring it unconditionally would be asking a read-only
+        // format to describe an editing surface it does not have.
+        if (Lang.caps.edit) {
+            if (!@hasDecl(Lang, "syntax"))
+                @compileError("Language with caps.edit must define syntax");
+
+            // Coherence: a format cannot have a same-line trailing comment
+            // marker without having a comment syntax at all. Checked over
+            // every dialect, since `syntax` is indexed by one.
+            for (std.meta.tags(Lang.Type)) |t| {
+                const s: Syntax = Lang.syntax(t);
+                if (s.trailing_comment != null and s.line_comment == null)
+                    @compileError("Language declares a trailing comment marker but no line comment marker");
+            }
+        }
     }
+}
+
+// Validate every compiled-in language, including the read-only ones that no
+// `Editor()` instantiation would otherwise reach. Runs whenever this file is
+// analyzed, which is whenever anything touches a format at all.
+comptime {
+    if (build_options.lang_json) validate(JSON);
+    if (build_options.lang_yaml) validate(YAML);
+    if (build_options.lang_toml) validate(TOML);
+    if (build_options.lang_zon) validate(ZON);
+    if (build_options.lang_xml) validate(XML);
+    if (build_options.lang_fig) validate(FIG);
+    if (build_options.lang_ini) validate(INI);
+    if (build_options.lang_dotenv) validate(DOTENV);
+    if (build_options.lang_properties) validate(PROPERTIES);
+    if (build_options.lang_plist) validate(PLIST);
+    if (build_options.lang_nestedtext) validate(NESTEDTEXT);
 }
 
 test "detect identifies each compiled-in format by content" {

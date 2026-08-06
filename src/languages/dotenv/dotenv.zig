@@ -1,5 +1,6 @@
 const dotenv = @This();
 const Document = @import("../../document.zig");
+const lang = @import("../manifest.zig");
 
 pub const Parser = @import("parser.zig");
 pub const Tokenizer = @import("tokenizer.zig");
@@ -21,6 +22,29 @@ pub const Language = struct {
     }
     pub const print = Printer.print;
     pub const printNode = Printer.printNode;
+
+    pub const name = "dotenv";
+    /// A dotenv file is conventionally named exactly `.env`, whose last-dot
+    /// "extension" is the literal `env`. (`.env.production` is not recognized
+    /// by extension — pass `--input dotenv`.)
+    pub const extensions: []const []const u8 = &.{"env"};
+    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
+
+    pub fn syntax(t: dotenv.Type) lang.Syntax {
+        _ = t;
+        return .{
+            .comment_style = .hash,
+            .line_comment = "#",
+            .trailing_comment = "#",
+            // A bare `=` with no surrounding spaces — see `printer.zig`.
+            .kv_sep = "=",
+            // Flat: no nesting to vivify into, but `{}` is still the literal
+            // the generic seed would splice, and the format has no nested
+            // path for it to seed. Kept as the shared default rather than
+            // null, which would change the error a nested `set` reports.
+            .empty_map_literal = "{}",
+        };
+    }
 };
 
 // Test discovery: importing `dotenv.zig` (from root.zig) pulls in every

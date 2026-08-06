@@ -1,6 +1,7 @@
 const zon = @This();
 const Document = @import("../../document.zig");
 const AST = @import("../../ast/ast.zig");
+const lang = @import("../manifest.zig");
 
 pub const Parser = @import("parser.zig");
 pub const Printer = @import("printer.zig");
@@ -20,6 +21,40 @@ pub const Language = struct {
     }
     pub const print = Printer.print;
     pub const printNode = Printer.printNode;
+
+    pub const name = "zon";
+    pub const extensions: []const []const u8 = &.{"zon"};
+    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
+
+    /// The format that most exercises the manifest's "push traits down into
+    /// parameters" rule: three of these fields exist because ZON's surface
+    /// syntax differs from the block-mapping formats, not because ZON needs
+    /// bespoke logic. Any future format whose keys carry a sigil, or which
+    /// has no keyless top-level mapping, reuses them unchanged.
+    pub fn syntax(t: zon.Type) lang.Syntax {
+        _ = t;
+        return .{
+            // ZON follows Zig: `//`, and the owned-block scanner that also
+            // walks `/* ... */` as a unit.
+            .comment_style = .slashes,
+            .line_comment = "//",
+            .trailing_comment = "//",
+            // Struct-field syntax.
+            .kv_sep = " = ",
+            .key_style = .zon_field,
+            // A struct field's key SPAN starts at the bare identifier, so the
+            // leading `.` has to be absorbed explicitly on a flow-entry
+            // delete or the splice strands it beside a survivor.
+            .key_sigil = '.',
+            .empty_map_literal = ".{}",
+            // No bare `key: value` document form (unlike YAML/JSON5, whose
+            // root can be a keyless top-level mapping), so a null promotes in
+            // place to `.{ key = value }` — root or nested, no distinction.
+            .bare_document_mapping = false,
+            .flow_map_open = ".{",
+            .flow_map_close = "}",
+        };
+    }
 };
 
 // Test discovery: importing `zon.zig` (from root.zig) pulls in every ZON

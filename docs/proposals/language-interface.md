@@ -8,14 +8,19 @@ part_of = [proposals](proposals.md)
 
 # A declared Language interface
 
-> **Status: proposed, unimplemented.** Nothing here has shipped. The site
-> catalogue in §2 was taken against `main` at 5c7b97b (fig 2.5.3) and is the
-> part of this document worth keeping even if the rest is rejected — it is the
-> first written-down account of what a format actually has to supply.
+> **Status: Steps 1 and 2 implemented; Steps 3–5 not started, Step 4
+> withdrawn.** The manifest exists (`src/languages/manifest.zig`), all eleven
+> formats declare one, and the §2A/§2B/§2C parameter branches are gone from
+> `editor.zig`. See §9 for exactly what landed and the two places the plan
+> below was not followed.
+>
+> The site catalogue in §2 was taken against `main` at 5c7b97b (fig 2.5.3) and
+> remains the reference account of what a format has to supply; its line
+> numbers are now stale.
 >
 > **§8 corrects §3, §4, §5 and §7 against the same commit.** One claim in §3 —
 > that exclusive operations can stop existing — does not compile on the pinned
-> Zig, and Step 4 rests on it. Read §8 before acting on any of those sections.
+> Zig, and Step 4 rested on it. Read §8 before acting on those sections.
 
 `Language.validate` ([src/languages/language.zig][validate]) states a
 four-declaration contract: `Type`, `default_type`, `parse`, `print`. That is
@@ -458,6 +463,66 @@ Steps 1 and 2 stand, including §5's argument that they are worth doing alone.
 Step 3 remains the real risk and the body is honest about it. Step 4 should go
 (§8.1). §4 is the right idea and needs §8.3 and §8.4 before it is implementable.
 
+## 9. Outcome (2026-08-06)
+
+Steps 1 and 2 landed together, as two commits so the bridge in §5's Step 1
+exists in history with CI green against both halves.
+
+**What is in tree.** [`src/languages/manifest.zig`][manifest] defines `Syntax`,
+`Caps`, `CommentStyle` and `KeyStyle`. It is a leaf — it imports nothing, not
+even `std` — which is what makes the manifest safe for all eleven
+`<lang>/<lang>.zig` files to import while `language.zig` imports each of them
+in turn. §3 put these types in `language.zig`; that would have been a cycle.
+
+Each language declares `name`, `extensions`, `caps`, and (when `caps.edit`)
+`syntax`. `validate` requires them, adds `Parser` as §8.3 recommended, and runs
+from a comptime registry loop over the compiled-in languages as well as from
+`Editor()` — so XML is checked, closing §8.4.
+
+**23 of the 65 type-test sites are gone**, not the 26 §5 predicted. The gap is
+the three NestedText `.index` sites (§2's 537, 629, 667): §2C files them under
+micro-parameters, but each calls `nt_edit.seqItemLineStart`, so they are hooks
+and belong to Step 3. Every one of the 41 remaining sites is §2D or §2E.
+
+`editor.zig` now holds **no ZON, dotenv or `.properties` branch at all** —
+those three tags survive only in its own tests. That is §8.6's import argument
+partially cashed without any hook dispatch.
+
+**Two deviations from the plan.**
+
+*Hook declarations were not added.* §5's Step 1 says every language gains them.
+Nothing in Steps 1–2 consumes a hook, and adding them now would put
+`@TypeOf(Language.insertKey)` — whose signature names `Editor(Language)` —
+within reach of a `validate` that runs inside `Editor()`'s own body, before
+that type is complete. `validate`'s typed checks are exactly what §4 wants to
+grow, so the safe shape is to keep the in-`Editor` call shallow and do typed
+and coherence checks from the registry loop, where no instantiation is in
+flight. That is a Step 3 decision; nothing was committed to here.
+
+*The comment markers moved to Step 2 rather than being exempted.* §8.2's fork,
+resolved the second way. `lineCommentMarker`'s dialect logic was extracted to a
+comptime-callable `fn(Type)` in Step 1 — a mechanical change that does break
+Step 1's "change nothing" promise for that one function, and buys a bridge
+assertion over `std.meta.tags(Language.Type)`, i.e. every dialect rather than
+just `default_type`. plist is exempt from those two assertions alone: all six
+comment ops delegate to `plist_edit` before a marker is read, so today's
+fall-through `"#"` is dead code. The manifest declares null there instead —
+plist has no line-comment leader, only a `<!-- -->` pair — so a dropped
+delegation would fail loudly rather than splice a half-open comment.
+
+**§7's payoff is not collected yet.** `fig_format_capabilities` still spells
+out its eleven triples by hand and `cli/args.zig` still special-cases `.env`
+and `.nt`. `caps` and `extensions` are declared and validated but unread —
+wiring them is a follow-on, and per §8.5 it is a smaller win than the body
+claims.
+
+Verification: `zig build check` is byte-identical to the pre-change baseline
+(2278/2281 tests, one pre-existing TypeScript-binding failure), every
+conformance corpus is at baseline, and three language-gating configurations
+build. Both bridge and registry loop were confirmed live by deliberately
+breaking a manifest value and a required declaration.
+
+[manifest]: /src/languages/manifest.zig
 [validate]: /src/languages/language.zig
 [editor]: /src/editor.zig
 [c_api]: /src/c_api.zig

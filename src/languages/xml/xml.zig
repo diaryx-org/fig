@@ -3,6 +3,7 @@ const std = @import("std");
 const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
 const Writer = std.Io.Writer;
+const lang = @import("../manifest.zig");
 
 pub const Parser = @import("parser.zig");
 pub const Tokenizer = @import("tokenizer.zig");
@@ -51,6 +52,15 @@ pub const Language = struct {
     pub fn print(writer: *Writer, ast: *const AST) !void {
         return xml.Printer.print(writer, ast, .{});
     }
+
+    pub const name = "xml";
+    pub const extensions: []const []const u8 = &.{"xml"};
+    /// The one format in tree with no in-place editor: `Editor(XML)` is never
+    /// instantiated, so there is no `syntax` to declare. This declaration is
+    /// also the reason `validate` runs from a registry loop in `language.zig`
+    /// rather than only from `Editor()` — the format whose `caps` carries the
+    /// most information is the one an `Editor`-only check would never see.
+    pub const caps: lang.Caps = .{ .read = true, .edit = false, .serialize = true };
 };
 
 // Test discovery: importing `xml.zig` (from root.zig) pulls in every XML

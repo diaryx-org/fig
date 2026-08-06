@@ -1,6 +1,7 @@
 const yaml = @This();
 const Document = @import("../../document.zig");
 const AST = @import("../../ast/ast.zig");
+const lang = @import("../manifest.zig");
 
 pub const Parser = @import("parser.zig");
 pub const Tokenizer = @import("tokenizer.zig");
@@ -33,6 +34,29 @@ pub const Language = struct {
     /// gate on `@hasDecl(Lang, "materialize")`.
     pub const materialize = Materialize.materialize;
     pub const TagMode = Materialize.TagMode;
+
+    pub const name = "yaml";
+    pub const extensions: []const []const u8 = &.{ "yaml", "yml" };
+    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
+
+    /// 1.1 and 1.2.2 differ only in scalar type RESOLUTION, never in the
+    /// syntax the editor splices, so both dialects answer identically. This
+    /// is where an editing divergence would land if one ever appeared.
+    pub fn syntax(t: yaml.Type) lang.Syntax {
+        _ = t;
+        return .{
+            .comment_style = .hash,
+            .line_comment = "#",
+            .trailing_comment = "#",
+            .kv_sep = ": ",
+            // The empty seed rather than `{}` — see `Syntax.empty_map_literal`
+            // for why the two are not interchangeable here.
+            .empty_map_literal = "",
+            // The only editable format whose block mapping has a single-line
+            // spelling (`k: v`) that reaches the splice paths.
+            .single_line_block_mapping = true,
+        };
+    }
 };
 
 // Test discovery: importing `yaml.zig` (from root.zig) pulls in every YAML

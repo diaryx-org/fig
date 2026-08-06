@@ -1,5 +1,6 @@
 const nestedtext = @This();
 const Document = @import("../../document.zig");
+const lang = @import("../manifest.zig");
 
 pub const Parser = @import("parser.zig");
 pub const Tokenizer = @import("tokenizer.zig");
@@ -21,6 +22,28 @@ pub const Language = struct {
     }
     pub const print = Printer.print;
     pub const printNode = Printer.printNode;
+
+    pub const name = "nestedtext";
+    pub const extensions: []const []const u8 = &.{"nt"};
+    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
+
+    pub fn syntax(t: nestedtext.Type) lang.Syntax {
+        _ = t;
+        return .{
+            .comment_style = .hash,
+            .line_comment = "#",
+            // Joins INI: a `#` after a value on the SAME line is literal
+            // rest-of-line value text, not a comment (see `parser.zig`,
+            // "rest-of-line values are 100% literal"). A trailing comment can
+            // only ever be its own `#` line immediately after the entry.
+            .trailing_comment = null,
+            .kv_sep = ": ",
+            // No literal spelling for an empty nested dict — every value is
+            // either rest-of-line text or a nested block — so `set` cannot
+            // auto-vivify a missing ancestor.
+            .empty_map_literal = null,
+        };
+    }
 };
 
 // Test discovery: importing `nestedtext.zig` (from root.zig) pulls in every

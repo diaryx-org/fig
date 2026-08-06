@@ -8,6 +8,10 @@ const build_options = @import("build_options");
 
 const AST = @import("ast.zig");
 const Node = AST.Node;
+/// The format registry, for the comptime assert under `SerializeFormat` alone —
+/// this file dispatches to the printer modules directly and takes nothing else
+/// from the language layer.
+const Language = @import("../languages/language.zig");
 
 // Printers are pulled in only for the formats compiled into this build. A gated
 // format's `*Printer` is `void`, so the matching `serialize` arm below (guarded
@@ -37,6 +41,21 @@ const CanonicalPrinter = if (canonical_enabled) @import("../canonical/printer.zi
 /// AST root to be a one-entry mapping (see `languages/xml/printer.zig`'s
 /// header) — anything else is `RootNotSingleElement`, not a silent fallback.
 pub const SerializeFormat = enum { json, jsonc, json5, yaml, toml, zon, xml, canonical, fig, ini, dotenv, properties, plist, nestedtext };
+
+// Pinned against the format registry (`languages/language.zig`'s `dialects`),
+// of which this enum is a restatement plus `canonical` — which is not a
+// `Language` at all (no parser module, no dialect, an options-less printer),
+// and so stays an explicit named arm here and everywhere else. Order matters:
+// Stage 5 reifies this enum from the registry, and its member order becomes
+// the registry's.
+comptime {
+    Language.assertDerivedEnum(
+        SerializeFormat,
+        Language.namesOf(.all),
+        &.{"canonical"},
+        "AST.SerializeFormat",
+    );
+}
 
 /// Knobs controlling how a value is rendered. The defaults reproduce fig's
 /// historical output (pretty-printed, two-space indent), so `.{}` is a no-op

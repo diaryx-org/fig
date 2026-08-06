@@ -181,6 +181,26 @@ fn spliceStyle(format: Format) SpliceStyle {
     };
 }
 
+// The format registry declares the same semantic per dialect
+// (`Language.SpliceStyle`), and Stage 4 deletes the switch above in favour of
+// it. Pinned by running it: every registry entry must agree with the arm that
+// answers for it today, so the swap is provably a no-op. The three members
+// with no registry entry (`yml`/`canonical`/`gron`) are unreachable here for
+// their own reasons, stated above.
+comptime {
+    @setEvalBranchQuota(10_000);
+    for (fig.Language.dialects) |d| {
+        const want: SpliceStyle = switch (d.splice) {
+            .literal => .literal,
+            .json_string => .json_string,
+            .raw => .raw,
+        };
+        if (spliceStyle(@field(Format, d.name)) != want)
+            @compileError("the format registry's splice style for '" ++ d.name ++
+                "' disagrees with `spliceStyle` in this file");
+    }
+}
+
 /// Report an edit whose *argument* — not the file — is what doesn't parse, and
 /// exit(2). `edit`/`set`/`insert` splice the text the user typed straight into
 /// the document, so when the reparse fails the underlying error describes the

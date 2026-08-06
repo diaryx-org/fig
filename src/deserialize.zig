@@ -15,6 +15,9 @@ const std = @import("std");
 const AST = @import("ast/ast.zig");
 const build_options = @import("build_options");
 
+/// The format registry, for the comptime assert under `Format` alone.
+const Language = @import("languages/language.zig");
+
 const Json = @import("languages/json/parser.zig");
 const Yaml = if (build_options.lang_yaml) @import("languages/yaml/parser.zig") else void;
 const Toml = if (build_options.lang_toml) @import("languages/toml/parser.zig") else void;
@@ -24,6 +27,14 @@ const Zon = if (build_options.lang_zon) @import("languages/zon/parser.zig") else
 /// compiled out is still a valid enum value, but parsing it yields
 /// `error.FormatDisabled` (see `parseToAst`).
 pub const Format = enum { json, jsonc, yaml, toml, zon };
+
+// Pinned against the format registry: this enum is exactly the entries marked
+// `deserializable`, in registry order. A format that grows a typed
+// deserialization path declares it there and gets a member here (Stage 3);
+// until then, the assert is what stops the two lists from drifting.
+comptime {
+    Language.assertDerivedEnum(Format, Language.namesOf(.deserializable), &.{}, "deserialize.Format");
+}
 
 pub const Options = struct {
     /// Mapping keys with no matching struct field are ignored when true (the

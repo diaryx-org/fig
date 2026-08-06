@@ -64,6 +64,16 @@ const Match = union(enum) {
 /// it too — see `innerFormat`.
 pub const InnerFormat = enum { yaml, json, fig, toml };
 
+// Pinned against the format registry: this enum's members are exactly the
+// entries carrying `EmbedSpellings`. MEMBERSHIP only, deliberately — this is
+// the one derived enum whose order is not the registry's, and it is also the
+// only one where that is harmless: it is internal (no ABI value, no CLI token,
+// no `@intFromEnum` dependency), so Stage 6 reifies it into registry order —
+// json, yaml, toml, fig — as a pure renumbering.
+comptime {
+    Language.assertEnumMembers(InnerFormat, Language.namesOf(.embeddable), "Embed.InnerFormat");
+}
+
 /// Resolve a `fenced`/`frontmatter` language tag (a code-fence info string's
 /// first token, or a `---<tag>`) to a config format — or null when it is not one
 /// this project understands, so a ```` ```python ```` code sample or a `---foo`

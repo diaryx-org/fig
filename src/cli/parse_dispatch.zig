@@ -33,21 +33,13 @@ pub const Spec = struct {
     yaml: DialectOf(L.YAML) = defaultDialect(L.YAML),
 };
 
-/// `Lang.Type` when `Lang` is compiled in, `void` when it is gated out.
-///
-/// A `-D<lang>=false` build resolves that language to `void` in
-/// `languages/language.zig`, and `void` has no `.Type` — so a field naming one
-/// directly fails to compile in exactly the builds the flag exists to produce.
-/// Routing the type through here keeps `Spec`'s shape identical in every build:
-/// the gated-out field becomes a zero-bit `void` that nothing reads, because
-/// every consumer already sits behind the same `build_options` test.
-fn DialectOf(comptime Lang: type) type {
-    return if (Lang == void) void else Lang.Type;
-}
-
-fn defaultDialect(comptime Lang: type) DialectOf(Lang) {
-    return if (Lang == void) {} else Lang.default_type;
-}
+/// `Lang.Type` when `Lang` is compiled in, `void` when it is gated out — and
+/// its `default_type` twin. Both now live in `languages/language.zig`, beside
+/// the format registry that needs the same `void` protocol one layer below the
+/// CLI; re-exported here under their original names so every consumer in this
+/// file (and the `Spec` fields above) reads exactly as it did.
+pub const DialectOf = fig.Language.DialectOf;
+pub const defaultDialect = fig.Language.defaultDialect;
 
 /// Resolve a `--spec` version string against the format it will parse. Null
 /// `spec_str` yields the default spec. Errors when the version is unknown for
@@ -80,6 +72,43 @@ pub fn resolveSpec(format: Format, spec_str: ?[]const u8) error{UnsupportedSpec}
             error.UnsupportedSpec,
         .json, .jsonc, .json5, .zon, .xml, .canonical, .fig, .gron, .ini, .dotenv, .properties, .plist, .nestedtext => error.UnsupportedSpec,
     };
+}
+
+// The format registry's `specs` tables, pinned against the switch above by
+// running it — every version string the registry lists must resolve, and must
+// resolve to the dialect the registry says, so Stage 4 can replace the arms
+// with a table walk and know the behaviour is unchanged. The reverse direction
+// (a version string `resolveSpec` accepts that the registry omits) can't be
+// enumerated from here, so it gets the one probe a format with NO registry
+// specs must still reject.
+//
+// This lives here rather than in `language.zig` because `resolveSpec` is the
+// source of truth being pinned, and it is a CLI function — the registry sits
+// below the CLI and cannot reach up to it.
+comptime {
+    @setEvalBranchQuota(20_000);
+    for (fig.Language.dialects) |d| {
+        // A gated-out language has no dialect to compare against, and
+        // `resolveSpec` refuses `--spec` for it outright (see the arms above).
+        if (d.Lang == void) continue;
+        const format = @field(Format, d.name);
+        for (d.specs) |s| {
+            const got = resolveSpec(format, s.name) catch @compileError(
+                "resolveSpec rejects `--spec " ++ s.name ++ "` for '" ++ d.name ++
+                    "', which the format registry lists as one of its versions",
+            );
+            // `Spec`'s field per language is named for the format, which for
+            // the two multi-version languages IS the entry name.
+            if (@field(got, d.name) != s.dialect)
+                @compileError("the format registry's `--spec " ++ s.name ++ "` for '" ++ d.name ++
+                    "' selects a different dialect than resolveSpec does");
+        }
+        if (d.specs.len == 0) {
+            _ = resolveSpec(format, "1.0") catch continue;
+            @compileError("resolveSpec accepts `--spec 1.0` for '" ++ d.name ++
+                "', but the format registry lists no versions for it");
+        }
+    }
 }
 
 /// The languages that have grown the rich diagnostic layer — position +

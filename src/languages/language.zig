@@ -32,6 +32,538 @@ pub const PROPERTIES = if (build_options.lang_properties) @import("properties/pr
 pub const PLIST = if (build_options.lang_plist) @import("plist/plist.zig").Language else void;
 pub const NESTEDTEXT = if (build_options.lang_nestedtext) @import("nestedtext/nestedtext.zig").Language else void;
 
+// ============================================================================
+// THE FORMAT REGISTRY
+// ============================================================================
+//
+// `compiled` (below) is the per-LANGUAGE list. This is the per-DIALECT one: the
+// table the five hand-written parallel format enumerations — `Detected` here,
+// `cli.Format`, `AST.SerializeFormat`, `c_api.FigFormat`, `deserialize.Format`,
+// `Embed.InnerFormat` — are all restatements of, plus the per-dialect facts
+// (ABI value, splice style, empty-document seed, `--spec` strings, embedded
+// spellings) that today live scattered across six files as switches nothing
+// cross-checks.
+//
+// As of this stage NOTHING CONSUMES IT except `cli/args.zig`'s extension table.
+// What it does instead is ASSERT: the `comptime` block after `dialects` and its
+// siblings in `cli/types.zig`, `c_api.zig`, `ast/serialize_options.zig`,
+// `deserialize.zig` and `embed.zig` fail the build the moment the registry and
+// the hand-written enum they pin disagree. The derivations that make those
+// enums *reifications* of this table arrive in Stages 3-7.
+
+/// `Lang.Type` when `Lang` is compiled in, `void` when it is gated out.
+///
+/// A `-D<lang>=false` build resolves that language to `void` above, and `void`
+/// has no `.Type` — so a field naming one directly fails to compile in exactly
+/// the builds the flag exists to produce. Routing the type through here keeps
+/// every dependent shape (a registry `Entry`, the CLI's `Spec`) identical in
+/// every build: the gated-out field becomes a zero-bit `void` that nothing
+/// reads, because every consumer already sits behind the same `build_options`
+/// test. Moved here from `cli/parse_dispatch.zig`, which now re-exports it —
+/// the registry needs it one layer below the CLI.
+pub fn DialectOf(comptime Lang: type) type {
+    return if (Lang == void) void else Lang.Type;
+}
+
+/// `Lang.default_type`, or the `void` value when `Lang` is gated out.
+pub fn defaultDialect(comptime Lang: type) DialectOf(Lang) {
+    return if (Lang == void) {} else Lang.default_type;
+}
+
+/// A named dialect of `Lang` spelled by its member NAME rather than by a
+/// literal, so a registry entry can name one in a build where `Lang` is `void`
+/// (there is no enum to write `.JSONC` against). Collapses to the `void` value
+/// exactly when the language is gated out.
+pub fn dial(comptime Lang: type, comptime tag: []const u8) DialectOf(Lang) {
+    return if (Lang == void) {} else @field(Lang.Type, tag);
+}
+
+/// How a format takes the caller's edit text, which decides what the fix is
+/// when the text turns out not to fit. The semantic `cli/diag_report.zig`'s
+/// `spliceStyle` states today (and which `cli/edit_ops.zig` acts on), lifted
+/// here so it is declared once per dialect beside everything else about it.
+pub const SpliceStyle = enum {
+    /// Spliced in verbatim as source, so a string value needs its own quotes —
+    /// YAML, TOML, ZON, fig.
+    literal,
+    /// Wrapped as a JSON string first (`edit_ops.jsonifyEdit`), so `"`/`\` in
+    /// the text are escaped rather than taken as syntax — the JSON family.
+    json_string,
+    /// Written as raw characters, so only the format's own separators can
+    /// break it — INI, dotenv, `.properties`, XML, plist, NestedText. (plist
+    /// and NestedText *render* the text rather than splicing it; XML has no
+    /// in-place editor at all, so no edit text ever reaches it.)
+    raw,
+};
+
+/// One `--spec <version>` string and the dialect it selects. The element type
+/// of `Entry.specs`, generic over the language so a gated-out one collapses to
+/// a `void` dialect and the table still compiles (and still lists the version
+/// STRINGS, which are build-invariant — `resolveSpec` rejects them for a
+/// gated-out language rather than not knowing them).
+pub fn SpecName(comptime Lang: type) type {
+    return struct {
+        /// The accepted `--spec` text, matched exactly. Several map to one
+        /// dialect (`1.0` and `1.0.0` both select TOML 1.0).
+        name: []const u8,
+        dialect: DialectOf(Lang),
+    };
+}
+
+/// One user-facing dialect: everything about it that is not the language
+/// module itself. Generic over the language so the `void` protocol survives —
+/// see `DialectOf`.
+fn Entry(comptime L: type) type {
+    return struct {
+        /// The member name this dialect has in every derived enum, and —
+        /// upper-cased — the `FIG_FORMAT_<NAME>` suffix in fig.h. Sentinel-
+        /// terminated because a reified enum's field names must be.
+        name: [:0]const u8,
+
+        /// The language this dialect is a dialect OF; `void` when that
+        /// language is gated out of this build. Every consumer must test this
+        /// FIRST — it is the gate, and reading any other `Lang`-derived field
+        /// past a `void` is a compile error, which is the point.
+        Lang: type = L,
+
+        /// The `Lang.Type` value this dialect selects. Defaults to the
+        /// language's own default; only the JSON trio overrides it.
+        dialect: DialectOf(L) = defaultDialect(L),
+
+        /// The `FigFormat` value in the C ABI. FROZEN: a released value can
+        /// never change or be reused, so new entries append (which is why
+        /// these run 1,2,7 down the JSON family — JSON5 arrived after XML).
+        /// `zig build abi-check` compares these against fig.h's
+        /// `FIG_FORMAT_*` enumerators in both directions.
+        abi_value: c_int,
+
+        /// Whether `detect` can sniff this dialect, i.e. whether it is a
+        /// member of `Detected`. False for `jsonc` alone, which overlaps
+        /// json/json5 on almost all input.
+        detectable: bool = true,
+
+        /// Whether `deserialize.Format` covers it — the typed
+        /// struct-deserialization entry points, which today reach five of the
+        /// thirteen dialects.
+        deserializable: bool = false,
+
+        /// How this dialect takes spliced edit text. See `SpliceStyle`.
+        splice: SpliceStyle,
+
+        /// The document `set` seeds when the target file does not exist yet
+        /// (and what `Embed.initRegion` writes into a freshly created region),
+        /// or null for a format that refuses to be created from scratch.
+        ///
+        /// An empty string is NOT the same statement as null: it means an
+        /// empty file already parses as an empty root mapping, so the first
+        /// key can just be inserted into it.
+        empty_doc_seed: ?[]const u8,
+
+        /// The `Printer` declaration that writes a whole document in this
+        /// dialect, and the one that writes a single node. Two names rather
+        /// than one because the JSON family shares a printer and separates its
+        /// dialects by entry point (`print`/`printc`/`print5`), and YAML's
+        /// document printer is `printWith`. Consumed in Stage 5, when
+        /// `Printer` joins the `Language` interface.
+        print_name: [:0]const u8 = "print",
+        print_node_name: [:0]const u8 = "printNode",
+
+        /// The `--spec` strings this dialect accepts and what each selects.
+        /// Empty for the eleven dialects with a single grammar. See
+        /// `cli/parse_dispatch.zig`'s `resolveSpec`, whose behaviour a
+        /// comptime assert beside it pins against this table.
+        specs: []const SpecName(L) = &.{},
+
+        /// How this format spells itself inside a host document, or null when
+        /// it has no embedded form (`Embed.InnerFormat` is exactly the four
+        /// entries where this is non-null). Consumed in Stage 6.
+        embed: ?manifest.EmbedSpellings = null,
+    };
+}
+
+/// EVERY user-facing dialect, as a heterogeneous comptime tuple — thirteen
+/// entries over eleven languages (the JSON module supplies three).
+///
+/// Two properties of this table are frozen, and both are load-bearing:
+///
+///   * ORDER. It is the member order of every enum derived from it in Stages
+///     3-7 (`Detected`, `cli.Format`, `SerializeFormat`, …), and reproduces
+///     today's `cli.Format` order minus its three non-registry members (`yml`,
+///     an alias removed in Stage 3; `canonical`, which is not a `Language` at
+///     all; `gron`, a CLI-only projection). Reordering it would silently
+///     renumber `@intFromEnum` for every one of those enums. Append.
+///
+///   * `abi_value`. It is the C ABI, and a released value is permanent.
+///
+/// Entries are ALWAYS present — a gated-out language collapses its entry's
+/// `Lang` to `void` rather than dropping the row — so every derived enum is
+/// build-invariant and only the *behaviour* behind a member is gated.
+///
+/// `canonical` and `gron` are deliberately absent: canonical is the AST's own
+/// oracle grammar (no `Language`, no dialect, an options-less printer) and
+/// gron is a CLI-only projection of JSON. Both stay explicit named arms at
+/// every switch, which is also what keeps an exhaustive switch honest — a new
+/// member has to be either a registry entry or one of those two.
+pub const dialects = .{
+    Entry(JSON){
+        .name = "json",
+        .dialect = dial(JSON, "JSON"),
+        .abi_value = 1,
+        .deserializable = true,
+        .splice = .json_string,
+        .empty_doc_seed = "{}\n",
+        .embed = .{
+            .fence_tag = "json",
+            .frontmatter = "---json",
+            .script_mime = "application/json",
+            .script_mime_aliases = &.{"application/ld+json"},
+            .code_class = "language-json",
+        },
+    },
+    Entry(JSON){
+        .name = "jsonc",
+        .dialect = dial(JSON, "JSONC"),
+        .abi_value = 2,
+        // The one non-detectable dialect: plain JSON and JSON5 already claim
+        // everything JSONC accepts that they can parse, so sniffing it would
+        // only ever mis-attribute a comment-free document.
+        .detectable = false,
+        .deserializable = true,
+        .splice = .json_string,
+        .empty_doc_seed = "{}\n",
+        .print_name = "printc",
+        .print_node_name = "printNodec",
+    },
+    Entry(JSON){
+        .name = "json5",
+        .dialect = dial(JSON, "JSON5"),
+        .abi_value = 7,
+        .splice = .json_string,
+        .empty_doc_seed = "{}\n",
+        .print_name = "print5",
+        .print_node_name = "printNode5",
+    },
+    Entry(YAML){
+        .name = "yaml",
+        .abi_value = 3,
+        .deserializable = true,
+        .splice = .literal,
+        // A bare `key:` seed, not `{}`: see `Syntax.empty_map_literal`'s note
+        // on why an empty YAML document is the empty string.
+        .empty_doc_seed = "",
+        .print_name = "printWith",
+        .specs = &.{
+            .{ .name = "1.2", .dialect = dial(YAML, "v1_2_2") },
+            .{ .name = "1.2.2", .dialect = dial(YAML, "v1_2_2") },
+            .{ .name = "1.1", .dialect = dial(YAML, "v1_1") },
+            .{ .name = "1.1.0", .dialect = dial(YAML, "v1_1") },
+        },
+        .embed = .{
+            .fence_tag = "yaml",
+            .fence_aliases = &.{"yml"},
+            // Bare, not `---yaml`: an untagged frontmatter block is YAML.
+            .frontmatter = "---",
+            .script_mime = "application/yaml",
+            .script_mime_aliases = &.{ "application/x-yaml", "text/yaml" },
+            .code_class = "language-yaml",
+        },
+    },
+    Entry(TOML){
+        .name = "toml",
+        .abi_value = 4,
+        .deserializable = true,
+        .splice = .literal,
+        .empty_doc_seed = "",
+        .specs = &.{
+            .{ .name = "1.0", .dialect = dial(TOML, "TOML_1_0") },
+            .{ .name = "1.0.0", .dialect = dial(TOML, "TOML_1_0") },
+            .{ .name = "1.1", .dialect = dial(TOML, "TOML_1_1") },
+            .{ .name = "1.1.0", .dialect = dial(TOML, "TOML_1_1") },
+        },
+        .embed = .{
+            .fence_tag = "toml",
+            .frontmatter = "---toml",
+            .script_mime = "application/toml",
+            .code_class = "language-toml",
+        },
+    },
+    Entry(ZON){
+        .name = "zon",
+        .abi_value = 5,
+        .deserializable = true,
+        .splice = .literal,
+        .empty_doc_seed = ".{}\n",
+    },
+    Entry(XML){
+        .name = "xml",
+        .abi_value = 6,
+        // XML has a reader and a writer but no in-place editor, so no edit
+        // text ever reaches a splice; `.raw` is what `spliceStyle` says today.
+        .splice = .raw,
+        // No from-scratch creation: a bare XML document needs a root element
+        // this layer cannot name.
+        .empty_doc_seed = null,
+    },
+    Entry(FIG){
+        .name = "fig",
+        .abi_value = 8,
+        .splice = .literal,
+        .empty_doc_seed = "",
+        .embed = .{
+            .fence_tag = "fig",
+            .fence_aliases = &.{"figl"},
+            .frontmatter = "---fig",
+            .script_mime = "application/figl",
+            .script_mime_aliases = &.{"application/fig"},
+            // `language-figl`, not `language-fig`: the class token and the
+            // fence tag genuinely differ in `embed.zig` today.
+            .code_class = "language-figl",
+        },
+    },
+    Entry(INI){
+        .name = "ini",
+        .abi_value = 9,
+        .splice = .raw,
+        .empty_doc_seed = "",
+    },
+    Entry(DOTENV){
+        .name = "dotenv",
+        .abi_value = 10,
+        .splice = .raw,
+        .empty_doc_seed = "",
+    },
+    Entry(PROPERTIES){
+        .name = "properties",
+        .abi_value = 11,
+        .splice = .raw,
+        .empty_doc_seed = "",
+    },
+    Entry(PLIST){
+        .name = "plist",
+        .abi_value = 12,
+        .splice = .raw,
+        // DELIBERATE DEVIATION from `cli/edit_ops.zig`'s `emptyDocSeed`, which
+        // returns null for plist today — so `fig set` on a nonexistent
+        // `.plist` refuses instead of creating one. A bare `<dict>` IS a
+        // document `Language.PLIST` parses (see its `detect` probe), so the
+        // registry declares the seed the fix needs. NOTHING READS IT YET: the
+        // switch is converted in Stage 4, which is where the behaviour change
+        // and its CLI test land. The assert beside `emptyDocSeed` exempts this
+        // one row for exactly that reason.
+        .empty_doc_seed = "<dict>\n</dict>\n",
+    },
+    Entry(NESTEDTEXT){
+        .name = "nestedtext",
+        .abi_value = 13,
+        .splice = .raw,
+        .empty_doc_seed = "",
+    },
+};
+
+/// The registry entry named `name`, or a compile error naming the format that
+/// has none. The lookup every derived dispatch arm opens with.
+pub fn entryFor(comptime name: []const u8) EntryOf(name) {
+    inline for (dialects) |d| {
+        if (comptime std.mem.eql(u8, d.name, name)) return d;
+    }
+    unreachable; // `EntryOf` already failed the build for an unknown name
+}
+
+/// The `Entry(L)` instantiation `entryFor(name)` returns — its own function
+/// because each entry is a DIFFERENT type (they are generic over the language),
+/// so the return type has to be computed from the name.
+fn EntryOf(comptime name: []const u8) type {
+    inline for (dialects) |d| {
+        if (std.mem.eql(u8, d.name, name)) return @TypeOf(d);
+    }
+    @compileError("no registry entry for format '" ++ name ++ "'");
+}
+
+/// Which registry entries a derived enum is built from.
+pub const Selector = enum {
+    /// All thirteen.
+    all,
+    /// `.detectable` — `Language.Detected`.
+    detectable,
+    /// `.deserializable` — `deserialize.Format`.
+    deserializable,
+    /// `.embed != null` — `Embed.InnerFormat`.
+    embeddable,
+};
+
+/// The names of the entries `sel` selects, in registry order. The expected
+/// member list of the enum each selector names.
+pub fn namesOf(comptime sel: Selector) []const [:0]const u8 {
+    comptime {
+        var out: []const [:0]const u8 = &.{};
+        for (dialects) |d| {
+            const take = switch (sel) {
+                .all => true,
+                .detectable => d.detectable,
+                .deserializable => d.deserializable,
+                .embeddable => d.embed != null,
+            };
+            if (take) out = out ++ [_][:0]const u8{d.name};
+        }
+        return out;
+    }
+}
+
+/// Fail the build unless `E`'s members are exactly `want` (in `want`'s order)
+/// plus `extra` (which may sit anywhere, and must all be present). `what`
+/// names the enum in the message.
+///
+/// The shape every "this enum is a restatement of the registry" assert needs:
+/// order matters for the members that come FROM the registry, because that
+/// order becomes theirs when the enum is reified, while the deliberate
+/// non-registry members (`canonical`, `gron`, `yml`) are positioned by hand and
+/// only have to still exist.
+pub fn assertDerivedEnum(
+    comptime E: type,
+    comptime want: []const [:0]const u8,
+    comptime extra: []const []const u8,
+    comptime what: []const u8,
+) void {
+    comptime {
+        @setEvalBranchQuota(20_000);
+        var seen_extra = [_]bool{false} ** extra.len;
+        var i: usize = 0;
+        for (@typeInfo(E).@"enum".fields) |f| {
+            var is_extra = false;
+            for (extra, 0..) |x, xi| {
+                if (std.mem.eql(u8, x, f.name)) {
+                    seen_extra[xi] = true;
+                    is_extra = true;
+                }
+            }
+            if (is_extra) continue;
+            if (i == want.len)
+                @compileError(what ++ " has the member '" ++ f.name ++ "' after the last" ++
+                    " registry entry — add it to `language.zig`'s `dialects`, or declare it" ++
+                    " a deliberate non-registry member at this assert");
+            if (!std.mem.eql(u8, want[i], f.name))
+                @compileError(what ++ " member '" ++ f.name ++ "' sits where registry entry '" ++
+                    want[i] ++ "' does — the registry's ORDER is the member order every" ++
+                    " derived enum inherits, so the two cannot diverge");
+            i += 1;
+        }
+        if (i != want.len)
+            @compileError(what ++ " has no member for the registry entry '" ++ want[i] ++ "'");
+        for (extra, seen_extra) |x, s| {
+            if (!s) @compileError(what ++ " no longer has the non-registry member '" ++ x ++
+                "' this assert exempts — drop it from the exemption list");
+        }
+    }
+}
+
+/// `assertDerivedEnum` without the ordering claim: the member SET must match,
+/// the order is the enum's own business. For the two enums whose order is
+/// deliberately not the registry's (`c_api.FigFormat`, ordered by ABI history;
+/// `Embed.InnerFormat`, internal-only and reordered in Stage 6).
+pub fn assertEnumMembers(
+    comptime E: type,
+    comptime want: []const [:0]const u8,
+    comptime what: []const u8,
+) void {
+    comptime {
+        @setEvalBranchQuota(20_000);
+        for (@typeInfo(E).@"enum".fields) |f| {
+            var found = false;
+            for (want) |w| {
+                if (std.mem.eql(u8, w, f.name)) found = true;
+            }
+            if (!found)
+                @compileError(what ++ " has the member '" ++ f.name ++
+                    "' with no format-registry entry of that name");
+        }
+        for (want) |w| {
+            if (!@hasField(E, w))
+                @compileError(what ++ " has no member for the registry entry '" ++ w ++ "'");
+        }
+    }
+}
+
+// The registry's self-consistency, plus the one derived enum that lives in this
+// file. The cross-module pins — `cli.Format`, `c_api.FigFormat`,
+// `AST.SerializeFormat`, `deserialize.Format`, `Embed.InnerFormat` — cannot be
+// written here (this file sits BELOW all five, and reaching up would invert the
+// dependency), so each lives beside the enum it pins and calls the helpers
+// above.
+comptime {
+    @setEvalBranchQuota(50_000);
+
+    // Names and ABI values are both identities: a duplicate of either would
+    // make a derived enum ill-formed (two members of one name) or the C ABI
+    // ambiguous (two formats answering to one integer).
+    for (namesOf(.all), 0..) |a, ai| {
+        for (namesOf(.all)[ai + 1 ..]) |b| {
+            if (std.mem.eql(u8, a, b))
+                @compileError("two format-registry entries are both named '" ++ a ++ "'");
+        }
+    }
+    for (dialects, 0..) |a, ai| {
+        for (dialects, 0..) |b, bi| {
+            if (bi > ai and a.abi_value == b.abi_value)
+                @compileError("format-registry entries '" ++ a.name ++ "' and '" ++ b.name ++
+                    "' share the ABI value " ++ std.fmt.comptimePrint("{d}", .{a.abi_value}) ++
+                    " — released ABI values are permanent and unique");
+        }
+    }
+
+    // Language ↔ registry bijection, both directions. A compiled-in language
+    // with no entry would be a format the derived enums cannot name; an entry
+    // whose (non-gated) language is not compiled in would be a member nothing
+    // can serve.
+    for (compiled) |Lang| {
+        var found = false;
+        for (dialects) |d| {
+            if (d.Lang == Lang) found = true;
+        }
+        if (!found)
+            @compileError("the compiled-in language '" ++ Lang.name ++
+                "' has no entry in `dialects`, so no derived format enum can name it");
+    }
+    for (dialects) |d| {
+        if (d.Lang == void) continue;
+        var found = false;
+        for (compiled) |Lang| {
+            if (d.Lang == Lang) found = true;
+        }
+        if (!found)
+            @compileError("format-registry entry '" ++ d.name ++
+                "' names a language missing from `compiled`");
+    }
+
+    // Each entry's dialect. The JSON trio is the whole reason `dialect` is a
+    // field rather than always `default_type`; everything else must BE the
+    // language's default, which is what every current call site passes.
+    for (dialects) |d| {
+        if (d.Lang == void) continue;
+        const expected = if (std.mem.eql(u8, d.name, "jsonc"))
+            dial(d.Lang, "JSONC")
+        else if (std.mem.eql(u8, d.name, "json5"))
+            dial(d.Lang, "JSON5")
+        else
+            defaultDialect(d.Lang);
+        if (d.dialect != expected)
+            @compileError("format-registry entry '" ++ d.name ++
+                "' selects a dialect other than the one its call sites pass today");
+    }
+
+    // `entryFor` itself, which nothing else calls until Stage 3 — an unused
+    // comptime function is an unanalyzed one, and a lookup that does not
+    // compile is not a lookup the next stage can build a dispatch idiom on.
+    if (entryFor("json").abi_value != 1 or entryFor("nestedtext").abi_value != 13)
+        @compileError("`entryFor` does not return the entry it was asked for");
+
+    // LAST, deliberately: `Detected` is the one derived enum living in this
+    // file, and a registry that is internally inconsistent (a missing entry, a
+    // duplicated ABI value) would fail this assert too — with a message about
+    // `Detected` rather than about the registry. Checking the table's own
+    // coherence first means the error names the actual mistake.
+    assertDerivedEnum(Detected, namesOf(.detectable), &.{}, "Language.Detected");
+}
+
 /// A format `detect` can recognize. The `jsonc` dialect and `canonical` are
 /// deliberately excluded: jsonc overlaps json/json5 on most input, and
 /// canonical is an explicit selection rather than something to sniff. `fig`

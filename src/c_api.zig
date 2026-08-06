@@ -129,6 +129,27 @@ pub const FigFormat = enum(c_int) {
     nestedtext = 13,
 };
 
+// The ABI pin. `FigFormat` is the one derived enum whose ORDER is not the
+// registry's — it is ABI history (JSON5 and fig were appended after XML), and
+// the values are what a compiled caller holds — so membership is checked as a
+// SET and the integers are checked one by one. Together with `zig build
+// abi-check`, which compares the same registry values against fig.h's
+// `FIG_FORMAT_*` enumerators, this makes the C ABI's format numbering
+// build-enforced from three directions: the registry, this enum, and the
+// header. Stage 7 reifies this enum from the registry; until then the assert
+// is what keeps the two in step.
+comptime {
+    Languages.assertEnumMembers(FigFormat, Languages.namesOf(.all), "c_api.FigFormat");
+    for (Languages.dialects) |d| {
+        const got = @intFromEnum(@field(FigFormat, d.name));
+        if (got != d.abi_value)
+            @compileError("FigFormat." ++ d.name ++ " is " ++
+                std.fmt.comptimePrint("{d}", .{got}) ++ " but the format registry says " ++
+                std.fmt.comptimePrint("{d}", .{d.abi_value}) ++
+                " — a released ABI value is permanent, so one of the two is a mistake");
+    }
+}
+
 // ==================
 // VERSION + CAPABILITIES
 // ==================

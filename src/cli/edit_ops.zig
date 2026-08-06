@@ -327,6 +327,28 @@ pub fn emptyDocSeed(format: Format) ?[]const u8 {
     };
 }
 
+// The format registry declares the same seed per dialect
+// (`Entry.empty_doc_seed`), and Stage 4 deletes the switch above in favour of
+// it. Pinned by running it — with ONE deliberate exemption: the registry gives
+// plist `"<dict>\n</dict>\n"` where this returns null, which is fix #1 of the
+// registry plan (a from-scratch `fig set` on a `.plist` refuses today, and a
+// bare `<dict>` is a document plist parses). That behaviour change lands in
+// Stage 4 with its own CLI test; asserting equality here would forbid the
+// registry from stating the fix, so plist is skipped and everything else is
+// held byte-for-byte.
+comptime {
+    @setEvalBranchQuota(10_000);
+    for (fig.Language.dialects) |d| {
+        if (std.mem.eql(u8, d.name, "plist")) continue;
+        const here = emptyDocSeed(@field(Format, d.name));
+        const there = d.empty_doc_seed;
+        const same = if (here) |h| (there != null and std.mem.eql(u8, h, there.?)) else there == null;
+        if (!same)
+            @compileError("the format registry's empty-document seed for '" ++ d.name ++
+                "' disagrees with `emptyDocSeed` in this file");
+    }
+}
+
 /// Shared per-format routing for the structural `insert`/`delete` actions —
 /// the `edit` handler's format switch, minus the value-replacement specifics.
 /// JSON-family inputs requote the inserted key/value via `jsonifyEdit`; YAML,

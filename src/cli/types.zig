@@ -28,6 +28,22 @@ const gron = @import("gron.zig");
 // `AST.SerializeFormat` counterpart.
 pub const Format = enum { json, jsonc, json5, yaml, yml, toml, zon, xml, canonical, fig, gron, ini, dotenv, properties, plist, nestedtext };
 
+// `Format` is a restatement of the format registry
+// (`languages/language.zig`'s `dialects`) plus three members no `Language`
+// backs: `yml` (an alias of `yaml`, removed in Stage 3), `canonical` (the
+// AST's own oracle grammar) and `gron` (a CLI-only projection of JSON). The
+// assert pins membership AND the relative order of the registry members,
+// because that order becomes this enum's when Stage 3 reifies it — a
+// silently-renumbered `@intFromEnum` is exactly what it exists to prevent.
+comptime {
+    fig.Language.assertDerivedEnum(
+        Format,
+        fig.Language.namesOf(.all),
+        &.{ "yml", "canonical", "gron" },
+        "cli.Format",
+    );
+}
+
 /// The `AST.SerializeFormat` counterpart of a CLI format, or null for gron (a
 /// CLI-only projection with no serializer — the `get`/`fmt`/`convert` handlers
 /// intercept it before reaching the serializer dispatch; see each call site's

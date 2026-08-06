@@ -36,6 +36,11 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     //   * abi_probe.{c,cpp} are compiled against fig.h, as C and as C++, and
     //     linked against the C ABI static library, proving the header parses and
     //     links in both languages.
+    //   * the header's `FIG_FORMAT_*` enumerators are diffed (name and value,
+    //     both directions) against the format registry the tool reads out of the
+    //     `fig` module below — the format ABI is a typedef'd enum, so a
+    //     renumbered format is invisible to the symbol diff but breaks every
+    //     compiled caller.
     // Signatures are not compared (C has no name mangling). Run: zig build abi-check.
     // The pre-commit hook in .githooks/ runs this when an ABI file is staged.
     const abi_check = b.addExecutable(.{
@@ -44,6 +49,11 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
             .root_source_file = b.path("tools/abi-check.zig"),
             .target = target,
             .optimize = optimize,
+            // The library itself, so the enumerator check reads the SAME
+            // `Language.dialects` the library compiles against rather than a
+            // copy of it (the pattern the gen-* dev tools use — see
+            // build/tools.zig).
+            .imports = &.{.{ .name = "fig", .module = arts.fig_mod }},
         }),
     });
     const abi_check_run = b.addRunArtifact(abi_check);

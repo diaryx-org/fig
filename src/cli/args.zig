@@ -114,13 +114,11 @@ pub fn detectLanguageFromFileEnding(file_path: []const u8) ?Detected {
 /// The `Format` owning file extension `ext`, per the languages' own
 /// `extensions` declarations, or null.
 ///
-/// The `Language`→`Format` pairing below is hand-written and cannot be
-/// generated: `Format` is per-DIALECT (json/jsonc/json5/yml are separate
-/// members over two `Language`s) while `extensions` is per-LANGUAGE, so a
-/// language maps to whichever member is its DEFAULT spelling. What the manifest
-/// removes is the extension list itself. The comptime loop below fails the
-/// build if a compiled-in language is missing from the pairing, so adding a
-/// format cannot silently skip this table.
+/// The `Language`→`Format` pairing this walks is per-LANGUAGE while `Format` is
+/// per-DIALECT (json/jsonc/json5/yml are four members over one `Language`), so
+/// a language resolves to whichever member is its DEFAULT spelling. That used
+/// to be a hand-written table; it is now derived from the format registry —
+/// see `ext_pairs`.
 fn extensionFormat(ext: []const u8) ?Format {
     inline for (ext_pairs) |pair| {
         if (pair[0] != void) {
@@ -132,26 +130,41 @@ fn extensionFormat(ext: []const u8) ?Format {
     return null;
 }
 
-/// Each `Language` and the `Format` member that is its default spelling. A
-/// gated-out language is `void` here and skipped.
-const ext_pairs = .{
-    .{ fig.Language.JSON, Format.json },
-    .{ fig.Language.YAML, Format.yaml },
-    .{ fig.Language.TOML, Format.toml },
-    .{ fig.Language.ZON, Format.zon },
-    .{ fig.Language.XML, Format.xml },
-    .{ fig.Language.FIG, Format.fig },
-    .{ fig.Language.INI, Format.ini },
-    .{ fig.Language.DOTENV, Format.dotenv },
-    .{ fig.Language.PROPERTIES, Format.properties },
-    .{ fig.Language.PLIST, Format.plist },
-    .{ fig.Language.NESTEDTEXT, Format.nestedtext },
+/// Each `Language` and the `Format` member that is its default spelling,
+/// derived from the format registry: a language's default spelling IS its
+/// FIRST entry in `dialects` — `json`, ahead of the `jsonc`/`json5` dialects
+/// of the same module; every other language's single entry. That is exactly
+/// what the hand-written table this replaces spelled out row by row.
+///
+/// A gated-out language is `void` here — the registry keeps every entry in
+/// every build and collapses `Lang` instead — and `extensionFormat` skips it,
+/// exactly as it skipped the `void` rows of the old table.
+const ext_pairs = blk: {
+    const Pair = struct { type, Format };
+    var pairs: []const Pair = &.{};
+    outer: for (fig.Language.dialects) |d| {
+        // First entry per distinct language wins. A gated-out language is
+        // `void` in EVERY entry, so this test cannot tell JSON's three rows
+        // apart in a `-Djson=false` build (nor one gated language's row from
+        // another's) — and it does not need to: `extensionFormat` skips a
+        // `void` row, so a duplicate of one is a row that is skipped twice.
+        if (d.Lang != void) {
+            for (pairs) |p| {
+                if (p[0] == d.Lang) continue :outer;
+            }
+        }
+        pairs = pairs ++ [_]Pair{.{ d.Lang, @field(Format, d.name) }};
+    }
+    break :blk pairs;
 };
 
 // A language missing from `ext_pairs` would silently stop resolving by
 // extension — the failure would look like "that file just isn't detected",
-// which is exactly the kind of quiet gap this proposal exists to remove. So
-// walk the registry instead of trusting the table to be complete.
+// which is exactly the kind of quiet gap this work exists to remove. The
+// derivation above makes that unreachable rather than merely detectable, so
+// this is now a check on the DERIVATION rather than on a hand-written table;
+// it costs one comptime loop and it is what would catch a first-entry-per-
+// language rule that silently skipped a row.
 comptime {
     outer: for (fig.Language.compiled) |Lang| {
         for (ext_pairs) |pair| {

@@ -17,9 +17,22 @@
 //! header's FIG_ABI_VERSION macro matches the canonical ABI version compiled into
 //! `fig_abi_version()` (likewise passed in by build.zig).
 //!
+//! Finally it diffs the header's `FIG_FORMAT_*` enumerators against the format
+//! registry (`src/languages/language.zig`'s `dialects`) in both directions —
+//! name AND integer value. This is the half of the format ABI that the symbol
+//! diff above cannot see: `FigFormat` is one symbol-free `typedef enum`, so a
+//! renumbered or missing format is invisible to a prototype comparison but
+//! catastrophic to a compiled caller, which holds the integer. The registry is
+//! the third party here (the Zig enum is pinned to it by a comptime assert in
+//! src/c_api.zig), so the header, the implementation and the table can no
+//! longer drift pairwise.
+//!
 //! Usage (driven by build.zig): abi-check <header.h> <impl.zig> <major.minor.patch> <abi-version>
 
 const std = @import("std");
+/// For `Language.dialects` — the format registry, which owns the canonical
+/// `FIG_FORMAT_*` values. Wired in by src/build/checks.zig.
+const fig = @import("fig");
 
 const max_file = 4 * 1024 * 1024;
 
@@ -87,8 +100,112 @@ pub fn main(init: std.process.Init) !void {
         fail = true;
     }
 
+    // Format-enum drift: fig.h's FIG_FORMAT_* enumerators must match the format
+    // registry name-for-name and value-for-value.
+    const formats = try parseFormatEnumerators(arena, header);
+    try checkFormats(arena, formats, &fail);
+
     if (fail) std.process.exit(1);
     std.debug.print("abi-check: symbol diff OK ({d} symbols), version {s}, ABI v{d}\n", .{ exported.len, want_version, want_abi_int });
+    std.debug.print("abi-check: FIG_FORMAT_* enumerators OK ({d} formats) — fig.h matches the format registry\n", .{formats.len});
+}
+
+/// One `FIG_FORMAT_<NAME> = <value>` line from the header.
+const FormatEnumerator = struct { name: []const u8, value: i64 };
+
+/// Compare the header's enumerators against the registry in both directions,
+/// setting `fail` (and printing a line naming the enumerator and both values)
+/// for each disagreement.
+fn checkFormats(arena: std.mem.Allocator, formats: []const FormatEnumerator, fail: *bool) !void {
+    // Registry -> header: every format must be declared, with its exact value.
+    inline for (fig.Language.dialects) |d| {
+        const want_name = try enumeratorName(arena, d.name);
+        if (findFormat(formats, want_name)) |e| {
+            if (e.value != @as(i64, d.abi_value)) {
+                if (!fail.*) std.debug.print("abi-check: FAIL\n", .{});
+                std.debug.print(
+                    "  format value drift: fig.h has {s} = {d} but the format registry gives '{s}' the ABI value {d}\n",
+                    .{ want_name, e.value, d.name, d.abi_value },
+                );
+                fail.* = true;
+            }
+        } else {
+            if (!fail.*) std.debug.print("abi-check: FAIL\n", .{});
+            std.debug.print(
+                "  missing enumerator: the format registry has '{s}' (ABI value {d}) but fig.h declares no {s}\n",
+                .{ d.name, d.abi_value, want_name },
+            );
+            fail.* = true;
+        }
+    }
+    // Header -> registry: an enumerator no format claims is a value a caller can
+    // pass that nothing implements.
+    for (formats) |e| {
+        var found = false;
+        inline for (fig.Language.dialects) |d| {
+            const want_name = try enumeratorName(arena, d.name);
+            if (std.mem.eql(u8, want_name, e.name)) found = true;
+        }
+        if (!found) {
+            if (!fail.*) std.debug.print("abi-check: FAIL\n", .{});
+            std.debug.print(
+                "  unknown enumerator: fig.h declares {s} = {d}, which matches no format-registry entry\n",
+                .{ e.name, e.value },
+            );
+            fail.* = true;
+        }
+    }
+}
+
+/// The `FIG_FORMAT_<NAME>` spelling of a registry entry name — the one place
+/// the naming convention between the two surfaces is written down.
+fn enumeratorName(arena: std.mem.Allocator, name: []const u8) ![]const u8 {
+    const out = try arena.alloc(u8, "FIG_FORMAT_".len + name.len);
+    @memcpy(out[0.."FIG_FORMAT_".len], "FIG_FORMAT_");
+    _ = std.ascii.upperString(out["FIG_FORMAT_".len..], name);
+    return out;
+}
+
+fn findFormat(formats: []const FormatEnumerator, name: []const u8) ?FormatEnumerator {
+    for (formats) |e| if (std.mem.eql(u8, e.name, name)) return e;
+    return null;
+}
+
+/// The enumerators of the header's `FigFormat` enum, in declaration order.
+///
+/// Adapted from `parseEnumerators` in tools/semver-check.zig, minus the parts
+/// this doesn't need: `FigFormat` gives every member an explicit decimal value
+/// (that is the ABI contract), so there is no implicit-value running counter
+/// and no expression evaluation — a member without a literal integer is itself
+/// an error worth reporting rather than something to infer.
+fn parseFormatEnumerators(arena: std.mem.Allocator, header: []const u8) ![]const FormatEnumerator {
+    const decl = "typedef enum FigFormat";
+    const at = std.mem.indexOf(u8, header, decl) orelse return error.MissingFigFormatEnum;
+    const open = std.mem.indexOfScalarPos(u8, header, at, '{') orelse return error.MissingFigFormatEnum;
+    const close = std.mem.indexOfScalarPos(u8, header, open, '}') orelse return error.MissingFigFormatEnum;
+
+    // Strip `//` comments FIRST, whole-body: most members carry a prose comment,
+    // and prose contains commas — splitting on `,` before removing it would cut
+    // a sentence in half and hand the tail to the next enumerator.
+    var code: std.ArrayList(u8) = .empty;
+    var lines = std.mem.splitScalar(u8, header[open + 1 .. close], '\n');
+    while (lines.next()) |line| {
+        const bare = if (std.mem.indexOf(u8, line, "//")) |c| line[0..c] else line;
+        try code.appendSlice(arena, std.mem.trim(u8, bare, " \t\r"));
+    }
+
+    var list: std.ArrayList(FormatEnumerator) = .empty;
+    var it = std.mem.splitScalar(u8, code.items, ',');
+    while (it.next()) |raw| {
+        const item = std.mem.trim(u8, raw, " \t");
+        if (item.len == 0) continue;
+        const eq = std.mem.indexOfScalar(u8, item, '=') orelse return error.MalformedFigFormatEnum;
+        const name = std.mem.trim(u8, item[0..eq], " \t");
+        const value = std.fmt.parseInt(i64, std.mem.trim(u8, item[eq + 1 ..], " \t"), 10) catch
+            return error.MalformedFigFormatEnum;
+        try list.append(arena, .{ .name = name, .value = value });
+    }
+    return list.items;
 }
 
 /// The `major.minor.patch` spelled by the header's `#define FIG_VERSION_*` lines.

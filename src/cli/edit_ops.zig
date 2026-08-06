@@ -316,7 +316,7 @@ pub fn emptyDocSeed(format: Format) ?[]const u8 {
         // key into it. (INI's own auto-vivify guard in `Editor.set` only
         // matters for a 2+-segment path creating a brand-new SECTION; a
         // single root-level key from an empty file is unaffected.)
-        .yaml, .yml, .toml, .fig, .dotenv, .properties, .ini => "",
+        .yaml, .toml, .fig, .dotenv, .properties, .ini => "",
         .zon => ".{}\n",
         // An empty NestedText file parses as `.null_` (see `nestedtext/
         // parser.zig`), and `Editor(NestedText)`'s `insertKey` promotes that
@@ -371,7 +371,7 @@ pub fn applyStructuralEdit(
             const j = try jsonifyEdit(allocator, op, text);
             try applyToFile(fig.Language.JSON, allocator, io, input, path, j.text, j.op, jsonDialect(f));
         } else return error.FormatDisabled,
-        .yaml, .yml => if (comptime build_options.lang_yaml)
+        .yaml => if (comptime build_options.lang_yaml)
             try applyToFile(fig.Language.YAML, allocator, io, input, path, text, op, fig.Language.YAML.default_type)
         else
             return error.FormatDisabled,

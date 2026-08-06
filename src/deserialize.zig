@@ -15,26 +15,35 @@ const std = @import("std");
 const AST = @import("ast/ast.zig");
 const build_options = @import("build_options");
 
-/// The format registry, for the comptime assert under `Format` alone.
+/// The format registry `Format` is reified from.
 const Language = @import("languages/language.zig");
 
-const Json = @import("languages/json/parser.zig");
+// Parsers are pulled in only for the formats compiled into this build: a gated
+// format's module is `void`, so the matching `parseToAst` arm (guarded by the
+// same comptime flag) is never analyzed and the parser never compiles in.
+//
+// JSON was the one exception — imported unconditionally, so `-Djson=false`
+// still dragged the JSON parser into every build that touched this file, and
+// the `.json`/`.jsonc` arms answered instead of refusing like every other
+// disabled format. That is fix #4 of the registry plan.
+const Json = if (build_options.lang_json) @import("languages/json/parser.zig") else void;
 const Yaml = if (build_options.lang_yaml) @import("languages/yaml/parser.zig") else void;
 const Toml = if (build_options.lang_toml) @import("languages/toml/parser.zig") else void;
 const Zon = if (build_options.lang_zon) @import("languages/zon/parser.zig") else void;
 
-/// The source format to parse before mapping onto `T`. A format that was
-/// compiled out is still a valid enum value, but parsing it yields
-/// `error.FormatDisabled` (see `parseToAst`).
-pub const Format = enum { json, jsonc, yaml, toml, zon };
+/// The source format to parse before mapping onto `T`: exactly the format
+/// registry entries marked `deserializable`, in registry order. A format that
+/// was compiled out is still a valid enum value (the registry keeps every
+/// entry in every build), but parsing it yields `error.FormatDisabled` — see
+/// `parseToAst`.
+pub const Format = @Enum(
+    Language.EnumTag(format_names),
+    .exhaustive,
+    format_names,
+    &Language.enumValues(format_names),
+);
 
-// Pinned against the format registry: this enum is exactly the entries marked
-// `deserializable`, in registry order. A format that grows a typed
-// deserialization path declares it there and gets a member here (Stage 3);
-// until then, the assert is what stops the two lists from drifting.
-comptime {
-    Language.assertDerivedEnum(Format, Language.namesOf(.deserializable), &.{}, "deserialize.Format");
-}
+const format_names = Language.namesOf(.deserializable);
 
 pub const Options = struct {
     /// Mapping keys with no matching struct field are ignored when true (the
@@ -107,8 +116,8 @@ pub fn parseFromSliceLeaky(
 
 fn parseToAst(allocator: std.mem.Allocator, source: []const u8, format: Format) !AST {
     return switch (format) {
-        .json => Json.parseAbstract(allocator, source, .JSON),
-        .jsonc => Json.parseAbstract(allocator, source, .JSONC),
+        .json => if (comptime build_options.lang_json) Json.parseAbstract(allocator, source, .JSON) else error.FormatDisabled,
+        .jsonc => if (comptime build_options.lang_json) Json.parseAbstract(allocator, source, .JSONC) else error.FormatDisabled,
         .yaml => if (comptime build_options.lang_yaml) Yaml.parseAbstract(allocator, source, .v1_2_2) else error.FormatDisabled,
         .toml => if (comptime build_options.lang_toml) Toml.parseAbstract(allocator, source, .TOML_1_1) else error.FormatDisabled,
         .zon => if (comptime build_options.lang_zon) Zon.parseAbstract(allocator, source, .ZON) else error.FormatDisabled,
@@ -312,6 +321,7 @@ test "deserialize: yaml into a struct (defaults, optionals, unknown ignored)" {
 }
 
 test "deserialize: json into a struct" {
+    if (comptime !build_options.lang_json) return error.SkipZigTest;
     const S = struct { name: []const u8, n: u32 };
     const parsed = try parseFromSlice(S, testing.allocator, "{\"name\": \"x\", \"n\": 5}", .json, .{});
     defer parsed.deinit();

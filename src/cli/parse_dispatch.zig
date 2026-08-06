@@ -62,7 +62,7 @@ pub fn resolveSpec(format: Format, spec_str: ?[]const u8) error{UnsupportedSpec}
             .{ .toml = .TOML_1_1 }
         else
             error.UnsupportedSpec,
-        .yaml, .yml => if (comptime !build_options.lang_yaml)
+        .yaml => if (comptime !build_options.lang_yaml)
             error.UnsupportedSpec
         else if (eq(u8, s, "1.2") or eq(u8, s, "1.2.2"))
             .{ .yaml = .v1_2_2 }
@@ -208,9 +208,9 @@ pub const Reports = struct {
 /// Parse already-read `content` as the CLI `format` under `spec`. The
 /// content-based parser the `get` and `check` actions use: reading the input
 /// once means detection and parsing share the same bytes, so a piped stdin is
-/// consumed only once. `.jsonc`/`.json5` select the JSON dialect; `.yml` aliases
-/// YAML; `.canonical` is the AST's 1:1 oracle grammar. `spec` picks the version
-/// where one is selectable (TOML 1.0 vs 1.1, YAML version).
+/// consumed only once. `.jsonc`/`.json5` select the JSON dialect; `.canonical`
+/// is the AST's 1:1 oracle grammar. `spec` picks the version where one is
+/// selectable (TOML 1.0 vs 1.1, YAML version).
 ///
 /// `reports` (fields optional) receives each covered language's own parse
 /// report — `diag` on failure (position + teaching message), `warnings`
@@ -222,7 +222,7 @@ pub fn parseSliceAs(format: Format, spec: Spec, allocator: std.mem.Allocator, co
         .json => if (comptime build_options.lang_json) parseJson(allocator, content, .JSON, recover, &reports.json) else error.FormatDisabled,
         .jsonc => if (comptime build_options.lang_json) parseJson(allocator, content, .JSONC, recover, &reports.json) else error.FormatDisabled,
         .json5 => if (comptime build_options.lang_json) parseJson(allocator, content, .JSON5, recover, &reports.json) else error.FormatDisabled,
-        .yaml, .yml => if (comptime build_options.lang_yaml) fig.Language.YAML.Parser.parse(allocator, content, spec.yaml) else error.FormatDisabled,
+        .yaml => if (comptime build_options.lang_yaml) fig.Language.YAML.Parser.parse(allocator, content, spec.yaml) else error.FormatDisabled,
         .toml => if (comptime build_options.lang_toml) blk: {
             const r = &reports.toml;
             break :blk if (recover)
@@ -388,7 +388,13 @@ test "resolveSpec maps YAML version strings" {
     // 1.1 is now selectable (was previously rejected as UnsupportedSpec).
     try t.expectEqual(@as(fig.Language.YAML.Type, .v1_1), (try resolveSpec(.yaml, "1.1")).yaml);
     try t.expectEqual(@as(fig.Language.YAML.Type, .v1_1), (try resolveSpec(.yaml, "1.1.0")).yaml);
-    try t.expectEqual(@as(fig.Language.YAML.Type, .v1_1), (try resolveSpec(.yml, "1.1")).yaml);
+    // `--input yml --spec 1.1` still selects YAML 1.1. `yml` is no longer a
+    // `Format` member of its own; `parseFormatName` collapses the spelling to
+    // `.yaml` before anything downstream — including this — ever sees it.
+    try t.expectEqual(
+        @as(fig.Language.YAML.Type, .v1_1),
+        (try resolveSpec(args_mod.parseFormatName("yml").?, "1.1")).yaml,
+    );
     // Unknown YAML versions still error.
     try t.expectError(error.UnsupportedSpec, resolveSpec(.yaml, "1.3"));
     try t.expectError(error.UnsupportedSpec, resolveSpec(.yaml, "2"));

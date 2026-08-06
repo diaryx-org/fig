@@ -56,7 +56,7 @@ pub fn runEdit(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, binary_n
             const replacement = try std.fmt.allocPrint(a, "\"{s}\"", .{opts.replacement});
             try edit_ops.applyToFile(fig.Language.JSON, a, io, input, opts.path, replacement, op, edit_ops.jsonDialect(f));
         } else return error.FormatDisabled,
-        .yaml, .yml => if (comptime build_options.lang_yaml) {
+        .yaml => if (comptime build_options.lang_yaml) {
             try edit_ops.applyToFile(fig.Language.YAML, a, io, input, opts.path, opts.replacement, op, fig.Language.YAML.default_type);
         } else return error.FormatDisabled,
         // TOML value/key replacement: a value or key node has a tight,
@@ -325,8 +325,8 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     // Converting YAML to a non-YAML format resolves the reference layer
     // first (aliases → copies, merges → flattened, tags applied/dropped).
     // YAML→YAML keeps it intact for round-trip; JSON never has it.
-    const src_is_yaml = from == .yaml or from == .yml;
-    const dst_is_yaml = to == .yaml or to == .yml;
+    const src_is_yaml = from == .yaml;
+    const dst_is_yaml = to == .yaml;
     const base_ast: *const fig.AST = if (src_is_yaml and !dst_is_yaml) blk: {
         // Reachable only when the source is YAML, so YAML is compiled in;
         // the comptime guard keeps `Language.YAML` out of the gated build.
@@ -481,7 +481,7 @@ pub fn runComment(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
                 std.process.exit(2);
             },
             .jsonc, .json5 => |f| if (comptime build_options.lang_json) try edit_ops.getCommentFromFile(fig.Language.JSON, a, io, input, opts.path, opts.inline_comment, edit_ops.jsonDialect(f)) else return error.FormatDisabled,
-            .yaml, .yml => if (comptime build_options.lang_yaml)
+            .yaml => if (comptime build_options.lang_yaml)
                 try edit_ops.getCommentFromFile(fig.Language.YAML, a, io, input, opts.path, opts.inline_comment, fig.Language.YAML.default_type)
             else
                 return error.FormatDisabled,
@@ -560,7 +560,7 @@ pub fn runComment(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
         },
         // JSONC/JSON5 accept `//` comments (reparsed under the dialect).
         .jsonc, .json5 => |f| if (comptime build_options.lang_json) try edit_ops.applyToFile(fig.Language.JSON, a, io, input, opts.path, opts.text, op, edit_ops.jsonDialect(f)) else return error.FormatDisabled,
-        .yaml, .yml => if (comptime build_options.lang_yaml)
+        .yaml => if (comptime build_options.lang_yaml)
             try edit_ops.applyToFile(fig.Language.YAML, a, io, input, opts.path, opts.text, op, fig.Language.YAML.default_type)
         else
             return error.FormatDisabled,

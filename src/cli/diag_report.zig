@@ -174,7 +174,7 @@ const SpliceStyle = enum { literal, json_string, raw };
 fn spliceStyle(format: Format) SpliceStyle {
     return switch (format) {
         .json, .jsonc, .json5 => .json_string,
-        .toml, .yaml, .yml, .zon, .fig => .literal,
+        .toml, .yaml, .zon, .fig => .literal,
         .ini, .dotenv, .properties, .plist, .xml, .nestedtext => .raw,
         // Neither has an in-place editor, so no edit text ever reaches here.
         .canonical, .gron => .literal,
@@ -184,8 +184,8 @@ fn spliceStyle(format: Format) SpliceStyle {
 // The format registry declares the same semantic per dialect
 // (`Language.SpliceStyle`), and Stage 4 deletes the switch above in favour of
 // it. Pinned by running it: every registry entry must agree with the arm that
-// answers for it today, so the swap is provably a no-op. The three members
-// with no registry entry (`yml`/`canonical`/`gron`) are unreachable here for
+// answers for it today, so the swap is provably a no-op. The two members
+// with no registry entry (`canonical`/`gron`) are unreachable here for
 // their own reasons, stated above.
 comptime {
     @setEvalBranchQuota(10_000);

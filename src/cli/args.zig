@@ -3,6 +3,7 @@
 //! parsing (and later, the action handlers) share.
 const std = @import("std");
 const fig = @import("fig");
+const build_options = @import("build_options");
 
 const gron = @import("gron.zig");
 const types = @import("types.zig");
@@ -17,9 +18,15 @@ const append_index = types.append_index;
 const Io = std.Io;
 
 /// Map a `--input`/`-i` format name to a `Format`. The enum member names cover
-/// every accepted token (including `canonical` and `fig`) directly. Returns null
-/// for an unknown name so callers can emit a tailored error.
+/// every accepted token (including `canonical` and `fig`) directly, plus the
+/// one alias below. Returns null for an unknown name so callers can emit a
+/// tailored error.
 pub fn parseFormatName(name: []const u8) ?Format {
+    // `yml` is an accepted SPELLING of yaml, not a format of its own: it used
+    // to be a `Format` member, which bought a second `@tagName` echo and a
+    // duplicated arm in every switch over the enum, and nothing else. It
+    // collapses here instead, so downstream code only ever sees `.yaml`.
+    if (std.mem.eql(u8, name, "yml")) return .yaml;
     return std.meta.stringToEnum(Format, name);
 }
 
@@ -88,9 +95,12 @@ pub fn detectLanguageFromFileEnding(file_path: []const u8) ?Detected {
     }
 
     // An extension that names a `Format` member IS that format. Tried first so
-    // every token the enum already spells keeps its exact meaning — notably
-    // `yml`, which is its own member rather than an alias of `yaml`, and the
-    // format-only members (`canonical`, `gron`) that no `Language` declares.
+    // every token the enum spells keeps its exact meaning — notably the
+    // dialect members (`jsonc`, `json5`) that share a language with the
+    // default spelling, and the format-only members (`canonical`, `gron`) that
+    // no `Language` declares. `yml` is NOT one of them any more: it falls
+    // through to `extensionFormat` below, where `Language.YAML.extensions`
+    // owns it and resolves it to `.yaml` — the same parse it always got.
     if (std.meta.stringToEnum(Format, ext)) |format| return .{ .format = format };
 
     // Otherwise ask the languages. Each declares the extensions it owns
@@ -115,7 +125,7 @@ pub fn detectLanguageFromFileEnding(file_path: []const u8) ?Detected {
 /// `extensions` declarations, or null.
 ///
 /// The `Language`→`Format` pairing this walks is per-LANGUAGE while `Format` is
-/// per-DIALECT (json/jsonc/json5/yml are four members over one `Language`), so
+/// per-DIALECT (json/jsonc/json5 are three members over one `Language`), so
 /// a language resolves to whichever member is its DEFAULT spelling. That used
 /// to be a hand-written table; it is now derived from the format registry —
 /// see `ext_pairs`.
@@ -1134,6 +1144,26 @@ test "detectLanguageFromFileEnding: .md/.markdown defer the archetype to a runti
     const fig_ext = detectLanguageFromFileEnding("f.fig").?;
     try t.expectEqual(Format.fig, fig_ext.format);
     try t.expect(!fig_ext.embed_detect);
+}
+
+test "yml is an accepted spelling of yaml, as a --input value and as an extension" {
+    const t = std.testing;
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+
+    // `--input yml`: the alias line above, not an enum member of its own.
+    try t.expectEqual(@as(?Format, .yaml), parseFormatName("yml"));
+    try t.expectEqual(@as(?Format, .yaml), parseFormatName("yaml"));
+
+    // `.yml` files: `stringToEnum` no longer answers for the extension, so it
+    // falls through to `Language.YAML.extensions`, which owns both spellings —
+    // the same `.yaml` parse either way.
+    const yml_ext = detectLanguageFromFileEnding("f.yml").?;
+    try t.expectEqual(Format.yaml, yml_ext.format);
+    try t.expect(!yml_ext.embed_detect);
+    try t.expectEqual(Format.yaml, detectLanguageFromFileEnding("f.yaml").?.format);
+
+    // An unknown token is still unknown (the alias must not widen the lookup).
+    try t.expectEqual(@as(?Format, null), parseFormatName("yamll"));
 }
 
 test "resolveEmbedTypeFromContent: explicit override wins, else sniffs, else falls back to YAML" {

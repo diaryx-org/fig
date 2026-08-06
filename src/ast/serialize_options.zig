@@ -40,21 +40,34 @@ const CanonicalPrinter = if (canonical_enabled) @import("../canonical/printer.zi
 /// (lossy at the edges — see src/languages/fig/DESIGN.md). `xml` requires its
 /// AST root to be a one-entry mapping (see `languages/xml/printer.zig`'s
 /// header) — anything else is `RootNotSingleElement`, not a silent fallback.
-pub const SerializeFormat = enum { json, jsonc, json5, yaml, toml, zon, xml, canonical, fig, ini, dotenv, properties, plist, nestedtext };
+pub const SerializeFormat = @Enum(
+    Language.EnumTag(serialize_format_names),
+    .exhaustive,
+    serialize_format_names,
+    &Language.enumValues(serialize_format_names),
+);
 
-// Pinned against the format registry (`languages/language.zig`'s `dialects`),
-// of which this enum is a restatement plus `canonical` — which is not a
-// `Language` at all (no parser module, no dialect, an options-less printer),
-// and so stays an explicit named arm here and everywhere else. Order matters:
-// Stage 5 reifies this enum from the registry, and its member order becomes
-// the registry's.
+/// Every format registry entry (`languages/language.zig`'s `dialects`), in
+/// registry order, plus `canonical` directly after `xml` — where the
+/// hand-written enum this replaces put it. `canonical` is not a `Language` at
+/// all (no parser module, no dialect, an options-less printer), so it stays an
+/// explicit named arm in every switch below and is spliced in by hand here.
+///
+/// Unlike `cli.Format` there is no `gron`: gron is a CLI-only projection with
+/// no printer on this side, and its callers intercept it before the serializer
+/// dispatch (see `cli/types.zig`'s `toSerializeFormat`).
+const serialize_format_names = blk: {
+    @setEvalBranchQuota(20_000);
+    break :blk Language.namesWith(.all, &.{.{ .after = "xml", .name = "canonical" }});
+};
+
+// Membership and registry order are true by construction (`namesWith` fails
+// the build if `canonical` names an entry that does not exist to follow); what
+// is left to state is that `canonical` belongs beside `xml` specifically, not
+// merely somewhere in the list.
 comptime {
-    Language.assertDerivedEnum(
-        SerializeFormat,
-        Language.namesOf(.all),
-        &.{"canonical"},
-        "AST.SerializeFormat",
-    );
+    if (@intFromEnum(SerializeFormat.canonical) != @intFromEnum(SerializeFormat.xml) + 1)
+        @compileError("AST.SerializeFormat's `canonical` no longer sits directly after `xml`");
 }
 
 /// Knobs controlling how a value is rendered. The defaults reproduce fig's

@@ -48,8 +48,8 @@ const ExtKind = AST.Node.Kind.Extended.ExtKind;
 /// mis-decoded (a documented limitation — escaping is a future concern).
 const sentinel = "$fig";
 
-/// The output format an `encode` pass targets. `jsonc` collapses to `json` and
-/// `yml` to `yaml` for capability purposes (same type system).
+/// The output format an `encode` pass targets. `jsonc` collapses to `json` for
+/// capability purposes (same type system).
 pub const Target = enum { json, yaml, toml, zon };
 
 /// The `Target` a serialize format's envelope pass should use, or null when
@@ -60,9 +60,9 @@ pub const Target = enum { json, yaml, toml, zon };
 /// needs an envelope on output (only input envelopes get decoded) — same as
 /// XML, INI, dotenv, `.properties`, plist, and NestedText, none of which has
 /// a typed-scalar envelope of its own (a plain print already loses nothing
-/// an envelope could have preserved). Callers with a CLI-only format on top
-/// of `SerializeFormat` (gron, `yml`) resolve their own arm before/via
-/// `toSerializeFormat` and consult this for everything else.
+/// an envelope could have preserved). A caller with a CLI-only format on top
+/// of `SerializeFormat` (gron) resolves its own arm before/via
+/// `toSerializeFormat` and consults this for everything else.
 pub fn targetFor(fmt: AST.SerializeFormat) ?Target {
     return switch (fmt) {
         .json, .jsonc, .json5 => .json,

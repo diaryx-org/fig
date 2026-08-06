@@ -12,6 +12,8 @@ const fig = @import("fig");
 // deriving straight from the public AST (see `cli/gron.zig`).
 const gron = @import("gron.zig");
 
+const L = fig.Language;
+
 // `gron` is a CLI-only output/echo format with no `AST.SerializeFormat`
 // counterpart; the `get` handler intercepts it before the serializer dispatch.
 // `canonical` (formerly `native`) is the AST's 1:1 oracle encoding, selectable
@@ -26,36 +28,55 @@ const gron = @import("gron.zig");
 // `reorderTables` — library-level only, same as TOML's). `gron` is a CLI-only
 // echo format with no
 // `AST.SerializeFormat` counterpart.
-pub const Format = enum { json, jsonc, json5, yaml, yml, toml, zon, xml, canonical, fig, gron, ini, dotenv, properties, plist, nestedtext };
+pub const Format = @Enum(L.EnumTag(format_names), .exhaustive, format_names, &L.enumValues(format_names));
 
-// `Format` is a restatement of the format registry
-// (`languages/language.zig`'s `dialects`) plus three members no `Language`
-// backs: `yml` (an alias of `yaml`, removed in Stage 3), `canonical` (the
-// AST's own oracle grammar) and `gron` (a CLI-only projection of JSON). The
-// assert pins membership AND the relative order of the registry members,
-// because that order becomes this enum's when Stage 3 reifies it — a
-// silently-renumbered `@intFromEnum` is exactly what it exists to prevent.
+/// Every format registry entry (`languages/language.zig`'s `dialects`), in
+/// registry order, plus the two members no `Language` backs: `canonical` after
+/// `xml`, `gron` after `fig`. Those positions are not arbitrary — they are
+/// where the hand-written enum this replaces put them, and the member order is
+/// what `@intFromEnum` and `main.zig`'s `--help` format list both read.
+///
+/// `yml` is deliberately NOT here: it used to be a member of its own, an alias
+/// of `yaml` that duplicated it in ~ten switches and bought nothing but a
+/// second spelling in `@tagName` echoes. It survives where it was actually
+/// used — `--input yml` is an accepted spelling (`args.parseFormatName`), and
+/// the `.yml` FILE extension resolves through `Language.YAML.extensions` —
+/// and both now land on `.yaml` itself.
+const format_names = blk: {
+    @setEvalBranchQuota(20_000);
+    break :blk L.namesWith(.all, &.{
+        .{ .after = "xml", .name = "canonical" },
+        .{ .after = "fig", .name = "gron" },
+    });
+};
+
+// `namesWith` places the two non-registry members and would fail the build if
+// either named a nonexistent entry to follow, so membership and registry order
+// are true by construction. What that does NOT state is the intent — that
+// `canonical` belongs beside `xml` and `gron` beside `fig` rather than merely
+// somewhere — so that is what is left to check, plus the removal of `yml`.
 comptime {
-    fig.Language.assertDerivedEnum(
-        Format,
-        fig.Language.namesOf(.all),
-        &.{ "yml", "canonical", "gron" },
-        "cli.Format",
-    );
+    if (@intFromEnum(Format.canonical) != @intFromEnum(Format.xml) + 1)
+        @compileError("cli.Format's `canonical` no longer sits directly after `xml`");
+    if (@intFromEnum(Format.gron) != @intFromEnum(Format.fig) + 1)
+        @compileError("cli.Format's `gron` no longer sits directly after `fig`");
+    if (@hasField(Format, "yml"))
+        @compileError("`yml` is an accepted SPELLING of `yaml` (see `args.parseFormatName`)," ++
+            " not a format of its own — a member here would resurrect the duplicated switch arms");
 }
 
 /// The `AST.SerializeFormat` counterpart of a CLI format, or null for gron (a
 /// CLI-only projection with no serializer — the `get`/`fmt`/`convert` handlers
 /// intercept it before reaching the serializer dispatch; see each call site's
-/// own early return/`orelse unreachable`). `yml` collapses onto `yaml`, same
-/// as gron's `.gron` mapping to `.json` in the callers that still need one
-/// (the lossless-envelope target switches) — every other member is identity.
+/// own early return/`orelse unreachable`). gron's `.gron` maps to `.json` in
+/// the callers that still need one (the lossless-envelope target switches);
+/// every other member is identity.
 pub fn toSerializeFormat(f: Format) ?fig.AST.SerializeFormat {
     return switch (f) {
         .json => .json,
         .jsonc => .jsonc,
         .json5 => .json5,
-        .yaml, .yml => .yaml,
+        .yaml => .yaml,
         .toml => .toml,
         .zon => .zon,
         .canonical => .canonical,

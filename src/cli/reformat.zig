@@ -133,8 +133,8 @@ pub fn convertSlice(
     // Converting YAML to a non-YAML format resolves the reference layer first
     // (aliases → copies, merges → flattened, tags applied/dropped). YAML→YAML
     // keeps it intact for round-trip; JSON never has it. Mirrors `get`.
-    const src_is_yaml = from == .yaml or from == .yml;
-    const dst_is_yaml = to == .yaml or to == .yml;
+    const src_is_yaml = from == .yaml;
+    const dst_is_yaml = to == .yaml;
     const base_ast: *const fig.AST = if (src_is_yaml and !dst_is_yaml) blk: {
         if (comptime build_options.lang_yaml) {
             const mode: fig.Language.YAML.TagMode = if (lax_tags) .lax else .strict;

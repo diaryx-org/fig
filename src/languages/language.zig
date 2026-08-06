@@ -44,12 +44,15 @@ pub const NESTEDTEXT = if (build_options.lang_nestedtext) @import("nestedtext/ne
 // spellings) that today live scattered across six files as switches nothing
 // cross-checks.
 //
-// As of this stage NOTHING CONSUMES IT except `cli/args.zig`'s extension table.
-// What it does instead is ASSERT: the `comptime` block after `dialects` and its
-// siblings in `cli/types.zig`, `c_api.zig`, `ast/serialize_options.zig`,
-// `deserialize.zig` and `embed.zig` fail the build the moment the registry and
-// the hand-written enum they pin disagree. The derivations that make those
-// enums *reifications* of this table arrive in Stages 3-7.
+// As of this stage FOUR of those enums are REIFIED from it rather than merely
+// pinned against it — `Detected` below, `cli.Format`, `AST.SerializeFormat`
+// and `deserialize.Format` are all `@Enum` over `namesOf(…)` — along with
+// `cli/args.zig`'s extension table. The two that remain hand-written,
+// `c_api.FigFormat` (Stage 7) and `Embed.InnerFormat` (Stage 6), still carry
+// the `comptime` asserts that fail the build the moment they and the registry
+// disagree. The per-dialect FACTS (splice style, empty-document seed, `--spec`
+// strings, printer names, embedded spellings) are still asserted rather than
+// consumed; those switches are converted in Stages 4-6.
 
 /// `Lang.Type` when `Lang` is compiled in, `void` when it is gated out.
 ///
@@ -186,12 +189,15 @@ fn Entry(comptime L: type) type {
 ///
 /// Two properties of this table are frozen, and both are load-bearing:
 ///
-///   * ORDER. It is the member order of every enum derived from it in Stages
-///     3-7 (`Detected`, `cli.Format`, `SerializeFormat`, …), and reproduces
-///     today's `cli.Format` order minus its three non-registry members (`yml`,
-///     an alias removed in Stage 3; `canonical`, which is not a `Language` at
-///     all; `gron`, a CLI-only projection). Reordering it would silently
-///     renumber `@intFromEnum` for every one of those enums. Append.
+///   * ORDER. It IS the member order of every enum derived from it
+///     (`Detected`, `cli.Format`, `SerializeFormat`, `deserialize.Format`
+///     already; `Embed.InnerFormat` and `c_api.FigFormat` in Stages 6-7), and
+///     reproduces the pre-registry `cli.Format` order minus its two
+///     non-registry members (`canonical`, which is not a `Language` at all,
+///     and `gron`, a CLI-only projection — both spliced back by hand at their
+///     old positions, see `namesWith`) and minus `yml`, an alias of `yaml`
+///     retired in Stage 3. Reordering it would silently renumber
+///     `@intFromEnum` for every one of those enums. Append.
 ///
 ///   * `abi_value`. It is the C ABI, and a released value is permanent.
 ///
@@ -409,6 +415,83 @@ pub fn namesOf(comptime sel: Selector) []const [:0]const u8 {
     }
 }
 
+/// A member a derived enum carries that the registry does not back: what it is
+/// called, and which registry entry it sits immediately after. `cli.Format`'s
+/// `canonical` (after `xml`) and `gron` (after `fig`), and `SerializeFormat`'s
+/// `canonical`, are the only three uses — see `dialects`' note on why neither
+/// format is an entry.
+pub const Extra = struct {
+    /// The registry entry name this member follows directly.
+    after: []const u8,
+    /// The member name. Sentinel-terminated: a reified enum's field
+    /// names must be.
+    name: [:0]const u8,
+};
+
+/// `namesOf(sel)` with each `extras` member spliced in directly after the
+/// registry entry it names. The member list of a derived enum that has
+/// hand-placed members on top of the registry's; the splice positions are what
+/// reproduce the pre-reification member ORDER, so they are as load-bearing as
+/// the registry's own order and are checked here rather than trusted.
+pub fn namesWith(comptime sel: Selector, comptime extras: []const Extra) []const [:0]const u8 {
+    comptime {
+        @setEvalBranchQuota(20_000);
+        var out: []const [:0]const u8 = &.{};
+        var placed = [_]bool{false} ** extras.len;
+        for (namesOf(sel)) |n| {
+            out = out ++ [_][:0]const u8{n};
+            for (extras, 0..) |x, xi| {
+                if (!std.mem.eql(u8, x.after, n)) continue;
+                if (placed[xi])
+                    @compileError("two format-registry entries are named '" ++ x.after ++
+                        "', so '" ++ x.name ++ "' has no single position to take");
+                placed[xi] = true;
+                out = out ++ [_][:0]const u8{x.name};
+            }
+        }
+        for (extras, placed) |x, p| {
+            if (!p)
+                @compileError("the derived member '" ++ x.name ++ "' is placed after '" ++ x.after ++
+                    "', which is not a format-registry entry this enum draws from");
+        }
+        return out;
+    }
+}
+
+// Reifying an enum from a name list. This Zig spells type reification as
+// granular builtins (`@Enum`/`@Union`) rather than `@Type(.{...})`; the
+// in-tree precedent is `c_api.zig`'s `EditorUnion`.
+//
+// The two halves below are helpers rather than one `MakeEnum(names)` function
+// deliberately: a type CREATED inside a generic function is named after that
+// function, so every derived format enum would answer to
+// `language.MakeEnum(&.{ &.{ ... }[0..(...)], … }[0..14])` in every compile
+// error that mentions it. Calling `@Enum` at the declaration site instead
+// gives each one its own name (`cli.types.Format`, `serialize_options
+// .SerializeFormat`, …) — the error a missing switch arm produces is the whole
+// point of these enums, so it is worth two call sites' worth of noise.
+
+/// The tag type a registry-derived enum of `names.len` members gets:
+/// `IntFittingRange(0, n - 1)` — exactly what Zig infers for a hand-written
+/// `enum { … }` of the same size, so a reified enum is bit-for-bit the one it
+/// replaces rather than merely name-compatible.
+pub fn EnumTag(comptime member_names: []const [:0]const u8) type {
+    if (member_names.len == 0)
+        @compileError("a format enum derived from the registry must have at least one member");
+    return std.math.IntFittingRange(0, member_names.len - 1);
+}
+
+/// The tag values of a registry-derived enum: 0..n-1 in `names` order, so the
+/// member order IS the registry order and `@intFromEnum` keeps meaning what it
+/// meant before reification. Pass as `&enumValues(names)`.
+pub fn enumValues(comptime member_names: []const [:0]const u8) [member_names.len]EnumTag(member_names) {
+    comptime {
+        var values: [member_names.len]EnumTag(member_names) = undefined;
+        for (&values, 0..) |*v, i| v.* = @intCast(i);
+        return values;
+    }
+}
+
 /// Fail the build unless `E`'s members are exactly `want` (in `want`'s order)
 /// plus `extra` (which may sit anywhere, and must all be present). `what`
 /// names the enum in the message.
@@ -416,8 +499,14 @@ pub fn namesOf(comptime sel: Selector) []const [:0]const u8 {
 /// The shape every "this enum is a restatement of the registry" assert needs:
 /// order matters for the members that come FROM the registry, because that
 /// order becomes theirs when the enum is reified, while the deliberate
-/// non-registry members (`canonical`, `gron`, `yml`) are positioned by hand and
-/// only have to still exist.
+/// non-registry members (`canonical`, `gron`) are positioned by hand and only
+/// have to still exist.
+///
+/// Stage 3 reified away its callers — `cli.Format`, `AST.SerializeFormat`,
+/// `deserialize.Format` and `Detected` are now BUILT from `namesOf`/`namesWith`
+/// rather than checked against them, which is the stronger statement. It stays
+/// for any enum that must remain hand-written and still restate the registry in
+/// order (`c_api.FigFormat` uses the unordered twin below until Stage 7).
 pub fn assertDerivedEnum(
     comptime E: type,
     comptime want: []const [:0]const u8,
@@ -557,22 +646,42 @@ comptime {
         @compileError("`entryFor` does not return the entry it was asked for");
 
     // LAST, deliberately: `Detected` is the one derived enum living in this
-    // file, and a registry that is internally inconsistent (a missing entry, a
-    // duplicated ABI value) would fail this assert too — with a message about
-    // `Detected` rather than about the registry. Checking the table's own
-    // coherence first means the error names the actual mistake.
-    assertDerivedEnum(Detected, namesOf(.detectable), &.{}, "Language.Detected");
+    // file, so a registry that is internally inconsistent (a missing entry, a
+    // duplicated name) would fail HERE too — with a message about `Detected`
+    // rather than about the registry. Checking the table's own coherence first
+    // means the error names the actual mistake.
+    //
+    // `Detected` is now REIFIED from `.detectable`, so "its members are the
+    // detectable entries, in registry order" is true by construction and there
+    // is nothing left to compare. What is still a real claim is which entries
+    // carry the flag — the membership its doc comment argues for — so that is
+    // what this checks: jsonc out, its json/json5 siblings in, and `canonical`
+    // (no entry at all) absent.
+    if (@hasField(Detected, "jsonc"))
+        @compileError("the `jsonc` registry entry is marked detectable, but `detect` deliberately" ++
+            " never sniffs it — it overlaps json/json5 on almost all input");
+    if (!@hasField(Detected, "json") or !@hasField(Detected, "json5"))
+        @compileError("`detect` returns `.json`/`.json5`, so both entries must stay detectable");
+    if (@hasField(Detected, "canonical"))
+        @compileError("`canonical` is not a registry entry and cannot be sniffed");
 }
 
-/// A format `detect` can recognize. The `jsonc` dialect and `canonical` are
-/// deliberately excluded: jsonc overlaps json/json5 on most input, and
-/// canonical is an explicit selection rather than something to sniff. `fig`
-/// IS included, but slotted just ahead of YAML (see the ordering note on
-/// `detect`) since its grammar overlaps TOML/YAML on plain `key = value`
-/// content — it only wins detection on input that is either invalid for
-/// every stricter format, or uses fig-only structural syntax (`>` section
-/// depth, `*` elements, `+` continuations, `[]` group headers).
-pub const Detected = enum { json, json5, yaml, toml, zon, xml, fig, ini, dotenv, properties, plist, nestedtext };
+/// A format `detect` can recognize: the registry entries marked `detectable`,
+/// in registry order. The `jsonc` dialect and `canonical` are deliberately
+/// excluded: jsonc overlaps json/json5 on most input, and canonical is an
+/// explicit selection rather than something to sniff (it is not a registry
+/// entry at all). `fig` IS included, but slotted just ahead of YAML (see the
+/// ordering note on `detect`) since its grammar overlaps TOML/YAML on plain
+/// `key = value` content — it only wins detection on input that is either
+/// invalid for every stricter format, or uses fig-only structural syntax (`>`
+/// section depth, `*` elements, `+` continuations, `[]` group headers).
+///
+/// `detect` itself stays hand-written: the global ORDER the probes run in is a
+/// single argument about grammar overlap that belongs in one place, and it is
+/// not the member order — see the function below.
+pub const Detected = @Enum(EnumTag(detected_names), .exhaustive, detected_names, &enumValues(detected_names));
+
+const detected_names = namesOf(.detectable);
 
 /// Best-effort content sniffing: try each COMPILED-IN parser and return the
 /// first that accepts `input`, or null if none do (also what an

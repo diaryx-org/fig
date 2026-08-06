@@ -196,14 +196,25 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     rust_test.has_side_effects = true;
     check_step.dependOn(&rust_test.step);
 
-    // TypeScript binding test suite, gated on a local npm toolchain AND installed
-    // deps. The tests import the built wasm module, so build first. Skips (with a
-    // note) when npm is absent or `node_modules` hasn't been populated, so the
-    // gate degrades gracefully on a partial checkout; CI runs `npm ci` first.
+    // TypeScript binding test suite, gated on a local npm toolchain, a new enough
+    // Node, AND installed deps. The tests import the built wasm module, so build
+    // first. Skips (with a note) when npm is absent, when Node predates 24, or when
+    // `node_modules` hasn't been populated, so the gate degrades gracefully on a
+    // partial checkout; CI pins Node 24 and runs `npm ci` first.
+    //
+    // The Node floor is a test-time requirement only, not a consumer one: the suite
+    // runs the `.ts` sources through Node's type-stripping, which erases annotations
+    // but cannot downlevel the `using` declarations the tests rely on. Shipped output
+    // is downlevelled by tsc, so `engines` in package.json stays at >=20.
     const ts_test_script =
         \\set -eu
         \\if ! command -v npm >/dev/null 2>&1; then
         \\  echo "typescript tests: npm not found — skipping (install Node.js to run them)."
+        \\  exit 0
+        \\fi
+        \\node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+        \\if [ "$node_major" -lt 24 ]; then
+        \\  echo "typescript tests: Node <24 — skipping (the test suite uses 'using' declarations, which Node's type-stripping cannot downlevel)."
         \\  exit 0
         \\fi
         \\if [ ! -d node_modules ]; then

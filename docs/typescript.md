@@ -41,7 +41,8 @@ npm install @diaryx/fig
 ```
 
 Requires Node 20+ (or any runtime with `Symbol.dispose`). The package is ESM-only
-and ships its own TypeScript types.
+and ships its own TypeScript types. Working on the binding itself needs a newer
+Node — see [Developing the binding](#developing-the-binding).
 
 ## Loading the module
 
@@ -416,6 +417,30 @@ manage the handle for you, so no cleanup is needed.
 - `FigError` — the thrown error type.
 - Types: `Value`, `JsValue` (read side), `JsInput` (write side), `Segment`,
   `SerializeOptions`, `Warning`, `Region`, `Span`, `Version`, `Capabilities`.
+
+## Developing the binding
+
+Consumers need Node 20+; working on `bindings/typescript` from a checkout needs
+**Node 24+**. The floor is higher because `npm test` runs the `.ts` test sources
+directly through Node's type-stripping, which erases type annotations but cannot
+downlevel the `using` declarations the tests use. On older Node the suite dies
+with a `SyntaxError` before a single test runs.
+
+```sh
+cd bindings/typescript
+npm ci
+npm run build   # builds the wasm module, then compiles with tsc
+npm test
+```
+
+This is a test-time requirement only. The published package stays at
+`"engines": { "node": ">=20" }`, because `tsc` downlevels `using` in the shipped
+`dist/` output. Don't raise `engines` to match the dev floor.
+
+`zig build check` runs this suite as part of the pre-release gate and skips it
+with a note — rather than failing — when Node is older than 24, when `npm` is
+missing, or when `node_modules` hasn't been populated. CI pins Node 24, so there
+it always runs for real.
 
 ## See also
 

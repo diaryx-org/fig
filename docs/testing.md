@@ -18,6 +18,11 @@ misreading them. Three layers guard that, in increasing order of paranoia:
 The first two run on every push, via `zig build check`. The third runs nightly —
 see [Fuzzing](#Fuzzing) for why it cannot sensibly run on a pull request.
 
+`check` also runs the Rust and TypeScript binding suites, each of which skips
+with a note when its toolchain is missing, so the gate stays useful on a partial
+checkout. The TypeScript suite additionally skips on Node older than 24 — see
+[Developing the binding](typescript.md#developing-the-binding) for why.
+
 # Conformance
 
 Conformance suites answer a question unit tests cannot: *does `fig` agree with

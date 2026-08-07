@@ -4,6 +4,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
+    // docs.rs builds documentation in a sandbox with no Zig toolchain and no
+    // network access. `cargo doc` type-checks the crate but never links the
+    // static library, so skip the native build entirely there — the bindings
+    // still document cleanly. (Mirrors twig-sys's build.rs.)
+    if env::var_os("DOCS_RS").is_some() {
+        return;
+    }
+
     println!("cargo:rerun-if-env-changed=FIG_SYS_FORCE_SOURCE");
 
     let cargo_target = env::var("TARGET").expect("Cargo should set TARGET");

@@ -122,6 +122,20 @@ const cases = [_]Case{
         .expect = "declares kv_sep = null but does not hook insertKey",
     },
     .{
+        // The closed set covers whole-container ops too (`Decls.exclusive`), so
+        // a misspelled one is caught the same way a misspelled hook is rather
+        // than silently never dispatching.
+        .name = "unknown decl, whole-container op typo",
+        .decls = "pub const deletecontainer = {};",
+        .expect = "declares unknown 'deletecontainer' — did you mean 'deleteContainer'?",
+    },
+    .{
+        .name = "caps.edit = false with a whole-container op",
+        .caps = ".{ .read = true, .edit = false, .serialize = true }",
+        .decls = "pub const moveContainer = {};",
+        .expect = "declares caps.edit = false but supplies the editing hook 'moveContainer'",
+    },
+    .{
         .name = "sequence hook under block_seq_editable = false",
         .syntax_body =
         \\.comments = .hash, .kv_sep = ": ", .empty_map_literal = "{}",

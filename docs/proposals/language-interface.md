@@ -1085,6 +1085,84 @@ conformance suite (JSON5 25/26, YAML 289/93/19/1, TOML 209/495 and 218/488,
 plist 9/7/5, NestedText 80/68), `abi-check` and `semver-check` unchanged — no
 ABI surface is involved, since both fields are internal to the editor.
 
+## 14. Outcome, §2E revisited (2026-08-07)
+
+§8.1 killed Step 4 on a mechanism argument, and it was right: Zig has no
+conditional container-level declarations, so an exclusive op cannot un-declare
+itself for the formats that lack it, and nothing since 0.15 has changed that.
+This section does not attempt it. What §8.1 did not examine is what those nine
+sites were keyed on and what they were called, and both were wrong in a way the
+rest of the proposal had already ruled out everywhere else.
+
+### 14.1 Two names for one operation
+
+§2E lists TOML's six and fig's three as separate inventories. They are not:
+`deleteTable` and `deleteContainer` are the same operation over the same
+algorithm, and so are `moveTable`/`moveContainer` and
+`reorderTables`/`reorderContainers`. The duplication was literal —
+`spliceOutRegions` and `appendWithBlankBefore` were byte-identical between
+`toml/editor_helper.zig` and `fig/editor_helper.zig`, and `normalizeRegions`
+differed by one character (`<` versus `<=`, because TOML's rename needs
+touching regions kept addressable and fig has no rename). The move and reorder
+bodies had drifted apart: fig's was a single pass where TOML's built an
+intermediate buffer, and fig's had picked up OOM guards TOML's lacked.
+
+`languages/shared/sections.zig` now holds everything downstream of the gather —
+`Region`, `normalize`, `spliceOut`, `relocate`, `reorderBundles`,
+`captureBundle`, `entryLineRegion`, `appendWithBlankBefore` — and it is fig's
+version of each, so TOML's `reorderTables` stops leaking its capture buffer when
+an allocation fails mid-bundle. The two helpers lost 384 lines between them for
+218 shared ones. What deliberately did NOT move is the gather itself: "which
+lines belong to this container" is the one real per-format question (TOML
+classifies by a leading `[`, fig by its value's kind plus the parser's re-entry
+table, INI by section membership), and each helper keeps its own.
+
+### 14.2 Identity, not declaration
+
+`if (Language != Toml) @compileError(...)` is the exact pattern the manifest
+exists to remove — §2's opening complaint, still live in `editor.zig` because
+§8.1 declared the whole section closed. The wrappers now dispatch on
+`@hasDecl(Language, "deleteContainer")` like every hook, and each format
+declares its ops in the same "Editing hooks" block as everything else (a
+`Decls.exclusive` set, held apart from `Decls.hooks` because the reachability
+rules of §11 do not apply to an op that IS the operation). `editor.zig` no
+longer imports `toml/editor_helper.zig` or `fig/editor_helper.zig` at all, and
+names no format outside its own tests.
+
+The methods still exist for all eleven formats, per §8.1. The difference is
+what the refusal says: `'deleteContainer' is a whole-container op that 'yaml'
+does not declare` at the call site, rather than `deleteTable is TOML-only`.
+
+The vocabulary is now the operation's rather than one format's — `deleteTable` →
+`deleteContainer`, `appendTableToArray` → `appendContainerToSeq`, and so on.
+Each format's own words survive where they carry meaning: in its errors
+(`NotATable` beside `NotAContainer`), in its helper's function names, and in its
+documentation. Library-level only, so no ABI moved.
+
+### 14.3 INI was a section format all along
+
+`ini/editor_helper.zig` opened by explaining why INI needs no multi-region
+gather, and for INSERT that is correct (a reopened section threads onto the tail
+of its child list, so the generic `lastChild` anchor already lands right). For
+delete/move/reorder it was not: `[a]` … `[b]` … `[a]` scatters a section exactly
+as a TOML table scatters, and INI had no operation for it at all — only
+`sectionDeleteGuard`, refusing a line-delete and pointing nowhere.
+
+INI now declares the same three ops fig does. The missing piece was finding a
+REOPENED header: a section's span anchors its first `[a]` only. `Document.
+reentry_headers` already existed for precisely this, described in fig's terms
+but general in shape, and INI's parser has the same merge branch fig's has — so
+recording one there is four lines, and it covers the case a scan-based gather
+cannot (a reopened header with no entries under it, which nothing in the AST
+points at). That case is a test.
+
+**Verification.** `zig build test` 1133 passing (up 10: eight INI section-op
+tests, two parser tests pinning `reentry_headers`), `validate-check` 13/13 with
+two new cases for `Decls.exclusive`, `zig build check` at every conformance
+baseline, `abi-check` and `semver-check` unchanged — these ops are library-level
+and reach no ABI. The comptime refusal was checked by compiling a probe against
+`Editor(YAML).deleteContainer` and reading the error it produces.
+
 [vcheck]: /tools/validate-check.zig
 [abi_check]: /tools/abi-check.zig
 [semver_check]: /tools/semver-check.zig

@@ -38,19 +38,16 @@ const lang = @import("languages/manifest.zig");
 //
 // What remains below is what hook dispatch does not reach:
 //
-//   * `toml_edit`/`fig_edit` back the EXCLUSIVE operations — the whole-table
-//     and whole-container ops only those two formats have, which are `pub fn`s
-//     on this struct guarded by `@compileError` rather than hooks. Zig has no
-//     conditional container-level declarations (`usingnamespace` was removed
-//     in 0.15), so an op cannot un-declare itself for the other ten formats;
-//     `@hasDecl(Language, "deleteTable")` on the MANIFEST is the queryable
-//     fact, and it costs nothing extra.
 //   * `zon_edit.appendFieldName` is reached through `key_style`, as the
 //     rendering half of a syntax parameter rather than an operation override.
-//   * The bare language tags are used by this file's OWN tests, and by the
-//     `Language != Toml`/`!= Fig` guards on those exclusive operations.
-const toml_edit = @import("languages/toml/editor_helper.zig");
-const fig_edit = @import("languages/fig/editor_helper.zig");
+//   * The bare language tags below are used by this file's OWN tests, nothing
+//     else. The EXCLUSIVE whole-container operations (see that block) used to
+//     need `Language != Toml`/`!= Fig` guards and direct imports of those two
+//     formats' helper modules; they are `@hasDecl`-dispatched now, like every
+//     hook, so this file names no format outside its tests. Zig still has no
+//     conditional container-level declarations (`usingnamespace` was removed in
+//     0.15), so the methods exist for every format and refuse at comptime —
+//     but on a missing declaration rather than on a format's identity.
 const zon_edit = @import("languages/zon/editor_helper.zig");
 const Toml = @import("languages/toml/toml.zig").Language;
 const Fig = @import("languages/fig/fig.zig").Language;
@@ -834,7 +831,7 @@ pub fn Editor(comptime Language: type) type {
                 return;
             }
             // A non-flow TOML sequence is an array-of-tables; use
-            // `appendTableToArray` for those. (TOML has no block scalar array.)
+            // `appendContainerToSeq` for those. (TOML has no block scalar array.)
             if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
             if (@hasDecl(Language, "appendToSeq")) return Language.appendToSeq(self, parsed, node, value_text);
             const last = (try parsed.ast.lastChild(&node)) orelse return error.NotASequence;
@@ -1376,76 +1373,87 @@ pub fn Editor(comptime Language: type) type {
             try self.replaceAtSpan(Span.init(insert_at, insert_at), out.items);
         }
 
-        // --- TOML whole-table structural editing (TOML-only) ---
+        // --- Whole-container structural editing (section formats) ---
         //
-        // The implementations live in `toml/editor_helper.zig`, next to the
-        // region helpers they build on, so this generic engine stays
-        // format-agnostic. These wrappers are the public `Editor(Toml)` surface;
-        // each guards with a comptime error so the method does not exist for
-        // other formats. See the helper module for the per-op contract.
-
-        /// Append a `[[header]]` element (body `body_text`) to the AoT at `path`.
-        pub fn appendTableToArray(self: *Self, path: []const AST.PathSegment, body_text: []const u8) !void {
-            if (Language != Toml) @compileError("appendTableToArray is TOML-only");
-            return toml_edit.appendTableToArray(self, path, body_text);
-        }
-
-        /// Delete the table / array-of-tables / AoT element named by `path`.
-        pub fn deleteTable(self: *Self, path: []const AST.PathSegment) !void {
-            if (Language != Toml) @compileError("deleteTable is TOML-only");
-            return toml_edit.deleteTable(self, path);
-        }
-
-        /// Create a new `[path]` table with body `body_text`.
-        pub fn insertTable(self: *Self, path: []const AST.PathSegment, body_text: []const u8) !void {
-            if (Language != Toml) @compileError("insertTable is TOML-only");
-            return toml_edit.insertTable(self, path, body_text);
-        }
-
-        /// Rename the leaf segment of the table at `path` to `new_leaf`.
-        pub fn renameTable(self: *Self, path: []const AST.PathSegment, new_leaf: []const u8) !void {
-            if (Language != Toml) @compileError("renameTable is TOML-only");
-            return toml_edit.renameTable(self, path, new_leaf);
-        }
-
-        /// Move the table at `src_path` before `dest_path` (or to EOF if null).
-        pub fn moveTable(self: *Self, src_path: []const AST.PathSegment, dest_path: ?[]const AST.PathSegment) !void {
-            if (Language != Toml) @compileError("moveTable is TOML-only");
-            return toml_edit.moveTable(self, src_path, dest_path);
-        }
-
-        /// Reorder top-level tables to the order given by `order` (their keys).
-        pub fn reorderTables(self: *Self, order: []const []const u8) !void {
-            if (Language != Toml) @compileError("reorderTables is TOML-only");
-            return toml_edit.reorderTables(self, order);
-        }
-
-        // --- fig whole-container structural editing (fig-only) ---
+        // The EXCLUSIVE operations: a format whose logical containers are
+        // scattered through the source (TOML's `[table]` headers, fig's `>`
+        // marker runs and re-entered headers, INI's reopened `[section]`) needs
+        // ops the generic line-splice engine has no counterpart for, because
+        // there is no single `[min,max)` range to splice. Each implementation
+        // lives in that format's `editor_helper.zig`, next to the region gather
+        // it builds on, over the shared machinery in
+        // `languages/shared/sections.zig`.
         //
-        // The implementations live in `fig/editor_helper.zig`, next to the
-        // region-gather helpers they build on — the fig generalization of the
-        // TOML wrappers just above. `renameTable`'s fig twin doesn't exist: the
-        // generic `replaceKeyAtPath` already splices a header's key in place.
-        // See the helper module for the per-op contract and its scope.
+        // These are DECLARED, not identity-checked: the wrapper dispatches on
+        // `@hasDecl(Language, …)` exactly as every hook above does, so a format
+        // opts in by declaring the op in its "Editing hooks" block and this file
+        // names no format. What the wrappers cannot do is stop existing for the
+        // formats that declare nothing — Zig has no conditional container-level
+        // declarations since `usingnamespace` went away in 0.15 (see the
+        // proposal's §8.1) — so a `@compileError` remains the answer there. The
+        // difference is what it is keyed on: a missing declaration rather than a
+        // hardcoded `Language != Toml`.
+        //
+        // The vocabulary is the operation's, not any one format's: TOML's
+        // `[table]`, fig's block container and INI's `[section]` are the same
+        // thing here, and the format's own words survive in its errors
+        // (`NotATable` vs `NotAContainer`) and its helper's documentation.
 
-        /// Delete the whole block mapping/sequence named by `path`.
+        /// Delete the whole container named by `path` — every scattered region
+        /// of its subtree, leaving interleaved foreign content untouched. For
+        /// TOML that is a table, array-of-tables, or single AoT element.
         pub fn deleteContainer(self: *Self, path: []const AST.PathSegment) !void {
-            if (Language != Fig) @compileError("deleteContainer is fig-only");
-            return fig_edit.deleteContainer(self, path);
+            comptime requireSectionOp("deleteContainer");
+            return Language.deleteContainer(self, path);
         }
 
-        /// Move the block container at `src_path` before `dest_path` (or to EOF
-        /// if null).
+        /// Create a new container at `path` whose body is `body_text` (verbatim
+        /// entry lines, possibly empty), spliced where no existing key is
+        /// reparented.
+        pub fn insertContainer(self: *Self, path: []const AST.PathSegment, body_text: []const u8) !void {
+            comptime requireSectionOp("insertContainer");
+            return Language.insertContainer(self, path, body_text);
+        }
+
+        /// Rename the leaf segment of the container at `path` to `new_leaf`,
+        /// rewriting every header that shares the prefix.
+        ///
+        /// Only TOML needs this: a fig or INI header carries its key in one
+        /// tight span the generic `replaceKeyAtPath` already rewrites, while a
+        /// TOML rename must also reach `[a.b]`, `[a.b.c]`, `[[a.b]]`.
+        pub fn renameContainer(self: *Self, path: []const AST.PathSegment, new_leaf: []const u8) !void {
+            comptime requireSectionOp("renameContainer");
+            return Language.renameContainer(self, path, new_leaf);
+        }
+
+        /// Move the container at `src_path` before `dest_path` (or to EOF if
+        /// null), re-emitting its scattered fragments contiguously.
         pub fn moveContainer(self: *Self, src_path: []const AST.PathSegment, dest_path: ?[]const AST.PathSegment) !void {
-            if (Language != Fig) @compileError("moveContainer is fig-only");
-            return fig_edit.moveContainer(self, src_path, dest_path);
+            comptime requireSectionOp("moveContainer");
+            return Language.moveContainer(self, src_path, dest_path);
         }
 
-        /// Reorder top-level block containers to the order given by `order`
-        /// (their keys).
+        /// Reorder top-level containers to the order given by `order` (their
+        /// keys). Containers not named are untouched.
         pub fn reorderContainers(self: *Self, order: []const []const u8) !void {
-            if (Language != Fig) @compileError("reorderContainers is fig-only");
-            return fig_edit.reorderContainers(self, order);
+            comptime requireSectionOp("reorderContainers");
+            return Language.reorderContainers(self, order);
+        }
+
+        /// Append a new element (body `body_text`) to the container sequence at
+        /// `path` — TOML's `[[header]]` array-of-tables append.
+        pub fn appendContainerToSeq(self: *Self, path: []const AST.PathSegment, body_text: []const u8) !void {
+            comptime requireSectionOp("appendContainerToSeq");
+            return Language.appendContainerToSeq(self, path, body_text);
+        }
+
+        /// The comptime refusal shared by the six ops above. Names the format
+        /// and the declaration it is missing, since "this format has no such
+        /// operation" is the whole content of the error.
+        fn requireSectionOp(comptime op: []const u8) void {
+            if (!@hasDecl(Language, op))
+                @compileError("'" ++ op ++ "' is a whole-container op that '" ++ Language.name ++
+                    "' does not declare — see the \"Editing hooks\" block of its <lang>.zig");
         }
 
         /// How a splice's `value_text` is *spelled* — whether it stands as an
@@ -2137,13 +2145,13 @@ test "addLeadingComment on TOML uses #" {
     try expectCommentEdit(Toml, .TOML_1_1, "a = 1\nb = 2\n", "a = 1\n# note\nb = 2\n", .leading, &.{.{ .key = "b" }}, "note");
 }
 
-// This instantiation (plus every `Editor(Fig)` call below) is also what pulls
-// `fig/editor_helper.zig` into the test build's reachability graph — `zig
-// test` discovers a file's `test` blocks only once something forces it to be
-// analyzed, and a bare top-level `const fig_edit = @import(...)` is not
-// enough on its own (mirrors why the TOML test above matters for
-// `toml/editor_helper.zig`, and why `fig/editor_helper.zig`'s OWN tests carry
-// the rest of `Editor(Fig)`'s coverage rather than duplicating it here).
+// This instantiation (plus every `Editor(Fig)` call below) is what pulls
+// `Editor(Fig)`'s own methods into the test build's reachability graph — `zig
+// test` analyzes a generic struct's methods only once something calls them, so
+// an `Editor(Fig)` that nothing instantiates is an `Editor(Fig)` nothing
+// type-checks. (`fig/editor_helper.zig`'s `test` blocks are discovered through
+// `fig.zig`'s own `test {}`, and carry the rest of `Editor(Fig)`'s coverage
+// rather than duplicating it here; the same split holds for TOML above.)
 test "addLeadingComment on fig uses # at the target's own marker depth" {
     if (comptime !build_options.lang_fig) return error.SkipZigTest;
     try expectCommentEdit(Fig, .Fig, "a = 1\nb = 2\n", "a = 1\n# note\nb = 2\n", .leading, &.{.{ .key = "b" }}, "note");

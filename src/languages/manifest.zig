@@ -279,7 +279,7 @@ pub const Syntax = struct {
     /// Whether a BLOCK (non-flow) sequence can be edited in place.
     ///
     /// False for TOML alone: a non-flow TOML sequence is an array-of-tables,
-    /// which `appendTableToArray` handles instead, and TOML has no block
+    /// which `appendContainerToSeq` handles instead, and TOML has no block
     /// scalar array. Append/prepend/remove/reorder all refuse with
     /// `NotAnInlineArray` when this is false.
     block_seq_editable: bool = true,

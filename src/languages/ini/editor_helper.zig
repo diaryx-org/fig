@@ -46,7 +46,13 @@ const Ini = @import("ini.zig").Language;
 const IniEditor = editor.Editor(Ini);
 
 const lineStartBefore = editor.lineStartBefore;
+const lineEndAfter = editor.lineEndAfter;
 const firstNonSpace = editor.firstNonSpace;
+
+/// The multi-region machinery INI shares with TOML and fig — everything
+/// downstream of the gather below. See `../shared/sections.zig`.
+const sections = @import("../shared/sections.zig");
+const Region = sections.Region;
 
 /// Insert `key_text = value_text` into the mapping at `node` (root or a
 /// section) — the same block-mapping primitive JSON/YAML/dotenv/.properties
@@ -89,6 +95,125 @@ pub fn sectionDeleteGuard(self: *IniEditor, parsed: Document, node: AST.Node, sp
 pub fn isSectionHeaderLine(source: []const u8, span: Span) bool {
     const fns = firstNonSpace(source, lineStartBefore(source, span.start));
     return fns < source.len and source[fns] == '[';
+}
+
+// ============================================================================
+// WHOLE-SECTION STRUCTURAL EDITING (multi-region)
+// ============================================================================
+//
+// What `sectionDeleteGuard` above refuses, these do properly. A `[section]` may
+// be REOPENED (`[a]` … `[b]` … `[a]`), which the parser merges into one mapping
+// whose span anchors only the FIRST header — so a section's bytes are scattered
+// exactly the way a TOML table's or a fig container's are, and the same answer
+// applies: gather the disjoint line-regions, rebuild the source once. The
+// reopened headers come from `Document.reentry_headers`, which `parser.zig`
+// records at its merge branch for this.
+//
+// INI's gather is the simplest of the three: one level of nesting, no arrays,
+// no dotted keys, no flow syntax — a section is its header lines plus its
+// entries' lines, with no recursion. Everything after that is shared
+// (`../shared/sections.zig`).
+//
+// There is no `insertContainer`/`renameContainer` twin: a new `[section]` is
+// `set`'s business (INI cannot auto-vivify — see the module doc), and a rename
+// is one tight span the generic `replaceKeyAtPath` already rewrites, since an
+// INI header has no dotted descendants to follow.
+
+/// The physical line of a `[section]` header — the owned comment block above it
+/// through the header line's own newline. `content_start` is any position on
+/// that line at or after its indent: a section mapping's own span (anchored at
+/// the name token inside the brackets) or a recorded re-entry's `content_start`.
+fn headerLineRegion(source: []const u8, content_start: usize) Region {
+    const ls = lineStartBefore(source, content_start);
+    return .{ .start = editor.commentBlockStart(source, ls, .semicolon), .end = lineEndAfter(source, ls) };
+}
+
+/// Every region belonging to the section at `path`: its header line, every
+/// reopened header line, and each of its entries' own lines.
+///
+/// `error.NotAContainer` when `path` doesn't name a `[section]` — a root-level
+/// scalar key (use `deleteKey`), or a path that resolves to a value rather than
+/// a mapping. INI has one level of nesting, so a section is always at the root.
+fn gatherSection(parsed: Document, source: []const u8, allocator: std.mem.Allocator, path: []const AST.PathSegment) !struct { node: AST.Node, regions: std.ArrayList(Region) } {
+    if (path.len != 1) return error.NotAContainer;
+    const node = try parsed.ast.getValByPath(path);
+    if (node.kind != .mapping) return error.NotAContainer;
+
+    var regions: std.ArrayList(Region) = .empty;
+    errdefer regions.deinit(allocator);
+    try regions.append(allocator, headerLineRegion(source, parsed.span(node).start));
+    for (parsed.reentry_headers) |rh| {
+        if (rh.node_id == node.id) try regions.append(allocator, headerLineRegion(source, rh.content_start));
+    }
+    var cur = node.kind.mapping;
+    while (cur) |id| : (cur = parsed.ast.nodes[id].next_sibling) {
+        try regions.append(allocator, sections.entryLineRegion(source, parsed.span(parsed.ast.nodes[id]), .semicolon));
+    }
+    return .{ .node = node, .regions = regions };
+}
+
+/// Delete the whole `[section]` named by `path` — every occurrence of its
+/// header plus all of its entries — leaving interleaved foreign sections in
+/// place. The op `sectionDeleteGuard` points a `deleteKey` caller at.
+pub fn deleteContainer(self: *IniEditor, path: []const AST.PathSegment) !void {
+    const parsed = try self.getParsed();
+    const source = self.source.items;
+    var g = try gatherSection(parsed, source, self.allocator, path);
+    defer g.regions.deinit(self.allocator);
+    const n = sections.normalize(g.regions.items, true);
+    try sections.spliceOut(self, g.regions.items[0..n]);
+}
+
+/// Move the whole `[section]` at `src_path` so it begins immediately before the
+/// section at `dest_path`, or at end-of-file when `dest_path` is null. A
+/// reopened section's fragments are collapsed together at the destination;
+/// foreign sections stay put.
+pub fn moveContainer(self: *IniEditor, src_path: []const AST.PathSegment, dest_path: ?[]const AST.PathSegment) !void {
+    const parsed = try self.getParsed();
+    const source = self.source.items;
+    var g = try gatherSection(parsed, source, self.allocator, src_path);
+    defer g.regions.deinit(self.allocator);
+    const n = sections.normalize(g.regions.items, true);
+
+    const dest_at = blk: {
+        if (dest_path) |dp| {
+            if (dp.len != 1) return error.NotAContainer;
+            const dn = try parsed.ast.getValByPath(dp);
+            if (dn.kind != .mapping) return error.NotAContainer;
+            break :blk headerLineRegion(source, parsed.span(dn).start).start;
+        }
+        break :blk source.len;
+    };
+    try sections.relocate(self, g.regions.items[0..n], dest_at);
+}
+
+/// Reorder the `[section]`s named by `order` among themselves, each re-emitted
+/// contiguously at the position the earliest currently occupies. Sections not
+/// named — and any root-level keys above the first section — are untouched.
+pub fn reorderContainers(self: *IniEditor, order: []const []const u8) !void {
+    if (order.len == 0) return;
+    const parsed = try self.getParsed();
+    const source = self.source.items;
+
+    var all: std.ArrayList(Region) = .empty;
+    defer all.deinit(self.allocator);
+    var bundles: std.ArrayList([]u8) = .empty;
+    defer {
+        for (bundles.items) |b| self.allocator.free(b);
+        bundles.deinit(self.allocator);
+    }
+
+    for (order) |name| {
+        const path: [1]AST.PathSegment = .{.{ .key = name }};
+        var g = try gatherSection(parsed, source, self.allocator, &path);
+        defer g.regions.deinit(self.allocator);
+        const n = sections.normalize(g.regions.items, true);
+        const owned = try sections.captureBundle(self.allocator, source, g.regions.items[0..n], &all);
+        errdefer self.allocator.free(owned);
+        try bundles.append(self.allocator, owned);
+    }
+    const total = sections.normalize(all.items, true);
+    try sections.reorderBundles(self, all.items[0..total], bundles.items);
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -138,6 +263,82 @@ test "ini deleteKey refuses to delete a whole [section] header" {
     // empty) section header intact.
     try ed.deleteKey(&.{ .{ .key = "server" }, .{ .key = "host" } });
     try testing.expectEqualStrings("[server]\n", ed.source.items);
+}
+
+test "ini deleteContainer removes a whole section" {
+    var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
+    try ed.init("[a]\nx = 1\n[b]\ny = 2\n");
+    defer ed.deinit();
+    try ed.deleteContainer(&.{.{ .key = "a" }});
+    try testing.expectEqualStrings("[b]\ny = 2\n", ed.source.items);
+}
+
+test "ini deleteContainer removes EVERY occurrence of a reopened section" {
+    // The case `sectionDeleteGuard` refuses a line-delete for: `[a]` is
+    // scattered, and its second header is in no node's span. Without
+    // `Document.reentry_headers` the trailing `[a]` would survive and adopt
+    // whatever followed it.
+    var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
+    try ed.init("[a]\nx = 1\n[b]\ny = 2\n[a]\nz = 3\n");
+    defer ed.deinit();
+    try ed.deleteContainer(&.{.{ .key = "a" }});
+    try testing.expectEqualStrings("[b]\ny = 2\n", ed.source.items);
+}
+
+test "ini deleteContainer removes an EMPTY reopened header too" {
+    // A reopen with no entries under it has nothing to find it by except the
+    // recorded re-entry — a gather that scanned upward from each child would
+    // leave this one behind.
+    var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
+    try ed.init("[a]\nx = 1\n[b]\ny = 2\n[a]\n");
+    defer ed.deinit();
+    try ed.deleteContainer(&.{.{ .key = "a" }});
+    try testing.expectEqualStrings("[b]\ny = 2\n", ed.source.items);
+}
+
+test "ini deleteContainer takes owned comments with the section" {
+    var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
+    try ed.init("; about a\n[a]\n; about x\nx = 1\n[b]\ny = 2\n");
+    defer ed.deinit();
+    try ed.deleteContainer(&.{.{ .key = "a" }});
+    try testing.expectEqualStrings("[b]\ny = 2\n", ed.source.items);
+}
+
+test "ini deleteContainer refuses a root-level scalar key" {
+    var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
+    try ed.init("name = fig\n[a]\nx = 1\n");
+    defer ed.deinit();
+    try testing.expectError(error.NotAContainer, ed.deleteContainer(&.{.{ .key = "name" }}));
+    try testing.expectEqualStrings("name = fig\n[a]\nx = 1\n", ed.source.items);
+}
+
+test "ini moveContainer relocates a section before another, collapsing its fragments" {
+    var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
+    try ed.init("[a]\nx = 1\n[b]\ny = 2\n[a]\nz = 3\n");
+    defer ed.deinit();
+    // `a`'s two fragments are removed and re-emitted as one section at `b`.
+    // No blank line before it: `b` was already the file's second section, so
+    // the relocated block lands at the very start with nothing preceding it to
+    // separate from (see `sections.appendWithBlankBefore`).
+    try ed.moveContainer(&.{.{ .key = "a" }}, &.{.{ .key = "b" }});
+    try testing.expectEqualStrings("[a]\nx = 1\n[a]\nz = 3\n[b]\ny = 2\n", ed.source.items);
+}
+
+test "ini moveContainer with a null destination moves to EOF" {
+    var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
+    try ed.init("[a]\nx = 1\n[b]\ny = 2\n");
+    defer ed.deinit();
+    try ed.moveContainer(&.{.{ .key = "a" }}, null);
+    try testing.expectEqualStrings("[b]\ny = 2\n\n[a]\nx = 1\n", ed.source.items);
+}
+
+test "ini reorderContainers reorders named sections, leaving others in place" {
+    var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
+    try ed.init("[a]\nx = 1\n[b]\ny = 2\n[c]\nz = 3\n");
+    defer ed.deinit();
+    try ed.reorderContainers(&.{ "c", "a" });
+    // `b` is untouched; `c` and `a` swap into the slot `a` held.
+    try testing.expectEqualStrings("[c]\nz = 3\n[a]\nx = 1\n[b]\ny = 2\n", ed.source.items);
 }
 
 test "ini reopened/scattered section: insertKey appends after the LAST physical entry" {

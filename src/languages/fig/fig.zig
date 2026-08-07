@@ -91,6 +91,26 @@ pub const Language = struct {
     /// pair — sized for a plain-whitespace indent — would drop.
     pub const appendToSeq = edit.figAppendSeqLine;
     pub const prependToSeq = edit.figPrependSeqLine;
+
+    // ── Whole-container ops ──────────────────────────────────────────────────
+    //
+    // The EXCLUSIVE operations, shared in shape with TOML and INI (see
+    // `editor.Editor`'s block of the same name): a fig block container may be
+    // re-entered and scattered, so these gather its disjoint regions rather
+    // than splicing one range. No `insertContainer`/`appendContainerToSeq` —
+    // `set` already vivifies a path — and no `renameContainer`, since a fig
+    // header carries its key in one tight span the generic `replaceKeyAtPath`
+    // rewrites in place.
+
+    /// Every region of the container's subtree, re-entered header lines
+    /// included (`Document.reentry_headers`).
+    pub const deleteContainer = edit.deleteContainer;
+
+    /// The container's fragments, re-emitted contiguously at the destination.
+    pub const moveContainer = edit.moveContainer;
+
+    /// Top-level containers reordered among themselves.
+    pub const reorderContainers = edit.reorderContainers;
 };
 
 // Test discovery: importing `fig.zig` (from root.zig) pulls in every fig

@@ -76,6 +76,38 @@ pub const Language = struct {
     /// A `[header]` table has no contiguous line span, so the generic
     /// line-based delete would remove its header and orphan the body.
     pub const deleteKeyGuard = edit.tableDeleteGuard;
+
+    // ── Whole-container ops ──────────────────────────────────────────────────
+    //
+    // The EXCLUSIVE operations: they override nothing, because the generic
+    // engine has no counterpart for editing a container assembled from
+    // scattered `[header]` regions. Declaring one is still the whole of opting
+    // in — `Editor` dispatches on `@hasDecl` here exactly as it does for the
+    // hooks above. TOML declares all six; a format that declares none simply
+    // has no whole-container surface.
+
+    /// Every region of the table / array-of-tables / AoT element's subtree.
+    pub const deleteContainer = edit.deleteTable;
+
+    /// A new `[path]` table, spliced past the parent's whole subtree so no
+    /// existing key is reparented.
+    pub const insertContainer = edit.insertTable;
+
+    /// TOML alone needs a rename op: the renamed segment appears in every
+    /// descendant header (`[a.b]`, `[a.b.c]`, `[[a.b]]`), not just its own.
+    pub const renameContainer = edit.renameTable;
+
+    /// The table's scattered fragments, re-emitted contiguously at the
+    /// destination; interleaved foreign tables stay put.
+    pub const moveContainer = edit.moveTable;
+
+    /// Top-level tables reordered among themselves, each re-emitted
+    /// contiguously at the position the earliest currently occupies.
+    pub const reorderContainers = edit.reorderTables;
+
+    /// A new `[[header]]` element on the end of an array-of-tables, past every
+    /// line of the current last element's subtree.
+    pub const appendContainerToSeq = edit.appendTableToArray;
 };
 
 // Test discovery for the TOML module: importing `toml.zig` (from root.zig) pulls

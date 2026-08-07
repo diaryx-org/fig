@@ -30,8 +30,9 @@
 //! Every built node also carries a source `Span` (see "AST assembly" below) —
 //! the foundation `Editor(fig.Language.FIG)` needs to splice edits in place
 //! (`edit`/`set`/`insert`/`delete`/`comment`; see `editor_helper.zig`).
-//! Whole-container structural ops (rename/move/reorder a header, analogous to
-//! TOML's `renameTable`/`moveTable`) are not implemented yet.
+//! Whole-container structural ops — `deleteContainer`/`moveContainer`/
+//! `reorderContainers`, over the region gather in `editor_helper.zig` — are
+//! built on those spans plus `reentry_headers` below.
 
 pub const Parser = @This();
 

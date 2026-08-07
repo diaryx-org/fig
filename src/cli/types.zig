@@ -24,8 +24,8 @@ const L = fig.Language;
 // `insert`/`delete`/`comment` through the same span-splice engine as
 // TOML/YAML/ZON (see `fig/editor_helper.zig`, which also carries the
 // whole-container structural ops — `deleteContainer`/`moveContainer`/
-// `reorderContainers`, fig's twins of TOML's `deleteTable`/`moveTable`/
-// `reorderTables` — library-level only, same as TOML's). `gron` is a CLI-only
+// `reorderContainers`, the same declared ops TOML and INI supply for their own
+// scattered containers — library-level only). `gron` is a CLI-only
 // echo format with no
 // `AST.SerializeFormat` counterpart.
 pub const Format = @Enum(L.EnumTag(format_names), .exhaustive, format_names, &L.enumValues(format_names));

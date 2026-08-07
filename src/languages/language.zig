@@ -852,6 +852,23 @@ const Decls = struct {
         "getTrailingComment",
     };
 
+    /// Whole-container ops for SECTION formats — those whose logical containers
+    /// are scattered through the source (TOML tables, fig block containers, INI
+    /// sections). Unlike `hooks` these override nothing: the generic engine has
+    /// no counterpart, because there is no single range to splice. Declaring one
+    /// is still the whole of opting in; `editor.Editor`'s method of the same
+    /// name dispatches on `@hasDecl` and refuses at comptime for a format that
+    /// declares nothing (see its `requireSectionOp`).
+    ///
+    /// Kept as a separate set from `hooks` because the reachability rules below
+    /// do not apply: a hook can be unreachable behind a `syntax` refusal, while
+    /// one of these IS the operation and is reachable whenever it is declared.
+    const exclusive = [_][]const u8{
+        "deleteContainer",    "insertContainer",
+        "renameContainer",    "moveContainer",
+        "reorderContainers",  "appendContainerToSeq",
+    };
+
     fn has(comptime set: []const []const u8, comptime name: []const u8) bool {
         for (set) |k| if (std.mem.eql(u8, k, name)) return true;
         return false;
@@ -859,7 +876,7 @@ const Decls = struct {
 
     fn known(comptime name: []const u8) bool {
         return has(&required, name) or has(&required_edit, name) or
-            has(&optional, name) or has(&hooks, name);
+            has(&optional, name) or has(&hooks, name) or has(&exclusive, name);
     }
 
     /// The known name `name` differs from only by letter case, or null.
@@ -869,7 +886,7 @@ const Decls = struct {
     /// slip (`insertkey`, `appendtoseq`), and that is the one this catches. A
     /// wilder misspelling still fails; it just fails without a suggestion.
     fn nearest(comptime name: []const u8) ?[]const u8 {
-        for ([_][]const []const u8{ &required, &required_edit, &optional, &hooks }) |set| {
+        for ([_][]const []const u8{ &required, &required_edit, &optional, &hooks, &exclusive }) |set| {
             for (set) |k| if (std.ascii.eqlIgnoreCase(k, name)) return k;
         }
         return null;
@@ -950,14 +967,17 @@ pub fn validate(comptime Lang: type) void {
                     " — did you mean '" ++ near ++ "'?"
                 else
                     ". Editing hooks must be named for the `editor.Editor` method they" ++
-                        " override, and added to `Decls.hooks` in language.zig.");
+                        " override, and added to `Decls.hooks` in language.zig" ++
+                        " (or `Decls.exclusive` for a whole-container op).");
         }
 
         // Coherence: a format that says it cannot be edited must not declare
         // editing behaviour. Without this, `caps.edit = false` and a live hook
-        // can disagree indefinitely — nothing else reads both.
+        // can disagree indefinitely — nothing else reads both. Whole-container
+        // ops count: `Editor` is where they are reached, so declaring one on a
+        // format with no editor is the same contradiction.
         if (!Lang.caps.edit) {
-            for (Decls.hooks) |name| {
+            for (Decls.hooks ++ Decls.exclusive) |name| {
                 if (@hasDecl(Lang, name))
                     @compileError("Language '" ++ Lang.name ++ "' declares caps.edit = false" ++
                         " but supplies the editing hook '" ++ name ++ "'");

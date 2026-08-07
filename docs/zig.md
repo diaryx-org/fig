@@ -316,24 +316,33 @@ try ed.deleteTrailingComment(&.{.{ .key = "port" }});
 The comment marker (`#`, `//`) is chosen for the language; strict JSON has no
 comments and every comment op returns `error.CommentsUnsupported`.
 
-Two languages get extra whole-container operations no other format needs,
-compile-error-guarded so they only exist for their own `Editor(Lang)`:
+### Whole-container editing (section formats)
+
+TOML, fig and INI have containers whose bytes are *scattered* — a TOML table
+reopened by a later `[header]`, a fig container re-entered further down, an INI
+`[section]` written twice. There is no single byte range to splice, so these
+formats get extra operations that gather a container's disjoint regions and
+rebuild the source in one edit:
 
 ```zig
-// TOML: whole-table structural editing. Paths here are the usual
-// `[]const AST.PathSegment`; only `reorderTables`/`reorderContainers` take
-// plain key-name strings instead (there's nothing to index into yet).
-try ed.insertTable(&.{ .{ .key = "servers" }, .{ .key = "alpha" } }, "ip = \"10.0.0.1\"\n");
-try ed.deleteTable(&.{ .{ .key = "servers" }, .{ .key = "alpha" } });
-try ed.renameTable(&.{.{ .key = "servers" }}, "hosts");
-try ed.moveTable(&.{.{ .key = "a" }}, &.{.{ .key = "b" }}); // null dest_path = move to EOF
-try ed.reorderTables(&.{ "package", "dependencies" });
-
-// fig: whole-container structural editing (its generalization of the above).
+// Paths are the usual `[]const AST.PathSegment`; only `reorderContainers`
+// takes plain key-name strings (there's nothing to index into yet).
 try ed.deleteContainer(&.{.{ .key = "servers" }});
-try ed.moveContainer(&.{.{ .key = "a" }}, null);
-try ed.reorderContainers(&.{ "database", "logging" });
+try ed.moveContainer(&.{.{ .key = "a" }}, &.{.{ .key = "b" }}); // null dest = move to EOF
+try ed.reorderContainers(&.{ "package", "dependencies" });
+
+// TOML additionally, where a header path has descendants to follow:
+try ed.insertContainer(&.{ .{ .key = "servers" }, .{ .key = "alpha" } }, "ip = \"10.0.0.1\"\n");
+try ed.renameContainer(&.{.{ .key = "servers" }}, "hosts"); // also `[servers.x]`, `[[servers.y]]`
+try ed.appendContainerToSeq(&.{.{ .key = "products" }}, "name = \"hammer\"\n"); // new `[[products]]`
 ```
+
+Which ops a format has is a declaration, not a hardcoded list: each is present
+exactly when that language declares it (`@hasDecl(Lang, "deleteContainer")`),
+and calling one a format doesn't declare is a compile error naming the format
+and the missing declaration. Today TOML declares all six, fig and INI the first
+three. Everything else — YAML, JSON, ZON, … — has contiguous containers, where
+`deleteKey` is already the right operation.
 
 ## Markdown frontmatter & embeds
 

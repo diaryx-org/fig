@@ -70,6 +70,26 @@ pub const Language = struct {
     /// A `[section]`'s span is anchored at its first occurrence's header alone,
     /// so a line delete would orphan a reopened section's later entries.
     pub const deleteKeyGuard = edit.sectionDeleteGuard;
+
+    // ── Whole-container ops ──────────────────────────────────────────────────
+    //
+    // The EXCLUSIVE operations (see `editor.Editor`'s block of the same name).
+    // A reopened `[section]` is scattered through the file exactly as a TOML
+    // table or fig container is, so INI answers it the same way: gather the
+    // section's disjoint regions, rebuild once. No `insertContainer` (INI
+    // cannot auto-vivify at all — `syntax().empty_map_literal` is null) and no
+    // `renameContainer` (a header's key is one tight span the generic
+    // `replaceKeyAtPath` rewrites, with no dotted descendants to follow).
+
+    /// Every occurrence of the section's header, plus its entries — the op
+    /// `deleteKeyGuard` above refuses a line-delete in favour of.
+    pub const deleteContainer = edit.deleteContainer;
+
+    /// The section's fragments, re-emitted contiguously at the destination.
+    pub const moveContainer = edit.moveContainer;
+
+    /// Top-level sections reordered among themselves.
+    pub const reorderContainers = edit.reorderContainers;
 };
 
 // Test discovery: importing `ini.zig` (from root.zig) pulls in every INI

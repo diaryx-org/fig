@@ -1363,10 +1363,9 @@ object's own fig-inline (`=`) vs JSON (`:`) pair mode. `edit`/`set`/`insert`/
 `delete`/`comment` all work on `.figl` now.
 
 **Landed: whole-container structural ops.** `deleteContainer`/`moveContainer`/
-`reorderContainers` — fig's twins of TOML's `deleteTable`/`moveTable`/
-`reorderTables` (library-level only, same as TOML's; no dedicated
-`renameContainer` — the generic `replaceKeyAtPath` already splices a header's
-key in place). Built on `gatherContainerRegions`, the fig generalization of
+`reorderContainers` — the same three ops TOML and INI declare for their own
+scattered containers (library-level only; no `renameContainer` — the generic
+`replaceKeyAtPath` already splices a header's key in place). Built on `gatherContainerRegions`, the fig generalization of
 TOML's bracket-header region-gather: fig has no `[header]` token to grep for,
 but ANY block (non-flow) mapping/sequence-valued entry was introduced by SOME
 header line regardless of depth, so recursing into every such child and

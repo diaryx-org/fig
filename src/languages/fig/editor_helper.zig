@@ -17,8 +17,11 @@
 //! `reorderContainers`)
 //!
 //! fig has no `[bracket]` syntax to grep for like TOML, but the same
-//! multi-region gather TOML needs (`toml/editor_helper.zig`) generalizes here:
-//! ANY block (non-flow) mapping/sequence-valued entry was introduced by SOME
+//! multi-region gather TOML needs generalizes here — and everything downstream
+//! of the gather (coalesce, splice out, relocate, reorder) is literally the
+//! same code, in `../shared/sections.zig`. What stays fig's own is the
+//! classification, and it is a different question than TOML's: ANY block
+//! (non-flow) mapping/sequence-valued entry was introduced by SOME
 //! header line — a bare/dotted zero-marker path OR a nested `>` line, no
 //! difference in kind (DESIGN.md "a header only selects/creates a map path")
 //! — so `gatherContainerRegions` recurses into every block-container child
@@ -77,6 +80,12 @@ const lineStartBefore = editor.lineStartBefore;
 const lineEndAfter = editor.lineEndAfter;
 const firstNonSpace = editor.firstNonSpace;
 const isFlow = editor.isFlow;
+
+/// The multi-region machinery fig shares with TOML and INI: everything
+/// downstream of "which lines belong to this container", which is the part that
+/// stays here (`gatherContainerRegions`). See `shared/sections.zig`.
+const sections = @import("../shared/sections.zig");
+const Region = sections.Region;
 
 /// The marker-prefix text (leading whitespace + `>` run + the one load-bearing
 /// separator space, or "" at root) that precedes the content starting at
@@ -353,10 +362,6 @@ pub fn figPrependSeqLine(self: *FigEditor, parsed: Document, node: AST.Node, val
 // key in place (it only touches the key's own tight span).
 // ============================================================================
 
-/// A line-aligned source range `[start, end)` belonging to a logical
-/// container's subtree. Mirrors `toml/editor_helper.zig`'s `Region`.
-const Region = struct { start: usize, end: usize };
-
 /// The physical line of a fig block container's OWN header — the comment
 /// block above it through the header line's own newline. `content_start` is
 /// any position on that line at or after the marker prefix — a mapping
@@ -374,7 +379,7 @@ fn headerLineRegion(source: []const u8, content_start: usize) Region {
 /// or sequence element: its owned comment block through the end of its own
 /// span's last line (multi-line only for a `'''`/`"""` string value).
 fn entryLineRegion(source: []const u8, span: Span) Region {
-    return .{ .start = commentBlockStart(source, lineStartBefore(source, span.start)), .end = lineEndAfter(source, span.end -| 1) };
+    return sections.entryLineRegion(source, span, .hash);
 }
 
 /// `../editor.zig`'s `commentBlockStart`, pinned to fig's `#` marker (the only
@@ -452,62 +457,11 @@ fn appendReentryHeaderLines(parsed: Document, source: []const u8, allocator: std
     }
 }
 
-/// Sort `regions` by start and coalesce overlapping/touching ones into a
-/// disjoint, ascending set (in place); returns the coalesced count. Mirrors
-/// `toml/editor_helper.zig`'s `normalizeRegions` (touching regions DO merge
-/// here — unlike TOML's rename, nothing in this module needs to address a
-/// region's own start independently of its neighbor).
+/// Coalesce in place, merging regions that merely touch: unlike TOML's rename,
+/// nothing here needs to address a region's own start independently of its
+/// neighbor. See `sections.normalize`.
 fn normalizeRegions(regions: []Region) usize {
-    std.mem.sort(Region, regions, {}, struct {
-        fn lt(_: void, a: Region, b: Region) bool {
-            return a.start < b.start;
-        }
-    }.lt);
-    if (regions.len == 0) return 0;
-    var w: usize = 0;
-    for (regions[1..]) |r| {
-        if (r.start <= regions[w].end) {
-            regions[w].end = @max(regions[w].end, r.end);
-        } else {
-            w += 1;
-            regions[w] = r;
-        }
-    }
-    return w + 1;
-}
-
-/// Rebuild the source with `regions` (disjoint, ascending) removed, in one
-/// `replaceAtSpan` so the reparse/rollback runs once.
-fn spliceOutRegions(self: *FigEditor, regions: []const Region) !void {
-    const source = self.source.items;
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-    var pos: usize = 0;
-    for (regions) |r| {
-        try out.appendSlice(self.allocator, source[pos..r.start]);
-        pos = r.end;
-    }
-    try out.appendSlice(self.allocator, source[pos..]);
-    try self.replaceAtSpan(Span.init(0, source.len), out.items);
-}
-
-/// Append `block` to `out` separated from any preceding content by exactly
-/// one blank line (two newlines) — used when relocating a container so it
-/// reads as its own section at the destination. Mirrors
-/// `toml/editor_helper.zig`'s `appendWithBlankBefore`.
-fn appendWithBlankBefore(out: *std.ArrayList(u8), allocator: std.mem.Allocator, block: []const u8) !void {
-    if (block.len == 0) return;
-    const n = out.items.len;
-    if (n > 0) {
-        if (n >= 2 and out.items[n - 1] == '\n' and out.items[n - 2] == '\n') {
-            // already a blank line
-        } else if (out.items[n - 1] == '\n') {
-            try out.append(allocator, '\n');
-        } else {
-            try out.appendSlice(allocator, "\n\n");
-        }
-    }
-    try out.appendSlice(allocator, block);
+    return sections.normalize(regions, true);
 }
 
 /// The gathered, coalesced region set for the block container at `path`
@@ -544,7 +498,7 @@ pub fn deleteContainer(self: *FigEditor, path: []const AST.PathSegment) !void {
     var g = try gatherKeyedContainer(parsed, source, self.allocator, path);
     defer g.regions.deinit(self.allocator);
     const n = normalizeRegions(g.regions.items);
-    try spliceOutRegions(self, g.regions.items[0..n]);
+    try sections.spliceOut(self, g.regions.items[0..n]);
 }
 
 /// Move the whole block container at `src_path` so it begins immediately
@@ -561,8 +515,6 @@ pub fn moveContainer(self: *FigEditor, src_path: []const AST.PathSegment, dest_p
     var g = try gatherKeyedContainer(parsed, source, self.allocator, src_path);
     defer g.regions.deinit(self.allocator);
     const n = normalizeRegions(g.regions.items);
-    const used = g.regions.items[0..n];
-    if (n == 0) return;
 
     const dest_at = blk: {
         if (dest_path) |dp| {
@@ -573,40 +525,7 @@ pub fn moveContainer(self: *FigEditor, src_path: []const AST.PathSegment, dest_p
         }
         break :blk source.len;
     };
-    for (used) |r| if (dest_at > r.start and dest_at < r.end) return; // no-op: destination is inside the source
-
-    var moved: std.ArrayList(u8) = .empty;
-    defer moved.deinit(self.allocator);
-    for (used) |r| try moved.appendSlice(self.allocator, source[r.start..r.end]);
-
-    // Emit the kept source with the used regions removed and `moved` spliced in
-    // at `dest_at`, in a single pass. The result is at most the source plus the
-    // separator `appendWithBlankBefore` may add (the moved bytes are cut from
-    // the source, then re-added), so one precise reservation avoids reallocs.
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-    try out.ensureTotalCapacity(self.allocator, source.len + 2);
-    var inserted = false;
-    var pos: usize = 0;
-    for (used) |r| {
-        if (!inserted and dest_at >= pos and dest_at <= r.start) {
-            try out.appendSlice(self.allocator, source[pos..dest_at]);
-            try appendWithBlankBefore(&out, self.allocator, moved.items);
-            try out.appendSlice(self.allocator, source[dest_at..r.start]);
-            inserted = true;
-        } else {
-            try out.appendSlice(self.allocator, source[pos..r.start]);
-        }
-        pos = r.end;
-    }
-    if (!inserted) {
-        try out.appendSlice(self.allocator, source[pos..dest_at]);
-        try appendWithBlankBefore(&out, self.allocator, moved.items);
-        try out.appendSlice(self.allocator, source[dest_at..]);
-    } else {
-        try out.appendSlice(self.allocator, source[pos..]);
-    }
-    try self.replaceAtSpan(Span.init(0, source.len), out.items);
+    try sections.relocate(self, g.regions.items[0..n], dest_at);
 }
 
 /// Reorder a set of top-level block containers (named by `order`, the keys in
@@ -634,42 +553,12 @@ pub fn reorderContainers(self: *FigEditor, order: []const []const u8) !void {
         var g = try gatherKeyedContainer(parsed, source, self.allocator, &path);
         defer g.regions.deinit(self.allocator);
         const n = normalizeRegions(g.regions.items);
-        var bytes: std.ArrayList(u8) = .empty;
-        // Guard both windows before `bundles` owns the buffer: an OOM during the
-        // fill loop frees the growable `bytes`; an OOM in the final `append`
-        // (after `toOwnedSlice` has emptied `bytes`) frees the moved-out slice.
-        errdefer bytes.deinit(self.allocator);
-        for (g.regions.items[0..n]) |r| {
-            try bytes.appendSlice(self.allocator, source[r.start..r.end]);
-            try all.append(self.allocator, r);
-        }
-        const owned = try bytes.toOwnedSlice(self.allocator);
+        const owned = try sections.captureBundle(self.allocator, source, g.regions.items[0..n], &all);
         errdefer self.allocator.free(owned);
         try bundles.append(self.allocator, owned);
     }
     const total = normalizeRegions(all.items);
-    const used = all.items[0..total];
-    if (total == 0) return;
-    const anchor = used[0].start;
-
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-    var pos: usize = 0;
-    for (used) |r| {
-        if (anchor >= pos and anchor <= r.start) {
-            try out.appendSlice(self.allocator, source[pos..anchor]);
-            for (bundles.items) |b| {
-                try editor.appendBlockSep(&out, self.allocator, b);
-                if (b.len > 0 and b[b.len - 1] != '\n') try out.append(self.allocator, '\n');
-            }
-            try out.appendSlice(self.allocator, source[anchor..r.start]);
-        } else {
-            try out.appendSlice(self.allocator, source[pos..r.start]);
-        }
-        pos = r.end;
-    }
-    try out.appendSlice(self.allocator, source[pos..]);
-    try self.replaceAtSpan(Span.init(0, source.len), out.items);
+    try sections.reorderBundles(self, all.items[0..total], bundles.items);
 }
 
 // =======

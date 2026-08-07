@@ -1,12 +1,17 @@
 //! TOML-specific editing helpers for `Editor(Toml)`.
 //!
 //! The generic span-splice engine lives in `../editor.zig`; this module holds the
-//! TOML-only logic it delegates to — the multi-region gather that lets whole-table
+//! TOML-only logic it delegates to — the multi-region GATHER that lets whole-table
 //! ops (delete/insert/rename/move/reorder) work across TOML's scattered headers,
 //! plus header-path rendering. Everything here is a pure function of
 //! `(Document, source, allocator)` returning regions/bytes, so it has no
 //! dependency on the `Editor` struct itself (only the shared source-coordinate
 //! utilities, aliased below). See `editor.zig` for the public methods.
+//!
+//! What the gather FEEDS is shared: `../shared/sections.zig` holds the coalesce,
+//! splice-out, relocate and reorder steps that TOML, fig and INI all run once
+//! they know which lines belong to a container. Only the classification is
+//! TOML's own — here, a line starting with `[`.
 
 const std = @import("std");
 
@@ -30,7 +35,12 @@ const firstNonSpace = editor.firstNonSpace;
 const commentBlockStart = editor.commentBlockStart;
 const CommentStyle = editor.CommentStyle;
 const isFlow = editor.isFlow;
-const appendBlockSep = editor.appendBlockSep;
+
+/// The multi-region machinery TOML shares with fig and INI: everything
+/// downstream of "which lines belong to this table", which is the part that
+/// stays here (`gatherTableRegions` and friends). See `shared/sections.zig`.
+const sections = @import("../shared/sections.zig");
+const Region = sections.Region;
 
 /// Largest source `end` over the subtree rooted at `id` — the textual end of an
 /// AoT element including any nested `[header]`/`[[header]]` sub-tables (whose own
@@ -64,9 +74,6 @@ pub fn subtreeMaxEnd(parsed: Document, id: AST.Node.Id) usize {
 // disjoint line-regions that belong to the table's subtree and rebuild the source
 // once. `replaceAtSpan` reparses per call, so every op does exactly one splice.
 
-/// A line-aligned source range `[start, end)` belonging to a logical table.
-pub const Region = struct { start: usize, end: usize };
-
 /// Expand `seg_span` (a header key segment, sitting inside `[...]`/`[[...]]`) to
 /// its full physical line(s) plus any owned leading comment block. Returns null
 /// when the segment's line does not start with `[` — i.e. the table is a dotted
@@ -83,12 +90,7 @@ pub fn headerLineRegion(source: []const u8, seg_span: Span, style: CommentStyle)
 
 /// Full line-region of an in-table entry (`key = value`, possibly multi-line):
 /// its owned comment block through the newline ending its last line.
-pub fn entryLineRegion(source: []const u8, kv_span: Span, style: CommentStyle) Region {
-    return .{
-        .start = commentBlockStart(source, lineStartBefore(source, kv_span.start), style),
-        .end = lineEndAfter(source, kv_span.end -| 1),
-    };
-}
+const entryLineRegion = sections.entryLineRegion;
 
 /// Line start of the nearest line at or above `at` whose first non-space byte is
 /// `[` (a `[table]` / `[[aot]]` header), or null if none. Used to recover an
@@ -240,46 +242,12 @@ pub fn headerSegmentSpan(source: []const u8, region: Region, depth: usize) ?Span
     return null;
 }
 
-/// Sort regions by start and coalesce overlapping ones into a disjoint, ascending
-/// set (in place); returns the coalesced count.
-pub fn normalizeRegions(regions: []Region) usize {
-    std.mem.sort(Region, regions, {}, struct {
-        fn lt(_: void, a: Region, b: Region) bool {
-            return a.start < b.start;
-        }
-    }.lt);
-    if (regions.len == 0) return 0;
-    var w: usize = 0;
-    for (regions[1..]) |r| {
-        // Merge only on real overlap, not mere touching — rename needs each header
-        // line as its own region, while delete/move are unaffected (a zero-width
-        // gap between touching regions copies nothing).
-        if (r.start < regions[w].end) {
-            regions[w].end = @max(regions[w].end, r.end);
-        } else {
-            w += 1;
-            regions[w] = r;
-        }
-    }
-    return w + 1;
-}
-
-/// Append `block` to `out` separated from any preceding content by exactly one
-/// blank line (two newlines). `block` is appended verbatim (it already ends in a
-/// newline). Used to splice a relocated TOML table so it reads as its own section.
-pub fn appendWithBlankBefore(out: *std.ArrayList(u8), allocator: std.mem.Allocator, block: []const u8) !void {
-    if (block.len == 0) return;
-    const n = out.items.len;
-    if (n > 0) {
-        if (n >= 2 and out.items[n - 1] == '\n' and out.items[n - 2] == '\n') {
-            // already a blank line
-        } else if (out.items[n - 1] == '\n') {
-            try out.append(allocator, '\n');
-        } else {
-            try out.appendSlice(allocator, "\n\n");
-        }
-    }
-    try out.appendSlice(allocator, block);
+/// Coalesce in place, merging only on real OVERLAP: `renameTable` addresses
+/// each header region's own start to rewrite the segment inside it, which a
+/// region merged with a touching neighbor would hide. Delete/move/reorder are
+/// insensitive to the choice. See `sections.normalize`.
+fn normalizeRegions(regions: []Region) usize {
+    return sections.normalize(regions, false);
 }
 
 /// Render a TOML header path (`a.b.c`) from a PathSegment list into `out`. Index
@@ -330,9 +298,12 @@ pub fn isTomlBareKey(name: []const u8) bool {
 //     declares each on its `Language` and the generic engine dispatches on
 //     `@hasDecl`, naming no format. See that file's "Editing hooks" block.
 //   * The EXCLUSIVE whole-table ops (`deleteTable`, `moveTable`, …) have no
-//     generic counterpart to override, so `editor.zig` keeps thin public
-//     wrappers (`Editor(Toml).deleteTable` etc.) that forward here, guarded by
-//     `@compileError` for the other ten formats.
+//     generic counterpart to override, but are declared and dispatched the same
+//     way — `toml.zig`'s "Whole-container ops" block maps each to the shared
+//     name `editor.zig` exposes it under (`deleteTable` → `deleteContainer`),
+//     since a TOML table, a fig block container and an INI section are one
+//     operation with three vocabularies. The TOML words stay here, where the
+//     `[header]` reasoning they describe lives.
 
 /// Refuse a line-based delete of a `[header]` table or `[[array]]` element.
 ///
@@ -476,22 +447,6 @@ pub fn appendTableToArray(self: *TomlEditor, path: []const AST.PathSegment, body
 // left in place. Library-level (not CLI/C-ABI wired), matching the rest of TOML
 // editing.
 
-/// Rebuild the source with `regions` (disjoint, ascending) removed, in one
-/// `replaceAtSpan` so the reparse/rollback runs once. `regions` is the slice
-/// actually used (caller passes the coalesced prefix).
-pub fn spliceOutRegions(self: *TomlEditor, regions: []const Region) !void {
-    const source = self.source.items;
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-    var pos: usize = 0;
-    for (regions) |r| {
-        try out.appendSlice(self.allocator, source[pos..r.start]);
-        pos = r.end;
-    }
-    try out.appendSlice(self.allocator, source[pos..]);
-    try self.replaceAtSpan(Span.init(0, source.len), out.items);
-}
-
 /// Delete the whole table, array-of-tables, or single AoT element named by
 /// `path` — including every scattered region of its subtree — leaving any
 /// interleaved foreign tables untouched. A path ending in an index targets one
@@ -523,7 +478,7 @@ pub fn deleteTable(self: *TomlEditor, path: []const AST.PathSegment) !void {
         else => return error.NotATable,
     }
     const n = normalizeRegions(regions.items);
-    try spliceOutRegions(self, regions.items[0..n]);
+    try sections.spliceOut(self, regions.items[0..n]);
 }
 
 /// Search anchor for the AoT element at `path` (which ends in an index): the
@@ -653,8 +608,6 @@ pub fn moveTable(self: *TomlEditor, src_path: []const AST.PathSegment, dest_path
         else => unreachable,
     }
     const n = normalizeRegions(regions.items);
-    const used = regions.items[0..n];
-    if (n == 0) return;
 
     // Destination: start of the dest table's header line, or EOF.
     const dest_at = blk: {
@@ -665,49 +618,7 @@ pub fn moveTable(self: *TomlEditor, src_path: []const AST.PathSegment, dest_path
         }
         break :blk source.len;
     };
-    // No-op only if the destination lands strictly inside a moved region (a
-    // boundary at a fragment's edge — e.g. EOF coinciding with the last fragment
-    // — is still a real relocation that collapses the fragments).
-    for (used) |r| if (dest_at > r.start and dest_at < r.end) return;
-
-    // Capture the table's bytes (document order, gaps dropped) — this is the
-    // contiguous re-emission spliced at the destination.
-    var moved: std.ArrayList(u8) = .empty;
-    defer moved.deinit(self.allocator);
-    for (used) |r| try moved.appendSlice(self.allocator, source[r.start..r.end]);
-
-    // Build the source with the table removed, tracking where `dest_at` lands in
-    // the result; then splice `moved` there with one blank line of separation
-    // from preceding content.
-    var kept: std.ArrayList(u8) = .empty;
-    defer kept.deinit(self.allocator);
-    var insert_pos: ?usize = null;
-    var pos: usize = 0;
-    for (used) |r| {
-        if (insert_pos == null and dest_at >= pos and dest_at <= r.start) {
-            try kept.appendSlice(self.allocator, source[pos..dest_at]);
-            insert_pos = kept.items.len;
-            try kept.appendSlice(self.allocator, source[dest_at..r.start]);
-        } else {
-            try kept.appendSlice(self.allocator, source[pos..r.start]);
-        }
-        pos = r.end;
-    }
-    if (insert_pos == null) {
-        try kept.appendSlice(self.allocator, source[pos..dest_at]);
-        insert_pos = kept.items.len;
-        try kept.appendSlice(self.allocator, source[dest_at..]);
-    } else {
-        try kept.appendSlice(self.allocator, source[pos..]);
-    }
-
-    const ip = insert_pos.?;
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-    try out.appendSlice(self.allocator, kept.items[0..ip]);
-    try appendWithBlankBefore(&out, self.allocator, moved.items);
-    try out.appendSlice(self.allocator, kept.items[ip..]);
-    try self.replaceAtSpan(Span.init(0, source.len), out.items);
+    try sections.relocate(self, regions.items[0..n], dest_at);
 }
 
 /// Reorder a set of top-level tables (named by `order`, the keys in their
@@ -742,36 +653,12 @@ pub fn reorderTables(self: *TomlEditor, order: []const []const u8) !void {
             else => unreachable,
         }
         const n = normalizeRegions(regions.items);
-        var bytes: std.ArrayList(u8) = .empty;
-        for (regions.items[0..n]) |r| {
-            try bytes.appendSlice(self.allocator, source[r.start..r.end]);
-            try all.append(self.allocator, r);
-        }
-        try bundles.append(self.allocator, try bytes.toOwnedSlice(self.allocator));
+        const owned = try sections.captureBundle(self.allocator, source, regions.items[0..n], &all);
+        errdefer self.allocator.free(owned);
+        try bundles.append(self.allocator, owned);
     }
     const total = normalizeRegions(all.items);
-    const used = all.items[0..total];
-    if (total == 0) return;
-    const anchor = used[0].start;
-
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-    var pos: usize = 0;
-    for (used) |r| {
-        if (anchor >= pos and anchor <= r.start) {
-            try out.appendSlice(self.allocator, source[pos..anchor]);
-            for (bundles.items) |b| {
-                try appendBlockSep(&out, self.allocator, b);
-                if (b.len > 0 and b[b.len - 1] != '\n') try out.append(self.allocator, '\n');
-            }
-            try out.appendSlice(self.allocator, source[anchor..r.start]);
-        } else {
-            try out.appendSlice(self.allocator, source[pos..r.start]);
-        }
-        pos = r.end;
-    }
-    try out.appendSlice(self.allocator, source[pos..]);
-    try self.replaceAtSpan(Span.init(0, source.len), out.items);
+    try sections.reorderBundles(self, all.items[0..total], bundles.items);
 }
 
 // =======
@@ -1077,7 +964,7 @@ test "toml inline array ops on array-of-tables are refused" {
 test "toml append array-of-tables element" {
     var ed = try newTomlEditor("[[fruit]]\nname = \"apple\"\n");
     defer ed.deinit();
-    try ed.appendTableToArray(&.{.{ .key = "fruit" }}, "name = \"pear\"\n");
+    try ed.appendContainerToSeq(&.{.{ .key = "fruit" }}, "name = \"pear\"\n");
     try expectTomlSource(&ed, "[[fruit]]\nname = \"apple\"\n\n[[fruit]]\nname = \"pear\"\n");
 }
 
@@ -1086,28 +973,28 @@ test "toml append AoT element after one with a sub-table" {
     // into the middle of it.
     var ed = try newTomlEditor("[[fruit]]\nname = \"apple\"\n\n[fruit.variety]\nkind = \"red\"\n");
     defer ed.deinit();
-    try ed.appendTableToArray(&.{.{ .key = "fruit" }}, "name = \"pear\"\n");
+    try ed.appendContainerToSeq(&.{.{ .key = "fruit" }}, "name = \"pear\"\n");
     try expectTomlSource(&ed, "[[fruit]]\nname = \"apple\"\n\n[fruit.variety]\nkind = \"red\"\n\n[[fruit]]\nname = \"pear\"\n");
 }
 
 test "toml append empty AoT element" {
     var ed = try newTomlEditor("[[fruit]]\nname = \"apple\"\n");
     defer ed.deinit();
-    try ed.appendTableToArray(&.{.{ .key = "fruit" }}, "");
+    try ed.appendContainerToSeq(&.{.{ .key = "fruit" }}, "");
     try expectTomlSource(&ed, "[[fruit]]\nname = \"apple\"\n\n[[fruit]]\n");
 }
 
 test "toml append AoT with a dotted header path" {
     var ed = try newTomlEditor("[[a.b]]\nx = 1\n");
     defer ed.deinit();
-    try ed.appendTableToArray(&.{ .{ .key = "a" }, .{ .key = "b" } }, "x = 2\n");
+    try ed.appendContainerToSeq(&.{ .{ .key = "a" }, .{ .key = "b" } }, "x = 2\n");
     try expectTomlSource(&ed, "[[a.b]]\nx = 1\n\n[[a.b]]\nx = 2\n");
 }
 
 test "toml appendTableToArray on a non-AoT is refused" {
     var ed = try newTomlEditor("nums = [1, 2]\n");
     defer ed.deinit();
-    try std.testing.expectError(error.NotAnArrayOfTables, ed.appendTableToArray(&.{.{ .key = "nums" }}, "x = 1\n"));
+    try std.testing.expectError(error.NotAnArrayOfTables, ed.appendContainerToSeq(&.{.{ .key = "nums" }}, "x = 1\n"));
 }
 
 // --- deleteTable ---
@@ -1115,70 +1002,70 @@ test "toml appendTableToArray on a non-AoT is refused" {
 test "toml delete simple header table" {
     var ed = try newTomlEditor("[a]\nx = 1\n[b]\ny = 2\n");
     defer ed.deinit();
-    try ed.deleteTable(&.{.{ .key = "a" }});
+    try ed.deleteContainer(&.{.{ .key = "a" }});
     try expectTomlSource(&ed, "[b]\ny = 2\n");
 }
 
 test "toml delete table leaves interleaved foreign table intact" {
     var ed = try newTomlEditor("[a]\nx = 1\n[other]\ny = 2\n[a.b]\nz = 3\n");
     defer ed.deinit();
-    try ed.deleteTable(&.{.{ .key = "a" }});
+    try ed.deleteContainer(&.{.{ .key = "a" }});
     try expectTomlSource(&ed, "[other]\ny = 2\n");
 }
 
 test "toml delete header-only table with sub-tables" {
     var ed = try newTomlEditor("[a]\n[a.b]\ny = 2\n");
     defer ed.deinit();
-    try ed.deleteTable(&.{.{ .key = "a" }});
+    try ed.deleteContainer(&.{.{ .key = "a" }});
     try expectTomlSource(&ed, "");
 }
 
 test "toml delete table carries owned comment" {
     var ed = try newTomlEditor("# about a\n[a]\nx = 1\n[b]\ny = 2\n");
     defer ed.deinit();
-    try ed.deleteTable(&.{.{ .key = "a" }});
+    try ed.deleteContainer(&.{.{ .key = "a" }});
     try expectTomlSource(&ed, "[b]\ny = 2\n");
 }
 
 test "toml delete table with multi-line array value" {
     var ed = try newTomlEditor("[a]\nl = [\n  1,\n  2,\n]\n[b]\ny = 2\n");
     defer ed.deinit();
-    try ed.deleteTable(&.{.{ .key = "a" }});
+    try ed.deleteContainer(&.{.{ .key = "a" }});
     try expectTomlSource(&ed, "[b]\ny = 2\n");
 }
 
 test "toml delete dotted-only table" {
     var ed = try newTomlEditor("a.b = 1\na.c = 2\nz = 9\n");
     defer ed.deinit();
-    try ed.deleteTable(&.{.{ .key = "a" }});
+    try ed.deleteContainer(&.{.{ .key = "a" }});
     try expectTomlSource(&ed, "z = 9\n");
 }
 
 test "toml delete whole array-of-tables" {
     var ed = try newTomlEditor("[[f]]\nn = \"a\"\n[[f]]\nn = \"b\"\n");
     defer ed.deinit();
-    try ed.deleteTable(&.{.{ .key = "f" }});
+    try ed.deleteContainer(&.{.{ .key = "f" }});
     try expectTomlSource(&ed, "");
 }
 
 test "toml delete single AoT element" {
     var ed = try newTomlEditor("[[f]]\nn = \"a\"\n[[f]]\nn = \"b\"\n");
     defer ed.deinit();
-    try ed.deleteTable(&.{ .{ .key = "f" }, .{ .index = 0 } });
+    try ed.deleteContainer(&.{ .{ .key = "f" }, .{ .index = 0 } });
     try expectTomlSource(&ed, "[[f]]\nn = \"b\"\n");
 }
 
 test "toml delete AoT element with nested sub-table" {
     var ed = try newTomlEditor("[[f]]\nn = \"a\"\n[f.sub]\nk = 1\n[[f]]\nn = \"b\"\n");
     defer ed.deinit();
-    try ed.deleteTable(&.{ .{ .key = "f" }, .{ .index = 0 } });
+    try ed.deleteContainer(&.{ .{ .key = "f" }, .{ .index = 0 } });
     try expectTomlSource(&ed, "[[f]]\nn = \"b\"\n");
 }
 
 test "toml deleteTable on a scalar key is refused" {
     var ed = try newTomlEditor("x = 1\n");
     defer ed.deinit();
-    try std.testing.expectError(error.NotATable, ed.deleteTable(&.{.{ .key = "x" }}));
+    try std.testing.expectError(error.NotATable, ed.deleteContainer(&.{.{ .key = "x" }}));
 }
 
 // --- insertTable ---
@@ -1186,35 +1073,35 @@ test "toml deleteTable on a scalar key is refused" {
 test "toml insert new table at root end" {
     var ed = try newTomlEditor("a = 1\n[t]\nx = 1\n");
     defer ed.deinit();
-    try ed.insertTable(&.{.{ .key = "s" }}, "p = 1\n");
+    try ed.insertContainer(&.{.{ .key = "s" }}, "p = 1\n");
     try expectTomlSource(&ed, "a = 1\n[t]\nx = 1\n\n[s]\np = 1\n");
 }
 
 test "toml insert sub-table after parent subtree" {
     var ed = try newTomlEditor("[a]\nx = 1\n");
     defer ed.deinit();
-    try ed.insertTable(&.{ .{ .key = "a" }, .{ .key = "b" } }, "z = 3\n");
+    try ed.insertContainer(&.{ .{ .key = "a" }, .{ .key = "b" } }, "z = 3\n");
     try expectTomlSource(&ed, "[a]\nx = 1\n\n[a.b]\nz = 3\n");
 }
 
 test "toml insert empty table" {
     var ed = try newTomlEditor("a = 1\n");
     defer ed.deinit();
-    try ed.insertTable(&.{.{ .key = "t" }}, "");
+    try ed.insertContainer(&.{.{ .key = "t" }}, "");
     try expectTomlSource(&ed, "a = 1\n\n[t]\n");
 }
 
 test "toml insert table with quoted-key segment" {
     var ed = try newTomlEditor("a = 1\n");
     defer ed.deinit();
-    try ed.insertTable(&.{.{ .key = "needs space" }}, "x = 1\n");
+    try ed.insertContainer(&.{.{ .key = "needs space" }}, "x = 1\n");
     try expectTomlSource(&ed, "a = 1\n\n[\"needs space\"]\nx = 1\n");
 }
 
 test "toml insert duplicate table is refused" {
     var ed = try newTomlEditor("[a]\nx = 1\n");
     defer ed.deinit();
-    try std.testing.expectError(error.TableExists, ed.insertTable(&.{.{ .key = "a" }}, "y = 2\n"));
+    try std.testing.expectError(error.TableExists, ed.insertContainer(&.{.{ .key = "a" }}, "y = 2\n"));
 }
 
 // --- renameTable ---
@@ -1222,35 +1109,35 @@ test "toml insert duplicate table is refused" {
 test "toml rename leaf table header" {
     var ed = try newTomlEditor("[server]\nport = 8080\n");
     defer ed.deinit();
-    try ed.renameTable(&.{.{ .key = "server" }}, "http");
+    try ed.renameContainer(&.{.{ .key = "server" }}, "http");
     try expectTomlSource(&ed, "[http]\nport = 8080\n");
 }
 
 test "toml rename rewrites descendant sub-headers" {
     var ed = try newTomlEditor("[a]\nx = 1\n[a.b]\nz = 3\n[a.b.c]\nw = 4\n");
     defer ed.deinit();
-    try ed.renameTable(&.{.{ .key = "a" }}, "q");
+    try ed.renameContainer(&.{.{ .key = "a" }}, "q");
     try expectTomlSource(&ed, "[q]\nx = 1\n[q.b]\nz = 3\n[q.b.c]\nw = 4\n");
 }
 
 test "toml rename does not touch a similar-prefix foreign table" {
     var ed = try newTomlEditor("[a]\nx = 1\n[ab]\ny = 2\n");
     defer ed.deinit();
-    try ed.renameTable(&.{.{ .key = "a" }}, "q");
+    try ed.renameContainer(&.{.{ .key = "a" }}, "q");
     try expectTomlSource(&ed, "[q]\nx = 1\n[ab]\ny = 2\n");
 }
 
 test "toml rename leaf needing quotes" {
     var ed = try newTomlEditor("[a]\nx = 1\n");
     defer ed.deinit();
-    try ed.renameTable(&.{.{ .key = "a" }}, "new key");
+    try ed.renameContainer(&.{.{ .key = "a" }}, "new key");
     try expectTomlSource(&ed, "[\"new key\"]\nx = 1\n");
 }
 
 test "toml rename AoT header" {
     var ed = try newTomlEditor("[[a.b]]\nn = 1\n[[a.b]]\nn = 2\n");
     defer ed.deinit();
-    try ed.renameTable(&.{ .{ .key = "a" }, .{ .key = "b" } }, "c");
+    try ed.renameContainer(&.{ .{ .key = "a" }, .{ .key = "b" } }, "c");
     try expectTomlSource(&ed, "[[a.c]]\nn = 1\n[[a.c]]\nn = 2\n");
 }
 
@@ -1259,27 +1146,27 @@ test "toml rename AoT header" {
 test "toml move table to end" {
     var ed = try newTomlEditor("[a]\nx = 1\n[b]\ny = 2\n");
     defer ed.deinit();
-    try ed.moveTable(&.{.{ .key = "a" }}, null);
+    try ed.moveContainer(&.{.{ .key = "a" }}, null);
     try expectTomlSource(&ed, "[b]\ny = 2\n\n[a]\nx = 1\n");
 }
 
 test "toml move scattered table collapses fragments contiguously" {
     var ed = try newTomlEditor("[a]\nx = 1\n[b]\ny = 2\n[a.c]\nz = 3\n");
     defer ed.deinit();
-    try ed.moveTable(&.{.{ .key = "a" }}, null);
+    try ed.moveContainer(&.{.{ .key = "a" }}, null);
     try expectTomlSource(&ed, "[b]\ny = 2\n\n[a]\nx = 1\n[a.c]\nz = 3\n");
 }
 
 test "toml move table before another" {
     var ed = try newTomlEditor("[a]\nx = 1\n[b]\ny = 2\n[c]\nw = 3\n");
     defer ed.deinit();
-    try ed.moveTable(&.{.{ .key = "c" }}, &.{.{ .key = "b" }});
+    try ed.moveContainer(&.{.{ .key = "c" }}, &.{.{ .key = "b" }});
     try expectTomlSource(&ed, "[a]\nx = 1\n\n[c]\nw = 3\n[b]\ny = 2\n");
 }
 
 test "toml reorder top-level tables" {
     var ed = try newTomlEditor("[a]\nx = 1\n[b]\ny = 2\n[c]\nw = 3\n");
     defer ed.deinit();
-    try ed.reorderTables(&.{ "c", "a", "b" });
+    try ed.reorderContainers(&.{ "c", "a", "b" });
     try expectTomlSource(&ed, "[c]\nw = 3\n[a]\nx = 1\n[b]\ny = 2\n");
 }

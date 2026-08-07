@@ -29,7 +29,7 @@
 //!     generic engine writes, which is why arrays can't ride it).
 //!   - comment ops: `<!-- ... -->`, not a `#`/`//`/`;` line marker.
 //!
-//! What DOESN'T live here: delete-key and remove-seq-item. Once `comment_style`
+//! What DOESN'T live here: delete-key and remove-seq-item. Once `comments.style`
 //! is `.xml_comment` (see `editor.zig`), the generic line-based delete already
 //! does the right thing — a plist entry/item occupies whole lines, and the
 //! keyvalue's full-extent span (recorded by `parser.zig`) covers both the key

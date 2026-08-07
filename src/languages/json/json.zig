@@ -34,15 +34,15 @@ pub const Language = struct {
     /// document being read as strict JSON would produce source that no longer
     /// parses — the comment ops return `CommentsUnsupported` there instead.
     ///
-    /// `comment_style` stays `.slashes` for all three: it selects the scanner
-    /// for OWNED comment blocks, and in strict JSON no `//` line can exist for
+    /// `style` stays `.slashes` for all three: it selects the scanner for
+    /// OWNED comment blocks, and in strict JSON no `//` line can exist for
     /// that scanner to find, so the choice is unobservable rather than wrong.
+    /// That split — one scanner, a marker that varies — is why this is written
+    /// out rather than taking the `Comments.slashes` preset.
     pub fn syntax(t: json.Type) lang.Syntax {
         const marker: ?[]const u8 = if (t == .JSON) null else "//";
         return .{
-            .comment_style = .slashes,
-            .line_comment = marker,
-            .trailing_comment = marker,
+            .comments = .{ .style = .slashes, .line = marker, .trailing = marker },
             .kv_sep = ": ",
             // Strict-JSON-family keys must be quoted and escaped (`b` -> `"b"`).
             .key_style = .json_quoted,

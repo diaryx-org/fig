@@ -33,14 +33,12 @@ pub const Language = struct {
         _ = t;
         return .{
             // The printer accepts a leading `#` on read but always WRITES
-            // `;`, so `;` is what the editor's inserts and scans use.
-            .comment_style = .semicolon,
-            .line_comment = ";",
-            // No same-line trailing comment syntax at all: a `;`/`#` after a
+            // `;`, so `;` is what the editor's inserts and scans use. No
+            // same-line trailing comment syntax at all: a `;`/`#` after a
             // value on the SAME line is literal value text (see `parser.zig`,
             // "a value runs to end of line"). Splicing one in would corrupt
             // the value on reread, so trailing ops are refused.
-            .trailing_comment = null,
+            .comments = .{ .style = .semicolon, .line = ";", .trailing = null },
             .kv_sep = " = ",
             // No literal spelling for an empty nested mapping — `{}` in INI
             // is the two-character STRING `{}`, not a container — so `set`

@@ -40,13 +40,13 @@ pub const Language = struct {
     pub fn syntax(t: fig.Type) lang.Syntax {
         _ = t;
         return .{
-            .comment_style = .hash,
-            .line_comment = "#",
-            .trailing_comment = "#",
-            // fig spells an entry `key = value`, but as with TOML the paths
-            // where that matters delegate to `fig/editor_helper.zig`; `": "`
-            // is what the shared helpers were already using here.
-            .kv_sep = ": ",
+            .comments = .hash,
+            // fig spells an entry `key = value`, but `insertKey` is hooked and
+            // picks the separator from the object it is inserting into — a
+            // flow object is `=`-mode or `:`-mode (JSON-embedded) and may not
+            // mix — so there is no one answer for the generic engine to write,
+            // and no generic path left that would read it. See `Syntax.kv_sep`.
+            .kv_sep = null,
             // A dotted-key format: the flow chain is the idiomatic
             // intermediate form, and `fig fmt` canonicalizes it back.
             .empty_map_literal = "{}",

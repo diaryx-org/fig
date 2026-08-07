@@ -31,14 +31,15 @@ pub const Language = struct {
     pub fn syntax(t: nestedtext.Type) lang.Syntax {
         _ = t;
         return .{
-            .comment_style = .hash,
-            .line_comment = "#",
             // Joins INI: a `#` after a value on the SAME line is literal
             // rest-of-line value text, not a comment (see `parser.zig`,
             // "rest-of-line values are 100% literal"). A trailing comment can
             // only ever be its own `#` line immediately after the entry.
-            .trailing_comment = null,
-            .kv_sep = ": ",
+            .comments = .{ .style = .hash, .line = "#", .trailing = null },
+            // An entry is a `key:` line this format's own `insertKey` hook
+            // writes, so the generic engine never spells one. See
+            // `Syntax.kv_sep`.
+            .kv_sep = null,
             // No literal spelling for an empty nested dict — every value is
             // either rest-of-line text or a nested block — so `set` cannot
             // auto-vivify a missing ancestor.

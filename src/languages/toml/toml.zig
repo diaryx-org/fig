@@ -36,13 +36,12 @@ pub const Language = struct {
     pub fn syntax(t: toml.Type) lang.Syntax {
         _ = t;
         return .{
-            .comment_style = .hash,
-            .line_comment = "#",
-            .trailing_comment = "#",
-            // TOML spells an entry `key = value`, but every path where that
-            // matters is delegated to `toml/editor_helper.zig`; `": "` is
-            // what the shared flow/block helpers were already using here.
-            .kv_sep = ": ",
+            .comments = .hash,
+            // TOML spells an entry `key = value`, and every path where that
+            // matters is delegated to `toml/editor_helper.zig` — so the
+            // generic engine never writes a TOML separator. See
+            // `Syntax.kv_sep`.
+            .kv_sep = null,
             // The dotted-key formats keep the flow `{}` chain as the
             // idiomatic intermediate form — `fig fmt` canonicalizes
             // `a = { b = { c = v }}` back to `a.b.c = v`.

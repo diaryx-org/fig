@@ -1019,6 +1019,72 @@ stage, and CLI output byte-diffed against the parent commit's binary at each
 step — a 573-case embed matrix at Stage 6, a 71-case CLI diff repeated
 throughout.
 
+## 13. Outcome, two redundancies in the manifest itself (2026-08-07)
+
+§2's inventory counted coupling *sites*, and every site it found was real. What
+it could not see is that two of the parameters it named were not carrying their
+own weight once written down: one asked the same question three times, and one
+asked a question four formats have no answer to. Both showed up the same way —
+a reader looking at `fig/fig.zig` and asking why `#` appears three times and why
+a format that spells entries `key = value` declares `": "`.
+
+### 13.1 `comment_style`/`line_comment`/`trailing_comment` → `comments`
+
+The three are genuinely independent questions (§8.2 established the first two
+are, and §11.2 the third), but their answers coincide for six of the ten
+editable formats, and three lines restating `#` read as a mistake rather than as
+three answers. They are now one `Comments` field with two presets for exactly
+the case where all three agree — `.hash` (YAML, TOML, fig, dotenv,
+`.properties`) and `.slashes` (ZON).
+
+The four formats that write the struct out are the four whose answers diverge,
+which is the point: INI and NestedText have a leading marker and no trailing
+one, plist has a scanner and no marker at all, and JSON has one scanner across
+three dialects with a marker that varies between them — the split that made
+`syntax` a function of `Type` in the first place (§3). A preset for each of
+those would be a name invented for one caller; the literal states the divergence
+where the reader is already standing.
+
+### 13.2 `kv_sep` is not a question every format answers
+
+fig, TOML, plist and NestedText all declared `": "` under a comment explaining
+it away — "what the shared helpers were already using", "declared as the shared
+default rather than left to mean something". None of the four is read: each
+hooks `insertKey`, and every `kv_sep` consumer sits under the generic
+`insertKey`/`promoteNullToMapping` dispatch that the hook replaces. Verified
+rather than reasoned — replacing each declaration with a poison value leaves
+`zig build test` green for all four, and red for INI, whose `iniInsertKey`
+delegates back to the generic `insertBlockKey` and so genuinely needs its
+`" = "`.
+
+The declared value was not merely unused, it was wrong: fig's flow objects are
+`=`-mode or `:`-mode (JSON-embedded) and may not mix, so `figInsertFlowEntry`
+decides from the object it is inserting into — and an unquoted key followed by
+`:` is `FigFlowBareKeyColon` in fig's own parser. The manifest was stating a
+separator the format rejects.
+
+`kv_sep` is now `?[]const u8`, null for those four, with the null meaning "not
+the generic engine's question" rather than "no separator". Three pieces make
+that hold together:
+
+- `validate` requires a null to come with an `insertKey` hook — the same
+  reachability reasoning as §11's `block_seq_editable` and comment-hook rules,
+  and the fourth rule of that kind.
+- `Editor.kvSep` refuses with `UnsupportedShape` instead of fabricating a
+  separator, so a dispatch bug surfaces as an error rather than as a splice the
+  format's parser rejects (which the reparse-rollback would then report as
+  something unrelated).
+- `validate-check` gains the paired case §6 requires, and its positive control
+  still compiles — the load-bearing one, since both changes edit `Syntax`'s
+  field names and that is exactly the "probe stops building for an unrelated
+  reason" hazard its module doc names.
+
+**Verification.** `zig build test` green, `validate-check` 11/11 with the new
+case failing for the right reason, `zig build check` at baseline across every
+conformance suite (JSON5 25/26, YAML 289/93/19/1, TOML 209/495 and 218/488,
+plist 9/7/5, NestedText 80/68), `abi-check` and `semver-check` unchanged — no
+ABI surface is involved, since both fields are internal to the editor.
+
 [vcheck]: /tools/validate-check.zig
 [abi_check]: /tools/abi-check.zig
 [semver_check]: /tools/semver-check.zig

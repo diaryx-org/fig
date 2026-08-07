@@ -33,9 +33,7 @@ pub const Language = struct {
         return .{
             // The grammar accepts `#` and `!` as comment leaders; the printer
             // writes `#`, so that is what the editor scans for and inserts.
-            .comment_style = .hash,
-            .line_comment = "#",
-            .trailing_comment = "#",
+            .comments = .hash,
             // Three separators are legal on read (`=`, `:`, space); the
             // printer always writes a bare `=`.
             .kv_sep = "=",

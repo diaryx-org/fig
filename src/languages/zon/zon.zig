@@ -37,9 +37,7 @@ pub const Language = struct {
         return .{
             // ZON follows Zig: `//`, and the owned-block scanner that also
             // walks `/* ... */` as a unit.
-            .comment_style = .slashes,
-            .line_comment = "//",
-            .trailing_comment = "//",
+            .comments = .slashes,
             // Struct-field syntax.
             .kv_sep = " = ",
             .key_style = .zon_field,

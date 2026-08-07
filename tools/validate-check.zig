@@ -105,16 +105,26 @@ const cases = [_]Case{
     .{
         .name = "trailing comment marker with no line comment marker",
         .syntax_body =
-        \\.comment_style = .hash, .line_comment = null,
-        \\.trailing_comment = "#", .kv_sep = ": ", .empty_map_literal = "{}",
+        \\.comments = .{ .style = .hash, .line = null, .trailing = "#" },
+        \\.kv_sep = ": ", .empty_map_literal = "{}",
         ,
         .expect = "trailing comment marker but no line comment marker",
     },
     .{
+        // The other direction of the same field: a null says "my own
+        // `insertKey` writes every entry", so it is only true alongside the
+        // hook. Without the rule the mismatch surfaces as a runtime
+        // `UnsupportedShape` from `Editor.kvSep` on an ordinary `set`.
+        .name = "kv_sep = null with no insertKey hook",
+        .syntax_body =
+        \\.comments = .hash, .kv_sep = null, .empty_map_literal = "{}",
+        ,
+        .expect = "declares kv_sep = null but does not hook insertKey",
+    },
+    .{
         .name = "sequence hook under block_seq_editable = false",
         .syntax_body =
-        \\.comment_style = .hash, .line_comment = "#",
-        \\.trailing_comment = "#", .kv_sep = ": ", .empty_map_literal = "{}",
+        \\.comments = .hash, .kv_sep = ": ", .empty_map_literal = "{}",
         \\.block_seq_editable = false,
         ,
         .decls = "pub const appendToSeq = {};",
@@ -123,8 +133,8 @@ const cases = [_]Case{
     .{
         .name = "partial comment hooks with no marker in any dialect",
         .syntax_body =
-        \\.comment_style = .hash, .line_comment = null,
-        \\.trailing_comment = null, .kv_sep = ": ", .empty_map_literal = null,
+        \\.comments = .{ .style = .hash, .line = null, .trailing = null },
+        \\.kv_sep = ": ", .empty_map_literal = null,
         ,
         .decls = "pub const addLeadingComment = {};",
         .expect = "can then only ever return CommentsUnsupported",
@@ -140,8 +150,7 @@ const cases = [_]Case{
 /// exercises the contract, not an implementation of it.
 fn buildProbe(allocator: std.mem.Allocator, case: Case) ![]u8 {
     const default_syntax =
-        \\.comment_style = .hash, .line_comment = "#",
-        \\.trailing_comment = "#", .kv_sep = ": ", .empty_map_literal = "{}",
+        \\.comments = .hash, .kv_sep = ": ", .empty_map_literal = "{}",
     ;
     const default_caps = ".{ .read = true, .edit = true, .serialize = true }";
 

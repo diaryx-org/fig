@@ -34,9 +34,7 @@ pub const Language = struct {
     pub fn syntax(t: dotenv.Type) lang.Syntax {
         _ = t;
         return .{
-            .comment_style = .hash,
-            .line_comment = "#",
-            .trailing_comment = "#",
+            .comments = .hash,
             // A bare `=` with no surrounding spaces — see `printer.zig`.
             .kv_sep = "=",
             // Flat: no nesting to vivify into, but `{}` is still the literal

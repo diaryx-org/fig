@@ -46,9 +46,7 @@ pub const Language = struct {
     pub fn syntax(t: yaml.Type) lang.Syntax {
         _ = t;
         return .{
-            .comment_style = .hash,
-            .line_comment = "#",
-            .trailing_comment = "#",
+            .comments = .hash,
             .kv_sep = ": ",
             // The empty seed rather than `{}` — see `Syntax.empty_map_literal`
             // for why the two are not interchangeable here.

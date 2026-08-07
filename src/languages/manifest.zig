@@ -27,7 +27,7 @@
 /// Which leading-comment syntax a language uses, so the owned-comment scan in
 /// delete/move (`editor.commentBlockStart`) recognizes the right marker.
 ///
-/// Distinct from `Syntax.line_comment`: this selects the *scanner*, which is
+/// Distinct from `Comments.line`: this selects the *scanner*, which is
 /// per-language and comptime, while the marker is per-dialect and may be null
 /// where the scanner still has a sensible answer. Plain JSON has no comments,
 /// but `.slashes` is harmless there since no `//` line can exist.
@@ -42,6 +42,49 @@ pub const CommentStyle = enum {
     semicolon,
     /// plist's `<!-- ... -->`.
     xml_comment,
+};
+
+/// A format's whole comment surface: which scanner walks an owned comment
+/// block, and the markers the editor writes and strips.
+///
+/// One field on `Syntax` rather than three, because the three answers coincide
+/// for most formats and restating the same marker three times reads as
+/// redundancy rather than as the three independent questions it is. The two
+/// presets below are exactly the "all three agree" case; a format whose
+/// answers diverge — INI, NestedText, plist — writes the literal out, and so
+/// does JSON, whose marker varies by dialect while its scanner does not.
+pub const Comments = struct {
+    /// Selects the owned-comment-block scanner. See `CommentStyle`. Never
+    /// null, and never redundant with `line`: the scanner is per-language
+    /// while a marker is per-dialect, so strict JSON declares `.slashes`
+    /// alongside a null marker — unobservable there, since no `//` line can
+    /// exist for the scanner to find.
+    style: CommentStyle,
+
+    /// The own-line (leading) comment marker, or null when the dialect has
+    /// none to write — strict JSON, where the comment ops return
+    /// `CommentsUnsupported`, and plist, whose `<!-- ... -->` is a delimiter
+    /// pair with no leader (it hooks all six comment ops instead).
+    line: ?[]const u8,
+
+    /// The marker for a same-line TRAILING comment specifically, or null when
+    /// the format has no such syntax.
+    ///
+    /// Distinct from `line` because INI and NestedText have real, safe leading
+    /// comments but no trailing ones: a `;`/`#` after a value on the SAME line
+    /// is literal value text, not a comment (see `ini/parser.zig`'s "a value
+    /// runs to end of line" and `nestedtext/parser.zig`'s "rest-of-line values
+    /// are 100% literal", and both printers, which render a "trailing" comment
+    /// as its own line immediately after the entry). Splicing one in anyway
+    /// would silently corrupt the value on reread, so trailing ops are refused
+    /// there.
+    trailing: ?[]const u8,
+
+    /// `#` throughout — YAML, TOML, fig, dotenv, `.properties`.
+    pub const hash: Comments = .{ .style = .hash, .line = "#", .trailing = "#" };
+
+    /// `//` throughout — ZON, which follows Zig.
+    pub const slashes: Comments = .{ .style = .slashes, .line = "//", .trailing = "//" };
 };
 
 /// How a logical mapping key renders as this format's key syntax on the `set`
@@ -141,7 +184,7 @@ pub const EmbedSpellings = struct {
 /// surface syntax, indexed by dialect.
 ///
 /// Obtained as `Language.syntax(t)` rather than as a constant because
-/// `line_comment` genuinely varies by dialect: strict JSON has no comment
+/// `comments.line` genuinely varies by dialect: strict JSON has no comment
 /// syntax while JSONC and JSON5 do, and the splice is reparsed under whichever
 /// dialect the editor is holding. Making the whole struct a function of `Type`
 /// keeps that question in one place instead of scattering per-field `fn(Type)`
@@ -157,27 +200,8 @@ pub const Syntax = struct {
     // COMMENTS
     // ==================
 
-    /// Selects the owned-comment-block scanner. See `CommentStyle`.
-    comment_style: CommentStyle,
-
-    /// The own-line (leading) comment marker, or null when the dialect
-    /// forbids comments entirely — strict JSON, where the comment ops return
-    /// `CommentsUnsupported`.
-    line_comment: ?[]const u8,
-
-    /// The marker for a same-line TRAILING comment specifically, or null when
-    /// the format has no such syntax.
-    ///
-    /// Distinct from `line_comment` because INI and NestedText have real,
-    /// safe leading comments but no trailing ones: a `;`/`#` after a value on
-    /// the SAME line is literal value text, not a comment (see
-    /// `ini/parser.zig`'s "a value runs to end of line" and
-    /// `nestedtext/parser.zig`'s "rest-of-line values are 100% literal", and
-    /// both printers, which render a "trailing" comment as its own line
-    /// immediately after the entry). Splicing one in anyway would silently
-    /// corrupt the value on reread, so trailing ops are refused there.
-    /// Every other language repeats its `line_comment` here.
-    trailing_comment: ?[]const u8,
+    /// This format's comment scanner and markers. See `Comments`.
+    comments: Comments,
 
     // ==================
     // ENTRIES
@@ -185,16 +209,26 @@ pub const Syntax = struct {
 
     /// The mapping key/value separator spliced by the generic flow-entry
     /// insert helpers (`insertFlowMapEntry`/`insertFlowEntry`) and by
-    /// `writeMapValue`'s block-insert path.
+    /// `writeMapValue`'s block-insert path — or null for a format that owns
+    /// every one of those paths itself and so has no answer to give.
     ///
-    /// This is the separator the GENERIC engine writes, which is not always
-    /// the separator the format's printer writes: TOML and fig both spell an
-    /// entry `key = value`, but every path where that matters is delegated to
-    /// their own `editor_helper.zig`, so the value they declare here is the
-    /// one the shared helpers were already using. ZON's struct-field syntax
-    /// is ` = `; dotenv/`.properties` print a bare `=` with no surrounding
-    /// spaces, while INI always pads it. See each `printer.zig`.
-    kv_sep: []const u8,
+    /// This is the separator the GENERIC engine writes, which need not be the
+    /// separator the format's printer writes: ZON's struct-field syntax is
+    /// ` = `, dotenv/`.properties` print a bare `=` with no surrounding
+    /// spaces, INI always pads it. See each `printer.zig`.
+    ///
+    /// The null is not "no separator" — it is "not the generic engine's
+    /// question". fig and TOML spell an entry `key = value` but hook
+    /// `insertKey` and decide the separator from the source there (fig's flow
+    /// objects are `=`-mode or `:`-mode and may not mix, so there is no one
+    /// answer to declare); plist's entries are a pair of sibling ELEMENTS and
+    /// NestedText's are `key:` lines its own helper writes. All four used to
+    /// declare `": "` — a value no code read, and for fig one its own parser
+    /// rejects (`FigFlowBareKeyColon`). `language.validate` requires a null
+    /// here to come with an `insertKey` hook, which is what makes every
+    /// consumer below unreachable; `editor.Editor.kvSep` is where that is
+    /// cashed in.
+    kv_sep: ?[]const u8,
 
     /// How a logical key renders into this format's key syntax. See `KeyStyle`.
     key_style: KeyStyle = .verbatim,

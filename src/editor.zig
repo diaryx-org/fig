@@ -466,18 +466,32 @@ pub fn Editor(comptime Language: type) type {
         /// as, or null when that dialect forbids comments (strict JSON) — in
         /// which case the comment ops return `CommentsUnsupported`. Indexed by
         /// `self.format` because the splice is reparsed under that same
-        /// dialect. See `Syntax.line_comment`.
+        /// dialect. See `Comments.line`.
         fn lineCommentMarker(self: *const Self) ?[]const u8 {
-            return self.syntax().line_comment;
+            return self.syntax().comments.line;
         }
 
         /// The marker for a same-line TRAILING comment specifically, or null
         /// for a format that has no such syntax (INI, NestedText — where a
         /// `;`/`#` after a value is literal value text). Distinct from
         /// `lineCommentMarker`, which those two formats do have. See
-        /// `Syntax.trailing_comment` for the full reasoning.
+        /// `Comments.trailing` for the full reasoning.
         fn trailingCommentMarker(self: *const Self) ?[]const u8 {
-            return self.syntax().trailing_comment;
+            return self.syntax().comments.trailing;
+        }
+
+        /// The key/value separator the GENERIC entry-insert helpers splice.
+        ///
+        /// Every caller sits under the generic `insertKey`/`promoteNullToMapping`
+        /// dispatch, so a format that declares `kv_sep = null` — fig, TOML,
+        /// plist, NestedText — cannot reach one: `language.validate` requires a
+        /// null to come with an `insertKey` hook, and the hook replaces this
+        /// whole path. The error is the same "unreachable by construction"
+        /// answer `setSequence` gives on its own impossible branch, rather than
+        /// a fabricated separator that would splice syntax the format's own
+        /// parser rejects — fig's `": "` was exactly that.
+        fn kvSep(self: *const Self) ![]const u8 {
+            return self.syntax().kv_sep orelse error.UnsupportedShape;
         }
 
         /// The line a leading-comment op anchors on: the node's own line start,
@@ -598,7 +612,7 @@ pub fn Editor(comptime Language: type) type {
             const span = parsed.span(node);
             const source = self.source.items;
             const line_start = try self.leadingCommentLineStart(parsed, path, span);
-            const block_start = commentBlockStart(source, line_start, self.syntax().comment_style);
+            const block_start = commentBlockStart(source, line_start, self.syntax().comments.style);
             if (block_start == line_start) return; // nothing above to remove
             try self.replaceAtSpan(Span.init(block_start, line_start), "");
         }
@@ -633,7 +647,7 @@ pub fn Editor(comptime Language: type) type {
             const span = parsed.span(node);
             const source = self.source.items;
             const line_start = try self.leadingCommentLineStart(parsed, path, span);
-            const block_start = commentBlockStart(source, line_start, self.syntax().comment_style);
+            const block_start = commentBlockStart(source, line_start, self.syntax().comments.style);
             if (block_start == line_start) return null; // no block above
 
             var out: std.ArrayList(u8) = .empty;
@@ -790,12 +804,12 @@ pub fn Editor(comptime Language: type) type {
                 // the entry itself keeps the survivors' indentation intact.
                 const line_start = lineStartBefore(source, entry_start);
                 const on_own_line = firstNonSpace(source, line_start) == entry_start;
-                const cbs = if (on_own_line) commentBlockStart(source, line_start, self.syntax().comment_style) else line_start;
+                const cbs = if (on_own_line) commentBlockStart(source, line_start, self.syntax().comments.style) else line_start;
                 const del_start = if (cbs < line_start) cbs else entry_start;
                 return self.removeFlowItem(Span.init(del_start, span.end), prev == null);
             }
             const line_start = lineStartBefore(source, span.start);
-            const del_start = commentBlockStart(source, line_start, self.syntax().comment_style);
+            const del_start = commentBlockStart(source, line_start, self.syntax().comments.style);
             const del_end = lineEndAfter(source, span.end -| 1);
             try self.replaceAtSpan(Span.init(del_start, del_end), "");
         }
@@ -896,7 +910,7 @@ pub fn Editor(comptime Language: type) type {
             }
             if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
             if (@hasDecl(Language, "removeSeqItem")) return Language.removeSeqItem(self, parsed, node, item, prev);
-            const line_start = commentBlockStart(source, lineStartBefore(source, item_span.start), self.syntax().comment_style);
+            const line_start = commentBlockStart(source, lineStartBefore(source, item_span.start), self.syntax().comments.style);
             const del_end = lineEndAfter(source, item_span.end -| 1);
             try self.replaceAtSpan(Span.init(line_start, del_end), "");
         }
@@ -1115,9 +1129,9 @@ pub fn Editor(comptime Language: type) type {
             if (dest.kind != .keyvalue) return error.NotAMapping;
             const source = self.source.items;
             try self.moveBlock(
-                entryBlockStart(source, parsed.span(src), self.syntax().comment_style),
+                entryBlockStart(source, parsed.span(src), self.syntax().comments.style),
                 entryBlockEnd(source, parsed.span(src)),
-                entryBlockStart(source, parsed.span(dest), self.syntax().comment_style),
+                entryBlockStart(source, parsed.span(dest), self.syntax().comments.style),
             );
         }
 
@@ -1179,7 +1193,7 @@ pub fn Editor(comptime Language: type) type {
                     else => return error.InvalidDocument,
                 };
                 try entry_keys.append(self.allocator, key);
-                try blocks.append(self.allocator, .{ .start = entryBlockStart(source, parsed.span(cur), self.syntax().comment_style), .end = 0 });
+                try blocks.append(self.allocator, .{ .start = entryBlockStart(source, parsed.span(cur), self.syntax().comments.style), .end = 0 });
                 last_end = entryBlockEnd(source, parsed.span(cur));
                 cur = parsed.ast.next(&cur) orelse break;
             }
@@ -1246,7 +1260,7 @@ pub fn Editor(comptime Language: type) type {
             var blocks: std.ArrayList(Block) = .empty;
             defer blocks.deinit(self.allocator);
             for (spans.items) |s| {
-                try blocks.append(self.allocator, .{ .start = entryBlockStart(source, s, self.syntax().comment_style), .end = 0 });
+                try blocks.append(self.allocator, .{ .start = entryBlockStart(source, s, self.syntax().comments.style), .end = 0 });
             }
             const last_end = entryBlockEnd(source, spans.items[spans.items.len - 1]);
             tileBlocks(blocks.items, last_end);
@@ -1508,11 +1522,11 @@ pub fn Editor(comptime Language: type) type {
             // trimmed so the line doesn't end in whitespace; formats whose
             // separator carries no padding (`KEY=`) are unaffected.
             if (v.len == 0) {
-                try out.appendSlice(self.allocator, std.mem.trimEnd(u8, self.syntax().kv_sep, " "));
+                try out.appendSlice(self.allocator, std.mem.trimEnd(u8, try self.kvSep(), " "));
                 return;
             }
             if (shape == .inline_ or shape == .block_scalar) {
-                try out.appendSlice(self.allocator, self.syntax().kv_sep);
+                try out.appendSlice(self.allocator, try self.kvSep());
                 try reindentInto(out, self.allocator, v, col);
                 return;
             }
@@ -1556,7 +1570,7 @@ pub fn Editor(comptime Language: type) type {
                 try out.appendSlice(self.allocator, syn.flow_map_open);
                 try out.append(self.allocator, ' ');
                 try out.appendSlice(self.allocator, key_text);
-                try out.appendSlice(self.allocator, syn.kv_sep);
+                try out.appendSlice(self.allocator, try self.kvSep());
                 try out.appendSlice(self.allocator, value_text);
                 try out.append(self.allocator, ' ');
                 try out.appendSlice(self.allocator, syn.flow_map_close);
@@ -1634,7 +1648,7 @@ pub fn Editor(comptime Language: type) type {
                     try out.appendSlice(self.allocator, ",\n");
                     try out.appendNTimes(self.allocator, ' ', col);
                     try out.appendSlice(self.allocator, key_text);
-                    try out.appendSlice(self.allocator, self.syntax().kv_sep);
+                    try out.appendSlice(self.allocator, try self.kvSep());
                     try out.appendSlice(self.allocator, value_text);
                     try self.replaceAtSpan(Span.init(last_end, last_end), out.items);
                     return;
@@ -1649,7 +1663,7 @@ pub fn Editor(comptime Language: type) type {
                 defer out.deinit(self.allocator);
                 try out.appendSlice(self.allocator, ", ");
                 try out.appendSlice(self.allocator, key_text);
-                try out.appendSlice(self.allocator, self.syntax().kv_sep);
+                try out.appendSlice(self.allocator, try self.kvSep());
                 try out.appendSlice(self.allocator, value_text);
                 try self.replaceAtSpan(Span.init(last_end, last_end), out.items);
                 return;
@@ -1667,7 +1681,7 @@ pub fn Editor(comptime Language: type) type {
             var out: std.ArrayList(u8) = .empty;
             defer out.deinit(self.allocator);
             try out.appendSlice(self.allocator, key_text);
-            try out.appendSlice(self.allocator, self.syntax().kv_sep);
+            try out.appendSlice(self.allocator, try self.kvSep());
             try out.appendSlice(self.allocator, value_text);
             const at = flowOpenEnd(self.source.items, span); // just after '{' (or ZON's '.{')
             try self.replaceAtSpan(Span.init(at, at), out.items);
@@ -2237,7 +2251,7 @@ test "deleteTrailingComment removes a same-line comment (YAML/JSONC), else no-op
     try expectCommentDelete(json.Language, .JSONC, "{\n  \"a\": 1 // x\n}", "{\n  \"a\": 1\n}", .trailing, &.{.{ .key = "a" }});
 }
 
-test "ZON owned-comment scan uses // (comment_style fix)" {
+test "ZON owned-comment scan uses // (comments.style fix)" {
     if (comptime !build_options.lang_zon) return error.SkipZigTest;
     try expectCommentDelete(
         Zon,

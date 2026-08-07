@@ -923,8 +923,19 @@ pub fn validate(comptime Lang: type) void {
             // every dialect, since `syntax` is indexed by one.
             for (std.meta.tags(Lang.Type)) |t| {
                 const s: Syntax = Lang.syntax(t);
-                if (s.trailing_comment != null and s.line_comment == null)
+                if (s.comments.trailing != null and s.comments.line == null)
                     @compileError("Language declares a trailing comment marker but no line comment marker");
+
+                // Coherence: `kv_sep = null` says "the generic engine never
+                // writes an entry for me". Every path that would is under the
+                // generic `insertKey`, so the claim holds exactly when that op
+                // is hooked — and `Editor.kvSep` refuses rather than
+                // fabricating a separator if one is ever reached anyway.
+                // Without this the null would be a silent `UnsupportedShape`
+                // on an ordinary `set` instead of a compile error here.
+                if (s.kv_sep == null and !@hasDecl(Lang, "insertKey"))
+                    @compileError("Language declares kv_sep = null but does not hook insertKey," ++
+                        " so the generic entry-insert paths have no separator to write");
             }
         }
 
@@ -967,7 +978,7 @@ pub fn validate(comptime Lang: type) void {
         for (std.meta.tags(Lang.Type)) |t| {
             const s: Syntax = Lang.syntax(t);
             if (s.block_seq_editable) any_block_seq = true;
-            if (s.line_comment != null) any_line_comment = true;
+            if (s.comments.line != null) any_line_comment = true;
         }
         if (!any_block_seq) {
             for ([_][]const u8{ "appendToSeq", "prependToSeq", "removeSeqItem", "reorderSeqItems" }) |name| {

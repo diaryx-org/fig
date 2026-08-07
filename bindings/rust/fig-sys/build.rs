@@ -313,12 +313,18 @@ fn zig_target_for_cargo_target(target: &str, host: &str) -> Option<&'static str>
         "riscv64gc-unknown-linux-gnu" => Some("riscv64-linux-gnu"),
         "riscv64gc-unknown-linux-musl" => Some("riscv64-linux-musl"),
         "wasm32-unknown-unknown" => Some("wasm32-freestanding"),
-        // Rust's WASI target is `wasm32-wasip1` (née `wasm32-wasi`); Zig has no
-        // separate preview1/preview2 tag, just `wasi` (preview1). `wasm32-wasip2`
-        // is intentionally unmapped — Zig has no component-model target, and a
-        // preview1-ABI static lib is not guaranteed link-compatible with wasip2's
-        // sysroot.
+        // Rust's WASI targets are `wasm32-wasip1` (née `wasm32-wasi`) and
+        // `wasm32-wasip2`; Zig has no separate preview1/preview2 tag, just
+        // `wasi` (preview1). `wasm32-wasip2` maps to the same Zig target: fig's
+        // C surface does no I/O (no filesystem, no host calls) — it only
+        // touches its own linear memory — so a preview1-ABI static lib links
+        // and runs correctly under Rust's wasip2 sysroot, which supplies the
+        // actual environment/component surface itself and never needs
+        // anything from this library's own (nonexistent) WASI imports.
+        // Verified by linking+running `fig/examples/wasm_smoke.rs` for both
+        // targets under wasmtime; revisit if fig ever grows real I/O.
         "wasm32-wasip1" => Some("wasm32-wasi"),
+        "wasm32-wasip2" => Some("wasm32-wasi"),
         "x86_64-unknown-linux-gnu" => Some("x86_64-linux-gnu"),
         "x86_64-unknown-linux-musl" => Some("x86_64-linux-musl"),
         _ => panic!(

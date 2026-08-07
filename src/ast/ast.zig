@@ -169,10 +169,12 @@ pub const Comment = struct {
 };
 
 /// Comments bound to one node: a run of own-line comments above it (in source
-/// order), at most one same-line trailing comment, and — on a container node —
-/// a run of `dangling` comments that sit at the END of its body with no child
-/// after them (an orphan in an empty `[]`, or comments before the closing brace /
-/// at end of document). `dangling` is empty for non-containers.
+/// order), at most one same-line trailing comment, and — on a container node,
+/// or the document root of any kind — a run of `dangling` comments that sit at
+/// the END of its body with no child after them (an orphan in an empty `[]`,
+/// comments before the closing brace, or EOF orphans after a non-container
+/// root, which has no closing brace to precede). `dangling` is empty for
+/// every other non-container node.
 pub const NodeComments = struct {
     leading: []const Comment = &.{},
     trailing: ?Comment = null,

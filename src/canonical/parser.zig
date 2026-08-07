@@ -88,10 +88,13 @@ pub fn deinit(self: *Parser) void {
     self.node_anchors.deinit(self.allocator);
     self.node_tags.deinit(self.allocator);
     self.anchors.deinit(self.allocator);
-    // Free any `leading` slices still owned here. After a successful
+    // Free any `leading`/`dangling` slices still owned here. After a successful
     // `parseOnce` these moved to the AST and the list is empty; on an error
     // path they are freed here. Comment text borrows `src`, so it is not freed.
-    for (self.node_comments.items) |nc| self.allocator.free(nc.leading);
+    for (self.node_comments.items) |nc| {
+        self.allocator.free(nc.leading);
+        self.allocator.free(nc.dangling);
+    }
     self.node_comments.deinit(self.allocator);
     self.pending_leading.deinit(self.allocator);
 }
@@ -263,13 +266,30 @@ fn parseNumber(self: *Parser) ParserError!AST.Node.Id {
         if (!isNumberChar(c)) break;
     }
     const raw = self.src[raw_start..self.pos];
-    if (raw.len == 0) return error.UnexpectedToken;
+    if (raw.len == 0 or !looksLikeNumber(raw)) return error.UnexpectedToken;
     const NumberKind = @TypeOf(Printer.impliedNumberKind(raw));
     const kind: NumberKind = if (override) |is_float|
         (if (is_float) .float else .integer)
     else
         Printer.impliedNumberKind(raw);
     return self.addNode(.{ .number = .{ .raw = raw, .kind = kind } }, start);
+}
+
+/// Whether `raw` (already filtered through `isNumberChar`, so drawn from
+/// `0-9a-fA-FxXoObB._+-`) can round-trip as a number. `parseValue` only ever
+/// routes a *fresh* dispatch (no `~i`/`~f` marker in front) into `parseNumber`
+/// when the first byte is a digit or `.`; if the printer omits the override
+/// marker (because the lexeme's implied kind already matches), that first
+/// byte is all reparsing has to go on. A lexeme like a lone hex letter (`A`,
+/// no `0x` prefix) sails through `isNumberChar` but starts with a letter, so
+/// it prints back out looking like — and reparses as — a bareword instead.
+fn looksLikeNumber(raw: []const u8) bool {
+    const body = if (raw.len > 0 and (raw[0] == '+' or raw[0] == '-')) raw[1..] else raw;
+    if (body.len == 0) return false;
+    return switch (body[0]) {
+        '0'...'9', '.' => true,
+        else => false,
+    };
 }
 
 fn parseExtended(self: *Parser) ParserError!AST.Node.Id {
@@ -572,11 +592,25 @@ fn appendDangling(self: *Parser, id: AST.Node.Id, c: AST.Comment) ParserError!vo
 
 /// Hand buffered orphan comments (no node followed them) to container `id` as its
 /// `dangling` run — they sit at the end of its body. No-op when nothing buffered.
+/// `id` may already carry a `dangling` run (e.g. the document root, claimed once
+/// for orphans before its closing bracket and again for trailing EOF orphans), so
+/// this appends rather than overwrites — otherwise the earlier run would leak and
+/// silently drop from the AST.
 fn claimDangling(self: *Parser, id: AST.Node.Id) ParserError!void {
     if (self.pending_leading.items.len == 0) return;
     const owned = try self.pending_leading.toOwnedSlice(self.allocator);
     self.pending_leading = .empty;
-    self.node_comments.items[id].dangling = owned;
+    const old = self.node_comments.items[id].dangling;
+    if (old.len == 0) {
+        self.node_comments.items[id].dangling = owned;
+    } else {
+        const grown = try self.allocator.alloc(AST.Comment, old.len + owned.len);
+        @memcpy(grown[0..old.len], old);
+        @memcpy(grown[old.len..], owned);
+        self.allocator.free(old);
+        self.allocator.free(owned);
+        self.node_comments.items[id].dangling = grown;
+    }
     self.comments_seen = true;
 }
 
@@ -714,6 +748,31 @@ test "comment-free document carries no comment table" {
     try testing.expectEqual(@as(usize, 0), ast.node_comments.len);
 }
 
+test "a kind override with no actual digits is rejected, not silently accepted" {
+    // `~i` forces integer kind, but `A` alone (a bare hex letter, no `0x`
+    // prefix) isn't a number lexeme at all. Accepting it built a node whose
+    // `raw` prints back out as plain `A` — indistinguishable from the
+    // bareword `A`, which fails to reparse (not even the wrong tree: no tree).
+    try testing.expectError(error.UnexpectedToken, parseAbstract(testing.allocator, "~iA"));
+    try testing.expectError(error.UnexpectedToken, parseAbstract(testing.allocator, "~fA"));
+    // Legitimate hex, and overrides on real digits, still parse.
+    try expectRoundTrip("0xFF");
+    try expectRoundTrip("~i0xFF");
+}
+
+test "dangling comments before a root container's close merge with trailing EOF orphans" {
+    // The root claims `dangling` twice: once for "before close" (inside the
+    // `]`), once for the EOF orphan after it. `claimDangling` must merge these
+    // rather than overwrite, or the first run leaks and vanishes from the AST.
+    var ast = try parseAbstract(testing.allocator, "[\n  1,\n  // before close\n]\n// eof orphan\n");
+    defer ast.deinit();
+    const dangling = ast.comments(ast.root).dangling;
+    try testing.expectEqual(@as(usize, 2), dangling.len);
+    try testing.expectEqualStrings("before close", dangling[0].text);
+    try testing.expectEqualStrings("eof orphan", dangling[1].text);
+    try expectRoundTrip("[\n  1,\n  // before close\n]\n// eof orphan\n");
+}
+
 test "orphan comments are captured as the container's dangling run" {
     try expectRoundTrip("[]"); // sanity: empty container still round-trips
     // An own-line comment at the bottom of a container binds as `dangling`.
@@ -823,6 +882,27 @@ test "alias resolves to its anchor" {
 
 test "rejects trailing garbage" {
     try testing.expectError(error.TrailingGarbage, parseAbstract(testing.allocator, "1 2"));
+}
+
+test "a non-container root's trailing EOF orphan comments round-trip as dangling" {
+    // Root has no closing brace for `claimDangling`'s usual "before the close"
+    // meaning to attach to, but EOF orphans still land there — the printer must
+    // have somewhere to put them, or they silently vanish on reparse.
+    try expectRoundTrip("1\n// eof orphan");
+    var ast = try parseAbstract(testing.allocator, "1\n// a\n// b");
+    defer ast.deinit();
+    const dangling = ast.comments(ast.root).dangling;
+    try testing.expectEqual(@as(usize, 2), dangling.len);
+    try testing.expectEqualStrings("a", dangling[0].text);
+    try testing.expectEqualStrings("b", dangling[1].text);
+}
+
+test "a claimed dangling run doesn't leak when a later error unwinds the parser" {
+    // The `]` closes with an orphan comment claimed as dangling, then trailing
+    // garbage after it fails the parse. `parseOnce` never reaches the AST
+    // handoff, so `Parser.deinit`'s error-path cleanup owns that `dangling`
+    // slice — it must free it, the same as it already does for `leading`.
+    try testing.expectError(error.TrailingGarbage, parseAbstract(testing.allocator, "[\n  // c\n]x"));
 }
 
 test "bounds nesting depth" {

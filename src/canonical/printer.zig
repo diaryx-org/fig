@@ -59,6 +59,15 @@ pub fn print(writer: *Writer, ast: *const AST) Error!void {
     // scalar root's trailing is emitted here.
     if (!p.isContainer(ast.trailingCommentAnchor(ast.root)))
         try p.trailingComment(ast.trailingCommentAnchor(ast.root));
+    // A container root emits its own dangling run inside its closing delimiter
+    // (see `container`); a non-container root has no body for EOF orphans to
+    // live in, so they print here, one per line, after the value.
+    if (!p.isContainer(ast.root)) {
+        for (ast.comments(ast.root).dangling) |c| {
+            try writer.writeByte('\n');
+            try p.writeComment(c);
+        }
+    }
     try writer.writeByte('\n');
     try writer.flush();
 }

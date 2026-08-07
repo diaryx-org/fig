@@ -23,7 +23,11 @@ part_of = [proposals](proposals.md)
 >
 > The follow-on this proposal names but does not attempt — the five parallel
 > format enumerations and the `build_options` switches keyed on them — remains
-> open and should be its own proposal (§7, §12.4).
+> open and should be its own proposal (§7, §12.4). **Update (2026-08-06): that
+> proposal was written as code rather than prose.** It landed on branch
+> `format-registry` (7 commits, not yet merged to `main`) and is accounted for
+> in §13, which also corrects §8.5's and §12.4's claim that the
+> `FigFormat`→`Language` mapping cannot be generated from a manifest.
 >
 > The site catalogue in §2 was taken against `main` at 5c7b97b (fig 2.5.3) and
 > remains the reference account of what a format has to supply; its line
@@ -446,6 +450,14 @@ actually drifted before, as the comment at [cli/args.zig][args] line 546
 records. `FigFormat` is per-dialect (json/jsonc/json5 all map to one `Language`)
 while `caps` is per-language, so that mapping cannot be generated from this
 manifest. A real win, but "cannot drift" claims more than it buys.
+
+**Correction (2026-08-06 — see §13).** This is wrong, and the fix is the
+premise, not the mechanism: a *second*, dialect-indexed registry
+(`Language.dialects`, thirteen entries over eleven languages) carries a frozen
+`abi_value` per dialect, and `FigFormat` is `@Enum`-reified from it directly.
+The per-language `caps` this section is about still can't produce a per-dialect
+mapping — nothing here was wrong about that — but nobody had to make it,
+because the mapping was never `caps`'s to produce.
 
 ### 8.6 Three arguments the body leaves on the table
 
@@ -930,7 +942,86 @@ that used to fail to build there are now fixed, separately). That is a bigger
 line-count win than everything here and a worse place to have started, because
 it changes the C ABI surface. It now has a registry to build on.
 
+**Correction (2026-08-06 — see §13).** It was built on. §7's list was actually
+six enums, not five — `deserialize.Format` restates the same shape and was
+missed in every count from §7 onward — and all six are gone as hand-written
+types. The "worse place to have started, because it changes the C ABI surface"
+concern was real and was paid, not avoided: `FigFormat`'s values are now pinned
+in three independent places rather than one hand-written switch, and
+`abi-check` diffs `fig.h` against the registry in both directions.
+
+## 13. Outcome, the follow-on: a format registry (2026-08-06)
+
+§7 and §12.4 named the five — actually six, see below — parallel format
+enumerations and the switches keyed on them as a bigger win than this
+proposal and a worse place to have started it, because it touches the C ABI.
+It's done anyway, on branch `format-registry` (7 commits, not yet merged to
+`main`), as a second manifest rather than an extension of the first.
+
+**The registry is dialect-indexed, not language-indexed.** [`language.zig`][validate]
+gains `dialects`: thirteen entries over eleven languages (json/jsonc/json5 are
+three entries sharing one `Language`), each carrying the name, `Language`,
+`Lang.Type` dialect, a frozen C ABI value, and the per-dialect facts the six
+enums used to restate by hand — detectability, deserializability, splice
+style, empty-doc seed, printer entry points, `--spec` strings, embed
+spellings. This is the fact that resolves §8.5's "cannot be generated from
+this manifest": that claim was about the §3 manifest, which is per-language by
+construction (one `Language` struct per format). A per-dialect table was never
+in reach of it. It didn't need to be extended to reach the mapping — it needed
+a sibling that starts from the dialect instead of the language.
+
+**Staging mirrored §5's shape: land the table inert, then move consumers onto
+it one at a time.** Stage 1 (5933f16) first collapsed three duplicate
+`Format`→`SerializeFormat` switches and three lossless-target switches into
+shared helpers, clearing duplication the registry would otherwise have had to
+reconcile. Stage 2 (1310f6f) added `dialects` itself, assert-only — every
+claim pinned as a comptime assert against the switch that was still the real
+source of truth, the same "prove it before deleting anything" discipline as
+§5's Step 1 bridge. Stages 3–7 then retired the six enums one at a time,
+each stage proven live rather than merely code-reviewed:
+
+- Stage 3 (48f82ce) — `cli.Format`, `AST.SerializeFormat`, `Language.Detected`
+  and `deserialize.Format` (the sixth enum, absent from §7's and §12.4's
+  lists throughout) reified from `dialects`. `yml` retired as a `Format`
+  member; `.yml` now resolves to `yaml` rather than a byte-identical twin.
+- Stage 4 (665c509) — CLI parse/spec/edit/data-table dispatch moved onto the
+  registry (`entryFor` + `inline else`), closing gaps along the way: plist
+  gained an empty-document seed, and ini/dotenv/.properties/NestedText
+  gained the rich diagnostics json/toml/fig already had.
+- Stage 5 (b53ec82) — AST serialization dispatches through the registry;
+  `Printer` becomes a required `Language` declaration, checked by `validate`
+  exactly as `Parser` is per §8.3's tightening.
+- Stage 6 (891a5a0) — `Embed.InnerFormat` reified from the registry's
+  embeddable entries; a new test pins all sixteen embed literals as bytes so
+  a registry edit that changes a spelling fails a test that doesn't consult
+  the registry.
+- Stage 7 (989548b) — `c_api.FigFormat`, the mapping §8.5 called ungeneratable,
+  is `@Enum`-reified from `dialects`' frozen `abi_value` field. Its values
+  are pinned three independent ways: a literal 13-pair comptime assert,
+  `abi-check`'s enumerator diff of `fig.h` against the registry in both
+  directions (its "fifth check", added in Stage 2 ahead of the type it would
+  eventually check), and `semver-check`'s enum-surface diff. The 33-line
+  `*Parser`/`*Type`/`*Lang` alias block in `c_api.zig` is gone with no
+  survivors.
+
+**What this does not claim.** The `build_options.lang_*` axis itself — whether
+a format is compiled in at all — is unchanged and was never in scope (§1); a
+gated-out format is still `void`, now in the dialect registry rather than in a
+hand-written switch arm. What's gone is the *switch on the enum value*, not
+the compile-time gate that decides which enum values exist.
+
+Verified per stage in each commit body (recorded there rather than
+duplicated here): `zig build check`/conformance/`validate-check` at baseline
+throughout, `abi-check` green at every stage including Stage 7's zero-header-
+change run, `semver-check` reporting the expected verdict (patch, 2.5.4) with
+Stage 7's enum reification, five-to-six gating configurations building per
+stage, and CLI output byte-diffed against the parent commit's binary at each
+step — a 573-case embed matrix at Stage 6, a 71-case CLI diff repeated
+throughout.
+
 [vcheck]: /tools/validate-check.zig
+[abi_check]: /tools/abi-check.zig
+[semver_check]: /tools/semver-check.zig
 [manifest]: /src/languages/manifest.zig
 [validate]: /src/languages/language.zig
 [editor]: /src/editor.zig

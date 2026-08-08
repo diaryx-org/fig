@@ -87,7 +87,22 @@ jobs.fuzz.steps[]
 > # (Possibly macOS-only — the fuzzer is least exercised there and CI is Linux —
 > # but a check that is redundant on Linux costs nothing, and being wrong here is
 > # invisible.) So: grep for the failure marker FIRST, and treat the exit code as
-> # a secondary signal. A passing run emits neither marker.
+> # a secondary signal.
+> #
+> # `--error-style minimal` is what makes that grep trustworthy in the OTHER
+> # direction. Zig 0.16's build runner prints a step's report whenever the step
+> # wrote anything at all to stderr — "No matter the result, we want to display
+> # error/warning messages", says build_runner.zig — and a `failed command:
+> # <argv>` line rides along with it, because `Run` fills in
+> # `result_failed_command` before spawning the child and clears it only on two
+> # paths that success is not one of. So that line shows up on green runs: `zig
+> # build check` prints one today, for the conformance scoreboards, and exits 0.
+> # It is a context line, not a verdict. `minimal` turns it off (it gates
+> # `error_style.verboseContext()`) and leaves `error:` lines and their return
+> # traces fully intact — verified both ways, including against a deliberately
+> # failing target. The fuzz targets happen to print nothing to stderr, so this
+> # was a latent false positive rather than a live one; it was one `std.log` line
+> # away from filing an issue against a clean run.
 > #
 > # Exit 124 then means `timeout` ended a run that reported nothing — budget
 > # spent, no findings, which is the good outcome and must exit 0. `-k 1m` is in
@@ -108,14 +123,14 @@ budget="${BUDGET:-15m}"
 echo "Fuzzing for ${budget} (iteration cap set high so time alone bounds the run)."
 
 set +e
-timeout -k 1m --signal=TERM "$budget" zig build fuzz --fuzz=1G 2>&1 | tee fuzz-output.log
+timeout -k 1m --signal=TERM "$budget" zig build fuzz --fuzz=1G --error-style minimal 2>&1 | tee fuzz-output.log
 code="${PIPESTATUS[0]}"
 set -e
 
-# Primary signal. `error: '<test>' failed:` is the runner reporting a target;
-# `failed command:` is the build system reporting the run step died. Neither
-# appears in a clean run.
-if grep -qE "^error: |^failed command: " fuzz-output.log; then
+# Primary signal, and the only marker: `error: '<test>' failed:` is the runner
+# reporting a target. `failed command:` is NOT one — see the `--error-style
+# minimal` note above for what it actually means and why it is switched off.
+if grep -q "^error: " fuzz-output.log; then
   echo "::error::The fuzzer reported a failing target — see the log above and the attached corpus."
   exit 1
 fi

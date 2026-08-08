@@ -190,9 +190,23 @@ budget is a clock rather than a count.
 
 Both may well be macOS-only — the fuzzer is least exercised there, and CI runs
 Linux — but a redundant check costs nothing, and being wrong about it would be
-invisible. A clean run emits neither `^error: ` nor `^failed command: `; a
-failing one emits both. If a future Zig makes the exit code trustworthy, the
-grep can go.
+invisible. The marker is `^error: `, and only that. If a future Zig makes the
+exit code trustworthy, the grep can go.
+
+`^failed command: ` was part of the pattern too, on the reading that it meant
+"the build system reporting the run step died". It does not mean that. Zig
+0.16's build runner prints a step's report whenever the step wrote anything to
+stderr — `build_runner.zig`'s *"No matter the result, we want to display
+error/warning messages"* — and a `failed command: <argv>` line comes with it,
+because `Run` fills in `result_failed_command` before spawning the child and
+clears it only on two paths that success is not one of. A green `zig build
+check` prints one right now, for the conformance scoreboards, and still exits 0;
+that line is context, not a verdict. The nightly passes `--error-style minimal`,
+which suppresses it (the flag gates `error_style.verboseContext()`) while
+leaving `error:` lines and their return traces intact, so the marker cannot fire
+on a clean run. The fuzz targets print nothing to stderr today, so this was a
+false positive waiting to happen rather than one already happening — but it was
+one stray `std.log` line away from filing an issue against a green nightly.
 
 To reproduce a nightly failure: download the run's `fuzz-corpus-*` artifact,
 unzip it so `f` lands at `.zig-cache/f`, and re-run `zig build fuzz --fuzz=1G`.

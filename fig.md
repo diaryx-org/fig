@@ -22,14 +22,27 @@ contents = [[fig docs](docs/docs.md)]
   <a href="LICENSE-MIT"><img src="https://img.shields.io/crates/l/fig.svg" alt="license"></a>
 </p>
 
-`fig` is a Zig library for parsing and editing config files.
+`fig` is a Zig library (and CLI) for parsing and editing config files.
+
+```bash
+$ fig get config.yaml
+hello: world
+$ fig comment config.yaml --inline hello "this is a comment"
+$ fig get config.yaml
+hello: world # this is a comment
+$ fig get config.yaml -o jsonc
+{
+  "hello": "world" // this is a comment
+}
+$ fig edit config.yaml hello everyone
+$ fig get config.yaml -o toml
+hello = "everyone" # this is a comment
+````
 
 Originally made for [Diaryx](https://diaryx.org),
-`fig` allows editing frontmatter in markdown files without reserializing the data,
+`fig` was made to edit frontmatter in markdown files without reserializing,
 preserving comments and other trivia.
-`fig` has since been expanded to include many different kinds of configuration formats and different kinds of embedding.
-
-It currently supports the following formats:
+`fig` has since been expanded to include many different kinds of configuration formats:
 
 - YAML (1.2.2 and 1.1)
 - JSON (strict, JSONC, JSON5)

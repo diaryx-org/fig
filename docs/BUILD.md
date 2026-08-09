@@ -97,7 +97,8 @@ You can use a **package manager** to make updating easier. Right now, `fig` only
 
 ## nix-darwin
 
-I personally use Nix on my Macbook to manage packages. I integrate it with Homebrew by adding this to my `configuration.nix`:
+I personally use Nix on my Macbook to manage packages.
+I integrate it with Homebrew by adding this to my `configuration.nix`:
 
 ```nix
 homebrew = {
@@ -115,6 +116,9 @@ homebrew = {
 
 # Changing Code
 
-If you want, you can make changes to the code in the `src` folder and then run `zig build` again to see how your changes affected the `fig` binary.
+If you want,
+you can make changes to the code in the `src` folder
+and then run `zig build` again to see how your changes affected the `fig` binary.
 
-If you make changes and want to share them with me, be sure to follow the instructions [here](CONTRIBUTING.md).
+If you make changes and want to share them with me,
+be sure to follow the instructions [here](CONTRIBUTING.md).

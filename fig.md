@@ -183,13 +183,13 @@ For each of these, I made a conformance suite in order to ensure a correct imple
 
 All of the code generated was carefully reviewed and edited according to my taste before being accepted.
 I take full responsibility and ownership of the code in this repository.
-If you have any questions or concerns about AI use in this project, [please contact me!](<#Contact Me>)
+If you have any questions or concerns about AI use in this project, [please contact me!](<#contact-me>)
 
 **License**
 
 MIT or Apache 2.0, at your discretion.
 If you use `fig` in your work, I would love to hear from you and feature you here!
-[Please contact me!](<#Contact Me>)
+[Please contact me!](<#contact-me>)
 
 **Credits**
 

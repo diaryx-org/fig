@@ -3,7 +3,7 @@ title = fig
 version = 2.5.3
 author = adammharris
 created = 2026-05-08
-updated = 2026-07-05T21:46:34-06:00
+updated = 2026-08-08T21:07:09-06:00
 contents = [[fig docs](docs/docs.md)]
 ```
 
@@ -24,36 +24,93 @@ contents = [[fig docs](docs/docs.md)]
 
 `fig` is a Zig library (and CLI) for parsing and editing config files.
 
+Editing config files programmatically shouldn't be a hassle.
+Take a messy, real-world config:
+
+```yaml
+# config.yaml — Deploy settings
+service:
+  name: api          # must match the DNS record
+  replicas: 2
+  ports: [80, 443]
+
+defaults: &defaults
+  retries: 3
+  timeout: 30s
+
+worker:
+  <<: *defaults
+  replicas: 1
+```
+
+And easily edit and comment from the command-line:
+
 ```bash
-$ fig get config.yaml
-hello: world
-$ fig comment config.yaml --inline hello "this is a comment"
-$ fig get config.yaml
-hello: world # this is a comment
-$ fig get config.yaml -o jsonc
+$ fig set config.yaml service.replicas 5
+$ fig comment --inline config.yaml service.replicas "bumped for Black Friday"
+```
+
+```diff
+@@ -2,5 +2,5 @@
+ service:
+   name: api          # must match the DNS record
+-  replicas: 2
++  replicas: 5 # bumped for Black Friday
+   ports: [80, 443]
+```
+
+`fig` produces a single-line diff.
+Every other byte is untouched.
+
+`fig` supports lots of formats.
+Converting to another format shouldn't mean sacrificing your comments:
+
+```bash
+$ fig get config.yaml service -o json5
 {
-  "hello": "world" // this is a comment
+  name: "api", // must match the DNS record
+  replicas: 5, // bumped for Black Friday
+  ports: [
+    80,
+    443
+  ]
 }
-$ fig edit config.yaml hello everyone
-$ fig get config.yaml -o toml
-hello = "everyone" # this is a comment
-````
+```
+
+`fig`can also edit (and convert) config *embedded in* other files:
+
+```bash
+$ fig set post.md tags --seq notes zig
+$ fig convert post.md --to-embed frontmatter-toml --diff
+--- post.md
++++ post.md
+@@ -1,7 +1,7 @@
+----
+-title: Hello
+-tags: [notes, zig]   # taxonomy
+----
+++++
++title = "Hello"
++tags = ["notes", "zig"] # taxonomy
+++++
+ 
+ # Hello
+```
 
 Originally made for [Diaryx](https://diaryx.org),
-`fig` was made to edit frontmatter in markdown files without reserializing,
-preserving comments and other trivia.
+`fig` was made to edit frontmatter in markdown files without reserializing.
 `fig` has since been expanded to include many different kinds of configuration formats:
 
 - YAML (1.2.2 and 1.1)
 - JSON (strict, JSONC, JSON5)
 - TOML (1.1 and 1.2)
-- ZON (Zig Object Notation)
-- NestedText (nestedtext.org)
-- Java `.properties`
-- dotenv `.dotenv`
-- INI `.ini`
-- Property list `.plist`
-- Fig `.figl`, an in-house authoring dialect authored by yours truly!
+- ZON (Zig Object Notation, via `std.zig.AST`)
+- NestedText (<https://nestedtext.org>)
+- Java (`.properties`)
+- dotenv (`.dotenv`)
+- INI (`.ini`)
+- Property list (`.plist`)
+- Fig (`.figl`), an in-house authoring dialect authored by yours truly!
 
 And has bindings in the following programming languages:
 
@@ -71,7 +128,7 @@ brew tap diaryx-org/tap
 brew install diaryx-org/tap/fig
 ```
 
-Or run it with no install at all (needs Node 20+; experimental — see
+Or run it with no install at all (needs Node 20+)—see
 [docs/npm-wasi.md](docs/npm-wasi.md)):
 
 ```bash
@@ -140,12 +197,17 @@ I took the JSON test suite at `testdata/json` from [Nicolas Seriot's JSONTestSui
 I'm grateful that it is licensed under the MIT license, so I am allowed to use it for `fig`.
 A copy of the license is included in this repository at `testdata/json/LICENSE`.
 
-Likewise, test suite licenses are included for JSON5, TOML, YAML, and NestedText
-(the latter from [KenKundert/nestedtext_tests](https://github.com/KenKundert/nestedtext_tests), MIT).
+I've done likewise for the other testing suites:
+
+- JSON5 <https://github.com/json5/json5-tests>
+- TOML <https://github.com/toml-lang/toml-test>
+- YAML <https://github.com/yaml/yaml-test-suite>
+- NestedText [KenKundert/nestedtext_tests](https://github.com/KenKundert/nestedtext_tests)
+
 I am thankful for each of them.
 
 I am also thankful for the `toml-edit` Rust crate,
-which provided inspiration for the complex structural edits required by any format-preserving TOML editor.
+which provided guidance for the complex structural edits required by any format-preserving TOML editor.
 
 ## Contact Me
 

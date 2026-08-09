@@ -25,7 +25,7 @@ contents = [[fig docs](docs/docs.md)]
 `fig` is a Zig library (and CLI) for parsing and editing config files.
 
 Editing config files programmatically shouldn't be a hassle.
-Take a messy, real-world config:
+Take a messy YAML file:
 
 ```yaml
 # config.yaml — Deploy settings
@@ -60,10 +60,10 @@ $ fig comment --inline config.yaml service.replicas "bumped for Black Friday"
 ```
 
 `fig` produces a single-line diff.
-Every other byte is untouched.
+Every other byte is preserved.
 
 `fig` supports lots of formats.
-Converting to another format shouldn't mean sacrificing your comments:
+Convert to another format, and keep your comments:
 
 ```bash
 $ fig get config.yaml service -o json5

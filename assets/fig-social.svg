@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <defs>
+    <path id="f" d="M0,-40 C-1,-30 -8,-26 -16,-18 C-25,-9 -30,2 -30,12 C-30,29 -17,40 0,40 C17,40 30,29 30,12 C30,2 25,-9 16,-18 C8,-26 1,-30 0,-40 Z"/>
+  </defs>
+  <rect width="1280" height="640" fill="#241A28"/>
+
+  <g transform="translate(523,248) scale(1.5)">
+    <path d="M0,-40 C1,-46 3,-50 8,-54" fill="none" stroke="#B08954" stroke-width="4.5" stroke-linecap="round"/>
+    <use href="#f" fill="#7A5187"/>
+    <g transform="scale(0.84)"><use href="#f" fill="#EEDFCC"/></g>
+    <g transform="scale(0.70)"><use href="#f" fill="#E06A7D"/></g>
+    <g fill="#F3E4CF">
+      <circle cx="0" cy="-14" r="2.1"/><circle cx="-7" cy="-6" r="2.1"/><circle cx="7" cy="-6" r="2.1"/>
+      <circle cx="-13" cy="3" r="2.1"/><circle cx="0" cy="2" r="2.1"/><circle cx="13" cy="3" r="2.1"/>
+      <circle cx="-8" cy="11" r="2.1"/><circle cx="8" cy="11" r="2.1"/><circle cx="-15" cy="12" r="2.1"/>
+      <circle cx="15" cy="12" r="2.1"/><circle cx="0" cy="19" r="2.1"/><circle cx="-7" cy="24" r="2.1"/>
+      <circle cx="7" cy="24" r="2.1"/>
+    </g>
+  </g>
+
+  <text x="603" y="308" font-family="Iowan Old Style, Palatino, Georgia, serif" font-size="168" fill="#EFE6F1">fig</text>
+
+  <text x="640" y="434" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="38" fill="#C9B6CE">format-preserving config parsing &amp; editing</text>
+
+  <text x="640" y="510" text-anchor="middle" font-family="SF Mono, Menlo, Consolas, monospace" font-size="22" letter-spacing="1.5" fill="#8E7A96">YAML · JSON · TOML · ZON · INI · plist · dotenv · NestedText</text>
+</svg>

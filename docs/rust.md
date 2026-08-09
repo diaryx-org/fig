@@ -2,7 +2,7 @@
 title = Using fig in Rust
 author = adammharris
 created = 2026-07-05T21:35:14-06:00
-updated = 2026-07-05T22:36:00-06:00
+updated = 2026-08-08T10:00:00-06:00
 part_of = [docs](docs.md)
 ```
 
@@ -15,8 +15,9 @@ deep in a YAML or TOML file and every comment, blank line, key order, and quotin
 style elsewhere stays byte-for-byte identical. It also converts losslessly
 between formats and edits config embedded in markdown frontmatter.
 
-The core is a Zig library compiled and statically linked into your crate at build
-time. It carries an optional `serde` layer, or you can use its own
+The core is a Zig library statically linked into your crate — as a prebuilt
+archive for the default feature set, so the common case needs no Zig toolchain.
+It carries an optional `serde` layer, or you can use its own
 `serde`-independent `Value` tree and `#[derive(ToValue, FromValue)]` macros —
 `fig` can replace `serde` in your project entirely. Diaryx uses `fig` in
 production as a `serde` replacement.
@@ -39,16 +40,23 @@ production as a `serde` replacement.
 
 ## Install
 
-`fig` builds the Zig core from source, so you need **Zig installed** on the
-machine that compiles your crate. Then add the git dependency:
-
 ```toml
 [dependencies]
-fig = { git = "https://github.com/diaryx-org/fig" }
+fig = "3"
 ```
 
-There is no separate native library to ship — the core is linked straight into
-your binary.
+For the **default feature set** on a tier-1 target, `fig-sys` links a prebuilt
+`libfig.a` shipped by a per-target payload crate — Cargo downloads exactly the
+one matching your target, and **no Zig toolchain is required**. A source build
+(which does need Zig 0.16+) kicks in only when:
+
+- the target has no prebuilt payload crate,
+- a **non-default** language feature set is selected — adding or removing a
+  format changes the compiled library, so the prebuilt no longer matches, or
+- `FIG_SYS_FORCE_SOURCE=1` is set.
+
+Either way there is no separate native library to ship: the core is linked
+straight into your binary.
 
 ## Quick start
 
@@ -88,7 +96,9 @@ let yaml = fig::to_string(&cfg)?;
 ## Cargo features
 
 Each format and the two typed-mapping layers are Cargo features. The defaults
-cover the common case; trim them to shrink the linked core.
+cover the common case; trim them to shrink the linked core — at the cost of
+falling off the prebuilt-archive path (see [Install](#install)), since any
+change to the language set means the library has to be rebuilt from Zig source.
 
 | Feature    | Default | What it adds                                                              |
 | ---------- | :-----: | ------------------------------------------------------------------------- |
@@ -126,15 +136,23 @@ let caps = capabilities(Format::Toml);
 | `Jsonc`  |  ✅   |  ✅  |    ✅     | JSON with `//` and `/* */` comments. |
 | `Json5`  |  ✅   |  ✅  |    ✅     | Unquoted keys, trailing commas, etc. |
 | `Yaml`   |  ✅   |  ✅  |    ✅     | YAML 1.2.2 / 1.1.                    |
-| `Toml`   |  ✅   |  ✅  |    ✅     | TOML 1.1 / 1.2, incl. datetimes.     |
-| `Zon`    |  ✅   |  ✅  |    ✅     | Zig Object Notation.                 |
+| `Toml`   |  ✅   |  ✅  |    ✅     | TOML 1.0 / 1.1, incl. datetimes.     |
+| `Zon`    |  ⚠️   |  ⚠️  |    ⚠️     | Zig Object Notation — **not** in `default`; enable the `zon` feature. |
 | `Fig`    |  ✅   |  ✅  |    ✅     | The native `fig` authoring dialect.  |
 
-Every format the Rust `Format` enum exposes parses, edits, and serializes. (The
-core also has an XML reader, but it is reader-only and not surfaced as a writable
-`Format`, so the binding does not expose it — see the `xml` feature below.) Ask
-[`capabilities`] at runtime rather than hard-coding the table — a format can also
-be compiled out.
+Every format the Rust `Format` enum exposes parses, edits, and serializes when
+its feature is on — but `zon` is not in the default feature set, so on a stock
+build `capabilities(Format::Zon)` is all-`false` and using it returns
+[`Error::UnsupportedFormat`]. Ask [`capabilities`] at runtime rather than
+hard-coding the table.
+
+The core supports more formats than this binding currently surfaces: generic XML
+(reader-only, which is why there is no writable `Format` for it — see the `xml`
+feature below), plus INI, dotenv, Java `.properties`, NestedText and Apple XML
+property lists. Those five have C ABI values already and are reachable from the
+CLI and the TypeScript binding; the Rust `Format` enum has not grown to match
+yet. Because `Format` is `#[non_exhaustive]`, adding them will be a **minor**
+release — see [Forward compatibility](#forward-compatibility-non_exhaustive).
 
 ## Reading data
 
@@ -292,7 +310,7 @@ Common operations (identical on [`Editor`] and [`Embed`]):
 ```rust
 ed.insert_value(&[], "key", &value)?;                 // add a mapping entry
 ed.replace_value(path, &value)?;                      // change a value
-ed.replace_key(path, "new_key")?;                     // rename a key
+ed.replace_key(path, "new_key")?;                     // rename a key (framed as the format's string)
 ed.set_value(path, &value)?;                          // upsert (replace or insert)
 ed.delete(path)?;                                     // remove a mapping entry
 ed.append_value(&[Segment::Key("list")], &value)?;    // push onto a sequence
@@ -305,14 +323,28 @@ ed.reorder_items(&[Segment::Key("list")], &[2, 0])?;  // bring these indices to 
 ed.set_sequence(&[Segment::Key("tags")], &tags)?;     // reconcile a list, keeping survivors' comments
 ```
 
+`replace_value`, `insert_value` and `set_value` each have a `*_with` twin
+taking a [`SerializeOptions`], for when the spliced value's own rendering needs
+controlling (`replace_value_with`, `insert_value_with`, `set_value_with`).
+
+`set_sequence` has a narrower domain than the rest: it matches new items to old
+ones by *value* so a kept-or-merely-reordered item keeps its comments, which
+means each item has to parse as a standalone document. It therefore declines —
+with `Error::InvalidArgument` — on `Toml` (whose scalars can't stand alone), on
+an empty list on either side, and on any non-scalar item. Nothing is lost
+there: a TOML inline array carries no per-element comments, so `replace_value`
+on the whole list is equivalent. It earns its keep on `Yaml` and `Fig`, where
+per-item comments are real.
+
 Comments are first-class:
 
 ```rust
 ed.add_leading_comment(&["port".into()], "the listening port")?; // own-line comment above
 ed.set_trailing_comment(&["port".into()], "default 8080")?;      // same-line comment
 ed.leading_comment(&["port".into()])?;   // read it back (Some("") = bare marker, None = none)
+ed.trailing_comment(&["port".into()])?;  // same convention
 ed.delete_trailing_comment(&["port".into()])?;
-ed.delete_leading_comments(&["port".into()])?;
+ed.delete_leading_comments(&["port".into()])?;   // drops the whole owned block
 ```
 
 The comment marker (`#`, `//`) is chosen for the format; strict `Json` has no
@@ -363,12 +395,34 @@ println!("{}", fm.render()?);
 // text
 ```
 
-- [`EmbedType`] selects the region and inner format: `FrontmatterYaml`,
-  `FrontmatterJson`, `FrontmatterFig`, or `EndmatterYaml`.
+- [`EmbedType`] selects the container *and* the inner format. Four container
+  families, crossed with the four embeddable formats (JSON, YAML, TOML, fig):
+
+  | Container | Variants |
+  | --------- | -------- |
+  | Markdown frontmatter | `FrontmatterYaml` (bare `---`), `MdFrontmatterJson` (`---json`), `MdFrontmatterToml`, `MdFrontmatterFig` |
+  | Fenced code block | `FrontmatterFig` (```` ```fig ````), `FencedYaml`, `FencedJson`, `FencedToml` |
+  | HTML data island | `HtmlScriptFig`, `HtmlScriptYaml`, `HtmlScriptJson`, `HtmlScriptToml` — `<script type="application/…">` |
+  | HTML visible code | `HtmlCodeFig`, `HtmlCodeYaml`, `HtmlCodeJson`, `HtmlCodeToml` — `<pre><code class="language-…">` |
+
+  Plus three conventions with their own distinct delimiter: `FrontmatterJson`
+  (`;;;`), `PlusToml` (`+++`, the Hugo/Zola convention), and `EndmatterYaml` (a
+  trailing ```` ```endmatter ```` block). The first four names are historical —
+  `FrontmatterJson` is the `;;;` form and `FrontmatterFig` the fenced one — and
+  are kept because their ABI values are frozen.
+
+  The `HtmlCode*` variants are entity-encoded on disk. Editing decodes on open
+  and re-encodes span-aware on `render`, so an edit preserves every untouched
+  byte's original encoding and canonically encodes only what changed.
 - `Embed::open_or_init(host, kind)` creates the block if none exists, so the
   first `set` lands cleanly.
 - `Embed::extract(host, kind)` / `split(content, kind)` locate the region
   *without* parsing — handy for reading the raw frontmatter and body apart.
+  [`Extracted`] gives you `region()`, `content()` and `body()`.
+- `detect(source)` sniffs which [`EmbedType`] a host opens with, or `None`;
+  `EmbedType::inner_format()` then reports the [`Format`] that archetype's
+  content is written in, so a detected embed resolves to a parser without
+  duplicating the mapping.
 - `replace_body(text)` swaps the prose while keeping the (possibly edited) config.
 
 ## Serialization options
@@ -479,6 +533,7 @@ text to outlive the next edit — the borrow checker enforces this for you.
 - `capabilities(format) -> Capabilities` — what this build can read/edit/serialize.
 - `version() -> Version` / `version_string() -> &'static str` — linked core version.
 - `split(content, kind) -> Option<(&str, &str)>` — read-only `(content, body)` of an embed.
+- `detect(source) -> Option<EmbedType>` — which embed archetype a host opens with.
 - *(serde)* `from_str<T>(s) -> Result<T>` — deserialize a YAML string.
 - *(serde)* `from_slice<T>(bytes, format) -> Result<T>` — deserialize any format.
 - *(serde)* `to_string<T>(&value) -> Result<String>` — serialize to YAML.
@@ -488,11 +543,12 @@ text to outlive the next edit — the borrow checker enforces this for you.
 
 - [`Document`] — read path: `parse`, `to_value`, `serialize`/`serialize_with`, `diagnose`.
 - [`Editor`] — comment-preserving editor: `open`, `source`, and the edit/comment methods.
-- [`Embed`] — frontmatter/embed editor: `open`, `open_or_init`, `extract`, `render`, `replace_body`, and the edit methods.
+- [`Embed`] — frontmatter/embed editor: `open`, `open_or_init`, `extract`, `render`, `replace_body`, `inner_format`, `region`, and the edit methods.
+- [`Extracted`] — a located-but-unparsed region: `region()`, `content()`, `body()`.
 - [`Value`] — the owned value tree; `serialize`/`serialize_with`/`diagnose`, plus `From` impls.
 - `Segment<'a>` — path step (`Key(&str)` / `Index(usize)`), with `From<&str>`/`From<usize>`.
 - `SerializeOptions` — output style (`compact()`, `pretty(n)`, `.indent(n)`, `.width(n)`, `.strip_comments()`, `.lossless()`).
-- `Warning` / `Region` / `Span` / `Extracted` / `Version` / `Capabilities` / `ParseError`.
+- `Warning` / `Region` / `Span` / `Version` / `Capabilities` / `ParseError`.
 
 **Enums**
 

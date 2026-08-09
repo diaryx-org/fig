@@ -2,15 +2,16 @@
 title = Using fig in Zig
 author = adammharris
 created = 2026-07-05T21:35:14-06:00
-updated = 2026-07-05T23:10:00-06:00
+updated = 2026-08-08T10:00:00-06:00
 part_of = [docs](docs.md)
 ```
 
 # fig for Zig
 
 `fig` is a Zig library that parses, **edits**, and serializes configuration
-files — JSON, JSONC, JSON5, YAML, TOML, ZON, XML (read-only), and the native
-`fig` authoring dialect — from one small package with no external
+files — JSON, JSONC, JSON5, YAML, TOML, ZON, INI, dotenv, Java `.properties`,
+NestedText, Apple XML property lists, XML (read-only), and the native `fig`
+authoring dialect — from one small package with no external
 dependencies. Its distinguishing feature is *comment-preserving editing*: you
 can change one value deep in a YAML or TOML file and every comment, blank
 line, key order, and quoting style elsewhere stays byte-for-byte identical. It
@@ -50,25 +51,40 @@ const fig_dep = b.dependency("fig", .{ .target = target, .optimize = optimize })
 exe.root_module.addImport("fig", fig_dep.module("fig"));
 ```
 
-Every format but XML is compiled in by default. Each is gated by its own
-build option, so a consumer that only needs JSON+YAML can trim the rest out
-of the binary by passing options through to the dependency:
+Most formats are compiled in by default. Each is gated by its own build
+option, so a consumer that only needs JSON+YAML can trim the rest out of the
+binary by passing options through to the dependency:
 
 ```zig
 const fig_dep = b.dependency("fig", .{
     .target = target,
     .optimize = optimize,
-    .toml = false, // drop TOML support
-    .zon = false,  // drop ZON support
-    .xml = true,   // XML is opt-in; enable it if you need it
+    .toml = false,  // drop TOML support
+    .zon = false,   // drop ZON support
+    .xml = true,    // XML is opt-in; enable it if you need it
+    .plist = true,  // so is plist
 });
 ```
 
-(`json`, `yaml`, `toml`, `zon`, and `fig` default to `true`; `xml` defaults to
-`false`.) A disabled language's `Language.*` member (see below) resolves to
-`void` at comptime rather than being omitted, so any code path that touches a
-gated-out language must itself be guarded with `if (comptime
-build_options.lang_toml) ...` — see [Formats](#formats).
+| Option        | Default | Includes                                    |
+| ------------- | :-----: | ------------------------------------------- |
+| `json`        |   ✅    | The shared JSON/JSONC/JSON5 core.           |
+| `yaml`        |   ✅    | YAML 1.2.2 / 1.1.                           |
+| `toml`        |   ✅    | TOML 1.0 / 1.1.                             |
+| `zon`         |   ✅    | Zig Object Notation.                        |
+| `fig`         |   ✅    | The native `fig` authoring dialect.         |
+| `ini`         |   ✅    | INI (`[section]` + `key = value`).          |
+| `dotenv`      |   ✅    | dotenv / `.env`.                            |
+| `properties`  |   ✅    | Java `.properties`.                         |
+| `nestedtext`  |   ✅    | NestedText (nestedtext.org).                |
+| `xml`         |         | Generic XML (read-only; slated for removal as a selectable format — see [BREAKING-CHANGES](BREAKING-CHANGES.md)). |
+| `plist`       |         | Apple XML property lists.                   |
+| `canonical`   |         | The AST's own oracle encoding (mostly for tests; always compiled for a test build). |
+
+A disabled language's `Language.*` member (see below) resolves to `void` at
+comptime rather than being omitted, so any code path that touches a gated-out
+language must itself be guarded with `if (comptime build_options.lang_toml)
+...` — see [Formats](#formats).
 
 ## Quick start
 
@@ -77,7 +93,7 @@ const std = @import("std");
 const fig = @import("fig");
 
 pub fn main() !void {
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -108,12 +124,24 @@ adaptation needed to target a different format.
 | `ZON`        |  ✅   |  ✅  |    ✅     | Zig Object Notation.                      |
 | `XML`        |  ✅   |      |    ✅     | Opt-in (`-Dxml`); root must be one element.|
 | `FIG`        |  ✅   |  ✅  |    ✅     | The native `fig` authoring dialect.       |
+| `INI`        |  ✅   |  ✅  |    ✅     | Untyped scalars — `port = 8080` reads back as the *string* `"8080"`. |
+| `DOTENV`     |  ✅   |  ✅  |    ✅     | Flat string map: no nesting, untyped scalars. |
+| `PROPERTIES` |  ✅   |  ✅  |    ✅     | Java `.properties`; same flat, untyped limits as dotenv. |
+| `PLIST`      |  ✅   |  ✅  |    ✅     | Opt-in (`-Dplist`). Typed *and* nested; date/data ride on `extended`. |
+| `NESTEDTEXT` |  ✅   |  ✅  |    ✅     | Nested (dict/list) but deliberately untyped — every leaf is a string. |
+
+The four untyped formats (INI, dotenv, `.properties`, NestedText) parse every
+scalar as a string; nothing infers a number or a bool from them. INI, dotenv
+and `.properties` are also shape-limited — see
+[`FlatStrip`](#diagnostics--lossless-conversion) for what a serialize to one
+of them drops.
 
 Don't hard-code this table into your program — each row is only compiled in
 when its build option is set (`build_options.lang_json`, `.lang_yaml`,
-`.lang_toml`, `.lang_zon`, `.lang_xml`, `.lang_fig`), and `Language.TOML` etc.
-is `void` when its flag is off. Guard any generic code with the matching
-comptime check, the way `Language.detect` itself does:
+`.lang_toml`, `.lang_zon`, `.lang_xml`, `.lang_fig`, `.lang_ini`,
+`.lang_dotenv`, `.lang_properties`, `.lang_plist`, `.lang_nestedtext`), and
+`Language.TOML` etc. is `void` when its flag is off. Guard any generic code
+with the matching comptime check, the way `Language.detect` itself does:
 
 ```zig
 if (comptime build_options.lang_toml) {
@@ -123,17 +151,25 @@ if (comptime build_options.lang_toml) {
 ```
 
 `fig.Language.detect(allocator, input)` sniffs which compiled-in format
-`input` parses as (trying, in order, JSON/JSON5, ZON, XML, TOML, fig, then
-YAML — see `languages/language.zig`'s doc comment for why that order), and
-`fig.Language.validate(comptime Lang)` is a comptime assertion that a type
-has the shape (`Type`, `default_type`, `parse`, `print`) the generic engines
-(`Editor(Lang)`, `deserialize`) require.
+`input` parses as, returning a `Language.Detected`. It tries strictest first:
+JSON, JSON5, ZON, plist, XML, TOML, fig, INI, dotenv, YAML, `.properties`,
+NestedText. The tail of that order is what keeps the permissive formats from
+starving the rest — `.properties` accepts nearly any UTF-8 text, and plain
+`key: value` NestedText is also valid YAML (but types `port: 80` as the string
+`"80"` rather than an integer), so both sit after YAML and reach selection
+mainly via their file extension. See `languages/language.zig` for the
+per-format reasoning.
+
+`fig.Language.validate(comptime Lang)` is a comptime assertion that a type has
+the shape (`Type`, `default_type`, `parse`, `print`) the generic engines
+(`Editor(Lang)`, `deserialize`) require, and `fig.Language.compiled` is the
+list of language modules this build actually contains.
 
 Every "Edit" ✅ above goes through the *same* generic `Editor(Language)` engine
 (next section) — ZON included, splicing its `.key = value` struct-field syntax
 and `.{}`/`.@"..."` quoting rules exactly like JSON gets `"key": value`. Only
-TOML and fig additionally get the whole-table/whole-container structural ops
-listed near the end of that section.
+TOML, fig and INI additionally get the whole-table/whole-container structural
+ops listed near the end of that section.
 
 ## Reading data
 
@@ -292,6 +328,7 @@ Common operations:
 ```zig
 try ed.insertKey(&.{}, "region", "\"us-east-1\"");    // add a mapping entry
 try ed.replaceValAtPath(&.{.{ .key = "port" }}, "80"); // change a value
+try ed.replaceKeyAtPath(&.{.{ .key = "port" }}, "listen"); // rename a key
 try ed.set(&.{.{ .key = "debug" }}, "false");          // upsert (replace or insert)
 try ed.deleteKey(&.{.{ .key = "debug" }});             // remove a mapping entry
 try ed.appendToSeq(&.{.{ .key = "tags" }}, "\"c\"");   // push onto a sequence
@@ -300,8 +337,32 @@ try ed.removeSeqItem(&.{.{ .key = "tags" }}, 0);       // remove sequence item b
 try ed.moveKey(&.{.{ .key = "a" }}, &.{.{ .key = "b" }});     // reorder mapping entries
 try ed.reorderKeys(&.{}, &.{ "title", "body" });              // named keys first, rest follow
 try ed.moveItem(&.{.{ .key = "tags" }}, 2, 0);                // reorder sequence items
+try ed.reorderItems(&.{.{ .key = "tags" }}, &.{ 2, 0 });      // bring these indices to the front
 try ed.setSequence(&.{.{ .key = "tags" }}, &.{ "\"c\"", "\"a\"" }); // reconcile a list, keeping survivors' comments
 ```
+
+`setSequence` is the one op above with a narrower domain than the rest: it
+matches new items to old ones by *value* so that a kept-or-merely-reordered
+item keeps its comments, which means it needs to parse each item text as a
+standalone document. TOML scalars can't stand alone, so it declines there with
+`error.UnsupportedShape` — as it does for an empty list on either side, or any
+non-scalar item. (Nothing is lost: a TOML inline array carries no per-element
+comments to preserve, so replacing the whole value is equivalent.) It is worth
+reaching for on YAML and fig, where per-item comments are real:
+
+```zig
+var ed: fig.Editor(fig.Language.YAML) = .{ .allocator = allocator };
+defer ed.deinit();
+try ed.init("tags:\n- a # keep me\n- b\n");
+try ed.setSequence(&.{.{ .key = "tags" }}, &.{ "c", "a" });
+// tags:
+// - c
+// - a # keep me
+```
+
+`replaceAtSpan(span, text)` is the escape hatch underneath all of them: splice
+an arbitrary byte range you located yourself (via `getParsed()` and
+`doc.span(node)`), with the same reparse-or-roll-back guarantee.
 
 Comments are first-class:
 
@@ -310,8 +371,16 @@ try ed.addLeadingComment(&.{.{ .key = "port" }}, "the listening port"); // own-l
 try ed.setTrailingComment(&.{.{ .key = "port" }}, "default 8080");     // same-line
 const leading = try ed.getLeadingComment(&.{.{ .key = "port" }});      // "" = bare marker, null = none
 if (leading) |text| allocator.free(text);
+const trailing = try ed.getTrailingComment(&.{.{ .key = "port" }});    // same convention
+if (trailing) |text| allocator.free(text);
 try ed.deleteTrailingComment(&.{.{ .key = "port" }});
+try ed.deleteLeadingComments(&.{.{ .key = "port" }});   // drops the whole owned block
 ```
+
+Both getters return allocator-owned memory — free what you get back. Not every
+format has both halves: INI and NestedText have real leading comments but no
+trailing-comment syntax at all, so `setTrailingComment` there returns
+`error.CommentsUnsupported` the way strict JSON does for every comment op.
 
 The comment marker (`#`, `//`) is chosen for the language; strict JSON has no
 comments and every comment op returns `error.CommentsUnsupported`.
@@ -346,60 +415,99 @@ three. Everything else — YAML, JSON, ZON, … — has contiguous containers, w
 
 ## Markdown frontmatter & embeds
 
-`fig.Embed` locates a config block embedded in a host file — YAML/JSON/`fig`
-frontmatter, or a YAML endmatter block — without touching an `Editor`
-directly; you compose it with `Editor` yourself for edits (there is no
-combined "embedded editor" type at this layer — see the CLI's `applyToEmbed`
-in `src/cli/edit_ops.zig` for the exact pattern this section follows).
+`fig.Embed` locates a config block embedded in a host file without touching an
+`Editor` directly; you compose it with `Editor` yourself for edits (there is
+no combined "embedded editor" type at this layer — see the CLI's
+`applyToEmbed` in `src/cli/edit_ops.zig` for the exact pattern this section
+follows).
+
+### Archetypes
+
+`fig.Embed.Type` is a *union*, not a flat enum: the four container shapes that
+name their format in the source are parametric over an `Embed.InnerFormat`
+(`.json`, `.yaml`, `.toml`, `.fig` — exactly the formats with an embedded
+spelling), and three popular conventions whose delimiter is its own distinct
+token stay as blessed presets:
+
+```zig
+const t: fig.Embed.Type = .{ .frontmatter = .yaml };  // ---      … --- / ...  (bare --- is YAML)
+_ = fig.Embed.Type{ .fenced = .toml };                // ```toml  … ```
+_ = fig.Embed.Type{ .html_script = .json };           // <script type="application/json"> … </script>
+_ = fig.Embed.Type{ .html_code = .fig };              // <pre><code class="language-figl"> … </code></pre>
+_ = fig.Embed.Type.semicolons_json;                   // ;;;      … ;;;
+_ = fig.Embed.Type.plus_toml;                         // +++      … +++   (Hugo/Zola)
+_ = fig.Embed.Type.endmatter_yaml;                    // trailing ```endmatter block
+```
 
 Read-only extraction:
 
 ```zig
 const md = "---\ntitle: Hello\ntags:\n- draft\n---\n# Body\n\ntext\n";
 
-const embedded = try fig.Embed.extract(allocator, md, .FrontmatterYaml);
+const embedded = try fig.Embed.extract(allocator, md, .{ .frontmatter = .yaml });
 defer embedded.deinit(allocator);
 
 const title = try embedded.document.ast.getValByPath(&.{.{ .key = "title" }});
 title.kind.string; // "Hello"
 
-// `embedded.region` gives the fence/content/body spans in *outer* coordinates;
-// a node span from `embedded.document` is relative to `region.content` —
-// lift it back with `embedded.outerSpan(doc.span(node))`.
+// `embedded.region` gives the open_fence/content/close_fence/body spans in
+// *outer* coordinates; a node span from `embedded.document` is relative to the
+// DECODED content — lift it back with `embedded.outerSpan(doc.span(node))`,
+// which routes through the decode provenance map for the `<code>` archetype.
 ```
 
-To edit an embedded block in place: locate the region, run `Editor` over just
-the `content` slice (as that archetype's inner format — `Embed.innerFormat`
-tells you which), then splice the edited slice back between the retained
-fences:
+To edit an embedded block in place: locate the region, decode the content for
+the archetype's codec, run `Editor` over just that slice (as the archetype's
+inner format — `Embed.innerFormat` tells you which), re-encode, and splice the
+result back between the retained fences:
 
 ```zig
 fn setFrontmatterTitle(allocator: std.mem.Allocator, host: []const u8, new_title: []const u8) ![]u8 {
-    const region = try fig.Embed.locateRegion(host, .FrontmatterYaml);
+    const t: fig.Embed.Type = .{ .frontmatter = .yaml };
+    const region = try fig.Embed.locateRegion(host, t);
     const inner = host[region.content.start..region.content.end];
+
+    // Identity for every archetype but `html_code`, whose on-disk content is
+    // entity-encoded — decode so the editor sees real config.
+    const codec = fig.Embed.codecOf(t);
+    const decoded = try fig.Embed.decodeForParse(allocator, inner, codec);
+    defer decoded.deinit(allocator);
 
     var ed: fig.Editor(fig.Language.YAML) = .{ .allocator = allocator };
     defer ed.deinit();
-    try ed.init(inner);
+    try ed.init(decoded.text);
     try ed.set(&.{.{ .key = "title" }}, new_title); // e.g. `"Hello, world"`
+
+    // Span-aware: only the bytes the editor actually changed are re-encoded, so
+    // an untouched `&#60;` never normalizes to `&lt;`. A passthrough copy for
+    // `identity`.
+    const edited = try fig.Embed.reencodeEdited(allocator, codec, inner, decoded, ed.source.items);
+    defer allocator.free(edited);
 
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(allocator);
     try out.appendSlice(allocator, host[0..region.content.start]);
-    try out.appendSlice(allocator, ed.source.items);
+    try out.appendSlice(allocator, edited);
     try out.appendSlice(allocator, host[region.content.end..]);
     return out.toOwnedSlice(allocator);
 }
 ```
 
+If you only ever handle identity archetypes you can skip the codec pair and
+splice `ed.source.items` directly — but going through it is what makes the same
+function work for `.{ .html_code = ... }` unchanged.
+
 - `fig.Embed.locateRegion(source, t)` finds the region without parsing it;
-  `fig.Embed.extract` does both.
+  `fig.Embed.extract` does both. `fig.Embed.parseSpan` parses a content span
+  you already have.
 - `fig.Embed.detect(source)` sniffs which archetype `source` opens (mirrors
   `Language.detect`); `fig.Embed.innerFormat(t)` reports the format that
-  archetype's content is written in.
+  archetype's content is written in, and `fig.Embed.bodyIsBefore(t)` whether
+  the host prose precedes the region (endmatter) or follows it.
 - `fig.Embed.initRegion(allocator, source, t)` synthesizes a host with a fresh
   *empty* region when none exists yet — the "create" half of open-or-init, for
-  seeding a brand-new frontmatter block before the first `set`.
+  seeding a brand-new frontmatter block before the first `set`. It returns
+  `Initialized{ host, region }`, and `host` is caller-owned.
 - `fig.Embed.retype(allocator, source, region, to, new_content)` rebuilds the
   region as a *different* archetype (e.g. YAML frontmatter → `;;;` JSON
   frontmatter) while keeping the host prose byte-identical.
@@ -420,19 +528,30 @@ try ast.serializeWith(&out.writer, .toml, .{ .width = 40 });          // inline 
 try ast.serializeWith(&out.writer, .yaml, .{ .strip_comments = true });
 ```
 
-| Field           | Applies to       | Meaning                                          |
-| --------------- | ---------------- | ------------------------------------------------- |
-| `pretty`        | JSON/JSON5, ZON, TOML | Multi-line (default) vs. compact.             |
+| Field           | Applies to        | Meaning                                          |
+| --------------- | ----------------- | ------------------------------------------------- |
+| `pretty`        | JSON/JSON5, ZON, TOML | Multi-line (default) vs. compact. TOML uses it to gate array wrapping; YAML ignores it. |
 | `indent`        | JSON/JSON5, TOML  | Spaces per level (default 2).                    |
-| `width`         | TOML              | Column budget for inline-table vs. `[section]`.  |
+| `width`         | TOML, YAML, fig   | Column budget for inline (flow) vs. expanded layout (default 80). `1` means "always block". |
 | `strip_comments`| all               | Drop carried comments instead of emitting them.  |
+| `fig_indent`    | fig               | Opt-in cosmetic `2 × depth` indentation (`fig fmt --indent`). |
+| `flow`          | fig, fragments    | Render a container root as inline flow (`[a, b]` / `{ k = v }`) rather than block. |
 
 `AST.SerializeFormat` is `json | jsonc | json5 | yaml | toml | zon | xml |
-canonical | fig`. `canonical` (aliased as `fig.Native`, kept for backward
-compatibility — prefer `fig.Canonical`) is the AST's own total, bijective
-encoding: every node kind, including ones no other format can hold, round-trips
-through it unchanged, which makes it useful both as a debug dump and as the
-comparison oracle round-trip tests use.
+canonical | fig | ini | dotenv | properties | plist | nestedtext` — every
+format-registry dialect, plus `canonical` spliced in after `xml`. `canonical`
+(aliased as `fig.Native`, kept for backward compatibility — prefer
+`fig.Canonical`) is the AST's own total, bijective encoding: every node kind,
+including ones no other format can hold, round-trips through it unchanged,
+which makes it useful both as a debug dump and as the comparison oracle
+round-trip tests use. It is opt-in at build time (`-Dcanonical`), though a test
+build always compiles it.
+
+Serializing can fail for reasons the target format decides — `SerializeError`
+covers `NullUnsupported` (TOML), `NonStringKey` (TOML/ZON/XML), the XML shape
+errors, `FigUnrepresentableRoot`, `UnsupportedValue` (a sequence or mapping
+reaching INI/dotenv), `InvalidKey` (a dotenv key that isn't a bash identifier),
+and `FormatDisabled` when the target was compiled out of this build.
 
 ## Diagnostics & lossless conversion
 
@@ -470,7 +589,18 @@ printing; `decode(arena, ast)` reverses it after parsing back. `needsEnvelope`/
 check a single node's fate up front, and `lossyStrip` gives you the CLI's
 default (non-lossless) behavior explicitly: drop only what a target truly
 cannot represent at all (today, just a `null` bound for TOML) and report the
-dropped paths, rather than aborting the whole serialize.
+dropped paths, rather than aborting the whole serialize. `Lossless.Target` is
+`json | yaml | toml | zon`; `Lossless.targetFor(format)` maps a
+`SerializeFormat` onto one, or `null` for a format with no envelope support.
+
+`fig.FlatStrip` is the sibling pass for the three flat/shallow formats — INI,
+dotenv, `.properties` — whose limits are about *depth* rather than scalar kind
+(INI holds a root mapping plus one level of `[section]`s; dotenv and
+`.properties` are flat outright). Run it before printing to drop what those
+formats can't hold at all — a `null`, a sequence at any depth, a mapping
+nested past the limit — so the printer never aborts a document partway
+through. It reports the same set `Diagnostics.analyze` warns about for those
+targets, so the usual sequence is analyze-then-strip-then-print.
 
 ## Reflective deserialization
 
@@ -541,8 +671,8 @@ var ed: fig.Editor(fig.Language.YAML) = .{ .allocator = allocator };
 defer ed.deinit(); // frees its internal Document + source buffer
 try ed.init(source);
 
-const embedded = try fig.Embed.extract(allocator, host, .FrontmatterYaml);
-defer embedded.deinit(allocator); // frees embedded.document
+const embedded = try fig.Embed.extract(allocator, host, .{ .frontmatter = .yaml });
+defer embedded.deinit(allocator); // frees embedded.document and its decoded buffer
 
 const stream = try fig.Embed.extractStream(allocator, host);
 defer stream.deinit(allocator); // frees every StreamDoc's document
@@ -565,7 +695,8 @@ only *after* the `Document` that borrows it is itself freed.
 **Top-level modules** (`@import("fig")` re-exports each as a member)
 
 - `Language` — per-format namespace (`.JSON`/`.YAML`/`.TOML`/`.ZON`/`.XML`/
-  `.FIG`, each `void` when compiled out) plus `detect`/`validate`.
+  `.FIG`/`.INI`/`.DOTENV`/`.PROPERTIES`/`.PLIST`/`.NESTEDTEXT`, each `void`
+  when compiled out) plus `detect`/`Detected`/`validate`/`compiled`.
 - `Document` — `{ source, ast, node_spans, ... }`; `deinit`, `span`,
   `anchorSpan`, `tagSpan`.
 - `AST` — the value tree: `Node`/`Node.Kind`, path navigation
@@ -576,10 +707,15 @@ only *after* the `Document` that borrows it is itself freed.
   `AST.Builder` (the write path).
 - `Editor(Language)` — comment-preserving generic editor; see
   [Editing without reserializing](#editing-without-reserializing).
-- `Embed` — frontmatter/embed location + splicing; see
+- `Embed` — frontmatter/embed location + splicing: `Type`, `InnerFormat`,
+  `extract`, `locateRegion`, `parseSpan`, `detect`, `innerFormat`,
+  `initRegion`, `retype`, `extractStream`, and the codec trio
+  (`codecOf`/`decodeForParse`/`reencodeEdited`); see
   [Markdown frontmatter & embeds](#markdown-frontmatter--embeds).
 - `Lossless` — `$fig`-envelope lossless conversion: `encode`, `decode`,
-  `needsEnvelope`, `isUnrepresentable`, `lossyStrip`.
+  `needsEnvelope`, `isUnrepresentable`, `lossyStrip`, `Target`, `targetFor`.
+- `FlatStrip` — depth-based lossy stripping for INI/dotenv/`.properties`, the
+  `Lossless` sibling for the flat formats.
 - `Diagnostics` — `analyze` reports what a serialize would lose (`Warning`,
   `Code`, `Cause`, `Options`).
 - `ParseDiagnostic` — shared offset→line/col + report rendering

@@ -2,15 +2,16 @@
 title = Using fig in Typescript
 author = adammharris
 created = 2026-07-05T21:35:14-06:00
-updated = 2026-07-05T22:36:00-06:00
+updated = 2026-08-08T10:00:00-06:00
 part_of = [docs](docs.md)
 ```
 
 # fig for TypeScript & JavaScript
 
 `fig` parses, **edits**, and serializes configuration files — JSON, JSONC, JSON5,
-YAML, TOML, and the native `fig` dialect — from one small package (ZON too, if
-you build your own module — see [Formats](#formats)). Its
+YAML, TOML, INI, dotenv, Java `.properties`, NestedText, and the native `fig`
+dialect — from one small package (ZON and Apple property lists too, if you
+build your own module — see [Formats](#formats)). Its
 distinguishing feature is *comment-preserving editing*: you can change one value
 deep in a YAML or TOML file and every comment, blank line, key order, and quoting
 style elsewhere stays byte-for-byte identical. It also converts losslessly
@@ -107,23 +108,29 @@ cfg.port; // typed as number
 | `Jsonc`  |  ✅   |  ✅  |    ✅     | JSON with `//` and `/* */` comments. |
 | `Json5`  |  ✅   |  ✅  |    ✅     | Unquoted keys, trailing commas, etc. |
 | `Yaml`   |  ✅   |  ✅  |    ✅     | YAML 1.2.2 / 1.1.                    |
-| `Toml`   |  ✅   |  ✅  |    ✅     | TOML 1.1 / 1.2, incl. datetimes.     |
-| `Zon`    |  ⚠️   |  ⚠️  |    ⚠️     | Zig Object Notation — opt-in build, see below. |
+| `Toml`   |  ✅   |  ✅  |    ✅     | TOML 1.0 / 1.1, incl. datetimes.     |
 | `Fig`    |  ✅   |  ✅  |    ✅     | The native `fig` authoring dialect.  |
+| `Ini`    |  ✅   |  ✅  |    ✅     | `[section]` + `key = value`. Untyped scalars — `port = 8080` reads back as the string `"8080"`. |
+| `Dotenv` |  ✅   |  ✅  |    ✅     | Flat `KEY=value`: no nesting, untyped scalars. |
+| `Properties` | ✅ |  ✅  |    ✅     | Java `.properties`; same flat, untyped limits as `Dotenv`. |
+| `Nestedtext` | ✅ |  ✅  |    ✅     | [NestedText](https://nestedtext.org) — nested (dict/list) but deliberately untyped. |
+| `Zon`    |  ⚠️   |  ⚠️  |    ⚠️     | Zig Object Notation — opt-in build, see below. |
+| `Plist`  |  ⚠️   |  ⚠️  |    ⚠️     | Apple XML property list; typed and nested — opt-in build, see below. |
 
-`Zon` is fully editable — full parity with every other format — but it is
-**not compiled into the wasm module published to npm**. It's the newest
-editable format and the one least likely to be needed by a typical
-JSON/YAML/TOML/Fig consumer, so it's left out to keep the inlined base64
-payload smaller for everyone else. To get a module with ZON support, build your
-own from a checkout:
+`Zon` and `Plist` are fully editable — full parity with every other format —
+but they are **not compiled into the wasm module published to npm**. ZON is the
+newest editable format and the least likely to be needed by a typical
+JSON/YAML/TOML/Fig consumer; plist's XML parser is the heaviest of the group.
+Both are left out to keep the inlined base64 payload smaller for everyone else.
+To get a module with either, build your own from a checkout:
 
 ```sh
-FIG_WASM_ZON=1 npm run build:wasm
+FIG_WASM_ZON=1 npm run build:wasm     # add ZON
+FIG_WASM_PLIST=1 npm run build:wasm   # add plist
 ```
 
-That module parses, edits, and serializes `Format.Zon` exactly like any other
-format. Whichever module you're running, don't hard-code the table above — ask
+That module parses, edits, and serializes the added format exactly like any
+other. Whichever module you're running, don't hard-code the table above — ask
 the build at runtime, since a format can be compiled out:
 
 ```ts
@@ -133,6 +140,12 @@ capabilities(Format.Toml); // → { read: true, edit: true, serialize: true }
 capabilities(Format.Zon);  // → { read: false, edit: false, serialize: false } in the published module
                            // → { read: true, edit: true, serialize: true } after a FIG_WASM_ZON=1 build
 ```
+
+The four untyped formats — `Ini`, `Dotenv`, `Properties`, `Nestedtext` — parse
+every scalar as a string; nothing infers a number or a boolean from them. The
+first three are also shape-limited (`Ini` holds one level of sections; `Dotenv`
+and `Properties` are flat), so serializing a nested value to one of them drops
+what it cannot hold — run `diagnose` first to see exactly what.
 
 ## Reading data
 
@@ -157,10 +170,10 @@ doc.toJS();                      // → the whole document as plain JS
 handle automatically at the end of the scope — see
 [Managing resources](#managing-resources).
 
-A lower-level node API (`root()`, `firstChild()`, `nextSibling()`, `kind()`,
-`keyOf()`, `valueOf()`, `asString()`, `asNumberRaw()`, `asExtended()`, …) is also
-available for walking the tree by hand; `get`/`toJS`/`toValue` are built on top of
-it and cover almost every need.
+A lower-level node API (`root()`, `firstChild()`, `nextSibling()`,
+`childCount()`, `kind()`, `keyOf()`, `valueOf()`, `asBool()`, `asString()`,
+`asNumberRaw()`, `asExtended()`) is also available for walking the tree by hand;
+`get`/`toJS`/`toValue` are built on top of it and cover almost every need.
 
 ## The value tree
 
@@ -226,6 +239,7 @@ Common operations (available on both `Editor` and `Embed`):
 ```ts
 ed.insertValue([], "key", value);      // add a mapping entry
 ed.replaceValue(path, value);          // change a value
+ed.replaceKey(path, "newKey");         // rename a key (framed as the format's string)
 ed.set(path, value);                   // upsert (replace or insert)
 ed.delete(path);                       // remove a mapping entry
 ed.appendValue(["list"], value);       // push onto a sequence
@@ -234,8 +248,22 @@ ed.removeItem(["list"], 0);            // remove sequence item by index
 ed.moveKey(["a"], ["b"]);              // reorder mapping entries
 ed.reorderKeys([], ["title", "body"]); // named keys first, rest follow
 ed.moveItem(["list"], 2, 0);           // reorder sequence items
+ed.reorderItems(["list"], [2, 0]);     // bring these indices to the front
 ed.setSequence(["tags"], ["c", "a"]);  // reconcile a list, keeping survivors' comments
 ```
+
+`replaceValue`, `insertValue` and `set` each have a `*With` twin taking a
+`SerializeOptions`, for when the spliced value's own rendering needs
+controlling — `replaceValueWith`, `insertValueWith`, `setWith`.
+
+`setSequence` has a narrower domain than the rest: it matches new items to old
+ones by *value* so a kept-or-merely-reordered item keeps its comments, which
+means each item has to parse as a standalone document. It therefore throws
+`InvalidArgument` on `Format.Toml` (whose scalars can't stand alone), on an
+empty list on either side, and on any non-scalar item. Nothing is lost there —
+a TOML inline array carries no per-element comments, so `replaceValue` on the
+whole list is equivalent. It earns its keep on `Yaml` and `Fig`, where per-item
+comments are real.
 
 Comments are first-class:
 
@@ -243,15 +271,21 @@ Comments are first-class:
 ed.addLeadingComment(["port"], "the listening port"); // own-line comment above
 ed.setTrailingComment(["port"], "default 8080");      // same-line comment
 ed.getLeadingComment(["port"]);   // read it back ("" = bare marker, null = none)
+ed.getTrailingComment(["port"]);  // same convention
 ed.deleteTrailingComment(["port"]);
+ed.deleteLeadingComments(["port"]); // drops the whole owned block
 ```
 
-The comment marker (`#`, `//`) is chosen for the format; strict `Json` has no
-comments and throws `UnsupportedFormat` if you try.
+The comment marker (`#`, `//`, `;`) is chosen for the format; strict `Json` has
+no comments and throws `UnsupportedFormat` if you try. Not every format has both
+halves either: `Ini` and `Nestedtext` have real leading comments but no
+trailing-comment syntax, so `setTrailingComment` throws there too — a `;`/`#`
+after a value on those formats' value lines is literal text, not a comment.
 
 Need to insert already-serialized text verbatim (e.g. preserving exact quoting)?
 Every value method has a `*Raw` twin — `replaceValueRaw`, `insertValueRaw`,
-`appendValueRaw`, `setRaw` — that takes a string instead of a `Value`.
+`appendValueRaw`, `prependValueRaw`, `setRaw` — that takes a string instead of a
+`Value`.
 
 ## Markdown frontmatter & embeds
 
@@ -279,10 +313,31 @@ console.log(fm.render());
 // text
 ```
 
+`EmbedType` selects the container *and* the inner format — four container
+families crossed with the four embeddable formats (JSON, YAML, TOML, fig):
+
+| Container | Variants |
+| --------- | -------- |
+| Markdown frontmatter | `FrontmatterYaml` (bare `---`), `MdFrontmatterJson` (`---json`), `MdFrontmatterToml`, `MdFrontmatterFig` |
+| Fenced code block | `FrontmatterFig` (```` ```fig ````), `FencedYaml`, `FencedJson`, `FencedToml` |
+| HTML data island | `HtmlScriptFig`, `HtmlScriptYaml`, `HtmlScriptJson`, `HtmlScriptToml` — `<script type="application/…">` |
+| HTML visible code | `HtmlCodeFig`, `HtmlCodeYaml`, `HtmlCodeJson`, `HtmlCodeToml` — `<pre><code class="language-…">` |
+
+Plus three conventions with their own distinct delimiter: `FrontmatterJson`
+(`;;;`), `PlusToml` (`+++`, the Hugo/Zola convention), and `EndmatterYaml` (a
+trailing ```` ```endmatter ```` block). The first four names are historical —
+`FrontmatterJson` is the `;;;` form and `FrontmatterFig` the fenced one — and
+are kept because their ABI values are frozen.
+
+The `HtmlCode*` variants are entity-encoded on disk. Editing decodes on open and
+re-encodes span-aware on `render`, so an edit preserves every untouched byte's
+original encoding and canonically encodes only what changed.
+
 - `Embed.openOrInit(host, kind)` creates the block if none exists, so the first
   `set` lands cleanly.
 - `Embed.extract(host, kind)` / `split(host, kind)` locate the region *without*
   parsing — handy for just reading the raw frontmatter and body apart.
+- `detect(source)` sniffs which `EmbedType` a host opens with, or `null`.
 - `replaceBody(text)` swaps the prose while keeping the (possibly edited) config.
 
 ## Serialization options
@@ -299,11 +354,16 @@ convert(src, Format.Yaml, Format.Json, { stripComments: true });
 
 | Option          | Applies to           | Meaning                                            |
 | --------------- | -------------------- | -------------------------------------------------- |
-| `pretty`        | JSON, ZON, TOML      | Multi-line (default) vs. compact.                  |
+| `pretty`        | JSON, ZON, TOML      | Multi-line (default) vs. compact. For TOML it gates array wrapping. |
 | `indent`        | JSON, TOML           | Spaces per level (default 2).                      |
-| `width`         | TOML                 | Column budget for inline-table vs. `[section]`.    |
+| `width`         | TOML, YAML, Fig      | Column budget for inline (flow) vs. expanded layout (default 80). |
 | `stripComments` | all                  | Drop carried comments instead of emitting them.    |
 | `lossless`      | `Document`/`convert` | Round-trip values the target can't natively hold.  |
+
+Two gotchas on `width`: `0` means *unset* and resolves to the default 80 (a
+zero-initialized options struct is ordinary across the C ABI), so pass `1` to
+force block layout; and for YAML the budget governs nested containers only — a
+root mapping or sequence always renders block.
 
 ## Diagnostics & lossless conversion
 
@@ -399,11 +459,14 @@ manage the handle for you, so no cleanup is needed.
 - `valueText(value, format, options?)` — serialized form for splicing into edits.
 - `version()` / `versionString()` / `capabilities(format)` — introspection.
 - `split(host, kind)` — read-only `[content, body]` of an embed.
+- `detect(source)` — which `EmbedType` a host opens with, or `null`.
 
 **Classes**
 
 - `Document` — read path: `parse`, `get`, `has`, `nodeAt`, `toJS`, `toValue`,
-  `serialize`, `diagnose`, plus low-level node accessors.
+  `serialize`, `diagnose`, plus low-level node accessors (`root`, `kind`,
+  `firstChild`, `nextSibling`, `childCount`, `keyOf`, `valueOf`, `asBool`,
+  `asString`, `asNumberRaw`, `asExtended`).
 - `Editor` — comment-preserving editor: `open`, `source`, and the edit methods.
 - `Embed` — frontmatter/embed editor: `open`, `openOrInit`, `extract`, `render`,
   `replaceBody`, and the edit methods.

@@ -151,6 +151,25 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
         error.NotAMapping => try term.writer.writeAll(": a segment of this path is not a mapping, so it has no keys to address\n"),
         error.NotASequence => try term.writer.writeAll(": a segment of this path is not a sequence, so it has no indices to address\n"),
         error.IndexOutOfBounds => try term.writer.writeAll(": that index is past the end of the sequence\n"),
+        // `--seq` (`Editor.setSequence`) is the only caller that reaches here,
+        // so this speaks in its terms: the other producer, `Editor.kvSep`, is
+        // kept unreachable by a `language.validate` rule (a null `kv_sep` must
+        // come with an `insertKey` hook — see `tools/validate-check.zig`).
+        // Its by-value matching needs every item text to parse as a standalone
+        // document, which no TOML scalar does — so TOML declines on every
+        // input, and the generic `fig check` note below would send the user
+        // hunting for a parse error in a file that parses fine.
+        error.UnsupportedShape => {
+            try term.writer.writeAll(": this is not a flat list of scalars, so `--seq` cannot diff it\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("note");
+            try term.setColor(.reset);
+            try term.writer.writeAll(": `--seq` pairs new items with current ones by value, so both lists must be non-empty and every item on each side must be a scalar that parses on its own. TOML never qualifies — its scalars cannot stand alone as a document.\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("help");
+            try term.setColor(.reset);
+            try term.writer.print(": replace the whole list instead — `{s} set <file> <path> '[...]'`. On TOML that loses nothing, as its arrays carry no per-item comments.\n", .{binary_name});
+        },
         else => {
             try term.writer.print(": {s}\n", .{@errorName(err)});
             if (file) |f| {

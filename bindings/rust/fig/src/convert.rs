@@ -56,13 +56,11 @@ fn type_err(expected: &'static str, found: &Value) -> Error {
 ///
 /// Used by `#[derive(FromValue)]`: the generated code calls this shared function
 /// instead of emitting its own lookup closure per field/variant, which keeps the
-/// derived code small for large structs and many-variant enums.
+/// derived code small for large structs and many-variant enums. Shares its
+/// implementation with [`Value::get`].
 #[doc(hidden)]
 pub fn map_get<'a>(entries: &'a [(Value, Value)], name: &str) -> Option<&'a Value> {
-    entries.iter().rev().find_map(|(k, v)| match k {
-        Value::Str(s) if s == name => Some(v),
-        _ => None,
-    })
+    crate::value::map_get(entries, name)
 }
 
 /// Extract a required field from a mapping's entries. Used by `#[derive(FromValue)]`

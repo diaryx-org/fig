@@ -222,6 +222,206 @@ impl Value {
         }
         Ok(out)
     }
+
+    /// `true` if this is [`Value::Null`].
+    pub fn is_null(&self) -> bool {
+        matches!(self, Value::Null)
+    }
+
+    /// `true` if this is a [`Value::Bool`].
+    pub fn is_bool(&self) -> bool {
+        matches!(self, Value::Bool(_))
+    }
+
+    /// The bool, if this is a [`Value::Bool`].
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Value::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    /// `true` if [`Value::as_i64`] would succeed: this is a [`Value::Int`], or a
+    /// [`Value::Uint`] that fits in `i64`.
+    pub fn is_i64(&self) -> bool {
+        self.as_i64().is_some()
+    }
+
+    /// The integer, if this is a [`Value::Int`], or a [`Value::Uint`] that fits
+    /// in `i64`.
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Value::Int(i) => Some(*i),
+            Value::Uint(u) => i64::try_from(*u).ok(),
+            _ => None,
+        }
+    }
+
+    /// `true` if [`Value::as_u64`] would succeed: this is a [`Value::Uint`], or
+    /// a non-negative [`Value::Int`].
+    pub fn is_u64(&self) -> bool {
+        self.as_u64().is_some()
+    }
+
+    /// The integer, if this is a [`Value::Uint`], or a non-negative [`Value::Int`].
+    pub fn as_u64(&self) -> Option<u64> {
+        match self {
+            Value::Uint(u) => Some(*u),
+            Value::Int(i) => u64::try_from(*i).ok(),
+            _ => None,
+        }
+    }
+
+    /// `true` if this is a [`Value::Float`]. Unlike [`Value::as_f64`], integers
+    /// don't count — this asks whether the value was *stored* as a float, not
+    /// whether it's numerically representable as one.
+    pub fn is_f64(&self) -> bool {
+        matches!(self, Value::Float(_))
+    }
+
+    /// The float, if this is a [`Value::Float`]. Also widens a [`Value::Int`]
+    /// or [`Value::Uint`] (lossily for magnitudes past `2^53`), matching how
+    /// [`crate::convert::FromValue`] reads `f64` fields.
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Value::Float(f) => Some(*f),
+            Value::Int(i) => Some(*i as f64),
+            Value::Uint(u) => Some(*u as f64),
+            _ => None,
+        }
+    }
+
+    /// `true` if this is a [`Value::Str`].
+    pub fn is_str(&self) -> bool {
+        matches!(self, Value::Str(_))
+    }
+
+    /// The string, if this is a [`Value::Str`]. Does not match [`Value::Extended`]
+    /// scalars, whose `text` is format-specific rather than a plain string.
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Value::Str(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// `true` if this is a [`Value::Extended`] scalar.
+    pub fn is_extended(&self) -> bool {
+        matches!(self, Value::Extended { .. })
+    }
+
+    /// The kind and text, if this is a [`Value::Extended`] scalar.
+    pub fn as_extended(&self) -> Option<(ExtKind, &str)> {
+        match self {
+            Value::Extended { kind, text } => Some((*kind, text.as_str())),
+            _ => None,
+        }
+    }
+
+    /// `true` if this is a [`Value::Seq`].
+    pub fn is_seq(&self) -> bool {
+        matches!(self, Value::Seq(_))
+    }
+
+    /// The elements, if this is a [`Value::Seq`].
+    pub fn as_seq(&self) -> Option<&[Value]> {
+        match self {
+            Value::Seq(items) => Some(items),
+            _ => None,
+        }
+    }
+
+    /// `true` if this is a [`Value::Map`].
+    pub fn is_mapping(&self) -> bool {
+        matches!(self, Value::Map(_))
+    }
+
+    /// The entries, if this is a [`Value::Map`].
+    pub fn as_mapping(&self) -> Option<&[(Value, Value)]> {
+        match self {
+            Value::Map(entries) => Some(entries),
+            _ => None,
+        }
+    }
+
+    /// Index into this value: a string-like [`Index`] looks up a key among a
+    /// [`Value::Map`]'s entries (last-wins on duplicates), an integer looks up
+    /// a position in a [`Value::Seq`]. `None` if this value isn't the matching
+    /// container kind, or the key/index isn't present.
+    pub fn get<I: Index>(&self, index: I) -> Option<&Value> {
+        index.index_into(self)
+    }
+}
+
+/// Look up `key` in `entries`, last-wins (later duplicate keys shadow earlier
+/// ones). Shared by [`Value::get`]'s `&str`/`String` [`Index`] impls and,
+/// behind the `derive` feature, the generated field extraction in
+/// [`crate::convert`].
+pub(crate) fn map_get<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
+    entries.iter().rev().find_map(|(k, v)| match k {
+        Value::Str(s) if s == key => Some(v),
+        _ => None,
+    })
+}
+
+/// A type that can index into a [`Value`]: a string-like key for a
+/// [`Value::Map`], or an integer position for a [`Value::Seq`]. Implemented
+/// for `str`, `String`, and `usize` (and `&T` over any of those), and sealed
+/// so it can't be implemented outside this crate. Drives both [`Value::get`]
+/// and `value[index]`, the way `serde_json::value::Index` does for
+/// `serde_json::Value`.
+pub trait Index: sealed::Sealed {
+    #[doc(hidden)]
+    fn index_into<'v>(&self, value: &'v Value) -> Option<&'v Value>;
+}
+
+impl Index for str {
+    fn index_into<'v>(&self, value: &'v Value) -> Option<&'v Value> {
+        match value {
+            Value::Map(entries) => map_get(entries, self),
+            _ => None,
+        }
+    }
+}
+impl Index for String {
+    fn index_into<'v>(&self, value: &'v Value) -> Option<&'v Value> {
+        self.as_str().index_into(value)
+    }
+}
+impl Index for usize {
+    fn index_into<'v>(&self, value: &'v Value) -> Option<&'v Value> {
+        match value {
+            Value::Seq(items) => items.get(*self),
+            _ => None,
+        }
+    }
+}
+impl<T: ?Sized + Index> Index for &T {
+    fn index_into<'v>(&self, value: &'v Value) -> Option<&'v Value> {
+        (**self).index_into(value)
+    }
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for str {}
+    impl Sealed for String {}
+    impl Sealed for usize {}
+    impl<T: ?Sized + Sealed> Sealed for &T {}
+}
+
+/// `value[key]`/`value[index]`, returning [`Value::Null`] (rather than
+/// panicking) when the index is out of range or the wrong container kind —
+/// so a chain like `value["a"]["b"][0]` can walk through a mismatch and still
+/// be checked with [`Value::is_null`] at the end. Use [`Value::get`] instead
+/// for an `Option` that distinguishes "absent" from an actual null.
+impl<I: Index> std::ops::Index<I> for Value {
+    type Output = Value;
+
+    fn index(&self, index: I) -> &Value {
+        static NULL: Value = Value::Null;
+        self.get(index).unwrap_or(&NULL)
+    }
 }
 
 /// Destroys the value handle on drop, so an early `?` return can't leak it.
@@ -697,5 +897,108 @@ mod tests {
             v.serialize(Format::Toml).unwrap(),
             "when = 1979-05-27T07:32:00Z\n"
         );
+    }
+
+    #[test]
+    fn accessors_match_kind() {
+        assert!(Value::Null.is_null());
+        assert!(!Value::Bool(false).is_null());
+
+        assert!(Value::Bool(true).is_bool());
+        assert_eq!(Value::Bool(true).as_bool(), Some(true));
+        assert_eq!(Value::Int(1).as_bool(), None);
+
+        assert!(Value::Str("hi".into()).is_str());
+        assert_eq!(Value::Str("hi".into()).as_str(), Some("hi"));
+        assert_eq!(Value::Int(1).as_str(), None);
+
+        let ext = Value::Extended {
+            kind: ExtKind::LocalDate,
+            text: "2026-06-18".into(),
+        };
+        assert!(ext.is_extended());
+        assert_eq!(ext.as_extended(), Some((ExtKind::LocalDate, "2026-06-18")));
+        assert_eq!(Value::Null.as_extended(), None);
+
+        let seq = Value::Seq(vec![1i64.into(), 2i64.into()]);
+        assert!(seq.is_seq());
+        assert_eq!(seq.as_seq(), Some(&[Value::Int(1), Value::Int(2)][..]));
+        assert_eq!(Value::Null.as_seq(), None);
+
+        let map = Value::Map(vec![("a".into(), 1i64.into())]);
+        assert!(map.is_mapping());
+        assert_eq!(
+            map.as_mapping(),
+            Some(&[(Value::Str("a".into()), Value::Int(1))][..])
+        );
+        assert_eq!(Value::Null.as_mapping(), None);
+    }
+
+    // `Int`/`Uint` are separate variants, but `as_i64`/`as_u64` widen across
+    // them when the value fits — `is_i64`/`is_u64` track exactly what those
+    // accessors would succeed on. `is_f64` stays strict to the stored variant,
+    // since `as_f64` widens any integer and so is a poor "is this a float" test.
+    #[test]
+    fn numeric_accessors_widen_between_int_and_uint() {
+        assert!(Value::Int(5).is_i64());
+        assert_eq!(Value::Int(5).as_i64(), Some(5));
+        assert!(Value::Int(5).is_u64());
+        assert_eq!(Value::Int(5).as_u64(), Some(5));
+        assert!(!Value::Int(-5).is_u64());
+        assert_eq!(Value::Int(-5).as_u64(), None);
+
+        assert!(Value::Uint(u64::MAX).is_u64());
+        assert_eq!(Value::Uint(u64::MAX).as_u64(), Some(u64::MAX));
+        assert!(!Value::Uint(u64::MAX).is_i64());
+        assert_eq!(Value::Uint(u64::MAX).as_i64(), None);
+        assert!(Value::Uint(5).is_i64());
+        assert_eq!(Value::Uint(5).as_i64(), Some(5));
+
+        assert!(Value::Float(1.5).is_f64());
+        assert_eq!(Value::Float(1.5).as_f64(), Some(1.5));
+        assert!(!Value::Int(5).is_f64());
+        assert_eq!(Value::Int(5).as_f64(), Some(5.0));
+        assert_eq!(Value::Uint(5).as_f64(), Some(5.0));
+        assert_eq!(Value::Bool(true).as_f64(), None);
+    }
+
+    #[test]
+    fn get_looks_up_by_string_key_or_seq_index() {
+        let map = Value::Map(vec![
+            ("title".into(), "Hi".into()),
+            ("count".into(), 42i64.into()),
+            ("title".into(), "Overridden".into()),
+            ("nums".into(), Value::Seq(vec![1i64.into(), 2i64.into()])),
+        ]);
+        // Last-wins on a duplicate key.
+        assert_eq!(map.get("title"), Some(&Value::Str("Overridden".into())));
+        assert_eq!(map.get("count"), Some(&Value::Int(42)));
+        assert_eq!(map.get("missing"), None);
+        assert_eq!(Value::Seq(vec![]).get("title"), None);
+
+        // A `String` key works the same as `&str`, and chains through nested
+        // lookups by index.
+        assert_eq!(map.get(String::from("count")), Some(&Value::Int(42)));
+        assert_eq!(
+            map.get("nums").and_then(|v| v.get(1)),
+            Some(&Value::Int(2))
+        );
+        assert_eq!(map.get("nums").and_then(|v| v.get(9)), None);
+        assert_eq!(Value::Null.get(0), None);
+    }
+
+    // `value[key]`/`value[index]` never panics: a mismatched kind or missing
+    // key/index reads back as `Value::Null`, same as a `None` from `get`.
+    #[test]
+    fn index_operator_returns_null_instead_of_panicking() {
+        let map = Value::Map(vec![(
+            "nums".into(),
+            Value::Seq(vec![1i64.into(), 2i64.into()]),
+        )]);
+        assert_eq!(map["nums"][0], Value::Int(1));
+        assert_eq!(map["nums"][9], Value::Null);
+        assert_eq!(map["missing"], Value::Null);
+        assert_eq!(Value::Null["a"], Value::Null);
+        assert_eq!(Value::Null[0], Value::Null);
     }
 }

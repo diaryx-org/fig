@@ -1,0 +1,73 @@
+engine: microvm
+# Tangled CI — the mirror of `.github/workflows/ci.yml`'s `zig` job, for the
+# copy of this repo hosted on tangled.org (pipelines there are run by a
+# "spindle"; see https://docs.tangled.org/spindles).
+#
+# It runs the same one pre-release gate — `zig build check` (test +
+# conformance + abi-check + semver-check + version-floor) — and nothing else:
+# a tangled workflow file has no `jobs:`, one file *is* one job, so the
+# `rust` / `rust-semver` / `typescript` jobs that run in parallel on GitHub
+# would each need their own file here. They stay GitHub-only for now; `check`
+# already folds them in where a toolchain happens to be present and skips
+# them with a note where it isn't, so nothing goes unchecked overall.
+#
+# Prerequisites, once, on the tangled side: the repo needs a spindle attached
+# under Settings → Pipelines. Without one, nothing here ever fires.
+#
+# Push `-o skip-ci` to skip a run: `git push -o skip-ci`.
+image: nixos
+when:
+- event: [push, manual]
+  branch: [main]
+- event: [pull_request]
+  branch: [main]
+# Only what the steps below actually reach for beyond a bare NixOS image:
+# `git` for the tag baselines, `curl` + `gnutar` + `xz` for the toolchain
+# tarball. Deliberately *not* `zig`: nixpkgs' `zig` is whatever this image's
+# nixpkgs snapshot pinned, and this repo cares about an exact toolchain (see
+# the install step).
+dependencies: [git, curl, gnutar, xz]
+steps:
+# `semver-check` diffs the C ABI against the most recent `core/v*` tag and
+# `cargo-semver-checks` against `rust/v*`, both discovered with `git
+# describe` — the GitHub job gets them via `fetch-depth: 0`. Spindle's clone
+# depth isn't ours to set portably (`clone.depth` takes a positive count),
+# so ask for the tags directly and shrug if the clone can't be deepened:
+# both checks degrade to "no release tag found — skipping diff" rather than
+# failing, so a tag-less clone costs coverage, not a red run.
+- name: Fetch tags (ABI/semver baselines)
+  command: git fetch --tags --force --unshallow 2>/dev/null || git fetch --tags --force || true
+# The toolchain version is read out of `build.zig.zon` rather than pinned a
+# third time here (`.github/workflows/*.yml` pin it via `mlugg/setup-zig`,
+# `flake.nix` via zig-overlay): building at exactly the `minimum_zig_version`
+# the manifest advertises is the one number this workflow can take from the
+# repo instead of duplicating, and it makes that floor a claim CI tests
+# rather than one nothing checks. Same trick `flake.nix` uses to read
+# `cli_version` out of `build.zig`.
+#
+# Zig's Linux tarballs are statically linked, so the binary runs as-is on
+# NixOS (no interpreter to patchelf). It lands in ./.zig, which later steps
+# put on PATH themselves — each step is its own shell, so exports don't
+# survive across them.
+- name: Install the pinned Zig toolchain
+  command: |
+    set -euo pipefail
+    version=$(sed -n 's/.*minimum_zig_version = "\([^"]*\)".*/\1/p' build.zig.zon)
+    [ -n "$version" ] || { echo "could not read minimum_zig_version from build.zig.zon" >&2; exit 1; }
+    echo "zig $version (from build.zig.zon)"
+    mkdir -p .zig
+    curl -fsSL "https://ziglang.org/download/$version/zig-x86_64-linux-$version.tar.xz" \
+      | tar -xJ --strip-components=1 -C .zig
+    .zig/zig version
+# The one pre-release gate, same as the GitHub `zig` job: zig test +
+# conformance + abi-check + semver-check + version-floor. The Rust/TS halves
+# of `check` degrade gracefully — no cargo or npm in this image, so they
+# skip with a note (see figl/ci.figl for the jobs that run them for real).
+#
+# If this trips the spindle's workflow timeout (5 minutes unless the
+# operator raised it), split the suite across files rather than trimming it.
+- name: zig build check
+  command: |
+    set -euo pipefail
+    export PATH="$PWD/.zig:$PATH"
+    zig build check

@@ -3,3 +3,7 @@ zig-out
 .zed
 **/.DS_STORE
 *.wasm
+# Scratch dirs the .tangled/workflows steps create (toolchain, packaged
+# artifacts) — only ever populated when those steps are run locally.
+.zig
+dist

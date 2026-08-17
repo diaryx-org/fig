@@ -1,8 +1,9 @@
 //! Dev tool: keep the repo's hand-authored `.figl` files and the generated
-//! artifacts they describe (GitHub Actions workflows, `build.zig.zon`) in
-//! sync, by shelling out to the `fig` binary itself (`fig get -o <format>
-//! <src>`) rather than re-implementing any parsing/printing here. Dogfoods the
-//! same conversion path a user of `fig convert`/`fig get` would exercise.
+//! artifacts they describe (GitHub Actions workflows, tangled.org pipelines,
+//! `build.zig.zon`) in sync, by shelling out to the `fig` binary itself
+//! (`fig get -o <format> <src>`) rather than re-implementing any parsing or
+//! printing here. Dogfoods the same conversion path a user of `fig
+//! convert`/`fig get` would exercise.
 //!
 //! The `.figl` files are the source of truth: comments, structure, and intent
 //! live there, and the generated files are a build artifact of them — the
@@ -41,6 +42,8 @@ const mappings = [_]Mapping{
     .{ .src = "figl/release.figl", .dest = ".github/workflows/release.yml", .format = "yaml" },
     .{ .src = "figl/release-npm.figl", .dest = ".github/workflows/release-npm.yml", .format = "yaml" },
     .{ .src = "figl/release-npm-wasi.figl", .dest = ".github/workflows/release-npm-wasi.yml", .format = "yaml" },
+    .{ .src = "figl/tangled-ci.figl", .dest = ".tangled/workflows/ci.yml", .format = "yaml" },
+    .{ .src = "figl/tangled-release.figl", .dest = ".tangled/workflows/release.yml", .format = "yaml" },
 };
 
 const max_file = 4 * 1024 * 1024;

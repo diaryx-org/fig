@@ -139,9 +139,10 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
 
     // The `.figl` files under figl/ (build.zig.figl, ci.figl, fuzz.figl,
     // homebrew.figl, release-binaries.figl, release.figl, release-npm.figl,
-    // release-npm-wasi.figl) are the source of truth for their generated
-    // counterparts (build.zig.zon, the six .github/workflows/*.yml files) —
-    // the inverse of the usual setup,
+    // release-npm-wasi.figl, tangled-ci.figl, tangled-release.figl) are the
+    // source of truth for their generated counterparts (build.zig.zon, the six
+    // .github/workflows/*.yml files, the two .tangled/workflows/*.yml
+    // pipelines) — the inverse of the usual setup,
     // dogfooding fig's own cross-format conversion for fig's own release
     // infra. This tool shells out to the just-built `fig` binary (`fig get -o
     // <format>`) to regenerate them; it never re-implements parsing/printing
@@ -161,7 +162,7 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     sync_figl_run.addArtifactArg(exe);
     sync_figl_run.addArg(b.pathFromRoot("."));
     sync_figl_run.has_side_effects = true;
-    const sync_figl_step = b.step("sync-figl", "Regenerate build.zig.zon + the .github/workflows/*.yml files from their .figl sources");
+    const sync_figl_step = b.step("sync-figl", "Regenerate build.zig.zon + the .github/ and .tangled/ workflow files from their .figl sources");
     sync_figl_step.dependOn(&sync_figl_run.step);
 
     const check_figl_run = b.addRunArtifact(sync_figl);
@@ -169,7 +170,7 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     check_figl_run.addArg(b.pathFromRoot("."));
     check_figl_run.addArg("--check");
     check_figl_run.has_side_effects = true;
-    const check_figl_step = b.step("check-figl", "Fail if build.zig.zon / .github/workflows/*.yml are stale relative to their .figl sources");
+    const check_figl_step = b.step("check-figl", "Fail if build.zig.zon / the .github/ and .tangled/ workflow files are stale relative to their .figl sources");
     check_figl_step.dependOn(&check_figl_run.step);
 
     // docs/CHANGELOG.md's `## Unreleased` region, regenerated from the commits

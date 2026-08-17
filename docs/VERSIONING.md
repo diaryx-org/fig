@@ -46,14 +46,14 @@ Since each artifact versions independently, no single tag number could honestly 
 
 | Tag | Drives | Why it exists |
 |---|---|---|
-| `cli/v<cli-version>` | `release-binaries.yml` + `homebrew.yml` (build/attach the CLI binaries, create the GitHub Release) and `release-npm-wasi.yml` | the CLI's own compatibility contract; this is the tag end users actually see and fetch (Homebrew, npx, direct download) |
+| `cli/v<cli-version>` | `release-binaries.yml` + `homebrew.yml` (build/attach the CLI binaries, create the GitHub Release), `release-npm-wasi.yml`, and `.tangled/workflows/release.yml` (the same binaries, published as artifacts on the tangled.org mirror) | the CLI's own compatibility contract; this is the tag end users actually see and fetch (Homebrew, npx, direct download) |
 | `core/v<core-version>` | nothing — no workflow triggers on it | the core has no package registry of its own — `zig fetch`'s "pushing the tag *is* the Zig release" needs a tag that means *core*, and `zig build semver-check`'s ABI diff needs a baseline on the core's own line, so it gets a plain (no CI, no GitHub Release) tag purely as that anchor |
 | `rust/v<rust-version>` | `release.yml`'s `crate` job (crates.io: `fig` + `fig-macros`) | also the `cargo-semver-checks` baseline, so the Rust API diff compares against the Rust crate's own release history, not core's or the CLI's |
 | `npm/v<npm-version>` | `release-npm.yml` (`@diaryx/fig`, the TS library) | independent track, same reasoning |
 
 `fig-wasi` doesn't get its own prefix — it's pinned exactly to `cli_version` (see above), so it rides the `cli/` tag; its job keeps an explicit "tag matches package version" check (in addition to the floor) to enforce that pin.
 
-Only `cli/*` tags get prebuilt binaries and a GitHub Release object (via `softprops/action-gh-release`) attached — that's the human-facing release. `core/*`, `rust/*`, and `npm/*` are plain git tags (visible under the repo's Tags list, not the Releases page): real, `git describe`-able and `zig fetch`-able anchors for their own consumers, without cluttering the Releases page with entries nobody downloads binaries from.
+Only `cli/*` tags get prebuilt binaries — a GitHub Release object (via `softprops/action-gh-release`) and, on the tangled.org mirror, one `sh.tangled.repo.artifact` record per binary against the same tag — attached. That's the human-facing release. `core/*`, `rust/*`, and `npm/*` are plain git tags (visible under the repo's Tags list, not the Releases page): real, `git describe`-able and `zig fetch`-able anchors for their own consumers, without cluttering the Releases page with entries nobody downloads binaries from.
 
 A release that bumps several artifacts at once just pushes several tags at the same commit — e.g. a release that bumps both the CLI and the core pushes `cli/v3.1.0` and `core/v2.1.0` together; a Rust-only bump pushes only `rust/v1.5.0` and needs no CLI or core tag at all.
 

@@ -566,6 +566,50 @@ unsafe extern "C" {
         items: *const FigStr,
         items_len: usize,
     ) -> FigStatus;
+    // Whole-container ops, for containers scattered through the source (a TOML
+    // `[header]` table, an INI `[section]`, a fig block container). The key ops
+    // above cannot address one, and refuse with `INVALID_ARGUMENT` at such a
+    // path. A format that does not support the op answers `UNSUPPORTED_FORMAT`.
+    pub fn fig_editor_delete_container(
+        editor: *mut FigEditor,
+        path: *const FigPathSegment,
+        path_len: usize,
+    ) -> FigStatus;
+    pub fn fig_editor_insert_container(
+        editor: *mut FigEditor,
+        path: *const FigPathSegment,
+        path_len: usize,
+        body: *const u8,
+        body_len: usize,
+    ) -> FigStatus;
+    pub fn fig_editor_rename_container(
+        editor: *mut FigEditor,
+        path: *const FigPathSegment,
+        path_len: usize,
+        new_leaf: *const u8,
+        new_leaf_len: usize,
+    ) -> FigStatus;
+    /// A NULL `dest_path` means "to the end of the document" — distinct from a
+    /// zero-length path, which every other entry point reads as the root.
+    pub fn fig_editor_move_container(
+        editor: *mut FigEditor,
+        src_path: *const FigPathSegment,
+        src_path_len: usize,
+        dest_path: *const FigPathSegment,
+        dest_path_len: usize,
+    ) -> FigStatus;
+    pub fn fig_editor_reorder_containers(
+        editor: *mut FigEditor,
+        order: *const FigStr,
+        order_len: usize,
+    ) -> FigStatus;
+    pub fn fig_editor_append_container_to_seq(
+        editor: *mut FigEditor,
+        path: *const FigPathSegment,
+        path_len: usize,
+        body: *const u8,
+        body_len: usize,
+    ) -> FigStatus;
     pub fn fig_editor_source(
         editor: *const FigEditor,
         out_ptr: *mut *const u8,

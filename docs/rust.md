@@ -327,6 +327,40 @@ ed.set_sequence(&[Segment::Key("tags")], &tags)?;     // reconcile a list, keepi
 taking a [`SerializeOptions`], for when the spliced value's own rendering needs
 controlling (`replace_value_with`, `insert_value_with`, `set_value_with`).
 
+### Whole containers
+
+The operations above address a container the same way they address a scalar:
+by the one range of source it occupies. A TOML `[header]` table occupies no
+such range — its body is the lines after the header, and `[a.b]` further down
+the file extends it — and neither does an INI `[section]` or a `fig` block
+container. At a path naming one, `delete`, `replace_value`, `move_key` and
+`reorder_keys` all answer `Error::InvalidArgument` rather than rewrite the
+header and leave the entries behind. These six are the route for those shapes:
+
+```rust
+ed.delete_container(&[Segment::Key("a")])?;                    // header + body, every region
+ed.insert_container(&[Segment::Key("c")], "z = 3\n")?;         // a new [c] with these entries
+ed.rename_container(&[Segment::Key("a")], "q")?;               // [a], [a.b] and [[a.c]] alike
+ed.move_container(&[Segment::Key("a")], None)?;                // None = to EOF; Some(&[]) = the root
+ed.reorder_containers(&["b", "a"])?;                           // top-level containers
+ed.append_container_to_seq(&[Segment::Key("bin")], "name = \"b\"\n")?;  // a new [[bin]]
+```
+
+`body` is verbatim entry lines in the document's format, spliced and reparsed
+like any other edit, so a body that doesn't parse rolls the document back.
+
+Support varies by format, and a format that lacks an operation answers
+`Error::UnsupportedFormat`:
+
+| | `Toml` | `Ini` | `Fig` | others |
+|---|---|---|---|---|
+| `delete_container`, `move_container`, `reorder_containers` | ✓ | ✓ | ✓ | — |
+| `insert_container`, `rename_container`, `append_container_to_seq` | ✓ | — | — | — |
+
+"Others" is not a gap: YAML, JSON and the rest nest a container in one
+contiguous region, so `delete` and `replace_value` already handle it — which is
+why they succeed on a YAML block mapping where TOML's refuse.
+
 `set_sequence` has a narrower domain than the rest: it matches new items to old
 ones by *value* so a kept-or-merely-reordered item keeps its comments, which
 means each item has to parse as a standalone document. It therefore declines —

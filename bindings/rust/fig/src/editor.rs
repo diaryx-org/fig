@@ -507,6 +507,114 @@ impl Editor {
         Error::from_status(status)
     }
 
+    // ---- whole-container ops ----
+    //
+    // For containers that are SCATTERED through the source: a TOML `[header]`
+    // table (whose body is the lines after it, extended by every `[a.b]` header
+    // elsewhere in the file), an INI `[section]`, a fig block container. Such a
+    // container owns no single range to splice, so the key methods above cannot
+    // address one — `delete_key`, `replace_value`, `move_key` and
+    // `reorder_keys` all answer `Error::InvalidArgument` at a table path rather
+    // than silently rewriting the header and rehoming the body — and these are
+    // where that request goes instead.
+    //
+    // Support varies by format: TOML has all six, INI and `fig` the
+    // delete/move/reorder three, and every other format none, answering
+    // `Error::UnsupportedFormat`. YAML, JSON and the rest nest their containers
+    // in one contiguous region, so the key methods already handle them.
+    //
+    // `body` is verbatim entry lines in the document's format
+    // (`ip = "10.0.0.1"\n` for TOML), spliced and reparsed like any other edit,
+    // so a body that does not parse rolls the document back.
+
+    /// Delete the whole container at `path` — every scattered region of its
+    /// subtree, leaving interleaved foreign content in place.
+    pub fn delete_container(&mut self, path: &[Segment]) -> Result<(), Error> {
+        let p = to_ffi_path(path);
+        let status = unsafe { ffi::fig_editor_delete_container(self.ptr(), p.as_ptr(), p.len()) };
+        Error::from_status(status)
+    }
+
+    /// Create a container at `path` with `body` as its entries, spliced past
+    /// the parent's whole subtree so no existing key is reparented.
+    pub fn insert_container(&mut self, path: &[Segment], body: &str) -> Result<(), Error> {
+        let p = to_ffi_path(path);
+        let status = unsafe {
+            ffi::fig_editor_insert_container(
+                self.ptr(),
+                p.as_ptr(),
+                p.len(),
+                body.as_ptr(),
+                body.len(),
+            )
+        };
+        Error::from_status(status)
+    }
+
+    /// Rename the container at `path` to `new_leaf`, rewriting every line that
+    /// names it: renaming `a` rewrites `[a]`, `[a.b]` and `[[a.c]]` alike.
+    pub fn rename_container(&mut self, path: &[Segment], new_leaf: &str) -> Result<(), Error> {
+        let p = to_ffi_path(path);
+        let status = unsafe {
+            ffi::fig_editor_rename_container(
+                self.ptr(),
+                p.as_ptr(),
+                p.len(),
+                new_leaf.as_ptr(),
+                new_leaf.len(),
+            )
+        };
+        Error::from_status(status)
+    }
+
+    /// Move the container at `src_path` before the one at `dest_path`,
+    /// re-emitting its scattered fragments contiguously; interleaved foreign
+    /// containers stay put. `None` moves it to the end of the document —
+    /// distinct from `Some(&[])`, which names the root.
+    pub fn move_container(
+        &mut self,
+        src_path: &[Segment],
+        dest_path: Option<&[Segment]>,
+    ) -> Result<(), Error> {
+        let s = to_ffi_path(src_path);
+        let d = dest_path.map(to_ffi_path);
+        // A null pointer is what carries "to EOF" across the ABI, so the None
+        // arm must not hand over a dangling-but-non-null empty-Vec pointer.
+        let (d_ptr, d_len) = match &d {
+            Some(v) => (v.as_ptr(), v.len()),
+            None => (std::ptr::null(), 0),
+        };
+        let status = unsafe {
+            ffi::fig_editor_move_container(self.ptr(), s.as_ptr(), s.len(), d_ptr, d_len)
+        };
+        Error::from_status(status)
+    }
+
+    /// Reorder top-level containers so those named in `order` come first, in
+    /// that order, each re-emitted contiguously at the position the earliest of
+    /// them currently occupies. Containers not named keep their places.
+    pub fn reorder_containers<S: AsRef<str>>(&mut self, order: &[S]) -> Result<(), Error> {
+        let o = to_ffi_keys(order);
+        let status = unsafe { ffi::fig_editor_reorder_containers(self.ptr(), o.as_ptr(), o.len()) };
+        Error::from_status(status)
+    }
+
+    /// Append an element with body `body` to the container sequence at `path` —
+    /// TOML's `[[header]]` array-of-tables append.
+    pub fn append_container_to_seq(&mut self, path: &[Segment], body: &str) -> Result<(), Error> {
+        let p = to_ffi_path(path);
+        let status = unsafe {
+            ffi::fig_editor_append_container_to_seq(
+                self.ptr(),
+                p.as_ptr(),
+                p.len(),
+                body.as_ptr(),
+                body.len(),
+            )
+        };
+        Error::from_status(status)
+    }
+
     /// The current source. Borrows editor memory; invalidated by the next edit.
     pub fn source(&self) -> Result<&str, Error> {
         let mut ptr: *const u8 = std::ptr::null();

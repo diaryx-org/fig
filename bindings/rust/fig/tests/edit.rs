@@ -601,3 +601,94 @@ fn yaml_set_seeds_a_nested_path_into_an_empty_document() {
     assert!(ed.set_value(&[Segment::Key("a"), Segment::Key("b")], 2i64).is_err());
     assert_eq!(ed.source().unwrap(), "a: 1\n");
 }
+
+// --- whole-container ops ---
+//
+// The key methods cannot address a scattered container (a TOML `[header]`
+// table, an INI `[section]`): its body is separate lines, so the editor's
+// guards refuse rather than rewrite the header and rehome the entries. These
+// six are the route for those shapes.
+
+#[test]
+#[cfg(feature = "toml")]
+fn toml_container_ops_reach_a_table_the_key_ops_refuse() {
+    let src = b"[a]\nx = 1\n[b]\ny = 2\n";
+
+    // delete: the key op refuses, the container op takes the body with it.
+    let mut ed = Editor::open(src, Format::Toml).unwrap();
+    assert!(matches!(
+        ed.delete(&[Segment::Key("a")]),
+        Err(fig::Error::InvalidArgument)
+    ));
+    ed.delete_container(&[Segment::Key("a")]).unwrap();
+    assert_eq!(ed.source().unwrap(), "[b]\ny = 2\n");
+
+    // rename: reaches every line that names the table, not just its header.
+    let mut ed = Editor::open(b"[a]\nx = 1\n[a.b]\ny = 2\n", Format::Toml).unwrap();
+    ed.rename_container(&[Segment::Key("a")], "q").unwrap();
+    assert_eq!(ed.source().unwrap(), "[q]\nx = 1\n[q.b]\ny = 2\n");
+
+    // insert
+    let mut ed = Editor::open(src, Format::Toml).unwrap();
+    ed.insert_container(&[Segment::Key("c")], "z = 3\n")
+        .unwrap();
+    assert_eq!(
+        ed.source().unwrap(),
+        "[a]\nx = 1\n[b]\ny = 2\n\n[c]\nz = 3\n"
+    );
+
+    // append to an array-of-tables
+    let mut ed = Editor::open(b"[[bin]]\nname = \"a\"\n", Format::Toml).unwrap();
+    ed.append_container_to_seq(&[Segment::Key("bin")], "name = \"b\"\n")
+        .unwrap();
+    assert_eq!(
+        ed.source().unwrap(),
+        "[[bin]]\nname = \"a\"\n\n[[bin]]\nname = \"b\"\n"
+    );
+}
+
+#[test]
+#[cfg(feature = "toml")]
+fn toml_move_and_reorder_containers_where_the_key_ops_refuse() {
+    let src = b"[a]\nx = 1\n[b]\ny = 2\n";
+
+    // `move_key` at a table path used to relocate the header alone, handing
+    // `x = 1` to whichever table landed above it; it now refuses.
+    let mut ed = Editor::open(src, Format::Toml).unwrap();
+    assert!(matches!(
+        ed.move_key(&[Segment::Key("a")], &[Segment::Key("b")]),
+        Err(fig::Error::InvalidArgument)
+    ));
+    // `None` is "to EOF" — the reason the destination is an Option rather than
+    // an empty slice, which would name the root.
+    ed.move_container(&[Segment::Key("a")], None).unwrap();
+    assert_eq!(ed.source().unwrap(), "[b]\ny = 2\n\n[a]\nx = 1\n");
+
+    let mut ed = Editor::open(src, Format::Toml).unwrap();
+    ed.move_container(&[Segment::Key("b")], Some(&[Segment::Key("a")]))
+        .unwrap();
+    assert_eq!(ed.source().unwrap(), "[b]\ny = 2\n[a]\nx = 1\n");
+
+    // Same pairing for reorder.
+    let mut ed = Editor::open(src, Format::Toml).unwrap();
+    assert!(matches!(
+        ed.reorder_keys(&[], &["b", "a"]),
+        Err(fig::Error::InvalidArgument)
+    ));
+    ed.reorder_containers(&["b", "a"]).unwrap();
+    assert_eq!(ed.source().unwrap(), "[b]\ny = 2\n[a]\nx = 1\n");
+}
+
+#[test]
+#[cfg(feature = "yaml")]
+fn container_ops_are_unsupported_where_the_key_ops_already_suffice() {
+    // YAML nests a container in one contiguous region, so it declares none of
+    // the six — and `delete_key` handles the same shape directly.
+    let mut ed = Editor::open(b"a:\n  x: 1\nb:\n  y: 2\n", Format::Yaml).unwrap();
+    assert!(matches!(
+        ed.delete_container(&[Segment::Key("a")]),
+        Err(fig::Error::UnsupportedFormat)
+    ));
+    ed.delete(&[Segment::Key("a")]).unwrap();
+    assert_eq!(ed.source().unwrap(), "b:\n  y: 2\n");
+}

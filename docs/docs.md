@@ -1,7 +1,7 @@
 ```fig
 title = fig docs
 author = adammharris
-part_of = [fig](/fig.md)
+part_of = [fig](/README.md)
 contents
 > * [BUILD](BUILD.md)
 > * [CONTRIBUTING](CONTRIBUTING.md)

@@ -75,6 +75,15 @@ pub const Language = struct {
     /// section path would rename the header rather than replace its body.
     pub const replaceValGuard = edit.sectionReplaceGuard;
 
+    /// A section's block is its header line, so a move relocates the name and
+    /// leaves the entries — and moving anything before a header lands it in the
+    /// section above.
+    pub const moveKeyGuard = edit.sectionMoveGuard;
+
+    /// The last entry's block stops at its own header, so a reorder that shifts
+    /// a section hands that section's entries to its new neighbour.
+    pub const reorderKeysGuard = edit.sectionReorderGuard;
+
     // ── Whole-container ops ──────────────────────────────────────────────────
     //
     // The EXCLUSIVE operations (see `editor.Editor`'s block of the same name).

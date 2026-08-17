@@ -779,6 +779,13 @@ fn editStatus(err: anyerror) FigStatus {
         // (`deleteContainer`, `renameContainer`, …) are what handle these shapes.
         error.CannotDeleteTable, error.CannotDeleteSection, error.CannotDeleteContainer => .invalid_argument,
         error.CannotReplaceTable, error.CannotReplaceSection => .invalid_argument,
+        // The same family for the two ops that RELOCATE an entry's block: the
+        // block of a `[header]`/`[section]` entry is its header line, so a move
+        // strands the body and a reorder hands it to the entry that lands
+        // before it. `fig_editor_move_container`/`fig_editor_reorder_containers`
+        // are the ops that relocate a scattered container whole.
+        error.CannotMoveTable, error.CannotMoveSection => .invalid_argument,
+        error.CannotReorderTables, error.CannotReorderSections => .invalid_argument,
         // NestedText declines two shapes outright: inserting into an inline
         // `{}`/`[]` (expanding one into block form is out of scope) and renaming
         // a key to text that needs the multiline `: key` form.
@@ -4117,17 +4124,19 @@ test "editStatus: every editor refusal is a caller error, not parse_error" {
     // each of these is raised by an editor op (not by a parser) and must map to a
     // caller-facing status. INI's and fig's delete guards had drifted this way.
     const refusals = [_]anyerror{
-        error.NotFound,                   error.NotAMapping,
-        error.NotASequence,               error.NotAContainer,
-        error.UnsupportedShape,           error.NotATable,
-        error.NotAnInlineArray,           error.NotAnArrayOfTables,
-        error.TableExists,                error.DuplicateKey,
-        error.MergeOnlyKey,               error.CannotDeleteTable,
-        error.CannotDeleteSection,        error.CannotDeleteContainer,
-        error.CannotReplaceTable,         error.CannotReplaceSection,
-        error.EmptyInlineContainer,       error.KeyRequiresMultilineForm,
-        error.BlockValueIntoFlow,         error.CommentsUnsupported,
-        error.NullUnsupported,            error.MultilineComment,
+        error.NotFound,             error.NotAMapping,
+        error.NotASequence,         error.NotAContainer,
+        error.UnsupportedShape,     error.NotATable,
+        error.NotAnInlineArray,     error.NotAnArrayOfTables,
+        error.TableExists,          error.DuplicateKey,
+        error.MergeOnlyKey,         error.CannotDeleteTable,
+        error.CannotDeleteSection,  error.CannotDeleteContainer,
+        error.CannotReplaceTable,   error.CannotReplaceSection,
+        error.CannotMoveTable,      error.CannotMoveSection,
+        error.CannotReorderTables,  error.CannotReorderSections,
+        error.EmptyInlineContainer, error.KeyRequiresMultilineForm,
+        error.BlockValueIntoFlow,   error.CommentsUnsupported,
+        error.NullUnsupported,      error.MultilineComment,
         error.InvalidComment,
     };
     for (refusals) |err| {

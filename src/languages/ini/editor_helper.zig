@@ -103,6 +103,40 @@ pub fn sectionReplaceGuard(self: *IniEditor, parsed: Document, path: []const AST
     if (node.kind == .mapping) return error.CannotReplaceSection;
 }
 
+/// Refuse a block-move of, or onto, a `[section]` header — INI's twin of
+/// TOML's `CannotMoveTable`.
+///
+/// The `moveKeyGuard` hook (see `editor.Editor.moveKey`). A section entry's
+/// block is its header LINE, so moving it relocates the name and leaves the
+/// entries for whichever section now precedes them; and moving anything to sit
+/// *before* a header drops it at the tail of the preceding section's body,
+/// turning a root key into that section's key. `moveContainer` moves a section
+/// whole.
+pub fn sectionMoveGuard(self: *IniEditor, parsed: Document, src: AST.Node, src_span: Span, dest: AST.Node, dest_span: Span) !void {
+    _ = parsed;
+    _ = src;
+    _ = dest;
+    const source = self.source.items;
+    if (isSectionHeaderLine(source, src_span) or isSectionHeaderLine(source, dest_span))
+        return error.CannotMoveSection;
+}
+
+/// Refuse a reorder that changes a `[section]`'s position among its siblings —
+/// INI's twin of `CannotReorderTables`.
+///
+/// The `reorderKeysGuard` hook (see `editor.Editor.reorderKeys`), which passes
+/// only the entries whose position changes. Entry blocks tile up to the next
+/// sibling's line, so a section carries its body — except the last one, whose
+/// block stops at its own header and leaves its entries outside the spliced
+/// range for the section that lands before them. `reorderContainers` is the op
+/// for sections; reordering root keys that are all plain entries is untouched.
+pub fn sectionReorderGuard(self: *IniEditor, parsed: Document, moved: []const AST.Node) !void {
+    const source = self.source.items;
+    for (moved) |node| {
+        if (isSectionHeaderLine(source, parsed.span(node))) return error.CannotReorderSections;
+    }
+}
+
 /// Whether the entry at `span` is a `[section]` header line — i.e. whether
 /// deleting it via the generic line-based `deleteKey` would only remove that
 /// one header line and orphan a reopened section's later entries elsewhere
@@ -396,4 +430,50 @@ test "ini reopened/scattered section: insertKey appends after the LAST physical 
     defer ed.deinit();
     try ed.set(&.{ .{ .key = "a" }, .{ .key = "w" } }, "3");
     try testing.expectEqualStrings("[a]\nx = 1\n[b]\nz = 1\n[a]\ny = 2\nw = 3\n", ed.source.items);
+}
+
+// --- the move/reorder guards (a section's block is its header LINE) ---
+//
+// The same span fact the delete and replace guards rest on, in the two ops
+// that relocate an entry's block. `moveContainer`/`reorderContainers` above are
+// what these refusals point at; both generic ops used to report success while
+// handing one section's entries to another.
+
+test "ini moveKey refuses to move a [section], or to move an entry before one" {
+    var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
+    try ed.init("z = 0\n[a]\nx = 1\n[b]\ny = 2\n");
+    defer ed.deinit();
+    // Moving the section relocates its header alone, leaving `y = 2` for
+    // whichever section ends up above it.
+    try testing.expectError(error.CannotMoveSection, ed.moveKey(&.{.{ .key = "b" }}, &.{.{ .key = "z" }}));
+    // And "before `[b]`" is the tail of `[a]`'s body, so the root key `z` would
+    // have become `a.z`.
+    try testing.expectError(error.CannotMoveSection, ed.moveKey(&.{.{ .key = "z" }}, &.{.{ .key = "b" }}));
+    try testing.expectEqualStrings("z = 0\n[a]\nx = 1\n[b]\ny = 2\n", ed.source.items);
+}
+
+test "ini moveKey still moves plain entries inside a section" {
+    var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
+    try ed.init("[a]\nx = 1\ny = 2\nz = 3\n");
+    defer ed.deinit();
+    try ed.moveKey(&.{ .{ .key = "a" }, .{ .key = "z" } }, &.{ .{ .key = "a" }, .{ .key = "y" } });
+    try testing.expectEqualStrings("[a]\nx = 1\nz = 3\ny = 2\n", ed.source.items);
+}
+
+test "ini reorderKeys refuses a reorder that shifts a section" {
+    var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
+    try ed.init("z = 0\n[b]\ny = 2\n[a]\nx = 1\n");
+    defer ed.deinit();
+    // Used to produce `z = 0\n[a]\n[b]\ny = 2\nx = 1\n` — `[a]` emptied and
+    // `x = 1` rehomed into `b`.
+    try testing.expectError(error.CannotReorderSections, ed.reorderKeys(&.{}, &.{ "z", "a", "b" }));
+    try testing.expectEqualStrings("z = 0\n[b]\ny = 2\n[a]\nx = 1\n", ed.source.items);
+}
+
+test "ini reorderKeys still reorders entries within a section" {
+    var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
+    try ed.init("[a]\nx = 1\ny = 2\nz = 3\n");
+    defer ed.deinit();
+    try ed.reorderKeys(&.{.{ .key = "a" }}, &.{ "z", "x" });
+    try testing.expectEqualStrings("[a]\nz = 3\nx = 1\ny = 2\n", ed.source.items);
 }

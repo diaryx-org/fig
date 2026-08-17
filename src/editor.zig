@@ -1134,12 +1134,23 @@ pub fn Editor(comptime Language: type) type {
         /// comment block and any trailing same-line comment; the bytes between
         /// the two entries are preserved. Moving an entry to before itself (or
         /// into its own comment block) is a no-op.
+        ///
+        /// **Hook** `moveKeyGuard(self, parsed, src, src_span, dest, dest_span)
+        /// !void` — a veto, run before any splice. Declared by TOML and INI,
+        /// where an entry's block is not always the region it owns: a
+        /// `[header]` table's block is the header LINE, so moving it would
+        /// relocate the name and strand the body, and moving anything else to
+        /// sit before such a header lands it at the tail of the *preceding*
+        /// table's body, silently reparenting it. `moveContainer` is the op
+        /// that relocates a scattered container whole.
         pub fn moveKey(self: *Self, src_path: []const AST.PathSegment, dest_path: []const AST.PathSegment) !void {
             const parsed = try self.getParsed();
             const src = try parsed.ast.getNodeByPath(src_path);
             if (src.kind != .keyvalue) return error.NotAMapping;
             const dest = try parsed.ast.getNodeByPath(dest_path);
             if (dest.kind != .keyvalue) return error.NotAMapping;
+            if (@hasDecl(Language, "moveKeyGuard"))
+                try Language.moveKeyGuard(self, parsed, src, parsed.span(src), dest, parsed.span(dest));
             const source = self.source.items;
             try self.moveBlock(
                 entryBlockStart(source, parsed.span(src), self.syntax().comments.style),
@@ -1182,6 +1193,17 @@ pub fn Editor(comptime Language: type) type {
         /// entry's owned comments — and any interleaved blank lines / orphan
         /// comments, which ride with the entry that precedes them — are
         /// preserved, so no bytes are dropped. Errors on a flow mapping (`{…}`).
+        ///
+        /// **Hook** `reorderKeysGuard(self, parsed, moved) !void` — a veto, run
+        /// once the new order is known and before any splice, receiving only
+        /// the entries whose position actually changes (never empty when
+        /// called). Declared by TOML and INI, whose `[header]` entries tile
+        /// into blocks that stop at the *next* sibling's line — so the last
+        /// entry's block excludes its own body, and any container that changes
+        /// place strands or absorbs entries. `reorderContainers` is the op that
+        /// reorders scattered containers whole. Reordering an inner mapping's
+        /// scalar keys around a sub-table that stays put is unaffected, which
+        /// is why the hook sees `moved` rather than every entry.
         pub fn reorderKeys(self: *Self, path: []const AST.PathSegment, keys: []const []const u8) !void {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
@@ -1227,6 +1249,33 @@ pub fn Editor(comptime Language: type) type {
                         break;
                     }
                 }
+            }
+            // The language's veto, before anything is spliced — handed exactly
+            // the entries whose position this reorder changes, since an entry
+            // left where it was is never at risk. See the hook note above.
+            if (@hasDecl(Language, "reorderKeysGuard")) {
+                // Where each entry ends up: the listed keys first, in `order`,
+                // then the unlisted ones in their original relative order.
+                const final_pos = try self.allocator.alloc(usize, blocks.items.len);
+                defer self.allocator.free(final_pos);
+                var pos: usize = 0;
+                for (order.items) |i| {
+                    final_pos[i] = pos;
+                    pos += 1;
+                }
+                for (chosen, 0..) |c, i| if (!c) {
+                    final_pos[i] = pos;
+                    pos += 1;
+                };
+                var moved: std.ArrayList(AST.Node) = .empty;
+                defer moved.deinit(self.allocator);
+                var entry = parsed.ast.nodes[first_id];
+                var idx: usize = 0;
+                while (true) : (idx += 1) {
+                    if (final_pos[idx] != idx) try moved.append(self.allocator, entry);
+                    entry = parsed.ast.next(&entry) orelse break;
+                }
+                if (moved.items.len > 0) try Language.reorderKeysGuard(self, parsed, moved.items);
             }
             try self.reorderBlocks(blocks.items[0].start, last_end, blocks.items, order.items);
         }

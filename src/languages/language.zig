@@ -837,22 +837,28 @@ const Decls = struct {
 
     /// Editing hooks. Declaring one takes over `editor.Editor`'s method of the
     /// same name — except `keyIsInherited` (a predicate the engine queries),
-    /// `seqItemLineStart` (a sub-computation), and the two `*Guard` vetoes
-    /// (`deleteKeyGuard`, `replaceValGuard`, which run before the generic op
-    /// rather than replacing it), which are named for what they answer rather
-    /// than for a method. Signatures are documented on the `Editor` method each
-    /// overrides; see `editor.zig`.
+    /// `seqItemLineStart` (a sub-computation), and the four `*Guard` vetoes
+    /// (`deleteKeyGuard`, `replaceValGuard`, `moveKeyGuard`,
+    /// `reorderKeysGuard`, which run before the generic op rather than
+    /// replacing it), which are named for what they answer rather than for a
+    /// method. Signatures are documented on the `Editor` method each overrides;
+    /// see `editor.zig`.
+    ///
+    /// The four guards are one family: each refuses a generic op whose
+    /// line-or-span shape does not match a SCATTERED container (a TOML
+    /// `[header]` table, an INI `[section]`), and each points at the
+    /// whole-container op below that does the job properly.
     const hooks = [_][]const u8{
-        "insertKey",         "deleteKeyGuard",
-        "replaceValGuard",   "replaceValAtPath",
-        "replaceValAtPathFollowing",
-        "replaceKeyAtPath",  "keyIsInherited",
-        "seqItemLineStart",  "appendToSeq",
-        "prependToSeq",      "removeSeqItem",
-        "reorderSeqItems",   "addLeadingComment",
-        "deleteLeadingComments", "getLeadingComment",
-        "setTrailingComment", "deleteTrailingComment",
-        "getTrailingComment",
+        "insertKey",                 "deleteKeyGuard",
+        "replaceValGuard",           "moveKeyGuard",
+        "reorderKeysGuard",          "replaceValAtPath",
+        "replaceValAtPathFollowing", "replaceKeyAtPath",
+        "keyIsInherited",            "seqItemLineStart",
+        "appendToSeq",               "prependToSeq",
+        "removeSeqItem",             "reorderSeqItems",
+        "addLeadingComment",         "deleteLeadingComments",
+        "getLeadingComment",         "setTrailingComment",
+        "deleteTrailingComment",     "getTrailingComment",
     };
 
     /// Whole-container ops for SECTION formats — those whose logical containers
@@ -867,9 +873,9 @@ const Decls = struct {
     /// do not apply: a hook can be unreachable behind a `syntax` refusal, while
     /// one of these IS the operation and is reachable whenever it is declared.
     const exclusive = [_][]const u8{
-        "deleteContainer",    "insertContainer",
-        "renameContainer",    "moveContainer",
-        "reorderContainers",  "appendContainerToSeq",
+        "deleteContainer",   "insertContainer",
+        "renameContainer",   "moveContainer",
+        "reorderContainers", "appendContainerToSeq",
     };
 
     fn has(comptime set: []const []const u8, comptime name: []const u8) bool {

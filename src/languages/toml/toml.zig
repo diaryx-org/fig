@@ -82,6 +82,14 @@ pub const Language = struct {
     /// the table's NAME instead of its body.
     pub const replaceValGuard = edit.tableReplaceGuard;
 
+    /// A table's block is its header LINE, so moving it strands the body — and
+    /// moving anything to sit before a header lands it inside the table above.
+    pub const moveKeyGuard = edit.tableMoveGuard;
+
+    /// The last entry's block stops at its own line, so a reorder that shifts a
+    /// `[header]` table leaves that table's body behind for its new neighbour.
+    pub const reorderKeysGuard = edit.tableReorderGuard;
+
     /// A table's name is written once per `[header]`/dotted line that mentions
     /// it, but only the first has a key node — so the generic one-span splice
     /// renames that mention and leaves the rest behind, splitting the table.

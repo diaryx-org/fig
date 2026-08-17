@@ -357,9 +357,59 @@ pub fn isTomlBareKey(name: []const u8) bool {
 pub fn tableDeleteGuard(self: *TomlEditor, parsed: Document, node: AST.Node, span: Span) !void {
     _ = parsed;
     _ = node;
-    const source = self.source.items;
+    if (opensHeaderLine(self.source.items, span)) return error.CannotDeleteTable;
+}
+
+/// Whether the entry at `span` sits on a `[header]` / `[[array]]` line — the
+/// shape whose block is the header alone while its body is separate lines. A
+/// `key = value` entry never starts its line with `[`, and neither does a
+/// dotted one (`a.b = 1`), which is why both delete and move cleanly.
+fn opensHeaderLine(source: []const u8, span: Span) bool {
     const fns = firstNonSpace(source, lineStartBefore(source, span.start));
-    if (fns < source.len and source[fns] == '[') return error.CannotDeleteTable;
+    return fns < source.len and source[fns] == '[';
+}
+
+/// Refuse a block-move of, or onto, a `[header]` table.
+///
+/// The `moveKeyGuard` hook (see `editor.Editor.moveKey`). Two hazards, one
+/// span fact — a header entry's block is its header LINE, and its body is the
+/// lines that follow until the next header:
+///
+///   * moving the table (`src`) relocates the name and strands the body, which
+///     the table that now precedes those lines silently adopts;
+///   * moving anything *before* a header (`dest`) lands it at the tail of the
+///     PRECEDING table's body, so a root key becomes that table's key —
+///     `z = 0` moved before `[b]` in `z = 0\n[a]\nx = 1\n[b]\n…` becomes
+///     `a.z`.
+///
+/// `moveContainer` relocates a scattered table whole and is the op for both.
+pub fn tableMoveGuard(self: *TomlEditor, parsed: Document, src: AST.Node, src_span: Span, dest: AST.Node, dest_span: Span) !void {
+    _ = parsed;
+    _ = src;
+    _ = dest;
+    const source = self.source.items;
+    if (opensHeaderLine(source, src_span) or opensHeaderLine(source, dest_span))
+        return error.CannotMoveTable;
+}
+
+/// Refuse a reorder that changes a `[header]` table's position among its
+/// siblings.
+///
+/// The `reorderKeysGuard` hook (see `editor.Editor.reorderKeys`), which passes
+/// only the entries whose position changes. The generic reorder tiles each
+/// entry's block up to the next sibling's line, so a header table's block does
+/// carry its body — except the LAST entry's, which stops at its own line end
+/// and leaves the body outside the spliced range entirely. Reordering root
+/// tables therefore drops one table's contents into whichever table lands
+/// before them. `reorderContainers` is the op that does this correctly.
+///
+/// Only moved entries are checked, so reordering a table's scalar keys around
+/// a sub-table header that stays put still works.
+pub fn tableReorderGuard(self: *TomlEditor, parsed: Document, moved: []const AST.Node) !void {
+    const source = self.source.items;
+    for (moved) |node| {
+        if (opensHeaderLine(source, parsed.span(node))) return error.CannotReorderTables;
+    }
 }
 
 /// Refuse a span-splice replacement of a BLOCK table's value: a `[header]`
@@ -1560,4 +1610,72 @@ test "toml reorder top-level tables" {
     defer ed.deinit();
     try ed.reorderContainers(&.{ "c", "a", "b" });
     try expectTomlSource(&ed, "[c]\nw = 3\n[a]\nx = 1\n[b]\ny = 2\n");
+}
+
+// --- the move/reorder guards (a table's block is its header LINE) ---
+//
+// `reorderContainers` and `moveContainer` above are what these two refusals
+// point at: the generic key ops relocate an entry's tiled block, which for a
+// `[header]` table is the header alone (or the header plus a body that stops
+// at the next sibling — with the LAST entry's body left out of the range
+// entirely). Both used to report success while rehoming keys.
+
+test "toml moveKey refuses to move a [header] table" {
+    var ed = try newTomlEditor("z = 0\n[b]\ny = 2\n[a]\nx = 1\n");
+    defer ed.deinit();
+    // Used to produce `[b]\nz = 0\ny = 2\n…` — only the header line moved, so
+    // the root key `z` landed inside `b`.
+    try std.testing.expectError(
+        error.CannotMoveTable,
+        ed.moveKey(&.{.{ .key = "b" }}, &.{.{ .key = "z" }}),
+    );
+    try expectTomlSource(&ed, "z = 0\n[b]\ny = 2\n[a]\nx = 1\n");
+}
+
+test "toml moveKey refuses to move an entry to before a [header]" {
+    var ed = try newTomlEditor("z = 0\n[a]\nx = 1\n[b]\ny = 2\n");
+    defer ed.deinit();
+    // "Before `[b]`" is the end of `[a]`'s body, so `z` would have become `a.z`
+    // — the destination is as much of a hazard as the source.
+    try std.testing.expectError(
+        error.CannotMoveTable,
+        ed.moveKey(&.{.{ .key = "z" }}, &.{.{ .key = "b" }}),
+    );
+    try expectTomlSource(&ed, "z = 0\n[a]\nx = 1\n[b]\ny = 2\n");
+}
+
+test "toml moveKey still moves plain entries inside a table" {
+    var ed = try newTomlEditor("[a]\nx = 1\ny = 2\nz = 3\n");
+    defer ed.deinit();
+    try ed.moveKey(&.{ .{ .key = "a" }, .{ .key = "z" } }, &.{ .{ .key = "a" }, .{ .key = "y" } });
+    try expectTomlSource(&ed, "[a]\nx = 1\nz = 3\ny = 2\n");
+}
+
+test "toml reorderKeys refuses a reorder that shifts a table" {
+    var ed = try newTomlEditor("z = 0\n[b]\ny = 2\n[a]\nx = 1\n");
+    defer ed.deinit();
+    // Used to produce `z = 0\n[a]\n[b]\ny = 2\nx = 1\n`: `[a]` was the last
+    // entry, so its block stopped at its own header line and `x = 1` stayed
+    // put — becoming `b.x`, with `[a]` left empty.
+    try std.testing.expectError(
+        error.CannotReorderTables,
+        ed.reorderKeys(&.{}, &.{ "z", "a", "b" }),
+    );
+    try expectTomlSource(&ed, "z = 0\n[b]\ny = 2\n[a]\nx = 1\n");
+}
+
+test "toml reorderKeys still reorders scalars around a sub-table that stays put" {
+    var ed = try newTomlEditor("[a]\nx = 1\ny = 2\n[a.b]\nz = 3\n");
+    defer ed.deinit();
+    // The guard sees only entries whose position CHANGES, and `b` keeps its
+    // index here — so this legitimate reorder is untouched.
+    try ed.reorderKeys(&.{.{ .key = "a" }}, &.{ "y", "x" });
+    try expectTomlSource(&ed, "[a]\ny = 2\nx = 1\n[a.b]\nz = 3\n");
+}
+
+test "toml reorderKeys still reorders a document of plain root keys" {
+    var ed = try newTomlEditor("a = 1\nb = 2\nc = 3\n");
+    defer ed.deinit();
+    try ed.reorderKeys(&.{}, &.{ "c", "a" });
+    try expectTomlSource(&ed, "c = 3\na = 1\nb = 2\n");
 }

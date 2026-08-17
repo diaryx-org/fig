@@ -110,7 +110,7 @@ the end marker, where regeneration cannot reach it. Cutting a release means
 renaming `## Unreleased` to the versions that went out and leaving the generated
 region in place.
 
-## Unreleased
+## 2.6.0
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 

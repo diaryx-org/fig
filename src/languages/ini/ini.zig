@@ -71,6 +71,10 @@ pub const Language = struct {
     /// so a line delete would orphan a reopened section's later entries.
     pub const deleteKeyGuard = edit.sectionDeleteGuard;
 
+    /// That same span is the section's NAME token, so a value splice at a
+    /// section path would rename the header rather than replace its body.
+    pub const replaceValGuard = edit.sectionReplaceGuard;
+
     // ── Whole-container ops ──────────────────────────────────────────────────
     //
     // The EXCLUSIVE operations (see `editor.Editor`'s block of the same name).

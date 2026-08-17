@@ -84,6 +84,25 @@ pub fn sectionDeleteGuard(self: *IniEditor, parsed: Document, node: AST.Node, sp
     if (isSectionHeaderLine(self.source.items, span)) return error.CannotDeleteSection;
 }
 
+/// Refuse a span-splice replacement of a whole `[section]` — INI's twin of
+/// TOML's `CannotReplaceTable`.
+///
+/// The `replaceValGuard` hook (see `editor.Editor.replaceValAtPath`). Same span
+/// fact the delete guard rests on, with a worse outcome: a section mapping's
+/// span is just its NAME token inside the header, so the generic splice writes
+/// the replacement over that name and reports success — `[server]` becomes
+/// `[REPLACED]`, renaming the section while its entries stay put. INI has no
+/// flow syntax, so a non-root mapping is always a section; every scalar value
+/// splices normally, and the root (empty path) spans the whole document, which
+/// is what replacing the root means.
+pub fn sectionReplaceGuard(self: *IniEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, span: Span) !void {
+    _ = parsed;
+    _ = self;
+    _ = span;
+    if (path.len == 0) return;
+    if (node.kind == .mapping) return error.CannotReplaceSection;
+}
+
 /// Whether the entry at `span` is a `[section]` header line — i.e. whether
 /// deleting it via the generic line-based `deleteKey` would only remove that
 /// one header line and orphan a reopened section's later entries elsewhere
@@ -263,6 +282,31 @@ test "ini deleteKey refuses to delete a whole [section] header" {
     // empty) section header intact.
     try ed.deleteKey(&.{ .{ .key = "server" }, .{ .key = "host" } });
     try testing.expectEqualStrings("[server]\n", ed.source.items);
+}
+
+test "ini replaceValAtPath refuses a whole [section] (would rename the header)" {
+    var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
+    try ed.init("[server]\nhost = localhost\n");
+    defer ed.deinit();
+    // The section mapping's span is the NAME token inside the header, so the
+    // generic splice used to write `[REPLACED]` and report success — renaming
+    // the section while its entries stayed under it.
+    try testing.expectError(error.CannotReplaceSection, ed.replaceValAtPath(&.{.{ .key = "server" }}, "REPLACED"));
+    try testing.expectEqualStrings("[server]\nhost = localhost\n", ed.source.items);
+    // A value WITHIN the section still replaces normally.
+    try ed.replaceValAtPath(&.{ .{ .key = "server" }, .{ .key = "host" } }, "example.com");
+    try testing.expectEqualStrings("[server]\nhost = example.com\n", ed.source.items);
+}
+
+test "ini replaceValAtPath at the root rewrites the whole document" {
+    var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
+    try ed.init("[server]\nhost = localhost\n");
+    defer ed.deinit();
+    // The root's span is the whole file — the one container the guard exempts,
+    // and the reason it tests the PATH rather than sniffing for a `[` (which the
+    // first line here would trip).
+    try ed.replaceValAtPath(&.{}, "[db]\nname = fig\n");
+    try testing.expectEqualStrings("[db]\nname = fig\n", ed.source.items);
 }
 
 test "ini deleteContainer removes a whole section" {

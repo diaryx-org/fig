@@ -324,6 +324,41 @@ pub fn tableDeleteGuard(self: *TomlEditor, parsed: Document, node: AST.Node, spa
     if (fns < source.len and source[fns] == '[') return error.CannotDeleteTable;
 }
 
+/// Refuse a span-splice replacement of a BLOCK table's value: a `[header]`
+/// table, a dotted table (`a.b = 1` addressed at `a`), an `[[array]]` of
+/// tables, or one of its elements.
+///
+/// The `replaceValGuard` hook (see `editor.Editor.replaceValAtPath`). Such a
+/// node's span is its KEY segment — the `nested` inside `[nested]`, or the `a`
+/// in `a.b = 1` — because that is the only contiguous text a scattered table
+/// owns (`gatherTableRegions` is what assembles the rest, and the whole-table
+/// ops are built on it). The generic splice would therefore write `replacement`
+/// over the table's NAME and report success: `[nested]` + `"x"` becomes the
+/// still-valid `["x"]`, silently renaming the section and rehoming its body.
+/// Refuse instead — `renameContainer` renames a table, `deleteContainer`
+/// removes one, and no op replaces a block table's body wholesale.
+///
+/// Only BLOCK containers are affected: an inline table (`{ … }`) and an inline
+/// array (`[ … ]`) span their own delimited text, so both splice correctly and
+/// are let through, as is every scalar. The root (empty path) is let through
+/// too — its span is the whole document, which is exactly what replacing the
+/// root means.
+pub fn tableReplaceGuard(self: *TomlEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, span: Span) !void {
+    _ = parsed;
+    if (path.len == 0) return;
+    switch (node.kind) {
+        .mapping, .sequence => {},
+        else => return,
+    }
+    // `isFlow` reads the target's own first byte, so it separates the two cases
+    // exactly: an inline `{`/`[` opens the value text, while a block table's
+    // span starts at its bare or quoted key. (Sniffing the LINE instead — as
+    // the delete guard does — would miss a dotted table, whose line starts with
+    // the key rather than `[`.)
+    if (isFlow(self.source.items, span)) return;
+    return error.CannotReplaceTable;
+}
+
 // --- TOML structural inserts ---
 //
 // TOML splits a logical table across `[header]`…dotted-key…lines, so an insert
@@ -726,6 +761,84 @@ test "toml replace value with an inline array" {
     defer ed.deinit();
     try ed.replaceValAtPath(&.{.{ .key = "ports" }}, "[3, 4, 5]");
     try expectTomlSource(&ed, "ports = [3, 4, 5]\n");
+}
+
+test "toml replace value with an inline table" {
+    var ed = try newTomlEditor("t = { a = 1 }\n");
+    defer ed.deinit();
+    // An inline container's span IS its `{ … }` text, so it splices in place —
+    // the shape `tableReplaceGuard` deliberately lets through.
+    try ed.replaceValAtPath(&.{.{ .key = "t" }}, "{ z = 2 }");
+    try expectTomlSource(&ed, "t = { z = 2 }\n");
+}
+
+test "toml replace at the document root rewrites the whole document" {
+    var ed = try newTomlEditor("k = 1\n");
+    defer ed.deinit();
+    // The root's span is the whole file, so replacing it is exact — the empty
+    // path is the one container `tableReplaceGuard` exempts.
+    try ed.replaceValAtPath(&.{}, "z = 2\n");
+    try expectTomlSource(&ed, "z = 2\n");
+}
+
+// --- the `replaceValGuard` refusals (block tables are NOT value slots) ---
+//
+// A block table's node span is its KEY segment — the `nested` inside
+// `[nested]`, the `a` in `a.b = 1` — because that is the only contiguous text a
+// scattered table owns. Splicing a replacement there would rewrite the table's
+// NAME and, for a string replacement, still reparse: `[nested]` became
+// `["REPLACED"]`, silently renaming the section and rehoming its body while
+// reporting success. Every such shape now refuses, source untouched.
+
+test "toml replace refuses a [header] table (would rename the header)" {
+    var ed = try newTomlEditor("[nested]\nk = \"v\"\n");
+    defer ed.deinit();
+    try std.testing.expectError(
+        error.CannotReplaceTable,
+        ed.replaceValAtPath(&.{.{ .key = "nested" }}, "\"REPLACED\""),
+    );
+    try expectTomlSource(&ed, "[nested]\nk = \"v\"\n");
+}
+
+test "toml replace refuses a dotted table" {
+    var ed = try newTomlEditor("a.b = 1\n");
+    defer ed.deinit();
+    // Not a `[header]` line at all — the line starts with the key — so this is
+    // the case a line-based sniff would miss and splice into `"x".b = 1`.
+    try std.testing.expectError(
+        error.CannotReplaceTable,
+        ed.replaceValAtPath(&.{.{ .key = "a" }}, "\"REPLACED\""),
+    );
+    try expectTomlSource(&ed, "a.b = 1\n");
+}
+
+test "toml replace refuses an array of tables and its elements" {
+    var ed = try newTomlEditor("[[aot]]\nk = 1\n");
+    defer ed.deinit();
+    // The `[[aot]]` sequence and every element share the header key's span, so
+    // both paths are the same hazard.
+    try std.testing.expectError(
+        error.CannotReplaceTable,
+        ed.replaceValAtPath(&.{.{ .key = "aot" }}, "[1, 2]"),
+    );
+    try std.testing.expectError(
+        error.CannotReplaceTable,
+        ed.replaceValAtPath(&.{ .{ .key = "aot" }, .{ .index = 0 } }, "{ z = 1 }"),
+    );
+    try expectTomlSource(&ed, "[[aot]]\nk = 1\n");
+}
+
+test "toml set on an existing [header] table refuses without touching the file" {
+    var ed = try newTomlEditor("[nested]\nk = \"v\"\n");
+    defer ed.deinit();
+    // `set` falls back to `insertKey` on ANY replace error, so the guard has to
+    // leave the document byte-for-byte intact through that second attempt too
+    // (the insert's own reparse would hit TOML's duplicate-key rule).
+    try std.testing.expectError(
+        error.CannotReplaceTable,
+        ed.set(&.{.{ .key = "nested" }}, "\"REPLACED\""),
+    );
+    try expectTomlSource(&ed, "[nested]\nk = \"v\"\n");
 }
 
 test "toml rename a leaf key" {

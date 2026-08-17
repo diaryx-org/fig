@@ -182,7 +182,20 @@ pub fn Editor(comptime Language: type) type {
         /// A hook receives the resolved `node` and its `span`, so it never
         /// repeats the path walk; a format that declares none (JSON, TOML, ZON,
         /// INI, dotenv, `.properties`) has a literal syntax that splices
-        /// verbatim in place.
+        /// verbatim in place — for every target it can address at all, which for
+        /// TOML and INI is what the guard below decides.
+        ///
+        /// **Hook** `replaceValGuard(self, parsed, path, node, span) !void` — a
+        /// veto, run before any splice (and before the `replaceValAtPath` hook
+        /// above, if the format declares both). Declared by TOML and INI, the
+        /// two formats where a container's node span is only its KEY segment
+        /// inside a `[header]` (or a dotted `a.b = 1` key) rather than any
+        /// value text: a container's body is assembled from lines the span
+        /// never covers, so splicing `replacement` into that span would rewrite
+        /// the header's NAME and silently rename the section. Both refuse
+        /// instead; `deleteKeyGuard` is the same veto for the delete side, and
+        /// the whole-container ops (`deleteContainer`, `renameContainer`, …)
+        /// are what handle those shapes properly.
         pub fn replaceValAtPath(self: *Self, path: []const AST.PathSegment, replacement: []const u8) !void {
             const parsed = try self.getParsed();
             const node = parsed.ast.getValByPath(path) catch |err| {
@@ -196,6 +209,9 @@ pub fn Editor(comptime Language: type) type {
                 return err;
             };
             const span = parsed.span(node);
+            // The language's veto, before anything is spliced — a target whose
+            // span is a header/dotted KEY, not a value slot.
+            if (@hasDecl(Language, "replaceValGuard")) try Language.replaceValGuard(self, parsed, path, node, span);
             if (@hasDecl(Language, "replaceValAtPath"))
                 return Language.replaceValAtPath(self, parsed, path, node, span, replacement);
             try self.replaceAtSpan(span, replacement);

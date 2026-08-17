@@ -77,6 +77,11 @@ pub const Language = struct {
     /// line-based delete would remove its header and orphan the body.
     pub const deleteKeyGuard = edit.tableDeleteGuard;
 
+    /// A block table's node span is its key segment inside the `[header]` (or
+    /// its dotted key), not any value text, so the generic splice would rewrite
+    /// the table's NAME instead of its body.
+    pub const replaceValGuard = edit.tableReplaceGuard;
+
     // ── Whole-container ops ──────────────────────────────────────────────────
     //
     // The EXCLUSIVE operations: they override nothing, because the generic

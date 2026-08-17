@@ -836,13 +836,16 @@ const Decls = struct {
     const optional = [_][]const u8{ "printNode", "materialize", "TagMode" };
 
     /// Editing hooks. Declaring one takes over `editor.Editor`'s method of the
-    /// same name — except `keyIsInherited` (a predicate the engine queries) and
-    /// `seqItemLineStart` (a sub-computation), which are named for what they
-    /// answer rather than for a method. Signatures are documented on the
-    /// `Editor` method each overrides; see `editor.zig`.
+    /// same name — except `keyIsInherited` (a predicate the engine queries),
+    /// `seqItemLineStart` (a sub-computation), and the two `*Guard` vetoes
+    /// (`deleteKeyGuard`, `replaceValGuard`, which run before the generic op
+    /// rather than replacing it), which are named for what they answer rather
+    /// than for a method. Signatures are documented on the `Editor` method each
+    /// overrides; see `editor.zig`.
     const hooks = [_][]const u8{
         "insertKey",         "deleteKeyGuard",
-        "replaceValAtPath",  "replaceValAtPathFollowing",
+        "replaceValGuard",   "replaceValAtPath",
+        "replaceValAtPathFollowing",
         "replaceKeyAtPath",  "keyIsInherited",
         "seqItemLineStart",  "appendToSeq",
         "prependToSeq",      "removeSeqItem",

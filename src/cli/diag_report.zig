@@ -159,6 +159,22 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
         // document, which no TOML scalar does — so TOML declines on every
         // input, and the generic `fig check` note below would send the user
         // hunting for a parse error in a file that parses fine.
+        // The `replaceValGuard` refusal (TOML tables, INI sections). Worth a
+        // sentence of its own: the raw error name reads like a limitation of the
+        // tool, when what it means is that the path names a header rather than a
+        // value — and the generic `fig check` note below would send the user
+        // hunting for a parse error in a file that parses fine.
+        error.CannotReplaceTable, error.CannotReplaceSection => {
+            try term.writer.writeAll(": that path names a whole block table/section, which has no single value to replace\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("note");
+            try term.setColor(.reset);
+            try term.writer.writeAll(": a `[table]`/`[section]` owns nothing contiguous but the name in its header — its entries are separate lines, and it may be reopened further down the file. Replacing it as one value would rewrite that NAME and leave the entries where they are.\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("help");
+            try term.setColor(.reset);
+            try term.writer.print(": edit the keys inside it instead — `{s} set <file> <path>.<key> <value>`.\n", .{binary_name});
+        },
         error.UnsupportedShape => {
             try term.writer.writeAll(": this is not a flat list of scalars, so `--seq` cannot diff it\n");
             try term.setColor(.blue);

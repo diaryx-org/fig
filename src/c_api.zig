@@ -770,6 +770,10 @@ fn editStatus(err: anyerror) FigStatus {
         // scalar ops, inserting a key/table that already exists). These are caller
         // errors, not malformed-source reparse failures.
         error.NotATable, error.NotAnInlineArray, error.NotAnArrayOfTables, error.TableExists, error.DuplicateKey, error.CannotDeleteTable, error.MergeOnlyKey => .invalid_argument,
+        // A value replace addressed a whole block `[table]`/`[section]`, whose
+        // node span is its header key rather than any value text (see the
+        // `replaceValGuard` hook) — the whole-container ops handle those shapes.
+        error.CannotReplaceTable, error.CannotReplaceSection => .invalid_argument,
         // A block-spelled value (`- a`, `k: v`, `|`) was handed to a splice into
         // a flow `{…}`/`[…]` container, which has no way to hold it.
         error.BlockValueIntoFlow => .invalid_argument,

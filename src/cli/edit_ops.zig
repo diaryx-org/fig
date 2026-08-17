@@ -610,6 +610,30 @@ test "applyEdit performs the structural ops on ini, root and section" {
         var dk_path = [_]fig.AST.PathSegment{.{ .key = "server" }};
         try t.expectError(error.CannotDeleteSection, applyEdit(I, t.allocator, "[server]\nhost = localhost\n", &dk_path, "", .delete_key, dia));
     }
+    // replace_value on the `[section]` header is refused for the same reason —
+    // the section's span is its NAME, so this used to rewrite `[server]` into
+    // `[REPLACED]` and report success.
+    {
+        var rv_path = [_]fig.AST.PathSegment{.{ .key = "server" }};
+        try t.expectError(error.CannotReplaceSection, applyEdit(I, t.allocator, "[server]\nhost = localhost\n", &rv_path, "REPLACED", .replace_value, dia));
+    }
+}
+
+test "applyEdit refuses replace_value on a toml [table] header" {
+    if (comptime !build_options.lang_toml) return error.SkipZigTest;
+    const t = std.testing;
+    const T = fig.Language.TOML;
+    const dia = T.default_type;
+
+    // The reported shape: `["REPLACED"]` is valid TOML, so the splice into the
+    // header key's span reparsed cleanly and the rename went unnoticed.
+    var path = [_]fig.AST.PathSegment{.{ .key = "nested" }};
+    try t.expectError(error.CannotReplaceTable, applyEdit(T, t.allocator, "[nested]\nk = \"v\"\n", &path, "\"REPLACED\"", .replace_value, dia));
+    // A key INSIDE the table still edits normally.
+    var inner = [_]fig.AST.PathSegment{ .{ .key = "nested" }, .{ .key = "k" } };
+    const out = try applyEdit(T, t.allocator, "[nested]\nk = \"v\"\n", &inner, "\"w\"", .replace_value, dia);
+    defer t.allocator.free(out);
+    try t.expectEqualStrings("[nested]\nk = \"w\"\n", out);
 }
 
 test "applyEdit performs the structural ops on .properties, including from-empty insert" {

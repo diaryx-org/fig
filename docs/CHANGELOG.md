@@ -119,6 +119,7 @@ region in place.
 - **c-api** — expose the six whole-container editor ops ([`c4b5326`](https://github.com/diaryx-org/fig/commit/c4b532696551e5aa94b321eac51112992fa66ec1))
 - **rust** — wrap the six whole-container editor ops ([`86debb4`](https://github.com/diaryx-org/fig/commit/86debb4997490c95a6a9c7cbdb9a6c408ff47d68))
 - **ts** — wrap the six whole-container editor ops ([`cf52151`](https://github.com/diaryx-org/fig/commit/cf5215148c5a73540d23135e59a19e3dd79ffd51))
+- **docs** — a git-cliff changelog, with Behavioural-change trailers ([`f99c277`](https://github.com/diaryx-org/fig/commit/f99c27726be19d90446766f717e3392ea9664fee))
 
 ### Fixed
 
@@ -135,13 +136,21 @@ region in place.
 homebrew workflow ([`a702829`](https://github.com/diaryx-org/fig/commit/a70282946f5a11d90501499cfd49d13150a8b9d0))
 - **gitignore** — more sensible gitignore ([`6f8ea23`](https://github.com/diaryx-org/fig/commit/6f8ea23a5fa48cd4afc11bbf849e8198e367d04d))
 
-<!-- git-cliff:end -->
-
 ### Behavioural changes
 
-These predate the `Behavioural-change:` trailer, which this release introduces,
-so they are written here by hand rather than gathered from the commits. From the
-next release on, this section is generated.
+- `zig build changelog` is a new build step; it needs
+  git-cliff on PATH (added to the nix dev shell). It is not part of
+  `zig build check`, so an absent git-cliff cannot fail an ordinary build.
+
+<!-- git-cliff:end -->
+
+### Behavioural changes (predating the trailer)
+
+The generated section above carries only the one commit written after the
+`Behavioural-change:` trailer existed — this release is the one that introduces
+it. The rest of this release's observable changes are below, by hand, because
+the commits that caused them were already written. From the next release on
+there is one section, generated, and this heading goes away.
 
 - **`edit`/`set`/`delete` at a TOML `[table]` or INI `[section]` path now
   refuse.** They used to report success, having rewritten the header's NAME and

@@ -469,9 +469,11 @@ test("Document.diagnose reports a dropped null for TOML", () => {
   using doc = Document.parse("a: null\nb: 1\n", Format.Yaml);
   const warns = doc.diagnose(Format.Toml);
   assert.equal(warns.length, 1);
-  assert.equal(warns[0].code, WarningCode.ValueDropped);
-  assert.equal(warns[0].cause, WarningCause.FormatLimitation);
-  assert.equal(warns[0].path, "a");
+  const [w] = warns;
+  assert.ok(w);
+  assert.equal(w.code, WarningCode.ValueDropped);
+  assert.equal(w.cause, WarningCause.FormatLimitation);
+  assert.equal(w.path, "a");
   // Lossless preserves the null → nothing lost.
   assert.equal(doc.diagnose(Format.Toml, { lossless: true }).length, 0);
 });
@@ -480,9 +482,11 @@ test("value diagnose reports a degraded datetime", () => {
   const v = V.map([[V.string("when"), V.extended(ExtKind.OffsetDateTime, "1979-05-27T07:32:00Z")]]);
   const warns = diagnose(v, Format.Json);
   assert.equal(warns.length, 1);
-  assert.equal(warns[0].code, WarningCode.TypeDegraded);
-  assert.equal(warns[0].path, "when");
-  assert.equal(warns[0].note, "string");
+  const [w] = warns;
+  assert.ok(w);
+  assert.equal(w.code, WarningCode.TypeDegraded);
+  assert.equal(w.path, "when");
+  assert.equal(w.note, "string");
 });
 
 // ── new: init / lazy loading ────────────────────────────────────────────────

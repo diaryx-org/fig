@@ -1,5 +1,6 @@
 node_modules/
 dist/
+test-dist/
 *.tsbuildinfo
 src/wasm-bytes.ts
 # Docs/license text vendored in at pack time by scripts/vendor-publish-files.mjs;

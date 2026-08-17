@@ -1,0 +1,28 @@
+// Build the test suite the way the package itself is built, rather than running
+// the `.ts` sources through Node.
+//
+// Node's built-in TypeScript support is STRIP-ONLY: it erases annotations but
+// refuses any construct that needs real emit, and this package's public API is
+// built on numeric enums (`Format`, `Status`, `NodeKind`, …). Node 22–25 could
+// run the sources anyway via `--experimental-transform-types`; Node 26 removed
+// that flag, leaving strip-only as the only mode, so `node --test *.ts` fails
+// outright with ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX. Compiling first sidesteps
+// the whole question — it is what `npm run build` already does for `src`, and
+// what consumers get from the published package.
+//
+// It also means the tests are genuinely TYPE-CHECKED for the first time: under
+// strip-only they were only ever parsed. Hence `@types/node` in devDependencies
+// and `rootDir` at the package root, so `test/` and `src/` land side by side in
+// `test-dist/` and the tests' `../src/index.ts` imports resolve after
+// `rewriteRelativeImportExtensions` rewrites them to `.js`.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "test-dist",
+    "rootDir": ".",
+    // Type declarations are for consumers of `dist`, not for a test build.
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

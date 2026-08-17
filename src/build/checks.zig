@@ -212,10 +212,14 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     // `node_modules` hasn't been populated, so the gate degrades gracefully on a
     // partial checkout; CI pins Node 24 and runs `npm ci` first.
     //
-    // The Node floor is a test-time requirement only, not a consumer one: the suite
-    // runs the `.ts` sources through Node's type-stripping, which erases annotations
-    // but cannot downlevel the `using` declarations the tests rely on. Shipped output
-    // is downlevelled by tsc, so `engines` in package.json stays at >=20.
+    // The Node floor is a test-time requirement only, not a consumer one — shipped
+    // output is downlevelled by tsc, so `engines` in package.json stays at >=20. It
+    // is CI parity (the workflow pins 24) plus `node --test`'s glob argument, and
+    // nothing more: `npm test` compiles the suite with tsc and runs the JS, so
+    // Node's own TypeScript support is not on the path at all. It used to be, via
+    // `--experimental-transform-types`, and that is exactly what broke — Node 26
+    // removed the flag, leaving strip-only mode, which rejects this package's
+    // numeric enums. See `bindings/typescript/tsconfig.test.json`.
     const ts_test_script =
         \\set -eu
         \\if ! command -v npm >/dev/null 2>&1; then

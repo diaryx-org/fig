@@ -82,6 +82,12 @@ pub const Language = struct {
     /// the table's NAME instead of its body.
     pub const replaceValGuard = edit.tableReplaceGuard;
 
+    /// A table's name is written once per `[header]`/dotted line that mentions
+    /// it, but only the first has a key node — so the generic one-span splice
+    /// renames that mention and leaves the rest behind, splitting the table.
+    /// Routes a block table to `renameContainer`'s multi-mention rewrite.
+    pub const replaceKeyAtPath = edit.tomlReplaceKey;
+
     // ── Whole-container ops ──────────────────────────────────────────────────
     //
     // The EXCLUSIVE operations: they override nothing, because the generic

@@ -213,10 +213,25 @@ pub fn headerSegmentSpan(source: []const u8, region: Region, depth: usize) ?Span
 
     var p = line_start;
     while (p < source.len and source[p] == '[') p += 1; // skip `[` or `[[`
+    return keySegmentSpan(source, p, depth, ']');
+}
+
+/// Span of the `index`-th (0-based) segment of the dotted key path starting at
+/// `p0`, or null when the path has fewer than `index+1` segments. `terminator`
+/// ends the path: `]` for a `[a.b.c]` header, `=` for an `a.b.c = v` line. The
+/// span covers the raw key token (quotes included), so splicing over it rewrites
+/// exactly one path segment and nothing else on the line.
+///
+/// Shared by the two callers because a TOML key path is spelled the same in both
+/// places — bare, `"basic"` or `'literal'` segments joined by `.`, spaces
+/// allowed around each. Stops at a newline as well as at `terminator`, so a
+/// malformed line can't run the scan into the rest of the file.
+fn keySegmentSpan(source: []const u8, p0: usize, index: usize, terminator: u8) ?Span {
+    var p = p0;
     var seg: usize = 0;
-    while (p < source.len and source[p] != ']') {
+    while (p < source.len and source[p] != terminator and source[p] != '\n') {
         while (p < source.len and (source[p] == ' ' or source[p] == '\t')) p += 1;
-        if (p >= source.len or source[p] == ']') break;
+        if (p >= source.len or source[p] == terminator or source[p] == '\n') break;
         const start = p;
         switch (source[p]) {
             '"' => {
@@ -234,10 +249,33 @@ pub fn headerSegmentSpan(source: []const u8, region: Region, depth: usize) ?Span
             else => while (p < source.len and isTomlBareKey(source[p .. p + 1])) : (p += 1) {},
         }
         const end = p;
-        if (seg == depth) return Span.init(start, end);
+        if (end == start) break; // no key token here — malformed; don't spin
+        if (seg == index) return Span.init(start, end);
         seg += 1;
         while (p < source.len and (source[p] == ' ' or source[p] == '\t')) p += 1;
         if (p < source.len and source[p] == '.') p += 1; // segment separator
+    }
+    return null;
+}
+
+/// The 0-based position of the key token starting at `key_start` within the
+/// dotted key path on its own line: 0 for `a` in `a.b = 1`, 1 for that line's
+/// `b`. Null when `key_start` names no segment of a `key = value` line — which
+/// is how a `[header]` line answers, since its path is scanned by
+/// `headerSegmentSpan` instead.
+///
+/// This is what lets a dotted rename find its segment without tracking parser
+/// state: a dotted key path is spelled relative to the enclosing `[header]`, so
+/// the index of a given table within it cannot be derived from the AST path
+/// alone (`[t]` + `a.b = 1` puts `t.a` at index 0, not 1) — but it is right
+/// there in the source.
+fn dottedIndexOfKey(source: []const u8, key_start: usize) ?usize {
+    const p0 = firstNonSpace(source, lineStartBefore(source, key_start));
+    if (p0 >= source.len or source[p0] == '[') return null;
+    var i: usize = 0;
+    while (keySegmentSpan(source, p0, i, '=')) |seg| : (i += 1) {
+        if (seg.start == key_start) return i;
+        if (seg.start > key_start) return null;
     }
     return null;
 }
@@ -357,6 +395,33 @@ pub fn tableReplaceGuard(self: *TomlEditor, parsed: Document, path: []const AST.
     // the key rather than `[`.)
     if (isFlow(self.source.items, span)) return;
     return error.CannotReplaceTable;
+}
+
+/// Rename the key at `path`, routing a BLOCK table to the multi-line rename.
+///
+/// The `replaceKeyAtPath` hook (see `editor.Editor.replaceKeyAtPath`). The
+/// generic op splices over the key node's span, which for a TOML table is the
+/// ONE place its name has a node — its first `[header]` or dotted mention. Every
+/// other place it is written (`[a.b]` sub-headers, further `[[a]]` elements,
+/// sibling dotted lines) would keep the old name, and since what stays behind
+/// still parses, the rename SPLIT the table in two and reported success:
+/// `[a]`/`[a.b]` renamed to `q` left `[q]` holding `a`'s scalars while `[a.b]`
+/// re-created `a` around `b`.
+///
+/// `renameTableSegments` is that operation done over every mention at once;
+/// `replacement` is key syntax in both, so it passes straight through. A scalar,
+/// an inline table and an inline array keep the generic splice below: their key
+/// is written exactly once, so its span IS the whole rename.
+pub fn tomlReplaceKey(self: *TomlEditor, parsed: Document, path: []const AST.PathSegment, replacement: []const u8) !void {
+    if (path.len > 0) {
+        if (parsed.ast.getValByPath(path)) |node| {
+            const container = node.kind == .mapping or node.kind == .sequence;
+            if (container and !isFlow(self.source.items, parsed.span(node)))
+                return renameTableSegments(self, path, replacement);
+        } else |_| {}
+    }
+    const key = try parsed.ast.getKeyByPath(path);
+    try self.replaceAtSpan(parsed.span(key), replacement);
 }
 
 // --- TOML structural inserts ---
@@ -571,13 +636,40 @@ pub fn insertTable(self: *TomlEditor, path: []const AST.PathSegment, body_text: 
     try self.replaceAtSpan(Span.init(insert_at, insert_at), out.items);
 }
 
-/// Rename the leaf key of the table at `path` to `new_leaf`, rewriting the
-/// table's own header and every descendant sub-header that shares the prefix
-/// (`[a.b]`, `[a.b.c]`, `[[a.b]]` → `[q.b]`, `[q.b.c]`, `[[q.b]]` when renaming
-/// `a`→`q`). Format-preserving: only the renamed segment of each affected header
-/// changes. A collision with an existing sibling is rejected via the reparse
-/// rollback (`error.DuplicateKey`).
+/// Rename the leaf key of the table at `path` to `new_leaf` — the
+/// `renameContainer` op. `new_leaf` is a LOGICAL key name, rendered into TOML key
+/// syntax (quoted if it needs to be) before it is spliced; `renameTableSegments`
+/// is the same operation taking pre-rendered syntax.
 pub fn renameTable(self: *TomlEditor, path: []const AST.PathSegment, new_leaf: []const u8) !void {
+    var rendered: std.ArrayList(u8) = .empty;
+    defer rendered.deinit(self.allocator);
+    try appendTomlHeaderPath(&rendered, self.allocator, &.{.{ .key = new_leaf }});
+    return renameTableSegments(self, path, rendered.items);
+}
+
+/// Rewrite every source segment that names the table at `path` to `rendered`
+/// (TOML key syntax, spliced verbatim), leaving the rest of each line alone.
+///
+/// A table's name is written in as many places as TOML has ways to name it, and a
+/// rename that misses one does not fail — it SPLITS the table in two, since what
+/// is left behind still parses as a table of the old name:
+///
+///   * its own header and every descendant sub-header that shares the prefix —
+///     `[a]`, `[a.b]`, `[[a.c]]` all carry `a` at the same segment index, which
+///     is `path`'s own key depth (AoT indices don't appear in headers);
+///   * every DOTTED line under it — `a.b = 1`, `a.c = 2` name `a` twice, and only
+///     the first has a node whose span points at it. Their index is NOT the path
+///     depth: a dotted key is spelled relative to the enclosing `[header]`, so
+///     `[t]` + `a.b = 1` puts `t.a` at index 0. It is read off the source per line
+///     instead (`dottedIndexOfKey`), walking down from this table through dotted
+///     levels only — a header boundary ends the prefix, so `[a]` + `b.c = 1` has
+///     no `a` on the entry line and is correctly left alone.
+///
+/// Format-preserving: only the renamed segments change. A collision with an
+/// existing sibling is rejected by the reparse rollback (`error.DuplicateKey`),
+/// and a table whose name is nowhere to be found is refused rather than reported
+/// as a rename that did nothing.
+pub fn renameTableSegments(self: *TomlEditor, path: []const AST.PathSegment, rendered: []const u8) !void {
     if (path.len == 0) return error.NotATable;
     const parsed = try self.getParsed();
     const node = try parsed.ast.getValByPath(path);
@@ -592,8 +684,12 @@ pub fn renameTable(self: *TomlEditor, path: []const AST.PathSegment, new_leaf: [
         .index => {},
     };
 
-    // Gather every header line belonging to this table's subtree, then rewrite
-    // the segment at `depth` in each. Rebuild once.
+    var spans: std.ArrayList(Span) = .empty;
+    defer spans.deinit(self.allocator);
+
+    // Header lines: gather the subtree's regions and take the segment at `depth`
+    // from each `[`-line among them (a region may open with an owned comment
+    // block, so the scan locates the header line inside it).
     var regions: std.ArrayList(Region) = .empty;
     defer regions.deinit(self.allocator);
     switch (node.kind) {
@@ -602,24 +698,67 @@ pub fn renameTable(self: *TomlEditor, path: []const AST.PathSegment, new_leaf: [
         else => unreachable,
     }
     const n = normalizeRegions(regions.items);
+    for (regions.items[0..n]) |r| {
+        if (headerSegmentSpan(source, r, depth)) |seg| try spans.append(self.allocator, seg);
+    }
 
-    var rendered: std.ArrayList(u8) = .empty;
-    defer rendered.deinit(self.allocator);
-    try appendTomlHeaderPath(&rendered, self.allocator, &.{.{ .key = new_leaf }});
+    // Dotted lines: only a mapping can have them — an AoT is spelled `[[…]]` and
+    // so is named in headers alone.
+    if (node.kind == .mapping) try appendDottedNameSpans(parsed, source, self.allocator, node, 0, &spans);
+
+    if (spans.items.len == 0) return error.NotATable;
+    std.mem.sort(Span, spans.items, {}, struct {
+        fn lessThan(_: void, a: Span, b: Span) bool {
+            return a.start < b.start;
+        }
+    }.lessThan);
 
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(self.allocator);
     var pos: usize = 0;
-    for (regions.items[0..n]) |r| {
-        // Only header regions carry the renamed segment; a region may begin with
-        // an owned comment block, so locate the `[`-line within it.
-        const seg = headerSegmentSpan(source, r, depth) orelse continue;
+    for (spans.items) |seg| {
+        if (seg.start < pos) continue; // same segment reached twice; splice once
         try out.appendSlice(self.allocator, source[pos..seg.start]);
-        try out.appendSlice(self.allocator, rendered.items);
+        try out.appendSlice(self.allocator, rendered);
         pos = seg.end;
     }
     try out.appendSlice(self.allocator, source[pos..]);
     try self.replaceAtSpan(Span.init(0, source.len), out.items);
+}
+
+/// Append the span naming `node` on every dotted line beneath it, descending
+/// through dotted levels only. `level` is how many dotted segments separate
+/// `node` from the children being walked, so a child's key at dotted index `i`
+/// puts `node` at `i - 1 - level` — negative when the child's line does not spell
+/// `node` at all (`[a]` + `x = 1`, or a `[header]` child), which is skipped.
+///
+/// Recursing per dotted LEVEL rather than per line is what covers the sibling
+/// case: `a.b.c = 1` / `a.b.d = 2` are two lines both naming `a` and `b`, but only
+/// the first line's keys have nodes of their own — the second is reached as a
+/// child of `b`.
+fn appendDottedNameSpans(
+    parsed: Document,
+    source: []const u8,
+    allocator: std.mem.Allocator,
+    node: AST.Node,
+    level: usize,
+    out: *std.ArrayList(Span),
+) std.mem.Allocator.Error!void {
+    var cur = node.kind.mapping;
+    while (cur) |id| : (cur = parsed.ast.nodes[id].next_sibling) {
+        const kv = parsed.ast.nodes[id];
+        const key_start = parsed.span(parsed.ast.nodes[kv.kind.keyvalue.key]).start;
+        const idx = dottedIndexOfKey(source, key_start) orelse continue; // `[header]` child
+        if (idx >= level + 1) {
+            if (keySegmentSpan(source, firstNonSpace(source, lineStartBefore(source, key_start)), idx - 1 - level, '=')) |seg|
+                try out.append(allocator, seg);
+        }
+        // A dotted intermediate continues the prefix onto its own children's
+        // lines; a flow container or a scalar ends it.
+        const val = parsed.ast.nodes[kv.kind.keyvalue.value];
+        if (val.kind == .mapping and !isFlow(source, parsed.span(val)))
+            try appendDottedNameSpans(parsed, source, allocator, val, level + 1, out);
+    }
 }
 
 /// Move the whole table at `src_path` to sit immediately before the table at
@@ -1254,6 +1393,122 @@ test "toml rename AoT header" {
     try expectTomlSource(&ed, "[[a.c]]\nn = 1\n[[a.c]]\nn = 2\n");
 }
 
+// --- renaming a DOTTED table: every line that spells the prefix ---
+//
+// A dotted table is named on each of its lines, and only the first of those has
+// a key node — so a rename that follows node spans alone renamed nothing at all
+// here (the gather finds no `[header]` line to rewrite) and reported success.
+
+test "toml rename a dotted table rewrites every line that names it" {
+    var ed = try newTomlEditor("a.b = 1\na.c = 2\n");
+    defer ed.deinit();
+    try ed.renameContainer(&.{.{ .key = "a" }}, "q");
+    try expectTomlSource(&ed, "q.b = 1\nq.c = 2\n");
+}
+
+test "toml rename an intermediate dotted segment" {
+    var ed = try newTomlEditor("a.b.c = 1\na.b.d = 2\n");
+    defer ed.deinit();
+    // `a.b.d = 2` has no node of its own for `b` — it is reached as a child of
+    // the `b` created by line 1, which is why the walk recurses per dotted
+    // LEVEL rather than per node with a span.
+    try ed.renameContainer(&.{ .{ .key = "a" }, .{ .key = "b" } }, "q");
+    try expectTomlSource(&ed, "a.q.c = 1\na.q.d = 2\n");
+}
+
+test "toml rename a dotted table inside a header uses its LINE index" {
+    var ed = try newTomlEditor("[t]\na.b = 1\na.c = 2\n");
+    defer ed.deinit();
+    // `t.a` is at path depth 1 but segment 0 of each line: a dotted key is
+    // spelled relative to the enclosing header, so the index comes from the
+    // source, not the path.
+    try ed.renameContainer(&.{ .{ .key = "t" }, .{ .key = "a" } }, "q");
+    try expectTomlSource(&ed, "[t]\nq.b = 1\nq.c = 2\n");
+}
+
+test "toml rename a header does NOT touch its children's dotted keys" {
+    var ed = try newTomlEditor("[t]\na.b = 1\na.c = 2\n");
+    defer ed.deinit();
+    // The mirror of the case above: `[t]`'s name appears in the header alone —
+    // its children's dotted lines are relative to it and must stay as they are.
+    try ed.renameContainer(&.{.{ .key = "t" }}, "q");
+    try expectTomlSource(&ed, "[q]\na.b = 1\na.c = 2\n");
+}
+
+test "toml rename a table named by BOTH a dotted line and a sub-header" {
+    var ed = try newTomlEditor("a.b = 1\n[a.c]\nd = 2\n");
+    defer ed.deinit();
+    // Renaming `a` has to rewrite both mentions; either one alone split the
+    // document into a renamed table plus a re-created `a`.
+    try ed.renameContainer(&.{.{ .key = "a" }}, "q");
+    try expectTomlSource(&ed, "q.b = 1\n[q.c]\nd = 2\n");
+}
+
+test "toml rename a quoted dotted segment replaces the whole token" {
+    var ed = try newTomlEditor("[t]\n\"q k\".b = 1\n");
+    defer ed.deinit();
+    try ed.renameContainer(&.{ .{ .key = "t" }, .{ .key = "q k" } }, "plain");
+    try expectTomlSource(&ed, "[t]\nplain.b = 1\n");
+}
+
+test "toml rename refuses a target whose name is nowhere to rewrite" {
+    var ed = try newTomlEditor("t = { a = 1 }\nk = 1\n");
+    defer ed.deinit();
+    // An inline table's key is a plain key, not a table name — the whole-table
+    // rename has nothing to gather, so it says so instead of reporting a rename
+    // that changed nothing. (`replaceKeyAtPath` is what renames these; see
+    // below.)
+    try std.testing.expectError(error.NotATable, ed.renameContainer(&.{.{ .key = "t" }}, "q"));
+    try std.testing.expectError(error.NotATable, ed.renameContainer(&.{.{ .key = "k" }}, "q"));
+    try expectTomlSource(&ed, "t = { a = 1 }\nk = 1\n");
+}
+
+// --- `replaceKeyAtPath` routes a block table to that same rewrite ---
+
+test "toml replaceKey on a [header] table renames every mention" {
+    var ed = try newTomlEditor("[a]\nx = 1\n[a.b]\ny = 2\n");
+    defer ed.deinit();
+    // Was: `[a]` → `[Q]` with `[a.b]` left behind, which re-created `a` around
+    // `b` and split the table — reported as a successful rename.
+    try ed.replaceKeyAtPath(&.{.{ .key = "a" }}, "q");
+    try expectTomlSource(&ed, "[q]\nx = 1\n[q.b]\ny = 2\n");
+}
+
+test "toml replaceKey on an array of tables renames every element header" {
+    var ed = try newTomlEditor("[[aot]]\nk = 1\n[[aot]]\nk = 2\n");
+    defer ed.deinit();
+    try ed.replaceKeyAtPath(&.{.{ .key = "aot" }}, "q");
+    try expectTomlSource(&ed, "[[q]]\nk = 1\n[[q]]\nk = 2\n");
+}
+
+test "toml replaceKey on a dotted table renames every line" {
+    var ed = try newTomlEditor("a.b = 1\na.c = 2\n");
+    defer ed.deinit();
+    try ed.replaceKeyAtPath(&.{.{ .key = "a" }}, "q");
+    try expectTomlSource(&ed, "q.b = 1\nq.c = 2\n");
+}
+
+test "toml replaceKey on a scalar or inline container still splices one span" {
+    var ed = try newTomlEditor("t = { a = 1 }\nk = 1\nl = [1, 2]\n");
+    defer ed.deinit();
+    // These keys are written exactly once, so the key span IS the whole rename —
+    // the routing above must not reach for the table machinery here. `replaceKey`
+    // takes key SYNTAX, which is what a quoted rename spells.
+    try ed.replaceKeyAtPath(&.{.{ .key = "t" }}, "tbl");
+    try ed.replaceKeyAtPath(&.{.{ .key = "k" }}, "\"a key\"");
+    try ed.replaceKeyAtPath(&.{.{ .key = "l" }}, "list");
+    try expectTomlSource(&ed, "tbl = { a = 1 }\n\"a key\" = 1\nlist = [1, 2]\n");
+}
+
+test "toml replaceKey rolls back a rename that collides with a sibling" {
+    var ed = try newTomlEditor("[a]\nx = 1\n[b]\ny = 2\n");
+    defer ed.deinit();
+    // `[a]` → `[b]` makes two `[b]` tables; the reparse rejects it and the whole
+    // multi-line rewrite is undone.
+    try std.testing.expectError(error.DuplicateKey, ed.replaceKeyAtPath(&.{.{ .key = "a" }}, "b"));
+    try expectTomlSource(&ed, "[a]\nx = 1\n[b]\ny = 2\n");
+}
+
 // --- moveTable / reorderTables ---
 
 test "toml move table to end" {
@@ -1283,3 +1538,5 @@ test "toml reorder top-level tables" {
     try ed.reorderContainers(&.{ "c", "a", "b" });
     try expectTomlSource(&ed, "[c]\nw = 3\n[a]\nx = 1\n[b]\ny = 2\n");
 }
+
+

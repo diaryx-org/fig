@@ -180,25 +180,25 @@ pub const Help = struct {
             \\    comments; every value is plain text (no typed scalars). Holds a
             \\    root mapping and one level of section nesting only — a value
             \\    nested any deeper, or an array anywhere, has no INI spelling.
-            \\    No in-place editor yet (`edit`/`comment` reject it, like xml).
+            \\    Editable in place, except that a `[section]` is a name rather
+            \\    than a value — `edit`/`delete` at a section's own path refuse,
+            \\    since a section owns no contiguous text but its header and may
+            \\    be reopened further down the file. Edit the keys inside it.
             \\  dotenv (.env): flat `KEY=value` only, no sections/nesting; keys
             \\    are bash identifiers, an optional `export ` prefix is accepted
             \\    and discarded, and `"`/`'` quoting is real (escapes, multi-line
-            \\    values) — no `$VAR` interpolation is performed. No in-place
-            \\    editor yet, same as ini/xml.
+            \\    values) — no `$VAR` interpolation is performed.
             \\  properties (Java .properties): flat `key=value` only (also
             \\    accepts `key: value`/`key value`); backslash escapes on both
             \\    key and value (`\t \n \r \f \\ \uXXXX`, plus `\` at end-of-line
-            \\    as a line continuation); `#`/`!` full-line comments. No
-            \\    in-place editor yet, same as ini/dotenv.
+            \\    as a line continuation); `#`/`!` full-line comments.
             \\  nestedtext (.nt, nestedtext.org): indentation-nested `key: value`/
             \\    `- item`/`> multiline string` lines, arbitrary nesting depth;
             \\    every value is plain text (no typed scalars, like ini). `#`
             \\    full-line comments. Detected from content only as a last
             \\    resort (after every other format, including yaml, since plain
             \\    `key: value`/`- item` text is valid in both) — select it with
-            \\    `-i nestedtext` or a `.nt` extension. No in-place editor yet,
-            \\    same as ini/dotenv/properties.
+            \\    `-i nestedtext` or a `.nt` extension.
             \\  gron: a line-oriented `path = value;` projection (greppable, and
             \\    reversible with `-i gron`); must be selected explicitly, never
             \\    sniffed. Fidelity matches JSON (drops comments/anchors).
@@ -324,9 +324,8 @@ pub const Help = struct {
             \\    fig, ini, dotenv, properties, nestedtext. `-o xml` requires the
             \\    document to convert to have exactly one root key (see `get --help`'s
             \\    `xml:` entry); xml is compiled in only with `-Dxml=true`, and canonical
-            \\    only with `-Dcanonical=true`. ini/dotenv/properties/nestedtext have no
-            \\    in-place editor yet (`edit`/`set`/`comment` reject them, same as
-            \\    xml) — convert to/from them here instead.
+            \\    only with `-Dcanonical=true`. xml has no in-place editor
+            \\    (`edit`/`set`/`comment` reject it) — convert to/from it here instead.
             \\
             \\  Embed-archetype mode (--to-embed): rehouse a host document's
             \\    embedded region from one archetype's fence-and-content convention

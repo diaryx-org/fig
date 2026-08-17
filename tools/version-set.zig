@@ -9,7 +9,7 @@
 //!
 //!   fig-binary: path to a built `fig` CLI binary (injected by build.zig via
 //!               addArtifactArg — not something you pass through `--`), used
-//!               to sync fig.md by shelling out rather than hand-parsing it.
+//!               to sync README.md by shelling out rather than hand-parsing it.
 //!   artifact: core | cli | rust | npm   (wasi is derived — see below)
 //!   version : an explicit SemVer ("2.4.0") OR a bump keyword incrementing the
 //!             artifact's current value (major -> X+1.0.0, minor -> X.Y+1.0,
@@ -28,8 +28,8 @@
 //!     version, so a `rust` bump edits both;
 //!   * the `artifact >= core` floor: bumping `core` auto-raises any of
 //!     cli/rust/npm that would fall below it (and, via the wasi pin, wasi too);
-//!   * fig.md's frontmatter `version` (the README's displayed version) mirrors
-//!     the core version exactly, kept in sync via `fig set fig.md version ...`
+//!   * README.md's frontmatter `version` (the README's displayed version) mirrors
+//!     the core version exactly, kept in sync via `fig set README.md version ...`
 //!     — dogfooding fig's own frontmatter editing instead of hand-parsing the
 //!     markdown here (same self-hosting pattern as `tools/sync-figl.zig`).
 //!
@@ -62,7 +62,7 @@ const build_zig_rel = "build.zig";
 const cargo_rel = "bindings/rust/Cargo.toml";
 const ts_pkg_rel = "bindings/typescript/package.json";
 const wasi_pkg_rel = "bindings/wasi/package.json";
-const fig_md_rel = "fig.md";
+const fig_md_rel = "README.md";
 // The C ABI header carries the core version as three `#define FIG_VERSION_*`
 // macros (`abi-check` asserts they equal build.zig.zon's `.version`), so a core
 // bump must update them as well.
@@ -267,7 +267,7 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("  rust crate (Cargo.toml)      {s}  (internal pins tracked)\n", .{d_rust});
     std.debug.print("  npm package (package.json)   {s}\n", .{d_npm});
     std.debug.print("  fig-wasi (wasi/package.json) {s}\n", .{d_wasi});
-    std.debug.print("  fig.md (frontmatter version) {s}\n", .{d_core});
+    std.debug.print("  README.md (frontmatter version) {s}\n", .{d_core});
     if (!dry_run)
         std.debug.print("\nversion-set: done — now run `zig build check` to verify.\n", .{});
 }
@@ -365,8 +365,8 @@ fn refreshNpm(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, root
     runRefresh(io, gpa, &argv, "lockfile", label);
 }
 
-/// Sync fig.md's frontmatter `version` field to the new core version by
-/// shelling out to the `fig` binary itself (`fig set fig.md version <v>`)
+/// Sync README.md's frontmatter `version` field to the new core version by
+/// shelling out to the `fig` binary itself (`fig set README.md version <v>`)
 /// rather than hand-parsing the markdown here — the same self-hosting move
 /// `tools/sync-figl.zig` makes for the generated `.figl` artifacts. Warns
 /// (rather than failing the already-written manifest bump) if it can't run.
@@ -376,14 +376,14 @@ fn setFigMdVersion(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
         return;
     };
     const argv = [_][]const u8{ fig_binary, "set", fig_md_path, "version", version };
-    const label = std.fmt.allocPrint(arena, "fig set {s} version {s}", .{ fig_md_rel, version }) catch "fig set fig.md version";
-    runRefresh(io, gpa, &argv, "fig.md", label);
+    const label = std.fmt.allocPrint(arena, "fig set {s} version {s}", .{ fig_md_rel, version }) catch "fig set README.md version";
+    runRefresh(io, gpa, &argv, "README.md", label);
 }
 
-/// Run a derived-file refresh command (lockfile regen or fig.md sync); on any
+/// Run a derived-file refresh command (lockfile regen or README.md sync); on any
 /// failure warn + print the manual command rather than aborting the
 /// (already-written) bump. `what` names the kind of thing being refreshed
-/// (e.g. "lockfile", "fig.md") for the log messages; `label` is the full
+/// (e.g. "lockfile", "README.md") for the log messages; `label` is the full
 /// human-readable command.
 fn runRefresh(io: std.Io, gpa: std.mem.Allocator, argv: []const []const u8, what: []const u8, label: []const u8) void {
     const res = std.process.run(gpa, io, .{ .argv = argv }) catch |err| {

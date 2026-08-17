@@ -25,8 +25,9 @@ const L = fig.Language;
 // TOML/YAML/ZON (see `fig/editor_helper.zig`, which also carries the
 // whole-container structural ops — `deleteContainer`/`moveContainer`/
 // `reorderContainers`, the same declared ops TOML and INI supply for their own
-// scattered containers — library-level only). `gron` is a CLI-only
-// echo format with no
+// scattered containers; reachable from the C ABI and the Rust/TypeScript
+// bindings as `fig_editor_*_container`, but not from this CLI, which has no
+// verb for a whole container yet). `gron` is a CLI-only echo format with no
 // `AST.SerializeFormat` counterpart.
 pub const Format = @Enum(L.EnumTag(format_names), .exhaustive, format_names, &L.enumValues(format_names));
 

@@ -1364,8 +1364,9 @@ object's own fig-inline (`=`) vs JSON (`:`) pair mode. `edit`/`set`/`insert`/
 
 **Landed: whole-container structural ops.** `deleteContainer`/`moveContainer`/
 `reorderContainers` — the same three ops TOML and INI declare for their own
-scattered containers (library-level only; no `renameContainer` — the generic
-`replaceKeyAtPath` already splices a header's key in place). Built on `gatherContainerRegions`, the fig generalization of
+scattered containers (no `renameContainer` — the generic `replaceKeyAtPath`
+already splices a header's key in place). Exposed through the C ABI, and the
+Rust and TypeScript bindings, as `fig_editor_*_container`. Built on `gatherContainerRegions`, the fig generalization of
 TOML's bracket-header region-gather: fig has no `[header]` token to grep for,
 but ANY block (non-flow) mapping/sequence-valued entry was introduced by SOME
 header line regardless of depth, so recursing into every such child and

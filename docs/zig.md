@@ -413,6 +413,10 @@ and the missing declaration. Today TOML declares all six, fig and INI the first
 three. Everything else — YAML, JSON, ZON, … — has contiguous containers, where
 `deleteKey` is already the right operation.
 
+All six are also in the C ABI as `fig_editor_*_container`, and wrapped by the
+Rust and TypeScript bindings. There the "format doesn't declare it" case cannot
+be a compile error, so it answers `FIG_STATUS_UNSUPPORTED_FORMAT` instead.
+
 ## Markdown frontmatter & embeds
 
 `fig.Embed` locates a config block embedded in a host file without touching an

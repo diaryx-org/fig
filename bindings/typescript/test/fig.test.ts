@@ -593,3 +593,67 @@ test("using a disposed Editor throws", () => {
   assert.throws(() => ed.source(), /already disposed/);
   assert.throws(() => ed.set(["a"], 2), /already disposed/);
 });
+
+// ── whole-container ops ─────────────────────────────────────────────────────
+//
+// A TOML `[header]` table occupies no single range of source — its body is the
+// lines after the header — so the path-addressed edits refuse at such a path
+// rather than rewrite the header and leave the entries behind. These six are
+// the route for those shapes.
+
+test("Editor container ops reach a TOML table the key ops refuse", () => {
+  const src = "[a]\nx = 1\n[b]\ny = 2\n";
+
+  using del = Editor.open(src, Format.Toml);
+  assert.throws(() => del.delete(["a"]), /invalid argument/);
+  del.deleteContainer(["a"]);
+  assert.equal(del.source(), "[b]\ny = 2\n");
+
+  // A rename reaches every line that names the table, not just its header.
+  using ren = Editor.open("[a]\nx = 1\n[a.b]\ny = 2\n", Format.Toml);
+  ren.renameContainer(["a"], "q");
+  assert.equal(ren.source(), "[q]\nx = 1\n[q.b]\ny = 2\n");
+
+  using ins = Editor.open(src, Format.Toml);
+  ins.insertContainer(["c"], "z = 3\n");
+  assert.equal(ins.source(), "[a]\nx = 1\n[b]\ny = 2\n\n[c]\nz = 3\n");
+
+  using aot = Editor.open('[[bin]]\nname = "a"\n', Format.Toml);
+  aot.appendContainerToSeq(["bin"], 'name = "b"\n');
+  assert.equal(aot.source(), '[[bin]]\nname = "a"\n\n[[bin]]\nname = "b"\n');
+});
+
+test("Editor moves and reorders TOML tables where the key ops refuse", () => {
+  const src = "[a]\nx = 1\n[b]\ny = 2\n";
+
+  // `moveKey` at a table path would relocate the header alone, handing `x = 1`
+  // to whichever table landed above it.
+  using mv = Editor.open(src, Format.Toml);
+  assert.throws(() => mv.moveKey(["a"], ["b"]), /invalid argument/);
+  mv.moveContainer(["a"], null); // null = to EOF
+  assert.equal(mv.source(), "[b]\ny = 2\n\n[a]\nx = 1\n");
+
+  using before = Editor.open(src, Format.Toml);
+  before.moveContainer(["b"], ["a"]);
+  assert.equal(before.source(), "[b]\ny = 2\n[a]\nx = 1\n");
+
+  // An empty destination encodes to a null pointer, which the ABI reads as
+  // "to EOF" — so it is rejected rather than silently meaning something other
+  // than the root it names everywhere else.
+  using root = Editor.open(src, Format.Toml);
+  assert.throws(() => root.moveContainer(["a"], []), /root is not a valid destination/);
+
+  using ord = Editor.open(src, Format.Toml);
+  assert.throws(() => ord.reorderKeys([], ["b", "a"]), /invalid argument/);
+  ord.reorderContainers(["b", "a"]);
+  assert.equal(ord.source(), "[b]\ny = 2\n[a]\nx = 1\n");
+});
+
+test("Editor container ops are unsupported where the key ops already suffice", () => {
+  // YAML nests a container in one contiguous region, so it declares none of the
+  // six — and `delete` handles the same shape directly.
+  using ed = Editor.open("a:\n  x: 1\nb:\n  y: 2\n", Format.Yaml);
+  assert.throws(() => ed.deleteContainer(["a"]), /unsupported format/);
+  ed.delete(["a"]);
+  assert.equal(ed.source(), "b:\n  y: 2\n");
+});

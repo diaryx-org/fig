@@ -256,6 +256,44 @@ ed.setSequence(["tags"], ["c", "a"]);  // reconcile a list, keeping survivors' c
 `SerializeOptions`, for when the spliced value's own rendering needs
 controlling — `replaceValueWith`, `insertValueWith`, `setWith`.
 
+### Whole containers (`Editor` only)
+
+The operations above address a container the same way they address a scalar: by
+the one range of source it occupies. A TOML `[header]` table occupies no such
+range — its body is the lines after the header, and an `[a.b]` header further
+down the file extends it — and neither does an INI `[section]` or a `fig` block
+container. At a path naming one, `delete`, `replaceValue`, `moveKey` and
+`reorderKeys` all throw `InvalidArgument` rather than rewrite the header and
+leave the entries behind. These six are the route for those shapes:
+
+```ts
+ed.deleteContainer(["a"]);                        // header + body, every region
+ed.insertContainer(["c"], "z = 3\n");             // a new [c] with these entries
+ed.renameContainer(["a"], "q");                   // [a], [a.b] and [[a.c]] alike
+ed.moveContainer(["a"], null);                    // null = to the end of the document
+ed.reorderContainers(["b", "a"]);                 // top-level containers
+ed.appendContainerToSeq(["bin"], 'name = "b"\n'); // a new [[bin]]
+```
+
+The body argument is verbatim entry lines in the document's format, spliced and
+reparsed like any other edit, so a body that doesn't parse rolls the document
+back.
+
+Support varies by format, and an unsupported operation throws
+`UnsupportedFormat`:
+
+| | `Toml` | `Ini` | `Fig` | others |
+|---|---|---|---|---|
+| `deleteContainer`, `moveContainer`, `reorderContainers` | ✓ | ✓ | ✓ | — |
+| `insertContainer`, `renameContainer`, `appendContainerToSeq` | ✓ | — | — | — |
+
+"Others" is not a gap: `Yaml`, `Json` and the rest nest a container in one
+contiguous region, so `delete` and `replaceValue` already handle it — which is
+why they succeed on a YAML block mapping where TOML's refuse.
+
+These live on `Editor` and not on `Embed`: the C ABI has no `fig_embed_*`
+twins, since no embed archetype hosts a scattered-container format today.
+
 `setSequence` has a narrower domain than the rest: it matches new items to old
 ones by *value* so a kept-or-merely-reordered item keeps its comments, which
 means each item has to parse as a standalone document. It therefore throws

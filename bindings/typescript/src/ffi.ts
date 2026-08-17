@@ -77,6 +77,14 @@ interface Exports {
   fig_editor_move_item(ed: number, path: number, path_len: number, from: number, to: number): number;
   fig_editor_reorder_items(ed: number, path: number, path_len: number, indices: number, indices_len: number): number;
   fig_editor_set_sequence(ed: number, path: number, path_len: number, items: number, items_len: number): number;
+  // Whole-container ops (scattered containers: a TOML `[header]` table, an INI
+  // `[section]`, a fig block container). No `fig_embed_*` twins exist.
+  fig_editor_delete_container(ed: number, path: number, path_len: number): number;
+  fig_editor_insert_container(ed: number, path: number, path_len: number, body: number, body_len: number): number;
+  fig_editor_rename_container(ed: number, path: number, path_len: number, leaf: number, leaf_len: number): number;
+  fig_editor_move_container(ed: number, src: number, src_len: number, dest: number, dest_len: number): number;
+  fig_editor_reorder_containers(ed: number, order: number, order_len: number): number;
+  fig_editor_append_container_to_seq(ed: number, path: number, path_len: number, body: number, body_len: number): number;
   fig_editor_source(ed: number, out_ptr: number, out_len: number): number;
 
   fig_embed_extract(input: number, input_len: number, embed_type: number, out_region: number): number;

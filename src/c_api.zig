@@ -769,18 +769,32 @@ fn editStatus(err: anyerror) FigStatus {
         // shape (e.g. appending to a non-array-of-tables, deleting a table by the
         // scalar ops, inserting a key/table that already exists). These are caller
         // errors, not malformed-source reparse failures.
-        error.NotATable, error.NotAnInlineArray, error.NotAnArrayOfTables, error.TableExists, error.DuplicateKey, error.CannotDeleteTable, error.MergeOnlyKey => .invalid_argument,
-        // A value replace addressed a whole block `[table]`/`[section]`, whose
-        // node span is its header key rather than any value text (see the
-        // `replaceValGuard` hook) — the whole-container ops handle those shapes.
+        error.NotATable, error.NotAnInlineArray, error.NotAnArrayOfTables, error.TableExists, error.DuplicateKey, error.MergeOnlyKey => .invalid_argument,
+        // The pre-op guards: a scalar op addressed a whole scattered container,
+        // whose node span covers only the header line (delete) or just the name
+        // inside it (replace), so the generic splice would orphan or rename what
+        // it can't see. One error per format vocabulary — TOML tables, INI
+        // sections, fig block containers — and all of them are caller errors
+        // about the request, not malformed source: the whole-container ops
+        // (`deleteContainer`, `renameContainer`, …) are what handle these shapes.
+        error.CannotDeleteTable, error.CannotDeleteSection, error.CannotDeleteContainer => .invalid_argument,
         error.CannotReplaceTable, error.CannotReplaceSection => .invalid_argument,
+        // NestedText declines two shapes outright: inserting into an inline
+        // `{}`/`[]` (expanding one into block form is out of scope) and renaming
+        // a key to text that needs the multiline `: key` form.
+        error.EmptyInlineContainer, error.KeyRequiresMultilineForm => .invalid_argument,
         // A block-spelled value (`- a`, `k: v`, `|`) was handed to a splice into
         // a flow `{…}`/`[…]` container, which has no way to hold it.
         error.BlockValueIntoFlow => .invalid_argument,
         // The target dialect has no comment syntax (strict JSON).
         error.CommentsUnsupported => .unsupported_format,
-        // A trailing comment was given multi-line text.
-        error.MultilineComment => .invalid_argument,
+        // A value the format cannot represent at all — plist has no null. Same
+        // answer `serializeStatus` gives it, since it is the same fact about the
+        // format either way.
+        error.NullUnsupported => .unsupported_format,
+        // A trailing comment was given multi-line text, or (plist) comment text
+        // carrying `--`, which cannot go inside `<!-- … -->`.
+        error.MultilineComment, error.InvalidComment => .invalid_argument,
         error.NotInitialized, error.MultipleInit, error.InvalidSpan => .internal_error,
         // A reparse after a malformed edit lands here.
         else => .parse_error,
@@ -4093,4 +4107,39 @@ test "fig_editor comment reads return bytes, distinguishing absent from empty" {
     const pc = at.key(&kc);
     try std.testing.expectEqual(FigStatus.not_found, fig_editor_get_leading_comment(ed, &pc, 1, &ptr, &len));
     try std.testing.expectEqual(FigStatus.not_found, fig_editor_get_trailing_comment(ed, &pc, 1, &ptr, &len));
+}
+
+test "editStatus: every editor refusal is a caller error, not parse_error" {
+    // `editStatus`'s fall-through is `.parse_error` — the right answer for a
+    // reparse failure after a splice, and the wrong one for every REFUSAL, which
+    // is about the request rather than the source. A new refusal error that
+    // nobody adds here inherits that fall-through silently, so this pins the set:
+    // each of these is raised by an editor op (not by a parser) and must map to a
+    // caller-facing status. INI's and fig's delete guards had drifted this way.
+    const refusals = [_]anyerror{
+        error.NotFound,                   error.NotAMapping,
+        error.NotASequence,               error.NotAContainer,
+        error.UnsupportedShape,           error.NotATable,
+        error.NotAnInlineArray,           error.NotAnArrayOfTables,
+        error.TableExists,                error.DuplicateKey,
+        error.MergeOnlyKey,               error.CannotDeleteTable,
+        error.CannotDeleteSection,        error.CannotDeleteContainer,
+        error.CannotReplaceTable,         error.CannotReplaceSection,
+        error.EmptyInlineContainer,       error.KeyRequiresMultilineForm,
+        error.BlockValueIntoFlow,         error.CommentsUnsupported,
+        error.NullUnsupported,            error.MultilineComment,
+        error.InvalidComment,
+    };
+    for (refusals) |err| {
+        const status = editStatus(err);
+        if (status == .parse_error) {
+            std.log.err("editStatus({s}) is parse_error; add it to the mapping", .{@errorName(err)});
+            return error.TestUnexpectedResult;
+        }
+    }
+    // The two fig PARSER errors an edit's reparse surfaces stay parse errors:
+    // they describe source that no longer parses, which is what the caller needs
+    // to hear.
+    try std.testing.expectEqual(FigStatus.parse_error, editStatus(error.FigEmptyContainer));
+    try std.testing.expectEqual(FigStatus.parse_error, editStatus(error.FigDuplicateKey));
 }

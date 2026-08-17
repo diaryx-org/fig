@@ -151,14 +151,6 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
         error.NotAMapping => try term.writer.writeAll(": a segment of this path is not a mapping, so it has no keys to address\n"),
         error.NotASequence => try term.writer.writeAll(": a segment of this path is not a sequence, so it has no indices to address\n"),
         error.IndexOutOfBounds => try term.writer.writeAll(": that index is past the end of the sequence\n"),
-        // `--seq` (`Editor.setSequence`) is the only caller that reaches here,
-        // so this speaks in its terms: the other producer, `Editor.kvSep`, is
-        // kept unreachable by a `language.validate` rule (a null `kv_sep` must
-        // come with an `insertKey` hook — see `tools/validate-check.zig`).
-        // Its by-value matching needs every item text to parse as a standalone
-        // document, which no TOML scalar does — so TOML declines on every
-        // input, and the generic `fig check` note below would send the user
-        // hunting for a parse error in a file that parses fine.
         // The `replaceValGuard` refusal (TOML tables, INI sections). Worth a
         // sentence of its own: the raw error name reads like a limitation of the
         // tool, when what it means is that the path names a header rather than a
@@ -175,6 +167,14 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
             try term.setColor(.reset);
             try term.writer.print(": edit the keys inside it instead — `{s} set <file> <path>.<key> <value>`.\n", .{binary_name});
         },
+        // `--seq` (`Editor.setSequence`) is the only caller that reaches here,
+        // so this speaks in its terms: the other producer, `Editor.kvSep`, is
+        // kept unreachable by a `language.validate` rule (a null `kv_sep` must
+        // come with an `insertKey` hook — see `tools/validate-check.zig`).
+        // Its by-value matching needs every item text to parse as a standalone
+        // document, which no TOML scalar does — so TOML declines on every
+        // input, and the generic `fig check` note below would send the user
+        // hunting for a parse error in a file that parses fine.
         error.UnsupportedShape => {
             try term.writer.writeAll(": this is not a flat list of scalars, so `--seq` cannot diff it\n");
             try term.setColor(.blue);

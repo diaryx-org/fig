@@ -440,8 +440,11 @@ pub fn tomlInsertKey(self: *TomlEditor, parsed: Document, path: []const AST.Path
     const is_root = path.len == 0;
     if (node.kind != .mapping) return error.NotAMapping;
     const source = self.source.items;
-    // Inline table `{ … }`: splice a `key = value` inside the braces.
-    if (isFlow(source, span))
+    // Inline table `{ … }`: splice a `key = value` inside the braces. The root
+    // is never one — its span is the whole document, so `isFlow` would read the
+    // leading `[` of a header-first file (`[package]` in every Cargo.toml) as an
+    // opening delimiter and splice the new entry into that header.
+    if (!is_root and isFlow(source, span))
         return tomlInsertFlowEntry(self, parsed, node, span, key_text, value_text);
 
     // Block table: scan its direct children for the in-region ones (those whose
@@ -1027,6 +1030,26 @@ test "toml insert root key goes above the first header" {
     try expectTomlSource(&ed, "x = 1\nz = 3\n[t]\ny = 2\n");
 }
 
+test "toml insert root key into a document that OPENS with a header" {
+    // The root's span is the whole document, so its first byte is the `[` of
+    // `[t]` — which the generic `isFlow` sniff read as an inline table's opening
+    // delimiter, splicing the new entry into the header itself (`[t, z = 3]`)
+    // and failing the reparse with `BadKey`. Every header-first file was
+    // affected, which is to say every Cargo.toml.
+    var ed = try newTomlEditor("[t]\ny = 2\n");
+    defer ed.deinit();
+    try ed.insertKey(&.{}, "z", "3");
+    try expectTomlSource(&ed, "z = 3\n[t]\ny = 2\n");
+}
+
+test "toml insert root key into a document that opens with an array-of-tables" {
+    // `[[bin]]` is the same hazard with a doubled delimiter.
+    var ed = try newTomlEditor("[[bin]]\nname = \"a\"\n");
+    defer ed.deinit();
+    try ed.insertKey(&.{}, "z", "3");
+    try expectTomlSource(&ed, "z = 3\n[[bin]]\nname = \"a\"\n");
+}
+
 test "toml insert key into a table" {
     var ed = try newTomlEditor("[server]\nhost = \"a\"\nport = 1\n");
     defer ed.deinit();
@@ -1538,5 +1561,3 @@ test "toml reorder top-level tables" {
     try ed.reorderContainers(&.{ "c", "a", "b" });
     try expectTomlSource(&ed, "[c]\nw = 3\n[a]\nx = 1\n[b]\ny = 2\n");
 }
-
-

@@ -1294,6 +1294,164 @@ pub export fn fig_editor_set_sequence(
     };
 }
 
+// ============
+// EDITOR — WHOLE-CONTAINER OPS
+// ============
+//
+// The six ops for containers that are SCATTERED through the source: a TOML
+// `[header]` table (whose body is the lines after it, extended by every
+// `[a.b]` header elsewhere in the file), an INI `[section]`, a fig block
+// container. Such a container owns no single range to splice, so the key ops
+// above cannot address it — `fig_editor_delete_key` and
+// `fig_editor_replace_val` at a table path return `invalid_argument` (the
+// editor's pre-op guards), and these are where that request goes instead.
+//
+// Only some formats declare them (`Editor.hasContainerOp`): TOML all six, INI
+// and fig the delete/move/reorder three, and everything else none — YAML, JSON
+// and the rest nest their containers in one contiguous region, so the key ops
+// already handle them and there is nothing to declare. A format that does not
+// declare the op answers `unsupported_format`, the same answer
+// `fig_editor_create` gives for a format with no editor at all.
+//
+// Paths are the usual `FigPathSegment` array; `body_text` is verbatim entry
+// lines for the target format (`ip = "10.0.0.1"\n`), spliced and reparsed like
+// every other edit, so a body that doesn't parse rolls back.
+
+/// Delete the whole container at `path` — every scattered region of its
+/// subtree, leaving interleaved foreign content in place.
+pub export fn fig_editor_delete_container(
+    ed: ?*FigEditor,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+) FigStatus {
+    const handle = editorFrom(ed) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    return switch (handle.inner) {
+        inline else => |*e| if (comptime @TypeOf(e.*).hasContainerOp("deleteContainer"))
+            (if (e.deleteContainer(path)) .ok else |err| editStatus(err))
+        else
+            .unsupported_format,
+    };
+}
+
+/// Create a new container at `path` with `body_text` as its entries, spliced
+/// past the parent's whole subtree so no existing key is reparented.
+pub export fn fig_editor_insert_container(
+    ed: ?*FigEditor,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    body_ptr: ?[*]const u8,
+    body_len: usize,
+) FigStatus {
+    const handle = editorFrom(ed) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    const body = sliceOf(body_ptr, body_len) orelse return .invalid_argument;
+    return switch (handle.inner) {
+        inline else => |*e| if (comptime @TypeOf(e.*).hasContainerOp("insertContainer"))
+            (if (e.insertContainer(path, body)) .ok else |err| editStatus(err))
+        else
+            .unsupported_format,
+    };
+}
+
+/// Rename the container at `path` to `new_leaf`, rewriting every line that
+/// names it — `[a]`, `[a.b]`, `[[a.c]]` all follow an `a` → `q` rename.
+///
+/// This is what `fig_editor_replace_key` at a block-table path routes to
+/// internally; called directly it also reaches a container the key op cannot
+/// address.
+pub export fn fig_editor_rename_container(
+    ed: ?*FigEditor,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    leaf_ptr: ?[*]const u8,
+    leaf_len: usize,
+) FigStatus {
+    const handle = editorFrom(ed) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    const leaf = sliceOf(leaf_ptr, leaf_len) orelse return .invalid_argument;
+    return switch (handle.inner) {
+        inline else => |*e| if (comptime @TypeOf(e.*).hasContainerOp("renameContainer"))
+            (if (e.renameContainer(path, leaf)) .ok else |err| editStatus(err))
+        else
+            .unsupported_format,
+    };
+}
+
+/// Move the container at `src_path` to sit before the one at `dest_path`,
+/// re-emitting its scattered fragments contiguously; interleaved foreign
+/// containers stay put.
+///
+/// A NULL `dest_ptr` means "to the end of the document" — distinct from a
+/// zero-length destination path, which every other export reads as the root.
+pub export fn fig_editor_move_container(
+    ed: ?*FigEditor,
+    src_ptr: ?[*]const FigPathSegment,
+    src_len: usize,
+    dest_ptr: ?[*]const FigPathSegment,
+    dest_len: usize,
+) FigStatus {
+    const handle = editorFrom(ed) orelse return .invalid_argument;
+    var src_buf: [max_path_len]AST.PathSegment = undefined;
+    var dest_buf: [max_path_len]AST.PathSegment = undefined;
+    const src = decodePath(src_ptr, src_len, &src_buf) orelse return .invalid_argument;
+    const dest: ?[]AST.PathSegment = if (dest_ptr == null)
+        null
+    else
+        (decodePath(dest_ptr, dest_len, &dest_buf) orelse return .invalid_argument);
+    return switch (handle.inner) {
+        inline else => |*e| if (comptime @TypeOf(e.*).hasContainerOp("moveContainer"))
+            (if (e.moveContainer(src, dest)) .ok else |err| editStatus(err))
+        else
+            .unsupported_format,
+    };
+}
+
+/// Reorder top-level containers among themselves so the ones named in `order`
+/// come first, in that order; each is re-emitted contiguously at the position
+/// the earliest of them currently occupies. Containers not named keep their
+/// places.
+pub export fn fig_editor_reorder_containers(
+    ed: ?*FigEditor,
+    order_ptr: ?[*]const FigStr,
+    order_len: usize,
+) FigStatus {
+    const handle = editorFrom(ed) orelse return .invalid_argument;
+    var buf: [max_keys_len][]const u8 = undefined;
+    const order = decodeKeys(order_ptr, order_len, &buf) orelse return .invalid_argument;
+    return switch (handle.inner) {
+        inline else => |*e| if (comptime @TypeOf(e.*).hasContainerOp("reorderContainers"))
+            (if (e.reorderContainers(order)) .ok else |err| editStatus(err))
+        else
+            .unsupported_format,
+    };
+}
+
+/// Append a new element with body `body_text` to the container sequence at
+/// `path` — TOML's `[[header]]` array-of-tables append — past every line of the
+/// current last element's subtree.
+pub export fn fig_editor_append_container_to_seq(
+    ed: ?*FigEditor,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    body_ptr: ?[*]const u8,
+    body_len: usize,
+) FigStatus {
+    const handle = editorFrom(ed) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    const body = sliceOf(body_ptr, body_len) orelse return .invalid_argument;
+    return switch (handle.inner) {
+        inline else => |*e| if (comptime @TypeOf(e.*).hasContainerOp("appendContainerToSeq"))
+            (if (e.appendContainerToSeq(path, body)) .ok else |err| editStatus(err))
+        else
+            .unsupported_format,
+    };
+}
+
 /// Borrow the editor's current source bytes. Valid until the next mutation or
 /// `fig_editor_destroy`.
 pub export fn fig_editor_source(
@@ -3824,6 +3982,116 @@ test "fig_editor_create edits ZON through the C ABI" {
     var len: usize = undefined;
     try std.testing.expectEqual(FigStatus.ok, fig_editor_source(ed, &ptr, &len));
     try std.testing.expectEqualStrings(".{ .title = \"old\", .port = 9090 }", ptr[0..len]);
+}
+
+/// Read back an editor's source, for the whole-container tests below.
+fn expectEditorSource(ed: ?*FigEditor, expected: []const u8) !void {
+    var ptr: [*c]const u8 = undefined;
+    var len: usize = undefined;
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_source(ed, &ptr, &len));
+    try std.testing.expectEqualStrings(expected, ptr[0..len]);
+}
+
+test "fig_editor whole-container ops reach a TOML table the key ops cannot" {
+    if (comptime !build_options.lang_toml) return error.SkipZigTest;
+    // The pairing these exports exist for: at a `[header]` path the key ops
+    // refuse (the editor's pre-op guards), and the container op does the job.
+    const src = "[a]\nx = 1\n[b]\ny = 2\n";
+    const path_a = [_]FigPathSegment{keySeg("a")};
+    const path_b = [_]FigPathSegment{keySeg("b")};
+
+    {
+        var ed: ?*FigEditor = null;
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+        defer fig_editor_destroy(ed);
+        // Refused by the key op…
+        try std.testing.expectEqual(FigStatus.invalid_argument, fig_editor_delete_key(ed, &path_a, 1));
+        // …done by the container op, which takes the body with the header.
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_delete_container(ed, &path_a, 1));
+        try expectEditorSource(ed, "[b]\ny = 2\n");
+    }
+    {
+        var ed: ?*FigEditor = null;
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+        defer fig_editor_destroy(ed);
+        const leaf = "q";
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_rename_container(ed, &path_a, 1, leaf.ptr, leaf.len));
+        try expectEditorSource(ed, "[q]\nx = 1\n[b]\ny = 2\n");
+    }
+    {
+        var ed: ?*FigEditor = null;
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+        defer fig_editor_destroy(ed);
+        const body = "z = 3\n";
+        const path_c = [_]FigPathSegment{keySeg("c")};
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_insert_container(ed, &path_c, 1, body.ptr, body.len));
+        try expectEditorSource(ed, "[a]\nx = 1\n[b]\ny = 2\n\n[c]\nz = 3\n");
+    }
+    {
+        var ed: ?*FigEditor = null;
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+        defer fig_editor_destroy(ed);
+        // The generic move is refused; the container move relocates the whole
+        // table. A NULL destination is "to EOF", which is why it cannot be
+        // spelled as a zero-length path (that is the root).
+        try std.testing.expectEqual(FigStatus.invalid_argument, fig_editor_move_key(ed, &path_a, 1, &path_b, 1));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_move_container(ed, &path_a, 1, null, 0));
+        try expectEditorSource(ed, "[b]\ny = 2\n\n[a]\nx = 1\n");
+    }
+    {
+        var ed: ?*FigEditor = null;
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+        defer fig_editor_destroy(ed);
+        const order = [_]FigStr{ figStr("b"), figStr("a") };
+        // `fig_editor_reorder_keys` at the root would have moved the header
+        // lines alone; this moves the tables.
+        try std.testing.expectEqual(FigStatus.invalid_argument, fig_editor_reorder_keys(ed, &.{}, 0, &order, order.len));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_reorder_containers(ed, &order, order.len));
+        try expectEditorSource(ed, "[b]\ny = 2\n[a]\nx = 1\n");
+    }
+}
+
+test "fig_editor_append_container_to_seq appends a TOML array-of-tables element" {
+    if (comptime !build_options.lang_toml) return error.SkipZigTest;
+    const src = "[[bin]]\nname = \"a\"\n";
+    var ed: ?*FigEditor = null;
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+    defer fig_editor_destroy(ed);
+    const path = [_]FigPathSegment{keySeg("bin")};
+    const body = "name = \"b\"\n";
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_append_container_to_seq(ed, &path, 1, body.ptr, body.len));
+    try expectEditorSource(ed, "[[bin]]\nname = \"a\"\n\n[[bin]]\nname = \"b\"\n");
+}
+
+test "fig_editor whole-container ops answer unsupported_format where the format has none" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    if (comptime !build_options.lang_ini) return error.SkipZigTest;
+    const path = [_]FigPathSegment{keySeg("a")};
+    // YAML nests its containers in one contiguous region, so it declares none of
+    // the six — the key ops already handle a YAML block mapping (which is why
+    // `fig_editor_delete_key` below succeeds where TOML's refuses).
+    {
+        const src = "a:\n  x: 1\nb:\n  y: 2\n";
+        var ed: ?*FigEditor = null;
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.yaml), &ed));
+        defer fig_editor_destroy(ed);
+        try std.testing.expectEqual(FigStatus.unsupported_format, fig_editor_delete_container(ed, &path, 1));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_delete_key(ed, &path, 1));
+        try expectEditorSource(ed, "b:\n  y: 2\n");
+    }
+    // INI declares the delete/move/reorder three but not the other half: a
+    // section has no `[[array]]` form, and its name is one span the generic
+    // `replace_key` already rewrites.
+    {
+        const src = "[a]\nx = 1\n[b]\ny = 2\n";
+        var ed: ?*FigEditor = null;
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.ini), &ed));
+        defer fig_editor_destroy(ed);
+        const leaf = "q";
+        try std.testing.expectEqual(FigStatus.unsupported_format, fig_editor_rename_container(ed, &path, 1, leaf.ptr, leaf.len));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_delete_container(ed, &path, 1));
+        try expectEditorSource(ed, "[b]\ny = 2\n");
+    }
 }
 
 test "fig_document_serialize materializes the YAML reference layer when leaving YAML" {

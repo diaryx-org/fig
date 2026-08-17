@@ -17,8 +17,8 @@ extern "C" {
 // also exposed as a string by fig_version_string().
 // ============================================================================
 #define FIG_VERSION_MAJOR 2
-#define FIG_VERSION_MINOR 5
-#define FIG_VERSION_PATCH 3
+#define FIG_VERSION_MINOR 6
+#define FIG_VERSION_PATCH 0
 #define FIG_VERSION_NUM (((uint32_t)FIG_VERSION_MAJOR << 16) | \
                          ((uint32_t)FIG_VERSION_MINOR << 8)  | \
                          (uint32_t)FIG_VERSION_PATCH)
@@ -391,6 +391,50 @@ FigStatus fig_editor_reorder_items(FigEditor *editor, const FigPathSegment *path
 // FIG_STATUS_INVALID_ARGUMENT.
 FigStatus fig_editor_set_sequence(FigEditor *editor, const FigPathSegment *path, size_t path_len,
                                   const FigStr *items, size_t items_len);
+
+// Whole-container ops, for containers that are SCATTERED through the source: a
+// TOML [header] table (whose body is the lines after it, extended by every
+// [a.b] header elsewhere in the file), an INI [section], a fig block container.
+// Such a container owns no single range to splice, so the key ops above cannot
+// address it — fig_editor_delete_key and fig_editor_replace_val at a table path
+// answer FIG_STATUS_INVALID_ARGUMENT, and these are where that request goes.
+//
+// Formats differ in which they support: TOML all six, INI and fig the
+// delete/move/reorder three, and every other format none — YAML, JSON and the
+// rest nest their containers in one contiguous region, so the key ops already
+// handle them. An op a format does not support answers
+// FIG_STATUS_UNSUPPORTED_FORMAT.
+//
+// `body` is verbatim entry lines in the document's format (e.g. `ip = "10.0.0.1"\n`
+// for TOML), spliced and reparsed like every other edit — a body that does not
+// parse rolls the document back and returns FIG_STATUS_PARSE_ERROR.
+FigStatus fig_editor_delete_container(FigEditor *editor, const FigPathSegment *path,
+                                      size_t path_len);
+FigStatus fig_editor_insert_container(FigEditor *editor, const FigPathSegment *path,
+                                      size_t path_len,
+                                      const uint8_t *body, size_t body_len);
+// Rename the container at `path` to `new_leaf`, rewriting EVERY line that names
+// it: renaming `a` rewrites [a], [a.b] and [[a.c]] alike.
+FigStatus fig_editor_rename_container(FigEditor *editor, const FigPathSegment *path,
+                                      size_t path_len,
+                                      const uint8_t *new_leaf, size_t new_leaf_len);
+// Move the container at `src_path` before the one at `dest_path`, re-emitting
+// its scattered fragments contiguously; interleaved foreign containers stay put.
+// A NULL `dest_path` means "to the end of the document" — distinct from a
+// zero-length path, which every other entry point reads as the root.
+FigStatus fig_editor_move_container(FigEditor *editor,
+                                    const FigPathSegment *src_path, size_t src_path_len,
+                                    const FigPathSegment *dest_path, size_t dest_path_len);
+// Reorder top-level containers so those named in `order` come first, in that
+// order, each re-emitted contiguously at the position the earliest of them
+// currently occupies. Containers not named keep their places.
+FigStatus fig_editor_reorder_containers(FigEditor *editor,
+                                        const FigStr *order, size_t order_len);
+// Append a new element with body `body` to the container sequence at `path` —
+// TOML's [[header]] array-of-tables append.
+FigStatus fig_editor_append_container_to_seq(FigEditor *editor, const FigPathSegment *path,
+                                             size_t path_len,
+                                             const uint8_t *body, size_t body_len);
 
 // Borrow the editor's current source bytes. Valid until the next mutation or
 // fig_editor_destroy.

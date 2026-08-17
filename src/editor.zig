@@ -1512,6 +1512,21 @@ pub fn Editor(comptime Language: type) type {
             return Language.appendContainerToSeq(self, path, body_text);
         }
 
+        /// Whether this format declares the whole-container op `op` — the
+        /// runtime-dispatchable form of `requireSectionOp`'s comptime refusal,
+        /// for callers that must ANSWER rather than fail to compile.
+        ///
+        /// The C ABI is the one such caller: its exports switch `inline else`
+        /// over every language at once, so naming `e.deleteContainer(…)` in
+        /// that switch would instantiate it for YAML and JSON too and stop the
+        /// build. Guarding each arm with this turns "this format has no such
+        /// operation" into `unsupported_format`, which is what a C caller can
+        /// act on. Keyed on the declaration, like every other dispatch here —
+        /// no format is named.
+        pub fn hasContainerOp(comptime op: []const u8) bool {
+            return @hasDecl(Language, op);
+        }
+
         /// The comptime refusal shared by the six ops above. Names the format
         /// and the declaration it is missing, since "this format has no such
         /// operation" is the whole content of the error.

@@ -1,6 +1,6 @@
 ```fig
 title = fig
-version = 2.5.3
+version = 2.6.0
 author = adammharris
 created = 2026-05-08
 updated = 2026-08-08T21:07:09-06:00

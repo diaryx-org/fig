@@ -172,6 +172,32 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     const check_figl_step = b.step("check-figl", "Fail if build.zig.zon / .github/workflows/*.yml are stale relative to their .figl sources");
     check_figl_step.dependOn(&check_figl_run.step);
 
+    // docs/CHANGELOG.md's `## Unreleased` region, regenerated from the commits
+    // since the newest release tag on any of the four tracks. Same write/check
+    // split as sync-figl above, and for the same reason: `changelog` writes,
+    // `changelog-check` fails on a stale region without writing.
+    //
+    // A shell script rather than a Zig tool because the work is entirely
+    // git-cliff's — a tool here would only shell out to the same binary and
+    // splice the same two markers. It is NOT wired into `zig build check`:
+    // git-cliff is an external dependency (the nix dev shell has it, a bare
+    // checkout may not), and gating every check run on a regenerated changelog
+    // would mean re-running it on every commit of a series rather than once at
+    // release time, which is when it is actually read. See docs/CHANGELOG.md
+    // and docs/VERSIONING.md's release steps.
+    //
+    // Git state isn't a declared input, so neither run may be cached.
+    const changelog_run = b.addSystemCommand(&.{ "sh", b.pathFromRoot("tools/changelog.sh") });
+    if (b.args) |args| changelog_run.addArgs(args);
+    changelog_run.has_side_effects = true;
+    const changelog_step = b.step("changelog", "Regenerate docs/CHANGELOG.md's Unreleased region from the commits since the last release tag");
+    changelog_step.dependOn(&changelog_run.step);
+
+    const changelog_check_run = b.addSystemCommand(&.{ "sh", b.pathFromRoot("tools/changelog.sh"), "--check" });
+    changelog_check_run.has_side_effects = true;
+    const changelog_check_step = b.step("changelog-check", "Fail if docs/CHANGELOG.md's Unreleased region is stale");
+    changelog_check_step.dependOn(&changelog_check_run.step);
+
     // The `Language` contract's negative tests. `language.validate` is a wall
     // of `@compileError`, and Zig cannot assert that one fires from inside
     // `zig build test` — a test that triggers a compile error doesn't fail, it

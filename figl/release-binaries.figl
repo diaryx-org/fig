@@ -30,7 +30,10 @@ jobs.binaries
 > if = github.ref_type == 'tag'
 
 jobs.binaries.steps[]
+> # fetch-depth 0 because git-cliff walks the tag history to work out which
+> # commits belong to this release (see the release-notes step below).
 > uses = actions/checkout@v7
+> with.fetch-depth = 0
 +
 > uses = mlugg/setup-zig@v2
 > with.version = 0.16.0
@@ -62,10 +65,23 @@ cp zig-out/wasi-options/build_options.zig build_options.zig
 
 '''
 +
+> # Release notes from the same .config/cliff.toml that writes
+> # docs/CHANGELOG.md's Unreleased region, so the release page and the changelog
+> # group commits identically and the Behavioural-change trailers reach both.
+> # This replaces GitHub's generate_release_notes, which groups by PR author and
+> # knows nothing of the add(scope)/change(scope) convention.
+> name = Generate release notes
+> uses = orhun/git-cliff-action@v4
+> with
+> > config = .config/cliff.toml
+> > args = --current --strip all
+> env.OUTPUT = RELEASE_NOTES.md
++
 > name = Attach to the GitHub Release
 > uses = softprops/action-gh-release@v3
 > with
 > > tag_name = ${{ github.ref_name }}
+> > body_path = RELEASE_NOTES.md
 > > files = '''
 fig-windows-x86_64.zip
 fig-wasi.wasm

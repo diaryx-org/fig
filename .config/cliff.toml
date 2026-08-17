@@ -1,0 +1,134 @@
+# git-cliff configuration for fig.
+#
+# Two consumers, one config:
+#   * `zig build changelog` (tools/changelog.sh) regenerates the marked region
+#     inside docs/CHANGELOG.md's `## Unreleased` section.
+#   * `.github/workflows/release-binaries.yml` renders the tagged version's
+#     commits into the GitHub release body.
+#
+# The **Behavioural changes** section is generated too, from `Behavioural-change:`
+# trailers rather than from subjects. The rule that section answers — "would a
+# caller who upgrades without editing a line of their own code observe a
+# difference" — is a judgment about the change, and no subject can carry it: a
+# `fix:` can be behavioural and an `add:` can be silently behavioural. But the
+# judgment is not unrecoverable, only unrecoverable from the SUBJECT. Asking the
+# author to write it as a trailer keeps it where it has to be made — at the
+# commit, by the person holding the context — while ending the duplication that
+# came of writing it a second time by hand, where it could drift from the change
+# or be forgotten entirely.
+#
+# One trailer per observable difference; a commit may carry several. Write the
+# value as prose a consumer can act on: what used to happen, what happens now.
+# Continuation lines are indented two spaces and fold into one paragraph.
+#
+#     Behavioural-change: `fig edit` at a TOML `[table]` path now refuses with
+#       `CannotReplaceTable`. It used to report success, having rewritten the
+#       header's name and left the table's entries where they were.
+#
+# Still handwritten, and deliberately: a release INTRO, for a release that needs
+# a narrative rather than a list. That goes below the end marker, where
+# regeneration cannot reach it.
+
+[changelog]
+header = ""
+footer = ""
+trim = true
+
+# One `### Group` per bucket, commits as bullets. Scope is surfaced because
+# fig's subjects lean on it (`fix(toml)`, `feat(c-api)`, `change(cli)`) to say
+# which surface moved — and in a repo shipping four artifacts off one tree, the
+# scope is usually the fastest answer to "does this affect me". The short hash
+# makes a bullet traceable back to the diff during triage.
+#
+# Then one **Behavioural changes** section for the whole release, collected from
+# every `Behavioural-change:` trailer in commit order. It comes last because it
+# is what a consumer upgrading reads first-and-only: the groups above say what
+# moved, this says what will change under them. Gathered into a list before
+# rendering so the heading appears only when there is something under it — a
+# release with no observable difference should not advertise an empty section.
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim }}
+{% for commit in commits %}
+- {% if commit.scope %}**{{ commit.scope }}** — {% endif %}{{ commit.message }} ([`{{ commit.id | truncate(length=7, end="") }}`](https://github.com/diaryx-org/fig/commit/{{ commit.id }}))
+{%- endfor %}
+{% endfor %}
+{%- set_global notes = [] -%}
+{%- for commit in commits -%}
+{#- `default`, because a commit whose subject git-conventional cannot parse
+    (a wrapped one, say) carries no `footers` key at all rather than an empty
+    one, and an unguarded access aborts the whole render. -#}
+{%- for f in commit.footers | default(value=[]) -%}
+{%- if f.token == "Behavioural-change" -%}
+{%- set_global notes = notes | concat(with=f.value) -%}
+{%- endif -%}
+{%- endfor -%}
+{%- endfor -%}
+{% if notes | length > 0 %}
+### Behavioural changes
+{% for n in notes %}
+- {{ n | trim }}
+{% endfor %}
+{%- endif %}"""
+
+[git]
+conventional_commits = true
+# fig's history predates any convention — roughly a fifth of its commits parse
+# as conventional, the rest are `update readme` and friends. Keeping them in
+# (rather than dropping them) is what lets the catch-all parser below surface
+# them for triage instead of silently losing them.
+filter_unconventional = false
+filter_commits = false
+protect_breaking_commits = true
+split_commits = false
+sort_commits = "oldest"
+
+# fig ships FOUR independently versioned artifacts off one tree — core, cli,
+# rust, npm — each with its own tag prefix (see docs/VERSIONING.md), so there is
+# no single `v*` line to walk. Matching all four makes "unreleased" mean
+# "described by no release yet", which is the question this file answers: one
+# changelog for one repository, not four interleaved ones.
+#
+# A release usually pushes SEVERAL of these tags at the same commit, and
+# git-cliff picks one name per commit for its section heading. That does not
+# matter here, because the heading is not git-cliff's to write: `## Unreleased`
+# is handwritten, and cutting a release means renaming it by hand to name every
+# artifact that moved (`## core 2.6.0 · cli 3.5.3 · rust 3.2.0 · npm 2.6.0`).
+# git-cliff owns only the bytes between the markers.
+tag_pattern = "(core|cli|npm|rust)/v[0-9]*"
+
+commit_preprocessors = [
+  # Trailing period on a SUBJECT reads wrong once it is a bullet. Anchored to
+  # the first line, because a preprocessor sees the whole message: an
+  # end-of-STRING match would leave the subject alone on any multi-line commit
+  # and quietly eat the last period of the body — which, now that
+  # `Behavioural-change:` trailers live down there, would truncate the last
+  # sentence a consumer reads.
+  { pattern = '^(?P<subject>[^\n]*?)[ \t]*\.[ \t]*(?P<rest>\n|$)', replace = "${subject}${rest}" },
+  # A bare `<div>` in a subject is HTML once the bullet is rendered, and the
+  # word disappears. Backtick anything angle-bracketed that isn't already.
+  { pattern = '(?P<pre>[^`])<(?P<tag>[a-zA-Z/][^<>\s]*)>', replace = "${pre}`<${tag}>`" },
+]
+
+# First match wins, so the `!` breaking rule has to precede the type rules.
+# fig spells additions `add(scope):` and `feat(scope):` and revisions
+# `change(scope):` alongside `refactor(scope):`; all four are accepted, so older
+# commits and any muscle memory land in the right bucket rather than in triage.
+commit_parsers = [
+  { message = '^chore\(release\)', skip = true },
+  { message = '^chore: (release|bump)', skip = true },
+  { message = '^[a-zA-Z]+(\(.+\))?!:', group = "<0>Breaking" },
+  { message = '^(add|feat)', group = "<1>Added" },
+  { message = '^fix', group = "<2>Fixed" },
+  { message = '^(change|refactor|perf)', group = "<3>Changed" },
+  { message = '^docs', skip = true },
+  { message = '^(chore|test|ci|build|style)', skip = true },
+  { message = '^(merge|Merge)', skip = true },
+  # Anything left is off-convention. It gets a visible bucket rather than a
+  # silent drop, so the author decides where it belongs.
+  { message = '.*', group = "<9>Uncategorised — triage before release" },
+]
+
+[bump]
+features_always_bump_minor = true
+breaking_always_bump_major = true

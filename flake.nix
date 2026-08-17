@@ -67,7 +67,14 @@
         };
 
         devShells.default = pkgs.mkShell {
-          nativeBuildInputs = [ zig ];
+          nativeBuildInputs = [
+            zig
+            # git-cliff drives tools/changelog.sh, which regenerates the
+            # generated region of docs/CHANGELOG.md. Not needed to build or
+            # test fig — only to cut a release — so `zig build changelog` says
+            # how to get it rather than assuming this shell.
+            pkgs.git-cliff
+          ];
         };
       });
 }

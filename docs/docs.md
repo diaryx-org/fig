@@ -7,6 +7,7 @@ contents
 > * [CONTRIBUTING](CONTRIBUTING.md)
 > * [Testing](testing.md)
 > * [VERSIONING](VERSIONING.md)
+> * [CHANGELOG](CHANGELOG.md)
 > * [Upcoming breaking changes](BREAKING-CHANGES.md)
 > * [Proposals](proposals/proposals.md)
 > * [Devlog](devlogs/devlogs.md)

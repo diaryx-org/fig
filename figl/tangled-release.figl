@@ -105,11 +105,22 @@ ls -l dist
 > # the DID document instead of hardcoded, so this keeps working whichever PDS
 > # the owning account lives on (and if it ever migrates).
 > #
-> # `TANGLED_REPO_DID`, `TANGLED_REPO_URL` and `TANGLED_REF_NAME` are supplied
+> # `TANGLED_REPO_DID`, `TANGLED_REPO_NAME` and `TANGLED_REF_NAME` are supplied
 > # by spindle; `ATP_APP_PASSWORD` comes from Settings → Secrets. The record's
 > # `tag` is the annotated tag *object's* hash as raw bytes — which is why the
 > # release tags this repo pushes have to stay annotated (`git tag -a`), as
 > # every existing one is.
+> #
+> # The `repo` field is the AT-URI of the repo's own `sh.tangled.repo` record,
+> # NOT `TANGLED_REPO_URL`. The docs recipe passes the latter, but the
+> # sh.tangled.repo.artifact lexicon declares `repo` as `format: at-uri` and
+> # spindle sets `TANGLED_REPO_URL` to the knot's https URL, so the recipe
+> # writes a record the appview will never match to this repo — and because
+> # `validate: false` (also from the recipe) skips lexicon checking, the PDS
+> # accepts it, createRecord returns 200, and the release *looks* successful
+> # while nothing shows up on the tag page. The first cli/v3.5.4 run did
+> # exactly that. The AT-URI is rebuilt here from spindle's own variables: the
+> # repo record's rkey is the repo name.
 > name = Publish the artifacts to the tag
 > command = '''
 set -euo pipefail
@@ -134,6 +145,8 @@ repo=$(printf '%s' "$session" | jq -r .did)
 tag_hash=$(git rev-parse "$TANGLED_REF_NAME^{tag}")
 tag_bytes=$(printf "$(printf '%s' "$tag_hash" | sed 's/../\\x&/g')" | base64 | tr -d '=\n')
 created=$(date -Iseconds)
+repo_uri="at://$TANGLED_REPO_DID/sh.tangled.repo/$TANGLED_REPO_NAME"
+echo "attaching to $repo_uri at tag $TANGLED_REF_NAME ($tag_hash)"
 
 for path in dist/*; do
   name=$(basename "$path")
@@ -145,7 +158,7 @@ for path in dist/*; do
     --arg repo "$repo" \
     --arg tag "$tag_bytes" \
     --arg name "$name" \
-    --arg url "$TANGLED_REPO_URL" \
+    --arg uri "$repo_uri" \
     --arg created "$created" \
     --argjson blob "$(printf '%s' "$blob" | jq .blob)" '{
       repo: $repo,
@@ -155,7 +168,8 @@ for path in dist/*; do
         "$type": "sh.tangled.repo.artifact",
         tag: {"$bytes": $tag},
         name: $name,
-        repo: $url,
+        repo: $uri,
+        repoDid: $repo,
         artifact: $blob,
         createdAt: $created
       }

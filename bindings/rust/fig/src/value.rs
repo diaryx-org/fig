@@ -69,21 +69,25 @@ impl ExtKind {
 ///
 /// # Canonical form
 ///
-/// The two integer variants overlap, so the tree has a canonical spelling that
-/// every constructor in this crate produces — parsing, `From`, the `ToValue`
-/// impls, and the serde serializer alike: **an integer that fits in `i64` is
-/// [`Value::Int`]**, whatever Rust type it came from. [`Value::Uint`] holds only
-/// magnitudes past `i64::MAX`.
+/// Two of the scalar variants overlap, so the tree has a canonical spelling
+/// that every constructor in this crate produces — parsing, `From`, the
+/// `ToValue` impls, and the serde serializer alike:
 ///
-/// That is what keeps `Value::from(3u64) == Value::from(3i64)`. `PartialEq` is
-/// structural — it compares variants, as a value tree's equality should — so
-/// without the rule the same number could be unequal to itself depending on
-/// which door it came in by, while all three of [`Value::as_i64`],
-/// [`Value::as_u64`], and [`Value::as_f64`] read the two variants identically.
-///
-/// The variants stay public, so a hand-built `Value::Uint(3)` is still possible;
-/// it reads back fine, it just isn't `==` to `Value::Int(3)`. Build small
-/// integers with `Value::from` rather than naming `Uint` directly.
+/// - **An integer that fits in `i64` is [`Value::Int`]**, whatever Rust type it
+///   came from. [`Value::Uint`] holds only magnitudes past `i64::MAX`. This is
+///   what keeps `Value::from(3u64) == Value::from(3i64)`; `PartialEq` is
+///   structural (it compares variants, as a value tree's equality should), so
+///   without the rule the same number could be unequal to itself depending on
+///   which door it came in by. The reading accessors ([`Value::as_i64`],
+///   [`Value::as_u64`], [`Value::as_f64`]) still span both variants, so a
+///   hand-built `Value::Uint(3)` reads back fine — it just isn't `==` to
+///   `Value::Int(3)`. Route through `Value::from` (or [`Value::eq_canonical`])
+///   rather than constructing `Uint` for a small number.
+/// - **A float is compared by IEEE rules under `==`**, which means a value can
+///   fail to equal itself: `.nan` is a scalar fig both parses and renders, and
+///   `NaN != NaN`. A dirty check written as `if new != old { … }` therefore
+///   never converges on a float field holding `.nan`. Use
+///   [`Value::eq_canonical`] for that; it compares floats by bit pattern.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Null,
@@ -92,6 +96,10 @@ pub enum Value {
     /// An integer too large for `i64`. Canonically this variant holds only
     /// values above `i64::MAX` — see the type-level note on canonical form.
     Uint(u64),
+    /// A float, including the non-finite values YAML spells `.inf`/`.nan`
+    /// (see [`Value::parse_float`]). Note that `==` on a `NaN` payload is
+    /// `false`, as everywhere else in Rust; [`Value::eq_canonical`] is the
+    /// reflexive comparison.
     Float(f64),
     Str(String),
     /// A format-specific scalar (TOML datetime, ZON enum/char literal) carried
@@ -368,6 +376,61 @@ impl Value {
         match self {
             Value::Map(entries) => Some(entries),
             _ => None,
+        }
+    }
+
+    /// Structural equality, canonicalised so that a value always equals itself.
+    ///
+    /// `==` compares the variants exactly, which is what a value tree's equality
+    /// should mean — but it inherits two edges from the scalars:
+    ///
+    /// - `Value::Float(f64::NAN) != Value::Float(f64::NAN)`, by IEEE rules, so
+    ///   a value parsed from `x: .nan` is not equal to an identical second parse
+    ///   of the same bytes. Here floats compare by **bit pattern**, so it is.
+    ///   The flip side of that: `0.0` and `-0.0` are *not* equal here, matching
+    ///   the distinct text (`0.0` / `-0.0`) they serialize to.
+    /// - [`Value::Int`] and [`Value::Uint`] are distinct variants, so a
+    ///   hand-built `Value::Uint(3)` is not `==` to `Value::Int(3)` (the crate's
+    ///   own constructors never produce the former — see the type-level note on
+    ///   canonical form). Here the two integer variants compare **numerically**.
+    ///
+    /// Everything else matches `==`, including map comparison being
+    /// order-sensitive: entries are an ordered `Vec`, and reordering them
+    /// changes the document.
+    ///
+    /// This is the comparison to use for a round-trip or dirty check —
+    /// "would writing this value back change the file?" — where `==` can
+    /// report a spurious difference and loop.
+    ///
+    /// ```
+    /// use fig::Value;
+    ///
+    /// let nan = Value::Float(f64::NAN);
+    /// assert!(nan != nan);              // IEEE
+    /// assert!(nan.eq_canonical(&nan));  // reflexive
+    ///
+    /// assert!(Value::Int(3).eq_canonical(&Value::Uint(3)));
+    /// assert!(!Value::Float(0.0).eq_canonical(&Value::Float(-0.0)));
+    /// ```
+    pub fn eq_canonical(&self, other: &Value) -> bool {
+        match (self, other) {
+            // Bitwise, so `NaN` equals itself and `-0.0` differs from `0.0`.
+            (Value::Float(a), Value::Float(b)) => a.to_bits() == b.to_bits(),
+            // The one cross-variant pair; `Int`/`Int` and `Uint`/`Uint` fall
+            // through to the derived comparison below.
+            (Value::Int(i), Value::Uint(u)) | (Value::Uint(u), Value::Int(i)) => {
+                u64::try_from(*i).is_ok_and(|i| i == *u)
+            }
+            (Value::Seq(a), Value::Seq(b)) => {
+                a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.eq_canonical(y))
+            }
+            (Value::Map(a), Value::Map(b)) => {
+                a.len() == b.len()
+                    && a.iter().zip(b).all(|((ak, av), (bk, bv))| {
+                        ak.eq_canonical(bk) && av.eq_canonical(bv)
+                    })
+            }
+            _ => self == other,
         }
     }
 
@@ -1081,6 +1144,43 @@ mod tests {
         // Reading still spans both variants, so a hand-built `Uint` is not
         // stranded — it just isn't the canonical spelling.
         assert_eq!(Value::Uint(3).as_i64(), Some(3));
+        assert!(Value::Int(3).eq_canonical(&Value::Uint(3)));
+    }
+
+    // `.nan` is a scalar fig parses *and* renders, so a document holding one can
+    // be re-read into a value that isn't `==` to itself. `eq_canonical` is the
+    // comparison that converges — what a dirty check needs.
+    #[test]
+    fn eq_canonical_is_reflexive_over_nan() {
+        let nan = Value::Float(f64::NAN);
+        assert!(nan != nan);
+        assert!(nan.eq_canonical(&nan));
+
+        // Nested, since a dirty check compares whole trees.
+        let doc = |f: f64| {
+            Value::Map(vec![(
+                "xs".into(),
+                Value::Seq(vec![Value::Float(f), Value::Int(1)]),
+            )])
+        };
+        assert!(doc(f64::NAN) != doc(f64::NAN));
+        assert!(doc(f64::NAN).eq_canonical(&doc(f64::NAN)));
+        assert!(doc(f64::INFINITY).eq_canonical(&doc(f64::INFINITY)));
+        assert!(!doc(f64::NAN).eq_canonical(&doc(1.0)));
+
+        // Bitwise, so the two zeros differ — they serialize to different text.
+        assert!(Value::Float(0.0) == Value::Float(-0.0));
+        assert!(!Value::Float(0.0).eq_canonical(&Value::Float(-0.0)));
+
+        // Everything else still behaves like `==`, order-sensitively.
+        assert!(Value::Str("a".into()).eq_canonical(&Value::Str("a".into())));
+        assert!(!Value::Str("a".into()).eq_canonical(&Value::Int(1)));
+        assert!(!Value::Seq(vec![Value::Int(1)]).eq_canonical(&Value::Seq(vec![])));
+        let m = |a: &str, b: &str| {
+            Value::Map(vec![(a.into(), Value::Int(1)), (b.into(), Value::Int(2))])
+        };
+        assert!(m("a", "b").eq_canonical(&m("a", "b")));
+        assert!(!m("a", "b").eq_canonical(&m("b", "a")));
     }
 
     // The `ToValue` impls behind the `derive` feature funnel through the same

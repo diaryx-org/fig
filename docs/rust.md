@@ -204,6 +204,13 @@ A few things to know:
   canonical side: a value that fits in `i64` is always `Int`, whatever Rust type
   it was built from, so `Value::from(3u64) == Value::from(3i64)`. `Uint` holds
   only magnitudes past `i64::MAX`.
+- **Equality is structural**, which leaves two edges worth knowing: a
+  hand-built `Uint(3)` is not `==` to `Int(3)` (nothing in the crate builds
+  one), and `Float(f64::NAN)` is not equal to itself — `.nan` is a scalar fig
+  parses *and* writes, so a dirty check spelled `if new != old { … }` never
+  converges on one. [`Value::eq_canonical`] is the comparison that does:
+  integers compare numerically across the two variants and floats compare by bit
+  pattern (which also makes `0.0` and `-0.0` differ, as their text does).
 - **Maps are ordered `Vec`s of pairs**, not hash maps — key order is preserved,
   and a key can be any `Value` (non-string keys serialize only to formats whose
   printer accepts them).

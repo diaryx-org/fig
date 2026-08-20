@@ -24,13 +24,13 @@ fn external_tagging_round_trips() {
         (External::Unit, s("Unit")),
         (
             External::Newtype(7),
-            Value::Map(vec![(s("Newtype"), Value::Uint(7))]),
+            Value::Map(vec![(s("Newtype"), Value::Int(7))]),
         ),
         (
             External::Tuple(1, true),
             Value::Map(vec![(
                 s("Tuple"),
-                Value::Seq(vec![Value::Uint(1), Value::Bool(true)]),
+                Value::Seq(vec![Value::Int(1), Value::Bool(true)]),
             )]),
         ),
         (

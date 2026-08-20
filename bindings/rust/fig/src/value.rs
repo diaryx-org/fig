@@ -66,11 +66,31 @@ impl ExtKind {
 }
 
 /// An owned, format-independent value tree.
+///
+/// # Canonical form
+///
+/// The two integer variants overlap, so the tree has a canonical spelling that
+/// every constructor in this crate produces — parsing, `From`, the `ToValue`
+/// impls, and the serde serializer alike: **an integer that fits in `i64` is
+/// [`Value::Int`]**, whatever Rust type it came from. [`Value::Uint`] holds only
+/// magnitudes past `i64::MAX`.
+///
+/// That is what keeps `Value::from(3u64) == Value::from(3i64)`. `PartialEq` is
+/// structural — it compares variants, as a value tree's equality should — so
+/// without the rule the same number could be unequal to itself depending on
+/// which door it came in by, while all three of [`Value::as_i64`],
+/// [`Value::as_u64`], and [`Value::as_f64`] read the two variants identically.
+///
+/// The variants stay public, so a hand-built `Value::Uint(3)` is still possible;
+/// it reads back fine, it just isn't `==` to `Value::Int(3)`. Build small
+/// integers with `Value::from` rather than naming `Uint` directly.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Null,
     Bool(bool),
     Int(i64),
+    /// An integer too large for `i64`. Canonically this variant holds only
+    /// values above `i64::MAX` — see the type-level note on canonical form.
     Uint(u64),
     Float(f64),
     Str(String),
@@ -103,9 +123,16 @@ impl From<i32> for Value {
         Value::Int(v as i64)
     }
 }
+/// Normalises into the canonical integer variant: [`Value::Int`] when the value
+/// fits in `i64`, [`Value::Uint`] only past `i64::MAX`. Every other constructor
+/// in the crate funnels unsigned integers through here, so a `3` is the same
+/// value however it was built.
 impl From<u64> for Value {
     fn from(v: u64) -> Self {
-        Value::Uint(v)
+        match i64::try_from(v) {
+            Ok(i) => Value::Int(i),
+            Err(_) => Value::Uint(v),
+        }
     }
 }
 impl From<f64> for Value {
@@ -372,6 +399,7 @@ impl Value {
                 return Ok(Value::Int(i));
             }
             if let Ok(u) = raw.parse::<u64>() {
+                // Past `i64::MAX`, so this is the canonical `Uint` range.
                 return Ok(Value::Uint(u));
             }
         }
@@ -646,8 +674,11 @@ impl<'de> serde::Deserialize<'de> for Value {
             fn visit_i64<E>(self, v: i64) -> Result<Value, E> {
                 Ok(Value::Int(v))
             }
+            // `From<u64>`, not `Value::Uint`, so `3u64` deserializes to the
+            // same value a document's `3` reads as (see the canonical-form note
+            // on `Value`).
             fn visit_u64<E>(self, v: u64) -> Result<Value, E> {
-                Ok(Value::Uint(v))
+                Ok(Value::from(v))
             }
             fn visit_i128<E>(self, v: i128) -> Result<Value, E> {
                 Ok(i64::try_from(v)
@@ -656,7 +687,7 @@ impl<'de> serde::Deserialize<'de> for Value {
             }
             fn visit_u128<E>(self, v: u128) -> Result<Value, E> {
                 Ok(u64::try_from(v)
-                    .map(Value::Uint)
+                    .map(Value::from)
                     .unwrap_or(Value::Float(v as f64)))
             }
             fn visit_f64<E>(self, v: f64) -> Result<Value, E> {
@@ -1030,6 +1061,53 @@ mod tests {
             Value::parse_number("zero", false),
             Err(Error::Number(_))
         ));
+    }
+
+    // Canonical form: an integer that fits in `i64` is `Int`, whatever door it
+    // came in by — `From`, the `ToValue` impls, or the document parser. Without
+    // this the same number is unequal to itself under the derived `PartialEq`,
+    // even though all three of `as_i64`/`as_u64`/`as_f64` read it identically.
+    #[test]
+    fn small_unsigned_integers_construct_as_int() {
+        assert_eq!(Value::from(3u64), Value::Int(3));
+        assert_eq!(Value::from(3u64), Value::from(3i64));
+
+        // `i64::MAX` still fits; one past it is where `Uint` starts.
+        assert_eq!(Value::from(i64::MAX as u64), Value::Int(i64::MAX));
+        let past = i64::MAX as u64 + 1;
+        assert_eq!(Value::from(past), Value::Uint(past));
+        assert_eq!(Value::from(u64::MAX), Value::Uint(u64::MAX));
+
+        // Reading still spans both variants, so a hand-built `Uint` is not
+        // stranded — it just isn't the canonical spelling.
+        assert_eq!(Value::Uint(3).as_i64(), Some(3));
+    }
+
+    // The `ToValue` impls behind the `derive` feature funnel through the same
+    // `From<u64>`, so a `u8` field and an `i64` field holding 3 are one value.
+    #[test]
+    #[cfg(feature = "derive")]
+    fn unsigned_to_value_impls_are_canonical_too() {
+        use crate::ToValue;
+
+        assert_eq!(3u8.to_value(), Value::Int(3));
+        assert_eq!(3u32.to_value(), Value::Int(3));
+        assert_eq!(3usize.to_value(), Value::Int(3));
+        assert_eq!(3u64.to_value(), 3i64.to_value());
+        assert_eq!(u64::MAX.to_value(), Value::Uint(u64::MAX));
+    }
+
+    // The parser has always produced `Int` for a small number; the constructors
+    // now agree with it.
+    #[test]
+    #[cfg(feature = "yaml")]
+    fn parsed_and_constructed_integers_agree() {
+        use crate::{Document, Format};
+        let parsed = Document::parse(b"n: 3\n", Format::Yaml)
+            .unwrap()
+            .to_value()
+            .unwrap();
+        assert_eq!(parsed, Value::Map(vec![("n".into(), Value::from(3u64))]));
     }
 
     #[test]

@@ -25,7 +25,9 @@ fn round_trips_simple_struct() {
         value,
         Value::Map(vec![
             (Value::Str("name".into()), Value::Str("fig".into())),
-            (Value::Str("count".into()), Value::Uint(3)),
+            // `count: u32`, but a value that fits in `i64` is canonically
+            // `Int` whatever Rust type it came from.
+            (Value::Str("count".into()), Value::Int(3)),
             (Value::Str("enabled".into()), Value::Bool(true)),
         ])
     );

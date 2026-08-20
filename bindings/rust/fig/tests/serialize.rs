@@ -371,3 +371,39 @@ fn yaml_width_controls_nested_flow_vs_block_and_zero_means_unset() {
         );
     }
 }
+
+// The serde paths build the same canonical integer variant as everything else:
+// a value that fits in `i64` is `Int`, whichever unsigned Rust type it came
+// from, and whichever direction it crossed. Before this, a `u16` field and a
+// document's `3` produced values that were `!=` while all three of
+// `as_i64`/`as_u64`/`as_f64` read them identically.
+#[test]
+fn unsigned_fields_serialize_to_the_canonical_integer_variant() {
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    struct Ports {
+        port: u16,
+        big: u64,
+        huge: u64,
+    }
+    let ports = Ports {
+        port: 8080,
+        big: 3,
+        // One past `i64::MAX` — the range `Uint` exists for.
+        huge: i64::MAX as u64 + 1,
+    };
+    assert_eq!(
+        fig::to_value(&ports).unwrap(),
+        map(vec![
+            ("port", Value::Int(8080)),
+            ("big", Value::Int(3)),
+            ("huge", Value::Uint(i64::MAX as u64 + 1)),
+        ])
+    );
+
+    // The read side agrees with the parser, so a struct round-trips to a value
+    // equal to the one parsed from its own output.
+    let text = fig::to_string(&ports).unwrap();
+    let parsed: Value = fig::from_str(&text).unwrap();
+    assert_eq!(parsed, fig::to_value(&ports).unwrap());
+    assert_eq!(fig::from_str::<Ports>(&text).unwrap(), ports);
+}

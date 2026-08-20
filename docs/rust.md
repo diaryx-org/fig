@@ -200,7 +200,10 @@ pub enum Value {
 A few things to know:
 
 - **Integers** split into `Int(i64)` and `Uint(u64)` so the full unsigned range
-  round-trips; reading widens `i64` → `u64` → `Float` as needed.
+  round-trips; reading widens `i64` → `u64` → `Float` as needed. The split has a
+  canonical side: a value that fits in `i64` is always `Int`, whatever Rust type
+  it was built from, so `Value::from(3u64) == Value::from(3i64)`. `Uint` holds
+  only magnitudes past `i64::MAX`.
 - **Maps are ordered `Vec`s of pairs**, not hash maps — key order is preserved,
   and a key can be any `Value` (non-string keys serialize only to formats whose
   printer accepts them).

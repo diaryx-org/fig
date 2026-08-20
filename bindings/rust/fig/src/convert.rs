@@ -148,10 +148,13 @@ macro_rules! signed_to_value {
         }
     )*};
 }
+// Via `From<u64>`, so an unsigned field lands in the canonical variant — `Int`
+// unless the value is past `i64::MAX` — and compares equal to the same number
+// read from a document or built from a signed field.
 macro_rules! unsigned_to_value {
     ($($t:ty),*) => {$(
         impl ToValue for $t {
-            fn to_value(&self) -> Value { Value::Uint(*self as u64) }
+            fn to_value(&self) -> Value { Value::from(*self as u64) }
         }
     )*};
 }

@@ -55,26 +55,28 @@ impl Serializer for ValueSerializer {
         if let Ok(i) = i64::try_from(v) {
             Ok(Value::Int(i))
         } else if let Ok(u) = u64::try_from(v) {
-            Ok(Value::Uint(u))
+            Ok(Value::Uint(u)) // > i64::MAX by construction: the canonical `Uint` range
         } else {
             Ok(Value::Str(v.to_string()))
         }
     }
     fn serialize_u8(self, v: u8) -> Result<Value, Error> {
-        Ok(Value::Uint(v as u64))
+        Ok(Value::from(v as u64))
     }
     fn serialize_u16(self, v: u16) -> Result<Value, Error> {
-        Ok(Value::Uint(v as u64))
+        Ok(Value::from(v as u64))
     }
     fn serialize_u32(self, v: u32) -> Result<Value, Error> {
-        Ok(Value::Uint(v as u64))
+        Ok(Value::from(v as u64))
     }
+    // `From<u64>` canonicalises: `Int` when it fits in `i64`, `Uint` only past
+    // `i64::MAX`. Same value whichever integer type the caller's field had.
     fn serialize_u64(self, v: u64) -> Result<Value, Error> {
-        Ok(Value::Uint(v))
+        Ok(Value::from(v))
     }
     fn serialize_u128(self, v: u128) -> Result<Value, Error> {
         if let Ok(u) = u64::try_from(v) {
-            Ok(Value::Uint(u))
+            Ok(Value::from(u))
         } else {
             Ok(Value::Str(v.to_string()))
         }
@@ -93,7 +95,7 @@ impl Serializer for ValueSerializer {
     }
     fn serialize_bytes(self, v: &[u8]) -> Result<Value, Error> {
         Ok(Value::Seq(
-            v.iter().map(|b| Value::Uint(*b as u64)).collect(),
+            v.iter().map(|b| Value::from(*b as u64)).collect(),
         ))
     }
     fn serialize_none(self) -> Result<Value, Error> {

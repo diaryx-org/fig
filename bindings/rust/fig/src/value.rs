@@ -10,9 +10,9 @@
 use std::os::raw::c_int;
 use std::ptr::{self, NonNull};
 
-use crate::{Format, SerializeOptions};
 use crate::error::Error;
 use crate::ffi;
+use crate::{Format, SerializeOptions};
 
 /// The kind of a format-specific [`Value::Extended`] scalar. Mirrors the core's
 /// `ExtKind` and the C ABI's `FigExtKind`; the discriminants match that ABI.
@@ -182,7 +182,11 @@ impl Value {
 
     /// Render to `format`, with `options` controlling output style such as
     /// compact vs. pretty-printed JSON.
-    pub fn serialize_with(&self, format: Format, options: SerializeOptions) -> Result<String, Error> {
+    pub fn serialize_with(
+        &self,
+        format: Format,
+        options: SerializeOptions,
+    ) -> Result<String, Error> {
         self.serialize_ffi(format, options.into())
     }
 
@@ -233,7 +237,11 @@ impl Value {
     /// (values/comments dropped or degraded). The built value has no source
     /// envelopes, so `options.lossless` is ignored. Returns one [`crate::Warning`]
     /// per lossy event (empty if nothing is lost).
-    pub fn diagnose(&self, format: Format, options: SerializeOptions) -> Result<Vec<crate::Warning>, Error> {
+    pub fn diagnose(
+        &self,
+        format: Format,
+        options: SerializeOptions,
+    ) -> Result<Vec<crate::Warning>, Error> {
         let mut raw = ptr::null_mut();
         Error::from_status(unsafe { ffi::fig_value_create(&mut raw) })?;
         NonNull::new(raw).ok_or(Error::Internal)?;
@@ -426,9 +434,9 @@ impl Value {
             }
             (Value::Map(a), Value::Map(b)) => {
                 a.len() == b.len()
-                    && a.iter().zip(b).all(|((ak, av), (bk, bv))| {
-                        ak.eq_canonical(bk) && av.eq_canonical(bv)
-                    })
+                    && a.iter()
+                        .zip(b)
+                        .all(|((ak, av), (bk, bv))| ak.eq_canonical(bk) && av.eq_canonical(bv))
             }
             _ => self == other,
         }
@@ -691,7 +699,9 @@ fn format_float(f: f64) -> String {
     // `kk = e + 1` with `10^(kk-1) <= |f| < 10^kk` — the quantity ryu bands.
     let sci = format!("{f:e}");
     let (mantissa, exponent) = sci.split_once('e').expect("LowerExp always writes an `e`");
-    let e: i32 = exponent.parse().expect("LowerExp writes a decimal exponent");
+    let e: i32 = exponent
+        .parse()
+        .expect("LowerExp writes a decimal exponent");
     let kk = e + 1;
 
     // ryu's `pretty` band for f64: decimal while `-5 < kk <= 16`.
@@ -995,7 +1005,9 @@ mod tests {
                 text: "1979-05-27T07:32:00Z".into(),
             },
         )]);
-        let warns = v.diagnose(Format::Json, SerializeOptions::default()).unwrap();
+        let warns = v
+            .diagnose(Format::Json, SerializeOptions::default())
+            .unwrap();
         assert_eq!(warns.len(), 1);
         assert_eq!(warns[0].code, WarningCode::TypeDegraded);
         assert_eq!(warns[0].path, "when");
@@ -1090,7 +1102,10 @@ mod tests {
     fn float_specials_round_trip_through_the_public_parser() {
         for (text, expect_nan) in [(".inf", false), ("-.inf", false), (".nan", true)] {
             let v = Value::parse_number(text, true).unwrap();
-            assert!(v.is_f64(), "`{text}` must stay a float, not become a string");
+            assert!(
+                v.is_f64(),
+                "`{text}` must stay a float, not become a string"
+            );
             let f = v.as_f64().unwrap();
             assert_eq!(f.is_nan(), expect_nan);
             // ...and the value renders back to the text it was parsed from.
@@ -1227,10 +1242,7 @@ mod tests {
         // A `String` key works the same as `&str`, and chains through nested
         // lookups by index.
         assert_eq!(map.get(String::from("count")), Some(&Value::Int(42)));
-        assert_eq!(
-            map.get("nums").and_then(|v| v.get(1)),
-            Some(&Value::Int(2))
-        );
+        assert_eq!(map.get("nums").and_then(|v| v.get(1)), Some(&Value::Int(2)));
         assert_eq!(map.get("nums").and_then(|v| v.get(9)), None);
         assert_eq!(Value::Null.get(0), None);
     }

@@ -345,11 +345,8 @@ unsafe extern "C" {
         options: *const FigSerializeOptions,
         out_count: *mut usize,
     ) -> FigStatus;
-    pub fn fig_value_warning(
-        value: *mut FigValue,
-        index: usize,
-        out: *mut FigWarning,
-    ) -> FigStatus;
+    pub fn fig_value_warning(value: *mut FigValue, index: usize, out: *mut FigWarning)
+    -> FigStatus;
 }
 
 // ---- editing (write path) ----
@@ -771,11 +768,8 @@ unsafe extern "C" {
         items: *const FigStr,
         items_len: usize,
     ) -> FigStatus;
-    pub fn fig_embed_replace_body(
-        fm: *mut FigEmbed,
-        body: *const u8,
-        body_len: usize,
-    ) -> FigStatus;
+    pub fn fig_embed_replace_body(fm: *mut FigEmbed, body: *const u8, body_len: usize)
+    -> FigStatus;
     pub fn fig_embed_render(
         fm: *mut FigEmbed,
         out_ptr: *mut *const u8,

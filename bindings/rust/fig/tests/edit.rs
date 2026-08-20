@@ -28,16 +28,23 @@ fn editor_set_replaces_or_inserts() {
 #[test]
 fn embed_open_or_init_creates_block_then_sets_first_key() {
     // No frontmatter: open_or_init synthesizes an empty block; set lands the key.
-    let mut fm = Embed::open_or_init(b"# Just a body\n\nprose\n", EmbedType::FrontmatterYaml).unwrap();
+    let mut fm =
+        Embed::open_or_init(b"# Just a body\n\nprose\n", EmbedType::FrontmatterYaml).unwrap();
     fm.set(&[Segment::Key("title")], "Hi").unwrap();
-    assert_eq!(fm.render().unwrap(), "---\ntitle: Hi\n---\n# Just a body\n\nprose\n");
+    assert_eq!(
+        fm.render().unwrap(),
+        "---\ntitle: Hi\n---\n# Just a body\n\nprose\n"
+    );
 }
 
 #[test]
 fn embed_open_or_init_opens_existing_region_unchanged() {
     // Existing frontmatter: behaves like open, preserving the comment + body.
-    let mut fm =
-        Embed::open_or_init(b"---\ntitle: Old # c\n---\nbody\n", EmbedType::FrontmatterYaml).unwrap();
+    let mut fm = Embed::open_or_init(
+        b"---\ntitle: Old # c\n---\nbody\n",
+        EmbedType::FrontmatterYaml,
+    )
+    .unwrap();
     fm.set(&[Segment::Key("title")], "New").unwrap();
     assert_eq!(fm.render().unwrap(), "---\ntitle: New # c\n---\nbody\n");
 }
@@ -78,11 +85,24 @@ fn editor_reads_comments_distinguishing_absent_from_empty() {
     // trailing (present but empty); `c` has neither (absent).
     let ed = Editor::open(b"# why\na: 1 # two\nb: 2 #\nc: 3\n", Format::Yaml).unwrap();
 
-    assert_eq!(ed.leading_comment(&[Segment::Key("a")]).unwrap().as_deref(), Some("why"));
-    assert_eq!(ed.trailing_comment(&[Segment::Key("a")]).unwrap().as_deref(), Some("two"));
+    assert_eq!(
+        ed.leading_comment(&[Segment::Key("a")]).unwrap().as_deref(),
+        Some("why")
+    );
+    assert_eq!(
+        ed.trailing_comment(&[Segment::Key("a")])
+            .unwrap()
+            .as_deref(),
+        Some("two")
+    );
 
     // Present-but-empty bare marker → Some(""), not None.
-    assert_eq!(ed.trailing_comment(&[Segment::Key("b")]).unwrap().as_deref(), Some(""));
+    assert_eq!(
+        ed.trailing_comment(&[Segment::Key("b")])
+            .unwrap()
+            .as_deref(),
+        Some("")
+    );
 
     // No comment at all → None.
     assert_eq!(ed.leading_comment(&[Segment::Key("c")]).unwrap(), None);
@@ -94,7 +114,9 @@ fn editor_reads_trailing_comment_on_a_block_collection_key() {
     // The comment rides the `contents:` line above the block sequence.
     let ed = Editor::open(b"contents: # the list\n- one\n- two\n", Format::Yaml).unwrap();
     assert_eq!(
-        ed.trailing_comment(&[Segment::Key("contents")]).unwrap().as_deref(),
+        ed.trailing_comment(&[Segment::Key("contents")])
+            .unwrap()
+            .as_deref(),
         Some("the list"),
     );
 }
@@ -235,9 +257,15 @@ fn split_borrows_content_and_body() {
     assert_eq!(fm, "k: v\r\n");
     assert_eq!(body, "body\r\n");
     // No frontmatter -> None.
-    assert_eq!(fig::split("# just markdown\n", EmbedType::FrontmatterYaml), None);
+    assert_eq!(
+        fig::split("# just markdown\n", EmbedType::FrontmatterYaml),
+        None
+    );
     // Unterminated fence -> None (not a panic / partial split).
-    assert_eq!(fig::split("---\nk: v\nno close\n", EmbedType::FrontmatterYaml), None);
+    assert_eq!(
+        fig::split("---\nk: v\nno close\n", EmbedType::FrontmatterYaml),
+        None
+    );
 }
 
 #[test]
@@ -271,7 +299,10 @@ fn fig_dialect_container_splices_render_flow_and_round_trip() {
     let mut em = Embed::open(b"```fig\nt = x\n```\nbody\n", EmbedType::FrontmatterFig).unwrap();
     em.set_value(
         &[Segment::Key("contents")],
-        fig::Value::Seq(vec![fig::Value::Str("a.md".into()), fig::Value::Str("b.md".into())]),
+        fig::Value::Seq(vec![
+            fig::Value::Str("a.md".into()),
+            fig::Value::Str("b.md".into()),
+        ]),
     )
     .unwrap();
     em.set_value(
@@ -287,15 +318,22 @@ fn fig_dialect_container_splices_render_flow_and_round_trip() {
     let (content, _) = fig::split(&rendered, EmbedType::FrontmatterFig).unwrap();
     let doc = fig::Document::parse(content.as_bytes(), Format::Fig).unwrap();
     let v = doc.to_value().unwrap();
-    let fig::Value::Map(entries) = &v else { panic!("{v:?}") };
-    let contents = entries.iter().find(|(k, _)| k == &fig::Value::Str("contents".into()));
+    let fig::Value::Map(entries) = &v else {
+        panic!("{v:?}")
+    };
+    let contents = entries
+        .iter()
+        .find(|(k, _)| k == &fig::Value::Str("contents".into()));
     assert!(
         matches!(contents, Some((_, fig::Value::Seq(items))) if items.len() == 2),
         "{v:?}"
     );
 
     // Whole-document serialization of a Map is unchanged (still block sections).
-    let map = fig::Value::Map(vec![(fig::Value::Str("title".into()), fig::Value::Str("T".into()))]);
+    let map = fig::Value::Map(vec![(
+        fig::Value::Str("title".into()),
+        fig::Value::Str("T".into()),
+    )]);
     assert_eq!(map.serialize(Format::Fig).unwrap(), "title = T\n");
 }
 
@@ -305,7 +343,11 @@ fn fig_dialect_block_map_splices_into_a_fence_with_the_width_knob() {
     // nested section under its key inside a ```fig``` fence — the prov case
     // that plain `set_value` (forced inline flow) could not express.
     use fig::SerializeOptions;
-    let mut em = Embed::open(b"```fig\ntitle = hi\n```\nbody\n", EmbedType::FrontmatterFig).unwrap();
+    let mut em = Embed::open(
+        b"```fig\ntitle = hi\n```\nbody\n",
+        EmbedType::FrontmatterFig,
+    )
+    .unwrap();
     em.set_value_with(
         &[Segment::Key("registry")],
         fig::Value::Map(vec![
@@ -316,14 +358,21 @@ fn fig_dialect_block_map_splices_into_a_fence_with_the_width_knob() {
     )
     .unwrap();
     let rendered = em.render().unwrap().to_string();
-    assert_eq!(rendered, "```fig\ntitle = hi\nregistry\n> a = 1\n> b = 2\n```\nbody\n");
+    assert_eq!(
+        rendered,
+        "```fig\ntitle = hi\nregistry\n> a = 1\n> b = 2\n```\nbody\n"
+    );
 
     // It re-parses as the nested map, not a string.
     let (content, _) = fig::split(&rendered, EmbedType::FrontmatterFig).unwrap();
     let doc = fig::Document::parse(content.as_bytes(), Format::Fig).unwrap();
     let v = doc.to_value().unwrap();
-    let fig::Value::Map(entries) = &v else { panic!("{v:?}") };
-    let registry = entries.iter().find(|(k, _)| k == &fig::Value::Str("registry".into()));
+    let fig::Value::Map(entries) = &v else {
+        panic!("{v:?}")
+    };
+    let registry = entries
+        .iter()
+        .find(|(k, _)| k == &fig::Value::Str("registry".into()));
     assert!(
         matches!(registry, Some((_, fig::Value::Map(inner))) if inner.len() == 2),
         "{v:?}"
@@ -343,7 +392,10 @@ fn detect_recognizes_an_unterminated_fence() {
 #[test]
 fn extract_exposes_region_spans_and_slices() {
     let e = fig::Embed::extract(NOTE, EmbedType::FrontmatterYaml).unwrap();
-    assert_eq!(e.content(), "title: Hello\n# keep this comment\ntags:\n- a\n- b\n");
+    assert_eq!(
+        e.content(),
+        "title: Hello\n# keep this comment\ntags:\n- a\n- b\n"
+    );
     assert_eq!(e.body(), "# Body\n\nprose goes here\n");
     let r = e.region();
     // The body span starts at the close fence's end.
@@ -395,7 +447,9 @@ fn frontmatter_reads_a_leading_comment() {
     let fm = Embed::open(NOTE.as_bytes(), EmbedType::FrontmatterYaml).unwrap();
     // `# keep this comment` sits above `tags` in the frontmatter.
     assert_eq!(
-        fm.leading_comment(&[Segment::Key("tags")]).unwrap().as_deref(),
+        fm.leading_comment(&[Segment::Key("tags")])
+            .unwrap()
+            .as_deref(),
         Some("keep this comment"),
     );
     // `title` has no comment of its own.
@@ -497,8 +551,12 @@ fn yaml_single_entry_map_sets_like_a_multi_entry_one() {
     assert_eq!(ed.source().unwrap(), "title: t\nfresh:\n  k: v\n");
 
     let mut ed = Editor::open(b"title: t\na:\n  b: 1\n", Format::Yaml).unwrap();
-    ed.set_value(&[Segment::Key("a"), Segment::Key("c")], one()).unwrap();
-    assert_eq!(ed.source().unwrap(), "title: t\na:\n  b: 1\n  c:\n    k: v\n");
+    ed.set_value(&[Segment::Key("a"), Segment::Key("c")], one())
+        .unwrap();
+    assert_eq!(
+        ed.source().unwrap(),
+        "title: t\na:\n  b: 1\n  c:\n    k: v\n"
+    );
 
     let mut ed = Editor::open(b"title: t\nfresh: 0\n", Format::Yaml).unwrap();
     ed.set_value(&[Segment::Key("fresh")], one()).unwrap();
@@ -506,7 +564,8 @@ fn yaml_single_entry_map_sets_like_a_multi_entry_one() {
 
     // A null-valued key is a mapping waiting to happen — block values land in it.
     let mut ed = Editor::open(b"title: t\na:\n", Format::Yaml).unwrap();
-    ed.set_value(&[Segment::Key("a"), Segment::Key("b")], one()).unwrap();
+    ed.set_value(&[Segment::Key("a"), Segment::Key("b")], one())
+        .unwrap();
     assert_eq!(ed.source().unwrap(), "title: t\na:\n  b:\n    k: v\n");
     let mut ed = Editor::open(b"title: t\na:\n", Format::Yaml).unwrap();
     ed.set_value(
@@ -528,14 +587,18 @@ fn yaml_block_value_into_a_flow_container_errs_instead_of_corrupting() {
 
     // Into an existing flow mapping.
     let mut ed = Editor::open(b"title: t\na: {b: 1}\n", Format::Yaml).unwrap();
-    let err = ed.set_value(&[Segment::Key("a"), Segment::Key("c")], seq()).unwrap_err();
+    let err = ed
+        .set_value(&[Segment::Key("a"), Segment::Key("c")], seq())
+        .unwrap_err();
     assert!(matches!(err, fig::Error::InvalidArgument), "{err:?}");
     assert_eq!(ed.source().unwrap(), "title: t\na: {b: 1}\n");
 
     // A flow container the caller has to have written themselves is the only way
     // to reach this now: ancestors `set` creates are block (see the test below).
     let mut ed = Editor::open(b"title: t\na: {}\n", Format::Yaml).unwrap();
-    let err = ed.set_value(&[Segment::Key("a"), Segment::Key("b")], seq()).unwrap_err();
+    let err = ed
+        .set_value(&[Segment::Key("a"), Segment::Key("b")], seq())
+        .unwrap_err();
     assert!(matches!(err, fig::Error::InvalidArgument), "{err:?}");
     assert_eq!(ed.source().unwrap(), "title: t\na: {}\n");
 }
@@ -589,16 +652,16 @@ fn yaml_set_seeds_a_nested_path_into_an_empty_document() {
     // A fresh, empty file is the `mkdir -p for config` case: a null root is a
     // container waiting to exist, not data standing in the way.
     let mut ed = Editor::open(b"", Format::Yaml).unwrap();
-    ed.set_value(
-        &[Segment::Key("meta"), Segment::Key("title")],
-        "Hi",
-    )
-    .unwrap();
+    ed.set_value(&[Segment::Key("meta"), Segment::Key("title")], "Hi")
+        .unwrap();
     assert_eq!(ed.source().unwrap(), "meta:\n  title: Hi\n");
 
     // A scalar standing where a parent mapping should be is still never clobbered.
     let mut ed = Editor::open(b"a: 1\n", Format::Yaml).unwrap();
-    assert!(ed.set_value(&[Segment::Key("a"), Segment::Key("b")], 2i64).is_err());
+    assert!(
+        ed.set_value(&[Segment::Key("a"), Segment::Key("b")], 2i64)
+            .is_err()
+    );
     assert_eq!(ed.source().unwrap(), "a: 1\n");
 }
 

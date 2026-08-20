@@ -27,7 +27,8 @@ fn every_serialize_options_field_is_reachable_without_a_struct_literal() {
     // And they still reach the serializer.
     let v = Value::Map(vec![(Value::Str("k".into()), Value::Str("v".into()))]);
     assert_eq!(
-        v.serialize_with(Format::Json, SerializeOptions::compact()).unwrap(),
+        v.serialize_with(Format::Json, SerializeOptions::compact())
+            .unwrap(),
         "{\"k\":\"v\"}\n"
     );
 }
@@ -65,12 +66,19 @@ fn returned_struct_fields_are_still_readable() {
     assert!(caps.read || caps.edit || caps.serialize);
 
     let doc = Document::parse(b"a: null\n", Format::Yaml).unwrap();
-    let warns = doc.diagnose(Format::Toml, SerializeOptions::default()).unwrap();
+    let warns = doc
+        .diagnose(Format::Toml, SerializeOptions::default())
+        .unwrap();
     assert_eq!(warns[0].path, "a");
     let _ = (&warns[0].code, &warns[0].cause, &warns[0].note);
 
     if let fig::Error::Parse(detail) = Document::parse(b"{ oops", Format::Json).unwrap_err() {
-        let _ = (detail.message, detail.byte_offset, detail.line, detail.column);
+        let _ = (
+            detail.message,
+            detail.byte_offset,
+            detail.line,
+            detail.column,
+        );
     }
 }
 

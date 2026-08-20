@@ -139,7 +139,13 @@ pub struct SerializeOptions {
 
 impl Default for SerializeOptions {
     fn default() -> Self {
-        Self { pretty: true, indent: 2, strip_comments: false, lossless: false, width: 80 }
+        Self {
+            pretty: true,
+            indent: 2,
+            strip_comments: false,
+            lossless: false,
+            width: 80,
+        }
     }
 }
 
@@ -151,12 +157,19 @@ impl Default for SerializeOptions {
 impl SerializeOptions {
     /// Compact single-line output with no insignificant whitespace.
     pub fn compact() -> Self {
-        Self { pretty: false, ..Self::default() }
+        Self {
+            pretty: false,
+            ..Self::default()
+        }
     }
 
     /// Pretty-printed output with the given number of spaces per indent level.
     pub fn pretty(indent: u8) -> Self {
-        Self { pretty: true, indent, ..Self::default() }
+        Self {
+            pretty: true,
+            indent,
+            ..Self::default()
+        }
     }
 
     /// This style with the given spaces-per-indent-level (see `indent`). The
@@ -169,12 +182,18 @@ impl SerializeOptions {
     /// This style with `lossless` enabled (see the field). Builder-style so
     /// `SerializeOptions::default().lossless()` reads naturally.
     pub fn lossless(self) -> Self {
-        Self { lossless: true, ..self }
+        Self {
+            lossless: true,
+            ..self
+        }
     }
 
     /// This style with comments stripped (see `strip_comments`).
     pub fn strip_comments(self) -> Self {
-        Self { strip_comments: true, ..self }
+        Self {
+            strip_comments: true,
+            ..self
+        }
     }
 
     /// This style with the given inline-vs-expanded column budget for
@@ -274,7 +293,13 @@ impl Document {
         // `from_status` as usual (the struct is meaningful only on failure).
         let mut err = ffi::FigError::new();
         let status = unsafe {
-            ffi::fig_parse_ex(input.as_ptr(), input.len(), ffi_format as i32, &mut raw, &mut err)
+            ffi::fig_parse_ex(
+                input.as_ptr(),
+                input.len(),
+                ffi_format as i32,
+                &mut raw,
+                &mut err,
+            )
         };
         if status != ffi::FigStatus(ffi::FigStatus::OK) {
             if status == ffi::FigStatus(ffi::FigStatus::PARSE_ERROR) {
@@ -468,7 +493,11 @@ impl Document {
 
     /// As [`Document::serialize`], with `options` controlling output style,
     /// comment stripping, and lossless `$fig`-envelope round-tripping.
-    pub fn serialize_with(&self, format: Format, options: SerializeOptions) -> Result<String, Error> {
+    pub fn serialize_with(
+        &self,
+        format: Format,
+        options: SerializeOptions,
+    ) -> Result<String, Error> {
         let ffi_format: ffi::FigFormat = format.into();
         let ffi_options: ffi::FigSerializeOptions = options.into();
         let mut ptr_out: *const u8 = std::ptr::null();
@@ -489,19 +518,30 @@ impl Document {
         } else {
             unsafe { std::slice::from_raw_parts(ptr_out, len) }
         };
-        Ok(std::str::from_utf8(bytes).map_err(|_| Error::Utf8)?.to_owned())
+        Ok(std::str::from_utf8(bytes)
+            .map_err(|_| Error::Utf8)?
+            .to_owned())
     }
 
     /// Report what serializing the whole document to `format` would silently lose
     /// (comments dropped/degraded, values dropped/degraded), using the same
     /// pipeline [`Document::serialize_with`] prints from. Returns one [`Warning`]
     /// per lossy event (empty if nothing is lost).
-    pub fn diagnose(&self, format: Format, options: SerializeOptions) -> Result<Vec<Warning>, Error> {
+    pub fn diagnose(
+        &self,
+        format: Format,
+        options: SerializeOptions,
+    ) -> Result<Vec<Warning>, Error> {
         let ffi_format: ffi::FigFormat = format.into();
         let ffi_options: ffi::FigSerializeOptions = options.into();
         let mut count: usize = 0;
         Error::from_status(unsafe {
-            ffi::fig_document_diagnose(self.raw.as_ptr(), ffi_format as c_int, &ffi_options, &mut count)
+            ffi::fig_document_diagnose(
+                self.raw.as_ptr(),
+                ffi_format as c_int,
+                &ffi_options,
+                &mut count,
+            )
         })?;
         let mut out = Vec::with_capacity(count);
         for i in 0..count {
@@ -551,10 +591,13 @@ mod tests {
 
     #[test]
     fn version_and_capabilities() {
-        use super::{capabilities, version, version_string, Format};
+        use super::{Format, capabilities, version, version_string};
         let v = version();
         // The packed version round-trips through the string form.
-        assert_eq!(version_string(), format!("{}.{}.{}", v.major, v.minor, v.patch));
+        assert_eq!(
+            version_string(),
+            format!("{}.{}.{}", v.major, v.minor, v.patch)
+        );
         // JSON is always fully supported in any build.
         let json = capabilities(Format::Json);
         assert!(json.read && json.edit && json.serialize);
@@ -576,7 +619,9 @@ mod tests {
         use super::{SerializeOptions, WarningCause, WarningCode};
         let doc = Document::parse(b"a: null\nb: 1\n", Format::Yaml).unwrap();
         // A null can't survive in TOML → one value-dropped warning at path "a".
-        let warns = doc.diagnose(Format::Toml, SerializeOptions::default()).unwrap();
+        let warns = doc
+            .diagnose(Format::Toml, SerializeOptions::default())
+            .unwrap();
         assert_eq!(warns.len(), 1);
         assert_eq!(warns[0].code, WarningCode::ValueDropped);
         assert_eq!(warns[0].cause, WarningCause::FormatLimitation);
@@ -600,7 +645,8 @@ mod tests {
         use super::{Editor, Segment};
         let mut ed = Editor::open(b"a: 1\nb: 2\n", Format::Yaml).unwrap();
         ed.add_leading_comment(&[Segment::Key("b")], "why").unwrap();
-        ed.set_trailing_comment(&[Segment::Key("b")], "two").unwrap();
+        ed.set_trailing_comment(&[Segment::Key("b")], "two")
+            .unwrap();
         assert_eq!(ed.source().unwrap(), "a: 1\n# why\nb: 2 # two\n");
         ed.delete_trailing_comment(&[Segment::Key("b")]).unwrap();
         ed.delete_leading_comments(&[Segment::Key("b")]).unwrap();
@@ -666,8 +712,7 @@ mod tests {
         // An entity-encoded <code> block with MIXED encodings (numeric &#60; vs
         // named &lt;). Editing `expr` must canonically re-encode only that value
         // and leave `note`'s original &lt; byte-for-byte.
-        let html =
-            "<pre><code class=\"language-figl\">\nexpr = \"a &#60; b\"\nnote = \"x &lt; y\"\n</code></pre>\n";
+        let html = "<pre><code class=\"language-figl\">\nexpr = \"a &#60; b\"\nnote = \"x &lt; y\"\n</code></pre>\n";
         let mut ec = Embed::open(html.as_bytes(), EmbedType::HtmlCodeFig).unwrap();
         ec.replace_value(&[Segment::Key("expr")], "p > q").unwrap();
         // The edited value canonically encodes `>`→`&gt;`; the untouched `note`

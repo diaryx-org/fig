@@ -150,10 +150,12 @@ impl RenameRule {
                 }
                 out
             }
-            RenameRule::ScreamingSnake => {
-                RenameRule::Snake.apply_to_variant(variant).to_ascii_uppercase()
-            }
-            RenameRule::Kebab => RenameRule::Snake.apply_to_variant(variant).replace('_', "-"),
+            RenameRule::ScreamingSnake => RenameRule::Snake
+                .apply_to_variant(variant)
+                .to_ascii_uppercase(),
+            RenameRule::Kebab => RenameRule::Snake
+                .apply_to_variant(variant)
+                .replace('_', "-"),
             RenameRule::ScreamingKebab => RenameRule::ScreamingSnake
                 .apply_to_variant(variant)
                 .replace('_', "-"),
@@ -210,7 +212,9 @@ fn parse_field_attrs(attrs: &[syn::Attribute]) -> syn::Result<FieldAttrs> {
                 let path = meta.value()?.parse::<LitStr>()?.parse::<syn::Path>()?;
                 parsed.deserialize_with = Some(path);
             } else if meta.path.is_ident("alias") {
-                parsed.aliases.push(meta.value()?.parse::<LitStr>()?.value());
+                parsed
+                    .aliases
+                    .push(meta.value()?.parse::<LitStr>()?.value());
             } else {
                 return Err(meta.error(
                     "unknown `fig` field attribute (expected: rename, skip, flatten, \
@@ -554,19 +558,23 @@ fn to_value_variant_arm(
                 let id = f.ident;
                 quote! { #id: #b }
             });
-            let entry_stmts = infos.iter().zip(&binds).filter(|(f, _)| !f.skip).map(|(f, b)| {
-                let fkey = &f.key;
-                let push = quote! {
-                    __vmap.push((
-                        fig::Value::Str(::std::string::String::from(#fkey)),
-                        fig::ToValue::to_value(#b),
-                    ));
-                };
-                match &f.skip_serializing_if {
-                    Some(pred) => quote! { if !#pred(#b) { #push } },
-                    None => push,
-                }
-            });
+            let entry_stmts = infos
+                .iter()
+                .zip(&binds)
+                .filter(|(f, _)| !f.skip)
+                .map(|(f, b)| {
+                    let fkey = &f.key;
+                    let push = quote! {
+                        __vmap.push((
+                            fig::Value::Str(::std::string::String::from(#fkey)),
+                            fig::ToValue::to_value(#b),
+                        ));
+                    };
+                    match &f.skip_serializing_if {
+                        Some(pred) => quote! { if !#pred(#b) { #push } },
+                        None => push,
+                    }
+                });
             (
                 quote! { Self::#vident { #(#pat_fields),* } },
                 Some(quote! {{

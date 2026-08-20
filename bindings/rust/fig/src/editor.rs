@@ -105,7 +105,11 @@ impl Editor {
 
     /// Replace the value at `path` with `value` — any `impl Into<Value>`: a
     /// scalar (`9i64`, `"x"`, `true`), a built [`Value`], or a `&Value`.
-    pub fn replace_value(&mut self, path: &[Segment], value: impl Into<Value>) -> Result<(), Error> {
+    pub fn replace_value(
+        &mut self,
+        path: &[Segment],
+        value: impl Into<Value>,
+    ) -> Result<(), Error> {
         let repl = value_text(&value.into(), self.format)?;
         let p = to_ffi_path(path);
         let status = unsafe {
@@ -180,8 +184,9 @@ impl Editor {
     pub fn set_value(&mut self, path: &[Segment], value: impl Into<Value>) -> Result<(), Error> {
         let val = value_text(&value.into(), self.format)?;
         let p = to_ffi_path(path);
-        let status =
-            unsafe { ffi::fig_editor_set(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len()) };
+        let status = unsafe {
+            ffi::fig_editor_set(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
+        };
         Error::from_status(status)
     }
 
@@ -249,8 +254,9 @@ impl Editor {
     ) -> Result<(), Error> {
         let val = value_text_with(&value.into(), self.format, options)?;
         let p = to_ffi_path(path);
-        let status =
-            unsafe { ffi::fig_editor_set(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len()) };
+        let status = unsafe {
+            ffi::fig_editor_set(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
+        };
         Error::from_status(status)
     }
 
@@ -265,7 +271,11 @@ impl Editor {
     }
 
     /// Prepend `value` (any `impl Into<Value>`) to the sequence at `path`.
-    pub fn prepend_value(&mut self, path: &[Segment], value: impl Into<Value>) -> Result<(), Error> {
+    pub fn prepend_value(
+        &mut self,
+        path: &[Segment],
+        value: impl Into<Value>,
+    ) -> Result<(), Error> {
         let val = value_text(&value.into(), self.format)?;
         let p = to_ffi_path(path);
         let status = unsafe {
@@ -338,7 +348,13 @@ impl Editor {
     pub fn add_leading_comment(&mut self, path: &[Segment], text: &str) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe {
-            ffi::fig_editor_add_leading_comment(self.ptr(), p.as_ptr(), p.len(), text.as_ptr(), text.len())
+            ffi::fig_editor_add_leading_comment(
+                self.ptr(),
+                p.as_ptr(),
+                p.len(),
+                text.as_ptr(),
+                text.len(),
+            )
         };
         Error::from_status(status)
     }
@@ -350,7 +366,13 @@ impl Editor {
     pub fn set_trailing_comment(&mut self, path: &[Segment], text: &str) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe {
-            ffi::fig_editor_set_trailing_comment(self.ptr(), p.as_ptr(), p.len(), text.as_ptr(), text.len())
+            ffi::fig_editor_set_trailing_comment(
+                self.ptr(),
+                p.as_ptr(),
+                p.len(),
+                text.as_ptr(),
+                text.len(),
+            )
         };
         Error::from_status(status)
     }
@@ -359,7 +381,8 @@ impl Editor {
     /// A no-op (still `Ok`) when there is none.
     pub fn delete_leading_comments(&mut self, path: &[Segment]) -> Result<(), Error> {
         let p = to_ffi_path(path);
-        let status = unsafe { ffi::fig_editor_delete_leading_comments(self.ptr(), p.as_ptr(), p.len()) };
+        let status =
+            unsafe { ffi::fig_editor_delete_leading_comments(self.ptr(), p.as_ptr(), p.len()) };
         Error::from_status(status)
     }
 
@@ -367,7 +390,8 @@ impl Editor {
     /// (still `Ok`) when there is none.
     pub fn delete_trailing_comment(&mut self, path: &[Segment]) -> Result<(), Error> {
         let p = to_ffi_path(path);
-        let status = unsafe { ffi::fig_editor_delete_trailing_comment(self.ptr(), p.as_ptr(), p.len()) };
+        let status =
+            unsafe { ffi::fig_editor_delete_trailing_comment(self.ptr(), p.as_ptr(), p.len()) };
         Error::from_status(status)
     }
 
@@ -396,9 +420,21 @@ impl Editor {
         let mut len: usize = 0;
         let status = unsafe {
             if trailing {
-                ffi::fig_editor_get_trailing_comment(self.ptr(), p.as_ptr(), p.len(), &mut ptr, &mut len)
+                ffi::fig_editor_get_trailing_comment(
+                    self.ptr(),
+                    p.as_ptr(),
+                    p.len(),
+                    &mut ptr,
+                    &mut len,
+                )
             } else {
-                ffi::fig_editor_get_leading_comment(self.ptr(), p.as_ptr(), p.len(), &mut ptr, &mut len)
+                ffi::fig_editor_get_leading_comment(
+                    self.ptr(),
+                    p.as_ptr(),
+                    p.len(),
+                    &mut ptr,
+                    &mut len,
+                )
             }
         };
         if status.0 == ffi::FigStatus::NOT_FOUND {

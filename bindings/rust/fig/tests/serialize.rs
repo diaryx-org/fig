@@ -202,7 +202,10 @@ fn json_compact_vs_pretty() {
     use fig::SerializeOptions;
     let value = map(vec![
         ("name", "Ada".into()),
-        ("tags", Value::Seq(vec!["zig".into(), true.into(), Value::Null])),
+        (
+            "tags",
+            Value::Seq(vec!["zig".into(), true.into(), Value::Null]),
+        ),
     ]);
 
     // Default serialize == pretty default == 2-space multi-line.

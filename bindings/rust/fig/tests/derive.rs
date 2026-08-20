@@ -226,19 +226,25 @@ struct WithAlias {
 #[test]
 fn alias_accepts_old_keys_on_read() {
     // Primary key wins.
-    let primary =
-        WithAlias::from_value(&Value::Map(vec![(Value::Str("new_name".into()), Value::Str("a".into()))]))
-            .unwrap();
+    let primary = WithAlias::from_value(&Value::Map(vec![(
+        Value::Str("new_name".into()),
+        Value::Str("a".into()),
+    )]))
+    .unwrap();
     assert_eq!(primary.new_name, "a");
     // First alias accepted.
-    let old =
-        WithAlias::from_value(&Value::Map(vec![(Value::Str("old_name".into()), Value::Str("b".into()))]))
-            .unwrap();
+    let old = WithAlias::from_value(&Value::Map(vec![(
+        Value::Str("old_name".into()),
+        Value::Str("b".into()),
+    )]))
+    .unwrap();
     assert_eq!(old.new_name, "b");
     // Second alias accepted.
-    let legacy =
-        WithAlias::from_value(&Value::Map(vec![(Value::Str("legacy".into()), Value::Str("c".into()))]))
-            .unwrap();
+    let legacy = WithAlias::from_value(&Value::Map(vec![(
+        Value::Str("legacy".into()),
+        Value::Str("c".into()),
+    )]))
+    .unwrap();
     assert_eq!(legacy.new_name, "c");
     // ToValue always writes the primary key.
     assert_eq!(map_keys(&primary.to_value()), vec!["new_name"]);
@@ -267,9 +273,11 @@ struct WithDeserializeWith {
 #[test]
 fn deserialize_with_coerces_present_value() {
     // Integer scalar coerced to string.
-    let from_int =
-        WithDeserializeWith::from_value(&Value::Map(vec![(Value::Str("label".into()), Value::Int(42))]))
-            .unwrap();
+    let from_int = WithDeserializeWith::from_value(&Value::Map(vec![(
+        Value::Str("label".into()),
+        Value::Int(42),
+    )]))
+    .unwrap();
     assert_eq!(from_int.label.as_deref(), Some("42"));
     // Absent key -> default (None), hook not called.
     let absent = WithDeserializeWith::from_value(&Value::Map(vec![])).unwrap();

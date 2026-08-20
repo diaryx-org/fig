@@ -39,21 +39,34 @@ pub enum Error {
     /// Both parts are compile-time `&'static str`s, so constructing this is
     /// allocation-free and the message text is assembled lazily in `Display`
     /// rather than `format!`-ed at every derived call site.
-    MissingField { field: &'static str, ty: &'static str },
+    MissingField {
+        field: &'static str,
+        ty: &'static str,
+    },
     /// A derived `FromValue` impl expected a mapping but found another kind.
     ExpectedMapping { ty: &'static str },
     /// A derived enum `FromValue` impl saw a variant/tag it doesn't recognize.
     /// `got` is the (runtime) text that didn't match any known variant.
-    UnknownVariant { enum_name: &'static str, got: String },
+    UnknownVariant {
+        enum_name: &'static str,
+        got: String,
+    },
     /// A derived tuple-variant `FromValue` impl got the wrong element count.
-    WrongSeqLen { label: &'static str, expected: usize, got: usize },
+    WrongSeqLen {
+        label: &'static str,
+        expected: usize,
+        got: usize,
+    },
     /// A static, fully compile-time-known message (no runtime interpolation).
     /// Used by derived code in place of `Message(String::from("..."))` so the
     /// `String` allocation is dropped from every call site.
     Static(&'static str),
     /// A primitive conversion expected one kind of value but found another.
     /// `found` is one of the `&'static str` kind names from `kind_of`.
-    TypeMismatch { expected: &'static str, found: &'static str },
+    TypeMismatch {
+        expected: &'static str,
+        found: &'static str,
+    },
     /// An integer value was outside the range of the target type. Only the
     /// target type name is kept (a `&'static str`) — deliberately *not* the
     /// offending value, since an `i128` payload would force 16-byte alignment
@@ -125,13 +138,20 @@ impl Error {
     #[cold]
     #[inline(never)]
     pub fn unknown_variant(enum_name: &'static str, got: &str) -> Self {
-        Error::UnknownVariant { enum_name, got: got.to_string() }
+        Error::UnknownVariant {
+            enum_name,
+            got: got.to_string(),
+        }
     }
 
     #[cold]
     #[inline(never)]
     pub fn wrong_seq_len(label: &'static str, expected: usize, got: usize) -> Self {
-        Error::WrongSeqLen { label, expected, got }
+        Error::WrongSeqLen {
+            label,
+            expected,
+            got,
+        }
     }
 
     #[cold]
@@ -195,8 +215,15 @@ impl fmt::Display for Error {
             Error::UnknownVariant { enum_name, got } => {
                 write!(f, "unknown variant `{got}` for enum `{enum_name}`")
             }
-            Error::WrongSeqLen { label, expected, got } => {
-                write!(f, "expected {expected} element(s) for `{label}`, found {got}")
+            Error::WrongSeqLen {
+                label,
+                expected,
+                got,
+            } => {
+                write!(
+                    f,
+                    "expected {expected} element(s) for `{label}`, found {got}"
+                )
             }
             Error::Static(msg) => f.write_str(msg),
             Error::TypeMismatch { expected, found } => {

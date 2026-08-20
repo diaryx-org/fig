@@ -3,7 +3,7 @@ title = VERSIONING
 description = Versioning policy for `fig`
 author = adammharris
 created = 2026-06-27
-updated = 2026-07-06
+updated = 2026-08-20
 part_of = [docs](docs.md)
 ```
 
@@ -59,13 +59,60 @@ A release that bumps several artifacts at once just pushes several tags at the s
 
 ## Releasing
 
-1. Bump only the artifact(s) whose surface changed, by the amount its SemVer tool demands, with `zig build version-set -- <artifact> <version|major|minor|patch>` (`artifact` = `core`|`cli`|`rust`|`npm`). It edits the right manifest(s) and keeps the coupled fields consistent for you: the `fig-wasi` == `cli_version` pin (so a `cli` bump carries `fig-wasi`), the `fig-macros` pin == the Rust workspace version, and the `artifact >= core` floor (a `core` bump auto-raises any lagging cli/rust/npm), then refreshes the lockfiles. A `core` bump also syncs `fig.md`'s frontmatter `version` field (the number shown at the top of the README) to match, by shelling out to `fig set` itself rather than hand-editing the markdown. Add `--dry-run` to preview the edits without writing. (`version-set` is the writer counterpart of the read-only `version-floor` checker; it does **not** touch `abi_version` — see step 2.)
-2. If the core had a **breaking** ABI change, also bump `FIG_ABI_VERSION` (`abi_version` in `build.zig`) by hand — it's a deliberate ABI-contract decision `semver-check` guards, not a marketing version, so `version-set` leaves it alone — and pull every other artifact's major up to satisfy the floor (`zig build version-set -- core <major>.0.0` does the pull for you).
-3. Run `zig build check` (test + abi-check + semver-check + version-floor + cargo-semver-checks) — all green.
-4. Cut the changelog entry. `zig build changelog` regenerates [CHANGELOG](CHANGELOG.md)'s `## Unreleased` region from the commits since the newest tag on any track; then rename that heading by hand to name every version going out (`## core 2.6.0 · cli 3.5.3 · rust 3.2.0 · npm 2.6.0`) and add a new empty `## Unreleased` above it. Triage anything that landed in the **Uncategorised** bucket, and check the **Behavioural changes** section actually covers what an unedited caller will notice — it is gathered from `Behavioural-change:` commit trailers, so a missing one means a commit didn't carry it. `zig build changelog-check` verifies the region is current without writing; it is deliberately not part of `zig build check` (see the comment in `src/build/tools.zig`).
-5. Push one tag per artifact that changed this release (see "Release tagging" above): `cli/v<cli-version>` if the CLI (or `fig-wasi`) moved, `core/v<core-version>` if the core moved, `rust/v<rust-version>` / `npm/v<npm-version>` for those tracks. The SemVer tools each baseline against their own track's most recent tag (`core/v*` for `semver-check`, `rust/v*` for `cargo-semver-checks`).
+One command, which stops before the push:
+
+```
+zig build release -- <artifact> <version|major|minor|patch> [...] [--push] [--no-verify]
+```
+
+`zig build release -- rust minor` for a Rust-only release; `zig build release --
+core minor cli patch` when several artifacts move together. It runs steps 1–6
+below in order, and a run without `--push` ends by printing the two commands it
+did not run, along with what each tag will set off and the one-line undo (`git
+tag -d <tags> && git reset --hard HEAD~1`). The push is asked for explicitly
+every time because it is the step that spends a version number: crates.io and
+npm can yank a version, never reuse it.
+
+The **release set is read back off the manifests**, not off the arguments — so
+an artifact that `version-set` raised to satisfy the `>= core` floor is tagged
+and named in the changelog heading along with the one you asked for.
+
+The steps, which are also how to do it by hand:
+
+1. **Preflight.** Refuse a release that is already doomed, before anything is
+   written: a dirty tree (the release commit must hold only the bump and the
+   changelog), a branch that isn't `main`, a `main` behind `origin/main` (a
+   release cut on a stale main is a release missing commits; advisory if origin
+   is unreachable), no `git-cliff` on PATH, or a [CHANGELOG](CHANGELOG.md) whose
+   generated region isn't inside a `## Unreleased` section — which is what a
+   previous release cut by hand leaves behind — or is empty, meaning there is
+   nothing to release.
+2. **Bump** only the artifact(s) whose surface changed, by the amount its SemVer tool demands, with `zig build version-set -- <artifact> <version|major|minor|patch>` (`artifact` = `core`|`cli`|`rust`|`npm`). It edits the right manifest(s) and keeps the coupled fields consistent for you: the `fig-wasi` == `cli_version` pin (so a `cli` bump carries `fig-wasi`), the `fig-macros` pin == the Rust workspace version, and the `artifact >= core` floor (a `core` bump auto-raises any lagging cli/rust/npm), then refreshes the lockfiles. A `core` bump also syncs `fig.md`'s frontmatter `version` field (the number shown at the top of the README) to match, by shelling out to `fig set` itself rather than hand-editing the markdown. Add `--dry-run` to preview the edits without writing — the way to see what a bump would do without cutting anything. (`version-set` is the writer counterpart of the read-only `version-floor` checker; it does **not** touch `abi_version` — see below.)
+3. **Verify** with `zig build check` (test + abi-check + semver-check + version-floor + cargo-semver-checks) — all green. This runs *after* the bump, not before: `semver-check` and `version-floor` judge the versions in the tree, so running them first would be judging the versions the release is replacing. `zig build release --no-verify` skips it, for a re-run of a release whose check already passed.
+4. **Cut the changelog entry.** `zig build changelog` regenerates [CHANGELOG](CHANGELOG.md)'s `## Unreleased` region from the commits since the newest tag on any track; the cut then renames that heading to name every version going out (`## core 2.6.0 · cli 3.5.3 · rust 3.2.0 · npm 2.6.0`), strips the two markers from the section that just became history — so exactly one marker pair is ever in the file and a later regeneration cannot rewrite a released section — and opens a fresh empty `## Unreleased` above it. A handwritten release intro below the end marker rides down with its section. Anything that landed in the **Uncategorised** bucket is a commit whose subject git-conventional could not read; the tool warns rather than refusing, since the region is generated and the fix is an amended subject, not an edit there. Check the **Behavioural changes** section actually covers what an unedited caller will notice — it is gathered from `Behavioural-change:` commit trailers, so a missing one means a commit didn't carry it. `zig build changelog-check` verifies the region is current without writing; it is deliberately not part of `zig build check` (see the comment in `src/build/tools.zig`).
+5. **Commit** the bump and the changelog, and nothing else. `release` stages the release files by name and refuses if anything else in the tree changed, then commits as `chore: release <heading>` — a subject `.config/cliff.toml` skips, so the release commit never appears in the next release's changelog.
+6. **Tag** one annotated tag per artifact that changed this release (see "Release tagging" above): `cli/v<cli-version>` if the CLI (or `fig-wasi`) moved, `core/v<core-version>` if the core moved, `rust/v<rust-version>` / `npm/v<npm-version>` for those tracks. The SemVer tools each baseline against their own track's most recent tag (`core/v*` for `semver-check`, `rust/v*` for `cargo-semver-checks`).
+7. **Push** the branch and the tags — `--push`, or the two commands the tool prints.
+
+If the core had a **breaking** ABI change, bump `FIG_ABI_VERSION` (`abi_version`
+in `build.zig`) by hand before releasing — it's a deliberate ABI-contract
+decision `semver-check` guards, not a marketing version, so neither
+`version-set` nor `release` touches it — and pull every other artifact's major
+up to satisfy the floor (`zig build version-set -- core <major>.0.0` does the
+pull for you).
+
+Everything `release` does before the push is local and reversible, and any
+failure after the bump restores the tree — the preflight proved it was clean, so
+`git checkout -- .` puts back exactly what the tool wrote and nothing else. The
+one exception is a failure *between* the commit and the last tag: the commit is
+left in place and the tool says so, rather than guessing which half to unwind.
 
 ## Known gaps
 
 - **No automated TypeScript API guard.** There is no turnkey `cargo-semver-checks` equivalent for the TS public surface, and the C-ABI integer has no TS analog (npm exposes no C ABI). The TS package is on the independent track + floor; an automated TS API-diff (e.g. an `api-extractor` report committed to git) is an optional follow-up.
+- **No `publish` command.** `release.yml`'s crate job inlines its own bottom-up
+  `cargo publish` loop over the workspace, so the workflow knows the crate list
+  rather than asking the repo for it, and a run that dies halfway is finished by
+  re-running the workflow rather than a local command. prov's `cargo xtask
+  publish` is the shape to copy if that ever needs a manual recovery path.
 - **No `npm/*` tag baseline guard yet.** Unlike the C ABI (`semver-check` vs `core/v*`) and the Rust crate (`cargo-semver-checks` vs `rust/v*`), the TS package has no equivalent baseline diff to run against `npm/v*` — see the TypeScript API guard gap above; once that lands, it should baseline the same way.

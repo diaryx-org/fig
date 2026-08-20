@@ -199,6 +199,35 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     const changelog_check_step = b.step("changelog-check", "Fail if docs/CHANGELOG.md's Unreleased region is stale");
     changelog_check_step.dependOn(&changelog_check_run.step);
 
+    // The whole release, as one command: preflight, bump (via the version_set
+    // binary above — the same program `zig build version-set` runs, handed over
+    // as an artifact arg rather than re-implemented), `zig build check`, the
+    // changelog regen + cut, the release commit, one annotated tag per track
+    // that moved, and a stop before the push. See docs/VERSIONING.md.
+    //
+    // Not part of `check`, and side-effecting for the same reason version-set
+    // is: it rewrites the real tree and talks to git, so it must never be
+    // served from cache. The nested `zig build check` it runs is a separate
+    // top-level build against the same cache — which is exactly what a
+    // maintainer would type — and it has to run AFTER the bump, so it cannot be
+    // a build-graph dependency here.
+    const release = b.addExecutable(.{
+        .name = "release",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/release.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const release_run = b.addRunArtifact(release);
+    release_run.addArtifactArg(version_set);
+    release_run.addArtifactArg(exe);
+    release_run.addArg(b.pathFromRoot("."));
+    if (b.args) |args| release_run.addArgs(args);
+    release_run.has_side_effects = true;
+    const release_step = b.step("release", "Cut a release: bump, verify, cut the changelog, commit, tag (push only with --push)");
+    release_step.dependOn(&release_run.step);
+
     // The `Language` contract's negative tests. `language.validate` is a wall
     // of `@compileError`, and Zig cannot assert that one fires from inside
     // `zig build test` — a test that triggers a compile error doesn't fail, it

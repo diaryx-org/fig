@@ -3,7 +3,7 @@ title = CHANGELOG
 description = Release history for `fig`
 author = adammharris
 created = 2026-08-17
-updated = 2026-08-17
+updated = 2026-08-20
 part_of = [docs](docs.md)
 ```
 
@@ -106,13 +106,48 @@ disappearing.
 What is left to write by hand is a release **intro** — a paragraph or two for a
 release that wants a narrative rather than a list. Most releases want none, and
 an intro that only restates the bullets below it should be cut. It goes below
-the end marker, where regeneration cannot reach it. Cutting a release means
-renaming `## Unreleased` to the versions that went out and leaving the generated
-region in place.
+the end marker, where regeneration cannot reach it, and it rides down with its
+section when the release is cut.
 
-## 2.6.0
+Cutting a release renames `## Unreleased` to the versions that went out, strips
+the two markers from the section that just became history, and opens a fresh
+empty `## Unreleased` above it. `zig build release` does that (see
+[VERSIONING](VERSIONING.md)); the markers come out because exactly one pair
+should ever be in this file — a second pair left behind in a released section is
+one that the next `zig build changelog` would overwrite with unreleased work.
+
+## Unreleased
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
+
+### Added
+
+- **rust** — the scalar text parser, so text edits round-trip through fig ([`4ad9936`](https://github.com/diaryx-org/fig/commit/4ad9936370dff40efcceba9557d8a33dfaa2825a))
+- **rust** — Value::eq_canonical, a comparison a dirty check can converge on ([`b966d7a`](https://github.com/diaryx-org/fig/commit/b966d7a9137ebfb628b552db4754e7808aaf0d2a))
+
+### Fixed
+
+- **ci** — attach tangled artifacts by AT-URI, not the knot URL ([`f664b2a`](https://github.com/diaryx-org/fig/commit/f664b2a81c32faa229a537fe61cf9fa2f6ab1a50))
+
+### Changed
+
+- **rust** — a small integer is Int, whichever Rust type it came from ([`667ed09`](https://github.com/diaryx-org/fig/commit/667ed098baec848273c8869956cee9b13255ff29))
+
+### Behavioural changes
+
+- released artifacts now show on the tangled tag page
+
+- an unsigned integer that fits in `i64` now builds as
+  `Value::Int`, not `Value::Uint` — from `Value::from(3u64)`, a `u8`/`u16`/
+  `u32`/`u64`/`usize` field via `ToValue` or serde, or `from_str::`<Value>``.
+  `Uint` now appears only past `i64::MAX`. Code matching `Value::Uint(_)`
+  to catch small unsigned values needs an `Int` arm; the `as_i64`/`as_u64`/
+  `as_f64` accessors are unaffected, and `Value::from(3u64)` is now `==` to
+  a `3` read from a document.
+
+<!-- git-cliff:end -->
+
+## 2.6.0
 
 ### Added
 
@@ -182,5 +217,3 @@ homebrew workflow ([`a702829`](https://github.com/diaryx-org/fig/commit/a7028294
 - `zig build changelog` is a new build step; it needs
   git-cliff on PATH (added to the nix dev shell). It is not part of
   `zig build check`, so an absent git-cliff cannot fail an ordinary build.
-
-<!-- git-cliff:end -->

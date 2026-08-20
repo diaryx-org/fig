@@ -313,7 +313,7 @@ impl Document {
             FigNodeKind::Bool => Ok(Value::Bool(self.get_bool(id).ok_or(Error::Internal)?)),
             FigNodeKind::Int | FigNodeKind::Float => {
                 let raw = self.number_raw(id).ok_or(Error::Internal)??;
-                value::number_from_raw(raw, kind == FigNodeKind::Float)
+                Value::parse_number(raw, kind == FigNodeKind::Float)
             }
             FigNodeKind::String => Ok(Value::Str(
                 self.get_str(id).ok_or(Error::Internal)??.to_owned(),

@@ -59,7 +59,7 @@ impl<'de, 'a> Deserializer<'de> for NodeDeserializer<'a> {
             FigNodeKind::Int => visit_int(self.number_raw(id)?, visitor),
             FigNodeKind::Float => {
                 let raw = self.number_raw(id)?;
-                let f = crate::value::parse_yaml_float(raw)
+                let f = crate::Value::parse_float(raw)
                     .ok_or_else(|| Error::Number(raw.to_string()))?;
                 visitor.visit_f64(f)
             }
@@ -154,7 +154,7 @@ fn visit_int<'de, V: Visitor<'de>>(raw: &str, visitor: V) -> Result<V::Value, Er
         visitor.visit_i128(i)
     } else if let Ok(u) = raw.parse::<u128>() {
         visitor.visit_u128(u)
-    } else if let Some(f) = crate::value::parse_yaml_float(raw) {
+    } else if let Some(f) = crate::Value::parse_float(raw) {
         // Out of integer range — fall back to float, matching YAML behavior.
         visitor.visit_f64(f)
     } else {

@@ -2,7 +2,7 @@
 title = Using fig in Rust
 author = adammharris
 created = 2026-07-05T21:35:14-06:00
-updated = 2026-08-08T10:00:00-06:00
+updated = 2026-08-20T10:00:00-06:00
 part_of = [docs](docs.md)
 ```
 
@@ -221,6 +221,21 @@ let value = Value::Map(vec![
 ]);
 
 value.serialize(Format::Json)?; // {\n  "name": "fig",\n  "nums": [\n    1,\n    2\n  ]\n}\n
+```
+
+The reverse direction — scalar *text* back into a `Value` — is
+[`Value::parse_number`], the same mapping `Document::to_value` uses, plus
+[`Value::parse_float`] for the `f64` half on its own. Reach for these rather than
+`str::parse` when turning edited text back into a value: `str::parse::<f64>()`
+rejects `.inf`/`.nan`, the exact spellings fig writes, so a field holding one
+would silently become a string on an edit that changed nothing.
+
+```rust
+use fig::Value;
+
+Value::parse_number("3", false)?;    // Int(3)  — integer field
+Value::parse_number("3", true)?;     // Float(3.0) — float field, same text
+Value::parse_number(".inf", true)?;  // Float(f64::INFINITY), not Str(".inf")
 ```
 
 ## Typed structs: serde or derive

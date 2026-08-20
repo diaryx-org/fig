@@ -344,6 +344,60 @@ impl Value {
         }
     }
 
+    /// Parse a numeric scalar's text into a `Value`, exactly as reading a
+    /// document does — the inverse of the number text fig writes out.
+    ///
+    /// `is_float` is the scalar's kind, not a guess about its spelling: a float
+    /// field holding `3` is `Float(3.0)`, an integer field holding `3` is
+    /// `Int(3)`. An integer tries `i64` then `u64`, falling back to a float when
+    /// it fits in neither (matching how the deserializer widens); a float goes
+    /// through [`Value::parse_float`], so it accepts the `.inf`/`.nan` spellings
+    /// fig itself emits.
+    ///
+    /// Editors and schema layers that turn edited text back into a value should
+    /// use this rather than `str::parse`, which rejects `.inf`/`.nan` — a field
+    /// holding one would otherwise become a [`Value::Str`] on a no-op edit.
+    ///
+    /// ```
+    /// use fig::Value;
+    ///
+    /// assert_eq!(Value::parse_number("3", false).unwrap(), Value::Int(3));
+    /// assert_eq!(Value::parse_number("3", true).unwrap(), Value::Float(3.0));
+    /// assert!(Value::parse_number(".inf", true).unwrap().as_f64().unwrap().is_infinite());
+    /// assert!(Value::parse_number("nope", false).is_err());
+    /// ```
+    pub fn parse_number(raw: &str, is_float: bool) -> Result<Value, Error> {
+        if !is_float {
+            if let Ok(i) = raw.parse::<i64>() {
+                return Ok(Value::Int(i));
+            }
+            if let Ok(u) = raw.parse::<u64>() {
+                return Ok(Value::Uint(u));
+            }
+        }
+        Value::parse_float(raw)
+            .map(Value::Float)
+            .ok_or_else(|| Error::Number(raw.to_owned()))
+    }
+
+    /// Parse float text the way fig reads it: `f64::from_str`, plus the
+    /// non-finite spellings YAML uses and fig writes — `.inf`, `.Inf`, `.INF`
+    /// (with an optional `+`), their negatives, and `.nan`, `.NaN`, `.NAN`.
+    /// `None` if the text is not a float at all.
+    ///
+    /// This is the inverse of the text fig serializes a [`Value::Float`] to, so
+    /// a float scalar survives a text round trip unchanged. Rust's own
+    /// `"…".parse::<f64>()` is not: it rejects `.inf`/`.nan` and accepts
+    /// `inf`/`NaN`, which fig never writes.
+    pub fn parse_float(raw: &str) -> Option<f64> {
+        match raw {
+            ".inf" | ".Inf" | ".INF" | "+.inf" | "+.Inf" | "+.INF" => Some(f64::INFINITY),
+            "-.inf" | "-.Inf" | "-.INF" => Some(f64::NEG_INFINITY),
+            ".nan" | ".NaN" | ".NAN" => Some(f64::NAN),
+            _ => raw.parse::<f64>().ok(),
+        }
+    }
+
     /// Index into this value: a string-like [`Index`] looks up a key among a
     /// [`Value::Map`]'s entries (last-wins on duplicates), an integer looks up
     /// a position in a [`Value::Seq`]. `None` if this value isn't the matching
@@ -520,34 +574,6 @@ pub(crate) fn value_text_with(
         s.pop();
     }
     Ok(s)
-}
-
-/// Parse a numeric scalar's raw text into a `Value`, classifying by `is_float`
-/// (the node's kind). Integers try `i64` then `u64`, falling back to float when
-/// out of range, matching how the serde deserializer widens.
-pub(crate) fn number_from_raw(raw: &str, is_float: bool) -> Result<Value, Error> {
-    if !is_float {
-        if let Ok(i) = raw.parse::<i64>() {
-            return Ok(Value::Int(i));
-        }
-        if let Ok(u) = raw.parse::<u64>() {
-            return Ok(Value::Uint(u));
-        }
-    }
-    parse_yaml_float(raw)
-        .map(Value::Float)
-        .ok_or_else(|| Error::Number(raw.to_owned()))
-}
-
-/// Parse a float, including the YAML special values (`​.inf`/`.nan`) that Rust's
-/// `f64::from_str` rejects.
-pub(crate) fn parse_yaml_float(raw: &str) -> Option<f64> {
-    match raw {
-        ".inf" | ".Inf" | ".INF" | "+.inf" | "+.Inf" | "+.INF" => Some(f64::INFINITY),
-        "-.inf" | "-.Inf" | "-.INF" => Some(f64::NEG_INFINITY),
-        ".nan" | ".NaN" | ".NAN" => Some(f64::NAN),
-        _ => raw.parse::<f64>().ok(),
-    }
 }
 
 /// Format a float as the text fig stores in `number.raw`: YAML's `.inf`/`.nan`
@@ -762,7 +788,7 @@ mod tests {
             123456789012345680000.0,
         ] {
             let text = format_float(f);
-            let back = parse_yaml_float(&text)
+            let back = Value::parse_float(&text)
                 .unwrap_or_else(|| panic!("`{text}` must parse back as a float"));
             assert_eq!(back.to_bits(), f.to_bits(), "round trip of `{text}`");
         }
@@ -960,6 +986,50 @@ mod tests {
         assert_eq!(Value::Int(5).as_f64(), Some(5.0));
         assert_eq!(Value::Uint(5).as_f64(), Some(5.0));
         assert_eq!(Value::Bool(true).as_f64(), None);
+    }
+
+    // A `.nan`/`.inf` document survives parse -> text -> parse: the same text
+    // fig writes reads back as the same float. Without `Value::parse_float`, a
+    // caller reaching for `str::parse` turns `.inf` into a quoted string on an
+    // edit that changed nothing.
+    #[test]
+    fn float_specials_round_trip_through_the_public_parser() {
+        for (text, expect_nan) in [(".inf", false), ("-.inf", false), (".nan", true)] {
+            let v = Value::parse_number(text, true).unwrap();
+            assert!(v.is_f64(), "`{text}` must stay a float, not become a string");
+            let f = v.as_f64().unwrap();
+            assert_eq!(f.is_nan(), expect_nan);
+            // ...and the value renders back to the text it was parsed from.
+            assert_eq!(format_float(f), text);
+        }
+        // `str::parse` rejects the spellings fig writes; `parse_float` is the
+        // inverse of `format_float` instead (while still taking Rust's own).
+        assert!(".inf".parse::<f64>().is_err());
+        assert!(Value::parse_float(".inf").unwrap().is_infinite());
+        assert!(Value::parse_float("inf").unwrap().is_infinite());
+        assert!(Value::parse_float("nope").is_none());
+    }
+
+    // The kind drives the variant, not the spelling: `3` in a float field is a
+    // float, and an integer past `u64` widens rather than failing.
+    #[test]
+    fn parse_number_classifies_by_kind() {
+        assert_eq!(Value::parse_number("3", false).unwrap(), Value::Int(3));
+        assert_eq!(Value::parse_number("-3", false).unwrap(), Value::Int(-3));
+        assert_eq!(Value::parse_number("3", true).unwrap(), Value::Float(3.0));
+        assert_eq!(
+            Value::parse_number("18446744073709551615", false).unwrap(),
+            Value::Uint(u64::MAX)
+        );
+        // Past `u64`: widens to a float, matching how the deserializer reads it.
+        assert!(matches!(
+            Value::parse_number("184467440737095516150", false).unwrap(),
+            Value::Float(_)
+        ));
+        assert!(matches!(
+            Value::parse_number("zero", false),
+            Err(Error::Number(_))
+        ));
     }
 
     #[test]

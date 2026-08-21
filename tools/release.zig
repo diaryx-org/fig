@@ -8,11 +8,19 @@
 //! whose generated region has to be cut into a released section, one tag per
 //! track that actually moved — so it lives here instead of in a checklist:
 //!
-//!   zig build release -- <artifact> <version|major|minor|patch> [...] [flags]
+//!   zig build release -- <artifact> <version|major|minor|patch|as-is> [...] [flags]
 //!
 //!     artifact : core | cli | rust | npm   (fig-wasi rides cli, as ever)
+//!     as-is    : release the version already in the manifests, bumping nothing
 //!     flags    : --push       also push the branch and the tags
 //!                --no-verify  skip `zig build check`
+//!
+//! `as-is` is for the case a bump-first tool otherwise handles badly: a version
+//! that was bumped in an earlier commit and never released. The number is
+//! already right; what is missing is the tag, the changelog section, and the
+//! publish. Bumping again to release it would spend a version number to fix a
+//! bookkeeping gap, and leave a hole in the published history where the
+//! unreleased one used to be.
 //!
 //! Several artifacts move in one release by naming several pairs:
 //!
@@ -152,6 +160,12 @@ pub fn main(init: std.process.Init) !void {
         return usage(std.fmt.allocPrint(arena, "`{s}` has no <version|major|minor|patch> after it", .{artifact}) catch "missing version");
     if (pairs.items.len == 0) return usage("nothing to release — name at least one artifact");
     for (pairs.items) |p| {
+        for (pairs.items) |q| {
+            if (p.artifact.ptr != q.artifact.ptr and std.mem.eql(u8, p.artifact, q.artifact))
+                return usage(std.fmt.allocPrint(arena, "`{s}` named twice — one spec per artifact", .{p.artifact}) catch "artifact named twice");
+        }
+    }
+    for (pairs.items) |p| {
         if (std.meta.stringToEnum(Track, p.artifact) == null) {
             if (std.mem.eql(u8, p.artifact, "wasi"))
                 fail("fig-wasi is pinned to cli_version; release the CLI instead: `zig build release -- cli {s}`", .{p.spec});
@@ -171,23 +185,18 @@ pub fn main(init: std.process.Init) !void {
     // ---- bump ---------------------------------------------------------------
     step("bump");
     for (pairs.items) |p| {
+        if (std.mem.eql(u8, p.spec, as_is)) {
+            std.debug.print("{s}: as-is — releasing {s}, no bump\n", .{ p.artifact, before.get(std.meta.stringToEnum(Track, p.artifact).?) });
+            continue;
+        }
         const argv = [_][]const u8{ version_set_binary, fig_binary, repo_root, p.artifact, p.spec };
         if (!try sh.stream(&argv))
             fail("`version-set {s} {s}` failed — the tree is untouched by anything after it", .{ p.artifact, p.spec });
     }
 
     const after = try readVersions(io, arena, cwd, repo_root);
-    var moved: std.ArrayList(Moved) = .empty;
-    for (std.enums.values(Track)) |t| {
-        const old = before.get(t);
-        const new = after.get(t);
-        if (!std.mem.eql(u8, old, new)) try moved.append(arena, .{ .track = t, .from = old, .to = new });
-    }
-    if (moved.items.len == 0) {
-        // Nothing was written, so there is nothing to restore.
-        fail("no version changed — every artifact is already at the version asked for", .{});
-    }
-    const heading = try headingFor(arena, moved.items);
+    const moved = try releaseSet(arena, pairs.items, before, after);
+    const heading = try headingFor(arena, moved);
     std.debug.print("\nrelease: {s}\n", .{heading});
 
     // From here on the tree is dirty, so every exit restores it.
@@ -196,7 +205,7 @@ pub fn main(init: std.process.Init) !void {
     // The tag names only exist once the bump has run, so this is as early as a
     // collision can be caught — still well before `check`, the changelog, and
     // the commit, and while restoring the tree is all it takes to back out.
-    try tagsAreFree(sh, arena, repo_root, moved.items);
+    try tagsAreFree(sh, arena, repo_root, moved);
 
     // ---- verify -------------------------------------------------------------
     if (verify) {
@@ -241,7 +250,7 @@ pub fn main(init: std.process.Init) !void {
     step("commit + tag");
     try commit(sh, arena, cwd, repo_root, heading);
     var tags: std.ArrayList([]const u8) = .empty;
-    for (moved.items) |m| {
+    for (moved) |m| {
         const tag = try std.fmt.allocPrint(arena, "{s}/v{s}", .{ m.track.prefix(), m.to });
         if (!try sh.stream(&.{ "git", "-C", repo_root, "tag", "-a", tag, "-m", heading })) {
             // The commit is already made; leave it and say so rather than
@@ -258,8 +267,14 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("To release:\n\n    git push origin {s}\n    git push origin", .{branch});
         for (tags.items) |t| std.debug.print(" {s}", .{t});
         std.debug.print("\n\nWhat each tag sets off:\n", .{});
-        for (moved.items) |m|
-            std.debug.print("  {s}/v{s}  ->  {s}\n", .{ m.track.prefix(), m.to, m.track.triggers() });
+        for (moved) |m| {
+            std.debug.print("  {s}/v{s}{s}  ->  {s}\n", .{
+                m.track.prefix(),
+                m.to,
+                if (m.unchanged()) "  (as-is, bumped by an earlier commit)" else "",
+                m.track.triggers(),
+            });
+        }
         std.debug.print("\nNone of it can be undone — a published version number is spent even\nafter a yank. To undo locally instead:\n\n    git tag -d", .{});
         for (tags.items) |t| std.debug.print(" {s}", .{t});
         std.debug.print(" && git reset --hard HEAD~1\n\n", .{});
@@ -276,8 +291,45 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("\nrelease: pushed. The release workflows are running:\n  https://github.com/diaryx-org/fig/actions\n\n", .{});
 }
 
+/// The spec that bumps nothing: release whatever the manifests already say.
+const as_is = "as-is";
+
 const Pair = struct { artifact: []const u8, spec: []const u8 };
-const Moved = struct { track: Track, from: []const u8, to: []const u8 };
+
+/// A track going out in this release, and where its version came from.
+const Moved = struct {
+    track: Track,
+    from: []const u8,
+    to: []const u8,
+
+    /// `true` when this release doesn't move the number — an `as-is` track, or
+    /// one named with the version it already had.
+    fn unchanged(m: Moved) bool {
+        return std.mem.eql(u8, m.from, m.to);
+    }
+};
+
+/// What is going out: every track named on the command line, at whatever
+/// version the manifests now hold, plus every track the bump moved without
+/// being named — the ones `version-set` raised to satisfy the `>= core` floor.
+///
+/// Named-but-unmoved counts, which is the whole of `as-is`: a release is a tag
+/// and a changelog section, and a version that was bumped in an earlier commit
+/// needs both of those just as much as one bumped a moment ago. Unnamed-and-
+/// unmoved does not: that is simply an artifact this release isn't about.
+fn releaseSet(arena: std.mem.Allocator, pairs: []const Pair, before: Versions, after: Versions) ![]const Moved {
+    var out: std.ArrayList(Moved) = .empty;
+    for (std.enums.values(Track)) |t| {
+        const from = before.get(t);
+        const to = after.get(t);
+        const named = for (pairs) |p| {
+            if (std.meta.stringToEnum(Track, p.artifact) == t) break true;
+        } else false;
+        if (named or !std.mem.eql(u8, from, to))
+            try out.append(arena, .{ .track = t, .from = from, .to = to });
+    }
+    return out.toOwnedSlice(arena);
+}
 
 /// The four tracked versions, read straight off the manifests (the same
 /// locators `version-floor` and `version-set` use), so "what moved" is a fact
@@ -636,13 +688,15 @@ fn usage(why: []const u8) noreturn {
     std.debug.print(
         \\release: {s}
         \\
-        \\usage: zig build release -- <artifact> <version|major|minor|patch> [...] [--push] [--no-verify]
+        \\usage: zig build release -- <artifact> <version|major|minor|patch|as-is> [...] [--push] [--no-verify]
         \\  artifact : core | cli | rust | npm   (fig-wasi rides the cli track)
-        \\  version  : an explicit SemVer (e.g. 2.7.0) or a bump keyword
+        \\  version  : an explicit SemVer (e.g. 2.7.0), a bump keyword, or `as-is`
+        \\             to release the version the manifests already hold
         \\
         \\examples:
         \\  zig build release -- rust minor
         \\  zig build release -- core minor cli patch
+        \\  zig build release -- rust as-is npm as-is
         \\  zig build release -- cli patch --push
         \\
         \\Preview a bump without releasing: zig build version-set -- <artifact> <spec> --dry-run
@@ -753,6 +807,51 @@ test "a changelog the cut cannot trust is refused, not guessed at" {
     try testing.expectError(error.DuplicateMarker, parseUnreleased(doubled));
 
     try testing.expectError(error.NoBeginMarker, parseUnreleased("# nothing here\n"));
+}
+
+test "the release set is what was named, plus what the floor dragged along" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const before: Versions = .{ .core = "2.6.0", .cli = "3.5.4", .rust = "3.2.0", .npm = "2.6.0" };
+
+    // `as-is`: nothing moved, and the named track is still the release.
+    {
+        const set = try releaseSet(arena, &.{.{ .artifact = "rust", .spec = as_is }}, before, before);
+        try testing.expectEqual(1, set.len);
+        try testing.expectEqual(Track.rust, set[0].track);
+        try testing.expectEqualStrings("3.2.0", set[0].to);
+        try testing.expect(set[0].unchanged());
+        try testing.expectEqualStrings("rust 3.2.0", try headingFor(arena, set));
+    }
+
+    // Two tracks sitting unreleased, released together, still nothing bumped.
+    {
+        const set = try releaseSet(arena, &.{
+            .{ .artifact = "rust", .spec = as_is },
+            .{ .artifact = "npm", .spec = as_is },
+        }, before, before);
+        try testing.expectEqualStrings("rust 3.2.0 · npm 2.6.0", try headingFor(arena, set));
+    }
+
+    // A core bump raises the artifacts below the floor: unnamed, but they moved,
+    // so they are part of the release and get their own tags.
+    {
+        const after: Versions = .{ .core = "4.0.0", .cli = "4.0.0", .rust = "4.0.0", .npm = "4.0.0" };
+        const set = try releaseSet(arena, &.{.{ .artifact = "core", .spec = "4.0.0" }}, before, after);
+        try testing.expectEqual(4, set.len);
+        try testing.expect(!set[0].unchanged());
+        try testing.expectEqualStrings("core 4.0.0 · cli 4.0.0 · rust 4.0.0 · npm 4.0.0", try headingFor(arena, set));
+    }
+
+    // An artifact neither named nor moved is not in the release, even though
+    // its version is ahead of its last tag.
+    {
+        const after: Versions = .{ .core = "2.6.0", .cli = "3.6.0", .rust = "3.2.0", .npm = "2.6.0" };
+        const set = try releaseSet(arena, &.{.{ .artifact = "cli", .spec = "minor" }}, before, after);
+        try testing.expectEqualStrings("cli 3.6.0", try headingFor(arena, set));
+    }
 }
 
 test "the heading names every artifact that moved, in track order" {

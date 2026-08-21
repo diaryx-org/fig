@@ -124,6 +124,7 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 
 - **rust** — the scalar text parser, so text edits round-trip through fig ([`4ad9936`](https://github.com/diaryx-org/fig/commit/4ad9936370dff40efcceba9557d8a33dfaa2825a))
 - **rust** — Value::eq_canonical, a comparison a dirty check can converge on ([`b966d7a`](https://github.com/diaryx-org/fig/commit/b966d7a9137ebfb628b552db4754e7808aaf0d2a))
+- **build** — `zig build release`, the whole release as one command ([`200e9e4`](https://github.com/diaryx-org/fig/commit/200e9e471ac5cf931b9530b57c859eb8c9d45250))
 
 ### Fixed
 

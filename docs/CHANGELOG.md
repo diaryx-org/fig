@@ -136,6 +136,7 @@ _No commits since the last release tag._
 ### Fixed
 
 - **ci** — attach tangled artifacts by AT-URI, not the knot URL ([`f664b2a`](https://github.com/diaryx-org/fig/commit/f664b2a81c32faa229a537fe61cf9fa2f6ab1a50))
+- **build** — vendor the crate README from README.md, not the fig.md that moved ([`71bffcb`](https://github.com/diaryx-org/fig/commit/71bffcb137c8e01e5c6c77750bb89a3ff6b88160))
 
 ### Changed
 

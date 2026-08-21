@@ -9,7 +9,7 @@
         "build.zig",
         "build.zig.zon",
         "src",
-        "fig.md",
+        "README.md",
         "LICENSE-MIT",
         "LICENSE-APACHE",
     },

@@ -2,7 +2,7 @@
 title = fig CLI via npm/npx
 author = adammharris
 created = 2026-07-06
-updated = 2026-07-06
+updated = 2026-08-20
 part_of = [docs](docs.md)
 ```
 
@@ -14,7 +14,7 @@ part_of = [docs](docs.md)
 > work at all (see [Known limitations](#known-limitations)), and its
 > interface may still change. For anything beyond a quick one-off or CI use,
 > prefer a native install (Homebrew, a downloaded release binary, `cargo
-> install`) — see [the main CLI docs](/fig.md#command-line-interface).
+> install`) — see [the main CLI docs](/README.md#command-line-interface).
 
 `@diaryx/fig-wasi` runs the real `fig` command-line tool — the same
 `get`/`set`/`edit`/`insert`/`delete`/`comment`/`check`/`fmt`/`convert` actions
@@ -121,6 +121,6 @@ patterns than fig's, may surface more.
 
 ## See also
 
-- [The Zig CLI / library](/fig.md) — install via Homebrew or a release binary.
+- [The Zig CLI / library](/README.md) — install via Homebrew or a release binary.
 - [fig in TypeScript](typescript.md) — the `@diaryx/fig` *library*
   package (parse/edit/serialize as a JS API), not a CLI.

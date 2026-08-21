@@ -15,6 +15,8 @@ pub const Deps = struct {
     check_figl_step: *std.Build.Step,
     /// From `tools`: the `Language` contract's compile-failure cases.
     validate_check_step: *std.Build.Step,
+    /// `vendor-rust --check`: every path the published crate needs is present.
+    vendor_check_step: *std.Build.Step,
     /// From `tests`: the unit-test suite.
     test_step: *std.Build.Step,
     /// From `tests`: the conformance run.
@@ -155,6 +157,7 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     check_step.dependOn(semver_check_step);
     check_step.dependOn(version_floor_step);
     check_step.dependOn(deps.check_figl_step);
+    check_step.dependOn(deps.vendor_check_step);
     // The negative half of the `Language` contract. `test`/`conformance` cover
     // what a well-formed manifest DOES; this covers what `validate` refuses,
     // which nothing inside a test binary can reach — see tools/validate-check.zig.

@@ -2,7 +2,7 @@
 title = Using fig in Typescript
 author = adammharris
 created = 2026-07-05T21:35:14-06:00
-updated = 2026-08-08T10:00:00-06:00
+updated = 2026-08-20T10:00:00-06:00
 part_of = [docs](docs.md)
 ```
 
@@ -545,7 +545,7 @@ it always runs for real.
 
 ## See also
 
-- [The Zig CLI / library](/fig.md) — install via Homebrew or a release binary.
+- [The Zig CLI / library](/README.md) — install via Homebrew or a release binary.
 - [fig CLI via npm/npx](npm-wasi.md) (experimental) — the
   `@diaryx/fig-wasi` *CLI* package (same actions as the native binary,
   running under Node's WASI support), not a JS library — if you want to

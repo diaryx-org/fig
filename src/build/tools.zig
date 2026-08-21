@@ -18,6 +18,10 @@ pub const Result = struct {
     /// means compiling something that must NOT build, which a test binary
     /// cannot host.
     validate_check_step: *std.Build.Step,
+    /// The publish-path existence guard (`vendor-rust --check`), which
+    /// `zig build check` runs. The copy it guards only happens at release time,
+    /// so nothing else would notice a renamed source until a release died.
+    vendor_check_step: *std.Build.Step,
 };
 
 pub fn add(ctx: Context, arts: artifacts.Result) Result {
@@ -44,6 +48,20 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     vendor_rust_run.addArg(b.pathFromRoot("bindings/rust/fig-sys/zig"));
     const vendor_rust_step = b.step("vendor-rust", "Vendor the Zig source into the Rust crate for publishing");
     vendor_rust_step.dependOn(&vendor_rust_run.step);
+
+    // The read-only half: every path the copy above reads, plus every entry in
+    // build.zig.zon's `.paths`, still exists. The copy itself runs only at
+    // publish time, so without this a renamed source file is invisible until a
+    // release workflow dies on it — which is how `fig.md` -> `README.md` got as
+    // far as a tagged release. Git state isn't a declared input, so it must not
+    // be cached.
+    const vendor_check_run = b.addRunArtifact(vendor_rust);
+    vendor_check_run.addArg(b.pathFromRoot("."));
+    vendor_check_run.addArg(b.pathFromRoot("bindings/rust/fig-sys/zig"));
+    vendor_check_run.addArg("--check");
+    vendor_check_run.has_side_effects = true;
+    const vendor_check_step = b.step("vendor-check", "Fail if a path the published crate needs (or build.zig.zon's .paths promises) is missing");
+    vendor_check_step.dependOn(&vendor_check_run.step);
 
     // Dev tool: regenerate the YAML conformance corpus from the yaml-test-suite,
     // parsing the suite meta-files with fig itself (no third-party YAML library).
@@ -113,14 +131,14 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
 
     // The writer counterpart of version-floor: set/bump one artifact's version
     // and keep every coupled field valid in one shot (the fig-wasi==cli pin, the
-    // fig-macros pin, the artifact>=core floor, and fig.md's frontmatter version
+    // fig-macros pin, the artifact>=core floor, and README.md's frontmatter version
     // — see docs/VERSIONING.md). It rewrites the real manifests (not addFileArg
     // cache copies), so it takes the repo root like sync-figl and is marked
     // has_side_effects. Not part of `check` — it mutates the tree rather than
     // guarding it. The `--` args (<artifact> <version|major|minor|patch>
     // [--dry-run]) are forwarded through. It also takes the just-built `fig`
     // binary itself (same self-hosting pattern as sync-figl below) so it can
-    // sync fig.md's frontmatter with `fig set` instead of hand-parsing markdown.
+    // sync README.md's frontmatter with `fig set` instead of hand-parsing markdown.
     const version_set = b.addExecutable(.{
         .name = "version_set",
         .root_module = b.createModule(.{
@@ -261,5 +279,6 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     return .{
         .check_figl_step = check_figl_step,
         .validate_check_step = validate_check_step,
+        .vendor_check_step = vendor_check_step,
     };
 }

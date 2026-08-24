@@ -169,8 +169,22 @@ impl From<ffi::FigSpan> for Span {
 }
 
 /// A located embed region in host-file byte coordinates (the content is not
-/// parsed). `body` is the host prose outside the fences — the suffix after the
-/// close fence for frontmatter, the prefix before the open fence for endmatter.
+/// parsed).
+///
+/// `body_before` and `body_after` are the host text on either side of the
+/// block. With the three region spans they tile the source exactly:
+///
+/// ```text
+/// body_before ++ open_fence ++ content ++ close_fence ++ body_after == source
+/// ```
+///
+/// Every byte is in exactly one span (a leading UTF-8 BOM heads `body_before`),
+/// so a caller can rebuild the host without losing one.
+///
+/// `body` is the historical one-sided view of the same thing: the suffix after
+/// the close fence for frontmatter, the prefix before the open fence for
+/// endmatter. For a mid-document block (an HTML `<script>` data island) that is
+/// only ever half the host — prefer the two sides when reassembling.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct Region {
@@ -178,6 +192,8 @@ pub struct Region {
     pub content: Span,
     pub close_fence: Span,
     pub body: Span,
+    pub body_before: Span,
+    pub body_after: Span,
 }
 
 /// The result of [`Embed::extract`]: a located [`Region`] plus the borrowed host
@@ -200,9 +216,25 @@ impl<'a> Extracted<'a> {
         &self.source[self.region.content.start..self.region.content.end]
     }
 
-    /// The host body outside the fences (the markdown prose).
+    /// The host body outside the fences (the markdown prose) — the one-sided
+    /// [`Region::body`] view. See [`host_before`](Self::host_before) /
+    /// [`host_after`](Self::host_after) for both sides of a mid-document block.
     pub fn body(&self) -> &'a str {
         &self.source[self.region.body.start..self.region.body.end]
+    }
+
+    /// The host text before the block — `[0, open_fence.start)`, a leading
+    /// UTF-8 BOM included. Empty for frontmatter; the prose for endmatter; the
+    /// `<head>` above an HTML `<script>` data island.
+    pub fn host_before(&self) -> &'a str {
+        &self.source[self.region.body_before.start..self.region.body_before.end]
+    }
+
+    /// The host text after the block — `[close_fence.end, source.len())`.
+    /// Concatenating [`host_before`](Self::host_before), the three region
+    /// slices, and this reproduces the source byte-for-byte.
+    pub fn host_after(&self) -> &'a str {
+        &self.source[self.region.body_after.start..self.region.body_after.end]
     }
 }
 
@@ -296,6 +328,8 @@ impl Embed {
                 content: region.content.into(),
                 close_fence: region.close_fence.into(),
                 body: region.body.into(),
+                body_before: region.body_before.into(),
+                body_after: region.body_after.into(),
             },
         })
     }

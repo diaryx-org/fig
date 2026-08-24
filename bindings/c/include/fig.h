@@ -17,7 +17,7 @@ extern "C" {
 // also exposed as a string by fig_version_string().
 // ============================================================================
 #define FIG_VERSION_MAJOR 2
-#define FIG_VERSION_MINOR 6
+#define FIG_VERSION_MINOR 7
 #define FIG_VERSION_PATCH 0
 #define FIG_VERSION_NUM (((uint32_t)FIG_VERSION_MAJOR << 16) | \
                          ((uint32_t)FIG_VERSION_MINOR << 8)  | \
@@ -458,8 +458,21 @@ typedef struct FigRegion {
     FigSpan close_fence;
     // The host body outside the fences (in host-file coordinates): the suffix
     // after the close fence for frontmatter, the prefix before the open fence
-    // for endmatter. The read-side twin of `content` (frontmatter vs. body).
+    // for endmatter. The read-side twin of `content` (frontmatter vs. body),
+    // and one-sided: for a mid-document block (an HTML <script> data island)
+    // it names only the text AFTER the block. Prefer the two spans below when
+    // reassembling the file.
     FigSpan body;
+    // The host text on each side of the block: [0, open_fence.start) and
+    // [close_fence.end, input_len). Together with the three region spans they
+    // tile the input exactly — every byte in exactly one span, a leading UTF-8
+    // BOM at the head of `body_before` — so a caller can rebuild the host
+    // without losing a byte, whichever side the block sits on.
+    //
+    // Added in core 2.7.0. A caller whose `size` predates these fields is not
+    // written past its own layout; see the `size` note above.
+    FigSpan body_before;
+    FigSpan body_after;
 } FigRegion;
 
 // The flat mirror of fig's parametric embed model. The three parametric

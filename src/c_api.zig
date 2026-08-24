@@ -1491,8 +1491,18 @@ pub const FigRegion = extern struct {
     content: FigSpan,
     close_fence: FigSpan,
     /// The host body outside the fences (suffix for frontmatter, prefix for
-    /// endmatter) — the read-side twin of `content`.
+    /// endmatter) — the read-side twin of `content`. One-sided: for a
+    /// mid-document block (an HTML `<script>` island) it names only the text
+    /// AFTER the block. Use `body_before`/`body_after` to see all of the host.
     body: FigSpan,
+    /// `[0, open_fence.start)` — the host text before the block, BOM included.
+    /// Added in core 2.7.0: a caller whose `size` predates it is unwritten.
+    body_before: FigSpan,
+    /// `[close_fence.end, input_len)` — the host text after the block. With
+    /// `body_before` and the three region spans this tiles the input exactly,
+    /// so a caller can rebuild the file without losing a byte.
+    /// Added in core 2.7.0: a caller whose `size` predates it is unwritten.
+    body_after: FigSpan,
 };
 
 /// Whether the caller-reported `FigRegion.size` covers `field` (same rule as
@@ -1626,6 +1636,8 @@ pub export fn fig_embed_extract(
     if (regionCovers(size, "content")) out.content = toFigSpan(region.content);
     if (regionCovers(size, "close_fence")) out.close_fence = toFigSpan(region.close_fence);
     if (regionCovers(size, "body")) out.body = toFigSpan(region.body);
+    if (regionCovers(size, "body_before")) out.body_before = toFigSpan(region.body_before);
+    if (regionCovers(size, "body_after")) out.body_after = toFigSpan(region.body_after);
     return .ok;
 }
 
@@ -3462,7 +3474,7 @@ test "frontmatter c abi move item in a flow sequence value" {
 
 test "embed c abi locates region with content and body spans" {
     const md = "---\nk: v\n---\nbody\n";
-    var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined };
+    var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined, .body_before = undefined, .body_after = undefined };
     try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @intFromEnum(FigEmbedType.frontmatter_yaml), &region));
     try std.testing.expectEqualStrings("k: v\n", md[region.content.start..region.content.end]);
     // The body is the suffix after the close fence.
@@ -3472,7 +3484,7 @@ test "embed c abi locates region with content and body spans" {
 test "embed c abi locates a ```fig fenced frontmatter block (extract-only)" {
     if (comptime !build_options.lang_fig) return error.SkipZigTest;
     const md = "```fig\nk = v\n```\nbody\n";
-    var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined };
+    var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined, .body_before = undefined, .body_after = undefined };
     try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @intFromEnum(FigEmbedType.frontmatter_fig), &region));
     try std.testing.expectEqualStrings("k = v\n", md[region.content.start..region.content.end]);
     try std.testing.expectEqualStrings("body\n", md[region.body.start..region.body.end]);
@@ -3509,7 +3521,7 @@ test "embed c abi detect: not_found leaves out untouched; unterminated still det
     const unterminated = "---\nk: v\nno close\n";
     try std.testing.expectEqual(FigStatus.ok, fig_embed_detect(unterminated.ptr, unterminated.len, &out));
     try std.testing.expectEqual(@intFromEnum(FigEmbedType.frontmatter_yaml), out);
-    var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined };
+    var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined, .body_before = undefined, .body_after = undefined };
     try std.testing.expectEqual(FigStatus.parse_error, fig_embed_extract(unterminated.ptr, unterminated.len, out, &region));
     // Null out param is invalid, not a crash.
     try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_detect(plain.ptr, plain.len, null));
@@ -3585,11 +3597,16 @@ test "embed c abi region size-gate leaves uncovered fields untouched" {
         .content = undefined,
         .close_fence = .{ .start = 111, .end = 222 },
         .body = .{ .start = 333, .end = 444 },
+        .body_before = .{ .start = 555, .end = 666 },
+        .body_after = .{ .start = 777, .end = 888 },
     };
     try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @intFromEnum(FigEmbedType.frontmatter_yaml), &region));
     try std.testing.expectEqualStrings("k: v\n", md[region.content.start..region.content.end]);
     try std.testing.expectEqual(@as(usize, 111), region.close_fence.start);
     try std.testing.expectEqual(@as(usize, 333), region.body.start);
+    // The two sides were appended after `body`, so they are past `size` too.
+    try std.testing.expectEqual(@as(usize, 555), region.body_before.start);
+    try std.testing.expectEqual(@as(usize, 777), region.body_after.start);
 }
 
 test "fig_embed_replace_body swaps the body, keeps fences + edited content" {

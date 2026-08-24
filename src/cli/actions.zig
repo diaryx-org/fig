@@ -196,14 +196,19 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     const input = try fileio.getInput(io, opts.file, .read_only);
     defer if (!std.mem.eql(u8, opts.file, "-")) input.close(io);
 
-    // `--body`: print the host prose OUTSIDE the fences (the region's
-    // `body` span) — the complement of extracting the embed content. With
-    // no such region the whole file is the body.
+    // `--body`: print the host prose OUTSIDE the fences — the complement of
+    // extracting the embed content. Both sides, in file order: for frontmatter
+    // or endmatter one of them is empty (bar a BOM), so this is the block's
+    // own side and nothing else; for a mid-document block (an HTML `<script>`
+    // island) it is the whole host with just the block cut out, rather than
+    // the arbitrary half `region.body` can name. With no such region the whole
+    // file is the body.
     if (opts.body) {
         const content = try fileio.readAll(a, io, input);
         const embed_type = args_mod.resolveEmbedTypeFromContent(content, opts.embed, opts.detect_embed) orelse fig.Embed.Type{ .frontmatter = .yaml };
         if (fig.Embed.locateRegion(content, embed_type)) |region| {
-            try stdout_term.writer.writeAll(content[region.body.start..region.body.end]);
+            try stdout_term.writer.writeAll(content[region.body_before.start..region.body_before.end]);
+            try stdout_term.writer.writeAll(content[region.body_after.start..region.body_after.end]);
         } else |err| switch (err) {
             error.NotFound => try stdout_term.writer.writeAll(content),
             else => return err,
@@ -680,7 +685,24 @@ pub fn runConvert(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
             opts.quiet,
             opts.strict,
         );
-        const out = try fig.Embed.retype(a, content, region, to_embed_type, converted_inner);
+        const out = fig.Embed.retype(a, content, region, source_type, to_embed_type, converted_inner) catch |err| switch (err) {
+            // A mid-document block (an HTML `<script>`/`<pre><code>` island)
+            // cannot become an edge archetype without either mangling the host
+            // or silently dropping the half of it on the wrong side of the
+            // block. Say so, and name the two conversions that do work.
+            error.MidDocumentRegionCannotMove => {
+                try stderr_term.writer.print(
+                    "error: `{s}` keeps its config in a mid-document block, which cannot move to `{s}`" ++
+                        " without rewriting the host around it.\n" ++
+                        "note: convert between mid-document archetypes (html-script-*, html-code-*) instead," ++
+                        " or extract the config to its own file with `fig get`.\n",
+                    .{ opts.file, args_mod.embedTypeName(to_embed_type) },
+                );
+                try stderr_term.writer.flush();
+                std.process.exit(2);
+            },
+            else => |e| return e,
+        };
         try finishConvert(a, io, stdout_term, input, opts.file, content, out, opts.write, opts.diff);
         return;
     }

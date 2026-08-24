@@ -403,6 +403,33 @@ fn extract_exposes_region_spans_and_slices() {
 }
 
 #[test]
+fn embed_region_spans_tile_the_host_exactly() {
+    // Both sides of the block are reported, so a caller can rebuild the host
+    // without losing a byte — including for a mid-document `<script>` island,
+    // where `body` alone names only the half after the block.
+    let html = "<head>\n<script type=\"application/yaml\">\nk: v\n</script>\n</head>\n";
+    let e = Embed::extract(html, EmbedType::HtmlScriptYaml).unwrap();
+    assert_eq!(e.host_before(), "<head>\n");
+    assert_eq!(e.host_after(), "</head>\n");
+
+    let r = e.region();
+    assert_eq!(r.body_before.start, 0);
+    assert_eq!(r.body_before.end, r.open_fence.start);
+    assert_eq!(r.body_after.start, r.close_fence.end);
+    assert_eq!(r.body_after.end, html.len());
+    // Reassembling the five spans in order reproduces the file byte-for-byte.
+    let rebuilt = format!(
+        "{}{}{}{}{}",
+        e.host_before(),
+        &html[r.open_fence.start..r.open_fence.end],
+        e.content(),
+        &html[r.close_fence.start..r.close_fence.end],
+        e.host_after(),
+    );
+    assert_eq!(rebuilt, html);
+}
+
+#[test]
 fn frontmatter_replace_body_keeps_frontmatter_byte_identical() {
     let mut fm = Embed::open(NOTE.as_bytes(), EmbedType::FrontmatterYaml).unwrap();
     fm.replace_body("# New Body\n").unwrap();

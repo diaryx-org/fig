@@ -454,10 +454,19 @@ defer embedded.deinit(allocator);
 const title = try embedded.document.ast.getValByPath(&.{.{ .key = "title" }});
 title.kind.string; // "Hello"
 
-// `embedded.region` gives the open_fence/content/close_fence/body spans in
-// *outer* coordinates; a node span from `embedded.document` is relative to the
-// DECODED content — lift it back with `embedded.outerSpan(doc.span(node))`,
-// which routes through the decode provenance map for the `<code>` archetype.
+// `embedded.region` gives the region's spans in *outer* coordinates. The five
+// spans tile the host exactly —
+//
+//     body_before ++ open_fence ++ content ++ close_fence ++ body_after == md
+//
+// — so a rebuild from them loses nothing, whichever side of the block the host
+// prose sits on (both sides, for an HTML `<script>` data island; a leading BOM
+// heads `body_before`). `region.body` is the older one-sided view of the same
+// thing, kept because `replace_body` addresses exactly one side.
+//
+// A node span from `embedded.document` is relative to the DECODED content —
+// lift it back with `embedded.outerSpan(doc.span(node))`, which routes through
+// the decode provenance map for the `<code>` archetype.
 ```
 
 To edit an embedded block in place: locate the region, decode the content for

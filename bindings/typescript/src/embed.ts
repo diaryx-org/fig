@@ -46,13 +46,25 @@ export interface Span {
   end: number;
 }
 
-/** The fence/content/body byte spans of a located embedded region. `body` is the
- *  host prose outside the fences (suffix for frontmatter, prefix for endmatter). */
+/** The byte spans of a located embedded region.
+ *
+ *  `bodyBefore` and `bodyAfter` are the host text on either side of the block.
+ *  With the three region spans they tile the source exactly —
+ *  `bodyBefore ++ openFence ++ content ++ closeFence ++ bodyAfter === source`,
+ *  a leading UTF-8 BOM heading `bodyBefore` — so a caller can rebuild the host
+ *  without losing a byte.
+ *
+ *  `body` is the historical one-sided view: the suffix after the close fence
+ *  for frontmatter, the prefix before the open fence for endmatter. For a
+ *  mid-document block (an HTML `<script>` data island) that is only ever half
+ *  the host, so prefer the two sides when reassembling. */
 export interface Region {
   openFence: Span;
   content: Span;
   closeFence: Span;
   body: Span;
+  bodyBefore: Span;
+  bodyAfter: Span;
 }
 
 /** The inner editing format an embed archetype carries (`---`/endmatter ⇒ YAML,
@@ -129,16 +141,24 @@ export class Embed extends Editable {
     const frame = new Frame();
     try {
       const ptr = frame.bytes(bytes);
-      // FigRegion (wasm32): u32 size + 4 × FigSpan(u32 start, u32 end) = 36 bytes.
+      // FigRegion (wasm32): u32 size + 6 × FigSpan(u32 start, u32 end) = 52 bytes.
       // The caller must set `size` before the call so the size-gated library
-      // fills the fields this layout declares.
-      const REGION_SIZE = 36;
+      // fills the fields this layout declares — `bodyBefore`/`bodyAfter` are the
+      // trailing pair added in core 2.7.0, which is exactly what `size` is for.
+      const REGION_SIZE = 52;
       const region = frame.alloc(REGION_SIZE);
       writeU32(region, REGION_SIZE);
       check(fig.fig_embed_extract(ptr, bytes.length, kind, region), "fig_embed_extract");
-      // Spans start after the 4-byte `size` field: offsets 4, 12, 20, 28.
+      // Spans start after the 4-byte `size` field: offsets 4, 12, 20, 28, 36, 44.
       const span = (off: number): Span => ({ start: readU32(region + off), end: readU32(region + off + 4) });
-      return { openFence: span(4), content: span(12), closeFence: span(20), body: span(28) };
+      return {
+        openFence: span(4),
+        content: span(12),
+        closeFence: span(20),
+        body: span(28),
+        bodyBefore: span(36),
+        bodyAfter: span(44),
+      };
     } finally {
       frame.dispose();
     }

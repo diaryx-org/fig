@@ -236,6 +236,50 @@ pub fn embedTypeFromName(name: []const u8) ?fig.Embed.Type {
     return null;
 }
 
+/// The canonical `--embed` spelling of an archetype — the inverse of
+/// `embedTypeFromName`, for diagnostics that have a `Type` in hand and need to
+/// name it back to the user in the vocabulary they typed. Canonical means: the
+/// derived `<container>-<format>` name for the parametric families, and the
+/// primary (not legacy-alias) name for the presets, so round-tripping the
+/// result back through `embedTypeFromName` returns the same `Type`.
+pub fn embedTypeName(t: fig.Embed.Type) []const u8 {
+    return switch (t) {
+        // `frontmatter = .yaml` is spelled `frontmatter`, not `md-yaml` — a bare
+        // `---` block IS YAML frontmatter, which is why `md-yaml` is not a
+        // spelling at all (see `embedTypeFromName`).
+        .frontmatter => |f| switch (f) {
+            .yaml => "frontmatter",
+            inline else => |g| "md-" ++ @tagName(g),
+        },
+        .fenced => |f| switch (f) {
+            inline else => |g| "fenced-" ++ @tagName(g),
+        },
+        .html_script => |f| switch (f) {
+            inline else => |g| "html-script-" ++ @tagName(g),
+        },
+        .html_code => |f| switch (f) {
+            inline else => |g| "html-code-" ++ @tagName(g),
+        },
+        .semicolons_json => "semicolons",
+        .plus_toml => "plus",
+        .endmatter_yaml => "endmatter",
+    };
+}
+
+test "embedTypeName round-trips through embedTypeFromName" {
+    // Every archetype the CLI can name must name itself back to the same Type,
+    // so a diagnostic never prints a spelling the parser would reject.
+    for ([_]fig.Embed.Type{
+        .{ .frontmatter = .yaml }, .{ .frontmatter = .json },   .{ .frontmatter = .toml }, .{ .frontmatter = .fig },
+        .{ .fenced = .yaml },      .{ .fenced = .json },        .{ .fenced = .toml },      .{ .fenced = .fig },
+        .{ .html_script = .yaml }, .{ .html_script = .json },   .{ .html_script = .toml }, .{ .html_script = .fig },
+        .{ .html_code = .yaml },   .{ .html_code = .json },     .{ .html_code = .toml },   .{ .html_code = .fig },
+        .semicolons_json,          .plus_toml,                  .endmatter_yaml,
+    }) |t| {
+        try std.testing.expectEqual(@as(?fig.Embed.Type, t), embedTypeFromName(embedTypeName(t)));
+    }
+}
+
 /// The `--embed <archetype>` names accepted by `embedTypeFromName`, for error
 /// messages — one source of truth so a new archetype is listed everywhere.
 pub const embed_archetype_names = "frontmatter, md-json, md-toml, md-fig, fenced-yaml, fenced-json, fenced-toml, fenced-fig, frontmatter-json (;;;), frontmatter-toml (+++), html-script[-yaml/json/toml], html-code[-yaml/json/toml], endmatter";

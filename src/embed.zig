@@ -565,17 +565,65 @@ pub const Type = union(enum) {
 
 /// A located region, in *outer-source* byte coordinates. The fence spans are
 /// retained so an editor can splice a replacement into `content` while leaving
-/// everything else byte-identical. `body` is the host text OUTSIDE the region —
-/// the markdown the config is embedded in — computed archetype-aware: the suffix
-/// after the close fence for a `.start` (frontmatter) region, the prefix before
-/// the open fence for an `.end` (endmatter) region. It is the read-side twin of
-/// the `content` slice (frontmatter vs. body) and the target of `replace_body`.
+/// everything else byte-identical.
+///
+/// `body_before` and `body_after` are the host text on either side of the block.
+/// Together with the three region spans they TILE the source exactly:
+///
+///     body_before ++ open_fence ++ content ++ close_fence ++ body_after == source
+///
+/// Every byte of the host is in exactly one span, which is what lets a rebuild
+/// (`retype`) be lossless. The UTF-8 BOM, when present, is the leading part of
+/// `body_before` rather than a hole in the partition — see `regionTilesSource`,
+/// which asserts the invariant, and `splitBom`, for the rebuilds that must keep
+/// the BOM at offset 0.
+///
+/// `body` is the historical ONE-SIDED view of the same thing: the suffix after
+/// the close fence for a `.start` (frontmatter) region, the prefix before the
+/// open fence for an `.end` (endmatter) one. It is the read-side twin of the
+/// `content` slice and the target of `replace_body`, so it names the *one* side
+/// those single-slot APIs can address. For a `.middle` block (an HTML `<script>`
+/// data island) that is only ever half the host, which is exactly why the two
+/// explicit sides exist: prefer them for anything that reassembles the file.
 pub const Region = struct {
     open_fence: Span,
     content: Span,
     close_fence: Span,
     body: Span,
+    /// `[0, open_fence.start)` — the host text before the block, BOM included.
+    body_before: Span,
+    /// `[close_fence.end, source.len)` — the host text after the block.
+    body_after: Span,
 };
+
+/// The source's leading UTF-8 BOM, if any. Named because three places need it:
+/// the two locators (which must not mistake it for content) and the rebuilds,
+/// which have to re-emit it at offset 0 rather than wherever `body_before`
+/// would otherwise land it.
+const utf8_bom = "\xEF\xBB\xBF";
+
+/// Split `prefix` (a region's `body_before`) into its leading BOM and the real
+/// host text after it. A rebuild that MOVES the block emits the BOM first and
+/// the remainder wherever the host text belongs, so the BOM stays at offset 0.
+fn splitBom(prefix: []const u8) struct { bom: []const u8, rest: []const u8 } {
+    return if (std.mem.startsWith(u8, prefix, utf8_bom))
+        .{ .bom = prefix[0..utf8_bom.len], .rest = prefix[utf8_bom.len..] }
+    else
+        .{ .bom = "", .rest = prefix };
+}
+
+/// Whether `region` accounts for every byte of `source` exactly once — the
+/// partition invariant documented on `Region`. Asserted by the locator tests
+/// across every archetype; a rebuild that starts from these spans is lossless
+/// precisely when this holds.
+fn regionTilesSource(region: Region, source: []const u8) bool {
+    return region.body_before.start == 0 and
+        region.body_before.end == region.open_fence.start and
+        region.open_fence.end == region.content.start and
+        region.content.end == region.close_fence.start and
+        region.close_fence.end == region.body_after.start and
+        region.body_after.end == source.len;
+}
 
 /// Extraction result. `source` is the borrowed *outer* file; `region` indexes
 /// into it. `document`'s node spans are relative to the DECODED content — call
@@ -678,7 +726,7 @@ pub fn locateRegion(source: []const u8, t: Type) Error!Region {
 /// for config.
 pub fn detect(source: []const u8) ?Type {
     var i: usize = 0;
-    if (std.mem.startsWith(u8, source, "\xEF\xBB\xBF")) i += 3; // UTF-8 BOM
+    if (std.mem.startsWith(u8, source, utf8_bom)) i += utf8_bom.len;
 
     // First-line (`.start`) conventions.
     const eol = lineEnd(source, i);
@@ -771,14 +819,30 @@ pub fn initRegion(allocator: Allocator, source: []const u8, t: Type) !Initialize
         try host.appendSlice(allocator, close_tok);
         try host.append(allocator, '\n');
         const close_end = host.items.len;
-        return .{ .host = try host.toOwnedSlice(allocator), .region = .{
+        const built = try host.toOwnedSlice(allocator);
+        // `body` runs to `open_start`, not `source.len`: any separating newline
+        // synthesized just above is host text, and leaving it outside every span
+        // would break the tiling invariant (and lose a byte on reassembly).
+        const region: Region = .{
             .open_fence = Span.init(open_start, content_start),
             .content = Span.init(content_start, content_end),
             .close_fence = Span.init(content_end, close_end),
-            .body = Span.init(0, source.len),
-        } };
+            .body = Span.init(0, open_start),
+            .body_before = Span.init(0, open_start),
+            .body_after = Span.init(close_end, close_end),
+        };
+        std.debug.assert(regionTilesSource(region, built));
+        return .{ .host = built, .region = region };
     }
-    // .start: [ open\n ][ seed ][ close\n ][ body ]
+    // .start / .middle: [ bom ][ open\n ][ seed ][ close\n ][ body ]
+    //
+    // A BOM has to stay at offset 0, so it is hoisted ahead of the synthesized
+    // block rather than being carried along at the head of the body — otherwise
+    // creating frontmatter in a BOM'd file would bury the BOM mid-document,
+    // where it is no longer a BOM but a stray zero-width no-break space.
+    const split = splitBom(source);
+    try host.appendSlice(allocator, split.bom);
+    const open_start = host.items.len;
     try host.appendSlice(allocator, open_tok);
     try host.append(allocator, '\n');
     const content_start = host.items.len;
@@ -787,52 +851,111 @@ pub fn initRegion(allocator: Allocator, source: []const u8, t: Type) !Initialize
     try host.appendSlice(allocator, close_tok);
     try host.append(allocator, '\n');
     const close_end = host.items.len;
-    const body_start = host.items.len;
-    try host.appendSlice(allocator, source);
-    return .{ .host = try host.toOwnedSlice(allocator), .region = .{
-        .open_fence = Span.init(0, content_start),
+    try host.appendSlice(allocator, split.rest);
+    const built = try host.toOwnedSlice(allocator);
+    const region: Region = .{
+        .open_fence = Span.init(open_start, content_start),
         .content = Span.init(content_start, content_end),
         .close_fence = Span.init(content_end, close_end),
-        .body = Span.init(body_start, body_start + source.len),
-    } };
+        .body = Span.init(close_end, close_end + split.rest.len),
+        .body_before = Span.init(0, open_start),
+        .body_after = Span.init(close_end, close_end + split.rest.len),
+    };
+    std.debug.assert(regionTilesSource(region, built));
+    return .{ .host = built, .region = region };
 }
 
-/// Rebuild `source`'s embedded region as a DIFFERENT archetype: keep the host
-/// prose (`region.body`, byte-identical) but replace the old fences and
-/// content with `to`'s convention wrapped around `new_content` — the already
-/// re-serialized inner document (e.g. YAML frontmatter content re-printed as
-/// JSON, for `fig convert --to-embed`). `region` must be `source`'s existing
-/// region of whatever archetype it was located as (`locateRegion`/`extract`);
-/// this function doesn't care what that was, only where the body is. Mirrors
-/// `initRegion`'s `.start`/`.end` placement, but re-housing real content
-/// rather than seeding an empty document. The returned buffer is caller-owned.
-pub fn retype(allocator: Allocator, source: []const u8, region: Region, to: Type, new_content: []const u8) ![]u8 {
+pub const RetypeError = error{
+    /// The source region sits MID-document (an HTML `<script>` data island or a
+    /// `<pre><code>` block) and the target archetype wants the block at an edge
+    /// of the file. There is no honest answer: hoisting a `---` fence above
+    /// `<html>` produces neither valid markdown nor valid HTML, and leaving the
+    /// block where it is produces a "frontmatter" block that is not at the
+    /// front. Converting such a file means converting the HOST too — markdown
+    /// with real frontmatter — or keeping the metadata in a separate file.
+    /// A `.middle` → `.middle` retype (say `<script>` → `<pre><code>`) is fine
+    /// and splices in place.
+    MidDocumentRegionCannotMove,
+};
+
+/// Rebuild `source`'s embedded region as a DIFFERENT archetype: keep every host
+/// byte outside the block (`body_before`/`body_after`, byte-identical) but
+/// replace the old fences and content with `to`'s convention wrapped around
+/// `new_content` — the already re-serialized inner document (e.g. YAML
+/// frontmatter content re-printed as JSON, for `fig convert --to-embed`).
+/// `region` must be `source`'s existing region, located as `from`
+/// (`locateRegion`/`extract`).
+///
+/// The block MOVES only when the target puts it at the other end of the file
+/// (frontmatter <-> endmatter); otherwise it is re-housed exactly where it sat,
+/// which makes a same-archetype retype a byte-identical rebuild. Either way the
+/// host text on both sides survives in file order — the two body spans tile the
+/// source with the region (see `Region`), so nothing falls out. A BOM is
+/// re-emitted at offset 0 rather than travelling with the prose it precedes.
+///
+/// Moving a `.middle` block to an edge is refused
+/// (`error.MidDocumentRegionCannotMove`) rather than guessed at. The returned
+/// buffer is caller-owned.
+pub fn retype(
+    allocator: Allocator,
+    source: []const u8,
+    region: Region,
+    from: Type,
+    to: Type,
+    new_content: []const u8,
+) (RetypeError || Allocator.Error)![]u8 {
     const a = archetypeOf(to);
+    const src_loc = archetypeOf(from).location;
+    if (src_loc == .middle and a.location != .middle) return RetypeError.MidDocumentRegionCannotMove;
+
     const open_tok = delimLiteral(a.open);
     const close_tok = delimLiteral(a.close);
-    const body = Span.of(u8, region.body, source);
+    const split = splitBom(Span.of(u8, region.body_before, source));
+    const before = split.rest;
+    const after = Span.of(u8, region.body_after, source);
 
     var host: std.ArrayList(u8) = .empty;
     errdefer host.deinit(allocator);
 
-    if (a.location == .end) {
-        // [ body ][ \n? ][ open\n ][ content ][ close\n ]
-        try host.appendSlice(allocator, body);
-        if (body.len > 0 and body[body.len - 1] != '\n') try host.append(allocator, '\n');
-        try host.appendSlice(allocator, open_tok);
-        try host.append(allocator, '\n');
-        try host.appendSlice(allocator, new_content);
-        try host.appendSlice(allocator, close_tok);
-        try host.append(allocator, '\n');
-        return host.toOwnedSlice(allocator);
+    const block = struct {
+        fn emit(al: Allocator, h: *std.ArrayList(u8), o: []const u8, c: []const u8, inner: []const u8) !void {
+            try h.appendSlice(al, o);
+            try h.append(al, '\n');
+            try h.appendSlice(al, inner);
+            try h.appendSlice(al, c);
+            try h.append(al, '\n');
+        }
+    }.emit;
+
+    // The block only MOVES when the target wants it at the other end of the
+    // file. Leaving it put otherwise is what makes a same-archetype retype a
+    // byte-identical rebuild — and it is the only arrangement that keeps an
+    // HTML host intact, since a `.middle` block has real host text on both
+    // sides. (A `.start` source's `before` is empty bar the BOM, so in place
+    // and "at the front" are the same bytes there anyway.)
+    const in_place = a.location == .middle or a.location == src_loc;
+
+    // The BOM leads in every arrangement, so it stays a BOM.
+    try host.appendSlice(allocator, split.bom);
+    if (in_place) {
+        // [ bom ][ before ][ open\n content close\n ][ after ]
+        try host.appendSlice(allocator, before);
+        try block(allocator, &host, open_tok, close_tok, new_content);
+        try host.appendSlice(allocator, after);
+    } else if (a.location == .start) {
+        // Endmatter -> frontmatter: [ bom ][ block ][ before ][ after ]
+        try block(allocator, &host, open_tok, close_tok, new_content);
+        try host.appendSlice(allocator, before);
+        try host.appendSlice(allocator, after);
+    } else {
+        // Frontmatter -> endmatter: [ bom ][ before ][ after ][ \n? ][ block ]
+        try host.appendSlice(allocator, before);
+        try host.appendSlice(allocator, after);
+        const prose = host.items[split.bom.len..];
+        // The open fence must start its own line.
+        if (prose.len > 0 and prose[prose.len - 1] != '\n') try host.append(allocator, '\n');
+        try block(allocator, &host, open_tok, close_tok, new_content);
     }
-    // .start: [ open\n ][ content ][ close\n ][ body ]
-    try host.appendSlice(allocator, open_tok);
-    try host.append(allocator, '\n');
-    try host.appendSlice(allocator, new_content);
-    try host.appendSlice(allocator, close_tok);
-    try host.append(allocator, '\n');
-    try host.appendSlice(allocator, body);
     return host.toOwnedSlice(allocator);
 }
 
@@ -1013,7 +1136,7 @@ fn hasContent(slice: []const u8) bool {
 
 fn locate(source: []const u8, a: Archetype) Error!Region {
     var i: usize = 0;
-    if (std.mem.startsWith(u8, source, "\xEF\xBB\xBF")) i += 3; // UTF-8 BOM
+    if (std.mem.startsWith(u8, source, utf8_bom)) i += utf8_bom.len;
 
     const open = if (a.location == .start)
         matchDelim(source, i, a.open) orelse return Error.NotFound
@@ -1023,19 +1146,30 @@ fn locate(source: []const u8, a: Archetype) Error!Region {
     var line = open.end;
     while (line < source.len) {
         if (matchDelim(source, line, a.close)) |close| {
-            // The body is the host text outside the fences: the prefix before the
-            // open fence for endmatter (where the config trails the prose), else
-            // the suffix after the close fence — for frontmatter (`.start`) AND
-            // for a mid-document block (`.middle`, e.g. an HTML `<script>` data
-            // island). A `.middle` block also has host text BEFORE it, which this
-            // single-span body doesn't capture; in-place edits splice via the
-            // content spans and stay byte-identical on both sides regardless, so
-            // only `replace_body` is one-sided (it swaps the suffix).
+            // Both sides, always — they tile the source with the three region
+            // spans (see `Region`), so a rebuild loses nothing regardless of
+            // where the block sits. `body_before` starts at 0, so a BOM is part
+            // of it rather than a byte belonging to no span.
+            //
+            // `body` is the one-sided historical view layered on top: the prefix
+            // for endmatter (where the config trails the prose), else the suffix
+            // — for frontmatter (`.start`) AND for a mid-document block
+            // (`.middle`, e.g. an HTML `<script>` data island), whose host text
+            // BEFORE the block a single span cannot also name.
             const body = if (a.location == .end)
                 Span.init(0, open.start)
             else
                 Span.init(close.end, source.len);
-            return .{ .open_fence = open, .content = Span.init(open.end, close.start), .close_fence = close, .body = body };
+            const region: Region = .{
+                .open_fence = open,
+                .content = Span.init(open.end, close.start),
+                .close_fence = close,
+                .body = body,
+                .body_before = Span.init(0, open.start),
+                .body_after = Span.init(close.end, source.len),
+            };
+            std.debug.assert(regionTilesSource(region, source));
+            return region;
         }
         line = lineEnd(source, line);
     }
@@ -1653,7 +1787,7 @@ test "detect: plain prose with no fences at all detects nothing" {
 test "retype: YAML frontmatter -> JSON frontmatter, body preserved byte-identical" {
     const src = "---\ntitle: hi\n---\n# body\n";
     const region = try locateRegion(src, .{ .frontmatter = .yaml });
-    const out = try retype(testing.allocator, src, region, .semicolons_json, "{\"title\":\"hi\"}\n");
+    const out = try retype(testing.allocator, src, region, .{ .frontmatter = .yaml }, .semicolons_json, "{\"title\":\"hi\"}\n");
     defer testing.allocator.free(out);
     try testing.expectEqualStrings(";;;\n{\"title\":\"hi\"}\n;;;\n# body\n", out);
 }
@@ -1661,7 +1795,100 @@ test "retype: YAML frontmatter -> JSON frontmatter, body preserved byte-identica
 test "retype: frontmatter -> endmatter moves the fences to the end, body first" {
     const src = "---\ntitle: hi\n---\n# body\n";
     const region = try locateRegion(src, .{ .frontmatter = .yaml });
-    const out = try retype(testing.allocator, src, region, .endmatter_yaml, "title: hi\n");
+    const out = try retype(testing.allocator, src, region, .{ .frontmatter = .yaml }, .endmatter_yaml, "title: hi\n");
     defer testing.allocator.free(out);
     try testing.expectEqualStrings("# body\n```endmatter\ntitle: hi\n```\n", out);
+}
+
+/// Every archetype, on a source that has host text on BOTH sides of the block
+/// plus a BOM — the shape that used to lose bytes. `locate` must account for
+/// every byte exactly once (`Region`'s partition invariant), which is what
+/// makes the `retype` rebuilds below lossless.
+const tiling_cases = [_]struct { t: Type, src: []const u8 }{
+    .{ .t = .{ .frontmatter = .yaml }, .src = "\xEF\xBB\xBF---\nk: v\n---\nafter\n" },
+    .{ .t = .{ .fenced = .yaml }, .src = "```yaml\nk: v\n```\nafter\n" },
+    .{ .t = .semicolons_json, .src = ";;;\n{}\n;;;\nafter\n" },
+    .{ .t = .plus_toml, .src = "+++\nk = 1\n+++\nafter\n" },
+    .{ .t = .endmatter_yaml, .src = "before\n```endmatter\nk: v\n```\nafter\n" },
+    .{ .t = .{ .html_script = .yaml }, .src = "<head>\n<script type=\"application/yaml\">\nk: v\n</script>\n</head>\n" },
+    .{ .t = .{ .html_code = .yaml }, .src = "<p>x</p>\n<pre><code class=\"language-yaml\">\nk: v\n</code></pre>\n<p>y</p>\n" },
+};
+
+test "locate: the region and both body sides tile the source exactly" {
+    for (tiling_cases) |case| {
+        const region = try locateRegion(case.src, case.t);
+        try testing.expect(regionTilesSource(region, case.src));
+        // Spelled out once concretely: reassembling the five spans in order
+        // reproduces the file byte-for-byte, BOM included.
+        var buf: std.ArrayList(u8) = .empty;
+        defer buf.deinit(testing.allocator);
+        for ([_]Span{ region.body_before, region.open_fence, region.content, region.close_fence, region.body_after }) |s|
+            try buf.appendSlice(testing.allocator, Span.of(u8, s, case.src));
+        try testing.expectEqualStrings(case.src, buf.items);
+    }
+}
+
+test "retype: a same-archetype rebuild is byte-identical for every archetype" {
+    // The strongest statement of losslessness available without a parser: retype
+    // an archetype to ITSELF, re-housing its own content unchanged. Any host
+    // byte the rebuild drops — a BOM, a prefix, a trailing line — shows up here
+    // as a diff. Each of these used to fail on one case or another.
+    for (tiling_cases) |case| {
+        const region = try locateRegion(case.src, case.t);
+        const inner = Span.of(u8, region.content, case.src);
+        const out = try retype(testing.allocator, case.src, region, case.t, case.t, inner);
+        defer testing.allocator.free(out);
+        try testing.expectEqualStrings(case.src, out);
+    }
+}
+
+test "retype: a BOM stays at offset 0 when the block moves" {
+    const src = "\xEF\xBB\xBF---\ntitle: hi\n---\n# body\n";
+    const region = try locateRegion(src, .{ .frontmatter = .yaml });
+    // Frontmatter -> endmatter sends the block to the bottom; the BOM must not
+    // travel with the prose it happens to precede, or it stops being a BOM.
+    const out = try retype(testing.allocator, src, region, .{ .frontmatter = .yaml }, .endmatter_yaml, "title: hi\n");
+    defer testing.allocator.free(out);
+    try testing.expectEqualStrings("\xEF\xBB\xBF# body\n```endmatter\ntitle: hi\n```\n", out);
+}
+
+test "retype: endmatter keeps text that trailed the close fence" {
+    const src = "prose\n```endmatter\ntitle: hi\n```\ntrailing\n";
+    const region = try locateRegion(src, .endmatter_yaml);
+    const out = try retype(testing.allocator, src, region, .endmatter_yaml, .{ .fenced = .yaml }, "title: hi\n");
+    defer testing.allocator.free(out);
+    // Both sides of the old block survive, in order, below the new fence.
+    try testing.expectEqualStrings("```yaml\ntitle: hi\n```\nprose\ntrailing\n", out);
+}
+
+test "retype: a mid-document block re-houses in place, both sides intact" {
+    const src = "<head>\n<script type=\"application/yaml\">\nk: v\n</script>\n</head>\n";
+    const region = try locateRegion(src, .{ .html_script = .yaml });
+    const out = try retype(testing.allocator, src, region, .{ .html_script = .yaml }, .{ .html_code = .yaml }, "k: v\n");
+    defer testing.allocator.free(out);
+    try testing.expectEqualStrings(
+        "<head>\n<pre><code class=\"language-yaml\">\nk: v\n</code></pre>\n</head>\n",
+        out,
+    );
+}
+
+test "retype: refuses to move a mid-document block to an edge archetype" {
+    // Hoisting a `---` fence above `<head>` is neither valid markdown nor valid
+    // HTML, and leaving it put is not frontmatter. Refuse rather than pick one.
+    const src = "<head>\n<script type=\"application/yaml\">\nk: v\n</script>\n</head>\n";
+    const region = try locateRegion(src, .{ .html_script = .yaml });
+    for ([_]Type{ .{ .frontmatter = .yaml }, .{ .fenced = .yaml }, .semicolons_json, .plus_toml, .endmatter_yaml }) |to| {
+        try testing.expectError(
+            error.MidDocumentRegionCannotMove,
+            retype(testing.allocator, src, region, .{ .html_script = .yaml }, to, "k: v\n"),
+        );
+    }
+}
+
+test "initRegion: a BOM'd source keeps its BOM at offset 0" {
+    const init = try initRegion(testing.allocator, "\xEF\xBB\xBFbody text\n", .plus_toml);
+    defer testing.allocator.free(init.host);
+    // The block goes after the BOM, not before it.
+    try testing.expectEqualStrings("\xEF\xBB\xBF+++\n+++\nbody text\n", init.host);
+    try testing.expectEqualStrings("body text\n", Span.of(u8, init.region.body, init.host));
 }

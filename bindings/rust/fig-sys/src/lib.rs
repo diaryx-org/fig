@@ -399,6 +399,12 @@ pub struct FigRegion {
     pub content: FigSpan,
     pub close_fence: FigSpan,
     pub body: FigSpan,
+    /// `[0, open_fence.start)` and `[close_fence.end, input_len)` — the host
+    /// text on each side of the block. With the three region spans they tile
+    /// the input exactly, so a rebuild loses nothing. Added in core 2.7.0; an older
+    /// `size` leaves them unwritten.
+    pub body_before: FigSpan,
+    pub body_after: FigSpan,
 }
 
 #[repr(C)]

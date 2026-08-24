@@ -309,6 +309,20 @@ test("Embed.extract locates the region, with a body span", () => {
   assert.equal(region.body.start, region.closeFence.end);
 });
 
+test("Embed.extract reports both host sides, which tile the input exactly", () => {
+  // A mid-document `<script>` island has host text on BOTH sides, which the
+  // one-sided `body` span cannot name — `bodyBefore`/`bodyAfter` can.
+  const html = '<head>\n<script type="application/yaml">\nk: v\n</script>\n</head>\n';
+  const r = Embed.extract(html, EmbedType.HtmlScriptYaml);
+  const slice = (s: { start: number; end: number }) => html.slice(s.start, s.end);
+  assert.equal(slice(r.bodyBefore), "<head>\n");
+  assert.equal(slice(r.bodyAfter), "</head>\n");
+  assert.equal(
+    slice(r.bodyBefore) + slice(r.openFence) + slice(r.content) + slice(r.closeFence) + slice(r.bodyAfter),
+    html,
+  );
+});
+
 test("split returns [content, body], or null when absent", () => {
   assert.deepEqual(split("---\nk: v\n---\nbody\n", EmbedType.FrontmatterYaml), ["k: v\n", "body\n"]);
   // CRLF fences handled.

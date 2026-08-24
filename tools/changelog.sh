@@ -24,6 +24,18 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 changelog="$repo_root/docs/CHANGELOG.md"
 config="$repo_root/.config/cliff.toml"
 
+# Run from the repo root, whatever directory we were invoked from. git-cliff
+# scopes its commit range to the CURRENT DIRECTORY, and does it silently: from
+# `bindings/wasi` it reports only the commits touching that path, exits 0, and
+# warns about nothing. The script's own paths are absolute (derived from
+# BASH_SOURCE above), so before this line everything LOOKED right — it wrote the
+# correct file, printed the usual "wrote …", and left a changelog that was
+# simply missing most of the release. `zig build` finds build.zig by walking up
+# from the cwd, so `zig build changelog` from any subdirectory reached here with
+# that subdirectory still current. Anchoring once, here, covers the git-cliff
+# call below and any git command a later edit adds.
+cd "$repo_root"
+
 BEGIN_MARKER='<!-- git-cliff:begin — generated; edits here are overwritten -->'
 END_MARKER='<!-- git-cliff:end -->'
 

@@ -120,6 +120,12 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
+_No commits since the last release tag._
+
+<!-- git-cliff:end -->
+
+## core 2.7.0 · cli 3.6.0 · rust 3.3.0 · npm 2.7.0
+
 ### Added
 
 - **embed** — report both host sides of a region, and rebuild from both ([`c2d1797`](https://github.com/diaryx-org/fig/commit/c2d17973452654f45b77848be1b35116e9f7a63b))
@@ -149,8 +155,6 @@ one that the next `zig build changelog` would overwrite with unreleased work.
   starting with a UTF-8 BOM now insert the new block after the BOM. They
   used to insert it before, leaving the BOM mid-file, where it is no longer
   a byte-order mark but a stray zero-width no-break space.
-
-<!-- git-cliff:end -->
 
 ## rust 3.2.0 · npm 2.6.0
 

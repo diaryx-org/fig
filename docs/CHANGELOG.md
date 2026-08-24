@@ -123,6 +123,7 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 ### Added
 
 - **embed** — report both host sides of a region, and rebuild from both ([`c2d1797`](https://github.com/diaryx-org/fig/commit/c2d17973452654f45b77848be1b35116e9f7a63b))
+- **c-api** — export `retype` — re-house an embed under another archetype ([`f19b12e`](https://github.com/diaryx-org/fig/commit/f19b12ede104401c28c4b2be01775bdb3bbc5856))
 
 ### Behavioural changes
 

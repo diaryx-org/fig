@@ -7,6 +7,7 @@ name = CI
 #   * rust        — cargo test for the Rust binding (bindings/rust).
 #   * rust-semver — cargo-semver-checks over the native Rust public surface.
 #   * typescript  — build + test the TypeScript/npm binding (bindings/typescript).
+#   * wasi        — build + test the fig-wasi npm package (bindings/wasi).
 #
 # These were once three separate workflows (ci.figl, ci-rust.figl, ci-npm.figl)
 # so each binding could be re-triggered on its own; they were merged back into
@@ -102,22 +103,25 @@ jobs.rust-semver
 > > > # rustdoc (current AND the baseline rev) needs Zig.
 > > > uses = mlugg/setup-zig@v2
 > > > with.version = 0.16.0
-> > * { uses = dtolnay/rust-toolchain@stable }
 > > *
-> > > # cargo-semver-checks reads rustdoc JSON, which only nightly rustdoc emits.
-> > > # PINNED, not @nightly: rustdoc's JSON format is unstable and nightly ships a
-> > > # new FORMAT_VERSION days-to-weeks before cargo-semver-checks learns to read
-> > > # it. `@nightly` raced ahead to v58 (rustdoc-types 0.58.0, 2026-06-24) while
-> > > # the released tool only reads v56/v57, breaking CI. This pin is the last
-> > > # nightly comfortably within v57 (rustdoc-types 0.57.x ran through 2026-06-19).
-> > > # When you bump cargo-semver-checks to a release that supports a newer format,
-> > > # advance this date to a nightly that emits it.
-> > > # NB: the @<ref> selects a *branch* of the action repo (no per-date branch
-> > > # exists), so a dated nightly must go through @master + the `toolchain` input.
-> > > # Keep this pin in sync with release.figl's `crate` job — it runs the same
-> > > # check before publishing and pins the same nightly.
-> > > uses = dtolnay/rust-toolchain@master
-> > > with.toolchain = nightly-2026-06-15
+> > > # STABLE, deliberately — cargo-semver-checks reads rustdoc JSON, and its
+> > > # README is explicit that the formats it supports are the ones emitted by
+> > > # the then-current stable and beta Rust, with nightly supported only on a
+> > > # best-effort basis ("often, but not always"), sometimes dropped even while
+> > > # older stable formats are still supported.
+> > > #
+> > > # This used to pin a dated nightly (nightly-2026-06-15, the last emitting
+> > > # rustdoc-types v57) because a bare `@nightly` kept racing ahead of the
+> > > # tool: nightly ships a new FORMAT_VERSION days-to-weeks before
+> > > # cargo-semver-checks learns to read it. But a dated pin only trades a
+> > > # fast-moving break for a slow-rotting one — it ages out of support in the
+> > > # other direction, and it is one more number to remember to advance.
+> > > # Tracking stable removes the race instead of re-timing it: stable moves
+> > > # every six weeks, the tool supports a RANGE of formats at once (0.50.0
+> > > # reads v57, v60 and v61), and stable is the combination its authors
+> > > # actually test. So both halves float, and the recommendation the README
+> > > # gives — newest cargo-semver-checks against newest stable — is what runs.
+> > > uses = dtolnay/rust-toolchain@stable
 > > *
 > > > uses = Swatinem/rust-cache@v2
 > > > with.workspaces = bindings/rust
@@ -167,3 +171,46 @@ jobs.typescript.steps[]
 +
 > run = npm test
 > working-directory = bindings/typescript
+
+# fig-wasi is the CLI's WASI build wrapped as an npx-able npm package. It had no
+# CI job until now, and its test suite ran in exactly one place: `prepublishOnly`
+# on the release workflow. That is the worst place for the only run of a test to
+# be. A missing-file assertion in it pinned the CLI's old raw-Zig-error wording,
+# the CLI switched to human messages a fortnight later, and nothing noticed —
+# because nothing ran it — until it failed the RELEASE, twice (cli/v3.5.4 and
+# cli/v3.6.0). Both times the tap and the binaries published and fig-wasi did
+# not, leaving the package two versions behind on npm.
+#
+# So it runs here too, on every push, where a rotted assertion fails a build
+# instead of a publish. `prepublishOnly` still runs it at release time — this
+# job does not replace that gate, it just stops that gate being the first time
+# anyone finds out.
+jobs.wasi
+> name = fig-wasi — build + test
+> runs-on = ubuntu-latest
+
+jobs.wasi.steps[]
+> uses = actions/checkout@v7
++
+> # `npm run build` runs `zig build wasi` to (re)generate wasm/fig-wasi.wasm.
+> uses = mlugg/setup-zig@v2
+> with.version = 0.16.0
++
+> uses = actions/setup-node@v7
+> with
+> > # The package itself declares `engines.node >= 20`, but the suite drives the
+> > # guest through node:wasi, whose API has moved under us before; test on the
+> > # same major the TypeScript job uses so both bindings fail together rather
+> > # than one aging out quietly.
+> > node-version = 24
+> > cache = npm
+> > cache-dependency-path = bindings/wasi/package-lock.json
++
+> run = npm ci
+> working-directory = bindings/wasi
++
+> run = npm run build
+> working-directory = bindings/wasi
++
+> run = npm test
+> working-directory = bindings/wasi

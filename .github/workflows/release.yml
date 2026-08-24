@@ -51,11 +51,11 @@ jobs:
     # the published crate.
     - uses: mlugg/setup-zig@v2
       with: { version: 0.16.0 }
-    # cargo-semver-checks reads rustdoc JSON, which only nightly rustdoc emits —
-    # see ci.figl's `rust-semver` job for why this is a dated pin rather
-    # than `@nightly`. Keep this pin in sync with that job's.
-    - uses: dtolnay/rust-toolchain@master
-      with: { toolchain: nightly-2026-06-15 }
+    # Stable, which is the toolchain cargo-semver-checks actually supports — see
+    # ci.figl's `rust-semver` job for why this is no longer a dated nightly pin.
+    # It is also the toolchain the rest of this job (test/vendor/publish) wants,
+    # so one install now serves the whole job.
+    - uses: dtolnay/rust-toolchain@stable
     - uses: taiki-e/install-action@v2
       with: { tool: cargo-semver-checks }
     # Same gate ci.figl's `rust-semver` job runs on every push/PR — re-run
@@ -76,10 +76,6 @@ jobs:
         fi
         echo "cargo-semver-checks: baseline $tag"
         cargo semver-checks --package fig --baseline-rev "$tag"
-    # Switch back to stable for the rest of the job (test/vendor/publish) — the
-    # nightly toolchain above was only needed for cargo-semver-checks' rustdoc
-    # JSON.
-    - uses: dtolnay/rust-toolchain@stable
     # The crate is an independent track (see the header comment above) — this
     # only checks it (and everything else) stays >= the core it embeds, not
     # that it equals the tag.

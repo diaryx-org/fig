@@ -84,7 +84,15 @@ test("a missing file exits non-zero with fig's own clean error, not a JS stack t
       assert.fail("expected a non-zero exit");
     } catch (err) {
       assert.equal(err.status, 1);
-      assert.match(err.stderr.toString(), /error: FileNotFound/);
+      // What this asserts is the SHAPE of fig's own diagnostic — its `error: `
+      // prefix at the start of a line, naming the offending path — not the exact
+      // wording of the reason. The wording is deliberately not pinned: this
+      // assertion was written as /error: FileNotFound/ (the raw Zig error name),
+      // and when `dbc8dfc` replaced those names with human messages it started
+      // matching nothing. Because the fig-wasi suite runs only at publish time
+      // (`prepublishOnly`) and not in CI, that surfaced as a failed *release*
+      // job, twice, rather than as a failed build.
+      assert.match(err.stderr.toString(), /^error: .*nope\.yaml/m);
       assert.doesNotMatch(err.stderr.toString(), /at file:\/\//); // no raw JS stack trace
     }
   });

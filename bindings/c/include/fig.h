@@ -104,6 +104,11 @@ typedef enum FigStatus {
     FIG_STATUS_OUT_OF_MEMORY = 3,
     FIG_STATUS_UNSUPPORTED_FORMAT = 4,
     FIG_STATUS_NOT_FOUND = 5,
+    // The operation is not defined for these arguments, though each argument is
+    // individually valid — as distinct from FIG_STATUS_INVALID_ARGUMENT (a
+    // malformed call) and FIG_STATUS_UNSUPPORTED_FORMAT (a format this build
+    // cannot handle). Added in core 2.7.0; see fig_embed_retype.
+    FIG_STATUS_UNSUPPORTED_OPERATION = 6,
     FIG_STATUS_INTERNAL_ERROR = 255,
 } FigStatus;
 
@@ -531,6 +536,42 @@ FigStatus fig_embed_extract(const uint8_t *input, size_t input_len,
 // inner formats this build compiles in.
 FigStatus fig_embed_detect(const uint8_t *input, size_t input_len,
                            int *out_embed_type);
+
+// Re-house `input`'s embedded region under a DIFFERENT archetype's fences: keep
+// every host byte outside the block, and wrap `content` — the already
+// re-serialized inner document, in the TARGET archetype's inner format — in the
+// target's convention. The stateless counterpart of fig_embed_extract, and the
+// splice half of "convert this file's embed style": the caller does the format
+// conversion (fig_value_serialize, or its own printer), fig does the fences and
+// the placement.
+//
+// The block MOVES only when the target puts it at the other end of the file
+// (frontmatter <-> endmatter); otherwise it is re-housed exactly where it sat,
+// so a same-archetype retype is a byte-identical rebuild. The host text on both
+// sides survives in file order either way, and a UTF-8 BOM is re-emitted at
+// offset 0 rather than travelling with the prose it precedes.
+//
+// Moving a MID-DOCUMENT block (FIG_EMBED_HTML_SCRIPT_*, FIG_EMBED_HTML_CODE_*)
+// to an archetype that sits at an edge of the file returns
+// FIG_STATUS_UNSUPPORTED_OPERATION: hoisting a `---` fence above <html> is
+// neither valid markdown nor valid HTML, and leaving the block where it is does
+// not make it frontmatter. Converting such a file means converting the host too.
+// Mid-document to mid-document is fine, and splices in place.
+//
+// FIG_STATUS_NOT_FOUND when `input` has no region of `from_embed_type`;
+// FIG_STATUS_PARSE_ERROR when it opens one and never closes it.
+//
+// OWNERSHIP: on FIG_STATUS_OK the result is a freshly allocated buffer the
+// CALLER owns — release it with fig_free(ptr, len), passing back the exact
+// *out_len. This is the one fig call that hands back an owned buffer rather than
+// one borrowed from a handle, because it holds no handle. Nothing is written to
+// the out params on failure.
+//
+// Added in core 2.7.0.
+FigStatus fig_embed_retype(const uint8_t *input, size_t input_len,
+                           int from_embed_type, int to_embed_type,
+                           const uint8_t *content, size_t content_len,
+                           uint8_t **out_ptr, size_t *out_len);
 
 // ============================================================================
 // Embed editor (combined): opens the config inside a host file — selected by

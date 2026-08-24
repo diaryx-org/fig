@@ -24,6 +24,11 @@ pub enum Error {
     OutOfMemory,
     /// The requested format is not supported.
     UnsupportedFormat,
+    /// The operation is not defined for these arguments, though each argument
+    /// is individually valid — distinct from [`Error::InvalidArgument`] (a
+    /// malformed call). Returned by [`Embed::retype`](crate::Embed::retype)
+    /// when asked to move a mid-document block to an edge archetype.
+    UnsupportedOperation,
     /// A path, key, or embedded region was not found.
     NotFound,
     /// An unexpected internal error occurred.
@@ -179,6 +184,7 @@ impl Error {
             ffi::FigStatus::PARSE_ERROR => Err(Self::Parse(ParseError::generic())),
             ffi::FigStatus::OUT_OF_MEMORY => Err(Self::OutOfMemory),
             ffi::FigStatus::UNSUPPORTED_FORMAT => Err(Self::UnsupportedFormat),
+            ffi::FigStatus::UNSUPPORTED_OPERATION => Err(Self::UnsupportedOperation),
             ffi::FigStatus::NOT_FOUND => Err(Self::NotFound),
             // `INTERNAL_ERROR` and any code fig may add in a later release fold
             // into `Internal`: an unrecognized status is never mistaken for `Ok`.
@@ -203,6 +209,7 @@ impl fmt::Display for Error {
             }
             Error::OutOfMemory => f.write_str("out of memory"),
             Error::UnsupportedFormat => f.write_str("unsupported format"),
+            Error::UnsupportedOperation => f.write_str("unsupported operation"),
             Error::NotFound => f.write_str("path or region not found"),
             Error::Internal => f.write_str("internal error"),
             Error::Utf8 => f.write_str("scalar was not valid UTF-8"),

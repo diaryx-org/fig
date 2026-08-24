@@ -134,6 +134,59 @@ export class Embed extends Editable {
     return Embed.openWith(host, kind, fig.fig_embed_open_or_init, "fig_embed_open_or_init");
   }
 
+  /** Re-house `host`'s embedded region under a different archetype's fences:
+   *  keep every host byte outside the block, and wrap `content` — the already
+   *  re-serialized inner document, in `to`'s inner format — in `to`'s
+   *  convention. The splice half of "convert this file's embed style"; the
+   *  caller does the format conversion, fig does the fences and the placement.
+   *
+   *  The block MOVES only when `to` puts it at the other end of the file
+   *  (frontmatter <-> endmatter); otherwise it is re-housed exactly where it
+   *  sat, so retyping to the same archetype is a byte-identical rebuild. The
+   *  host text on both sides survives in file order either way, and a UTF-8 BOM
+   *  is re-emitted at offset 0 rather than travelling with the prose it
+   *  precedes.
+   *
+   *  Throws {@link FigError} `UnsupportedOperation` when `from` is a
+   *  mid-document archetype (`HtmlScript*`/`HtmlCode*`) and `to` sits at an edge
+   *  of the file: hoisting a `---` fence above `<html>` is neither valid
+   *  markdown nor valid HTML, and leaving the block where it is does not make it
+   *  frontmatter. Mid-document to mid-document is fine, and splices in place.
+   *  `NotFound` when `host` has no region of `from`; `ParseError` when it opens
+   *  one and never closes it. */
+  static retype(
+    host: string | Uint8Array,
+    from: EmbedType,
+    to: EmbedType,
+    content: string | Uint8Array,
+  ): string {
+    const hostBytes = typeof host === "string" ? encoder.encode(host) : host;
+    const contentBytes = typeof content === "string" ? encoder.encode(content) : content;
+    const frame = new Frame();
+    try {
+      const h = frame.bytes(hostBytes);
+      const c = frame.bytes(contentBytes);
+      // An 8-byte scratch holding the (ptr, len) out-param pair.
+      const out = frame.alloc(8);
+      check(
+        fig.fig_embed_retype(h, hostBytes.length, from, to, c, contentBytes.length, out, out + 4),
+        "fig_embed_retype",
+      );
+      // Unlike every other fig call, the result buffer is OURS: fig allocated it
+      // and holds no handle to free it later. Copy it out, then hand it back
+      // with the exact length — in a `finally`, so a decode failure still frees.
+      const ptr = readU32(out);
+      const len = readU32(out + 4);
+      try {
+        return readOutSlice(out);
+      } finally {
+        fig.fig_free(ptr, len);
+      }
+    } finally {
+      frame.dispose();
+    }
+  }
+
   /** Locate an embedded region and report its fence/content spans without
    *  parsing the content. Throws {@link FigError} `NotFound` if absent. */
   static extract(input: string | Uint8Array, kind: EmbedType): Region {

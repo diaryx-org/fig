@@ -309,6 +309,35 @@ test("Embed.extract locates the region, with a body span", () => {
   assert.equal(region.body.start, region.closeFence.end);
 });
 
+test("Embed.retype re-houses a block, keeping every host byte", () => {
+  assert.equal(
+    Embed.retype("---\ntitle: hi\n---\n# body\n", EmbedType.FrontmatterYaml, EmbedType.PlusToml, 'title = "hi"\n'),
+    '+++\ntitle = "hi"\n+++\n# body\n',
+  );
+  // Same archetype in and out is a byte-identical rebuild, even with host text
+  // on both sides of the block.
+  const html = '<head>\n<script type="application/yaml">\nk: v\n</script>\n</head>\n';
+  assert.equal(Embed.retype(html, EmbedType.HtmlScriptYaml, EmbedType.HtmlScriptYaml, "k: v\n"), html);
+});
+
+test("Embed.retype refuses to move a mid-document block to an edge", () => {
+  const html = '<head>\n<script type="application/yaml">\nk: v\n</script>\n</head>\n';
+  assert.throws(
+    () => Embed.retype(html, EmbedType.HtmlScriptYaml, EmbedType.FrontmatterYaml, "k: v\n"),
+    (e: unknown) => e instanceof FigError && e.status === Status.UnsupportedOperation,
+  );
+  // Mid-document to mid-document splices in place, both sides intact.
+  assert.equal(
+    Embed.retype(html, EmbedType.HtmlScriptYaml, EmbedType.HtmlCodeYaml, "k: v\n"),
+    '<head>\n<pre><code class="language-yaml">\nk: v\n</code></pre>\n</head>\n',
+  );
+  // A missing region is NotFound, not a silent pass-through.
+  assert.throws(
+    () => Embed.retype("# just markdown\n", EmbedType.FrontmatterYaml, EmbedType.PlusToml, ""),
+    (e: unknown) => e instanceof FigError && e.status === Status.NotFound,
+  );
+});
+
 test("Embed.extract reports both host sides, which tile the input exactly", () => {
   // A mid-document `<script>` island has host text on BOTH sides, which the
   // one-sided `body` span cannot name — `bodyBefore`/`bodyAfter` can.

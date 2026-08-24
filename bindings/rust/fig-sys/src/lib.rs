@@ -30,6 +30,9 @@ impl FigStatus {
     pub const OUT_OF_MEMORY: c_int = 3;
     pub const UNSUPPORTED_FORMAT: c_int = 4;
     pub const NOT_FOUND: c_int = 5;
+    /// The operation is not defined for these arguments, though each is
+    /// individually valid. Added in core 2.7.0; see `fig_embed_retype`.
+    pub const UNSUPPORTED_OPERATION: c_int = 6;
     pub const INTERNAL_ERROR: c_int = 255;
 }
 
@@ -631,6 +634,24 @@ unsafe extern "C" {
         input_len: usize,
         out_embed_type: *mut c_int,
     ) -> FigStatus;
+
+    /// Re-house an embedded region under a different archetype's fences. On
+    /// `OK` the result is an OWNED buffer — release it with `fig_free`, passing
+    /// back the exact `out_len`. Added in core 2.7.0.
+    pub fn fig_embed_retype(
+        input: *const u8,
+        input_len: usize,
+        from_embed_type: c_int,
+        to_embed_type: c_int,
+        content: *const u8,
+        content_len: usize,
+        out_ptr: *mut *mut u8,
+        out_len: *mut usize,
+    ) -> FigStatus;
+
+    /// Sized free for a buffer fig allocated (`fig_embed_retype`'s result) or
+    /// that the caller obtained from `fig_alloc`. `len` must be exact.
+    pub fn fig_free(ptr: *mut u8, len: usize);
 
     pub fn fig_embed_open(
         input: *const u8,

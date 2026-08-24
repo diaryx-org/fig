@@ -307,6 +307,72 @@ impl Embed {
     /// Locate `kind`'s region in `content` and borrow its content/body slices
     /// without parsing or copying — the read-only counterpart to [`Embed::open`].
     /// [`Error::NotFound`] when no such region exists (or its fence is unterminated).
+    /// Re-house `host`'s embedded region under a different archetype's fences:
+    /// keep every host byte outside the block, and wrap `content` — the already
+    /// re-serialized inner document, in `to`'s inner format — in `to`'s
+    /// convention. The splice half of "convert this file's embed style"; the
+    /// caller does the format conversion, fig does the fences and the placement.
+    ///
+    /// The block MOVES only when `to` puts it at the other end of the file
+    /// (frontmatter <-> endmatter); otherwise it is re-housed exactly where it
+    /// sat, so retyping to the same archetype is a byte-identical rebuild. The
+    /// host text on both sides survives in file order either way, and a UTF-8
+    /// BOM is re-emitted at offset 0 rather than travelling with the prose it
+    /// precedes.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::UnsupportedOperation`] when `from` is a mid-document archetype
+    /// (`HtmlScript*`, `HtmlCode*`) and `to` sits at an edge of the file:
+    /// hoisting a `---` fence above `<html>` is neither valid markdown nor
+    /// valid HTML, and leaving the block where it is does not make it
+    /// frontmatter. Mid-document to mid-document is fine, and splices in place.
+    ///
+    /// [`Error::NotFound`] when `host` has no region of `from`;
+    /// [`Error::Parse`] when it opens one and never closes it.
+    ///
+    /// ```
+    /// use fig::{Embed, EmbedType};
+    /// let out = Embed::retype(
+    ///     "---\ntitle: hi\n---\n# body\n",
+    ///     EmbedType::FrontmatterYaml,
+    ///     EmbedType::PlusToml,
+    ///     "title = \"hi\"\n",
+    /// )?;
+    /// assert_eq!(out, "+++\ntitle = \"hi\"\n+++\n# body\n");
+    /// # Ok::<(), fig::Error>(())
+    /// ```
+    pub fn retype(
+        host: &str,
+        from: EmbedType,
+        to: EmbedType,
+        content: &str,
+    ) -> Result<String, Error> {
+        let mut ptr: *mut u8 = std::ptr::null_mut();
+        let mut len: usize = 0;
+        let status = unsafe {
+            ffi::fig_embed_retype(
+                host.as_ptr(),
+                host.len(),
+                from.ffi() as i32,
+                to.ffi() as i32,
+                content.as_ptr(),
+                content.len(),
+                &mut ptr,
+                &mut len,
+            )
+        };
+        Error::from_status(status)?;
+        if ptr.is_null() {
+            return Err(Error::Internal);
+        }
+        // fig owns the buffer until we copy it out; the sized free must run even
+        // if the bytes turn out not to be UTF-8, so it is not guarded by `?`.
+        let owned = unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec();
+        unsafe { ffi::fig_free(ptr, len) };
+        String::from_utf8(owned).map_err(|_| Error::Utf8)
+    }
+
     pub fn extract(content: &str, kind: EmbedType) -> Result<Extracted<'_>, Error> {
         let mut region = ffi::FigRegion {
             size: core::mem::size_of::<ffi::FigRegion>() as u32,

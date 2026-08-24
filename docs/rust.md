@@ -483,6 +483,15 @@ println!("{}", fm.render()?);
   content is written in, so a detected embed resolves to a parser without
   duplicating the mapping.
 - `replace_body(text)` swaps the prose while keeping the (possibly edited) config.
+- `Embed::retype(host, from, to, content)` re-houses the block under a
+  *different* archetype's fences — the splice half of "convert this file's embed
+  style", with `content` the already re-serialized inner document. Every host
+  byte outside the block survives, and the block moves only when the target puts
+  it at the other end of the file, so retyping to the same archetype is a
+  byte-identical rebuild. Moving a mid-document block (`HtmlScript*`,
+  `HtmlCode*`) to an edge archetype is [`Error::UnsupportedOperation`]: there is
+  no honest place to put the host text that sits above it. Mid-document to
+  mid-document splices in place.
 
 ## Serialization options
 
@@ -559,7 +568,8 @@ match Document::parse(b"{ not valid", Format::Json) {
 ```
 
 Notable variants: `Parse(ParseError)`, `UnsupportedFormat`, `NotFound` (a path,
-key, or region), `InvalidArgument`, `Utf8`, plus serde/derive mapping errors
+key, or region), `InvalidArgument`, `UnsupportedOperation` (every argument valid,
+but the operation is not defined for them), `Utf8`, plus serde/derive mapping errors
 (`Message`, `MissingField`, `UnknownVariant`, `TypeMismatch`, …).
 [`ParseError`] currently carries the core's message; byte offset / line / column
 are wired but `None` until the core surfaces them.

@@ -377,6 +377,14 @@ original encoding and canonically encodes only what changed.
   parsing — handy for just reading the raw frontmatter and body apart.
 - `detect(source)` sniffs which `EmbedType` a host opens with, or `null`.
 - `replaceBody(text)` swaps the prose while keeping the (possibly edited) config.
+- `Embed.retype(host, from, to, content)` re-houses the block under a *different*
+  archetype's fences — the splice half of "convert this file's embed style", with
+  `content` the already re-serialized inner document. Every host byte outside the
+  block survives, and the block moves only when the target puts it at the other
+  end of the file, so retyping to the same archetype is a byte-identical rebuild.
+  Moving a mid-document block (`HtmlScript*`, `HtmlCode*`) to an edge archetype
+  throws `Status.UnsupportedOperation`: there is no honest place to put the host
+  text above it. Mid-document to mid-document splices in place.
 
 ## Serialization options
 
@@ -506,8 +514,8 @@ manage the handle for you, so no cleanup is needed.
   `firstChild`, `nextSibling`, `childCount`, `keyOf`, `valueOf`, `asBool`,
   `asString`, `asNumberRaw`, `asExtended`).
 - `Editor` — comment-preserving editor: `open`, `source`, and the edit methods.
-- `Embed` — frontmatter/embed editor: `open`, `openOrInit`, `extract`, `render`,
-  `replaceBody`, and the edit methods.
+- `Embed` — frontmatter/embed editor: `open`, `openOrInit`, `extract`, `retype`,
+  `render`, `replaceBody`, and the edit methods.
 
 **Values & enums**
 

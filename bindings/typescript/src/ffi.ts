@@ -22,6 +22,10 @@ export enum Status {
   OutOfMemory = 3,
   UnsupportedFormat = 4,
   NotFound = 5,
+  /** The operation is not defined for these arguments, though each argument is
+   *  individually valid — distinct from `InvalidArgument` (a malformed call).
+   *  Added in core 2.7.0; see `Embed.retype`. */
+  UnsupportedOperation = 6,
   InternalError = 255,
 }
 
@@ -89,6 +93,19 @@ interface Exports {
 
   fig_embed_extract(input: number, input_len: number, embed_type: number, out_region: number): number;
   fig_embed_detect(input: number, input_len: number, out_embed_type: number): number;
+  /** Re-house an embedded region under a different archetype. On `Ok` the
+   *  result is an OWNED buffer in linear memory — free it with `fig_free`,
+   *  passing back the exact length. Added in core 2.7.0. */
+  fig_embed_retype(
+    input: number,
+    input_len: number,
+    from_embed_type: number,
+    to_embed_type: number,
+    content: number,
+    content_len: number,
+    out_ptr: number,
+    out_len: number,
+  ): number;
   fig_embed_open(input: number, input_len: number, embed_type: number, out: number): number;
   fig_embed_open_or_init(input: number, input_len: number, embed_type: number, out: number): number;
   fig_embed_destroy(em: number): void;

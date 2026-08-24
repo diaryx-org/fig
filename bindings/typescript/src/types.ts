@@ -174,6 +174,7 @@ const STATUS_MESSAGE: Record<number, string> = {
   [Status.OutOfMemory]: "out of memory",
   [Status.UnsupportedFormat]: "unsupported format",
   [Status.NotFound]: "not found",
+  [Status.UnsupportedOperation]: "unsupported operation",
   [Status.InternalError]: "internal error",
 };
 

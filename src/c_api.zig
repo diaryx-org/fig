@@ -52,6 +52,12 @@ pub const FigStatus = enum(c_int) {
     out_of_memory = 3,
     unsupported_format = 4,
     not_found = 5,
+    /// The operation is not defined for these arguments, though every argument
+    /// is individually valid — as distinct from `invalid_argument` (a malformed
+    /// call) and `unsupported_format` (a format this build cannot handle).
+    /// Returned by `fig_embed_retype` when asked to move a mid-document block to
+    /// an archetype that sits at an edge of the file.
+    unsupported_operation = 6,
     internal_error = 255,
 };
 
@@ -1659,6 +1665,62 @@ pub export fn fig_embed_detect(
     const input = sliceOf(input_ptr, input_len) orelse return .invalid_argument;
     const t = Embed.detect(input) orelse return .not_found;
     out.* = @intFromEnum(figEmbedTypeOf(t));
+    return .ok;
+}
+
+/// Re-house `input`'s embedded region under a DIFFERENT archetype's fences:
+/// keep every host byte outside the block, and wrap `content` — the already
+/// re-serialized inner document, in the TARGET archetype's inner format — in
+/// `to`'s convention. The stateless counterpart of `fig_embed_extract`, and the
+/// splice half of "convert this file's embed style": the caller does the format
+/// conversion (`fig_value_serialize` or its own printer), fig does the fences
+/// and the placement.
+///
+/// The block MOVES only when the target puts it at the other end of the file
+/// (frontmatter <-> endmatter); otherwise it is re-housed exactly where it sat,
+/// so a same-archetype retype is a byte-identical rebuild. The host text on both
+/// sides survives in file order either way, and a UTF-8 BOM is re-emitted at
+/// offset 0 rather than travelling with the prose it precedes.
+///
+/// Moving a MID-DOCUMENT block (`html_script`/`html_code`) to an edge archetype
+/// returns `unsupported_operation`: hoisting a `---` fence above `<html>` is
+/// neither valid markdown nor valid HTML, and leaving the block where it is does
+/// not make it frontmatter. Converting such a file means converting the host
+/// too. Mid-document to mid-document is fine and splices in place.
+///
+/// `not_found` when `input` has no region of `from_embed_type`, `parse_error`
+/// when it opens one and never closes it.
+///
+/// OWNERSHIP: on `ok` the result is a freshly allocated buffer the CALLER owns.
+/// Release it with `fig_free(ptr, len)`, passing back the exact `*out_len` — a
+/// sized free, like every other fig allocation. Nothing is written to the out
+/// params on failure.
+pub export fn fig_embed_retype(
+    input_ptr: ?[*]const u8,
+    input_len: usize,
+    from_embed_type: c_int,
+    to_embed_type: c_int,
+    content_ptr: ?[*]const u8,
+    content_len: usize,
+    out_ptr: ?*[*]u8,
+    out_len: ?*usize,
+) FigStatus {
+    const op = out_ptr orelse return .invalid_argument;
+    const ol = out_len orelse return .invalid_argument;
+    const input = sliceOf(input_ptr, input_len) orelse return .invalid_argument;
+    const content = sliceOf(content_ptr, content_len) orelse return .invalid_argument;
+    const from = embedTypeOf(from_embed_type) orelse return .invalid_argument;
+    const to = embedTypeOf(to_embed_type) orelse return .invalid_argument;
+    const region = Embed.locateRegion(input, from) catch |err| return switch (err) {
+        error.NotFound => .not_found,
+        error.Unterminated => .parse_error,
+    };
+    const out = Embed.retype(activeAllocator(), input, region, from, to, content) catch |err| return switch (err) {
+        error.MidDocumentRegionCannotMove => .unsupported_operation,
+        error.OutOfMemory => .out_of_memory,
+    };
+    op.* = out.ptr;
+    ol.* = out.len;
     return .ok;
 }
 
@@ -3470,6 +3532,70 @@ test "frontmatter c abi move item in a flow sequence value" {
     var len: usize = undefined;
     try std.testing.expectEqual(FigStatus.ok, fig_embed_render(out_fm, &ptr, &len));
     try std.testing.expectEqualStrings("---\ntags: [z, x, y]\n---\nbody\n", ptr[0..len]);
+}
+
+test "fig_embed_retype re-houses a block, keeping every host byte" {
+    const md = "---\ntitle: hi\n---\n# body\n";
+    const content = "{\"title\":\"hi\"}\n";
+    var ptr: [*]u8 = undefined;
+    var len: usize = undefined;
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_retype(
+        md.ptr,
+        md.len,
+        @intFromEnum(FigEmbedType.frontmatter_yaml),
+        @intFromEnum(FigEmbedType.frontmatter_json),
+        content.ptr,
+        content.len,
+        &ptr,
+        &len,
+    ));
+    defer fig_free(ptr, len);
+    try std.testing.expectEqualStrings(";;;\n{\"title\":\"hi\"}\n;;;\n# body\n", ptr[0..len]);
+}
+
+test "fig_embed_retype refuses to move a mid-document block to an edge" {
+    // The prefix above the block has nowhere to go — see the Zig-side twin.
+    const html = "<head>\n<script type=\"application/yaml\">\nk: v\n</script>\n</head>\n";
+    const content = "k: v\n";
+    var ptr: [*]u8 = undefined;
+    var len: usize = undefined;
+    try std.testing.expectEqual(FigStatus.unsupported_operation, fig_embed_retype(
+        html.ptr,
+        html.len,
+        @intFromEnum(FigEmbedType.html_script_yaml),
+        @intFromEnum(FigEmbedType.frontmatter_yaml),
+        content.ptr,
+        content.len,
+        &ptr,
+        &len,
+    ));
+    // Mid-document to mid-document is fine, and splices in place.
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_retype(
+        html.ptr,
+        html.len,
+        @intFromEnum(FigEmbedType.html_script_yaml),
+        @intFromEnum(FigEmbedType.html_code_yaml),
+        content.ptr,
+        content.len,
+        &ptr,
+        &len,
+    ));
+    defer fig_free(ptr, len);
+    try std.testing.expectEqualStrings(
+        "<head>\n<pre><code class=\"language-yaml\">\nk: v\n</code></pre>\n</head>\n",
+        ptr[0..len],
+    );
+}
+
+test "fig_embed_retype reports a missing or unterminated region" {
+    var ptr: [*]u8 = undefined;
+    var len: usize = undefined;
+    const plain = "# just markdown\n";
+    try std.testing.expectEqual(FigStatus.not_found, fig_embed_retype(plain.ptr, plain.len, @intFromEnum(FigEmbedType.frontmatter_yaml), @intFromEnum(FigEmbedType.plus_toml), "", 0, &ptr, &len));
+    const unterminated = "---\nk: v\nno close\n";
+    try std.testing.expectEqual(FigStatus.parse_error, fig_embed_retype(unterminated.ptr, unterminated.len, @intFromEnum(FigEmbedType.frontmatter_yaml), @intFromEnum(FigEmbedType.plus_toml), "", 0, &ptr, &len));
+    // Null out params are rejected, not crashed on.
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_retype(plain.ptr, plain.len, 0, 0, "", 0, null, &len));
 }
 
 test "embed c abi locates region with content and body spans" {

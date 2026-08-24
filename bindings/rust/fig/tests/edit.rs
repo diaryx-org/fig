@@ -403,6 +403,71 @@ fn extract_exposes_region_spans_and_slices() {
 }
 
 #[test]
+fn embed_retype_rehouses_a_block_keeping_every_host_byte() {
+    // Frontmatter -> endmatter: the block moves to the bottom, prose leads.
+    let out = Embed::retype(
+        "---\ntitle: hi\n---\n# body\n",
+        EmbedType::FrontmatterYaml,
+        EmbedType::EndmatterYaml,
+        "title: hi\n",
+    )
+    .unwrap();
+    assert_eq!(out, "# body\n```endmatter\ntitle: hi\n```\n");
+
+    // Retyping to the SAME archetype is a byte-identical rebuild, on a source
+    // with host text on both sides of the block.
+    let html = "<head>\n<script type=\"application/yaml\">\nk: v\n</script>\n</head>\n";
+    let same = Embed::retype(
+        html,
+        EmbedType::HtmlScriptYaml,
+        EmbedType::HtmlScriptYaml,
+        "k: v\n",
+    )
+    .unwrap();
+    assert_eq!(same, html);
+}
+
+#[test]
+fn embed_retype_refuses_to_move_a_mid_document_block_to_an_edge() {
+    let html = "<head>\n<script type=\"application/yaml\">\nk: v\n</script>\n</head>\n";
+    // The `<head>` above the block has nowhere to go under an edge archetype.
+    assert!(matches!(
+        Embed::retype(
+            html,
+            EmbedType::HtmlScriptYaml,
+            EmbedType::FrontmatterYaml,
+            "k: v\n"
+        ),
+        Err(fig::Error::UnsupportedOperation)
+    ));
+    // Mid-document to mid-document splices in place, both sides intact.
+    let moved = Embed::retype(
+        html,
+        EmbedType::HtmlScriptYaml,
+        EmbedType::HtmlCodeYaml,
+        "k: v\n",
+    )
+    .unwrap();
+    assert_eq!(
+        moved,
+        "<head>\n<pre><code class=\"language-yaml\">\nk: v\n</code></pre>\n</head>\n"
+    );
+}
+
+#[test]
+fn embed_retype_reports_a_missing_region() {
+    assert!(matches!(
+        Embed::retype(
+            "# just markdown\n",
+            EmbedType::FrontmatterYaml,
+            EmbedType::PlusToml,
+            ""
+        ),
+        Err(fig::Error::NotFound)
+    ));
+}
+
+#[test]
 fn embed_region_spans_tile_the_host_exactly() {
     // Both sides of the block are reported, so a caller can rebuild the host
     // without losing a byte — including for a mid-document `<script>` island,

@@ -120,7 +120,34 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
-_No commits since the last release tag._
+### Added
+
+- **embed** — report both host sides of a region, and rebuild from both ([`c2d1797`](https://github.com/diaryx-org/fig/commit/c2d17973452654f45b77848be1b35116e9f7a63b))
+
+### Behavioural changes
+
+- `fig convert --to-embed` now refuses, with exit 2, to
+  convert a mid-document embed (`html-script-*`, `html-code-*`) to an
+  archetype that sits at an edge of the file. It used to emit a file with
+  every byte before the block silently deleted — for an HTML page, the
+  whole document head above the block.
+
+- `fig convert --to-embed` from `endmatter` now keeps text
+  that followed the closing fence. It used to drop it.
+
+- a UTF-8 BOM now survives `fig convert --to-embed`, and
+  stays at offset 0 when the block moves to the other end of the file. It
+  used to be dropped.
+
+- `fig get --body` now prints the host text on both sides of
+  the block, in file order. For frontmatter and endmatter that is the same
+  output as before, bar a leading BOM, which is now included; for a
+  mid-document embed it used to print only the text after the block.
+
+- `Embed.initRegion` / `fig_embed_open_or_init` on a source
+  starting with a UTF-8 BOM now insert the new block after the BOM. They
+  used to insert it before, leaving the BOM mid-file, where it is no longer
+  a byte-order mark but a stray zero-width no-break space.
 
 <!-- git-cliff:end -->
 

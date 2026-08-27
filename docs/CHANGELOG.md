@@ -120,6 +120,10 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
+### Added
+
+- **nushell** — add a nushell plugin providing `from figl` / `to figl` ([`4b1420f`](https://github.com/diaryx-org/fig/commit/4b1420f235e2739cb8e86d20d2da479a05b8b977))
+
 ### Fixed
 
 - **wasi** — assert the shape of fig's missing-file error, not its wording ([`2a16ff1`](https://github.com/diaryx-org/fig/commit/2a16ff1672003bb30deeda36527d95567c598c08))

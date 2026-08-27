@@ -7,6 +7,7 @@
 //! and the editor's typed methods build a `Value` from any `Serialize` type
 //! (see [`crate::ser`]); without it, callers construct `Value` directly.
 
+use std::borrow::Cow;
 use std::os::raw::c_int;
 use std::ptr::{self, NonNull};
 
@@ -456,26 +457,61 @@ impl Value {
     /// use this rather than `str::parse`, which rejects `.inf`/`.nan` — a field
     /// holding one would otherwise become a [`Value::Str`] on a no-op edit.
     ///
+    /// # Notation
+    ///
+    /// The text is a *lexeme*, not a canonical decimal: `fig_node_number`
+    /// yields the raw source text, and how much of the author's spelling
+    /// survives is the language's choice. TOML canonicalizes its numbers before
+    /// they reach here; fig's own dialect and ZON deliberately keep the
+    /// verbatim lexeme so `0xFF` round-trips as `0xFF` rather than `255`. So
+    /// this accepts everything those tokenizers do: the `0x`/`0o`/`0b` radix
+    /// prefixes, `_` digit separators, and a leading sign on either.
+    ///
     /// ```
     /// use fig::Value;
     ///
     /// assert_eq!(Value::parse_number("3", false).unwrap(), Value::Int(3));
     /// assert_eq!(Value::parse_number("3", true).unwrap(), Value::Float(3.0));
+    /// assert_eq!(Value::parse_number("0xFF", false).unwrap(), Value::Int(255));
+    /// assert_eq!(Value::parse_number("1_000", false).unwrap(), Value::Int(1000));
+    /// assert_eq!(Value::parse_number("-0o755", false).unwrap(), Value::Int(-493));
+    /// // Past i64::MAX, in any notation, is the canonical `Uint` range.
+    /// assert_eq!(
+    ///     Value::parse_number("0xd4f24a95e29f7b74", false).unwrap(),
+    ///     Value::Uint(15344408888017386356),
+    /// );
     /// assert!(Value::parse_number(".inf", true).unwrap().as_f64().unwrap().is_infinite());
     /// assert!(Value::parse_number("nope", false).is_err());
     /// ```
     pub fn parse_number(raw: &str, is_float: bool) -> Result<Value, Error> {
+        // Digit separators are legal wherever fig reads numbers, and a lexeme
+        // that kept them (`1_000`) is not something `str::parse` will read.
+        // Borrowed unless the text actually has one, so the common path does
+        // not allocate.
+        let text: Cow<'_, str> = if raw.contains('_') {
+            Cow::Owned(raw.replace('_', ""))
+        } else {
+            Cow::Borrowed(raw)
+        };
+
         if !is_float {
-            if let Ok(i) = raw.parse::<i64>() {
+            if let Some((radix, digits, negative)) = split_radix(&text) {
+                return from_radix(digits, radix, negative)
+                    .ok_or_else(|| Error::Number(raw.to_owned()));
+            }
+            if let Ok(i) = text.parse::<i64>() {
                 return Ok(Value::Int(i));
             }
-            if let Ok(u) = raw.parse::<u64>() {
+            if let Ok(u) = text.parse::<u64>() {
                 // Past `i64::MAX`, so this is the canonical `Uint` range.
                 return Ok(Value::Uint(u));
             }
         }
-        Value::parse_float(raw)
+        Value::parse_float(&text)
             .map(Value::Float)
+            // The *original* lexeme in the error, not the separator-stripped
+            // rewrite: an error naming text the author never wrote is a worse
+            // error.
             .ok_or_else(|| Error::Number(raw.to_owned()))
     }
 
@@ -503,6 +539,47 @@ impl Value {
     /// container kind, or the key/index isn't present.
     pub fn get<I: Index>(&self, index: I) -> Option<&Value> {
         index.index_into(self)
+    }
+}
+
+/// Split a `0x…`/`0o…`/`0b…` lexeme into `(radix, digits, negative)`, with the
+/// sign taken off the front. `None` for ordinary decimal text, which
+/// [`Value::parse_number`] reads with `str::parse` instead.
+///
+/// Only the lowercase prefixes are accepted, because those are the only ones
+/// fig's tokenizers emit — this reads lexemes fig produced, not arbitrary text.
+fn split_radix(text: &str) -> Option<(u32, &str, bool)> {
+    let (negative, body) = match text.as_bytes().first() {
+        Some(b'-') => (true, &text[1..]),
+        Some(b'+') => (false, &text[1..]),
+        _ => (false, text),
+    };
+    let radix = match body.as_bytes() {
+        [b'0', b'x', ..] => 16,
+        [b'0', b'o', ..] => 8,
+        [b'0', b'b', ..] => 2,
+        _ => return None,
+    };
+    let digits = &body[2..];
+    (!digits.is_empty()).then_some((radix, digits, negative))
+}
+
+/// Assemble a radix-prefixed integer into fig's canonical integer form: `Int`
+/// where it fits an `i64`, `Uint` only past `i64::MAX`.
+fn from_radix(digits: &str, radix: u32, negative: bool) -> Option<Value> {
+    // The magnitude is read unsigned so a value above `i64::MAX` still lands —
+    // `i64::from_str_radix` would reject `0xd4f24a95e29f7b74` outright, and that
+    // shape is exactly what a `build.zig.zon` fingerprint is.
+    let magnitude = u64::from_str_radix(digits, radix).ok()?;
+    if negative {
+        // `checked_sub_unsigned` gets `i64::MIN` right, which negating an
+        // `i64::try_from` does not.
+        0i64.checked_sub_unsigned(magnitude).map(Value::Int)
+    } else {
+        Some(match i64::try_from(magnitude) {
+            Ok(i) => Value::Int(i),
+            Err(_) => Value::Uint(magnitude),
+        })
     }
 }
 
@@ -1139,6 +1216,65 @@ mod tests {
             Value::parse_number("zero", false),
             Err(Error::Number(_))
         ));
+    }
+
+    /// `fig_node_number` yields the *source lexeme*, and fig's own dialect (like
+    /// ZON) keeps the author's notation verbatim rather than canonicalizing it
+    /// the way TOML does. Reading a document therefore has to accept every
+    /// spelling those tokenizers accept, not just decimal digits.
+    #[test]
+    fn parse_number_reads_radix_prefixes_and_separators() {
+        assert_eq!(Value::parse_number("0xFF", false).unwrap(), Value::Int(255));
+        assert_eq!(Value::parse_number("0o755", false).unwrap(), Value::Int(493));
+        assert_eq!(Value::parse_number("0b1010", false).unwrap(), Value::Int(10));
+        assert_eq!(
+            Value::parse_number("1_000_000", false).unwrap(),
+            Value::Int(1_000_000)
+        );
+        assert_eq!(
+            Value::parse_number("0xdead_beef", false).unwrap(),
+            Value::Int(0xdead_beef)
+        );
+        assert_eq!(
+            Value::parse_number("1_000.5", true).unwrap(),
+            Value::Float(1000.5)
+        );
+
+        // Signs ride on the prefix form too.
+        assert_eq!(Value::parse_number("-0o755", false).unwrap(), Value::Int(-493));
+        assert_eq!(Value::parse_number("+0xFF", false).unwrap(), Value::Int(255));
+
+        // The shape that started this: a `build.zig.zon` fingerprint sits above
+        // `i64::MAX`, so it must widen to `Uint` rather than fail.
+        assert_eq!(
+            Value::parse_number("0xd4f24a95e29f7b74", false).unwrap(),
+            Value::Uint(15_344_408_888_017_386_356)
+        );
+        assert_eq!(
+            Value::parse_number("0xffff_ffff_ffff_ffff", false).unwrap(),
+            Value::Uint(u64::MAX)
+        );
+        // `i64::MIN` has no positive counterpart; negating through `i64` would
+        // overflow where the unsigned magnitude does not.
+        assert_eq!(
+            Value::parse_number("-0x8000000000000000", false).unwrap(),
+            Value::Int(i64::MIN)
+        );
+
+        // Still rejected: a prefix with no digits, a digit outside the radix,
+        // and a sign inside the prefix.
+        for bad in ["0x", "0b", "0o", "0b1234", "0xZZ", "0x-FF"] {
+            assert!(
+                matches!(Value::parse_number(bad, false), Err(Error::Number(_))),
+                "{bad} should not parse"
+            );
+        }
+
+        // The error names what the author wrote, not the stripped rewrite.
+        let Err(Error::Number(text)) = Value::parse_number("1_2_x", false) else {
+            panic!("expected a number error");
+        };
+        assert_eq!(text, "1_2_x");
     }
 
     // Canonical form: an integer that fits in `i64` is `Int`, whatever door it

@@ -129,6 +129,20 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **wasi** — assert the shape of fig's missing-file error, not its wording ([`2a16ff1`](https://github.com/diaryx-org/fig/commit/2a16ff1672003bb30deeda36527d95567c598c08))
 - **ci** — track stable for cargo-semver-checks, and test fig-wasi on every push ([`5268c8a`](https://github.com/diaryx-org/fig/commit/5268c8a3b0b161ad3807e3802383fb1a53eb7ad2))
 - **tools** — run changelog.sh from the repo root, whatever the cwd ([`ec63ad6`](https://github.com/diaryx-org/fig/commit/ec63ad60081b473c736c6c1d11a151276889f852))
+- **rust** — read radix-prefixed and separated number lexemes ([`17f1f6a`](https://github.com/diaryx-org/fig/commit/17f1f6a709f00f0e84cca76c5c6dd5c724172b45))
+- **ts** — read number lexemes exactly instead of via Number() ([`eed7104`](https://github.com/diaryx-org/fig/commit/eed7104b3ee02def2caff70e3fbd79521781f666))
+
+### Behavioural changes
+
+- `Document::to_value` now succeeds on a document holding a
+  hex/octal/binary or `_`-separated number, returning the integer. It used to
+  fail the entire read with `Error::Number` carrying that lexeme, so a figl or
+  ZON file containing one could not be read into a `Value` at all.
+
+- `parse`/`Document` traversal now return an exact `int`/`uint`
+  for a hex, octal, binary or `_`-separated integer. They used to return a
+  `float`: `0xFF` as `255` typed float, `1_000` as `NaN`, and any value past
+  2^53 rounded — all without raising.
 
 <!-- git-cliff:end -->
 

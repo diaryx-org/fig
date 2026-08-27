@@ -132,6 +132,10 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **rust** — read radix-prefixed and separated number lexemes ([`17f1f6a`](https://github.com/diaryx-org/fig/commit/17f1f6a709f00f0e84cca76c5c6dd5c724172b45))
 - **ts** — read number lexemes exactly instead of via Number() ([`eed7104`](https://github.com/diaryx-org/fig/commit/eed7104b3ee02def2caff70e3fbd79521781f666))
 
+### Changed
+
+- **release** — take the shared cliff config, one style for every repo ([`1e828f3`](https://github.com/diaryx-org/fig/commit/1e828f37e557a56d01a87b21b9e5f4a0312220df))
+
 ### Behavioural changes
 
 - `Document::to_value` now succeeds on a document holding a

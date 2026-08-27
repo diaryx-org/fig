@@ -163,6 +163,29 @@ test("large integers survive as bigint", () => {
   assert.equal(round, big);
 });
 
+test("radix-prefixed and separated integer lexemes read exactly", () => {
+  // `fig_node_number` yields the raw source text, and fig's dialect keeps the
+  // author's notation verbatim rather than canonicalizing it the way TOML does
+  // — so these spellings arrive here unchanged and must be read, not guessed at
+  // with `Number()` (which makes `0xFF` a float and `1_000` a NaN).
+  assert.deepEqual(parse("x = 0xFF\ny = 0o755\nz = 0b1010\nn = 1_000\n", Format.Fig), {
+    x: 255,
+    y: 493,
+    z: 10,
+    n: 1000,
+  });
+
+  // A `build.zig.zon` fingerprint: above i64, so it must stay exact as a
+  // bigint rather than rounding through a double (which lands 1356 short).
+  assert.deepEqual(parse("fingerprint = 0xd4f24a95e29f7b74\n", Format.Fig), {
+    fingerprint: 15344408888017386356n,
+  });
+
+  // TOML canonicalizes before the value reaches the binding, so the same
+  // spellings arrive already decimal — they must still read the same.
+  assert.deepEqual(parse("x = 0xFF\nn = 1_000\n", Format.Toml), { x: 255, n: 1000 });
+});
+
 test("float text stays a float in scientific notation", () => {
   // A bare-integer mantissa (`1e+300`) would read back as an int, the same way
   // `1` does — so it gets the `.0` too.

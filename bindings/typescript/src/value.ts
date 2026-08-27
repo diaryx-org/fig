@@ -314,18 +314,56 @@ function isValue(v: unknown): v is Value {
     ["null", "bool", "int", "uint", "float", "string", "extended", "seq", "map"].includes((v as { kind: string }).kind);
 }
 
+/** Every integer lexeme fig's tokenizers accept: an optional sign, then either
+ *  a `0x`/`0o`/`0b` radix prefix or plain decimal digits, with `_` separators
+ *  already stripped by the caller. Anchored, so trailing garbage fails rather
+ *  than being silently truncated the way `parseInt` would. */
+const INTEGER_LEXEME = /^([+-]?)(?:0x([0-9a-fA-F]+)|0o([0-7]+)|0b([01]+)|(\d+))$/;
+
+/** Read an integer lexeme exactly, or `null` if the text is not one.
+ *
+ *  `Number()` cannot be used for this: it reads `0xFF` as a *float*, silently
+ *  rounds anything past 2^53 (a `build.zig.zon` fingerprint loses its low
+ *  digits), and turns `1_000` into `NaN`. */
+function integerFromRaw(raw: string): bigint | null {
+  const match = INTEGER_LEXEME.exec(raw);
+  if (match === null) return null;
+  const [, sign, hex, octal, binary, decimal] = match;
+  // `BigInt` understands the radix prefixes but rejects a sign in front of one,
+  // so the magnitude is built prefixed and the sign applied after.
+  const magnitude = hex !== undefined
+    ? BigInt(`0x${hex}`)
+    : octal !== undefined
+      ? BigInt(`0o${octal}`)
+      : binary !== undefined
+        ? BigInt(`0b${binary}`)
+        : BigInt(decimal!);
+  return sign === "-" ? -magnitude : magnitude;
+}
+
 /** Reconstruct a {@link Value} from a number's raw source text and float flag —
  *  the read-path mirror of the builder's number handling (i64, then u64, then
- *  float). Used by Document traversal. */
+ *  float). Used by Document traversal.
+ *
+ *  The text is a *lexeme*, not canonical decimal: `fig_node_number` yields the
+ *  raw source text, and fig's own dialect (like ZON) keeps the author's
+ *  notation verbatim so `0xFF` round-trips as `0xFF`, where TOML canonicalizes
+ *  first. Radix prefixes and `_` separators therefore both arrive here. */
 export function numberFromRaw(raw: string, isFloat: boolean): Value {
-  if (!isFloat && /^[+-]?\d+$/.test(raw)) {
-    const n = BigInt(raw);
-    if (n >= I64_MIN && n <= I64_MAX) return V.int(n);
-    if (n >= 0n && n <= U64_MAX) return V.uint(n);
+  // Digit separators are legal in every fig format that has them, and neither
+  // `BigInt` nor `Number` reads them.
+  const text = raw.includes("_") ? raw.replaceAll("_", "") : raw;
+  if (!isFloat) {
+    const n = integerFromRaw(text);
+    if (n !== null) {
+      if (n >= I64_MIN && n <= I64_MAX) return V.int(n);
+      if (n >= 0n && n <= U64_MAX) return V.uint(n);
+      // Past u64: widen to a float, as the Rust binding and deserializer do.
+    }
   }
   const lower = raw.toLowerCase();
   if (lower === ".nan" || lower === "nan" || lower === "+.nan") return V.float(NaN);
   if (lower === ".inf" || lower === "+.inf" || lower === "inf") return V.float(Infinity);
   if (lower === "-.inf" || lower === "-inf") return V.float(-Infinity);
-  return V.float(Number(raw));
+  return V.float(Number(text));
 }

@@ -139,6 +139,17 @@ npx @diaryx/fig-wasi get config.yaml
 
 Run `fig help` for instructions for how to use it on your files.
 
+## Nushell
+
+[`bindings/nushell`](bindings/nushell) is a [nushell](https://www.nushell.sh) plugin
+providing `from figl` and `to figl`.
+Nushell dispatches `open` on file extension,
+so registering it also makes `open config.figl` return structured data.
+
+figl's datetimes arrive as real `datetime`s and its nulls as `nothing`.
+No convert-through-JSON shim manages both at once,
+which is why it is a plugin and not a one-line wrapper over the CLI.
+
 ## Planned features
 
 - Styling directives (maintain styling across formats, such as mapping TOML inline->YAML inline)

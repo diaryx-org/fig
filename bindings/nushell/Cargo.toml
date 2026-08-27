@@ -1,0 +1,46 @@
+# A standalone workspace on purpose: NOT a member of `bindings/rust`.
+#
+# The nushell plugin protocol is version-locked to the shell (see README), so
+# this crate pins `=0.113.0` of the nu crates and moves on nushell's release
+# cadence rather than fig's. Folding it into the `bindings/rust` workspace would
+# drag the whole nu dependency tree into `cargo test --workspace --all-features`
+# and into cargo-semver-checks' run over the published fig surface, for a crate
+# that shares neither their version track nor their release gate.
+[workspace]
+members = ["."]
+
+[package]
+name = "nu_plugin_fig"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Nushell plugin for the fig authoring dialect (.figl): `from figl` and `to figl`."
+repository = "https://github.com/diaryx-org/fig"
+keywords = ["nushell", "nu-plugin", "config", "figl", "fig"]
+categories = ["command-line-utilities", "config"]
+
+# Nushell finds plugins by the `nu_plugin_*` binary name; the crate is named to
+# match so `cargo install nu_plugin_fig` drops an executable `plugin add` accepts.
+[lib]
+name = "nu_plugin_fig"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nu_plugin_fig"
+path = "src/main.rs"
+
+[dependencies]
+# Exact pins, not carets. A plugin built against one nu-plugin minor will not
+# register against a different one, so a caret range would let `cargo update`
+# silently produce a binary the target shell rejects at `plugin add` time.
+nu-plugin = "=0.113.0"
+nu-protocol = "=0.113.0"
+# Only for building the `DateTime<FixedOffset>` that `Value::date` takes.
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+# The native binding. `default-features` carries json/yaml/toml/fig, which is
+# also the feature set fig-sys ships a prebuilt `libfig.a` for — so building
+# this plugin needs no Zig toolchain on a tier-1 target.
+fig = { path = "../rust/fig", version = "3.3.0" }
+
+[dev-dependencies]
+nu-plugin-test-support = "=0.113.0"

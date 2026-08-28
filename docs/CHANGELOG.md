@@ -123,6 +123,8 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 ### Added
 
 - **nushell** — add a nushell plugin providing `from figl` / `to figl` ([`4b1420f`](https://github.com/diaryx-org/fig/commit/4b1420f235e2739cb8e86d20d2da479a05b8b977))
+- **patch** — merge one document into another through the editor's splices ([`024dfb0`](https://github.com/diaryx-org/fig/commit/024dfb07b412ff703ec8ab0cf7f576ab9f7cf739))
+- **cli** — `fig patch`, merging one file (or part of one) into another ([`fbb675c`](https://github.com/diaryx-org/fig/commit/fbb675c77b290240d1fbed2862f1ef19aa979f17))
 
 ### Fixed
 

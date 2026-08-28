@@ -104,6 +104,7 @@ pub const CliAction = enum {
     check,
     fmt,
     convert,
+    patch,
 };
 
 pub const HelpOptions = struct {
@@ -363,6 +364,57 @@ pub const ConvertOptions = struct {
     diff: bool = false,
 };
 
+pub const PatchOptions = struct {
+    /// The document being patched, and the only one written. `-` reads stdin —
+    /// only valid with `--dry-run`/`--diff`, there being nowhere to write an
+    /// in-place result back to. Must already exist: `patch` merges into a
+    /// document, it does not seed one (that is `set`'s job).
+    file: []const u8,
+    /// The document supplying the change. `-` reads stdin (so `fig get a.toml
+    /// service | fig patch b.yaml -` works); at most one of the two may.
+    patch_file: []const u8,
+    /// Where in the target the patch lands (`--at`). Empty is the root.
+    at: []fig.AST.PathSegment = &.{},
+    /// Which subtree of the patch document to take (`--from`). Empty is its
+    /// root.
+    from: []fig.AST.PathSegment = &.{},
+    /// Paths to remove from the target after the merge (`--delete`, repeatable).
+    deletes: []const fig.Patch.Deletion = &.{},
+    /// How the merge behaves — sequence strategy, comment strategy, and the
+    /// serialize knobs patch subtrees are rendered with.
+    patch_options: fig.Patch.Options = .{},
+    requested_help: bool = false,
+    /// The TARGET's format. As everywhere else: `--input`, else the extension,
+    /// else (with `detect`) a content sniff.
+    format: Format,
+    detect: bool = false,
+    /// The PATCH document's format (`--patch-input`), resolved the same way
+    /// against its own extension — hence its own `detect` twin.
+    patch_format: Format,
+    detect_patch: bool = false,
+    /// When set, the target is a host document and the merge applies to its
+    /// embedded config of this archetype, spliced back in place.
+    embed: ?fig.Embed.Type = null,
+    /// As in `edit`: set when `embed` needs a runtime content sniff.
+    detect_embed: bool = false,
+    /// The same pair for the PATCH document, so one post's frontmatter can be
+    /// merged into another's.
+    patch_embed: ?fig.Embed.Type = null,
+    detect_patch_embed: bool = false,
+    /// Preserve values the target format can't represent natively through a
+    /// `$fig` envelope, and decode any envelope the patch document carries.
+    /// Same flag, same meaning, as `get`/`convert`.
+    lossless: bool = false,
+    /// Print the patched document to stdout instead of writing it back.
+    dry_run: bool = false,
+    /// Print a unified diff of the change instead of writing it back.
+    /// Unlike `fmt`'s, neither preview mode sets a non-zero exit status: a
+    /// patch is EXPECTED to change the file, so "it changed" is not a failure.
+    diff: bool = false,
+    /// Suppress the summary line and the dropped-comment warning.
+    quiet: bool = false,
+};
+
 pub const CliActionOptions = union(CliAction) {
     help: HelpOptions,
     version: VersionOptions,
@@ -375,6 +427,7 @@ pub const CliActionOptions = union(CliAction) {
     check: CheckOptions,
     fmt: FmtOptions,
     convert: ConvertOptions,
+    patch: PatchOptions,
 };
 
 /// The in-place editing operation `applyEdit` performs. Generalizes the editor's
@@ -494,11 +547,14 @@ pub fn targetFile(config: CliConfig) ?[]const u8 {
         .comment => |o| o.file,
         .fmt => |o| o.file,
         .convert => |o| o.file,
+        // The TARGET, not the patch document: it is the file being written,
+        // so it is the one a failure has to name.
+        .patch => |o| o.file,
         .help, .version, .check => null,
     };
 }
 
-pub const ArgError = error{ UnsupportedFileFormat, MissingEditArgument, MissingSetArgument, MissingInsertArgument, MissingDeleteArgument, MissingGetArgument, MissingCommentArgument, MissingCheckArgument, MissingFmtArgument, MissingConvertArgument, OutOfMemory, Overflow, InvalidCharacter, InvalidPath };
+pub const ArgError = error{ UnsupportedFileFormat, MissingEditArgument, MissingSetArgument, MissingInsertArgument, MissingDeleteArgument, MissingGetArgument, MissingCommentArgument, MissingCheckArgument, MissingFmtArgument, MissingConvertArgument, MissingPatchArgument, OutOfMemory, Overflow, InvalidCharacter, InvalidPath };
 
 /// Result of mapping a file extension to a parse strategy. `embed_detect` is
 /// set when the file is a host document whose config lives in an embedded

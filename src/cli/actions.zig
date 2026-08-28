@@ -16,6 +16,7 @@ const fileio = @import("fileio.zig");
 const diag_report = @import("diag_report.zig");
 const parse_dispatch = @import("parse_dispatch.zig");
 const edit_ops = @import("edit_ops.zig");
+const patch_ops = @import("patch_ops.zig");
 const reformat = @import("reformat.zig");
 
 const Help = help.Help;
@@ -531,6 +532,189 @@ pub fn runCheck(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_
     try stdout_term.writer.flush();
     try stderr_term.writer.flush();
     if (any_failed) std.process.exit(1);
+}
+
+/// `fig patch`: merge one document into another, in place.
+///
+/// The order below is not arbitrary. The TARGET is resolved first — read,
+/// format-detected, embed-sniffed — because the patch document's own
+/// preparation depends on it: `--lossless` encodes the patch's values for the
+/// format they are about to be rendered into, which is the target's.
+pub fn runPatch(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_term: *Io.Terminal, binary_name: []const u8, opts: types.PatchOptions) !void {
+    if (opts.requested_help) {
+        try Help.patch(stdout_term, binary_name);
+        return;
+    }
+    // `--dry-run`/`--diff` are preview modes: nothing is written under either,
+    // so the target opens read-only and stdin becomes a legal target.
+    const preview_only = opts.dry_run or opts.diff;
+    const target_is_stdin = std.mem.eql(u8, opts.file, "-");
+    if (!preview_only and target_is_stdin) {
+        try stderr_term.writer.print(
+            "error: cannot patch stdin in place; pass --dry-run or --diff to print the result instead.\n",
+            .{},
+        );
+        try stderr_term.writer.flush();
+        std.process.exit(2);
+    }
+
+    const input = try fileio.getInput(io, opts.file, if (preview_only) .read_only else .read_write);
+    defer if (!target_is_stdin) input.close(io);
+    const content = try fileio.readAll(a, io, input);
+
+    // An embedded target is patched as its inner format; a whole-file one as
+    // itself, sniffed from the bytes when the extension didn't say.
+    const embed_type = args_mod.resolveEmbedTypeFromContent(content, opts.embed, opts.detect_embed);
+    const target_format = if (embed_type) |et|
+        args_mod.embedFormat(et)
+    else if (opts.detect)
+        try parse_dispatch.resolveFormatFromContent(a, content, opts.file)
+    else
+        opts.format;
+
+    const patch = try loadPatch(a, io, stderr_term, opts, target_format);
+    const req: patch_ops.Request = .{
+        .at = opts.at,
+        .patch = patch.ast,
+        .from = patch.root,
+        .deletes = opts.deletes,
+        .options = opts.patch_options,
+    };
+
+    const patched: patch_ops.Result = if (embed_type) |et|
+        try patchEmbed(a, content, et, target_format, req)
+    else
+        try patch_ops.applyToSlice(a, content, target_format, req);
+
+    const changed = !std.mem.eql(u8, content, patched.content);
+    if (opts.diff) {
+        try diff.unifiedDiff(a, stdout_term.writer, opts.file, content, patched.content, 3);
+        try stdout_term.writer.flush();
+    } else if (opts.dry_run) {
+        try stdout_term.writer.writeAll(patched.content);
+        try stdout_term.writer.flush();
+    } else if (changed) {
+        // Read-then-splice-same-handle, as in `fmt`: `content` was read before
+        // this write, so there is no truncate-before-read race.
+        try input.writePositionalAll(io, patched.content, 0);
+        try input.setLength(io, patched.content.len);
+    }
+
+    // The one thing a silent success would hide: trivia the patch carried that
+    // the target has nowhere to put (strict JSON has no comment syntax at all).
+    if (patched.stats.comments_dropped > 0 and !opts.quiet) {
+        try stderr_term.writer.print(
+            "warning: dropped {d} comment(s) the patch carried — {s} has no place for them here.\n",
+            .{ patched.stats.comments_dropped, opts.file },
+        );
+        try stderr_term.writer.flush();
+    }
+}
+
+/// Patch only the bytes between a host document's fences, and splice the
+/// result back. The prose either side stays byte-identical; a codec archetype
+/// (`<pre><code>`) is decoded for the merge and re-encoded span-aware after,
+/// exactly as `edit_ops.applyToEmbed` does it for a single edit.
+fn patchEmbed(
+    a: std.mem.Allocator,
+    content: []const u8,
+    embed_type: fig.Embed.Type,
+    format: Format,
+    req: patch_ops.Request,
+) !patch_ops.Result {
+    const region = try fig.Embed.locateRegion(content, embed_type);
+    const inner = content[region.content.start..region.content.end];
+    const codec = fig.Embed.codecOf(embed_type);
+    const decoded = try fig.Embed.decodeForParse(a, inner, codec);
+
+    const patched = try patch_ops.applyToSlice(a, decoded.text, format, req);
+    const edited_inner = try fig.Embed.reencodeEdited(a, codec, inner, decoded, patched.content);
+
+    var out: std.ArrayList(u8) = .empty;
+    try out.appendSlice(a, content[0..region.content.start]);
+    try out.appendSlice(a, edited_inner);
+    try out.appendSlice(a, content[region.content.end..]);
+    return .{ .content = try out.toOwnedSlice(a), .stats = patched.stats };
+}
+
+/// Read, parse and prepare the patch document: the subtree `--from` names, in
+/// a form that can be rendered into `target_format` without dangling.
+///
+/// Two preparation passes, both conditional and both about references rather
+/// than values:
+///
+///   * A YAML patch that declares anchors is materialized (aliases → copies,
+///     `<<` merges → flattened). Its reference layer is defined in the PATCH
+///     file, which the target has never seen, so a `*name` spliced across
+///     verbatim would point at nothing. Skipped when there are no anchors,
+///     which is when materializing could only lose things (custom tags) and
+///     gain nothing.
+///   * `--lossless` decodes any `$fig` envelope the patch carries, then
+///     re-encodes for the target's own type system — the same symmetric pair
+///     `get`/`convert` run, and for the same reason.
+fn loadPatch(
+    a: std.mem.Allocator,
+    io: Io,
+    stderr_term: *Io.Terminal,
+    opts: types.PatchOptions,
+    target_format: Format,
+) !struct { ast: *const fig.AST, root: fig.AST.Node.Id } {
+    const is_stdin = std.mem.eql(u8, opts.patch_file, "-");
+    const file = try fileio.getInput(io, opts.patch_file, .read_only);
+    defer if (!is_stdin) file.close(io);
+    const content = try fileio.readAll(a, io, file);
+
+    // The patch document may itself be a host document (one post's frontmatter
+    // merged into another's), so it gets the same embed resolution the target
+    // does — via `--patch-embed`, or sniffed for a `.md` extension.
+    var format = opts.patch_format;
+    var source: []const u8 = content;
+    if (args_mod.resolveEmbedTypeFromContent(content, opts.patch_embed, opts.detect_patch_embed)) |et| {
+        const region = try fig.Embed.locateRegion(content, et);
+        const decoded = try fig.Embed.decodeForParse(a, content[region.content.start..region.content.end], fig.Embed.codecOf(et));
+        source = decoded.text;
+        format = args_mod.embedFormat(et);
+    } else if (opts.detect_patch) {
+        format = try parse_dispatch.resolveFormatFromContent(a, content, opts.patch_file);
+    }
+
+    var reports: parse_dispatch.Reports = .{};
+    // In the arena, not on this frame: the AST outlives `loadPatch` — it is
+    // what the merge reads all the way through — so a `&doc.ast` into a local
+    // would dangle the moment this returns.
+    const doc = try a.create(fig.Document);
+    doc.* = parse_dispatch.parseSliceAs(format, .{}, a, source, false, &reports) catch |err| {
+        // Same contract as `get`'s: a parse failure in a file the user named
+        // renders as a `file:line:col` teaching message, not an error name.
+        try reports.reportDiagnostics(stderr_term, source, opts.patch_file);
+        return err;
+    };
+    try reports.reportWarnings(stderr_term, source, opts.patch_file, opts.quiet, false);
+
+    var ast: *const fig.AST = &doc.ast;
+    if (format == .yaml and doc.ast.anchors.len > 0) {
+        if (comptime build_options.lang_yaml) {
+            const materialized = try a.create(fig.AST);
+            materialized.* = try fig.Language.YAML.materialize(a, &doc.ast, .lax);
+            ast = materialized;
+        } else unreachable; // `format == .yaml` means YAML is compiled in
+    }
+
+    const root = if (opts.from.len == 0) ast.root else (try ast.getValByPath(opts.from)).id;
+    if (!opts.lossless) return .{ .ast = ast, .root = root };
+
+    // Both envelope passes work from `ast.root`, so the subtree is selected
+    // first, by re-rooting a shallow copy: node ids are self-referential, so a
+    // copy pointing elsewhere IS that subtree.
+    var view = ast.*;
+    view.root = root;
+    const decoded = try a.create(fig.AST);
+    decoded.* = try fig.Lossless.decode(a, &view);
+    const target = fig.Lossless.targetFor(types.toSerializeFormat(target_format) orelse .json) orelse
+        return .{ .ast = decoded, .root = decoded.root };
+    const encoded = try a.create(fig.AST);
+    encoded.* = try fig.Lossless.encode(a, decoded, target);
+    return .{ .ast = encoded, .root = encoded.root };
 }
 
 pub fn runFmt(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_term: *Io.Terminal, binary_name: []const u8, opts: types.FmtOptions) !void {

@@ -28,6 +28,7 @@ const fileio = @import("fileio.zig");
 const diag_report = @import("diag_report.zig");
 const parse_dispatch = @import("parse_dispatch.zig");
 const edit_ops = @import("edit_ops.zig");
+const patch_ops = @import("patch_ops.zig");
 const reformat = @import("reformat.zig");
 
 const Help = help.Help;
@@ -162,6 +163,10 @@ pub fn main(init: std.process.Init) !void {
             try Help.convert(&stderr_terminal, "fig");
             std.process.exit(2);
         },
+        ArgError.MissingPatchArgument => {
+            try Help.patch(&stderr_terminal, "fig");
+            std.process.exit(2);
+        },
         else => return err,
     };
 
@@ -205,6 +210,7 @@ fn dispatch(a: std.mem.Allocator, io: Io, stdout_terminal: *Io.Terminal, stderr_
         .check => actions.runCheck(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.check),
         .fmt => actions.runFmt(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.fmt),
         .convert => actions.runConvert(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.convert),
+        .patch => actions.runPatch(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.patch),
     };
 }
 
@@ -219,6 +225,7 @@ test {
     _ = diag_report;
     _ = parse_dispatch;
     _ = edit_ops;
+    _ = patch_ops;
     _ = reformat;
     _ = args_mod;
     _ = actions;

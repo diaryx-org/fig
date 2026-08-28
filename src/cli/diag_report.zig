@@ -186,6 +186,42 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
             try term.setColor(.reset);
             try term.writer.print(": replace the whole list instead — `{s} set <file> <path> '[...]'`. On TOML that loses nothing, as its arrays carry no per-item comments.\n", .{binary_name});
         },
+        // The refusals `fig.Patch` makes rather than guessing (see its module
+        // doc). Each names a shape the caller has to resolve in one of the two
+        // documents; the generic `fig check` note below would send them
+        // hunting for a parse error in two files that both parse fine.
+        error.PatchThroughAlias => {
+            try term.writer.writeAll(": the patch targets a value that is a YAML alias (`*name`), which belongs to whatever defined its anchor\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("note");
+            try term.setColor(.reset);
+            try term.writer.writeAll(": writing there would either change every other user of that anchor or silently shadow it, and nothing in the two files says which was meant.\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("help");
+            try term.setColor(.reset);
+            try term.writer.print(": patch the anchor's own definition instead, or give the alias a local value first — `{s} set <file> <path> <value>`.\n", .{binary_name});
+        },
+        error.PatchRootNotMergeable => {
+            try term.writer.writeAll(": a patch whose root is not a mapping has nothing to merge INTO the document root\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("help");
+            try term.setColor(.reset);
+            try term.writer.print(": name where it lands — `{s} patch <file> <patch-file> --at <path>` — or, to take the patch document whole, copy it.\n", .{binary_name});
+        },
+        error.NonStringPatchKey => {
+            try term.writer.writeAll(": the patch has a mapping key that is not a string, and paths are string-keyed, so there is no way to address that entry\n");
+        },
+        error.PatchRenderRejected => {
+            try term.writer.writeAll(": a value from the patch has no spelling the target format can read back\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("note");
+            try term.setColor(.reset);
+            try term.writer.writeAll(": nothing was written — the edit was rolled back where it failed.\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("help");
+            try term.setColor(.reset);
+            try term.writer.writeAll(": --lossless carries values the target has no native form for (a null into TOML, a datetime into JSON) through a $fig envelope.\n");
+        },
         else => {
             try term.writer.print(": {s}\n", .{@errorName(err)});
             if (file) |f| {

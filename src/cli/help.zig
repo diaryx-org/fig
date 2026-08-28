@@ -23,6 +23,7 @@ pub const Help = struct {
             \\  fmt: reformat a file in place (house style; gofmt-style)
             \\  convert: convert a file (or a host document's embedded region)
             \\    from one format/archetype to another, in place
+            \\  patch: merge one document into another, in place and losslessly
             \\
             \\For information on action options, pass --help or -h
             \\to the action you would like to learn about.
@@ -354,6 +355,71 @@ pub const Help = struct {
             \\  reads stdin when <file> is `-`, but only without --write.
             \\
         , .{ binary_name, binary_name });
+        try term.writer.flush();
+    }
+
+    pub fn patch(term: *Io.Terminal, binary_name: []const u8) !void {
+        try term.writer.print(
+            \\Usage: {s} patch [flags] <file> <patch-file>
+            \\  Merge <patch-file> into <file>, in place. Every byte of <file>
+            \\  outside the paths the patch actually names is left untouched —
+            \\  comments, key order, quoting style and all. The two files need not
+            \\  share a format: a TOML patch merges into a YAML target, rendered in
+            \\  the target's syntax on the way in.
+            \\
+            \\  The merge rule, per path:
+            \\    absent in <file>          -> created, with the patch's own comments
+            \\    mapping on both sides     -> merged key by key, recursively
+            \\    sequence on both sides    -> --seq decides
+            \\    anything else             -> the patch's value wins
+            \\  A value the two files already agree on is not rewritten at all, so
+            \\  re-running a patch is a no-op and the diff is only what changed.
+            \\  A container the patch DOES change is re-rendered by the target
+            \\  format's printer, so it comes back in that format's house style
+            \\  (in YAML, a block collection) rather than the patch's spelling.
+            \\
+            \\  <file> must already exist — `patch` merges into a document, it does
+            \\  not create one; use `set` for that. `-` reads stdin for either file
+            \\  (not both), and stdin as <file> needs --dry-run or --diff.
+            \\
+            \\  --at <path>: merge into that path in <file> instead of its root.
+            \\  --from <path>: take only that subtree of <patch-file>.
+            \\    Together they move one part of one file into another part of
+            \\    another: `fig patch app.yaml defaults.toml --from db --at service.db`
+            \\  --delete <path>: remove a path from <file> after the merge; repeatable.
+            \\    A path that isn't there is not an error.
+            \\  --seq replace|append|union: what to do when both files hold a
+            \\    sequence at the same path. `replace` (default) takes the patch's;
+            \\    `append` adds every item; `union` adds only the items <file> does
+            \\    not already hold, compared by value rather than by source text.
+            \\  --comments ours|theirs|none: whose comment wins where both files
+            \\    carry one in the same position. `ours` (default) keeps <file>'s and
+            \\    contributes the patch's only where <file> has none; `theirs` lets
+            \\    the patch overwrite; `none` carries no comment from the patch at
+            \\    all. Comments nested inside a subtree the patch contributes whole
+            \\    always ride along with it unless `none`.
+            \\  -i, --input <format>: the format of <file> (else its extension, else
+            \\    sniffed). --patch-input does the same for <patch-file>.
+            \\  --embed <archetype>: patch the embedded region of a host <file>
+            \\    (e.g. a markdown post's frontmatter), splicing the result back
+            \\    between its fences and leaving the prose byte-identical.
+            \\    --patch-embed does the same for <patch-file>. A `.md`/`.markdown`
+            \\    extension implies the sniff on either side without the flag.
+            \\  --lossless / --lossy: preserve values the target format can't hold
+            \\    natively via a $fig envelope (default --lossy).
+            \\  --indent N / --width N / --compact / --pretty: style knobs for the
+            \\    values the patch contributes, as in `get`/`convert`.
+            \\  --dry-run: print the patched document to stdout; write nothing.
+            \\  --diff: print a unified diff of the change; write nothing. Neither
+            \\    preview mode sets a non-zero exit status — a patch is expected to
+            \\    change the file.
+            \\  -q, --quiet: suppress the summary line and the dropped-comment note.
+            \\
+            \\  Refused rather than guessed at: merging into a YAML `*alias` (the
+            \\  reference belongs to whatever defined the anchor), and replacing the
+            \\  whole document root with a non-mapping (that is a copy, not a patch).
+            \\
+        , .{binary_name});
         try term.writer.flush();
     }
 };

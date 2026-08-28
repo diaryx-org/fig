@@ -270,11 +270,11 @@ test "embedTypeName round-trips through embedTypeFromName" {
     // Every archetype the CLI can name must name itself back to the same Type,
     // so a diagnostic never prints a spelling the parser would reject.
     for ([_]fig.Embed.Type{
-        .{ .frontmatter = .yaml }, .{ .frontmatter = .json },   .{ .frontmatter = .toml }, .{ .frontmatter = .fig },
-        .{ .fenced = .yaml },      .{ .fenced = .json },        .{ .fenced = .toml },      .{ .fenced = .fig },
-        .{ .html_script = .yaml }, .{ .html_script = .json },   .{ .html_script = .toml }, .{ .html_script = .fig },
-        .{ .html_code = .yaml },   .{ .html_code = .json },     .{ .html_code = .toml },   .{ .html_code = .fig },
-        .semicolons_json,          .plus_toml,                  .endmatter_yaml,
+        .{ .frontmatter = .yaml }, .{ .frontmatter = .json }, .{ .frontmatter = .toml }, .{ .frontmatter = .fig },
+        .{ .fenced = .yaml },      .{ .fenced = .json },      .{ .fenced = .toml },      .{ .fenced = .fig },
+        .{ .html_script = .yaml }, .{ .html_script = .json }, .{ .html_script = .toml }, .{ .html_script = .fig },
+        .{ .html_code = .yaml },   .{ .html_code = .json },   .{ .html_code = .toml },   .{ .html_code = .fig },
+        .semicolons_json,          .plus_toml,                .endmatter_yaml,
     }) |t| {
         try std.testing.expectEqual(@as(?fig.Embed.Type, t), embedTypeFromName(embedTypeName(t)));
     }
@@ -1108,6 +1108,191 @@ pub fn parseConfig(allocator: std.mem.Allocator, args: anytype) ArgError!CliConf
                 .diff = diff_mode,
             } };
         }
+    } else if (std.mem.eql(u8, action_str, "patch") or std.mem.eql(u8, action_str, "p")) {
+        config.action = .patch;
+
+        var input_override: ?Format = null;
+        var patch_input_override: ?Format = null;
+        var embed_override: ?fig.Embed.Type = null;
+        var patch_embed_override: ?fig.Embed.Type = null;
+        var at: []fig.AST.PathSegment = &.{};
+        var from: []fig.AST.PathSegment = &.{};
+        var deletes: std.ArrayList(fig.Patch.Deletion) = .empty;
+        defer deletes.deinit(allocator);
+        var patch_options: fig.Patch.Options = .{};
+        var lossless = false;
+        var dry_run = false;
+        var diff_mode = false;
+        var quiet = false;
+        var requested_help = false;
+        var positionals: std.ArrayList([]const u8) = .empty;
+        defer positionals.deinit(allocator);
+
+        while (args.next()) |arg| {
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                requested_help = true;
+            } else if (std.mem.eql(u8, arg, "--dry-run")) {
+                dry_run = true;
+            } else if (std.mem.eql(u8, arg, "--diff")) {
+                diff_mode = true;
+            } else if (std.mem.eql(u8, arg, "--quiet") or std.mem.eql(u8, arg, "-q")) {
+                quiet = true;
+            } else if (std.mem.eql(u8, arg, "--lossless")) {
+                lossless = true;
+            } else if (std.mem.eql(u8, arg, "--lossy")) {
+                lossless = false;
+            } else if (std.mem.eql(u8, arg, "--compact")) {
+                patch_options.serialize.pretty = false;
+            } else if (std.mem.eql(u8, arg, "--pretty")) {
+                patch_options.serialize.pretty = true;
+            } else if (std.mem.eql(u8, arg, "--at")) {
+                const p = args.next() orelse {
+                    log.err("Missing path after {s}\n", .{arg});
+                    return ArgError.MissingPatchArgument;
+                };
+                at = try parsePath(allocator, p);
+            } else if (std.mem.eql(u8, arg, "--from")) {
+                const p = args.next() orelse {
+                    log.err("Missing path after {s}\n", .{arg});
+                    return ArgError.MissingPatchArgument;
+                };
+                from = try parsePath(allocator, p);
+            } else if (std.mem.eql(u8, arg, "--delete")) {
+                const p = args.next() orelse {
+                    log.err("Missing path after {s}\n", .{arg});
+                    return ArgError.MissingPatchArgument;
+                };
+                const parsed_path = try parsePath(allocator, p);
+                if (parsed_path.len == 0) {
+                    log.err("--delete needs a path within the document; the root cannot be deleted.\n", .{});
+                    return ArgError.MissingPatchArgument;
+                }
+                try deletes.append(allocator, parsed_path);
+            } else if (std.mem.eql(u8, arg, "--seq")) {
+                const name = args.next() orelse {
+                    log.err("Missing strategy after {s} (replace, append, union)\n", .{arg});
+                    return ArgError.MissingPatchArgument;
+                };
+                // `union` is a Zig keyword, so the enum member is `unite`;
+                // the CLI keeps the word a user would reach for.
+                patch_options.seq = if (std.mem.eql(u8, name, "union"))
+                    .unite
+                else
+                    std.meta.stringToEnum(fig.Patch.SeqStrategy, name) orelse {
+                        log.err("Unknown --seq strategy: {s} (replace, append, union)\n", .{name});
+                        return ArgError.MissingPatchArgument;
+                    };
+            } else if (std.mem.eql(u8, arg, "--comments")) {
+                const name = args.next() orelse {
+                    log.err("Missing strategy after {s} (ours, theirs, none)\n", .{arg});
+                    return ArgError.MissingPatchArgument;
+                };
+                patch_options.comments = std.meta.stringToEnum(fig.Patch.CommentStrategy, name) orelse {
+                    log.err("Unknown --comments strategy: {s} (ours, theirs, none)\n", .{name});
+                    return ArgError.MissingPatchArgument;
+                };
+            } else if (std.mem.eql(u8, arg, "--indent")) {
+                const n = args.next() orelse {
+                    log.err("Missing value after {s}\n", .{arg});
+                    return ArgError.MissingPatchArgument;
+                };
+                patch_options.serialize.indent = std.fmt.parseInt(u8, n, 10) catch {
+                    log.err("Invalid --indent value: {s}\n", .{n});
+                    return ArgError.MissingPatchArgument;
+                };
+                patch_options.serialize.fig_indent = true;
+            } else if (std.mem.eql(u8, arg, "--width")) {
+                const n = args.next() orelse {
+                    log.err("Missing value after {s}\n", .{arg});
+                    return ArgError.MissingPatchArgument;
+                };
+                patch_options.serialize.width = std.fmt.parseInt(u16, n, 10) catch {
+                    log.err("Invalid --width value: {s}\n", .{n});
+                    return ArgError.MissingPatchArgument;
+                };
+            } else if (std.mem.eql(u8, arg, "--input") or std.mem.eql(u8, arg, "-i")) {
+                const fmt_name = args.next() orelse {
+                    log.err("Missing format value after {s}\n", .{arg});
+                    return ArgError.MissingPatchArgument;
+                };
+                input_override = parseFormatName(fmt_name) orelse {
+                    log.err("Unsupported format: {s}\n", .{fmt_name});
+                    return ArgError.UnsupportedFileFormat;
+                };
+            } else if (std.mem.eql(u8, arg, "--patch-input")) {
+                const fmt_name = args.next() orelse {
+                    log.err("Missing format value after {s}\n", .{arg});
+                    return ArgError.MissingPatchArgument;
+                };
+                patch_input_override = parseFormatName(fmt_name) orelse {
+                    log.err("Unsupported format: {s}\n", .{fmt_name});
+                    return ArgError.UnsupportedFileFormat;
+                };
+            } else if (std.mem.eql(u8, arg, "--embed")) {
+                const name = args.next() orelse {
+                    log.err("Missing archetype after {s}\n", .{arg});
+                    return ArgError.MissingPatchArgument;
+                };
+                embed_override = embedTypeFromName(name) orelse {
+                    log.err("Unknown --embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
+                    return ArgError.UnsupportedFileFormat;
+                };
+            } else if (std.mem.eql(u8, arg, "--patch-embed")) {
+                const name = args.next() orelse {
+                    log.err("Missing archetype after {s}\n", .{arg});
+                    return ArgError.MissingPatchArgument;
+                };
+                patch_embed_override = embedTypeFromName(name) orelse {
+                    log.err("Unknown --patch-embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
+                    return ArgError.UnsupportedFileFormat;
+                };
+            } else {
+                try positionals.append(allocator, arg);
+            }
+        }
+
+        if (!requested_help and positionals.items.len < 2) {
+            log.err("patch takes two files: the document to change, then the one supplying the change.\n", .{});
+            return ArgError.MissingPatchArgument;
+        }
+        if (!requested_help and positionals.items.len > 2) {
+            log.err("patch takes two files; use --at/--from to name a path within one: {s}\n", .{positionals.items[2]});
+            return ArgError.MissingPatchArgument;
+        }
+        // Both from a pipe would mean reading one stream twice and getting
+        // half of each; the second read comes back empty and the failure is
+        // an empty patch, which is silent. Refuse it up front.
+        const target_path = if (positionals.items.len > 0) positionals.items[0] else "-";
+        const source_path = if (positionals.items.len > 1) positionals.items[1] else "-";
+        if (!requested_help and std.mem.eql(u8, target_path, "-") and std.mem.eql(u8, source_path, "-")) {
+            log.err("only one of the two files can be stdin.\n", .{});
+            return ArgError.MissingPatchArgument;
+        }
+
+        const target_ext: ?Detected = if (!requested_help) detectLanguageFromFileEnding(target_path) else null;
+        const source_ext: ?Detected = if (!requested_help) detectLanguageFromFileEnding(source_path) else null;
+
+        config.options = .{ .patch = .{
+            .file = target_path,
+            .patch_file = source_path,
+            .at = at,
+            .from = from,
+            .deletes = try deletes.toOwnedSlice(allocator),
+            .patch_options = patch_options,
+            .requested_help = requested_help,
+            .format = input_override orelse (if (target_ext) |d| d.format else null) orelse .json,
+            .detect = !requested_help and input_override == null and target_ext == null,
+            .patch_format = patch_input_override orelse (if (source_ext) |d| d.format else null) orelse .json,
+            .detect_patch = !requested_help and patch_input_override == null and source_ext == null,
+            .embed = embed_override,
+            .detect_embed = embed_override == null and if (target_ext) |d| d.embed_detect else false,
+            .patch_embed = patch_embed_override,
+            .detect_patch_embed = patch_embed_override == null and if (source_ext) |d| d.embed_detect else false,
+            .lossless = lossless,
+            .dry_run = dry_run,
+            .diff = diff_mode,
+            .quiet = quiet,
+        } };
     } else {
         log.err("Action not recognized: {s}", .{action_str});
         config.action = .help;
@@ -1294,6 +1479,81 @@ test "resolveEmbedTypeFromContent: explicit override wins, else sniffs, else fal
     // open-or-init still seeds the same archetype it always has.
     try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = .yaml }), resolveEmbedTypeFromContent("just prose\n", null, true));
     try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = .yaml }), resolveEmbedTypeFromContent("", null, true));
+}
+
+test "parseConfig routes patch: both files, both sides' formats, and the merge strategies" {
+    const t = std.testing;
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // Two positionals, in order: the file being changed, then the one
+    // supplying the change. Each side resolves its own format from its own
+    // extension, so a cross-format patch needs no flags at all.
+    var basic = TestArgs{ .items = &.{ "fig", "patch", "config.yaml", "overlay.toml" } };
+    const b = try parseConfig(a, &basic);
+    try t.expectEqual(CliAction.patch, b.action);
+    try t.expectEqualStrings("config.yaml", b.options.patch.file);
+    try t.expectEqualStrings("overlay.toml", b.options.patch.patch_file);
+    try t.expectEqual(Format.yaml, b.options.patch.format);
+    try t.expectEqual(Format.toml, b.options.patch.patch_format);
+    try t.expect(!b.options.patch.detect);
+    try t.expect(!b.options.patch.detect_patch);
+    // The defaults are the conservative ones: the target's comments stand and
+    // a sequence is taken whole.
+    try t.expectEqual(fig.Patch.SeqStrategy.replace, b.options.patch.patch_options.seq);
+    try t.expectEqual(fig.Patch.CommentStrategy.ours, b.options.patch.patch_options.comments);
+
+    // `--at`/`--from` are separate paths into separate documents.
+    var paths = TestArgs{ .items = &.{ "fig", "patch", "a.yaml", "b.yaml", "--at", "service.db", "--from", "db" } };
+    const p = try parseConfig(a, &paths);
+    try t.expectEqual(@as(usize, 2), p.options.patch.at.len);
+    try t.expectEqualStrings("service", p.options.patch.at[0].key);
+    try t.expectEqualStrings("db", p.options.patch.at[1].key);
+    try t.expectEqual(@as(usize, 1), p.options.patch.from.len);
+    try t.expectEqualStrings("db", p.options.patch.from[0].key);
+
+    // `--delete` accumulates; `union` is the CLI spelling of `.unite` (the
+    // enum can't be called `union`).
+    var strat = TestArgs{ .items = &.{
+        "fig",      "patch", "a.yaml",     "b.yaml",
+        "--seq",    "union", "--comments", "theirs",
+        "--delete", "x.y",   "--delete",   "z[2]",
+    } };
+    const s = try parseConfig(a, &strat);
+    try t.expectEqual(fig.Patch.SeqStrategy.unite, s.options.patch.patch_options.seq);
+    try t.expectEqual(fig.Patch.CommentStrategy.theirs, s.options.patch.patch_options.comments);
+    try t.expectEqual(@as(usize, 2), s.options.patch.deletes.len);
+    try t.expectEqualStrings("x", s.options.patch.deletes[0][0].key);
+    try t.expectEqual(@as(usize, 2), s.options.patch.deletes[1][1].index);
+
+    // A `.md` on either side implies SOME embedded region but never which
+    // archetype, so each side defers to its own runtime sniff — the same rule
+    // the other actions follow.
+    var md = TestArgs{ .items = &.{ "fig", "patch", "post.md", "meta.md" } };
+    const m = try parseConfig(a, &md);
+    try t.expect(m.options.patch.detect_embed);
+    try t.expect(m.options.patch.detect_patch_embed);
+    try t.expectEqual(@as(?fig.Embed.Type, null), m.options.patch.embed);
+
+    // An explicit archetype pins one side without touching the other.
+    var pinned = TestArgs{ .items = &.{ "fig", "patch", "post.md", "meta.md", "--embed", "endmatter" } };
+    const pin = try parseConfig(a, &pinned);
+    try t.expectEqual(@as(?fig.Embed.Type, .endmatter_yaml), pin.options.patch.embed);
+    try t.expect(!pin.options.patch.detect_embed);
+    try t.expect(pin.options.patch.detect_patch_embed);
+
+    // Unknown extensions on both sides defer both formats to a content sniff.
+    var sniff = TestArgs{ .items = &.{ "fig", "patch", "a.weird", "-" } };
+    const sn = try parseConfig(a, &sniff);
+    try t.expect(sn.options.patch.detect);
+    try t.expect(sn.options.patch.detect_patch);
+
+    // The rejections (fewer or more than two files, both files stdin, an
+    // unknown --seq/--comments strategy, a rootless --delete) all return
+    // `ArgError.MissingPatchArgument` after a `log.err`, which this test
+    // binary's runner counts as a failure regardless — see the note in the
+    // `convert` test above.
 }
 
 test "parseConfig routes set, --seq, and --embed" {

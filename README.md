@@ -3,7 +3,7 @@ title = fig
 version = 2.7.0
 author = adammharris
 created = 2026-05-08
-updated = 2026-08-08T21:07:09-06:00
+updated = 2026-08-27T22:45:00-06:00
 contents = [[fig docs](docs/docs.md)]
 config = .config/prov.yaml
 about = about.md
@@ -99,6 +99,41 @@ $ fig convert post.md --to-embed frontmatter-toml --diff
  # Hello
 ```
 
+`fig` can also merge one file into another —
+or one part of one file into part of another —
+touching nothing the patch doesn't name:
+
+```bash
+$ cat overlay.toml
+# overlay.toml — the us-west rollout
+[service]
+replicas = 8
+region = "us-west"
+
+$ fig patch config.yaml overlay.toml --diff
+--- config.yaml
++++ config.yaml
+@@ -1,8 +1,9 @@
+ # config.yaml — Deploy settings
+ service:
+   name: api          # must match the DNS record
+-  replicas: 5 # bumped for Black Friday
++  replicas: 8 # bumped for Black Friday
+   ports: [80, 443]
++  region: us-west
+
+ defaults: &defaults
+   retries: 3
+```
+
+The two files need not share a format.
+Values the two already agree on are never rewritten,
+so a patch's diff is only what it actually changed,
+and re-applying one is a no-op.
+`--at` and `--from` name where it lands and what to take,
+`--seq` and `--comments` decide who wins where both files have something to say,
+and `--delete` removes a path on the way through.
+
 Originally made for [Diaryx](https://diaryx.org),
 `fig` was made to edit frontmatter in markdown files without reserializing.
 `fig` has since been expanded to include many different kinds of configuration formats:
@@ -159,8 +194,7 @@ which is why it is a plugin and not a one-line wrapper over the CLI.
   - Filtering nodes
   - Redacting node
   - Multi-match `fig get`
-- Structure-aware diff & 3-way merge.
-- `fig patch` (config overlays / patch apply, lossless)
+- Structure-aware diff & 3-way merge (`fig patch` is the one-way half of this).
 - `fig fmt` enhancements (sort keys, dedupe, stable array, etc.)
 
 **In consideration**

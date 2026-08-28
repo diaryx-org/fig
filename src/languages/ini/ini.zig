@@ -29,6 +29,15 @@ pub const Language = struct {
     pub const extensions: []const []const u8 = &.{"ini"};
     pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
 
+    /// Untyped scalars: the grammar carries no type information, so
+    /// `port = 8080` reads back as the STRING "8080".
+    pub const dialects: []const lang.Dialect(@This()) = &.{.{
+        .name = "ini",
+        .abi_value = 9,
+        .splice = .raw,
+        .empty_doc_seed = "",
+    }};
+
     pub fn syntax(t: ini.Type) lang.Syntax {
         _ = t;
         return .{

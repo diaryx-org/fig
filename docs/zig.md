@@ -595,16 +595,18 @@ Each `Warning` carries a `code` (`.value_dropped`, `.type_degraded`,
 `strip_comments`), and a dotted/`[i]` `path` to the affected node.
 
 To *preserve* an otherwise-lossy value instead of dropping or degrading it,
-use `fig.Lossless`: `encode(arena, ast, target)` rewrites every value `target`
-can't hold natively into a reserved `{ "$fig": { ... } }` envelope before
-printing; `decode(arena, ast)` reverses it after parsing back. `needsEnvelope`/
-`isUnrepresentable` (the same capability table `Diagnostics` consults) let you
-check a single node's fate up front, and `lossyStrip` gives you the CLI's
-default (non-lossless) behavior explicitly: drop only what a target truly
-cannot represent at all (today, just a `null` bound for TOML) and report the
-dropped paths, rather than aborting the whole serialize. `Lossless.Target` is
-`json | yaml | toml | zon`; `Lossless.targetFor(format)` maps a
-`SerializeFormat` onto one, or `null` for a format with no envelope support.
+use `fig.Lossless`: `encode(arena, ast, native)` rewrites every value the
+target can't hold natively into a reserved `{ "$fig": { ... } }` envelope
+before printing; `decode(arena, ast)` reverses it after parsing back.
+`needsEnvelope`/`isUnrepresentable` (the same capability table `Diagnostics`
+consults) let you check a single node's fate up front, and `lossyStrip` gives
+you the CLI's default (non-lossless) behavior explicitly: drop only what a
+target truly cannot represent at all (today, just a `null` bound for TOML) and
+report the dropped paths, rather than aborting the whole serialize.
+`Lossless.NativeKinds` is what a target holds — the scalar kinds a format
+spells natively, declared by the format itself in `Language.caps.lossless` —
+and `Lossless.nativeFor(format)` reads a `SerializeFormat`'s declaration off
+the registry, or `null` for a format that takes no envelope.
 
 `fig.FlatStrip` is the sibling pass for the three flat/shallow formats — INI,
 dotenv, `.properties` — whose limits are about *depth* rather than scalar kind
@@ -726,7 +728,8 @@ only *after* the `Document` that borrows it is itself freed.
   (`codecOf`/`decodeForParse`/`reencodeEdited`); see
   [Markdown frontmatter & embeds](#markdown-frontmatter--embeds).
 - `Lossless` — `$fig`-envelope lossless conversion: `encode`, `decode`,
-  `needsEnvelope`, `isUnrepresentable`, `lossyStrip`, `Target`, `targetFor`.
+  `needsEnvelope`, `isUnrepresentable`, `lossyStrip`, `NativeKinds`,
+  `nativeFor`.
 - `FlatStrip` — depth-based lossy stripping for INI/dotenv/`.properties`, the
   `Lossless` sibling for the flat formats.
 - `Diagnostics` — `analyze` reports what a serialize would lose (`Warning`,

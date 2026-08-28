@@ -28,7 +28,42 @@ pub const Language = struct {
 
     pub const name = "toml";
     pub const extensions: []const []const u8 = &.{"toml"};
-    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
+    pub const caps: lang.Caps = .{
+        .read = true,
+        .edit = true,
+        .serialize = true,
+        // The four datetimes and `inf`/`nan` floats are native; `null` is
+        // not — TOML is the one typed format without one, which makes a
+        // `null` the one value the lossy path drops outright rather than
+        // degrades. Enum/char literals and plist's date/data are enveloped.
+        .lossless = .{
+            .offset_datetime = true,
+            .local_datetime = true,
+            .local_date = true,
+            .local_time = true,
+            .number_special = true,
+        },
+    };
+
+    pub const dialects: []const lang.Dialect(@This()) = &.{.{
+        .name = "toml",
+        .abi_value = 4,
+        .deserializable = true,
+        .splice = .literal,
+        .empty_doc_seed = "",
+        .specs = &.{
+            .{ .name = "1.0", .dialect = .TOML_1_0 },
+            .{ .name = "1.0.0", .dialect = .TOML_1_0 },
+            .{ .name = "1.1", .dialect = .TOML_1_1 },
+            .{ .name = "1.1.0", .dialect = .TOML_1_1 },
+        },
+        .embed = .{
+            .fence_tag = "toml",
+            .frontmatter = "---toml",
+            .script_mime = "application/toml",
+            .code_class = "language-toml",
+        },
+    }};
 
     /// 1.0 and 1.1 differ in what the PARSER accepts (newlines and trailing
     /// commas in inline tables, seconds-optional times, `\e`/`\xHH` escapes),

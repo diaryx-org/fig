@@ -288,23 +288,24 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     // losslessly already. The passes operate on a core AST, so any
     // non-YAML source (or a materialized YAML source) is safe.
     const ast: *const fig.AST = if (opts.lossless and !(src_is_yaml and dst_is_yaml)) blk: {
-        // gron is CLI-only — it has no `SerializeFormat`/`Lossless.Target` of
-        // its own — but its value layer is JSON, so it shares the JSON
-        // envelope target: an unrepresentable value (a TOML datetime, etc.)
-        // rides in a `$fig` envelope that prints as a JSON object. Every
-        // other format maps through its `SerializeFormat` counterpart (see
-        // `Lossless.targetFor` for the rest of the rationale: JSON5 reuse,
-        // canonical/fig decode-only, XML/INI/dotenv/properties/plist/
-        // NestedText's lack of an envelope of their own).
-        const maybe_target: ?fig.Lossless.Target = if (to == .gron)
-            .json
+        // gron is CLI-only — it has no `SerializeFormat` of its own, so no
+        // `caps.lossless` — but its value layer is JSON, so it encodes for
+        // JSON's declaration: an unrepresentable value (a TOML datetime,
+        // etc.) rides in a `$fig` envelope that prints as a JSON object.
+        // Every other format maps through its `SerializeFormat` counterpart,
+        // whose language declares the answer (see `manifest.Caps.lossless`
+        // for the rest of the rationale: JSON5 reuse, canonical/fig
+        // decode-only, XML/INI/dotenv/properties/plist/NestedText's lack of
+        // an envelope of their own).
+        const maybe_native: ?fig.Lossless.NativeKinds = if (to == .gron)
+            (if (comptime build_options.lang_json) fig.Language.JSON.caps.lossless else null)
         else
-            fig.Lossless.targetFor(types.toSerializeFormat(to) orelse unreachable); // gron handled above
+            fig.Lossless.nativeFor(types.toSerializeFormat(to) orelse unreachable); // gron handled above
         const decoded = try a.create(fig.AST);
         decoded.* = try fig.Lossless.decode(a, base_ast);
-        const target = maybe_target orelse break :blk decoded;
+        const native = maybe_native orelse break :blk decoded;
         const encoded = try a.create(fig.AST);
-        encoded.* = try fig.Lossless.encode(a, decoded, target);
+        encoded.* = try fig.Lossless.encode(a, decoded, native);
         break :blk encoded;
     } else base_ast;
 
@@ -368,15 +369,15 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     // flag's whole point.
     const flat_strip_fmt: ?fig.FlatStrip.Format = if (!opts.lossless) parse_dispatch.flatStripFormat(target) else null;
 
-    if (target == .toml and !opts.lossless) {
-        // TOML has no null. In lossy mode, rather than the printer
-        // aborting mid-document on one, strip unrepresentable values up
-        // front so output stays valid and complete (the warnings above
-        // already reported them). `lossyStrip` re-roots at `node_id`, so
-        // the result serializes whole.
-        const result = try fig.Lossless.lossyStrip(a, ast, node_id, .toml);
+    if (if (!opts.lossless) parse_dispatch.nullStripTarget(target) else null) |native| {
+        // The target has no null (TOML, by its own `caps.lossless`). In lossy
+        // mode, rather than the printer aborting mid-document on one, strip
+        // unrepresentable values up front so output stays valid and complete
+        // (the warnings above already reported them). `lossyStrip` re-roots
+        // at `node_id`, so the result serializes whole.
+        const result = try fig.Lossless.lossyStrip(a, ast, node_id, native);
         if (result.ast) |stripped| {
-            try stripped.serializeWith(stdout_term.writer, .toml, opts.serialize);
+            try stripped.serializeWith(stdout_term.writer, target, opts.serialize);
         }
     } else if (flat_strip_fmt) |fmt| {
         // INI/dotenv/.properties: same idea as TOML's null-stripping above,
@@ -710,10 +711,12 @@ fn loadPatch(
     view.root = root;
     const decoded = try a.create(fig.AST);
     decoded.* = try fig.Lossless.decode(a, &view);
-    const target = fig.Lossless.targetFor(types.toSerializeFormat(target_format) orelse .json) orelse
+    // gron (no `SerializeFormat` of its own) encodes for JSON's declaration,
+    // as `runGet` does — its value layer is JSON.
+    const native = fig.Lossless.nativeFor(types.toSerializeFormat(target_format) orelse .json) orelse
         return .{ .ast = decoded, .root = decoded.root };
     const encoded = try a.create(fig.AST);
-    encoded.* = try fig.Lossless.encode(a, decoded, target);
+    encoded.* = try fig.Lossless.encode(a, decoded, native);
     return .{ .ast = encoded, .root = encoded.root };
 }
 

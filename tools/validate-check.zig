@@ -49,6 +49,9 @@ const Case = struct {
     syntax_body: []const u8 = "",
     /// Replaces the base `caps` when non-empty.
     caps: []const u8 = "",
+    /// Replaces the base `dialects` rows (the contents of the `&.{ … }`)
+    /// when non-empty.
+    dialects: []const u8 = "",
     /// Text `validate`'s error must contain. Empty means "must compile" — the
     /// positive control.
     expect: []const u8,
@@ -94,6 +97,29 @@ const cases = [_]Case{
         .omit = "syntax",
         .expect = "has caps.edit and must define syntax",
     },
+    .{
+        // The format's own registry rows joined `Decls.required` when the
+        // registry became assembled from the languages rather than written
+        // in `language.zig`.
+        .name = "missing required decl (dialects)",
+        .omit = "dialects",
+        .expect = "must define dialects",
+    },
+
+    // ---- the dialect table's own coherence ----
+    .{
+        // The row selecting `default_type` is the one every consumer reaches
+        // the language by, so it carries the language's name.
+        .name = "default dialect row not named after the language",
+        .dialects = ".{ .name = \"other\", .abi_value = 99, .splice = .raw, .empty_doc_seed = \"\" }",
+        .expect = "which must be named after the language",
+    },
+    .{
+        .name = "two dialect rows with one name",
+        .dialects = ".{ .name = \"fixture\", .abi_value = 99, .splice = .raw, .empty_doc_seed = \"\" }," ++
+            " .{ .name = \"fixture\", .abi_value = 98, .splice = .raw, .empty_doc_seed = \"\" }",
+        .expect = "declares two dialects named 'fixture'",
+    },
 
     // ---- coherence rules (§4 job 3) ----
     .{
@@ -101,6 +127,14 @@ const cases = [_]Case{
         .caps = ".{ .read = true, .edit = false, .serialize = true }",
         .decls = "pub const insertKey = {};",
         .expect = "declares caps.edit = false but supplies the editing hook 'insertKey'",
+    },
+    .{
+        // `caps.lossless` describes what the envelope pass may write INTO the
+        // format, so it contradicts `serialize = false` the way a hook
+        // contradicts `edit = false`.
+        .name = "caps.lossless on a format that cannot serialize",
+        .caps = ".{ .read = true, .edit = true, .serialize = false, .lossless = .{ .null = true } }",
+        .expect = "declares caps.lossless (an envelope target for serialized output) but caps.serialize = false",
     },
     .{
         .name = "trailing comment marker with no line comment marker",
@@ -167,6 +201,10 @@ fn buildProbe(allocator: std.mem.Allocator, case: Case) ![]u8 {
         \\.comments = .hash, .kv_sep = ": ", .empty_map_literal = "{}",
     ;
     const default_caps = ".{ .read = true, .edit = true, .serialize = true }";
+    // One row, named after the language, selecting its (only) `Type`. The
+    // ABI value is arbitrary: the fixture is never in the real registry, so
+    // nothing cross-checks it.
+    const default_dialects = ".{ .name = \"fixture\", .abi_value = 99, .splice = .raw, .empty_doc_seed = \"\" }";
 
     var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(allocator);
@@ -193,6 +231,11 @@ fn buildProbe(allocator: std.mem.Allocator, case: Case) ![]u8 {
     try buf.print(allocator, "    pub const caps: language.Caps = {s};\n", .{
         if (case.caps.len != 0) case.caps else default_caps,
     });
+    if (!std.mem.eql(u8, case.omit, "dialects")) {
+        try buf.print(allocator, "    pub const dialects: []const language.Dialect(@This()) = &.{{ {s} }};\n", .{
+            if (case.dialects.len != 0) case.dialects else default_dialects,
+        });
+    }
     if (!std.mem.eql(u8, case.omit, "syntax")) {
         try buf.appendSlice(allocator, "    pub fn syntax(t: Type) language.Syntax {\n        _ = t;\n        return .{\n");
         try buf.print(allocator, "            {s}\n", .{
@@ -271,15 +314,17 @@ pub fn main(init: std.process.Init) !void {
             try f.setLength(io, src.len);
         }
 
-        const res = std.process.run(gpa, io, .{ .argv = &.{
-            zig_exe,   "build-obj",
-            // root: depends on both; language: depends on build_options.
-            "--dep",   "build_options",
-            "--dep",   "fig",
-            root_arg,  "--dep",
-            "build_options", lang_arg,
-            opts_arg,  emit_arg,
-        } }) catch |err| {
+        const res = std.process.run(gpa, io, .{
+            .argv = &.{
+                zig_exe,         "build-obj",
+                // root: depends on both; language: depends on build_options.
+                "--dep",         "build_options",
+                "--dep",         "fig",
+                root_arg,        "--dep",
+                "build_options", lang_arg,
+                opts_arg,        emit_arg,
+            },
+        }) catch |err| {
             std.debug.print("validate-check: could not run `{s} build-obj`: {s}\n", .{ zig_exe, @errorName(err) });
             return error.CompilerUnavailable;
         };

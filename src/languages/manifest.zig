@@ -17,6 +17,10 @@
 //! need no types here, because a hook's signature is fixed by the `Editor`
 //! method it overrides.
 //!
+//! It also holds the shape of a format-registry entry, `Dialect`, since each
+//! language now declares its own dialects (`Language.dialects`) and
+//! `language.zig` only assembles them.
+//!
 //! This module is deliberately a LEAF: it imports nothing, not even `std`.
 //! `language.zig` re-exports these types and every `<lang>/<lang>.zig` imports
 //! them, so anything pulled in here would be pulled into all eleven language
@@ -124,6 +128,68 @@ pub const Caps = struct {
     edit: bool = false,
     /// `print` can write this format.
     serialize: bool = false,
+    /// What the lossless `$fig` envelope pass (`lossless.zig`) may assume
+    /// about this format's value model on OUTPUT, or null when the format
+    /// takes no envelope at all.
+    ///
+    /// Non-null says: when `--lossless` targets this format, wrap every
+    /// scalar kind NOT marked native in `NativeKinds` in a `$fig` envelope so
+    /// a later run can rebuild it, and leave the marked kinds bare. Only the
+    /// four typed formats with a real value model and a mapping to carry the
+    /// envelope in — JSON, YAML, TOML, ZON — declare one.
+    ///
+    /// Null says: never encode an envelope into this format (envelopes in
+    /// its INPUT are still decoded). Two distinct reasons collapse into the
+    /// one answer, deliberately, because the pass has one behaviour for both:
+    ///
+    ///   * fig and canonical spell every kind directly, so an envelope would
+    ///     preserve nothing a plain print does not.
+    ///   * XML, INI, dotenv, `.properties`, plist and NestedText have no typed
+    ///     scalar envelope of their own — their printers already reduce the
+    ///     value to text, so a mapping-shaped envelope would be no more
+    ///     recoverable than the degraded scalar it replaced.
+    ///
+    /// A field on `Caps` rather than its own `Language` declaration because it
+    /// IS a capability — "can fig round-trip a value through this format
+    /// without loss, and which values need help" — and because the seven
+    /// null answers then cost nothing to state: the default is the
+    /// conservative one. It sits on the LANGUAGE (json/jsonc/json5 share it),
+    /// which is why JSON5's native `Infinity`/`NaN` are still enveloped: the
+    /// declaration is per-language and JSON's is the strict dialect's.
+    lossless: ?NativeKinds = null,
+};
+
+/// The scalar kinds a format spells natively, beyond the core four every
+/// serialize format has (boolean, string, number, and the two containers).
+/// Read by `lossless.zig`, whose `needsEnvelope` is exactly "the kind is one
+/// of these and the format did not mark it".
+///
+/// One field per kind the envelope can carry: `null`, plus one per
+/// `AST.Node.Kind.Extended.ExtKind` member, named identically. This module is
+/// a leaf and cannot name the AST's enum, so the correspondence is a
+/// comptime pin in `lossless.zig` (both directions) rather than a type: a new
+/// `ExtKind` fails the build until a field for it exists here, and a field
+/// with no `ExtKind` behind it fails the same way. Every field defaults to
+/// false — a format declares what it holds, and an omission is "envelope it",
+/// which is always lossless if sometimes unidiomatic.
+pub const NativeKinds = struct {
+    /// A bare `null`. Every typed format but TOML has one; TOML's absence is
+    /// the one kind the lossy path (`Lossless.lossyStrip`) DROPS rather than
+    /// degrades, since there is no string to collapse it to.
+    null: bool = false,
+    /// The four RFC-3339-derived TOML datetimes.
+    offset_datetime: bool = false,
+    local_datetime: bool = false,
+    local_date: bool = false,
+    local_time: bool = false,
+    /// ZON's `.name` and `'c'` literals.
+    enum_literal: bool = false,
+    char_literal: bool = false,
+    /// A non-finite float (`inf`/`nan`, JSON5's `Infinity`/`NaN`).
+    number_special: bool = false,
+    /// plist's `<date>` and `<data>`.
+    plist_date: bool = false,
+    plist_data: bool = false,
 };
 
 /// How a format spells itself when it is EMBEDDED in a host document — the
@@ -179,6 +245,151 @@ pub const EmbedSpellings = struct {
     /// reading and this covers writing.
     code_class: []const u8,
 };
+
+/// `Lang.Type` when `Lang` is a language, `void` when it is the gated-out
+/// placeholder.
+///
+/// A `-D<lang>=false` build resolves that language to `void` in
+/// `language.zig`, and `void` has no `.Type` — so a field naming one directly
+/// fails to compile in exactly the builds the flag exists to produce. Routing
+/// the type through here keeps every dependent shape (a registry `Dialect`,
+/// the CLI's `Spec`) identical in every build: the gated-out field becomes a
+/// zero-bit `void` that nothing reads, because every consumer already sits
+/// behind the same `build_options` test.
+pub fn DialectOf(comptime Lang: type) type {
+    return if (Lang == void) void else Lang.Type;
+}
+
+/// `Lang.default_type`, or the `void` value when `Lang` is gated out.
+pub fn defaultDialect(comptime Lang: type) DialectOf(Lang) {
+    return if (Lang == void) {} else Lang.default_type;
+}
+
+/// How a format takes the caller's edit text, which decides what the fix is
+/// when the text turns out not to fit. The semantic `cli/diag_report.zig`'s
+/// `spliceStyle` states (and which `cli/edit_ops.zig` acts on), declared once
+/// per dialect beside everything else about it.
+pub const SpliceStyle = enum {
+    /// Spliced in verbatim as source, so a string value needs its own quotes —
+    /// YAML, TOML, ZON, fig.
+    literal,
+    /// Wrapped as a JSON string first (`edit_ops.jsonifyEdit`), so `"`/`\` in
+    /// the text are escaped rather than taken as syntax — the JSON family.
+    json_string,
+    /// Written as raw characters, so only the format's own separators can
+    /// break it — INI, dotenv, `.properties`, XML, plist, NestedText. (plist
+    /// and NestedText *render* the text rather than splicing it; XML has no
+    /// in-place editor at all, so no edit text ever reaches it.)
+    raw,
+};
+
+/// One `--spec <version>` string and the dialect it selects. The element type
+/// of `Dialect.specs`, generic over the language so a gated-out one collapses
+/// to a `void` dialect and the registry still compiles (and still lists the
+/// version STRINGS, which are build-invariant — `resolveSpec` rejects them
+/// for a gated-out language rather than not knowing them).
+pub fn SpecName(comptime Lang: type) type {
+    return struct {
+        /// The accepted `--spec` text, matched exactly. Several map to one
+        /// dialect (`1.0` and `1.0.0` both select TOML 1.0).
+        name: []const u8,
+        dialect: DialectOf(Lang),
+    };
+}
+
+/// One user-facing dialect of a language: everything about it that is not
+/// the language module itself. A language declares its own as
+/// `Language.dialects: []const Dialect(Language)` — one entry for most, three
+/// for JSON (json/jsonc/json5 share one `Language`) — and `language.zig`
+/// assembles the format registry from those tables, in language order.
+///
+/// Generic over the language so the `void` protocol survives (see
+/// `DialectOf`): in the registry a gated-out language's entries are
+/// `Dialect(void)`, still present with their names, ABI values and spellings,
+/// so every enum derived from the registry is build-invariant. A language's
+/// own table is always `Dialect(Language)` — it is the registry that lifts
+/// the entries to the gated type.
+pub fn Dialect(comptime L: type) type {
+    return struct {
+        /// The member name this dialect has in every derived enum, and —
+        /// upper-cased — the `FIG_FORMAT_<NAME>` suffix in fig.h. Sentinel-
+        /// terminated because a reified enum's field names must be. The
+        /// entry that selects the language's `default_type` must be named
+        /// `Language.name` (`validate` checks); the others are the language's
+        /// business (JSON's `jsonc`/`json5`).
+        name: [:0]const u8,
+
+        /// The language this dialect is a dialect OF; `void` when that
+        /// language is gated out of this build. Every consumer must test this
+        /// FIRST — it is the gate, and reading any other `Lang`-derived field
+        /// past a `void` is a compile error, which is the point.
+        Lang: type = L,
+
+        /// The `Lang.Type` value this dialect selects. Defaults to the
+        /// language's own default; only the JSON trio overrides it.
+        dialect: DialectOf(L) = defaultDialect(L),
+
+        /// The `FigFormat` value in the C ABI. FROZEN: a released value can
+        /// never change or be reused, so a new dialect takes the next unused
+        /// integer (which is why these run 1,2,7 down the JSON family — JSON5
+        /// arrived after XML). `zig build abi-check` compares these against
+        /// fig.h's `FIG_FORMAT_*` enumerators in both directions, and
+        /// `language.zig` refuses a duplicate.
+        abi_value: c_int,
+
+        /// Whether `detect` can sniff this dialect, i.e. whether it is a
+        /// member of `Detected`. False for `jsonc` alone, which overlaps
+        /// json/json5 on almost all input.
+        detectable: bool = true,
+
+        /// Whether `deserialize.Format` covers it — the typed
+        /// struct-deserialization entry points, which today reach five of the
+        /// thirteen dialects.
+        deserializable: bool = false,
+
+        /// How this dialect takes spliced edit text. See `SpliceStyle`.
+        splice: SpliceStyle,
+
+        /// The document `set` seeds when the target file does not exist yet
+        /// (and what `Embed.initRegion` writes into a freshly created region),
+        /// or null for a format that refuses to be created from scratch.
+        ///
+        /// An empty string is NOT the same statement as null: it means an
+        /// empty file already parses as an empty root mapping, so the first
+        /// key can just be inserted into it.
+        empty_doc_seed: ?[]const u8,
+
+        /// The `Lang.Printer` declaration that writes a whole document in this
+        /// dialect, and the one that writes a single node. Two names rather
+        /// than one because the JSON family shares a printer and separates its
+        /// dialects by entry point (`print`/`printc`/`print5`), and YAML's
+        /// document printer is `printWith`.
+        ///
+        /// These ARE the serializer's dispatch: `ast/serialize_options.zig`
+        /// calls `@field(d.Lang.Printer, d.print_name)(writer, ast, options)`
+        /// (and the `print_node_name` twin) for every entry, so a wrong name
+        /// here is a compile error rather than a wrong output. There is no
+        /// separate fragment name: `serializeFragmentWith` uses `print_name`
+        /// for every dialect but fig, whose `printFragment` takes an explicit
+        /// arm there for the reason documented on that function.
+        print_name: [:0]const u8 = "print",
+        print_node_name: [:0]const u8 = "printNode",
+
+        /// The `--spec` strings this dialect accepts and what each selects.
+        /// Empty for the eleven dialects with a single grammar. See
+        /// `cli/parse_dispatch.zig`'s `resolveSpec`, whose behaviour a
+        /// comptime assert beside it pins against the registry.
+        specs: []const SpecName(L) = &.{},
+
+        /// How this format spells itself inside a host document, or null when
+        /// it has no embedded form (`Embed.InnerFormat` is REIFIED from
+        /// exactly the entries where this is non-null). `embed.zig` builds
+        /// every fence, frontmatter marker, `<script type>` and `<code class>`
+        /// it writes — and every tag/MIME it accepts on read — out of these
+        /// fields, so they are the spelling, not a description of it.
+        embed: ?EmbedSpellings = null,
+    };
+}
 
 /// Everything the generic splice engine needs to know about a format's
 /// surface syntax, indexed by dialect.

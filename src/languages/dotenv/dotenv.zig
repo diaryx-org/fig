@@ -31,6 +31,15 @@ pub const Language = struct {
     pub const extensions: []const []const u8 = &.{"env"};
     pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
 
+    /// A flat string map and nothing more: no nesting, untyped scalars. A
+    /// nested value tree cannot be represented, and serializing one warns.
+    pub const dialects: []const lang.Dialect(@This()) = &.{.{
+        .name = "dotenv",
+        .abi_value = 10,
+        .splice = .raw,
+        .empty_doc_seed = "",
+    }};
+
     pub fn syntax(t: dotenv.Type) lang.Syntax {
         _ = t;
         return .{

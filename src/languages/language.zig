@@ -13,24 +13,63 @@ pub const Language = @This();
 pub const CommentStyle = manifest.CommentStyle;
 pub const KeyStyle = manifest.KeyStyle;
 pub const Caps = manifest.Caps;
+pub const NativeKinds = manifest.NativeKinds;
 pub const Syntax = manifest.Syntax;
 
-// Per-language gates: a compiled-out format resolves to `void`, so its module is
-// never referenced and never built. Every call site that touches a gated
-// `Language.*` must guard the access behind the same `build_options.lang_*`
-// flag (a `comptime` check), or it will fail to compile against `void`. JSON is
-// gateable like the rest now that `detect` no longer assumes it as a base.
-pub const JSON = if (build_options.lang_json) @import("json/json.zig").Language else void;
-pub const YAML = if (build_options.lang_yaml) @import("yaml/yaml.zig").Language else void;
-pub const TOML = if (build_options.lang_toml) @import("toml/toml.zig").Language else void;
-pub const ZON = if (build_options.lang_zon) @import("zon/zon.zig").Language else void;
-pub const XML = if (build_options.lang_xml) @import("xml/xml.zig").Language else void;
-pub const FIG = if (build_options.lang_fig) @import("fig/fig.zig").Language else void;
-pub const INI = if (build_options.lang_ini) @import("ini/ini.zig").Language else void;
-pub const DOTENV = if (build_options.lang_dotenv) @import("dotenv/dotenv.zig").Language else void;
-pub const PROPERTIES = if (build_options.lang_properties) @import("properties/properties.zig").Language else void;
-pub const PLIST = if (build_options.lang_plist) @import("plist/plist.zig").Language else void;
-pub const NESTEDTEXT = if (build_options.lang_nestedtext) @import("nestedtext/nestedtext.zig").Language else void;
+// The language MODULES, imported unconditionally, each paired with its gate.
+//
+// This is the one list of languages in the tree. Everything per-language or
+// per-dialect is derived from it: the gated aliases just below, `compiled`,
+// and the format registry `dialects`, which is assembled from each module's
+// own `Language.dialects` table in THIS order (see the registry note on why
+// that order is frozen). Appending a language means appending a slot here;
+// nothing else in this file names it.
+//
+// The module is imported whether or not its gate is on. Nothing runtime is
+// ever reached through the module itself — only comptime DECLARATIONS
+// (`Language.dialects`, `Language.caps`) are read off it, which is how the
+// registry keeps a gated-out language's rows, names, ABI values and spellings
+// build-invariant, the way its `--spec` strings always were. Zig's analysis is
+// lazy, so reading a declaration builds no parser and no printer; everything
+// that would goes through the gated alias, which is `void` when the gate is
+// off. (`root.zig`'s test block has imported all eleven unconditionally for
+// as long as the gates have existed.)
+const slots = .{
+    .{ @import("json/json.zig"), build_options.lang_json },
+    .{ @import("yaml/yaml.zig"), build_options.lang_yaml },
+    .{ @import("toml/toml.zig"), build_options.lang_toml },
+    .{ @import("zon/zon.zig"), build_options.lang_zon },
+    .{ @import("xml/xml.zig"), build_options.lang_xml },
+    .{ @import("fig/fig.zig"), build_options.lang_fig },
+    .{ @import("ini/ini.zig"), build_options.lang_ini },
+    .{ @import("dotenv/dotenv.zig"), build_options.lang_dotenv },
+    .{ @import("properties/properties.zig"), build_options.lang_properties },
+    .{ @import("plist/plist.zig"), build_options.lang_plist },
+    .{ @import("nestedtext/nestedtext.zig"), build_options.lang_nestedtext },
+};
+
+/// A slot's `Language` when its gate is on, `void` when it is off.
+fn gated(comptime slot: anytype) type {
+    return if (slot[1]) slot[0].Language else void;
+}
+
+// Per-language gates: a compiled-out format resolves to `void`, so nothing that
+// would build its parser or printer is ever referenced. Every call site that
+// touches a gated `Language.*` must guard the access behind the same
+// `build_options.lang_*` flag (a `comptime` check), or it will fail to compile
+// against `void`. JSON is gateable like the rest now that `detect` no longer
+// assumes it as a base.
+pub const JSON = gated(slots[0]);
+pub const YAML = gated(slots[1]);
+pub const TOML = gated(slots[2]);
+pub const ZON = gated(slots[3]);
+pub const XML = gated(slots[4]);
+pub const FIG = gated(slots[5]);
+pub const INI = gated(slots[6]);
+pub const DOTENV = gated(slots[7]);
+pub const PROPERTIES = gated(slots[8]);
+pub const PLIST = gated(slots[9]);
+pub const NESTEDTEXT = gated(slots[10]);
 
 // ============================================================================
 // THE FORMAT REGISTRY
@@ -61,149 +100,76 @@ pub const NESTEDTEXT = if (build_options.lang_nestedtext) @import("nestedtext/ne
 // `inline` over the registry each. `c_api.zig` reads the rest: `abi_value` for
 // the enum, `Lang` for parser/capability/editor dispatch, and `dialect` for the
 // three JSON ABI values that share one language.
+//
+// The rows themselves are no longer written here. Each language declares its
+// own — `Language.dialects`, a `[]const manifest.Dialect(Language)` beside its
+// `name`/`extensions`/`caps` — and `dialects` below is ASSEMBLED from those
+// tables in `slots` order, lifting each row to the gated `Dialect(Lang)` so
+// the `void` protocol holds exactly as it did when the rows were literal.
 
-/// `Lang.Type` when `Lang` is compiled in, `void` when it is gated out.
-///
-/// A `-D<lang>=false` build resolves that language to `void` above, and `void`
-/// has no `.Type` — so a field naming one directly fails to compile in exactly
-/// the builds the flag exists to produce. Routing the type through here keeps
-/// every dependent shape (a registry `Entry`, the CLI's `Spec`) identical in
-/// every build: the gated-out field becomes a zero-bit `void` that nothing
-/// reads, because every consumer already sits behind the same `build_options`
-/// test. Moved here from `cli/parse_dispatch.zig`, which now re-exports it —
-/// the registry needs it one layer below the CLI.
-pub fn DialectOf(comptime Lang: type) type {
-    return if (Lang == void) void else Lang.Type;
+// The `void` protocol and the entry shape, re-exported from the leaf manifest
+// (where they moved so a language can name `Dialect(Language)` for its own
+// table). `cli/parse_dispatch.zig` re-exports the first two again under the
+// same names.
+pub const DialectOf = manifest.DialectOf;
+pub const defaultDialect = manifest.defaultDialect;
+pub const SpliceStyle = manifest.SpliceStyle;
+pub const SpecName = manifest.SpecName;
+pub const Dialect = manifest.Dialect;
+
+/// The registry's element type for a (possibly gated-out) language: what a
+/// language's own `Dialect(Language)` row becomes once lifted into the table.
+/// The same struct — `Lang` collapses to `void`, and `dialect`/`specs` with
+/// it, when the gate is off.
+fn Entry(comptime L: type) type {
+    return Dialect(L);
 }
 
-/// `Lang.default_type`, or the `void` value when `Lang` is gated out.
-pub fn defaultDialect(comptime Lang: type) DialectOf(Lang) {
-    return if (Lang == void) {} else Lang.default_type;
+/// A language's own row lifted to the registry's gated type: every field
+/// copied as declared, except the three the `void` protocol touches — `Lang`
+/// becomes the gated alias, and `dialect` and each `specs[i].dialect` collapse
+/// to the `void` value with it. Field-by-field over `@typeInfo`, so a field
+/// added to `manifest.Dialect` is carried without an edit here; the three
+/// exceptions are named, and anything else is copied verbatim.
+fn lift(comptime d: anytype, comptime G: type) Entry(G) {
+    comptime {
+        var out: Entry(G) = undefined;
+        for (@typeInfo(Entry(G)).@"struct".fields) |f| {
+            if (std.mem.eql(u8, f.name, "Lang")) {
+                out.Lang = G;
+            } else if (std.mem.eql(u8, f.name, "dialect")) {
+                out.dialect = if (G == void) {} else d.dialect;
+            } else if (std.mem.eql(u8, f.name, "specs")) {
+                var specs: []const SpecName(G) = &.{};
+                for (d.specs) |sp| {
+                    specs = specs ++ [_]SpecName(G){.{
+                        .name = sp.name,
+                        .dialect = if (G == void) {} else sp.dialect,
+                    }};
+                }
+                out.specs = specs;
+            } else {
+                @field(out, f.name) = @field(d, f.name);
+            }
+        }
+        return out;
+    }
 }
 
-/// A named dialect of `Lang` spelled by its member NAME rather than by a
-/// literal, so a registry entry can name one in a build where `Lang` is `void`
-/// (there is no enum to write `.JSONC` against). Collapses to the `void` value
-/// exactly when the language is gated out.
-pub fn dial(comptime Lang: type, comptime tag: []const u8) DialectOf(Lang) {
-    return if (Lang == void) {} else @field(Lang.Type, tag);
-}
-
-/// How a format takes the caller's edit text, which decides what the fix is
-/// when the text turns out not to fit. The semantic `cli/diag_report.zig`'s
-/// `spliceStyle` states today (and which `cli/edit_ops.zig` acts on), lifted
-/// here so it is declared once per dialect beside everything else about it.
-pub const SpliceStyle = enum {
-    /// Spliced in verbatim as source, so a string value needs its own quotes —
-    /// YAML, TOML, ZON, fig.
-    literal,
-    /// Wrapped as a JSON string first (`edit_ops.jsonifyEdit`), so `"`/`\` in
-    /// the text are escaped rather than taken as syntax — the JSON family.
-    json_string,
-    /// Written as raw characters, so only the format's own separators can
-    /// break it — INI, dotenv, `.properties`, XML, plist, NestedText. (plist
-    /// and NestedText *render* the text rather than splicing it; XML has no
-    /// in-place editor at all, so no edit text ever reaches it.)
-    raw,
+/// The registry's element types, one per row, in registry order — the tuple
+/// type `dialects` is built as. Heterogeneous because each language's rows
+/// are `Entry(<its gated alias>)`, so the table cannot be a plain slice.
+const entry_types: []const type = blk: {
+    var ts: []const type = &.{};
+    for (slots) |slot| {
+        for (slot[0].Language.dialects) |_| ts = ts ++ [_]type{Entry(gated(slot))};
+    }
+    break :blk ts;
 };
 
-/// One `--spec <version>` string and the dialect it selects. The element type
-/// of `Entry.specs`, generic over the language so a gated-out one collapses to
-/// a `void` dialect and the table still compiles (and still lists the version
-/// STRINGS, which are build-invariant — `resolveSpec` rejects them for a
-/// gated-out language rather than not knowing them).
-pub fn SpecName(comptime Lang: type) type {
-    return struct {
-        /// The accepted `--spec` text, matched exactly. Several map to one
-        /// dialect (`1.0` and `1.0.0` both select TOML 1.0).
-        name: []const u8,
-        dialect: DialectOf(Lang),
-    };
-}
-
-/// One user-facing dialect: everything about it that is not the language
-/// module itself. Generic over the language so the `void` protocol survives —
-/// see `DialectOf`.
-fn Entry(comptime L: type) type {
-    return struct {
-        /// The member name this dialect has in every derived enum, and —
-        /// upper-cased — the `FIG_FORMAT_<NAME>` suffix in fig.h. Sentinel-
-        /// terminated because a reified enum's field names must be.
-        name: [:0]const u8,
-
-        /// The language this dialect is a dialect OF; `void` when that
-        /// language is gated out of this build. Every consumer must test this
-        /// FIRST — it is the gate, and reading any other `Lang`-derived field
-        /// past a `void` is a compile error, which is the point.
-        Lang: type = L,
-
-        /// The `Lang.Type` value this dialect selects. Defaults to the
-        /// language's own default; only the JSON trio overrides it.
-        dialect: DialectOf(L) = defaultDialect(L),
-
-        /// The `FigFormat` value in the C ABI. FROZEN: a released value can
-        /// never change or be reused, so new entries append (which is why
-        /// these run 1,2,7 down the JSON family — JSON5 arrived after XML).
-        /// `zig build abi-check` compares these against fig.h's
-        /// `FIG_FORMAT_*` enumerators in both directions.
-        abi_value: c_int,
-
-        /// Whether `detect` can sniff this dialect, i.e. whether it is a
-        /// member of `Detected`. False for `jsonc` alone, which overlaps
-        /// json/json5 on almost all input.
-        detectable: bool = true,
-
-        /// Whether `deserialize.Format` covers it — the typed
-        /// struct-deserialization entry points, which today reach five of the
-        /// thirteen dialects.
-        deserializable: bool = false,
-
-        /// How this dialect takes spliced edit text. See `SpliceStyle`.
-        splice: SpliceStyle,
-
-        /// The document `set` seeds when the target file does not exist yet
-        /// (and what `Embed.initRegion` writes into a freshly created region),
-        /// or null for a format that refuses to be created from scratch.
-        ///
-        /// An empty string is NOT the same statement as null: it means an
-        /// empty file already parses as an empty root mapping, so the first
-        /// key can just be inserted into it.
-        empty_doc_seed: ?[]const u8,
-
-        /// The `Lang.Printer` declaration that writes a whole document in this
-        /// dialect, and the one that writes a single node. Two names rather
-        /// than one because the JSON family shares a printer and separates its
-        /// dialects by entry point (`print`/`printc`/`print5`), and YAML's
-        /// document printer is `printWith`.
-        ///
-        /// These ARE the serializer's dispatch: `ast/serialize_options.zig`
-        /// calls `@field(d.Lang.Printer, d.print_name)(writer, ast, options)`
-        /// (and the `print_node_name` twin) for every entry, so a wrong name
-        /// here is a compile error rather than a wrong output. There is no
-        /// separate fragment name: `serializeFragmentWith` uses `print_name`
-        /// for every dialect but fig, whose `printFragment` takes an explicit
-        /// arm there for the reason documented on that function.
-        print_name: [:0]const u8 = "print",
-        print_node_name: [:0]const u8 = "printNode",
-
-        /// The `--spec` strings this dialect accepts and what each selects.
-        /// Empty for the eleven dialects with a single grammar. See
-        /// `cli/parse_dispatch.zig`'s `resolveSpec`, whose behaviour a
-        /// comptime assert beside it pins against this table.
-        specs: []const SpecName(L) = &.{},
-
-        /// How this format spells itself inside a host document, or null when
-        /// it has no embedded form (`Embed.InnerFormat` is REIFIED from
-        /// exactly the entries where this is non-null). `embed.zig` builds
-        /// every fence, frontmatter marker, `<script type>` and `<code class>`
-        /// it writes — and every tag/MIME it accepts on read — out of these
-        /// fields, so they are the spelling, not a description of it.
-        embed: ?manifest.EmbedSpellings = null,
-    };
-}
-
 /// EVERY user-facing dialect, as a heterogeneous comptime tuple — thirteen
-/// entries over eleven languages (the JSON module supplies three).
+/// entries over eleven languages (the JSON module supplies three) — assembled
+/// from each language's own `Language.dialects` in `slots` order.
 ///
 /// Two properties of this table are frozen, and both are load-bearing:
 ///
@@ -216,188 +182,60 @@ fn Entry(comptime L: type) type {
 ///     and `gron`, a CLI-only projection — both spliced back by hand at their
 ///     old positions, see `namesWith`) and minus `yml`, an alias of `yaml`
 ///     retired in Stage 3. Reordering it would silently renumber
-///     `@intFromEnum` for every one of those enums. Append.
+///     `@intFromEnum` for every one of those enums. It is now the product of
+///     two orders — `slots` and each language's own table — so a literal pin
+///     below (`registry_order`) states the whole sequence in one place, and
+///     either half moving fails the build there. Append: a new language is a
+///     new last slot, a new dialect of an existing language is its table's
+///     last row — and the pin's.
 ///
 ///   * `abi_value`. It is the C ABI, and a released value is permanent.
 ///
-/// Entries are ALWAYS present — a gated-out language collapses its entry's
-/// `Lang` to `void` rather than dropping the row — so every derived enum is
-/// build-invariant and only the *behaviour* behind a member is gated.
+/// Entries are ALWAYS present — a gated-out language's rows are read off its
+/// module all the same and lifted with `Lang` collapsed to `void` rather than
+/// dropped — so every derived enum is build-invariant and only the *behaviour*
+/// behind a member is gated.
 ///
 /// `canonical` and `gron` are deliberately absent: canonical is the AST's own
 /// oracle grammar (no `Language`, no dialect, an options-less printer) and
 /// gron is a CLI-only projection of JSON. Both stay explicit named arms at
 /// every switch, which is also what keeps an exhaustive switch honest — a new
 /// member has to be either a registry entry or one of those two.
-pub const dialects = .{
-    Entry(JSON){
-        .name = "json",
-        .dialect = dial(JSON, "JSON"),
-        .abi_value = 1,
-        .deserializable = true,
-        .splice = .json_string,
-        .empty_doc_seed = "{}\n",
-        .embed = .{
-            .fence_tag = "json",
-            .frontmatter = "---json",
-            .script_mime = "application/json",
-            .script_mime_aliases = &.{"application/ld+json"},
-            .code_class = "language-json",
-        },
-    },
-    Entry(JSON){
-        .name = "jsonc",
-        .dialect = dial(JSON, "JSONC"),
-        .abi_value = 2,
-        // The one non-detectable dialect: plain JSON and JSON5 already claim
-        // everything JSONC accepts that they can parse, so sniffing it would
-        // only ever mis-attribute a comment-free document.
-        .detectable = false,
-        .deserializable = true,
-        .splice = .json_string,
-        .empty_doc_seed = "{}\n",
-        .print_name = "printc",
-        .print_node_name = "printNodec",
-    },
-    Entry(JSON){
-        .name = "json5",
-        .dialect = dial(JSON, "JSON5"),
-        // 7, not 6: JSON5 was added to the C ABI after XML, and a released
-        // value is appended rather than inserted. Same for `fig` at 8 and the
-        // five below it — the reason this enum's numbering is not its order.
-        .abi_value = 7,
-        .splice = .json_string,
-        .empty_doc_seed = "{}\n",
-        .print_name = "print5",
-        .print_node_name = "printNode5",
-    },
-    Entry(YAML){
-        .name = "yaml",
-        .abi_value = 3,
-        .deserializable = true,
-        .splice = .literal,
-        // A bare `key:` seed, not `{}`: see `Syntax.empty_map_literal`'s note
-        // on why an empty YAML document is the empty string.
-        .empty_doc_seed = "",
-        .print_name = "printWith",
-        .specs = &.{
-            .{ .name = "1.2", .dialect = dial(YAML, "v1_2_2") },
-            .{ .name = "1.2.2", .dialect = dial(YAML, "v1_2_2") },
-            .{ .name = "1.1", .dialect = dial(YAML, "v1_1") },
-            .{ .name = "1.1.0", .dialect = dial(YAML, "v1_1") },
-        },
-        .embed = .{
-            .fence_tag = "yaml",
-            .fence_aliases = &.{"yml"},
-            // Bare, not `---yaml`: an untagged frontmatter block is YAML.
-            .frontmatter = "---",
-            .script_mime = "application/yaml",
-            .script_mime_aliases = &.{ "application/x-yaml", "text/yaml" },
-            .code_class = "language-yaml",
-        },
-    },
-    Entry(TOML){
-        .name = "toml",
-        .abi_value = 4,
-        .deserializable = true,
-        .splice = .literal,
-        .empty_doc_seed = "",
-        .specs = &.{
-            .{ .name = "1.0", .dialect = dial(TOML, "TOML_1_0") },
-            .{ .name = "1.0.0", .dialect = dial(TOML, "TOML_1_0") },
-            .{ .name = "1.1", .dialect = dial(TOML, "TOML_1_1") },
-            .{ .name = "1.1.0", .dialect = dial(TOML, "TOML_1_1") },
-        },
-        .embed = .{
-            .fence_tag = "toml",
-            .frontmatter = "---toml",
-            .script_mime = "application/toml",
-            .code_class = "language-toml",
-        },
-    },
-    Entry(ZON){
-        .name = "zon",
-        .abi_value = 5,
-        .deserializable = true,
-        .splice = .literal,
-        .empty_doc_seed = ".{}\n",
-    },
-    Entry(XML){
-        .name = "xml",
-        .abi_value = 6,
-        // XML has a reader and a writer but no in-place editor, so no edit
-        // text ever reaches a splice; `.raw` is what `spliceStyle` says today.
-        .splice = .raw,
-        // No from-scratch creation: a bare XML document needs a root element
-        // this layer cannot name.
-        .empty_doc_seed = null,
-    },
-    Entry(FIG){
-        .name = "fig",
-        // The native authoring dialect (src/languages/fig/DESIGN.md): read,
-        // written and edited by every surface.
-        .abi_value = 8,
-        .splice = .literal,
-        .empty_doc_seed = "",
-        .embed = .{
-            .fence_tag = "fig",
-            .fence_aliases = &.{"figl"},
-            .frontmatter = "---fig",
-            .script_mime = "application/figl",
-            .script_mime_aliases = &.{"application/fig"},
-            // `language-figl`, not `language-fig`: the class token and the
-            // fence tag genuinely differ in `embed.zig` today.
-            .code_class = "language-figl",
-        },
-    },
-    Entry(INI){
-        .name = "ini",
-        // Untyped scalars: the grammar carries no type information, so
-        // `port = 8080` reads back as the STRING "8080".
-        .abi_value = 9,
-        .splice = .raw,
-        .empty_doc_seed = "",
-    },
-    Entry(DOTENV){
-        .name = "dotenv",
-        // A flat string map and nothing more: no nesting, untyped scalars. A
-        // nested value tree cannot be represented, and serializing one warns.
-        .abi_value = 10,
-        .splice = .raw,
-        .empty_doc_seed = "",
-    },
-    Entry(PROPERTIES){
-        .name = "properties",
-        // Flat and untyped, the same representational limits as dotenv.
-        .abi_value = 11,
-        .splice = .raw,
-        .empty_doc_seed = "",
-    },
-    Entry(PLIST){
-        .name = "plist",
-        // Genuinely typed and nested (dict/array/string/integer/real/bool,
-        // with date/data carried on the `extended` scalar) — the one XML-shaped
-        // format here that is also a full value model.
-        .abi_value = 12,
-        .splice = .raw,
-        // DELIBERATE DEVIATION from `cli/edit_ops.zig`'s `emptyDocSeed`, which
-        // returns null for plist today — so `fig set` on a nonexistent
-        // `.plist` refuses instead of creating one. A bare `<dict>` IS a
-        // document `Language.PLIST` parses (see its `detect` probe), so the
-        // registry declares the seed the fix needs. NOTHING READS IT YET: the
-        // switch is converted in Stage 4, which is where the behaviour change
-        // and its CLI test land. The assert beside `emptyDocSeed` exempts this
-        // one row for exactly that reason.
-        .empty_doc_seed = "<dict>\n</dict>\n",
-    },
-    Entry(NESTEDTEXT){
-        .name = "nestedtext",
-        // Nested (dict/list) but deliberately untyped — every leaf is a string.
-        .abi_value = 13,
-        .splice = .raw,
-        .empty_doc_seed = "",
-    },
+pub const dialects: std.meta.Tuple(entry_types) = blk: {
+    @setEvalBranchQuota(20_000);
+    var out: std.meta.Tuple(entry_types) = undefined;
+    var i: usize = 0;
+    for (slots) |slot| {
+        for (slot[0].Language.dialects) |d| {
+            out[i] = lift(d, gated(slot));
+            i += 1;
+        }
+    }
+    break :blk out;
 };
+
+/// The registry's order, as a literal. `dialects` derives it from `slots` ×
+/// each language's table, and this is the one place the whole sequence is
+/// written down — see the ORDER note on `dialects` for why it cannot move.
+const registry_order = [_][]const u8{
+    "json", "jsonc", "json5",  "yaml",       "toml",  "zon",        "xml",
+    "fig",  "ini",   "dotenv", "properties", "plist", "nestedtext",
+};
+
+/// The MODULE the registry entry `name` was declared in — the ungated route
+/// to that language's comptime declarations in a build that has it compiled
+/// out (`Lossless.nativeFor` reads `caps.lossless` this way, so the envelope
+/// table stays build-invariant). Only declarations may be read through it;
+/// anything that would build the language's code goes through the entry's
+/// gated `Lang`.
+pub fn moduleFor(comptime name: []const u8) type {
+    inline for (slots) |slot| {
+        inline for (slot[0].Language.dialects) |d| {
+            if (comptime std.mem.eql(u8, d.name, name)) return slot[0];
+        }
+    }
+    @compileError("no registry entry for format '" ++ name ++ "'");
+}
 
 /// The registry entry named `name`, or a compile error naming the format that
 /// has none. The lookup every derived dispatch arm opens with.
@@ -635,14 +473,47 @@ comptime {
     for (dialects) |d| {
         if (d.Lang == void) continue;
         const expected = if (std.mem.eql(u8, d.name, "jsonc"))
-            dial(d.Lang, "JSONC")
+            @field(d.Lang.Type, "JSONC")
         else if (std.mem.eql(u8, d.name, "json5"))
-            dial(d.Lang, "JSON5")
+            @field(d.Lang.Type, "JSON5")
         else
             defaultDialect(d.Lang);
         if (d.dialect != expected)
             @compileError("format-registry entry '" ++ d.name ++
                 "' selects a dialect other than the one its call sites pass today");
+    }
+
+    // The ORDER pin. Assembly reproduces `registry_order` exactly, or a slot
+    // or a language's own table has moved — which would renumber every
+    // derived enum (see `dialects`).
+    {
+        const names = namesOf(.all);
+        if (names.len != registry_order.len)
+            @compileError("the format registry has " ++ std.fmt.comptimePrint("{d}", .{names.len}) ++
+                " entries but `registry_order` pins " ++
+                std.fmt.comptimePrint("{d}", .{registry_order.len}) ++
+                " — a new dialect is appended to both its language's table and the pin");
+        for (names, registry_order, 0..) |got, want, i| {
+            if (!std.mem.eql(u8, got, want))
+                @compileError("format-registry entry " ++ std.fmt.comptimePrint("{d}", .{i}) ++
+                    " is '" ++ got ++ "' but `registry_order` pins '" ++ want ++
+                    "' there — the registry's order is every derived enum's member order," ++
+                    " so neither `slots` nor a language's own `dialects` may reorder");
+        }
+    }
+
+    // Every row's `Lang` is the gated alias of the language whose table it
+    // came from, and every gated-in row still describes a dialect of that
+    // language — `lift` is what makes this true, checked here so it stays so.
+    for (dialects) |d| {
+        if (d.Lang == void) continue;
+        var declared = false;
+        for (d.Lang.dialects) |own| {
+            if (std.mem.eql(u8, own.name, d.name)) declared = true;
+        }
+        if (!declared)
+            @compileError("format-registry entry '" ++ d.name ++ "' is attributed to '" ++
+                d.Lang.name ++ "', whose own `dialects` table does not declare it");
     }
 
     // `entryFor` itself: the lookup every derived dispatch in the CLI, the
@@ -816,9 +687,12 @@ const Decls = struct {
     /// `@field(d.Lang.Printer, d.print_name)` for every registry entry), so
     /// every format must expose one even when — as with plist and xml — its
     /// `Language` wraps only the module's `print`.
+    ///
+    /// `dialects` is the format's own rows of the format registry — see
+    /// `manifest.Dialect` — which `language.zig` assembles rather than writes.
     const required = [_][]const u8{
         "Type",  "Parser", "Printer",    "default_type", "parse",
-        "print", "name",   "extensions", "caps",
+        "print", "name",   "extensions", "caps",         "dialects",
     };
 
     /// Required of an editable format only. `syntax` describes how the generic
@@ -933,6 +807,49 @@ pub fn validate(comptime Lang: type) void {
         }
         if (@TypeOf(Lang.caps) != Caps)
             @compileError("Language.caps must be a language.Caps");
+
+        // The format's registry rows. Their type is fixed (the registry lifts
+        // exactly `Dialect(Lang)`), there must be at least one (a language
+        // with no dialect is a format no derived enum can name), names are
+        // unique within the language (the registry checks them across it),
+        // and exactly one row selects `default_type` and is named
+        // `Lang.name` — that is what ties the language's identity to the
+        // member every consumer reaches it by, and what the JSON trio's
+        // `jsonc`/`json5` rows are the exception to (they select the other
+        // two `Type` members).
+        if (@TypeOf(Lang.dialects) != []const Dialect(Lang))
+            @compileError("Language '" ++ Lang.name ++ "'.dialects must be a []const language.Dialect(Language)");
+        if (Lang.dialects.len == 0)
+            @compileError("Language '" ++ Lang.name ++ "' declares no dialects, so no format enum can name it");
+        var default_rows = 0;
+        for (Lang.dialects, 0..) |d, i| {
+            for (Lang.dialects[i + 1 ..]) |other| {
+                if (std.mem.eql(u8, d.name, other.name))
+                    @compileError("Language '" ++ Lang.name ++ "' declares two dialects named '" ++ d.name ++ "'");
+            }
+            if (d.Lang != Lang)
+                @compileError("Language '" ++ Lang.name ++ "'.dialects row '" ++ d.name ++
+                    "' names a different language");
+            if (d.dialect == Lang.default_type) {
+                default_rows += 1;
+                if (!std.mem.eql(u8, d.name, Lang.name))
+                    @compileError("Language '" ++ Lang.name ++ "' selects its default_type in the dialect" ++
+                        " row named '" ++ d.name ++ "', which must be named after the language");
+            }
+        }
+        if (default_rows != 1)
+            @compileError("Language '" ++ Lang.name ++ "' must have exactly one dialect row selecting" ++
+                " its default_type (the one named after the language)");
+
+        // Coherence: `caps.lossless` describes what the `$fig` envelope pass
+        // may write INTO this format, so it is only meaningful for a format
+        // that can be written at all. A read-only format declaring one would
+        // be describing output it never produces — the same shape of
+        // contradiction as an editing hook under `caps.edit = false`.
+        if (Lang.caps.lossless != null and !Lang.caps.serialize)
+            @compileError("Language '" ++ Lang.name ++ "' declares caps.lossless (an envelope" ++
+                " target for serialized output) but caps.serialize = false, so it never writes" ++
+                " the output the envelope would go into");
 
         // `syntax` describes how the generic splice engine writes this
         // format, so it is required exactly when there is an editor to read
@@ -1065,17 +982,9 @@ pub fn validate(comptime Lang: type) void {
 /// list to walk instead of eleven `build_options` tests to repeat.
 pub const compiled: []const type = blk: {
     var list: []const type = &.{};
-    if (build_options.lang_json) list = list ++ [_]type{JSON};
-    if (build_options.lang_yaml) list = list ++ [_]type{YAML};
-    if (build_options.lang_toml) list = list ++ [_]type{TOML};
-    if (build_options.lang_zon) list = list ++ [_]type{ZON};
-    if (build_options.lang_xml) list = list ++ [_]type{XML};
-    if (build_options.lang_fig) list = list ++ [_]type{FIG};
-    if (build_options.lang_ini) list = list ++ [_]type{INI};
-    if (build_options.lang_dotenv) list = list ++ [_]type{DOTENV};
-    if (build_options.lang_properties) list = list ++ [_]type{PROPERTIES};
-    if (build_options.lang_plist) list = list ++ [_]type{PLIST};
-    if (build_options.lang_nestedtext) list = list ++ [_]type{NESTEDTEXT};
+    for (slots) |slot| {
+        if (slot[1]) list = list ++ [_]type{slot[0].Language};
+    }
     break :blk list;
 };
 

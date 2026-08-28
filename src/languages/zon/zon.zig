@@ -25,7 +25,22 @@ pub const Language = struct {
 
     pub const name = "zon";
     pub const extensions: []const []const u8 = &.{"zon"};
-    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
+    pub const caps: lang.Caps = .{
+        .read = true,
+        .edit = true,
+        .serialize = true,
+        // `null`, `.enum_literal` and `'c'` are native Zig syntax; datetimes,
+        // non-finite floats and plist's date/data are enveloped.
+        .lossless = .{ .null = true, .enum_literal = true, .char_literal = true },
+    };
+
+    pub const dialects: []const lang.Dialect(@This()) = &.{.{
+        .name = "zon",
+        .abi_value = 5,
+        .deserializable = true,
+        .splice = .literal,
+        .empty_doc_seed = ".{}\n",
+    }};
 
     /// The format that most exercises the manifest's "push traits down into
     /// parameters" rule: three of these fields exist because ZON's surface

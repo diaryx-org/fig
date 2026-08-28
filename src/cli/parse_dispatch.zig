@@ -364,12 +364,24 @@ pub fn mapDetected(d: fig.Language.Detected) Format {
     };
 }
 
+/// The native-kinds declaration to run `Lossless.lossyStrip` against before a
+/// lossy print to `target`, or null when nothing would be stripped: the target
+/// either takes no envelope at all (fig, INI, plist, …) or holds a `null`
+/// natively (JSON, YAML, ZON), and a `null` is the one kind that pass ever
+/// drops (`Lossless.isUnrepresentable`). Today this answers TOML alone — by
+/// TOML's own `caps.lossless`, not by name here — and `get`/`convert`/`fmt`
+/// use it to decide whether to strip before printing so the printer never
+/// aborts a document partway through.
+pub fn nullStripTarget(target: fig.AST.SerializeFormat) ?fig.Lossless.NativeKinds {
+    const native = fig.Lossless.nativeFor(target) orelse return null;
+    return if (native.null) null else native;
+}
+
 /// Map a document-serialize `target` to its `fig.FlatStrip.Format` counterpart,
 /// or null for every format that isn't one of the three flat/shallow-only
 /// ones `FlatStrip` covers. `get`/`convert`'s lossy path use this to decide
-/// whether to run `FlatStrip.lossyStrip` before printing (mirroring how they
-/// hardcode `.toml` for `Lossless.lossyStrip`, just over three formats instead
-/// of one).
+/// whether to run `FlatStrip.lossyStrip` before printing (the depth-based
+/// twin of `nullStripTarget` above, over three formats instead of one).
 pub fn flatStripFormat(target: fig.AST.SerializeFormat) ?fig.FlatStrip.Format {
     return switch (target) {
         .ini => .ini,

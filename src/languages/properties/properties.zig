@@ -28,6 +28,14 @@ pub const Language = struct {
     pub const extensions: []const []const u8 = &.{"properties"};
     pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
 
+    /// Flat and untyped, the same representational limits as dotenv.
+    pub const dialects: []const lang.Dialect(@This()) = &.{.{
+        .name = "properties",
+        .abi_value = 11,
+        .splice = .raw,
+        .empty_doc_seed = "",
+    }};
+
     pub fn syntax(t: properties.Type) lang.Syntax {
         _ = t;
         return .{

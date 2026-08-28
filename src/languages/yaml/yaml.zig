@@ -38,7 +38,41 @@ pub const Language = struct {
 
     pub const name = "yaml";
     pub const extensions: []const []const u8 = &.{ "yaml", "yml" };
-    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
+    pub const caps: lang.Caps = .{
+        .read = true,
+        .edit = true,
+        .serialize = true,
+        // The core schema has a `null` and none of the extended scalars
+        // (a `!!timestamp` is a 1.1 tag, not a core kind), so those ride in
+        // a `$fig` envelope.
+        .lossless = .{ .null = true },
+    };
+
+    pub const dialects: []const lang.Dialect(@This()) = &.{.{
+        .name = "yaml",
+        .abi_value = 3,
+        .deserializable = true,
+        .splice = .literal,
+        // A bare `key:` seed, not `{}`: see `Syntax.empty_map_literal`'s
+        // note on why an empty YAML document is the empty string.
+        .empty_doc_seed = "",
+        .print_name = "printWith",
+        .specs = &.{
+            .{ .name = "1.2", .dialect = .v1_2_2 },
+            .{ .name = "1.2.2", .dialect = .v1_2_2 },
+            .{ .name = "1.1", .dialect = .v1_1 },
+            .{ .name = "1.1.0", .dialect = .v1_1 },
+        },
+        .embed = .{
+            .fence_tag = "yaml",
+            .fence_aliases = &.{"yml"},
+            // Bare, not `---yaml`: an untagged frontmatter block is YAML.
+            .frontmatter = "---",
+            .script_mime = "application/yaml",
+            .script_mime_aliases = &.{ "application/x-yaml", "text/yaml" },
+            .code_class = "language-yaml",
+        },
+    }};
 
     /// 1.1 and 1.2.2 differ only in scalar type RESOLUTION, never in the
     /// syntax the editor splices, so both dialects answer identically. This

@@ -8,6 +8,8 @@ const Document = @import("document.zig");
 const Span = @import("util/span.zig");
 const json = @import("languages/json/json.zig");
 const json_string = @import("util/json_string.zig");
+const regions = @import("editor/regions.zig");
+const Region = regions.Region;
 const log = std.log.scoped(.editor);
 
 // The declared half of the Language interface — `Syntax`, `Caps`,
@@ -185,17 +187,21 @@ pub fn Editor(comptime Language: type) type {
         /// verbatim in place — for every target it can address at all, which for
         /// TOML and INI is what the guard below decides.
         ///
-        /// **Hook** `replaceValGuard(self, parsed, path, node, span) !void` — a
-        /// veto, run before any splice (and before the `replaceValAtPath` hook
-        /// above, if the format declares both). Declared by TOML and INI, the
-        /// two formats where a container's node span is only its KEY segment
-        /// inside a `[header]` (or a dotted `a.b = 1` key) rather than any
-        /// value text: a container's body is assembled from lines the span
-        /// never covers, so splicing `replacement` into that span would rewrite
-        /// the header's NAME and silently rename the section. Both refuse
-        /// instead; `deleteKeyGuard` is the same veto for the delete side, and
-        /// the whole-container ops (`deleteContainer`, `renameContainer`, …)
-        /// are what handle those shapes properly.
+        /// **Engine rule**, not a hook: a SECTION node — one the parser
+        /// recorded header lines for (`Document.node_regions`) — is refused
+        /// before the generic splice runs (`CannotReplaceTable` /
+        /// `CannotReplaceSection` / `CannotReplaceContainer`, in the format's
+        /// own vocabulary). In TOML and INI a container's node span is only
+        /// its KEY segment inside a `[header]` (or a dotted `a.b = 1` key)
+        /// rather than any value text: a container's body is assembled from
+        /// lines the span never covers, so splicing `replacement` into that
+        /// span would rewrite the header's NAME and silently rename the
+        /// section. The rule guards the engine's own splice only: a format
+        /// that hooks `replaceValAtPath` has taken that splice over and owns
+        /// its targets (fig re-frames a block container's value in place, so
+        /// its sections stay replaceable through the hook). The
+        /// whole-container ops (`deleteContainer`, `renameContainer`, …) are
+        /// what handle a section otherwise.
         pub fn replaceValAtPath(self: *Self, path: []const AST.PathSegment, replacement: []const u8) !void {
             const parsed = try self.getParsed();
             const node = parsed.ast.getValByPath(path) catch |err| {
@@ -209,11 +215,13 @@ pub fn Editor(comptime Language: type) type {
                 return err;
             };
             const span = parsed.span(node);
-            // The language's veto, before anything is spliced — a target whose
-            // span is a header/dotted KEY, not a value slot.
-            if (@hasDecl(Language, "replaceValGuard")) try Language.replaceValGuard(self, parsed, path, node, span);
             if (@hasDecl(Language, "replaceValAtPath"))
                 return Language.replaceValAtPath(self, parsed, path, node, span, replacement);
+            // The engine's veto, before anything is spliced — a target whose
+            // span is a header/dotted KEY, not a value slot. The root is let
+            // through: its span is the whole document, which is exactly what
+            // replacing the root means.
+            if (path.len > 0 and parsed.isSection(node)) return self.refuse(.replace);
             try self.replaceAtSpan(span, replacement);
         }
 
@@ -761,12 +769,12 @@ pub fn Editor(comptime Language: type) type {
             if (node.kind != .keyvalue) return error.NotAMapping;
             const span = parsed.span(node);
             const source = self.source.items;
-            // The language's veto, before anything is spliced. Every declared
-            // guard today refuses the same hazard: an entry whose value is a
-            // SCATTERED container, assembled from lines elsewhere in the file,
-            // so the line-based delete below would remove only the piece it can
-            // see and orphan or misparse the rest.
-            if (@hasDecl(Language, "deleteKeyGuard")) try Language.deleteKeyGuard(self, parsed, node, span);
+            // The engine's veto, before anything is spliced: an entry whose
+            // value is a SECTION node, assembled from lines elsewhere in the
+            // file, so the line-based delete below would remove only the piece
+            // it can see and orphan or misparse the rest. `deleteContainer`
+            // is the op for it. See "Whole-container structural editing".
+            if (parsed.isSection(parsed.ast.nodes[node.kind.keyvalue.value])) return self.refuse(.delete);
             // A flow (`{...}`) mapping stores its entries comma-separated, not
             // one-per-line, so the line-based delete below (sized for a *block*
             // mapping's one-entry-per-line shape) mishandles it in three ways:
@@ -1135,22 +1143,23 @@ pub fn Editor(comptime Language: type) type {
         /// the two entries are preserved. Moving an entry to before itself (or
         /// into its own comment block) is a no-op.
         ///
-        /// **Hook** `moveKeyGuard(self, parsed, src, src_span, dest, dest_span)
-        /// !void` — a veto, run before any splice. Declared by TOML and INI,
-        /// where an entry's block is not always the region it owns: a
-        /// `[header]` table's block is the header LINE, so moving it would
-        /// relocate the name and strand the body, and moving anything else to
-        /// sit before such a header lands it at the tail of the *preceding*
-        /// table's body, silently reparenting it. `moveContainer` is the op
-        /// that relocates a scattered container whole.
+        /// **Engine rule**: a SECTION node at either end is refused before any
+        /// splice (`CannotMoveTable` / `CannotMoveSection` /
+        /// `CannotMoveContainer`). An entry's block is not always the region
+        /// it owns: a `[header]` table's block is the header LINE, so moving
+        /// it would relocate the name and strand the body, and moving anything
+        /// else to sit before such a header lands it at the tail of the
+        /// *preceding* table's body, silently reparenting it. `moveContainer`
+        /// is the op that relocates a scattered container whole.
         pub fn moveKey(self: *Self, src_path: []const AST.PathSegment, dest_path: []const AST.PathSegment) !void {
             const parsed = try self.getParsed();
             const src = try parsed.ast.getNodeByPath(src_path);
             if (src.kind != .keyvalue) return error.NotAMapping;
             const dest = try parsed.ast.getNodeByPath(dest_path);
             if (dest.kind != .keyvalue) return error.NotAMapping;
-            if (@hasDecl(Language, "moveKeyGuard"))
-                try Language.moveKeyGuard(self, parsed, src, parsed.span(src), dest, parsed.span(dest));
+            if (parsed.isSection(parsed.ast.nodes[src.kind.keyvalue.value]) or
+                parsed.isSection(parsed.ast.nodes[dest.kind.keyvalue.value]))
+                return self.refuse(.move);
             const source = self.source.items;
             try self.moveBlock(
                 entryBlockStart(source, parsed.span(src), self.syntax().comments.style),
@@ -1194,16 +1203,16 @@ pub fn Editor(comptime Language: type) type {
         /// comments, which ride with the entry that precedes them — are
         /// preserved, so no bytes are dropped. Errors on a flow mapping (`{…}`).
         ///
-        /// **Hook** `reorderKeysGuard(self, parsed, moved) !void` — a veto, run
-        /// once the new order is known and before any splice, receiving only
-        /// the entries whose position actually changes (never empty when
-        /// called). Declared by TOML and INI, whose `[header]` entries tile
-        /// into blocks that stop at the *next* sibling's line — so the last
-        /// entry's block excludes its own body, and any container that changes
-        /// place strands or absorbs entries. `reorderContainers` is the op that
-        /// reorders scattered containers whole. Reordering an inner mapping's
-        /// scalar keys around a sub-table that stays put is unaffected, which
-        /// is why the hook sees `moved` rather than every entry.
+        /// **Engine rule**: once the new order is known and before any splice,
+        /// an entry whose position actually changes and whose value is a
+        /// SECTION node is refused (`CannotReorderTables` /
+        /// `CannotReorderSections` / `CannotReorderContainers`). `[header]`
+        /// entries tile into blocks that stop at the *next* sibling's line —
+        /// so the last entry's block excludes its own body, and any container
+        /// that changes place strands or absorbs entries. `reorderContainers`
+        /// is the op that reorders scattered containers whole. Reordering an
+        /// inner mapping's scalar keys around a sub-table that stays put is
+        /// unaffected, which is why only the MOVED entries are checked.
         pub fn reorderKeys(self: *Self, path: []const AST.PathSegment, keys: []const []const u8) !void {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
@@ -1250,10 +1259,12 @@ pub fn Editor(comptime Language: type) type {
                     }
                 }
             }
-            // The language's veto, before anything is spliced — handed exactly
-            // the entries whose position this reorder changes, since an entry
-            // left where it was is never at risk. See the hook note above.
-            if (@hasDecl(Language, "reorderKeysGuard")) {
+            // The engine's veto, before anything is spliced — over exactly the
+            // entries whose position this reorder changes, since an entry left
+            // where it was is never at risk. See the rule note above. Skipped
+            // at comptime for a format with no sections, where nothing could
+            // be refused.
+            if (comptime is_section_format) {
                 // Where each entry ends up: the listed keys first, in `order`,
                 // then the unlisted ones in their original relative order.
                 const final_pos = try self.allocator.alloc(usize, blocks.items.len);
@@ -1267,15 +1278,13 @@ pub fn Editor(comptime Language: type) type {
                     final_pos[i] = pos;
                     pos += 1;
                 };
-                var moved: std.ArrayList(AST.Node) = .empty;
-                defer moved.deinit(self.allocator);
                 var entry = parsed.ast.nodes[first_id];
                 var idx: usize = 0;
                 while (true) : (idx += 1) {
-                    if (final_pos[idx] != idx) try moved.append(self.allocator, entry);
+                    if (final_pos[idx] != idx and parsed.isSection(parsed.ast.nodes[entry.kind.keyvalue.value]))
+                        return self.refuse(.reorder);
                     entry = parsed.ast.next(&entry) orelse break;
                 }
-                if (moved.items.len > 0) try Language.reorderKeysGuard(self, parsed, moved.items);
             }
             try self.reorderBlocks(blocks.items[0].start, last_end, blocks.items, order.items);
         }
@@ -1440,41 +1449,163 @@ pub fn Editor(comptime Language: type) type {
 
         // --- Whole-container structural editing (section formats) ---
         //
-        // The EXCLUSIVE operations: a format whose logical containers are
-        // scattered through the source (TOML's `[table]` headers, fig's `>`
-        // marker runs and re-entered headers, INI's reopened `[section]`) needs
-        // ops the generic line-splice engine has no counterpart for, because
-        // there is no single `[min,max)` range to splice. Each implementation
-        // lives in that format's `editor_helper.zig`, next to the region gather
-        // it builds on, over the shared machinery in
-        // `languages/shared/sections.zig`.
+        // The ops for a format whose logical containers are SCATTERED through
+        // the source (TOML's `[table]` headers, fig's `>` marker runs and
+        // re-entered headers, INI's reopened `[section]`): the generic
+        // line-splice ops above have no counterpart for them, because there is
+        // no single `[min,max)` range to splice. What there is instead is a
+        // DERIVED region set — `editor/regions.zig`'s `gather` — built from
+        // the one fact the parser records that spans cannot carry: each
+        // section node's header lines (`Document.node_regions`). Everything
+        // that only needs "where are this node's regions" is generic here, for
+        // every format whose `syntax().section_noun` is non-null:
         //
-        // These are DECLARED, not identity-checked: the wrapper dispatches on
-        // `@hasDecl(Language, …)` exactly as every hook above does, so a format
-        // opts in by declaring the op in its "Editing hooks" block and this file
-        // names no format. What the wrappers cannot do is stop existing for the
-        // formats that declare nothing — Zig has no conditional container-level
-        // declarations since `usingnamespace` went away in 0.15 (see the
-        // proposal's §8.1) — so a `@compileError` remains the answer there. The
-        // difference is what it is keyed on: a missing declaration rather than a
-        // hardcoded `Language != Toml`.
+        //   * `deleteContainer`, `moveContainer`, `reorderContainers` — the
+        //     gather plus the splice-out / relocate / reorder machinery in
+        //     `editor/regions.zig`, no format code at all;
+        //   * the four line-splice refusals above (`deleteKey`, `moveKey`,
+        //     `reorderKeys`, `replaceValAtPath`), which are ONE rule — a
+        //     section node cannot be line-spliced; use the container op —
+        //     spelled in the format's own vocabulary through `refuse`.
         //
-        // The vocabulary is the operation's, not any one format's: TOML's
-        // `[table]`, fig's block container and INI's `[section]` are the same
-        // thing here, and the format's own words survive in its errors
-        // (`NotATable` vs `NotAContainer`) and its helper's documentation.
+        // What stays a hook is what needs to SPELL a fragment or find a name:
+        // `insertContainer` and `appendContainerToSeq` write a new `[header]`
+        // line, and `renameContainer` rewrites every place a table's name is
+        // spelled (its headers AND its dotted lines), which is a different
+        // question from where its regions are. Those three keep the
+        // `@hasDecl` dispatch every hook uses, and `requireSectionOp`'s
+        // comptime refusal for a format that declares none. See
+        // `docs/proposals/derived-regions.md` for the catalogue.
+        //
+        // The methods exist for every format either way — Zig has no
+        // conditional container-level declarations since `usingnamespace`
+        // went away in 0.15 (see the language-interface proposal's §8.1) —
+        // so a `@compileError` remains the answer for a format that is not a
+        // section format. The vocabulary is the operation's, not any one
+        // format's: TOML's `[table]`, fig's block container and INI's
+        // `[section]` are the same thing here, and the format's own words
+        // survive in its errors (`NotATable` vs `NotAContainer`) through
+        // `Syntax.section_noun`.
+
+        /// Whether this format has section nodes at all — a non-null
+        /// `section_noun` in any dialect. Comptime, so the generic ops and the
+        /// line-splice rule can be compiled out for every other format.
+        const is_section_format = blk: {
+            var any = false;
+            for (std.meta.tags(Language.Type)) |t| {
+                if (Language.syntax(t).section_noun != null) any = true;
+            }
+            break :blk any;
+        };
+
+        /// The line-splice ops the section rule refuses, and the error each
+        /// refusal is spelled with per `SectionNoun`.
+        const SectionOp = enum { delete, replace, move, reorder, not_a_section };
+
+        /// The engine's refusal in this format's vocabulary. Returns an error
+        /// VALUE (not a union) so a caller writes `return self.refuse(.delete)`.
+        fn refuse(self: *const Self, comptime op: SectionOp) error{
+            NotATable,
+            NotAContainer,
+            CannotDeleteTable,
+            CannotDeleteSection,
+            CannotDeleteContainer,
+            CannotReplaceTable,
+            CannotReplaceSection,
+            CannotReplaceContainer,
+            CannotMoveTable,
+            CannotMoveSection,
+            CannotMoveContainer,
+            CannotReorderTables,
+            CannotReorderSections,
+            CannotReorderContainers,
+        } {
+            // A format with no section nodes never reaches here (`isSection`
+            // is false for all its nodes), so `.container` is only the type's
+            // default, never a real answer.
+            const noun = self.syntax().section_noun orelse .container;
+            return switch (op) {
+                .not_a_section => switch (noun) {
+                    .table => error.NotATable,
+                    .section, .container => error.NotAContainer,
+                },
+                .delete => switch (noun) {
+                    .table => error.CannotDeleteTable,
+                    .section => error.CannotDeleteSection,
+                    .container => error.CannotDeleteContainer,
+                },
+                .replace => switch (noun) {
+                    .table => error.CannotReplaceTable,
+                    .section => error.CannotReplaceSection,
+                    .container => error.CannotReplaceContainer,
+                },
+                .move => switch (noun) {
+                    .table => error.CannotMoveTable,
+                    .section => error.CannotMoveSection,
+                    .container => error.CannotMoveContainer,
+                },
+                .reorder => switch (noun) {
+                    .table => error.CannotReorderTables,
+                    .section => error.CannotReorderSections,
+                    .container => error.CannotReorderContainers,
+                },
+            };
+        }
+
+        /// The section node at `path`, or the format's "not a section"
+        /// refusal (`NotATable` / `NotAContainer`) — for a scalar, a flow
+        /// container, the root, or a path that resolves to no section.
+        fn sectionAt(self: *const Self, parsed: Document, path: []const AST.PathSegment) !AST.Node {
+            const node = try parsed.ast.getValByPath(path);
+            if (!parsed.isSection(node)) return self.refuse(.not_a_section);
+            return node;
+        }
+
+        /// The coalesced region set of the section node `node`: its header
+        /// lines (creating line and every re-entry, each with its owned
+        /// comment block) plus every line of its subtree, in one ascending,
+        /// disjoint list the caller owns. `pub` for the format hooks that need
+        /// the regions for a different purpose than the ops below — TOML's
+        /// rename addresses each header region's start, and asks for
+        /// `merge_touching = false` so a region merged with a touching
+        /// neighbour does not hide one.
+        pub fn gatherRegions(self: *const Self, parsed: Document, node: AST.Node, merge_touching: bool) !std.ArrayList(Region) {
+            return regions.gatherNormalized(parsed, self.source.items, self.allocator, node, self.syntax().comments.style, merge_touching);
+        }
+
+        /// Byte offset just past the last line of the section node `node`'s
+        /// subtree — where a new sibling section can be spliced without
+        /// splitting it. For the `insertContainer`/`appendContainerToSeq`
+        /// hooks, which place a header after a parent's whole extent.
+        pub fn sectionExtentEnd(self: *const Self, parsed: Document, node: AST.Node) !usize {
+            return regions.extentEnd(parsed, self.source.items, self.allocator, node, self.syntax().comments.style);
+        }
 
         /// Delete the whole container named by `path` — every scattered region
         /// of its subtree, leaving interleaved foreign content untouched. For
-        /// TOML that is a table, array-of-tables, or single AoT element.
+        /// TOML that is a table, array-of-tables, or single AoT element; for
+        /// fig a block container (a path may end in an index, deleting one
+        /// sequence element entire); for INI a `[section]`, reopened
+        /// occurrences included. A scalar or flow-valued target is refused
+        /// (`NotATable` / `NotAContainer`): `deleteKey`/`removeSeqItem` is the
+        /// op for those.
         pub fn deleteContainer(self: *Self, path: []const AST.PathSegment) !void {
-            comptime requireSectionOp("deleteContainer");
-            return Language.deleteContainer(self, path);
+            comptime requireSectionFormat("deleteContainer");
+            const parsed = try self.getParsed();
+            const node = try self.sectionAt(parsed, path);
+            var used = try self.gatherRegions(parsed, node, true);
+            defer used.deinit(self.allocator);
+            try regions.spliceOut(self, used.items);
         }
 
         /// Create a new container at `path` whose body is `body_text` (verbatim
         /// entry lines, possibly empty), spliced where no existing key is
         /// reparented.
+        ///
+        /// **Hook** `insertContainer(self, path, body_text) !void` — a hook
+        /// rather than generic because it has to SPELL the new header line
+        /// (`[a.b]`) in the format's syntax. TOML alone declares it; fig
+        /// vivifies through `set`, and INI cannot vivify at all.
         pub fn insertContainer(self: *Self, path: []const AST.PathSegment, body_text: []const u8) !void {
             comptime requireSectionOp("insertContainer");
             return Language.insertContainer(self, path, body_text);
@@ -1483,53 +1614,118 @@ pub fn Editor(comptime Language: type) type {
         /// Rename the leaf segment of the container at `path` to `new_leaf`,
         /// rewriting every header that shares the prefix.
         ///
-        /// Only TOML needs this: a fig or INI header carries its key in one
-        /// tight span the generic `replaceKeyAtPath` already rewrites, while a
-        /// TOML rename must also reach `[a.b]`, `[a.b.c]`, `[[a.b]]`.
+        /// **Hook** `renameContainer(self, path, new_leaf) !void`. Only TOML
+        /// needs it: a fig or INI header carries its key in one tight span the
+        /// generic `replaceKeyAtPath` already rewrites, while a TOML rename
+        /// must also reach `[a.b]`, `[a.b.c]`, `[[a.b]]` and every dotted
+        /// line that spells the name — "where is this node's NAME written",
+        /// which the region table does not answer.
         pub fn renameContainer(self: *Self, path: []const AST.PathSegment, new_leaf: []const u8) !void {
             comptime requireSectionOp("renameContainer");
             return Language.renameContainer(self, path, new_leaf);
         }
 
-        /// Move the container at `src_path` before `dest_path` (or to EOF if
-        /// null), re-emitting its scattered fragments contiguously.
+        /// Move the container at `src_path` before the container at
+        /// `dest_path` (or to EOF if null), re-emitting its scattered
+        /// fragments contiguously, separated from surrounding content by a
+        /// blank line; interleaved foreign content stays put. Both ends must
+        /// be section nodes. A no-op when the destination falls inside the
+        /// source's own region.
         pub fn moveContainer(self: *Self, src_path: []const AST.PathSegment, dest_path: ?[]const AST.PathSegment) !void {
-            comptime requireSectionOp("moveContainer");
-            return Language.moveContainer(self, src_path, dest_path);
+            comptime requireSectionFormat("moveContainer");
+            const parsed = try self.getParsed();
+            const node = try self.sectionAt(parsed, src_path);
+            var used = try self.gatherRegions(parsed, node, true);
+            defer used.deinit(self.allocator);
+            // Destination: the start of the dest container's own first header
+            // line (owned comment block included), or EOF.
+            const dest_at = blk: {
+                if (dest_path) |dp| {
+                    const dn = try self.sectionAt(parsed, dp);
+                    const first = parsed.regionsOf(dn.id)[0];
+                    break :blk regions.headerLineRegion(self.source.items, first, self.syntax().comments.style).start;
+                }
+                break :blk self.source.items.len;
+            };
+            try regions.relocate(self, used.items, dest_at);
         }
 
         /// Reorder top-level containers to the order given by `order` (their
-        /// keys). Containers not named are untouched.
+        /// keys). Each named container's scattered fragments are removed and
+        /// re-emitted contiguously, in `order`, at the position the earliest
+        /// of them currently occupies. Containers not named are untouched.
+        /// Each name must resolve to a section node.
         pub fn reorderContainers(self: *Self, order: []const []const u8) !void {
-            comptime requireSectionOp("reorderContainers");
-            return Language.reorderContainers(self, order);
+            comptime requireSectionFormat("reorderContainers");
+            if (order.len == 0) return;
+            const parsed = try self.getParsed();
+            const source = self.source.items;
+
+            var all: std.ArrayList(Region) = .empty;
+            defer all.deinit(self.allocator);
+            var bundles: std.ArrayList([]u8) = .empty;
+            defer {
+                for (bundles.items) |b| self.allocator.free(b);
+                bundles.deinit(self.allocator);
+            }
+
+            for (order) |name| {
+                const path: [1]AST.PathSegment = .{.{ .key = name }};
+                const node = try self.sectionAt(parsed, &path);
+                var used = try self.gatherRegions(parsed, node, true);
+                defer used.deinit(self.allocator);
+                const owned = try regions.captureBundle(self.allocator, source, used.items, &all);
+                errdefer self.allocator.free(owned);
+                try bundles.append(self.allocator, owned);
+            }
+            const total = regions.normalize(all.items, true);
+            try regions.reorderBundles(self, all.items[0..total], bundles.items);
         }
 
         /// Append a new element (body `body_text`) to the container sequence at
         /// `path` — TOML's `[[header]]` array-of-tables append.
+        ///
+        /// **Hook** `appendContainerToSeq(self, path, body_text) !void` — a
+        /// hook for the same reason as `insertContainer`: it spells the new
+        /// `[[header]]` line.
         pub fn appendContainerToSeq(self: *Self, path: []const AST.PathSegment, body_text: []const u8) !void {
             comptime requireSectionOp("appendContainerToSeq");
             return Language.appendContainerToSeq(self, path, body_text);
         }
 
-        /// Whether this format declares the whole-container op `op` — the
-        /// runtime-dispatchable form of `requireSectionOp`'s comptime refusal,
-        /// for callers that must ANSWER rather than fail to compile.
+        /// Whether this format has the whole-container op `op` — the
+        /// runtime-dispatchable form of the comptime refusals, for callers
+        /// that must ANSWER rather than fail to compile.
         ///
         /// The C ABI is the one such caller: its exports switch `inline else`
         /// over every language at once, so naming `e.deleteContainer(…)` in
         /// that switch would instantiate it for YAML and JSON too and stop the
         /// build. Guarding each arm with this turns "this format has no such
         /// operation" into `unsupported_format`, which is what a C caller can
-        /// act on. Keyed on the declaration, like every other dispatch here —
-        /// no format is named.
+        /// act on. The three generic ops are had by every section format; the
+        /// three hooks by the formats that declare them. No format is named.
         pub fn hasContainerOp(comptime op: []const u8) bool {
+            if (comptime isGenericContainerOp(op)) return is_section_format;
             return @hasDecl(Language, op);
         }
 
-        /// The comptime refusal shared by the six ops above. Names the format
-        /// and the declaration it is missing, since "this format has no such
-        /// operation" is the whole content of the error.
+        fn isGenericContainerOp(comptime op: []const u8) bool {
+            return std.mem.eql(u8, op, "deleteContainer") or
+                std.mem.eql(u8, op, "moveContainer") or
+                std.mem.eql(u8, op, "reorderContainers");
+        }
+
+        /// The comptime refusal shared by the three generic ops: a format with
+        /// no section nodes has nothing for them to address.
+        fn requireSectionFormat(comptime op: []const u8) void {
+            if (!is_section_format)
+                @compileError("'" ++ op ++ "' is a whole-container op, and '" ++ Language.name ++
+                    "' is not a section format — its `syntax().section_noun` is null in every dialect");
+        }
+
+        /// The comptime refusal shared by the three hooked ops. Names the
+        /// format and the declaration it is missing, since "this format has
+        /// no such operation" is the whole content of the error.
         fn requireSectionOp(comptime op: []const u8) void {
             if (!@hasDecl(Language, op))
                 @compileError("'" ++ op ++ "' is a whole-container op that '" ++ Language.name ++

@@ -836,22 +836,21 @@ const Decls = struct {
     const optional = [_][]const u8{ "printNode", "materialize", "TagMode" };
 
     /// Editing hooks. Declaring one takes over `editor.Editor`'s method of the
-    /// same name — except `keyIsInherited` (a predicate the engine queries),
-    /// `seqItemLineStart` (a sub-computation), and the four `*Guard` vetoes
-    /// (`deleteKeyGuard`, `replaceValGuard`, `moveKeyGuard`,
-    /// `reorderKeysGuard`, which run before the generic op rather than
-    /// replacing it), which are named for what they answer rather than for a
-    /// method. Signatures are documented on the `Editor` method each overrides;
-    /// see `editor.zig`.
+    /// same name — except `keyIsInherited` (a predicate the engine queries)
+    /// and `seqItemLineStart` (a sub-computation), which are named for what
+    /// they answer rather than for a method. Signatures are documented on the
+    /// `Editor` method each overrides; see `editor.zig`.
     ///
-    /// The four guards are one family: each refuses a generic op whose
-    /// line-or-span shape does not match a SCATTERED container (a TOML
-    /// `[header]` table, an INI `[section]`), and each points at the
-    /// whole-container op below that does the job properly.
+    /// There are no `*Guard` vetoes any more. The four that existed
+    /// (`deleteKeyGuard`, `replaceValGuard`, `moveKeyGuard`,
+    /// `reorderKeysGuard`) each refused a generic op on a SCATTERED container
+    /// (a TOML `[header]` table, an INI `[section]`, a fig block container),
+    /// and that is now one engine rule over `Document.node_regions` — a
+    /// section node cannot be line-spliced — spelled in the format's
+    /// vocabulary through `Syntax.section_noun`. See
+    /// `docs/proposals/derived-regions.md`.
     const hooks = [_][]const u8{
-        "insertKey",                 "deleteKeyGuard",
-        "replaceValGuard",           "moveKeyGuard",
-        "reorderKeysGuard",          "replaceValAtPath",
+        "insertKey",                 "replaceValAtPath",
         "replaceValAtPathFollowing", "replaceKeyAtPath",
         "keyIsInherited",            "seqItemLineStart",
         "appendToSeq",               "prependToSeq",
@@ -861,21 +860,24 @@ const Decls = struct {
         "deleteTrailingComment",     "getTrailingComment",
     };
 
-    /// Whole-container ops for SECTION formats — those whose logical containers
-    /// are scattered through the source (TOML tables, fig block containers, INI
-    /// sections). Unlike `hooks` these override nothing: the generic engine has
-    /// no counterpart, because there is no single range to splice. Declaring one
-    /// is still the whole of opting in; `editor.Editor`'s method of the same
-    /// name dispatches on `@hasDecl` and refuses at comptime for a format that
-    /// declares nothing (see its `requireSectionOp`).
+    /// The whole-container ops a SECTION format (`Syntax.section_noun` non-
+    /// null) may still supply itself. `deleteContainer`, `moveContainer` and
+    /// `reorderContainers` are not here: they are generic over
+    /// `Document.node_regions` and belong to every section format. These
+    /// three remain hooks because each has to SPELL a fragment or find a
+    /// name — a new `[header]` line, or every mention of a table's name —
+    /// which the region table does not answer. Unlike `hooks` they override
+    /// nothing: `editor.Editor`'s method of the same name dispatches on
+    /// `@hasDecl` and refuses at comptime for a format that declares nothing
+    /// (see its `requireSectionOp`).
     ///
     /// Kept as a separate set from `hooks` because the reachability rules below
     /// do not apply: a hook can be unreachable behind a `syntax` refusal, while
     /// one of these IS the operation and is reachable whenever it is declared.
+    /// The one coherence rule they carry is `validate`'s: a format that
+    /// declares one must be a section format.
     const exclusive = [_][]const u8{
-        "deleteContainer",   "insertContainer",
-        "renameContainer",   "moveContainer",
-        "reorderContainers", "appendContainerToSeq",
+        "insertContainer", "renameContainer", "appendContainerToSeq",
     };
 
     fn has(comptime set: []const []const u8, comptime name: []const u8) bool {
@@ -992,6 +994,24 @@ pub fn validate(comptime Lang: type) void {
                         " but supplies the editing hook '" ++ name ++ "'");
             }
             return;
+        }
+
+        // Coherence: the whole-container hooks address section nodes, and only
+        // a section format (`Syntax.section_noun` non-null in some dialect)
+        // has any. Declared on any other format, the hook would be reachable
+        // and would find nothing to address — a contradiction between the
+        // manifest and the declaration, caught here rather than at runtime.
+        var any_section = false;
+        for (std.meta.tags(Lang.Type)) |t| {
+            const s: Syntax = Lang.syntax(t);
+            if (s.section_noun != null) any_section = true;
+        }
+        if (!any_section) {
+            for (Decls.exclusive) |name| {
+                if (@hasDecl(Lang, name))
+                    @compileError("Language '" ++ Lang.name ++ "' is not a section format (section_noun" ++
+                        " is null in every dialect) but supplies the whole-container op '" ++ name ++ "'");
+            }
         }
 
         // The remaining rules are about hooks being REACHABLE. Both follow from

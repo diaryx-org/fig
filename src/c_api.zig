@@ -784,14 +784,14 @@ fn editStatus(err: anyerror) FigStatus {
         // about the request, not malformed source: the whole-container ops
         // (`deleteContainer`, `renameContainer`, …) are what handle these shapes.
         error.CannotDeleteTable, error.CannotDeleteSection, error.CannotDeleteContainer => .invalid_argument,
-        error.CannotReplaceTable, error.CannotReplaceSection => .invalid_argument,
+        error.CannotReplaceTable, error.CannotReplaceSection, error.CannotReplaceContainer => .invalid_argument,
         // The same family for the two ops that RELOCATE an entry's block: the
         // block of a `[header]`/`[section]` entry is its header line, so a move
         // strands the body and a reorder hands it to the entry that lands
         // before it. `fig_editor_move_container`/`fig_editor_reorder_containers`
         // are the ops that relocate a scattered container whole.
-        error.CannotMoveTable, error.CannotMoveSection => .invalid_argument,
-        error.CannotReorderTables, error.CannotReorderSections => .invalid_argument,
+        error.CannotMoveTable, error.CannotMoveSection, error.CannotMoveContainer => .invalid_argument,
+        error.CannotReorderTables, error.CannotReorderSections, error.CannotReorderContainers => .invalid_argument,
         // NestedText declines two shapes outright: inserting into an inline
         // `{}`/`[]` (expanding one into block form is out of scope) and renaming
         // a key to text that needs the multiline `: key` form.
@@ -1312,11 +1312,11 @@ pub export fn fig_editor_set_sequence(
 // `fig_editor_replace_val` at a table path return `invalid_argument` (the
 // editor's pre-op guards), and these are where that request goes instead.
 //
-// Only some formats declare them (`Editor.hasContainerOp`): TOML all six, INI
-// and fig the delete/move/reorder three, and everything else none — YAML, JSON
-// and the rest nest their containers in one contiguous region, so the key ops
-// already handle them and there is nothing to declare. A format that does not
-// declare the op answers `unsupported_format`, the same answer
+// Only the section formats have them (`Editor.hasContainerOp`): TOML all six,
+// INI and fig the generic delete/move/reorder three, and everything else none
+// — YAML, JSON and the rest nest their containers in one contiguous region, so
+// the key ops already handle them and there is nothing to derive. A format
+// that lacks the op answers `unsupported_format`, the same answer
 // `fig_editor_create` gives for a format with no editor at all.
 //
 // Paths are the usual `FigPathSegment` array; `body_text` is verbatim entry
@@ -4535,20 +4535,21 @@ test "editStatus: every editor refusal is a caller error, not parse_error" {
     // each of these is raised by an editor op (not by a parser) and must map to a
     // caller-facing status. INI's and fig's delete guards had drifted this way.
     const refusals = [_]anyerror{
-        error.NotFound,             error.NotAMapping,
-        error.NotASequence,         error.NotAContainer,
-        error.UnsupportedShape,     error.NotATable,
-        error.NotAnInlineArray,     error.NotAnArrayOfTables,
-        error.TableExists,          error.DuplicateKey,
-        error.MergeOnlyKey,         error.CannotDeleteTable,
-        error.CannotDeleteSection,  error.CannotDeleteContainer,
-        error.CannotReplaceTable,   error.CannotReplaceSection,
-        error.CannotMoveTable,      error.CannotMoveSection,
-        error.CannotReorderTables,  error.CannotReorderSections,
-        error.EmptyInlineContainer, error.KeyRequiresMultilineForm,
-        error.BlockValueIntoFlow,   error.CommentsUnsupported,
-        error.NullUnsupported,      error.MultilineComment,
-        error.InvalidComment,
+        error.NotFound,                 error.NotAMapping,
+        error.NotASequence,             error.NotAContainer,
+        error.UnsupportedShape,         error.NotATable,
+        error.NotAnInlineArray,         error.NotAnArrayOfTables,
+        error.TableExists,              error.DuplicateKey,
+        error.MergeOnlyKey,             error.CannotDeleteTable,
+        error.CannotDeleteSection,      error.CannotDeleteContainer,
+        error.CannotReplaceTable,       error.CannotReplaceSection,
+        error.CannotReplaceContainer,   error.CannotMoveContainer,
+        error.CannotReorderContainers,  error.CannotMoveTable,
+        error.CannotMoveSection,        error.CannotReorderTables,
+        error.CannotReorderSections,    error.EmptyInlineContainer,
+        error.KeyRequiresMultilineForm, error.BlockValueIntoFlow,
+        error.CommentsUnsupported,      error.NullUnsupported,
+        error.MultilineComment,         error.InvalidComment,
     };
     for (refusals) |err| {
         const status = editStatus(err);

@@ -1,30 +1,30 @@
-//! Shared multi-region machinery for SECTION formats — the ones whose logical
-//! containers are not contiguous in the source.
+//! Derived regions: the physical extent of a SECTION node, and the
+//! multi-region machinery the whole-container ops run on it.
 //!
+//! A section format's logical container is not contiguous in the source.
 //! TOML assembles a table from scattered headers (`[a]` x=1 … `[other]` y=2 …
-//! `[a.b]` z=3); fig does the same with `>` marker runs and re-entered headers;
-//! INI does it with a reopened `[section]`. In all three the AST has one node
+//! `[a.b]` z=3); fig does the same with `>` marker runs and re-entered
+//! headers; INI with a reopened `[section]`. In all three the AST has one node
 //! per logical container while its bytes are spread across the file, so a
-//! whole-container op cannot splice a single `[min,max)` range — it must gather
-//! the disjoint line-regions that belong to the container and rebuild the source
-//! once.
+//! whole-container op cannot splice a single `[min,max)` range — it must
+//! gather the disjoint line-regions that belong to the container and rebuild
+//! the source once.
 //!
-//! What is shared is everything downstream of that gather: coalescing regions,
-//! splicing them out, relocating them contiguously, and reordering bundles of
-//! them. What is NOT shared is the gather itself — "which lines belong to this
-//! container" is the one genuinely per-format question (TOML classifies by a
-//! leading `[`, fig by its value's kind plus the parser's re-entry table, INI by
-//! section membership), so each `<lang>/editor_helper.zig` keeps its own and
-//! hands the result here.
+//! The gather used to be the one per-format step: each `<lang>/editor_helper.
+//! zig` classified "which lines belong to this container" its own way (TOML by
+//! a leading `[`, fig by its value's kind plus a re-entry side-table, INI by
+//! section membership) and handed the result to what was then
+//! `languages/shared/sections.zig`. `gather` below is that step made generic:
+//! the parser records each section node's HEADER LINES in
+//! `Document.node_regions` (the one fact spans cannot carry — see that field),
+//! and everything else about the extent falls out of the tree. A child that is
+//! itself a section recurses; any other child is one contiguous entry whose
+//! line comes from its span. No format is named, and no source is sniffed.
 //!
-//! Before this module, TOML and fig each carried a private copy of all of it:
-//! `spliceOutRegions` and `appendWithBlankBefore` were byte-identical, and
-//! `normalizeRegions` differed by a single character (see `normalize`'s
-//! `merge_touching`). The move and reorder algorithms had drifted — fig's was a
-//! single pass where TOML's built an intermediate buffer, and fig's had picked
-//! up OOM guards TOML's was missing. This module is fig's version of each, which
-//! is why TOML's `reorderTables` no longer leaks its capture buffer when an
-//! allocation fails mid-bundle.
+//! Downstream of the gather nothing changed: coalescing regions, splicing them
+//! out, relocating them contiguously and reordering bundles of them are the
+//! functions this module always held. `docs/proposals/derived-regions.md` has
+//! the catalogue of what each format's ops needed and what became generic.
 //!
 //! The editor-taking functions take `self: anytype` because `Editor(Toml)`,
 //! `Editor(Fig)` and `Editor(Ini)` are three distinct types with no common
@@ -33,8 +33,10 @@
 
 const std = @import("std");
 
-const Span = @import("../../util/span.zig");
-const editor = @import("../../editor.zig");
+const AST = @import("../ast/ast.zig");
+const Document = @import("../document.zig");
+const Span = @import("../util/span.zig");
+const editor = @import("../editor.zig");
 
 const lineStartBefore = editor.lineStartBefore;
 const lineEndAfter = editor.lineEndAfter;
@@ -53,6 +55,77 @@ pub fn entryLineRegion(source: []const u8, span: Span, style: CommentStyle) Regi
         .start = commentBlockStart(source, lineStartBefore(source, span.start), style),
         .end = lineEndAfter(source, span.end -| 1),
     };
+}
+
+/// The physical line of one recorded header: its owned comment block through
+/// the header line's own newline. `style` selects the comment scanner, as it
+/// does for `entryLineRegion`.
+pub fn headerLineRegion(source: []const u8, header: Document.NodeRegion, style: CommentStyle) Region {
+    return .{ .start = commentBlockStart(source, header.start, style), .end = header.end };
+}
+
+/// Append every line-region belonging to the subtree of the section node
+/// `node`: its own recorded header lines (`Document.node_regions` — the
+/// creating line and every re-entry), then each child's contribution. A child
+/// whose value is itself a section recurses; any other child (a scalar, a flow
+/// container, a multi-line string) is one contiguous entry, taken as its own
+/// line-region from its span. The result is unsorted and may overlap (a
+/// header line that also holds a dotted entry appears twice); callers run
+/// `normalize` before using it.
+///
+/// This is the one gather for every section format. What made each format's
+/// version different — how it recognized a header-introduced child — is now
+/// `Document.isSection`, a fact the parser recorded rather than a line the
+/// editor sniffs.
+pub fn gather(parsed: Document, source: []const u8, allocator: std.mem.Allocator, node: AST.Node, style: CommentStyle, out: *std.ArrayList(Region)) std.mem.Allocator.Error!void {
+    for (parsed.regionsOf(node.id)) |h| try out.append(allocator, headerLineRegion(source, h, style));
+    switch (node.kind) {
+        .mapping => |first| {
+            var cur = first;
+            while (cur) |id| : (cur = parsed.ast.nodes[id].next_sibling) {
+                const kv = parsed.ast.nodes[id];
+                const val = parsed.ast.nodes[kv.kind.keyvalue.value];
+                if (parsed.isSection(val)) {
+                    try gather(parsed, source, allocator, val, style, out);
+                } else {
+                    try out.append(allocator, entryLineRegion(source, parsed.span(kv), style));
+                }
+            }
+        },
+        .sequence => |first| {
+            var cur = first;
+            while (cur) |id| : (cur = parsed.ast.nodes[id].next_sibling) {
+                const el = parsed.ast.nodes[id];
+                if (parsed.isSection(el)) {
+                    try gather(parsed, source, allocator, el, style, out);
+                } else {
+                    try out.append(allocator, entryLineRegion(source, parsed.span(el), style));
+                }
+            }
+        },
+        else => {},
+    }
+}
+
+/// `gather` followed by `normalize`: the coalesced, ascending region set of
+/// the section node `node`, as a fresh list the caller owns. `merge_touching`
+/// is `normalize`'s.
+pub fn gatherNormalized(parsed: Document, source: []const u8, allocator: std.mem.Allocator, node: AST.Node, style: CommentStyle, merge_touching: bool) std.mem.Allocator.Error!std.ArrayList(Region) {
+    var regions: std.ArrayList(Region) = .empty;
+    errdefer regions.deinit(allocator);
+    try gather(parsed, source, allocator, node, style, &regions);
+    regions.shrinkRetainingCapacity(normalize(regions.items, merge_touching));
+    return regions;
+}
+
+/// Byte offset just past the last line of the section node `node`'s subtree
+/// — where a new sibling section can be spliced without splitting it. The
+/// end of its last derived region, or of its own line when it has none.
+pub fn extentEnd(parsed: Document, source: []const u8, allocator: std.mem.Allocator, node: AST.Node, style: CommentStyle) std.mem.Allocator.Error!usize {
+    var regions = try gatherNormalized(parsed, source, allocator, node, style, true);
+    defer regions.deinit(allocator);
+    if (regions.items.len == 0) return lineEndAfter(source, parsed.span(node).end -| 1);
+    return regions.items[regions.items.len - 1].end;
 }
 
 /// Sort `regions` by start and coalesce them into a disjoint, ascending set in

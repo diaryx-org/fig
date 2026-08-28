@@ -126,14 +126,29 @@ const cases = [_]Case{
         // a misspelled one is caught the same way a misspelled hook is rather
         // than silently never dispatching.
         .name = "unknown decl, whole-container op typo",
-        .decls = "pub const deletecontainer = {};",
-        .expect = "declares unknown 'deletecontainer' — did you mean 'deleteContainer'?",
+        .decls = "pub const insertcontainer = {};",
+        .expect = "declares unknown 'insertcontainer' — did you mean 'insertContainer'?",
     },
     .{
         .name = "caps.edit = false with a whole-container op",
         .caps = ".{ .read = true, .edit = false, .serialize = true }",
-        .decls = "pub const moveContainer = {};",
-        .expect = "declares caps.edit = false but supplies the editing hook 'moveContainer'",
+        .decls = "pub const renameContainer = {};",
+        .expect = "declares caps.edit = false but supplies the editing hook 'renameContainer'",
+    },
+    .{
+        // The three remaining whole-container hooks address section nodes,
+        // which only a section format (`section_noun` non-null) has. The
+        // base fixture declares none, so the hook contradicts the manifest.
+        .name = "whole-container op on a non-section format",
+        .decls = "pub const insertContainer = {};",
+        .expect = "is not a section format (section_noun is null in every dialect) but supplies the whole-container op 'insertContainer'",
+    },
+    .{
+        // The generic ops are not declarations any more: a format that names
+        // one is naming a method the engine already has.
+        .name = "unknown decl, generic whole-container op",
+        .decls = "pub const deleteContainer = {};",
+        .expect = "declares unknown 'deleteContainer'",
     },
     .{
         .name = "sequence hook under block_seq_editable = false",

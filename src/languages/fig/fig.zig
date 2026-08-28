@@ -54,6 +54,11 @@ pub const Language = struct {
             // whitespace — a comment inserted above a line must repeat it or
             // it detaches. See `Syntax.structural_indent`.
             .structural_indent = true,
+            // A section format: a block container may be re-entered and
+            // scattered, and `parser.zig` records every block container's
+            // header lines in `Document.node_regions`. Its refusals say
+            // "container".
+            .section_noun = .container,
         };
     }
 
@@ -77,9 +82,12 @@ pub const Language = struct {
     /// scattered container.
     pub const insertKey = edit.figInsertKey;
 
-    /// A block container may be re-entered and scattered, so a line delete
-    /// risks swallowing an interleaved foreign sibling.
-    pub const deleteKeyGuard = edit.containerDeleteGuard;
+    // No delete guard: the engine's section rule covers it. Every block
+    // container is a section node (`Document.node_regions`), and a section
+    // node cannot be line-spliced — `deleteKey`, `moveKey` and `reorderKeys`
+    // refuse it (`CannotDeleteContainer`, …) and point at the
+    // whole-container ops. `replaceValAtPath` is hooked below, and a hook
+    // owns its targets: a block container's value is re-framed in place.
 
     /// A block map or sequence value has no inline `key = <block>` spelling —
     /// section headers, `> ` and `* ` lines only parse standalone — so it is
@@ -94,23 +102,14 @@ pub const Language = struct {
 
     // ── Whole-container ops ──────────────────────────────────────────────────
     //
-    // The EXCLUSIVE operations, shared in shape with TOML and INI (see
-    // `editor.Editor`'s block of the same name): a fig block container may be
-    // re-entered and scattered, so these gather its disjoint regions rather
-    // than splicing one range. No `insertContainer`/`appendContainerToSeq` —
-    // `set` already vivifies a path — and no `renameContainer`, since a fig
-    // header carries its key in one tight span the generic `replaceKeyAtPath`
+    // All generic (see `editor.Editor`'s block of the same name): a fig block
+    // container may be re-entered and scattered, and `deleteContainer`/
+    // `moveContainer`/`reorderContainers` derive its disjoint regions from
+    // `Document.node_regions` — re-entered header lines included — with no
+    // fig code at all. No `insertContainer`/`appendContainerToSeq` — `set`
+    // already vivifies a path — and no `renameContainer`, since a fig header
+    // carries its key in one tight span the generic `replaceKeyAtPath`
     // rewrites in place.
-
-    /// Every region of the container's subtree, re-entered header lines
-    /// included (`Document.reentry_headers`).
-    pub const deleteContainer = edit.deleteContainer;
-
-    /// The container's fragments, re-emitted contiguously at the destination.
-    pub const moveContainer = edit.moveContainer;
-
-    /// Top-level containers reordered among themselves.
-    pub const reorderContainers = edit.reorderContainers;
 };
 
 // Test discovery: importing `fig.zig` (from root.zig) pulls in every fig

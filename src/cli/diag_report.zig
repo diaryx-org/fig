@@ -151,12 +151,13 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
         error.NotAMapping => try term.writer.writeAll(": a segment of this path is not a mapping, so it has no keys to address\n"),
         error.NotASequence => try term.writer.writeAll(": a segment of this path is not a sequence, so it has no indices to address\n"),
         error.IndexOutOfBounds => try term.writer.writeAll(": that index is past the end of the sequence\n"),
-        // The `replaceValGuard` refusal (TOML tables, INI sections). Worth a
-        // sentence of its own: the raw error name reads like a limitation of the
+        // The engine's section refusal on a value replace (TOML tables, INI
+        // sections, fig block containers). Worth a sentence of its own: the
+        // raw error name reads like a limitation of the
         // tool, when what it means is that the path names a header rather than a
         // value — and the generic `fig check` note below would send the user
         // hunting for a parse error in a file that parses fine.
-        error.CannotReplaceTable, error.CannotReplaceSection => {
+        error.CannotReplaceTable, error.CannotReplaceSection, error.CannotReplaceContainer => {
             try term.writer.writeAll(": that path names a whole block table/section, which has no single value to replace\n");
             try term.setColor(.blue);
             try term.writer.writeAll("note");

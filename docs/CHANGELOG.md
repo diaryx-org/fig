@@ -133,6 +133,8 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **tools** — run changelog.sh from the repo root, whatever the cwd ([`ec63ad6`](https://github.com/diaryx-org/fig/commit/ec63ad60081b473c736c6c1d11a151276889f852))
 - **rust** — read radix-prefixed and separated number lexemes ([`17f1f6a`](https://github.com/diaryx-org/fig/commit/17f1f6a709f00f0e84cca76c5c6dd5c724172b45))
 - **ts** — read number lexemes exactly instead of via Number() ([`eed7104`](https://github.com/diaryx-org/fig/commit/eed7104b3ee02def2caff70e3fbd79521781f666))
+- **cli** — write the standard streams streaming, so a redirect isn't clobbered ([`48e0f52`](https://github.com/diaryx-org/fig/commit/48e0f52382897ef7409918ef7baaab6fd2d92a6c))
+- **lsp** — read and write the stdio transport streaming ([`f15ec5f`](https://github.com/diaryx-org/fig/commit/f15ec5f8ecb401d000737d70dd144454dda5a55b))
 
 ### Changed
 
@@ -149,6 +151,13 @@ one that the next `zig build changelog` would overwrite with unreleased work.
   for a hex, octal, binary or `_`-separated integer. They used to return a
   `float`: `0xFF` as `255` typed float, `1_000` as `NaN`, and any value past
   2^53 rounded — all without raising.
+
+- `fig`'s output to a REDIRECTED REGULAR FILE now appends
+  at the stream's shared offset instead of starting at byte 0. A script
+  running `fig` more than once under one redirection (`> out`, `>> log`, or a
+  redirected block) used to get output written over the front of the file and
+  over the output of neighbouring commands; it now gets all of it, in order.
+  Pipes and terminals are unaffected — they always took this path.
 
 <!-- git-cliff:end -->
 

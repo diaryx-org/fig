@@ -4,16 +4,19 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    # Pins the exact Zig toolchain (0.16.0) fig is built with, matching CI.
-    zig-overlay.url = "github:mitchellh/zig-overlay";
-    zig-overlay.inputs.nixpkgs.follows = "nixpkgs";
+    # The Zig toolchain fig is built with, and the dev shell that carries it.
+    # The version itself lives in diaryx-org/nix, because prov builds fig
+    # through its build script and so has to agree with this repo about it —
+    # `nix eval --raw github:diaryx-org/nix#versions.zig` is what CI reads.
+    diaryx-nix.url = "github:diaryx-org/nix";
+    diaryx-nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, flake-utils, zig-overlay }:
+  outputs = { self, nixpkgs, flake-utils, diaryx-nix }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        zig = zig-overlay.packages.${system}."0.16.0";
+        zig = diaryx-nix.lib.${system}.zig;
 
         # This flake ships the `fig` CLI binary, which carries its OWN SemVer
         # track (`cli_version` in build.zig), independent of the core library
@@ -66,15 +69,10 @@
           program = "${self.packages.${system}.fig}/bin/fig";
         };
 
-        devShells.default = pkgs.mkShell {
-          nativeBuildInputs = [
-            zig
-            # git-cliff drives tools/changelog.sh, which regenerates the
-            # generated region of docs/CHANGELOG.md. Not needed to build or
-            # test fig — only to cut a release — so `zig build changelog` says
-            # how to get it rather than assuming this shell.
-            pkgs.git-cliff
-          ];
-        };
+        # git-cliff comes with the shared shell: it drives tools/changelog.sh,
+        # which regenerates the generated region of docs/CHANGELOG.md. Not
+        # needed to build or test fig — only to cut a release — so `zig build
+        # changelog` still says how to get it rather than assuming this shell.
+        devShells.default = diaryx-nix.devShells.${system}.zig;
       });
 }

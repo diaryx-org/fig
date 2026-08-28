@@ -4,6 +4,10 @@ pub const Language = @import("languages/language.zig");
 // TODO: Language.detect(file: []const u8);
 
 pub const Editor = @import("editor.zig").Editor;
+/// Structure-aware patching: merge one document into another through the
+/// editor's span splices, so everything the patch does not name stays
+/// byte-identical. See its module doc for the merge rule and what it refuses.
+pub const Patch = @import("patch.zig");
 pub const Document = @import("document.zig");
 pub const AST = @import("ast/ast.zig");
 pub const Embed = @import("embed.zig");
@@ -50,6 +54,7 @@ test {
     _ = @import("languages/nestedtext/nestedtext.zig");
     _ = @import("languages/shared/flat_map.zig");
     _ = @import("editor.zig");
+    _ = @import("patch.zig");
     _ = @import("embed.zig");
     _ = @import("lossless.zig");
     _ = @import("flat_strip.zig");

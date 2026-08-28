@@ -35,7 +35,13 @@ pub fn getInput(io: Io, file_path: ?[]const u8, mode: std.Io.Dir.OpenFileOptions
 
 pub fn readAll(allocator: std.mem.Allocator, io: Io, file: Io.File) ![]u8 {
     var read_buffer: [4096]u8 = undefined;
-    var file_reader = file.reader(io, &read_buffer);
+    // Standard input takes the streaming path for the reason `stdioReader`
+    // gives; a file this process opened is at offset 0 by construction, so it
+    // keeps the positional read.
+    var file_reader = if (file.handle == Io.File.stdin().handle)
+        stdioReader(file, io, &read_buffer)
+    else
+        file.reader(io, &read_buffer);
     return file_reader.interface.allocRemaining(allocator, max_size);
 }
 
@@ -69,4 +75,69 @@ pub fn deleteCreatedFile(io: Io, file_path: []const u8) void {
     const dir = std.Io.Dir.cwd().openDir(io, cwd_buf[0..cwd_path], .{}) catch return;
     defer dir.close(io);
     dir.deleteFile(io, file_path) catch {};
+}
+
+/// A writer over one of this process's standard streams.
+///
+/// stdin/stdout/stderr are inherited file DESCRIPTIONS: the seek offset
+/// belongs to whoever opened the redirection — the shell — and is shared with
+/// every sibling process on the same stream. `File.writer` defaults to
+/// POSITIONAL writes, which start at byte 0 and ignore that offset entirely.
+/// On a pipe or a tty that is harmless (there is no offset to respect, pwrite
+/// fails, and the writer falls back to streaming), which is exactly why it
+/// survives interactive use and every pipeline in the test suite. Redirect
+/// stdout to a regular FILE, though, and each invocation writes over the front
+/// of whatever is already there:
+///
+///     $ bash -c 'echo AAAAAAAAAA; fig version; echo BBBBBBBBBB' > x
+///     $ cat x
+///     fig 3.6.0 (BBBBBBBBBB
+///     "Sierra")
+///
+/// `fig version` landed at byte 0, over the `echo` before it, and the `echo`
+/// after it landed at the offset the shell had reached — inside fig's output.
+/// Any `fig ... >> log`, or any redirected block that runs fig more than once,
+/// hits this.
+///
+/// Streaming mode uses plain `write`, which respects and advances the shared
+/// offset. Every writer over a standard stream is built through here.
+///
+/// A file this process OPENED itself is the opposite case and keeps the
+/// positional path: its offset is 0 by construction, nobody else holds the
+/// description, and positional is the more threadsafe of the two.
+pub fn stdioWriter(file: Io.File, io: Io, buffer: []u8) Io.File.Writer {
+    return file.writerStreaming(io, buffer);
+}
+
+/// The read counterpart of `stdioWriter`, for the same reason: a positional
+/// read of standard input starts at byte 0 however much of the stream a
+/// process sharing the description has already consumed.
+pub fn stdioReader(file: Io.File, io: Io, buffer: []u8) Io.File.Reader {
+    return file.readerStreaming(io, buffer);
+}
+
+test "a standard-stream writer appends at the shared offset instead of rewriting from zero" {
+    const t = std.testing;
+    const io = t.io;
+
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Stand in for a redirected stdout: one handle, written by two parties.
+    // The first advances the description's offset the way the shell's `echo`
+    // does; the second is fig.
+    const file = try tmp.dir.createFile(io, "out", .{ .read = true });
+    defer file.close(io);
+    try file.writeStreamingAll(io, "AAAA\n");
+
+    var buf: [64]u8 = undefined;
+    var w = stdioWriter(file, io, &buf);
+    try w.interface.writeAll("BBBB\n");
+    try w.interface.flush();
+
+    // With a positional writer this reads "BBBB\n" alone: fig's bytes would
+    // have gone to offset 0, on top of what was already there.
+    const back = try tmp.dir.readFileAlloc(io, "out", t.allocator, max_size);
+    defer t.allocator.free(back);
+    try t.expectEqualStrings("AAAA\nBBBB\n", back);
 }

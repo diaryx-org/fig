@@ -48,6 +48,11 @@ const ArgError = types.ArgError;
 // why this was easy to miss.) Route `std.log` through `stderr_terminal` once
 // `main` has constructed it, so there is only ever one `Io.File.Writer`/one
 // `pos` counter over stderr.
+//
+// That is half of the hazard. The other half is between PROCESSES rather than
+// within one — a standard stream's offset is the shell's, shared with every
+// sibling command on the same redirection — and it is why the two writers
+// below are built through `fileio.stdioWriter`, which explains it in full.
 pub const std_options: std.Options = .{ .logFn = logFn };
 
 /// Set by `main` right after `stderr_terminal` is constructed. `null` before
@@ -105,8 +110,8 @@ pub fn main(init: std.process.Init) !void {
     const stdout_color_mode = try Io.Terminal.Mode.detect(io, Io.File.stdout(), NO_COLOR, CLICOLOR_FORCE);
     var stdout_buf: [512]u8 = undefined;
     var stderr_buf: [512]u8 = undefined;
-    var stdout = Io.File.stdout().writer(io, &stdout_buf);
-    var stderr = Io.File.stderr().writer(io, &stderr_buf);
+    var stdout = fileio.stdioWriter(Io.File.stdout(), io, &stdout_buf);
+    var stderr = fileio.stdioWriter(Io.File.stderr(), io, &stderr_buf);
     var stderr_terminal = std.Io.Terminal{ .writer = &stderr.interface, .mode = stderr_color_mode };
     var stdout_terminal = std.Io.Terminal{ .writer = &stdout.interface, .mode = stdout_color_mode };
     // From here on, route `std.log` through this same writer (see `logFn`) so

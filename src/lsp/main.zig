@@ -23,12 +23,22 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
 
+    // Streaming, not positional, on both halves of the transport: a standard
+    // stream's seek offset belongs to whoever opened the redirection and is
+    // shared with any sibling process on it, so a positional read/write would
+    // start at byte 0 regardless of what has already crossed the wire. Over
+    // the pipe an editor actually spawns this server on, the positional path
+    // silently falls back to the same syscalls — so the two spellings are
+    // indistinguishable until the day the transport is a real file, which is
+    // the wrong day to find out. `cli/fileio.zig`'s `stdioWriter` carries the
+    // full reasoning; this binary is a separate artifact and does not import
+    // the CLI's modules for two lines.
     var stdin_buf: [64 * 1024]u8 = undefined;
-    var stdin = Io.File.stdin().reader(io, &stdin_buf);
+    var stdin = Io.File.stdin().readerStreaming(io, &stdin_buf);
     const r = &stdin.interface;
 
     var stdout_buf: [64 * 1024]u8 = undefined;
-    var stdout = Io.File.stdout().writer(io, &stdout_buf);
+    var stdout = Io.File.stdout().writerStreaming(io, &stdout_buf);
     const w = &stdout.interface;
 
     var server = Server{ .gpa = gpa, .w = w };

@@ -1163,6 +1163,21 @@ baseline, `abi-check` and `semver-check` unchanged — these ops are library-lev
 and reach no ABI. The comptime refusal was checked by compiling a probe against
 `Editor(YAML).deleteContainer` and reading the error it produces.
 
+## 15. Outcome, two facts pushed down into the languages (2026-08-28)
+
+Preliminary to the "pluggable formats" major: two facts a core file still
+stated *about* formats now come *from* them. `lossless.zig`'s
+`Target`/`targetFor`/`needsEnvelope` table became `Caps.lossless: ?NativeKinds`
+(one bool per envelope-carried kind, pinned against `ExtKind` both ways), and
+§13's thirteen hand-written registry rows moved into each language as
+`Language.dialects: []const manifest.Dialect(Language)` — `language.zig` now
+only assembles the registry, in a `slots` order pinned by a literal
+`registry_order`, lifting each row to the gated `Dialect(void)` so the `void`
+protocol and every reified enum (and `c_api.FigFormat`'s values) are unchanged.
+`validate` gained the coherence rules for both; `validate-check` gained the
+cases. Verified as in §13: `zig build check` green with no header change,
+four gating configurations, and a 689-case CLI byte-diff against the parent.
+
 [vcheck]: /tools/validate-check.zig
 [abi_check]: /tools/abi-check.zig
 [semver_check]: /tools/semver-check.zig

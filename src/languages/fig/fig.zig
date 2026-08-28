@@ -37,6 +37,26 @@ pub const Language = struct {
     pub const extensions: []const []const u8 = &.{ "figl", "fig" };
     pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
 
+    /// The native authoring dialect (`DESIGN.md`): read, written and edited
+    /// by every surface.
+    pub const dialects: []const lang.Dialect(@This()) = &.{.{
+        .name = "fig",
+        // 8: appended to the C ABI after json5 (7).
+        .abi_value = 8,
+        .splice = .literal,
+        .empty_doc_seed = "",
+        .embed = .{
+            .fence_tag = "fig",
+            .fence_aliases = &.{"figl"},
+            .frontmatter = "---fig",
+            .script_mime = "application/figl",
+            .script_mime_aliases = &.{"application/fig"},
+            // `language-figl`, not `language-fig`: the class token and the
+            // fence tag genuinely differ in `embed.zig`.
+            .code_class = "language-figl",
+        },
+    }};
+
     pub fn syntax(t: fig.Type) lang.Syntax {
         _ = t;
         return .{

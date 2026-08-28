@@ -58,20 +58,21 @@ pub const NativeKinds = Language.NativeKinds;
 /// The native-kinds declaration the envelope pass should encode for when the
 /// output is `fmt`, or null when that format takes no envelope at all (see
 /// `Caps.lossless` for which formats say null and why). Read off the format
-/// registry: `fmt`'s entry names its language's module, and the language's
-/// `caps` carries the answer. Read through the entry's ungated `Module`
-/// rather than its `Lang`, so the answer is the same in every build — a
-/// gated-out language still declares what it holds, just as it still has an
-/// ABI value; whether anything can be PRINTED in it is the serializer's
-/// refusal to make, not this table's. `canonical` is not a registry entry
-/// (it is the AST's own oracle grammar, not a `Language`) and takes its own
-/// arm, as it does at every registry-derived dispatch. A caller with a
-/// CLI-only format on top of `SerializeFormat` (gron) resolves its own arm
-/// before/via `toSerializeFormat` and consults this for the rest.
+/// registry: `fmt`'s entry was declared by some language's module, and that
+/// language's `caps` carries the answer. Read through the ungated module
+/// (`Language.moduleFor`) rather than the entry's gated `Lang`, so the answer
+/// is the same in every build — a gated-out language still declares what it
+/// holds, just as it still has an ABI value; whether anything can be PRINTED
+/// in it is the serializer's refusal to make, not this table's. `canonical`
+/// is not a registry entry (it is the AST's own oracle grammar, not a
+/// `Language`) and takes its own arm, as it does at every registry-derived
+/// dispatch. A caller with a CLI-only format on top of `SerializeFormat`
+/// (gron) resolves its own arm before/via `toSerializeFormat` and consults
+/// this for the rest.
 pub fn nativeFor(fmt: AST.SerializeFormat) ?NativeKinds {
     return switch (fmt) {
         .canonical => null,
-        inline else => |f| comptime Language.entryFor(@tagName(f)).Module.Language.caps.lossless,
+        inline else => |f| comptime Language.moduleFor(@tagName(f)).Language.caps.lossless,
     };
 }
 

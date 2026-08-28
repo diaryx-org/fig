@@ -37,6 +37,54 @@ pub const Language = struct {
         .lossless = .{ .null = true },
     };
 
+    /// The three user-facing dialects this one module serves. The only
+    /// language with more than one: strictness is the format NAME here
+    /// (json/jsonc/json5 select a `Type` each), where TOML and YAML select
+    /// theirs with `--spec`. Registry order within the language is this order.
+    pub const dialects: []const lang.Dialect(@This()) = &.{
+        .{
+            .name = "json",
+            .dialect = .JSON,
+            .abi_value = 1,
+            .deserializable = true,
+            .splice = .json_string,
+            .empty_doc_seed = "{}\n",
+            .embed = .{
+                .fence_tag = "json",
+                .frontmatter = "---json",
+                .script_mime = "application/json",
+                .script_mime_aliases = &.{"application/ld+json"},
+                .code_class = "language-json",
+            },
+        },
+        .{
+            .name = "jsonc",
+            .dialect = .JSONC,
+            .abi_value = 2,
+            // The one non-detectable dialect: plain JSON and JSON5 already
+            // claim everything JSONC accepts that they can parse, so sniffing
+            // it would only ever mis-attribute a comment-free document.
+            .detectable = false,
+            .deserializable = true,
+            .splice = .json_string,
+            .empty_doc_seed = "{}\n",
+            .print_name = "printc",
+            .print_node_name = "printNodec",
+        },
+        .{
+            .name = "json5",
+            .dialect = .JSON5,
+            // 7, not 3: JSON5 was added to the C ABI after XML (6), and a
+            // released value is appended rather than inserted — the reason
+            // the C enum's numbering is not its order.
+            .abi_value = 7,
+            .splice = .json_string,
+            .empty_doc_seed = "{}\n",
+            .print_name = "print5",
+            .print_node_name = "printNode5",
+        },
+    };
+
     /// The one manifest in tree whose answer genuinely varies by dialect, and
     /// therefore the reason `syntax` is a function of `Type` at all: strict
     /// JSON has no comment syntax, JSONC and JSON5 do. The editor's splices

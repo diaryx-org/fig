@@ -48,6 +48,18 @@ pub const Language = struct {
     pub const extensions: []const []const u8 = &.{"plist"};
     pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
 
+    /// Genuinely typed and nested (dict/array/string/integer/real/bool, with
+    /// date/data carried on the `extended` scalar) — the one XML-shaped
+    /// format that is also a full value model.
+    pub const dialects: []const lang.Dialect(@This()) = &.{.{
+        .name = "plist",
+        .abi_value = 12,
+        .splice = .raw,
+        // A bare `<dict>` IS a document this parser accepts (see its `detect`
+        // probe), so `fig set` on a nonexistent `.plist` can create one.
+        .empty_doc_seed = "<dict>\n</dict>\n",
+    }};
+
     /// plist declares the least of any editable format, because it delegates
     /// the most: an entry is a PAIR of sibling elements (`<key>k</key>` then
     /// a typed value element), not a `key<sep>value` line, so almost nothing

@@ -62,6 +62,17 @@ pub const Language = struct {
     /// rather than only from `Editor()` — the format whose `caps` carries the
     /// most information is the one an `Editor`-only check would never see.
     pub const caps: lang.Caps = .{ .read = true, .edit = false, .serialize = true };
+
+    pub const dialects: []const lang.Dialect(@This()) = &.{.{
+        .name = "xml",
+        .abi_value = 6,
+        // No in-place editor, so no edit text ever reaches a splice; `.raw`
+        // is what `spliceStyle` says for it.
+        .splice = .raw,
+        // No from-scratch creation: a bare XML document needs a root element
+        // this layer cannot name.
+        .empty_doc_seed = null,
+    }};
 };
 
 // Test discovery: importing `xml.zig` (from root.zig) pulls in every XML

@@ -45,6 +45,26 @@ pub const Language = struct {
         },
     };
 
+    pub const dialects: []const lang.Dialect(@This()) = &.{.{
+        .name = "toml",
+        .abi_value = 4,
+        .deserializable = true,
+        .splice = .literal,
+        .empty_doc_seed = "",
+        .specs = &.{
+            .{ .name = "1.0", .dialect = .TOML_1_0 },
+            .{ .name = "1.0.0", .dialect = .TOML_1_0 },
+            .{ .name = "1.1", .dialect = .TOML_1_1 },
+            .{ .name = "1.1.0", .dialect = .TOML_1_1 },
+        },
+        .embed = .{
+            .fence_tag = "toml",
+            .frontmatter = "---toml",
+            .script_mime = "application/toml",
+            .code_class = "language-toml",
+        },
+    }};
+
     /// 1.0 and 1.1 differ in what the PARSER accepts (newlines and trailing
     /// commas in inline tables, seconds-optional times, `\e`/`\xHH` escapes),
     /// not in what the editor writes, so both dialects answer identically.

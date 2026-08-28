@@ -28,6 +28,14 @@ pub const Language = struct {
     pub const extensions: []const []const u8 = &.{"nt"};
     pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
 
+    /// Nested (dict/list) but deliberately untyped — every leaf is a string.
+    pub const dialects: []const lang.Dialect(@This()) = &.{.{
+        .name = "nestedtext",
+        .abi_value = 13,
+        .splice = .raw,
+        .empty_doc_seed = "",
+    }};
+
     pub fn syntax(t: nestedtext.Type) lang.Syntax {
         _ = t;
         return .{

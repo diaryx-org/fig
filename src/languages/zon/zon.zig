@@ -34,6 +34,14 @@ pub const Language = struct {
         .lossless = .{ .null = true, .enum_literal = true, .char_literal = true },
     };
 
+    pub const dialects: []const lang.Dialect(@This()) = &.{.{
+        .name = "zon",
+        .abi_value = 5,
+        .deserializable = true,
+        .splice = .literal,
+        .empty_doc_seed = ".{}\n",
+    }};
+
     /// The format that most exercises the manifest's "push traits down into
     /// parameters" rule: three of these fields exist because ZON's surface
     /// syntax differs from the block-mapping formats, not because ZON needs

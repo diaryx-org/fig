@@ -5,33 +5,39 @@
 //! `editor_helper.zig` split (structural per-language decisions live here;
 //! `editor.zig` stays a one-line dispatch to them). INI is nearly flat like
 //! dotenv/.properties — one level of `[section]` nesting, no arrays/inline
-//! tables/dotted keys — so it needs far less than TOML: no multi-region
-//! gather, because a reopened/scattered section already threads correctly
-//! through the generic `lastChild`-anchored block insert (parsing always
-//! appends a reopened section's new entries to the tail of its child list, in
-//! file order — see `parser.zig`'s `parseSectionHeader` merge branch). What
-//! IS needed:
+//! tables/dotted keys — so almost nothing is left here:
 //!
 //!   - `iniInsertKey`: INI has no flow syntax at all, so this skips the
 //!     generic `isFlow` sniff outright rather than risk a false positive — a
 //!     file opening directly with `[section]` would otherwise make `isFlow`
 //!     see the `[` and misdetect the root as a bracket-delimited flow
 //!     container (the same hazard TOML's tables have, which is why TOML
-//!     declares an `insertKey` hook of its own too).
-//!   - `sectionDeleteGuard` (over `isSectionHeaderLine`): the `deleteKey`
-//!     guard that refuses to line-delete a `[section]` entry — its span is
-//!     anchored at the FIRST occurrence's header only (see this module's
-//!     sibling `parser.zig`), so a reopened section's later entries would be
-//!     orphaned into misparsed content if the "table" were deleted this way.
-//!     TOML's `CannotDeleteTable` twin (`CannotDeleteSection` here).
+//!     declares an `insertKey` hook of its own too). A reopened/scattered
+//!     section already threads correctly through the generic
+//!     `lastChild`-anchored block insert (parsing always appends a reopened
+//!     section's new entries to the tail of its child list, in file order —
+//!     see `parser.zig`'s `parseSectionHeader` merge branch).
 //!
-//! Unlike TOML/fig, INI does NOT get its own `set` auto-vivify path — it has
-//! no literal spelling for "an empty nested mapping" (`{}` is just a
-//! two-character STRING value in INI, not a container), so there is nothing
-//! for a seed to splice and `set` refuses rather than write a nonsense
-//! `section = {}` root key. That is an ABSENCE of syntax, not logic to
-//! delegate, so it is declared as `syntax().empty_map_literal = null` in
-//! `ini.zig` — see `manifest.Syntax.empty_map_literal`.
+//! Everything about a `[section]` as a WHOLE is the engine's. A section may be
+//! REOPENED (`[a]` … `[b]` … `[a]`), which the parser merges into one mapping
+//! whose span anchors only the FIRST header's name token — so its bytes are
+//! scattered exactly the way a TOML table's or a fig container's are.
+//! `parser.zig` records every header line of every section in
+//! `Document.node_regions`, and from that the engine derives the section's
+//! region set (`editor/regions.zig`): `deleteContainer`, `moveContainer` and
+//! `reorderContainers` gather it and rebuild the source once, and the four
+//! line-splice ops (`deleteKey`, `replaceValAtPath`, `moveKey`, `reorderKeys`)
+//! refuse a section node — `CannotDeleteSection`, `CannotReplaceSection`,
+//! `CannotMoveSection`, `CannotReorderSections`, per `Syntax.section_noun` —
+//! and point at those ops. The tests below pin every one of those behaviours
+//! for INI; the logic they exercise lives in `editor.zig`.
+//!
+//! There is no `insertContainer`/`renameContainer` twin: a new `[section]` is
+//! `set`'s business (INI cannot auto-vivify — it has no literal spelling for
+//! "an empty nested mapping", since `{}` is just a two-character STRING value
+//! in INI, declared as `syntax().empty_map_literal = null` in `ini.zig`), and
+//! a rename is one tight span the generic `replaceKeyAtPath` already rewrites,
+//! since an INI header has no dotted descendants to follow.
 
 const std = @import("std");
 const testing = std.testing;
@@ -44,15 +50,6 @@ const Ini = @import("ini.zig").Language;
 
 /// The concrete editor these ops drive — the INI arm of the generic engine.
 const IniEditor = editor.Editor(Ini);
-
-const lineStartBefore = editor.lineStartBefore;
-const lineEndAfter = editor.lineEndAfter;
-const firstNonSpace = editor.firstNonSpace;
-
-/// The multi-region machinery INI shares with TOML and fig — everything
-/// downstream of the gather below. See `../shared/sections.zig`.
-const sections = @import("../shared/sections.zig");
-const Region = sections.Region;
 
 /// Insert `key_text = value_text` into the mapping at `node` (root or a
 /// section) — the same block-mapping primitive JSON/YAML/dotenv/.properties
@@ -70,203 +67,6 @@ pub fn iniInsertKey(self: *IniEditor, parsed: Document, path: []const AST.PathSe
         .mapping => self.insertBlockKey(parsed, node, key_text, value_text),
         else => error.NotAMapping,
     };
-}
-
-/// Refuse a line-based delete of a `[section]` entry — INI's twin of TOML's
-/// `CannotDeleteTable`.
-///
-/// The `deleteKeyGuard` hook (see `editor.Editor.deleteKey`). A section's span
-/// is anchored at its FIRST occurrence's header only, so deleting that line
-/// would orphan a reopened section's later entries into misparsed content.
-pub fn sectionDeleteGuard(self: *IniEditor, parsed: Document, node: AST.Node, span: Span) !void {
-    _ = parsed;
-    _ = node;
-    if (isSectionHeaderLine(self.source.items, span)) return error.CannotDeleteSection;
-}
-
-/// Refuse a span-splice replacement of a whole `[section]` — INI's twin of
-/// TOML's `CannotReplaceTable`.
-///
-/// The `replaceValGuard` hook (see `editor.Editor.replaceValAtPath`). Same span
-/// fact the delete guard rests on, with a worse outcome: a section mapping's
-/// span is just its NAME token inside the header, so the generic splice writes
-/// the replacement over that name and reports success — `[server]` becomes
-/// `[REPLACED]`, renaming the section while its entries stay put. INI has no
-/// flow syntax, so a non-root mapping is always a section; every scalar value
-/// splices normally, and the root (empty path) spans the whole document, which
-/// is what replacing the root means.
-pub fn sectionReplaceGuard(self: *IniEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, span: Span) !void {
-    _ = parsed;
-    _ = self;
-    _ = span;
-    if (path.len == 0) return;
-    if (node.kind == .mapping) return error.CannotReplaceSection;
-}
-
-/// Refuse a block-move of, or onto, a `[section]` header — INI's twin of
-/// TOML's `CannotMoveTable`.
-///
-/// The `moveKeyGuard` hook (see `editor.Editor.moveKey`). A section entry's
-/// block is its header LINE, so moving it relocates the name and leaves the
-/// entries for whichever section now precedes them; and moving anything to sit
-/// *before* a header drops it at the tail of the preceding section's body,
-/// turning a root key into that section's key. `moveContainer` moves a section
-/// whole.
-pub fn sectionMoveGuard(self: *IniEditor, parsed: Document, src: AST.Node, src_span: Span, dest: AST.Node, dest_span: Span) !void {
-    _ = parsed;
-    _ = src;
-    _ = dest;
-    const source = self.source.items;
-    if (isSectionHeaderLine(source, src_span) or isSectionHeaderLine(source, dest_span))
-        return error.CannotMoveSection;
-}
-
-/// Refuse a reorder that changes a `[section]`'s position among its siblings —
-/// INI's twin of `CannotReorderTables`.
-///
-/// The `reorderKeysGuard` hook (see `editor.Editor.reorderKeys`), which passes
-/// only the entries whose position changes. Entry blocks tile up to the next
-/// sibling's line, so a section carries its body — except the last one, whose
-/// block stops at its own header and leaves its entries outside the spliced
-/// range for the section that lands before them. `reorderContainers` is the op
-/// for sections; reordering root keys that are all plain entries is untouched.
-pub fn sectionReorderGuard(self: *IniEditor, parsed: Document, moved: []const AST.Node) !void {
-    const source = self.source.items;
-    for (moved) |node| {
-        if (isSectionHeaderLine(source, parsed.span(node))) return error.CannotReorderSections;
-    }
-}
-
-/// Whether the entry at `span` is a `[section]` header line — i.e. whether
-/// deleting it via the generic line-based `deleteKey` would only remove that
-/// one header line and orphan a reopened section's later entries elsewhere
-/// in the file. `span.start` may land anywhere on the header line (an INI
-/// section-mapping's span is anchored at just its name token, not the
-/// header's own extent — see `parser.zig`'s `parseSectionHeader`), so this
-/// scans back to the line start first rather than checking `span.start`
-/// itself.
-pub fn isSectionHeaderLine(source: []const u8, span: Span) bool {
-    const fns = firstNonSpace(source, lineStartBefore(source, span.start));
-    return fns < source.len and source[fns] == '[';
-}
-
-// ============================================================================
-// WHOLE-SECTION STRUCTURAL EDITING (multi-region)
-// ============================================================================
-//
-// What `sectionDeleteGuard` above refuses, these do properly. A `[section]` may
-// be REOPENED (`[a]` … `[b]` … `[a]`), which the parser merges into one mapping
-// whose span anchors only the FIRST header — so a section's bytes are scattered
-// exactly the way a TOML table's or a fig container's are, and the same answer
-// applies: gather the disjoint line-regions, rebuild the source once. The
-// reopened headers come from `Document.reentry_headers`, which `parser.zig`
-// records at its merge branch for this.
-//
-// INI's gather is the simplest of the three: one level of nesting, no arrays,
-// no dotted keys, no flow syntax — a section is its header lines plus its
-// entries' lines, with no recursion. Everything after that is shared
-// (`../shared/sections.zig`).
-//
-// There is no `insertContainer`/`renameContainer` twin: a new `[section]` is
-// `set`'s business (INI cannot auto-vivify — see the module doc), and a rename
-// is one tight span the generic `replaceKeyAtPath` already rewrites, since an
-// INI header has no dotted descendants to follow.
-
-/// The physical line of a `[section]` header — the owned comment block above it
-/// through the header line's own newline. `content_start` is any position on
-/// that line at or after its indent: a section mapping's own span (anchored at
-/// the name token inside the brackets) or a recorded re-entry's `content_start`.
-fn headerLineRegion(source: []const u8, content_start: usize) Region {
-    const ls = lineStartBefore(source, content_start);
-    return .{ .start = editor.commentBlockStart(source, ls, .semicolon), .end = lineEndAfter(source, ls) };
-}
-
-/// Every region belonging to the section at `path`: its header line, every
-/// reopened header line, and each of its entries' own lines.
-///
-/// `error.NotAContainer` when `path` doesn't name a `[section]` — a root-level
-/// scalar key (use `deleteKey`), or a path that resolves to a value rather than
-/// a mapping. INI has one level of nesting, so a section is always at the root.
-fn gatherSection(parsed: Document, source: []const u8, allocator: std.mem.Allocator, path: []const AST.PathSegment) !struct { node: AST.Node, regions: std.ArrayList(Region) } {
-    if (path.len != 1) return error.NotAContainer;
-    const node = try parsed.ast.getValByPath(path);
-    if (node.kind != .mapping) return error.NotAContainer;
-
-    var regions: std.ArrayList(Region) = .empty;
-    errdefer regions.deinit(allocator);
-    try regions.append(allocator, headerLineRegion(source, parsed.span(node).start));
-    for (parsed.reentry_headers) |rh| {
-        if (rh.node_id == node.id) try regions.append(allocator, headerLineRegion(source, rh.content_start));
-    }
-    var cur = node.kind.mapping;
-    while (cur) |id| : (cur = parsed.ast.nodes[id].next_sibling) {
-        try regions.append(allocator, sections.entryLineRegion(source, parsed.span(parsed.ast.nodes[id]), .semicolon));
-    }
-    return .{ .node = node, .regions = regions };
-}
-
-/// Delete the whole `[section]` named by `path` — every occurrence of its
-/// header plus all of its entries — leaving interleaved foreign sections in
-/// place. The op `sectionDeleteGuard` points a `deleteKey` caller at.
-pub fn deleteContainer(self: *IniEditor, path: []const AST.PathSegment) !void {
-    const parsed = try self.getParsed();
-    const source = self.source.items;
-    var g = try gatherSection(parsed, source, self.allocator, path);
-    defer g.regions.deinit(self.allocator);
-    const n = sections.normalize(g.regions.items, true);
-    try sections.spliceOut(self, g.regions.items[0..n]);
-}
-
-/// Move the whole `[section]` at `src_path` so it begins immediately before the
-/// section at `dest_path`, or at end-of-file when `dest_path` is null. A
-/// reopened section's fragments are collapsed together at the destination;
-/// foreign sections stay put.
-pub fn moveContainer(self: *IniEditor, src_path: []const AST.PathSegment, dest_path: ?[]const AST.PathSegment) !void {
-    const parsed = try self.getParsed();
-    const source = self.source.items;
-    var g = try gatherSection(parsed, source, self.allocator, src_path);
-    defer g.regions.deinit(self.allocator);
-    const n = sections.normalize(g.regions.items, true);
-
-    const dest_at = blk: {
-        if (dest_path) |dp| {
-            if (dp.len != 1) return error.NotAContainer;
-            const dn = try parsed.ast.getValByPath(dp);
-            if (dn.kind != .mapping) return error.NotAContainer;
-            break :blk headerLineRegion(source, parsed.span(dn).start).start;
-        }
-        break :blk source.len;
-    };
-    try sections.relocate(self, g.regions.items[0..n], dest_at);
-}
-
-/// Reorder the `[section]`s named by `order` among themselves, each re-emitted
-/// contiguously at the position the earliest currently occupies. Sections not
-/// named — and any root-level keys above the first section — are untouched.
-pub fn reorderContainers(self: *IniEditor, order: []const []const u8) !void {
-    if (order.len == 0) return;
-    const parsed = try self.getParsed();
-    const source = self.source.items;
-
-    var all: std.ArrayList(Region) = .empty;
-    defer all.deinit(self.allocator);
-    var bundles: std.ArrayList([]u8) = .empty;
-    defer {
-        for (bundles.items) |b| self.allocator.free(b);
-        bundles.deinit(self.allocator);
-    }
-
-    for (order) |name| {
-        const path: [1]AST.PathSegment = .{.{ .key = name }};
-        var g = try gatherSection(parsed, source, self.allocator, &path);
-        defer g.regions.deinit(self.allocator);
-        const n = sections.normalize(g.regions.items, true);
-        const owned = try sections.captureBundle(self.allocator, source, g.regions.items[0..n], &all);
-        errdefer self.allocator.free(owned);
-        try bundles.append(self.allocator, owned);
-    }
-    const total = sections.normalize(all.items, true);
-    try sections.reorderBundles(self, all.items[0..total], bundles.items);
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -352,9 +152,9 @@ test "ini deleteContainer removes a whole section" {
 }
 
 test "ini deleteContainer removes EVERY occurrence of a reopened section" {
-    // The case `sectionDeleteGuard` refuses a line-delete for: `[a]` is
+    // The case the engine's section rule refuses a line-delete for: `[a]` is
     // scattered, and its second header is in no node's span. Without
-    // `Document.reentry_headers` the trailing `[a]` would survive and adopt
+    // `Document.node_regions` the trailing `[a]` would survive and adopt
     // whatever followed it.
     var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
     try ed.init("[a]\nx = 1\n[b]\ny = 2\n[a]\nz = 3\n");
@@ -365,8 +165,8 @@ test "ini deleteContainer removes EVERY occurrence of a reopened section" {
 
 test "ini deleteContainer removes an EMPTY reopened header too" {
     // A reopen with no entries under it has nothing to find it by except the
-    // recorded re-entry — a gather that scanned upward from each child would
-    // leave this one behind.
+    // recorded header line — a gather that scanned upward from each child
+    // would leave this one behind.
     var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
     try ed.init("[a]\nx = 1\n[b]\ny = 2\n[a]\n");
     defer ed.deinit();

@@ -16,41 +16,28 @@
 //! ## Whole-container structural ops (`deleteContainer`/`moveContainer`/
 //! `reorderContainers`)
 //!
-//! fig has no `[bracket]` syntax to grep for like TOML, but the same
-//! multi-region gather TOML needs generalizes here — and everything downstream
-//! of the gather (coalesce, splice out, relocate, reorder) is literally the
-//! same code, in `../shared/sections.zig`. What stays fig's own is the
-//! classification, and it is a different question than TOML's: ANY block
-//! (non-flow) mapping/sequence-valued entry was introduced by SOME
-//! header line — a bare/dotted zero-marker path OR a nested `>` line, no
-//! difference in kind (DESIGN.md "a header only selects/creates a map path")
-//! — so `gatherContainerRegions` recurses into every block-container child
-//! exactly the way `toml_edit.gatherTableRegions` recurses into every
-//! `[header]` child, using each child's own (always-accurate — see
-//! `fig/parser.zig`'s "AST assembly") span to recover its header line. This
-//! correctly handles fig's TOML-equivalent scattering (a container's fields
-//! split across separate dotted paths interleaved with foreign siblings,
-//! DESIGN.md's `[a]`/`[other]`/`[a.b]` example translated to `a`/`other`/
-//! `a.b`) for free.
+//! Nothing of these lives here any more: they are the generic ops in
+//! `../../editor.zig`, over the derived region set `../../editor/regions.zig`
+//! builds from `Document.node_regions`. What fig contributes is the parser's
+//! half — `fig/parser.zig` records every BLOCK (non-flow) container's header
+//! lines: the line that created it, plus every LATER header that re-entered
+//! it verbatim (`database` written a second time, `> pool` reopened later in
+//! the same parent's body, a dotted path whose final segment re-selects an
+//! existing container, `xs[i]` re-opening an element — DESIGN.md
+//! "Re-entering a path to add new keys is fine", a shape `fig fmt`'s own
+//! grouped hoisting EMITS). A container's node span anchors only the line
+//! that CREATED it, so those later lines are in no child's span and are
+//! exactly what the table exists to carry. From that, the engine's gather
+//! recurses into every block-container child (each is a section node) and
+//! takes every other child's own line, which handles fig's TOML-equivalent
+//! scattering (`a`/`other`/`a.b`) and verbatim re-entry alike. The tests below
+//! pin every one of those behaviours for fig; the logic is the engine's.
 //!
-//! ## Re-entered headers (`Document.reentry_headers`)
-//!
-//! fig uniquely also allows the exact SAME header path to be **re-entered**
-//! verbatim (`database` written a second time, or `> pool` reopened later in
-//! the same parent's body) to add more keys (DESIGN.md "Re-entering a path to
-//! add new keys is fine") — and `fig fmt`'s own grouped hoisting EMITS this
-//! shape (a second flat-sibling run re-enters its section header), so the
-//! gather must handle it, not merely fail safe on it. A container's node span
-//! anchors only the line that CREATED it (`TNode.span.start`, stamped once),
-//! so a later re-entering header line is in no child's span and a span-only
-//! gather would orphan it — an empty reopened header, `FigEmptyContainer` on
-//! the reparse, whole edit rolled back. The fix is exact, not heuristic: the
-//! parser records every header-final re-open (`resolveHeaderFinal` — verbatim
-//! re-entry, a dotted path whose final segment re-selects an existing
-//! container, and `xs[i]` re-opening an element alike) into
-//! `Document.reentry_headers`, and `appendReentryHeaderLines` folds those
-//! extra header lines into the region set wherever a container's own header
-//! line is gathered.
+//! The same table is why `deleteKey`, `moveKey` and `reorderKeys` refuse a
+//! block-container-valued entry (`CannotDeleteContainer`, `CannotMoveContainer`,
+//! `CannotReorderContainers` — the engine's one section rule, spelled per
+//! `Syntax.section_noun`): such a container may be scattered, and a line
+//! splice would move or remove only the fragment it can see.
 //!
 //! ## Scope (documented, not silent)
 //!
@@ -80,12 +67,6 @@ const lineStartBefore = editor.lineStartBefore;
 const lineEndAfter = editor.lineEndAfter;
 const firstNonSpace = editor.firstNonSpace;
 const isFlow = editor.isFlow;
-
-/// The multi-region machinery fig shares with TOML and INI: everything
-/// downstream of "which lines belong to this container", which is the part that
-/// stays here (`gatherContainerRegions`). See `shared/sections.zig`.
-const sections = @import("../shared/sections.zig");
-const Region = sections.Region;
 
 /// The marker-prefix text (leading whitespace + `>` run + the one load-bearing
 /// separator space, or "" at root) that precedes the content starting at
@@ -195,21 +176,6 @@ pub fn reframeMappingValue(self: *FigEditor, parsed: Document, path: []const AST
         return;
     }
     try self.replaceAtSpan(val_span, replacement);
-}
-
-/// Refuse a line-based delete of an entry whose value is a BLOCK (non-flow)
-/// mapping or sequence — fig's twin of TOML's `CannotDeleteTable`.
-///
-/// The `deleteKeyGuard` hook (see `editor.Editor.deleteKey`). Such a container
-/// may be re-entered and scattered (DESIGN.md, "Re-entering a path to add new
-/// keys is fine"), so a line-based delete risks swallowing an interleaved
-/// foreign sibling; `deleteContainer` is the operation that handles it. A flow
-/// (`{…}`/`[…]`) value is always tightly contiguous and deletes normally.
-pub fn containerDeleteGuard(self: *FigEditor, parsed: Document, node: AST.Node, span: Span) !void {
-    _ = span;
-    const val = parsed.ast.nodes[node.kind.keyvalue.value];
-    if ((val.kind == .mapping or val.kind == .sequence) and !isFlow(self.source.items, parsed.span(val)))
-        return error.CannotDeleteContainer;
 }
 
 // ============================================================================
@@ -352,213 +318,6 @@ pub fn figPrependSeqLine(self: *FigEditor, parsed: Document, node: AST.Node, val
     try out.appendSlice(self.allocator, value_text);
     try out.append(self.allocator, '\n');
     try self.replaceAtSpan(Span.init(line_start, line_start), out.items);
-}
-
-// ============================================================================
-// WHOLE-CONTAINER STRUCTURAL EDITING (multi-region) — `deleteContainer`,
-// `moveContainer`, `reorderContainers`. See the module doc comment for the
-// gather algorithm and its scope. `renameContainer` needs no dedicated op:
-// the generic `replaceKeyAtPath` already splices a single-occurrence header's
-// key in place (it only touches the key's own tight span).
-// ============================================================================
-
-/// The physical line of a fig block container's OWN header — the comment
-/// block above it through the header line's own newline. `content_start` is
-/// any position on that line at or after the marker prefix — a mapping
-/// entry's `key_span.start` or a sequence element's own `span.start`, both of
-/// which every node already carries (see `fig/parser.zig`'s `TNode.span` doc
-/// comment) — `lineStartBefore` recovers the true line start regardless of
-/// exactly where within it `content_start` falls (e.g. the "b" of a dotted
-/// "a.b" header).
-fn headerLineRegion(source: []const u8, content_start: usize) Region {
-    const ls = lineStartBefore(source, content_start);
-    return .{ .start = commentBlockStart(source, ls), .end = lineEndAfter(source, ls) };
-}
-
-/// The physical region of a DIRECT (scalar or flow-container) mapping entry
-/// or sequence element: its owned comment block through the end of its own
-/// span's last line (multi-line only for a `'''`/`"""` string value).
-fn entryLineRegion(source: []const u8, span: Span) Region {
-    return sections.entryLineRegion(source, span, .hash);
-}
-
-/// `../editor.zig`'s `commentBlockStart`, pinned to fig's `#` marker (the only
-/// comment style fig has, so no `CommentStyle` parameter is threaded through
-/// this module).
-fn commentBlockStart(source: []const u8, line_start: usize) usize {
-    return editor.commentBlockStart(source, line_start, .hash);
-}
-
-/// Append every region belonging to the subtree of block container `node`
-/// (mapping or sequence), NOT including `node`'s own header line (the caller
-/// adds that — see the module doc comment on why fig has no single
-/// `include_header` flag the way TOML's `gatherTableRegions` does: a fig
-/// container's "header" is just wherever its owning key/element sits, always
-/// recoverable from a child's own span, so there is no header-less root case
-/// to special-case here the way TOML's dotted-only tables need). Each child is
-/// classified purely by its value's kind: a block (non-flow) mapping/sequence
-/// is itself introduced by a header line and recursed into; anything else
-/// (scalar, or a flow container, which is tightly single-region) is a direct
-/// entry taken whole.
-fn gatherContainerRegions(parsed: Document, source: []const u8, allocator: std.mem.Allocator, node: AST.Node, out: *std.ArrayList(Region)) std.mem.Allocator.Error!void {
-    switch (node.kind) {
-        .mapping => |first| {
-            var cur = first;
-            while (cur) |id| : (cur = parsed.ast.nodes[id].next_sibling) {
-                const kv = parsed.ast.nodes[id];
-                const kv_span = parsed.span(kv);
-                const val = parsed.ast.nodes[kv.kind.keyvalue.value];
-                try gatherChild(parsed, source, allocator, val, kv_span, out);
-            }
-        },
-        .sequence => |first| {
-            var cur = first;
-            while (cur) |id| : (cur = parsed.ast.nodes[id].next_sibling) {
-                const el = parsed.ast.nodes[id];
-                try gatherChild(parsed, source, allocator, el, parsed.span(el), out);
-            }
-        },
-        else => unreachable, // callers only pass a mapping/sequence node
-    }
-}
-
-/// One child's contribution to its parent's gather: `own_span` is the span a
-/// direct entry would use whole (a mapping's `keyvalue` span, or a sequence
-/// element's own span — the two differ only in whether a separate key exists,
-/// which `val`/`val_span` below already accounts for).
-fn gatherChild(parsed: Document, source: []const u8, allocator: std.mem.Allocator, val: AST.Node, own_span: Span, out: *std.ArrayList(Region)) std.mem.Allocator.Error!void {
-    switch (val.kind) {
-        .mapping, .sequence => {
-            const val_span = parsed.span(val);
-            if (isFlow(source, val_span)) {
-                try out.append(allocator, entryLineRegion(source, own_span));
-            } else {
-                try out.append(allocator, headerLineRegion(source, val_span.start));
-                try appendReentryHeaderLines(parsed, source, allocator, val.id, out);
-                try gatherContainerRegions(parsed, source, allocator, val, out);
-            }
-        },
-        else => try out.append(allocator, entryLineRegion(source, own_span)),
-    }
-}
-
-/// Append the header-line region of every LATER header that re-OPENED the
-/// container `node_id` (`Document.reentry_headers`, recorded by the parser at
-/// each `resolveHeaderFinal` re-open). A container's own span anchors only the
-/// line that CREATED it; these are the extra physical occurrences — the exact
-/// same header re-entered verbatim, a dotted path re-selecting an existing
-/// container, or an `[i]` header re-opening an element — that would otherwise
-/// be left orphaned (and trip `FigEmptyContainer` on the reparse) when the
-/// container is deleted or moved. Linear scan: the table is empty for the
-/// overwhelming majority of documents.
-fn appendReentryHeaderLines(parsed: Document, source: []const u8, allocator: std.mem.Allocator, node_id: AST.Node.Id, out: *std.ArrayList(Region)) std.mem.Allocator.Error!void {
-    for (parsed.reentry_headers) |rh| {
-        if (rh.node_id == node_id) try out.append(allocator, headerLineRegion(source, rh.content_start));
-    }
-}
-
-/// Coalesce in place, merging regions that merely touch: unlike TOML's rename,
-/// nothing here needs to address a region's own start independently of its
-/// neighbor. See `sections.normalize`.
-fn normalizeRegions(regions: []Region) usize {
-    return sections.normalize(regions, true);
-}
-
-/// The gathered, coalesced region set for the block container at `path`
-/// (including its own header line) — the shared setup `deleteContainer`,
-/// `moveContainer`, and `reorderContainers` all start from. Errors
-/// `NotAContainer` when `path` doesn't resolve to a mapping/sequence, or
-/// resolves to one written as a flow value (tightly single-region — delete it
-/// via `deleteKey` instead, move/reorder don't apply to an inline value).
-fn gatherKeyedContainer(parsed: Document, source: []const u8, allocator: std.mem.Allocator, path: []const AST.PathSegment) !struct { node: AST.Node, regions: std.ArrayList(Region) } {
-    if (path.len == 0) return error.NotAContainer;
-    const node = try parsed.ast.getValByPath(path);
-    if (node.kind != .mapping and node.kind != .sequence) return error.NotAContainer;
-    const span = parsed.span(node);
-    if (isFlow(source, span)) return error.NotAContainer;
-
-    var regions: std.ArrayList(Region) = .empty;
-    errdefer regions.deinit(allocator);
-    try regions.append(allocator, headerLineRegion(source, span.start));
-    try appendReentryHeaderLines(parsed, source, allocator, node.id, &regions);
-    try gatherContainerRegions(parsed, source, allocator, node, &regions);
-    return .{ .node = node, .regions = regions };
-}
-
-/// Delete the whole block (non-flow) mapping or sequence named by `path` —
-/// its own header line(s) — re-entered occurrences included — plus every
-/// region of its subtree (see the module doc comment). `path` may end in
-/// a key or an index (deleting one sequence element entire — though
-/// `removeSeqItem` is the more direct primitive for that). A scalar or
-/// flow-valued target is refused with `error.NotAContainer` (use `deleteKey`/
-/// `removeSeqItem`).
-pub fn deleteContainer(self: *FigEditor, path: []const AST.PathSegment) !void {
-    const parsed = try self.getParsed();
-    const source = self.source.items;
-    var g = try gatherKeyedContainer(parsed, source, self.allocator, path);
-    defer g.regions.deinit(self.allocator);
-    const n = normalizeRegions(g.regions.items);
-    try sections.spliceOut(self, g.regions.items[0..n]);
-}
-
-/// Move the whole block container at `src_path` so it begins immediately
-/// before the block container at `dest_path` (also a header-introduced
-/// mapping/sequence), or at end-of-file when `dest_path` is null. The
-/// source's scattered fragments (if any — see the module doc comment) are
-/// removed from their original positions and re-emitted **contiguously** at
-/// the destination, separated from surrounding content by a blank line; any
-/// interleaved foreign siblings stay put. A no-op when the destination falls
-/// inside the source's own gathered region.
-pub fn moveContainer(self: *FigEditor, src_path: []const AST.PathSegment, dest_path: ?[]const AST.PathSegment) !void {
-    const parsed = try self.getParsed();
-    const source = self.source.items;
-    var g = try gatherKeyedContainer(parsed, source, self.allocator, src_path);
-    defer g.regions.deinit(self.allocator);
-    const n = normalizeRegions(g.regions.items);
-
-    const dest_at = blk: {
-        if (dest_path) |dp| {
-            const dn = try parsed.ast.getValByPath(dp);
-            const dspan = parsed.span(dn);
-            if (isFlow(source, dspan)) return error.NotAContainer;
-            break :blk headerLineRegion(source, dspan.start).start;
-        }
-        break :blk source.len;
-    };
-    try sections.relocate(self, g.regions.items[0..n], dest_at);
-}
-
-/// Reorder a set of top-level block containers (named by `order`, the keys in
-/// their desired final order) among themselves. Each named container's
-/// gathered fragments are removed and re-emitted contiguously, in `order`, at
-/// the position the earliest of them currently occupies (tight `appendBlockSep`
-/// separation — these were already siblings, unlike `moveContainer`'s
-/// blank-line-separated relocation). Keys not named are untouched. Each name
-/// must resolve to a root-level mapping/sequence (`error.NotAContainer`).
-pub fn reorderContainers(self: *FigEditor, order: []const []const u8) !void {
-    if (order.len == 0) return;
-    const parsed = try self.getParsed();
-    const source = self.source.items;
-
-    var all: std.ArrayList(Region) = .empty;
-    defer all.deinit(self.allocator);
-    var bundles: std.ArrayList([]u8) = .empty;
-    defer {
-        for (bundles.items) |b| self.allocator.free(b);
-        bundles.deinit(self.allocator);
-    }
-
-    for (order) |name| {
-        const path: [1]AST.PathSegment = .{.{ .key = name }};
-        var g = try gatherKeyedContainer(parsed, source, self.allocator, &path);
-        defer g.regions.deinit(self.allocator);
-        const n = normalizeRegions(g.regions.items);
-        const owned = try sections.captureBundle(self.allocator, source, g.regions.items[0..n], &all);
-        errdefer self.allocator.free(owned);
-        try bundles.append(self.allocator, owned);
-    }
-    const total = normalizeRegions(all.items);
-    try sections.reorderBundles(self, all.items[0..total], bundles.items);
 }
 
 // =======
@@ -949,7 +708,7 @@ test "fig deleteContainer on a flow-valued key is refused" {
 test "fig delete a verbatim re-entered header removes every occurrence" {
     // The exact same header (`database`, not a deeper dotted path) written
     // twice — the shape spans alone can't discover; found via the parser's
-    // `Document.reentry_headers` record (see the module doc comment). Both
+    // `Document.node_regions` record (see the module doc comment). Both
     // header lines and every child go; the foreign sibling stays put.
     var ed = try newFigEditor("database\n> x = 1\nother = 1\ndatabase\n> y = 2\n");
     defer ed.deinit();
@@ -1029,7 +788,7 @@ test "fig move a dotted-re-entry-scattered container collapses fragments contigu
 
 test "fig move a verbatim re-entered container relocates both occurrences" {
     // Both physical `database` blocks (the creating header and the verbatim
-    // re-entry, found via `Document.reentry_headers`) move contiguously; the
+    // re-entry, found via `Document.node_regions`) move contiguously; the
     // re-entered spelling itself is preserved — still-valid fig that parses
     // to the same merged mapping.
     var ed = try newFigEditor("database\n> x = 1\nother = 1\ndatabase\n> y = 2\n");
@@ -1142,4 +901,52 @@ test "fig reorderContainers on a scalar is refused" {
     defer ed.deinit();
     try std.testing.expectError(error.NotAContainer, ed.reorderContainers(&.{ "x", "a" }));
     try expectFigSource(&ed, "x = 1\na\n> y = 2\n");
+}
+
+// --- the engine's section rule on move/reorder ---
+//
+// fig only ever guarded `deleteKey`; `moveKey` and `reorderKeys` relocated a
+// block container's widened span, which is the whole container when it is
+// contiguous and only its FIRST fragment when it has been re-entered — the
+// re-entered fragment stayed behind, still parsing, so the edit reported
+// success with half the container moved. A block container is a section node
+// now, and the one engine rule refuses all three line ops for it.
+
+test "fig moveKey refuses a block container at either end" {
+    var ed = try newFigEditor("a\n> x = 1\nother = 1\na\n> y = 2\nb\n> z = 3\n");
+    defer ed.deinit();
+    // Moving `a` by its span would carry only the first `a` block.
+    try std.testing.expectError(error.CannotMoveContainer, ed.moveKey(&.{.{ .key = "a" }}, &.{.{ .key = "b" }}));
+    try std.testing.expectError(error.CannotMoveContainer, ed.moveKey(&.{.{ .key = "other" }}, &.{.{ .key = "b" }}));
+    try expectFigSource(&ed, "a\n> x = 1\nother = 1\na\n> y = 2\nb\n> z = 3\n");
+    // `moveContainer` carries both fragments.
+    try ed.moveContainer(&.{.{ .key = "a" }}, null);
+    try expectFigSource(&ed, "other = 1\nb\n> z = 3\n\na\n> x = 1\na\n> y = 2\n");
+}
+
+test "fig moveKey still moves scalar entries, inside and around a container" {
+    var ed = try newFigEditor("x = 1\ny = 2\na\n> p = 1\n> q = 2\n");
+    defer ed.deinit();
+    try ed.moveKey(&.{.{ .key = "y" }}, &.{.{ .key = "x" }});
+    try ed.moveKey(&.{ .{ .key = "a" }, .{ .key = "q" } }, &.{ .{ .key = "a" }, .{ .key = "p" } });
+    try expectFigSource(&ed, "y = 2\nx = 1\na\n> q = 2\n> p = 1\n");
+}
+
+test "fig reorderKeys refuses a reorder that shifts a block container" {
+    var ed = try newFigEditor("x = 1\na\n> p = 1\nb\n> q = 2\n");
+    defer ed.deinit();
+    try std.testing.expectError(error.CannotReorderContainers, ed.reorderKeys(&.{}, &.{ "b", "a" }));
+    try expectFigSource(&ed, "x = 1\na\n> p = 1\nb\n> q = 2\n");
+    // Scalars reordered around a container that keeps its index are fine.
+    try ed.reorderKeys(&.{.{ .key = "a" }}, &.{"p"});
+    try expectFigSource(&ed, "x = 1\na\n> p = 1\nb\n> q = 2\n");
+}
+
+test "fig replaceValAtPath still re-frames a contiguous block container through its hook" {
+    // The section rule guards only the ENGINE's splice; fig's hook owns the
+    // target and re-frames the value in place.
+    var ed = try newFigEditor("a\n> p = 1\nz = 0\n");
+    defer ed.deinit();
+    try ed.replaceValAtPath(&.{.{ .key = "a" }}, "q = 2\nr = 3\n");
+    try expectFigSource(&ed, "a\n> q = 2\n> r = 3\nz = 0\n");
 }

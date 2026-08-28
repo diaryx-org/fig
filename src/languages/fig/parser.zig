@@ -30,9 +30,10 @@
 //! Every built node also carries a source `Span` (see "AST assembly" below) —
 //! the foundation `Editor(fig.Language.FIG)` needs to splice edits in place
 //! (`edit`/`set`/`insert`/`delete`/`comment`; see `editor_helper.zig`).
-//! Whole-container structural ops — `deleteContainer`/`moveContainer`/
-//! `reorderContainers`, over the region gather in `editor_helper.zig` — are
-//! built on those spans plus `reentry_headers` below.
+//! Whole-container structural ops — the generic `deleteContainer`/
+//! `moveContainer`/`reorderContainers` in `editor.zig` — are built on those
+//! spans plus `Document.node_regions`, which this parser fills with every
+//! block container's header lines (see `recordRegions`).
 
 pub const Parser = @This();
 
@@ -398,10 +399,11 @@ recover: bool = false,
 /// caller's `Report.errors` by `parseImpl`). Populated only in `recover` mode;
 /// empty otherwise.
 diagnostics: std.ArrayList(Diagnostic) = .empty,
-/// `PendingContainer.reentries` resolved to built node ids during AST
-/// assembly (arena-backed; duped out to `Document.reentry_headers`). Empty
-/// unless some header re-opened an existing container.
-built_reentries: std.ArrayList(Document.ReentryHeader) = .empty,
+/// Every block container's header lines, keyed by built node id — the line
+/// that created it plus every `PendingContainer.reentries` entry — filled
+/// during AST assembly (arena-backed; duped out to `Document.node_regions`).
+/// Empty for a document with no block container.
+built_regions: std.ArrayList(Document.NodeRegion) = .empty,
 
 // ── Intermediate tree types ─────────────────────────────────────────────────
 
@@ -426,9 +428,10 @@ const PendingContainer = struct {
     /// re-opens are recorded: a header/assignment whose final segment CREATES
     /// something new anchors its own line through that new node's span, and a
     /// mid-path re-open always rides a line anchored by its final segment one
-    /// way or the other. Threaded out to `Document.reentry_headers` (keyed by
-    /// built node id) during AST assembly, so `Editor(Fig)`'s region gather
-    /// can remove/relocate every physical header occurrence.
+    /// way or the other. Threaded out to `Document.node_regions` (keyed by
+    /// built node id, alongside the creating line) during AST assembly, so
+    /// the editor's region gather can remove/relocate every physical header
+    /// occurrence.
     reentries: std.ArrayList(usize) = .empty,
 
     fn open(self: *PendingContainer) Error!*PendingContainer {
@@ -578,7 +581,7 @@ const Resolved = struct { container: *PendingContainer, owner: *TNode, entry: ?*
 pub fn parseAbstract(allocator: Allocator, input: []const u8, format: Type) !AST {
     const parsed = try parse(allocator, input, format);
     allocator.free(parsed.node_spans);
-    allocator.free(parsed.reentry_headers);
+    allocator.free(parsed.node_regions);
     return parsed.ast;
 }
 
@@ -659,9 +662,10 @@ fn parseImpl(allocator: Allocator, input: []const u8, format: Type, out: ?*Repor
     errdefer ast.deinit();
     const node_spans = try b.takeSpans();
     errdefer allocator.free(node_spans);
-    const reentry_headers = try allocator.dupe(Document.ReentryHeader, self.built_reentries.items);
+    const node_regions = try allocator.dupe(Document.NodeRegion, self.built_regions.items);
+    Document.sortRegions(node_regions);
 
-    return .{ .source = input, .ast = ast, .node_spans = node_spans, .reentry_headers = reentry_headers };
+    return .{ .source = input, .ast = ast, .node_spans = node_spans, .node_regions = node_regions };
 }
 
 /// Return `err` with the diagnostic caret pinned to `offset` — for the sites
@@ -2053,6 +2057,11 @@ fn buildNode(self: *Parser, b: *AST.Builder, node: *TNode) Error!AST.Node.Id {
         .container => |c| blk: {
             const built = try self.buildContainer(b, c);
             node.span.end = @max(node.span.end, built.end);
+            // A BLOCK container (not a flow `{…}`/`[…]`, not the root) is a
+            // section node: its header line(s) go on the document's region
+            // table. `node.span.start` sits on the creating line (see
+            // `TNode.span`), which is all the line recovery needs.
+            if (!c.closed and c != &self.root) try self.recordRegions(c, built.id, node.span.start);
             break :blk built.id;
         },
     };
@@ -2083,7 +2092,6 @@ fn buildContainer(self: *Parser, b: *AST.Builder, c: *PendingContainer) Error!Bu
                 kv_ids.appendAssumeCapacity(kv_id);
             }
             const id = try b.addMappingFromEntries(kv_ids.items);
-            try self.recordReentries(c, id);
             return .{ .id = id, .end = end };
         },
         .sequence => {
@@ -2097,18 +2105,23 @@ fn buildContainer(self: *Parser, b: *AST.Builder, c: *PendingContainer) Error!Bu
                 ids.appendAssumeCapacity(el_id);
             }
             const id = try b.addSequence(ids.items);
-            try self.recordReentries(c, id);
             return .{ .id = id, .end = end };
         },
     }
 }
 
-/// Resolve `c`'s recorded re-entry header-line offsets (if any) to the built
-/// node id `id` — the `PendingContainer` → `Document.reentry_headers` bridge.
-fn recordReentries(self: *Parser, c: *const PendingContainer, id: AST.Node.Id) Error!void {
-    for (c.reentries.items) |off| {
-        try self.built_reentries.append(self.allocator, .{ .node_id = id, .content_start = off });
-    }
+/// Record the header lines of the block container built as node `id`: the
+/// line holding `created_at` (its creating header — a key, a `*`, an `[i]`),
+/// then every later header that re-opened it (`PendingContainer.reentries`).
+/// The `PendingContainer` → `Document.node_regions` bridge.
+fn recordRegions(self: *Parser, c: *const PendingContainer, id: AST.Node.Id, created_at: usize) Error!void {
+    try self.appendRegion(id, created_at);
+    for (c.reentries.items) |off| try self.appendRegion(id, off);
+}
+
+fn appendRegion(self: *Parser, id: AST.Node.Id, at: usize) Error!void {
+    const line = Document.lineRegionAt(self.source, at);
+    try self.built_regions.append(self.allocator, .{ .node_id = id, .start = line.start, .end = line.end });
 }
 
 // ── Char-level helpers ───────────────────────────────────────────────────────
@@ -2239,25 +2252,35 @@ test "nested containers via markers" {
     try testing.expectEqualStrings("10", (try ast.getValByPath(&.{ .{ .key = "database" }, .{ .key = "pool" }, .{ .key = "size" } })).kind.number.raw);
 }
 
-test "reentry_headers records every header-final re-open, keyed by node id" {
+test "node_regions records every header line of a re-entered container, keyed by node id" {
     const src = "database\n> x = 1\nother = 1\ndatabase\n> y = 2\n";
     const parsed = try parse(testing.allocator, src, .Fig);
     defer parsed.deinit(testing.allocator);
-    try testing.expectEqual(@as(usize, 1), parsed.reentry_headers.len);
-    const rh = parsed.reentry_headers[0];
     const db = try parsed.ast.getValByPath(&.{.{ .key = "database" }});
-    try testing.expectEqual(db.id, rh.node_id);
-    // Anchored at the SECOND "database" header line (the re-open), which the
-    // creating line's span cannot carry.
-    try testing.expectEqual(std.mem.lastIndexOf(u8, src, "database").?, rh.content_start);
+    const regs = parsed.regionsOf(db.id);
+    try testing.expectEqual(@as(usize, 2), regs.len);
+    // The creating header line, then the SECOND "database" line (the
+    // re-open), which the creating line's span cannot carry.
+    try testing.expectEqual(@as(usize, 0), regs[0].start);
+    try testing.expectEqual("database\n".len, regs[0].end);
+    try testing.expectEqual(std.mem.lastIndexOf(u8, src, "database").?, regs[1].start);
+    try testing.expectEqual(std.mem.lastIndexOf(u8, src, "database").? + "database\n".len, regs[1].end);
+    // A scalar is never a section; the root never is either.
+    try testing.expect(!parsed.isSection(parsed.ast.nodes[parsed.ast.root]));
+    try testing.expect(!parsed.isSection(try parsed.ast.getValByPath(&.{.{ .key = "other" }})));
 }
 
-test "reentry_headers is empty without re-entry" {
-    const parsed = try parse(testing.allocator, "database\n> x = 1\ndatabase.pool\n> y = 2\n", .Fig);
+test "node_regions holds one line per block container without re-entry" {
+    const parsed = try parse(testing.allocator, "database\n> x = 1\ndatabase.pool\n> y = 2\np = { a = 1 }\n", .Fig);
     defer parsed.deinit(testing.allocator);
-    // `database.pool` CREATES pool (anchored by pool's own span) — a deeper
-    // dotted path is not a re-open of `database` itself.
-    try testing.expectEqual(@as(usize, 0), parsed.reentry_headers.len);
+    // `database.pool` CREATES pool (anchored by pool's own line) — a deeper
+    // dotted path is not a re-open of `database` itself. A flow value is not
+    // a section at all.
+    const db = try parsed.ast.getValByPath(&.{.{ .key = "database" }});
+    try testing.expectEqual(@as(usize, 1), parsed.regionsOf(db.id).len);
+    const pool = try parsed.ast.getValByPath(&.{ .{ .key = "database" }, .{ .key = "pool" } });
+    try testing.expectEqual(@as(usize, 1), parsed.regionsOf(pool.id).len);
+    try testing.expect(!parsed.isSection(try parsed.ast.getValByPath(&.{.{ .key = "p" }})));
 }
 
 test "dotted key flattener" {

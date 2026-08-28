@@ -1379,9 +1379,10 @@ re-selects an existing container, an `xs[i]` header re-opening an element),
 whose line sits in no child's span since a container's span anchors only its
 CREATING line — is solved exactly rather than heuristically: the parser
 records every header-final re-open at its single choke point
-(`resolveHeaderFinal`) into a `Document.reentry_headers` side-table (node id
-→ header-line position), and the gather folds those lines into the region
-set. This matters beyond hand-authored files: `fig fmt`'s grouped hoisting
+(`resolveHeaderFinal`) and, at AST assembly, every block container's header
+lines — the creating line and each re-open — into `Document.node_regions`
+(node id → header lines), which the editor's generic gather
+(`editor/regions.zig`) folds into the region set. This matters beyond hand-authored files: `fig fmt`'s grouped hoisting
 *emits* verbatim re-entered headers (a second flat-sibling run re-enters its
 section header), so delete/move/reorder must handle them, not merely fail
 safe. `deleteKey` still refuses a block-container-valued key outright

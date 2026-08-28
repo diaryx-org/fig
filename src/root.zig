@@ -53,7 +53,9 @@ test {
     _ = @import("languages/plist/plist.zig");
     _ = @import("languages/nestedtext/nestedtext.zig");
     _ = @import("languages/shared/flat_map.zig");
+    _ = @import("document.zig");
     _ = @import("editor.zig");
+    _ = @import("editor/regions.zig");
     _ = @import("patch.zig");
     _ = @import("embed.zig");
     _ = @import("lossless.zig");

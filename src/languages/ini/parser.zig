@@ -44,14 +44,13 @@ current_table: AST.Node.Id = 0,
 // next key/section-header claims it (or it dangles at EOF).
 pending_leading: std.ArrayList(AST.Comment) = .empty,
 comments_seen: bool = false,
-/// Every REOPENED `[section]` header line — the second and later `[a]` in
-/// `[a]…[b]…[a]`. A section's node span anchors only the header that CREATED
-/// it, so these extra positions are what let `Editor(Ini)`'s region gather
-/// remove or relocate all of a section's physical occurrences rather than just
-/// the first. Threaded out to `Document.reentry_headers`, the same field fig's
-/// parser fills for the same reason; empty for the overwhelming majority of
-/// documents, since reopening a section is unusual (and warned about).
-built_reentries: std.ArrayList(Document.ReentryHeader) = .empty,
+/// Every `[section]` header line, keyed by the section's node id — the one
+/// that created it and every REOPENING `[a]` in `[a]…[b]…[a]`. A section's
+/// node span anchors only its name token in the first header, so this is what
+/// lets the editor's region gather find every physical occurrence rather than
+/// just the first. Threaded out to `Document.node_regions`, the same table
+/// fig's and TOML's parsers fill for the same reason.
+built_regions: std.ArrayList(Document.NodeRegion) = .empty,
 
 recover: bool = false,
 diagnostics: std.ArrayList(Diagnostic) = .empty,
@@ -189,7 +188,7 @@ fn parseImpl(allocator: std.mem.Allocator, input: []const u8, format: Type, out:
 pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!AST {
     const doc = try parse(allocator, input, format);
     allocator.free(doc.node_spans);
-    allocator.free(doc.reentry_headers);
+    allocator.free(doc.node_regions);
     return doc.ast;
 }
 
@@ -242,7 +241,7 @@ fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Documen
     defer self.pending_leading.deinit(self.allocator);
     // Covers both exits, so `parseImpl`'s error path needs no arm for it
     // (unlike `arena.nodes`/`spans`, which are only moved out on success).
-    defer self.built_reentries.deinit(self.allocator);
+    defer self.built_regions.deinit(self.allocator);
     defer {
         for (self.arena.node_comments.items) |nc| {
             self.allocator.free(nc.leading);
@@ -283,9 +282,10 @@ fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Documen
         self.arena.node_comments = .empty;
     }
 
-    const reentry_headers = try self.allocator.dupe(Document.ReentryHeader, self.built_reentries.items);
+    const node_regions = try self.allocator.dupe(Document.NodeRegion, self.built_regions.items);
+    Document.sortRegions(node_regions);
 
-    return .{ .source = input, .ast = ast, .node_spans = spans, .reentry_headers = reentry_headers };
+    return .{ .source = input, .ast = ast, .node_spans = spans, .node_regions = node_regions };
 }
 
 // ── Token cursor ────────────────────────────────────────────────────────────
@@ -364,16 +364,23 @@ fn parseSectionHeader(self: *Parser) ParserError!void {
         self.current_table = kv.value;
         // The header line that REOPENED this section. Its position is in no
         // node's span (the section's own anchors the first `[a]`), so record it
-        // for the editor's region gather — see `built_reentries`.
-        try self.built_reentries.append(self.allocator, .{ .node_id = kv.value, .content_start = name_tok.span.start });
+        // for the editor's region gather — see `built_regions`.
+        try self.recordHeader(kv.value, name_tok.span.start);
         try self.addWarning(.duplicate_section, name_tok.span);
     } else {
         const key_id = try self.arena.addNode(.{ .string = name }, name_tok.span);
         try self.claimLeading(key_id);
         const map_id = try self.arena.addNode(.{ .mapping = null }, name_tok.span);
         _ = try flat_map.putEntry(&self.arena, self.root_id, key_id, map_id, .overwrite);
+        try self.recordHeader(map_id, name_tok.span.start);
         self.current_table = map_id;
     }
+}
+
+/// Record the header line holding `at` as one of section `id`'s regions.
+fn recordHeader(self: *Parser, id: AST.Node.Id, at: usize) ParserError!void {
+    const line = Document.lineRegionAt(self.source, at);
+    try self.built_regions.append(self.allocator, .{ .node_id = id, .start = line.start, .end = line.end });
 }
 
 /// `key = value`, attaching to `current_table`.
@@ -521,22 +528,29 @@ test "parseCollecting recovers across multiple parser-level errors" {
     testing.allocator.free(report.warnings);
 }
 
-test "reentry_headers records every reopened [section], keyed by node id" {
+test "node_regions records every [section] header line, reopenings included, keyed by node id" {
     const src = "[a]\nx = 1\n[b]\ny = 2\n[a]\nz = 3\n";
     const parsed = try parse(testing.allocator, src, .INI);
     defer parsed.deinit(testing.allocator);
-    try testing.expectEqual(@as(usize, 1), parsed.reentry_headers.len);
-    const rh = parsed.reentry_headers[0];
     const a = try parsed.ast.getValByPath(&.{.{ .key = "a" }});
-    try testing.expectEqual(a.id, rh.node_id);
-    // Anchored at the SECOND `[a]`'s name token — the occurrence the section's
-    // own span (pinned to the first header) cannot carry. `Editor(Ini)`'s
-    // section gather is the only consumer; see `editor_helper.zig`.
-    try testing.expectEqual(std.mem.lastIndexOf(u8, src, "a").?, rh.content_start);
+    const regs = parsed.regionsOf(a.id);
+    try testing.expectEqual(@as(usize, 2), regs.len);
+    try testing.expectEqual(@as(usize, 0), regs[0].start);
+    try testing.expectEqual("[a]\n".len, regs[0].end);
+    // The SECOND `[a]` line — the occurrence the section's own span (pinned to
+    // the first header's name token) cannot carry. The editor's region gather
+    // is the consumer; see `editor/regions.zig`.
+    try testing.expectEqual(std.mem.lastIndexOf(u8, src, "[a]").?, regs[1].start);
+    try testing.expectEqual(src.len - "z = 3\n".len, regs[1].end);
+    const b = try parsed.ast.getValByPath(&.{.{ .key = "b" }});
+    try testing.expectEqual(@as(usize, 1), parsed.regionsOf(b.id).len);
+    // Neither the root nor an entry is a section.
+    try testing.expect(!parsed.isSection(parsed.ast.nodes[parsed.ast.root]));
+    try testing.expect(!parsed.isSection(try parsed.ast.getValByPath(&.{ .{ .key = "a" }, .{ .key = "x" } })));
 }
 
-test "reentry_headers is empty without a reopened section" {
-    const parsed = try parse(testing.allocator, "[a]\nx = 1\n[b]\ny = 2\n", .INI);
+test "node_regions is empty for a document with no section" {
+    const parsed = try parse(testing.allocator, "x = 1\ny = 2\n", .INI);
     defer parsed.deinit(testing.allocator);
-    try testing.expectEqual(@as(usize, 0), parsed.reentry_headers.len);
+    try testing.expectEqual(@as(usize, 0), parsed.node_regions.len);
 }

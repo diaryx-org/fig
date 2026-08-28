@@ -49,6 +49,14 @@ current_table: AST.Node.Id = 0,
 /// Per-mapping provenance, used to enforce TOML's table/key conflict rules.
 /// Absent ⇒ a value node or the root.
 table_meta: std.AutoHashMapUnmanaged(AST.Node.Id, TableMeta) = .empty,
+/// Every header line of every BLOCK table, keyed by the table's node id: the
+/// `[a]`/`[[a]]` line that created or re-opened it, or — for a dotted table —
+/// each `a.b = 1` line that created or extended it. A block table's node span
+/// is only its key segment, so these lines are what let the editor's region
+/// gather (`editor/regions.zig`) find the table's physical extent; an inline
+/// table `{…}` and a static array span their own text and are not recorded.
+/// Threaded out to `Document.node_regions`.
+built_regions: std.ArrayList(Document.NodeRegion) = .empty,
 
 /// Error-recovery mode: when set, a failed top-level statement is recorded
 /// into `diagnostics` and the parser resyncs to the next statement boundary
@@ -289,6 +297,7 @@ fn parseImpl(allocator: std.mem.Allocator, input: []const u8, format: Type, out:
         }
         parser.nodes.deinit(allocator);
         parser.spans.deinit(allocator);
+        parser.built_regions.deinit(allocator);
         for (parser.owned_strings.items) |s| allocator.free(s);
         parser.owned_strings.deinit(allocator);
         return err;
@@ -298,6 +307,7 @@ fn parseImpl(allocator: std.mem.Allocator, input: []const u8, format: Type, out:
 pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!AST {
     const doc = try parse(allocator, input, format);
     allocator.free(doc.node_spans);
+    allocator.free(doc.node_regions);
     return doc.ast;
 }
 
@@ -475,6 +485,9 @@ fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Documen
     errdefer self.allocator.free(nodes);
     const spans = try self.spans.toOwnedSlice(self.allocator);
     errdefer self.allocator.free(spans);
+    const node_regions = try self.built_regions.toOwnedSlice(self.allocator);
+    errdefer self.allocator.free(node_regions);
+    Document.sortRegions(node_regions);
     const owned = try self.owned_strings.toOwnedSlice(self.allocator);
 
     var ast: AST = .{
@@ -492,6 +505,7 @@ fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Documen
         .source = input,
         .ast = ast,
         .node_spans = spans,
+        .node_regions = node_regions,
     };
 }
 
@@ -633,6 +647,7 @@ fn parseTableHeader(self: *Parser) ParserError!void {
         const m = self.table_meta.get(child) orelse TableMeta{};
         if (m.explicit or m.dotted or m.inline_table) return self.failSpan(final.span.start, final.span.end, error.DuplicateKey);
         try self.table_meta.put(self.allocator, child, .{ .explicit = true });
+        try self.recordHeader(child, final.span.start);
         self.current_table = child;
     } else {
         self.current_table = try self.createTable(cur, final, .{ .explicit = true });
@@ -660,13 +675,18 @@ fn parseArrayTable(self: *Parser) ParserError!void {
         // See `parseTableHeader`: the `[[header]]` line is fully consumed
         // already, so pin the caret to the conflicting final segment.
         if (self.nodes.items[child].kind != .sequence or !m.aot) return self.failSpan(final.span.start, final.span.end, error.DuplicateKey);
+        try self.recordHeader(child, final.span.start);
         self.current_table = try self.appendArrayElement(child);
     } else {
         const seq_id = try self.addNode(.{ .sequence = null }, final.span);
         try self.appendKeyValue(cur, final, seq_id);
         try self.table_meta.put(self.allocator, seq_id, .{ .aot = true });
+        try self.recordHeader(seq_id, final.span.start);
         self.current_table = try self.appendArrayElement(seq_id);
     }
+    // The new element shares the array's node span, so its `[[…]]` line is
+    // recorded on the element too — the only way its header is findable.
+    try self.recordHeader(self.current_table, final.span.start);
 }
 
 /// Walk a header/array-of-tables path of intermediate segments from `start`,
@@ -764,6 +784,9 @@ fn navigateDottedPath(self: *Parser, start: AST.Node.Id, intermediates: []const 
             if (self.nodes.items[child].kind != .mapping) return self.failSpan(seg.span.start, seg.span.end, error.DuplicateKey);
             const m = self.table_meta.get(child) orelse TableMeta{};
             if (m.explicit or m.inline_table) return self.failSpan(seg.span.start, seg.span.end, error.DuplicateKey);
+            // A dotted line extending an existing dotted/implicit table is a
+            // re-entry of it — this line is in no node's span of that table.
+            try self.recordHeader(child, seg.span.start);
             cur = child;
         } else {
             cur = try self.createTable(cur, seg, .{ .dotted = true });
@@ -823,7 +846,17 @@ fn createTable(self: *Parser, parent: AST.Node.Id, key: KeySeg, meta: TableMeta)
     const map_id = try self.addNode(.{ .mapping = null }, key.span);
     try self.appendKeyValue(parent, key, map_id);
     try self.table_meta.put(self.allocator, map_id, meta);
+    // Explicit, implicit or dotted, the table is a section node: record the
+    // line that created it. (Inline tables never come through here.)
+    try self.recordHeader(map_id, key.span.start);
     return map_id;
+}
+
+/// Record the header line holding `at` as one of block table `id`'s regions
+/// — see `built_regions`.
+fn recordHeader(self: *Parser, id: AST.Node.Id, at: usize) ParserError!void {
+    const line = Document.lineRegionAt(self.source, at);
+    try self.built_regions.append(self.allocator, .{ .node_id = id, .start = line.start, .end = line.end });
 }
 
 fn parseValue(self: *Parser) ParserError!AST.Node.Id {

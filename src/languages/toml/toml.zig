@@ -85,6 +85,10 @@ pub const Language = struct {
             // `appendTableToArray`), and TOML has no block scalar array — so
             // the generic block-sequence edits refuse with `NotAnInlineArray`.
             .block_seq_editable = false,
+            // A section format: a `[table]`, `[[array]]` or dotted table is
+            // assembled from scattered lines, which `parser.zig` records in
+            // `Document.node_regions`. Its refusals say "table".
+            .section_noun = .table,
         };
     }
 
@@ -108,22 +112,11 @@ pub const Language = struct {
     /// reparent it.
     pub const insertKey = edit.tomlInsertKey;
 
-    /// A `[header]` table has no contiguous line span, so the generic
-    /// line-based delete would remove its header and orphan the body.
-    pub const deleteKeyGuard = edit.tableDeleteGuard;
-
-    /// A block table's node span is its key segment inside the `[header]` (or
-    /// its dotted key), not any value text, so the generic splice would rewrite
-    /// the table's NAME instead of its body.
-    pub const replaceValGuard = edit.tableReplaceGuard;
-
-    /// A table's block is its header LINE, so moving it strands the body — and
-    /// moving anything to sit before a header lands it inside the table above.
-    pub const moveKeyGuard = edit.tableMoveGuard;
-
-    /// The last entry's block stops at its own line, so a reorder that shifts a
-    /// `[header]` table leaves that table's body behind for its new neighbour.
-    pub const reorderKeysGuard = edit.tableReorderGuard;
+    // No delete/replace/move/reorder guards: the engine's section rule covers
+    // them. A block table is a section node (`Document.node_regions`), and a
+    // section node cannot be line-spliced — `deleteKey`, `replaceValAtPath`,
+    // `moveKey` and `reorderKeys` refuse it in this format's vocabulary
+    // (`CannotDeleteTable`, …) and point at the whole-container ops.
 
     /// A table's name is written once per `[header]`/dotted line that mentions
     /// it, but only the first has a key node — so the generic one-span splice
@@ -133,31 +126,21 @@ pub const Language = struct {
 
     // ── Whole-container ops ──────────────────────────────────────────────────
     //
-    // The EXCLUSIVE operations: they override nothing, because the generic
-    // engine has no counterpart for editing a container assembled from
-    // scattered `[header]` regions. Declaring one is still the whole of opting
-    // in — `Editor` dispatches on `@hasDecl` here exactly as it does for the
-    // hooks above. TOML declares all six; a format that declares none simply
-    // has no whole-container surface.
-
-    /// Every region of the table / array-of-tables / AoT element's subtree.
-    pub const deleteContainer = edit.deleteTable;
+    // `deleteContainer`, `moveContainer` and `reorderContainers` are GENERIC:
+    // `editor.zig` derives a table's scattered regions from `Document.
+    // node_regions` and needs nothing from here. The three below are the ops
+    // that have to SPELL something TOML — a `[header]` line, or every mention
+    // of a table's name — and stay hooks; `Editor` dispatches on `@hasDecl`
+    // for them exactly as for the hooks above.
 
     /// A new `[path]` table, spliced past the parent's whole subtree so no
     /// existing key is reparented.
     pub const insertContainer = edit.insertTable;
 
     /// TOML alone needs a rename op: the renamed segment appears in every
-    /// descendant header (`[a.b]`, `[a.b.c]`, `[[a.b]]`), not just its own.
+    /// descendant header (`[a.b]`, `[a.b.c]`, `[[a.b]]`) and every dotted line
+    /// that spells it, not just its own key node.
     pub const renameContainer = edit.renameTable;
-
-    /// The table's scattered fragments, re-emitted contiguously at the
-    /// destination; interleaved foreign tables stay put.
-    pub const moveContainer = edit.moveTable;
-
-    /// Top-level tables reordered among themselves, each re-emitted
-    /// contiguously at the position the earliest currently occupies.
-    pub const reorderContainers = edit.reorderTables;
 
     /// A new `[[header]]` element on the end of an array-of-tables, past every
     /// line of the current last element's subtree.

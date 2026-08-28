@@ -53,6 +53,10 @@ pub const Language = struct {
             // is the two-character STRING `{}`, not a container — so `set`
             // cannot auto-vivify a missing ancestor here at all.
             .empty_map_literal = null,
+            // A section format: a `[section]` may be reopened and so
+            // scattered, and `parser.zig` records every section's header
+            // lines in `Document.node_regions`. Its refusals say "section".
+            .section_noun = .section,
         };
     }
 
@@ -76,42 +80,23 @@ pub const Language = struct {
     /// a bracket-delimited flow container.
     pub const insertKey = edit.iniInsertKey;
 
-    /// A `[section]`'s span is anchored at its first occurrence's header alone,
-    /// so a line delete would orphan a reopened section's later entries.
-    pub const deleteKeyGuard = edit.sectionDeleteGuard;
-
-    /// That same span is the section's NAME token, so a value splice at a
-    /// section path would rename the header rather than replace its body.
-    pub const replaceValGuard = edit.sectionReplaceGuard;
-
-    /// A section's block is its header line, so a move relocates the name and
-    /// leaves the entries — and moving anything before a header lands it in the
-    /// section above.
-    pub const moveKeyGuard = edit.sectionMoveGuard;
-
-    /// The last entry's block stops at its own header, so a reorder that shifts
-    /// a section hands that section's entries to its new neighbour.
-    pub const reorderKeysGuard = edit.sectionReorderGuard;
+    // No delete/replace/move/reorder guards: the engine's section rule covers
+    // them. A `[section]` is a section node (`Document.node_regions`) — its
+    // span is anchored at its first header's name token alone — and a section
+    // node cannot be line-spliced: `deleteKey`, `replaceValAtPath`, `moveKey`
+    // and `reorderKeys` refuse it (`CannotDeleteSection`, …) and point at the
+    // whole-container ops.
 
     // ── Whole-container ops ──────────────────────────────────────────────────
     //
-    // The EXCLUSIVE operations (see `editor.Editor`'s block of the same name).
-    // A reopened `[section]` is scattered through the file exactly as a TOML
-    // table or fig container is, so INI answers it the same way: gather the
-    // section's disjoint regions, rebuild once. No `insertContainer` (INI
-    // cannot auto-vivify at all — `syntax().empty_map_literal` is null) and no
-    // `renameContainer` (a header's key is one tight span the generic
+    // All generic (see `editor.Editor`'s block of the same name). A reopened
+    // `[section]` is scattered through the file exactly as a TOML table or fig
+    // container is, and `deleteContainer`/`moveContainer`/`reorderContainers`
+    // derive its regions — every header occurrence plus its entries — from
+    // `Document.node_regions`, with no INI code at all. No `insertContainer`
+    // (INI cannot auto-vivify at all — `syntax().empty_map_literal` is null)
+    // and no `renameContainer` (a header's key is one tight span the generic
     // `replaceKeyAtPath` rewrites, with no dotted descendants to follow).
-
-    /// Every occurrence of the section's header, plus its entries — the op
-    /// `deleteKeyGuard` above refuses a line-delete in favour of.
-    pub const deleteContainer = edit.deleteContainer;
-
-    /// The section's fragments, re-emitted contiguously at the destination.
-    pub const moveContainer = edit.moveContainer;
-
-    /// Top-level sections reordered among themselves.
-    pub const reorderContainers = edit.reorderContainers;
 };
 
 // Test discovery: importing `ini.zig` (from root.zig) pulls in every INI

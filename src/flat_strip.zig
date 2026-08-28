@@ -6,7 +6,7 @@
 //! warn, then this, exactly mirroring TOML's existing `null`-stripping path in
 //! `cli/actions.zig`'s `runGet`).
 //!
-//! Kept as its own small pass rather than folded into `Lossless.Target`/
+//! Kept as its own small pass rather than folded into `Lossless.NativeKinds`/
 //! `lossyStrip` because the capability rule here is DEPTH-based (a mapping
 //! nested past some per-format limit) rather than scalar-kind-based —
 //! bolting a depth parameter onto `Lossless.isUnrepresentable` for the sake of

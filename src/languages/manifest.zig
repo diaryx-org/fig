@@ -124,6 +124,68 @@ pub const Caps = struct {
     edit: bool = false,
     /// `print` can write this format.
     serialize: bool = false,
+    /// What the lossless `$fig` envelope pass (`lossless.zig`) may assume
+    /// about this format's value model on OUTPUT, or null when the format
+    /// takes no envelope at all.
+    ///
+    /// Non-null says: when `--lossless` targets this format, wrap every
+    /// scalar kind NOT marked native in `NativeKinds` in a `$fig` envelope so
+    /// a later run can rebuild it, and leave the marked kinds bare. Only the
+    /// four typed formats with a real value model and a mapping to carry the
+    /// envelope in — JSON, YAML, TOML, ZON — declare one.
+    ///
+    /// Null says: never encode an envelope into this format (envelopes in
+    /// its INPUT are still decoded). Two distinct reasons collapse into the
+    /// one answer, deliberately, because the pass has one behaviour for both:
+    ///
+    ///   * fig and canonical spell every kind directly, so an envelope would
+    ///     preserve nothing a plain print does not.
+    ///   * XML, INI, dotenv, `.properties`, plist and NestedText have no typed
+    ///     scalar envelope of their own — their printers already reduce the
+    ///     value to text, so a mapping-shaped envelope would be no more
+    ///     recoverable than the degraded scalar it replaced.
+    ///
+    /// A field on `Caps` rather than its own `Language` declaration because it
+    /// IS a capability — "can fig round-trip a value through this format
+    /// without loss, and which values need help" — and because the seven
+    /// null answers then cost nothing to state: the default is the
+    /// conservative one. It sits on the LANGUAGE (json/jsonc/json5 share it),
+    /// which is why JSON5's native `Infinity`/`NaN` are still enveloped: the
+    /// declaration is per-language and JSON's is the strict dialect's.
+    lossless: ?NativeKinds = null,
+};
+
+/// The scalar kinds a format spells natively, beyond the core four every
+/// serialize format has (boolean, string, number, and the two containers).
+/// Read by `lossless.zig`, whose `needsEnvelope` is exactly "the kind is one
+/// of these and the format did not mark it".
+///
+/// One field per kind the envelope can carry: `null`, plus one per
+/// `AST.Node.Kind.Extended.ExtKind` member, named identically. This module is
+/// a leaf and cannot name the AST's enum, so the correspondence is a
+/// comptime pin in `lossless.zig` (both directions) rather than a type: a new
+/// `ExtKind` fails the build until a field for it exists here, and a field
+/// with no `ExtKind` behind it fails the same way. Every field defaults to
+/// false — a format declares what it holds, and an omission is "envelope it",
+/// which is always lossless if sometimes unidiomatic.
+pub const NativeKinds = struct {
+    /// A bare `null`. Every typed format but TOML has one; TOML's absence is
+    /// the one kind the lossy path (`Lossless.lossyStrip`) DROPS rather than
+    /// degrades, since there is no string to collapse it to.
+    null: bool = false,
+    /// The four RFC-3339-derived TOML datetimes.
+    offset_datetime: bool = false,
+    local_datetime: bool = false,
+    local_date: bool = false,
+    local_time: bool = false,
+    /// ZON's `.name` and `'c'` literals.
+    enum_literal: bool = false,
+    char_literal: bool = false,
+    /// A non-finite float (`inf`/`nan`, JSON5's `Infinity`/`NaN`).
+    number_special: bool = false,
+    /// plist's `<date>` and `<data>`.
+    plist_date: bool = false,
+    plist_data: bool = false,
 };
 
 /// How a format spells itself when it is EMBEDDED in a host document — the

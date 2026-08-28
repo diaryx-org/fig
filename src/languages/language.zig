@@ -13,24 +13,46 @@ pub const Language = @This();
 pub const CommentStyle = manifest.CommentStyle;
 pub const KeyStyle = manifest.KeyStyle;
 pub const Caps = manifest.Caps;
+pub const NativeKinds = manifest.NativeKinds;
 pub const Syntax = manifest.Syntax;
 
-// Per-language gates: a compiled-out format resolves to `void`, so its module is
-// never referenced and never built. Every call site that touches a gated
-// `Language.*` must guard the access behind the same `build_options.lang_*`
-// flag (a `comptime` check), or it will fail to compile against `void`. JSON is
-// gateable like the rest now that `detect` no longer assumes it as a base.
-pub const JSON = if (build_options.lang_json) @import("json/json.zig").Language else void;
-pub const YAML = if (build_options.lang_yaml) @import("yaml/yaml.zig").Language else void;
-pub const TOML = if (build_options.lang_toml) @import("toml/toml.zig").Language else void;
-pub const ZON = if (build_options.lang_zon) @import("zon/zon.zig").Language else void;
-pub const XML = if (build_options.lang_xml) @import("xml/xml.zig").Language else void;
-pub const FIG = if (build_options.lang_fig) @import("fig/fig.zig").Language else void;
-pub const INI = if (build_options.lang_ini) @import("ini/ini.zig").Language else void;
-pub const DOTENV = if (build_options.lang_dotenv) @import("dotenv/dotenv.zig").Language else void;
-pub const PROPERTIES = if (build_options.lang_properties) @import("properties/properties.zig").Language else void;
-pub const PLIST = if (build_options.lang_plist) @import("plist/plist.zig").Language else void;
-pub const NESTEDTEXT = if (build_options.lang_nestedtext) @import("nestedtext/nestedtext.zig").Language else void;
+// The language MODULES, imported unconditionally. Nothing runtime is ever
+// reached through these — they exist so the registry below can read a
+// format's comptime DECLARATIONS (`caps.lossless`, via each entry's `Module`)
+// in a build that has the format gated out, which keeps a fact about a format
+// build-invariant the way `abi_value` and the `--spec` strings are. Zig's
+// analysis is lazy, so importing a module and reading one declaration off it
+// builds no parser and no printer; `root.zig`'s test block has imported all
+// eleven unconditionally for as long as the gates have existed.
+const json_mod = @import("json/json.zig");
+const yaml_mod = @import("yaml/yaml.zig");
+const toml_mod = @import("toml/toml.zig");
+const zon_mod = @import("zon/zon.zig");
+const xml_mod = @import("xml/xml.zig");
+const fig_mod = @import("fig/fig.zig");
+const ini_mod = @import("ini/ini.zig");
+const dotenv_mod = @import("dotenv/dotenv.zig");
+const properties_mod = @import("properties/properties.zig");
+const plist_mod = @import("plist/plist.zig");
+const nestedtext_mod = @import("nestedtext/nestedtext.zig");
+
+// Per-language gates: a compiled-out format resolves to `void`, so nothing that
+// would build its parser or printer is ever referenced. Every call site that
+// touches a gated `Language.*` must guard the access behind the same
+// `build_options.lang_*` flag (a `comptime` check), or it will fail to compile
+// against `void`. JSON is gateable like the rest now that `detect` no longer
+// assumes it as a base.
+pub const JSON = if (build_options.lang_json) json_mod.Language else void;
+pub const YAML = if (build_options.lang_yaml) yaml_mod.Language else void;
+pub const TOML = if (build_options.lang_toml) toml_mod.Language else void;
+pub const ZON = if (build_options.lang_zon) zon_mod.Language else void;
+pub const XML = if (build_options.lang_xml) xml_mod.Language else void;
+pub const FIG = if (build_options.lang_fig) fig_mod.Language else void;
+pub const INI = if (build_options.lang_ini) ini_mod.Language else void;
+pub const DOTENV = if (build_options.lang_dotenv) dotenv_mod.Language else void;
+pub const PROPERTIES = if (build_options.lang_properties) properties_mod.Language else void;
+pub const PLIST = if (build_options.lang_plist) plist_mod.Language else void;
+pub const NESTEDTEXT = if (build_options.lang_nestedtext) nestedtext_mod.Language else void;
 
 // ============================================================================
 // THE FORMAT REGISTRY
@@ -137,6 +159,14 @@ fn Entry(comptime L: type) type {
         /// past a `void` is a compile error, which is the point.
         Lang: type = L,
 
+        /// The MODULE that language lives in (`json_mod`, …), never gated: the
+        /// route to a format's comptime declarations in a build that has it
+        /// compiled out — `Lossless.nativeFor` reads `Module.Language.caps
+        /// .lossless` through it, so the envelope table stays build-invariant.
+        /// Only declarations may be read this way; anything that would build
+        /// the format's code goes through `Lang`, behind its gate.
+        Module: type,
+
         /// The `Lang.Type` value this dialect selects. Defaults to the
         /// language's own default; only the JSON trio overrides it.
         dialect: DialectOf(L) = defaultDialect(L),
@@ -231,6 +261,7 @@ fn Entry(comptime L: type) type {
 /// member has to be either a registry entry or one of those two.
 pub const dialects = .{
     Entry(JSON){
+        .Module = json_mod,
         .name = "json",
         .dialect = dial(JSON, "JSON"),
         .abi_value = 1,
@@ -246,6 +277,7 @@ pub const dialects = .{
         },
     },
     Entry(JSON){
+        .Module = json_mod,
         .name = "jsonc",
         .dialect = dial(JSON, "JSONC"),
         .abi_value = 2,
@@ -260,6 +292,7 @@ pub const dialects = .{
         .print_node_name = "printNodec",
     },
     Entry(JSON){
+        .Module = json_mod,
         .name = "json5",
         .dialect = dial(JSON, "JSON5"),
         // 7, not 6: JSON5 was added to the C ABI after XML, and a released
@@ -272,6 +305,7 @@ pub const dialects = .{
         .print_node_name = "printNode5",
     },
     Entry(YAML){
+        .Module = yaml_mod,
         .name = "yaml",
         .abi_value = 3,
         .deserializable = true,
@@ -297,6 +331,7 @@ pub const dialects = .{
         },
     },
     Entry(TOML){
+        .Module = toml_mod,
         .name = "toml",
         .abi_value = 4,
         .deserializable = true,
@@ -316,6 +351,7 @@ pub const dialects = .{
         },
     },
     Entry(ZON){
+        .Module = zon_mod,
         .name = "zon",
         .abi_value = 5,
         .deserializable = true,
@@ -323,6 +359,7 @@ pub const dialects = .{
         .empty_doc_seed = ".{}\n",
     },
     Entry(XML){
+        .Module = xml_mod,
         .name = "xml",
         .abi_value = 6,
         // XML has a reader and a writer but no in-place editor, so no edit
@@ -333,6 +370,7 @@ pub const dialects = .{
         .empty_doc_seed = null,
     },
     Entry(FIG){
+        .Module = fig_mod,
         .name = "fig",
         // The native authoring dialect (src/languages/fig/DESIGN.md): read,
         // written and edited by every surface.
@@ -351,6 +389,7 @@ pub const dialects = .{
         },
     },
     Entry(INI){
+        .Module = ini_mod,
         .name = "ini",
         // Untyped scalars: the grammar carries no type information, so
         // `port = 8080` reads back as the STRING "8080".
@@ -359,6 +398,7 @@ pub const dialects = .{
         .empty_doc_seed = "",
     },
     Entry(DOTENV){
+        .Module = dotenv_mod,
         .name = "dotenv",
         // A flat string map and nothing more: no nesting, untyped scalars. A
         // nested value tree cannot be represented, and serializing one warns.
@@ -367,6 +407,7 @@ pub const dialects = .{
         .empty_doc_seed = "",
     },
     Entry(PROPERTIES){
+        .Module = properties_mod,
         .name = "properties",
         // Flat and untyped, the same representational limits as dotenv.
         .abi_value = 11,
@@ -374,6 +415,7 @@ pub const dialects = .{
         .empty_doc_seed = "",
     },
     Entry(PLIST){
+        .Module = plist_mod,
         .name = "plist",
         // Genuinely typed and nested (dict/array/string/integer/real/bool,
         // with date/data carried on the `extended` scalar) — the one XML-shaped
@@ -391,6 +433,7 @@ pub const dialects = .{
         .empty_doc_seed = "<dict>\n</dict>\n",
     },
     Entry(NESTEDTEXT){
+        .Module = nestedtext_mod,
         .name = "nestedtext",
         // Nested (dict/list) but deliberately untyped — every leaf is a string.
         .abi_value = 13,
@@ -933,6 +976,16 @@ pub fn validate(comptime Lang: type) void {
         }
         if (@TypeOf(Lang.caps) != Caps)
             @compileError("Language.caps must be a language.Caps");
+
+        // Coherence: `caps.lossless` describes what the `$fig` envelope pass
+        // may write INTO this format, so it is only meaningful for a format
+        // that can be written at all. A read-only format declaring one would
+        // be describing output it never produces — the same shape of
+        // contradiction as an editing hook under `caps.edit = false`.
+        if (Lang.caps.lossless != null and !Lang.caps.serialize)
+            @compileError("Language '" ++ Lang.name ++ "' declares caps.lossless (an envelope" ++
+                " target for serialized output) but caps.serialize = false, so it never writes" ++
+                " the output the envelope would go into");
 
         // `syntax` describes how the generic splice engine writes this
         // format, so it is required exactly when there is an editor to read

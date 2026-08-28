@@ -72,12 +72,13 @@ pub fn reformatSlice(
 
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
-    if (target == .toml) {
-        // Same lossy-strip-then-print path `get` uses for a lossy TOML target:
-        // TOML has no null, so an unrepresentable value is dropped up front
-        // (already reported above) rather than aborting mid-print.
-        const result = try fig.Lossless.lossyStrip(allocator, &doc.ast, doc.ast.root, .toml);
-        if (result.ast) |stripped| try stripped.serializeWith(&out.writer, .toml, serialize);
+    if (parse_dispatch.nullStripTarget(target)) |native| {
+        // Same lossy-strip-then-print path `get` uses for a lossy target with
+        // no null (TOML, by its own `caps.lossless`): an unrepresentable
+        // value is dropped up front (already reported above) rather than
+        // aborting mid-print.
+        const result = try fig.Lossless.lossyStrip(allocator, &doc.ast, doc.ast.root, native);
+        if (result.ast) |stripped| try stripped.serializeWith(&out.writer, target, serialize);
     } else if (parse_dispatch.flatStripFormat(target)) |fmt| {
         // `fmt` never converts format (always reads and writes the same one),
         // so — unlike `convertSlice`'s twin below — there's no `--lossless` to
@@ -146,15 +147,16 @@ pub fn convertSlice(
 
     const ast: *const fig.AST = if (lossless and !(src_is_yaml and dst_is_yaml)) blk: {
         // `to` is never `.gron` here (rejected up front above), so it always
-        // has a `SerializeFormat` counterpart — see `Lossless.targetFor` for
-        // the per-format rationale (JSON5 reuse, canonical/fig decode-only,
-        // XML/INI/dotenv/properties/plist/NestedText's lack of an envelope).
-        const maybe_target: ?fig.Lossless.Target = fig.Lossless.targetFor(types.toSerializeFormat(to) orelse unreachable);
+        // has a `SerializeFormat` counterpart, whose language declares what
+        // it holds — see `manifest.Caps.lossless` for the per-format
+        // rationale (JSON5 reuse, canonical/fig decode-only, XML/INI/dotenv/
+        // properties/plist/NestedText's lack of an envelope).
+        const maybe_native: ?fig.Lossless.NativeKinds = fig.Lossless.nativeFor(types.toSerializeFormat(to) orelse unreachable);
         const decoded = try allocator.create(fig.AST);
         decoded.* = try fig.Lossless.decode(allocator, base_ast);
-        const target = maybe_target orelse break :blk decoded;
+        const native = maybe_native orelse break :blk decoded;
         const encoded = try allocator.create(fig.AST);
-        encoded.* = try fig.Lossless.encode(allocator, decoded, target);
+        encoded.* = try fig.Lossless.encode(allocator, decoded, native);
         break :blk encoded;
     } else base_ast;
 
@@ -190,12 +192,13 @@ pub fn convertSlice(
 
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
-    if (target == .toml and !lossless) {
-        // Same lossy-strip-then-print path `get` uses for a lossy TOML target:
-        // TOML has no null, so an unrepresentable value is dropped up front
-        // (already reported above) rather than aborting mid-print.
-        const result = try fig.Lossless.lossyStrip(allocator, ast, ast.root, .toml);
-        if (result.ast) |stripped| try stripped.serializeWith(&out.writer, .toml, serialize);
+    if (if (!lossless) parse_dispatch.nullStripTarget(target) else null) |native| {
+        // Same lossy-strip-then-print path `get` uses for a lossy target with
+        // no null (TOML, by its own `caps.lossless`): an unrepresentable
+        // value is dropped up front (already reported above) rather than
+        // aborting mid-print.
+        const result = try fig.Lossless.lossyStrip(allocator, ast, ast.root, native);
+        if (result.ast) |stripped| try stripped.serializeWith(&out.writer, target, serialize);
     } else if (flat_strip_fmt) |fmt| {
         // INI/dotenv/.properties: same idea as TOML's null-stripping above,
         // but depth-based (see `fig.FlatStrip`'s module doc); gated on

@@ -2805,17 +2805,18 @@ fn prepareDocumentAst(handle: *DocumentHandle, fmt: AST.SerializeFormat, options
     // re-encode for the target. Skipped for YAML→YAML (its reference layer already
     // round-trips, and the core-AST passes would strip it).
     if (losslessRequested(options) and !ref_layer_round_trip) {
-        // `.canonical` is never yielded by `serializeFormatOf`, so `targetFor`
+        // `.canonical` is never yielded by `serializeFormatOf`, so `nativeFor`
         // returning null for it here is moot in practice; every other null
-        // arm is real (see `Lossless.targetFor`'s doc comment for the
-        // per-format rationale — `.fig`, XML/INI/dotenv/.properties/plist/
-        // NestedText have no envelope of their own to encode into).
-        const target: ?Lossless.Target = Lossless.targetFor(fmt);
+        // answer is the format's own `caps.lossless` declaration (see
+        // `manifest.Caps.lossless` for the per-format rationale — `.fig`,
+        // XML/INI/dotenv/.properties/plist/NestedText have no envelope of
+        // their own to encode into).
+        const native: ?Lossless.NativeKinds = Lossless.nativeFor(fmt);
         const decoded = try arena.create(AST);
         decoded.* = try Lossless.decode(arena, base_ast);
-        const t = target orelse return decoded;
+        const n = native orelse return decoded;
         const encoded = try arena.create(AST);
-        encoded.* = try Lossless.encode(arena, decoded, t);
+        encoded.* = try Lossless.encode(arena, decoded, n);
         return encoded;
     }
     return base_ast;

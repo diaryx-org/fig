@@ -28,7 +28,22 @@ pub const Language = struct {
 
     pub const name = "toml";
     pub const extensions: []const []const u8 = &.{"toml"};
-    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
+    pub const caps: lang.Caps = .{
+        .read = true,
+        .edit = true,
+        .serialize = true,
+        // The four datetimes and `inf`/`nan` floats are native; `null` is
+        // not — TOML is the one typed format without one, which makes a
+        // `null` the one value the lossy path drops outright rather than
+        // degrades. Enum/char literals and plist's date/data are enveloped.
+        .lossless = .{
+            .offset_datetime = true,
+            .local_datetime = true,
+            .local_date = true,
+            .local_time = true,
+            .number_special = true,
+        },
+    };
 
     /// 1.0 and 1.1 differ in what the PARSER accepts (newlines and trailing
     /// commas in inline tables, seconds-optional times, `\e`/`\xHH` escapes),

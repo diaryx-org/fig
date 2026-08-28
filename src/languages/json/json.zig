@@ -25,7 +25,17 @@ pub const Language = struct {
 
     pub const name = "json";
     pub const extensions: []const []const u8 = &.{ "json", "jsonc", "json5" };
-    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
+    pub const caps: lang.Caps = .{
+        .read = true,
+        .edit = true,
+        .serialize = true,
+        // Beyond the core kinds, JSON holds a `null` and nothing else: every
+        // extended scalar rides in a `$fig` envelope. Declared for the
+        // strict dialect and shared by JSONC/JSON5 — so JSON5's native
+        // `Infinity`/`NaN` are enveloped too, which is conservative but still
+        // lossless (see `Caps.lossless`).
+        .lossless = .{ .null = true },
+    };
 
     /// The one manifest in tree whose answer genuinely varies by dialect, and
     /// therefore the reason `syntax` is a function of `Type` at all: strict

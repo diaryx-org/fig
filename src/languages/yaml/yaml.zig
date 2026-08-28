@@ -38,7 +38,15 @@ pub const Language = struct {
 
     pub const name = "yaml";
     pub const extensions: []const []const u8 = &.{ "yaml", "yml" };
-    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
+    pub const caps: lang.Caps = .{
+        .read = true,
+        .edit = true,
+        .serialize = true,
+        // The core schema has a `null` and none of the extended scalars
+        // (a `!!timestamp` is a 1.1 tag, not a core kind), so those ride in
+        // a `$fig` envelope.
+        .lossless = .{ .null = true },
+    };
 
     /// 1.1 and 1.2.2 differ only in scalar type RESOLUTION, never in the
     /// syntax the editor splices, so both dialects answer identically. This

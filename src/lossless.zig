@@ -39,6 +39,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const AST = @import("ast/ast.zig");
+const Language = @import("languages/language.zig");
 
 const Id = AST.Node.Id;
 const ExtKind = AST.Node.Kind.Extended.ExtKind;
@@ -48,80 +49,89 @@ const ExtKind = AST.Node.Kind.Extended.ExtKind;
 /// mis-decoded (a documented limitation — escaping is a future concern).
 const sentinel = "$fig";
 
-/// The output format an `encode` pass targets. `jsonc` collapses to `json` for
-/// capability purposes (same type system).
-pub const Target = enum { json, yaml, toml, zon };
+/// What an `encode` pass targets: the scalar kinds the output format spells
+/// natively, as the format itself declares them (`Language.caps.lossless`).
+/// Everything not marked is enveloped. This module never names a format — it
+/// reads the declaration and applies one rule to it.
+pub const NativeKinds = Language.NativeKinds;
 
-/// The `Target` a serialize format's envelope pass should use, or null when
-/// `fmt` has no `Target` counterpart at all. JSON5 reuses the JSON envelope
-/// target — it could hold `Infinity`/`NaN` natively, so this is conservative
-/// (those ride in a `$fig` envelope regardless) but still fully lossless.
-/// `canonical` and `fig` encode/decode every node kind directly, so neither
-/// needs an envelope on output (only input envelopes get decoded) — same as
-/// XML, INI, dotenv, `.properties`, plist, and NestedText, none of which has
-/// a typed-scalar envelope of its own (a plain print already loses nothing
-/// an envelope could have preserved). A caller with a CLI-only format on top
-/// of `SerializeFormat` (gron) resolves its own arm before/via
-/// `toSerializeFormat` and consults this for everything else.
-pub fn targetFor(fmt: AST.SerializeFormat) ?Target {
+/// The native-kinds declaration the envelope pass should encode for when the
+/// output is `fmt`, or null when that format takes no envelope at all (see
+/// `Caps.lossless` for which formats say null and why). Read off the format
+/// registry: `fmt`'s entry names its language's module, and the language's
+/// `caps` carries the answer. Read through the entry's ungated `Module`
+/// rather than its `Lang`, so the answer is the same in every build — a
+/// gated-out language still declares what it holds, just as it still has an
+/// ABI value; whether anything can be PRINTED in it is the serializer's
+/// refusal to make, not this table's. `canonical` is not a registry entry
+/// (it is the AST's own oracle grammar, not a `Language`) and takes its own
+/// arm, as it does at every registry-derived dispatch. A caller with a
+/// CLI-only format on top of `SerializeFormat` (gron) resolves its own arm
+/// before/via `toSerializeFormat` and consults this for the rest.
+pub fn nativeFor(fmt: AST.SerializeFormat) ?NativeKinds {
     return switch (fmt) {
-        .json, .jsonc, .json5 => .json,
-        .yaml => .yaml,
-        .toml => .toml,
-        .zon => .zon,
-        .canonical, .fig, .xml, .ini, .dotenv, .properties, .plist, .nestedtext => null,
+        .canonical => null,
+        inline else => |f| comptime Language.entryFor(@tagName(f)).Module.Language.caps.lossless,
     };
 }
 
 pub const Error = Allocator.Error;
 
-/// Does `target` need the lossless envelope to represent `kind` without loss?
-/// True only for the scalar kinds the target can't hold natively; every other
-/// kind (and any container) is copied through verbatim.
-pub fn needsEnvelope(target: Target, kind: AST.Node.Kind) bool {
+/// Does a format that holds `native` need the lossless envelope to represent
+/// `kind` without loss? True only for the scalar kinds the format did not mark
+/// native; every other kind (and any container) is copied through verbatim.
+pub fn needsEnvelope(native: NativeKinds, kind: AST.Node.Kind) bool {
     return switch (kind) {
-        // Only TOML lacks a null. JSON/YAML/ZON all have one.
-        .null_ => target == .toml,
-        .extended => |e| switch (target) {
-            // TOML has the four datetimes and inf/nan floats natively;
-            // enum/char it does not.
-            .toml => switch (e.kind) {
-                .offset_datetime, .local_datetime, .local_date, .local_time => false,
-                .number_special => false,
-                .enum_literal, .char_literal => true,
-                .plist_date, .plist_data => true,
-            },
-            // ZON has enum and char literals natively; datetimes and the
-            // non-finite floats it does not.
-            .zon => switch (e.kind) {
-                .enum_literal, .char_literal => false,
-                .offset_datetime, .local_datetime, .local_date, .local_time => true,
-                .number_special => true,
-                .plist_date, .plist_data => true,
-            },
-            // Neither JSON nor YAML's core schema has any of these.
-            .json, .yaml => true,
+        .null_ => !native.null,
+        // One field per `ExtKind`, named identically — pinned below.
+        .extended => |e| switch (e.kind) {
+            inline else => |k| !@field(native, @tagName(k)),
         },
         else => false,
     };
 }
 
-/// Whether `target` cannot represent `kind` AT ALL (even degraded) — the values
-/// the lossy `lossyStrip` pass removes. Distinct from `needsEnvelope`: a TOML
-/// datetime → JSON is a `needsEnvelope` case (degrades to a string in lossy mode,
-/// no data type lost beyond the tag) but NOT unrepresentable. Only a `null`
-/// bound for TOML is genuinely unrepresentable today.
-pub fn isUnrepresentable(target: Target, kind: AST.Node.Kind) bool {
-    return target == .toml and kind == .null_;
+/// Whether a format that holds `native` cannot represent `kind` AT ALL (even
+/// degraded) — the values the lossy `lossyStrip` pass removes. Distinct from
+/// `needsEnvelope`: a TOML datetime → JSON is a `needsEnvelope` case (degrades
+/// to a string in lossy mode, no data type lost beyond the tag) but NOT
+/// unrepresentable. A `null` is the only kind with nothing to degrade TO — an
+/// extended scalar has its text — so it is the only kind this is true for,
+/// and only where the format has no `null` (TOML, today).
+pub fn isUnrepresentable(native: NativeKinds, kind: AST.Node.Kind) bool {
+    return kind == .null_ and !native.null;
+}
+
+// `NativeKinds` (declared in the leaf `manifest.zig`, which cannot name the
+// AST) must have exactly one field per kind the envelope carries: `null`, and
+// one per `ExtKind` member under the same name. Both directions, so a new
+// extended scalar cannot be added without every format being asked whether it
+// holds it, and a stale field cannot outlive the kind it described.
+comptime {
+    const fields = @typeInfo(NativeKinds).@"struct".fields;
+    const ext = @typeInfo(ExtKind).@"enum".fields;
+    if (fields.len != ext.len + 1)
+        @compileError("manifest.NativeKinds must have exactly one field per ExtKind member plus `null`");
+    if (!@hasField(NativeKinds, "null"))
+        @compileError("manifest.NativeKinds must have a `null` field");
+    for (ext) |e| {
+        if (!@hasField(NativeKinds, e.name))
+            @compileError("ExtKind." ++ e.name ++ " has no `manifest.NativeKinds` field — every format" ++
+                " must be able to say whether it holds the new scalar natively");
+    }
+    for (fields) |f| {
+        if (f.type != bool)
+            @compileError("manifest.NativeKinds." ++ f.name ++ " must be a bool");
+    }
 }
 
 // ── Public entry points ─────────────────────────────────────────────────────
 
-/// Build a fresh AST in `arena` where every node `target` can't represent
-/// natively is wrapped in a `$fig` envelope. Strings borrow from `ast` (and its
-/// source), so the result must not outlive them.
-pub fn encode(arena: Allocator, ast: *const AST, target: Target) Error!AST {
-    var e = Encoder{ .src = ast, .arena = arena, .target = target };
+/// Build a fresh AST in `arena` where every node a format holding `native`
+/// can't represent is wrapped in a `$fig` envelope. Strings borrow from `ast`
+/// (and its source), so the result must not outlive them.
+pub fn encode(arena: Allocator, ast: *const AST, native: NativeKinds) Error!AST {
+    var e = Encoder{ .src = ast, .arena = arena, .native = native };
     const root = try e.copy(ast.nodes[ast.root]);
     var result: AST = .{ .allocator = arena, .root = root, .nodes = try e.out.toOwnedSlice(arena) };
     if (e.any_comments) result.node_comments = try e.out_comments.toOwnedSlice(arena);
@@ -153,9 +163,9 @@ pub const StripResult = struct {
 /// mapping entry and sequence element the target can't represent at all (today:
 /// a `null` for TOML). Used in lossy mode so the printer never aborts a document
 /// partway through. Dropped paths are reported relative to `root_id`.
-pub fn lossyStrip(arena: Allocator, ast: *const AST, root_id: Id, target: Target) Error!StripResult {
-    var s = Stripper{ .src = ast, .arena = arena, .target = target };
-    if (isUnrepresentable(target, ast.nodes[root_id].kind)) {
+pub fn lossyStrip(arena: Allocator, ast: *const AST, root_id: Id, native: NativeKinds) Error!StripResult {
+    var s = Stripper{ .src = ast, .arena = arena, .native = native };
+    if (isUnrepresentable(native, ast.nodes[root_id].kind)) {
         try s.dropped.append(arena, "(value)");
         return .{ .ast = null, .dropped = try s.dropped.toOwnedSlice(arena) };
     }
@@ -173,7 +183,7 @@ pub fn lossyStrip(arena: Allocator, ast: *const AST, root_id: Id, target: Target
 const Encoder = struct {
     src: *const AST,
     arena: Allocator,
-    target: Target,
+    native: NativeKinds,
     out: std.ArrayList(AST.Node) = .empty,
     out_comments: std.ArrayList(AST.NodeComments) = .empty,
     any_comments: bool = false,
@@ -187,7 +197,7 @@ const Encoder = struct {
         }
         // A leaf scalar. If it needs enveloping, the value's comments ride on the
         // wrapping mapping; otherwise they ride on the copied scalar.
-        const id = if ((node.kind == .null_ or node.kind == .extended) and needsEnvelope(self.target, node.kind))
+        const id = if ((node.kind == .null_ or node.kind == .extended) and needsEnvelope(self.native, node.kind))
             try self.envelope(node.kind)
         else
             try emit(self, node.kind);
@@ -300,7 +310,7 @@ const Decoder = struct {
 const Stripper = struct {
     src: *const AST,
     arena: Allocator,
-    target: Target,
+    native: NativeKinds,
     out: std.ArrayList(AST.Node) = .empty,
     out_comments: std.ArrayList(AST.NodeComments) = .empty,
     any_comments: bool = false,
@@ -327,7 +337,7 @@ const Stripper = struct {
         while (c) |cid| : (c = self.src.nodes[cid].next_sibling) {
             const kv = self.src.nodes[cid].kind.keyvalue;
             const child_path = try self.keyPath(path, kv.key);
-            if (isUnrepresentable(self.target, self.src.nodes[kv.value].kind)) {
+            if (isUnrepresentable(self.native, self.src.nodes[kv.value].kind)) {
                 try self.dropped.append(self.arena, child_path);
                 continue;
             }
@@ -348,7 +358,7 @@ const Stripper = struct {
         while (c) |cid| : (c = self.src.nodes[cid].next_sibling) {
             const child_path = try indexPath(self.arena, path, i);
             i += 1;
-            if (isUnrepresentable(self.target, self.src.nodes[cid].kind)) {
+            if (isUnrepresentable(self.native, self.src.nodes[cid].kind)) {
                 try self.dropped.append(self.arena, child_path);
                 continue;
             }
@@ -376,9 +386,9 @@ fn indexPath(arena: Allocator, parent: []const u8, i: usize) Error![]const u8 {
 
 // ── Shared node-building helpers (duck-typed over Encoder/Decoder/Stripper) ──
 // `pub` so `flat_strip.zig`'s own Stripper (INI/dotenv/`.properties`'s
-// depth-based capability model doesn't fit `Target`'s scalar-kind shape — see
-// that file's module doc) can reuse this tree-copying plumbing instead of a
-// third copy of it.
+// depth-based capability model doesn't fit `NativeKinds`' scalar-kind shape —
+// see that file's module doc) can reuse this tree-copying plumbing instead of
+// a third copy of it.
 
 pub fn emit(self: anytype, kind: AST.Node.Kind) Error!Id {
     const id: Id = @intCast(self.out.items.len);
@@ -457,19 +467,28 @@ const TomlPrinter = @import("languages/toml/printer.zig");
 const ZonParser = @import("languages/zon/parser.zig");
 const ZonPrinter = @import("languages/zon/printer.zig");
 
-/// Parse `input` with `Parser`, run `decode` then `encode(target)`, print with
+// The declarations the tests encode for, read straight off each language
+// module rather than through `nativeFor`: these tests import the parsers and
+// printers directly too, so they run in a build that has the language gated
+// out of `Language.*` (where `nativeFor` would answer null).
+const json_native: NativeKinds = @import("languages/json/json.zig").Language.caps.lossless.?;
+const toml_native: NativeKinds = @import("languages/toml/toml.zig").Language.caps.lossless.?;
+const zon_native: NativeKinds = @import("languages/zon/zon.zig").Language.caps.lossless.?;
+const yaml_native: NativeKinds = @import("languages/yaml/yaml.zig").Language.caps.lossless.?;
+
+/// Parse `input` with `Parser`, run `decode` then `encode(native)`, print with
 /// `Printer`, all inside `arena`. Returns the printed bytes (arena-owned).
 fn convert(
     arena: Allocator,
     comptime Parser: type,
     src_type: anytype,
     comptime Printer: type,
-    target: Target,
+    native: NativeKinds,
     input: []const u8,
 ) ![]const u8 {
     var ast = try Parser.parseAbstract(arena, input, src_type);
     const decoded = try decode(arena, &ast);
-    const encoded = try encode(arena, &decoded, target);
+    const encoded = try encode(arena, &decoded, native);
     var out: std.Io.Writer.Allocating = .init(arena);
     // The JSON, ZON, and TOML printers take serialization options; YAML doesn't (yet).
     if (Printer == JsonPrinter or Printer == ZonPrinter or Printer == TomlPrinter) {
@@ -486,9 +505,9 @@ test "null round-trips through TOML" {
     const arena = a.allocator();
 
     // JSON null → TOML (must wrap; TOML has no null) → JSON (must restore).
-    const toml = try convert(arena, JsonParser, .JSON, TomlPrinter, .toml, "{\"k\": null}");
+    const toml = try convert(arena, JsonParser, .JSON, TomlPrinter, toml_native, "{\"k\": null}");
     try testing.expect(std.mem.indexOf(u8, toml, sentinel) != null); // wrapped
-    const json = try convert(arena, TomlParser, .TOML_1_1, JsonPrinter, .json, toml);
+    const json = try convert(arena, TomlParser, .TOML_1_1, JsonPrinter, json_native, toml);
     try testing.expectEqualStrings("{\n  \"k\": null\n}\n", json);
 }
 
@@ -498,7 +517,7 @@ test "null stays native for JSON/YAML/ZON targets" {
     const arena = a.allocator();
 
     // JSON → JSON lossless leaves a null bare (JSON has one).
-    const json = try convert(arena, JsonParser, .JSON, JsonPrinter, .json, "{\"k\": null}");
+    const json = try convert(arena, JsonParser, .JSON, JsonPrinter, json_native, "{\"k\": null}");
     try testing.expectEqualStrings("{\n  \"k\": null\n}\n", json);
     try testing.expect(std.mem.indexOf(u8, json, sentinel) == null);
 }
@@ -509,9 +528,9 @@ test "TOML datetime round-trips through JSON" {
     const arena = a.allocator();
 
     const src = "t = 1979-05-27T07:32:00Z\n";
-    const json = try convert(arena, TomlParser, .TOML_1_1, JsonPrinter, .json, src);
+    const json = try convert(arena, TomlParser, .TOML_1_1, JsonPrinter, json_native, src);
     try testing.expect(std.mem.indexOf(u8, json, "offset_datetime") != null);
-    const toml = try convert(arena, JsonParser, .JSON, TomlPrinter, .toml, json);
+    const toml = try convert(arena, JsonParser, .JSON, TomlPrinter, toml_native, json);
     try testing.expectEqualStrings(src, toml);
 }
 
@@ -521,7 +540,7 @@ test "TOML datetime stays native for a TOML target" {
     const arena = a.allocator();
 
     const src = "t = 1979-05-27T07:32:00Z\n";
-    const toml = try convert(arena, TomlParser, .TOML_1_1, TomlPrinter, .toml, src);
+    const toml = try convert(arena, TomlParser, .TOML_1_1, TomlPrinter, toml_native, src);
     try testing.expectEqualStrings(src, toml); // not wrapped
 }
 
@@ -531,11 +550,11 @@ test "ZON enum and char literals round-trip through JSON" {
     const arena = a.allocator();
 
     const src = ".{ .mode = .fast, .ch = 'A' }";
-    const json = try convert(arena, ZonParser, .ZON, JsonPrinter, .json, src);
+    const json = try convert(arena, ZonParser, .ZON, JsonPrinter, json_native, src);
     try testing.expect(std.mem.indexOf(u8, json, "enum_literal") != null);
     try testing.expect(std.mem.indexOf(u8, json, "char_literal") != null);
 
-    const zon = try convert(arena, JsonParser, .JSON, ZonPrinter, .zon, json);
+    const zon = try convert(arena, JsonParser, .JSON, ZonPrinter, zon_native, json);
     try testing.expectEqualStrings(
         \\.{
         \\    .mode = .fast,
@@ -551,7 +570,7 @@ test "lossyStrip drops nulls for a TOML target and reports paths" {
     const arena = a.allocator();
 
     var ast = try CanonicalParser.parseAbstract(arena, "{\"a\": 1, \"b\": null, \"c\": [1, null, 2]}");
-    const result = try lossyStrip(arena, &ast, ast.root, .toml);
+    const result = try lossyStrip(arena, &ast, ast.root, toml_native);
     try testing.expect(result.ast != null);
 
     var out: std.Io.Writer.Allocating = .init(arena);
@@ -569,7 +588,7 @@ test "lossyStrip reports a bare-null root and yields no AST" {
     const arena = a.allocator();
 
     var ast = try CanonicalParser.parseAbstract(arena, "null");
-    const result = try lossyStrip(arena, &ast, ast.root, .toml);
+    const result = try lossyStrip(arena, &ast, ast.root, toml_native);
     try testing.expect(result.ast == null);
     try testing.expectEqual(@as(usize, 1), result.dropped.len);
 }
@@ -580,7 +599,7 @@ test "lossyStrip on a nested null reports a dotted path" {
     const arena = a.allocator();
 
     var ast = try CanonicalParser.parseAbstract(arena, "{\"outer\": {\"inner\": null, \"keep\": 2}}");
-    const result = try lossyStrip(arena, &ast, ast.root, .toml);
+    const result = try lossyStrip(arena, &ast, ast.root, toml_native);
     try testing.expect(result.ast != null);
     try testing.expectEqual(@as(usize, 1), result.dropped.len);
     try testing.expectEqualStrings("outer.inner", result.dropped[0]);
@@ -592,6 +611,97 @@ test "decode leaves a non-envelope $fig mapping untouched" {
     const arena = a.allocator();
 
     // value is a number, not the inner mapping shape → ordinary data.
-    const json = try convert(arena, JsonParser, .JSON, JsonPrinter, .json, "{\"$fig\": 1}");
+    const json = try convert(arena, JsonParser, .JSON, JsonPrinter, json_native, "{\"$fig\": 1}");
     try testing.expectEqualStrings("{\n  \"$fig\": 1\n}\n", json);
+}
+
+// The envelope table as it was written before the formats declared it, pinned
+// against the declarations that replaced it. `needsEnvelope` used to be a
+// hand-written switch over `enum { json, yaml, toml, zon }` × kind; the four
+// `caps.lossless` declarations are now the only source, so this is the one
+// place that still states the OLD answers — a declaration that drifts from
+// them fails here, not in a round-trip that quietly changed shape.
+test "declared native kinds reproduce the pre-declaration envelope table" {
+    const K = AST.Node.Kind;
+    const Row = struct { native: NativeKinds, kind: K, envelope: bool, unrepresentable: bool };
+    const ext = struct {
+        fn of(k: ExtKind) K {
+            return .{ .extended = .{ .kind = k, .text = "" } };
+        }
+    };
+    const rows = [_]Row{
+        // Only TOML lacks a null; JSON/YAML/ZON all have one.
+        .{ .native = json_native, .kind = .null_, .envelope = false, .unrepresentable = false },
+        .{ .native = yaml_native, .kind = .null_, .envelope = false, .unrepresentable = false },
+        .{ .native = zon_native, .kind = .null_, .envelope = false, .unrepresentable = false },
+        .{ .native = toml_native, .kind = .null_, .envelope = true, .unrepresentable = true },
+        // TOML: datetimes and inf/nan native; enum/char and plist's two not.
+        .{ .native = toml_native, .kind = ext.of(.offset_datetime), .envelope = false, .unrepresentable = false },
+        .{ .native = toml_native, .kind = ext.of(.local_datetime), .envelope = false, .unrepresentable = false },
+        .{ .native = toml_native, .kind = ext.of(.local_date), .envelope = false, .unrepresentable = false },
+        .{ .native = toml_native, .kind = ext.of(.local_time), .envelope = false, .unrepresentable = false },
+        .{ .native = toml_native, .kind = ext.of(.number_special), .envelope = false, .unrepresentable = false },
+        .{ .native = toml_native, .kind = ext.of(.enum_literal), .envelope = true, .unrepresentable = false },
+        .{ .native = toml_native, .kind = ext.of(.char_literal), .envelope = true, .unrepresentable = false },
+        .{ .native = toml_native, .kind = ext.of(.plist_date), .envelope = true, .unrepresentable = false },
+        .{ .native = toml_native, .kind = ext.of(.plist_data), .envelope = true, .unrepresentable = false },
+        // ZON: enum/char native; everything else not.
+        .{ .native = zon_native, .kind = ext.of(.enum_literal), .envelope = false, .unrepresentable = false },
+        .{ .native = zon_native, .kind = ext.of(.char_literal), .envelope = false, .unrepresentable = false },
+        .{ .native = zon_native, .kind = ext.of(.offset_datetime), .envelope = true, .unrepresentable = false },
+        .{ .native = zon_native, .kind = ext.of(.local_datetime), .envelope = true, .unrepresentable = false },
+        .{ .native = zon_native, .kind = ext.of(.local_date), .envelope = true, .unrepresentable = false },
+        .{ .native = zon_native, .kind = ext.of(.local_time), .envelope = true, .unrepresentable = false },
+        .{ .native = zon_native, .kind = ext.of(.number_special), .envelope = true, .unrepresentable = false },
+        .{ .native = zon_native, .kind = ext.of(.plist_date), .envelope = true, .unrepresentable = false },
+        .{ .native = zon_native, .kind = ext.of(.plist_data), .envelope = true, .unrepresentable = false },
+        // Containers and the core scalars never envelope anywhere.
+        .{ .native = toml_native, .kind = .{ .mapping = null }, .envelope = false, .unrepresentable = false },
+        .{ .native = toml_native, .kind = .{ .sequence = null }, .envelope = false, .unrepresentable = false },
+        .{ .native = toml_native, .kind = .{ .string = "" }, .envelope = false, .unrepresentable = false },
+        .{ .native = toml_native, .kind = .{ .boolean = true }, .envelope = false, .unrepresentable = false },
+        .{ .native = json_native, .kind = .{ .mapping = null }, .envelope = false, .unrepresentable = false },
+    };
+    for (rows) |r| {
+        try testing.expectEqual(r.envelope, needsEnvelope(r.native, r.kind));
+        try testing.expectEqual(r.unrepresentable, isUnrepresentable(r.native, r.kind));
+    }
+    // JSON and YAML: every extended kind is enveloped, none is dropped.
+    inline for (@typeInfo(ExtKind).@"enum".fields) |f| {
+        const k = ext.of(@field(ExtKind, f.name));
+        try testing.expect(needsEnvelope(json_native, k));
+        try testing.expect(needsEnvelope(yaml_native, k));
+        try testing.expect(!isUnrepresentable(json_native, k));
+        try testing.expect(!isUnrepresentable(yaml_native, k));
+    }
+}
+
+// `targetFor` used to answer `.json` for the three JSON dialects, `.yaml`,
+// `.toml`, `.zon` for their own, and null for the other eight `SerializeFormat`
+// members — in every build, gates notwithstanding. Pinned by name against what
+// the registry now answers: a format gaining or losing an envelope target is a
+// behaviour change to be made here on purpose.
+test "nativeFor reproduces the pre-declaration targetFor table" {
+    const Expect = struct { fmt: AST.SerializeFormat, native: ?NativeKinds };
+    const table = [_]Expect{
+        .{ .fmt = .json, .native = json_native },
+        .{ .fmt = .jsonc, .native = json_native },
+        .{ .fmt = .json5, .native = json_native },
+        .{ .fmt = .yaml, .native = yaml_native },
+        .{ .fmt = .toml, .native = toml_native },
+        .{ .fmt = .zon, .native = zon_native },
+        .{ .fmt = .canonical, .native = null },
+        .{ .fmt = .fig, .native = null },
+        .{ .fmt = .xml, .native = null },
+        .{ .fmt = .ini, .native = null },
+        .{ .fmt = .dotenv, .native = null },
+        .{ .fmt = .properties, .native = null },
+        .{ .fmt = .plist, .native = null },
+        .{ .fmt = .nestedtext, .native = null },
+    };
+    // Every member is listed, so a new format has to say what it wants here.
+    try testing.expectEqual(@typeInfo(AST.SerializeFormat).@"enum".fields.len, table.len);
+    for (table) |e| {
+        try testing.expectEqual(e.native, nativeFor(e.fmt));
+    }
 }

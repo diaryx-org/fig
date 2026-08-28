@@ -103,6 +103,14 @@ const cases = [_]Case{
         .expect = "declares caps.edit = false but supplies the editing hook 'insertKey'",
     },
     .{
+        // `caps.lossless` describes what the envelope pass may write INTO the
+        // format, so it contradicts `serialize = false` the way a hook
+        // contradicts `edit = false`.
+        .name = "caps.lossless on a format that cannot serialize",
+        .caps = ".{ .read = true, .edit = true, .serialize = false, .lossless = .{ .null = true } }",
+        .expect = "declares caps.lossless (an envelope target for serialized output) but caps.serialize = false",
+    },
+    .{
         .name = "trailing comment marker with no line comment marker",
         .syntax_body =
         \\.comments = .{ .style = .hash, .line = null, .trailing = "#" },
@@ -271,15 +279,17 @@ pub fn main(init: std.process.Init) !void {
             try f.setLength(io, src.len);
         }
 
-        const res = std.process.run(gpa, io, .{ .argv = &.{
-            zig_exe,   "build-obj",
-            // root: depends on both; language: depends on build_options.
-            "--dep",   "build_options",
-            "--dep",   "fig",
-            root_arg,  "--dep",
-            "build_options", lang_arg,
-            opts_arg,  emit_arg,
-        } }) catch |err| {
+        const res = std.process.run(gpa, io, .{
+            .argv = &.{
+                zig_exe,         "build-obj",
+                // root: depends on both; language: depends on build_options.
+                "--dep",         "build_options",
+                "--dep",         "fig",
+                root_arg,        "--dep",
+                "build_options", lang_arg,
+                opts_arg,        emit_arg,
+            },
+        }) catch |err| {
             std.debug.print("validate-check: could not run `{s} build-obj`: {s}\n", .{ zig_exe, @errorName(err) });
             return error.CompilerUnavailable;
         };

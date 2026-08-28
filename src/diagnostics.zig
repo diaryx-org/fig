@@ -226,12 +226,13 @@ fn indexPath(arena: Allocator, parent: []const u8, i: usize) Allocator.Error![]c
 // ── Capability table ────────────────────────────────────────────────────────
 //
 // The single source of truth for what each target format can hold. Keyed on the
-// full 7-way `SerializeFormat` (not the coarser `Lossless.Target`) because the
-// JSON family splits: plain JSON drops comments and quotes non-finite floats,
-// while JSON5 keeps comments and has native `Infinity`/`NaN`, and JSONC keeps
-// comments but still quotes non-finite. For the three formats whose type system
-// the lossless layer already models exactly (YAML/TOML/ZON), value capability is
-// delegated to `Lossless.needsEnvelope`/`isUnrepresentable`.
+// full `SerializeFormat` (not the per-LANGUAGE `caps.lossless` declaration the
+// envelope pass reads) because the JSON family splits: plain JSON drops
+// comments and quotes non-finite floats, while JSON5 keeps comments and has
+// native `Infinity`/`NaN`, and JSONC keeps comments but still quotes
+// non-finite. For the three formats whose type system the lossless layer
+// already models exactly (YAML/TOML/ZON), value capability is delegated to
+// `Lossless.needsEnvelope`/`isUnrepresentable` over the language's declaration.
 
 const Loss = struct { code: Warning.Code, note: []const u8 };
 
@@ -276,16 +277,14 @@ fn valueLoss(format: Format, kind: AST.Node.Kind, depth: usize) ?Loss {
             },
             else => return null,
         },
-        // YAML/TOML/ZON: defer to the lossless capability model.
+        // YAML/TOML/ZON: defer to the lossless capability model — what each
+        // language declares in `caps.lossless` (build-invariant, so this
+        // reports the same loss whether or not the target is compiled in).
         .yaml, .toml, .zon => {
-            const target: Lossless.Target = switch (format) {
-                .yaml => .yaml,
-                .toml => .toml,
-                .zon => .zon,
-                else => unreachable,
-            };
-            if (Lossless.isUnrepresentable(target, kind)) return .{ .code = .value_dropped, .note = dropNote(kind) };
-            if (Lossless.needsEnvelope(target, kind)) {
+            const native = Lossless.nativeFor(format) orelse unreachable; // all three declare one
+
+            if (Lossless.isUnrepresentable(native, kind)) return .{ .code = .value_dropped, .note = dropNote(kind) };
+            if (Lossless.needsEnvelope(native, kind)) {
                 // `needsEnvelope` is true here only for `extended` kinds (a `null`
                 // is either representable or already caught by `isUnrepresentable`).
                 return switch (kind) {

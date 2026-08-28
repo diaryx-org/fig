@@ -139,6 +139,14 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 ### Changed
 
 - **release** — take the shared cliff config, one style for every repo ([`1e828f3`](https://github.com/diaryx-org/fig/commit/1e828f37e557a56d01a87b21b9e5f4a0312220df))
+- **lossless** — read the envelope's native kinds off each language's caps ([`5238c41`](https://github.com/diaryx-org/fig/commit/5238c41b542f2901aa7a87f6f2aa0f749e80e9ef))
+- **languages** — each language declares its own registry rows ([`1b6c7a1`](https://github.com/diaryx-org/fig/commit/1b6c7a1c641d996b0b42cf1129f78cd403bd7033))
+- **editor** — derive section regions from Document.node_regions instead of three per-format gathers ([`7d1c1fe`](https://github.com/diaryx-org/fig/commit/7d1c1fe42661d916702dc13bb410e14ec30c8204))
+
+### Uncategorised — triage before release
+
+- each language declares its lossless kinds and registry rows ([`fa68bce`](https://github.com/diaryx-org/fig/commit/fa68bce117e3e6c736ba6fdd2111f19482f4d507))
+- derive section regions from Document.node_regions ([`b8d10e1`](https://github.com/diaryx-org/fig/commit/b8d10e1a7fe5305ada538adba44a11674034d9d5))
 
 ### Behavioural changes
 
@@ -158,6 +166,34 @@ one that the next `zig build changelog` would overwrite with unreleased work.
   redirected block) used to get output written over the front of the file and
   over the output of neighbouring commands; it now gets all of it, in order.
   Pipes and terminals are unaffected — they always took this path.
+
+- TOML: a dotted table (`a.b = 1`) is a section node, so
+`deleteKey`, `moveKey` and `reorderKeys` on its entry now refuse with
+`CannotDeleteTable`/`CannotMoveTable`/`CannotReorderTables`; they used to
+line-splice, which was correct for a one-line table and silently left the
+other lines behind otherwise. `deleteContainer` handles every case.
+
+- TOML: `deleteContainer`/`moveContainer` of a table whose
+dotted child spans several lines (`[a]` / `x.y = 1` / `x.z = 2`) now takes
+every line; the `[`-sniffing gather took the child's first line only.
+
+- TOML: `moveContainer` accepts a dotted table as the
+destination; it refused with `NotATable`.
+
+- fig: `moveKey` and `reorderKeys` on a block-container
+entry now refuse with the new `CannotMoveContainer`/`CannotReorderContainers`;
+they used to relocate the node's widened span, which for a re-entered
+container is its first fragment alone. `moveContainer`/`reorderContainers`
+carry every fragment.
+
+- fig: `moveContainer` with a scalar destination now
+refuses with `NotAContainer` rather than landing before the scalar's line.
+
+- Zig API: `Document.reentry_headers`/`ReentryHeader` are
+replaced by `Document.node_regions`/`NodeRegion`, `regionsOf`, `isSection`;
+`languages/shared/sections.zig` is `editor/regions.zig`; a `Language` may no
+longer declare `deleteContainer`/`moveContainer`/`reorderContainers` or any
+`*Guard` hook, and declares `Syntax.section_noun` instead.
 
 <!-- git-cliff:end -->
 

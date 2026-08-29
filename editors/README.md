@@ -8,6 +8,12 @@ Two artifacts that give the `.figl` authoring dialect syntax highlighting
 | [`tree-sitter-fig/`](./tree-sitter-fig) | The Tree-sitter grammar. Editor-agnostic — Zed, Neovim, Helix, and others can all consume it. |
 | [`zed-fig/`](./zed-fig) | A thin Zed extension that points Zed at the grammar and ships the highlight query. |
 
+The grammar ships **two** highlight queries, because editors do not agree on
+capture names: `queries/highlights.scm` uses Zed's vocabulary and
+`queries/highlights-helix.scm` uses Helix's (`@variable.other.member` where Zed
+says `@property`, `@constant.numeric.integer` where Zed says `@number`, and so
+on). They capture the same nodes; a grammar change has to land in both.
+
 ## Design stance: the grammar is NOT a second source of truth
 
 The Tree-sitter grammar is deliberately **shallow and lexical**. It recognizes
@@ -115,6 +121,43 @@ send({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":
 print(json.dumps(read(), indent=2))   # expect one FigForeignSyntaxColon diagnostic
 PY
 ```
+
+## Loading it in Helix
+
+Helix has no bundled fig grammar and does not read the Zed extension, so both
+halves are registered by hand in `~/.config/helix/languages.toml`:
+
+```toml
+[language-server.fig-lsp]
+command = "fig-lsp"
+
+[[grammar]]
+name = "fig"
+source = { path = "/absolute/path/to/fig/editors/tree-sitter-fig" }
+
+[[language]]
+name = "fig"
+scope = "source.fig"
+file-types = ["figl", "fig"]
+comment-token = "#"
+indent = { tab-width = 2, unit = "  " }
+language-servers = ["fig-lsp"]
+```
+
+Then build the grammar and install the Helix-flavoured query:
+
+```sh
+hx --grammar build      # -> ~/.config/helix/runtime/grammars/fig.so
+mkdir -p ~/.config/helix/runtime/queries/fig
+ln -sf "$PWD/editors/tree-sitter-fig/queries/highlights-helix.scm" \
+       ~/.config/helix/runtime/queries/fig/highlights.scm
+```
+
+`hx --health fig` should then list the language server as found and the grammar
+and highlight query as present. Unlike Zed, Helix builds the grammar from a
+local path — no commit, no `rev` bump — but `hx --grammar build` has to be re-run
+whenever `src/parser.c` is regenerated. The query is read at startup and on
+`:config-reload`, so symlinking it means edits apply without a rebuild.
 
 ### Scope / next steps
 

@@ -25,10 +25,14 @@ pub const Help = struct {
             \\    from one format/archetype to another, in place
             \\  patch: merge one document into another, in place and losslessly
             \\
+            \\Any other action is handed to a `fig-<action>` program on your PATH,
+            \\the way git does: `{s} schema lint f.json` runs `fig-schema lint f.json`
+            \\with every argument after `schema` passed through untouched.
+            \\
             \\For information on action options, pass --help or -h
             \\to the action you would like to learn about.
             \\
-        , .{binary_name});
+        , .{ binary_name, binary_name });
         try term.writer.flush();
     }
 

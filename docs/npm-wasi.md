@@ -105,6 +105,11 @@ real debugging to find:
   this package relies on — `preview1`, `preopens`, `returnOnExit` — has been
   stable across many Node majors; this package suppresses the one-time
   `ExperimentalWarning` Node prints so it doesn't clutter normal use.
+- **No `fig-<action>` handoff.** A native `fig` hands an action it doesn't
+  implement to a `fig-<action>` program on your PATH, the way git does. WASI
+  has neither `exec` nor `fork`, so this build has nowhere to send one and
+  reports that instead of running it. Every action `fig` implements itself is
+  unaffected.
 - **Slower cold start than the native binary.** Every invocation compiles the
   WASI module fresh (no persistent process) — fine for occasional/CI use,
   not a reason to replace a natively-installed `fig` for heavy scripting.

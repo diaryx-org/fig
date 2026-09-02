@@ -18,6 +18,7 @@ const parse_dispatch = @import("parse_dispatch.zig");
 const edit_ops = @import("edit_ops.zig");
 const patch_ops = @import("patch_ops.zig");
 const reformat = @import("reformat.zig");
+const external = @import("external.zig");
 
 const Help = help.Help;
 const Format = types.Format;
@@ -36,6 +37,14 @@ pub fn runHelp(stderr_term: *Io.Terminal, binary_name: []const u8) !void {
 /// without requiring a `core_version`/ABI release, and vice versa) plus one
 /// purely cosmetic label (`epoch` has no compatibility meaning — it's the
 /// core's marketing name, not a version number).
+/// The git-style fallback for a word that is not one of fig's own actions:
+/// hand it to `fig-<word>` on PATH. All of it lives in `external.zig`; this
+/// exists so that `main`'s dispatch switch stays one arm per action, straight
+/// into this file.
+pub fn runExternal(io: Io, stdout_term: *Io.Terminal, stderr_term: *Io.Terminal, binary_name: []const u8, opts: types.ExternalOptions) !void {
+    return external.run(io, stdout_term, stderr_term, binary_name, opts);
+}
+
 pub fn runVersion(stdout_term: *Io.Terminal, cli_version: []const u8, core_version: []const u8, epoch: []const u8) !void {
     try stdout_term.writer.print("fig {s} (core {s} \"{s}\")\n", .{ cli_version, core_version, epoch });
     try stdout_term.writer.flush();

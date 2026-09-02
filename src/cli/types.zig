@@ -105,6 +105,9 @@ pub const CliAction = enum {
     fmt,
     convert,
     patch,
+    /// Not one of fig's own verbs: a word handed off to a `fig-<word>`
+    /// executable on PATH. See `ExternalOptions`.
+    external,
 };
 
 pub const HelpOptions = struct {
@@ -415,6 +418,32 @@ pub const PatchOptions = struct {
     quiet: bool = false,
 };
 
+/// A subcommand fig has no action of its own for, on its way to the
+/// git-style `fig <name>` → `fig-<name>` handoff — see `external.zig`, which
+/// is the only consumer. `parseConfig` only builds this for a word that could
+/// name an executable at all (see `externalCommandName`), so `name` is never
+/// a path, a flag, or empty.
+pub const ExternalOptions = struct {
+    /// The word as the user typed it (`schema` in `fig schema get f.json`).
+    /// Kept alongside `program` for the not-found report, which talks about
+    /// what was typed rather than what was looked up.
+    name: []const u8,
+    /// `fig-<name>` — the executable to look for on PATH. Always spelled
+    /// `fig-`, never after `binary_name`: a renamed or path-qualified argv[0]
+    /// (`./zig-out/bin/fig`) would otherwise ask for a sibling nothing ships.
+    ///
+    /// Null when `name` is a word that could not name an executable at all
+    /// (`fig config.toml`, `fig --colour`), which is the ordinary "no such
+    /// action" case wearing this union's clothes: there is nothing to look
+    /// up, and `argv` is empty.
+    program: ?[]const u8,
+    /// The full argv to hand over: `program`, then every argument after the
+    /// subcommand word, verbatim and unparsed. fig deliberately does not read
+    /// them — the flags after `fig schema` belong to `fig-schema`, including
+    /// the ones fig itself would recognize.
+    argv: []const []const u8,
+};
+
 pub const CliActionOptions = union(CliAction) {
     help: HelpOptions,
     version: VersionOptions,
@@ -428,6 +457,7 @@ pub const CliActionOptions = union(CliAction) {
     fmt: FmtOptions,
     convert: ConvertOptions,
     patch: PatchOptions,
+    external: ExternalOptions,
 };
 
 /// The in-place editing operation `applyEdit` performs. Generalizes the editor's
@@ -550,7 +580,10 @@ pub fn targetFile(config: CliConfig) ?[]const u8 {
         // The TARGET, not the patch document: it is the file being written,
         // so it is the one a failure has to name.
         .patch => |o| o.file,
-        .help, .version, .check => null,
+        // `external` never touches a file itself — whatever it does with its
+        // arguments is the other binary's business, and its failures are its
+        // own to report.
+        .help, .version, .check, .external => null,
     };
 }
 

@@ -174,6 +174,11 @@ npx @diaryx/fig-wasi get config.yaml
 
 Run `fig help` for instructions for how to use it on your files.
 
+An action `fig` doesn't implement is handed to a `fig-<action>` program on your
+PATH, the way `git` does — so installing a tool named `fig-schema` makes
+`fig schema ...` run it, with every argument after the action passed through
+untouched.
+
 ## Nushell
 
 [`bindings/nushell`](bindings/nushell) is a [nushell](https://www.nushell.sh) plugin

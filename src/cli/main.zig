@@ -5,8 +5,9 @@
 //! This file is deliberately thin: process/terminal setup, `std.log` routing,
 //! and `parseConfig`'s error-to-help mapping, then a dispatch switch straight
 //! into `actions.zig`. Everything else (arg parsing, format/embed detection,
-//! parse dispatch, in-place editing, reformat/convert, diagnostic rendering)
-//! lives in its own sibling module — see each file's own doc comment.
+//! parse dispatch, in-place editing, reformat/convert, diagnostic rendering,
+//! the `fig-<action>` handoff) lives in its own sibling module — see each
+//! file's own doc comment.
 
 const std = @import("std");
 const fig = @import("fig");
@@ -30,6 +31,7 @@ const parse_dispatch = @import("parse_dispatch.zig");
 const edit_ops = @import("edit_ops.zig");
 const patch_ops = @import("patch_ops.zig");
 const reformat = @import("reformat.zig");
+const external = @import("external.zig");
 
 const Help = help.Help;
 const ArgError = types.ArgError;
@@ -216,6 +218,7 @@ fn dispatch(a: std.mem.Allocator, io: Io, stdout_terminal: *Io.Terminal, stderr_
         .fmt => actions.runFmt(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.fmt),
         .convert => actions.runConvert(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.convert),
         .patch => actions.runPatch(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.patch),
+        .external => actions.runExternal(io, stdout_terminal, stderr_terminal, config.binary_name, config.options.external),
     };
 }
 
@@ -232,6 +235,7 @@ test {
     _ = edit_ops;
     _ = patch_ops;
     _ = reformat;
+    _ = external;
     _ = args_mod;
     _ = actions;
     _ = gron;

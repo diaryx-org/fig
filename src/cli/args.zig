@@ -1293,13 +1293,54 @@ pub fn parseConfig(allocator: std.mem.Allocator, args: anytype) ArgError!CliConf
             .diff = diff_mode,
             .quiet = quiet,
         } };
+    } else if (externalCommandName(action_str)) |name| {
+        // Git's fallback, and the reason fig-schema can grow a CLI without
+        // fig growing a `schema` action: a word fig has no verb for is handed
+        // to a `fig-<word>` executable. Everything after the word is passed
+        // through untouched — see `ExternalOptions.argv` — so this branch
+        // consumes the rest of the iterator and parses none of it.
+        config.action = .external;
+        const program = try std.fmt.allocPrint(allocator, "fig-{s}", .{name});
+        var argv: std.ArrayList([]const u8) = .empty;
+        try argv.append(allocator, program);
+        while (args.next()) |arg| try argv.append(allocator, arg);
+        config.options = .{ .external = .{
+            .name = name,
+            .program = program,
+            .argv = try argv.toOwnedSlice(allocator),
+        } };
     } else {
-        log.err("Action not recognized: {s}", .{action_str});
-        config.action = .help;
-        config.options = .{ .help = .{ .requested_help = true } };
+        // Not one of fig's verbs, and not a word that could name a program
+        // either (`externalCommandName` says which shapes those are). Still
+        // an `.external`: a null `program` means the handoff was never on the
+        // table, so one place gets to say "no such action" for both halves of
+        // the unrecognized case rather than two places saying it differently.
+        config.action = .external;
+        config.options = .{ .external = .{ .name = action_str, .program = null, .argv = &.{} } };
     }
 
     return config;
+}
+
+/// The `<name>` for a `fig-<name>` handoff, or null if this word can't be one
+/// — in which case it stays an ordinary unrecognized action.
+///
+/// The rule is deliberately narrower than "whatever `execvp` would take".
+/// Restricting it to ASCII letters, digits, `-` and `_` keeps two shapes out:
+/// a leading `-`, so a mistyped flag (`fig --colour`) reports itself as a flag
+/// instead of hunting for `fig---colour`; and anything containing a path
+/// separator or a `.`, so a forgotten verb (`fig config.toml`, `fig ../x`)
+/// can't reach the filesystem as a program name. That second one is the load-
+/// bearing half: `argv[0]` with a separator in it bypasses PATH lookup
+/// entirely and runs a file at that path, which is not something a typo should
+/// be able to do.
+fn externalCommandName(word: []const u8) ?[]const u8 {
+    if (word.len == 0 or word[0] == '-') return null;
+    for (word) |c| switch (c) {
+        'a'...'z', 'A'...'Z', '0'...'9', '-', '_' => {},
+        else => return null,
+    };
+    return word;
 }
 
 // A slice-backed stand-in for the process arg iterator `parseConfig` consumes.
@@ -1356,6 +1397,64 @@ test "parseConfig routes insert/delete to the right action and path tail" {
     try t.expectEqual(CliAction.delete, dc.action);
     try t.expectEqual(@as(usize, 1), dc.options.delete.path[1].index);
     try t.expectEqual(Format.toml, dc.options.delete.format);
+}
+
+test "parseConfig hands an unknown action to fig-<action> with its arguments untouched" {
+    const t = std.testing;
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // The case this exists for. Note `--help` and `check`: fig owns both
+    // words, and neither is parsed here — everything after `schema` is the
+    // other tool's to read.
+    var ext = TestArgs{ .items = &.{ "fig", "schema", "check", "--help", "-" } };
+    const ec = try parseConfig(a, &ext);
+    try t.expectEqual(CliAction.external, ec.action);
+    try t.expectEqualStrings("schema", ec.options.external.name);
+    try t.expectEqualStrings("fig-schema", ec.options.external.program.?);
+    try t.expectEqual(@as(usize, 4), ec.options.external.argv.len);
+    try t.expectEqualStrings("fig-schema", ec.options.external.argv[0]);
+    try t.expectEqualStrings("check", ec.options.external.argv[1]);
+    try t.expectEqualStrings("--help", ec.options.external.argv[2]);
+    try t.expectEqualStrings("-", ec.options.external.argv[3]);
+
+    // The program name is `fig-`, not `argv[0]-`: what fig was invoked as
+    // says nothing about what its siblings are installed as.
+    var qualified = TestArgs{ .items = &.{ "./zig-out/bin/fig", "schema" } };
+    const qc = try parseConfig(a, &qualified);
+    try t.expectEqualStrings("fig-schema", qc.options.external.program.?);
+
+    // A word that can't name a program is still `.external` — with a null
+    // `program`, so the report knows PATH was never searched.
+    for ([_][]const u8{ "config.toml", "--colour", "../evil", "a/b" }) |word| {
+        var bad = TestArgs{ .items = &.{ "fig", word } };
+        const bc = try parseConfig(a, &bad);
+        try t.expectEqual(CliAction.external, bc.action);
+        try t.expectEqualStrings(word, bc.options.external.name);
+        try t.expectEqual(@as(?[]const u8, null), bc.options.external.program);
+    }
+
+    // ...and an action fig does own never gets there, alias included.
+    var owned = TestArgs{ .items = &.{ "fig", "ck", "f.yaml" } };
+    try t.expectEqual(CliAction.check, (try parseConfig(a, &owned)).action);
+}
+
+test "externalCommandName accepts only words that could name a program" {
+    const t = std.testing;
+    try t.expectEqualStrings("schema", externalCommandName("schema").?);
+    try t.expectEqualStrings("two-words_9", externalCommandName("two-words_9").?);
+    // A leading `-` is a mistyped flag, not a subcommand.
+    try t.expectEqual(@as(?[]const u8, null), externalCommandName("-x"));
+    try t.expectEqual(@as(?[]const u8, null), externalCommandName("--colour"));
+    // Anything with a separator or a dot is a path or a filename the user
+    // meant to give an action. A separator in argv[0] would skip PATH lookup
+    // and execute that file, which no typo should be able to do.
+    try t.expectEqual(@as(?[]const u8, null), externalCommandName("./x"));
+    try t.expectEqual(@as(?[]const u8, null), externalCommandName("../../tmp/x"));
+    try t.expectEqual(@as(?[]const u8, null), externalCommandName("a\\b"));
+    try t.expectEqual(@as(?[]const u8, null), externalCommandName("config.toml"));
+    try t.expectEqual(@as(?[]const u8, null), externalCommandName(""));
 }
 
 test "embedTypeFromName maps archetype names" {

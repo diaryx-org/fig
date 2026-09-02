@@ -120,11 +120,19 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
+_No commits since the last release tag._
+
+<!-- git-cliff:end -->
+
+## cli 4.0.0
+
 ### Added
 
 - **nushell** — add a nushell plugin providing `from figl` / `to figl` ([`4b1420f`](https://github.com/diaryx-org/fig/commit/4b1420f235e2739cb8e86d20d2da479a05b8b977))
 - **patch** — merge one document into another through the editor's splices ([`024dfb0`](https://github.com/diaryx-org/fig/commit/024dfb07b412ff703ec8ab0cf7f576ab9f7cf739))
 - **cli** — `fig patch`, merging one file (or part of one) into another ([`fbb675c`](https://github.com/diaryx-org/fig/commit/fbb675c77b290240d1fbed2862f1ef19aa979f17))
+- **editors** — add a Helix-flavoured highlight query and Helix setup docs ([`282f309`](https://github.com/diaryx-org/fig/commit/282f30933fff831eac954afbacfbde1f65b550ba))
+- **cli** — hand an unknown action to a `fig-<action>` program, git-style ([`06efdf7`](https://github.com/diaryx-org/fig/commit/06efdf79847797f452e71fe8033ce5792fc86443))
 
 ### Fixed
 
@@ -195,7 +203,11 @@ replaced by `Document.node_regions`/`NodeRegion`, `regionsOf`, `isSection`;
 longer declare `deleteContainer`/`moveContainer`/`reorderContainers` or any
 `*Guard` hook, and declares `Syntax.section_noun` instead.
 
-<!-- git-cliff:end -->
+- `fig <unknown-action>` now exits 2. It used to print the
+  general help and exit 0, so a typo'd action in a script reported success.
+  The action list is still printed, under an `error:` line naming the word —
+  and, when the word could name a program, only after no `fig-<word>` was
+  found on PATH.
 
 ## core 2.7.0 · cli 3.6.0 · rust 3.3.0 · npm 2.7.0
 

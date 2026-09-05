@@ -120,7 +120,49 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
-_No commits since the last release tag._
+### Fixed
+
+- **patch** — compare comment-op errors instead of switching on them; test the CLI everything-on ([`125e826`](https://github.com/diaryx-org/fig/commit/125e8263f75b55a92c6db19a456fdd96f67f72f4))
+- **yaml** — spell every mapping key kind; fix two explicit-key parser gaps ([`0a0d646`](https://github.com/diaryx-org/fig/commit/0a0d64611ec494d7009cc86c1f36cce5d531ee34))
+- **yaml** — no trailing space after the dash of a nested block sequence ([`3bd426a`](https://github.com/diaryx-org/fig/commit/3bd426a7d62b413617c2140281fad7a039fac370))
+
+### Changed
+
+- **languages** — derive the format set from one list, src/languages/list.zig ([`8b34254`](https://github.com/diaryx-org/fig/commit/8b34254d49f27560a2b6d2201f4e919c99a31beb))
+- **languages** — declare the detection order per dialect as `sniff_rank` ([`2ef10aa`](https://github.com/diaryx-org/fig/commit/2ef10aacd575785e9abccffb44f7303bc9c3fd51))
+- **languages** — move the last per-format facts in core onto the manifest ([`6a1f6b3`](https://github.com/diaryx-org/fig/commit/6a1f6b30942d4846c91439f02a36b745eacab409))
+- **editor** — name the hook-facing surface as src/editor/splice.zig ([`449e900`](https://github.com/diaryx-org/fig/commit/449e900f007c85da7cd87e8687fdafe6c2cf6b62))
+
+### Behavioural changes
+
+- `manifest.Dialect.detectable` is replaced by `sniff_rank: ?u8` (null means not sniffed). A `Language` declared outside the tree that set `.detectable` no longer compiles; one that relied on the default is still sniffed only if it declares a rank, and the registry now refuses a language with no ranked dialect.
+
+- `FlatStrip.Format` is removed and `FlatStrip.lossyStrip` takes the mapping-depth limit (`usize`) in its place; read it from `Language.<L>.caps.max_mapping_depth`. `cli/parse_dispatch.flatStripFormat` is `flatStripDepth`. No CLI or C ABI change.
+
+- Printing a YAML document whose mapping key is not a
+  string — null, number, boolean, alias, sequence, or mapping — now
+  succeeds with a spelling of that key. It used to panic (`fig get`, `fig
+  fmt`, `fig get -o yaml`, and every library serialize to YAML).
+
+- `&a a: b` and `!!str a: b` now anchor/tag the key `a`.
+  They used to anchor/tag the mapping, so `*a` resolved to the mapping
+  (and `-o json` failed with `AliasCycle`), and a tagged first key failed
+  materialization with `TagTypeMismatch`. `&m` on its own line above the
+  first key still decorates the mapping.
+
+- A nested explicit key (`?\n  ? a\n  : b\n: x`) now
+  parses as the key `{a: b}` with value `x`. It used to parse as the key
+  `{a: null}` with value `b`, then reject the trailing `: x`.
+
+- `? &a` followed by a block collection on the next
+  lines now anchors that collection as the key. It used to produce an
+  anchored null key whose value was the collection, followed by a second
+  null-key entry.
+
+- A nested block sequence prints its parent dash as `-`
+  with nothing after it. It used to be `- ` with a trailing space, so `fig
+  fmt` output (and any YAML serialize) of such a document changes by that
+  one byte per nested-sequence item.
 
 <!-- git-cliff:end -->
 

@@ -36,12 +36,12 @@ const std = @import("std");
 const AST = @import("../ast/ast.zig");
 const Document = @import("../document.zig");
 const Span = @import("../util/span.zig");
-const editor = @import("../editor.zig");
+const splice = @import("splice.zig");
 
-const lineStartBefore = editor.lineStartBefore;
-const lineEndAfter = editor.lineEndAfter;
-const commentBlockStart = editor.commentBlockStart;
-const CommentStyle = editor.CommentStyle;
+const lineStartBefore = splice.lineStartBefore;
+const lineEndAfter = splice.lineEndAfter;
+const commentBlockStart = splice.commentBlockStart;
+const CommentStyle = splice.CommentStyle;
 
 /// A line-aligned source range `[start, end)` belonging to one logical
 /// container's subtree.
@@ -259,7 +259,7 @@ pub fn reorderBundles(self: anytype, used: []const Region, bundles: []const []co
         if (anchor >= pos and anchor <= r.start) {
             try out.appendSlice(self.allocator, source[pos..anchor]);
             for (bundles) |b| {
-                try editor.appendBlockSep(&out, self.allocator, b);
+                try splice.appendBlockSep(&out, self.allocator, b);
                 if (b.len > 0 and b[b.len - 1] != '\n') try out.append(self.allocator, '\n');
             }
             try out.appendSlice(self.allocator, source[anchor..r.start]);

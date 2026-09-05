@@ -704,7 +704,9 @@ const Decls = struct {
     /// same name — except `keyIsInherited` (a predicate the engine queries)
     /// and `seqItemLineStart` (a sub-computation), which are named for what
     /// they answer rather than for a method. Signatures are documented on the
-    /// `Editor` method each overrides; see `editor.zig`.
+    /// `Editor` method each overrides; see `editor.zig`. What a hook may CALL
+    /// is `editor/splice.zig`: its free functions and the `Editor` members its
+    /// module doc names, and nothing else in the engine.
     ///
     /// There are no `*Guard` vetoes any more. The four that existed
     /// (`deleteKeyGuard`, `replaceValGuard`, `moveKeyGuard`,

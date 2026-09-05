@@ -29,7 +29,7 @@
 //! declare them.
 
 /// Which leading-comment syntax a language uses, so the owned-comment scan in
-/// delete/move (`editor.commentBlockStart`) recognizes the right marker.
+/// delete/move (`editor/splice.zig`'s `commentBlockStart`) recognizes the right marker.
 ///
 /// Distinct from `Comments.line`: this selects the *scanner*, which is
 /// per-language and comptime, while the marker is per-dialect and may be null

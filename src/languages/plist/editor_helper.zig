@@ -44,6 +44,7 @@ const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
 const Span = @import("../../util/span.zig");
 const editor = @import("../../editor.zig");
+const splice = @import("../../editor/splice.zig");
 const Plist = @import("plist.zig").Language;
 // The `.fig` dialect's bare-token classifier — reused so plist value typing
 // obeys the exact same literal-else-string rules the fig language documents
@@ -54,8 +55,8 @@ const sniff = @import("../fig/tokenizer.zig");
 /// The concrete editor these ops drive — the plist arm of the generic engine.
 const PlistEditor = editor.Editor(Plist);
 
-const lineStartBefore = editor.lineStartBefore;
-const firstNonSpace = editor.firstNonSpace;
+const lineStartBefore = splice.lineStartBefore;
+const firstNonSpace = splice.firstNonSpace;
 
 // ── value rendering ────────────────────────────────────────────────────────────
 
@@ -277,7 +278,7 @@ pub fn plistDeleteLeadingComments(self: *PlistEditor, path: []const AST.PathSegm
     const node = try parsed.ast.getNodeByPath(path);
     const source = self.source.items;
     const line_start = lineStartBefore(source, parsed.span(node).start);
-    const block_start = editor.commentBlockStart(source, line_start, .xml_comment);
+    const block_start = splice.commentBlockStart(source, line_start, .xml_comment);
     if (block_start == line_start) return;
     try self.replaceAtSpan(Span.init(block_start, line_start), "");
 }
@@ -290,7 +291,7 @@ pub fn plistGetLeadingComment(self: *PlistEditor, path: []const AST.PathSegment)
     const node = try parsed.ast.getNodeByPath(path);
     const source = self.source.items;
     const line_start = lineStartBefore(source, parsed.span(node).start);
-    const block_start = editor.commentBlockStart(source, line_start, .xml_comment);
+    const block_start = splice.commentBlockStart(source, line_start, .xml_comment);
     if (block_start == line_start) return null;
 
     var out: std.ArrayList(u8) = .empty;

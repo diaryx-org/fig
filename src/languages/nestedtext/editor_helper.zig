@@ -65,15 +65,16 @@ const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
 const Span = @import("../../util/span.zig");
 const editor = @import("../../editor.zig");
+const splice = @import("../../editor/splice.zig");
 const NestedText = @import("nestedtext.zig").Language;
 
 /// The concrete editor these ops drive — the NestedText arm of the generic engine.
 const NtEditor = editor.Editor(NestedText);
 
-const lineStartBefore = editor.lineStartBefore;
-const lineEndAfter = editor.lineEndAfter;
-const firstNonSpace = editor.firstNonSpace;
-const columnOf = editor.columnOf;
+const lineStartBefore = splice.lineStartBefore;
+const lineEndAfter = splice.lineEndAfter;
+const firstNonSpace = splice.firstNonSpace;
+const columnOf = splice.columnOf;
 
 /// Matches `printer.zig`'s own `indent_width` — NestedText only requires a
 /// nested region's indent to be GREATER than its parent's (any amount), but
@@ -444,7 +445,7 @@ pub fn ntPrependItem(self: *NtEditor, parsed: Document, seq: AST.Node, value_tex
 pub fn ntRemoveSeqItem(self: *NtEditor, parsed: Document, seq: AST.Node, item: AST.Node, prev: ?AST.Node) !void {
     const source = self.source.items;
     const dash_pos = dashPosAfterPrev(source, parsed, seq, prev);
-    const del_start = editor.commentBlockStart(source, lineStartBefore(source, dash_pos), .hash);
+    const del_start = splice.commentBlockStart(source, lineStartBefore(source, dash_pos), .hash);
     const item_span = parsed.span(item);
     const del_end = lineEndAfter(source, item_span.end -| 1);
     try self.replaceAtSpan(Span.init(del_start, del_end), "");
@@ -462,7 +463,7 @@ pub fn ntRemoveSeqItem(self: *NtEditor, parsed: Document, seq: AST.Node, item: A
 /// completely format-agnostic.
 pub fn ntReorderSeqItems(self: *NtEditor, parsed: Document, seq: AST.Node, order: []const usize) !void {
     const source = self.source.items;
-    var blocks: std.ArrayList(editor.Block) = .empty;
+    var blocks: std.ArrayList(splice.Block) = .empty;
     defer blocks.deinit(self.allocator);
     var last_span: ?Span = null;
 
@@ -470,7 +471,7 @@ pub fn ntReorderSeqItems(self: *NtEditor, parsed: Document, seq: AST.Node, order
     var prev: ?AST.Node = null;
     while (maybe) |item| {
         const dash_pos = dashPosAfterPrev(source, parsed, seq, prev);
-        const start = editor.commentBlockStart(source, lineStartBefore(source, dash_pos), .hash);
+        const start = splice.commentBlockStart(source, lineStartBefore(source, dash_pos), .hash);
         try blocks.append(self.allocator, .{ .start = start, .end = 0 });
         last_span = parsed.span(item);
         prev = item;
@@ -479,13 +480,13 @@ pub fn ntReorderSeqItems(self: *NtEditor, parsed: Document, seq: AST.Node, order
     if (blocks.items.len == 0) return;
 
     const last_end = lineEndAfter(source, last_span.?.end -| 1);
-    editor.tileBlocks(blocks.items, last_end);
+    splice.tileBlocks(blocks.items, last_end);
 
-    const perm = try editor.fullOrder(self.allocator, order, blocks.items.len);
+    const perm = try splice.fullOrder(self.allocator, order, blocks.items.len);
     defer self.allocator.free(perm);
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(self.allocator);
-    for (perm) |i| try editor.appendBlockSep(&out, self.allocator, source[blocks.items[i].start..blocks.items[i].end]);
+    for (perm) |i| try splice.appendBlockSep(&out, self.allocator, source[blocks.items[i].start..blocks.items[i].end]);
     try self.replaceAtSpan(Span.init(blocks.items[0].start, last_end), out.items);
 }
 

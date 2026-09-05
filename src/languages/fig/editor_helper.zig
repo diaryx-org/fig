@@ -56,6 +56,7 @@ const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
 const Span = @import("../../util/span.zig");
 const editor = @import("../../editor.zig");
+const splice = @import("../../editor/splice.zig");
 const Fig = @import("fig.zig").Language;
 const Printer = @import("printer.zig");
 const Writer = std.Io.Writer;
@@ -63,10 +64,10 @@ const log = std.log.scoped(.editor);
 
 const FigEditor = editor.Editor(Fig);
 
-const lineStartBefore = editor.lineStartBefore;
-const lineEndAfter = editor.lineEndAfter;
-const firstNonSpace = editor.firstNonSpace;
-const isFlow = editor.isFlow;
+const lineStartBefore = splice.lineStartBefore;
+const lineEndAfter = splice.lineEndAfter;
+const firstNonSpace = splice.firstNonSpace;
+const isFlow = splice.isFlow;
 
 /// The marker-prefix text (leading whitespace + `>` run + the one load-bearing
 /// separator space, or "" at root) that precedes the content starting at

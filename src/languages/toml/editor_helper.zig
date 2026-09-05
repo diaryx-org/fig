@@ -25,6 +25,7 @@ const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
 const Span = @import("../../util/span.zig");
 const editor = @import("../../editor.zig");
+const splice = @import("../../editor/splice.zig");
 const Toml = @import("toml.zig").Language;
 const log = std.log.scoped(.editor);
 
@@ -35,10 +36,10 @@ const log = std.log.scoped(.editor);
 const TomlEditor = editor.Editor(Toml);
 
 // Shared source-coordinate / rendering utilities (defined in editor.zig).
-const lineStartBefore = editor.lineStartBefore;
-const lineEndAfter = editor.lineEndAfter;
-const firstNonSpace = editor.firstNonSpace;
-const isFlow = editor.isFlow;
+const lineStartBefore = splice.lineStartBefore;
+const lineEndAfter = splice.lineEndAfter;
+const firstNonSpace = splice.firstNonSpace;
+const isFlow = splice.isFlow;
 
 /// The engine's derived-region type — `renameTableSegments` reads each header
 /// region's start out of the set `Editor.gatherRegions` hands back.

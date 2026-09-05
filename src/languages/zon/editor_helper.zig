@@ -3,7 +3,7 @@
 //! ZON's editing needs are small parameter swaps on the generic engine, not the
 //! structural logic TOML (multi-region tables)/YAML (reference layer)/Fig
 //! (marker-prefix copying) delegate out to their own helper modules:
-//!   * every ZON struct/array literal opens `.{` — `editor.isFlow` treats that
+//!   * every ZON struct/array literal opens `.{` — `editor/splice.zig`'s `isFlow` treats that
 //!     as flow, so ZON routes through the same flow-entry splice engine JSON
 //!     does (see `editor.zig`'s `kv_sep`/`flowOpenEnd`);
 //!   * struct fields separate key and value with ` = `, not `: ` (`kv_sep`);

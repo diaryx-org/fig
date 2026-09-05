@@ -18,6 +18,7 @@ const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
 const Span = @import("../../util/span.zig");
 const editor = @import("../../editor.zig");
+const splice = @import("../../editor/splice.zig");
 const Yaml = @import("yaml.zig").Language;
 const log = std.log.scoped(.editor);
 
@@ -26,7 +27,7 @@ const log = std.log.scoped(.editor);
 /// entry points); these are the YAML-only pieces they hand off to. `columnOf` is
 /// a shared source-coordinate utility defined in `editor.zig`.
 const YamlEditor = editor.Editor(Yaml);
-const columnOf = editor.columnOf;
+const columnOf = splice.columnOf;
 
 // --- reference layer + block-mapping value framing (the YAML arm of the engine) ---
 

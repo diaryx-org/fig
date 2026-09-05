@@ -6,8 +6,16 @@
 //! treats `build.zig` as their canonical home (e.g. `tools/version-floor.zig`
 //! parses `cli_version` out of it), so they are passed in via `Versions` rather
 //! than owned here.
+//!
+//! The per-format knobs are not written here either. `src/languages/list.zig`
+//! is the one list of formats and conformance suites, and this file declares
+//! one `-D<name>` option and one `build_options.lang_<name>` decl per row of
+//! it (and one `-D<name>-conformance` / `<name>_conformance` pair per suite).
+//! The only knob spelled by hand below is `canonical`, which is not a format:
+//! it gates the AST's own oracle encoding.
 
 const std = @import("std");
+const list = @import("../languages/list.zig");
 
 /// The package-identity numbers `addFigOptions` bakes into `build_options`.
 /// Passed in from `build.zig` (their canonical home) so this module owns only
@@ -35,53 +43,36 @@ pub const Versions = struct {
 /// funnelling both through one function is what keeps the two from drifting
 /// apart as knobs get added.
 pub const BuildOptions = struct {
-    json_conformance: bool,
-    json5_conformance: bool,
-    yaml_conformance: bool,
-    toml_conformance: bool,
-    plist_conformance: bool,
-    nestedtext_conformance: bool,
-    lang_json: bool,
-    lang_yaml: bool,
-    lang_toml: bool,
-    lang_zon: bool,
-    lang_xml: bool,
-    lang_fig: bool,
-    lang_ini: bool,
-    lang_dotenv: bool,
-    lang_properties: bool,
-    lang_plist: bool,
+    /// One per `list.rows`, in that order: whether the format is compiled in.
+    langs: [list.rows.len]bool,
+    /// One per `list.suites`, in that order: whether the suite runs.
+    suites: [list.suites.len]bool,
+    /// The canonical form is the AST's own 1:1 oracle encoding — invaluable
+    /// in tests but not exposed through the C ABI or any binding, so shipping
+    /// it in the default library/CLI/wasm is dead weight for everyone but the
+    /// test suite. Opt-in like xml (`-Dcanonical=true`); the code still
+    /// compiles for ANY test build regardless, gated as
+    /// `lang_canonical or @import("builtin").is_test`.
     lang_canonical: bool,
-    lang_nestedtext: bool,
+
+    /// Whether the format named `name` (a `list.Row.name`) is compiled in.
+    pub fn lang(self: BuildOptions, comptime name: []const u8) bool {
+        return self.langs[comptime list.indexOf(name)];
+    }
 
     /// The configuration `zig build conformance` builds: every suite and every
     /// language on, independent of whatever `-D` flags the caller passed, so the
     /// gate means the same thing on every machine.
     ///
-    /// Forcing the six suites on is the point of the step. Forcing all twelve
-    /// languages on is a deliberate second win: xml, plist and canonical are all
-    /// off by default, so nothing else in CI ever compiles them together — this
-    /// is the only build that proves the everything-on configuration still
+    /// Forcing the suites on is the point of the step. Forcing every language
+    /// on is a deliberate second win: xml, plist and canonical are all off by
+    /// default, so nothing else in CI ever compiles them together — this is
+    /// the only build that proves the everything-on configuration still
     /// builds at all.
     pub const all_on: BuildOptions = .{
-        .json_conformance = true,
-        .json5_conformance = true,
-        .yaml_conformance = true,
-        .toml_conformance = true,
-        .plist_conformance = true,
-        .nestedtext_conformance = true,
-        .lang_json = true,
-        .lang_yaml = true,
-        .lang_toml = true,
-        .lang_zon = true,
-        .lang_xml = true,
-        .lang_fig = true,
-        .lang_ini = true,
-        .lang_dotenv = true,
-        .lang_properties = true,
-        .lang_plist = true,
+        .langs = @splat(true),
+        .suites = @splat(true),
         .lang_canonical = true,
-        .lang_nestedtext = true,
     };
 };
 
@@ -89,76 +80,24 @@ pub const BuildOptions = struct {
 /// the user-facing configuration; `zig build conformance` uses
 /// `BuildOptions.all_on` instead of calling this.
 pub fn resolve(b: *std.Build) BuildOptions {
-    const run_conformance = b.option(bool, "json-conformance", "Run JSON conformance tests") orelse false;
-    const run_json5_conformance = b.option(bool, "json5-conformance", "Run JSON5 conformance tests") orelse false;
-    const run_yaml_conformance = b.option(bool, "yaml-conformance", "Run YAML conformance tests") orelse false;
-    const run_toml_conformance = b.option(bool, "toml-conformance", "Run TOML conformance tests") orelse false;
-    const run_plist_conformance = b.option(bool, "plist-conformance", "Run plist conformance tests") orelse false;
-    const run_nestedtext_conformance = b.option(bool, "nestedtext-conformance", "Run NestedText conformance tests") orelse false;
+    var cfg: BuildOptions = undefined;
+
+    inline for (list.suites, 0..) |suite, i| {
+        cfg.suites[i] = b.option(bool, suite.name ++ "-conformance", suite.help) orelse false;
+    }
 
     // Per-language feature gates. Any format can be compiled out to shrink the
     // binary and drop its parser/printer — including JSON, now that the native
     // `.fig` format exists and `Language.detect()` sniffs every compiled-in
     // language rather than assuming a JSON base. A build with no language at all
     // is rejected at the call sites that need one (e.g. the C ABI editor union).
-    // Default: everything on, EXCEPT xml — it stays opt-in (`-Dxml=true`) even
-    // in a full build. Generic XML is a demoted, best-effort *fold* (attributes/
-    // `#text` collapse, no typed scalars, single-root-key output), NOT a
-    // first-class config format, and it is slated for removal as a selectable
-    // format in a future major (see `docs/BREAKING-CHANGES.md`). What survives
-    // that removal is the shared XML *lexing substrate* — `xml/tokenizer.zig` —
-    // that typed flavors (plist, and future `.csproj`/manifest readers) sit on
-    // top of; that layer is always compiled when any XML-family flavor is, so it
-    // does not ride on this gate. The gate here controls only the generic
-    // reader/printer, which is why non-users shouldn't pay for it by default.
-    const enable_json = b.option(bool, "json", "Include JSON/JSONC/JSON5 support") orelse true;
-    const enable_yaml = b.option(bool, "yaml", "Include YAML support") orelse true;
-    const enable_toml = b.option(bool, "toml", "Include TOML support") orelse true;
-    const enable_zon = b.option(bool, "zon", "Include ZON support") orelse true;
-    const enable_xml = b.option(bool, "xml", "Include XML support (opt-in; default off)") orelse false;
-    const enable_fig = b.option(bool, "fig", "Include the fig authoring dialect support") orelse true;
-    const enable_ini = b.option(bool, "ini", "Include INI support") orelse true;
-    const enable_dotenv = b.option(bool, "dotenv", "Include dotenv (.env) support") orelse true;
-    const enable_properties = b.option(bool, "properties", "Include Java .properties support") orelse true;
-    // plist (XML variant only so far): the newest, least battle-tested format
-    // (no conformance harness wired up yet — see
-    // `src/languages/plist/conformance.zig`), opt-in via `-Dplist=true`. Unlike
-    // generic xml above, plist is a first-class typed flavor (typed scalars,
-    // round-trips, in-place editor) and is the intended long-term home for
-    // structured XML config — it is not slated for removal.
-    const enable_plist = b.option(bool, "plist", "Include Apple XML property list support (opt-in; default off)") orelse false;
-    // The canonical form is the AST's own 1:1 oracle encoding — invaluable in
-    // tests but not exposed through the C ABI or any binding, so shipping it in
-    // the default library/CLI/wasm is dead weight for everyone but the test
-    // suite. Opt-in like xml (`-Dcanonical=true`); the code still compiles for
-    // ANY test build regardless, gated as `lang_canonical or @import("builtin").is_test`.
-    const enable_canonical = b.option(bool, "canonical", "Include the canonical oracle format (opt-in; default off — used mainly by the test suite)") orelse false;
-    // NestedText (nestedtext.org): reader + printer + editor, untyped-string
-    // scalars like INI. No conformance harness caveat like plist — the
-    // official test suite (vendored to `testdata/nestedtext/tests.json`) is
-    // wired up from the start. On by default like TOML/ZON/INI.
-    const enable_nestedtext = b.option(bool, "nestedtext", "Include NestedText support") orelse true;
+    // Which formats default off, and why, is said on each row of the list.
+    inline for (list.rows, 0..) |row, i| {
+        cfg.langs[i] = b.option(bool, row.name, row.help) orelse row.default_on;
+    }
 
-    return .{
-        .json_conformance = run_conformance,
-        .json5_conformance = run_json5_conformance,
-        .yaml_conformance = run_yaml_conformance,
-        .toml_conformance = run_toml_conformance,
-        .plist_conformance = run_plist_conformance,
-        .nestedtext_conformance = run_nestedtext_conformance,
-        .lang_json = enable_json,
-        .lang_yaml = enable_yaml,
-        .lang_toml = enable_toml,
-        .lang_zon = enable_zon,
-        .lang_xml = enable_xml,
-        .lang_fig = enable_fig,
-        .lang_ini = enable_ini,
-        .lang_dotenv = enable_dotenv,
-        .lang_properties = enable_properties,
-        .lang_plist = enable_plist,
-        .lang_canonical = enable_canonical,
-        .lang_nestedtext = enable_nestedtext,
-    };
+    cfg.lang_canonical = b.option(bool, "canonical", "Include the canonical oracle format (opt-in; default off — used mainly by the test suite)") orelse false;
+    return cfg;
 }
 
 /// Build one `build_options` instance from `cfg` and `ver`. The version/ABI
@@ -167,25 +106,14 @@ pub fn resolve(b: *std.Build) BuildOptions {
 /// knobs — every build gets the same ones.
 pub fn addFigOptions(b: *std.Build, cfg: BuildOptions, ver: Versions) *std.Build.Step.Options {
     const options = b.addOptions();
-    options.addOption(bool, "json_conformance", cfg.json_conformance);
-    options.addOption(bool, "json5_conformance", cfg.json5_conformance);
-    options.addOption(bool, "yaml_conformance", cfg.yaml_conformance);
-    options.addOption(bool, "toml_conformance", cfg.toml_conformance);
-    options.addOption(bool, "plist_conformance", cfg.plist_conformance);
-    options.addOption(bool, "nestedtext_conformance", cfg.nestedtext_conformance);
+    inline for (list.suites, 0..) |suite, i| {
+        options.addOption(bool, suite.name ++ "_conformance", cfg.suites[i]);
+    }
     // Language gates, consumed across the codebase as `build_options.lang_*`.
-    options.addOption(bool, "lang_json", cfg.lang_json);
-    options.addOption(bool, "lang_yaml", cfg.lang_yaml);
-    options.addOption(bool, "lang_toml", cfg.lang_toml);
-    options.addOption(bool, "lang_zon", cfg.lang_zon);
-    options.addOption(bool, "lang_xml", cfg.lang_xml);
-    options.addOption(bool, "lang_fig", cfg.lang_fig);
-    options.addOption(bool, "lang_ini", cfg.lang_ini);
-    options.addOption(bool, "lang_dotenv", cfg.lang_dotenv);
-    options.addOption(bool, "lang_properties", cfg.lang_properties);
-    options.addOption(bool, "lang_plist", cfg.lang_plist);
+    inline for (list.rows, 0..) |row, i| {
+        options.addOption(bool, "lang_" ++ row.name, cfg.langs[i]);
+    }
     options.addOption(bool, "lang_canonical", cfg.lang_canonical);
-    options.addOption(bool, "lang_nestedtext", cfg.lang_nestedtext);
     // Library version surfaced through the C ABI (`fig_version` /
     // `fig_version_string`). Parsed from `.version` in `build.zig.zon` — the one
     // canonical package version — and split into the components the ABI's
@@ -203,7 +131,7 @@ pub fn addFigOptions(b: *std.Build, cfg: BuildOptions, ver: Versions) *std.Build
     options.addOption(u8, "cli_version_minor", @intCast(ver.cli.minor));
     options.addOption(u8, "cli_version_patch", @intCast(ver.cli.patch));
     // The current marketing epoch (see `epoch`'s doc comment in build.zig),
-    // surfaced only by `fig version` — no ABI/library counterpart.
+    // surfaced only by the CLI's `fig version` — no ABI/library counterpart.
     options.addOption([]const u8, "epoch", ver.epoch);
     return options;
 }

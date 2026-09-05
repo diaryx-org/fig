@@ -62,7 +62,7 @@ pub fn add(ctx: Context) Result {
     // rather than compiling a server that could never answer. That is why the
     // gate is here in the build graph and not a `comptime` branch in the
     // source: the source has no meaningful fig-less form to compile.
-    if (ctx.cfg.lang_fig) {
+    if (ctx.cfg.lang("fig")) {
         const lsp_exe = b.addExecutable(.{
             .name = "fig-lsp",
             .root_module = b.createModule(.{

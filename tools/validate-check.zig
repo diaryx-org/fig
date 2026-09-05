@@ -33,6 +33,7 @@
 
 const std = @import("std");
 const Dir = std.Io.Dir;
+const list = @import("languages");
 
 /// One fixture: a `Language` with a single deliberate defect, and the fragment
 /// of `validate`'s complaint that proves the right rule caught it.
@@ -269,24 +270,20 @@ fn buildProbe(allocator: std.mem.Allocator, case: Case) ![]u8 {
 ///
 /// Not a shortcut — a requirement. `language.zig` ends in a comptime block that
 /// validates every compiled-in language, so importing it to reach `validate`
-/// would otherwise drag all eleven real formats into each of these compiles.
-/// With the gates off they resolve to `void` and the registry loop skips them,
+/// would otherwise drag every real format into each of these compiles. With
+/// the gates off they resolve to `void` and the registry loop skips them,
 /// leaving the fixture as the only thing under test (and each probe fast).
-const options_src =
-    \\pub const lang_json: bool = false;
-    \\pub const lang_yaml: bool = false;
-    \\pub const lang_toml: bool = false;
-    \\pub const lang_zon: bool = false;
-    \\pub const lang_xml: bool = false;
-    \\pub const lang_fig: bool = false;
-    \\pub const lang_ini: bool = false;
-    \\pub const lang_dotenv: bool = false;
-    \\pub const lang_properties: bool = false;
-    \\pub const lang_plist: bool = false;
-    \\pub const lang_canonical: bool = false;
-    \\pub const lang_nestedtext: bool = false;
-    \\
-;
+///
+/// Written from `src/languages/list.zig` (the `languages` module) rather than
+/// by hand, so a format added to the list is gated off here without an edit.
+/// `canonical` is not a format and is named by hand, as it is in
+/// `src/build/Options.zig`.
+const options_src = blk: {
+    var src: []const u8 = "";
+    for (list.rows) |row| src = src ++ "pub const lang_" ++ row.name ++ ": bool = false;\n";
+    src = src ++ "pub const lang_canonical: bool = false;\n";
+    break :blk src;
+};
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;

@@ -260,12 +260,18 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     // whatever is first on PATH. Side-effecting: it writes and re-writes one
     // probe file per case, and its result depends on `src/languages/` state
     // that isn't a declared input, so it must not be served from cache.
+    //
+    // Takes the format list as a module so its all-formats-off
+    // `build_options` stub names exactly the gates the library reads.
     const validate_check = b.addExecutable(.{
         .name = "validate_check",
         .root_module = b.createModule(.{
             .root_source_file = b.path("tools/validate-check.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "languages", .module = b.createModule(.{ .root_source_file = b.path("src/languages/list.zig") }) },
+            },
         }),
     });
     const validate_check_run = b.addRunArtifact(validate_check);

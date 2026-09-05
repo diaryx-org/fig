@@ -137,11 +137,11 @@ and `.properties` are also shape-limited — see
 of them drops.
 
 Don't hard-code this table into your program — each row is only compiled in
-when its build option is set (`build_options.lang_json`, `.lang_yaml`,
-`.lang_toml`, `.lang_zon`, `.lang_xml`, `.lang_fig`, `.lang_ini`,
-`.lang_dotenv`, `.lang_properties`, `.lang_plist`, `.lang_nestedtext`), and
-`Language.TOML` etc. is `void` when its flag is off. Guard any generic code
-with the matching comptime check, the way `Language.detect` itself does:
+when its build option is set (`build_options.lang_<name>`, one per row of
+`src/languages/list.zig`: `lang_json`, `lang_yaml`, `lang_toml`, and so on),
+and `Language.TOML` etc. — or `Language.of("toml")`, the same lookup by name
+— is `void` when its flag is off. Guard any generic code with the matching
+comptime check, the way `Language.detect` itself does:
 
 ```zig
 if (comptime build_options.lang_toml) {

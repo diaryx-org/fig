@@ -38,20 +38,12 @@ pub const Fig = @import("languages/fig/fig.zig");
 pub const deserialize = @import("deserialize.zig");
 
 test {
-    // Each language module's own `test {}` block pulls in its submodules' tests,
-    // so root only imports the module entry points. Build-option-gated
-    // conformance suites stay enumerated below.
-    _ = @import("languages/json/json.zig");
-    _ = @import("languages/yaml/yaml.zig");
-    _ = @import("languages/toml/toml.zig");
-    _ = @import("languages/zon/zon.zig");
-    _ = @import("languages/xml/xml.zig");
-    _ = @import("languages/fig/fig.zig");
-    _ = @import("languages/ini/ini.zig");
-    _ = @import("languages/dotenv/dotenv.zig");
-    _ = @import("languages/properties/properties.zig");
-    _ = @import("languages/plist/plist.zig");
-    _ = @import("languages/nestedtext/nestedtext.zig");
+    // `language.zig`'s own test block references every language module in
+    // its `slots`, and each module's `test {}` block pulls in its submodules'
+    // tests, so root names no language. Build-option-gated conformance
+    // suites stay enumerated below: each is a file, and a file is imported by
+    // literal.
+    _ = @import("languages/language.zig");
     _ = @import("languages/shared/flat_map.zig");
     _ = @import("document.zig");
     _ = @import("editor.zig");

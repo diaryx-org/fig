@@ -16,14 +16,23 @@ pub const Caps = manifest.Caps;
 pub const NativeKinds = manifest.NativeKinds;
 pub const Syntax = manifest.Syntax;
 
-// The language MODULES, imported unconditionally, each paired with its gate.
+/// The one list of formats — `src/languages/list.zig` — re-exported so a
+/// consumer that is genuinely per-format (the build, `validate-check`, the
+/// harness) reads the same rows this file pairs with modules.
+pub const list = @import("list.zig");
+
+// The language MODULES, imported unconditionally, each named by its row in
+// `list.rows`. Every other per-language or per-dialect thing is derived from
+// the pairing: the gated aliases just below, `compiled`, and the format
+// registry `dialects`, which is assembled from each module's own
+// `Language.dialects` table in `list.rows` order (see the registry note on
+// why that order is frozen).
 //
-// This is the one list of languages in the tree. Everything per-language or
-// per-dialect is derived from it: the gated aliases just below, `compiled`,
-// and the format registry `dialects`, which is assembled from each module's
-// own `Language.dialects` table in THIS order (see the registry note on why
-// that order is frozen). Appending a language means appending a slot here;
-// nothing else in this file names it.
+// This is the ONE line a new format adds to core beside its row in the list.
+// It cannot be generated from the row — `@import` takes only a string
+// literal — so the comptime block after it checks the two lists agree in
+// both directions and in order, and the gate is looked up by name rather
+// than paired by hand.
 //
 // The module is imported whether or not its gate is on. Nothing runtime is
 // ever reached through the module itself — only comptime DECLARATIONS
@@ -32,25 +41,58 @@ pub const Syntax = manifest.Syntax;
 // build-invariant, the way its `--spec` strings always were. Zig's analysis is
 // lazy, so reading a declaration builds no parser and no printer; everything
 // that would goes through the gated alias, which is `void` when the gate is
-// off. (`root.zig`'s test block has imported all eleven unconditionally for
-// as long as the gates have existed.)
+// off.
 const slots = .{
-    .{ @import("json/json.zig"), build_options.lang_json },
-    .{ @import("yaml/yaml.zig"), build_options.lang_yaml },
-    .{ @import("toml/toml.zig"), build_options.lang_toml },
-    .{ @import("zon/zon.zig"), build_options.lang_zon },
-    .{ @import("xml/xml.zig"), build_options.lang_xml },
-    .{ @import("fig/fig.zig"), build_options.lang_fig },
-    .{ @import("ini/ini.zig"), build_options.lang_ini },
-    .{ @import("dotenv/dotenv.zig"), build_options.lang_dotenv },
-    .{ @import("properties/properties.zig"), build_options.lang_properties },
-    .{ @import("plist/plist.zig"), build_options.lang_plist },
-    .{ @import("nestedtext/nestedtext.zig"), build_options.lang_nestedtext },
+    .{ .name = "json", .mod = @import("json/json.zig") },
+    .{ .name = "yaml", .mod = @import("yaml/yaml.zig") },
+    .{ .name = "toml", .mod = @import("toml/toml.zig") },
+    .{ .name = "zon", .mod = @import("zon/zon.zig") },
+    .{ .name = "xml", .mod = @import("xml/xml.zig") },
+    .{ .name = "fig", .mod = @import("fig/fig.zig") },
+    .{ .name = "ini", .mod = @import("ini/ini.zig") },
+    .{ .name = "dotenv", .mod = @import("dotenv/dotenv.zig") },
+    .{ .name = "properties", .mod = @import("properties/properties.zig") },
+    .{ .name = "plist", .mod = @import("plist/plist.zig") },
+    .{ .name = "nestedtext", .mod = @import("nestedtext/nestedtext.zig") },
 };
+
+comptime {
+    // `slots` and `list.rows` are the same list twice, in the same order —
+    // one holding what only a string literal can spell, the other what the
+    // build has to read without importing a language. Either drifting fails
+    // here, naming the row or slot that has no partner.
+    if (slots.len != list.rows.len)
+        @compileError("src/languages/list.zig has " ++ std.fmt.comptimePrint("{d}", .{list.rows.len}) ++
+            " rows but `slots` in language.zig has " ++ std.fmt.comptimePrint("{d}", .{slots.len}) ++
+            " — a format is one row in the list and one `@import` slot here");
+    for (slots, list.rows, 0..) |slot, row, i| {
+        if (!std.mem.eql(u8, slot.name, row.name))
+            @compileError("slot " ++ std.fmt.comptimePrint("{d}", .{i}) ++ " of language.zig is '" ++
+                slot.name ++ "' but row " ++ std.fmt.comptimePrint("{d}", .{i}) ++
+                " of src/languages/list.zig is '" ++ row.name ++
+                "' — the two lists must agree in order, since the order is every derived enum's");
+        if (!std.mem.eql(u8, slot.mod.Language.name, slot.name))
+            @compileError("slot '" ++ slot.name ++ "' imports a module whose Language.name is '" ++
+                slot.mod.Language.name ++ "'");
+    }
+}
+
+/// Whether the format named `name` is compiled into this build: the
+/// `build_options.lang_<name>` decl the build declares per row of the list.
+fn gateOf(comptime name: []const u8) bool {
+    return @field(build_options, "lang_" ++ name);
+}
 
 /// A slot's `Language` when its gate is on, `void` when it is off.
 fn gated(comptime slot: anytype) type {
-    return if (slot[1]) slot[0].Language else void;
+    return if (gateOf(slot.name)) slot.mod.Language else void;
+}
+
+/// The gated `Language` of the format named `name` — `void` when the format
+/// is compiled out — looked up by name in the list rather than by position.
+/// A name that is not a row is a compile error naming it.
+pub fn of(comptime name: []const u8) type {
+    return gated(slots[comptime list.indexOf(name)]);
 }
 
 // Per-language gates: a compiled-out format resolves to `void`, so nothing that
@@ -59,17 +101,23 @@ fn gated(comptime slot: anytype) type {
 // `build_options.lang_*` flag (a `comptime` check), or it will fail to compile
 // against `void`. JSON is gateable like the rest now that `detect` no longer
 // assumes it as a base.
-pub const JSON = gated(slots[0]);
-pub const YAML = gated(slots[1]);
-pub const TOML = gated(slots[2]);
-pub const ZON = gated(slots[3]);
-pub const XML = gated(slots[4]);
-pub const FIG = gated(slots[5]);
-pub const INI = gated(slots[6]);
-pub const DOTENV = gated(slots[7]);
-pub const PROPERTIES = gated(slots[8]);
-pub const PLIST = gated(slots[9]);
-pub const NESTEDTEXT = gated(slots[10]);
+//
+// Named aliases rather than `of("json")` at every call site because the
+// names are how every guide, test and consumer reaches a format; they are
+// the one thing here a new format still adds by hand, since Zig cannot
+// declare a named constant from a loop. `of` is the same lookup for a caller
+// that has the name as a string.
+pub const JSON = of("json");
+pub const YAML = of("yaml");
+pub const TOML = of("toml");
+pub const ZON = of("zon");
+pub const XML = of("xml");
+pub const FIG = of("fig");
+pub const INI = of("ini");
+pub const DOTENV = of("dotenv");
+pub const PROPERTIES = of("properties");
+pub const PLIST = of("plist");
+pub const NESTEDTEXT = of("nestedtext");
 
 // ============================================================================
 // THE FORMAT REGISTRY
@@ -104,7 +152,7 @@ pub const NESTEDTEXT = gated(slots[10]);
 // The rows themselves are no longer written here. Each language declares its
 // own — `Language.dialects`, a `[]const manifest.Dialect(Language)` beside its
 // `name`/`extensions`/`caps` — and `dialects` below is ASSEMBLED from those
-// tables in `slots` order, lifting each row to the gated `Dialect(Lang)` so
+// tables in `list.rows` order, lifting each row to the gated `Dialect(Lang)` so
 // the `void` protocol holds exactly as it did when the rows were literal.
 
 // The `void` protocol and the entry shape, re-exported from the leaf manifest
@@ -162,14 +210,14 @@ fn lift(comptime d: anytype, comptime G: type) Entry(G) {
 const entry_types: []const type = blk: {
     var ts: []const type = &.{};
     for (slots) |slot| {
-        for (slot[0].Language.dialects) |_| ts = ts ++ [_]type{Entry(gated(slot))};
+        for (slot.mod.Language.dialects) |_| ts = ts ++ [_]type{Entry(gated(slot))};
     }
     break :blk ts;
 };
 
 /// EVERY user-facing dialect, as a heterogeneous comptime tuple — thirteen
 /// entries over eleven languages (the JSON module supplies three) — assembled
-/// from each language's own `Language.dialects` in `slots` order.
+/// from each language's own `Language.dialects` in `list.rows` order.
 ///
 /// Two properties of this table are frozen, and both are load-bearing:
 ///
@@ -182,12 +230,11 @@ const entry_types: []const type = blk: {
 ///     and `gron`, a CLI-only projection — both spliced back by hand at their
 ///     old positions, see `namesWith`) and minus `yml`, an alias of `yaml`
 ///     retired in Stage 3. Reordering it would silently renumber
-///     `@intFromEnum` for every one of those enums. It is now the product of
-///     two orders — `slots` and each language's own table — so a literal pin
-///     below (`registry_order`) states the whole sequence in one place, and
-///     either half moving fails the build there. Append: a new language is a
-///     new last slot, a new dialect of an existing language is its table's
-///     last row — and the pin's.
+///     `@intFromEnum` for every one of those enums. It is the product of
+///     two orders — `list.rows` (which `slots` is checked against) and each
+///     language's own table. Append: a new language is a new last row of the
+///     list and a new last slot, a new dialect of an existing language is its
+///     table's last row.
 ///
 ///   * `abi_value`. It is the C ABI, and a released value is permanent.
 ///
@@ -206,20 +253,12 @@ pub const dialects: std.meta.Tuple(entry_types) = blk: {
     var out: std.meta.Tuple(entry_types) = undefined;
     var i: usize = 0;
     for (slots) |slot| {
-        for (slot[0].Language.dialects) |d| {
+        for (slot.mod.Language.dialects) |d| {
             out[i] = lift(d, gated(slot));
             i += 1;
         }
     }
     break :blk out;
-};
-
-/// The registry's order, as a literal. `dialects` derives it from `slots` ×
-/// each language's table, and this is the one place the whole sequence is
-/// written down — see the ORDER note on `dialects` for why it cannot move.
-const registry_order = [_][]const u8{
-    "json", "jsonc", "json5",  "yaml",       "toml",  "zon",        "xml",
-    "fig",  "ini",   "dotenv", "properties", "plist", "nestedtext",
 };
 
 /// The MODULE the registry entry `name` was declared in — the ungated route
@@ -230,8 +269,8 @@ const registry_order = [_][]const u8{
 /// gated `Lang`.
 pub fn moduleFor(comptime name: []const u8) type {
     inline for (slots) |slot| {
-        inline for (slot[0].Language.dialects) |d| {
-            if (comptime std.mem.eql(u8, d.name, name)) return slot[0];
+        inline for (slot.mod.Language.dialects) |d| {
+            if (comptime std.mem.eql(u8, d.name, name)) return slot.mod;
         }
     }
     @compileError("no registry entry for format '" ++ name ++ "'");
@@ -481,25 +520,6 @@ comptime {
         if (d.dialect != expected)
             @compileError("format-registry entry '" ++ d.name ++
                 "' selects a dialect other than the one its call sites pass today");
-    }
-
-    // The ORDER pin. Assembly reproduces `registry_order` exactly, or a slot
-    // or a language's own table has moved — which would renumber every
-    // derived enum (see `dialects`).
-    {
-        const names = namesOf(.all);
-        if (names.len != registry_order.len)
-            @compileError("the format registry has " ++ std.fmt.comptimePrint("{d}", .{names.len}) ++
-                " entries but `registry_order` pins " ++
-                std.fmt.comptimePrint("{d}", .{registry_order.len}) ++
-                " — a new dialect is appended to both its language's table and the pin");
-        for (names, registry_order, 0..) |got, want, i| {
-            if (!std.mem.eql(u8, got, want))
-                @compileError("format-registry entry " ++ std.fmt.comptimePrint("{d}", .{i}) ++
-                    " is '" ++ got ++ "' but `registry_order` pins '" ++ want ++
-                    "' there — the registry's order is every derived enum's member order," ++
-                    " so neither `slots` nor a language's own `dialects` may reorder");
-        }
     }
 
     // Every row's `Lang` is the gated alias of the language whose table it
@@ -1001,11 +1021,11 @@ pub fn validate(comptime Lang: type) void {
 /// per-LANGUAGE — but a consumer that is genuinely per-language now has one
 /// list to walk instead of eleven `build_options` tests to repeat.
 pub const compiled: []const type = blk: {
-    var list: []const type = &.{};
+    var out: []const type = &.{};
     for (slots) |slot| {
-        if (slot[1]) list = list ++ [_]type{slot[0].Language};
+        if (gateOf(slot.name)) out = out ++ [_]type{slot.mod.Language};
     }
-    break :blk list;
+    break :blk out;
 };
 
 // Validate every compiled-in language, including the read-only ones that no
@@ -1013,6 +1033,13 @@ pub const compiled: []const type = blk: {
 // analyzed, which is whenever anything touches a format at all.
 comptime {
     for (compiled) |Lang| validate(Lang);
+}
+
+// Test discovery: referencing each language module from a test block pulls
+// its own `test {}` block — and through it every submodule's tests — into
+// the suite, so `root.zig` names this file and no language.
+test {
+    inline for (slots) |slot| _ = slot.mod;
 }
 
 test "detect identifies each compiled-in format by content" {

@@ -58,6 +58,11 @@ const Case = struct {
     expect: []const u8,
     /// When set, this decl is removed from the base rather than added.
     omit: []const u8 = "",
+    /// When set, the probe is a complete out-of-tree `Language` with a
+    /// working parser and printer (see `buildDrivenProbe`), compiled with
+    /// `zig test` and RUN: it must build and its test must pass. The
+    /// positive control for the engine rather than for `validate` alone.
+    run: bool = false,
 };
 
 const cases = [_]Case{
@@ -65,6 +70,16 @@ const cases = [_]Case{
     .{
         .name = "well-formed fixture compiles",
         .expect = "",
+    },
+    .{
+        // The claim `docs/zig.md` makes for an out-of-tree format: a type that
+        // passes `validate` can be given to `Editor`, its hooks may use
+        // `editor/splice.zig`, and it appears in no registry-derived enum.
+        // Proved by running one: a `Language` declared here, outside
+        // `src/languages/`, drives `Editor.set` end to end.
+        .name = "out-of-tree Language drives Editor",
+        .expect = "",
+        .run = true,
     },
 
     // ---- the closed declaration set (§4 job 2) ----
@@ -274,6 +289,70 @@ fn buildProbe(allocator: std.mem.Allocator, case: Case) ![]u8 {
     return buf.toOwnedSlice(allocator);
 }
 
+/// A complete out-of-tree `Language`, plus the test that drives it.
+///
+/// The declarations are the fixture's own — its name, extension, caps,
+/// dialect row and syntax are nothing the tree has — while the parser and
+/// printer are borrowed from dotenv through `Language.moduleFor`, the
+/// ungated route to a language's module, so the probe has a real grammar to
+/// edit without shipping one. dotenv declares no hooks, so every operation
+/// runs the generic engine, which is exactly the surface an out-of-tree
+/// format without hooks would be relying on. `build_options` still gates
+/// every real format off (see `options_src`), so the fixture is the only
+/// `Language` in the compile and cannot be reached through any registry
+/// enum — which the test also checks.
+fn buildDrivenProbe(allocator: std.mem.Allocator) ![]u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    errdefer buf.deinit(allocator);
+    try buf.appendSlice(allocator,
+        \\const std = @import("std");
+        \\const fig = @import("fig");
+        \\const language = fig.Language;
+        \\const borrowed = language.moduleFor("dotenv");
+        \\
+        \\pub const Language = struct {
+        \\    pub const Type = borrowed.Type;
+        \\    pub const Parser = borrowed.Parser;
+        \\    pub const Printer = borrowed.Printer;
+        \\    pub const default_type: Type = borrowed.Language.default_type;
+        \\    pub fn parse(parser: *Parser, input: []const u8, format: Type) !fig.Document {
+        \\        return Parser.parse(parser.allocator, input, format);
+        \\    }
+        \\    pub const print = Printer.print;
+        \\    pub const printNode = Printer.printNode;
+        \\
+        \\    pub const name = "fixture";
+        \\    pub const extensions: []const []const u8 = &.{"fx"};
+        \\    pub const caps: language.Caps = .{ .read = true, .edit = true, .serialize = true, .max_mapping_depth = 0 };
+        \\    pub const dialects: []const language.Dialect(@This()) = &.{
+        \\        .{ .name = "fixture", .abi_value = 99, .sniff_rank = 200, .splice = .raw, .empty_doc_seed = "" },
+        \\    };
+        \\    pub fn syntax(t: Type) language.Syntax {
+        \\        return borrowed.Language.syntax(t);
+        \\    }
+        \\};
+        \\
+        \\comptime {
+        \\    language.validate(Language);
+        \\    // Out of tree means out of the registry: no derived enum names it.
+        \\    if (@hasField(fig.AST.SerializeFormat, "fixture")) @compileError("the fixture leaked into the registry");
+        \\}
+        \\
+        \\test "an out-of-tree Language drives Editor end to end" {
+        \\    const Ed = fig.Editor(Language);
+        \\    var ed: Ed = .{ .allocator = std.testing.allocator };
+        \\    defer ed.deinit();
+        \\    try ed.init("A=1\n");
+        \\    try ed.set(&.{.{ .key = "B" }}, "2");
+        \\    try std.testing.expectEqualStrings("A=1\nB=2\n", ed.source.items);
+        \\    try ed.deleteKey(&.{.{ .key = "A" }});
+        \\    try std.testing.expectEqualStrings("B=2\n", ed.source.items);
+        \\}
+        \\
+    );
+    return buf.toOwnedSlice(allocator);
+}
+
 /// A `build_options` with every format compiled out.
 ///
 /// Not a shortcut — a requirement. `language.zig` ends in a comptime block that
@@ -325,7 +404,7 @@ pub fn main(init: std.process.Init) !void {
 
     var failures: usize = 0;
     for (cases) |case| {
-        const src = try buildProbe(gpa, case);
+        const src = if (case.run) try buildDrivenProbe(gpa) else try buildProbe(gpa, case);
         defer gpa.free(src);
         {
             const f = try cwd.createFile(io, probe_path, .{ .read = true });
@@ -334,8 +413,17 @@ pub fn main(init: std.process.Init) !void {
             try f.setLength(io, src.len);
         }
 
+        // `build-obj` for a compile-or-refuse case; `test` — which also runs
+        // the binary — for a case that must execute.
         const res = std.process.run(gpa, io, .{
-            .argv = &.{
+            .argv = if (case.run) &.{
+                zig_exe,         "test",
+                "--dep",         "build_options",
+                "--dep",         "fig",
+                root_arg,        "--dep",
+                "build_options", lang_arg,
+                opts_arg,
+            } else &.{
                 zig_exe,         "build-obj",
                 // root: depends on both; language: depends on build_options.
                 "--dep",         "build_options",
@@ -357,18 +445,18 @@ pub fn main(init: std.process.Init) !void {
         };
 
         if (case.expect.len == 0) {
-            // Positive control: this one must build.
+            // Positive control: this one must build (and, for a run case, pass).
             if (compiled) {
                 std.debug.print("  ok    {s}\n", .{case.name});
             } else {
                 failures += 1;
                 std.debug.print(
                     \\  FAIL  {s}
-                    \\        the well-formed fixture did not compile, so every case below
+                    \\        the well-formed fixture did not {s}, so every case below
                     \\        this one proves nothing. Fix the harness, not `validate`.
                     \\{s}
                     \\
-                , .{ case.name, res.stderr });
+                , .{ case.name, if (case.run) "build and pass" else "compile", res.stderr });
             }
             continue;
         }

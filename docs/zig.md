@@ -167,6 +167,16 @@ the shape (`Type`, `default_type`, `parse`, `print`) the generic engines
 (`Editor(Lang)`, `deserialize`) require, and `fig.Language.compiled` is the
 list of language modules this build actually contains.
 
+That assertion is also the contract for a format declared *outside* the tree:
+a type that passes `Language.validate` can be given to `Editor`, its editing
+hooks may use what `src/editor/splice.zig` exports and the `Editor` members
+that file's module doc names, and it appears in no registry-derived enum —
+no `SerializeFormat` member, no CLI selector, no C ABI value, no embedded
+spelling; those belong to the formats listed in `src/languages/list.zig`.
+`zig build validate-check` proves the claim rather than describing it: one
+of its cases declares such a `Language` in a temporary directory, hands it to
+`Editor`, and runs a `set` and a `deleteKey` through it.
+
 Every "Edit" ✅ above goes through the *same* generic `Editor(Language)` engine
 (next section) — ZON included, splicing its `.key = value` struct-field syntax
 and `.{}`/`.@"..."` quoting rules exactly like JSON gets `"key": value`. Only

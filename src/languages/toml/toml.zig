@@ -49,6 +49,13 @@ pub const Language = struct {
         },
     };
 
+    /// What `languages/harness.zig` round-trips and edits: a root key, a
+    /// `[table]` (the section shape the parser records regions for), an
+    /// array, and an inline table.
+    pub const samples: []const []const u8 = &.{
+        "a = 1\nb = [1, 2]\n\n[s]\nk = \"v\"\nt = { x = 1 }\n",
+    };
+
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "toml",
         .abi_value = 4,

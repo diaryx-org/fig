@@ -44,6 +44,7 @@ test {
     // suites stay enumerated below: each is a file, and a file is imported by
     // literal.
     _ = @import("languages/language.zig");
+    _ = @import("languages/harness.zig");
     _ = @import("languages/shared/flat_map.zig");
     _ = @import("document.zig");
     _ = @import("editor.zig");

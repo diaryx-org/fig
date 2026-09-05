@@ -28,6 +28,12 @@ pub const Language = struct {
     pub const extensions: []const []const u8 = &.{"nt"};
     pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
 
+    /// What `languages/harness.zig` round-trips and edits: a dict with a
+    /// nested list.
+    pub const samples: []const []const u8 = &.{
+        "a: 1\nb:\n  - x\n  - y\n",
+    };
+
     /// Nested (dict/list) but deliberately untyped — every leaf is a string.
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "nestedtext",

@@ -87,6 +87,17 @@ on one format:
 zig build test -Dtoml-conformance=true
 ```
 
+Between the unit tests and the suites sits one more layer that needs no
+flag: `src/languages/harness.zig`, the checks that hold for *any* format,
+run over every compiled-in dialect. Each format declares a few `samples` in
+its own grammar; the harness parses each, prints it, and reparses it to the
+same tree, checks that `Document.node_regions` is well-formed and that a
+section format's parser fills it, and constructs an `Editor` over it with a
+no-op splice. It also parses every registry row's `empty_doc_seed`. A new
+format is covered by declaring `samples`; a corpus is not needed for that,
+and the corpora under `testdata/` are deliberately left to the suites that
+know their shape.
+
 ## Refreshing a corpus
 
 The `gen-*-conformance` steps vendor an upstream corpus into `testdata/`. They

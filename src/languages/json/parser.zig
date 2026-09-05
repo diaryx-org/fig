@@ -570,167 +570,167 @@ fn parse_once(self: *Parser, input: []const u8, kind: Type) !Document {
 /// Bodies are unchanged from the original inline dispatch.
 fn dispatchToken(self: *Parser, input: []const u8, token: Token) ParserError!void {
     switch (self.state) {
-            .ExpectValue => {
-                switch (token.kind) {
-                    .open_brace => {
-                        const id = try self.addNode(.{ .mapping = null }, token.span);
-                        try self.openContainer(.object, id);
-                        self.state = .ExpectObjectKeyOrEnd;
-                    },
-                    .open_bracket => {
-                        const id = try self.addNode(.{ .sequence = null }, token.span);
-                        try self.openContainer(.array, id);
-                        self.state = .ExpectArrayValueOrEnd;
-                    },
-                    .null_ => {
-                        const id = try self.addTokenNode(input, token);
-                        try self.finishValue(id);
-                    },
-                    .true_, .false_ => {
-                        const id = try self.addTokenNode(input, token);
-                        try self.finishValue(id);
-                    },
-                    .string => {
-                        const id = try self.addTokenNode(input, token);
-                        try self.finishValue(id);
-                    },
-                    .number, .identifier => {
-                        const id = try self.addTokenNode(input, token);
-                        try self.finishValue(id);
-                    },
-                    else => return ParseError.UnexpectedToken,
-                }
-            },
+        .ExpectValue => {
+            switch (token.kind) {
+                .open_brace => {
+                    const id = try self.addNode(.{ .mapping = null }, token.span);
+                    try self.openContainer(.object, id);
+                    self.state = .ExpectObjectKeyOrEnd;
+                },
+                .open_bracket => {
+                    const id = try self.addNode(.{ .sequence = null }, token.span);
+                    try self.openContainer(.array, id);
+                    self.state = .ExpectArrayValueOrEnd;
+                },
+                .null_ => {
+                    const id = try self.addTokenNode(input, token);
+                    try self.finishValue(id);
+                },
+                .true_, .false_ => {
+                    const id = try self.addTokenNode(input, token);
+                    try self.finishValue(id);
+                },
+                .string => {
+                    const id = try self.addTokenNode(input, token);
+                    try self.finishValue(id);
+                },
+                .number, .identifier => {
+                    const id = try self.addTokenNode(input, token);
+                    try self.finishValue(id);
+                },
+                else => return ParseError.UnexpectedToken,
+            }
+        },
 
-            .ExpectArrayValueOrEnd => {
-                switch (token.kind) {
-                    .open_bracket => {
-                        const id = try self.addNode(.{ .sequence = null }, token.span);
-                        try self.openContainer(.array, id);
-                        self.state = .ExpectArrayValueOrEnd;
-                    },
-                    .open_brace => {
-                        const id = try self.addNode(.{ .mapping = null }, token.span);
-                        try self.openContainer(.object, id);
-                        self.state = .ExpectObjectKeyOrEnd;
-                    },
-                    .null_ => {
-                        const id = try self.addTokenNode(input, token);
-                        try self.finishValue(id);
-                    },
-                    .true_, .false_ => {
-                        const id = try self.addTokenNode(input, token);
-                        try self.finishValue(id);
-                    },
-                    .string => {
-                        const id = try self.addTokenNode(input, token);
-                        try self.finishValue(id);
-                    },
-                    .number, .identifier => {
-                        const id = try self.addTokenNode(input, token);
-                        try self.finishValue(id);
-                    },
-                    .close_bracket => {
-                        const id = try self.closeContainer(token.span.end);
-                        try self.finishValue(id);
-                    },
-                    else => return ParseError.UnexpectedToken,
-                }
-            },
-            .ExpectArrayCommaOrEnd => {
-                switch (token.kind) {
-                    .close_bracket => {
-                        const id = try self.closeContainer(token.span.end);
-                        try self.finishValue(id);
-                    },
-                    .comma => {
-                        // JSON5 permits a trailing comma: route to the state
-                        // that also accepts `]`. Strict JSON must then see a
-                        // value, so `[1,]` stays an error.
-                        self.state = if (self.format == .JSON5) .ExpectArrayValueOrEnd else .ExpectValue;
-                    },
-                    else => return ParseError.UnexpectedToken,
-                }
-            },
+        .ExpectArrayValueOrEnd => {
+            switch (token.kind) {
+                .open_bracket => {
+                    const id = try self.addNode(.{ .sequence = null }, token.span);
+                    try self.openContainer(.array, id);
+                    self.state = .ExpectArrayValueOrEnd;
+                },
+                .open_brace => {
+                    const id = try self.addNode(.{ .mapping = null }, token.span);
+                    try self.openContainer(.object, id);
+                    self.state = .ExpectObjectKeyOrEnd;
+                },
+                .null_ => {
+                    const id = try self.addTokenNode(input, token);
+                    try self.finishValue(id);
+                },
+                .true_, .false_ => {
+                    const id = try self.addTokenNode(input, token);
+                    try self.finishValue(id);
+                },
+                .string => {
+                    const id = try self.addTokenNode(input, token);
+                    try self.finishValue(id);
+                },
+                .number, .identifier => {
+                    const id = try self.addTokenNode(input, token);
+                    try self.finishValue(id);
+                },
+                .close_bracket => {
+                    const id = try self.closeContainer(token.span.end);
+                    try self.finishValue(id);
+                },
+                else => return ParseError.UnexpectedToken,
+            }
+        },
+        .ExpectArrayCommaOrEnd => {
+            switch (token.kind) {
+                .close_bracket => {
+                    const id = try self.closeContainer(token.span.end);
+                    try self.finishValue(id);
+                },
+                .comma => {
+                    // JSON5 permits a trailing comma: route to the state
+                    // that also accepts `]`. Strict JSON must then see a
+                    // value, so `[1,]` stays an error.
+                    self.state = if (self.format == .JSON5) .ExpectArrayValueOrEnd else .ExpectValue;
+                },
+                else => return ParseError.UnexpectedToken,
+            }
+        },
 
-            .ExpectObjectKeyOrEnd => {
-                switch (token.kind) {
-                    .string, .identifier, .true_, .false_, .null_ => {
-                        try self.beginKey(input, token);
-                    },
-                    .close_brace => {
-                        const id = try self.closeContainer(token.span.end);
-                        try self.finishValue(id);
-                    },
-                    else => return ParseError.UnexpectedToken,
-                }
-            },
-            .ExpectObjectKey => {
-                switch (token.kind) {
-                    .string, .identifier, .true_, .false_, .null_ => {
-                        try self.beginKey(input, token);
-                    },
-                    else => return ParseError.UnexpectedToken,
-                }
-            },
-            .ExpectObjectColon => {
-                switch (token.kind) {
-                    .colon => {
-                        self.state = .ExpectObjectValue;
-                    },
-                    else => return ParseError.UnexpectedToken,
-                }
-            },
-            .ExpectObjectValue => {
-                switch (token.kind) {
-                    .open_brace => {
-                        const id = try self.addNode(.{ .mapping = null }, token.span);
-                        try self.openContainer(.object, id);
-                        self.state = .ExpectObjectKeyOrEnd;
-                    },
-                    .open_bracket => {
-                        const id = try self.addNode(.{ .sequence = null }, token.span);
-                        try self.openContainer(.array, id);
-                        self.state = .ExpectArrayValueOrEnd;
-                    },
-                    .null_ => {
-                        const id = try self.addTokenNode(input, token);
-                        try self.finishValue(id);
-                    },
-                    .true_, .false_ => {
-                        const id = try self.addTokenNode(input, token);
-                        try self.finishValue(id);
-                    },
-                    .string => {
-                        const id = try self.addTokenNode(input, token);
-                        try self.finishValue(id);
-                    },
-                    .number, .identifier => {
-                        const id = try self.addTokenNode(input, token);
-                        try self.finishValue(id);
-                    },
-                    else => return ParseError.UnexpectedToken,
-                }
-            },
-            .ExpectObjectCommaOrEnd => {
-                switch (token.kind) {
-                    .close_brace => {
-                        const id = try self.closeContainer(token.span.end);
-                        try self.finishValue(id);
-                    },
-                    // JSON5 permits a trailing comma before `}`.
-                    .comma => self.state = if (self.format == .JSON5) .ExpectObjectKeyOrEnd else .ExpectObjectKey,
-                    else => return ParseError.UnexpectedToken,
-                }
-            },
+        .ExpectObjectKeyOrEnd => {
+            switch (token.kind) {
+                .string, .identifier, .true_, .false_, .null_ => {
+                    try self.beginKey(input, token);
+                },
+                .close_brace => {
+                    const id = try self.closeContainer(token.span.end);
+                    try self.finishValue(id);
+                },
+                else => return ParseError.UnexpectedToken,
+            }
+        },
+        .ExpectObjectKey => {
+            switch (token.kind) {
+                .string, .identifier, .true_, .false_, .null_ => {
+                    try self.beginKey(input, token);
+                },
+                else => return ParseError.UnexpectedToken,
+            }
+        },
+        .ExpectObjectColon => {
+            switch (token.kind) {
+                .colon => {
+                    self.state = .ExpectObjectValue;
+                },
+                else => return ParseError.UnexpectedToken,
+            }
+        },
+        .ExpectObjectValue => {
+            switch (token.kind) {
+                .open_brace => {
+                    const id = try self.addNode(.{ .mapping = null }, token.span);
+                    try self.openContainer(.object, id);
+                    self.state = .ExpectObjectKeyOrEnd;
+                },
+                .open_bracket => {
+                    const id = try self.addNode(.{ .sequence = null }, token.span);
+                    try self.openContainer(.array, id);
+                    self.state = .ExpectArrayValueOrEnd;
+                },
+                .null_ => {
+                    const id = try self.addTokenNode(input, token);
+                    try self.finishValue(id);
+                },
+                .true_, .false_ => {
+                    const id = try self.addTokenNode(input, token);
+                    try self.finishValue(id);
+                },
+                .string => {
+                    const id = try self.addTokenNode(input, token);
+                    try self.finishValue(id);
+                },
+                .number, .identifier => {
+                    const id = try self.addTokenNode(input, token);
+                    try self.finishValue(id);
+                },
+                else => return ParseError.UnexpectedToken,
+            }
+        },
+        .ExpectObjectCommaOrEnd => {
+            switch (token.kind) {
+                .close_brace => {
+                    const id = try self.closeContainer(token.span.end);
+                    try self.finishValue(id);
+                },
+                // JSON5 permits a trailing comma before `}`.
+                .comma => self.state = if (self.format == .JSON5) .ExpectObjectKeyOrEnd else .ExpectObjectKey,
+                else => return ParseError.UnexpectedToken,
+            }
+        },
 
-            .ExpectEndOfFile => {
-                switch (token.kind) {
-                    .end_of_file => {},
-                    else => return ParseError.UnexpectedToken,
-                }
-            },
-        }
+        .ExpectEndOfFile => {
+            switch (token.kind) {
+                .end_of_file => {},
+                else => return ParseError.UnexpectedToken,
+            }
+        },
+    }
 }
 
 /// After a parse error at `tokens[start]` (only reachable in `recover` mode),

@@ -52,6 +52,13 @@ pub const Language = struct {
         .lossless = .{ .null = true },
     };
 
+    /// What `languages/harness.zig` round-trips and edits: block and flow
+    /// shapes, a sequence, a nested mapping.
+    pub const samples: []const []const u8 = &.{
+        "a: 1\nb:\n  - x\n  - y\nc:\n  d: true\n",
+        "{a: 1, b: [2, 3]}\n",
+    };
+
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "yaml",
         .abi_value = 3,

@@ -698,7 +698,11 @@ const Decls = struct {
     ///   * `parseAbstract` — the AST-only parse `deserialize.zig` dispatches
     ///     through. Required of exactly the languages with a `deserializable`
     ///     dialect row (a `validate` rule below), optional for the rest.
-    const optional = [_][]const u8{ "printNode", "materialize", "TagMode", "parseAbstract" };
+    ///   * `samples` — a few small documents in the format's own grammar
+    ///     that `languages/harness.zig` parses, prints, reparses and edits
+    ///     to check what the engine assumes of every format. Every in-tree
+    ///     format declares some; an out-of-tree one may.
+    const optional = [_][]const u8{ "printNode", "materialize", "TagMode", "parseAbstract", "samples" };
 
     /// Editing hooks. Declaring one takes over `editor.Editor`'s method of the
     /// same name — except `keyIsInherited` (a predicate the engine queries)

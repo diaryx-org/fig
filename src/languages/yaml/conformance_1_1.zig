@@ -91,7 +91,7 @@ fn scoreValidDir(dir_path: []const u8, version: YamlType) !Score {
 // ── tagged-JSON comparison (mirrors src/languages/toml/conformance.zig, plus `null`) ───
 
 const TagType = enum {
-    @"null",
+    null,
     string,
     integer,
     float,
@@ -187,7 +187,7 @@ fn countChildren(ast: *const AST, node: AST.Node) usize {
 fn matchLeaf(ya: *const AST, y_id: AST.Node.Id, leaf: Leaf) bool {
     const node = ya.nodes[y_id].kind;
     return switch (leaf.tag) {
-        .@"null" => node == .null_,
+        .null => node == .null_,
         .string => node == .string and std.mem.eql(u8, node.string, leaf.value),
         .bool => node == .boolean and std.mem.eql(u8, if (node.boolean) "true" else "false", leaf.value),
         .integer => node == .number and node.number.kind == .integer and intEqual(node.number.raw, leaf.value),

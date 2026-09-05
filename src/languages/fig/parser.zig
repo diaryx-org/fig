@@ -2857,8 +2857,7 @@ test "multiline strings: raw and dedented" {
 }
 
 test "multiline closer is line-anchored: indented closer OK, mid-line triple is content" {
-    var ast = try parseAbstract(testing.allocator,
-        "a = '''\n  x\n  '''\nb = '''\nhas ''' inside\n'''\nc = \"\"\"\n    hi\n  low\n    \"\"\"\n", .Fig);
+    var ast = try parseAbstract(testing.allocator, "a = '''\n  x\n  '''\nb = '''\nhas ''' inside\n'''\nc = \"\"\"\n    hi\n  low\n    \"\"\"\n", .Fig);
     defer ast.deinit();
     // Raw: content lines keep their indentation; the CLOSER line's leading
     // whitespace is not content (the closer need not sit flush-left).
@@ -2883,8 +2882,7 @@ test "content after a multiline opener is a hard error, an opener comment is not
 }
 
 test "CRLF input parses identically to LF (a line-terminating \\r is trivia)" {
-    var ast = try parseAbstract(testing.allocator,
-        "database\r\n> host = localhost\r\n> quoted = \"v\"  # c\r\n>>\r\nports\r\n> * 1\r\n> * 2\r\nblob = '''\r\na\r\nb\r\n'''\r\nxs[]\r\n> k = 1\r\n+\r\n> k = 2\r\n", .Fig);
+    var ast = try parseAbstract(testing.allocator, "database\r\n> host = localhost\r\n> quoted = \"v\"  # c\r\n>>\r\nports\r\n> * 1\r\n> * 2\r\nblob = '''\r\na\r\nb\r\n'''\r\nxs[]\r\n> k = 1\r\n+\r\n> k = 2\r\n", .Fig);
     defer ast.deinit();
     try testing.expectEqualStrings("localhost", (try ast.getValByPath(&.{ .{ .key = "database" }, .{ .key = "host" } })).kind.string);
     try testing.expectEqualStrings("v", (try ast.getValByPath(&.{ .{ .key = "database" }, .{ .key = "quoted" } })).kind.string);

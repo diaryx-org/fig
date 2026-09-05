@@ -48,6 +48,12 @@ pub const Language = struct {
     pub const extensions: []const []const u8 = &.{"plist"};
     pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
 
+    /// What `languages/harness.zig` round-trips and edits: a dict with a
+    /// string, an integer and an array.
+    pub const samples: []const []const u8 = &.{
+        "<plist version=\"1.0\"><dict><key>a</key><string>b</string><key>n</key><integer>1</integer><key>l</key><array><true/><false/></array></dict></plist>\n",
+    };
+
     /// Genuinely typed and nested (dict/array/string/integer/real/bool, with
     /// date/data carried on the `extended` scalar) — the one XML-shaped
     /// format that is also a full value model.

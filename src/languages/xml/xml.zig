@@ -63,6 +63,12 @@ pub const Language = struct {
     /// most information is the one an `Editor`-only check would never see.
     pub const caps: lang.Caps = .{ .read = true, .edit = false, .serialize = true };
 
+    /// What `languages/harness.zig` parses (read-only, so no round trip):
+    /// an element with a child and an attribute.
+    pub const samples: []const []const u8 = &.{
+        "<r a=\"1\"><b>2</b></r>\n",
+    };
+
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "xml",
         .abi_value = 6,

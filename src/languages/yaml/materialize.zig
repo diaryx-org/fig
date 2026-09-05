@@ -251,12 +251,7 @@ const Materializer = struct {
     fn carryScalarTag(self: *Materializer, src_id: AST.Node.Id, new_id: AST.Node.Id) Error!void {
         const name = self.coreName(self.src.node_tags[src_id] orelse return) orelse return;
         const kind: AST.Tag.KindTag =
-            if (std.mem.eql(u8, name, "str")) .string
-            else if (std.mem.eql(u8, name, "int")) .integer
-            else if (std.mem.eql(u8, name, "float")) .float
-            else if (std.mem.eql(u8, name, "bool")) .boolean
-            else if (std.mem.eql(u8, name, "null")) .null_
-            else return; // seq/map (collection) or unrecognized — nothing to carry
+            if (std.mem.eql(u8, name, "str")) .string else if (std.mem.eql(u8, name, "int")) .integer else if (std.mem.eql(u8, name, "float")) .float else if (std.mem.eql(u8, name, "bool")) .boolean else if (std.mem.eql(u8, name, "null")) .null_ else return; // seq/map (collection) or unrecognized — nothing to carry
         self.out_tags.items[new_id] = .{ .kind = kind };
         self.any_tags = true;
     }

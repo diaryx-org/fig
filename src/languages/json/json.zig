@@ -41,6 +41,13 @@ pub const Language = struct {
         .lossless = .{ .null = true },
     };
 
+    /// What `languages/harness.zig` round-trips and edits: a mapping, a
+    /// sequence, and the scalar kinds the grammar has.
+    pub const samples: []const []const u8 = &.{
+        "{\"a\": 1, \"b\": [true, null, \"s\"], \"c\": {\"d\": 2.5}}\n",
+        "[]\n",
+    };
+
     /// The three user-facing dialects this one module serves. The only
     /// language with more than one: strictness is the format NAME here
     /// (json/jsonc/json5 select a `Type` each), where TOML and YAML select

@@ -1239,7 +1239,6 @@ fn validUnderscored(s: []const u8, comptime pred: fn (u8) bool) bool {
     return true;
 }
 
-
 /// Canonicalize an integer literal (any radix, underscores, sign) to a decimal
 /// string. Returns `raw` unchanged when already canonical, else an owned copy.
 fn canonicalInt(self: *Parser, raw: []const u8) ParserError![]const u8 {

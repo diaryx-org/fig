@@ -469,9 +469,11 @@ fn needsQuoting(s: []const u8) bool {
 /// (null, bool, the special floats) or a number.
 fn resolvesToNonString(s: []const u8) bool {
     const keywords = [_][]const u8{
-        "null", "Null", "NULL", "~",
-        "true", "True", "TRUE", "false", "False", "FALSE",
-        ".inf", ".Inf", ".INF", "-.inf", "-.Inf", "-.INF", "+.inf", ".nan", ".NaN", ".NAN",
+        "null",  "Null",  "NULL",  "~",
+        "true",  "True",  "TRUE",  "false",
+        "False", "FALSE", ".inf",  ".Inf",
+        ".INF",  "-.inf", "-.Inf", "-.INF",
+        "+.inf", ".nan",  ".NaN",  ".NAN",
     };
     for (keywords) |kw| if (std.mem.eql(u8, s, kw)) return true;
     return looksNumeric(s);

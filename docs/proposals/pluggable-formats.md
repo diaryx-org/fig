@@ -2,17 +2,26 @@
 title = Pluggable formats
 description = What fig 3.0 is for — the format set written down once, every per-format fact declared by the format, and the editing contract a format writes against named in one place
 created = 2026-09-04
-status = draft
+status = accepted
 updated = 2026-09-04
 part_of = [proposals](proposals.md)
 ```
 
 # Pluggable formats
 
-> **Status: DRAFT.** The argument for fig 3.0, written against `main` at
-> c9761cd (cli 4.0.0, core 2.7.0 plus the unreleased derived-regions work).
-> Nothing here has been built. §6 says what lands in 2.x minors first and what
-> the major itself is; §8 lists the questions still open.
+> **Status: ACCEPTED, 2.x steps implemented.** The argument for core 3.0,
+> written against `main` at c9761cd (cli 4.0.0, core 2.7.0 plus the
+> unreleased derived-regions work). §5.1, §5.2, §5.3, §5.4, §5.5 and §5.7
+> landed on `main` on 2026-09-04 as six commits (8b34254, 2ef10aa, 6a1f6b3,
+> 449e900, 2226998, 47bcaac), each verified as §7 says; they ship in the next
+> core minor. §5.6 — the major itself — is not started. §9 records what was
+> built, where it departs from §5 as argued, and the review that forced the
+> departures; read it before acting on §5.1, §5.4 or §5.7, each of which
+> asked for something the pinned Zig cannot do or the tree does not have.
+>
+> "fig 3.0" in the body means **core 3.0** (`.version` in `build.zig.zon`,
+> with `abi_version` 2). The crates.io `fig` crate is already at 3.3.0 and
+> the CLI at 4.0.0; each moves on its own track (see VERSIONING).
 
 ## 1. The claim
 
@@ -394,3 +403,144 @@ What the last two proposals did, and what each step here repeats:
    is a CLI break too. Whether the CLI cuts 5.0 alongside core 3.0 or
    deprecates the selectors first is a CLI question this proposal does not
    answer.
+
+## 9. Outcome (2026-09-04)
+
+Six of the seven steps in §5 are on `main`. Each commit's message carries
+its own verification; this section records where the built thing differs
+from the argued one, and answers three of §8's four questions. The body
+above is left as written.
+
+### 9.1 The review
+
+A review against the code at c9761cd found, before anything was built:
+
+- **§5.1's mechanism does not compile.** Zig 0.16 rejects any `@import`
+  whose operand is not a string literal, so `language.zig` cannot iterate
+  `rows` and import `row.dir ++ "/" ++ row.dir ++ ".zig"`; a build-time
+  generated file cannot rescue it either, since a generated module lands in
+  the cache directory and its relative imports cannot reach
+  `src/languages/`. The same limitation answers §8.1: Zig cannot declare a
+  named constant from a loop, so `Language.JSON` cannot be generated.
+- **§5.7 assumed a corpus shape that does not exist.** `testdata/json/` is
+  `accept/`, `edgecase/`, `reject/`; `testdata/toml/` is `valid/`,
+  `invalid/`; `testdata/yaml/` has `accept/`, `reject/`, `reject-stream/` and
+  a skiplist; `testdata/nestedtext/` is one `tests.json`; fig's corpus is one
+  file under `src/languages/fig/testdata/`. "Parse each file in
+  `testdata/<lang>/`" fails on every reject case.
+- **§3 undercounts.** `diagnostics.zig`'s `valueLoss` has an arm for every
+  format, and the flat three encode "no typed scalars" and "no sequences"
+  as well as depth; `commentsEmitted`, `blockComments`, `degradedNote`,
+  `cli/types.zig`'s `toSerializeFormat` and `cli/parse_dispatch.zig`'s
+  `mapDetected` are exhaustive switches a new format must edit.
+- **§5.4 miscounts the hook surface.** INI's `insertKey` hook calls
+  `self.insertBlockKey`, which is not among the seven; and the `Editor`
+  members are methods on the generic type, so they cannot move to a file.
+- §5.1's `conformance` field is one string per row, but JSON has two suites;
+  §5.2's rank uniqueness is a registry check, not a `validate` one; §5.3's
+  YAML gate also reaches `TagMode`; `root.Native` is confirmed dead across
+  the org; §1's "eleven places" does not match §3's thirteen items.
+
+### 9.2 What was built
+
+**§5.1** (8b34254). `src/languages/list.zig` holds one `Row` per format —
+`name`, `help`, `default_on`; `flag` and `dir` collapsed into `name`, since
+they were the same string for all eleven — and a separate `suites` list for
+the conformance flags, one per suite rather than one per row. `Options.zig`
+loops both; `BuildOptions` is `langs: [rows.len]bool`, `suites`, and a
+hand-declared `lang_canonical`, with `cfg.lang("fig")` for the build graph.
+`language.zig` keeps one `@import` slot per row, named, and a comptime block
+that refuses to build unless `slots` and `rows` agree in order and each
+module's `Language.name` matches its slot. So a format is one row **and one
+slot**, not one line; the slot is what only a string literal can spell.
+`Language.of("json")` is the lookup by name; the named aliases stay,
+written as `pub const JSON = of("json")`. `registry_order` is gone: the
+row order is the language order and the slot check is the pin.
+`root.zig` names no language — `language.zig`'s own test block references
+every slot, which discovers each module's tests — and `validate-check`
+writes its all-off `build_options` stub from the list. Test count 1251 →
+1252, the one being that block.
+
+**§5.2** (2ef10aa). `Dialect.sniff_rank: ?u8` replaces `detectable`; every
+row declares its rank with the reasoning paragraph moved beside it (jsonc
+declares null). `Language.sniff_order` is the sorted result and `detect` is
+one loop over it. The registry refuses a duplicate rank and a language with
+no ranked dialect — the guard that makes a default of null safe. A test pins
+the sorted order to the sequence the hand-written function spelled.
+`Detected` keeps registry-order members.
+
+**§5.3** (6a1f6b3). `Caps.max_mapping_depth: ?u8` (INI 1, dotenv and
+`.properties` 0); `flat_strip.zig` takes the depth, `flatStripDepth` reads it
+off the registry, and `valueLoss`'s three flat arms are one `inline` arm
+reading the same field. `parseAbstract` joined `Decls.optional`, `validate`
+requires it of a language with a `deserializable` row (validate-check case
+20), and `deserialize.zig` dispatches through `entryFor`. `embed.zig`'s
+splitter parses each segment through `entryFor("yaml")`. The CLI's two
+`materialize` sites became one `materializeFor` that dispatches on
+`@hasDecl(Lang, "materialize")` for the source format, as the C ABI's
+`prepareDocumentAst` does; the `lang_json` gate became
+`Lossless.nativeFor(.json)`. **What stayed, by decision:** the typed-scalar
+and no-sequence halves of the flat arm, `commentsEmitted`, `blockComments`,
+`degradedNote`, `toSerializeFormat` and `mapDetected`. Each is an exhaustive
+switch, so a new format cannot be added without the compiler naming the
+site; moving them onto `Caps` would need three more fields for one reader
+each, and none of them is a gate. They are listed here so that §3 is
+complete, not so that they are done.
+
+**§5.4** (449e900). `src/editor/splice.zig` holds the ten free functions
+(`lineStartBefore`, `lineEndAfter`, `firstNonSpace`, `columnOf`, `isFlow`,
+`commentBlockStart`, `appendBlockSep`, `Block`, `tileBlocks`, `fullOrder`)
+and re-exports `CommentStyle`; its module doc names the `Editor` members a
+hook may call — `allocator`, `source`, `replaceAtSpan`, `getParsed`,
+`sectionExtentEnd`, `gatherRegions`, `writeMapValue`, **and
+`insertBlockKey`**. Nothing on `Editor` lost its `pub`: every hook-only
+method is reached from another file, and the rest is the public editing API.
+`flowOpenEnd`, engine-only, did. The surface is a documented file boundary,
+not an enforced one; a hook still receives `*Editor` and Zig has no way to
+restrict what it calls short of a wrapper type, which would change hook
+signatures.
+
+**§5.5** (2226998). `docs/zig.md` states the out-of-tree contract, and
+`validate-check` proves it with a case that is *run* rather than compiled: a
+`Language` declared in the tool's work directory — its own name, extension,
+caps, dialect row and syntax, borrowing dotenv's parser and printer through
+`Language.moduleFor` — is compiled with `zig test`, drives `set` and
+`deleteKey` through `Editor`, and asserts `SerializeFormat` gained no
+member. The case fails when its expectation is wrong (checked by hand).
+
+**§5.7** (47bcaac). `src/languages/harness.zig` runs over
+`Language.dialects`: every `empty_doc_seed` parses and round-trips; every
+`sample` a format declares parses, prints, and reparses to the same tree;
+`Document.node_regions` is whole-line, container-only and sorted, and a
+section format's parser fills it; `Editor` constructs over every sample of
+an editable format with a no-op splice. A format opts in by declaring
+`samples` (an optional decl); the corpora are left to the suites that know
+their shape. Two findings on the way: `AST.eql` is positional over node
+ids, so the round trip is compared through the canonical encoding (TOML
+prints a short `[table]` inline and the reparse numbers it differently);
+and the registry invariants stayed in `language.zig` beside the tables.
+
+### 9.3 §8, answered
+
+1. **Aliases kept**, as `of(name)` lookups; generating them is impossible
+   (§9.1), and `of` serves a caller with the name as a string.
+2. **The YAML stream is embed's.** Only the parse call changed; the `---`
+   splitter stays in `embed.zig` and names the `yaml` entry once, through
+   the registry rather than a build flag. Making it a `Language` decl would
+   add a member to the closed set for one format and one caller.
+3. Open. Nothing here touched the TypeScript binding.
+4. Open. The CLI's major is still a CLI question.
+
+### 9.4 What 3.0 still is
+
+§5.6 as written. Nothing in §9.2 changed the C ABI (`abi-check` and
+`semver-check` were green at every step, verdict `patch`), and the two
+Zig-visible changes — `Dialect.detectable` → `sniff_rank`, and
+`FlatStrip.lossyStrip` taking a depth in place of `FlatStrip.Format` — are
+recorded as `Behavioural-change:` trailers on their commits for the core
+release that carries them.
+
+Two defects found while verifying, neither introduced here, are filed in
+[tasks](/docs/tasks/tasks.md): the YAML printer panics on thirty of the
+accept-corpus documents, and the everything-on `zig build test` fails to
+compile in `patch.zig`.

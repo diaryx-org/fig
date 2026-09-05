@@ -10,6 +10,7 @@ contents
 > * [CHANGELOG](CHANGELOG.md)
 > * [Upcoming breaking changes](BREAKING-CHANGES.md)
 > * [Proposals](proposals/proposals.md)
+> * [Tasks](tasks/tasks.md)
 > * [Devlog](devlogs/devlogs.md)
 > * [fig CLI via npm/npx](npm-wasi.md)
 > * [fig in Rust](rust.md)

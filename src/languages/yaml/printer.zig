@@ -89,11 +89,11 @@ fn printSequence(writer: *Writer, document: *const AST, first_child: ?AST.Node.I
                 }
             },
             .sequence => |child| {
-                try writer.writeAll("- ");
                 if (child == null) {
-                    try writer.writeAll("[]\n");
+                    try writer.writeAll("- []\n");
                 } else {
-                    try writer.writeByte('\n');
+                    // A bare dash, not `- ` — nothing follows on the line.
+                    try writer.writeAll("-\n");
                     try printSequence(writer, document, child, depth + 1, opts);
                 }
             },
@@ -891,6 +891,11 @@ test "yaml flow: a comment or overflow keeps a collection block" {
         "items:\n- " ++ long ++ "\n",
         "items:\n- " ++ long ++ "\n",
     );
+}
+
+test "yaml printer: a nested block sequence leaves no trailing space after the dash" {
+    try expectRoundTrip("- - a\n  - b\n- c\n", "-\n  - a\n  - b\n- c\n");
+    try expectRoundTrip("- []\n", "- []\n");
 }
 
 test "yaml printer: every key kind has a spelling that re-parses" {

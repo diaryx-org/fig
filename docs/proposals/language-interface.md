@@ -2,7 +2,8 @@
 title = A declared Language interface
 description = Replacing editor.zig's per-language type tests with a manifest each format declares, checked by Language.validate
 created = 2026-08-05
-updated = 2026-08-06
+status = implemented
+updated = 2026-09-04
 part_of = [proposals](proposals.md)
 ```
 
@@ -17,15 +18,15 @@ part_of = [proposals](proposals.md)
 > consumers rather than restated. See §9 for Steps 1–2, §10 for Step 3, §11 for
 > Step 5, §12 for §7's payoff.
 >
-> Implemented on `main` after fig 2.5.3, and not yet in a release — this is
+> Implemented on `main` after fig 2.5.3 and shipped in core 2.6.0 — this is
 > internal structure, so it carries no API or ABI change (`abi-check`: 86
-> symbols, unchanged). Update this line with the version that ships it.
+> symbols, unchanged).
 >
 > The follow-on this proposal names but does not attempt — the five parallel
 > format enumerations and the `build_options` switches keyed on them — remains
 > open and should be its own proposal (§7, §12.4). **Update (2026-08-06): that
 > proposal was written as code rather than prose.** It landed on branch
-> `format-registry` (7 commits, not yet merged to `main`) and is accounted for
+> `format-registry` (merged to `main` at fa68bce, in cli 4.0.0) and is accounted for
 > in §13, which also corrects §8.5's and §12.4's claim that the
 > `FigFormat`→`Language` mapping cannot be generated from a manifest.
 >
@@ -1019,7 +1020,7 @@ stage, and CLI output byte-diffed against the parent commit's binary at each
 step — a 573-case embed matrix at Stage 6, a 71-case CLI diff repeated
 throughout.
 
-## 13. Outcome, two redundancies in the manifest itself (2026-08-07)
+## 14. Outcome, two redundancies in the manifest itself (2026-08-07)
 
 §2's inventory counted coupling *sites*, and every site it found was real. What
 it could not see is that two of the parameters it named were not carrying their
@@ -1028,7 +1029,7 @@ asked a question four formats have no answer to. Both showed up the same way —
 a reader looking at `fig/fig.zig` and asking why `#` appears three times and why
 a format that spells entries `key = value` declares `": "`.
 
-### 13.1 `comment_style`/`line_comment`/`trailing_comment` → `comments`
+### 14.1 `comment_style`/`line_comment`/`trailing_comment` → `comments`
 
 The three are genuinely independent questions (§8.2 established the first two
 are, and §11.2 the third), but their answers coincide for six of the ten
@@ -1045,7 +1046,7 @@ three dialects with a marker that varies between them — the split that made
 those would be a name invented for one caller; the literal states the divergence
 where the reader is already standing.
 
-### 13.2 `kv_sep` is not a question every format answers
+### 14.2 `kv_sep` is not a question every format answers
 
 fig, TOML, plist and NestedText all declared `": "` under a comment explaining
 it away — "what the shared helpers were already using", "declared as the shared
@@ -1085,7 +1086,7 @@ conformance suite (JSON5 25/26, YAML 289/93/19/1, TOML 209/495 and 218/488,
 plist 9/7/5, NestedText 80/68), `abi-check` and `semver-check` unchanged — no
 ABI surface is involved, since both fields are internal to the editor.
 
-## 14. Outcome, §2E revisited (2026-08-07)
+## 15. Outcome, §2E revisited (2026-08-07)
 
 §8.1 killed Step 4 on a mechanism argument, and it was right: Zig has no
 conditional container-level declarations, so an exclusive op cannot un-declare
@@ -1094,7 +1095,7 @@ This section does not attempt it. What §8.1 did not examine is what those nine
 sites were keyed on and what they were called, and both were wrong in a way the
 rest of the proposal had already ruled out everywhere else.
 
-### 14.1 Two names for one operation
+### 15.1 Two names for one operation
 
 §2E lists TOML's six and fig's three as separate inventories. They are not:
 `deleteTable` and `deleteContainer` are the same operation over the same
@@ -1117,7 +1118,7 @@ lines belong to this container" is the one real per-format question (TOML
 classifies by a leading `[`, fig by its value's kind plus the parser's re-entry
 table, INI by section membership), and each helper keeps its own.
 
-### 14.2 Identity, not declaration
+### 15.2 Identity, not declaration
 
 `if (Language != Toml) @compileError(...)` is the exact pattern the manifest
 exists to remove — §2's opening complaint, still live in `editor.zig` because
@@ -1139,7 +1140,7 @@ Each format's own words survive where they carry meaning: in its errors
 (`NotATable` beside `NotAContainer`), in its helper's function names, and in its
 documentation. Library-level only, so no ABI moved.
 
-### 14.3 INI was a section format all along
+### 15.3 INI was a section format all along
 
 `ini/editor_helper.zig` opened by explaining why INI needs no multi-region
 gather, and for INSERT that is correct (a reopened section threads onto the tail
@@ -1163,7 +1164,7 @@ baseline, `abi-check` and `semver-check` unchanged — these ops are library-lev
 and reach no ABI. The comptime refusal was checked by compiling a probe against
 `Editor(YAML).deleteContainer` and reading the error it produces.
 
-## 15. Outcome, two facts pushed down into the languages (2026-08-28)
+## 16. Outcome, two facts pushed down into the languages (2026-08-28)
 
 Preliminary to the "pluggable formats" major: two facts a core file still
 stated *about* formats now come *from* them. `lossless.zig`'s

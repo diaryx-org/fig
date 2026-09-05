@@ -2,14 +2,15 @@
 title = Editor splice: findings and wishlist
 description = Downstream findings against fig's editor splice path, and what shipped in response
 created = 2026-07-25
-updated = 2026-07-25
+status = implemented
+updated = 2026-09-04
 part_of = [proposals](proposals.md)
 ```
 
 # Editor splice: findings and wishlist
 
-> **Status: §1–§4 fixed in fig 2.5.3. §5 was my error — `width` works; see
-> below.** Re-verified 2026-07-25 against `rust/v2.5.3` and, side by side,
+> **Status: IMPLEMENTED in fig 2.5.3.** §1–§4 fixed there; §5 was my error —
+> `width` works; see below. Re-verified 2026-07-25 against `rust/v2.5.3` and, side by side,
 > against fig-sys 2.5.2, where every original symptom still reproduces exactly.
 > prov has since deleted the workaround this document was written to justify
 > (`set_meta_in_text` is now a single splice), so nothing downstream depends on

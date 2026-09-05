@@ -2,14 +2,16 @@
 title = Derived regions
 description = Moving "where are this node's regions" from three editor_helper.zig gathers into Document, so the whole-container ops and the section guards are generic
 created = 2026-08-28
-updated = 2026-08-28
+status = implemented
+updated = 2026-09-04
 part_of = [proposals](proposals.md)
 ```
 
 # Derived regions
 
-> **Status: IMPLEMENTED** on branch `worktree-agent-a45ed60ef4bf25740`, against
-> `main` at 013ea08, as the first preliminary refactor for fig 3.0's pluggable
+> **Status: IMPLEMENTED.** Merged to `main` at b8d10e1 (2026-08-28) and shipped
+> in cli 4.0.0; the next core release carries it. Written on branch
+> `worktree-agent-a45ed60ef4bf25740` against `main` at 013ea08, as the first preliminary refactor for fig 3.0's pluggable
 > formats. `Document.reentry_headers` is gone; `Document.node_regions`
 > replaces it, filled by the fig, TOML and INI parsers. `deleteContainer`,
 > `moveContainer`, `reorderContainers` and the four line-splice guards are

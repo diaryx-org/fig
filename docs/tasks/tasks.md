@@ -7,7 +7,6 @@ updated = 2026-09-04
 part_of = [docs](/docs/docs.md)
 contents
 > * [YAML printer panics on some accept-corpus documents](yaml-printer-panics-on-accept-corpus.md)
-> * [Everything-on `zig build test` fails to compile](everything-on-test-build-fails.md)
 ```
 
 # Tasks

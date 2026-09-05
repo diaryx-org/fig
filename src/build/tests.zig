@@ -99,8 +99,32 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     });
     const run_conformance_tests = b.addRunArtifact(conformance_tests);
 
-    const conformance_step = b.step("conformance", "Score every format against its vendored conformance corpus in testdata/");
+    // The CLI's test root, built against the everything-on library. The
+    // conformance variant above is the one build that turns every format on,
+    // but on its own it proves only that the LIBRARY compiles that way: the
+    // CLI instantiates the generic engines (patch.zig, the editor) for every
+    // compiled-in language, and a comptime error there — a `switch` arm naming
+    // an error a plist-hooked op cannot return — was invisible to every
+    // default build, where plist is gated off. Running the CLI's tests here
+    // too makes `zig build check` the gate for the whole everything-on
+    // configuration, not just the library's half of it.
+    const all_on_exe_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/cli/main.zig"),
+            .target = target,
+            .optimize = ctx.optimize,
+            .imports = &.{
+                .{ .name = "fig", .module = conformance_mod },
+                .{ .name = "build_options", .module = conformance_options_mod },
+            },
+        }),
+        .filters = test_filters,
+    });
+    const run_all_on_exe_tests = b.addRunArtifact(all_on_exe_tests);
+
+    const conformance_step = b.step("conformance", "Score every format against its vendored conformance corpus in testdata/, and run the CLI's tests with every format on");
     conformance_step.dependOn(&run_conformance_tests.step);
+    conformance_step.dependOn(&run_all_on_exe_tests.step);
 
     // Coverage-guided fuzzing for the hand-written tokenizers/parsers — the
     // targets themselves live in src/fuzz.zig. Conformance proves fig handles the

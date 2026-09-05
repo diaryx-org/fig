@@ -68,7 +68,9 @@ pub const BuildOptions = struct {
     /// on is a deliberate second win: xml, plist and canonical are all off by
     /// default, so nothing else in CI ever compiles them together — this is
     /// the only build that proves the everything-on configuration still
-    /// builds at all.
+    /// builds at all. It builds both the library's test root and the CLI's
+    /// (tests.zig): the CLI is what instantiates the generic engines for
+    /// every language, so the library alone is not the whole proof.
     pub const all_on: BuildOptions = .{
         .langs = @splat(true),
         .suites = @splat(true),

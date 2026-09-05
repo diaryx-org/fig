@@ -1,13 +1,21 @@
 ```fig
 title = Everything-on `zig build test` fails to compile
 description = `zig build test -Dxml=true -Dplist=true -Dcanonical=true` fails in `patch.zig` with an error-set mismatch on plist's `getLeadingComment`, while `zig build conformance` (which forces the same configuration) passes
-status = open
+status = done
 created = 2026-09-04
 updated = 2026-09-04
 part_of = [tasks](tasks.md)
 ```
 
 # Everything-on `zig build test` fails to compile
+
+**Status.** Done, in `fix(patch): compare comment-op errors instead of
+switching on them; test the CLI everything-on` (2026-09-04). `patch.zig`
+compares the error (`err == error.CommentsUnsupported`, which Zig accepts
+for an error outside the set) rather than naming it in a `switch` arm, and
+the `conformance` step — which `check` folds in — now also builds and runs
+the CLI's test root against the everything-on library, so the whole
+configuration is proven, not just the library's half.
 
 **Repro.** On `main` at c9761cd and after:
 

@@ -348,14 +348,21 @@ fn Walker(comptime Language: type) type {
             if (trailing) |c| try self.carryTrailing(c);
         }
 
+        // The comment ops' errors are COMPARED below rather than switched on.
+        // Each op's error set is inferred per language, and a format that
+        // hooks the op (plist, whose `<!-- -->` has no line marker) has a set
+        // without `CommentsUnsupported` in it — a `switch` arm naming an error
+        // outside the set is a compile error, which only the everything-on
+        // build ever saw. `==` against an error not in the set is fine.
+
         fn carryLeading(self: *Self, leading: []const AST.Comment) !void {
-            const existing = self.editor.getLeadingComment(self.path.items) catch |err| switch (err) {
+            const existing = self.editor.getLeadingComment(self.path.items) catch |err| {
                 // No comment syntax in this format, or the entry isn't there
                 // to comment on (an empty mapping the merge contributed
                 // nothing for).
-                error.CommentsUnsupported => return self.dropComment(),
-                error.NotFound => return,
-                else => return err,
+                if (err == error.CommentsUnsupported) return self.dropComment();
+                if (err == error.NotFound) return;
+                return err;
             };
             defer if (existing) |e| self.allocator.free(e);
             if (self.options.comments == .ours and existing != null) return;
@@ -374,16 +381,16 @@ fn Walker(comptime Language: type) type {
             // A same-line comment is one line by definition; a block comment
             // that spans several has no trailing spelling to downgrade to.
             if (std.mem.indexOfScalar(u8, comment.text, '\n') != null) return self.dropComment();
-            const existing = self.editor.getTrailingComment(self.path.items) catch |err| switch (err) {
-                error.CommentsUnsupported => return self.dropComment(),
-                error.NotFound => return,
-                else => return err,
+            const existing = self.editor.getTrailingComment(self.path.items) catch |err| {
+                if (err == error.CommentsUnsupported) return self.dropComment();
+                if (err == error.NotFound) return;
+                return err;
             };
             defer if (existing) |e| self.allocator.free(e);
             if (self.options.comments == .ours and existing != null) return;
-            self.editor.setTrailingComment(self.path.items, comment.text) catch |err| switch (err) {
-                error.CommentsUnsupported, error.MultilineComment => return self.dropComment(),
-                else => return err,
+            self.editor.setTrailingComment(self.path.items, comment.text) catch |err| {
+                if (err == error.CommentsUnsupported or err == error.MultilineComment) return self.dropComment();
+                return err;
             };
         }
 

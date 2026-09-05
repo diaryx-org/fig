@@ -337,10 +337,20 @@ pub fn Dialect(comptime L: type) type {
         /// `language.zig` refuses a duplicate.
         abi_value: c_int,
 
-        /// Whether `detect` can sniff this dialect, i.e. whether it is a
-        /// member of `Detected`. False for `jsonc` alone, which overlaps
+        /// Where this dialect sits in `Language.detect`'s probe order, or
+        /// null for a dialect `detect` never sniffs (and which is then no
+        /// member of `Detected`) — `jsonc` alone today, since it overlaps
         /// json/json5 on almost all input.
-        detectable: bool = true,
+        ///
+        /// The order is one argument about grammar overlap — strictest first,
+        /// so a permissive grammar cannot claim what a stricter one would
+        /// have accepted — and each row carries its own place in it with the
+        /// reasoning beside the number. Ranks are unique across the registry
+        /// (`language.zig` refuses a duplicate) and need not be contiguous;
+        /// `language.zig` pins the resulting sequence in a test, so a new
+        /// format choosing a rank cannot reorder the existing ones unnoticed.
+        /// Every language must give at least one of its dialects a rank.
+        sniff_rank: ?u8 = null,
 
         /// Whether `deserialize.Format` covers it — the typed
         /// struct-deserialization entry points, which today reach five of the

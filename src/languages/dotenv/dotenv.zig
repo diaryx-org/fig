@@ -36,6 +36,17 @@ pub const Language = struct {
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "dotenv",
         .abi_value = 10,
+        // Last of the four key/value-shaped formats. dotenv is almost entirely
+        // shadowed by INI: INI's key scanner accepts any non-`=`/newline run
+        // (so even `export FOO=bar` parses as one weird INI key) and its value
+        // decoding is quote-agnostic, so nearly anything dotenv accepts, INI
+        // already claimed first. The one thing only dotenv parses — a
+        // `"`/`'`-quoted value spanning a literal embedded newline (INI's
+        // value never crosses a physical line) — is this rank's actual reason
+        // to exist; `.env`'s real path to selection is its extension
+        // (`cli/args.zig`'s `detectLanguageFromFileEnding` special-cases
+        // `env`), not this content sniff.
+        .sniff_rank = 8,
         .splice = .raw,
         .empty_doc_seed = "",
     }};

@@ -66,6 +66,9 @@ pub const Language = struct {
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "xml",
         .abi_value = 6,
+        // After plist (which it would otherwise starve — see plist's row) and
+        // before the key/value grammars, none of which accept a `<tag>`.
+        .sniff_rank = 4,
         // No in-place editor, so no edit text ever reaches a splice; `.raw`
         // is what `spliceStyle` says for it.
         .splice = .raw,

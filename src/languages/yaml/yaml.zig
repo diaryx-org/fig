@@ -51,6 +51,12 @@ pub const Language = struct {
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "yaml",
         .abi_value = 3,
+        // Third from last: YAML is so permissive (a bare line is a valid plain
+        // scalar) that almost anything falls through to it, so every stricter
+        // grammar — and fig and INI, which it would otherwise starve — must
+        // have had its turn first. Only `.properties` and NestedText accept
+        // more.
+        .sniff_rank = 9,
         .deserializable = true,
         .splice = .literal,
         // A bare `key:` seed, not `{}`: see `Syntax.empty_map_literal`'s

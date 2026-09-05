@@ -299,7 +299,7 @@ fn EntryOf(comptime name: []const u8) type {
 pub const Selector = enum {
     /// All thirteen.
     all,
-    /// `.detectable` — `Language.Detected`.
+    /// `.sniff_rank != null` — `Language.Detected`.
     detectable,
     /// `.deserializable` — `deserialize.Format`.
     deserializable,
@@ -315,7 +315,7 @@ pub fn namesOf(comptime sel: Selector) []const [:0]const u8 {
         for (dialects) |d| {
             const take = switch (sel) {
                 .all => true,
-                .detectable => d.detectable,
+                .detectable => d.sniff_rank != null,
                 .deserializable => d.deserializable,
                 .embeddable => d.embed != null,
             };
@@ -482,6 +482,29 @@ comptime {
         }
     }
 
+    // Sniff ranks are identities too: two dialects at one rank would have no
+    // defined probe order between them. And every language must be sniffable
+    // through at least one of its dialects — a rank left off every row is a
+    // format `detect` silently never returns, which is the failure mode a
+    // default of null would otherwise invite.
+    for (dialects, 0..) |a, ai| {
+        for (dialects, 0..) |b, bi| {
+            if (bi > ai and a.sniff_rank != null and a.sniff_rank == b.sniff_rank)
+                @compileError("format-registry entries '" ++ a.name ++ "' and '" ++ b.name ++
+                    "' both declare sniff_rank " ++ std.fmt.comptimePrint("{d}", .{a.sniff_rank.?}) ++
+                    " — the probe order is total, so every rank is unique");
+        }
+    }
+    for (slots) |slot| {
+        var any = false;
+        for (slot.mod.Language.dialects) |d| {
+            if (d.sniff_rank != null) any = true;
+        }
+        if (!any)
+            @compileError("no dialect of '" ++ slot.name ++ "' declares a sniff_rank, so `detect`" ++
+                " could never return it — give the row named after the language a rank");
+    }
+
     // Language ↔ registry bijection, both directions. A compiled-in language
     // with no entry would be a format the derived enums cannot name; an entry
     // whose (non-gated) language is not compiled in would be a member nothing
@@ -548,14 +571,14 @@ comptime {
     // rather than about the registry. Checking the table's own coherence first
     // means the error names the actual mistake.
     //
-    // `Detected` is now REIFIED from `.detectable`, so "its members are the
-    // detectable entries, in registry order" is true by construction and there
-    // is nothing left to compare. What is still a real claim is which entries
-    // carry the flag — the membership its doc comment argues for — so that is
-    // what this checks: jsonc out, its json/json5 siblings in, and `canonical`
-    // (no entry at all) absent.
+    // `Detected` is REIFIED from `.sniff_rank != null`, so "its members are
+    // the sniffable entries, in registry order" is true by construction and
+    // there is nothing left to compare. What is still a real claim is which
+    // entries carry a rank — the membership its doc comment argues for — so
+    // that is what this checks: jsonc out, its json/json5 siblings in, and
+    // `canonical` (no entry at all) absent.
     if (@hasField(Detected, "jsonc"))
-        @compileError("the `jsonc` registry entry is marked detectable, but `detect` deliberately" ++
+        @compileError("the `jsonc` registry entry declares a sniff_rank, but `detect` deliberately" ++
             " never sniffs it — it overlaps json/json5 on almost all input");
     if (!@hasField(Detected, "json") or !@hasField(Detected, "json5"))
         @compileError("`detect` returns `.json`/`.json5`, so both entries must stay detectable");
@@ -563,119 +586,64 @@ comptime {
         @compileError("`canonical` is not a registry entry and cannot be sniffed");
 }
 
-/// A format `detect` can recognize: the registry entries marked `detectable`,
-/// in registry order. The `jsonc` dialect and `canonical` are deliberately
-/// excluded: jsonc overlaps json/json5 on most input, and canonical is an
-/// explicit selection rather than something to sniff (it is not a registry
-/// entry at all). `fig` IS included, but slotted just ahead of YAML (see the
-/// ordering note on `detect`) since its grammar overlaps TOML/YAML on plain
-/// `key = value` content — it only wins detection on input that is either
-/// invalid for every stricter format, or uses fig-only structural syntax (`>`
-/// section depth, `*` elements, `+` continuations, `[]` group headers).
-///
-/// `detect` itself stays hand-written: the global ORDER the probes run in is a
-/// single argument about grammar overlap that belongs in one place, and it is
-/// not the member order — see the function below.
+/// A format `detect` can recognize: the registry entries with a
+/// `sniff_rank`, in registry order (NOT probe order — see `sniff_order`).
+/// The `jsonc` dialect and `canonical` are deliberately excluded: jsonc
+/// overlaps json/json5 on most input, and canonical is an explicit selection
+/// rather than something to sniff (it is not a registry entry at all).
 pub const Detected = @Enum(EnumTag(detected_names), .exhaustive, detected_names, &enumValues(detected_names));
 
 const detected_names = namesOf(.detectable);
 
-/// Best-effort content sniffing: try each COMPILED-IN parser and return the
-/// first that accepts `input`, or null if none do (also what an
-/// all-languages-disabled build returns). Order matters because the grammars
-/// overlap — from most to least strict: JSON/JSON5, ZON, XML, TOML, then fig,
-/// then INI, then YAML. fig sits just before INI/YAML, not after: YAML is so
-/// permissive (a bare line is a valid plain scalar) that almost anything falls
-/// through to it, which would starve fig (and INI) of a turn if it went last.
-/// fig itself overlaps TOML heavily (both accept plain `key = value`), so it is
-/// tried only after TOML has had first claim — a plain TOML-shaped document
-/// still resolves to `.toml`, and fig only wins on content TOML can't parse
-/// (its `>`/`*`/`+`/`[]` structural markers) or that is otherwise TOML-invalid.
-/// INI overlaps TOML/fig too (same `[section]`/`key = value` shape) but accepts
-/// strictly more — any raw, unquoted value text — so it sits right after fig
-/// and wins only what both of those reject. dotenv sits last of the four
-/// key/value-shaped formats since INI's grammar shadows almost all of it too
-/// (see the `dotenv` branch below for the one thing that doesn't). This is a
-/// heuristic, not a proof: input valid as more than one format resolves to
-/// the earliest candidate in this order.
+/// The probe order: every detectable entry's name, sorted by the
+/// `sniff_rank` its own row declares. The order is a single argument about
+/// grammar overlap — strictest first — but each step of it is a fact about
+/// one format, so each row carries its rank and the reasoning for it, and
+/// this is only the sort. A test below pins the result to the sequence the
+/// hand-written `detect` used to spell, so a rank cannot move unnoticed.
+pub const sniff_order: []const [:0]const u8 = blk: {
+    @setEvalBranchQuota(20_000);
+    const n = detected_names.len;
+    var ranks: [n]u8 = undefined;
+    var names: [n][:0]const u8 = undefined;
+    var i: usize = 0;
+    for (dialects) |d| {
+        if (d.sniff_rank) |r| {
+            ranks[i] = r;
+            names[i] = d.name;
+            i += 1;
+        }
+    }
+    // Insertion sort by rank; `n` is thirteen at most.
+    var a: usize = 1;
+    while (a < n) : (a += 1) {
+        var b = a;
+        while (b > 0 and ranks[b - 1] > ranks[b]) : (b -= 1) {
+            const tr = ranks[b - 1];
+            ranks[b - 1] = ranks[b];
+            ranks[b] = tr;
+            const tn = names[b - 1];
+            names[b - 1] = names[b];
+            names[b] = tn;
+        }
+    }
+    const out = names;
+    break :blk &out;
+};
+
+/// Best-effort content sniffing: try each COMPILED-IN parser in `sniff_order`
+/// and return the first that accepts `input`, or null if none do (also what
+/// an all-languages-disabled build returns). Order matters because the
+/// grammars overlap — from most to least strict — and each row's
+/// `sniff_rank` says where it sits and why. This is a heuristic, not a
+/// proof: input valid as more than one format resolves to the earliest
+/// candidate in the order.
 pub fn detect(allocator: Allocator, input: []const u8) ?Detected {
-    if (comptime build_options.lang_json) {
-        if (tryParse(JSON, allocator, input, .JSON)) return .json;
-        if (tryParse(JSON, allocator, input, .JSON5)) return .json5;
-    }
-    if (comptime build_options.lang_zon) {
-        if (tryParse(ZON, allocator, input, ZON.default_type)) return .zon;
-    }
-    if (comptime build_options.lang_plist) {
-        // plist's DTD vocabulary (`<dict>`/`<array>`/`<key>`/...) is a STRICT
-        // SUBSET of well-formed XML: the generic XML reader below would also
-        // happily accept any real plist document, just folding it into a
-        // differently-shaped AST (attribute/`#text` folding, no typed
-        // scalars). So plist must get first claim, or a compiled-in XML
-        // reader would starve it completely — the reverse isn't a problem:
-        // plist's own grammar rejects anything outside its fixed element
-        // vocabulary (`error.UnknownElement`), so ordinary XML falls through
-        // to the `.xml` branch below untouched.
-        if (tryParse(PLIST, allocator, input, PLIST.default_type)) return .plist;
-    }
-    if (comptime build_options.lang_xml) {
-        if (tryParse(XML, allocator, input, XML.default_type)) return .xml;
-    }
-    if (comptime build_options.lang_toml) {
-        if (tryParse(TOML, allocator, input, TOML.default_type)) return .toml;
-    }
-    if (comptime build_options.lang_fig) {
-        if (tryParse(FIG, allocator, input, FIG.default_type)) return .fig;
-    }
-    if (comptime build_options.lang_ini) {
-        // INI's grammar is also permissive (a bare `key = value` line, or an
-        // empty file, both parse), so it's tried only after everything
-        // stricter above has had first claim — it wins only on content those
-        // reject, e.g. a `[section]` header or an unquoted value with
-        // characters no TOML/fig scalar allows (`path = C:\a\b`).
-        if (tryParse(INI, allocator, input, INI.default_type)) return .ini;
-    }
-    if (comptime build_options.lang_dotenv) {
-        // dotenv is almost entirely shadowed by INI above: INI's key scanner
-        // accepts any non-`=`/newline run (so even `export FOO=bar` parses as
-        // one weird INI key) and its value decoding is quote-agnostic, so
-        // nearly anything dotenv accepts, INI already claimed first. The one
-        // thing only dotenv parses — a `"`/`'`-quoted value spanning a literal
-        // embedded newline (INI's value never crosses a physical line) — is
-        // this branch's actual reason to exist; `.env`'s real path to
-        // selection is its extension (`detectLanguageFromFileEnding`
-        // special-cases the `env` extension), not this content sniff.
-        if (tryParse(DOTENV, allocator, input, DOTENV.default_type)) return .dotenv;
-    }
-    if (comptime build_options.lang_yaml) {
-        if (tryParse(YAML, allocator, input, YAML.default_type)) return .yaml;
-    }
-    if (comptime build_options.lang_properties) {
-        // `.properties` is even more permissive than YAML: a line with no
-        // separator at all is still legal (a bare key, empty value — see
-        // `properties/tokenizer.zig`), so nearly any UTF-8 text parses. It
-        // therefore sits LAST, after YAML — the one thing this format
-        // accepts that YAML rejects outright is a malformed-YAML shape
-        // (see the test below); `.properties`'s real path to selection is
-        // its extension, same as `.env`.
-        if (tryParse(PROPERTIES, allocator, input, PROPERTIES.default_type)) return .properties;
-    }
-    if (comptime build_options.lang_nestedtext) {
-        // NestedText goes LAST, after even `.properties` — not because its
-        // own grammar is unusually permissive (it isn't: keys/values have
-        // real restrictions, unlike `.properties`'s "nearly any text"), but
-        // because a huge, ordinary swath of it — plain `key: value` lines
-        // and `- item` lists — is ALSO valid YAML, and parses to a MEANINGFULLY
-        // DIFFERENT tree there (YAML types `port: 80` as an integer;
-        // NestedText's `port` is the untyped string `"80"`). Trying this
-        // before YAML would silently change what today's `detect()` returns
-        // for ordinary plain-YAML content already relied upon elsewhere in
-        // this codebase — a real regression, not just an academic ambiguity
-        // — so NestedText only gets a turn once every stricter-or-equally-
-        // plausible format (including YAML) has already rejected the input.
-        // Its real path to selection is the `.nt` extension (see
-        // `cli/args.zig`), exactly like dotenv/`.properties` above.
-        if (tryParse(NESTEDTEXT, allocator, input, NESTEDTEXT.default_type)) return .nestedtext;
+    inline for (sniff_order) |name| {
+        const d = comptime entryFor(name);
+        if (comptime d.Lang != void) {
+            if (tryParse(d.Lang, allocator, input, d.dialect)) return @field(Detected, name);
+        }
     }
     return null;
 }
@@ -1092,6 +1060,18 @@ test "detect identifies each compiled-in format by content" {
         // permissive grammar of all, so it's tried dead last.
         try std.testing.expectEqual(Detected.properties, detect(a, "a: 1\n b: 2\n").?);
     }
+}
+
+test "sniff_order: the ranks the rows declare reproduce the probe order detect has always used" {
+    // The whole sequence, written once, so a new format choosing a rank —
+    // or an existing row changing its mind — has to change this line too.
+    // Build-invariant: gated-out languages keep their rows and their ranks.
+    const want = [_][]const u8{
+        "json", "json5",  "zon",  "plist",      "xml",        "toml",
+        "fig",  "ini",    "dotenv", "yaml",     "properties", "nestedtext",
+    };
+    try std.testing.expectEqual(want.len, sniff_order.len);
+    for (want, sniff_order) |w, got| try std.testing.expectEqualStrings(w, got);
 }
 
 test "detect: plain `key = value` prefers TOML over fig despite fig accepting it too" {

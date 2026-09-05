@@ -43,6 +43,15 @@ pub const Language = struct {
         .name = "fig",
         // 8: appended to the C ABI after json5 (7).
         .abi_value = 8,
+        // Right after TOML and before INI/YAML, not last: fig overlaps TOML
+        // heavily (both accept plain `key = value`), so it is tried only after
+        // TOML has had first claim — a plain TOML-shaped document still
+        // resolves to `toml`, and fig wins on content TOML can't parse (its
+        // `>`/`*`/`+`/`[]` structural markers) or that is otherwise
+        // TOML-invalid. It cannot go later: YAML is so permissive (a bare line
+        // is a valid plain scalar) that almost anything falls through to it,
+        // which would starve fig (and INI) of a turn.
+        .sniff_rank = 6,
         .splice = .literal,
         .empty_doc_seed = "",
         .embed = .{

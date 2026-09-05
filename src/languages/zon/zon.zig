@@ -37,6 +37,10 @@ pub const Language = struct {
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "zon",
         .abi_value = 5,
+        // After the JSON family and before every markup or key/value grammar:
+        // a `.{ … }` literal is not valid JSON, and nothing looser would read it
+        // as anything but a scalar.
+        .sniff_rank = 2,
         .deserializable = true,
         .splice = .literal,
         .empty_doc_seed = ".{}\n",

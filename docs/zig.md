@@ -157,8 +157,10 @@ NestedText. The tail of that order is what keeps the permissive formats from
 starving the rest — `.properties` accepts nearly any UTF-8 text, and plain
 `key: value` NestedText is also valid YAML (but types `port: 80` as the string
 `"80"` rather than an integer), so both sit after YAML and reach selection
-mainly via their file extension. See `languages/language.zig` for the
-per-format reasoning.
+mainly via their file extension. Each format declares its own place in that
+order as the `sniff_rank` on its dialect row, with the reasoning beside it;
+`Language.sniff_order` is the sorted result, and a test in
+`languages/language.zig` pins it to the sequence above.
 
 `fig.Language.validate(comptime Lang)` is a comptime assertion that a type has
 the shape (`Type`, `default_type`, `parse`, `print`) the generic engines

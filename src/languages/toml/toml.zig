@@ -48,6 +48,10 @@ pub const Language = struct {
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "toml",
         .abi_value = 4,
+        // First of the `key = value` grammars. fig, INI and dotenv all accept
+        // plain TOML-shaped content, so TOML gets first claim on it and they
+        // win only what TOML rejects.
+        .sniff_rank = 5,
         .deserializable = true,
         .splice = .literal,
         .empty_doc_seed = "",

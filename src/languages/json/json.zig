@@ -46,6 +46,9 @@ pub const Language = struct {
             .name = "json",
             .dialect = .JSON,
             .abi_value = 1,
+            // Strictest grammar of all, so it goes first: nothing JSON accepts is
+            // ambiguous with a looser format's reading of it.
+            .sniff_rank = 0,
             .deserializable = true,
             .splice = .json_string,
             .empty_doc_seed = "{}\n",
@@ -61,10 +64,11 @@ pub const Language = struct {
             .name = "jsonc",
             .dialect = .JSONC,
             .abi_value = 2,
-            // The one non-detectable dialect: plain JSON and JSON5 already
-            // claim everything JSONC accepts that they can parse, so sniffing
-            // it would only ever mis-attribute a comment-free document.
-            .detectable = false,
+            // The one dialect `detect` never sniffs: plain JSON and JSON5
+            // already claim everything JSONC accepts that they can parse, so
+            // sniffing it would only ever mis-attribute a comment-free
+            // document.
+            .sniff_rank = null,
             .deserializable = true,
             .splice = .json_string,
             .empty_doc_seed = "{}\n",
@@ -78,6 +82,9 @@ pub const Language = struct {
             // released value is appended rather than inserted — the reason
             // the C enum's numbering is not its order.
             .abi_value = 7,
+            // Right after plain JSON: a superset of it, and still stricter than
+            // everything below.
+            .sniff_rank = 1,
             .splice = .json_string,
             .empty_doc_seed = "{}\n",
             .print_name = "print5",

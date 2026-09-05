@@ -34,6 +34,12 @@ pub const Language = struct {
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "ini",
         .abi_value = 9,
+        // After TOML and fig: INI's grammar is also permissive (a bare
+        // `key = value` line, or an empty file, both parse), so it is tried
+        // only after everything stricter has had first claim — it wins only on
+        // content those reject, e.g. a `[section]` header or an unquoted value
+        // with characters no TOML/fig scalar allows (`path = C:\a\b`).
+        .sniff_rank = 7,
         .splice = .raw,
         .empty_doc_seed = "",
     }};

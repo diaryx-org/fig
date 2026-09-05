@@ -54,6 +54,16 @@ pub const Language = struct {
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "plist",
         .abi_value = 12,
+        // BEFORE generic XML. plist's DTD vocabulary (`<dict>`/`<array>`/
+        // `<key>`/...) is a STRICT SUBSET of well-formed XML: the generic XML
+        // reader would also happily accept any real plist document, just
+        // folding it into a differently-shaped AST (attribute/`#text` folding,
+        // no typed scalars). So plist must get first claim, or a compiled-in
+        // XML reader would starve it completely — the reverse isn't a problem:
+        // plist's own grammar rejects anything outside its fixed element
+        // vocabulary (`error.UnknownElement`), so ordinary XML falls through
+        // to `xml` untouched.
+        .sniff_rank = 3,
         .splice = .raw,
         // A bare `<dict>` IS a document this parser accepts (see its `detect`
         // probe), so `fig set` on a nonexistent `.plist` can create one.

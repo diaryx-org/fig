@@ -32,6 +32,20 @@ pub const Language = struct {
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "nestedtext",
         .abi_value = 13,
+        // LAST, after even `.properties` — not because its own grammar is
+        // unusually permissive (it isn't: keys/values have real restrictions,
+        // unlike `.properties`'s "nearly any text"), but because a huge,
+        // ordinary swath of it — plain `key: value` lines and `- item` lists —
+        // is ALSO valid YAML, and parses to a MEANINGFULLY DIFFERENT tree there
+        // (YAML types `port: 80` as an integer; NestedText's `port` is the
+        // untyped string `"80"`). Trying this before YAML would silently change
+        // what `detect()` returns for ordinary plain-YAML content already relied
+        // upon elsewhere in this codebase — a real regression, not just an
+        // academic ambiguity — so NestedText only gets a turn once every
+        // stricter-or-equally-plausible format (including YAML) has rejected
+        // the input. Its real path to selection is the `.nt` extension (see
+        // `cli/args.zig`), exactly like dotenv/`.properties`.
+        .sniff_rank = 11,
         .splice = .raw,
         .empty_doc_seed = "",
     }};

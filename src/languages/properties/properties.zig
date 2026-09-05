@@ -32,6 +32,13 @@ pub const Language = struct {
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "properties",
         .abi_value = 11,
+        // After YAML. `.properties` is even more permissive: a line with no
+        // separator at all is still legal (a bare key, empty value — see
+        // `tokenizer.zig`), so nearly any UTF-8 text parses. The one thing
+        // this format accepts that YAML rejects outright is a malformed-YAML
+        // shape; `.properties`'s real path to selection is its extension,
+        // same as `.env`.
+        .sniff_rank = 10,
         .splice = .raw,
         .empty_doc_seed = "",
     }};

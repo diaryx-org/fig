@@ -1,13 +1,24 @@
 ```fig
 title = YAML printer panics on some accept-corpus documents
 description = `fig get` and `fig fmt` on 30 of the 289 yaml-test-suite accept documents crash in `printKeyValue` — a non-string mapping key reaches a `.string` union access
-status = open
+status = done
 created = 2026-09-04
 updated = 2026-09-04
 part_of = [tasks](tasks.md)
 ```
 
 # YAML printer panics on some accept-corpus documents
+
+**Status.** Done, in `fix(yaml): spell every mapping key kind; fix two
+explicit-key parser gaps` (2026-09-04). The printer spells each key kind
+(`null: a`, `23: x`, `*ref : x`, and the explicit `? key` form for a
+collection, inlined as flow when it fits), every accept document prints and
+re-parses except the two carrying a `%TAG` directive, and the conformance
+scoreboard now ratchets a print-and-re-parse count so this cannot regress.
+Two parser gaps the re-parse exposed are fixed in the same commit: a `:`
+right of a `?`'s column no longer closes the outer key (`?\n  ? a\n  : b`),
+and a property on an implicit key's own line (`&a a: b`, E76Z/74H7)
+decorates the key, not the mapping it opens.
 
 **Repro.** With any `fig` since at least cli 4.0.0:
 

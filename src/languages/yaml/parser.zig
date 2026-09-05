@@ -628,8 +628,12 @@ fn parseSequenceEntry(self: *Parser) ParserError!void {
         },
         .scalar => {
             if (self.isMappingStart()) {
+                // `- &a a: b`: the property is the key's, not the item
+                // mapping's (see `holdKeyLineProps`).
+                const held = self.holdKeyLineProps();
                 const mapping_id = try self.openContainer(.mapping, self.peek().span.start);
                 self.containerById(mapping_id).continues_sequence_item = true;
+                self.releaseKeyLineProps(held);
                 try self.parseMappingEntry();
             } else {
                 const value_id = try self.parseScalar();
@@ -684,9 +688,35 @@ fn parseSequenceEntry(self: *Parser) ParserError!void {
     }
 }
 
+/// A pending property taken off the parser while a mapping container opens, to
+/// be put back for the key. See `holdKeyLineProps`.
+const HeldProps = struct { anchor: ?PendingAnchor = null, tag: ?PendingTag = null };
+
+/// A property on an implicit key's own line decorates the KEY (`&a a: b`
+/// anchors the scalar `a` — E76Z, 74H7), while one on an earlier line decorates
+/// the mapping the key opens (`&m\na: b`). `openContainer` hands a lone pending
+/// property to the container it opens, so a same-line one is held back here
+/// until the container exists, and `releaseKeyLineProps` puts it back for the
+/// key's `addNode` to claim. Called with the key token next.
+fn holdKeyLineProps(self: *Parser) HeldProps {
+    if (!self.pendingPropOnLineOf(self.peek().span.start)) return .{};
+    defer {
+        self.pending_anchor = null;
+        self.pending_tag = null;
+    }
+    return .{ .anchor = self.pending_anchor, .tag = self.pending_tag };
+}
+
+fn releaseKeyLineProps(self: *Parser, held: HeldProps) void {
+    if (held.anchor) |a| self.pending_anchor = a;
+    if (held.tag) |t| self.pending_tag = t;
+}
+
 fn parseMappingEntry(self: *Parser) ParserError!void {
+    const held = self.holdKeyLineProps();
     const mapping_id = try self.ensureContainer(.mapping);
     try self.closePendingEmptyValue();
+    self.releaseKeyLineProps(held);
 
     const key_id = try self.parseKeyNode();
     self.skipTriviaNoNewline();
@@ -803,14 +833,16 @@ fn parseExplicitKey(self: *Parser) ParserError!void {
 
     self.skipTriviaNoNewline();
     try self.consumePendingProperties(); // `? !!str key`
-    // `?` alone on its line, with no property decorating the key: the key is
-    // supplied by following lines (an indentless or indented block collection,
-    // `?\n- a\n- b`), not empty. Defer like a complex key — the following content
-    // closes into this mapping as its key (building_explicit_key), and a `:` that
-    // arrives with no key content resolves to a null key (see the `.colon`
-    // main-loop handler). A pending property (`? &a\n`) instead decorates an
-    // empty key node here and now, so it falls through to the null-key arm.
-    if (self.peek().kind == .newline and self.pending_anchor == null and self.pending_tag == null) {
+    // `?` alone on its line: the key is supplied by following lines (an
+    // indentless or indented block collection, `?\n- a\n- b`), not empty. Defer
+    // like a complex key — the following content closes into this mapping as
+    // its key (building_explicit_key), and a `:` that arrives with no key
+    // content resolves to a null key (see the `.colon` main-loop handler). A
+    // property on the `?` line (`? &a\n  - a`) stays pending through the
+    // deferral and lands on whichever node the next line opens — the block
+    // collection, or the null key when the `:` comes first (`? &a\n: x`) — the
+    // same way `k: &a\n  - a` anchors the sequence, not an empty value.
+    if (self.peek().kind == .newline) {
         self.containerById(mapping_id).building_explicit_key = true;
         self.containerById(mapping_id).explicit_key_col = self.columnOf(marker.span.start);
         return;
@@ -1586,10 +1618,17 @@ fn closeSequenceItemContinuation(self: *Parser) ParserError!void {
 /// If a complex explicit key's container (a block sequence opened after `?`) is
 /// still open — its `:` sits on the same line, so no dedent closed it — close it
 /// now. finishValue's `building_explicit_key` path then records it as the key.
+///
+/// Only a `:` at (or left of) the `?`'s own column is that key's value
+/// indicator. One further right belongs to the key's content — a nested
+/// explicit entry's value (`?\n  ? earth\n  : blue\n: x`, where the inner `:`
+/// supplies `blue` and the outer key is `{earth: blue}`) — and closing the
+/// inner mapping on it would hand `blue` to the outer entry instead.
 fn closeOpenComplexKey(self: *Parser) ParserError!void {
     if (self.container_stack.items.len < 2) return;
     const parent = &self.container_stack.items[self.container_stack.items.len - 2];
     if (!parent.building_explicit_key) return;
+    if (self.columnOf(self.peek().span.start) > parent.explicit_key_col) return;
 
     self.currentContainer().continues_sequence_item = false;
     try self.closePendingEmptyValue();
@@ -3695,6 +3734,77 @@ test "yaml mapping as an explicit key" {
     // A tab standing in for the nested mapping's indentation is invalid.
     try testParserError("?\tkey:\n", error.UnexpectedToken);
     try testParserError("? key:\n:\tkey:\n", error.UnexpectedToken);
+}
+
+test "yaml explicit key nested in a deferred explicit key" {
+    // The inner `:` (right of the outer `?`'s column) supplies the inner
+    // value; only a `:` back at the `?`'s column closes the outer key.
+    const doc = try Parser.parse(testing.allocator, "?\n  ? earth\n  : blue\n: x\n", .v1_2_2);
+    defer doc.deinit(testing.allocator);
+    const pair = doc.ast.nodes[doc.ast.nodes[doc.ast.root].kind.mapping.?];
+    const key = doc.ast.nodes[pair.kind.keyvalue.key];
+    try testing.expect(std.meta.activeTag(key.kind) == .mapping);
+    const inner = doc.ast.nodes[key.kind.mapping.?].kind.keyvalue;
+    try testing.expectEqualStrings("earth", doc.ast.nodes[inner.key].kind.string);
+    try testing.expectEqualStrings("blue", doc.ast.nodes[inner.value].kind.string);
+    try testing.expectEqualStrings("x", doc.ast.nodes[pair.kind.keyvalue.value].kind.string);
+    // An indentless block key still closes on the `:` at its own column.
+    const flat = try Parser.parse(testing.allocator, "?\n- a\n- b\n: c\n", .v1_2_2);
+    defer flat.deinit(testing.allocator);
+    const flat_pair = flat.ast.nodes[flat.ast.nodes[flat.ast.root].kind.mapping.?];
+    try testing.expect(std.meta.activeTag(flat.ast.nodes[flat_pair.kind.keyvalue.key].kind) == .sequence);
+    try testing.expectEqualStrings("c", flat.ast.nodes[flat_pair.kind.keyvalue.value].kind.string);
+}
+
+test "yaml explicit key: a property on the `?` line decorates the block key" {
+    // `? &a` then a block sequence: the anchor is the sequence's, as `k: &a`
+    // then a block sequence anchors the value.
+    const doc = try Parser.parse(testing.allocator, "? &a\n  - a\n  - b\n: *a\n", .v1_2_2);
+    defer doc.deinit(testing.allocator);
+    const pair = doc.ast.nodes[doc.ast.nodes[doc.ast.root].kind.mapping.?];
+    const key = doc.ast.nodes[pair.kind.keyvalue.key];
+    try testing.expect(std.meta.activeTag(key.kind) == .sequence);
+    try testing.expectEqualSlices(u8, "a", doc.ast.node_anchors[key.id].?);
+    try testing.expectEqual(key.id, try doc.ast.resolveAlias(doc.ast.nodes[pair.kind.keyvalue.value]));
+    // With no key content, the `:` makes an (anchored) null key.
+    const empty = try Parser.parse(testing.allocator, "? &a\n: x\n", .v1_2_2);
+    defer empty.deinit(testing.allocator);
+    const empty_pair = empty.ast.nodes[empty.ast.nodes[empty.ast.root].kind.mapping.?];
+    const empty_key = empty.ast.nodes[empty_pair.kind.keyvalue.key];
+    try testing.expect(empty_key.kind == .null_);
+    try testing.expectEqualSlices(u8, "a", empty.ast.node_anchors[empty_key.id].?);
+}
+
+test "yaml anchor: a property on an implicit key's own line is the key's" {
+    // E76Z/74H7: `&a a: b` anchors the scalar `a`, not the mapping it opens —
+    // at the root, nested, and on a sequence item's compact mapping.
+    const cases = [_][]const u8{
+        "&a a: b\nc: *a\n",
+        "x:\n  &a a: b\n  c: *a\n",
+        "- &a a: b\n- *a\n",
+    };
+    for (cases) |src| {
+        const doc = try Parser.parse(testing.allocator, src, .v1_2_2);
+        defer doc.deinit(testing.allocator);
+        var seen = false;
+        for (doc.ast.nodes, 0..) |node, i| {
+            if (doc.ast.node_anchors[i] == null) continue;
+            try testing.expectEqualStrings("a", node.kind.string);
+            seen = true;
+        }
+        try testing.expect(seen);
+    }
+    // A tag the same way (`!!str a: b` tags the key).
+    const tagged = try Parser.parse(testing.allocator, "!!str a: b\n", .v1_2_2);
+    defer tagged.deinit(testing.allocator);
+    const pair = tagged.ast.nodes[tagged.ast.nodes[tagged.ast.root].kind.mapping.?];
+    try testing.expect(tagged.ast.node_tags[tagged.ast.root] == null);
+    try testing.expectEqualStrings("!!str", tagged.ast.node_tags[pair.kind.keyvalue.key].?.text);
+    // One on an earlier line is still the mapping's.
+    const above = try Parser.parse(testing.allocator, "k: &m\n  a: b\n", .v1_2_2);
+    defer above.deinit(testing.allocator);
+    const k = try above.ast.getValByPath(&.{.{ .key = "k" }});
+    try testing.expectEqualSlices(u8, "m", above.ast.node_anchors[k.id].?);
 }
 
 test "yaml plain scalar continuation may start with an indicator" {

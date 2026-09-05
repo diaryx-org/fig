@@ -154,11 +154,22 @@ fn printSequenceMapping(writer: *Writer, document: *const AST, first_pair: AST.N
 fn printKeyValue(writer: *Writer, document: *const AST, kv: anytype, depth: usize, skip_indent: bool, opts: AST.SerializeOptions) Writer.Error!void {
     const value = document.nodes[kv.value];
     if (!skip_indent) try writeIndent(writer, depth);
-    try writeProps(writer, document, kv.key); // `&k key:` / `!!str key:`
-    try printScalar(writer, document.nodes[kv.key].kind.string);
     // Columns already on the value's line — indent, key (with props), and `: ` —
     // the budget the flow form must fit within.
-    const value_prefix = 2 * depth + keyCols(document, kv.key) + 2;
+    const value_prefix: usize = switch (document.nodes[kv.key].kind) {
+        // A collection key has no single-line spelling to put before a `:`,
+        // so it takes the explicit form: `? key` on its own line(s), then the
+        // value on a `: ` line at the key's column — where the value's prefix
+        // is just the indent and the `: `.
+        .sequence, .mapping => blk: {
+            try writeExplicitKey(writer, document, kv.key, depth, opts);
+            break :blk 2 * depth + 2;
+        },
+        else => blk: {
+            try writeKeyLead(writer, document, kv.key); // `&k key:` / `!!str key:`
+            break :blk 2 * depth + keyCols(document, kv.key) + 2;
+        },
+    };
     switch (value.kind) {
         .mapping => |child| {
             if (child != null and flowFits(document, kv.value, value_prefix, opts)) {
@@ -251,8 +262,14 @@ fn flowEligible(ast: *const AST, id: AST.Node.Id) bool {
                 if (!ast.comments(kv_id).isEmpty()) return false;
                 const kv = ast.nodes[kv_id].kind.keyvalue;
                 if (!ast.comments(kv.key).isEmpty()) return false;
-                const key = ast.nodes[kv.key];
-                if (key.kind != .string or std.mem.indexOfScalar(u8, key.kind.string, '\n') != null) return false;
+                // A key must have a one-line flow spelling: a scalar (a
+                // string without a newline; `{ 1: a, null: b }` is fine
+                // YAML), never a collection or an alias.
+                switch (ast.nodes[kv.key].kind) {
+                    .string => |s| if (std.mem.indexOfScalar(u8, s, '\n') != null) return false,
+                    .null_, .boolean, .number => {},
+                    else => return false,
+                }
                 // A mapping directly nested in a mapping is too much structure
                 // for one flow line; keep it block (matches the fig printer).
                 if (ast.nodes[kv.value].kind == .mapping) return false;
@@ -275,9 +292,63 @@ fn keyCols(ast: *const AST, key_id: AST.Node.Id) usize {
     return width.rendered(writeKeyLead, .{ ast, key_id }) orelse 0;
 }
 
+/// The left-hand side of an implicit `key: value` line: the key's props and
+/// its single-line spelling. Every non-collection key has one — a YAML mapping
+/// key is any node, not just a string, and the parser produces each of these
+/// (`null: a`, `23: x`, `true: x`, `*ref : x`, `2001-12-14: x`). A collection
+/// key is the explicit `?` form instead (`writeExplicitKey`).
 fn writeKeyLead(writer: *Writer, ast: *const AST, key_id: AST.Node.Id) Writer.Error!void {
     try writeProps(writer, ast, key_id);
-    try printScalar(writer, ast.nodes[key_id].kind.string);
+    try writeScalarKey(writer, ast, key_id);
+}
+
+/// A non-collection key's own spelling, without props.
+fn writeScalarKey(writer: *Writer, ast: *const AST, key_id: AST.Node.Id) Writer.Error!void {
+    switch (ast.nodes[key_id].kind) {
+        .string => |s| try printScalar(writer, s),
+        // An empty key (`: a`) reads back as a null key; spelling it `null`
+        // says so, and re-parses to the same node.
+        .null_ => try writer.writeAll("null"),
+        .boolean => |b| try writer.writeAll(if (b) "true" else "false"),
+        .number => |n| try num.write(writer, n.raw, num.yaml_1_2),
+        .extended => |value| switch (value.kind) {
+            .enum_literal => try printScalar(writer, value.text),
+            else => try writer.writeAll(value.text),
+        },
+        // `*a : b` — the space is load-bearing: `:` is a legal anchor-name
+        // character, so `*a:` would be an alias to an anchor called `a:`.
+        .alias => |name| {
+            try writer.writeByte('*');
+            try writer.writeAll(name);
+            try writer.writeByte(' ');
+        },
+        .sequence, .mapping, .keyvalue => unreachable, // writeExplicitKey's
+    }
+}
+
+/// A collection key, in explicit form. Everything up to and including the
+/// indent of the `:` line is written, so the caller continues with the `:` and
+/// the value exactly as for an implicit key. The key inlines as `? [a, b]` when
+/// it fits the width like any other collection; otherwise it is `?` alone on
+/// the line — with the key's own props after it, the way a block value's ride
+/// after the `:` — and the block form indented beneath:
+///
+///     ? &a
+///       - a
+///       - b
+///     : value
+fn writeExplicitKey(writer: *Writer, ast: *const AST, key_id: AST.Node.Id, depth: usize, opts: AST.SerializeOptions) Writer.Error!void {
+    if (flowFits(ast, key_id, 2 * depth + 2, opts)) {
+        try writer.writeAll("? ");
+        try writeFlow(writer, ast, key_id);
+        try writer.writeByte('\n');
+    } else {
+        try writer.writeByte('?');
+        try writePropsAfterColon(writer, ast, key_id);
+        try writer.writeByte('\n');
+        try printNode(writer, ast, key_id, depth + 1, opts);
+    }
+    try writeIndent(writer, depth);
 }
 
 /// Emit `id` as inline flow. Assumes `flowEligible(ast, id)`, so every node has a
@@ -319,7 +390,10 @@ fn writeFlow(writer: *Writer, ast: *const AST, id: AST.Node.Id) Writer.Error!voi
             }) {
                 if (i > 0) try writer.writeAll(", ");
                 const kv = ast.nodes[kv_id].kind.keyvalue;
-                try printFlowScalar(writer, ast.nodes[kv.key].kind.string);
+                switch (ast.nodes[kv.key].kind) {
+                    .string => |s| try printFlowScalar(writer, s),
+                    else => try writeScalarKey(writer, ast, kv.key),
+                }
                 try writer.writeAll(": ");
                 try writeFlow(writer, ast, kv.value);
             }
@@ -817,6 +891,58 @@ test "yaml flow: a comment or overflow keeps a collection block" {
         "items:\n- " ++ long ++ "\n",
         "items:\n- " ++ long ++ "\n",
     );
+}
+
+test "yaml printer: every key kind has a spelling that re-parses" {
+    // A YAML mapping key is any node. The printer used to read every key as a
+    // `.string` and crash on the rest (30 yaml-test-suite accept documents —
+    // docs/tasks/yaml-printer-panics-on-accept-corpus.md); each kind now has
+    // a spelling the parser reads back to the same node.
+    // null (2JQS: `: a`), number (74H7, with its tag kept), boolean.
+    try expectRoundTrip(": a\n", "null: a\n");
+    try expectRoundTrip("23: x\n!!str 23: y\n", "23: x\n!!str 23: y\n");
+    try expectRoundTrip("true: x\n", "true: x\n");
+    // alias (26DV/E76Z) — the space before `:` is what keeps `*n` an alias.
+    try expectRoundTrip("x: &n v\n*n : w\n", "x: &n v\n*n : w\n");
+    // sequence (4FJ6/SBG9): explicit `?`, inlined as flow when it fits …
+    try expectRoundTrip("? - a\n  - b\n: c\n", "? [a, b]\n: c\n");
+    try expectRoundTrip("? []\n: c\n", "? []\n: c\n");
+    // … and block beneath a bare `?` when it cannot (X38W: props inside).
+    try expectRoundTrip(
+        "{ &a [a, &b b]: *b, *a : c }\n",
+        "? &a\n  - a\n  - &b b\n: *b\n*a : c\n",
+    );
+    // mapping (9MMW/M2N8-1), including one whose own key is a collection.
+    try expectRoundTrip("? a: b\n: c\n", "? { a: b }\n: c\n");
+    try expectRoundTrip("? []: x\n", "?\n  ? []\n  : x\n: null\n");
+    // A collection key on a sequence item's first pair rides the `- `.
+    try expectRoundTrip("- ? [[b, c]]\n  : d\n", "- ? [[b, c]]\n  : d\n");
+    // Scalar keys other than strings inline in a flow mapping.
+    try expectRoundTrip("x:\n  1: a\n  null: b\n", "x: { 1: a, null: b }\n");
+}
+
+test "yaml printer: a re-printed key re-parses to the same node kind" {
+    const Parser = @import("parser.zig");
+    const cases = [_][]const u8{
+        ": a\n",
+        "23: x\n",
+        "x: &n v\n*n : w\n",
+        "? - a\n  - b\n: c\n",
+        "? a: b\n: c\n",
+        "? []: x\n",
+    };
+    for (cases) |src| {
+        const doc = try Parser.parse(std.testing.allocator, src, .v1_2_2);
+        defer doc.deinit(std.testing.allocator);
+        var out: Writer.Allocating = .init(std.testing.allocator);
+        defer out.deinit();
+        try print(&out.writer, &doc.ast);
+        const again = try Parser.parse(std.testing.allocator, out.written(), .v1_2_2);
+        defer again.deinit(std.testing.allocator);
+        const want = doc.ast.nodes[doc.ast.nodes[doc.ast.nodes[doc.ast.root].kind.mapping.?].kind.keyvalue.key].kind;
+        const got = again.ast.nodes[again.ast.nodes[again.ast.nodes[again.ast.root].kind.mapping.?].kind.keyvalue.key].kind;
+        try std.testing.expectEqual(std.meta.activeTag(want), std.meta.activeTag(got));
+    }
 }
 
 test "yaml flow: a flow indicator in a scalar forces quoting" {

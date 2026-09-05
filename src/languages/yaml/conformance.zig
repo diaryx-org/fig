@@ -19,6 +19,7 @@ const std = @import("std");
 const testing = std.testing;
 
 const Parser = @import("parser.zig");
+const Printer = @import("printer.zig");
 const YamlType = @import("yaml.zig").Type;
 const Embed = @import("../../embed.zig");
 
@@ -27,6 +28,12 @@ const max_fixture_size = 1024 * 1024;
 // Baseline scores. These are a ratchet: raise them as coverage improves; never
 // lower them without a deliberate reason. A run below baseline fails the test.
 const accept_baseline = 289;
+// Accept documents that also survive a print and re-parse: the printer must
+// have a spelling for every node the parser can produce (a collection or
+// alias as a mapping key, say), and that spelling must be YAML the parser
+// reads back. Short of 289 by the fixtures carrying a `%TAG` directive, which
+// the printer drops.
+const reprint_baseline = 287;
 const reject_baseline = 93;
 // Multi-document streams parsed via Embed.extractStream (the single-document
 // parser refuses a stream; the splitter feeds it one document at a time).
@@ -38,6 +45,8 @@ const reject_stream_baseline = 1;
 const Score = struct {
     correct: usize = 0,
     total: usize = 0,
+    /// Of the correct `.should_pass` documents, how many printed and re-parsed.
+    reprinted: usize = 0,
 };
 
 test "yaml conformance: scoreboard" {
@@ -50,21 +59,37 @@ test "yaml conformance: scoreboard" {
         \\
         \\YAML conformance (yaml-test-suite, out-of-scope excluded)
         \\  accept (must parse): {d}/{d}   baseline {d}
+        \\  reprint (print + re-parse): {d}/{d}   baseline {d}
         \\  reject (must fail) : {d}/{d}   baseline {d}
         \\  stream (extractStream): {d}/{d}   baseline {d}
         \\  reject-stream (extractStream must fail): {d}/{d}   baseline {d}
         \\
     , .{
         accept.correct,        accept.total,        accept_baseline,
+        accept.reprinted,      accept.total,        reprint_baseline,
         reject.correct,        reject.total,        reject_baseline,
         stream.correct,        stream.total,        stream_baseline,
         reject_stream.correct, reject_stream.total, reject_stream_baseline,
     });
 
     try testing.expect(accept.correct >= accept_baseline);
+    try testing.expect(accept.reprinted >= reprint_baseline);
     try testing.expect(reject.correct >= reject_baseline);
     try testing.expect(stream.correct >= stream_baseline);
     try testing.expect(reject_stream.correct >= reject_stream_baseline);
+}
+
+/// Print `ast` as YAML and parse the result. A printer without a spelling for
+/// some node used to panic here (a non-string key); now it either spells it or
+/// the re-parse fails and the document does not count.
+fn reprints(ast: *const @import("../../ast/ast.zig")) !bool {
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    try Printer.print(&out.writer, ast);
+    const again = Parser.parse(testing.allocator, out.written(), YamlType.v1_2_2) catch return false;
+    var d = again;
+    d.deinit(testing.allocator);
+    return true;
 }
 
 /// Score the multi-document fixtures via Embed.extractStream, which errors if
@@ -128,8 +153,9 @@ fn scoreDir(dir_path: []const u8, expected: Expected) !Score {
             .should_pass => {
                 if (parsed) |doc| {
                     var d = doc;
-                    d.deinit(testing.allocator);
+                    defer d.deinit(testing.allocator);
                     score.correct += 1;
+                    if (try reprints(&d.ast)) score.reprinted += 1;
                 } else |_| {}
             },
             .should_fail => {

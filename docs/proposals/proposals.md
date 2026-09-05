@@ -9,6 +9,7 @@ contents
 > * [Editor splice: findings and wishlist](editor-splice-wishlist.md)
 > * [A declared Language interface](language-interface.md)
 > * [Derived regions](derived-regions.md)
+> * [Pluggable formats](pluggable-formats.md)
 ```
 
 # Proposals

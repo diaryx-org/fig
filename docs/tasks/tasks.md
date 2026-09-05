@@ -6,6 +6,8 @@ created = 2026-09-04
 updated = 2026-09-04
 part_of = [docs](/docs/docs.md)
 contents
+> * [JSON printer emits a non-string mapping key as invalid JSON](json-printer-emits-non-string-keys.md)
+> * [YAML printer drops `%TAG` directives and root collection properties](yaml-printer-drops-directives-and-root-props.md)
 ```
 
 # Tasks

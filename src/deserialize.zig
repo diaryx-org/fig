@@ -18,19 +18,6 @@ const build_options = @import("build_options");
 /// The format registry `Format` is reified from.
 const Language = @import("languages/language.zig");
 
-// Parsers are pulled in only for the formats compiled into this build: a gated
-// format's module is `void`, so the matching `parseToAst` arm (guarded by the
-// same comptime flag) is never analyzed and the parser never compiles in.
-//
-// JSON was the one exception — imported unconditionally, so `-Djson=false`
-// still dragged the JSON parser into every build that touched this file, and
-// the `.json`/`.jsonc` arms answered instead of refusing like every other
-// disabled format. That is fix #4 of the registry plan.
-const Json = if (build_options.lang_json) @import("languages/json/parser.zig") else void;
-const Yaml = if (build_options.lang_yaml) @import("languages/yaml/parser.zig") else void;
-const Toml = if (build_options.lang_toml) @import("languages/toml/parser.zig") else void;
-const Zon = if (build_options.lang_zon) @import("languages/zon/parser.zig") else void;
-
 /// The source format to parse before mapping onto `T`: exactly the format
 /// registry entries marked `deserializable`, in registry order. A format that
 /// was compiled out is still a valid enum value (the registry keeps every
@@ -114,13 +101,18 @@ pub fn parseFromSliceLeaky(
     return parseValue(T, allocator, &ast, ast.root, options);
 }
 
+/// Parse through the registry: a `deserializable` dialect's language declares
+/// `parseAbstract` (an optional `Language` decl that `validate` requires of
+/// exactly those languages), and the dialect row says which `Type` to parse
+/// as. A gated-out language has `Lang == void` and refuses, so no parser is
+/// pulled into a build that gates its format out.
 fn parseToAst(allocator: std.mem.Allocator, source: []const u8, format: Format) !AST {
     return switch (format) {
-        .json => if (comptime build_options.lang_json) Json.parseAbstract(allocator, source, .JSON) else error.FormatDisabled,
-        .jsonc => if (comptime build_options.lang_json) Json.parseAbstract(allocator, source, .JSONC) else error.FormatDisabled,
-        .yaml => if (comptime build_options.lang_yaml) Yaml.parseAbstract(allocator, source, .v1_2_2) else error.FormatDisabled,
-        .toml => if (comptime build_options.lang_toml) Toml.parseAbstract(allocator, source, .TOML_1_1) else error.FormatDisabled,
-        .zon => if (comptime build_options.lang_zon) Zon.parseAbstract(allocator, source, .ZON) else error.FormatDisabled,
+        inline else => |f| blk: {
+            const d = comptime Language.entryFor(@tagName(f));
+            if (comptime d.Lang == void) break :blk error.FormatDisabled;
+            break :blk d.Lang.parseAbstract(allocator, source, d.dialect);
+        },
     };
 }
 

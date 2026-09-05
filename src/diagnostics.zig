@@ -24,6 +24,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const AST = @import("ast/ast.zig");
 const Lossless = @import("lossless.zig");
+const Language = @import("languages/language.zig");
 const Writer = std.Io.Writer;
 
 const ExtKind = AST.Node.Kind.Extended.ExtKind;
@@ -305,41 +306,24 @@ fn valueLoss(format: Format, kind: AST.Node.Kind, depth: usize) ?Loss {
             .extended => |e| return .{ .code = .type_degraded, .note = degradedNote(format, e.kind) },
             else => return null,
         },
-        // INI: also no typed scalars (see the `.xml` arm above). Unlike every
-        // other format here, capability also depends on DEPTH: a root mapping
-        // (depth 0) and a `[section]` mapping (depth 1) both have a direct
-        // INI spelling, but a sequence at any depth, or a mapping nested two
-        // or more levels deep, has none at all — `languages/ini/printer.zig`
-        // hard-errors on both rather than degrading them.
-        .ini => switch (kind) {
-            .null_ => return .{ .code = .value_dropped, .note = "null" },
-            .boolean, .number => return .{ .code = .type_degraded, .note = "string" },
-            .extended => |e| return .{ .code = .type_degraded, .note = degradedNote(format, e.kind) },
-            .sequence => return .{ .code = .value_dropped, .note = "array" },
-            .mapping => if (depth >= 2) return .{ .code = .value_dropped, .note = "table" } else return null,
-            else => return null,
-        },
-        // dotenv: same story as INI's typed-scalar handling, but flat only —
-        // even a depth-1 mapping (INI's `[section]`) has no dotenv spelling,
-        // since dotenv has no nesting concept at all.
-        .dotenv => switch (kind) {
-            .null_ => return .{ .code = .value_dropped, .note = "null" },
-            .boolean, .number => return .{ .code = .type_degraded, .note = "string" },
-            .extended => |e| return .{ .code = .type_degraded, .note = degradedNote(format, e.kind) },
-            .sequence => return .{ .code = .value_dropped, .note = "array" },
-            .mapping => if (!is_root) return .{ .code = .value_dropped, .note = "table" } else return null,
-            else => return null,
-        },
-        // .properties: same story as dotenv (flat only, no typed scalars) —
-        // it's just as much a `Hashtable<String, String>` as dotenv is a flat
-        // environment map.
-        .properties => switch (kind) {
-            .null_ => return .{ .code = .value_dropped, .note = "null" },
-            .boolean, .number => return .{ .code = .type_degraded, .note = "string" },
-            .extended => |e| return .{ .code = .type_degraded, .note = degradedNote(format, e.kind) },
-            .sequence => return .{ .code = .value_dropped, .note = "array" },
-            .mapping => if (!is_root) return .{ .code = .value_dropped, .note = "table" } else return null,
-            else => return null,
+        // The flat formats — INI, dotenv, `.properties` — each declaring a
+        // `caps.max_mapping_depth`: no typed scalars (see the `.xml` arm
+        // above), no `null`, no sequence at any depth, and a mapping only
+        // down to the declared depth (INI's root plus one level of
+        // `[section]`s; the other two hold the root mapping alone). This is
+        // exactly what `flat_strip.zig` drops before a lossy print, reading
+        // the same field, so the warning and the strip cannot disagree.
+        inline .ini, .dotenv, .properties => |f| {
+            const max_depth = comptime Language.moduleFor(@tagName(f)).Language.caps.max_mapping_depth orelse
+                @compileError("'" ++ @tagName(f) ++ "' takes the flat arm of `valueLoss` but declares no max_mapping_depth");
+            switch (kind) {
+                .null_ => return .{ .code = .value_dropped, .note = "null" },
+                .boolean, .number => return .{ .code = .type_degraded, .note = "string" },
+                .extended => |e| return .{ .code = .type_degraded, .note = degradedNote(format, e.kind) },
+                .sequence => return .{ .code = .value_dropped, .note = "array" },
+                .mapping => if (depth > max_depth) return .{ .code = .value_dropped, .note = "table" } else return null,
+                else => return null,
+            }
         },
         // plist has native `boolean`/`integer`/`real`/`string`, unlimited
         // mapping/sequence nesting, and its own two extended kinds — the only

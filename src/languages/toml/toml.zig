@@ -25,6 +25,10 @@ pub const Language = struct {
     }
     pub const print = toml.Printer.print;
     pub const printNode = toml.Printer.printNode;
+    /// Parse straight to a core AST with no `Document` around it — what
+    /// `deserialize.zig` maps onto a Zig type. Optional `Language` decl,
+    /// required exactly of a language with a `deserializable` dialect row.
+    pub const parseAbstract = toml.Parser.parseAbstract;
 
     pub const name = "toml";
     pub const extensions: []const []const u8 = &.{"toml"};

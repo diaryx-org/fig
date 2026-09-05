@@ -30,6 +30,10 @@ pub const Language = struct {
     }
     pub const print = yaml.Printer.print;
     pub const printNode = yaml.Printer.printNode;
+    /// Parse straight to a core AST with no `Document` around it — what
+    /// `deserialize.zig` maps onto a Zig type. Optional `Language` decl,
+    /// required exactly of a language with a `deserializable` dialect row.
+    pub const parseAbstract = yaml.Parser.parseAbstract;
     /// Collapse the reference layer (aliases/merges/tags/anchors) into a core AST
     /// before handing it to a non-YAML printer. Optional Language decl: callers
     /// gate on `@hasDecl(Lang, "materialize")`.

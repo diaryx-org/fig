@@ -29,7 +29,9 @@ pub const Language = struct {
     /// "extension" is the literal `env`. (`.env.production` is not recognized
     /// by extension — pass `--input dotenv`.)
     pub const extensions: []const []const u8 = &.{"env"};
-    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
+    /// Flat: even a depth-1 mapping (INI's `[section]`) has no dotenv
+    /// spelling, since dotenv has no nesting concept at all.
+    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true, .max_mapping_depth = 0 };
 
     /// A flat string map and nothing more: no nesting, untyped scalars. A
     /// nested value tree cannot be represented, and serializing one warns.

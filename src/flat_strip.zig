@@ -15,10 +15,12 @@
 //! `emit`/`carry`/`link` node-building primitives (`pub` there for exactly
 //! this) rather than a third copy of that plumbing.
 //!
-//! MUST stay in sync with `diagnostics.zig`'s matching `.ini`/`.dotenv`/
-//! `.properties` `valueLoss` arms: that pass reports exactly what this one
-//! removes (a `null` or a `sequence` at any depth; a `mapping` nested past
-//! `maxMappingDepth`).
+//! The depth limit is the format's own declaration — `Caps.max_mapping_depth`
+//! — and the caller passes it in (`cli/parse_dispatch.zig`'s `flatStripDepth`
+//! reads it off the registry). `diagnostics.zig`'s `valueLoss` reads the same
+//! field, so the warning pass reports exactly what this one removes (a `null`
+//! or a `sequence` at any depth; a `mapping` nested past the limit) without
+//! restating which formats are flat.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -27,18 +29,6 @@ const Lossless = @import("lossless.zig");
 const Id = AST.Node.Id;
 
 pub const Error = Allocator.Error;
-
-pub const Format = enum { ini, dotenv, properties };
-
-/// How many levels of mapping nesting `format` can still represent: INI holds
-/// a root mapping plus one level of `[section]`s; dotenv/`.properties` are
-/// flat (the root mapping itself, nothing nested under it).
-fn maxMappingDepth(format: Format) usize {
-    return switch (format) {
-        .ini => 1,
-        .dotenv, .properties => 0,
-    };
-}
 
 /// `depth` is the node's OWN depth (0 = document root), matching
 /// `diagnostics.zig`'s `valueLoss` exactly.
@@ -63,10 +53,10 @@ pub const StripResult = struct {
 };
 
 /// Build a fresh AST in `arena` rooted at the subtree `root_id`, dropping
-/// every mapping entry/sequence element `format` can't represent at all.
-/// Dropped paths are reported relative to `root_id`.
-pub fn lossyStrip(arena: Allocator, ast: *const AST, root_id: Id, format: Format) Error!StripResult {
-    const max_depth = maxMappingDepth(format);
+/// every mapping entry/sequence element a format holding at most
+/// `max_depth` levels of mapping nesting (its `Caps.max_mapping_depth`)
+/// can't represent at all. Dropped paths are reported relative to `root_id`.
+pub fn lossyStrip(arena: Allocator, ast: *const AST, root_id: Id, max_depth: usize) Error!StripResult {
     var s = Stripper{ .src = ast, .arena = arena, .max_mapping_depth = max_depth };
     if (isUnrepresentable(ast.nodes[root_id].kind, 0, max_depth)) {
         try s.dropped.append(arena, "(value)");
@@ -155,7 +145,7 @@ test "drops an array at any depth, keeps everything else" {
     var ast = try b.finish(root);
     defer ast.deinit();
 
-    const result = try lossyStrip(arena, &ast, ast.root, .dotenv);
+    const result = try lossyStrip(arena, &ast, ast.root, 0);
     try testing.expectEqual(@as(usize, 1), result.dropped.len);
     try testing.expectEqualStrings("list", result.dropped[0]);
     const stripped = result.ast.?;
@@ -184,7 +174,7 @@ test "INI keeps one level of mapping nesting, drops the next" {
     var ast = try b.finish(root);
     defer ast.deinit();
 
-    const result = try lossyStrip(arena, &ast, ast.root, .ini);
+    const result = try lossyStrip(arena, &ast, ast.root, 1);
     try testing.expectEqual(@as(usize, 1), result.dropped.len);
     try testing.expectEqualStrings("server.nested", result.dropped[0]);
     const stripped = result.ast.?;
@@ -205,7 +195,7 @@ test "a bare array root has nothing to print" {
     var ast = try b.finish(root);
     defer ast.deinit();
 
-    const result = try lossyStrip(arena, &ast, ast.root, .properties);
+    const result = try lossyStrip(arena, &ast, ast.root, 0);
     try testing.expectEqual(@as(?AST, null), result.ast);
     try testing.expectEqual(@as(usize, 1), result.dropped.len);
 }

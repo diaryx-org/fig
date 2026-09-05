@@ -157,6 +157,21 @@ pub const Caps = struct {
     /// which is why JSON5's native `Infinity`/`NaN` are still enveloped: the
     /// declaration is per-language and JSON's is the strict dialect's.
     lossless: ?NativeKinds = null,
+
+    /// How many levels of mapping nesting this format can represent, or
+    /// null for a format with no depth limit at all (every typed format).
+    /// INI holds a root mapping plus one level of `[section]`s (1); dotenv
+    /// and `.properties` are flat — the root mapping itself, nothing nested
+    /// under it (0).
+    ///
+    /// A non-null value also says the format holds no sequence anywhere and
+    /// no `null`: the three flat formats share that shape, and
+    /// `flat_strip.zig` — the lossy pass that drops what such a format
+    /// cannot hold before printing — and `diagnostics.zig`'s matching
+    /// warning read this one field for the depth and take the rest as
+    /// given. A future shallow format with sequences would need a second
+    /// field, not a different reading of this one.
+    max_mapping_depth: ?u8 = null,
 };
 
 /// The scalar kinds a format spells natively, beyond the core four every

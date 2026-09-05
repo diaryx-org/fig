@@ -695,7 +695,10 @@ const Decls = struct {
     ///   * `materialize`/`TagMode` — YAML only: collapsing the reference layer
     ///     before a non-YAML printer sees the tree. Callers already gate on
     ///     `@hasDecl(Lang, "materialize")`.
-    const optional = [_][]const u8{ "printNode", "materialize", "TagMode" };
+    ///   * `parseAbstract` — the AST-only parse `deserialize.zig` dispatches
+    ///     through. Required of exactly the languages with a `deserializable`
+    ///     dialect row (a `validate` rule below), optional for the rest.
+    const optional = [_][]const u8{ "printNode", "materialize", "TagMode", "parseAbstract" };
 
     /// Editing hooks. Declaring one takes over `editor.Editor`'s method of the
     /// same name — except `keyIsInherited` (a predicate the engine queries)
@@ -830,6 +833,16 @@ pub fn validate(comptime Lang: type) void {
         if (default_rows != 1)
             @compileError("Language '" ++ Lang.name ++ "' must have exactly one dialect row selecting" ++
                 " its default_type (the one named after the language)");
+
+        // Coherence: a `deserializable` row is a promise that `deserialize.zig`
+        // can parse the dialect, and it parses through `Lang.parseAbstract`.
+        // Without this the row would compile and the dispatch would fail
+        // later, in a file that never named the format.
+        for (Lang.dialects) |d| {
+            if (d.deserializable and !@hasDecl(Lang, "parseAbstract"))
+                @compileError("Language '" ++ Lang.name ++ "' marks dialect '" ++ d.name ++
+                    "' deserializable but declares no parseAbstract for deserialize.zig to call");
+        }
 
         // Coherence: `caps.lossless` describes what the `$fig` envelope pass
         // may write INTO this format, so it is only meaningful for a format

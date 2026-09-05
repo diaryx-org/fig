@@ -1075,11 +1075,14 @@ fn pushSegment(
     });
 }
 
+/// Parse one segment as the stream's language. The `---`/`...` stream is
+/// YAML's, so the entry is looked up by name; the gate is the registry's
+/// (`Lang == void` when YAML is compiled out) rather than a build flag.
 fn parseYamlSlice(allocator: Allocator, slice: []const u8) !Document {
-    if (comptime build_options.lang_yaml) {
-        var parser = Language.YAML.Parser{ .allocator = allocator };
-        return Language.YAML.parse(&parser, slice, Language.YAML.default_type);
-    } else return error.FormatDisabled;
+    const d = comptime Language.entryFor("yaml");
+    if (comptime d.Lang == void) return error.FormatDisabled;
+    var parser = d.Lang.Parser{ .allocator = allocator };
+    return d.Lang.parse(&parser, slice, d.dialect);
 }
 
 const MarkerKind = enum { start, end, none };

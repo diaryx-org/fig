@@ -22,6 +22,10 @@ pub const Language = struct {
     }
     pub const print = json.Printer.print;
     pub const printNode = json.Printer.printNode;
+    /// Parse straight to a core AST with no `Document` around it — what
+    /// `deserialize.zig` maps onto a Zig type. Optional `Language` decl,
+    /// required exactly of a language with a `deserializable` dialect row.
+    pub const parseAbstract = json.Parser.parseAbstract;
 
     pub const name = "json";
     pub const extensions: []const []const u8 = &.{ "json", "jsonc", "json5" };

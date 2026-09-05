@@ -26,7 +26,9 @@ pub const Language = struct {
 
     pub const name = "properties";
     pub const extensions: []const []const u8 = &.{"properties"};
-    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
+    /// Flat, like dotenv: as much a `Hashtable<String, String>` as dotenv is
+    /// a flat environment map.
+    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true, .max_mapping_depth = 0 };
 
     /// Flat and untyped, the same representational limits as dotenv.
     pub const dialects: []const lang.Dialect(@This()) = &.{.{

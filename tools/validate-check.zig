@@ -122,6 +122,14 @@ const cases = [_]Case{
         .expect = "declares two dialects named 'fixture'",
     },
 
+    .{
+        // `deserialize.zig` parses a deserializable dialect through the
+        // language's `parseAbstract`, so the row and the decl are a pair.
+        .name = "deserializable dialect without parseAbstract",
+        .dialects = ".{ .name = \"fixture\", .abi_value = 99, .deserializable = true, .splice = .raw, .empty_doc_seed = \"\" }",
+        .expect = "marks dialect 'fixture' deserializable but declares no parseAbstract",
+    },
+
     // ---- coherence rules (§4 job 3) ----
     .{
         .name = "caps.edit = false with an editing hook",

@@ -26,6 +26,28 @@ const EditOp = types.EditOp;
 const append_index = types.append_index;
 const Io = std.Io;
 
+/// Collapse `ast`'s reference layer (aliases, merges, tags) for a source in
+/// `format`, or hand it back untouched when the source language has none.
+/// Dispatched on the registry: a language declares `materialize` exactly when
+/// it has such a layer (an optional `Language` decl — YAML alone today), so
+/// this names no format. `mode` is the tag policy — lax keeps unknown tags,
+/// strict refuses them.
+fn materializeFor(a: std.mem.Allocator, format: Format, ast: *const fig.AST, mode: enum { lax, strict }) !*const fig.AST {
+    return switch (format) {
+        .canonical, .gron => ast,
+        inline else => |f| blk: {
+            const d = comptime fig.Language.entryFor(@tagName(f));
+            if (comptime d.Lang == void or !@hasDecl(d.Lang, "materialize")) break :blk ast;
+            const mat = try a.create(fig.AST);
+            mat.* = try d.Lang.materialize(a, ast, switch (mode) {
+                .lax => .lax,
+                .strict => .strict,
+            });
+            break :blk mat;
+        },
+    };
+}
+
 pub fn runHelp(stderr_term: *Io.Terminal, binary_name: []const u8) !void {
     try stderr_term.writer.print(help.title_string, .{});
     try Help.general(stderr_term, binary_name);
@@ -280,14 +302,12 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     const src_is_yaml = from == .yaml;
     const dst_is_yaml = to == .yaml;
     const base_ast: *const fig.AST = if (src_is_yaml and !dst_is_yaml) blk: {
-        // Reachable only when the source is YAML, so YAML is compiled in;
-        // the comptime guard keeps `Language.YAML` out of the gated build.
-        if (comptime build_options.lang_yaml) {
-            const mode: fig.Language.YAML.TagMode = if (opts.lax_tags) .lax else .strict;
-            const mat = try a.create(fig.AST);
-            mat.* = try fig.Language.YAML.materialize(a, &doc.ast, mode);
-            break :blk mat;
-        } else unreachable;
+        // Reachable only when the source is YAML, so YAML is compiled in.
+        // Dispatched on the source format's registry entry: a language
+        // declares `materialize` exactly when it has a reference layer to
+        // collapse (an optional `Language` decl), so this names no format —
+        // the same shape as `c_api.zig`'s `prepareDocumentAst`.
+        break :blk try materializeFor(a, from, &doc.ast, if (opts.lax_tags) .lax else .strict);
     } else &doc.ast;
 
     // Lossless mode: decode any `$fig` envelopes in the input back to
@@ -307,7 +327,7 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
         // decode-only, XML/INI/dotenv/properties/plist/NestedText's lack of
         // an envelope of their own).
         const maybe_native: ?fig.Lossless.NativeKinds = if (to == .gron)
-            (if (comptime build_options.lang_json) fig.Language.JSON.caps.lossless else null)
+            fig.Lossless.nativeFor(.json)
         else
             fig.Lossless.nativeFor(types.toSerializeFormat(to) orelse unreachable); // gron handled above
         const decoded = try a.create(fig.AST);
@@ -376,7 +396,7 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     // real error via `reportSerializeError` — `--lossless` means "don't
     // silently drop data," so silently stripping under it would defeat the
     // flag's whole point.
-    const flat_strip_fmt: ?fig.FlatStrip.Format = if (!opts.lossless) parse_dispatch.flatStripFormat(target) else null;
+    const flat_strip_depth: ?usize = if (!opts.lossless) parse_dispatch.flatStripDepth(target) else null;
 
     if (if (!opts.lossless) parse_dispatch.nullStripTarget(target) else null) |native| {
         // The target has no null (TOML, by its own `caps.lossless`). In lossy
@@ -388,13 +408,14 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
         if (result.ast) |stripped| {
             try stripped.serializeWith(stdout_term.writer, target, opts.serialize);
         }
-    } else if (flat_strip_fmt) |fmt| {
-        // INI/dotenv/.properties: same idea as TOML's null-stripping above,
-        // but the capability rule is DEPTH-based, not scalar-kind-based — an
-        // array, or a table nested past what the format allows, would
-        // otherwise abort the printer mid-document (already warned about
-        // above).
-        const result = try fig.FlatStrip.lossyStrip(a, ast, node_id, fmt);
+    } else if (flat_strip_depth) |depth| {
+        // A flat format (INI/dotenv/.properties, by their own
+        // `caps.max_mapping_depth`): same idea as TOML's null-stripping
+        // above, but the capability rule is DEPTH-based, not
+        // scalar-kind-based — an array, or a table nested past what the
+        // format allows, would otherwise abort the printer mid-document
+        // (already warned about above).
+        const result = try fig.FlatStrip.lossyStrip(a, ast, node_id, depth);
         if (result.ast) |stripped| {
             try stripped.serializeWith(stdout_term.writer, target, opts.serialize);
         }
@@ -702,12 +723,11 @@ fn loadPatch(
     try reports.reportWarnings(stderr_term, source, opts.patch_file, opts.quiet, false);
 
     var ast: *const fig.AST = &doc.ast;
-    if (format == .yaml and doc.ast.anchors.len > 0) {
-        if (comptime build_options.lang_yaml) {
-            const materialized = try a.create(fig.AST);
-            materialized.* = try fig.Language.YAML.materialize(a, &doc.ast, .lax);
-            ast = materialized;
-        } else unreachable; // `format == .yaml` means YAML is compiled in
+    if (doc.ast.anchors.len > 0) {
+        // A patch must not carry unresolved aliases (see `patch.zig`); only a
+        // language with a reference layer can have produced any, and it is
+        // the one that declares `materialize`.
+        ast = try materializeFor(a, format, &doc.ast, .lax);
     }
 
     const root = if (opts.from.len == 0) ast.root else (try ast.getValByPath(opts.from)).id;

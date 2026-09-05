@@ -377,17 +377,19 @@ pub fn nullStripTarget(target: fig.AST.SerializeFormat) ?fig.Lossless.NativeKind
     return if (native.null) null else native;
 }
 
-/// Map a document-serialize `target` to its `fig.FlatStrip.Format` counterpart,
-/// or null for every format that isn't one of the three flat/shallow-only
-/// ones `FlatStrip` covers. `get`/`convert`'s lossy path use this to decide
-/// whether to run `FlatStrip.lossyStrip` before printing (the depth-based
-/// twin of `nullStripTarget` above, over three formats instead of one).
-pub fn flatStripFormat(target: fig.AST.SerializeFormat) ?fig.FlatStrip.Format {
+/// The mapping-depth limit to run `FlatStrip.lossyStrip` against before a
+/// lossy print to `target`, or null for a format with no such limit —
+/// `Caps.max_mapping_depth`, read off the registry the way `nativeFor` reads
+/// `caps.lossless`. `get`/`convert`'s lossy path use this to decide whether
+/// to run the pass before printing (the depth-based twin of
+/// `nullStripTarget` above).
+pub fn flatStripDepth(target: fig.AST.SerializeFormat) ?usize {
     return switch (target) {
-        .ini => .ini,
-        .dotenv => .dotenv,
-        .properties => .properties,
-        else => null,
+        .canonical => null,
+        inline else => |f| blk: {
+            const depth: ?u8 = comptime fig.Language.moduleFor(@tagName(f)).Language.caps.max_mapping_depth;
+            break :blk if (depth) |d| @as(usize, d) else null;
+        },
     };
 }
 

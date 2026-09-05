@@ -27,7 +27,10 @@ pub const Language = struct {
 
     pub const name = "ini";
     pub const extensions: []const []const u8 = &.{"ini"};
-    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
+    /// A root mapping and one level of `[section]` mappings; a sequence at
+    /// any depth, or a mapping nested two or more levels deep, has no INI
+    /// spelling (`printer.zig` hard-errors on both rather than degrading).
+    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true, .max_mapping_depth = 1 };
 
     /// Untyped scalars: the grammar carries no type information, so
     /// `port = 8080` reads back as the STRING "8080".

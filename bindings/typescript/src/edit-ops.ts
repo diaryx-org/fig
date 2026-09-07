@@ -33,6 +33,12 @@ export interface EditFns {
   deleteTrailingComment(h: number, path: number, pathLen: number): number;
   getLeadingComment(h: number, path: number, pathLen: number, outPtr: number, outLen: number): number;
   getTrailingComment(h: number, path: number, pathLen: number, outPtr: number, outLen: number): number;
+  addDanglingComment(h: number, path: number, pathLen: number, text: number, textLen: number): number;
+  deleteDanglingComments(h: number, path: number, pathLen: number): number;
+  getDanglingComment(h: number, path: number, pathLen: number, outPtr: number, outLen: number): number;
+  commentOut(h: number, path: number, pathLen: number): number;
+  uncommentLeading(h: number, path: number, pathLen: number, firstLine: number, lineCount: number): number;
+  uncommentDangling(h: number, path: number, pathLen: number, firstLine: number, lineCount: number): number;
 }
 
 export { type Segment };
@@ -333,6 +339,98 @@ export abstract class Editable {
    *  stripped). Returns `null` when there is none, `""` for a bare marker. */
   getTrailingComment(path: readonly Segment[]): string | null {
     return this.commentRead(path, this.fns.getTrailingComment, "getTrailingComment");
+  }
+
+  // ── the dangling anchor ─────────────────────────────────────────────────
+
+  /** Add own-line comment line(s) at the END of the container at `path`'s body
+   *  (an empty `path` = the document root), at the body's child depth — the
+   *  third comment anchor, beside leading and trailing, and where a
+   *  commented-out LAST entry lives. `text` may be multi-line; the lines land
+   *  below any run already there. Throws `InvalidArgument` when `path` names a
+   *  scalar, or a flow container with no line for the run to sit on
+   *  (`{ "a": 1 }` — a pretty-printed one is fine). */
+  addDanglingComment(path: readonly Segment[], text: string): void {
+    this.commentEdit(path, text, this.fns.addDanglingComment, "addDanglingComment");
+  }
+
+  /** Remove the whole dangling run at the end of the container at `path`'s body
+   *  (no-op if none). */
+  deleteDanglingComments(path: readonly Segment[]): void {
+    const frame = new Frame();
+    try {
+      const p = encodePath(frame, path);
+      check(this.fns.deleteDanglingComments(this.live(), p.ptr, p.len), "deleteDanglingComments");
+    } finally {
+      frame.dispose();
+    }
+  }
+
+  /** Read the dangling run at the end of the container at `path`'s body (lines
+   *  joined by `\n`, markers and indentation stripped). `null` when there is no
+   *  run, `""` for a bare marker. */
+  getDanglingComment(path: readonly Segment[]): string | null {
+    return this.commentRead(path, this.fns.getDanglingComment, "getDanglingComment");
+  }
+
+  // ── comment out, and back ───────────────────────────────────────────────
+
+  /** Turn the node at `path` into a comment run: every line of its source span
+   *  takes the line marker at that line's own indentation. The entry becomes
+   *  the leading block of what followed it — or, when it was last, the parent's
+   *  dangling run — and the tree no longer has the node. Its own leading
+   *  comment block stays above it, untouched.
+   *
+   *  Throws `InvalidArgument` for the root, for a node that does not have its
+   *  lines to itself (an item of `[a, b]`, an entry of `{ "a": 1, "b": 2 }`),
+   *  and for a whole `[table]`/`[section]`, whose body is lines this op cannot
+   *  see. */
+  commentOut(path: readonly Segment[]): void {
+    const frame = new Frame();
+    try {
+      const p = encodePath(frame, path);
+      check(this.fns.commentOut(this.live(), p.ptr, p.len), "commentOut");
+    } finally {
+      frame.dispose();
+    }
+  }
+
+  /** Bring `lineCount` lines of the LEADING comment block above the node at
+   *  `path`, starting at `firstLine` (0-based within that block — the block
+   *  `getLeadingComment` reports), back as entries: strip the marker and one
+   *  following space from each, then reparse.
+   *
+   *  Which lines look like an entry is the caller's judgement; this is the byte
+   *  edit and the guarantee that it landed. If the result does not parse — or
+   *  parses to a document whose OTHER nodes changed — the splice is rolled back
+   *  and the call throws (`ParseError` or `UnsupportedOperation`) with the
+   *  document byte-for-byte as it was. `NotFound` when the block has fewer
+   *  lines than asked for; a `lineCount` of 0 is a no-op. */
+  uncommentLeading(path: readonly Segment[], firstLine: number, lineCount: number): void {
+    this.uncomment(path, firstLine, lineCount, this.fns.uncommentLeading, "uncommentLeading");
+  }
+
+  /** The dangling twin of `uncommentLeading`: the run at the end of the
+   *  container at `path`'s body, which is where a commented-out LAST entry
+   *  lands. Same guarantee, same errors. */
+  uncommentDangling(path: readonly Segment[], firstLine: number, lineCount: number): void {
+    this.uncomment(path, firstLine, lineCount, this.fns.uncommentDangling, "uncommentDangling");
+  }
+
+  private uncomment(
+    path: readonly Segment[],
+    firstLine: number,
+    lineCount: number,
+    fn: EditFns["uncommentLeading"],
+    op: string,
+  ): void {
+    const frame = new Frame();
+    try {
+      const p = encodePath(frame, path);
+      check(fn(this.live(), p.ptr, p.len, firstLine, lineCount), op);
+    } finally {
+      frame.dispose();
+    }
   }
 
   private commentRead(path: readonly Segment[], fn: EditFns["getLeadingComment"], op: string): string | null {

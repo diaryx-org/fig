@@ -187,6 +187,18 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
             try term.setColor(.reset);
             try term.writer.print(": replace the whole list instead — `{s} set <file> <path> '[...]'`. On TOML that loses nothing, as its arrays carry no per-item comments.\n", .{binary_name});
         },
+        // The editor's uncomment refusal. Reachable through the library (and
+        // any `fig-<action>` program built on it) rather than through a
+        // built-in action today, but it is an editor error like the ones above
+        // and reads as a tool limitation without a sentence: what it means is
+        // that the lines named were not the entry they were taken for.
+        error.CommentNotAnEntry => {
+            try term.writer.writeAll(": those comment lines do not come back as an entry — uncommenting them changed nodes elsewhere in the document\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("note");
+            try term.setColor(.reset);
+            try term.writer.writeAll(": nothing was written — the edit was rolled back, and the file is byte-for-byte as it was.\n");
+        },
         // The refusals `fig.Patch` makes rather than guessing (see its module
         // doc). Each names a shape the caller has to resolve in one of the two
         // documents; the generic `fig check` note below would send them

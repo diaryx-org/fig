@@ -1,13 +1,27 @@
 ```fig
 title = Editor: read and write the dangling anchor, and comment a node out and back in
 description = The editor exposes leading and trailing comments per path but not the dangling run at the end of a container, and has no op that turns an entry into a comment run or a comment run back into an entry — the two things a structural editor needs to show a commented-out line as a disabled entry
-status = open
+status = done
 created = 2026-09-07
 updated = 2026-09-07
 part_of = [tasks](tasks.md)
 ```
 
 # Editor: read and write the dangling anchor, and comment a node out and back in
+
+**Status.** Done, in `feat(editor): the dangling comment anchor, and
+comment-out and back` (2026-09-07) — one commit, because the two halves share
+the marker-column arithmetic and the uncomment ops address the anchor. All
+nine ops are on `Editor` and cross `c_api.zig`, `fig.h`, `fig-sys`, the `fig`
+crate's `Editor`/`Embed` and the TypeScript `Editable`, with round-trip tests
+over YAML, TOML, fig and JSONC in the core suite and one each in the Rust and
+TypeScript suites. Two deviations from the wording below, both documented at
+their call sites: the comment-out pair refuses a node that does not have its
+LINES to itself rather than any node in a flow collection — a pretty-printed
+JSONC member is flow-spelled and perfectly commentable, a `[a, b]` item is not
+— and the dangling trio works on a multi-line flow container for the same
+reason, since a JSONC object's `// note` before the closing brace is a
+dangling run nothing else can address.
 
 **Why.** [flower](https://github.com/diaryx-org/flower) now reads and edits a
 node's leading and trailing comments through `fig::Editor` (flower's

@@ -397,6 +397,51 @@ trailing-comment syntax at all, so `setTrailingComment` there returns
 The comment marker (`#`, `//`) is chosen for the language; strict JSON has no
 comments and every comment op returns `error.CommentsUnsupported`.
 
+A container has a THIRD anchor: the **dangling** run at the end of its body,
+after its last entry (spec § 3.4), which is where a commented-out *last* entry
+lives. It is addressed by the container's own path — the empty path for the
+document root:
+
+```zig
+try ed.addDanglingComment(&.{.{ .key = "server" }}, "was: here"); // at the body's child depth
+const run = try ed.getDanglingComment(&.{.{ .key = "server" }}); // null = none, "" = bare marker
+if (run) |text| allocator.free(text);
+try ed.deleteDanglingComments(&.{});   // the run at the end of the document
+```
+
+A scalar has no body to end, and neither has a flow container written on one
+line (`{ "a": 1 }`) — both return `error.UnsupportedShape`. A pretty-printed
+JSONC object is fine: its `// note` before the closing brace is the root's
+dangling run, and nothing else can address it.
+
+Turning an entry into a comment run and back is `commentOut` / `uncomment*`:
+
+```zig
+try ed.commentOut(&.{ .{ .key = "server" }, .{ .key = "port" } });
+// server:
+//   # port: 8080
+//   host: local
+try ed.uncommentLeading(&.{ .{ .key = "server" }, .{ .key = "host" } }, 0, 1); // byte-identical again
+```
+
+`commentOut` prefixes every line of the node's span with the marker at that
+line's own indentation (past a fig `>` marker run, so depth survives), leaving
+the node's own leading block above it untouched; afterwards the tree has no
+node at that path. The entry becomes the leading block of whatever followed it,
+or — when it was last — the parent's dangling run, which
+`uncommentDangling(container_path, first_line, line_count)` addresses instead.
+
+The uncomment pair takes lines by index within the block, because *which* lines
+look like an entry is the caller's judgement; the editor's part is the byte edit
+and the guarantee that it landed. If the result does not parse, or parses to a
+document whose other nodes moved, the splice is rolled back and the call returns
+the parse error or `error.CommentNotAnEntry` — the document is byte-for-byte as
+it was, as every editor op promises. `error.UnsupportedShape` for the root and
+for a node that does not have its lines to itself (an item of `[a, b]`, an entry
+of `{ "a": 1, "b": 2 }`); a whole `[table]`/`[section]` is refused in the
+format's own words (`CannotDeleteTable`, …) for the reason `deleteKey` refuses
+it.
+
 ### Whole-container editing (section formats)
 
 TOML, fig and INI have containers whose bytes are *scattered* — a TOML table

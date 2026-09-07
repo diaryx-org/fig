@@ -707,6 +707,102 @@ impl Embed {
         Ok(Some(borrow_str(ptr, len)?.to_string()))
     }
 
+    // ── the dangling anchor, and comment-out ────────────────────────────────
+
+    /// Add own-line comment line(s) at the END of the container at `path`'s
+    /// body in the embedded config. Mirrors
+    /// [`crate::Editor::add_dangling_comment`].
+    pub fn add_dangling_comment(&mut self, path: &[Segment], text: &str) -> Result<(), Error> {
+        let p = to_ffi_path(path);
+        let status = unsafe {
+            ffi::fig_embed_add_dangling_comment(
+                self.ptr(),
+                p.as_ptr(),
+                p.len(),
+                text.as_ptr(),
+                text.len(),
+            )
+        };
+        Error::from_status(status)
+    }
+
+    /// Remove the dangling run at the end of the container at `path`'s body
+    /// (no-op if none). Mirrors [`crate::Editor::delete_dangling_comments`].
+    pub fn delete_dangling_comments(&mut self, path: &[Segment]) -> Result<(), Error> {
+        let p = to_ffi_path(path);
+        let status =
+            unsafe { ffi::fig_embed_delete_dangling_comments(self.ptr(), p.as_ptr(), p.len()) };
+        Error::from_status(status)
+    }
+
+    /// Read the dangling run at the end of the container at `path`'s body.
+    /// Mirrors [`crate::Editor::dangling_comment`].
+    pub fn dangling_comment(&self, path: &[Segment]) -> Result<Option<String>, Error> {
+        let p = to_ffi_path(path);
+        let mut ptr: *const u8 = std::ptr::null();
+        let mut len: usize = 0;
+        let status = unsafe {
+            ffi::fig_embed_get_dangling_comment(self.ptr(), p.as_ptr(), p.len(), &mut ptr, &mut len)
+        };
+        if status.0 == ffi::FigStatus::NOT_FOUND {
+            return Ok(None);
+        }
+        Error::from_status(status)?;
+        Ok(Some(borrow_str(ptr, len)?.to_string()))
+    }
+
+    /// Turn the node at `path` into a comment run. Mirrors
+    /// [`crate::Editor::comment_out`].
+    pub fn comment_out(&mut self, path: &[Segment]) -> Result<(), Error> {
+        let p = to_ffi_path(path);
+        let status = unsafe { ffi::fig_embed_comment_out(self.ptr(), p.as_ptr(), p.len()) };
+        Error::from_status(status)
+    }
+
+    /// Bring `line_count` lines of the leading comment block above the node at
+    /// `path` back as entries. Mirrors [`crate::Editor::uncomment_leading`],
+    /// rollback guarantee included.
+    pub fn uncomment_leading(
+        &mut self,
+        path: &[Segment],
+        first_line: usize,
+        line_count: usize,
+    ) -> Result<(), Error> {
+        let p = to_ffi_path(path);
+        let status = unsafe {
+            ffi::fig_embed_uncomment_leading(
+                self.ptr(),
+                p.as_ptr(),
+                p.len(),
+                first_line,
+                line_count,
+            )
+        };
+        Error::from_status(status)
+    }
+
+    /// Bring `line_count` lines of the dangling run at the end of the container
+    /// at `path`'s body back as entries. Mirrors
+    /// [`crate::Editor::uncomment_dangling`].
+    pub fn uncomment_dangling(
+        &mut self,
+        path: &[Segment],
+        first_line: usize,
+        line_count: usize,
+    ) -> Result<(), Error> {
+        let p = to_ffi_path(path);
+        let status = unsafe {
+            ffi::fig_embed_uncomment_dangling(
+                self.ptr(),
+                p.as_ptr(),
+                p.len(),
+                first_line,
+                line_count,
+            )
+        };
+        Error::from_status(status)
+    }
+
     // ── structural edits (no value) ─────────────────────────────────────────
 
     /// Delete the mapping entry named by `path`.

@@ -729,6 +729,9 @@ const Decls = struct {
         "addLeadingComment",         "deleteLeadingComments",
         "getLeadingComment",         "setTrailingComment",
         "deleteTrailingComment",     "getTrailingComment",
+        "addDanglingComment",        "deleteDanglingComments",
+        "getDanglingComment",        "commentOut",
+        "uncommentLeading",          "uncommentDangling",
     };
 
     /// The whole-container ops a SECTION format (`Syntax.section_noun` non-
@@ -975,6 +978,13 @@ pub fn validate(comptime Lang: type) void {
         // does not read the marker, so a null marker beside a hook is not a
         // contradiction; it is the hook making the marker irrelevant.
         if (!any_line_comment) {
+            // The six LEADING/TRAILING ops only. The dangling trio and the
+            // comment-out pair are deliberately outside the set: they are a
+            // later addition, and a format that hooked the six before they
+            // existed is not incoherent for leaving them to answer
+            // `CommentsUnsupported` — which is what plist does today. Hooking
+            // one of those six while dropping another is still the dropped
+            // delegation this rule is here to catch.
             const comment_hooks = [_][]const u8{
                 "addLeadingComment",  "deleteLeadingComments", "getLeadingComment",
                 "setTrailingComment", "deleteTrailingComment", "getTrailingComment",

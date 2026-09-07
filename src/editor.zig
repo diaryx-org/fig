@@ -718,6 +718,446 @@ pub fn Editor(comptime Language: type) type {
             return try self.allocator.dupe(u8, stripLineCommentMarker(after, marker));
         }
 
+        // ── The dangling anchor ─────────────────────────────────────────────
+        //
+        // A container's THIRD comment anchor (spec § 3.4): the run of own-line
+        // comments at the END of its body, after its last entry, which the AST
+        // side-table carries as `NodeComments.dangling` and every printer
+        // emits. The leading trio addresses a comment by the node it sits
+        // above; nothing addressed this one, because it sits above nothing —
+        // and a commented-out LAST entry is exactly a dangling run.
+        //
+        // Where the run is, in source: from just past the last line of the
+        // container's body, forward over each contiguous own-line comment
+        // whose line carries at least the body's child indent. That is spec
+        // § 3.4's own rule — "a comment at or deeper than the closing
+        // container's child depth becomes that container's dangling run; a
+        // shallower one stays pending as a leading comment on the next
+        // sibling" — read off the source rather than the parse, which is what
+        // makes it the exact inverse of what `addDanglingComment` writes.
+        //
+        // One ambiguity is inherent and shared with the leading trio: a
+        // comment line at child depth with an entry directly below it is both
+        // this container's dangling run and that entry's leading block, and
+        // both ops report it. `commentBlockStart` has always worked that way;
+        // resolving it would need the parse's attribution, and the parse
+        // discards where a comment came from.
+
+        /// Where a container's dangling run lives: the offset it starts at
+        /// (just past the container body's last line) and the line prefix its
+        /// lines carry (the body's child depth).
+        const DanglingAnchor = struct { at: usize, indent: []const u8 };
+
+        /// Resolve the dangling anchor of the container at `path` (the root for
+        /// an empty path). `UnsupportedShape` for a scalar — a dangling run is
+        /// a container's — and for a flow container with no room for an
+        /// own-line comment: one written on a single line (`{ "a": 1 }`, where
+        /// the run would have to break it) or with no children at all.
+        ///
+        /// A flow container that DOES span lines is fine and is the shape this
+        /// matters for: a pretty-printed JSONC object's `// note` before the
+        /// closing brace is the root's dangling run, and nothing else can
+        /// address it. (fig discards its own flow collections' interior
+        /// comments at parse, spec § 6.3 — the bytes still land, but the tree
+        /// will not carry them. The comment-out pair refuses flow outright,
+        /// where a marker would swallow a separator.)
+        ///
+        /// The body ends after the last child written on the container's OWN
+        /// lines. A child that is itself a SECTION is skipped: its lines are
+        /// assembled from elsewhere in the file, and the run belongs before the
+        /// sub-tables, not after them — the same place `toml/printer.zig` emits
+        /// it. A block container with no such child (an empty `[table]`)
+        /// anchors just past its header line(s).
+        fn danglingAnchor(self: *const Self, parsed: Document, path: []const AST.PathSegment) !DanglingAnchor {
+            const node = try parsed.ast.getValByPath(path);
+            switch (node.kind) {
+                .mapping, .sequence => {},
+                else => return error.UnsupportedShape,
+            }
+            const source = self.source.items;
+            const span = parsed.span(node);
+            const flow = isFlow(source, span);
+            const structural = self.syntax().structural_indent;
+
+            var last: ?AST.Node = null;
+            var maybe = try parsed.ast.child(&node);
+            while (maybe) |c| {
+                const val = if (c.kind == .keyvalue) parsed.ast.nodes[c.kind.keyvalue.value] else c;
+                if (!parsed.isSection(val)) last = c;
+                maybe = parsed.ast.next(&c);
+            }
+            if (last) |c| {
+                const c_span = parsed.span(c);
+                const line_start = lineStartBefore(source, c_span.start);
+                const at = lineEndAfter(source, c_span.end -| 1);
+                // A flow container whose closing delimiter shares the last
+                // child's line has no line for a run to sit on, and `at` is
+                // already past the container.
+                if (flow and at >= span.end) return error.UnsupportedShape;
+                return .{
+                    .at = at,
+                    .indent = source[line_start..commentColumn(source, line_start, structural)],
+                };
+            }
+            // Nothing on its own lines. A flow container has no body line to
+            // anchor on at all; a section container still has its
+            // header line(s) recorded; anything else falls back to its own
+            // line, which for a childless block container is where its body
+            // would begin. The indent is that line's, which is a level short
+            // for a format whose depth is structural (fig): an empty
+            // container is the one shape where the child depth cannot be read
+            // off a child, and a format that needs better hooks these ops.
+            if (flow) return error.UnsupportedShape; // `{}` — no body to end
+            const regs = parsed.regionsOf(node.id);
+            const anchor_at = if (regs.len > 0) regs[regs.len - 1].end else lineEndAfter(source, span.end -| 1);
+            const own_line = lineStartBefore(source, if (regs.len > 0) regs[regs.len - 1].start else span.start);
+            return .{
+                .at = anchor_at,
+                .indent = source[own_line..commentColumn(source, own_line, structural)],
+            };
+        }
+
+        /// Byte offset just past the dangling run starting at `anchor.at`: the
+        /// contiguous own-line `marker` comments carrying at least
+        /// `anchor.indent`. Stops at a blank line, at content, at a dedent, and
+        /// at end of input. Equal to `anchor.at` when there is no run.
+        fn danglingRunEnd(self: *const Self, anchor: DanglingAnchor, marker: []const u8) usize {
+            const source = self.source.items;
+            const structural = self.syntax().structural_indent;
+            var pos = anchor.at;
+            while (pos < source.len) {
+                const line_end = lineEndAfter(source, pos);
+                if (!std.mem.startsWith(u8, source[pos..line_end], anchor.indent)) break;
+                const col = commentColumn(source, pos, structural);
+                if (!std.mem.startsWith(u8, source[col..line_end], marker)) break;
+                pos = line_end;
+            }
+            return pos;
+        }
+
+        /// Read back the dangling comment run at the end of the container at
+        /// `path`'s body (the root for an empty path) — the third anchor beside
+        /// `getLeadingComment`/`getTrailingComment` — with each line's prefix
+        /// and `marker` (and one following space) stripped, lines rejoined by
+        /// '\n'. `null` when there is no run (distinct from a bare marker,
+        /// which yields ""). The caller owns the returned bytes.
+        /// `CommentsUnsupported` for a dialect without comment syntax (strict
+        /// JSON); `UnsupportedShape` for a scalar, or a flow container with no
+        /// line for a run to sit on (see `danglingAnchor`).
+        ///
+        /// **Hook** `getDanglingComment(self, path) !?[]u8`, as for the leading
+        /// trio. A format whose comment syntax has no line marker (plist's
+        /// `<!-- -->`) answers `CommentsUnsupported` until it declares one.
+        pub fn getDanglingComment(self: *Self, path: []const AST.PathSegment) !?[]u8 {
+            if (@hasDecl(Language, "getDanglingComment")) return Language.getDanglingComment(self, path);
+            const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
+            const parsed = try self.getParsed();
+            const anchor = try self.danglingAnchor(parsed, path);
+            const end = self.danglingRunEnd(anchor, marker);
+            if (end == anchor.at) return null;
+
+            const source = self.source.items;
+            const structural = self.syntax().structural_indent;
+            var out: std.ArrayList(u8) = .empty;
+            errdefer out.deinit(self.allocator);
+            var pos = anchor.at;
+            var first = true;
+            while (pos < end) {
+                const line_end = lineEndAfter(source, pos);
+                const body = std.mem.trimEnd(u8, source[commentColumn(source, pos, structural)..line_end], "\r\n");
+                if (!first) try out.append(self.allocator, '\n');
+                first = false;
+                try out.appendSlice(self.allocator, stripLineCommentMarker(body, marker));
+                pos = line_end;
+            }
+            return try out.toOwnedSlice(self.allocator);
+        }
+
+        /// Add own-line comment line(s) at the END of the container at `path`'s
+        /// body, at the body's child depth — the dangling twin of
+        /// `addLeadingComment`, landing at the bottom of any run already there.
+        /// `text` may be multi-line; each line becomes its own comment line.
+        /// `CommentsUnsupported` for a dialect without comment syntax (strict
+        /// JSON); `UnsupportedShape` for a scalar, or a flow container with no
+        /// line for a run to sit on (see `danglingAnchor`).
+        ///
+        /// **Hook** `addDanglingComment(self, path, text) !void`.
+        pub fn addDanglingComment(self: *Self, path: []const AST.PathSegment, text: []const u8) !void {
+            if (@hasDecl(Language, "addDanglingComment")) return Language.addDanglingComment(self, path, text);
+            const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
+            const parsed = try self.getParsed();
+            const anchor = try self.danglingAnchor(parsed, path);
+            const at = self.danglingRunEnd(anchor, marker);
+
+            var buf: std.ArrayList(u8) = .empty;
+            defer buf.deinit(self.allocator);
+            // A final line with no newline of its own would otherwise weld the
+            // first comment onto it.
+            if (at > 0 and self.source.items[at - 1] != '\n') try buf.append(self.allocator, '\n');
+            try renderLineComments(self.allocator, &buf, anchor.indent, marker, text);
+            try self.replaceAtSpan(Span.init(at, at), buf.items);
+        }
+
+        /// Remove the whole dangling run at the end of the container at
+        /// `path`'s body. A no-op when there is none. `CommentsUnsupported` for
+        /// a dialect without comment syntax (strict JSON); `UnsupportedShape`
+        /// for a scalar, or a flow container with no line for a run to sit on.
+        ///
+        /// **Hook** `deleteDanglingComments(self, path) !void`.
+        pub fn deleteDanglingComments(self: *Self, path: []const AST.PathSegment) !void {
+            if (@hasDecl(Language, "deleteDanglingComments")) return Language.deleteDanglingComments(self, path);
+            const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
+            const parsed = try self.getParsed();
+            const anchor = try self.danglingAnchor(parsed, path);
+            const end = self.danglingRunEnd(anchor, marker);
+            if (end == anchor.at) return;
+            try self.replaceAtSpan(Span.init(anchor.at, end), "");
+        }
+
+        // ── Comment out, and back ───────────────────────────────────────────
+        //
+        // A commented-out entry — `# port = 8080` under a `[server]` — is what
+        // a structural editor shows as a DISABLED row with a toggle. Both
+        // directions are one splice over the node's own span: re-serializing
+        // the value and calling `addLeadingComment` would lose the entry's
+        // spelling (its quoting, its layout, the comments inside it), and
+        // stripping the markers and calling `insertValue` would lose the same
+        // going the other way.
+
+        /// Whether the node at `span`, whose own line begins at `line_start`,
+        /// has those lines TO ITSELF — the precondition both halves of the
+        /// comment-out pair rest on, since a line marker hides everything after
+        /// it to end of line.
+        ///
+        /// Before the node, only indentation and the format's own line
+        /// introducers may stand (a `- `/`* ` item dash, a fig `>` marker run,
+        /// a `+` continuation). After it, only whitespace, one separating
+        /// comma, and a trailing comment. Anything else means a SIBLING shares
+        /// the line — the entries of `{ "a": 1, "b": 2 }`, the items of
+        /// `[a, b]` — or that a closing delimiter does, and commenting the line
+        /// out would take that with it.
+        ///
+        /// Stated as line ownership rather than as "is the parent a flow
+        /// container", because those are not the same question: a
+        /// pretty-printed JSONC object is flow-spelled and one entry per line,
+        /// and commenting one of its members out is exactly what a JSONC editor
+        /// wants; a one-line YAML flow sequence is the shape that cannot.
+        fn ownsItsLines(self: *const Self, line_start: usize, span: Span, marker: []const u8) bool {
+            const source = self.source.items;
+            for (source[line_start..span.start]) |c| switch (c) {
+                ' ', '\t', '-', '*', '>', '+' => {},
+                else => return false,
+            };
+            const line_end = lineEndAfter(source, span.end -| 1);
+            var i = span.end;
+            var comma = false;
+            while (i < line_end) : (i += 1) {
+                switch (source[i]) {
+                    ' ', '\t', '\r', '\n' => {},
+                    ',' => {
+                        if (comma) return false;
+                        comma = true;
+                    },
+                    else => return std.mem.startsWith(u8, source[i..line_end], marker),
+                }
+            }
+            return true;
+        }
+
+        /// Turn the node at `path` into a comment run: every line of its source
+        /// span — the key through the end of its value for a mapping entry, the
+        /// item for a sequence item — gains the line marker at that line's own
+        /// indentation (past a structural prefix, so a nested fig line keeps
+        /// its depth). The node's own leading comment block stays above it,
+        /// untouched, so a `# why` above a commented-out entry survives as a
+        /// note on the note.
+        ///
+        /// Afterwards the tree no longer has the node: the run is the leading
+        /// block of what followed it, or — when it was last — the parent's
+        /// dangling run, which `uncommentLeading`/`uncommentDangling` address
+        /// to bring it back.
+        ///
+        /// `CommentsUnsupported` for a dialect without comment syntax (strict
+        /// JSON). `UnsupportedShape` for the root (an empty path) and for a
+        /// node that does not have its lines to itself — an item of a one-line
+        /// flow collection (`tags = [a, b]`), where the marker would swallow a
+        /// separator and where fig discards an interior comment at parse
+        /// anyway (spec § 6.3). See `ownsItsLines`. A node whose value is a
+        /// SECTION is refused with the format's own vocabulary
+        /// (`CannotDeleteTable` / `CannotDeleteSection` /
+        /// `CannotDeleteContainer`) for the reason `deleteKey` refuses it: its
+        /// span is a name inside a header, and its body is lines this op cannot
+        /// see.
+        ///
+        /// **Hook** `commentOut(self, path) !void`.
+        pub fn commentOut(self: *Self, path: []const AST.PathSegment) !void {
+            if (@hasDecl(Language, "commentOut")) return Language.commentOut(self, path);
+            const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
+            if (path.len == 0) return error.UnsupportedShape;
+            const parsed = try self.getParsed();
+            const node = try parsed.ast.getNodeByPath(path);
+            const source = self.source.items;
+            const val = if (node.kind == .keyvalue) parsed.ast.nodes[node.kind.keyvalue.value] else node;
+            if (parsed.isSection(val)) return self.refuse(.delete);
+
+            const span = parsed.span(node);
+            const start = try self.leadingCommentLineStart(parsed, path, span);
+            const end = lineEndAfter(source, span.end -| 1);
+            if (!self.ownsItsLines(start, span, marker)) return error.UnsupportedShape;
+            const structural = self.syntax().structural_indent;
+
+            var buf: std.ArrayList(u8) = .empty;
+            defer buf.deinit(self.allocator);
+            var pos = start;
+            while (pos < end) {
+                const line_end = lineEndAfter(source, pos);
+                const col = commentColumn(source, pos, structural);
+                try buf.appendSlice(self.allocator, source[pos..col]);
+                try buf.appendSlice(self.allocator, marker);
+                // No trailing space on an otherwise empty line — the same rule
+                // `renderLineComments` follows, and what keeps the round trip
+                // byte-exact through a blank line inside a block scalar.
+                const rest = source[col..line_end];
+                if (rest.len > 0 and rest[0] != '\n' and rest[0] != '\r') try buf.append(self.allocator, ' ');
+                try buf.appendSlice(self.allocator, rest);
+                pos = line_end;
+            }
+            try self.replaceAtSpan(Span.init(start, end), buf.items);
+        }
+
+        /// Bring `line_count` lines of the LEADING comment block above the node
+        /// at `path`, starting at `first_line` (0-based within that block),
+        /// back as entries: strip the marker and one following space from each,
+        /// then reparse.
+        ///
+        /// Lines are addressed by index rather than matched by content because
+        /// WHICH lines look like an entry is the caller's judgement — it parses
+        /// the block as a fragment and decides. The editor's part is the byte
+        /// edit and the guarantee that it landed: if the result does not parse,
+        /// or parses to a document whose other nodes changed, the splice is
+        /// rolled back and the call fails (the parse error, or
+        /// `CommentNotAnEntry`) with the document byte-for-byte as it was.
+        ///
+        /// The block is exactly the one `getLeadingComment` reports — the same
+        /// `commentBlockStart` scan — so a caller can read the block, decide
+        /// which of its lines are an entry, and name them by the index it read
+        /// them at. (That scan does not climb past a structural prefix, so a
+        /// fig comment line carrying a `>` marker run is not part of any node's
+        /// leading block for either op. A commented-out nested fig entry is the
+        /// container's dangling run when it was last, which
+        /// `uncommentDangling` does address.)
+        ///
+        /// `NotFound` when the block has fewer than `first_line + line_count`
+        /// lines; a `line_count` of 0 is a no-op. `CommentsUnsupported` for a
+        /// dialect without comment syntax (strict JSON); `UnsupportedShape` for
+        /// the root and for a node that does not own its lines (`ownsItsLines`).
+        ///
+        /// **Hook** `uncommentLeading(self, path, first_line, line_count) !void`.
+        pub fn uncommentLeading(self: *Self, path: []const AST.PathSegment, first_line: usize, line_count: usize) !void {
+            if (@hasDecl(Language, "uncommentLeading"))
+                return Language.uncommentLeading(self, path, first_line, line_count);
+            const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
+            if (path.len == 0) return error.UnsupportedShape;
+            const parsed = try self.getParsed();
+            const node = try parsed.ast.getNodeByPath(path);
+            const source = self.source.items;
+            const parent_path = path[0 .. path.len - 1];
+            const span = parsed.span(node);
+            const line_start = try self.leadingCommentLineStart(parsed, path, span);
+            if (!self.ownsItsLines(line_start, span, marker)) return error.UnsupportedShape;
+            const block_start = commentBlockStart(source, line_start, self.syntax().comments.style);
+            return self.uncommentBlock(block_start, line_start, first_line, line_count, parent_path);
+        }
+
+        /// The dangling twin of `uncommentLeading`: bring `line_count` lines of
+        /// the DANGLING run at the end of the container at `container_path`'s
+        /// body, starting at `first_line`, back as entries of that container.
+        /// The op that re-enables a commented-out LAST entry, which has no
+        /// following sibling to be the leading block of.
+        ///
+        /// Same guarantee, same errors — see `uncommentLeading`.
+        ///
+        /// **Hook** `uncommentDangling(self, container_path, first_line,
+        /// line_count) !void`.
+        pub fn uncommentDangling(self: *Self, container_path: []const AST.PathSegment, first_line: usize, line_count: usize) !void {
+            if (@hasDecl(Language, "uncommentDangling"))
+                return Language.uncommentDangling(self, container_path, first_line, line_count);
+            const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
+            const parsed = try self.getParsed();
+            const anchor = try self.danglingAnchor(parsed, container_path);
+            const end = self.danglingRunEnd(anchor, marker);
+            return self.uncommentBlock(anchor.at, end, first_line, line_count, container_path);
+        }
+
+        /// The shared body of the two uncomment ops: strip the marker (and one
+        /// following space) from lines `[first_line, first_line + line_count)`
+        /// of the comment block `[block_start, block_end)`, splice the whole
+        /// block back in one edit, and keep the result only if it parses AND
+        /// adds nodes to nothing but the container at `container_path`.
+        ///
+        /// The marker is looked for where `commentOut` writes it
+        /// (`commentColumn`), so a line that is not a comment at all — or one
+        /// whose marker sits somewhere else entirely — is `CommentNotAnEntry`
+        /// before anything is spliced.
+        fn uncommentBlock(
+            self: *Self,
+            block_start: usize,
+            block_end: usize,
+            first_line: usize,
+            line_count: usize,
+            container_path: []const AST.PathSegment,
+        ) !void {
+            if (line_count == 0) return;
+            const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
+            const structural = self.syntax().structural_indent;
+            const source = self.source.items;
+
+            var out: std.ArrayList(u8) = .empty;
+            defer out.deinit(self.allocator);
+            var pos = block_start;
+            var index: usize = 0;
+            var stripped: usize = 0;
+            while (pos < block_end) {
+                const line_end = @min(lineEndAfter(source, pos), block_end);
+                if (index >= first_line and index < first_line + line_count) {
+                    const col = commentColumn(source, pos, structural);
+                    if (!std.mem.startsWith(u8, source[col..line_end], marker)) return error.CommentNotAnEntry;
+                    try out.appendSlice(self.allocator, source[pos..col]);
+                    var rest = source[col + marker.len .. line_end];
+                    if (rest.len > 0 and rest[0] == ' ') rest = rest[1..];
+                    try out.appendSlice(self.allocator, rest);
+                    stripped += 1;
+                } else {
+                    try out.appendSlice(self.allocator, source[pos..line_end]);
+                }
+                index += 1;
+                pos = line_end;
+            }
+            if (stripped != line_count) return error.NotFound; // fewer lines than asked for
+
+            // Snapshot before the splice: the check below compares the parse of
+            // these bytes against the parse of the edited ones, and a rollback
+            // has to be byte-exact, not a re-render.
+            const backup = try self.allocator.dupe(u8, self.source.items);
+            defer self.allocator.free(backup);
+            // A splice that doesn't parse rolls itself back (`replaceAtSpan`).
+            try self.replaceAtSpan(Span.init(block_start, block_end), out.items);
+
+            var parser: Language.Parser = .{ .allocator = self.allocator };
+            const before = Language.parse(&parser, backup, self.format) catch {
+                // `backup` parsed at `init` and every edit since kept it
+                // parsing, so this cannot happen; take the refusal rather than
+                // commit an edit nothing checked.
+                try self.restoreSource(backup);
+                return error.CommentNotAnEntry;
+            };
+            defer before.deinit(self.allocator);
+            if (!addedOnlyAt(before, try self.getParsed(), container_path)) {
+                try self.restoreSource(backup);
+                return error.CommentNotAnEntry;
+            }
+        }
+
         // ===============
         // INSERT / DELETE
         // ===============
@@ -2166,6 +2606,24 @@ fn stripLineCommentMarker(line: []const u8, marker: []const u8) []const u8 {
     return rest;
 }
 
+/// The column on the line starting at `line_start` where an own-line comment's
+/// marker belongs — past the line's leading whitespace, and (for a format whose
+/// line prefix is STRUCTURAL, `Syntax.structural_indent`) past that prefix too.
+///
+/// The one place `commentOut` writes a marker and the one place `uncomment*`
+/// looks for it again, so the two are inverses by construction. It matters for
+/// fig alone: its `>` marker run is section depth, not indentation, so a
+/// commented-out `> > size = 10` has to become `> > # size = 10` to stay
+/// attached where it was — `# > > size = 10` would read as a root-level
+/// comment. The `*` of a fig sequence item is NOT skipped: it introduces the
+/// item, so it is part of what a comment-out has to hide.
+fn commentColumn(source: []const u8, line_start: usize, structural: bool) usize {
+    var i = firstNonSpace(source, line_start);
+    if (!structural) return i;
+    while (i < source.len and source[i] == '>') i = firstNonSpace(source, i + 1);
+    return i;
+}
+
 /// Render `text` as one or more own-line comments into `out`, each line being
 /// `indent` + `marker` (+ a space and the line's text, unless the line is empty)
 /// + '\n'. A single trailing newline in `text` is ignored so it never yields a
@@ -2207,6 +2665,126 @@ fn seqLen(parsed: Document, node: AST.Node) !usize {
         maybe = parsed.ast.next(&c);
     }
     return n;
+}
+
+// ── "nothing else moved": the uncomment guard ───────────────────────────────
+//
+// `uncommentLeading`/`uncommentDangling` strip a marker off lines the CALLER
+// judged to be an entry, so the editor's half of the bargain is to prove the
+// result is what was claimed: a document that parses, and that differs from
+// the one before the splice only by what was ADDED to the container the lines
+// sit in. Anything else — text that merged into a neighbouring block scalar,
+// a line that re-opened a section and reparented the entries below it — is
+// rolled back byte-for-byte with `CommentNotAnEntry`.
+//
+// The comparison is over the two parses, not their bytes: the after-tree is
+// walked to the target container along the same path the caller named, every
+// node passed on the way compared whole, and only that container is allowed
+// to have grown. Comments and layout are outside the AST and so outside the
+// check, which is right — a comment run losing a line is exactly what the op
+// does.
+
+/// Whether every child of `bn` still appears, in order and unchanged, among
+/// the children of `an` — i.e. `an` differs from `bn` only by insertions.
+/// Matching is greedy: each before-child claims the earliest after-child it
+/// equals. Greedy can only fail early, never accept something it shouldn't, so
+/// the failure direction is the safe one (a rollback, not a bad commit).
+fn childrenOnlyGrew(b: Document, bn: AST.Node, a: Document, an: AST.Node) bool {
+    var b_cur = (b.ast.child(&bn) catch return false);
+    var a_cur = (a.ast.child(&an) catch return false);
+    while (b_cur) |bc| {
+        var matched = false;
+        while (a_cur) |ac| {
+            a_cur = a.ast.next(&ac);
+            if (nodesEqualDeep(b, bc.id, a, ac.id)) {
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) return false;
+        b_cur = b.ast.next(&bc);
+    }
+    return true;
+}
+
+/// Structural equality of two subtrees across two parses: same kinds, same
+/// scalar bytes, same children in the same order. Node ids differ between the
+/// two documents, so `AST.Node.Kind.eql` (which compares child ids) cannot be
+/// used for containers — only for the leaves.
+fn nodesEqualDeep(b: Document, bid: AST.Node.Id, a: Document, aid: AST.Node.Id) bool {
+    const bn = b.ast.nodes[bid];
+    const an = a.ast.nodes[aid];
+    if (std.meta.activeTag(bn.kind) != std.meta.activeTag(an.kind)) return false;
+    switch (bn.kind) {
+        .mapping, .sequence => {
+            var b_cur = (b.ast.child(&bn) catch return false);
+            var a_cur = (a.ast.child(&an) catch return false);
+            while (b_cur) |bc| {
+                const ac = a_cur orelse return false;
+                if (!nodesEqualDeep(b, bc.id, a, ac.id)) return false;
+                b_cur = b.ast.next(&bc);
+                a_cur = a.ast.next(&ac);
+            }
+            return a_cur == null;
+        },
+        .keyvalue => |kv| return nodesEqualDeep(b, kv.key, a, an.kind.keyvalue.key) and
+            nodesEqualDeep(b, kv.value, a, an.kind.keyvalue.value),
+        else => return bn.kind.eql(an.kind),
+    }
+}
+
+/// Whether `after` differs from `before` only by nodes added to the container
+/// at `path` (the root for an empty path). Every other node — including every
+/// container passed through on the way down, and every sibling of the ones
+/// that are — must be structurally identical.
+fn addedOnlyAt(before: Document, after: Document, path: []const AST.PathSegment) bool {
+    return addedOnlyUnder(before, before.ast.root, after, after.ast.root, path);
+}
+
+fn addedOnlyUnder(
+    b: Document,
+    bid: AST.Node.Id,
+    a: Document,
+    aid: AST.Node.Id,
+    path: []const AST.PathSegment,
+) bool {
+    const bn = b.ast.nodes[bid];
+    const an = a.ast.nodes[aid];
+    if (std.meta.activeTag(bn.kind) != std.meta.activeTag(an.kind)) return false;
+    if (path.len == 0) return childrenOnlyGrew(b, bn, a, an);
+
+    // Not the target yet: walk the two child lists in lockstep. They must have
+    // the same length and pair up, with only the child the next path segment
+    // names allowed to differ — and only by what is added deeper down.
+    var b_cur = (b.ast.child(&bn) catch return false);
+    var a_cur = (a.ast.child(&an) catch return false);
+    var index: usize = 0;
+    while (b_cur) |bc| {
+        const ac = a_cur orelse return false;
+        const on_path = switch (path[0]) {
+            .key => bc.kind == .keyvalue and ac.kind == .keyvalue and
+                keyNodeIs(b, bc.kind.keyvalue.key, path[0].key),
+            .index => index == path[0].index,
+        };
+        const b_next = if (bc.kind == .keyvalue) bc.kind.keyvalue.value else bc.id;
+        const a_next = if (ac.kind == .keyvalue) ac.kind.keyvalue.value else ac.id;
+        if (on_path) {
+            if (bc.kind == .keyvalue and !nodesEqualDeep(b, bc.kind.keyvalue.key, a, ac.kind.keyvalue.key))
+                return false;
+            if (!addedOnlyUnder(b, b_next, a, a_next, path[1..])) return false;
+        } else if (!nodesEqualDeep(b, bc.id, a, ac.id)) return false;
+        b_cur = b.ast.next(&bc);
+        a_cur = a.ast.next(&ac);
+        index += 1;
+    }
+    return a_cur == null;
+}
+
+/// Whether the key node `id` is the string `name` — the physical spelling a
+/// path segment matches against while walking two parses side by side.
+fn keyNodeIs(doc: Document, id: AST.Node.Id, name: []const u8) bool {
+    const k = doc.ast.nodes[id].kind;
+    return k == .string and std.mem.eql(u8, k.string, name);
 }
 
 /// Drop a single trailing '\n' (the serializer ends every value with one).
@@ -2505,6 +3083,445 @@ test "get comment ops are rejected for strict JSON" {
     defer ed.deinit();
     try testing.expectError(error.CommentsUnsupported, ed.getLeadingComment(&.{.{ .key = "a" }}));
     try testing.expectError(error.CommentsUnsupported, ed.getTrailingComment(&.{.{ .key = "a" }}));
+}
+
+// ── dangling-anchor tests ───────────────────────────────────────────────────
+
+/// Write a dangling comment at `path`, read it back, then delete it — the
+/// three-op cycle the anchor exists for. Asserts the source after the write,
+/// the text read back, and that the delete restores `input` byte-for-byte.
+fn expectDanglingCycle(
+    comptime Lang: type,
+    format: Lang.Type,
+    input: []const u8,
+    path: []const AST.PathSegment,
+    text: []const u8,
+    after_add: []const u8,
+) !void {
+    var ed: Editor(Lang) = .{ .allocator = testing.allocator, .format = format };
+    try ed.init(input);
+    defer ed.deinit();
+    try testing.expect((try ed.getDanglingComment(path)) == null);
+    try ed.addDanglingComment(path, text);
+    try testing.expectEqualStrings(after_add, ed.source.items);
+    const got = (try ed.getDanglingComment(path)).?;
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings(text, got);
+    try ed.deleteDanglingComments(path);
+    try testing.expectEqualStrings(input, ed.source.items);
+}
+
+test "dangling comment round-trips at a YAML container's end and at the root" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    // Nested: at the child depth of the container's body, after its last entry.
+    try expectDanglingCycle(
+        Yaml,
+        .v1_2_2,
+        "server:\n  port: 8080\nclient:\n  x: 1\n",
+        &.{.{ .key = "server" }},
+        "was: here",
+        "server:\n  port: 8080\n  # was: here\nclient:\n  x: 1\n",
+    );
+    // The root (empty path): the run at the end of the document.
+    try expectDanglingCycle(
+        Yaml,
+        .v1_2_2,
+        "a: 1\nb: 2\n",
+        &.{},
+        "end of file",
+        "a: 1\nb: 2\n# end of file\n",
+    );
+    // Multi-line text becomes one comment line per row.
+    try expectDanglingCycle(Yaml, .v1_2_2, "a: 1\n", &.{}, "one\ntwo", "a: 1\n# one\n# two\n");
+}
+
+test "dangling comment round-trips in a TOML table, before any sub-table" {
+    if (comptime !build_options.lang_toml) return error.SkipZigTest;
+    try expectDanglingCycle(
+        Toml,
+        .TOML_1_1,
+        "[server]\nport = 8080\n\n[client]\nx = 1\n",
+        &.{.{ .key = "server" }},
+        "note",
+        "[server]\nport = 8080\n# note\n\n[client]\nx = 1\n",
+    );
+    // A table whose only child is a sub-table anchors after its header line —
+    // where `toml/printer.zig` emits the run, before the sub-tables.
+    try expectDanglingCycle(
+        Toml,
+        .TOML_1_1,
+        "[a]\n[a.b]\nx = 1\n",
+        &.{.{ .key = "a" }},
+        "note",
+        "[a]\n# note\n[a.b]\nx = 1\n",
+    );
+}
+
+test "dangling comment round-trips at a fig container's marker depth" {
+    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    try expectDanglingCycle(
+        Fig,
+        .Fig,
+        "database\n> host = local\n> port = 5432\n",
+        &.{.{ .key = "database" }},
+        "note",
+        "database\n> host = local\n> port = 5432\n> # note\n",
+    );
+}
+
+test "dangling comment round-trips inside a multi-line JSONC object" {
+    // A `//` line before the closing brace is the object's dangling run; the
+    // editor can address it even though the container is flow-spelled.
+    try expectDanglingCycle(
+        json.Language,
+        .JSONC,
+        "{\n  \"a\": 1\n}\n",
+        &.{},
+        "note",
+        "{\n  \"a\": 1\n  // note\n}\n",
+    );
+}
+
+test "dangling ops decline a scalar, a one-line flow container and strict JSON" {
+    var ed: Editor(json.Language) = .{ .allocator = testing.allocator, .format = .JSONC };
+    try ed.init("{\"a\": 1, \"b\": {\"c\": 2}}");
+    defer ed.deinit();
+    // No line of its own to sit on.
+    try testing.expectError(error.UnsupportedShape, ed.getDanglingComment(&.{}));
+    try testing.expectError(error.UnsupportedShape, ed.addDanglingComment(&.{}, "x"));
+    // A scalar has no body to end.
+    try testing.expectError(error.UnsupportedShape, ed.getDanglingComment(&.{.{ .key = "a" }}));
+
+    var strict: Editor(json.Language) = .{ .allocator = testing.allocator, .format = .JSON };
+    try strict.init("{\n  \"a\": 1\n}\n");
+    defer strict.deinit();
+    try testing.expectError(error.CommentsUnsupported, strict.getDanglingComment(&.{}));
+    try testing.expectError(error.CommentsUnsupported, strict.addDanglingComment(&.{}, "x"));
+    try testing.expectError(error.CommentsUnsupported, strict.deleteDanglingComments(&.{}));
+}
+
+test "addDanglingComment lands below a run already there" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    var ed: Editor(Yaml) = .{ .allocator = testing.allocator, .format = .v1_2_2 };
+    try ed.init("a: 1\n# first\n");
+    defer ed.deinit();
+    try ed.addDanglingComment(&.{}, "second");
+    try testing.expectEqualStrings("a: 1\n# first\n# second\n", ed.source.items);
+    const got = (try ed.getDanglingComment(&.{})).?;
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings("first\nsecond", got);
+}
+
+test "a dedented comment is the next entry's leading block, not the container's dangling run" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    var ed: Editor(Yaml) = .{ .allocator = testing.allocator, .format = .v1_2_2 };
+    try ed.init("server:\n  port: 8080\n# about client\nclient: 1\n");
+    defer ed.deinit();
+    // Spec § 3.4: shallower than the body's child depth → it stays pending for
+    // the next sibling, and `server` has no dangling run at all.
+    try testing.expect((try ed.getDanglingComment(&.{.{ .key = "server" }})) == null);
+    const leading = (try ed.getLeadingComment(&.{.{ .key = "client" }})).?;
+    defer testing.allocator.free(leading);
+    try testing.expectEqualStrings("about client", leading);
+}
+
+test "a document with no trailing newline still takes a dangling comment" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    var ed: Editor(Yaml) = .{ .allocator = testing.allocator, .format = .v1_2_2 };
+    try ed.init("a: 1");
+    defer ed.deinit();
+    try ed.addDanglingComment(&.{}, "note");
+    try testing.expectEqualStrings("a: 1\n# note\n", ed.source.items);
+}
+
+// ── comment-out / uncomment tests ───────────────────────────────────────────
+
+/// `commentOut` at `path`, assert the source, then bring it back through the
+/// leading block of `next` and assert the source is `input` byte-for-byte.
+fn expectCommentOutRoundTrip(
+    comptime Lang: type,
+    format: Lang.Type,
+    input: []const u8,
+    path: []const AST.PathSegment,
+    commented: []const u8,
+    next: []const AST.PathSegment,
+    first_line: usize,
+    line_count: usize,
+) !void {
+    var ed: Editor(Lang) = .{ .allocator = testing.allocator, .format = format };
+    try ed.init(input);
+    defer ed.deinit();
+    try ed.commentOut(path);
+    try testing.expectEqualStrings(commented, ed.source.items);
+    // The node is gone from the tree: the entry is trivia now. (Asserted for a
+    // key only — commenting out item `i` leaves whatever followed it at `i`.)
+    if (path.len > 0 and std.meta.activeTag(path[path.len - 1]) == .key) {
+        const parsed = try ed.getParsed();
+        try testing.expectError(error.NotFound, parsed.ast.getNodeByPath(path));
+    }
+    try ed.uncommentLeading(next, first_line, line_count);
+    try testing.expectEqualStrings(input, ed.source.items);
+}
+
+/// The same round trip for a LAST entry, which becomes the parent's dangling
+/// run rather than any sibling's leading block.
+fn expectCommentOutLastRoundTrip(
+    comptime Lang: type,
+    format: Lang.Type,
+    input: []const u8,
+    path: []const AST.PathSegment,
+    commented: []const u8,
+    container: []const AST.PathSegment,
+    dangling_text: []const u8,
+) !void {
+    var ed: Editor(Lang) = .{ .allocator = testing.allocator, .format = format };
+    try ed.init(input);
+    defer ed.deinit();
+    try ed.commentOut(path);
+    try testing.expectEqualStrings(commented, ed.source.items);
+    const got = (try ed.getDanglingComment(container)).?;
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings(dangling_text, got);
+    var lines: usize = 1;
+    for (dangling_text) |c| {
+        if (c == '\n') lines += 1;
+    }
+    try ed.uncommentDangling(container, 0, lines);
+    try testing.expectEqualStrings(input, ed.source.items);
+}
+
+test "commentOut then uncommentLeading round-trips a YAML entry" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    try expectCommentOutRoundTrip(
+        Yaml,
+        .v1_2_2,
+        "server:\n  port: 8080\n  host: local\n",
+        &.{ .{ .key = "server" }, .{ .key = "port" } },
+        "server:\n  # port: 8080\n  host: local\n",
+        &.{ .{ .key = "server" }, .{ .key = "host" } },
+        0,
+        1,
+    );
+}
+
+test "commentOut leaves the entry's own leading block above it" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    // `# why` is a note ON the note afterwards, and the uncomment addresses
+    // line 1 of the block — the caller decides which lines are an entry.
+    try expectCommentOutRoundTrip(
+        Yaml,
+        .v1_2_2,
+        "# why\na: 1\nb: 2\n",
+        &.{.{ .key = "a" }},
+        "# why\n# a: 1\nb: 2\n",
+        &.{.{ .key = "b" }},
+        1,
+        1,
+    );
+}
+
+test "commentOut round-trips a multi-line value whole" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    // Every line of the block scalar takes the marker at its own indentation,
+    // the blank line included (bare marker, no trailing space).
+    try expectCommentOutRoundTrip(
+        Yaml,
+        .v1_2_2,
+        "text: |\n  one\n\n  two\nb: 2\n",
+        &.{.{ .key = "text" }},
+        "# text: |\n  # one\n#\n  # two\nb: 2\n",
+        &.{.{ .key = "b" }},
+        0,
+        4,
+    );
+}
+
+test "commentOut round-trips a TOML entry and a JSONC member" {
+    if (comptime build_options.lang_toml) {
+        try expectCommentOutRoundTrip(
+            Toml,
+            .TOML_1_1,
+            "[server]\nport = 8080\nhost = \"local\"\n",
+            &.{ .{ .key = "server" }, .{ .key = "port" } },
+            "[server]\n# port = 8080\nhost = \"local\"\n",
+            &.{ .{ .key = "server" }, .{ .key = "host" } },
+            0,
+            1,
+        );
+    }
+    // JSONC: the member's own trailing comma is commented out with it, so what
+    // is left is still valid.
+    try expectCommentOutRoundTrip(
+        json.Language,
+        .JSONC,
+        "{\n  \"a\": 1,\n  \"b\": 2\n}\n",
+        &.{.{ .key = "a" }},
+        "{\n  // \"a\": 1,\n  \"b\": 2\n}\n",
+        &.{.{ .key = "b" }},
+        0,
+        1,
+    );
+}
+
+test "commentOut round-trips a fig entry" {
+    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    try expectCommentOutRoundTrip(
+        Fig,
+        .Fig,
+        "host = local\nport = 5432\n",
+        &.{.{ .key = "host" }},
+        "# host = local\nport = 5432\n",
+        &.{.{ .key = "port" }},
+        0,
+        1,
+    );
+}
+
+test "commentOut writes a nested fig entry's marker after its `>` run" {
+    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    // The `>` run is section depth, not indentation: the marker goes after it,
+    // or the comment detaches to the root. Coming BACK is
+    // `uncommentDangling`'s here — `commentBlockStart`, which is the block
+    // `getLeadingComment` reports, does not climb past the `>` prefix.
+    var ed: Editor(Fig) = .{ .allocator = testing.allocator, .format = .Fig };
+    try ed.init("database\n> host = local\n> port = 5432\n");
+    defer ed.deinit();
+    try ed.commentOut(&.{ .{ .key = "database" }, .{ .key = "host" } });
+    try testing.expectEqualStrings("database\n> # host = local\n> port = 5432\n", ed.source.items);
+}
+
+test "commentOut round-trips a block sequence item, dash and all" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    try expectCommentOutRoundTrip(
+        Yaml,
+        .v1_2_2,
+        "tags:\n  - a\n  - b\n",
+        &.{ .{ .key = "tags" }, .{ .index = 0 } },
+        "tags:\n  # - a\n  - b\n",
+        &.{ .{ .key = "tags" }, .{ .index = 0 } },
+        0,
+        1,
+    );
+}
+
+test "commentOut of the last entry lands in the parent's dangling run" {
+    if (comptime build_options.lang_yaml) {
+        try expectCommentOutLastRoundTrip(
+            Yaml,
+            .v1_2_2,
+            "server:\n  port: 8080\n  host: local\nclient: 1\n",
+            &.{ .{ .key = "server" }, .{ .key = "host" } },
+            "server:\n  port: 8080\n  # host: local\nclient: 1\n",
+            &.{.{ .key = "server" }},
+            "host: local",
+        );
+        // The last entry of the document: the root's dangling run.
+        try expectCommentOutLastRoundTrip(
+            Yaml,
+            .v1_2_2,
+            "a: 1\nb: 2\n",
+            &.{.{ .key = "b" }},
+            "a: 1\n# b: 2\n",
+            &.{},
+            "b: 2",
+        );
+    }
+    if (comptime build_options.lang_toml) {
+        try expectCommentOutLastRoundTrip(
+            Toml,
+            .TOML_1_1,
+            "[server]\nport = 8080\nhost = \"local\"\n",
+            &.{ .{ .key = "server" }, .{ .key = "host" } },
+            "[server]\nport = 8080\n# host = \"local\"\n",
+            &.{.{ .key = "server" }},
+            "host = \"local\"",
+        );
+    }
+    if (comptime build_options.lang_fig) {
+        try expectCommentOutLastRoundTrip(
+            Fig,
+            .Fig,
+            "database\n> host = local\n> port = 5432\n",
+            &.{ .{ .key = "database" }, .{ .key = "port" } },
+            "database\n> host = local\n> # port = 5432\n",
+            &.{.{ .key = "database" }},
+            "port = 5432",
+        );
+    }
+}
+
+test "commentOut and uncomment decline strict JSON, the root, flow items and sections" {
+    var strict: Editor(json.Language) = .{ .allocator = testing.allocator, .format = .JSON };
+    try strict.init("{\n  \"a\": 1\n}\n");
+    defer strict.deinit();
+    try testing.expectError(error.CommentsUnsupported, strict.commentOut(&.{.{ .key = "a" }}));
+    try testing.expectError(error.CommentsUnsupported, strict.uncommentLeading(&.{.{ .key = "a" }}, 0, 1));
+    try testing.expectError(error.CommentsUnsupported, strict.uncommentDangling(&.{}, 0, 1));
+
+    if (comptime build_options.lang_yaml) {
+        var ed: Editor(Yaml) = .{ .allocator = testing.allocator, .format = .v1_2_2 };
+        try ed.init("tags: [a, b]\nk: 1\n");
+        defer ed.deinit();
+        // Inside a flow collection a marker would swallow the separator, and
+        // the parse discards interior comments anyway.
+        try testing.expectError(error.UnsupportedShape, ed.commentOut(&.{ .{ .key = "tags" }, .{ .index = 0 } }));
+        try testing.expectError(error.UnsupportedShape, ed.uncommentLeading(&.{ .{ .key = "tags" }, .{ .index = 1 } }, 0, 1));
+        try testing.expectError(error.UnsupportedShape, ed.uncommentDangling(&.{.{ .key = "tags" }}, 0, 1));
+        // The root is not an entry anything can carry.
+        try testing.expectError(error.UnsupportedShape, ed.commentOut(&.{}));
+        try testing.expectEqualStrings("tags: [a, b]\nk: 1\n", ed.source.items);
+    }
+    if (comptime build_options.lang_toml) {
+        var ed: Editor(Toml) = .{ .allocator = testing.allocator, .format = .TOML_1_1 };
+        try ed.init("[server]\nport = 8080\n");
+        defer ed.deinit();
+        // A table's span is the name inside its header; its body is lines this
+        // op cannot see. Same refusal `deleteKey` makes, in TOML's words.
+        try testing.expectError(error.CannotDeleteTable, ed.commentOut(&.{.{ .key = "server" }}));
+    }
+}
+
+test "uncomment refuses lines that are not an entry, byte-exactly" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    // The `# two` here is CONTENT of the block scalar, not a comment: stripping
+    // the marker parses, but it changes `text`'s value — a node the caller
+    // never named. Refused and rolled back.
+    const inside_scalar = "text: |\n  one\n  # two\nb: 2\n";
+    var ed: Editor(Yaml) = .{ .allocator = testing.allocator, .format = .v1_2_2 };
+    try ed.init(inside_scalar);
+    defer ed.deinit();
+    try testing.expectError(error.CommentNotAnEntry, ed.uncommentLeading(&.{.{ .key = "b" }}, 0, 1));
+    try testing.expectEqualStrings(inside_scalar, ed.source.items);
+
+    // Prose that does not parse as an entry: the reparse fails and
+    // `replaceAtSpan` rolls the splice back on its own.
+    const prose = "a: 1\n# just a note\nb: 2\n";
+    var ed2: Editor(Yaml) = .{ .allocator = testing.allocator, .format = .v1_2_2 };
+    try ed2.init(prose);
+    defer ed2.deinit();
+    try testing.expect(std.meta.isError(ed2.uncommentLeading(&.{.{ .key = "b" }}, 0, 1)));
+    try testing.expectEqualStrings(prose, ed2.source.items);
+
+    // A line with no marker at all, and a range past the end of the block.
+    var ed3: Editor(Yaml) = .{ .allocator = testing.allocator, .format = .v1_2_2 };
+    try ed3.init("a: 1\n# x: 2\nb: 3\n");
+    defer ed3.deinit();
+    try testing.expectError(error.NotFound, ed3.uncommentLeading(&.{.{ .key = "b" }}, 1, 1));
+    try testing.expectError(error.NotFound, ed3.uncommentLeading(&.{.{ .key = "b" }}, 0, 2));
+    // A zero-length range is a no-op.
+    try ed3.uncommentLeading(&.{.{ .key = "b" }}, 0, 0);
+    try testing.expectEqualStrings("a: 1\n# x: 2\nb: 3\n", ed3.source.items);
+}
+
+test "uncomment brings back a middle line of a block, leaving the rest commented" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    var ed: Editor(Yaml) = .{ .allocator = testing.allocator, .format = .v1_2_2 };
+    try ed.init("# note\n# x: 2\nb: 3\n");
+    defer ed.deinit();
+    try ed.uncommentLeading(&.{.{ .key = "b" }}, 1, 1);
+    try testing.expectEqualStrings("# note\nx: 2\nb: 3\n", ed.source.items);
+    const parsed = try ed.getParsed();
+    _ = try parsed.ast.getNodeByPath(&.{.{ .key = "x" }});
 }
 
 // ── set (upsert) tests ──────────────────────────────────────────────────────

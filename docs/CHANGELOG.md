@@ -120,11 +120,19 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
+### Added
+
+- **editor** — the dangling comment anchor, and comment-out and back ([`48b6f42`](https://github.com/diaryx-org/fig/commit/48b6f42243f6460089760b37d50aaf5b9ca06d5e))
+
 ### Fixed
 
 - **patch** — compare comment-op errors instead of switching on them; test the CLI everything-on ([`125e826`](https://github.com/diaryx-org/fig/commit/125e8263f75b55a92c6db19a456fdd96f67f72f4))
 - **yaml** — spell every mapping key kind; fix two explicit-key parser gaps ([`0a0d646`](https://github.com/diaryx-org/fig/commit/0a0d64611ec494d7009cc86c1f36cce5d531ee34))
 - **yaml** — no trailing space after the dash of a nested block sequence ([`3bd426a`](https://github.com/diaryx-org/fig/commit/3bd426a7d62b413617c2140281fad7a039fac370))
+- **fig** — a mid-word quote inside a bracket-led value no longer opens a quoted span ([`cd64b53`](https://github.com/diaryx-org/fig/commit/cd64b533410ab3a1d52a4544f0e7bea8d9e6e377))
+- **yaml** — print %TAG directives and root/item collection properties ([`76dc108`](https://github.com/diaryx-org/fig/commit/76dc108a714dc5a52bf08ef4e586d156be0c69c3))
+- **editor** — a flow item on its parent's line owns no comment ([`13f8822`](https://github.com/diaryx-org/fig/commit/13f8822a66f67223b6378f99f112c138fcb77080))
+- **json** — spell a scalar mapping key as a JSON string, refuse a collection key ([`fece77b`](https://github.com/diaryx-org/fig/commit/fece77ba7b76853a852a4909b0463a744c1584aa))
 
 ### Changed
 
@@ -163,6 +171,56 @@ one that the next `zig build changelog` would overwrite with unreleased work.
   with nothing after it. It used to be `- ` with a trailing space, so `fig
   fmt` output (and any YAML serialize) of such a document changes by that
   one byte per nested-sequence item.
+
+- a `[`/`{`-led value whose bare text contains a `'` or `"` —
+  `link = [it's here](x.md)`, a markdown link with an apostrophe in its text —
+  now parses as the bare string it spells. It used to be committed to flow and
+  fail with FigTrailingContent. `fig fmt` and the fig printer emit such a value
+  unquoted now, where they previously quoted it.
+
+- `fig fmt` and `fig get -o yaml` on a YAML document
+  whose tags use a `%TAG` handle now emit the `%TAG` line and a `---`
+  marker ahead of the body. The output used to carry the tags without the
+  declaration, which made it a document fig itself rejected with
+  `UndefinedTagHandle`.
+
+- `fig fmt` and `fig get -o yaml` now emit an anchor or
+  tag that sits on the root collection (`&m` on its own line above the
+  first key) or on a sequence item that is a collection (`- &a`). Both used
+  to be dropped, silently turning any `*m`/`*a` alias to them into an
+  undefined-alias error on re-read.
+
+- `getLeadingComment`/`getTrailingComment` at an element
+  or entry of a one-line flow collection now return NONE (`not_found`
+  across the C ABI, `None`/`null` in the Rust and TypeScript bindings).
+  They used to return the enclosing entry's comment — the block above
+  `members = ["a", "b"]` came back once for `members` and again for each
+  of its items.
+
+- `deleteLeadingComments`/`deleteTrailingComment` at such
+  a path are now a no-op, still reporting success. They used to delete the
+  enclosing entry's comment, so a caller that "cleared" an item's comment
+  removed the whole block above the collection.
+
+- `addLeadingComment`/`setTrailingComment` at such a path
+  now refuse with `CommentsUnanchored` (`FIG_STATUS_INVALID_ARGUMENT`,
+  `Error::InvalidArgument`, TypeScript `InvalidArgument`) and leave the
+  source byte-identical. They used to write onto the parent's line, where
+  the comment became the parent's — and on fig produced a corrupt document.
+
+- `fig.Patch` now counts a leading or trailing comment
+  destined for such a path as dropped (`stats.comments_dropped`) instead
+  of writing it onto the enclosing entry's line.
+
+- `fig get -o json` (and `-o jsonc`/`-o json5`, and the
+  library's `serialize` to those formats) on a document with a non-string
+  mapping key no longer emits the key bare. A null, boolean, number or
+  datetime key is now written as a JSON string of its source text —
+  `null: "a"` becomes `"null": "a"`, `23: false` becomes `"23": false` —
+  where the old output was not JSON at all. A sequence or mapping key now
+  fails with `NonStringKey` ("a non-string mapping key has no representation
+  in this output format", exit 1) instead of writing an unparseable object;
+  the 15 accept-corpus documents that hit this used to produce output.
 
 <!-- git-cliff:end -->
 

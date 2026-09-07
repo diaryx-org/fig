@@ -146,34 +146,76 @@ pub const BracketCommit = enum {
 
 /// Decide how a `[`/`{`-led block RHS commits. `start` indexes the opening
 /// bracket; scanning stops at the first newline (bare block values are
-/// single-line). Quoted spans are skipped so brackets inside strings don't count
-/// toward matching (`['[Blog](x)']` closes at its final `]`, not the inner one).
+/// single-line). Quoted *elements* are skipped so brackets inside strings don't
+/// count toward matching (`['[Blog](x)']` closes at its final `]`, not the inner
+/// one); a quote that the flow grammar would read as ordinary text is ordinary
+/// text here too — see `quoteOpensSpan`.
 pub fn classifyBracketCommit(source: []const u8, start: usize) BracketCommit {
     const close = bracketCloseIndex(source, start) orelse return .unclosed;
     return if (restIsCommentOnly(source, close + 1)) .flow else .bare_trailing;
 }
 
+/// May a `'`/`"` at this point open a quoted span? Only where the flow grammar
+/// would begin a quoted value or key: at an **element start** — the first
+/// non-whitespace byte after the opening `[`/`{`, after a `,`, or after a
+/// `:`/`=` pair separator (`parseFlowScalarOrNested`/`parseFlowKey` in
+/// parser.zig peek exactly there). `prev` is the last non-whitespace byte
+/// scanned, or 0 at the start of the scan.
+///
+/// Anywhere else a quote is ordinary bare-value text, because that is how
+/// `scanFlowBareValue` reads it: `[its parent's comment](x.md)` has a bare
+/// element with an apostrophe in it, so the apostrophe opens nothing and the
+/// bracket still balances at the `]`. Treating a mid-word quote as an opener
+/// used to run the span off the end of the line, making the value `.unclosed`
+/// and handing a markdown link to the flow parser.
+///
+/// `:`/`=` are honoured in sequence position too, where the flow grammar has no
+/// pair separator. Tracking which container is open would cost a stack for a
+/// shape (`[a: 'b]c']`) that is malformed under either reading, and admitting
+/// them keeps the pre-existing reading of it.
+fn quoteOpensSpan(prev: u8) bool {
+    return switch (prev) {
+        0, '[', '{', ',', ':', '=' => true,
+        else => false,
+    };
+}
+
 /// Index of the matching close bracket for the `[`/`{` at `start`, scanning at
-/// most to the first newline and skipping quoted spans — the balanced-prefix
-/// span the block-layer commit rule (and its coercion warn) reasons about.
-/// Null when the bracket doesn't close on the line.
+/// most to the first newline and skipping quoted spans (`quoteOpensSpan` decides
+/// which quotes open one) — the balanced-prefix span the block-layer commit rule
+/// (and its coercion warn) reasons about. Null when the bracket doesn't close on
+/// the line.
 pub fn bracketCloseIndex(source: []const u8, start: usize) ?usize {
     std.debug.assert(source[start] == '[' or source[start] == '{');
     var depth: usize = 0;
     var i = start;
+    var prev: u8 = 0; // last non-whitespace byte scanned; 0 = none yet
     while (i < source.len and source[i] != '\n') {
-        switch (source[i]) {
-            '\'', '"' => i = skipQuotedSpan(source, i) orelse return null,
+        const c = source[i];
+        switch (c) {
+            ' ', '\t', '\r' => i += 1, // whitespace never ends an element start
+            '\'', '"' => {
+                const opens = quoteOpensSpan(prev);
+                prev = c;
+                if (opens) {
+                    i = skipQuotedSpan(source, i) orelse return null;
+                } else i += 1;
+            },
             '[', '{' => {
                 depth += 1;
+                prev = c;
                 i += 1;
             },
             ']', '}' => {
                 depth -= 1;
+                prev = c;
                 i += 1;
                 if (depth == 0) return i - 1;
             },
-            else => i += 1,
+            else => {
+                prev = c;
+                i += 1;
+            },
         }
     }
     return null;
@@ -181,8 +223,9 @@ pub fn bracketCloseIndex(source: []const u8, start: usize) ?usize {
 
 /// Skip a single-line quoted span starting at the opening quote `source[start]`.
 /// Returns the index just past the close, or null if it doesn't close before the
-/// newline (an unterminated quote inside the brackets → treat as `.unclosed`).
-/// `"` honors `\`-escapes; `'` is raw (mirroring the value grammar).
+/// newline (an unterminated quote at an element start inside the brackets →
+/// treat as `.unclosed`). `"` honors `\`-escapes; `'` is raw (mirroring the
+/// value grammar).
 fn skipQuotedSpan(source: []const u8, start: usize) ?usize {
     const q = source[start];
     var i = start + 1;
@@ -216,25 +259,40 @@ fn restIsCommentOnly(source: []const u8, from: usize) bool {
 /// a markdown link) — the flow-position form of the balanced-then-trailing rule
 /// that lets markdown links go unquoted. There is no `.unclosed` outcome: an
 /// unterminated bracket is left to the flow parser (which raises
-/// FigUnclosedFlow), so this reports `.flow`.
+/// FigUnclosedFlow), so this reports `.flow`. Quoted spans are skipped on the
+/// same element-start rule as the block-layer scanner (`quoteOpensSpan`).
 pub fn classifyFlowBracket(source: []const u8, start: usize) BracketCommit {
     std.debug.assert(source[start] == '[' or source[start] == '{');
     var depth: usize = 0;
     var i = start;
+    var prev: u8 = 0; // last non-whitespace byte scanned; 0 = none yet
     while (i < source.len) {
-        switch (source[i]) {
-            '\'', '"' => i = skipQuotedSpan(source, i) orelse return .flow,
+        const c = source[i];
+        switch (c) {
+            ' ', '\t', '\r', '\n' => i += 1, // flow spans newlines; neither ends an element start
+            '\'', '"' => {
+                const opens = quoteOpensSpan(prev);
+                prev = c;
+                if (opens) {
+                    i = skipQuotedSpan(source, i) orelse return .flow;
+                } else i += 1;
+            },
             '[', '{' => {
                 depth += 1;
+                prev = c;
                 i += 1;
             },
             ']', '}' => {
                 depth -= 1;
+                prev = c;
                 i += 1;
                 if (depth == 0)
                     return if (flowRestIsTerminator(source, i)) .flow else .bare_trailing;
             },
-            else => i += 1,
+            else => {
+                prev = c;
+                i += 1;
+            },
         }
     }
     return .flow;
@@ -528,6 +586,25 @@ test "classifyBracketCommit: flow vs bare-trailing vs unclosed" {
     try std.testing.expect(classifyBracketCommit("[80, 443", 0) == .unclosed);
     try std.testing.expect(classifyBracketCommit("[\n", 0) == .unclosed);
     try std.testing.expect(classifyBracketCommit("['unterminated]", 0) == .unclosed);
+}
+
+test "classifyBracketCommit: a mid-word quote is content, not a span opener" {
+    // Only an element-start quote opens a span, so an apostrophe inside a bare
+    // element leaves the bracket balanced and the RHS a bare string.
+    try std.testing.expect(classifyBracketCommit("[its parent's comment](x.md)\n", 0) == .bare_trailing);
+    try std.testing.expect(classifyBracketCommit("[its parent\"s comment](x.md)\n", 0) == .bare_trailing);
+    try std.testing.expect(classifyBracketCommit("[text](it's.md)\n", 0) == .bare_trailing);
+    try std.testing.expect(classifyBracketCommit("[its parent's comment]\n", 0) == .flow);
+    // Element starts: after `[`/`{`, a `,`, and a `:`/`=` pair separator.
+    try std.testing.expect(classifyBracketCommit("[\"a]b\", c]\n", 0) == .flow);
+    try std.testing.expect(classifyBracketCommit("[a, 'b]c']\n", 0) == .flow);
+    try std.testing.expect(classifyBracketCommit("{k = 'a]b'}\n", 0) == .flow);
+    try std.testing.expect(classifyBracketCommit("{\"a]b\": 1}\n", 0) == .flow);
+}
+
+test "classifyFlowBracket: mid-word quote in an element" {
+    try std.testing.expect(classifyFlowBracket("[Blog](it's/x.md), b]", 0) == .bare_trailing);
+    try std.testing.expect(classifyFlowBracket("['a]b'], c]", 0) == .flow);
 }
 
 test "classifyFlowBracket: nested flow vs bare-trailing element" {

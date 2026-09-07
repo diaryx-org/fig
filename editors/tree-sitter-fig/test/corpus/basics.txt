@@ -359,6 +359,39 @@ links = [[Blog](/Blog/Blog.md), [Resume](/Resume.md)]
         (flow_bracket_led_bare)))))
 
 ==================
+a mid-word quote is content, not a quoted-span opener
+==================
+
+apos = [its parent's comment](x.md)
+links = [[Blog](it's/x.md), b]
+quoted = ['a]b', c]
+
+---
+
+(document
+  (assignment
+    key: (keypath
+      (key
+        (bare_key)))
+    value: (bracket_led_bare_string))
+  (assignment
+    key: (keypath
+      (key
+        (bare_key)))
+    value: (flow
+      (flow_array
+        (flow_bracket_led_bare)
+        (flow_bare))))
+  (assignment
+    key: (keypath
+      (key
+        (bare_key)))
+    value: (flow
+      (flow_array
+        (string_single)
+        (flow_bare)))))
+
+==================
 multi-line (stacked) flow for long lists
 ==================
 

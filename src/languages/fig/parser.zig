@@ -2620,6 +2620,51 @@ test "a bracket that never closes on its line still errors (truncation)" {
     try testing.expectError(error.FigUnclosedFlow, parseAbstract(testing.allocator, "x = [oops\n", .Fig));
 }
 
+test "a mid-word quote inside a bracket-led value is content, not a quoted span" {
+    // The bracket balancer skips a quoted ELEMENT, not any quote it meets: the
+    // flow grammar starts a quoted value only at an element start, so an
+    // apostrophe (or a stray `"`) inside a bare element leaves the bracket
+    // balanced and the whole RHS a bare string.
+    var ast = try parseAbstract(testing.allocator,
+        \\apos = [its parent's comment](x.md)
+        \\dq = [its parent"s comment](x.md)
+        \\url = [text](it's.md)
+        \\seq
+        \\> * [its parent's comment](x.md)
+        \\flow = [[Blog](it's/x.md), b]
+    , .Fig);
+    defer ast.deinit();
+    try testing.expectEqualStrings("[its parent's comment](x.md)", (try ast.getValByPath(&.{.{ .key = "apos" }})).kind.string);
+    try testing.expectEqualStrings("[its parent\"s comment](x.md)", (try ast.getValByPath(&.{.{ .key = "dq" }})).kind.string);
+    try testing.expectEqualStrings("[text](it's.md)", (try ast.getValByPath(&.{.{ .key = "url" }})).kind.string);
+    try testing.expectEqualStrings("[its parent's comment](x.md)", (try ast.getValByPath(&.{ .{ .key = "seq" }, .{ .index = 0 } })).kind.string);
+    try testing.expectEqualStrings("[Blog](it's/x.md)", (try ast.getValByPath(&.{ .{ .key = "flow" }, .{ .index = 0 } })).kind.string);
+    // The value is a plain bare string, so it earns no flow-like warn either.
+    try expectWarnCodes("apos = [its parent's comment](x.md)\n", &.{});
+}
+
+test "a quote AT an element start still opens a span the balancer skips" {
+    var ast = try parseAbstract(testing.allocator,
+        \\inner = ['[Blog](x)']
+        \\bracket = ["a]b", c]
+        \\pair = {k = 'a]b'}
+        \\json = {"a]b": 1}
+        \\bare = [a, it's fine, b]
+    , .Fig);
+    defer ast.deinit();
+    // A quoted element carrying `]`/`[` doesn't move the matching close.
+    try testing.expectEqualStrings("[Blog](x)", (try ast.getValByPath(&.{ .{ .key = "inner" }, .{ .index = 0 } })).kind.string);
+    try testing.expectEqualStrings("a]b", (try ast.getValByPath(&.{ .{ .key = "bracket" }, .{ .index = 0 } })).kind.string);
+    try testing.expectEqualStrings("c", (try ast.getValByPath(&.{ .{ .key = "bracket" }, .{ .index = 1 } })).kind.string);
+    try testing.expectEqualStrings("a]b", (try ast.getValByPath(&.{ .{ .key = "pair" }, .{ .key = "k" } })).kind.string);
+    try testing.expectEqualStrings("1", (try ast.getValByPath(&.{ .{ .key = "json" }, .{ .key = "a]b" } })).kind.number.raw);
+    // A mid-element apostrophe leaves genuine flow genuine.
+    try testing.expectEqualStrings("it's fine", (try ast.getValByPath(&.{ .{ .key = "bare" }, .{ .index = 1 } })).kind.string);
+    // An unclosed quote at an element start is still `.unclosed` → committed to
+    // the flow parser, which raises rather than falling back to a string.
+    try testing.expectError(error.FigUnclosedString, parseAbstract(testing.allocator, "x = ['unterminated]\n", .Fig));
+}
+
 // ── Span tests (Editor(Fig) foundation — see DESIGN.md's "no in-place editor
 // yet" note; this is the prerequisite the editor's span-splice engine needs) ──
 

@@ -183,6 +183,8 @@ Commitment decides whether a malformed value is an error or a string, and it is 
 
   A balanced, *well-formed* bracket group separated from its trailing content by whitespace (`[80, 443] x`) still parses as a string but produces the `flow_like_string` warning; glued shapes (`[Blog](/x)`) never warn.
 
+  "Quoted spans skipped" means quoted *elements*: a `'`/`"` suspends the match only where a quoted value or key could begin — as the first non-whitespace character after `[`, `{`, `,`, or a `:`/`=` pair separator (§ 6.3). A quote anywhere else is ordinary text in a bare element, exactly as the flow grammar reads it, so `[its parent's comment](x.md)` still balances at its `]` and is a bare string.
+
 ## 5. Keys and key-value pairs
 
 ### 5.1 Keys

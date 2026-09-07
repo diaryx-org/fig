@@ -66,6 +66,17 @@ static bool skip_quoted(TSLexer *lexer) {
   }
 }
 
+// May a `'`/`"` open a quoted span here? Mirrors tok.zig's `quoteOpensSpan`:
+// only at an element start — the first non-whitespace byte after `[`, `{`, a
+// `,`, or a `:`/`=` pair separator, which is where the flow grammar admits a
+// quoted value or key. Anywhere else the quote is ordinary bare-element text
+// (`[its parent's comment](x.md)`), so it must not suspend the bracket match.
+// `prev` is the last non-whitespace byte scanned, or 0 at the start.
+static bool quote_opens_span(int32_t prev) {
+  return prev == 0 || prev == '[' || prev == '{' || prev == ',' ||
+         prev == ':' || prev == '=';
+}
+
 // Scan a balanced `[`/`{` … `]`/`}` group starting at the current lookahead
 // (must be `[` or `{`). Generic like the Zig scanner: any close decrements
 // depth regardless of which open started it. Single-line only — a raw
@@ -75,13 +86,25 @@ static bool skip_quoted(TSLexer *lexer) {
 // positioned just past the matching close.
 static bool scan_bracket_run(TSLexer *lexer) {
   uint32_t depth = 0;
+  int32_t prev = 0; // last non-whitespace byte scanned; 0 = none yet
   while (true) {
     if (lexer->eof(lexer) || lexer->lookahead == '\n') return false;
     int32_t c = lexer->lookahead;
-    if (c == '\'' || c == '"') {
-      if (!skip_quoted(lexer)) return false;
+    if (is_hspace(c)) { // whitespace never ends an element start
+      lexer->advance(lexer, false);
       continue;
     }
+    if (c == '\'' || c == '"') {
+      bool opens = quote_opens_span(prev);
+      prev = c;
+      if (opens) {
+        if (!skip_quoted(lexer)) return false;
+      } else {
+        lexer->advance(lexer, false);
+      }
+      continue;
+    }
+    prev = c;
     if (c == '[' || c == '{') {
       depth++;
       lexer->advance(lexer, false);

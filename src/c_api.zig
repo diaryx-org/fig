@@ -710,7 +710,7 @@ fn figExtKindOf(kind: AST.Node.Kind.Extended.ExtKind) FigExtKind {
 /// One step of a path: `kind == 0` selects mapping key `key_ptr[0..key_len]`;
 /// `kind == 1` selects sequence element `index`. `kind` is a C `int` (not a
 /// fixed-width `int32_t`), matching the other small discriminants crossing this
-/// ABI — `format`, `embed_type`, and the `kind` of `fig_value_extended` /
+/// ABI — `format`, `container`, and the `kind` of `fig_value_extended` /
 /// `fig_node_extended` — so every enum-like field is the one integer type.
 pub const FigPathSegment = extern struct {
     kind: c_int,
@@ -1675,101 +1675,89 @@ fn regionCovers(size: u32, comptime field: []const u8) bool {
     return size >= end;
 }
 
-/// Mirrors `Embed.Type`.
-/// The flat C mirror of the parametric `Embed.Type` union: C enums can't carry a
-/// format parameter, so each (container, format) pair the union can spell is
-/// enumerated as its own value. Values 0–3 are ABI-frozen (shipped in 2.4.0);
-/// their historical names are kept even where the model has since renamed the
-/// concept — `frontmatter_json` is the `;;;` block, `frontmatter_fig` is the
-/// ```` ```fig ```` fenced block. Everything from 4 up is grouped by container.
-pub const FigEmbedType = enum(c_int) {
-    // Frozen (2.4.0).
-    frontmatter_yaml = 0, // ---              → .{ .frontmatter = .yaml }
-    frontmatter_json = 1, // ;;;              → .semicolons_json
-    endmatter_yaml = 2, //   ```endmatter     → .endmatter_yaml
-    frontmatter_fig = 3, //  ```fig           → .{ .fenced = .fig }
-    // Blessed `+++`.
-    plus_toml = 4, //        +++              → .plus_toml
-    // Fenced ```<lang>.
-    fenced_yaml = 5, //      ```yaml          → .{ .fenced = .yaml }
-    fenced_json = 6, //      ```json          → .{ .fenced = .json }
-    fenced_toml = 7, //      ```toml          → .{ .fenced = .toml }
-    // Markdown `---<lang>` frontmatter (bare --- is `frontmatter_yaml` above).
-    md_frontmatter_json = 8, // ---json       → .{ .frontmatter = .json }
-    md_frontmatter_toml = 9, // ---toml       → .{ .frontmatter = .toml }
-    md_frontmatter_fig = 10, // ---fig        → .{ .frontmatter = .fig }
-    // HTML `<script type="application/<lang>">` data islands.
-    html_script_fig = 11, //  application/figl → .{ .html_script = .fig }
-    html_script_yaml = 12, // application/yaml → .{ .html_script = .yaml }
-    html_script_json = 13, // application/json → .{ .html_script = .json }
-    html_script_toml = 14, // application/toml → .{ .html_script = .toml }
-    // HTML `<pre><code class="language-<lang>">` visible code blocks. Content is
-    // entity-encoded; the editing handle decodes on open and re-encodes
-    // span-aware on render, so an edit preserves every untouched byte's original
-    // encoding (see `embedHandleFromHost`/`fig_embed_render`).
-    html_code_fig = 15, //  language-figl → .{ .html_code = .fig }
-    html_code_yaml = 16, // language-yaml → .{ .html_code = .yaml }
-    html_code_json = 17, // language-json → .{ .html_code = .json }
-    html_code_toml = 18, // language-toml → .{ .html_code = .toml }
+/// The container half of an embed selector — the C mirror of `Embed.Type`'s
+/// tags. The four parametric families carry their content's format in a
+/// second `FigFormat` argument beside this one; the three presets pin their
+/// own format (`;;;` is JSON, `+++` is TOML, ```` ```endmatter ```` is YAML)
+/// and ignore that argument.
+///
+/// ABI 2 shape. ABI 1 (core 2.4 through 2.9) flattened the union into one
+/// `FigEmbedType` enum of nineteen `(container, format)` products; the
+/// product grew with every format that gained an embedded spelling, and a
+/// caller could not ask for a pair the enum had not been extended to name.
+/// Two integers say what one could not.
+pub const FigEmbedContainer = enum(c_int) {
+    /// `---<lang>` … `---`/`...` markdown frontmatter. A bare `---` is YAML,
+    /// so `(md_frontmatter, yaml)` is what ABI 1 called `FRONTMATTER_YAML`.
+    md_frontmatter = 0,
+    /// ```` ```<lang> ```` … ```` ``` ```` fenced block.
+    fenced = 1,
+    /// `<script type="application/<lang>">` … `</script>` HTML data island.
+    html_script = 2,
+    /// `<pre><code class="language-<lang>">` … `</code></pre>`. Content is
+    /// entity-encoded; the editing handle decodes on open and re-encodes
+    /// span-aware on render, so an edit preserves every untouched byte's
+    /// original encoding (see `embedHandleFromHost`/`fig_embed_render`).
+    html_code = 3,
+    /// `;;;` … `;;;` JSON frontmatter. Format argument ignored (JSON).
+    semicolons_json = 4,
+    /// `+++` … `+++` TOML frontmatter (Hugo/Zola). Format argument ignored (TOML).
+    plus_toml = 5,
+    /// A trailing ```` ```endmatter ```` … ```` ``` ```` YAML block. Format
+    /// argument ignored (YAML).
+    endmatter_yaml = 6,
 };
 
-fn embedTypeOf(t: c_int) ?Embed.Type {
-    return switch (t) {
-        @intFromEnum(FigEmbedType.frontmatter_yaml) => .{ .frontmatter = .yaml },
-        @intFromEnum(FigEmbedType.frontmatter_json) => .semicolons_json,
-        @intFromEnum(FigEmbedType.endmatter_yaml) => .endmatter_yaml,
-        @intFromEnum(FigEmbedType.frontmatter_fig) => .{ .fenced = .fig },
-        @intFromEnum(FigEmbedType.plus_toml) => .plus_toml,
-        @intFromEnum(FigEmbedType.fenced_yaml) => .{ .fenced = .yaml },
-        @intFromEnum(FigEmbedType.fenced_json) => .{ .fenced = .json },
-        @intFromEnum(FigEmbedType.fenced_toml) => .{ .fenced = .toml },
-        @intFromEnum(FigEmbedType.md_frontmatter_json) => .{ .frontmatter = .json },
-        @intFromEnum(FigEmbedType.md_frontmatter_toml) => .{ .frontmatter = .toml },
-        @intFromEnum(FigEmbedType.md_frontmatter_fig) => .{ .frontmatter = .fig },
-        @intFromEnum(FigEmbedType.html_script_fig) => .{ .html_script = .fig },
-        @intFromEnum(FigEmbedType.html_script_yaml) => .{ .html_script = .yaml },
-        @intFromEnum(FigEmbedType.html_script_json) => .{ .html_script = .json },
-        @intFromEnum(FigEmbedType.html_script_toml) => .{ .html_script = .toml },
-        @intFromEnum(FigEmbedType.html_code_fig) => .{ .html_code = .fig },
-        @intFromEnum(FigEmbedType.html_code_yaml) => .{ .html_code = .yaml },
-        @intFromEnum(FigEmbedType.html_code_json) => .{ .html_code = .json },
-        @intFromEnum(FigEmbedType.html_code_toml) => .{ .html_code = .toml },
-        else => null,
+/// The embed model's inner format for a `FigFormat` value: the registry
+/// entry of that name, when it declares an embedded spelling. Null for an
+/// out-of-range integer and for a format with no spelling (jsonc, ini, …).
+fn embedInnerOf(format: c_int) ?Embed.InnerFormat {
+    const f = std.enums.fromInt(FigFormat, format) orelse return null;
+    return switch (f) {
+        inline else => |tag| if (@hasField(Embed.InnerFormat, @tagName(tag)))
+            @field(Embed.InnerFormat, @tagName(tag))
+        else
+            null,
     };
 }
 
-/// `embedTypeOf`'s inverse — total, since every `Embed.Type` (container, format)
-/// pair has a flat C mirror above.
-fn figEmbedTypeOf(t: Embed.Type) FigEmbedType {
-    return switch (t) {
-        .frontmatter => |f| switch (f) {
-            .yaml => .frontmatter_yaml,
-            .json => .md_frontmatter_json,
-            .toml => .md_frontmatter_toml,
-            .fig => .md_frontmatter_fig,
-        },
-        .fenced => |f| switch (f) {
-            .yaml => .fenced_yaml,
-            .json => .fenced_json,
-            .toml => .fenced_toml,
-            .fig => .frontmatter_fig,
-        },
-        .html_script => |f| switch (f) {
-            .yaml => .html_script_yaml,
-            .json => .html_script_json,
-            .toml => .html_script_toml,
-            .fig => .html_script_fig,
-        },
-        .html_code => |f| switch (f) {
-            .yaml => .html_code_yaml,
-            .json => .html_code_json,
-            .toml => .html_code_toml,
-            .fig => .html_code_fig,
-        },
-        .semicolons_json => .frontmatter_json,
+/// `(container, format)` → `Embed.Type`, or null when either integer is out
+/// of range or `format` is one no container can hold. For a preset container
+/// `format` is not read.
+fn embedTypeOf(container: c_int, format: c_int) ?Embed.Type {
+    const c = std.enums.fromInt(FigEmbedContainer, container) orelse return null;
+    return switch (c) {
+        .semicolons_json => .semicolons_json,
+        .plus_toml => .plus_toml,
+        .endmatter_yaml => .endmatter_yaml,
+        .md_frontmatter => .{ .frontmatter = embedInnerOf(format) orelse return null },
+        .fenced => .{ .fenced = embedInnerOf(format) orelse return null },
+        .html_script => .{ .html_script = embedInnerOf(format) orelse return null },
+        .html_code => .{ .html_code = embedInnerOf(format) orelse return null },
+    };
+}
+
+/// What `fig_embed_detect` writes: `embedTypeOf`'s inverse, total. A preset
+/// reports the format it pins, so the pair a caller reads back is always
+/// meaningful on its own — `Embed.innerFormat` is what names it.
+const FigEmbedPair = struct { container: FigEmbedContainer, format: FigFormat };
+
+fn figEmbedPairOf(t: Embed.Type) FigEmbedPair {
+    const container: FigEmbedContainer = switch (t) {
+        .frontmatter => .md_frontmatter,
+        .fenced => .fenced,
+        .html_script => .html_script,
+        .html_code => .html_code,
+        .semicolons_json => .semicolons_json,
         .plus_toml => .plus_toml,
         .endmatter_yaml => .endmatter_yaml,
     };
+    // `InnerFormat`'s members are registry names, and every registry name is a
+    // `FigFormat` member, so the lookup by tag name is total.
+    const format: FigFormat = switch (Embed.innerFormat(t)) {
+        inline else => |f| @field(FigFormat, @tagName(f)),
+    };
+    return .{ .container = container, .format = format };
 }
 
 fn toFigSpan(s: Span) FigSpan {
@@ -1781,12 +1769,13 @@ fn toFigSpan(s: Span) FigSpan {
 pub export fn fig_embed_extract(
     input_ptr: ?[*]const u8,
     input_len: usize,
-    embed_type: c_int,
+    container: c_int,
+    format: c_int,
     out_region: ?*FigRegion,
 ) FigStatus {
     const out = out_region orelse return .invalid_argument;
     const input = sliceOf(input_ptr, input_len) orelse return .invalid_argument;
-    const t = embedTypeOf(embed_type) orelse return .invalid_argument;
+    const t = embedTypeOf(container, format) orelse return .invalid_argument;
     const region = Embed.locateRegion(input, t) catch |err| return switch (err) {
         error.NotFound => .not_found,
         else => .parse_error,
@@ -1808,19 +1797,24 @@ pub export fn fig_embed_extract(
 /// Only the open delimiter is checked — an unterminated block is still
 /// *recognized* as its archetype, so the caller's follow-up `fig_embed_extract`
 /// / `fig_embed_open` surfaces the real parse error instead of a misleading
-/// "nothing found". Writes the detected `FigEmbedType` to `out_embed_type` and
-/// returns `ok`; `not_found` when `input` opens none of them (the out param is
-/// left untouched). Detection is delimiter-only, so it works regardless of
-/// which inner formats this build compiles in.
+/// "nothing found". Writes the detected `FigEmbedContainer` and `FigFormat`
+/// to `out_container` and `out_format` and returns `ok`; `not_found` when
+/// `input` opens none of them (both out params are left untouched). A preset
+/// container reports the format it pins. Detection is delimiter-only, so it
+/// works regardless of which inner formats this build compiles in.
 pub export fn fig_embed_detect(
     input_ptr: ?[*]const u8,
     input_len: usize,
-    out_embed_type: ?*c_int,
+    out_container: ?*c_int,
+    out_format: ?*c_int,
 ) FigStatus {
-    const out = out_embed_type orelse return .invalid_argument;
+    const out_c = out_container orelse return .invalid_argument;
+    const out_f = out_format orelse return .invalid_argument;
     const input = sliceOf(input_ptr, input_len) orelse return .invalid_argument;
     const t = Embed.detect(input) orelse return .not_found;
-    out.* = @intFromEnum(figEmbedTypeOf(t));
+    const pair = figEmbedPairOf(t);
+    out_c.* = @intFromEnum(pair.container);
+    out_f.* = @intFromEnum(pair.format);
     return .ok;
 }
 
@@ -1844,7 +1838,7 @@ pub export fn fig_embed_detect(
 /// not make it frontmatter. Converting such a file means converting the host
 /// too. Mid-document to mid-document is fine and splices in place.
 ///
-/// `not_found` when `input` has no region of `from_embed_type`, `parse_error`
+/// `not_found` when `input` has no region of the `from` pair, `parse_error`
 /// when it opens one and never closes it.
 ///
 /// OWNERSHIP: on `ok` the result is a freshly allocated buffer the CALLER owns.
@@ -1854,8 +1848,10 @@ pub export fn fig_embed_detect(
 pub export fn fig_embed_retype(
     input_ptr: ?[*]const u8,
     input_len: usize,
-    from_embed_type: c_int,
-    to_embed_type: c_int,
+    from_container: c_int,
+    from_format: c_int,
+    to_container: c_int,
+    to_format: c_int,
     content_ptr: ?[*]const u8,
     content_len: usize,
     out_ptr: ?*[*]u8,
@@ -1865,8 +1861,8 @@ pub export fn fig_embed_retype(
     const ol = out_len orelse return .invalid_argument;
     const input = sliceOf(input_ptr, input_len) orelse return .invalid_argument;
     const content = sliceOf(content_ptr, content_len) orelse return .invalid_argument;
-    const from = embedTypeOf(from_embed_type) orelse return .invalid_argument;
-    const to = embedTypeOf(to_embed_type) orelse return .invalid_argument;
+    const from = embedTypeOf(from_container, from_format) orelse return .invalid_argument;
+    const to = embedTypeOf(to_container, to_format) orelse return .invalid_argument;
     const region = Embed.locateRegion(input, from) catch |err| return switch (err) {
         error.NotFound => .not_found,
         error.Unterminated => .parse_error,
@@ -2014,13 +2010,14 @@ fn embedHandleFromHost(
 pub export fn fig_embed_open(
     input_ptr: ?[*]const u8,
     input_len: usize,
-    embed_type: c_int,
+    container: c_int,
+    format: c_int,
     out_embed: ?*?*FigEmbed,
 ) FigStatus {
     const out = out_embed orelse return .invalid_argument;
     out.* = null;
     const input = sliceOf(input_ptr, input_len) orelse return .invalid_argument;
-    const t = embedTypeOf(embed_type) orelse return .invalid_argument;
+    const t = embedTypeOf(container, format) orelse return .invalid_argument;
     if (!embedInnerSupported(t)) return .unsupported_format;
 
     const region = Embed.locateRegion(input, t) catch |err| return switch (err) {
@@ -2033,7 +2030,7 @@ pub export fn fig_embed_open(
     return embedHandleFromHost(allocator, host, region, t, out);
 }
 
-/// Like `fig_embed_open`, but when no region of `embed_type` exists, create an
+/// Like `fig_embed_open`, but when no region of that pair exists, create an
 /// empty one (placed per the archetype: frontmatter at the top, endmatter at the
 /// bottom) instead of returning `not_found` — so a subsequent `fig_embed_set` /
 /// `fig_embed_insert_key` lands the first entry. An existing region is opened
@@ -2041,13 +2038,14 @@ pub export fn fig_embed_open(
 pub export fn fig_embed_open_or_init(
     input_ptr: ?[*]const u8,
     input_len: usize,
-    embed_type: c_int,
+    container: c_int,
+    format: c_int,
     out_embed: ?*?*FigEmbed,
 ) FigStatus {
     const out = out_embed orelse return .invalid_argument;
     out.* = null;
     const input = sliceOf(input_ptr, input_len) orelse return .invalid_argument;
-    const t = embedTypeOf(embed_type) orelse return .invalid_argument;
+    const t = embedTypeOf(container, format) orelse return .invalid_argument;
     if (!embedInnerSupported(t)) return .unsupported_format;
 
     const allocator = activeAllocator();
@@ -3678,7 +3676,7 @@ test "frontmatter c abi preserves fences and body" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntitle: Hi\n# keep\ntags:\n- x\n---\n# Body\ntext\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedType.frontmatter_yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const author = "author";
@@ -3706,7 +3704,7 @@ test "frontmatter c abi reorder keys preserves comments, fences, body" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntitle: Hi\n# keep\ntags:\n- x\nauthor: me\n---\n# Body\ntext\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedType.frontmatter_yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const keys = [_]FigStr{ figStr("author"), figStr("title") };
@@ -3725,7 +3723,7 @@ test "frontmatter c abi move key preserves fences and body" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\na: 1\nb: 2\nc: 3\n---\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedType.frontmatter_yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const src = [_]FigPathSegment{keySeg("c")};
@@ -3742,7 +3740,7 @@ test "frontmatter c abi reorder items in a block sequence value" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntags:\n- x\n- y\n- z\n---\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedType.frontmatter_yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const path = [_]FigPathSegment{keySeg("tags")};
@@ -3759,7 +3757,7 @@ test "frontmatter c abi move item in a flow sequence value" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntags: [x, y, z]\n---\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedType.frontmatter_yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const path = [_]FigPathSegment{keySeg("tags")};
@@ -3779,8 +3777,10 @@ test "fig_embed_retype re-houses a block, keeping every host byte" {
     try std.testing.expectEqual(FigStatus.ok, fig_embed_retype(
         md.ptr,
         md.len,
-        @intFromEnum(FigEmbedType.frontmatter_yaml),
-        @intFromEnum(FigEmbedType.frontmatter_json),
+        @intFromEnum(FigEmbedContainer.md_frontmatter),
+        @intFromEnum(FigFormat.yaml),
+        @intFromEnum(FigEmbedContainer.semicolons_json),
+        @intFromEnum(FigFormat.json),
         content.ptr,
         content.len,
         &ptr,
@@ -3799,8 +3799,10 @@ test "fig_embed_retype refuses to move a mid-document block to an edge" {
     try std.testing.expectEqual(FigStatus.unsupported_operation, fig_embed_retype(
         html.ptr,
         html.len,
-        @intFromEnum(FigEmbedType.html_script_yaml),
-        @intFromEnum(FigEmbedType.frontmatter_yaml),
+        @intFromEnum(FigEmbedContainer.html_script),
+        @intFromEnum(FigFormat.yaml),
+        @intFromEnum(FigEmbedContainer.md_frontmatter),
+        @intFromEnum(FigFormat.yaml),
         content.ptr,
         content.len,
         &ptr,
@@ -3810,8 +3812,10 @@ test "fig_embed_retype refuses to move a mid-document block to an edge" {
     try std.testing.expectEqual(FigStatus.ok, fig_embed_retype(
         html.ptr,
         html.len,
-        @intFromEnum(FigEmbedType.html_script_yaml),
-        @intFromEnum(FigEmbedType.html_code_yaml),
+        @intFromEnum(FigEmbedContainer.html_script),
+        @intFromEnum(FigFormat.yaml),
+        @intFromEnum(FigEmbedContainer.html_code),
+        @intFromEnum(FigFormat.yaml),
         content.ptr,
         content.len,
         &ptr,
@@ -3828,17 +3832,17 @@ test "fig_embed_retype reports a missing or unterminated region" {
     var ptr: [*]u8 = undefined;
     var len: usize = undefined;
     const plain = "# just markdown\n";
-    try std.testing.expectEqual(FigStatus.not_found, fig_embed_retype(plain.ptr, plain.len, @intFromEnum(FigEmbedType.frontmatter_yaml), @intFromEnum(FigEmbedType.plus_toml), "", 0, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.not_found, fig_embed_retype(plain.ptr, plain.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), @intFromEnum(FigEmbedContainer.plus_toml), @intFromEnum(FigFormat.toml), "", 0, &ptr, &len));
     const unterminated = "---\nk: v\nno close\n";
-    try std.testing.expectEqual(FigStatus.parse_error, fig_embed_retype(unterminated.ptr, unterminated.len, @intFromEnum(FigEmbedType.frontmatter_yaml), @intFromEnum(FigEmbedType.plus_toml), "", 0, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.parse_error, fig_embed_retype(unterminated.ptr, unterminated.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), @intFromEnum(FigEmbedContainer.plus_toml), @intFromEnum(FigFormat.toml), "", 0, &ptr, &len));
     // Null out params are rejected, not crashed on.
-    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_retype(plain.ptr, plain.len, 0, 0, "", 0, null, &len));
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_retype(plain.ptr, plain.len, 0, 0, 0, 0, "", 0, null, &len));
 }
 
 test "embed c abi locates region with content and body spans" {
     const md = "---\nk: v\n---\nbody\n";
     var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined, .body_before = undefined, .body_after = undefined };
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @intFromEnum(FigEmbedType.frontmatter_yaml), &region));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &region));
     try std.testing.expectEqualStrings("k: v\n", md[region.content.start..region.content.end]);
     // The body is the suffix after the close fence.
     try std.testing.expectEqualStrings("body\n", md[region.body.start..region.body.end]);
@@ -3848,53 +3852,76 @@ test "embed c abi locates a ```fig fenced frontmatter block (extract-only)" {
     if (comptime !build_options.lang_fig) return error.SkipZigTest;
     const md = "```fig\nk = v\n```\nbody\n";
     var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined, .body_before = undefined, .body_after = undefined };
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @intFromEnum(FigEmbedType.frontmatter_fig), &region));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @intFromEnum(FigEmbedContainer.fenced), @intFromEnum(FigFormat.fig), &region));
     try std.testing.expectEqualStrings("k = v\n", md[region.content.start..region.content.end]);
     try std.testing.expectEqualStrings("body\n", md[region.body.start..region.body.end]);
 }
 
 test "embed c abi detects each archetype by its open delimiter" {
-    const cases = [_]struct { src: []const u8, want: FigEmbedType }{
-        .{ .src = "---\nk: v\n---\nbody\n", .want = .frontmatter_yaml },
-        .{ .src = ";;;\n{\"k\": 1}\n;;;\nbody\n", .want = .frontmatter_json },
-        .{ .src = "```fig\nk = v\n```\nbody\n", .want = .frontmatter_fig },
-        .{ .src = "body\n```endmatter\nk: v\n```\n", .want = .endmatter_yaml },
-        .{ .src = "+++\nk = \"v\"\n+++\nbody\n", .want = .plus_toml },
-        .{ .src = "```toml\nk = \"v\"\n```\nbody\n", .want = .fenced_toml },
-        .{ .src = "```yaml\nk: v\n```\nbody\n", .want = .fenced_yaml },
-        .{ .src = "```json\n{\"k\": 1}\n```\nbody\n", .want = .fenced_json },
-        .{ .src = "---toml\nk = \"v\"\n---\nbody\n", .want = .md_frontmatter_toml },
-        .{ .src = "<html><head>\n<script type=\"application/figl\">\nk = \"v\"\n</script>\n</head></html>\n", .want = .html_script_fig },
+    // A preset container reports the format it pins, so every pair read back
+    // names a real inner format.
+    const cases = [_]struct { src: []const u8, container: FigEmbedContainer, format: FigFormat }{
+        .{ .src = "---\nk: v\n---\nbody\n", .container = .md_frontmatter, .format = .yaml },
+        .{ .src = ";;;\n{\"k\": 1}\n;;;\nbody\n", .container = .semicolons_json, .format = .json },
+        .{ .src = "```fig\nk = v\n```\nbody\n", .container = .fenced, .format = .fig },
+        .{ .src = "body\n```endmatter\nk: v\n```\n", .container = .endmatter_yaml, .format = .yaml },
+        .{ .src = "+++\nk = \"v\"\n+++\nbody\n", .container = .plus_toml, .format = .toml },
+        .{ .src = "```toml\nk = \"v\"\n```\nbody\n", .container = .fenced, .format = .toml },
+        .{ .src = "```yaml\nk: v\n```\nbody\n", .container = .fenced, .format = .yaml },
+        .{ .src = "```json\n{\"k\": 1}\n```\nbody\n", .container = .fenced, .format = .json },
+        .{ .src = "---toml\nk = \"v\"\n---\nbody\n", .container = .md_frontmatter, .format = .toml },
+        .{ .src = "<html><head>\n<script type=\"application/figl\">\nk = \"v\"\n</script>\n</head></html>\n", .container = .html_script, .format = .fig },
+        .{ .src = "<pre><code class=\"language-yaml\">\nk: v\n</code></pre>\n", .container = .html_code, .format = .yaml },
     };
     for (cases) |case| {
-        var out: c_int = -1;
-        try std.testing.expectEqual(FigStatus.ok, fig_embed_detect(case.src.ptr, case.src.len, &out));
-        try std.testing.expectEqual(@intFromEnum(case.want), out);
+        var out_c: c_int = -1;
+        var out_f: c_int = -1;
+        try std.testing.expectEqual(FigStatus.ok, fig_embed_detect(case.src.ptr, case.src.len, &out_c, &out_f));
+        try std.testing.expectEqual(@intFromEnum(case.container), out_c);
+        try std.testing.expectEqual(@intFromEnum(case.format), out_f);
     }
+}
+
+test "embed c abi refuses a pair the model cannot spell" {
+    const md = "---\nk: v\n---\nbody\n";
+    var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined, .body_before = undefined, .body_after = undefined };
+    // A format with no embedded spelling, an unknown format, an unknown
+    // container: each is a malformed selector, not a missing region.
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_extract(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.ini), &region));
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_extract(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), 6, &region));
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_extract(md.ptr, md.len, 99, @intFromEnum(FigFormat.yaml), &region));
+    // A preset ignores the format argument — even a nonsense one.
+    const jf = ";;;\n{\"k\": 1}\n;;;\nbody\n";
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(jf.ptr, jf.len, @intFromEnum(FigEmbedContainer.semicolons_json), -1, &region));
+    try std.testing.expectEqualStrings("{\"k\": 1}\n", jf[region.content.start..region.content.end]);
 }
 
 test "embed c abi detect: not_found leaves out untouched; unterminated still detects" {
     // Plain markdown — no archetype opens it.
     const plain = "# just a note\n";
-    var out: c_int = -7;
-    try std.testing.expectEqual(FigStatus.not_found, fig_embed_detect(plain.ptr, plain.len, &out));
-    try std.testing.expectEqual(@as(c_int, -7), out);
+    var out_c: c_int = -7;
+    var out_f: c_int = -7;
+    try std.testing.expectEqual(FigStatus.not_found, fig_embed_detect(plain.ptr, plain.len, &out_c, &out_f));
+    try std.testing.expectEqual(@as(c_int, -7), out_c);
+    try std.testing.expectEqual(@as(c_int, -7), out_f);
     // An unterminated fence is still recognized (open-delimiter-only sniff), so
     // the follow-up extract reports the real error rather than not_found.
     const unterminated = "---\nk: v\nno close\n";
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_detect(unterminated.ptr, unterminated.len, &out));
-    try std.testing.expectEqual(@intFromEnum(FigEmbedType.frontmatter_yaml), out);
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_detect(unterminated.ptr, unterminated.len, &out_c, &out_f));
+    try std.testing.expectEqual(@intFromEnum(FigEmbedContainer.md_frontmatter), out_c);
+    try std.testing.expectEqual(@intFromEnum(FigFormat.yaml), out_f);
     var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined, .body_before = undefined, .body_after = undefined };
-    try std.testing.expectEqual(FigStatus.parse_error, fig_embed_extract(unterminated.ptr, unterminated.len, out, &region));
-    // Null out param is invalid, not a crash.
-    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_detect(plain.ptr, plain.len, null));
+    try std.testing.expectEqual(FigStatus.parse_error, fig_embed_extract(unterminated.ptr, unterminated.len, out_c, out_f, &region));
+    // A null out param is invalid, not a crash — either of them.
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_detect(plain.ptr, plain.len, null, &out_f));
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_detect(plain.ptr, plain.len, &out_c, null));
 }
 
 test "embed c abi fig_embed_open edits a ```fig fenced frontmatter block" {
     if (comptime !build_options.lang_fig) return error.SkipZigTest;
     const md = "```fig\nk = v\n```\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedType.frontmatter_fig), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedContainer.fenced), @intFromEnum(FigFormat.fig), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const path = [_]FigPathSegment{keySeg("k")};
@@ -3911,7 +3938,7 @@ test "embed c abi edits a <code> block span-aware (untouched entity encoding pre
     // Mixed original encodings: `expr` uses numeric &#60;, `note` uses named &lt;.
     const html = "<pre><code class=\"language-figl\">\nexpr = \"a &#60; b\"\nnote = \"x &lt; y\"\n</code></pre>\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(html.ptr, html.len, @intFromEnum(FigEmbedType.html_code_fig), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(html.ptr, html.len, @intFromEnum(FigEmbedContainer.html_code), @intFromEnum(FigFormat.fig), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     // Edit `expr` to a quoted value containing `>` — it must canonically re-encode.
@@ -3937,7 +3964,7 @@ test "embed c abi fig_embed_set splices a block map into a ```fig fence" {
     // per-key flow inserts).
     const md = "```fig\ntitle = hi\n```\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedType.frontmatter_fig), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedContainer.fenced), @intFromEnum(FigFormat.fig), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const path = [_]FigPathSegment{keySeg("registry")};
@@ -3963,7 +3990,7 @@ test "embed c abi region size-gate leaves uncovered fields untouched" {
         .body_before = .{ .start = 555, .end = 666 },
         .body_after = .{ .start = 777, .end = 888 },
     };
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @intFromEnum(FigEmbedType.frontmatter_yaml), &region));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &region));
     try std.testing.expectEqualStrings("k: v\n", md[region.content.start..region.content.end]);
     try std.testing.expectEqual(@as(usize, 111), region.close_fence.start);
     try std.testing.expectEqual(@as(usize, 333), region.body.start);
@@ -3976,7 +4003,7 @@ test "fig_embed_replace_body swaps the body, keeps fences + edited content" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntitle: Hi\n---\nold body\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedType.frontmatter_yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     var ptr: [*c]const u8 = undefined;
@@ -4000,7 +4027,7 @@ test "fig_embed_open_or_init creates a frontmatter block where none exists" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "# Just a body\n\nprose\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @intFromEnum(FigEmbedType.frontmatter_yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &out_fm));
     defer fig_embed_destroy(out_fm);
     // The synthesized block is empty; the first set lands the opening key.
     const title = [_]FigPathSegment{keySeg("title")};
@@ -4016,7 +4043,7 @@ test "fig_embed_open_or_init opens an existing region unchanged" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntitle: Old # c\n---\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @intFromEnum(FigEmbedType.frontmatter_yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &out_fm));
     defer fig_embed_destroy(out_fm);
     // Behaves like open: edits the existing region, comment + body preserved.
     const title = [_]FigPathSegment{keySeg("title")};
@@ -4032,7 +4059,7 @@ test "fig_embed_open_or_init creates a JSON (;;;) frontmatter block" {
     if (comptime !build_options.lang_json) return error.SkipZigTest;
     const md = "# Doc\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @intFromEnum(FigEmbedType.frontmatter_json), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @intFromEnum(FigEmbedContainer.semicolons_json), @intFromEnum(FigFormat.json), &out_fm));
     defer fig_embed_destroy(out_fm);
     const title = [_]FigPathSegment{keySeg("title")};
     const hi = "\"Hi\""; // strict JSON value: a quoted string
@@ -4048,7 +4075,7 @@ test "fig_embed_open_or_init appends an endmatter block at the bottom" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "# Title\n\nbody text\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @intFromEnum(FigEmbedType.endmatter_yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @intFromEnum(FigEmbedContainer.endmatter_yaml), @intFromEnum(FigFormat.yaml), &out_fm));
     defer fig_embed_destroy(out_fm);
     const k = [_]FigPathSegment{keySeg("k")};
     const v = "v";
@@ -4063,7 +4090,7 @@ test "embed c abi edits json frontmatter (`;;;` fences, JSON inner editor)" {
     if (comptime !build_options.lang_json) return error.SkipZigTest;
     const md = ";;;\n{\"title\": \"Hi\", \"draft\": true}\n;;;\n# Body\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedType.frontmatter_json), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedContainer.semicolons_json), @intFromEnum(FigFormat.json), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     // The replacement crosses the ABI already serialized — JSON value text here.

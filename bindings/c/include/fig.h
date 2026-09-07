@@ -35,7 +35,11 @@ extern "C" {
 // on; a HIGHER value is an incompatible ABI it was not built for. (`zig build
 // abi-check` pins this macro to the library; `zig build semver-check` requires
 // it to increment whenever the ABI diff against the last release is breaking.)
-#define FIG_ABI_VERSION 1
+//
+// History: 1 — core 2.0 through 2.9. 2 — core 3.0: FigEmbedType folded into
+// (FigEmbedContainer, FigFormat) pairs on every fig_embed_* selector, and
+// FIG_FORMAT_XML retired.
+#define FIG_ABI_VERSION 2
 
 // Linked-library version, packed as (major << 16) | (minor << 8) | patch.
 uint32_t fig_version(void);
@@ -519,42 +523,42 @@ typedef struct FigRegion {
     FigSpan body_after;
 } FigRegion;
 
-// The flat mirror of fig's parametric embed model. The three parametric
-// families (markdown `---<lang>` frontmatter, ```` ```<lang> ```` fenced blocks,
-// and `<script type="application/<lang>">` HTML data islands) can't carry a
-// format parameter in a C enum, so each (container, format) pair is its own
-// value. Values 0-3 are ABI-frozen; their historical names are kept even where
-// the concept was since renamed (`FRONTMATTER_JSON` is the `;;;` block,
-// `FRONTMATTER_FIG` is the ```` ```fig ```` fenced block). Everything from 4 up is
-// grouped by container.
-typedef enum FigEmbedType {
-    FIG_EMBED_FRONTMATTER_YAML = 0,  // ---            markdown frontmatter, YAML
-    FIG_EMBED_FRONTMATTER_JSON = 1,  // ;;;            JSON frontmatter
-    FIG_EMBED_ENDMATTER_YAML   = 2,  // ```endmatter   trailing YAML block
-    FIG_EMBED_FRONTMATTER_FIG  = 3,  // ```fig         fenced fig block
-    FIG_EMBED_PLUS_TOML        = 4,  // +++            TOML frontmatter (Hugo/Zola)
-    // Fenced ```<lang> code blocks.
-    FIG_EMBED_FENCED_YAML      = 5,
-    FIG_EMBED_FENCED_JSON      = 6,
-    FIG_EMBED_FENCED_TOML      = 7,
-    // Markdown ---<lang> frontmatter (bare --- is FRONTMATTER_YAML above).
-    FIG_EMBED_MD_FRONTMATTER_JSON = 8,
-    FIG_EMBED_MD_FRONTMATTER_TOML = 9,
-    FIG_EMBED_MD_FRONTMATTER_FIG  = 10,
-    // HTML <script type="application/<lang>"> data islands.
-    FIG_EMBED_HTML_SCRIPT_FIG  = 11,
-    FIG_EMBED_HTML_SCRIPT_YAML = 12,
-    FIG_EMBED_HTML_SCRIPT_JSON = 13,
-    FIG_EMBED_HTML_SCRIPT_TOML = 14,
-    // HTML <pre><code class="language-<lang>"> visible code blocks. Content is
-    // entity-encoded; the editing handle decodes on open and re-encodes
-    // span-aware on render, so an edit keeps every untouched byte's original
-    // encoding while canonically encoding only what changed.
-    FIG_EMBED_HTML_CODE_FIG  = 15,
-    FIG_EMBED_HTML_CODE_YAML = 16,
-    FIG_EMBED_HTML_CODE_JSON = 17,
-    FIG_EMBED_HTML_CODE_TOML = 18,
-} FigEmbedType;
+// The container half of an embed selector. Every fig_embed_* entry point that
+// selects a region takes a (container, format) pair: this enum and a FigFormat.
+// The four PARAMETRIC containers hold any format with an embedded spelling
+// (JSON, YAML, TOML and fig today; FIG_STATUS_INVALID_ARGUMENT for one without,
+// such as INI, and for an unknown value of either integer). The three PRESET
+// containers pin their own format and ignore the format argument; detection
+// reports the pinned one, so a pair read back from fig_embed_detect is always
+// meaningful on its own.
+//
+// ABI 2 shape. ABI 1 (core 2.4 - 2.9) flattened the pair into one FigEmbedType
+// enum of nineteen products; each value maps onto exactly one pair, e.g.
+// FIG_EMBED_FRONTMATTER_YAML -> (FIG_EMBED_MD_FRONTMATTER, FIG_FORMAT_YAML),
+// FIG_EMBED_FRONTMATTER_JSON -> (FIG_EMBED_SEMICOLONS_JSON, any),
+// FIG_EMBED_FRONTMATTER_FIG -> (FIG_EMBED_FENCED, FIG_FORMAT_FIG),
+// FIG_EMBED_FENCED_TOML -> (FIG_EMBED_FENCED, FIG_FORMAT_TOML), and so on down
+// the MD_FRONTMATTER_*, HTML_SCRIPT_* and HTML_CODE_* groups.
+typedef enum FigEmbedContainer {
+    // ---<lang> ... --- (or ...) markdown frontmatter. A bare --- is YAML, so
+    // (FIG_EMBED_MD_FRONTMATTER, FIG_FORMAT_YAML) is the classic frontmatter.
+    FIG_EMBED_MD_FRONTMATTER = 0,
+    // ```<lang> ... ``` fenced block.
+    FIG_EMBED_FENCED = 1,
+    // <script type="application/<lang>"> ... </script> HTML data island.
+    FIG_EMBED_HTML_SCRIPT = 2,
+    // <pre><code class="language-<lang>"> ... </code></pre> visible code block.
+    // Content is entity-encoded; the editing handle decodes on open and
+    // re-encodes span-aware on render, so an edit keeps every untouched byte's
+    // original encoding while canonically encoding only what changed.
+    FIG_EMBED_HTML_CODE = 3,
+    // ;;; ... ;;; JSON frontmatter. Preset: format argument ignored (JSON).
+    FIG_EMBED_SEMICOLONS_JSON = 4,
+    // +++ ... +++ TOML frontmatter (Hugo/Zola). Preset: format ignored (TOML).
+    FIG_EMBED_PLUS_TOML = 5,
+    // A trailing ```endmatter ... ``` YAML block. Preset: format ignored (YAML).
+    FIG_EMBED_ENDMATTER_YAML = 6,
+} FigEmbedContainer;
 
 // Locate an embedded region and report its fence/content/body spans (in
 // host-file coordinates) without parsing the content. The caller must set
@@ -562,19 +566,20 @@ typedef enum FigEmbedType {
 // when no region of that type exists; a region whose open fence has no matching
 // close is FIG_STATUS_PARSE_ERROR.
 FigStatus fig_embed_extract(const uint8_t *input, size_t input_len,
-                            int embed_type, FigRegion *out_region);
+                            int container, int format, FigRegion *out_region);
 
 // Best-effort sniff of which embed archetype `input` uses: try each known
 // archetype's OPEN delimiter and report the first that matches. Only the open
 // delimiter is checked — an unterminated block is still recognized as its
 // archetype, so a follow-up fig_embed_extract/fig_embed_open surfaces the real
 // FIG_STATUS_PARSE_ERROR instead of a misleading "nothing found". Writes the
-// detected FigEmbedType to `out_embed_type` and returns FIG_STATUS_OK, or
-// FIG_STATUS_NOT_FOUND when `input` opens none of them (the out param is left
-// untouched). Detection is delimiter-only, so it works regardless of which
+// detected FigEmbedContainer and FigFormat to `out_container` and `out_format`
+// and returns FIG_STATUS_OK, or FIG_STATUS_NOT_FOUND when `input` opens none of
+// them (both out params are left untouched). A preset container reports the
+// format it pins. Detection is delimiter-only, so it works regardless of which
 // inner formats this build compiles in.
 FigStatus fig_embed_detect(const uint8_t *input, size_t input_len,
-                           int *out_embed_type);
+                           int *out_container, int *out_format);
 
 // Re-house `input`'s embedded region under a DIFFERENT archetype's fences: keep
 // every host byte outside the block, and wrap `content` — the already
@@ -590,14 +595,14 @@ FigStatus fig_embed_detect(const uint8_t *input, size_t input_len,
 // sides survives in file order either way, and a UTF-8 BOM is re-emitted at
 // offset 0 rather than travelling with the prose it precedes.
 //
-// Moving a MID-DOCUMENT block (FIG_EMBED_HTML_SCRIPT_*, FIG_EMBED_HTML_CODE_*)
+// Moving a MID-DOCUMENT block (FIG_EMBED_HTML_SCRIPT, FIG_EMBED_HTML_CODE)
 // to an archetype that sits at an edge of the file returns
 // FIG_STATUS_UNSUPPORTED_OPERATION: hoisting a `---` fence above <html> is
 // neither valid markdown nor valid HTML, and leaving the block where it is does
 // not make it frontmatter. Converting such a file means converting the host too.
 // Mid-document to mid-document is fine, and splices in place.
 //
-// FIG_STATUS_NOT_FOUND when `input` has no region of `from_embed_type`;
+// FIG_STATUS_NOT_FOUND when `input` has no region of the `from` pair;
 // FIG_STATUS_PARSE_ERROR when it opens one and never closes it.
 //
 // OWNERSHIP: on FIG_STATUS_OK the result is a freshly allocated buffer the
@@ -606,28 +611,32 @@ FigStatus fig_embed_detect(const uint8_t *input, size_t input_len,
 // one borrowed from a handle, because it holds no handle. Nothing is written to
 // the out params on failure.
 //
-// Added in core 2.7.0.
+// Added in core 2.7.0; takes (container, format) pairs since core 3.0.
 FigStatus fig_embed_retype(const uint8_t *input, size_t input_len,
-                           int from_embed_type, int to_embed_type,
+                           int from_container, int from_format,
+                           int to_container, int to_format,
                            const uint8_t *content, size_t content_len,
                            uint8_t **out_ptr, size_t *out_len);
 
 // ============================================================================
-// Embed editor (combined): opens the config inside a host file — selected by
-// FigEmbedType — and edits it in its inner format (YAML or JSON), leaving the
-// fences and surrounding host text byte-identical. fig_embed_open picks the
-// inner editor from the archetype; the edit ops mirror fig_editor_*.
+// Embed editor (combined): opens the config inside a host file — selected by a
+// (FigEmbedContainer, FigFormat) pair — and edits it in its inner format,
+// leaving the fences and surrounding host text byte-identical. fig_embed_open
+// picks the inner editor from the pair; the edit ops mirror fig_editor_*. A
+// pair whose format is compiled out of this build is
+// FIG_STATUS_UNSUPPORTED_FORMAT; one the model cannot spell (see
+// FigEmbedContainer) is FIG_STATUS_INVALID_ARGUMENT.
 // ============================================================================
 
 typedef struct FigEmbed FigEmbed;
 
-FigStatus fig_embed_open(const uint8_t *input, size_t input_len, int embed_type, FigEmbed **out_embed);
-// Like fig_embed_open, but when no region of `embed_type` exists, create an empty
+FigStatus fig_embed_open(const uint8_t *input, size_t input_len, int container, int format, FigEmbed **out_embed);
+// Like fig_embed_open, but when no region of that pair exists, create an empty
 // one (frontmatter at the top, endmatter at the bottom) instead of returning
 // FIG_STATUS_NOT_FOUND — so a subsequent fig_embed_set / fig_embed_insert_key
 // lands the first entry. An existing region is opened unchanged; a malformed one
 // (open fence with no close) still fails.
-FigStatus fig_embed_open_or_init(const uint8_t *input, size_t input_len, int embed_type, FigEmbed **out_embed);
+FigStatus fig_embed_open_or_init(const uint8_t *input, size_t input_len, int container, int format, FigEmbed **out_embed);
 void fig_embed_destroy(FigEmbed *embed);
 
 FigStatus fig_embed_replace_val(FigEmbed *embed, const FigPathSegment *path,

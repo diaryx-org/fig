@@ -33,7 +33,7 @@ const version = std.SemanticVersion.parse(@import("build.zig.zon").version) catc
 /// rare); decoupled from the marketing `.version` above so a feature release does
 /// not move it. `zig build semver-check` requires it to increment whenever the C
 /// ABI diff against the last release tag is breaking.
-const abi_version: u8 = 1;
+const abi_version: u8 = 2;
 
 /// The `fig` CLI binary's OWN SemVer track — independent of `.version` above,
 /// the same way the Rust crate and npm package are independent of it (see

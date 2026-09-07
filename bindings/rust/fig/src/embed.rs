@@ -70,56 +70,76 @@ pub enum EmbedType {
 }
 
 impl EmbedType {
-    fn ffi(self) -> ffi::FigEmbedType {
-        use ffi::FigEmbedType as F;
+    /// The `(container, format)` pair the C ABI selects this archetype by.
+    /// The Rust enum stays flat — one name per archetype is what a caller
+    /// wants to write — and this is the one place the two shapes meet.
+    fn parts(self) -> (ffi::FigEmbedContainer, ffi::FigFormat) {
+        use ffi::FigEmbedContainer as C;
+        use ffi::FigFormat as F;
         match self {
-            EmbedType::FrontmatterYaml => F::FrontmatterYaml,
-            EmbedType::FrontmatterJson => F::FrontmatterJson,
-            EmbedType::EndmatterYaml => F::EndmatterYaml,
-            EmbedType::FrontmatterFig => F::FrontmatterFig,
-            EmbedType::PlusToml => F::PlusToml,
-            EmbedType::FencedYaml => F::FencedYaml,
-            EmbedType::FencedJson => F::FencedJson,
-            EmbedType::FencedToml => F::FencedToml,
-            EmbedType::MdFrontmatterJson => F::MdFrontmatterJson,
-            EmbedType::MdFrontmatterToml => F::MdFrontmatterToml,
-            EmbedType::MdFrontmatterFig => F::MdFrontmatterFig,
-            EmbedType::HtmlScriptFig => F::HtmlScriptFig,
-            EmbedType::HtmlScriptYaml => F::HtmlScriptYaml,
-            EmbedType::HtmlScriptJson => F::HtmlScriptJson,
-            EmbedType::HtmlScriptToml => F::HtmlScriptToml,
-            EmbedType::HtmlCodeFig => F::HtmlCodeFig,
-            EmbedType::HtmlCodeYaml => F::HtmlCodeYaml,
-            EmbedType::HtmlCodeJson => F::HtmlCodeJson,
-            EmbedType::HtmlCodeToml => F::HtmlCodeToml,
+            EmbedType::FrontmatterYaml => (C::MdFrontmatter, F::Yaml),
+            EmbedType::FrontmatterJson => (C::SemicolonsJson, F::Json),
+            EmbedType::EndmatterYaml => (C::EndmatterYaml, F::Yaml),
+            EmbedType::FrontmatterFig => (C::Fenced, F::Fig),
+            EmbedType::PlusToml => (C::PlusToml, F::Toml),
+            EmbedType::FencedYaml => (C::Fenced, F::Yaml),
+            EmbedType::FencedJson => (C::Fenced, F::Json),
+            EmbedType::FencedToml => (C::Fenced, F::Toml),
+            EmbedType::MdFrontmatterJson => (C::MdFrontmatter, F::Json),
+            EmbedType::MdFrontmatterToml => (C::MdFrontmatter, F::Toml),
+            EmbedType::MdFrontmatterFig => (C::MdFrontmatter, F::Fig),
+            EmbedType::HtmlScriptFig => (C::HtmlScript, F::Fig),
+            EmbedType::HtmlScriptYaml => (C::HtmlScript, F::Yaml),
+            EmbedType::HtmlScriptJson => (C::HtmlScript, F::Json),
+            EmbedType::HtmlScriptToml => (C::HtmlScript, F::Toml),
+            EmbedType::HtmlCodeFig => (C::HtmlCode, F::Fig),
+            EmbedType::HtmlCodeYaml => (C::HtmlCode, F::Yaml),
+            EmbedType::HtmlCodeJson => (C::HtmlCode, F::Json),
+            EmbedType::HtmlCodeToml => (C::HtmlCode, F::Toml),
         }
     }
 
-    /// `ffi`'s inverse: decode a `FigEmbedType` discriminant reported by the
-    /// library (e.g. by `fig_embed_detect`). `None` for an unknown value — a
-    /// newer core may know archetypes this binding doesn't.
-    fn from_ffi(value: i32) -> Option<Self> {
-        use ffi::FigEmbedType as F;
-        Some(match value {
-            v if v == F::FrontmatterYaml as i32 => EmbedType::FrontmatterYaml,
-            v if v == F::FrontmatterJson as i32 => EmbedType::FrontmatterJson,
-            v if v == F::EndmatterYaml as i32 => EmbedType::EndmatterYaml,
-            v if v == F::FrontmatterFig as i32 => EmbedType::FrontmatterFig,
-            v if v == F::PlusToml as i32 => EmbedType::PlusToml,
-            v if v == F::FencedYaml as i32 => EmbedType::FencedYaml,
-            v if v == F::FencedJson as i32 => EmbedType::FencedJson,
-            v if v == F::FencedToml as i32 => EmbedType::FencedToml,
-            v if v == F::MdFrontmatterJson as i32 => EmbedType::MdFrontmatterJson,
-            v if v == F::MdFrontmatterToml as i32 => EmbedType::MdFrontmatterToml,
-            v if v == F::MdFrontmatterFig as i32 => EmbedType::MdFrontmatterFig,
-            v if v == F::HtmlScriptFig as i32 => EmbedType::HtmlScriptFig,
-            v if v == F::HtmlScriptYaml as i32 => EmbedType::HtmlScriptYaml,
-            v if v == F::HtmlScriptJson as i32 => EmbedType::HtmlScriptJson,
-            v if v == F::HtmlScriptToml as i32 => EmbedType::HtmlScriptToml,
-            v if v == F::HtmlCodeFig as i32 => EmbedType::HtmlCodeFig,
-            v if v == F::HtmlCodeYaml as i32 => EmbedType::HtmlCodeYaml,
-            v if v == F::HtmlCodeJson as i32 => EmbedType::HtmlCodeJson,
-            v if v == F::HtmlCodeToml as i32 => EmbedType::HtmlCodeToml,
+    /// `parts`' inverse: decode the `(container, format)` pair the library
+    /// reports (from `fig_embed_detect`). `None` for a pair this binding has
+    /// no name for — a newer core may know containers or embeddable formats
+    /// this enum doesn't.
+    fn from_parts(container: i32, format: i32) -> Option<Self> {
+        use ffi::FigEmbedContainer as C;
+        use ffi::FigFormat as F;
+        let c = match container {
+            v if v == C::MdFrontmatter as i32 => C::MdFrontmatter,
+            v if v == C::Fenced as i32 => C::Fenced,
+            v if v == C::HtmlScript as i32 => C::HtmlScript,
+            v if v == C::HtmlCode as i32 => C::HtmlCode,
+            v if v == C::SemicolonsJson as i32 => return Some(EmbedType::FrontmatterJson),
+            v if v == C::PlusToml as i32 => return Some(EmbedType::PlusToml),
+            v if v == C::EndmatterYaml as i32 => return Some(EmbedType::EndmatterYaml),
+            _ => return None,
+        };
+        let f = match format {
+            v if v == F::Yaml as i32 => F::Yaml,
+            v if v == F::Json as i32 => F::Json,
+            v if v == F::Toml as i32 => F::Toml,
+            v if v == F::Fig as i32 => F::Fig,
+            _ => return None,
+        };
+        Some(match (c, f) {
+            (C::MdFrontmatter, F::Yaml) => EmbedType::FrontmatterYaml,
+            (C::MdFrontmatter, F::Json) => EmbedType::MdFrontmatterJson,
+            (C::MdFrontmatter, F::Toml) => EmbedType::MdFrontmatterToml,
+            (C::MdFrontmatter, F::Fig) => EmbedType::MdFrontmatterFig,
+            (C::Fenced, F::Yaml) => EmbedType::FencedYaml,
+            (C::Fenced, F::Json) => EmbedType::FencedJson,
+            (C::Fenced, F::Toml) => EmbedType::FencedToml,
+            (C::Fenced, F::Fig) => EmbedType::FrontmatterFig,
+            (C::HtmlScript, F::Yaml) => EmbedType::HtmlScriptYaml,
+            (C::HtmlScript, F::Json) => EmbedType::HtmlScriptJson,
+            (C::HtmlScript, F::Toml) => EmbedType::HtmlScriptToml,
+            (C::HtmlScript, F::Fig) => EmbedType::HtmlScriptFig,
+            (C::HtmlCode, F::Yaml) => EmbedType::HtmlCodeYaml,
+            (C::HtmlCode, F::Json) => EmbedType::HtmlCodeJson,
+            (C::HtmlCode, F::Toml) => EmbedType::HtmlCodeToml,
+            (C::HtmlCode, F::Fig) => EmbedType::HtmlCodeFig,
             _ => return None,
         })
     }
@@ -256,12 +276,15 @@ pub fn split(content: &str, kind: EmbedType) -> Option<(&str, &str)> {
 /// misleading "nothing found". The counterpart to fig's `Language.detect`, for
 /// embeds.
 pub fn detect(source: &str) -> Option<EmbedType> {
-    let mut out: std::os::raw::c_int = 0;
-    let status = unsafe { ffi::fig_embed_detect(source.as_ptr(), source.len(), &mut out) };
+    let mut container: std::os::raw::c_int = 0;
+    let mut format: std::os::raw::c_int = 0;
+    let status = unsafe {
+        ffi::fig_embed_detect(source.as_ptr(), source.len(), &mut container, &mut format)
+    };
     if status.0 != ffi::FigStatus::OK {
         return None;
     }
-    EmbedType::from_ffi(out)
+    EmbedType::from_parts(container, format)
 }
 
 /// An editor over an embedded config region of a host file.
@@ -276,8 +299,10 @@ impl Embed {
     /// region exists.
     pub fn open(host: &[u8], kind: EmbedType) -> Result<Self, Error> {
         let mut raw = std::ptr::null_mut();
-        let status =
-            unsafe { ffi::fig_embed_open(host.as_ptr(), host.len(), kind.ffi() as i32, &mut raw) };
+        let (container, format) = kind.parts();
+        let status = unsafe {
+            ffi::fig_embed_open(host.as_ptr(), host.len(), container as i32, format as i32, &mut raw)
+        };
         Error::from_status(status)?;
         let raw = NonNull::new(raw).ok_or(Error::Internal)?;
         Ok(Self {
@@ -293,8 +318,15 @@ impl Embed {
     /// existing region is opened unchanged; a malformed one still errors.
     pub fn open_or_init(host: &[u8], kind: EmbedType) -> Result<Self, Error> {
         let mut raw = std::ptr::null_mut();
+        let (container, format) = kind.parts();
         let status = unsafe {
-            ffi::fig_embed_open_or_init(host.as_ptr(), host.len(), kind.ffi() as i32, &mut raw)
+            ffi::fig_embed_open_or_init(
+                host.as_ptr(),
+                host.len(),
+                container as i32,
+                format as i32,
+                &mut raw,
+            )
         };
         Error::from_status(status)?;
         let raw = NonNull::new(raw).ok_or(Error::Internal)?;
@@ -350,12 +382,16 @@ impl Embed {
     ) -> Result<String, Error> {
         let mut ptr: *mut u8 = std::ptr::null_mut();
         let mut len: usize = 0;
+        let (from_container, from_format) = from.parts();
+        let (to_container, to_format) = to.parts();
         let status = unsafe {
             ffi::fig_embed_retype(
                 host.as_ptr(),
                 host.len(),
-                from.ffi() as i32,
-                to.ffi() as i32,
+                from_container as i32,
+                from_format as i32,
+                to_container as i32,
+                to_format as i32,
                 content.as_ptr(),
                 content.len(),
                 &mut ptr,
@@ -378,11 +414,13 @@ impl Embed {
             size: core::mem::size_of::<ffi::FigRegion>() as u32,
             ..Default::default()
         };
+        let (container, format) = kind.parts();
         let status = unsafe {
             ffi::fig_embed_extract(
                 content.as_ptr(),
                 content.len(),
-                kind.ffi() as i32,
+                container as i32,
+                format as i32,
                 &mut region,
             )
         };

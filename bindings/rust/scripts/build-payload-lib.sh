@@ -8,8 +8,9 @@
 #   scripts/build-payload-lib.sh macos-arm64
 #   scripts/build-payload-lib.sh all
 #
-# The library is built with fig's DEFAULT language set — json, yaml, toml, fig
-# ON; zon, xml OFF — matching `fig`'s `default` features. `fig-sys`'s build
+# The library is built with fig's DEFAULT language set — json, yaml, toml, fig,
+# ini, dotenv, properties, nestedtext ON; zon, plist OFF — matching `fig`'s
+# `default` features. `fig-sys`'s build
 # script only links a prebuilt archive when the active feature set matches this;
 # any other combination compiles the core from source.
 #
@@ -30,8 +31,8 @@ build_one() {
     prefix="$(mktemp -d)"
 
     echo "build-payload-lib: $key ($rust_target -> zig $zig_target)"
-    # Default language set: zon and xml are off in fig's `default`, everything
-    # else on. Keep in sync with fig-sys's `features_match_prebuilt()`.
+    # Default language set: zon and plist are off in fig's `default`,
+    # everything else on. Keep in sync with fig-sys's `features_match_prebuilt()`.
     zig build install-c-lib \
         -Doptimize=ReleaseFast \
         -Dstrip=true \

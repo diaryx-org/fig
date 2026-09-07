@@ -410,29 +410,21 @@ pub struct FigRegion {
     pub body_after: FigSpan,
 }
 
+/// The container half of an embed selector; every `fig_embed_*` entry point
+/// that selects a region takes one of these beside a `FigFormat`. The four
+/// parametric containers read the format; the three presets pin their own
+/// and ignore it. Mirrors `FigEmbedContainer` in `fig.h` (ABI 2).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(dead_code)]
-pub enum FigEmbedType {
-    FrontmatterYaml = 0,
-    FrontmatterJson = 1,
-    EndmatterYaml = 2,
-    FrontmatterFig = 3,
-    PlusToml = 4,
-    FencedYaml = 5,
-    FencedJson = 6,
-    FencedToml = 7,
-    MdFrontmatterJson = 8,
-    MdFrontmatterToml = 9,
-    MdFrontmatterFig = 10,
-    HtmlScriptFig = 11,
-    HtmlScriptYaml = 12,
-    HtmlScriptJson = 13,
-    HtmlScriptToml = 14,
-    HtmlCodeFig = 15,
-    HtmlCodeYaml = 16,
-    HtmlCodeJson = 17,
-    HtmlCodeToml = 18,
+pub enum FigEmbedContainer {
+    MdFrontmatter = 0,
+    Fenced = 1,
+    HtmlScript = 2,
+    HtmlCode = 3,
+    SemicolonsJson = 4,
+    PlusToml = 5,
+    EndmatterYaml = 6,
 }
 
 unsafe extern "C" {
@@ -663,14 +655,16 @@ unsafe extern "C" {
     pub fn fig_embed_extract(
         input: *const u8,
         input_len: usize,
-        embed_type: c_int,
+        container: c_int,
+        format: c_int,
         out_region: *mut FigRegion,
     ) -> FigStatus;
 
     pub fn fig_embed_detect(
         input: *const u8,
         input_len: usize,
-        out_embed_type: *mut c_int,
+        out_container: *mut c_int,
+        out_format: *mut c_int,
     ) -> FigStatus;
 
     /// Re-house an embedded region under a different archetype's fences. On
@@ -679,8 +673,10 @@ unsafe extern "C" {
     pub fn fig_embed_retype(
         input: *const u8,
         input_len: usize,
-        from_embed_type: c_int,
-        to_embed_type: c_int,
+        from_container: c_int,
+        from_format: c_int,
+        to_container: c_int,
+        to_format: c_int,
         content: *const u8,
         content_len: usize,
         out_ptr: *mut *mut u8,
@@ -694,13 +690,15 @@ unsafe extern "C" {
     pub fn fig_embed_open(
         input: *const u8,
         input_len: usize,
-        embed_type: c_int,
+        container: c_int,
+        format: c_int,
         out_embed: *mut *mut FigEmbed,
     ) -> FigStatus;
     pub fn fig_embed_open_or_init(
         input: *const u8,
         input_len: usize,
-        embed_type: c_int,
+        container: c_int,
+        format: c_int,
         out_embed: *mut *mut FigEmbed,
     ) -> FigStatus;
     pub fn fig_embed_destroy(fm: *mut FigEmbed);

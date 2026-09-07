@@ -97,23 +97,25 @@ interface Exports {
   fig_editor_append_container_to_seq(ed: number, path: number, path_len: number, body: number, body_len: number): number;
   fig_editor_source(ed: number, out_ptr: number, out_len: number): number;
 
-  fig_embed_extract(input: number, input_len: number, embed_type: number, out_region: number): number;
-  fig_embed_detect(input: number, input_len: number, out_embed_type: number): number;
+  fig_embed_extract(input: number, input_len: number, container: number, format: number, out_region: number): number;
+  fig_embed_detect(input: number, input_len: number, out_container: number, out_format: number): number;
   /** Re-house an embedded region under a different archetype. On `Ok` the
    *  result is an OWNED buffer in linear memory — free it with `fig_free`,
    *  passing back the exact length. Added in core 2.7.0. */
   fig_embed_retype(
     input: number,
     input_len: number,
-    from_embed_type: number,
-    to_embed_type: number,
+    from_container: number,
+    from_format: number,
+    to_container: number,
+    to_format: number,
     content: number,
     content_len: number,
     out_ptr: number,
     out_len: number,
   ): number;
-  fig_embed_open(input: number, input_len: number, embed_type: number, out: number): number;
-  fig_embed_open_or_init(input: number, input_len: number, embed_type: number, out: number): number;
+  fig_embed_open(input: number, input_len: number, container: number, format: number, out: number): number;
+  fig_embed_open_or_init(input: number, input_len: number, container: number, format: number, out: number): number;
   fig_embed_destroy(em: number): void;
   fig_embed_replace_val(em: number, path: number, path_len: number, repl: number, repl_len: number): number;
   fig_embed_replace_key(em: number, path: number, path_len: number, repl: number, repl_len: number): number;

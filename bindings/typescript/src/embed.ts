@@ -6,7 +6,7 @@
 // host file with the fences and surrounding text byte-identical. The edit
 // methods are inherited from `Editable`. `extract` is a parse-free locator that
 // just reports the fence/content byte spans. Release with `dispose`.
-import { check, EmbedType, FigError, Format, Status } from "./types.ts";
+import { check, embedParts, EmbedType, embedTypeOf, FigError, Format, Status } from "./types.ts";
 import { fig, Frame, handleRegistry, readOutSlice, readU32, writeU32 } from "./ffi.ts";
 import { Editable, type EditFns } from "./edit-ops.ts";
 
@@ -75,29 +75,9 @@ export interface Region {
 
 /** The inner editing format an embed archetype carries (`---`/endmatter ⇒ YAML,
  *  `;;;` ⇒ JSON, `+++` ⇒ TOML, ```fig ⇒ the fig authoring dialect, and each
- *  ```lang fenced label ⇒ that `lang`). */
+ *  ```lang fenced label ⇒ that `lang`) — the format half of `embedParts`. */
 function innerFormat(kind: EmbedType): Format {
-  switch (kind) {
-    case EmbedType.FrontmatterJson:
-    case EmbedType.FencedJson:
-    case EmbedType.MdFrontmatterJson:
-    case EmbedType.HtmlScriptJson:
-    case EmbedType.HtmlCodeJson:
-      return Format.Json;
-    case EmbedType.FrontmatterFig:
-    case EmbedType.MdFrontmatterFig:
-    case EmbedType.HtmlScriptFig:
-    case EmbedType.HtmlCodeFig:
-      return Format.Fig;
-    case EmbedType.PlusToml:
-    case EmbedType.FencedToml:
-    case EmbedType.MdFrontmatterToml:
-    case EmbedType.HtmlScriptToml:
-    case EmbedType.HtmlCodeToml:
-      return Format.Toml;
-    default:
-      return Format.Yaml;
-  }
+  return embedParts(kind)[1];
 }
 
 export class Embed extends Editable {
@@ -109,15 +89,16 @@ export class Embed extends Editable {
   private static openWith(
     host: string | Uint8Array,
     kind: EmbedType,
-    fn: (input: number, inputLen: number, embedType: number, out: number) => number,
+    fn: (input: number, inputLen: number, container: number, format: number, out: number) => number,
     name: string,
   ): Embed {
     const bytes = typeof host === "string" ? encoder.encode(host) : host;
+    const [container, format] = embedParts(kind);
     const frame = new Frame();
     const out = frame.alloc(4);
     try {
       const ptr = frame.bytes(bytes);
-      check(fn(ptr, bytes.length, kind, out), name);
+      check(fn(ptr, bytes.length, container, format, out), name);
       const handle = new DataView(fig.memory.buffer).getUint32(out, true);
       if (handle === 0) throw new FigError(Status.InternalError, name);
       return new Embed(handle, kind);
@@ -168,6 +149,8 @@ export class Embed extends Editable {
   ): string {
     const hostBytes = typeof host === "string" ? encoder.encode(host) : host;
     const contentBytes = typeof content === "string" ? encoder.encode(content) : content;
+    const [fromContainer, fromFormat] = embedParts(from);
+    const [toContainer, toFormat] = embedParts(to);
     const frame = new Frame();
     try {
       const h = frame.bytes(hostBytes);
@@ -175,7 +158,18 @@ export class Embed extends Editable {
       // An 8-byte scratch holding the (ptr, len) out-param pair.
       const out = frame.alloc(8);
       check(
-        fig.fig_embed_retype(h, hostBytes.length, from, to, c, contentBytes.length, out, out + 4),
+        fig.fig_embed_retype(
+          h,
+          hostBytes.length,
+          fromContainer,
+          fromFormat,
+          toContainer,
+          toFormat,
+          c,
+          contentBytes.length,
+          out,
+          out + 4,
+        ),
         "fig_embed_retype",
       );
       // Unlike every other fig call, the result buffer is OURS: fig allocated it
@@ -207,7 +201,8 @@ export class Embed extends Editable {
       const REGION_SIZE = 52;
       const region = frame.alloc(REGION_SIZE);
       writeU32(region, REGION_SIZE);
-      check(fig.fig_embed_extract(ptr, bytes.length, kind, region), "fig_embed_extract");
+      const [container, format] = embedParts(kind);
+      check(fig.fig_embed_extract(ptr, bytes.length, container, format, region), "fig_embed_extract");
       // Spans start after the 4-byte `size` field: offsets 4, 12, 20, 28, 36, 44.
       const span = (off: number): Span => ({ start: readU32(region + off), end: readU32(region + off + 4) });
       return {
@@ -293,11 +288,12 @@ export function detect(source: string | Uint8Array): EmbedType | null {
   const frame = new Frame();
   try {
     const ptr = frame.bytes(bytes);
-    const out = frame.alloc(4);
-    const status = fig.fig_embed_detect(ptr, bytes.length, out);
+    // Two 4-byte out slots: the container, then the inner format.
+    const out = frame.alloc(8);
+    const status = fig.fig_embed_detect(ptr, bytes.length, out, out + 4);
     if (status === Status.NotFound) return null;
     check(status, "fig_embed_detect");
-    return readU32(out) as EmbedType;
+    return embedTypeOf(readU32(out), readU32(out + 4));
   } finally {
     frame.dispose();
   }

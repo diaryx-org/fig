@@ -6,10 +6,7 @@ created = 2026-09-04
 updated = 2026-09-07
 part_of = [docs](/docs/docs.md)
 contents
-> * [JSON printer emits a non-string mapping key as invalid JSON](json-printer-emits-non-string-keys.md)
-> * [YAML printer drops `%TAG` directives and root collection properties](yaml-printer-drops-directives-and-root-props.md)
-> * [Editor: read and write the dangling anchor, and comment a node out and back in](dangling-comments-and-comment-out-ops.md)
-> * [A flow sequence item reports, and deletes, its parent's leading comment](flow-item-leading-comment-is-the-parents.md)
+> * [YAML `!!int`/`!!float` is applied without checking the lexeme, and `%TAG !!` is not honoured](yaml-int-tag-applied-without-checking-the-lexeme.md)
 ```
 
 # Tasks

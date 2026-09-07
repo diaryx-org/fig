@@ -335,6 +335,10 @@ FigStatus fig_editor_set(FigEditor *editor, const FigPathSegment *path,
 // the value's same-line comment, replacing any existing one (single-line `text`,
 // else FIG_STATUS_INVALID_ARGUMENT). The delete ops remove the leading block /
 // the trailing comment, and are a no-op (FIG_STATUS_OK) when there is none.
+// An element or entry of a ONE-LINE flow collection (`members = ["a", "b"]`,
+// `nested: {k: v}`) shares its parent's line and so owns neither the block above
+// it nor its end: the two add/set ops return FIG_STATUS_INVALID_ARGUMENT there,
+// the deletes are a no-op, and the reads below answer FIG_STATUS_NOT_FOUND.
 FigStatus fig_editor_add_leading_comment(FigEditor *editor, const FigPathSegment *path,
                                          size_t path_len, const uint8_t *text, size_t text_len);
 FigStatus fig_editor_set_trailing_comment(FigEditor *editor, const FigPathSegment *path,

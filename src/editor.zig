@@ -530,6 +530,62 @@ pub fn Editor(comptime Language: type) type {
             return self.syntax().kv_sep orelse error.UnsupportedShape;
         }
 
+        /// Whether a comment op at `path` has no line of its own to work with:
+        /// the node is an element or entry of a flow collection that shares its
+        /// parent's line (`members = ["a", "b"]`, `members: [a, b]`,
+        /// `nested = { k = "v" }`).
+        ///
+        /// Per § 3.4/§ 6.3 a comment written *inside* a flow collection is
+        /// discarded at parse, so such a node can never own a leading block or
+        /// a same-line trailing comment. Anchoring on the node's line anyway
+        /// made every comment op reach the PARENT's through the item: the read
+        /// returned the parent's block, `deleteLeadingComments` removed it, and
+        /// `addLeadingComment` inserted above the parent's line (on fig, whose
+        /// indent is the raw line prefix, it spliced the prefix `members = [`
+        /// back in as well). See
+        /// `docs/tasks/flow-item-leading-comment-is-the-parents.md`.
+        ///
+        /// The test is what SHARES the line, not the node's column: the parent
+        /// is flow, and either the parent's opener (`key = [`) or a preceding
+        /// element sits on the node's own line. Asking instead whether the node
+        /// begins its line would be wrong for every format that decorates the
+        /// line before the node's span — ZON's `.` in `.n = 3`, a block
+        /// sequence's `- `, fig's `> ` marker run — and an item of a MULTI-LINE
+        /// flow collection (one element per line) has to keep working, since
+        /// each of those does own its line.
+        ///
+        /// The document root is excluded: `isFlow`'s first-character test reads
+        /// a TOML file that opens with `[table]` as a flow root, and a root
+        /// entry has no parent key line for its comment to be confused with
+        /// anyway.
+        ///
+        /// Infallible: an unresolvable path answers "anchored" so the caller's
+        /// own `getNodeByPath`/`getValByPath` raises the real `NotFound`.
+        fn commentsUnanchored(self: *const Self, parsed: Document, path: []const AST.PathSegment) bool {
+            if (path.len == 0) return false;
+            const source = self.source.items;
+            const parent = parsed.ast.getValByPath(path[0 .. path.len - 1]) catch return false;
+            if (parent.id == parsed.ast.root) return false;
+            const parent_span = parsed.span(parent);
+            if (!isFlow(source, parent_span)) return false;
+            const node = parsed.ast.getNodeByPath(path) catch return false;
+            const line = lineStartBefore(source, parsed.span(node).start);
+            // The opener is on this line, so what precedes the node is the
+            // parent's own `key = [` — the line, and the block above it, are
+            // the parent's.
+            if (lineStartBefore(source, parent_span.start) == line) return true;
+            // Otherwise the node is unanchored only if a preceding element ends
+            // on the same line (`[\n  "a", "b",\n]` — "b" shares "a"'s line).
+            var prev_end: ?usize = null;
+            var cur = (parsed.ast.child(&parent) catch return false) orelse return false;
+            while (cur.id != node.id) {
+                prev_end = parsed.span(cur).end;
+                cur = parsed.ast.next(&cur) orelse return false;
+            }
+            const end = prev_end orelse return false;
+            return lineStartBefore(source, end -| 1) == line;
+        }
+
         /// The line a leading-comment op anchors on: the node's own line start,
         /// which for a mapping entry is its key's line.
         ///
@@ -553,11 +609,15 @@ pub fn Editor(comptime Language: type) type {
         /// indentation. It lands at the BOTTOM of any existing leading comment
         /// block (the comment line nearest the node). `text` may be multi-line;
         /// each line becomes its own comment line. Returns `CommentsUnsupported`
-        /// for a dialect without comment syntax (strict JSON).
+        /// for a dialect without comment syntax (strict JSON), and
+        /// `CommentsUnanchored` for a node that shares its parent's line inside
+        /// a flow collection (see `commentsUnanchored`) — there is no line to
+        /// put a comment on that the node would own.
         pub fn addLeadingComment(self: *Self, path: []const AST.PathSegment, text: []const u8) !void {
             if (@hasDecl(Language, "addLeadingComment")) return Language.addLeadingComment(self, path, text);
             const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
             const parsed = try self.getParsed();
+            if (self.commentsUnanchored(parsed, path)) return error.CommentsUnanchored;
             const node = try parsed.ast.getNodeByPath(path);
             const span = parsed.span(node);
             const source = self.source.items;
@@ -585,8 +645,14 @@ pub fn Editor(comptime Language: type) type {
         /// block sequence), so the window is the key line, starting just past the
         /// key. `start` always sits before any comment marker and after the value
         /// (scalar) or key (block), so a `#`/`//` inside the value can't false-match.
-        fn trailingCommentWindow(self: *Self, path: []const AST.PathSegment) !struct { start: usize, line_end: usize } {
+        ///
+        /// `null` when the node has no such window at all: a flow element or
+        /// entry sharing its parent's line, whose line-end comment is the
+        /// PARENT's (see `commentsUnanchored`). Each caller turns that into its
+        /// own "as if there were none" answer.
+        fn trailingCommentWindow(self: *Self, path: []const AST.PathSegment) !?struct { start: usize, line_end: usize } {
             const parsed = try self.getParsed();
+            if (self.commentsUnanchored(parsed, path)) return null;
             const val = try parsed.ast.getValByPath(path);
             const val_span = parsed.span(val);
             const source = self.source.items;
@@ -606,12 +672,14 @@ pub fn Editor(comptime Language: type) type {
         /// existing trailing comment on that line, or append one if there is none.
         /// `text` must be a single line. Returns `CommentsUnsupported` for a
         /// dialect without comment syntax (strict JSON), `MultilineComment` if
-        /// `text` contains a newline.
+        /// `text` contains a newline, and `CommentsUnanchored` for a node that
+        /// shares its parent's line inside a flow collection (see
+        /// `commentsUnanchored`) — the end of that line is the parent's.
         pub fn setTrailingComment(self: *Self, path: []const AST.PathSegment, text: []const u8) !void {
             if (@hasDecl(Language, "setTrailingComment")) return Language.setTrailingComment(self, path, text);
             const marker = self.trailingCommentMarker() orelse return error.CommentsUnsupported;
             if (std.mem.indexOfScalar(u8, text, '\n') != null) return error.MultilineComment;
-            const win = try self.trailingCommentWindow(path);
+            const win = try self.trailingCommentWindow(path) orelse return error.CommentsUnanchored;
             const source = self.source.items;
 
             // If a comment marker already follows on this line, splice from it
@@ -638,12 +706,18 @@ pub fn Editor(comptime Language: type) type {
         /// Remove the run of own-line comments immediately ABOVE the node at
         /// `path` — its owned leading block (contiguous comment lines with no
         /// blank line between, the same block `deleteKey` carries). A no-op when
-        /// the node has none. Returns `CommentsUnsupported` for a dialect without
-        /// comment syntax (strict JSON).
+        /// the node has none — including a node that shares its parent's line
+        /// inside a flow collection, whose block above is the parent's (see
+        /// `commentsUnanchored`). Returns `CommentsUnsupported` for a dialect
+        /// without comment syntax (strict JSON).
         pub fn deleteLeadingComments(self: *Self, path: []const AST.PathSegment) !void {
             if (@hasDecl(Language, "deleteLeadingComments")) return Language.deleteLeadingComments(self, path);
             _ = self.lineCommentMarker() orelse return error.CommentsUnsupported;
             const parsed = try self.getParsed();
+            // Not the node's block to remove (the path resolved: an
+            // unresolvable one answers "anchored" and falls through to the
+            // `getNodeByPath` below, which raises `NotFound`).
+            if (self.commentsUnanchored(parsed, path)) return;
             const node = try parsed.ast.getNodeByPath(path);
             const span = parsed.span(node);
             const source = self.source.items;
@@ -654,12 +728,14 @@ pub fn Editor(comptime Language: type) type {
         }
 
         /// Remove the same-line trailing comment on the value at `path`, if any.
-        /// A no-op when there is none. Returns `CommentsUnsupported` for a dialect
-        /// without comment syntax (strict JSON).
+        /// A no-op when there is none — including a node that shares its
+        /// parent's line inside a flow collection, whose line-end comment is the
+        /// parent's (see `commentsUnanchored`). Returns `CommentsUnsupported`
+        /// for a dialect without comment syntax (strict JSON).
         pub fn deleteTrailingComment(self: *Self, path: []const AST.PathSegment) !void {
             if (@hasDecl(Language, "deleteTrailingComment")) return Language.deleteTrailingComment(self, path);
             const marker = self.trailingCommentMarker() orelse return error.CommentsUnsupported;
-            const win = try self.trailingCommentWindow(path);
+            const win = try self.trailingCommentWindow(path) orelse return; // not this node's line-end
             const source = self.source.items;
             const rel = std.mem.indexOf(u8, source[win.start..win.line_end], marker) orelse return; // none
             var cut = win.start + rel;
@@ -673,12 +749,15 @@ pub fn Editor(comptime Language: type) type {
         /// line's indentation and `marker` (and one following space) stripped, lines
         /// rejoined by '\n'. Returns `null` when there is no block above the node
         /// (distinct from a present-but-empty comment — a bare `#` — which yields
-        /// ""). The caller owns the returned bytes. Returns `CommentsUnsupported`
-        /// for a dialect without comment syntax (strict JSON).
+        /// ""), which includes a node that shares its parent's line inside a flow
+        /// collection: the block above that line is the parent's, not the node's
+        /// (see `commentsUnanchored`). The caller owns the returned bytes. Returns
+        /// `CommentsUnsupported` for a dialect without comment syntax (strict JSON).
         pub fn getLeadingComment(self: *Self, path: []const AST.PathSegment) !?[]u8 {
             if (@hasDecl(Language, "getLeadingComment")) return Language.getLeadingComment(self, path);
             const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
             const parsed = try self.getParsed();
+            if (self.commentsUnanchored(parsed, path)) return null;
             const node = try parsed.ast.getNodeByPath(path);
             const span = parsed.span(node);
             const source = self.source.items;
@@ -705,12 +784,14 @@ pub fn Editor(comptime Language: type) type {
         /// one `setTrailingComment` sets and `deleteTrailingComment` removes — with
         /// its `marker` (and one following space) stripped. Returns `null` when
         /// there is no trailing comment (distinct from a present-but-empty bare `#`,
-        /// which yields ""). The caller owns the returned bytes. Returns
+        /// which yields ""), which includes a node that shares its parent's line
+        /// inside a flow collection: the comment at that line's end is the parent's
+        /// (see `commentsUnanchored`). The caller owns the returned bytes. Returns
         /// `CommentsUnsupported` for a dialect without comment syntax (strict JSON).
         pub fn getTrailingComment(self: *Self, path: []const AST.PathSegment) !?[]u8 {
             if (@hasDecl(Language, "getTrailingComment")) return Language.getTrailingComment(self, path);
             const marker = self.trailingCommentMarker() orelse return error.CommentsUnsupported;
-            const win = try self.trailingCommentWindow(path);
+            const win = try self.trailingCommentWindow(path) orelse return null;
             const source = self.source.items;
             const rel = std.mem.indexOf(u8, source[win.start..win.line_end], marker) orelse
                 return null; // none
@@ -2505,6 +2586,188 @@ test "get comment ops are rejected for strict JSON" {
     defer ed.deinit();
     try testing.expectError(error.CommentsUnsupported, ed.getLeadingComment(&.{.{ .key = "a" }}));
     try testing.expectError(error.CommentsUnsupported, ed.getTrailingComment(&.{.{ .key = "a" }}));
+}
+
+// ── Flow elements own no comment (see `commentsUnanchored`) ────────────────
+//
+// An element or entry of a ONE-LINE flow collection sits on its parent's line,
+// so the block above that line and the comment at its end are the PARENT's.
+// Every op used to reach them through the item: the read returned the parent's
+// text, the delete removed it, and the add spliced a comment onto the parent's
+// line (on fig, whose indent is the raw line prefix, it duplicated `members = [`
+// as well). Per § 3.4/§ 6.3 a comment written inside a flow collection is
+// discarded at parse, so there is nothing for an item to own.
+//
+// Each format's test asserts all three leading ops on such an item, that the
+// parent still answers with its own block, and that the two shapes whose
+// elements DO begin their own lines — a multi-line flow collection, and a block
+// sequence — are untouched.
+
+/// `addLeadingComment` at `path` is refused as unanchored, and the source is
+/// left byte-identical.
+fn expectAddLeadingUnanchored(
+    comptime Lang: type,
+    format: Lang.Type,
+    input: []const u8,
+    path: []const AST.PathSegment,
+) !void {
+    var ed: Editor(Lang) = .{ .allocator = testing.allocator, .format = format };
+    try ed.init(input);
+    defer ed.deinit();
+    try testing.expectError(error.CommentsUnanchored, ed.addLeadingComment(path, "new"));
+    try testing.expectEqualStrings(input, ed.source.items);
+}
+
+/// `setTrailingComment` at `path` is refused as unanchored, and the source is
+/// left byte-identical.
+fn expectSetTrailingUnanchored(
+    comptime Lang: type,
+    format: Lang.Type,
+    input: []const u8,
+    path: []const AST.PathSegment,
+) !void {
+    var ed: Editor(Lang) = .{ .allocator = testing.allocator, .format = format };
+    try ed.init(input);
+    defer ed.deinit();
+    try testing.expectError(error.CommentsUnanchored, ed.setTrailingComment(path, "new"));
+    try testing.expectEqualStrings(input, ed.source.items);
+}
+
+const flow_item0: []const AST.PathSegment = &.{ .{ .key = "members" }, .{ .index = 0 } };
+const flow_item1: []const AST.PathSegment = &.{ .{ .key = "members" }, .{ .index = 1 } };
+const flow_members: []const AST.PathSegment = &.{.{ .key = "members" }};
+const flow_entry: []const AST.PathSegment = &.{ .{ .key = "nested" }, .{ .key = "k" } };
+
+test "TOML: a flow item on its parent's line owns no leading comment" {
+    if (comptime !build_options.lang_toml) return error.SkipZigTest;
+    const one_line = "# above members\nmembers = [\"a\", \"b\"]\n";
+    // Read: null through either item; the block is still `members`' own.
+    try expectCommentGet(Toml, .TOML_1_1, one_line, null, .leading, flow_item0);
+    try expectCommentGet(Toml, .TOML_1_1, one_line, null, .leading, flow_item1);
+    try expectCommentGet(Toml, .TOML_1_1, one_line, "above members", .leading, flow_members);
+    // Delete: a no-op, not a delete of the parent's block.
+    try expectCommentDelete(Toml, .TOML_1_1, one_line, one_line, .leading, flow_item0);
+    // Add: refused; there is no line the item owns to put one on.
+    try expectAddLeadingUnanchored(Toml, .TOML_1_1, one_line, flow_item0);
+    // An inline table's entry shares the line the same way.
+    const inline_tbl = "# above nested\nnested = { k = \"v\" }\n";
+    try expectCommentGet(Toml, .TOML_1_1, inline_tbl, null, .leading, flow_entry);
+    try expectCommentDelete(Toml, .TOML_1_1, inline_tbl, inline_tbl, .leading, flow_entry);
+    try expectAddLeadingUnanchored(Toml, .TOML_1_1, inline_tbl, flow_entry);
+    // A multi-line array's items each begin their own line: unchanged.
+    const multi = "# above members\nmembers = [\n  \"a\",\n  \"b\",\n]\n";
+    try expectCommentGet(Toml, .TOML_1_1, multi, null, .leading, flow_item0);
+    try expectCommentDelete(Toml, .TOML_1_1, multi, multi, .leading, flow_item0);
+    try expectCommentEdit(
+        Toml,
+        .TOML_1_1,
+        multi,
+        "# above members\nmembers = [\n  # new\n  \"a\",\n  \"b\",\n]\n",
+        .leading,
+        flow_item0,
+        "new",
+    );
+}
+
+test "YAML: a flow item on its parent's line owns no leading comment" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    const one_line = "# above\nmembers: [a, b]\n";
+    try expectCommentGet(Yaml, .v1_2_2, one_line, null, .leading, flow_item0);
+    try expectCommentGet(Yaml, .v1_2_2, one_line, null, .leading, flow_item1);
+    try expectCommentGet(Yaml, .v1_2_2, one_line, "above", .leading, flow_members);
+    try expectCommentDelete(Yaml, .v1_2_2, one_line, one_line, .leading, flow_item0);
+    try expectAddLeadingUnanchored(Yaml, .v1_2_2, one_line, flow_item0);
+    // A flow mapping's entry shares the line the same way.
+    const flow_map = "# above nested\nnested: {k: v}\n";
+    try expectCommentGet(Yaml, .v1_2_2, flow_map, null, .leading, flow_entry);
+    try expectCommentDelete(Yaml, .v1_2_2, flow_map, flow_map, .leading, flow_entry);
+    try expectAddLeadingUnanchored(Yaml, .v1_2_2, flow_map, flow_entry);
+    // A block sequence's items each begin their own line: unchanged.
+    const block = "# above\nmembers:\n  - a\n  - b\n";
+    try expectCommentGet(Yaml, .v1_2_2, block, null, .leading, flow_item0);
+    try expectCommentDelete(Yaml, .v1_2_2, block, block, .leading, flow_item0);
+    try expectCommentEdit(Yaml, .v1_2_2, block, "# above\nmembers:\n  # new\n  - a\n  - b\n", .leading, flow_item0, "new");
+}
+
+test "fig: a flow item on its parent's line owns no leading comment" {
+    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    const one_line = "# above\nmembers = [a, b]\n";
+    try expectCommentGet(Fig, .Fig, one_line, null, .leading, flow_item0);
+    try expectCommentGet(Fig, .Fig, one_line, null, .leading, flow_item1);
+    try expectCommentGet(Fig, .Fig, one_line, "above", .leading, flow_members);
+    try expectCommentDelete(Fig, .Fig, one_line, one_line, .leading, flow_item0);
+    // Refused rather than spliced: fig's indent is the raw line prefix, so the
+    // add used to emit `members = [# new` and duplicate the key line.
+    try expectAddLeadingUnanchored(Fig, .Fig, one_line, flow_item0);
+    // A flow object's entry shares the line the same way.
+    const flow_obj = "# above nested\nnested = { k = v }\n";
+    try expectCommentGet(Fig, .Fig, flow_obj, null, .leading, flow_entry);
+    try expectCommentDelete(Fig, .Fig, flow_obj, flow_obj, .leading, flow_entry);
+    try expectAddLeadingUnanchored(Fig, .Fig, flow_obj, flow_entry);
+    // A multi-line (stacked flow) list's items each begin their own line.
+    const multi = "# above\nmembers = [\n  a,\n  b,\n]\n";
+    try expectCommentGet(Fig, .Fig, multi, null, .leading, flow_item0);
+    try expectCommentDelete(Fig, .Fig, multi, multi, .leading, flow_item0);
+    try expectCommentEdit(Fig, .Fig, multi, "# above\nmembers = [\n  # new\n  a,\n  b,\n]\n", .leading, flow_item0, "new");
+}
+
+test "JSONC: a flow item on its parent's line owns no leading comment" {
+    const one_line = "{\n  // above\n  \"members\": [\"a\", \"b\"]\n}";
+    try expectCommentGet(json.Language, .JSONC, one_line, null, .leading, flow_item0);
+    try expectCommentGet(json.Language, .JSONC, one_line, null, .leading, flow_item1);
+    try expectCommentGet(json.Language, .JSONC, one_line, "above", .leading, flow_members);
+    try expectCommentDelete(json.Language, .JSONC, one_line, one_line, .leading, flow_item0);
+    try expectAddLeadingUnanchored(json.Language, .JSONC, one_line, flow_item0);
+    // A one-line nested object's entry shares the line the same way.
+    const nested = "{\n  // above\n  \"nested\": { \"k\": \"v\" }\n}";
+    try expectCommentGet(json.Language, .JSONC, nested, null, .leading, flow_entry);
+    try expectCommentDelete(json.Language, .JSONC, nested, nested, .leading, flow_entry);
+    try expectAddLeadingUnanchored(json.Language, .JSONC, nested, flow_entry);
+    // Pretty-printed, one element per line: unchanged.
+    const multi = "{\n  // above\n  \"members\": [\n    \"a\",\n    \"b\"\n  ]\n}";
+    try expectCommentGet(json.Language, .JSONC, multi, null, .leading, flow_item0);
+    try expectCommentDelete(json.Language, .JSONC, multi, multi, .leading, flow_item0);
+    try expectCommentEdit(
+        json.Language,
+        .JSONC,
+        multi,
+        "{\n  // above\n  \"members\": [\n    // new\n    \"a\",\n    \"b\"\n  ]\n}",
+        .leading,
+        flow_item0,
+        "new",
+    );
+}
+
+test "a flow item on its parent's line owns no trailing comment either" {
+    // The same defect, one line to the right: the comment after `]` closes the
+    // parent's line, and the item's window used to run right through the rest
+    // of the collection to reach it.
+    if (comptime build_options.lang_toml) {
+        const src = "members = [\"a\", \"b\"] # note\n";
+        try expectCommentGet(Toml, .TOML_1_1, src, null, .trailing, flow_item0);
+        try expectCommentGet(Toml, .TOML_1_1, src, "note", .trailing, flow_members);
+        try expectCommentDelete(Toml, .TOML_1_1, src, src, .trailing, flow_item0);
+        try expectSetTrailingUnanchored(Toml, .TOML_1_1, src, flow_item0);
+    }
+    if (comptime build_options.lang_yaml) {
+        const src = "members: [a, b] # note\n";
+        try expectCommentGet(Yaml, .v1_2_2, src, null, .trailing, flow_item0);
+        try expectCommentGet(Yaml, .v1_2_2, src, "note", .trailing, flow_members);
+        try expectCommentDelete(Yaml, .v1_2_2, src, src, .trailing, flow_item0);
+        try expectSetTrailingUnanchored(Yaml, .v1_2_2, src, flow_item0);
+    }
+    if (comptime build_options.lang_fig) {
+        const src = "members = [a, b] # note\n";
+        try expectCommentGet(Fig, .Fig, src, null, .trailing, flow_item0);
+        try expectCommentGet(Fig, .Fig, src, "note", .trailing, flow_members);
+        try expectCommentDelete(Fig, .Fig, src, src, .trailing, flow_item0);
+        try expectSetTrailingUnanchored(Fig, .Fig, src, flow_item0);
+    }
+    const src = "{\n  \"members\": [\"a\", \"b\"] // note\n}";
+    try expectCommentGet(json.Language, .JSONC, src, null, .trailing, flow_item0);
+    try expectCommentGet(json.Language, .JSONC, src, "note", .trailing, flow_members);
+    try expectCommentDelete(json.Language, .JSONC, src, src, .trailing, flow_item0);
+    try expectSetTrailingUnanchored(json.Language, .JSONC, src, flow_item0);
 }
 
 // ── set (upsert) tests ──────────────────────────────────────────────────────

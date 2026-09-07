@@ -801,6 +801,12 @@ fn editStatus(err: anyerror) FigStatus {
         error.BlockValueIntoFlow => .invalid_argument,
         // The target dialect has no comment syntax (strict JSON).
         error.CommentsUnsupported => .unsupported_format,
+        // The addressed node shares its parent's line inside a flow collection
+        // (`members = ["a", "b"]`), so it owns neither the line above nor that
+        // line's end — a fact about the request's PATH, not about the format,
+        // which is why this is `invalid_argument` and `CommentsUnsupported`
+        // above is not.
+        error.CommentsUnanchored => .invalid_argument,
         // A value the format cannot represent at all — plist has no null. Same
         // answer `serializeStatus` gives it, since it is the same fact about the
         // format either way.
@@ -1012,6 +1018,11 @@ pub export fn fig_editor_set(
 // Splice comment trivia around the node at `path`, preserving the rest of the
 // document byte-for-byte. The marker (`#`, `//`) is added by the editor; a
 // dialect without comment syntax (strict JSON) returns `unsupported_format`.
+//
+// An element or entry of a one-line flow collection owns no comment at all —
+// the line is its parent's — so the two writes return `invalid_argument`, the
+// deletes are a no-op, and the reads answer `not_found`. See
+// `Editor.commentsUnanchored`.
 
 /// Add an own-line comment ABOVE the node at `path`. `text` may be multi-line
 /// (one comment line per row), at the node's indentation, nearest the node.
@@ -4492,6 +4503,45 @@ test "fig_editor comment ops reject strict JSON with unsupported_format" {
     try std.testing.expectEqual(FigStatus.unsupported_format, fig_editor_get_trailing_comment(ed, &path, 1, &ptr, &len));
 }
 
+test "fig_editor comment ops on a one-line flow item answer as if it had none" {
+    if (comptime !build_options.lang_toml) return error.SkipZigTest;
+    // The item sits on `members`' line, so the block above and the comment at
+    // the line's end are `members`'. Every op used to reach them through the
+    // item; across the ABI that is `invalid_argument` for the writes and
+    // `not_found` (= absent) for the reads.
+    const src = "# above members\nmembers = [\"a\", \"b\"] # note\n";
+    var ed: ?*FigEditor = null;
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+    defer fig_editor_destroy(ed);
+
+    var key = [_]u8{ 'm', 'e', 'm', 'b', 'e', 'r', 's' };
+    const item0 = [_]FigPathSegment{
+        .{ .kind = 0, .key_ptr = &key, .key_len = key.len, .index = 0 },
+        .{ .kind = 1, .key_ptr = null, .key_len = 0, .index = 0 },
+    };
+    const text = "mine";
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_editor_add_leading_comment(ed, &item0, item0.len, text.ptr, text.len));
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_editor_set_trailing_comment(ed, &item0, item0.len, text.ptr, text.len));
+
+    var ptr: [*c]const u8 = undefined;
+    var len: usize = undefined;
+    try std.testing.expectEqual(FigStatus.not_found, fig_editor_get_leading_comment(ed, &item0, item0.len, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.not_found, fig_editor_get_trailing_comment(ed, &item0, item0.len, &ptr, &len));
+
+    // The deletes report success and change nothing.
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_delete_leading_comments(ed, &item0, item0.len));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_delete_trailing_comment(ed, &item0, item0.len));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_source(ed, &ptr, &len));
+    try std.testing.expectEqualStrings(src, ptr[0..len]);
+
+    // `members` itself still owns both.
+    const parent = [_]FigPathSegment{item0[0]};
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_get_leading_comment(ed, &parent, 1, &ptr, &len));
+    try std.testing.expectEqualStrings("above members", ptr[0..len]);
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_get_trailing_comment(ed, &parent, 1, &ptr, &len));
+    try std.testing.expectEqualStrings("note", ptr[0..len]);
+}
+
 test "fig_editor comment reads return bytes, distinguishing absent from empty" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const src = "# why\na: 1 # two\nb: 2 #\nc: 3\n";
@@ -4551,6 +4601,7 @@ test "editStatus: every editor refusal is a caller error, not parse_error" {
         error.KeyRequiresMultilineForm, error.BlockValueIntoFlow,
         error.CommentsUnsupported,      error.NullUnsupported,
         error.MultilineComment,         error.InvalidComment,
+        error.CommentsUnanchored,
     };
     for (refusals) |err| {
         const status = editStatus(err);

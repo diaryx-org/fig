@@ -122,6 +122,56 @@ fn editor_reads_trailing_comment_on_a_block_collection_key() {
 }
 
 #[test]
+fn editor_flow_item_owns_no_comment_of_its_parents() {
+    // An item of a one-line array sits on `members`' line, so the block above
+    // that line — and the comment at its end — belong to `members`. The reads
+    // used to hand the parent's text back through the item, and
+    // `delete_leading_comments` used to remove it.
+    let src = "# above members\nmembers = [\"a\", \"b\"]\n";
+    let item0 = [Segment::Key("members"), Segment::Index(0)];
+
+    let ed = Editor::open(src.as_bytes(), Format::Toml).unwrap();
+    assert_eq!(ed.leading_comment(&item0).unwrap(), None);
+    assert_eq!(
+        ed.leading_comment(&[Segment::Key("members")])
+            .unwrap()
+            .as_deref(),
+        Some("above members"),
+    );
+
+    let mut ed = Editor::open(src.as_bytes(), Format::Toml).unwrap();
+    ed.delete_leading_comments(&item0).unwrap();
+    assert_eq!(ed.source().unwrap(), src);
+
+    // Adding one is refused rather than landing on the parent's line.
+    let mut ed = Editor::open(src.as_bytes(), Format::Toml).unwrap();
+    let err = ed.add_leading_comment(&item0, "mine").unwrap_err();
+    assert!(matches!(err, fig::Error::InvalidArgument), "{err:?}");
+    assert_eq!(ed.source().unwrap(), src);
+
+    // The trailing trio answers the same way.
+    let trailing = "members = [\"a\", \"b\"] # note\n";
+    let ed = Editor::open(trailing.as_bytes(), Format::Toml).unwrap();
+    assert_eq!(ed.trailing_comment(&item0).unwrap(), None);
+    assert_eq!(
+        ed.trailing_comment(&[Segment::Key("members")])
+            .unwrap()
+            .as_deref(),
+        Some("note"),
+    );
+
+    // A multi-line array's items each begin their own line, and keep working.
+    let multi = "# above members\nmembers = [\n  \"a\",\n  \"b\",\n]\n";
+    let mut ed = Editor::open(multi.as_bytes(), Format::Toml).unwrap();
+    assert_eq!(ed.leading_comment(&item0).unwrap(), None);
+    ed.add_leading_comment(&item0, "mine").unwrap();
+    assert_eq!(
+        ed.source().unwrap(),
+        "# above members\nmembers = [\n  # mine\n  \"a\",\n  \"b\",\n]\n",
+    );
+}
+
+#[test]
 fn editor_sequence_ops() {
     let mut ed = Editor::open(b"items:\n- a\n- b\n", Format::Yaml).unwrap();
     ed.append(&[Segment::Key("items")], &"c").unwrap();

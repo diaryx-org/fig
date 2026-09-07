@@ -345,6 +345,11 @@ impl Editor {
     /// multi-line (one comment line per row). The marker (`#` for YAML, `//` for
     /// JSONC/JSON5) is added for you; strict JSON returns
     /// [`Error::UnsupportedFormat`].
+    ///
+    /// An element or entry of a one-line flow collection (`members = ["a",
+    /// "b"]`, `nested: {k: v}`) shares its parent's line and owns no line to
+    /// comment: those paths return [`Error::InvalidArgument`]. Comment the
+    /// collection itself, or break it onto one element per line.
     pub fn add_leading_comment(&mut self, path: &[Segment], text: &str) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe {
@@ -362,7 +367,9 @@ impl Editor {
     /// Set the same-line trailing comment on the value at `path`, replacing an
     /// existing one or appending if absent. `text` must be a single line
     /// ([`Error::InvalidArgument`] otherwise); strict JSON returns
-    /// [`Error::UnsupportedFormat`].
+    /// [`Error::UnsupportedFormat`]. An element or entry of a one-line flow
+    /// collection also returns [`Error::InvalidArgument`]: the end of that line
+    /// is the parent's, not the element's.
     pub fn set_trailing_comment(&mut self, path: &[Segment], text: &str) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe {
@@ -378,7 +385,8 @@ impl Editor {
     }
 
     /// Remove the own-line comment block immediately above the node at `path`.
-    /// A no-op (still `Ok`) when there is none.
+    /// A no-op (still `Ok`) when there is none — including an element or entry
+    /// of a one-line flow collection, whose block above is its parent's.
     pub fn delete_leading_comments(&mut self, path: &[Segment]) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status =
@@ -387,7 +395,8 @@ impl Editor {
     }
 
     /// Remove the same-line trailing comment on the value at `path`. A no-op
-    /// (still `Ok`) when there is none.
+    /// (still `Ok`) when there is none — including an element or entry of a
+    /// one-line flow collection, whose line-end comment is its parent's.
     pub fn delete_trailing_comment(&mut self, path: &[Segment]) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status =
@@ -399,13 +408,19 @@ impl Editor {
     /// (lines joined by `\n`, markers and indentation stripped). `None` when
     /// there is no such block; `Some("")` for a present-but-empty bare marker.
     /// Strict JSON returns [`Error::UnsupportedFormat`].
+    ///
+    /// `None` too for an element or entry of a one-line flow collection: the
+    /// block above `members = ["a", "b"]` belongs to `members`, not to its
+    /// items.
     pub fn leading_comment(&self, path: &[Segment]) -> Result<Option<String>, Error> {
         self.read_comment(path, false)
     }
 
     /// Read the same-line trailing comment on the value at `path` (marker
-    /// stripped). `None` when there is none; `Some("")` for a bare marker.
-    /// Strict JSON returns [`Error::UnsupportedFormat`].
+    /// stripped). `None` when there is none — including an element or entry of
+    /// a one-line flow collection, whose line ends with its parent's comment;
+    /// `Some("")` for a bare marker. Strict JSON returns
+    /// [`Error::UnsupportedFormat`].
     pub fn trailing_comment(&self, path: &[Segment]) -> Result<Option<String>, Error> {
         self.read_comment(path, true)
     }

@@ -275,18 +275,25 @@ export abstract class Editable {
   /** Add an own-line comment ABOVE the node at `path` (the key's line for a
    *  mapping entry), at its indentation, nearest the node. `text` may be
    *  multi-line (one comment line each). The marker (`#` for YAML, `//` for
-   *  JSONC/JSON5) is added for you; strict JSON throws `UnsupportedFormat`. */
+   *  JSONC/JSON5) is added for you; strict JSON throws `UnsupportedFormat`.
+   *  An element or entry of a ONE-LINE flow collection (`members = ["a", "b"]`,
+   *  `nested: {k: v}`) shares its parent's line and owns no line to comment:
+   *  those paths throw `InvalidArgument`. */
   addLeadingComment(path: readonly Segment[], text: string): void {
     this.commentEdit(path, text, this.fns.addLeadingComment, "addLeadingComment");
   }
 
   /** Set the same-line trailing comment on the value at `path`, replacing an
-   *  existing one or appending if absent. `text` must be single-line. */
+   *  existing one or appending if absent. `text` must be single-line. Throws
+   *  `InvalidArgument` for an element or entry of a one-line flow collection:
+   *  the end of that line is its parent's. */
   setTrailingComment(path: readonly Segment[], text: string): void {
     this.commentEdit(path, text, this.fns.setTrailingComment, "setTrailingComment");
   }
 
-  /** Remove the own-line comment block above the node at `path` (no-op if none). */
+  /** Remove the own-line comment block above the node at `path` (no-op if none,
+   *  including an element of a one-line flow collection, whose block above
+   *  belongs to its parent). */
   deleteLeadingComments(path: readonly Segment[]): void {
     const frame = new Frame();
     try {
@@ -297,7 +304,9 @@ export abstract class Editable {
     }
   }
 
-  /** Remove the same-line trailing comment on the value at `path` (no-op if none). */
+  /** Remove the same-line trailing comment on the value at `path` (no-op if
+   *  none, including an element of a one-line flow collection, whose line-end
+   *  comment belongs to its parent). */
   deleteTrailingComment(path: readonly Segment[]): void {
     const frame = new Frame();
     try {
@@ -323,14 +332,17 @@ export abstract class Editable {
 
   /** Read the own-line comment block above the node at `path` (lines joined by
    *  `\n`, markers and indentation stripped). Returns `null` when there is no
-   *  such block, and `""` for a present-but-empty bare marker. Strict JSON
-   *  throws `UnsupportedFormat`. */
+   *  such block, and `""` for a present-but-empty bare marker — `null` too for
+   *  an element of a one-line flow collection, whose block above belongs to its
+   *  parent. Strict JSON throws `UnsupportedFormat`. */
   getLeadingComment(path: readonly Segment[]): string | null {
     return this.commentRead(path, this.fns.getLeadingComment, "getLeadingComment");
   }
 
   /** Read the same-line trailing comment on the value at `path` (marker
-   *  stripped). Returns `null` when there is none, `""` for a bare marker. */
+   *  stripped). Returns `null` when there is none — including an element of a
+   *  one-line flow collection, whose line ends with its parent's comment — and
+   *  `""` for a bare marker. */
   getTrailingComment(path: readonly Segment[]): string | null {
     return this.commentRead(path, this.fns.getTrailingComment, "getTrailingComment");
   }

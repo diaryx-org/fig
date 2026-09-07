@@ -16,8 +16,8 @@ extern "C" {
 // host can compare the two to detect a header/library skew. The components are
 // also exposed as a string by fig_version_string().
 // ============================================================================
-#define FIG_VERSION_MAJOR 2
-#define FIG_VERSION_MINOR 9
+#define FIG_VERSION_MAJOR 3
+#define FIG_VERSION_MINOR 0
 #define FIG_VERSION_PATCH 0
 #define FIG_VERSION_NUM (((uint32_t)FIG_VERSION_MAJOR << 16) | \
                          ((uint32_t)FIG_VERSION_MINOR << 8)  | \

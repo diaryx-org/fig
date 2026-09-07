@@ -124,7 +124,7 @@ _No commits since the last release tag._
 
 <!-- git-cliff:end -->
 
-## core 2.9.0 · npm 2.9.0
+## core 2.9.0 · rust 3.4.0 · npm 2.9.0
 
 ### Added
 

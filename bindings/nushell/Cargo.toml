@@ -1,7 +1,7 @@
 # A standalone workspace on purpose: NOT a member of `bindings/rust`.
 #
 # The nushell plugin protocol is version-locked to the shell (see README), so
-# this crate pins `=0.113.0` of the nu crates and moves on nushell's release
+# this crate pins `=0.115.1` of the nu crates and moves on nushell's release
 # cadence rather than fig's. Folding it into the `bindings/rust` workspace would
 # drag the whole nu dependency tree into `cargo test --workspace --all-features`
 # and into cargo-semver-checks' run over the published fig surface, for a crate
@@ -33,8 +33,8 @@ path = "src/main.rs"
 # Exact pins, not carets. A plugin built against one nu-plugin minor will not
 # register against a different one, so a caret range would let `cargo update`
 # silently produce a binary the target shell rejects at `plugin add` time.
-nu-plugin = "=0.113.0"
-nu-protocol = "=0.113.0"
+nu-plugin = "=0.115.1"
+nu-protocol = "=0.115.1"
 # Only for building the `DateTime<FixedOffset>` that `Value::date` takes.
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 # The native binding. `default-features` carries json/yaml/toml/fig, which is
@@ -43,4 +43,10 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 fig = { path = "../rust/fig", version = "3.3.0" }
 
 [dev-dependencies]
-nu-plugin-test-support = "=0.113.0"
+nu-plugin-test-support = "=0.115.1"
+# Not used directly. `nu-plugin-test-support` pulls the engine without its
+# `local-socket` feature while `nu-plugin` turns that feature on in the core
+# crate they share, and the engine's match over the core's enum then fails to
+# compile under `cargo test`. Naming the engine here with the feature on unifies
+# the two, which is the only thing this line is for.
+nu-plugin-engine = { version = "=0.115.1", features = ["local-socket"] }

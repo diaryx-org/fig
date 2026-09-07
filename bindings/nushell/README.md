@@ -79,8 +79,8 @@ the CLI, which rewrites in place and leaves every other byte alone:
 ## Versioning
 
 **A plugin binary only works with the nushell minor it was built against.** The
-plugin protocol is versioned with the shell, so a binary built for 0.113 will be
-refused by 0.114 at `plugin add` time. The nu dependencies are pinned with `=`
+plugin protocol is versioned with the shell, so a binary built for 0.115 will be
+refused by 0.116 at `plugin add` time. The nu dependencies are pinned with `=`
 rather than `^` for that reason — a caret range would let `cargo update` quietly
 produce a binary the target shell rejects.
 

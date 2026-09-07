@@ -790,7 +790,7 @@ only *after* the `Document` that borrows it is itself freed.
   `Code`, `Cause`, `Options`).
 - `ParseDiagnostic` — shared offset→line/col + report rendering
   (`locateOffset`, `renderReport`, `renderReportAlloc`, `Rendered`).
-- `Canonical` (aliased `Native`, deprecated) — the AST's own 1:1 total
+- `Canonical` — the AST's own 1:1 total
   encoding: `parse`, `parseAbstract`, `print`, `printNode`.
 - `Fig` — the native `fig` authoring dialect's `Language`-shaped module
   (`Parser`, `Printer`, `Type`).

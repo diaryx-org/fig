@@ -27,9 +27,6 @@ pub const ParseDiagnostic = @import("parse_diagnostic.zig");
 /// The canonical form: the AST's own 1:1, total, bijective text encoding — the
 /// comparison oracle and lossless serialization.
 pub const Canonical = @import("canonical/canonical.zig");
-/// Deprecated alias for `Canonical`; kept so existing Zig consumers (the Diaryx
-/// git dep) keep building. Prefer `Canonical`.
-pub const Native = Canonical;
 /// The fig authoring dialect: the human-facing, hand-writable surface over the
 /// same AST. Reader + `fig fmt` printer; see src/languages/fig/DESIGN.md.
 pub const Fig = @import("languages/fig/fig.zig");

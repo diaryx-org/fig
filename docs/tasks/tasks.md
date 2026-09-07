@@ -3,11 +3,12 @@ title = Tasks
 description = Deferred work with a done state — a bug is a task with a repro
 author = adammharris
 created = 2026-09-04
-updated = 2026-09-04
+updated = 2026-09-07
 part_of = [docs](/docs/docs.md)
 contents
 > * [JSON printer emits a non-string mapping key as invalid JSON](json-printer-emits-non-string-keys.md)
 > * [YAML printer drops `%TAG` directives and root collection properties](yaml-printer-drops-directives-and-root-props.md)
+> * [Editor: read and write the dangling anchor, and comment a node out and back in](dangling-comments-and-comment-out-ops.md)
 ```
 
 # Tasks

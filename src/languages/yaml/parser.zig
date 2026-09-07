@@ -74,12 +74,15 @@ container_tag: ?PendingTag = null,
 container_anchor: ?PendingAnchor = null,
 container_stack: std.ArrayList(OpenContainer) = .empty,
 owned_strings: std.ArrayList([]const u8) = .empty,
-// Named tag handles (`!e!`, `!prefix!`) declared by `%TAG` directives in this
-// document. A named handle used by a tag must be declared (the `!` and `!!`
-// default handles are always available and not listed). Per-document by
-// construction: a stream is parsed one document at a time, each with a fresh
+// Tag handles (`!e!`, `!prefix!`, or a redefined `!`/`!!`) declared by `%TAG`
+// directives in this document, with the prefix each expands to. A NAMED handle
+// used by a tag must be declared (the `!` and `!!` default handles are always
+// available, so a tag may use one whether or not it appears here). Per-document
+// by construction: a stream is parsed one document at a time, each with a fresh
 // Parser, so a handle declared for one document is not visible to the next.
-tag_handles: std.ArrayList([]const u8) = .empty,
+// Handed to the AST so the printer can re-emit the declaration above a document
+// whose tags use it (`ast.tag_directives`); the strings alias `source`.
+tag_directives: std.ArrayList(AST.TagDirective) = .empty,
 tokens: []const Token = &.{},
 index: usize = 0,
 // Comment layer. Captured centrally in `advance` (the only place a comment
@@ -493,6 +496,9 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
     const node_anchor_spans = try self.node_anchor_spans.toOwnedSlice(self.allocator);
     errdefer self.allocator.free(node_anchor_spans);
     self.node_anchor_spans = .empty;
+    const tag_directives = try self.tag_directives.toOwnedSlice(self.allocator);
+    errdefer self.allocator.free(tag_directives);
+    self.tag_directives = .empty;
     const owned_strings = try self.owned_strings.toOwnedSlice(self.allocator);
     self.owned_strings = .empty;
     var ast: AST = .{
@@ -503,6 +509,7 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
         .node_tags = node_tags,
         .node_anchors = node_anchors,
         .anchors = anchors,
+        .tag_directives = tag_directives,
     };
     if (self.comments_seen) {
         ast.node_comments = try self.node_comments.toOwnedSlice(self.allocator);
@@ -550,9 +557,11 @@ fn parseDirective(self: *Parser, line: []const u8) ParserError!void {
         while (i < line.len and !isDirectiveSpace(line[i])) i += 1;
         if (i == prefix_start) return ParseError.InvalidDirective; // missing prefix
         try requireDirectiveEnd(line, i);
-        // Record a named handle (`!e!`) so tags may use it. The `!`/`!!` default
-        // handles need no declaration; recording them is harmless.
-        try self.tag_handles.append(self.allocator, handle);
+        // Record the handle and its prefix, so a named handle (`!e!`) may be
+        // used by a tag and so the printer can re-emit the directive. The
+        // `!`/`!!` default handles need no declaration, but a document may
+        // redefine them, and then the declaration is just as load-bearing.
+        try self.tag_directives.append(self.allocator, .{ .handle = handle, .prefix = line[prefix_start..i] });
     }
     // else: a reserved directive — accepted and ignored (params unrestricted).
 }
@@ -599,7 +608,7 @@ pub fn deinit(self: *Parser) void {
         self.allocator.free(string);
     }
     self.owned_strings.deinit(self.allocator);
-    self.tag_handles.deinit(self.allocator);
+    self.tag_directives.deinit(self.allocator);
     // After a successful parse these `leading` slices moved to the AST and the
     // list is empty; on an error path they are freed here. Text borrows `source`.
     for (self.node_comments.items) |nc| self.allocator.free(nc.leading);
@@ -2211,7 +2220,7 @@ fn stashAnchor(self: *Parser, name: []const u8, span: Span) ParserError!void {
 /// was declared by a `%TAG` directive in this document. The `!` (primary) and
 /// `!!` (secondary) default handles, local tags (`!suffix`), and verbatim tags
 /// (`!<uri>`) need no declaration. Scoping is per-document because each document
-/// in a stream is parsed by a fresh Parser (see `tag_handles`).
+/// in a stream is parsed by a fresh Parser (see `tag_directives`).
 fn validateTagHandle(self: *const Parser, text: []const u8) ParseError!void {
     if (text.len < 2) return; // `!` non-specific tag
     if (text[1] == '<' or text[1] == '!') return; // verbatim, or secondary `!!`
@@ -2219,8 +2228,8 @@ fn validateTagHandle(self: *const Parser, text: []const u8) ParseError!void {
     // second `!` means a local tag (`!suffix`), which uses the primary handle.
     const close = std.mem.indexOfScalarPos(u8, text, 1, '!') orelse return;
     const handle = text[0 .. close + 1];
-    for (self.tag_handles.items) |declared| {
-        if (std.mem.eql(u8, declared, handle)) return;
+    for (self.tag_directives.items) |declared| {
+        if (std.mem.eql(u8, declared.handle, handle)) return;
     }
     return ParseError.UndefinedTagHandle;
 }

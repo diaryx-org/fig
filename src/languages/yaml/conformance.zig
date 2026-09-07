@@ -31,9 +31,10 @@ const accept_baseline = 289;
 // Accept documents that also survive a print and re-parse: the printer must
 // have a spelling for every node the parser can produce (a collection or
 // alias as a mapping key, say), and that spelling must be YAML the parser
-// reads back. Short of 289 by the fixtures carrying a `%TAG` directive, which
-// the printer drops.
-const reprint_baseline = 287;
+// reads back — including the `%TAG` directive that declares the handle a tag
+// in the output is spelled with, without which the output is a document that
+// uses an undeclared handle. Every accept fixture now clears it.
+const reprint_baseline = 289;
 const reject_baseline = 93;
 // Multi-document streams parsed via Embed.extractStream (the single-document
 // parser refuses a stream; the splitter feeds it one document at a time).

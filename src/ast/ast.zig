@@ -67,6 +67,8 @@ pub fn deinit(self: *AST) void {
     self.allocator.free(self.node_tags);
     self.allocator.free(self.node_anchors);
     self.allocator.free(self.anchors);
+    // Same discipline: the handle/prefix strings alias `source`.
+    self.allocator.free(self.tag_directives);
     // Free each entry's `leading` slice (its own allocation) then the outer
     // table. Comment *text* aliases `self.source` or lives in `owned_strings`
     // (already freed above), so it is not freed here — same discipline as the
@@ -110,6 +112,15 @@ node_anchors: []const ?[]const u8 = &.{},
 /// document declares no anchors.
 anchors: []const Anchor = &.{},
 
+/// Tag-handle definitions in source order — a YAML `%TAG` directive's handle and
+/// the prefix it expands to. A tag SPELLING that uses a named handle (`!e!foo`)
+/// is only legal in a document that declares it, so the printer must be able to
+/// re-emit the declaration alongside the tag; the handle→prefix mapping is the
+/// one piece of a document's directives prefix that its own body depends on.
+/// Empty when the document declares none, which is every document from a format
+/// with no directives.
+tag_directives: []const TagDirective = &.{},
+
 // ── Comment layer (side-table) ─────────────────────────────────────────────
 // Comments are trivia: they ride alongside a value but are NOT part of it, so
 // (like the reference layer above) they live in a node-id-indexed side-table
@@ -124,6 +135,12 @@ anchors: []const Anchor = &.{},
 node_comments: []const NodeComments = &.{},
 
 pub const Anchor = struct { name: []const u8, node: Node.Id };
+
+/// One `%TAG` directive: the handle it declares, including both `!`s (`!e!`, or
+/// `!`/`!!` when a document redefines a default handle), and the prefix that
+/// handle expands to. Both are stored verbatim, so re-emitting the directive is
+/// a copy rather than a re-encoding.
+pub const TagDirective = struct { handle: []const u8, prefix: []const u8 };
 
 /// A cross-format type tag attached to a node (the `node_tags` element). It
 /// unifies fig's `: type =` annotation, YAML's `!!str`/`!foo`, and canonical's

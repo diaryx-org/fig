@@ -17,12 +17,86 @@ pub fn print(writer: *Writer, ast: *const AST) Writer.Error!void {
 /// of the source's own choice.
 pub fn printWith(writer: *Writer, ast: *const AST, opts: AST.SerializeOptions) Writer.Error!void {
     // Document-level leading comments (those bound to the root) sit at column 0
-    // above everything else.
+    // above everything else — above the directives too, which is where YAML's
+    // document prefix allows a comment.
     try leadingComments(writer, ast, ast.leadingCommentAnchor(ast.root), 0);
-    try printNode(writer, ast, ast.root, 0, opts);
+    try printDirectives(writer, ast);
+    try printRootNode(writer, ast, opts);
     // End-of-document comments dangling off the root, at column 0.
     try danglingComments(writer, ast, ast.root, 0);
     try writer.flush();
+}
+
+/// The root node, preceded by its own anchor/tag. Every other node's properties
+/// are written by whatever wrote its lead-in (`- `, `key:`, `?`); the root has
+/// no lead-in, so they are written here — on a line of their own above a block
+/// collection (`&m` / `!!seq`, which the parser binds to the collection that
+/// opens beneath), inline for anything with a single-line spelling (`&m {}`,
+/// `!!str foo`). Dropping them used to leave every alias to an anchored root
+/// dangling.
+fn printRootNode(writer: *Writer, ast: *const AST, opts: AST.SerializeOptions) Writer.Error!void {
+    const root = ast.root;
+    if (!hasProps(ast, root)) return printNode(writer, ast, root, 0, opts);
+    switch (ast.nodes[root].kind) {
+        .sequence => |first| if (first) |child| {
+            try writePropsOwnLine(writer, ast, root);
+            return printSequence(writer, ast, child, 0, opts);
+        },
+        .mapping => |first| if (first) |child| {
+            try writePropsOwnLine(writer, ast, root);
+            return printMapping(writer, ast, child, 0, opts);
+        },
+        else => {},
+    }
+    try writeProps(writer, ast, root);
+    try printNode(writer, ast, root, 0, opts);
+}
+
+// ── Directives ──────────────────────────────────────────────────────────────
+// A `%TAG` handle is the one part of a document's directives prefix its body
+// depends on: `!e!foo` is a parse error in a document that does not declare
+// `!e!`, so a printer that keeps the tag must keep the declaration. Everything
+// else in the prefix is inert — a `%YAML` version fig neither acts on nor
+// re-emits (the output is 1.2-compatible whatever the source said), and a
+// reserved directive, which by definition means nothing to a processor — so it
+// is not carried through the AST at all.
+
+/// Emit each `%TAG` directive whose handle a tag in this document actually uses,
+/// then the `---` that ends the directives prefix (mandatory once any directive
+/// is written). An unused declaration is dropped rather than written back: it
+/// would force a `---` marker onto a document that needs neither.
+fn printDirectives(writer: *Writer, ast: *const AST) Writer.Error!void {
+    var wrote_any = false;
+    for (ast.tag_directives) |directive| {
+        if (!handleIsUsed(ast, directive.handle)) continue;
+        try writer.writeAll("%TAG ");
+        try writer.writeAll(directive.handle);
+        try writer.writeByte(' ');
+        try writer.writeAll(directive.prefix);
+        try writer.writeByte('\n');
+        wrote_any = true;
+    }
+    if (wrote_any) try writer.writeAll("---\n");
+}
+
+/// Whether any node's tag is spelled with `handle`.
+fn handleIsUsed(ast: *const AST, handle: []const u8) bool {
+    for (ast.node_tags) |maybe_tag| {
+        const tag = maybe_tag orelse continue;
+        const used = tagHandleOf(tagText(tag)) orelse continue;
+        if (std.mem.eql(u8, used, handle)) return true;
+    }
+    return false;
+}
+
+/// The handle a tag spelling uses, including both `!`s: `!e!foo` → `!e!`, `!!str`
+/// → `!!`, and a local `!foo` (or the bare non-specific `!`) → the primary
+/// `!`. A verbatim `!<uri>` tag uses none, and needs no declaration.
+fn tagHandleOf(text: []const u8) ?[]const u8 {
+    if (text.len == 0 or text[0] != '!') return null;
+    if (text.len > 1 and text[1] == '<') return null;
+    const close = std.mem.indexOfScalarPos(u8, text, 1, '!') orelse return text[0..1];
+    return text[0 .. close + 1];
 }
 
 pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize, opts: AST.SerializeOptions) Writer.Error!void {
@@ -83,14 +157,32 @@ fn printSequence(writer: *Writer, document: *const AST, first_child: ?AST.Node.I
             .mapping => |child| {
                 try writer.writeAll("- ");
                 if (child) |first_pair| {
-                    try printSequenceMapping(writer, document, first_pair, depth, opts);
+                    // An item mapping's own props cannot ride the `- key: v`
+                    // line: the parser reads `- &a key: v` as the KEY's anchor
+                    // (see its `holdKeyLineProps`). They take the rest of the
+                    // dash line instead, and the mapping starts beneath.
+                    if (hasProps(document, id)) {
+                        try writePropsOwnLine(writer, document, id);
+                        try printMapping(writer, document, first_pair, depth + 1, opts);
+                    } else {
+                        try printSequenceMapping(writer, document, first_pair, depth, opts);
+                    }
                 } else {
+                    try writeProps(writer, document, id); // `- &a {}`
                     try writer.writeAll("{}\n");
                 }
             },
             .sequence => |child| {
                 if (child == null) {
-                    try writer.writeAll("- []\n");
+                    try writer.writeAll("- ");
+                    try writeProps(writer, document, id); // `- &a []`
+                    try writer.writeAll("[]\n");
+                } else if (hasProps(document, id)) {
+                    // `- &a` — the props are all that follows the dash, and the
+                    // nested block sits under them.
+                    try writer.writeAll("- ");
+                    try writePropsOwnLine(writer, document, id);
+                    try printSequence(writer, document, child, depth + 1, opts);
                 } else {
                     // A bare dash, not `- ` — nothing follows on the line.
                     try writer.writeAll("-\n");
@@ -477,6 +569,25 @@ fn tagText(tag: AST.Tag) []const u8 {
             .mapping => "!!map",
         },
     };
+}
+
+/// Like `writeProps` but for a line of its own — `&a !tag` with no trailing
+/// space, then the newline — the form a block collection's props take when there
+/// is no `key:`/`- ` lead-in to hang them off (a document root) or when hanging
+/// them off one would rebind them (a sequence item's mapping). The parser binds
+/// a property line to the collection that opens beneath it.
+fn writePropsOwnLine(writer: *Writer, ast: *const AST, id: AST.Node.Id) Writer.Error!void {
+    var wrote_any = false;
+    if (id < ast.node_anchors.len) if (ast.node_anchors[id]) |name| {
+        try writer.writeByte('&');
+        try writer.writeAll(name);
+        wrote_any = true;
+    };
+    if (id < ast.node_tags.len) if (ast.node_tags[id]) |tag| {
+        if (wrote_any) try writer.writeByte(' ');
+        try writer.writeAll(tagText(tag));
+    };
+    try writer.writeByte('\n');
 }
 
 /// Like `writeProps` but for the position right after a mapping value's `:`,
@@ -1036,5 +1147,83 @@ test "yaml printer: block scalars round-trip through the parser" {
         const root = doc.ast.nodes[doc.ast.root];
         const kv = doc.ast.nodes[root.kind.mapping.?].kind.keyvalue;
         try std.testing.expectEqualStrings(s, doc.ast.nodes[kv.value].kind.string);
+    }
+}
+
+test "yaml printer: a %TAG directive is written back above the tags that use it" {
+    // 6CK3/Z9M4: the tags are kept verbatim, so the handle they are spelled
+    // with has to be declared, or the printer's own output is a document that
+    // uses an undeclared handle (`UndefinedTagHandle`).
+    const tagged =
+        \\%TAG !e! tag:example.com,2000:app/
+        \\---
+        \\- !local foo
+        \\- !!str bar
+        \\- !e!tag%21 baz
+        \\
+    ;
+    try expectRoundTrip(tagged, tagged);
+    // A redefined default handle is just as load-bearing as a named one.
+    const secondary =
+        \\%TAG !! tag:example.com,2000:app/
+        \\---
+        \\- !!foo bar
+        \\
+    ;
+    try expectRoundTrip(secondary, secondary);
+    // A declaration nothing uses is dropped: writing it back would drag a `---`
+    // marker onto a document that needs neither.
+    try expectRoundTrip("%TAG !e! tag:example.com,2000:app/\n---\na: b\n", "a: b\n");
+    // `%YAML` and reserved directives are inert — the output is 1.2-compatible
+    // whatever the source declared — so they are not carried through either.
+    try expectRoundTrip("%YAML 1.2\n---\na: b\n", "a: b\n");
+}
+
+test "yaml printer: a root collection's own props sit on a line above it" {
+    // `&m\na: b` — the anchor is the ROOT mapping's (`node_anchors[root]`), and
+    // dropping it left every `*m` alias to it dangling.
+    try expectRoundTrip("&m\na: b\n", "&m\na: b\n");
+    try expectRoundTrip("!!seq\n- a\n", "!!seq\n- a\n");
+    try expectRoundTrip("&m !!map\na: b\n", "&m !!map\na: b\n");
+    // A root with a single-line spelling keeps them inline instead.
+    try expectRoundTrip("&m {}\n", "&m {}\n");
+    try expectRoundTrip("!!str foo\n", "!!str foo\n");
+}
+
+test "yaml printer: a collection sequence item keeps its props on the dash line" {
+    try expectRoundTrip("- &a\n  - x\n", "- &a\n  - x\n");
+    // `- &a k: v` would bind `&a` to the KEY, so the props take the dash line
+    // and the mapping starts beneath.
+    try expectRoundTrip("- &a\n  k: v\n", "- &a\n  k: v\n");
+    try expectRoundTrip("- !!map\n  k: v\n", "- !!map\n  k: v\n");
+    try expectRoundTrip("- &a {}\n", "- &a {}\n");
+    try expectRoundTrip("- &a []\n", "- &a []\n");
+}
+
+test "yaml printer: reprinted root/item props re-parse onto the same nodes" {
+    const Parser = @import("parser.zig");
+    const cases = [_][]const u8{
+        "&m\na: b\n",
+        "!!seq\n- a\n",
+        "&m !!map\na: b\n",
+        "- &a\n  - x\n",
+        "- &a\n  k: v\n",
+        "%TAG !e! tag:example.com,2000:app/\n---\n&m\na: !e!foo b\n",
+    };
+    for (cases) |src| {
+        const doc = try Parser.parse(std.testing.allocator, src, .v1_2_2);
+        defer doc.deinit(std.testing.allocator);
+        var out: Writer.Allocating = .init(std.testing.allocator);
+        defer out.deinit();
+        try print(&out.writer, &doc.ast);
+        const again = try Parser.parse(std.testing.allocator, out.written(), .v1_2_2);
+        defer again.deinit(std.testing.allocator);
+        try std.testing.expect(doc.ast.eql(again.ast));
+        try std.testing.expect(doc.ast.tagsEql(again.ast));
+        for (doc.ast.node_anchors, 0..) |want, id| {
+            const got: ?[]const u8 = if (id < again.ast.node_anchors.len) again.ast.node_anchors[id] else null;
+            try std.testing.expectEqual(want == null, got == null);
+            if (want) |name| try std.testing.expectEqualStrings(name, got.?);
+        }
     }
 }

@@ -1,13 +1,22 @@
 ```fig
 title = YAML printer drops `%TAG` directives and root collection properties
 description = `fig get -o yaml` and `fig fmt` lose a `%TAG` directive (so a `!e!foo` tag in the output no longer parses) and an anchor or tag on the root mapping/sequence itself (`&m` above the first key)
-status = open
+status = done
 created = 2026-09-04
-updated = 2026-09-04
+updated = 2026-09-07
 part_of = [tasks](tasks.md)
 ```
 
 # YAML printer drops `%TAG` directives and root collection properties
+
+**Status.** Done, in `fix(yaml): print %TAG directives and root/item
+collection properties` (2026-09-07). The parser now hands the AST each
+`%TAG` handle with the prefix it expands to (`ast.tag_directives`), and the
+printer writes back every directive whose handle a tag in the output uses,
+ahead of the `---` those directives require; a root collection's own
+anchor/tag goes on a line above it (`&m\na: b`) and a collection sequence
+item's after its dash (`- &a`), both of which the parser reads back onto the
+same node. The conformance `reprint` ratchet is 289 of 289.
 
 **Repro.** With `fig` at 0a0d646:
 

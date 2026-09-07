@@ -459,6 +459,135 @@ impl Editor {
         Ok(Some(borrow_str(ptr, len)?.to_string()))
     }
 
+    // ── the dangling anchor ─────────────────────────────────────────────────
+
+    /// Add own-line comment line(s) at the END of the container at `path`'s
+    /// body (an empty `path` = the document root), at the body's child depth —
+    /// the third comment anchor, beside leading and trailing. `text` may be
+    /// multi-line (one comment line per row), and lands below any run already
+    /// there.
+    ///
+    /// [`Error::InvalidArgument`] when `path` names a scalar, or a flow
+    /// container with no line for the run to sit on (`{ "a": 1 }` — a
+    /// pretty-printed one is fine); strict JSON returns
+    /// [`Error::UnsupportedFormat`].
+    pub fn add_dangling_comment(&mut self, path: &[Segment], text: &str) -> Result<(), Error> {
+        let p = to_ffi_path(path);
+        let status = unsafe {
+            ffi::fig_editor_add_dangling_comment(
+                self.ptr(),
+                p.as_ptr(),
+                p.len(),
+                text.as_ptr(),
+                text.len(),
+            )
+        };
+        Error::from_status(status)
+    }
+
+    /// Remove the whole dangling run at the end of the container at `path`'s
+    /// body. A no-op (still `Ok`) when there is none.
+    pub fn delete_dangling_comments(&mut self, path: &[Segment]) -> Result<(), Error> {
+        let p = to_ffi_path(path);
+        let status =
+            unsafe { ffi::fig_editor_delete_dangling_comments(self.ptr(), p.as_ptr(), p.len()) };
+        Error::from_status(status)
+    }
+
+    /// Read the dangling run at the end of the container at `path`'s body
+    /// (lines joined by `\n`, markers and indentation stripped). `None` when
+    /// there is no run; `Some("")` for a bare marker.
+    pub fn dangling_comment(&self, path: &[Segment]) -> Result<Option<String>, Error> {
+        let p = to_ffi_path(path);
+        let mut ptr: *const u8 = std::ptr::null();
+        let mut len: usize = 0;
+        let status = unsafe {
+            ffi::fig_editor_get_dangling_comment(
+                self.ptr(),
+                p.as_ptr(),
+                p.len(),
+                &mut ptr,
+                &mut len,
+            )
+        };
+        if status.0 == ffi::FigStatus::NOT_FOUND {
+            return Ok(None);
+        }
+        Error::from_status(status)?;
+        Ok(Some(borrow_str(ptr, len)?.to_string()))
+    }
+
+    // ── comment out, and back ───────────────────────────────────────────────
+
+    /// Turn the node at `path` into a comment run: every line of its source
+    /// span takes the line marker at that line's own indentation. The entry
+    /// becomes the leading block of what followed it — or, when it was last,
+    /// the parent's dangling run — and the tree no longer has the node. Its own
+    /// leading comment block stays above it, untouched.
+    ///
+    /// [`Error::InvalidArgument`] for the root, for a node that does not have
+    /// its lines to itself (an item of `[a, b]`, an entry of
+    /// `{ "a": 1, "b": 2 }`), and for a whole `[table]`/`[section]`, whose body
+    /// is lines this op cannot see.
+    pub fn comment_out(&mut self, path: &[Segment]) -> Result<(), Error> {
+        let p = to_ffi_path(path);
+        let status = unsafe { ffi::fig_editor_comment_out(self.ptr(), p.as_ptr(), p.len()) };
+        Error::from_status(status)
+    }
+
+    /// Bring `line_count` lines of the LEADING comment block above the node at
+    /// `path`, starting at `first_line` (0-based within that block — the block
+    /// [`leading_comment`](Self::leading_comment) reports), back as entries:
+    /// strip the marker and one following space from each, then reparse.
+    ///
+    /// Which lines look like an entry is the caller's judgement; this is the
+    /// byte edit and the guarantee that it landed. If the result does not parse
+    /// — or parses to a document whose OTHER nodes changed — the splice is
+    /// rolled back and the call fails ([`Error::Parse`] or
+    /// [`Error::UnsupportedOperation`]) with the document byte-for-byte as it
+    /// was. [`Error::NotFound`] when the block has fewer lines than asked for; a
+    /// `line_count` of 0 is a no-op.
+    pub fn uncomment_leading(
+        &mut self,
+        path: &[Segment],
+        first_line: usize,
+        line_count: usize,
+    ) -> Result<(), Error> {
+        let p = to_ffi_path(path);
+        let status = unsafe {
+            ffi::fig_editor_uncomment_leading(
+                self.ptr(),
+                p.as_ptr(),
+                p.len(),
+                first_line,
+                line_count,
+            )
+        };
+        Error::from_status(status)
+    }
+
+    /// The dangling twin of [`uncomment_leading`](Self::uncomment_leading):
+    /// the run at the end of the container at `path`'s body, which is where a
+    /// commented-out LAST entry lands. Same guarantee, same errors.
+    pub fn uncomment_dangling(
+        &mut self,
+        path: &[Segment],
+        first_line: usize,
+        line_count: usize,
+    ) -> Result<(), Error> {
+        let p = to_ffi_path(path);
+        let status = unsafe {
+            ffi::fig_editor_uncomment_dangling(
+                self.ptr(),
+                p.as_ptr(),
+                p.len(),
+                first_line,
+                line_count,
+            )
+        };
+        Error::from_status(status)
+    }
+
     // ── structural edits (no value) ─────────────────────────────────────────
 
     /// Delete the mapping entry named by `path`.

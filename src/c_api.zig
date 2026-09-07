@@ -807,6 +807,12 @@ fn editStatus(err: anyerror) FigStatus {
         // which is why this is `invalid_argument` and `CommentsUnsupported`
         // above is not.
         error.CommentsUnanchored => .invalid_argument,
+        // `fig_editor_uncomment_*` stripped the markers and the result parsed,
+        // but to a document whose other nodes had moved — so those lines were
+        // not the entry the caller took them for, and the splice was rolled
+        // back. Every argument was individually valid, which is what
+        // `unsupported_operation` says and `invalid_argument` would not.
+        error.CommentNotAnEntry => .unsupported_operation,
         // A value the format cannot represent at all — plist has no null. Same
         // answer `serializeStatus` gives it, since it is the same fact about the
         // format either way.
@@ -1098,6 +1104,29 @@ pub export fn fig_editor_delete_trailing_comment(
 // the status: `not_found` means absent; `ok` with `out_len == 0` means present and
 // empty. Strict JSON (no comment syntax) returns `unsupported_format`.
 
+/// Hand a comment read's bytes back across the ABI: copy them into `scratch`
+/// (borrowed until the next read on this handle), free the original, and set
+/// the out-parameters. A null `maybe` — no such comment — is `not_found`, which
+/// is what distinguishes an ABSENT comment from a present-but-empty one.
+/// Shared by both handles' reads, and by the dangling read's own entry point.
+fn fillCommentOut(
+    allocator: std.mem.Allocator,
+    scratch: *std.ArrayList(u8),
+    maybe: ?[]u8,
+    p: *[*c]const u8,
+    l: *usize,
+) FigStatus {
+    const bytes = maybe orelse return .not_found;
+    defer allocator.free(bytes);
+    scratch.clearRetainingCapacity();
+    // Keep a valid (non-dangling) pointer even for a zero-length present comment.
+    scratch.ensureTotalCapacity(allocator, bytes.len + 1) catch return .out_of_memory;
+    scratch.appendSliceAssumeCapacity(bytes);
+    p.* = scratch.items.ptr;
+    l.* = scratch.items.len;
+    return .ok;
+}
+
 fn editorGetComment(
     handle: *EditorHandle,
     path: []const AST.PathSegment,
@@ -1110,15 +1139,7 @@ fn editorGetComment(
     const maybe = (switch (handle.inner) {
         inline else => |*e| if (trailing) e.getTrailingComment(path) else e.getLeadingComment(path),
     }) catch |err| return editStatus(err);
-    const bytes = maybe orelse return .not_found;
-    defer handle.allocator.free(bytes);
-    handle.scratch.clearRetainingCapacity();
-    // Keep a valid (non-dangling) pointer even for a zero-length present comment.
-    handle.scratch.ensureTotalCapacity(handle.allocator, bytes.len + 1) catch return .out_of_memory;
-    handle.scratch.appendSliceAssumeCapacity(bytes);
-    p.* = handle.scratch.items.ptr;
-    l.* = handle.scratch.items.len;
-    return .ok;
+    return fillCommentOut(handle.allocator, &handle.scratch, maybe, p, l);
 }
 
 /// Read the own-line comment block immediately ABOVE the node at `path`, joined by
@@ -1149,6 +1170,117 @@ pub export fn fig_editor_get_trailing_comment(
     var buf: [max_path_len]AST.PathSegment = undefined;
     const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
     return editorGetComment(handle, path, true, out_ptr, out_len);
+}
+
+// ── The dangling anchor, and comment-out ────────────────────────────────────
+// A container's third comment anchor — the run at the end of its body, after
+// its last entry — plus the pair that turns an entry into a comment run and
+// back. See `Editor.getDanglingComment` and `Editor.commentOut`.
+
+/// Add own-line comment line(s) at the END of the container at `path`'s body
+/// (empty path = the root), at the body's child depth.
+pub export fn fig_editor_add_dangling_comment(
+    ed: ?*FigEditor,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    text_ptr: ?[*]const u8,
+    text_len: usize,
+) FigStatus {
+    const handle = editorFrom(ed) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    const text = sliceOf(text_ptr, text_len) orelse return .invalid_argument;
+    return switch (handle.inner) {
+        inline else => |*e| if (e.addDanglingComment(path, text)) .ok else |err| editStatus(err),
+    };
+}
+
+/// Remove the whole dangling run at the end of the container at `path`'s body
+/// (no-op when there is none).
+pub export fn fig_editor_delete_dangling_comments(
+    ed: ?*FigEditor,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+) FigStatus {
+    const handle = editorFrom(ed) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    return switch (handle.inner) {
+        inline else => |*e| if (e.deleteDanglingComments(path)) .ok else |err| editStatus(err),
+    };
+}
+
+/// Read the dangling run at the end of the container at `path`'s body, joined
+/// by '\n' with markers and indentation stripped. Same borrowed-bytes and
+/// `not_found`-means-absent contract as the other comment reads.
+pub export fn fig_editor_get_dangling_comment(
+    ed: ?*FigEditor,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    out_ptr: ?*[*c]const u8,
+    out_len: ?*usize,
+) FigStatus {
+    const handle = editorFrom(ed) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    const p = out_ptr orelse return .invalid_argument;
+    const l = out_len orelse return .invalid_argument;
+    const maybe = (switch (handle.inner) {
+        inline else => |*e| e.getDanglingComment(path),
+    }) catch |err| return editStatus(err);
+    return fillCommentOut(handle.allocator, &handle.scratch, maybe, p, l);
+}
+
+/// Turn the node at `path` into a comment run: every line of its span gains the
+/// line marker at that line's own indentation. Its own leading comment block
+/// stays above it; afterwards the tree no longer has the node.
+pub export fn fig_editor_comment_out(
+    ed: ?*FigEditor,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+) FigStatus {
+    const handle = editorFrom(ed) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    return switch (handle.inner) {
+        inline else => |*e| if (e.commentOut(path)) .ok else |err| editStatus(err),
+    };
+}
+
+/// Bring `line_count` lines of the LEADING comment block above the node at
+/// `path`, starting at `first_line`, back as entries. `unsupported_operation`
+/// when the result parses but is not the entry it was taken for; the document
+/// is unchanged on every failure.
+pub export fn fig_editor_uncomment_leading(
+    ed: ?*FigEditor,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    first_line: usize,
+    line_count: usize,
+) FigStatus {
+    const handle = editorFrom(ed) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    return switch (handle.inner) {
+        inline else => |*e| if (e.uncommentLeading(path, first_line, line_count)) .ok else |err| editStatus(err),
+    };
+}
+
+/// The dangling twin of `fig_editor_uncomment_leading`: the run at the end of
+/// the container at `path`'s body — where a commented-out LAST entry lands.
+pub export fn fig_editor_uncomment_dangling(
+    ed: ?*FigEditor,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    first_line: usize,
+    line_count: usize,
+) FigStatus {
+    const handle = editorFrom(ed) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    return switch (handle.inner) {
+        inline else => |*e| if (e.uncommentDangling(path, first_line, line_count)) .ok else |err| editStatus(err),
+    };
 }
 
 pub export fn fig_editor_insert_key(
@@ -2052,14 +2184,7 @@ fn embedGetComment(
     const maybe = (switch (handle.editor) {
         inline else => |*e| if (trailing) e.getTrailingComment(path) else e.getLeadingComment(path),
     }) catch |err| return editStatus(err);
-    const bytes = maybe orelse return .not_found;
-    defer handle.allocator.free(bytes);
-    handle.scratch.clearRetainingCapacity();
-    handle.scratch.ensureTotalCapacity(handle.allocator, bytes.len + 1) catch return .out_of_memory;
-    handle.scratch.appendSliceAssumeCapacity(bytes);
-    p.* = handle.scratch.items.ptr;
-    l.* = handle.scratch.items.len;
-    return .ok;
+    return fillCommentOut(handle.allocator, &handle.scratch, maybe, p, l);
 }
 
 pub export fn fig_embed_get_leading_comment(
@@ -2086,6 +2211,98 @@ pub export fn fig_embed_get_trailing_comment(
     var buf: [max_path_len]AST.PathSegment = undefined;
     const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
     return embedGetComment(handle, path, true, out_ptr, out_len);
+}
+
+// ── The dangling anchor and comment-out (embed mirror) ──────────────────────
+
+pub export fn fig_embed_add_dangling_comment(
+    em: ?*FigEmbed,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    text_ptr: ?[*]const u8,
+    text_len: usize,
+) FigStatus {
+    const handle = embedFrom(em) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    const text = sliceOf(text_ptr, text_len) orelse return .invalid_argument;
+    return switch (handle.editor) {
+        inline else => |*e| if (e.addDanglingComment(path, text)) .ok else |err| editStatus(err),
+    };
+}
+
+pub export fn fig_embed_delete_dangling_comments(
+    em: ?*FigEmbed,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+) FigStatus {
+    const handle = embedFrom(em) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    return switch (handle.editor) {
+        inline else => |*e| if (e.deleteDanglingComments(path)) .ok else |err| editStatus(err),
+    };
+}
+
+pub export fn fig_embed_get_dangling_comment(
+    em: ?*FigEmbed,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    out_ptr: ?*[*c]const u8,
+    out_len: ?*usize,
+) FigStatus {
+    const handle = embedFrom(em) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    const p = out_ptr orelse return .invalid_argument;
+    const l = out_len orelse return .invalid_argument;
+    const maybe = (switch (handle.editor) {
+        inline else => |*e| e.getDanglingComment(path),
+    }) catch |err| return editStatus(err);
+    return fillCommentOut(handle.allocator, &handle.scratch, maybe, p, l);
+}
+
+pub export fn fig_embed_comment_out(
+    em: ?*FigEmbed,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+) FigStatus {
+    const handle = embedFrom(em) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    return switch (handle.editor) {
+        inline else => |*e| if (e.commentOut(path)) .ok else |err| editStatus(err),
+    };
+}
+
+pub export fn fig_embed_uncomment_leading(
+    em: ?*FigEmbed,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    first_line: usize,
+    line_count: usize,
+) FigStatus {
+    const handle = embedFrom(em) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    return switch (handle.editor) {
+        inline else => |*e| if (e.uncommentLeading(path, first_line, line_count)) .ok else |err| editStatus(err),
+    };
+}
+
+pub export fn fig_embed_uncomment_dangling(
+    em: ?*FigEmbed,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    first_line: usize,
+    line_count: usize,
+) FigStatus {
+    const handle = embedFrom(em) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    return switch (handle.editor) {
+        inline else => |*e| if (e.uncommentDangling(path, first_line, line_count)) .ok else |err| editStatus(err),
+    };
 }
 
 pub export fn fig_embed_insert_key(

@@ -107,7 +107,8 @@ typedef enum FigStatus {
     // The operation is not defined for these arguments, though each argument is
     // individually valid — as distinct from FIG_STATUS_INVALID_ARGUMENT (a
     // malformed call) and FIG_STATUS_UNSUPPORTED_FORMAT (a format this build
-    // cannot handle). Added in core 2.7.0; see fig_embed_retype.
+    // cannot handle). Added in core 2.7.0; see fig_embed_retype and
+    // fig_editor_uncomment_leading (lines that turned out not to be an entry).
     FIG_STATUS_UNSUPPORTED_OPERATION = 6,
     FIG_STATUS_INTERNAL_ERROR = 255,
 } FigStatus;
@@ -360,6 +361,38 @@ FigStatus fig_editor_get_leading_comment(FigEditor *editor, const FigPathSegment
 FigStatus fig_editor_get_trailing_comment(FigEditor *editor, const FigPathSegment *path,
                                           size_t path_len,
                                           const uint8_t **out_ptr, size_t *out_len);
+// The DANGLING anchor: the comment run at the END of a container's body, after
+// its last entry (the third anchor beside leading and trailing; `path` empty =
+// the root). Written at the body's child depth, read back with markers and
+// indentation stripped, same `not_found`-means-absent and borrowed-bytes rules
+// as the reads above. FIG_STATUS_INVALID_ARGUMENT when `path` names a scalar,
+// or a flow container with no line for the run to sit on (`{ "a": 1 }`).
+FigStatus fig_editor_add_dangling_comment(FigEditor *editor, const FigPathSegment *path,
+                                          size_t path_len, const uint8_t *text, size_t text_len);
+FigStatus fig_editor_delete_dangling_comments(FigEditor *editor, const FigPathSegment *path,
+                                              size_t path_len);
+FigStatus fig_editor_get_dangling_comment(FigEditor *editor, const FigPathSegment *path,
+                                          size_t path_len,
+                                          const uint8_t **out_ptr, size_t *out_len);
+// Comment an entry out, and back. `comment_out` prefixes every line of the node
+// at `path` with the line marker at that line's own indentation: the entry
+// becomes the leading block of what followed it, or — when it was last — the
+// parent's dangling run, and the tree no longer has the node. Its own leading
+// block stays above it. The uncomment pair is the inverse: strip the marker (and
+// one following space) from `line_count` lines of the named block, starting at
+// `first_line` (0-based within that block), and reparse. Which lines are an
+// entry is the caller's judgement; the editor guarantees the byte edit and that
+// it parsed. If the result does not parse, or parses to a document whose other
+// nodes changed, the splice is rolled back — the document is unchanged — and the
+// call returns the parse error or FIG_STATUS_UNSUPPORTED_OPERATION.
+// FIG_STATUS_INVALID_ARGUMENT for the root, and for a node that does not have
+// its lines to itself (an item of `[a, b]`, an entry of `{ "a": 1, "b": 2 }`);
+// FIG_STATUS_NOT_FOUND when the block has fewer lines than asked for.
+FigStatus fig_editor_comment_out(FigEditor *editor, const FigPathSegment *path, size_t path_len);
+FigStatus fig_editor_uncomment_leading(FigEditor *editor, const FigPathSegment *path,
+                                       size_t path_len, size_t first_line, size_t line_count);
+FigStatus fig_editor_uncomment_dangling(FigEditor *editor, const FigPathSegment *path,
+                                        size_t path_len, size_t first_line, size_t line_count);
 FigStatus fig_editor_insert_key(FigEditor *editor, const FigPathSegment *path, size_t path_len,
                                 const uint8_t *key, size_t key_len,
                                 const uint8_t *val, size_t val_len);
@@ -622,6 +655,20 @@ FigStatus fig_embed_get_leading_comment(FigEmbed *embed, const FigPathSegment *p
 FigStatus fig_embed_get_trailing_comment(FigEmbed *embed, const FigPathSegment *path,
                                          size_t path_len,
                                          const uint8_t **out_ptr, size_t *out_len);
+// The dangling anchor and the comment-out pair on the embedded config (mirrors
+// fig_editor_*; see those for the semantics and the failure modes).
+FigStatus fig_embed_add_dangling_comment(FigEmbed *embed, const FigPathSegment *path,
+                                         size_t path_len, const uint8_t *text, size_t text_len);
+FigStatus fig_embed_delete_dangling_comments(FigEmbed *embed, const FigPathSegment *path,
+                                             size_t path_len);
+FigStatus fig_embed_get_dangling_comment(FigEmbed *embed, const FigPathSegment *path,
+                                         size_t path_len,
+                                         const uint8_t **out_ptr, size_t *out_len);
+FigStatus fig_embed_comment_out(FigEmbed *embed, const FigPathSegment *path, size_t path_len);
+FigStatus fig_embed_uncomment_leading(FigEmbed *embed, const FigPathSegment *path,
+                                      size_t path_len, size_t first_line, size_t line_count);
+FigStatus fig_embed_uncomment_dangling(FigEmbed *embed, const FigPathSegment *path,
+                                       size_t path_len, size_t first_line, size_t line_count);
 FigStatus fig_embed_insert_key(FigEmbed *embed, const FigPathSegment *path, size_t path_len,
                                const uint8_t *key, size_t key_len,
                                const uint8_t *val, size_t val_len);

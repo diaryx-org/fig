@@ -172,6 +172,80 @@ fn editor_flow_item_owns_no_comment_of_its_parents() {
 }
 
 #[test]
+fn editor_dangling_comment_round_trips() {
+    // The third anchor: the run at the END of a container's body. Written at
+    // the body's child depth, read back with the marker stripped, deleted whole.
+    let mut ed = Editor::open(b"server:\n  port: 8080\nclient: 1\n", Format::Yaml).unwrap();
+    assert_eq!(
+        ed.dangling_comment(&[Segment::Key("server")]).unwrap(),
+        None
+    );
+
+    ed.add_dangling_comment(&[Segment::Key("server")], "was: here")
+        .unwrap();
+    assert_eq!(
+        ed.source().unwrap(),
+        "server:\n  port: 8080\n  # was: here\nclient: 1\n"
+    );
+    assert_eq!(
+        ed.dangling_comment(&[Segment::Key("server")])
+            .unwrap()
+            .as_deref(),
+        Some("was: here")
+    );
+
+    ed.delete_dangling_comments(&[Segment::Key("server")])
+        .unwrap();
+    assert_eq!(ed.source().unwrap(), "server:\n  port: 8080\nclient: 1\n");
+}
+
+#[test]
+fn editor_comment_out_and_back_is_byte_identical() {
+    const SRC: &str = "server:\n  port: 8080\n  host: local\n";
+
+    // A middle entry becomes the leading block of the entry below it.
+    let mut ed = Editor::open(SRC.as_bytes(), Format::Yaml).unwrap();
+    ed.comment_out(&[Segment::Key("server"), Segment::Key("port")])
+        .unwrap();
+    assert_eq!(
+        ed.source().unwrap(),
+        "server:\n  # port: 8080\n  host: local\n"
+    );
+    ed.uncomment_leading(&[Segment::Key("server"), Segment::Key("host")], 0, 1)
+        .unwrap();
+    assert_eq!(ed.source().unwrap(), SRC);
+
+    // The LAST entry has no sibling below it: it becomes the parent's dangling
+    // run, and comes back through `uncomment_dangling`.
+    let mut ed = Editor::open(SRC.as_bytes(), Format::Yaml).unwrap();
+    ed.comment_out(&[Segment::Key("server"), Segment::Key("host")])
+        .unwrap();
+    assert_eq!(
+        ed.dangling_comment(&[Segment::Key("server")])
+            .unwrap()
+            .as_deref(),
+        Some("host: local")
+    );
+    ed.uncomment_dangling(&[Segment::Key("server")], 0, 1)
+        .unwrap();
+    assert_eq!(ed.source().unwrap(), SRC);
+}
+
+#[test]
+fn editor_uncomment_refuses_lines_that_are_not_an_entry() {
+    // `# two` is CONTENT of the block scalar. Stripping the marker parses, but
+    // it changes `text` — a node the caller never named — so the splice is
+    // rolled back and the document is byte-for-byte as it was.
+    const SRC: &str = "text: |\n  one\n  # two\nb: 2\n";
+    let mut ed = Editor::open(SRC.as_bytes(), Format::Yaml).unwrap();
+    let err = ed
+        .uncomment_leading(&[Segment::Key("b")], 0, 1)
+        .unwrap_err();
+    assert!(matches!(err, fig::Error::UnsupportedOperation), "{err:?}");
+    assert_eq!(ed.source().unwrap(), SRC);
+}
+
+#[test]
 fn editor_sequence_ops() {
     let mut ed = Editor::open(b"items:\n- a\n- b\n", Format::Yaml).unwrap();
     ed.append(&[Segment::Key("items")], &"c").unwrap();

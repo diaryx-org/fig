@@ -169,6 +169,36 @@ test "harness: node_regions is well-formed, and a section format's parser fills 
     }
 }
 
+test "harness: a dangling comment written at the root reads back and deletes clean" {
+    // The dangling anchor is derived from the parse (the container's last
+    // own-line child) rather than declared per format, so it is exactly the
+    // kind of thing that works on the two formats it was written against and
+    // falls over on the ninth. Every editable format's samples are put through
+    // the write/read/delete cycle here; the two refusals it may legitimately
+    // give — no comment syntax at all, and no body line to anchor on — are the
+    // documented answers and are accepted as such.
+    inline for (Language.dialects) |d| {
+        if (comptime d.Lang != void and d.Lang.caps.edit and @hasDecl(d.Lang, "samples")) {
+            for (d.Lang.samples) |sample| {
+                var ed: Editor(d.Lang) = .{ .allocator = testing.allocator, .format = d.dialect };
+                defer ed.deinit();
+                try ed.init(sample);
+                if (ed.addDanglingComment(&.{}, "harness")) |_| {
+                    const got = try ed.getDanglingComment(&.{});
+                    defer if (got) |g| testing.allocator.free(g);
+                    try testing.expect(got != null);
+                    try testing.expectEqualStrings("harness", got.?);
+                    try ed.deleteDanglingComments(&.{});
+                    try testing.expectEqualStrings(sample, ed.source.items);
+                } else |err| switch (err) {
+                    error.CommentsUnsupported, error.UnsupportedShape => {},
+                    else => return err,
+                }
+            }
+        }
+    }
+}
+
 test "harness: Editor constructs over every sample, and a no-op splice changes nothing" {
     inline for (Language.dialects) |d| {
         if (comptime d.Lang != void and d.Lang.caps.edit and @hasDecl(d.Lang, "samples")) {

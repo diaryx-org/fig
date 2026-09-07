@@ -315,10 +315,47 @@ ed.deleteLeadingComments(["port"]); // drops the whole owned block
 ```
 
 The comment marker (`#`, `//`, `;`) is chosen for the format; strict `Json` has
-no comments and throws `UnsupportedFormat` if you try. Not every format has both
-halves either: `Ini` and `Nestedtext` have real leading comments but no
+no comments and throws `UnsupportedFormat` if you try. Not every format has
+both halves either: `Ini` and `Nestedtext` have real leading comments but no
 trailing-comment syntax, so `setTrailingComment` throws there too — a `;`/`#`
 after a value on those formats' value lines is literal text, not a comment.
+
+A container has a third anchor — the **dangling** run at the end of its body,
+after its last entry, which is where a commented-out *last* entry lives. It is
+addressed by the container's own path (`[]` = the document root):
+
+```ts
+ed.addDanglingComment(["server"], "was: here"); // at the body's child depth
+ed.getDanglingComment(["server"]);   // "" = bare marker, null = none
+ed.deleteDanglingComments([]);       // the run at the end of the document
+```
+
+A scalar has no body to end, and neither has a flow container written on one
+line (`{ "a": 1 }`) — both throw `InvalidArgument`. A pretty-printed JSONC
+object is fine: its `// note` before the closing brace is the root's dangling
+run.
+
+An entry can also be turned INTO a comment run and back, which is how a
+structural editor shows a disabled row:
+
+```ts
+ed.commentOut(["server", "port"]);
+// server:
+//   # port: 8080
+//   host: local
+ed.uncommentLeading(["server", "host"], 0, 1); // byte-identical again
+```
+
+`commentOut` prefixes every line of the node's span with the marker at that
+line's own indentation, leaving the node's own leading block above it
+untouched; afterwards the tree has no node at that path. The run is the leading
+block of whatever followed it, or — when the entry was last — the parent's
+dangling run, which `uncommentDangling(containerPath, firstLine, lineCount)`
+addresses instead. Lines are taken by index within the block because *which*
+lines are an entry is the caller's judgement; if the result does not parse, or
+parses to a document whose other nodes moved, the splice is rolled back and the
+call throws `ParseError` or `UnsupportedOperation` with the document
+byte-for-byte as it was.
 
 Need to insert already-serialized text verbatim (e.g. preserving exact quoting)?
 Every value method has a `*Raw` twin — `replaceValueRaw`, `insertValueRaw`,

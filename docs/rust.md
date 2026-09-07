@@ -409,6 +409,43 @@ ed.delete_leading_comments(&["port".into()])?;   // drops the whole owned block
 The comment marker (`#`, `//`) is chosen for the format; strict `Json` has no
 comments and returns [`Error::UnsupportedFormat`] if you try.
 
+A container has a third anchor — the **dangling** run at the end of its body,
+after its last entry, which is where a commented-out *last* entry lives. It is
+addressed by the container's own path (an empty path = the document root):
+
+```rust
+ed.add_dangling_comment(&["server".into()], "was: here")?; // at the body's child depth
+ed.dangling_comment(&["server".into()])?;   // Some("") = bare marker, None = none
+ed.delete_dangling_comments(&[])?;          // the run at the end of the document
+```
+
+A scalar has no body to end, and neither has a flow container written on one
+line (`{ "a": 1 }`) — both give [`Error::InvalidArgument`]. A pretty-printed
+JSONC object is fine: its `// note` before the closing brace is the root's
+dangling run.
+
+An entry can also be turned INTO a comment run and back, which is how a
+structural editor shows a disabled row:
+
+```rust
+ed.comment_out(&["server".into(), "port".into()])?;
+// server:
+//   # port: 8080
+//   host: local
+ed.uncomment_leading(&["server".into(), "host".into()], 0, 1)?; // byte-identical again
+```
+
+`comment_out` prefixes every line of the node's span with the marker at that
+line's own indentation, leaving the node's own leading block above it
+untouched; afterwards the tree has no node at that path. The run is the leading
+block of whatever followed it, or — when the entry was last — the parent's
+dangling run, which `uncomment_dangling(container_path, first_line, line_count)`
+addresses instead. Lines are taken by index within the block because *which*
+lines are an entry is the caller's judgement; if the result does not parse, or
+parses to a document whose other nodes moved, the splice is rolled back and the
+call returns [`Error::Parse`] or [`Error::UnsupportedOperation`] with the
+document byte-for-byte as it was.
+
 Everything above uses the `*_value` methods, which take `impl Into<Value>` and
 need no serde — they are the full API, not a subset. **With the `serde` feature**,
 each gains a twin that takes any `T: Serialize` instead: `replace`, `insert`,

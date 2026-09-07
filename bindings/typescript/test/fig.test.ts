@@ -455,6 +455,49 @@ test("editor reads a trailing comment riding a block-collection key", () => {
   assert.equal(ed.getTrailingComment(["contents"]), "the list");
 });
 
+test("editor dangling comment round-trips at a container's end", () => {
+  // The third anchor: the run at the END of a container's body, written at the
+  // body's child depth and read back with the marker stripped.
+  using ed = Editor.open("server:\n  port: 8080\nclient: 1\n", Format.Yaml);
+  assert.equal(ed.getDanglingComment(["server"]), null);
+  ed.addDanglingComment(["server"], "was: here");
+  assert.equal(ed.source(), "server:\n  port: 8080\n  # was: here\nclient: 1\n");
+  assert.equal(ed.getDanglingComment(["server"]), "was: here");
+  ed.deleteDanglingComments(["server"]);
+  assert.equal(ed.source(), "server:\n  port: 8080\nclient: 1\n");
+});
+
+test("editor comments an entry out and back, byte-identically", () => {
+  const src = "server:\n  port: 8080\n  host: local\n";
+
+  // A middle entry becomes the leading block of the entry below it.
+  using ed = Editor.open(src, Format.Yaml);
+  ed.commentOut(["server", "port"]);
+  assert.equal(ed.source(), "server:\n  # port: 8080\n  host: local\n");
+  ed.uncommentLeading(["server", "host"], 0, 1);
+  assert.equal(ed.source(), src);
+
+  // The LAST entry has no sibling below it: it lands in the parent's dangling
+  // run, and comes back through uncommentDangling.
+  using last = Editor.open(src, Format.Yaml);
+  last.commentOut(["server", "host"]);
+  assert.equal(last.getDanglingComment(["server"]), "host: local");
+  last.uncommentDangling(["server"], 0, 1);
+  assert.equal(last.source(), src);
+});
+
+test("editor uncomment refuses lines that are not an entry, byte-exactly", () => {
+  // `# two` is CONTENT of the block scalar: stripping the marker parses, but it
+  // changes `text`, a node the caller never named. Rolled back.
+  const src = "text: |\n  one\n  # two\nb: 2\n";
+  using ed = Editor.open(src, Format.Yaml);
+  assert.throws(
+    () => ed.uncommentLeading(["b"], 0, 1),
+    (err: unknown) => err instanceof FigError && err.status === Status.UnsupportedOperation,
+  );
+  assert.equal(ed.source(), src);
+});
+
 test("embed reads a frontmatter comment", () => {
   using fm = Embed.open("---\ntitle: Hi\n# keep\ntags:\n- x\n---\n# Body\ntext\n", EmbedType.FrontmatterYaml);
   assert.equal(fm.getLeadingComment(["tags"]), "keep");

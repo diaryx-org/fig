@@ -503,6 +503,44 @@ unsafe extern "C" {
         out_ptr: *mut *const u8,
         out_len: *mut usize,
     ) -> FigStatus;
+    pub fn fig_editor_add_dangling_comment(
+        editor: *mut FigEditor,
+        path: *const FigPathSegment,
+        path_len: usize,
+        text: *const u8,
+        text_len: usize,
+    ) -> FigStatus;
+    pub fn fig_editor_delete_dangling_comments(
+        editor: *mut FigEditor,
+        path: *const FigPathSegment,
+        path_len: usize,
+    ) -> FigStatus;
+    pub fn fig_editor_get_dangling_comment(
+        editor: *mut FigEditor,
+        path: *const FigPathSegment,
+        path_len: usize,
+        out_ptr: *mut *const u8,
+        out_len: *mut usize,
+    ) -> FigStatus;
+    pub fn fig_editor_comment_out(
+        editor: *mut FigEditor,
+        path: *const FigPathSegment,
+        path_len: usize,
+    ) -> FigStatus;
+    pub fn fig_editor_uncomment_leading(
+        editor: *mut FigEditor,
+        path: *const FigPathSegment,
+        path_len: usize,
+        first_line: usize,
+        line_count: usize,
+    ) -> FigStatus;
+    pub fn fig_editor_uncomment_dangling(
+        editor: *mut FigEditor,
+        path: *const FigPathSegment,
+        path_len: usize,
+        first_line: usize,
+        line_count: usize,
+    ) -> FigStatus;
     pub fn fig_editor_insert_key(
         editor: *mut FigEditor,
         path: *const FigPathSegment,
@@ -725,6 +763,44 @@ unsafe extern "C" {
         path_len: usize,
         out_ptr: *mut *const u8,
         out_len: *mut usize,
+    ) -> FigStatus;
+    pub fn fig_embed_add_dangling_comment(
+        fm: *mut FigEmbed,
+        path: *const FigPathSegment,
+        path_len: usize,
+        text: *const u8,
+        text_len: usize,
+    ) -> FigStatus;
+    pub fn fig_embed_delete_dangling_comments(
+        fm: *mut FigEmbed,
+        path: *const FigPathSegment,
+        path_len: usize,
+    ) -> FigStatus;
+    pub fn fig_embed_get_dangling_comment(
+        fm: *mut FigEmbed,
+        path: *const FigPathSegment,
+        path_len: usize,
+        out_ptr: *mut *const u8,
+        out_len: *mut usize,
+    ) -> FigStatus;
+    pub fn fig_embed_comment_out(
+        fm: *mut FigEmbed,
+        path: *const FigPathSegment,
+        path_len: usize,
+    ) -> FigStatus;
+    pub fn fig_embed_uncomment_leading(
+        fm: *mut FigEmbed,
+        path: *const FigPathSegment,
+        path_len: usize,
+        first_line: usize,
+        line_count: usize,
+    ) -> FigStatus;
+    pub fn fig_embed_uncomment_dangling(
+        fm: *mut FigEmbed,
+        path: *const FigPathSegment,
+        path_len: usize,
+        first_line: usize,
+        line_count: usize,
     ) -> FigStatus;
     pub fn fig_embed_insert_key(
         fm: *mut FigEmbed,

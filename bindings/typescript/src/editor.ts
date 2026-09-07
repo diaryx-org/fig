@@ -44,6 +44,12 @@ const EDITOR_FNS: EditFns = {
   deleteTrailingComment: (...a) => fig.fig_editor_delete_trailing_comment(...a),
   getLeadingComment: (...a) => fig.fig_editor_get_leading_comment(...a),
   getTrailingComment: (...a) => fig.fig_editor_get_trailing_comment(...a),
+  addDanglingComment: (...a) => fig.fig_editor_add_dangling_comment(...a),
+  deleteDanglingComments: (...a) => fig.fig_editor_delete_dangling_comments(...a),
+  getDanglingComment: (...a) => fig.fig_editor_get_dangling_comment(...a),
+  commentOut: (...a) => fig.fig_editor_comment_out(...a),
+  uncommentLeading: (...a) => fig.fig_editor_uncomment_leading(...a),
+  uncommentDangling: (...a) => fig.fig_editor_uncomment_dangling(...a),
 };
 
 export class Editor extends Editable {

@@ -24,9 +24,12 @@ It is deliberately not a to-do list, and not a source of truth:
 - Behavior that shipped is documented in the format guides ([Rust](/docs/rust.md),
   [TypeScript](/docs/typescript.md), [Zig](/docs/zig.md)) and the
   [spec](/docs/spec.md) — never here.
-- Breaking changes that are *planned* live in
-  [Upcoming breaking changes](/docs/BREAKING-CHANGES.md), which is a commitment to
-  consumers; a proposal here is not.
+- A breaking change that is *coming* is a `Behavioural-change:` trailer on the
+  commit that lands it, gathered into the [CHANGELOG](/docs/CHANGELOG.md)'s
+  unreleased section — a commitment to consumers; a proposal here is not.
+  (Until core 3.0 there was a separate `BREAKING-CHANGES.md` for changes that
+  were planned but not yet made; everything it listed shipped in 3.0, and
+  nothing is queued that way now.)
 - Anything written from outside the project is kept as its author wrote it, with
   corrections and outcomes added in a **Status** section at the top rather than
   edited into the body. A proposal whose findings turned out to be wrong is still

@@ -2,22 +2,24 @@
 title = Pluggable formats
 description = What fig 3.0 is for — the format set written down once, every per-format fact declared by the format, and the editing contract a format writes against named in one place
 created = 2026-09-04
-status = accepted
-updated = 2026-09-04
+status = implemented
+updated = 2026-09-07
 part_of = [proposals](proposals.md)
 ```
 
 # Pluggable formats
 
-> **Status: ACCEPTED, 2.x steps implemented.** The argument for core 3.0,
-> written against `main` at c9761cd (cli 4.0.0, core 2.7.0 plus the
-> unreleased derived-regions work). §5.1, §5.2, §5.3, §5.4, §5.5 and §5.7
-> landed on `main` on 2026-09-04 as six commits (8b34254, 2ef10aa, 6a1f6b3,
-> 449e900, 2226998, 47bcaac), each verified as §7 says; they ship in the next
-> core minor. §5.6 — the major itself — is not started. §9 records what was
-> built, where it departs from §5 as argued, and the review that forced the
-> departures; read it before acting on §5.1, §5.4 or §5.7, each of which
-> asked for something the pinned Zig cannot do or the tree does not have.
+> **Status: IMPLEMENTED.** The argument for core 3.0, written against `main`
+> at c9761cd (cli 4.0.0, core 2.7.0 plus the unreleased derived-regions
+> work). §5.1, §5.2, §5.3, §5.4, §5.5 and §5.7 landed on `main` on
+> 2026-09-04 as six commits (8b34254, 2ef10aa, 6a1f6b3, 449e900, 2226998,
+> 47bcaac), each verified as §7 says, and shipped in core 2.8.0. §5.6 — the
+> major itself — landed on `main` on 2026-09-07 and is core 3.0.0, ABI 2,
+> unreleased at the time of writing; §10 records it. §9 records what the 2.x
+> steps built, where they depart from §5 as argued, and the review that
+> forced the departures; read it before acting on §5.1, §5.4 or §5.7, each
+> of which asked for something the pinned Zig cannot do or the tree does not
+> have.
 >
 > "fig 3.0" in the body means **core 3.0** (`.version` in `build.zig.zon`,
 > with `abi_version` 2). The crates.io `fig` crate is already at 3.3.0 and
@@ -544,3 +546,55 @@ Two defects found while verifying, neither introduced here, are filed in
 [tasks](/docs/tasks/tasks.md): the YAML printer panics on thirty of the
 accept-corpus documents, and the everything-on `zig build test` fails to
 compile in `patch.zig`.
+
+## 10. Outcome: the major (2026-09-07)
+
+§5.6 as written, in §6's order, on `main` as four commits plus a version
+bump: XML removal (5a25681), the embed ABI (ecb689f), the `Native` alias
+(20c7767), the binding enums and their check, then `core 3.0.0 · rust 3.5.0
+· npm 3.0.0`. Where it departs from §5.6:
+
+- **The embed ABI's container enum has seven members, not six.** §5.6 quoted
+  BREAKING-CHANGES' list, written before `html_code` existed; the enum
+  mirrors `Embed.Type`'s tags as they are. A preset ignores the format
+  argument, as promised, and `fig_embed_detect` *reports* the format a preset
+  pins, so the pair a caller reads back is meaningful without a table. The
+  migration table BREAKING-CHANGES said a generator would write is instead
+  five lines of comment on the enum in fig.h — one per group, since every
+  member of a group maps the same way — and no shim table shipped on 2.9:
+  the promise was withdrawn rather than kept, on the grounds that a caller
+  recompiling against ABI 2 has the mapping in the header it is compiling
+  against.
+- **The bindings keep their flat `EmbedType`.** BREAKING-CHANGES offered
+  either shape; one name per archetype is what a caller wants to write, so
+  the Rust wrapper and the TypeScript binding each meet the pair in one
+  function (`EmbedType::parts`, `embedParts`) and their public APIs do not
+  change. Neither binding cuts a major for this.
+- **Value 6 is retired by a table, not a comment.** `c_api.zig`'s literal pin
+  gained a `retired` list beside `pinned`; the build refuses the name coming
+  back or the value being handed to another dialect.
+- **The Rust `Format` enum grew, and the check came with it.** §8.3 asked
+  whether the TypeScript binding wanted a generated enum. Neither binding's
+  enum is generated — a hand-written enum with doc comments per member reads
+  better than a generated one — but `abi-check` now diffs `fig-sys`'s
+  `FigFormat`, the TypeScript `Format` and the Rust wrapper's `Format`
+  against the registry, name and value, the way it diffs fig.h. That closes
+  §3's items 11 and 12 and answers §8.3: no generator, one check. The Rust
+  crate's five new variants and features are a minor (3.5.0); its `xml`
+  feature stays as a documented no-op so a dependent's feature list resolves,
+  and leaves at the next Rust major.
+- **The CLI did not cut a major.** §8.4 stays a CLI question. Removing `-i
+  xml`/`-o xml` is a break on paper, but no shipped binary ever compiled the
+  format in, so no user of a shipped binary observes it; the selectors are
+  gone from `--help` and the CLI stays at 4.0.0 until something a user can
+  see changes.
+- **BREAKING-CHANGES.md is gone**, not emptied. Everything it listed shipped
+  here, and a planned break is now a `Behavioural-change:` trailer on the
+  commit that lands it, gathered into the changelog's unreleased section —
+  the same place a shipped one is recorded, which is where a consumer looks.
+
+What 3.0 is not: an extensibility story beyond the tree. §4's boundary — the
+engine is generic over any `Language` that passes `validate`, the registry
+is fig's — is unchanged, and so is the answer on runtime plugins. That is
+the next argument, and it is a different proposal.
+

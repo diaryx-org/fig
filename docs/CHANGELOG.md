@@ -120,9 +120,65 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
-_No commits since the last release tag._
+### Breaking
+
+- **languages** — remove generic XML as a selectable format ([`5a25681`](https://github.com/diaryx-org/fig/commit/5a25681a580ba5ccf8a614cd45e6d533928e8d6d))
+- **c-api** — select an embed by (container, format) instead of a flat FigEmbedType ([`ecb689f`](https://github.com/diaryx-org/fig/commit/ecb689fafe2149022f5908481b8655bd3b5a459e))
+- **root** — drop the deprecated `Native` alias for `Canonical` ([`20c7767`](https://github.com/diaryx-org/fig/commit/20c776794d2517507a70aaffdda4f0ebee60fd53))
+
+### Added
+
+- **rust** — Format gains ini, dotenv, properties, plist and nestedtext; abi-check holds every binding's format enum to the registry ([`aebc2f7`](https://github.com/diaryx-org/fig/commit/aebc2f71e4b3268c70b701beed5975d4984c8b09))
+
+### Behavioural changes
+
+- `FIG_FORMAT_XML` (6) is gone from fig.h, and a C caller
+  passing 6 now gets `FIG_STATUS_UNSUPPORTED_FORMAT` from every entry point
+  and 0 from `fig_format_capabilities`, where a `-Dxml=true` build used to
+  parse and serialize it.
+
+- `fig get -i xml`, `-o xml` and `fig check -i xml` are no
+  longer accepted spellings; a build that had compiled XML in used to accept
+  them, and every shipped binary already rejected them.
+
+- `AST.SerializeError` no longer carries
+  `RootNotSingleElement`, `NestedSequenceUnsupported`, `InvalidElementName`
+  or `NonScalarValue`, and `AST.SerializeFormat`, `cli.Format` and
+  `Language.Detected` no longer have an `xml` member; a Zig switch that named
+  any of them stops compiling.
+
+- every `fig_embed_*` entry point that took an `int
+  embed_type` now takes `int container, int format` (and `fig_embed_detect`
+  two out params); a C caller compiled against ABI 1 must be recompiled
+  against the new header, and `fig_abi_version()` now reports 2.
+
+- a Rust or TypeScript caller that links a `fig-sys`
+  prebuilt payload or an npm wasm from core 2.x against this binding source
+  will crash; the payload crates and the wasm module ship rebuilt with the
+  same release.
+
+- `fig.Native` no longer exists; a Zig consumer that
+  spelled it must write `fig.Canonical`, which has been the name since 2.0.
 
 <!-- git-cliff:end -->
+
+### Why a major
+
+Core 3.0 is the two breaks that had been listed in BREAKING-CHANGES since
+2.4, plus the housekeeping that waited for them. The C ABI moves to version
+2: every `fig_embed_*` selector takes a `(FigEmbedContainer, FigFormat)`
+pair in place of the flat `FigEmbedType`, and `FIG_FORMAT_XML` (6) is
+retired with the generic XML format it named. A C caller recompiles against
+the new header; the enum's comment in fig.h maps every old value to its
+pair. The Rust and TypeScript bindings keep their public shape — a flat
+`EmbedType` in both, now decomposed to the pair inside — and ship rebuilt
+native payloads and wasm, which is why they move with the core. The Rust
+`Format` enum gains the five formats it was missing, and `zig build
+abi-check` now holds every binding's format enum to the registry.
+
+BREAKING-CHANGES.md is retired with this release: everything it listed has
+shipped, and a planned break is recorded from now on as a
+`Behavioural-change:` trailer, in this file's unreleased section.
 
 ## core 2.9.0 · rust 3.4.0 · npm 2.9.0
 

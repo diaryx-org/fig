@@ -8,7 +8,6 @@ contents
 > * [Testing](testing.md)
 > * [VERSIONING](VERSIONING.md)
 > * [CHANGELOG](CHANGELOG.md)
-> * [Upcoming breaking changes](BREAKING-CHANGES.md)
 > * [Proposals](proposals/proposals.md)
 > * [Tasks](tasks/tasks.md)
 > * [Devlog](devlogs/devlogs.md)

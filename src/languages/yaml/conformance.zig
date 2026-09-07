@@ -18,10 +18,17 @@
 const std = @import("std");
 const testing = std.testing;
 
+const AST = @import("../../ast/ast.zig");
 const Parser = @import("parser.zig");
 const Printer = @import("printer.zig");
 const YamlType = @import("yaml.zig").Type;
 const Embed = @import("../../embed.zig");
+// The JSON side of the scoreboard (see `printsAsJson`). Imported by path, like
+// `lossless.zig`'s test imports, so the count is scored even in a build that
+// gates JSON out of the `Language` registry.
+const JsonParser = @import("../json/parser.zig");
+const JsonPrinter = @import("../json/printer.zig");
+const materialize = @import("materialize.zig").materialize;
 
 const max_fixture_size = 1024 * 1024;
 
@@ -34,6 +41,16 @@ const accept_baseline = 289;
 // reads back. Short of 289 by the fixtures carrying a `%TAG` directive, which
 // the printer drops.
 const reprint_baseline = 287;
+// Accept documents that convert to JSON: materialized, printed as JSON, and the
+// printed bytes read back by fig's own JSON parser — what `fig get -o json`
+// does. Short of 289 by the 14 fixtures whose custom tag materialize refuses in
+// strict mode, the 15 whose mapping key is a collection (no JSON spelling, so
+// `NonStringKey`), and P76L, where `!!int 1 - 3` yields a number node holding a
+// lexeme that is not a number — `applyScalarTag` checks a `!!bool` payload but
+// not an `!!int`/`!!float` one, so the bare `1 - 3` it prints is not JSON. That
+// last one is a tag-application bug, not a printer one; raise this to 260 with
+// it, and to 289 as the other two classes gain answers.
+const json_baseline = 259;
 const reject_baseline = 93;
 // Multi-document streams parsed via Embed.extractStream (the single-document
 // parser refuses a stream; the splitter feeds it one document at a time).
@@ -47,6 +64,9 @@ const Score = struct {
     total: usize = 0,
     /// Of the correct `.should_pass` documents, how many printed and re-parsed.
     reprinted: usize = 0,
+    /// Of the correct `.should_pass` documents, how many printed as JSON that
+    /// fig's JSON parser reads back (see `printsAsJson`).
+    json_printed: usize = 0,
 };
 
 test "yaml conformance: scoreboard" {
@@ -60,6 +80,7 @@ test "yaml conformance: scoreboard" {
         \\YAML conformance (yaml-test-suite, out-of-scope excluded)
         \\  accept (must parse): {d}/{d}   baseline {d}
         \\  reprint (print + re-parse): {d}/{d}   baseline {d}
+        \\  json (materialize + print JSON + re-parse): {d}/{d}   baseline {d}
         \\  reject (must fail) : {d}/{d}   baseline {d}
         \\  stream (extractStream): {d}/{d}   baseline {d}
         \\  reject-stream (extractStream must fail): {d}/{d}   baseline {d}
@@ -67,6 +88,7 @@ test "yaml conformance: scoreboard" {
     , .{
         accept.correct,        accept.total,        accept_baseline,
         accept.reprinted,      accept.total,        reprint_baseline,
+        accept.json_printed,   accept.total,        json_baseline,
         reject.correct,        reject.total,        reject_baseline,
         stream.correct,        stream.total,        stream_baseline,
         reject_stream.correct, reject_stream.total, reject_stream_baseline,
@@ -74,6 +96,7 @@ test "yaml conformance: scoreboard" {
 
     try testing.expect(accept.correct >= accept_baseline);
     try testing.expect(accept.reprinted >= reprint_baseline);
+    try testing.expect(accept.json_printed >= json_baseline);
     try testing.expect(reject.correct >= reject_baseline);
     try testing.expect(stream.correct >= stream_baseline);
     try testing.expect(reject_stream.correct >= reject_stream_baseline);
@@ -89,6 +112,32 @@ fn reprints(ast: *const @import("../../ast/ast.zig")) !bool {
     const again = Parser.parse(testing.allocator, out.written(), YamlType.v1_2_2) catch return false;
     var d = again;
     d.deinit(testing.allocator);
+    return true;
+}
+
+/// Materialize `ast` — aliases expanded, merges flattened, tags applied, which
+/// is exactly what `fig get -o json` does to a YAML source — then print it as
+/// JSON and parse those bytes back as JSON.
+///
+/// False when the document has no JSON reading at all: a custom tag strict
+/// materialize refuses, or a collection used as a mapping key, which the JSON
+/// printer answers with `NonStringKey` (a *scalar* key it spells as a string).
+/// False, too — and this is what the ratchet is for — when JSON comes out that
+/// fig's own JSON parser rejects, which is how a whole class of keys used to
+/// leave here (`null: "a"`, `[ ... ]: 23`).
+///
+/// Every failure, allocation included, reads as "did not convert": a scoreboard
+/// counts, and a test-only helper need not tell the reasons apart.
+fn printsAsJson(ast: *const AST) bool {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const mat = materialize(arena, ast, .strict) catch return false;
+    var out: std.Io.Writer.Allocating = .init(arena);
+    JsonPrinter.print(&out.writer, &mat, .{}) catch return false;
+    // Arena-allocated: the parse result is freed with the arena, not by hand.
+    _ = JsonParser.parseAbstract(arena, out.written(), .JSON) catch return false;
     return true;
 }
 
@@ -156,6 +205,7 @@ fn scoreDir(dir_path: []const u8, expected: Expected) !Score {
                     defer d.deinit(testing.allocator);
                     score.correct += 1;
                     if (try reprints(&d.ast)) score.reprinted += 1;
+                    if (printsAsJson(&d.ast)) score.json_printed += 1;
                 } else |_| {}
             },
             .should_fail => {

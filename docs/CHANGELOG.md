@@ -120,6 +120,12 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
+_No commits since the last release tag._
+
+<!-- git-cliff:end -->
+
+## core 2.9.0 · npm 2.9.0
+
 ### Added
 
 - **editor** — the dangling comment anchor, and comment-out and back ([`48b6f42`](https://github.com/diaryx-org/fig/commit/48b6f42243f6460089760b37d50aaf5b9ca06d5e))
@@ -221,8 +227,6 @@ one that the next `zig build changelog` would overwrite with unreleased work.
   fails with `NonStringKey` ("a non-string mapping key has no representation
   in this output format", exit 1) instead of writing an unparseable object;
   the 15 accept-corpus documents that hit this used to produce output.
-
-<!-- git-cliff:end -->
 
 ## cli 4.0.0
 

@@ -1,13 +1,28 @@
 ```fig
 title = JSON printer emits a non-string mapping key as invalid JSON
 description = `fig get -o json` on a YAML document with a null, number, boolean or collection key writes the key bare (`null: "a"`, `[ ... ]: 23`) — output no JSON parser accepts — where the fig printer refuses with `NonStringKey`
-status = open
+status = done
 created = 2026-09-04
-updated = 2026-09-04
+updated = 2026-09-07
 part_of = [tasks](tasks.md)
 ```
 
 # JSON printer emits a non-string mapping key as invalid JSON
+
+**Status.** Done, in `fix(json): spell a scalar mapping key as a JSON string,
+refuse a collection key` (2026-09-07). The second option was taken: a
+non-string SCALAR key is spelled as the JSON string of its source text
+(`"null"`, `"23"`, `"true"`, a datetime's timestamp), and a sequence or
+mapping key — which has no faithful spelling — is refused with
+`NonStringKey`, reported by the CLI as before; an alias key keeps
+`UnresolvedAlias`, since like an alias value it means an unmaterialized YAML
+AST rather than a key JSON has no room for. One `key` path serves JSON,
+JSONC and JSON5, so all three moved together, and the YAML scoreboard now
+ratchets a `json` count (materialize + print JSON + re-parse, 249 → 259 of
+289) so this cannot regress. One accept document still prints JSON that does
+not parse, for an unrelated reason: P76L's `!!int 1 - 3` becomes a number
+node holding a non-numeric lexeme, because `materialize.applyScalarTag`
+validates a `!!bool` payload but not an `!!int`/`!!float` one.
 
 **Repro.** With `fig` at 0a0d646 (or any earlier build that survives the
 YAML side):

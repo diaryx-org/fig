@@ -75,7 +75,12 @@ pub const Projection = struct {
 
 // ── Printing (AST → gron) ───────────────────────────────────────────────────
 
-pub const Error = Writer.Error || error{UnresolvedAlias};
+/// gron renders every value — and every bracketed key segment — through the
+/// JSON printer, so it inherits that printer's refusals: `UnresolvedAlias` for
+/// an unmaterialized YAML alias, and `NonStringKey` for a collection used as an
+/// object key *inside* a bracketed key segment (a mapping key of a mapping key),
+/// which JSON has no spelling for. `main` reports both rather than escaping.
+pub const Error = Writer.Error || error{ UnresolvedAlias, NonStringKey };
 
 /// A path segment, built one link per nesting level on the call stack — the same
 /// linked-list-on-the-stack the TOML printer uses for its `[header.path]`s. The

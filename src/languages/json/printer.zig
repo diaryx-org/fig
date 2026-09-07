@@ -5,10 +5,14 @@ const json_string = @import("../../util/json_string.zig");
 const num = @import("../../util/number.zig");
 const Writer = std.Io.Writer;
 
-/// JSON cannot represent a YAML alias. A materialized AST contains none (aliases
-/// are expanded to copied subtrees by `yaml.materialize`), so reaching one here
-/// means an unmaterialized YAML AST was handed to the JSON printer.
-pub const Error = Writer.Error || error{UnresolvedAlias};
+/// `UnresolvedAlias`: JSON cannot represent a YAML alias. A materialized AST
+/// contains none (aliases are expanded to copied subtrees by
+/// `yaml.materialize`), so reaching one here means an unmaterialized YAML AST
+/// was handed to the JSON printer.
+///
+/// `NonStringKey`: a sequence or mapping was used as an object key. See `key`
+/// for what the printer does with the other key kinds and why.
+pub const Error = Writer.Error || error{ UnresolvedAlias, NonStringKey };
 
 writer: *Writer,
 ast: *const AST,
@@ -99,7 +103,7 @@ fn node(self: *Printer, id: AST.Node.Id, depth: usize) Error!void {
         .sequence => |first_child| try self.sequence(id, first_child, depth),
         .mapping => |first_child| try self.mapping(id, first_child, depth),
         .keyvalue => |kv| {
-            try self.key(kv.key, depth);
+            try self.key(kv.key);
             // Compact output omits the space after the colon.
             try self.writer.writeAll(if (self.options.pretty) ": " else ":");
             try self.node(kv.value, depth);
@@ -108,16 +112,56 @@ fn node(self: *Printer, id: AST.Node.Id, depth: usize) Error!void {
     }
 }
 
-/// Render an object key. In JSON5 a string key that is a bare ECMAScript
-/// identifier prints unquoted (`foo: 1`); otherwise it falls back to a normal
-/// quoted string. JSON always quotes.
-fn key(self: *Printer, id: AST.Node.Id, depth: usize) Error!void {
-    const k = self.ast.nodes[id].kind;
-    if (self.dialect == .json5 and k == .string and isBareIdentifier(k.string)) {
-        try self.writer.writeAll(k.string);
-        return;
+/// Render an object key.
+///
+/// A JSON object key is a string and nothing else, but the AST's key node can
+/// hold any kind: YAML writes `null: a`, `23: x`, `true: x`, and even
+/// `? [a, b] : c`. **The decision, for all three dialects: a non-string SCALAR
+/// key is spelled as the JSON string of its source text — `"null"`, `"23"`,
+/// `"true"` — and a key with no such spelling (a sequence or a mapping) is
+/// refused with `NonStringKey`.** The alternative — refuse every non-string
+/// key, as the fig/TOML/ZON/XML printers do — was weighed and rejected, because
+/// `-o json` is a *conversion*: a scalar key has one obvious faithful reading,
+/// and losing a whole document over `23:` would help nobody, while a collection
+/// key has no reading at all. Until this existed the key node was
+/// printed as a value, so those documents came out as bytes no JSON parser
+/// accepts (docs/tasks/json-printer-emits-non-string-keys.md).
+///
+/// Spelling can collide — a YAML document with both `null:` and `"null":`, or
+/// with two null keys (2JQS's `: a` / `: b`), emits the same name twice. That is
+/// still JSON: RFC 8259 permits a repeated name and every parser reads it, where
+/// the bare `null:` this replaced was not parseable at all.
+///
+/// An `alias` key stays `UnresolvedAlias`, not `NonStringKey`: like an alias
+/// *value* it means an unmaterialized YAML AST reached a non-YAML printer (the
+/// CLI materializes first), not a key JSON has no room for.
+///
+/// Dialect: in JSON5 a *source* string key that is a bare ECMAScript identifier
+/// prints unquoted (`foo: 1`); every spelled scalar key is quoted in every
+/// dialect, so the spelling of a converted key does not depend on which JSON
+/// came out.
+fn key(self: *Printer, id: AST.Node.Id) Error!void {
+    switch (self.ast.nodes[id].kind) {
+        .string => |s| {
+            if (self.dialect == .json5 and isBareIdentifier(s)) {
+                try self.writer.writeAll(s);
+                return;
+            }
+            try json_string.writeQuoted(self.writer, s);
+        },
+        .null_ => try json_string.writeQuoted(self.writer, "null"),
+        .boolean => |value| try json_string.writeQuoted(self.writer, if (value) "true" else "false"),
+        // The lexeme verbatim rather than the normalized number: the string is
+        // the key's source text, not a number being re-spelled, so a YAML `23`
+        // is `"23"` and a `0x1F` key stays `"0x1F"`.
+        .number => |value| try json_string.writeQuoted(self.writer, value.raw),
+        // Every extended scalar's `text` IS its value (a TOML timestamp, an enum
+        // literal's name, a char literal's codepoint, an `Infinity` lexeme) — the
+        // same bytes the value path prints, quoted because this is a key.
+        .extended => |value| try json_string.writeQuoted(self.writer, value.text),
+        .alias => return error.UnresolvedAlias,
+        .sequence, .mapping, .keyvalue => return error.NonStringKey,
     }
-    try self.node(id, depth);
 }
 
 /// The ASCII subset of an ECMAScript IdentifierName, matching what the JSON5
@@ -530,4 +574,100 @@ test "honors custom indent width" {
         \\}
         \\
     , output.written());
+}
+
+// ── Mapping keys (see `key`) ────────────────────────────────────────────────
+// A JSON object key is a string, but the AST's key node can be any kind. These
+// build the AST literally (as the XML/plist printer tests do) rather than
+// parsing, because no JSON dialect can *write* the keys under test — they come
+// from YAML, whose `null: a`, `23: x` and `? [a, b] : c` are all legal.
+
+/// `{ <key node> : "v" }`, given the key node's kind. Node 0 is the mapping,
+/// 1 the entry, 2 the key, 3 the value.
+fn keyKindAst(kind: AST.Node.Kind, nodes: *[4]AST.Node) AST {
+    nodes.* = .{
+        .{ .id = 0, .kind = .{ .mapping = 1 } },
+        .{ .id = 1, .kind = .{ .keyvalue = .{ .key = 2, .value = 3 } } },
+        .{ .id = 2, .kind = kind },
+        .{ .id = 3, .kind = .{ .string = "v" } },
+    };
+    return .{ .allocator = std.testing.allocator, .root = 0, .nodes = nodes };
+}
+
+/// Print `{ <key> : "v" }` compactly in `dialect` and return the bytes (owned by
+/// `out`), or the printer's error.
+fn printKeyKind(kind: AST.Node.Kind, dialect: Dialect, out: *Writer.Allocating) Error![]const u8 {
+    var nodes: [4]AST.Node = undefined;
+    const ast = keyKindAst(kind, &nodes);
+    switch (dialect) {
+        .json => try print(&out.writer, &ast, .{ .pretty = false }),
+        .jsonc => try printc(&out.writer, &ast, .{ .pretty = false }),
+        .json5 => try print5(&out.writer, &ast, .{ .pretty = false }),
+    }
+    return out.written();
+}
+
+fn expectKeyKind(kind: AST.Node.Kind, dialect: Dialect, expected: []const u8) !void {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try std.testing.expectEqualStrings(expected, try printKeyKind(kind, dialect, &out));
+}
+
+fn expectKeyKindError(kind: AST.Node.Kind, dialect: Dialect, expected: anyerror) !void {
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try std.testing.expectError(expected, printKeyKind(kind, dialect, &out));
+}
+
+test "key kind: a string key quotes, except a JSON5 bare identifier" {
+    try expectKeyKind(.{ .string = "k" }, .json, "{\"k\":\"v\"}\n");
+    try expectKeyKind(.{ .string = "k" }, .jsonc, "{\"k\":\"v\"}\n");
+    try expectKeyKind(.{ .string = "k" }, .json5, "{k:\"v\"}\n");
+    // Not an identifier: quoted even in JSON5.
+    try expectKeyKind(.{ .string = "a b" }, .json5, "{\"a b\":\"v\"}\n");
+}
+
+test "key kind: a null key spells as the string \"null\"" {
+    try expectKeyKind(.null_, .json, "{\"null\":\"v\"}\n");
+    try expectKeyKind(.null_, .jsonc, "{\"null\":\"v\"}\n");
+    // Quoted in JSON5 too: a spelled key reads the same in every dialect.
+    try expectKeyKind(.null_, .json5, "{\"null\":\"v\"}\n");
+}
+
+test "key kind: a boolean key spells as \"true\"/\"false\"" {
+    try expectKeyKind(.{ .boolean = true }, .json, "{\"true\":\"v\"}\n");
+    try expectKeyKind(.{ .boolean = false }, .json, "{\"false\":\"v\"}\n");
+    try expectKeyKind(.{ .boolean = true }, .json5, "{\"true\":\"v\"}\n");
+}
+
+test "key kind: a number key spells as its source lexeme, quoted" {
+    try expectKeyKind(.{ .number = .{ .raw = "23", .kind = .integer } }, .json, "{\"23\":\"v\"}\n");
+    try expectKeyKind(.{ .number = .{ .raw = "-1.5e3", .kind = .float } }, .json, "{\"-1.5e3\":\"v\"}\n");
+    // The lexeme verbatim, NOT the JSON-normalized number a value would get.
+    try expectKeyKind(.{ .number = .{ .raw = "0x1F", .kind = .integer } }, .json, "{\"0x1F\":\"v\"}\n");
+}
+
+test "key kind: an extended scalar key spells as its text" {
+    try expectKeyKind(.{ .extended = .{ .kind = .local_date, .text = "1979-05-27" } }, .json, "{\"1979-05-27\":\"v\"}\n");
+    // Even in JSON5, where the same scalar as a VALUE prints bare.
+    try expectKeyKind(.{ .extended = .{ .kind = .number_special, .text = "-Infinity" } }, .json5, "{\"-Infinity\":\"v\"}\n");
+}
+
+test "key kind: an alias key is UnresolvedAlias, like an alias value" {
+    // Not `NonStringKey`: it means an unmaterialized YAML AST reached a
+    // non-YAML printer, not a key JSON has no room for.
+    try expectKeyKindError(.{ .alias = "a" }, .json, error.UnresolvedAlias);
+    try expectKeyKindError(.{ .alias = "a" }, .json5, error.UnresolvedAlias);
+}
+
+test "key kind: a sequence key is NonStringKey" {
+    try expectKeyKindError(.{ .sequence = null }, .json, error.NonStringKey);
+    try expectKeyKindError(.{ .sequence = null }, .jsonc, error.NonStringKey);
+    try expectKeyKindError(.{ .sequence = null }, .json5, error.NonStringKey);
+}
+
+test "key kind: a mapping key is NonStringKey" {
+    try expectKeyKindError(.{ .mapping = null }, .json, error.NonStringKey);
+    try expectKeyKindError(.{ .mapping = null }, .jsonc, error.NonStringKey);
+    try expectKeyKindError(.{ .mapping = null }, .json5, error.NonStringKey);
 }

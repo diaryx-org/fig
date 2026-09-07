@@ -11,8 +11,8 @@ export { Status };
  *  consumer. Build with `FIG_WASM_ZON=1 npm run build:wasm` to get a module
  *  with ZON support, and call {@link capabilities} at runtime rather than
  *  assuming which module you're running. Values match the C ABI (`Json5 = 7`
- *  is appended, leaving a gap at the reader-only `Xml = 6`; `Fig` is appended
- *  after it for the same reason). */
+ *  is appended, leaving a gap at 6, which was generic XML until core 3.0
+ *  retired it; `Fig` is appended after it for the same reason). */
 export enum Format {
   Json = 1,
   Jsonc = 2,

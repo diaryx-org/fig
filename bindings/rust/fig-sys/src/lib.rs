@@ -44,12 +44,16 @@ pub enum FigFormat {
     Yaml = 3,
     Toml = 4,
     Zon = 5,
-    // `Xml = 6` in the C ABI is reader-only and has no writable `Format`
-    // variant, so it is intentionally omitted here; the discriminant gap is
-    // deliberate to keep JSON5 at its stable ABI value.
+    // 6 was generic XML through core 2.x; retired with the format in core
+    // 3.0 and never reused, which is why JSON5 keeps its gap.
     Json5 = 7,
     // The native `fig` authoring dialect. Appended, same reasoning as JSON5.
     Fig = 8,
+    Ini = 9,
+    Dotenv = 10,
+    Properties = 11,
+    Plist = 12,
+    Nestedtext = 13,
 }
 
 pub enum FigDocument {}

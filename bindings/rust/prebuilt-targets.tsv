@@ -5,7 +5,8 @@
 # build.rs arm. Targets NOT listed here fall back to the vendored zig source build.
 #
 # The prebuilt library is compiled with fig's DEFAULT language set (json, yaml,
-# toml, fig on; zon, xml off); non-default feature sets always build from source.
+# toml, fig, ini, dotenv, properties, nestedtext on; zon, plist off);
+# non-default feature sets always build from source.
 #
 # rust_target	zig_target	key	cfg
 aarch64-apple-darwin	aarch64-macos	macos-arm64	all(target_os = "macos", target_arch = "aarch64")

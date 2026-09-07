@@ -41,13 +41,20 @@ path = "src/lib.rs"
 # exact `default` set, so a default-feature build links it with no Zig toolchain;
 # any other language combination triggers a source build.
 [features]
-default = ["json", "yaml", "toml", "fig"]
+default = ["json", "yaml", "toml", "fig", "ini", "dotenv", "properties", "nestedtext"]
 json = []
 yaml = []
 toml = []
 zon = []
-xml = []
 fig = []
+ini = []
+dotenv = []
+properties = []
+plist = []
+nestedtext = []
+# No-op since core 3.0 removed generic XML; kept so a dependent's feature
+# list still resolves.
+xml = []
 
 # Prebuilt-library payload crates, one per tier-1 target. Each is a target-gated
 # dependency: Cargo activates (and downloads) only the one whose `cfg` matches

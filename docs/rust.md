@@ -109,13 +109,20 @@ change to the language set means the library has to be rebuilt from Zig source.
 | `yaml`     |   ✅    | YAML parser/printer in the linked core.                                   |
 | `toml`     |   ✅    | TOML parser/printer/editor.                                              |
 | `zon`      |         | ZON parser/printer/editor.                                              |
-| `xml`      |         | Compiles the core's XML reader in (not yet reachable via `Format`).       |
 | `fig`      |   ✅    | The native `fig` authoring dialect.                                      |
+| `ini`      |   ✅    | INI parser/printer/editor.                                              |
+| `dotenv`   |   ✅    | dotenv / `.env` parser/printer/editor.                                  |
+| `properties` | ✅    | Java `.properties` parser/printer/editor.                               |
+| `plist`    |         | Apple XML property list parser/printer/editor.                          |
+| `nestedtext` | ✅    | NestedText parser/printer/editor.                                       |
+| `xml`      |         | No-op: generic XML left the core in 3.0. Kept so a feature list resolves; goes at the next Rust major. |
 
-The default set is `json`, `yaml`, `toml`, `fig`. Enable the rest explicitly —
-`serde` for the `serde_json`-style helpers (otherwise the `Value` tree and
-`derive` cover typed mapping with no serde dependency), and `zon` / `xml` when you
-need those formats. JSON/JSONC/JSON5 share one core behind the `json` gate: on by
+The default set is `json`, `yaml`, `toml`, `fig`, `ini`, `dotenv`, `properties`,
+`nestedtext` — the core's own defaults, which is also what the prebuilt archive is
+compiled with. Enable the rest explicitly — `serde` for the `serde_json`-style
+helpers (otherwise the `Value` tree and `derive` cover typed mapping with no serde
+dependency), and `zon` / `plist` when you need those formats. JSON/JSONC/JSON5
+share one core behind the `json` gate: on by
 default but, like every language, removable (`--no-default-features`). The
 `Format` enum keeps *every* variant regardless of features — selecting a format
 whose feature is off returns [`Error::UnsupportedFormat`] at runtime, so query
@@ -139,20 +146,23 @@ let caps = capabilities(Format::Toml);
 | `Toml`   |  ✅   |  ✅  |    ✅     | TOML 1.0 / 1.1, incl. datetimes.     |
 | `Zon`    |  ⚠️   |  ⚠️  |    ⚠️     | Zig Object Notation — **not** in `default`; enable the `zon` feature. |
 | `Fig`    |  ✅   |  ✅  |    ✅     | The native `fig` authoring dialect.  |
+| `Ini`    |  ✅   |  ✅  |    ✅     | `[section]` + `key = value`; untyped-string scalars, one level of sections. |
+| `Dotenv` |  ✅   |  ✅  |    ✅     | Flat `KEY=value`; a flat string map.  |
+| `Properties` | ✅ |  ✅  |    ✅     | Java `.properties`; same flat, untyped limits as dotenv. |
+| `Plist`  |  ⚠️   |  ⚠️  |    ⚠️     | Apple XML property list, typed and nested — **not** in `default`; enable the `plist` feature. |
+| `Nestedtext` | ✅ |  ✅  |    ✅     | NestedText; nested but every leaf is a string. |
 
 Every format the Rust `Format` enum exposes parses, edits, and serializes when
-its feature is on — but `zon` is not in the default feature set, so on a stock
-build `capabilities(Format::Zon)` is all-`false` and using it returns
+its feature is on — but `zon` and `plist` are not in the default feature set, so
+on a stock build `capabilities(Format::Zon)` is all-`false` and using it returns
 [`Error::UnsupportedFormat`]. Ask [`capabilities`] at runtime rather than
 hard-coding the table.
 
-The core supports more formats than this binding currently surfaces: generic XML
-(reader-only, which is why there is no writable `Format` for it — see the `xml`
-feature below), plus INI, dotenv, Java `.properties`, NestedText and Apple XML
-property lists. Those five have C ABI values already and are reachable from the
-CLI and the TypeScript binding; the Rust `Format` enum has not grown to match
-yet. Because `Format` is `#[non_exhaustive]`, adding them will be a **minor**
-release — see [Forward compatibility](#forward-compatibility-non_exhaustive).
+`Format` is the whole registry: every format the core knows, at the C ABI value
+it has there, and `zig build abi-check` refuses a core whose registry this enum
+(or the TypeScript one) has fallen behind. Because `Format` is
+`#[non_exhaustive]`, a format the core gains later is a **minor** release — see
+[Forward compatibility](#forward-compatibility-non_exhaustive).
 
 ## Reading data
 

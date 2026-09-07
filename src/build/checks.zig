@@ -68,6 +68,11 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     // The canonical ABI version so the tool can assert fig.h's FIG_ABI_VERSION
     // macro matches the value compiled into `fig_abi_version()`.
     abi_check_run.addArg(b.fmt("{d}", .{ver.abi}));
+    // The three binding-side mirrors of `FigFormat`, diffed against the
+    // registry the same way fig.h is.
+    abi_check_run.addFileArg(b.path("bindings/rust/fig-sys/src/lib.rs"));
+    abi_check_run.addFileArg(b.path("bindings/typescript/src/types.ts"));
+    abi_check_run.addFileArg(b.path("bindings/rust/fig/src/lib.rs"));
 
     const abi_probe_c = b.addExecutable(.{
         .name = "abi_probe_c",

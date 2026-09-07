@@ -52,12 +52,12 @@ use ffi::{FIG_NODE_NONE, FigNodeId, FigNodeKind};
 ///
 /// Every variant is always present in the enum, but each format is gated by a
 /// crate feature of the same name (`json`, `yaml`, `toml`, `zon`, `fig`).
-/// `json`, `yaml`, `toml`, and `fig` are on by default; `zon` is opt-in.
-/// Disabling a feature compiles that format out of the bundled native library,
-/// so selecting it then fails with [`Error::UnsupportedFormat`] at runtime.
-/// `Json`/`Jsonc`/`Json5` share one core behind the `json` feature. (The core
-/// also has a reader-only XML format, but it has no writable `Format` variant
-/// and so is not exposed here.)
+/// Every format the core registers. `json`, `yaml`, `toml`, `fig`, `ini`,
+/// `dotenv`, `properties` and `nestedtext` are on by default; `zon` and
+/// `plist` are opt-in features. Disabling a feature compiles that format out
+/// of the bundled native library, so selecting it then fails with
+/// [`Error::UnsupportedFormat`] at runtime. `Json`/`Jsonc`/`Json5` share one
+/// core behind the `json` feature.
 ///
 /// `#[non_exhaustive]`: the core gains formats over time, so a `match` needs a
 /// `_` arm. Constructing a variant is unaffected.
@@ -73,6 +73,23 @@ pub enum Format {
     /// The native `fig` authoring dialect (see `src/languages/fig/DESIGN.md`
     /// in the core repo) — a memorable, typeable surface over the same AST.
     Fig,
+    /// INI (`[section]` + `key = value`). Untyped-string scalars: `port = 8080`
+    /// reads back as the string `"8080"`. A root mapping and one level of
+    /// `[section]` nesting only.
+    Ini,
+    /// dotenv / `.env` (flat `KEY=value`). A flat string map: no nesting,
+    /// untyped scalars.
+    Dotenv,
+    /// Java `.properties` (flat `key=value`). Same flat, untyped limits as
+    /// [`Format::Dotenv`].
+    Properties,
+    /// Apple XML property list. Typed and nested (dict/array/string/integer/
+    /// real/bool, with date/data on the extended scalar). Opt-in: the `plist`
+    /// feature.
+    Plist,
+    /// NestedText (<https://nestedtext.org>). Nested (dict/list) but
+    /// deliberately untyped — every leaf is a string.
+    Nestedtext,
 }
 
 impl From<Format> for ffi::FigFormat {
@@ -85,6 +102,11 @@ impl From<Format> for ffi::FigFormat {
             Format::Toml => ffi::FigFormat::Toml,
             Format::Zon => ffi::FigFormat::Zon,
             Format::Fig => ffi::FigFormat::Fig,
+            Format::Ini => ffi::FigFormat::Ini,
+            Format::Dotenv => ffi::FigFormat::Dotenv,
+            Format::Properties => ffi::FigFormat::Properties,
+            Format::Plist => ffi::FigFormat::Plist,
+            Format::Nestedtext => ffi::FigFormat::Nestedtext,
         }
     }
 }

@@ -38,13 +38,23 @@ fn main() {
 
 /// Whether the active cargo feature set matches the prebuilt `libfig.a`, which
 /// is compiled with fig's **default** language set: `json`, `yaml`, `toml`,
-/// `fig` on; `zon`, `xml` off. Any other combination — an extra language or a
-/// disabled default — requires compiling the core from source so the linked
-/// archive matches. (serde/derive/indexmap are Rust-only and don't affect this;
-/// they aren't fig-sys features.)
+/// `fig`, `ini`, `dotenv`, `properties`, `nestedtext` on; `zon`, `plist` off.
+/// Any other combination — an extra language or a disabled default — requires
+/// compiling the core from source so the linked archive matches.
+/// (serde/derive/indexmap are Rust-only and don't affect this; they aren't
+/// fig-sys features, and neither is the no-op `xml`.)
 fn features_match_prebuilt() -> bool {
     let on = |name: &str| env::var_os(format!("CARGO_FEATURE_{name}")).is_some();
-    on("JSON") && on("YAML") && on("TOML") && on("FIG") && !on("ZON") && !on("XML")
+    on("JSON")
+        && on("YAML")
+        && on("TOML")
+        && on("FIG")
+        && on("INI")
+        && on("DOTENV")
+        && on("PROPERTIES")
+        && on("NESTEDTEXT")
+        && !on("ZON")
+        && !on("PLIST")
 }
 
 /// Directory holding the prebuilt `libfig.a`/`fig.lib` for `target`, if a
@@ -104,22 +114,26 @@ fn build_from_source(cargo_target: &str, cargo_host: &str) {
         command.arg(format!("-Dtarget={zig_target}"));
     }
 
-    // Mirror the per-language cargo features onto `build.zig`'s `-D<lang>` gates.
-    // Cargo sets `CARGO_FEATURE_<NAME>` for every enabled feature; when one is
-    // absent we pass `-D<lang>=false` so that format's parser/printer is compiled
-    // out of `libfig.a`. `json` gates the shared JSON/JSONC/JSON5 core (on by
-    // default like the rest). Cargo reruns this script automatically when the
-    // active feature set changes.
-    for (feature, flag) in [
-        ("CARGO_FEATURE_JSON", "-Djson=false"),
-        ("CARGO_FEATURE_YAML", "-Dyaml=false"),
-        ("CARGO_FEATURE_TOML", "-Dtoml=false"),
-        ("CARGO_FEATURE_ZON", "-Dzon=false"),
-        ("CARGO_FEATURE_FIG", "-Dfig=false"),
+    // Mirror the per-language cargo features onto `build.zig`'s `-D<lang>` gates,
+    // each stated explicitly rather than leaning on the core's own default: the
+    // core has `plist` off and `zon` on, and the cargo feature is the whole
+    // truth here either way. Cargo sets `CARGO_FEATURE_<NAME>` for every enabled
+    // feature and reruns this script when the set changes. `json` gates the
+    // shared JSON/JSONC/JSON5 core.
+    for (feature, lang) in [
+        ("CARGO_FEATURE_JSON", "json"),
+        ("CARGO_FEATURE_YAML", "yaml"),
+        ("CARGO_FEATURE_TOML", "toml"),
+        ("CARGO_FEATURE_ZON", "zon"),
+        ("CARGO_FEATURE_FIG", "fig"),
+        ("CARGO_FEATURE_INI", "ini"),
+        ("CARGO_FEATURE_DOTENV", "dotenv"),
+        ("CARGO_FEATURE_PROPERTIES", "properties"),
+        ("CARGO_FEATURE_PLIST", "plist"),
+        ("CARGO_FEATURE_NESTEDTEXT", "nestedtext"),
     ] {
-        if env::var_os(feature).is_none() {
-            command.arg(flag);
-        }
+        let on = env::var_os(feature).is_some();
+        command.arg(format!("-D{lang}={on}"));
     }
 
     let status = command

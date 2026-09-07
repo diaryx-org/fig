@@ -31,7 +31,7 @@ path = "src/lib.rs"
 # parses, edits, and serializes through the `Value` tree (and `#[derive]`) with
 # no serde at all.
 [features]
-default = ["json", "yaml", "toml", "fig"]
+default = ["json", "yaml", "toml", "fig", "ini", "dotenv", "properties", "nestedtext"]
 # Typed (de)serialization: `to_string`/`from_str`, the editor's `T: Serialize`
 # value methods, and serde impls for `Value`. Opt-in (not in `default`); without
 # it, the binding still parses, edits, and serializes via the `Value` tree
@@ -55,8 +55,15 @@ json = ["fig-sys/json"]
 yaml = ["fig-sys/yaml"]
 toml = ["fig-sys/toml"]
 zon = ["fig-sys/zon"]
-xml = ["fig-sys/xml"]
 fig = ["fig-sys/fig"]
+ini = ["fig-sys/ini"]
+dotenv = ["fig-sys/dotenv"]
+properties = ["fig-sys/properties"]
+plist = ["fig-sys/plist"]
+nestedtext = ["fig-sys/nestedtext"]
+# No-op since core 3.0 removed generic XML (there is nothing left to gate).
+# Kept so a dependent's feature list still resolves; goes at the next major.
+xml = []
 
 [dependencies]
 # The `-sys` layer: raw FFI + the `links = "fig"` build script that provides

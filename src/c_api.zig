@@ -68,8 +68,9 @@ pub const FigStatus = enum(c_int) {
 ///
 ///   * The VALUES are the ABI, and a released one is permanent — which is
 ///     exactly why they are registry DATA rather than member positions. They
-///     run 1,2,7 down the JSON family because JSON5 was appended after XML,
-///     and 8..13 for the members that arrived later still. `zig build
+///     run 1,2,7 down the JSON family because JSON5 was appended after
+///     generic XML took 6 — a value retired with the format in core 3.0 and
+///     never reused — and 8..13 for the members that arrived later still. `zig build
 ///     abi-check` diffs them against fig.h's `FIG_FORMAT_*` enumerators in
 ///     both directions, and the literal pin below restates them a third time.
 ///   * The member ORDER is now the registry's (json, jsonc, json5, yaml, …)
@@ -77,13 +78,12 @@ pub const FigStatus = enum(c_int) {
 ///     Nothing depends on it — what a compiled caller holds is the value, and
 ///     every switch over this enum is either named-arm or `inline else`.
 ///
-/// Not every function accepts every member: `fig_parse` and the serializers
-/// (`fig_value_serialize`, `fig_document_serialize`) accept all of them, while
-/// the editor (`fig_editor_*`) accepts every member EXCEPT `xml` — which has a
-/// reader and a writer but no in-place editor yet, and so returns
-/// `unsupported_format`. That exception is not spelled here either: it is
-/// `XML.caps.edit`, which `fig_editor_create` reads. A format compiled out of
-/// this build is rejected the same way. `fig_format_capabilities` reports the
+/// Every function accepts every member of a full build: `fig_parse`, the
+/// serializers (`fig_value_serialize`, `fig_document_serialize`) and the
+/// editor (`fig_editor_*`) alike. Whether a format is editable is not spelled
+/// here: it is the language's own `caps.edit`, which `fig_editor_create`
+/// reads, and a format compiled out of this build is rejected with
+/// `unsupported_format` the same way. `fig_format_capabilities` reports the
 /// exact support in a given build; the per-format prose (what each dialect is,
 /// and what it can and cannot represent) lives on the registry entries and in
 /// fig.h. JSONC = plain-JSON syntax with comments.
@@ -113,12 +113,24 @@ const format_abi_values = blk: {
 // table, the header, and the registry that now feeds the enum.
 comptime {
     const pinned = .{
-        .{ "json", 1 },        .{ "jsonc", 2 },       .{ "yaml", 3 },
-        .{ "toml", 4 },        .{ "zon", 5 },         .{ "xml", 6 },
-        .{ "json5", 7 },       .{ "fig", 8 },         .{ "ini", 9 },
-        .{ "dotenv", 10 },     .{ "properties", 11 }, .{ "plist", 12 },
-        .{ "nestedtext", 13 },
+        .{ "json", 1 },        .{ "jsonc", 2 },  .{ "yaml", 3 },
+        .{ "toml", 4 },        .{ "zon", 5 },    .{ "json5", 7 },
+        .{ "fig", 8 },         .{ "ini", 9 },    .{ "dotenv", 10 },
+        .{ "properties", 11 }, .{ "plist", 12 }, .{ "nestedtext", 13 },
     };
+    // Values a released ABI once carried and no longer does. Retired, not
+    // free: a caller compiled against the old header still holds the integer,
+    // and a new dialect taking it would be silently misread by that caller.
+    const retired = .{
+        .{ "xml", 6 }, // generic XML, core 2.x; removed in core 3.0
+    };
+    for (retired) |r| {
+        if (@hasField(FigFormat, r[0]))
+            @compileError("`FigFormat." ++ r[0] ++ "` was removed from the C ABI and cannot come back under that name");
+        for (pinned) |p| if (p[1] == r[1])
+            @compileError("ABI value " ++ std.fmt.comptimePrint("{d}", .{r[1]}) ++
+                " is retired (it was '" ++ r[0] ++ "') and cannot be given to '" ++ p[0] ++ "'");
+    }
     if (@typeInfo(FigFormat).@"enum".fields.len != pinned.len)
         @compileError("`FigFormat` no longer has exactly " ++
             std.fmt.comptimePrint("{d}", .{pinned.len}) ++ " members — a format added to the" ++
@@ -187,7 +199,7 @@ pub const FigCapability = enum(u32) {
 
 /// Report what `fig` can do with `format` in THIS build as a bitmask of
 /// `FigCapability` (read | edit | serialize). Reflects both the format's inherent
-/// support (XML has no in-place editor yet — see `languages/xml/xml.zig`) and
+/// support (its `Language.caps` declaration) and
 /// build-time gating: a format compiled out reports 0, as does an unknown
 /// `format` value. JSON/JSONC/JSON5 are always fully supported. Lets a host pick
 /// a working format up front instead of probing via `unsupported_format` returns.
@@ -371,7 +383,7 @@ pub export fn fig_parse_ex(
 
     // Empty input (len 0, null pointer or not) is a valid slice handed to the
     // parser, which judges it per format (YAML → null document, TOML → empty
-    // table, JSON/JSON5/ZON/XML → parse_error). Only a null pointer paired with a
+    // table, JSON/JSON5/ZON → parse_error). Only a null pointer paired with a
     // nonzero length is a malformed argument. This mirrors `fig_editor_create`.
     const input = sliceOf(input_ptr, input_len) orelse
         return fillError(out_err, .invalid_argument, "null input with nonzero length");
@@ -830,7 +842,7 @@ pub const FigEditor = opaque {};
 
 // The editor backends, shared by the document editor and the embed editor: a
 // tagged union with one variant per editable language COMPILED INTO THIS BUILD
-// (json/yaml/toml/zon/fig/…; xml is not editable). The type is assembled from
+// (json/yaml/toml/zon/fig/…, every one whose `caps.edit` is true). The type is assembled from
 // only the enabled languages — rather than carrying `void` placeholder fields —
 // so the `inline else` switches over `handle.inner` stay valid: every variant
 // has a real `Editor` payload to act on.
@@ -924,8 +936,9 @@ pub export fn fig_editor_create(
     const inner: EditorUnion = switch (fig_format) {
         inline else => |f| blk: {
             const d = comptime Languages.entryFor(@tagName(f));
-            // Compiled out of this build, and — the xml case — a format with a
-            // reader and a writer but no in-place editor. Both are the same
+            // Compiled out of this build, and a format with a reader and a
+            // writer but no in-place editor (`caps.edit = false`, which no
+            // format in tree declares any more). Both are the same
             // answer to a caller, and both are read rather than listed: a
             // `void` language has no `Editor` instantiation, and `caps.edit` is
             // the format's own declaration (`EditorUnion` is built from exactly
@@ -2646,8 +2659,7 @@ fn serializeFormatOf(format: c_int) ?AST.SerializeFormat {
 
 /// Translate the canonical serialize error set onto `FigStatus`. Exhaustive over
 /// `AST.SerializeError`: a representability failure (alias/null/non-string key in
-/// a format that cannot hold it, or one of XML's own shape requirements — see
-/// `languages/xml/printer.zig`) maps to `unsupported_format`; the writer's only
+/// a format that cannot hold it) maps to `unsupported_format`; the writer's only
 /// other failure is allocation, surfaced as `WriteFailed`.
 fn serializeStatus(err: AST.SerializeError) FigStatus {
     return switch (err) {
@@ -2656,10 +2668,6 @@ fn serializeStatus(err: AST.SerializeError) FigStatus {
         error.NonStringKey,
         error.FormatDisabled,
         error.NestingTooDeep,
-        error.RootNotSingleElement,
-        error.NestedSequenceUnsupported,
-        error.InvalidElementName,
-        error.NonScalarValue,
         error.UnexpectedNodeKind,
         error.FigUnrepresentableRoot,
         error.UnsupportedValue,
@@ -3037,7 +3045,7 @@ fn prepareDocumentAst(handle: *DocumentHandle, fmt: AST.SerializeFormat, options
         // returning null for it here is moot in practice; every other null
         // answer is the format's own `caps.lossless` declaration (see
         // `manifest.Caps.lossless` for the per-format rationale — `.fig`,
-        // XML/INI/dotenv/.properties/plist/NestedText have no envelope of
+        // INI/dotenv/.properties/plist/NestedText have no envelope of
         // their own to encode into).
         const native: ?Lossless.NativeKinds = Lossless.nativeFor(fmt);
         const decoded = try arena.create(AST);
@@ -4567,10 +4575,6 @@ test "fig_format_capabilities reports the per-format matrix" {
         fig_format_capabilities(@intFromEnum(FigFormat.zon)),
     );
     try std.testing.expectEqual(
-        if (build_options.lang_xml) read | serialize else 0, // no in-place editor yet
-        fig_format_capabilities(@intFromEnum(FigFormat.xml)),
-    );
-    try std.testing.expectEqual(
         if (build_options.lang_fig) read | edit | serialize else 0,
         fig_format_capabilities(@intFromEnum(FigFormat.fig)),
     );
@@ -4601,7 +4605,6 @@ test "fig_format_capabilities agrees with actual READ/EDIT/SERIALIZE behavior" {
         .{ .fmt = .yaml, .sample = "a: 1\n" },
         .{ .fmt = .toml, .sample = "a = 1\n" },
         .{ .fmt = .zon, .sample = ".{ .a = 1 }" },
-        .{ .fmt = .xml, .sample = "<r>x</r>" },
         .{ .fmt = .fig, .sample = "a = 1\n" },
     };
 

@@ -123,8 +123,10 @@ pub const KeyStyle = enum {
 pub const Caps = struct {
     /// `parse` accepts this format. True for every language in tree.
     read: bool = true,
-    /// `Editor(Language)` is instantiated for this format. False for XML,
-    /// which has a reader and a writer but no in-place editor yet.
+    /// `Editor(Language)` is instantiated for this format. True for every
+    /// language in tree since generic XML (a reader and a writer with no
+    /// in-place editor) was removed in core 3.0; an out-of-tree `Language`
+    /// may still declare false, and the CLI and C ABI refuse to edit it.
     edit: bool = false,
     /// `print` can write this format.
     serialize: bool = false,
@@ -144,7 +146,7 @@ pub const Caps = struct {
     ///
     ///   * fig and canonical spell every kind directly, so an envelope would
     ///     preserve nothing a plain print does not.
-    ///   * XML, INI, dotenv, `.properties`, plist and NestedText have no typed
+    ///   * INI, dotenv, `.properties`, plist and NestedText have no typed
     ///     scalar envelope of their own — their printers already reduce the
     ///     value to text, so a mapping-shaped envelope would be no more
     ///     recoverable than the degraded scalar it replaced.
@@ -292,9 +294,8 @@ pub const SpliceStyle = enum {
     /// the text are escaped rather than taken as syntax — the JSON family.
     json_string,
     /// Written as raw characters, so only the format's own separators can
-    /// break it — INI, dotenv, `.properties`, XML, plist, NestedText. (plist
-    /// and NestedText *render* the text rather than splicing it; XML has no
-    /// in-place editor at all, so no edit text ever reaches it.)
+    /// break it — INI, dotenv, `.properties`, plist, NestedText. (plist and
+    /// NestedText *render* the text rather than splicing it.)
     raw,
 };
 
@@ -347,7 +348,8 @@ pub fn Dialect(comptime L: type) type {
         /// The `FigFormat` value in the C ABI. FROZEN: a released value can
         /// never change or be reused, so a new dialect takes the next unused
         /// integer (which is why these run 1,2,7 down the JSON family — JSON5
-        /// arrived after XML). `zig build abi-check` compares these against
+        /// arrived after generic XML took 6, a value that stays retired now
+        /// that the format is gone). `zig build abi-check` compares these against
         /// fig.h's `FIG_FORMAT_*` enumerators in both directions, and
         /// `language.zig` refuses a duplicate.
         abi_value: c_int,

@@ -375,8 +375,8 @@ pub fn reportFigUnrepresentableRoot(term: *Io.Terminal) noreturn {
 
 /// Every OTHER way a printer can fail — a value/shape the target format has no
 /// spelling for at all (an array/nested table reaching INI/dotenv/`.properties`,
-/// a non-identifier dotenv key, an XML document with more than one root key,
-/// a non-string mapping key reaching TOML/ZON/XML, ...). Exhaustive over
+/// a non-identifier dotenv key, a non-string mapping key reaching TOML/ZON,
+/// ...). Exhaustive over
 /// `fig.AST.SerializeError` so a NEW variant is a compile error here rather
 /// than silently falling through to a crash. `FigUnrepresentableRoot` is
 /// included for completeness (a call site that forgets to special-case it
@@ -393,10 +393,6 @@ pub fn reportSerializeError(term: *Io.Terminal, err: fig.AST.SerializeError) nor
         error.NonStringKey => "a non-string mapping key has no representation in this output format",
         error.FormatDisabled => "the requested format was not compiled into this build",
         error.NestingTooDeep => "this document nests too deeply for the canonical printer's depth guard",
-        error.RootNotSingleElement => "an XML document's root must be a mapping with exactly one key",
-        error.NestedSequenceUnsupported => "an array with no enclosing key name has no XML representation",
-        error.InvalidElementName => "a mapping key is not a valid XML element name",
-        error.NonScalarValue => "an `@`-attribute or `#text` entry must be a plain scalar in XML",
         error.UnexpectedNodeKind => "an internal fig printer error occurred (please report this)",
         error.FigUnrepresentableRoot => "a scalar value cannot be the root of a .fig/.figl document; use canonical form or another output format instead (see docs/spec.md § 2)",
         error.UnsupportedValue => "this document contains an array, or a table nested deeper than this format allows (INI: one level of `[section]`; dotenv/`.properties`: none)",

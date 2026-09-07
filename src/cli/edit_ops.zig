@@ -154,9 +154,9 @@ pub fn getCommentFromEmbed(
     // ⇒ JSON, `+++`/```toml ⇒ TOML) routes to the same reader. The reader
     // itself is the registry's — the same `Lang`/`dialect` pair `route` uses
     // for a whole file of that format. (No `caps.edit` test, unlike `route`:
-    // XML is the only non-editable language — the assert below `route` pins
-    // that — and it declares no embedded spelling, which `Embed.InnerFormat`'s
-    // own membership assert pins. So every format reachable here is editable.)
+    // every language in tree is editable, and `Embed.InnerFormat`'s own
+    // membership assert pins which of them have an embedded spelling. So
+    // every format reachable here is editable.)
     return switch (fig.Embed.innerFormat(embed_type)) {
         inline else => |f| {
             const d = comptime fig.Language.entryFor(@tagName(f));
@@ -283,8 +283,8 @@ pub fn jsonifyEdit(allocator: std.mem.Allocator, op: EditOp, text: []const u8) !
 /// The minimal valid empty document for `format`, used to seed a file `set`
 /// creates from scratch before landing its first key. `null` means the format
 /// has no empty-document form to seed into, so a from-scratch `set` on it is
-/// refused before any file is created — generic XML (a document needs a root
-/// element this layer cannot name) and the two non-`Language` projections.
+/// refused before any file is created — the two non-`Language` projections,
+/// canonical and gron.
 ///
 /// Every seed now comes from the format registry's `empty_doc_seed`, which is
 /// also what `Embed.initRegion` writes into a freshly created region, so the
@@ -330,9 +330,10 @@ pub const EditRequest = union(enum) {
 ///
 /// The three per-format facts, all derived:
 ///
-///   * WHETHER the format can be edited at all — `Lang.caps.edit`. Generic XML
-///     is the only registered language that cannot (it has a reader and a
-///     writer but no span-splicing editor); the assert below keeps that true.
+///   * WHETHER the format can be edited at all — `Lang.caps.edit`. Every
+///     registered language can (generic XML, a reader and a writer with no
+///     span-splicing editor, was the exception until core 3.0 removed it);
+///     the test stays for an out-of-tree `Language` that declares otherwise.
 ///     plist, despite being XML-based, is a strict typed subset with a real
 ///     editor (`Editor(Plist)` renders typed value elements and `<!-- -->`
 ///     comments), which is why it routes here like everything else.
@@ -369,7 +370,7 @@ pub fn route(
         inline else => |f| {
             const d = comptime fig.Language.entryFor(@tagName(f));
             if (comptime d.Lang == void) return error.FormatDisabled;
-            if (comptime !d.Lang.caps.edit) return error.UnsupportedXmlEdit;
+            if (comptime !d.Lang.caps.edit) return error.FormatNotEditable;
             switch (req) {
                 .get_comment => |g| return getCommentFromFile(d.Lang, allocator, io, file, g.path, g.inline_comment, d.dialect),
                 .apply => |ap| {
@@ -386,26 +387,13 @@ pub fn route(
     }
 }
 
-// `error.UnsupportedXmlEdit` names a format, so it can only stay honest while
-// XML is the only format it can be raised for. It is also what the CLI's
-// unhandled-error reporting and the docs call the "generic XML is reader-only"
-// refusal (see `languages/xml/xml.zig`'s module doc).
-//
-// Only compiled-in languages are visible here, and XML itself is opt-in
-// (`-Dxml=true`) — so this bites in the all-languages builds (`zig build
-// conformance`, the `-Dxml=true` configs), which is where a new language is
-// scored anyway.
-comptime {
-    for (fig.Language.dialects) |d| {
-        if (d.Lang == void or d.Lang.caps.edit) continue;
-        if (!std.mem.eql(u8, d.name, "xml"))
-            @compileError("'" ++ d.name ++ "' declares `caps.edit = false`, so the editor dispatch" ++
-                " above now refuses it with `error.UnsupportedXmlEdit` — an error named after a" ++
-                " format it is not about. Rename that error to something format-neutral (and" ++
-                " update `runEdit`/`runComment`/`applyStructuralEdit`'s callers with it) before" ++
-                " adding a second non-editable language");
-    }
-}
+// `error.FormatNotEditable` is the refusal for a language whose `caps.edit`
+// is false. No language in tree declares that any more (generic XML was the
+// one, until core 3.0 removed it), so the arm above is unreachable in every
+// shipped build; it stays because `caps.edit` is part of the `Language`
+// contract an out-of-tree format may write against, and the CLI's answer to
+// such a format should be a refusal rather than an `Editor` instantiation
+// that fails to compile.
 
 /// Apply an in-place edit to `file` as `format`. The wrapper every writing
 /// action uses; see `route` for what it derives.
@@ -665,7 +653,7 @@ test "emptyDocSeed: every seed is the byte string the registry declares" {
         try t.expectEqualStrings("", emptyDocSeed(f).?);
     // No empty-document form: a from-scratch `set` is refused before a file
     // lands on disk.
-    for ([_]Format{ .xml, .canonical, .gron }) |f|
+    for ([_]Format{ .canonical, .gron }) |f|
         try t.expectEqual(@as(?[]const u8, null), emptyDocSeed(f));
 }
 
@@ -784,11 +772,10 @@ test "emptyDocSeed: seedable formats round-trip a first `set`, others refuse" {
     const figc = try applyEdit(fig.Language.FIG, a, emptyDocSeed(.fig).?, &path, "world", .set, fig.Language.FIG.default_type);
     try t.expectEqualStrings("hello = world\n", figc);
 
-    // Projection/non-stored formats (gron, canonical, xml) have no empty-document
-    // form, so the create is refused before a file lands.
+    // Projection formats (gron, canonical) have no empty-document form, so
+    // the create is refused before a file lands.
     try t.expectEqual(@as(?[]const u8, null), emptyDocSeed(.gron));
     try t.expectEqual(@as(?[]const u8, null), emptyDocSeed(.canonical));
-    try t.expectEqual(@as(?[]const u8, null), emptyDocSeed(.xml));
 }
 
 // Fix #1 of the format-registry work: `emptyDocSeed(.plist)` used to be null,

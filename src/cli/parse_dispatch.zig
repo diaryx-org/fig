@@ -26,7 +26,7 @@ const canonical_enabled = build_options.lang_canonical or @import("builtin").is_
 /// Per-language version/dialect to parse under. Each field defaults to its
 /// language's `default_type`, so `parseSliceAs(fmt, .{}, …)` behaves exactly as
 /// before — only `check --spec` overrides a field. JSON strictness is carried by
-/// the `Format` itself (json/jsonc/json5); ZON/XML/native have one grammar each,
+/// the `Format` itself (json/jsonc/json5); ZON/native have one grammar each,
 /// so they need no field here.
 pub const Spec = struct {
     toml: DialectOf(L.TOML) = defaultDialect(L.TOML),
@@ -44,7 +44,7 @@ pub const defaultDialect = fig.Language.defaultDialect;
 /// Resolve a `--spec` version string against the format it will parse. Null
 /// `spec_str` yields the default spec. Errors when the version is unknown for
 /// that format, or when the format exposes no selectable version (then `--spec`
-/// doesn't apply — JSON strictness is the format name, ZON/XML/native are
+/// doesn't apply — JSON strictness is the format name, ZON/native are
 /// single-grammar). YAML selects 1.2.2 (default) or 1.1; the versions differ in
 /// scalar type resolution (see `scalarKind1_1` in the YAML parser).
 pub fn resolveSpec(format: Format, spec_str: ?[]const u8) error{UnsupportedSpec}!Spec {
@@ -60,7 +60,7 @@ pub fn resolveSpec(format: Format, spec_str: ?[]const u8) error{UnsupportedSpec}
             // Two ways `--spec` is inapplicable, and they report identically:
             // a gated-out language has no dialect to select at all, and a
             // single-grammar one (the JSON family — strictness is the format
-            // NAME here — plus ZON/XML/fig/INI/dotenv/.properties/plist/
+            // NAME here — plus ZON/fig/INI/dotenv/.properties/plist/
             // NestedText) has no version to select between.
             if (comptime d.Lang == void or d.specs.len == 0) return error.UnsupportedSpec;
             inline for (d.specs) |v| {
@@ -354,7 +354,6 @@ pub fn mapDetected(d: fig.Language.Detected) Format {
         .yaml => .yaml,
         .toml => .toml,
         .zon => .zon,
-        .xml => .xml,
         .fig => .fig,
         .ini => .ini,
         .dotenv => .dotenv,

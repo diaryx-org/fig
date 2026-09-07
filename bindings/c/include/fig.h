@@ -113,20 +113,22 @@ typedef enum FigStatus {
     FIG_STATUS_INTERNAL_ERROR = 255,
 } FigStatus;
 
-// Not every function accepts every member. fig_parse accepts all of them; the
-// editor (fig_editor_*) supports JSON/JSONC/JSON5/YAML/TOML/FIG (others return
-// FIG_STATUS_UNSUPPORTED_FORMAT); fig_value_serialize accepts
-// JSON/JSONC/JSON5/YAML/TOML/ZON/FIG (JSONC = plain-JSON syntax with comments).
-// XML is reader-only: accepted by fig_parse, rejected by the editor and
-// serializer. To query this matrix programmatically (it also depends on which
-// formats this build compiled in), call fig_format_capabilities below.
+// Every member of a full build is accepted by fig_parse, the editor
+// (fig_editor_*) and the serializers (JSONC = plain-JSON syntax with comments).
+// A format compiled out of this build returns FIG_STATUS_UNSUPPORTED_FORMAT
+// everywhere; to query the matrix programmatically, call
+// fig_format_capabilities below.
+//
+// Value 6 was FIG_FORMAT_XML, the generic XML fold, through core 2.x. It was
+// removed in core 3.0 (ABI 2) and the value is retired: it will never be
+// reused, so a caller that still passes it gets FIG_STATUS_UNSUPPORTED_FORMAT
+// (or 0 from fig_format_capabilities) rather than some other format.
 typedef enum FigFormat {
     FIG_FORMAT_JSON = 1,
     FIG_FORMAT_JSONC = 2,
     FIG_FORMAT_YAML = 3,
     FIG_FORMAT_TOML = 4,
     FIG_FORMAT_ZON = 5,
-    FIG_FORMAT_XML = 6,
     FIG_FORMAT_JSON5 = 7,
     // The native `fig` authoring dialect (see src/languages/fig/DESIGN.md).
     // Appended (not inserted) to keep the ABI values of the existing members
@@ -158,9 +160,9 @@ typedef enum FigCapability {
 } FigCapability;
 
 // Bitmask of FIG_CAP_* describing what this build can do with `format`. Reflects
-// both inherent support (XML is reader-only; ZON parses and serializes but is not
-// editable) and build-time gating: a format compiled out of this build, or an
-// unknown `format` value, reports 0. JSON/JSONC/JSON5 are always fully supported.
+// both inherent support (the format's own capability declaration) and
+// build-time gating: a format compiled out of this build, or an unknown
+// `format` value, reports 0.
 uint32_t fig_format_capabilities(int format);
 
 typedef struct FigDocument FigDocument;
@@ -169,7 +171,7 @@ typedef struct FigDocument FigDocument;
 // fig_document_destroy). Empty input (input_len == 0, with or without a null
 // `input`) is handed to the parser and judged per format, NOT rejected up front:
 // YAML treats it as a null document and TOML as an empty table (both succeed),
-// while JSON/JSON5/ZON/XML require a value/root and return FIG_STATUS_PARSE_ERROR.
+// while JSON/JSON5/ZON require a value/root and return FIG_STATUS_PARSE_ERROR.
 // A null `input` with a nonzero `input_len` is FIG_STATUS_INVALID_ARGUMENT.
 FigStatus fig_parse(
     const uint8_t *input,
@@ -830,9 +832,9 @@ FigStatus fig_value_serialize_opts(FigValue *value, FigNodeId root, int format,
 // Document serialization (cross-format conversion)
 //
 // Render a whole parsed FigDocument to a writable format — the conversion
-// primitive. `format` is one of JSON/JSONC/JSON5/YAML/TOML/ZON (the writable set;
-// any other, including XML, returns FIG_STATUS_UNSUPPORTED_FORMAT). The source may
-// be any parsed format, including reader-only XML (e.g. XML in, JSON out).
+// primitive. `format` is any FigFormat this build compiled in (a compiled-out
+// one returns FIG_STATUS_UNSUPPORTED_FORMAT). The source may be any parsed
+// format (e.g. plist in, JSON out).
 //
 // When the source is YAML and the target is not, the reference layer (anchors,
 // aliases, merge keys, tags) is collapsed automatically (strict tag mode: an

@@ -47,7 +47,6 @@ const slots = .{
     .{ .name = "yaml", .mod = @import("yaml/yaml.zig") },
     .{ .name = "toml", .mod = @import("toml/toml.zig") },
     .{ .name = "zon", .mod = @import("zon/zon.zig") },
-    .{ .name = "xml", .mod = @import("xml/xml.zig") },
     .{ .name = "fig", .mod = @import("fig/fig.zig") },
     .{ .name = "ini", .mod = @import("ini/ini.zig") },
     .{ .name = "dotenv", .mod = @import("dotenv/dotenv.zig") },
@@ -111,7 +110,6 @@ pub const JSON = of("json");
 pub const YAML = of("yaml");
 pub const TOML = of("toml");
 pub const ZON = of("zon");
-pub const XML = of("xml");
 pub const FIG = of("fig");
 pub const INI = of("ini");
 pub const DOTENV = of("dotenv");
@@ -327,7 +325,7 @@ pub fn namesOf(comptime sel: Selector) []const [:0]const u8 {
 
 /// A member a derived enum carries that the registry does not back: what it is
 /// called, and which registry entry it sits immediately after. `cli.Format`'s
-/// `canonical` (after `xml`) and `gron` (after `fig`), and `SerializeFormat`'s
+/// `canonical` (after `zon`) and `gron` (after `fig`), and `SerializeFormat`'s
 /// `canonical`, are the only three uses — see `dialects`' note on why neither
 /// format is an entry.
 pub const Extra = struct {
@@ -673,7 +671,7 @@ const Decls = struct {
     /// optional `printNode` decl below: the module is what the serializer
     /// dispatches through (`ast/serialize_options.zig` reaches
     /// `@field(d.Lang.Printer, d.print_name)` for every registry entry), so
-    /// every format must expose one even when — as with plist and xml — its
+    /// every format must expose one even when — as with plist — its
     /// `Language` wraps only the module's `print`.
     ///
     /// `dialects` is the format's own rows of the format registry — see
@@ -690,7 +688,7 @@ const Decls = struct {
 
     /// Permitted, not required.
     ///
-    ///   * `printNode` — every format but plist and xml, whose `print` is
+    ///   * `printNode` — every format but plist, whose `print` is
     ///     written inline.
     ///   * `materialize`/`TagMode` — YAML only: collapsing the reference layer
     ///     before a non-YAML printer sees the tree. Callers already gate on
@@ -783,10 +781,11 @@ const Decls = struct {
 /// between them.
 ///
 /// `Editor()` calls this for the format it is generic over, but that is not
-/// enough on its own — a read-only format has no editor, so `validate(XML)`
-/// would never be instantiated and XML's manifest would go unchecked. The
-/// `comptime` block below this function closes that gap by running `validate`
-/// over every compiled-in language, editable or not.
+/// enough on its own — a read-only format (generic XML was one, through core
+/// 2.x) has no editor, so `validate` of it would never be instantiated and its
+/// manifest would go unchecked. The `comptime` block below this function
+/// closes that gap by running `validate` over every compiled-in language,
+/// editable or not.
 pub fn validate(comptime Lang: type) void {
     comptime {
         // Every check here is a linear scan over a name list, and the closed-set
@@ -1050,20 +1049,17 @@ test "detect identifies each compiled-in format by content" {
     if (comptime build_options.lang_plist) {
         try std.testing.expectEqual(Detected.plist, detect(a, "<dict><key>a</key><string>b</string></dict>").?);
     }
-    if (comptime build_options.lang_xml) {
-        try std.testing.expectEqual(Detected.xml, detect(a, "<r/>").?);
-    }
     if (comptime build_options.lang_toml) {
         try std.testing.expectEqual(Detected.toml, detect(a, "x = 1\n").?);
     }
     if (comptime build_options.lang_fig) {
         // A bare container header line (no `=`, no `:`, no brackets) followed
-        // by a `>`-depth child isn't valid JSON/ZON/XML/TOML, so this resolves
+        // by a `>`-depth child isn't valid JSON/ZON/plist/TOML, so this resolves
         // to fig even though it's tried before YAML.
         try std.testing.expectEqual(Detected.fig, detect(a, "database\n> host = localhost\n").?);
     }
     if (comptime build_options.lang_ini) {
-        // A `;`-led comment line is invalid JSON/ZON/XML/TOML (TOML has no `;`
+        // A `;`-led comment line is invalid JSON/ZON/plist/TOML (TOML has no `;`
         // comment leader — its bare-key scanner rejects `;` outright) and not
         // fig syntax either, so this resolves to INI even though it's tried
         // right before YAML.
@@ -1096,8 +1092,8 @@ test "sniff_order: the ranks the rows declare reproduce the probe order detect h
     // or an existing row changing its mind — has to change this line too.
     // Build-invariant: gated-out languages keep their rows and their ranks.
     const want = [_][]const u8{
-        "json", "json5",  "zon",  "plist",      "xml",        "toml",
-        "fig",  "ini",    "dotenv", "yaml",     "properties", "nestedtext",
+        "json", "json5",  "zon",  "plist",      "toml",       "fig",
+        "ini",  "dotenv", "yaml", "properties", "nestedtext",
     };
     try std.testing.expectEqual(want.len, sniff_order.len);
     for (want, sniff_order) |w, got| try std.testing.expectEqualStrings(w, got);
@@ -1109,14 +1105,4 @@ test "detect: plain `key = value` prefers TOML over fig despite fig accepting it
     // fig's root-level dotted assignment accepts the exact same shape TOML
     // does; TOML is tried first, so it wins the tie.
     try std.testing.expectEqual(Detected.toml, detect(a, "x = 1\n").?);
-}
-
-test "detect: a plist document prefers plist over generic xml despite xml accepting it too" {
-    const a = std.testing.allocator;
-    if (comptime !build_options.lang_plist or !build_options.lang_xml) return error.SkipZigTest;
-    // Any well-formed plist is also well-formed generic XML; plist is tried
-    // first, so it wins. Ordinary XML that isn't plist-shaped still falls
-    // through to `.xml`.
-    try std.testing.expectEqual(Detected.plist, detect(a, "<dict><key>a</key><string>b</string></dict>").?);
-    try std.testing.expectEqual(Detected.xml, detect(a, "<r/>").?);
 }

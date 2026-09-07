@@ -10,8 +10,8 @@ part_of = [docs](docs.md)
 
 `fig` is a Zig library that parses, **edits**, and serializes configuration
 files — JSON, JSONC, JSON5, YAML, TOML, ZON, INI, dotenv, Java `.properties`,
-NestedText, Apple XML property lists, XML (read-only), and the native `fig`
-authoring dialect — from one small package with no external
+NestedText, Apple XML property lists, and the native `fig` authoring
+dialect — from one small package with no external
 dependencies. Its distinguishing feature is *comment-preserving editing*: you
 can change one value deep in a YAML or TOML file and every comment, blank
 line, key order, and quoting style elsewhere stays byte-for-byte identical. It
@@ -61,8 +61,7 @@ const fig_dep = b.dependency("fig", .{
     .optimize = optimize,
     .toml = false,  // drop TOML support
     .zon = false,   // drop ZON support
-    .xml = true,    // XML is opt-in; enable it if you need it
-    .plist = true,  // so is plist
+    .plist = true,  // plist is opt-in; enable it if you need it
 });
 ```
 
@@ -77,7 +76,6 @@ const fig_dep = b.dependency("fig", .{
 | `dotenv`      |   ✅    | dotenv / `.env`.                            |
 | `properties`  |   ✅    | Java `.properties`.                         |
 | `nestedtext`  |   ✅    | NestedText (nestedtext.org).                |
-| `xml`         |         | Generic XML (read-only; slated for removal as a selectable format — see [BREAKING-CHANGES](BREAKING-CHANGES.md)). |
 | `plist`       |         | Apple XML property lists.                   |
 | `canonical`   |         | The AST's own oracle encoding (mostly for tests; always compiled for a test build). |
 
@@ -122,7 +120,6 @@ adaptation needed to target a different format.
 | `YAML`       |  ✅   |  ✅  |    ✅     | YAML 1.2.2 / 1.1, incl. anchors/aliases.  |
 | `TOML`       |  ✅   |  ✅  |    ✅     | TOML 1.0 / 1.1, incl. datetimes.          |
 | `ZON`        |  ✅   |  ✅  |    ✅     | Zig Object Notation.                      |
-| `XML`        |  ✅   |      |    ✅     | Opt-in (`-Dxml`); root must be one element.|
 | `FIG`        |  ✅   |  ✅  |    ✅     | The native `fig` authoring dialect.       |
 | `INI`        |  ✅   |  ✅  |    ✅     | Untyped scalars — `port = 8080` reads back as the *string* `"8080"`. |
 | `DOTENV`     |  ✅   |  ✅  |    ✅     | Flat string map: no nesting, untyped scalars. |
@@ -152,7 +149,7 @@ if (comptime build_options.lang_toml) {
 
 `fig.Language.detect(allocator, input)` sniffs which compiled-in format
 `input` parses as, returning a `Language.Detected`. It tries strictest first:
-JSON, JSON5, ZON, plist, XML, TOML, fig, INI, dotenv, YAML, `.properties`,
+JSON, JSON5, ZON, plist, TOML, fig, INI, dotenv, YAML, `.properties`,
 NestedText. The tail of that order is what keeps the permissive formats from
 starving the rest — `.properties` accepts nearly any UTF-8 text, and plain
 `key: value` NestedText is also valid YAML (but types `port: 80` as the string
@@ -608,19 +605,18 @@ try ast.serializeWith(&out.writer, .yaml, .{ .strip_comments = true });
 | `fig_indent`    | fig               | Opt-in cosmetic `2 × depth` indentation (`fig fmt --indent`). |
 | `flow`          | fig, fragments    | Render a container root as inline flow (`[a, b]` / `{ k = v }`) rather than block. |
 
-`AST.SerializeFormat` is `json | jsonc | json5 | yaml | toml | zon | xml |
+`AST.SerializeFormat` is `json | jsonc | json5 | yaml | toml | zon |
 canonical | fig | ini | dotenv | properties | plist | nestedtext` — every
-format-registry dialect, plus `canonical` spliced in after `xml`. `canonical`
-(aliased as `fig.Native`, kept for backward compatibility — prefer
-`fig.Canonical`) is the AST's own total, bijective encoding: every node kind,
+format-registry dialect, plus `canonical` spliced in after `zon`. `canonical`
+is the AST's own total, bijective encoding: every node kind,
 including ones no other format can hold, round-trips through it unchanged,
 which makes it useful both as a debug dump and as the comparison oracle
 round-trip tests use. It is opt-in at build time (`-Dcanonical`), though a test
 build always compiles it.
 
 Serializing can fail for reasons the target format decides — `SerializeError`
-covers `NullUnsupported` (TOML), `NonStringKey` (TOML/ZON/XML), the XML shape
-errors, `FigUnrepresentableRoot`, `UnsupportedValue` (a sequence or mapping
+covers `NullUnsupported` (TOML), `NonStringKey` (TOML/ZON),
+`FigUnrepresentableRoot`, `UnsupportedValue` (a sequence or mapping
 reaching INI/dotenv), `InvalidKey` (a dotenv key that isn't a bash identifier),
 and `FormatDisabled` when the target was compiled out of this build.
 
@@ -699,7 +695,7 @@ parsed.value.title; // ...
 `Parsed(T)` owns an arena backing every allocation `T` needed (slices,
 strings); `deinit()` frees all of it in one shot. `fig.deserialize.Format` is
 `json | jsonc | yaml | toml | zon` (a smaller set than `SerializeFormat` — no
-XML/canonical/fig target here). Structs, optionals (missing → `null`),
+canonical/fig target here). Structs, optionals (missing → `null`),
 defaulted fields (`= 7`), enums (from a string or ZON enum-literal scalar),
 slices, and fixed-size arrays (which require an *exact*-length sequence) are
 all supported; a mapping key with no matching field is ignored by default
@@ -767,7 +763,7 @@ only *after* the `Document` that borrows it is itself freed.
 
 **Top-level modules** (`@import("fig")` re-exports each as a member)
 
-- `Language` — per-format namespace (`.JSON`/`.YAML`/`.TOML`/`.ZON`/`.XML`/
+- `Language` — per-format namespace (`.JSON`/`.YAML`/`.TOML`/`.ZON`/
   `.FIG`/`.INI`/`.DOTENV`/`.PROPERTIES`/`.PLIST`/`.NESTEDTEXT`, each `void`
   when compiled out) plus `detect`/`Detected`/`validate`/`compiled`.
 - `Document` — `{ source, ast, node_spans, ... }`; `deinit`, `span`,

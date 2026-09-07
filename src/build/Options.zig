@@ -50,7 +50,7 @@ pub const BuildOptions = struct {
     /// The canonical form is the AST's own 1:1 oracle encoding — invaluable
     /// in tests but not exposed through the C ABI or any binding, so shipping
     /// it in the default library/CLI/wasm is dead weight for everyone but the
-    /// test suite. Opt-in like xml (`-Dcanonical=true`); the code still
+    /// test suite. Opt-in like plist (`-Dcanonical=true`); the code still
     /// compiles for ANY test build regardless, gated as
     /// `lang_canonical or @import("builtin").is_test`.
     lang_canonical: bool,
@@ -65,7 +65,7 @@ pub const BuildOptions = struct {
     /// gate means the same thing on every machine.
     ///
     /// Forcing the suites on is the point of the step. Forcing every language
-    /// on is a deliberate second win: xml, plist and canonical are all off by
+    /// on is a deliberate second win: plist and canonical are both off by
     /// default, so nothing else in CI ever compiles them together — this is
     /// the only build that proves the everything-on configuration still
     /// builds at all. It builds both the library's test root and the CLI's

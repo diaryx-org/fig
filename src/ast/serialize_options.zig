@@ -24,7 +24,7 @@ const Language = @import("../languages/language.zig");
 //
 // The canonical form is the AST's own 1:1 oracle encoding. It is not exposed
 // through the C ABI or any binding, so it is opt-in (`-Dcanonical=true`) like
-// xml — but ALWAYS compiled for a test build (`is_test`), since the suite leans
+// plist — but ALWAYS compiled for a test build (`is_test`), since the suite leans
 // on it as a comparison oracle. When gated out, `CanonicalPrinter` is `void`
 // and the guarded arms below are never analyzed, so its code never compiles in.
 const canonical_enabled = build_options.lang_canonical or @import("builtin").is_test;
@@ -32,9 +32,7 @@ const CanonicalPrinter = if (canonical_enabled) @import("../canonical/printer.zi
 
 /// The canonical output format families. `canonical` (formerly `native`) is the
 /// AST's own 1:1 oracle encoding; `fig` is the human-facing authoring dialect
-/// (lossy at the edges — see src/languages/fig/DESIGN.md). `xml` requires its
-/// AST root to be a one-entry mapping (see `languages/xml/printer.zig`'s
-/// header) — anything else is `RootNotSingleElement`, not a silent fallback.
+/// (lossy at the edges — see src/languages/fig/DESIGN.md).
 pub const SerializeFormat = @Enum(
     Language.EnumTag(serialize_format_names),
     .exhaustive,
@@ -43,8 +41,9 @@ pub const SerializeFormat = @Enum(
 );
 
 /// Every format registry entry (`languages/language.zig`'s `dialects`), in
-/// registry order, plus `canonical` directly after `xml` — where the
-/// hand-written enum this replaces put it. `canonical` is not a `Language` at
+/// registry order, plus `canonical` directly after `zon` — where the
+/// hand-written enum this replaces put it, once generic `xml` (which used to
+/// sit between them) was removed in core 3.0. `canonical` is not a `Language` at
 /// all (no parser module, no dialect, an options-less printer), so it stays an
 /// explicit named arm in every switch below and is spliced in by hand here.
 ///
@@ -53,16 +52,16 @@ pub const SerializeFormat = @Enum(
 /// dispatch (see `cli/types.zig`'s `toSerializeFormat`).
 const serialize_format_names = blk: {
     @setEvalBranchQuota(20_000);
-    break :blk Language.namesWith(.all, &.{.{ .after = "xml", .name = "canonical" }});
+    break :blk Language.namesWith(.all, &.{.{ .after = "zon", .name = "canonical" }});
 };
 
 // Membership and registry order are true by construction (`namesWith` fails
 // the build if `canonical` names an entry that does not exist to follow); what
-// is left to state is that `canonical` belongs beside `xml` specifically, not
+// is left to state is that `canonical` belongs beside `zon` specifically, not
 // merely somewhere in the list.
 comptime {
-    if (@intFromEnum(SerializeFormat.canonical) != @intFromEnum(SerializeFormat.xml) + 1)
-        @compileError("AST.SerializeFormat's `canonical` no longer sits directly after `xml`");
+    if (@intFromEnum(SerializeFormat.canonical) != @intFromEnum(SerializeFormat.zon) + 1)
+        @compileError("AST.SerializeFormat's `canonical` no longer sits directly after `zon`");
 }
 
 /// Knobs controlling how a value is rendered. The defaults reproduce fig's
@@ -150,13 +149,9 @@ fn commentView(self: *const AST, options: SerializeOptions, buf: *AST) *const AS
 pub const SerializeError = Writer.Error || error{
     UnresolvedAlias, // a YAML `*alias` reached a non-YAML printer (materialize first)
     NullUnsupported, // a `null` reached a format with no null type (TOML)
-    NonStringKey, // a mapping key was not a string (TOML, ZON, XML)
+    NonStringKey, // a mapping key was not a string (TOML, ZON)
     FormatDisabled, // the target format was compiled out of this build
     NestingTooDeep, // container nesting exceeded the canonical printer's depth guard
-    RootNotSingleElement, // XML: the AST root was not a one-entry mapping
-    NestedSequenceUnsupported, // XML: a sequence with no element name to expand under
-    InvalidElementName, // XML: a mapping key is not a valid XML `Name`
-    NonScalarValue, // XML: an `@`-attribute or `#text` entry held a mapping/sequence
     UnexpectedNodeKind, // fig: a node kind reached a printer path that expects a container
     FigUnrepresentableRoot, // fig: a scalar/null value has no authoring spelling as a document root
     UnsupportedValue, // INI/dotenv: a sequence/mapping value has no spelling there
@@ -244,8 +239,8 @@ pub fn serializeNodeWith(self: *const AST, writer: *Writer, format: SerializeFor
             const d = comptime Language.entryFor(@tagName(f));
             if (comptime d.Lang == void) return error.FormatDisabled;
             // `printNode` on the printer MODULE, which every format has —
-            // including plist and xml, whose `Language` declares no `printNode`
-            // of its own (their `print` is written inline; see `Decls.optional`
+            // including plist, whose `Language` declares no `printNode`
+            // of its own (its `print` is written inline; see `Decls.optional`
             // in languages/language.zig).
             return @field(d.Lang.Printer, d.print_node_name)(writer, ast, id, 0, options);
         },

@@ -395,9 +395,8 @@ fn parseElementTextContent(self: *Parser, tag_name: []const u8) ParseError![]con
 }
 
 /// Decode XML entity references (predefined `&amp; &lt; &gt; &quot; &apos;`
-/// and numeric `&#dd; / &#xhh;`) into `buf`. Duplicated in miniature from
-/// `../xml/parser.zig`'s `decodeInto` (that one is a private method, not
-/// `pub`) — small enough that sharing it isn't worth a cross-language import.
+/// and numeric `&#dd; / &#xhh;`) into `buf`. The tokenizer hands entities
+/// through undecoded, since what an entity means is the flavor's business.
 fn decodeInto(self: *Parser, buf: *std.ArrayList(u8), raw: []const u8) ParseError!void {
     var i: usize = 0;
     while (i < raw.len) {

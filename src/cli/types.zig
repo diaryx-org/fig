@@ -33,9 +33,10 @@ pub const Format = @Enum(L.EnumTag(format_names), .exhaustive, format_names, &L.
 
 /// Every format registry entry (`languages/language.zig`'s `dialects`), in
 /// registry order, plus the two members no `Language` backs: `canonical` after
-/// `xml`, `gron` after `fig`. Those positions are not arbitrary — they are
-/// where the hand-written enum this replaces put them, and the member order is
-/// what `@intFromEnum` and `main.zig`'s `--help` format list both read.
+/// `zon`, `gron` after `fig`. Those positions are not arbitrary — they are
+/// where the hand-written enum this replaces put them (`canonical` followed
+/// generic `xml` until core 3.0 removed it), and the member order is what
+/// `@intFromEnum` and `main.zig`'s `--help` format list both read.
 ///
 /// `yml` is deliberately NOT here: it used to be a member of its own, an alias
 /// of `yaml` that duplicated it in ~ten switches and bought nothing but a
@@ -46,7 +47,7 @@ pub const Format = @Enum(L.EnumTag(format_names), .exhaustive, format_names, &L.
 const format_names = blk: {
     @setEvalBranchQuota(20_000);
     break :blk L.namesWith(.all, &.{
-        .{ .after = "xml", .name = "canonical" },
+        .{ .after = "zon", .name = "canonical" },
         .{ .after = "fig", .name = "gron" },
     });
 };
@@ -54,11 +55,11 @@ const format_names = blk: {
 // `namesWith` places the two non-registry members and would fail the build if
 // either named a nonexistent entry to follow, so membership and registry order
 // are true by construction. What that does NOT state is the intent — that
-// `canonical` belongs beside `xml` and `gron` beside `fig` rather than merely
+// `canonical` belongs beside `zon` and `gron` beside `fig` rather than merely
 // somewhere — so that is what is left to check, plus the removal of `yml`.
 comptime {
-    if (@intFromEnum(Format.canonical) != @intFromEnum(Format.xml) + 1)
-        @compileError("cli.Format's `canonical` no longer sits directly after `xml`");
+    if (@intFromEnum(Format.canonical) != @intFromEnum(Format.zon) + 1)
+        @compileError("cli.Format's `canonical` no longer sits directly after `zon`");
     if (@intFromEnum(Format.gron) != @intFromEnum(Format.fig) + 1)
         @compileError("cli.Format's `gron` no longer sits directly after `fig`");
     if (@hasField(Format, "yml"))
@@ -82,7 +83,6 @@ pub fn toSerializeFormat(f: Format) ?fig.AST.SerializeFormat {
         .zon => .zon,
         .canonical => .canonical,
         .fig => .fig,
-        .xml => .xml,
         .ini => .ini,
         .dotenv => .dotenv,
         .properties => .properties,

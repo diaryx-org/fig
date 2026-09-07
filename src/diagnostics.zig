@@ -295,20 +295,10 @@ fn valueLoss(format: Format, kind: AST.Node.Kind, depth: usize) ?Loss {
             }
             return null;
         },
-        // XML has no number/boolean/datetime/enum/char primitive of its own —
-        // every one of these collapses to plain element/attribute text the
-        // moment it leaves the AST (see `languages/xml/printer.zig`'s
-        // `writeScalarValue`). `null`/`string`/`mapping`/`sequence` all have a
-        // direct, lossless XML shape (empty element, text-only element,
-        // nested element, repeated elements).
-        .xml => switch (kind) {
-            .boolean, .number => return .{ .code = .type_degraded, .note = "string" },
-            .extended => |e| return .{ .code = .type_degraded, .note = degradedNote(format, e.kind) },
-            else => return null,
-        },
         // The flat formats — INI, dotenv, `.properties` — each declaring a
-        // `caps.max_mapping_depth`: no typed scalars (see the `.xml` arm
-        // above), no `null`, no sequence at any depth, and a mapping only
+        // `caps.max_mapping_depth`: no typed scalars (every boolean and
+        // number collapses to plain text the moment it leaves the AST),
+        // no `null`, no sequence at any depth, and a mapping only
         // down to the declared depth (INI's root plus one level of
         // `[section]`s; the other two hold the root mapping alone). This is
         // exactly what `flat_strip.zig` drops before a lossy print, reading
@@ -330,7 +320,7 @@ fn valueLoss(format: Format, kind: AST.Node.Kind, depth: usize) ?Loss {
         // thing it can't hold at all is `null` (the DTD has no null type).
         // An extended kind OTHER than plist's own two (a TOML datetime, a
         // ZON enum/char literal, a JSON5 non-finite float) degrades to a
-        // plain string, same as XML's blanket treatment.
+        // plain string, same as the flat formats' blanket treatment.
         .plist => switch (kind) {
             .null_ => return .{ .code = .value_dropped, .note = "null" },
             .extended => |e| switch (e.kind) {
@@ -339,7 +329,7 @@ fn valueLoss(format: Format, kind: AST.Node.Kind, depth: usize) ?Loss {
             },
             else => return null,
         },
-        // NestedText: same "no typed scalars" story as INI/XML, but with
+        // NestedText: same "no typed scalars" story as INI, but with
         // UNRESTRICTED mapping/sequence nesting (unlike INI's depth-2 cap —
         // see `languages/nestedtext/parser.zig`'s module doc). Its only
         // hard loss is `null`: the whole document may itself be absent/empty
@@ -366,16 +356,17 @@ fn degradedNote(format: Format, ext: ExtKind) []const u8 {
         .local_time,
         => "string",
         // A char literal's text is its codepoint: most printers emit it as a
-        // number; TOML as an integer; XML as plain text (it has no number type
-        // at all). (fig never reaches here — it re-emits the char natively via
-        // `: char`, so `valueLoss(.fig, …)` returns null.)
+        // number; TOML as an integer; plist as plain text (its `<integer>` is
+        // a number type, but a char is not one). (fig never reaches here — it
+        // re-emits the char natively via `: char`, so `valueLoss(.fig, …)`
+        // returns null.)
         .char_literal => switch (format) {
             .toml => "integer",
-            .xml, .plist => "string",
+            .plist => "string",
             else => "number",
         },
         // Non-finite floats quote in plain JSON/JSONC; elsewhere they degrade to
-        // a plain string scalar (YAML/ZON/XML — JSON5 keeps them natively,
+        // a plain string scalar (YAML/ZON — JSON5 keeps them natively,
         // handled before this is reached).
         .number_special => switch (format) {
             .json, .jsonc => "quoted string",
@@ -420,12 +411,12 @@ fn dropNote(kind: AST.Node.Kind) []const u8 {
 
 /// Whether `format` emits comments at all in this mode. Plain JSON never does;
 /// JSON5/JSONC/ZON only in pretty (multi-line) output; YAML/TOML/canonical
-/// always. XML never does — the reader has no comment syntax, so an XML-sourced
-/// AST never carries any, and the printer emits none. plist is the same story
-/// as XML (its reader shares XML's tokenizer, which skips `<!-- -->` entirely).
+/// always. plist never does — its reader sits on the XML tokenizer, which
+/// skips `<!-- -->` entirely, so a plist-sourced AST never carries any and the
+/// printer emits none.
 fn commentsEmitted(format: Format, pretty: bool) bool {
     return switch (format) {
-        .json, .xml, .plist => false,
+        .json, .plist => false,
         .json5, .jsonc, .zon => pretty,
         .yaml, .toml, .canonical, .fig, .ini, .dotenv, .properties, .nestedtext => true,
     };
@@ -433,12 +424,12 @@ fn commentsEmitted(format: Format, pretty: bool) bool {
 
 /// Whether `format` has block-comment syntax (`/* … */`). Only the JSON5 family
 /// and canonical do; YAML/TOML/ZON/fig/INI degrade a block comment to a line
-/// run; XML/plist have no comments at all (moot — `commentsEmitted` already
-/// excludes both).
+/// run; plist has no comments at all (moot — `commentsEmitted` already
+/// excludes it).
 fn blockComments(format: Format) bool {
     return switch (format) {
         .json5, .jsonc, .canonical => true,
-        .json, .yaml, .toml, .zon, .fig, .xml, .ini, .dotenv, .properties, .plist, .nestedtext => false,
+        .json, .yaml, .toml, .zon, .fig, .ini, .dotenv, .properties, .plist, .nestedtext => false,
     };
 }
 

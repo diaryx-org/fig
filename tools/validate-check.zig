@@ -102,7 +102,7 @@ const cases = [_]Case{
         // The same rule as above, on the decl that joined `Decls.required`
         // when the serializer's dispatch became registry-derived: `Printer` is
         // the printer MODULE (`@field(Lang.Printer, entry.print_name)`), which
-        // every format must expose even when — like plist and xml — its
+        // every format must expose even when — like plist — its
         // `Language` declares no `printNode` of its own.
         .name = "missing required decl (Printer)",
         .omit = "Printer",

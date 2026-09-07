@@ -149,7 +149,7 @@ pub fn convertSlice(
         // `to` is never `.gron` here (rejected up front above), so it always
         // has a `SerializeFormat` counterpart, whose language declares what
         // it holds — see `manifest.Caps.lossless` for the per-format
-        // rationale (JSON5 reuse, canonical/fig decode-only, XML/INI/dotenv/
+        // rationale (JSON5 reuse, canonical/fig decode-only, INI/dotenv/
         // properties/plist/NestedText's lack of an envelope).
         const maybe_native: ?fig.Lossless.NativeKinds = fig.Lossless.nativeFor(types.toSerializeFormat(to) orelse unreachable);
         const decoded = try allocator.create(fig.AST);

@@ -60,15 +60,13 @@ pub const Language = struct {
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "plist",
         .abi_value = 12,
-        // BEFORE generic XML. plist's DTD vocabulary (`<dict>`/`<array>`/
-        // `<key>`/...) is a STRICT SUBSET of well-formed XML: the generic XML
-        // reader would also happily accept any real plist document, just
-        // folding it into a differently-shaped AST (attribute/`#text` folding,
-        // no typed scalars). So plist must get first claim, or a compiled-in
-        // XML reader would starve it completely — the reverse isn't a problem:
-        // plist's own grammar rejects anything outside its fixed element
-        // vocabulary (`error.UnknownElement`), so ordinary XML falls through
-        // to `xml` untouched.
+        // After ZON and before the key/value grammars, none of which accept a
+        // `<tag>`. Rank 4 was generic XML's until core 3.0 removed it; the
+        // gap is left so that any typed XML flavor added later (a `.csproj`
+        // reader, a manifest reader) has a slot in the XML-shaped part of the
+        // order without renumbering. plist's own grammar rejects anything
+        // outside its fixed element vocabulary (`error.UnknownElement`), so
+        // it cannot starve such a flavor.
         .sniff_rank = 3,
         .splice = .raw,
         // A bare `<dict>` IS a document this parser accepts (see its `detect`
@@ -166,4 +164,8 @@ test {
     _ = @import("parser.zig");
     _ = @import("printer.zig");
     _ = @import("editor_helper.zig");
+    // The shared XML lexing substrate has no entry module of its own since
+    // generic XML stopped being a format (core 3.0); plist is its one consumer
+    // in tree, so plist discovers its tests.
+    _ = @import("../xml/tokenizer.zig");
 }

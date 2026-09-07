@@ -100,8 +100,9 @@ comptime {
     // `initRegion` seeds a freshly created region with `empty_doc_seed`, and it
     // has nowhere to report a format that refuses to be created from scratch:
     // its whole job is to synthesize a block. A format that can be embedded
-    // must therefore have an empty form (`null` is XML's answer, and XML has no
-    // embedded spelling), which is what makes the `.?` there total.
+    // must therefore have an empty form (a format with none, as generic XML
+    // had, must declare no embedded spelling), which is what makes the `.?`
+    // there total.
     for (inner_format_names) |n| {
         if (Language.entryFor(n).empty_doc_seed == null)
             @compileError("the format-registry entry '" ++ n ++ "' has an embedded spelling but no" ++

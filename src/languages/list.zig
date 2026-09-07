@@ -45,26 +45,21 @@ pub const rows = [_]Row{
     .{ .name = "yaml", .help = "Include YAML support", .default_on = true },
     .{ .name = "toml", .help = "Include TOML support", .default_on = true },
     .{ .name = "zon", .help = "Include ZON support", .default_on = true },
-    // Opt-in even in a full build. Generic XML is a demoted, best-effort
-    // *fold* (attributes/`#text` collapse, no typed scalars, single-root-key
-    // output), NOT a first-class config format, and it is slated for removal
-    // as a selectable format in a future major (see
-    // `docs/BREAKING-CHANGES.md`). What survives that removal is the shared
-    // XML *lexing substrate* — `xml/tokenizer.zig` — that typed flavors
-    // (plist, and future `.csproj`/manifest readers) sit on top of; that
-    // layer is always compiled when any XML-family flavor is, so it does not
-    // ride on this gate. The gate controls only the generic reader/printer,
-    // which is why non-users shouldn't pay for it by default.
-    .{ .name = "xml", .help = "Include XML support (opt-in; default off)", .default_on = false },
+    // There is no `xml` row. Generic XML — a best-effort fold of attributes
+    // and `#text` into a mapping, with no typed scalars and a single-root-key
+    // printer — was a selectable, opt-in format through core 2.x and was
+    // removed in core 3.0; its C ABI value, 6, is retired and never reused.
+    // What survives is the shared XML *lexing substrate*, `xml/tokenizer.zig`,
+    // which typed flavors (plist, and future `.csproj`/manifest readers) sit
+    // on top of and which compiles whenever one of them does.
     .{ .name = "fig", .help = "Include the fig authoring dialect support", .default_on = true },
     .{ .name = "ini", .help = "Include INI support", .default_on = true },
     .{ .name = "dotenv", .help = "Include dotenv (.env) support", .default_on = true },
     .{ .name = "properties", .help = "Include Java .properties support", .default_on = true },
     // plist (XML variant only so far): the newest, least battle-tested
-    // format, opt-in via `-Dplist=true`. Unlike generic xml above, plist is a
-    // first-class typed flavor (typed scalars, round-trips, in-place editor)
-    // and is the intended long-term home for structured XML config — it is
-    // not slated for removal.
+    // format, opt-in via `-Dplist=true`. plist is a first-class typed flavor
+    // (typed scalars, round-trips, in-place editor) and is the intended
+    // long-term home for structured XML config.
     .{ .name = "plist", .help = "Include Apple XML property list support (opt-in; default off)", .default_on = false },
     // NestedText (nestedtext.org): reader + printer + editor, untyped-string
     // scalars like INI. The official test suite (vendored to

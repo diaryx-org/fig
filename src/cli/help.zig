@@ -157,7 +157,7 @@ pub const Help = struct {
 
     pub fn get(term: *Io.Terminal, binary_name: []const u8) !void {
         try term.writer.print(
-            \\Usage: {s} get [--input json|json5|yaml|toml|zon|xml|canonical|fig|ini|dotenv|properties|nestedtext|gron] [--output json|json5|yaml|toml|zon|xml|canonical|fig|ini|dotenv|properties|nestedtext|gron] <file> [path]
+            \\Usage: {s} get [--input json|json5|yaml|toml|zon|canonical|fig|ini|dotenv|properties|nestedtext|gron] [--output json|json5|yaml|toml|zon|canonical|fig|ini|dotenv|properties|nestedtext|gron] <file> [path]
             \\  -i, --input: input format of file (defaults to the file extension,
             \\    then to sniffing the file's contents if the extension is unknown)
             \\  -o, --output:   output format (defaults to the input format)
@@ -171,16 +171,6 @@ pub const Help = struct {
             \\    use `canonical`/`--lossless` for those. `-o fig` prints in
             \\    house style; use `fig fmt` to
             \\    rewrite a file in place instead of printing to stdout.
-            \\  xml: a best-effort fold, not a general XML tool and not a
-            \\    first-class format — an element becomes a mapping, `@name`
-            \\    attributes and `#text` mixed content fold into it, repeated
-            \\    children become an array. `-o xml` requires the document to have
-            \\    exactly one root key; every scalar (numbers, booleans, ...)
-            \\    prints as plain text, since XML has no other type. Compiled in
-            \\    only with `-Dxml=true` (opt-in, off by default), has no in-place
-            \\    editor (`edit`/`comment` reject it), and is slated for removal in
-            \\    a future major (see docs/BREAKING-CHANGES.md) — use `plist` for
-            \\    structured XML config.
             \\  ini: `[section]` headers + `key = value` lines, `;`/`#` full-line
             \\    comments; every value is plain text (no typed scalars). Holds a
             \\    root mapping and one level of section nesting only — a value
@@ -251,7 +241,7 @@ pub const Help = struct {
             \\  `ok` line per file and exits 0 when all parse; prints an error
             \\  line to stderr for each failing file and exits 1 if any fail.
             \\  -i, --input: parse every file as this format (json, jsonc, json5,
-            \\    yaml, toml, zon, xml, canonical, ini, dotenv, properties,
+            \\    yaml, toml, zon, canonical, ini, dotenv, properties,
             \\    nestedtext).
             \\    Default: infer from each file's extension, then by sniffing
             \\    its contents.
@@ -325,12 +315,9 @@ pub const Help = struct {
             \\    whose extension implies an embedded region (`.md`/`.markdown`) is
             \\    rejected here — use embed-archetype mode, or pass --input to force
             \\    whole-file conversion anyway.
-            \\  -i, --input, -o, --output: json, json5, yaml, toml, zon, xml, canonical,
-            \\    fig, ini, dotenv, properties, nestedtext. `-o xml` requires the
-            \\    document to convert to have exactly one root key (see `get --help`'s
-            \\    `xml:` entry); xml is compiled in only with `-Dxml=true`, and canonical
-            \\    only with `-Dcanonical=true`. xml has no in-place editor
-            \\    (`edit`/`set`/`comment` reject it) — convert to/from it here instead.
+            \\  -i, --input, -o, --output: json, json5, yaml, toml, zon, canonical,
+            \\    fig, ini, dotenv, properties, nestedtext. canonical is compiled in
+            \\    only with `-Dcanonical=true`.
             \\
             \\  Embed-archetype mode (--to-embed): rehouse a host document's
             \\    embedded region from one archetype's fence-and-content convention

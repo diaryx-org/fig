@@ -693,7 +693,6 @@ test "nativeFor reproduces the pre-declaration targetFor table" {
         .{ .fmt = .zon, .native = zon_native },
         .{ .fmt = .canonical, .native = null },
         .{ .fmt = .fig, .native = null },
-        .{ .fmt = .xml, .native = null },
         .{ .fmt = .ini, .native = null },
         .{ .fmt = .dotenv, .native = null },
         .{ .fmt = .properties, .native = null },

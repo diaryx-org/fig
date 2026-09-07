@@ -115,7 +115,6 @@ fn build_from_source(cargo_target: &str, cargo_host: &str) {
         ("CARGO_FEATURE_YAML", "-Dyaml=false"),
         ("CARGO_FEATURE_TOML", "-Dtoml=false"),
         ("CARGO_FEATURE_ZON", "-Dzon=false"),
-        ("CARGO_FEATURE_XML", "-Dxml=false"),
         ("CARGO_FEATURE_FIG", "-Dfig=false"),
     ] {
         if env::var_os(feature).is_none() {

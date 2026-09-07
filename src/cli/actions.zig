@@ -85,9 +85,9 @@ pub fn runEdit(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, binary_n
     // — a value or key node has a tight, contiguous span, so the generic
     // editor handles even a TOML table assembled from scattered headers — so
     // it routes through the shared editor dispatch like every other edit. That
-    // is also where the JSON family's requoting of the replacement, XML's
-    // reader-only refusal and the canonical/gron refusals now live; see
-    // `edit_ops.route`.
+    // is also where the JSON family's requoting of the replacement, the
+    // refusal of a read-only format and the canonical/gron refusals now live;
+    // see `edit_ops.route`.
     if (try args_mod.resolveEmbedType(io, a, input, opts.embed, opts.detect_embed)) |embed_type| {
         try edit_ops.applyToEmbed(a, io, input, embed_type, opts.path, opts.replacement, op);
     } else {
@@ -324,8 +324,8 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
         // Every other format maps through its `SerializeFormat` counterpart,
         // whose language declares the answer (see `manifest.Caps.lossless`
         // for the rest of the rationale: JSON5 reuse, canonical/fig
-        // decode-only, XML/INI/dotenv/properties/plist/NestedText's lack of
-        // an envelope of their own).
+        // decode-only, INI/dotenv/properties/plist/NestedText's lack of an
+        // envelope of their own).
         const maybe_native: ?fig.Lossless.NativeKinds = if (to == .gron)
             fig.Lossless.nativeFor(.json)
         else

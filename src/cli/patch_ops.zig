@@ -70,7 +70,7 @@ pub fn applyToSlice(
         inline else => |f| {
             const d = comptime fig.Language.entryFor(@tagName(f));
             if (comptime d.Lang == void) return error.FormatDisabled;
-            if (comptime !d.Lang.caps.edit) return error.UnsupportedXmlEdit;
+            if (comptime !d.Lang.caps.edit) return error.FormatNotEditable;
             // `toSerializeFormat` is null only for gron, returned above.
             const target = comptime (types.toSerializeFormat(f) orelse unreachable);
             return patchAs(d.Lang, allocator, content, d.dialect, target, req);

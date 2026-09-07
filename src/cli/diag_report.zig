@@ -168,6 +168,23 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
             try term.setColor(.reset);
             try term.writer.print(": edit the keys inside it instead — `{s} set <file> <path>.<key> <value>`.\n", .{binary_name});
         },
+        // `fig comment` on an element or entry of a one-line flow collection.
+        // Worth its own sentence for the same reason as the arms above: the
+        // error is about the PATH, and the generic `fig check` note below
+        // would send the user hunting for a parse error in a file that parses
+        // fine. The old behaviour was worse than a refusal — it edited the
+        // parent's comment through the item.
+        error.CommentsUnanchored => {
+            try term.writer.writeAll(": that path names an item of a one-line `[...]`/`{...}`, which shares its parent's line and so owns no comment of its own\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("note");
+            try term.setColor(.reset);
+            try term.writer.writeAll(": a comment written inside a flow collection is discarded when the file is read back, so there is nowhere on that line to put one that would survive — and the line above it, and its end, belong to the key the collection is the value of.\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("help");
+            try term.setColor(.reset);
+            try term.writer.print(": comment the whole collection instead — `{s} comment <file> <path-without-the-index> <text>` — or rewrite it with one item per line, where each item does own its line.\n", .{binary_name});
+        },
         // `--seq` (`Editor.setSequence`) is the only caller that reaches here,
         // so this speaks in its terms: the other producer, `Editor.kvSep`, is
         // kept unreachable by a `language.validate` rule (a null `kv_sep` must

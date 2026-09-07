@@ -374,7 +374,14 @@ fn Walker(comptime Language: type) type {
                 try text.appendSlice(self.allocator, c.text);
             }
             if (existing != null) try self.editor.deleteLeadingComments(self.path.items);
-            try self.editor.addLeadingComment(self.path.items, text.items);
+            self.editor.addLeadingComment(self.path.items, text.items) catch |err| {
+                // The entry landed inside a one-line flow collection, where a
+                // comment has no line of its own to sit on (and would be
+                // discarded on the next parse anyway). Trivia: count it
+                // dropped, like a format with no comment syntax at all.
+                if (err == error.CommentsUnanchored) return self.dropComment();
+                return err;
+            };
         }
 
         fn carryTrailing(self: *Self, comment: AST.Comment) !void {
@@ -389,7 +396,7 @@ fn Walker(comptime Language: type) type {
             defer if (existing) |e| self.allocator.free(e);
             if (self.options.comments == .ours and existing != null) return;
             self.editor.setTrailingComment(self.path.items, comment.text) catch |err| {
-                if (err == error.CommentsUnsupported or err == error.MultilineComment) return self.dropComment();
+                if (err == error.CommentsUnsupported or err == error.MultilineComment or err == error.CommentsUnanchored) return self.dropComment();
                 return err;
             };
         }

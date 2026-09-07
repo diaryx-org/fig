@@ -1,13 +1,23 @@
 ```fig
 title = A flow sequence item reports, and deletes, its parent's leading comment
 description = `getLeadingComment` on an item of a one-line array (`members = ["a", "b"]`, `members: [a, b]`) returns the block above `members`, and `deleteLeadingComments` on the item removes it — the item shares its parent's line, and the op anchors on the line rather than on the node
-status = open
+status = done
 created = 2026-09-07
 updated = 2026-09-07
 part_of = [tasks](tasks.md)
 ```
 
 # A flow sequence item reports, and deletes, its parent's leading comment
+
+**Status.** Done, in `fix(editor): a flow item on its parent's line owns no
+comment` (2026-09-07). The editor now asks whether the node's line is its own
+— the parent is flow and either its opener or a preceding element sits on the
+node's line — and answers as if the node had no comment when it is not: `null`
+from the two reads, a no-op from the two deletes, and the new
+`CommentsUnanchored` (`invalid_argument` across the ABI) from
+`addLeadingComment`/`setTrailingComment`. The trailing trio had the same
+defect and is fixed with it; a multi-line flow collection, whose elements each
+begin their own line, is untouched.
 
 **Repro.** With `fig` 3.2.0 (the Rust crate; the Zig editor is the same code):
 
@@ -23,9 +33,10 @@ e.source()                            // "members = [\"a\", \"b\"]\n" — the pa
 ```
 
 YAML behaves the same (`# above\nmembers: [a, b]\n` — both items report
-`above`). A TOML inline-table entry does *not*: `nested = { k = "v" }` under a
-comment answers `None` for `nested.k`, and a multi-line array (one item per
-line) answers `None` for each item, which is the right answer in both cases.
+`above`). A multi-line array (one item per line) answers `None` for each item,
+which is the right answer. This filing claimed a TOML inline-table entry did
+too; it did not — `nested = { k = "v" }` under a comment answered `above` for
+`nested.k`, the same defect in the same shape, and it is fixed with the rest.
 
 **Cause.** `leadingCommentLineStart` in `src/editor.zig` anchors a leading
 op on `lineStartBefore(source, span.start)` — the start of the line the node

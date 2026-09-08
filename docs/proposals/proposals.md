@@ -3,13 +3,14 @@ title = Proposals
 description = Design proposals, findings, and wishlists for `fig` — from inside and outside the project
 author = adammharris
 created = 2026-07-25
-updated = 2026-09-04
+updated = 2026-09-07
 part_of = [docs](/docs/docs.md)
 contents
 > * [Editor splice: findings and wishlist](editor-splice-wishlist.md)
 > * [A declared Language interface](language-interface.md)
 > * [Derived regions](derived-regions.md)
 > * [Pluggable formats](pluggable-formats.md)
+> * [Runtime languages](runtime-languages.md)
 ```
 
 # Proposals

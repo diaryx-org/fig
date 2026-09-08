@@ -43,7 +43,7 @@ handful of facts that still live in core because no manifest field exists for
 them yet. That is what this proposal is about, and it is smaller than the
 phrase "pluggable formats" suggests. It is also the last thing to settle before
 the 3.0 breaks that have been waiting in
-[BREAKING-CHANGES](/docs/BREAKING-CHANGES.md) since 2.4, because both of those
+`BREAKING-CHANGES.md` (deleted in core 3.0) since 2.4, because both of those
 change the C ABI's format enum, and that enum should be derived from the one
 list before it is changed.
 
@@ -314,7 +314,7 @@ own contracts require. The breaks, all of which have been waiting on a
 major:
 
 - **`FigEmbedType` becomes parametric** — the entry already written in
-  [BREAKING-CHANGES](/docs/BREAKING-CHANGES.md). Its migration table is
+  `BREAKING-CHANGES.md` (deleted in core 3.0). Its migration table is
   generated from `dialects` and `Embed.Type` rather than written by hand,
   which is only possible once §5.1 makes both derivations total.
 - **Generic XML is removed as a selectable format** — the other entry. Its

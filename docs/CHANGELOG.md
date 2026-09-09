@@ -129,6 +129,7 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 ### Added
 
 - **rust** — Format gains ini, dotenv, properties, plist and nestedtext; abi-check holds every binding's format enum to the registry ([`aebc2f7`](https://github.com/diaryx-org/fig/commit/aebc2f71e4b3268c70b701beed5975d4984c8b09))
+- **c-api** — reserve FIG_FORMAT_RUNTIME_BASE for languages registered at runtime ([`3d8b7b3`](https://github.com/diaryx-org/fig/commit/3d8b7b32eacd88ad1df6bd1e975b85156d67c89d))
 
 ### Behavioural changes
 

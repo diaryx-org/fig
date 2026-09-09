@@ -131,6 +131,15 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **rust** — Format gains ini, dotenv, properties, plist and nestedtext; abi-check holds every binding's format enum to the registry ([`aebc2f7`](https://github.com/diaryx-org/fig/commit/aebc2f71e4b3268c70b701beed5975d4984c8b09))
 - **c-api** — reserve FIG_FORMAT_RUNTIME_BASE for languages registered at runtime ([`3d8b7b3`](https://github.com/diaryx-org/fig/commit/3d8b7b32eacd88ad1df6bd1e975b85156d67c89d))
 
+### Changed
+
+- **editor** — decide flow from syntax and the section rule, retiring INI's insertKey hook ([`70dcfdd`](https://github.com/diaryx-org/fig/commit/70dcfdd60f2b7d8eb5d5f96fc71c586b8a0f1cf3))
+- **editor** — record item markers and copy prefix bytes, retiring fig's and NestedText's sequence hooks ([`239502c`](https://github.com/diaryx-org/fig/commit/239502cef3b152fbb081e1890921cbae3ca9cfbb))
+- **editor** — comment delimiters are an open/close pair, retiring plist's six comment hooks ([`8719d15`](https://github.com/diaryx-org/fig/commit/8719d15bd5c2302f8a3cf2721126ef1d6d303f1a))
+- **editor** — value, entry and item renderers, retiring plist's and NestedText's insert hooks ([`bbc6338`](https://github.com/diaryx-org/fig/commit/bbc6338082595c26d68b33b905ed66ef8c040e20))
+- **editor** — reframe values from a recorded separator, retiring the fig, YAML and NestedText reframe hooks ([`9b6c34b`](https://github.com/diaryx-org/fig/commit/9b6c34b3c47c262fa0f02af89bfedb981187384a))
+- **editor** — name mentions and header syntax retire TOML's five hooks; merge_key and core aliases retire YAML's two — no editing hooks remain ([`f5d96a7`](https://github.com/diaryx-org/fig/commit/f5d96a730c344533c029a58aecd033e35b46e2f6))
+
 ### Behavioural changes
 
 - `FIG_FORMAT_XML` (6) is gone from fig.h, and a C caller
@@ -160,6 +169,33 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 
 - `fig.Native` no longer exists; a Zig consumer that
   spelled it must write `fig.Canonical`, which has been the name since 2.0.
+
+- a plist leading or trailing comment set to the empty
+string is now written `<!-- -->` with one space, where the hook wrote two.
+
+- a plist entry or item appended after a value that
+carries a same-line `<!-- -->` comment now lands after the comment's line,
+as in every other format, where it used to land between the value and its
+comment; an empty plist container expands with the declared two-space unit
+rather than a unit sniffed from the file.
+
+- inserting a key into NestedText's empty inline `{}`
+now writes `{key: value}` instead of failing with `EmptyInlineContainer`,
+and appending to an empty inline `[]` writes `[value]`.
+
+- INI and fig gain `renameContainer` (and
+`fig_editor_rename_container` answers `ok` rather than
+`unsupported_format` for them); an INI rename reaches every reopening of
+the section, and a fig rename every re-entry of the container, where the
+generic key splice used to rename only the first mention and split it.
+
+- inserting a root key into a header-first INI file now
+lands above the first `[section]`, where it used to land after the last
+one and silently join it.
+
+- a Zig consumer with an out-of-tree `Language` that
+declared an editing hook (`insertKey`, `replaceValAtPath`, …) is refused
+by `Language.validate` as an unknown declaration.
 
 <!-- git-cliff:end -->
 

@@ -539,6 +539,24 @@ pub const Syntax = struct {
     /// whose first byte is the first header's `[` — from `section_noun`.
     flow_containers: bool = true,
 
+    /// The bytes one level of block nesting adds to a line's prefix: two
+    /// spaces for YAML, four for NestedText, one `> ` marker cell for fig.
+    ///
+    /// The engine writes a block value that descends under a new entry
+    /// (`key:` and then the value's lines) by copying the entry's own line
+    /// prefix and appending this. It used to add two spaces to a column
+    /// count, which is YAML's answer and nobody else's; a runtime format
+    /// states its own. Read by `editor.Editor.writeMapValue` and
+    /// `promoteNullToMapping`.
+    indent_unit: []const u8 = "  ",
+
+    /// What introduces a block-sequence item, separator included: `- ` for
+    /// YAML and NestedText, `* ` for fig, `""` for plist, whose item is a
+    /// bare element. The engine writes a new item as the first item's line
+    /// prefix (the bytes before its marker — see `Document.node_marker_spans`)
+    /// followed by this. Used to be a `"- "` literal in the engine.
+    seq_item_marker: []const u8 = "- ",
+
     /// Whether a single line of the form `k: v` is a block MAPPING entry
     /// rather than scalar text — the one value shape that cannot be told
     /// apart by sniffing, so it is settled by the language's own parser.

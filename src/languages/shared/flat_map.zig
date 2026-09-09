@@ -16,6 +16,7 @@
 const std = @import("std");
 const AST = @import("../../ast/ast.zig");
 const Span = @import("../../util/span.zig");
+const Document = @import("../../document.zig");
 
 /// Owns the three parallel node-indexed arrays every fig parser builds
 /// (`nodes`, `spans`, `node_comments`) and the one operation that allocates a
@@ -26,6 +27,9 @@ pub const NodeArena = struct {
     nodes: std.ArrayList(AST.Node) = .empty,
     spans: std.ArrayList(Span) = .empty,
     node_comments: std.ArrayList(AST.NodeComments) = .empty,
+    /// Block-sequence item markers (`Document.node_marker_spans`); only
+    /// NestedText, of the arena's users, has a block sequence to record.
+    markers: std.ArrayList(Document.MarkerEntry) = .empty,
 
     pub fn addNode(self: *NodeArena, kind: AST.Node.Kind, span: Span) std.mem.Allocator.Error!AST.Node.Id {
         const id: AST.Node.Id = @intCast(self.nodes.items.len);
@@ -44,6 +48,7 @@ pub const NodeArena = struct {
         self.nodes.deinit(self.allocator);
         self.spans.deinit(self.allocator);
         self.node_comments.deinit(self.allocator);
+        self.markers.deinit(self.allocator);
     }
 };
 

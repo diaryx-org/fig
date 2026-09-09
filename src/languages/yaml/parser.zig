@@ -31,6 +31,13 @@ const OpenContainer = struct {
     pending_value_trailing: ?AST.Comment = null,
     pending_sequence_item_span: ?usize = null,
     pending_sequence_item: bool = false,
+    /// The `-` that introduced the item currently being parsed into this
+    /// sequence, recorded against the item's node when `finishValue` attaches
+    /// it (`Document.node_marker_spans`). Set by `parseSequenceEntry` once the
+    /// previous dash's pending value is closed, so a deferred value — a
+    /// container on the following lines, or the null a bare `-` becomes — is
+    /// attached under its own dash, not the next one.
+    current_marker: ?Span = null,
     continues_sequence_item: bool = false,
     // True for an indentless block sequence value: one opened (with no fresh
     // indent of its own) directly inside a mapping, so it shares that mapping's
@@ -58,6 +65,9 @@ node_spans: std.ArrayList(Span) = .empty,
 // hand off to the Document. `anchors` is the name→id table (filled in a later
 // phase; empty for tag-only documents).
 node_tags: std.ArrayList(?AST.Tag) = .empty,
+/// Every block-sequence item's `-` token, by item node id; becomes
+/// `Document.node_marker_spans`.
+markers: std.ArrayList(Document.MarkerEntry) = .empty,
 node_anchors: std.ArrayList(?[]const u8) = .empty,
 node_tag_spans: std.ArrayList(?Span) = .empty,
 node_anchor_spans: std.ArrayList(?Span) = .empty,
@@ -146,6 +156,7 @@ pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Ty
     allocator.free(parsed.node_spans);
     allocator.free(parsed.node_tag_spans);
     allocator.free(parsed.node_anchor_spans);
+    allocator.free(parsed.node_marker_spans);
     return parsed.ast;
 }
 
@@ -496,6 +507,8 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
     const node_anchor_spans = try self.node_anchor_spans.toOwnedSlice(self.allocator);
     errdefer self.allocator.free(node_anchor_spans);
     self.node_anchor_spans = .empty;
+    const node_marker_spans = try Document.buildMarkerSpans(self.allocator, nodes.len, self.markers.items);
+    errdefer self.allocator.free(node_marker_spans);
     const tag_directives = try self.tag_directives.toOwnedSlice(self.allocator);
     errdefer self.allocator.free(tag_directives);
     self.tag_directives = .empty;
@@ -521,6 +534,7 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
         .node_spans = node_spans,
         .node_tag_spans = node_tag_spans,
         .node_anchor_spans = node_anchor_spans,
+        .node_marker_spans = node_marker_spans,
     };
 }
 
@@ -603,6 +617,7 @@ pub fn deinit(self: *Parser) void {
     self.node_anchors.deinit(self.allocator);
     self.node_tag_spans.deinit(self.allocator);
     self.node_anchor_spans.deinit(self.allocator);
+    self.markers.deinit(self.allocator);
     self.anchors.deinit(self.allocator);
     for (self.owned_strings.items) |string| {
         self.allocator.free(string);
@@ -627,6 +642,7 @@ fn parseSequenceEntry(self: *Parser) ParserError!void {
     // finalized here.
     if (self.currentContainer().id == sequence_id) try self.closePendingEmptyValue();
     self.clearPendingSequenceItem(sequence_id);
+    self.containerById(sequence_id).current_marker = dash.span;
     self.skipTriviaNoNewline();
     try self.consumePendingProperties(); // `- !!str x`
 
@@ -1535,6 +1551,10 @@ fn finishValue(self: *Parser, value_id: AST.Node.Id) ParserError!void {
             self.attachChild(parent, value_id);
             parent.pending_sequence_item = false;
             parent.pending_sequence_item_span = null;
+            if (parent.current_marker) |m| {
+                try self.markers.append(self.allocator, .{ .node_id = value_id, .span = m });
+                parent.current_marker = null;
+            }
         },
         .mapping => {
             // A complex explicit key just finished: it becomes the pending key,

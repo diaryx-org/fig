@@ -275,52 +275,6 @@ fn figInsertFlowEntry(self: *FigEditor, parsed: Document, node: AST.Node, span: 
     try self.replaceAtSpan(Span.init(at, at), out.items);
 }
 
-// ============================================================================
-// append/prepend — `Editor(Fig).appendToSeq`/`prependToSeq`'s block-sequence arm
-// ============================================================================
-
-/// Append `value_text` as a new element line at the end of the block sequence
-/// `node` (`> *`/`> * value`, at whatever depth its siblings already sit at).
-/// `value_text` must be a single-line scalar literal — a multi-line value
-/// (e.g. a map-shaped element) needs its own per-line marker prefixes, which
-/// this does not synthesize; such an attempt fails safely via the
-/// reparse-rollback safety net rather than corrupting the file. Building a
-/// map-shaped element is `> *` block authoring (DESIGN.md) or the dedicated
-/// append-header op, neither of which this single-value primitive covers.
-pub fn figAppendSeqLine(self: *FigEditor, parsed: Document, node: AST.Node, value_text: []const u8) !void {
-    const source = self.source.items;
-    const first = (try parsed.ast.child(&node)).?; // FigEmptyContainer: never empty
-    const last = (try parsed.ast.lastChild(&node)).?;
-    const prefix = linePrefix(source, parsed.span(first).start);
-    const insert_at = lineEndAfter(source, parsed.span(last).end -| 1);
-
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-    if (insert_at > 0 and source[insert_at - 1] != '\n') try out.append(self.allocator, '\n');
-    try out.appendSlice(self.allocator, prefix);
-    try out.appendSlice(self.allocator, value_text);
-    try out.append(self.allocator, '\n');
-    try self.replaceAtSpan(Span.init(insert_at, insert_at), out.items);
-}
-
-/// Insert `value_text` as a new element line just before the block sequence
-/// `node`'s current first element. Same single-line-scalar contract as
-/// `figAppendSeqLine`.
-pub fn figPrependSeqLine(self: *FigEditor, parsed: Document, node: AST.Node, value_text: []const u8) !void {
-    const source = self.source.items;
-    const first = (try parsed.ast.child(&node)).?;
-    const first_start = parsed.span(first).start;
-    const prefix = linePrefix(source, first_start);
-    const line_start = lineStartBefore(source, first_start);
-
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-    try out.appendSlice(self.allocator, prefix);
-    try out.appendSlice(self.allocator, value_text);
-    try out.append(self.allocator, '\n');
-    try self.replaceAtSpan(Span.init(line_start, line_start), out.items);
-}
-
 // =======
 // TESTS
 // =======

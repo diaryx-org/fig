@@ -90,6 +90,11 @@ pub const Language = struct {
             // whitespace — a comment inserted above a line must repeat it or
             // it detaches. See `Syntax.structural_indent`.
             .structural_indent = true,
+            // One nesting level is one marker cell; an element line is the
+            // `>` run of its container plus `* `. Both are copied by the
+            // engine's prefix-bytes policy, so a glued `>>*` file stays glued.
+            .indent_unit = "> ",
+            .seq_item_marker = "* ",
             // A section format: a block container may be re-entered and
             // scattered, and `parser.zig` records every block container's
             // header lines in `Document.node_regions`. Its refusals say
@@ -130,11 +135,6 @@ pub const Language = struct {
     /// re-framed onto the following lines as a nested section instead.
     pub const replaceValAtPath = edit.reframeMappingValue;
 
-    /// A block sequence item is a `* ` line carrying the same `>` marker-run
-    /// prefix as its siblings, which the generic `dashColumn`/`insertSeqLine`
-    /// pair — sized for a plain-whitespace indent — would drop.
-    pub const appendToSeq = edit.figAppendSeqLine;
-    pub const prependToSeq = edit.figPrependSeqLine;
 
     // ── Whole-container ops ──────────────────────────────────────────────────
     //

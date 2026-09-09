@@ -74,6 +74,9 @@ pub const Language = struct {
             .empty_map_literal = null,
             // Every container is a block of lines; there is no inline form.
             .flow_containers = false,
+            // Four-space nesting; an item is `- value`.
+            .indent_unit = "    ",
+            .seq_item_marker = "- ",
         };
     }
 
@@ -108,24 +111,13 @@ pub const Language = struct {
     /// adding or dropping one.
     pub const replaceKeyAtPath = edit.ntReplaceKey;
 
-    /// A nested or empty item's value span can begin on a later line than its
-    /// own `-` dash, so a leading comment keyed by `.index` anchors on the
-    /// dash's line rather than on the span's.
-    pub const seqItemLineStart = edit.seqItemLineStart;
-
-    /// `dashColumn` reads the item column off the first item's OWN line, which
-    /// a nested or empty-valued item doesn't have — so the dash's line is
-    /// derived from the sequence node's span instead. Also renders a multiline
-    /// or empty value as a nested `>`-block rather than `insertSeqLine`'s bare
-    /// reindent.
+    /// Renders a multiline or empty value as a nested `>`-block rather than
+    /// `insertSeqLine`'s bare reindent. Where the item's line is, and what a
+    /// new sibling's prefix is, the engine reads from the `-` the parser
+    /// records (`Document.node_marker_spans`); remove and reorder, and the
+    /// comment ops keyed by `.index`, are generic for the same reason.
     pub const appendToSeq = edit.ntAppendItem;
     pub const prependToSeq = edit.ntPrependItem;
-    pub const removeSeqItem = edit.ntRemoveSeqItem;
-
-    /// Item block boundaries can't be recovered from each item span's start
-    /// here, so this computes its own; the tiling, permutation and splice
-    /// underneath are the generic engine's, reused as-is.
-    pub const reorderSeqItems = edit.ntReorderSeqItems;
 };
 
 // Test discovery: importing `nestedtext.zig` (from root.zig) pulls in every

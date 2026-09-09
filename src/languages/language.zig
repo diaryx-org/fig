@@ -725,9 +725,9 @@ const Decls = struct {
     const optional = [_][]const u8{ "printNode", "materialize", "TagMode", "parseAbstract", "samples" };
 
     /// Editing hooks. Declaring one takes over `editor.Editor`'s method of the
-    /// same name — except `keyIsInherited` (a predicate the engine queries)
-    /// and `seqItemLineStart` (a sub-computation), which are named for what
-    /// they answer rather than for a method. Signatures are documented on the
+    /// same name — except `keyIsInherited` (a predicate the engine queries),
+    /// which is named for what it answers rather than for a method.
+    /// Signatures are documented on the
     /// `Editor` method each overrides; see `editor.zig`. What a hook may CALL
     /// is `editor/splice.zig`: its free functions and the `Editor` members its
     /// module doc names, and nothing else in the engine.
@@ -743,10 +743,9 @@ const Decls = struct {
     const hooks = [_][]const u8{
         "insertKey",                 "replaceValAtPath",
         "replaceValAtPathFollowing", "replaceKeyAtPath",
-        "keyIsInherited",            "seqItemLineStart",
-        "appendToSeq",               "prependToSeq",
-        "removeSeqItem",             "reorderSeqItems",
-        "addLeadingComment",         "deleteLeadingComments",
+        "keyIsInherited",            "appendToSeq",
+        "prependToSeq",              "addLeadingComment",
+        "deleteLeadingComments",
         "getLeadingComment",         "setTrailingComment",
         "deleteTrailingComment",     "getTrailingComment",
         "addDanglingComment",        "deleteDanglingComments",
@@ -978,7 +977,7 @@ pub fn validate(comptime Lang: type) void {
             if (s.comments.line != null) any_line_comment = true;
         }
         if (!any_block_seq) {
-            for ([_][]const u8{ "appendToSeq", "prependToSeq", "removeSeqItem", "reorderSeqItems" }) |name| {
+            for ([_][]const u8{ "appendToSeq", "prependToSeq" }) |name| {
                 if (@hasDecl(Lang, name))
                     @compileError("Language '" ++ Lang.name ++ "' declares block_seq_editable = false" ++
                         " but supplies '" ++ name ++ "', which the engine refuses before reaching");

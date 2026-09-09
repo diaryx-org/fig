@@ -159,6 +159,7 @@ pub fn parseWithReport(allocator: std.mem.Allocator, input: []const u8, format: 
 pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!AST {
     const doc = try parse(allocator, input, format);
     allocator.free(doc.node_spans);
+    allocator.free(doc.node_marker_spans);
     return doc.ast;
 }
 
@@ -171,6 +172,7 @@ fn parseImpl(allocator: std.mem.Allocator, input: []const u8, format: Type, out:
         parser.owned_strings.deinit(allocator);
         parser.arena.nodes.deinit(allocator);
         parser.arena.spans.deinit(allocator);
+        parser.arena.markers.deinit(allocator);
         return err;
     };
 }
@@ -206,6 +208,10 @@ fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Documen
     errdefer self.allocator.free(nodes);
     const spans = try self.arena.spans.toOwnedSlice(self.allocator);
     errdefer self.allocator.free(spans);
+    const node_marker_spans = try Document.buildMarkerSpans(self.allocator, nodes.len, self.arena.markers.items);
+    errdefer self.allocator.free(node_marker_spans);
+    self.arena.markers.deinit(self.allocator);
+    self.arena.markers = .empty;
     const owned = try self.owned_strings.toOwnedSlice(self.allocator);
 
     var ast: AST = .{ .allocator = self.allocator, .root = root_id, .nodes = nodes, .owned_strings = owned };
@@ -214,7 +220,7 @@ fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Documen
         self.arena.node_comments = .empty;
     }
 
-    return .{ .source = input, .ast = ast, .node_spans = spans };
+    return .{ .source = input, .ast = ast, .node_spans = spans, .node_marker_spans = node_marker_spans };
 }
 
 // ── Line cursor ─────────────────────────────────────────────────────────────
@@ -417,6 +423,10 @@ fn parseListBlock(self: *Parser, indent: usize) ParserError!AST.Node.Id {
         const leading = try self.takeLeading();
         const value_id = try self.parseItemValue(l.content, indent);
         self.attachLeading(value_id, leading);
+        // The item's `-` sits right after its indentation; its value may
+        // begin lines below (nested or empty), so record the marker.
+        const dash = l.line_start + l.indent;
+        try self.arena.markers.append(self.allocator, .{ .node_id = value_id, .span = Span.init(dash, dash + 1) });
         self.appendSeqItem(seq_id, value_id);
         end = self.arena.spans.items[value_id].end;
     }

@@ -404,6 +404,9 @@ diagnostics: std.ArrayList(Diagnostic) = .empty,
 /// during AST assembly (arena-backed; duped out to `Document.node_regions`).
 /// Empty for a document with no block container.
 built_regions: std.ArrayList(Document.NodeRegion) = .empty,
+/// Every `*` element marker by built element id (arena-backed; becomes
+/// `Document.node_marker_spans`). See `TNode.marker`.
+markers: std.ArrayList(Document.MarkerEntry) = .empty,
 
 // ── Intermediate tree types ─────────────────────────────────────────────────
 
@@ -541,6 +544,11 @@ const TNode = struct {
     /// entry's value (sequence elements and root have no wrapping key to bind
     /// to instead).
     leading: std.ArrayList(AST.Comment) = .empty,
+    /// The `*` element marker that introduced this node as a block-sequence
+    /// element, or null (a map entry's value, the root, or an element that
+    /// arrived through an `x[] = v` append header, which has no marker of its
+    /// own). Recorded to `Document.node_marker_spans` in `buildNode`.
+    marker: ?Span = null,
     /// Orphan comments at the end of this node's body (container-only).
     dangling: std.ArrayList(AST.Comment) = .empty,
 };
@@ -581,6 +589,7 @@ const Resolved = struct { container: *PendingContainer, owner: *TNode, entry: ?*
 pub fn parseAbstract(allocator: Allocator, input: []const u8, format: Type) !AST {
     const parsed = try parse(allocator, input, format);
     allocator.free(parsed.node_spans);
+    allocator.free(parsed.node_marker_spans);
     allocator.free(parsed.node_regions);
     return parsed.ast;
 }
@@ -662,10 +671,12 @@ fn parseImpl(allocator: Allocator, input: []const u8, format: Type, out: ?*Repor
     errdefer ast.deinit();
     const node_spans = try b.takeSpans();
     errdefer allocator.free(node_spans);
+    const node_marker_spans = try Document.buildMarkerSpans(allocator, node_spans.len, self.markers.items);
+    errdefer allocator.free(node_marker_spans);
     const node_regions = try allocator.dupe(Document.NodeRegion, self.built_regions.items);
     Document.sortRegions(node_regions);
 
-    return .{ .source = input, .ast = ast, .node_spans = node_spans, .node_regions = node_regions };
+    return .{ .source = input, .ast = ast, .node_spans = node_spans, .node_marker_spans = node_marker_spans, .node_regions = node_regions };
 }
 
 /// Return `err` with the diagnostic caret pinned to `offset` — for the sites
@@ -773,7 +784,7 @@ fn processLine(self: *Parser, line_start: usize) Error!void {
             return;
         }
     }
-    try self.processContentLine(m.depth, m.star);
+    try self.processContentLine(m.depth, m.star_span);
 }
 
 /// Trailing work after the last line is consumed: close every still-open frame
@@ -821,7 +832,8 @@ fn recoverToNextLine(self: *Parser, line_start: usize) void {
     }
 }
 
-fn processContentLine(self: *Parser, depth: u32, star: bool) Error!void {
+fn processContentLine(self: *Parser, depth: u32, star_span: ?Span) Error!void {
+    const star = star_span != null;
     try self.closeFramesAbove(depth);
     const required: u32 = if (self.stack.items.len == 0) 0 else self.stack.items[self.stack.items.len - 1].child_depth;
     if (depth != required) return if (required == 0) error.FigRootMarker else error.FigSkippedLevel;
@@ -837,7 +849,7 @@ fn processContentLine(self: *Parser, depth: u32, star: bool) Error!void {
 
     // `star` = the prefix carried a `*` element marker (scanMarkers consumed
     // it, along with the separator).
-    if (star) return self.parseElementLine(target, depth);
+    if (star) return self.parseElementLine(target, depth, star_span.?);
     switch (self.peek().?) {
         // A `-` element line is the YAML habit (and fig's own pre-`*`
         // spelling) — hard error naming the `*` form.
@@ -928,6 +940,8 @@ const Markers = struct {
     /// form), glued (`>*`), or, at root, a bare leading `*` (a zero-marker
     /// sequence element). scanMarkers consumed it and its separator.
     star: bool,
+    /// The `*`'s own span when `star` is set.
+    star_span: ?Span = null,
 };
 
 /// Count a run of `>` markers (spaced runs like `> > >` count the same as
@@ -955,6 +969,7 @@ fn scanMarkers(self: *Parser) Error!Markers {
     // `>-` glued to the run — the old dash element spelling.
     if (count > 0 and self.peek() == '-') return error.FigForeignSyntaxDash;
     if (self.peek() == '*') {
+        const star_span = Span.init(self.pos, self.pos + 1);
         self.advance();
         if (self.peek() == ' ' or self.peek() == '\t') {
             self.skipSpacesTabs();
@@ -965,7 +980,7 @@ fn scanMarkers(self: *Parser) Error!Markers {
         } else if (!self.atEndOfContent()) {
             return error.FigBadMarkerSeparator;
         }
-        return .{ .depth = count, .star = true };
+        return .{ .depth = count, .star = true, .star_span = star_span };
     }
     if (count > 0) {
         if (self.peek() == ' ' or self.peek() == '\t') {
@@ -1074,7 +1089,7 @@ fn finishAssignment(self: *Parser, target: *PendingContainer, steps: []const Ste
 
 /// The element `*` marker (and its separator) has already been consumed by
 /// `scanMarkers`; `pos` sits on the element body (or a typing `:`).
-fn parseElementLine(self: *Parser, target: *PendingContainer, depth: u32) Error!void {
+fn parseElementLine(self: *Parser, target: *PendingContainer, depth: u32, star: Span) Error!void {
     // The position right after the `> *` marker prefix — before any trailing
     // whitespace is skipped — so a bare `*` opener (no value on its own line)
     // still anchors its container's span at a real, reconstructable position
@@ -1090,7 +1105,7 @@ fn parseElementLine(self: *Parser, target: *PendingContainer, depth: u32) Error!
         const child = try self.allocator.create(PendingContainer);
         child.* = .{};
         const el = try self.allocator.create(TNode);
-        el.* = .{ .value = .{ .container = child }, .span = Span.init(body_start, body_start) };
+        el.* = .{ .value = .{ .container = child }, .span = Span.init(body_start, body_start), .marker = star };
         try self.appendComments(&el.leading, leading);
         try seq.elements.append(self.allocator, el);
         if (try self.scanTrailingCommentOnly()) |cm| el.trailing = .{ .text = cm };
@@ -1112,6 +1127,7 @@ fn parseElementLine(self: *Parser, target: *PendingContainer, depth: u32) Error!
         if (self.peek() != '=') return self.failAt(colon_pos, error.FigForeignSyntaxColon);
         self.advance();
         var node = try self.parseAssignedValue(type_name);
+        node.marker = star;
         self.consumeLineEnd();
         try self.appendComments(&node.leading, leading);
         try seq.elements.append(self.allocator, try self.boxNode(node));
@@ -1121,6 +1137,7 @@ fn parseElementLine(self: *Parser, target: *PendingContainer, depth: u32) Error!
     const c = self.peek().?;
     if (c == '\'' or c == '"' or c == '[' or c == '{') {
         var node = try self.parseUntypedValue(false);
+        node.marker = star;
         self.consumeLineEnd();
         try self.appendComments(&node.leading, leading);
         try seq.elements.append(self.allocator, try self.boxNode(node));
@@ -1135,6 +1152,7 @@ fn parseElementLine(self: *Parser, target: *PendingContainer, depth: u32) Error!
     if (std.mem.indexOf(u8, self.source[start..k], " = ") != null) return error.FigElementInlineField;
 
     var node = try self.parseUntypedValue(false);
+    node.marker = star;
     self.consumeLineEnd();
     try self.appendComments(&node.leading, leading);
     try seq.elements.append(self.allocator, try self.boxNode(node));
@@ -2101,6 +2119,7 @@ fn buildContainer(self: *Parser, b: *AST.Builder, c: *PendingContainer) Error!Bu
             for (c.sequence.elements.items) |el| {
                 const el_id = try self.buildNode(b, el);
                 end = @max(end, el.span.end);
+                if (el.marker) |m| try self.markers.append(self.allocator, .{ .node_id = el_id, .span = m });
                 for (el.leading.items) |lc| try b.addLeadingComment(el_id, lc);
                 ids.appendAssumeCapacity(el_id);
             }

@@ -19,6 +19,21 @@ node_anchor_spans: []const ?Span = &.{},
 /// Indexed by node id: source span of the `!tag` token attached to this node,
 /// or null. Decoded tag text lives on `ast.node_tags`. Empty when no tags.
 node_tag_spans: []const ?Span = &.{},
+/// Indexed by node id: source span of the token that INTRODUCES this node as
+/// a block-sequence item — YAML's and NestedText's `-`, fig's `*` — or null
+/// for every node that is not one, and for an item whose span already begins
+/// at its introducing token (plist's `<string>` element). Empty when the
+/// document has no such items, which is every document of a format with no
+/// block-sequence marker.
+///
+/// This is the one item fact `node_spans` cannot carry: an item's span starts
+/// at its VALUE, which for a nested or empty value (`-\n  k: v`, a bare `-`)
+/// begins on a later line than the marker, so nothing in the span says where
+/// the item's own line is. The editor reads it for every block-sequence op
+/// — where an item's line starts, where a leading comment goes, what prefix
+/// a new sibling copies. NestedText used to hook five operations to
+/// recompute it by scanning; see `docs/proposals/runtime-languages.md` §4.1.
+node_marker_spans: []const ?Span = &.{},
 /// The physical HEADER LINES of every container whose span does not describe
 /// its extent — a SECTION node: a TOML `[table]`/`[[array]]`/dotted table, an
 /// INI `[section]`, a fig block container. One entry per header line that
@@ -56,7 +71,33 @@ pub fn deinit(self: Document, allocator: std.mem.Allocator) void {
     allocator.free(self.node_spans);
     allocator.free(self.node_anchor_spans);
     allocator.free(self.node_tag_spans);
+    allocator.free(self.node_marker_spans);
     allocator.free(self.node_regions);
+}
+
+/// Source span of the `-`/`*` token introducing `node` as a block-sequence
+/// item, or null. Null when the document records no markers (the table is
+/// empty), and for a node that is not an item — see `node_marker_spans`.
+pub fn markerSpan(self: Document, node: AST.Node) ?Span {
+    if (node.id >= self.node_marker_spans.len) return null;
+    return self.node_marker_spans[node.id];
+}
+
+/// One recorded item marker, as a parser accumulates them: `span` is the
+/// `-`/`*` token that introduced node `node_id`. `buildMarkerSpans` turns the
+/// accumulated list into the per-node table.
+pub const MarkerEntry = struct { node_id: AST.Node.Id, span: Span };
+
+/// The `node_marker_spans` table for `node_count` nodes from a parser's
+/// accumulated `entries`: empty (`&.{}`, nothing allocated) when there are
+/// none, else one slot per node with each entry's span in its node's slot.
+/// The caller owns the result; `deinit` frees it.
+pub fn buildMarkerSpans(allocator: std.mem.Allocator, node_count: usize, entries: []const MarkerEntry) std.mem.Allocator.Error![]const ?Span {
+    if (entries.len == 0) return &.{};
+    const table = try allocator.alloc(?Span, node_count);
+    @memset(table, null);
+    for (entries) |e| table[e.node_id] = e.span;
+    return table;
 }
 
 pub fn span(self: Document, node: AST.Node) Span {

@@ -28,16 +28,15 @@
 //!      own line whenever the value is nested/empty (a same-line `- key:
 //!      value` is parsed as the LITERAL string `"key: value"`, never a
 //!      nested mapping — see `parser.zig`'s module doc, "region" algorithm).
-//!      So an item's OWN span can start on a later line than its `-`,
-//!      breaking every generic helper that assumes otherwise: `appendToSeq`/
-//!      `prependToSeq`'s `dashColumn` (reads the column off the wrong line),
-//!      `removeSeqItem`/`moveItem`/`reorderItems`'s block-boundary math, and
-//!      the leading-comment ops when `path` ends in `.index`. This module's
-//!      `dashPosAfterPrev`/`seqItemLineStart`/`dashPosByIndex` recover the
-//!      real `-` position by scanning from a known-good anchor (the
-//!      sequence's own span, which — like a `.keyvalue`'s — is always
-//!      anchored at the FIRST item's `-` line) instead of trusting the
-//!      target item's own span.
+//!      So an item's OWN span can start on a later line than its `-`. The
+//!      parser records every item's `-` in `Document.node_marker_spans`, and
+//!      the engine's block-sequence ops — append/prepend's prefix, remove and
+//!      reorder's block boundaries, the leading-comment ops when `path` ends
+//!      in `.index` — read it, so none of those is NestedText's any more.
+//!      What is still this module's is RENDERING: a same-line value versus a
+//!      nested `>`-block, which the `replaceValAtPath` hook decides by
+//!      reframing from the `-` (`dashPosAfterPrev`/`dashPosByIndex` find it
+//!      by scanning; they go when that hook does).
 //!
 //! **Deliberately out of scope** (declined with a clear error rather than
 //! guessed at): inserting into a genuinely EMPTY inline `{}`/`[]` container.
@@ -249,17 +248,6 @@ fn nextContentLineStart(source: []const u8, from: usize) usize {
     return i;
 }
 
-/// The line start to anchor a leading-comment op on, for a `path` whose final
-/// segment is `.index` — `editor.zig` falls back to this instead of the
-/// generic `lineStartBefore(source, span.start)` there (see this module's
-/// doc, point 2).
-pub fn seqItemLineStart(source: []const u8, parsed: Document, path: []const AST.PathSegment) !usize {
-    const seq = try parsed.ast.getValByPath(path[0 .. path.len - 1]);
-    if (seq.kind != .sequence) return error.NotASequence;
-    const dash_pos = try dashPosByIndex(source, parsed, seq, path[path.len - 1].index);
-    return lineStartBefore(source, dash_pos);
-}
-
 // ── insertKey ────────────────────────────────────────────────────────────────
 
 /// Insert a `key_text:`/`: key_text` entry (rendering `value_text` same-line
@@ -432,62 +420,6 @@ pub fn ntPrependItem(self: *NtEditor, parsed: Document, seq: AST.Node, value_tex
     try appendValueTail(self.allocator, &out, dash_col + indent_width, value_text, false);
     try out.append(self.allocator, '\n');
     try self.replaceAtSpan(Span.init(line_start, line_start), out.items);
-}
-
-// ── removeSeqItem ────────────────────────────────────────────────────────────
-
-/// Remove sequence item `item` (whose immediately preceding sibling is
-/// `prev`, or null when `item` is first) — the whole owned block: any leading
-/// `#`-comment run above its `-` line, through its last (possibly nested)
-/// line. `editor.zig`'s `removeSeqItem` has already resolved `item`/`prev` by
-/// the time this is called (it needs `prev` too, for the same dash-position
-/// recovery `appendToSeq`/`prependToSeq` need — see the module doc).
-pub fn ntRemoveSeqItem(self: *NtEditor, parsed: Document, seq: AST.Node, item: AST.Node, prev: ?AST.Node) !void {
-    const source = self.source.items;
-    const dash_pos = dashPosAfterPrev(source, parsed, seq, prev);
-    const del_start = splice.commentBlockStart(source, lineStartBefore(source, dash_pos), .hash);
-    const item_span = parsed.span(item);
-    const del_end = lineEndAfter(source, item_span.end -| 1);
-    try self.replaceAtSpan(Span.init(del_start, del_end), "");
-}
-
-// ── move / reorder ───────────────────────────────────────────────────────────
-
-/// Reorder the block sequence `seq`'s items per `order` (bring-to-front
-/// indices, same contract as `Editor.reorderItems`/`moveItem`) — the
-/// NestedText arm of `editor.zig`'s private `reorderSeqNode`, needed because
-/// its generic per-item block-start computation (`entryBlockStart`, keyed off
-/// each item's own span) can't be trusted here (see the module doc). Reuses
-/// `editor.zig`'s own `Block`/`fullOrder`/`appendBlockSep` for the actual
-/// tiling/permutation/splice, which — unlike the block-start recovery — is
-/// completely format-agnostic.
-pub fn ntReorderSeqItems(self: *NtEditor, parsed: Document, seq: AST.Node, order: []const usize) !void {
-    const source = self.source.items;
-    var blocks: std.ArrayList(splice.Block) = .empty;
-    defer blocks.deinit(self.allocator);
-    var last_span: ?Span = null;
-
-    var maybe = try parsed.ast.child(&seq);
-    var prev: ?AST.Node = null;
-    while (maybe) |item| {
-        const dash_pos = dashPosAfterPrev(source, parsed, seq, prev);
-        const start = splice.commentBlockStart(source, lineStartBefore(source, dash_pos), .hash);
-        try blocks.append(self.allocator, .{ .start = start, .end = 0 });
-        last_span = parsed.span(item);
-        prev = item;
-        maybe = parsed.ast.next(&item);
-    }
-    if (blocks.items.len == 0) return;
-
-    const last_end = lineEndAfter(source, last_span.?.end -| 1);
-    splice.tileBlocks(blocks.items, last_end);
-
-    const perm = try splice.fullOrder(self.allocator, order, blocks.items.len);
-    defer self.allocator.free(perm);
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-    for (perm) |i| try splice.appendBlockSep(&out, self.allocator, source[blocks.items[i].start..blocks.items[i].end]);
-    try self.replaceAtSpan(Span.init(blocks.items[0].start, last_end), out.items);
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────

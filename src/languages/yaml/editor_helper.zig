@@ -47,7 +47,6 @@ pub fn reframeMappingValue(self: *YamlEditor, parsed: Document, path: []const AS
     const source = self.source.items;
     const key_node = try parsed.ast.getKeyByPath(path);
     const key_span = parsed.span(key_node);
-    const col = columnOf(source, key_span.start);
     // The `:` indicator sits just past the key (a plain key cannot contain `:`,
     // and a quoted key's `:` is inside `key_span`).
     const colon = std.mem.indexOfScalarPos(u8, source, key_span.end, ':') orelse
@@ -55,10 +54,14 @@ pub fn reframeMappingValue(self: *YamlEditor, parsed: Document, path: []const AS
 
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(self.allocator);
+    // A block value descends under the key's own line prefix.
+    var indent_buf: std.ArrayList(u8) = .empty;
+    defer indent_buf.deinit(self.allocator);
+    const indent = try self.indentAt(&indent_buf, key_span.start);
     // writeMapValue emits the `:` itself, so replace from the existing colon
     // through the old value's end (a null value is a zero-width span at the
     // colon, hence the `@max`).
-    try self.writeMapValue(&out, col, replacement);
+    try self.writeMapValue(&out, indent, replacement);
     const end = @max(val_span.end, colon + 1);
     try self.replaceAtSpan(Span.init(colon, end), out.items);
 }

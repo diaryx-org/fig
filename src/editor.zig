@@ -126,6 +126,45 @@ pub fn Editor(comptime Language: type) type {
             return isFlow(self.source.items, parsed.span(node));
         }
 
+        /// Where `node` BEGINS on its own line: its item marker's start when
+        /// the parser recorded one (`Document.node_marker_spans`), else its
+        /// span's. This is the byte every line-anchored computation starts
+        /// from — the line an item lives on, the prefix a sibling copies, the
+        /// block a delete or reorder takes — because a nested or empty item's
+        /// span can start lines below the `-` that introduces it.
+        fn markerStart(parsed: Document, node: AST.Node) usize {
+            if (parsed.markerSpan(node)) |m| return m.start;
+            return parsed.span(node).start;
+        }
+
+        /// The prefix a new line at the same nesting as the byte `at` needs,
+        /// appended to `buf` and returned as a slice of it.
+        ///
+        /// For a format whose line prefix is STRUCTURAL (fig's `>` marker
+        /// run, `Syntax.structural_indent`) it is the raw bytes from the line
+        /// start to `at`, which reproduces the depth and the file's spaced or
+        /// glued marker style. For every other format it is the line's
+        /// leading whitespace, kept as the bytes it is so a tab-indented file
+        /// stays tab-indented, padded with spaces out to `at`'s column when
+        /// `at` sits past some other token on its line — a key inside a
+        /// `- key: v` item, whose siblings align under the key and not under
+        /// the dash. The engine used to count a column and write that many
+        /// spaces, which lost tabs and was fig's whole reason for hooking
+        /// three insert operations.
+        pub fn indentAt(self: *const Self, buf: *std.ArrayList(u8), at: usize) ![]const u8 {
+            const source = self.source.items;
+            const line_start = lineStartBefore(source, at);
+            const from = buf.items.len;
+            if (self.syntax().structural_indent) {
+                try buf.appendSlice(self.allocator, source[line_start..at]);
+            } else {
+                const ws_end = @min(firstNonSpace(source, line_start), at);
+                try buf.appendSlice(self.allocator, source[line_start..ws_end]);
+                try buf.appendNTimes(self.allocator, ' ', at - ws_end);
+            }
+            return buf.items[from..];
+        }
+
         /// Whether `path`'s final segment names a key the document RESOLVES but
         /// no physical entry declares — one supplied by the format's reference
         /// layer, which path navigation does not follow and therefore reports
@@ -612,21 +651,13 @@ pub fn Editor(comptime Language: type) type {
         }
 
         /// The line a leading-comment op anchors on: the node's own line start,
-        /// which for a mapping entry is its key's line.
-        ///
-        /// **Hook** `seqItemLineStart(source, parsed, path) !usize` — consulted
-        /// only when `path`'s final segment is an `.index`. Declared by
-        /// NestedText alone: its sequence items carry no keyvalue-shaped
-        /// wrapper node, so a nested or empty item's value span can begin on a
-        /// LATER line than the item's own `-` dash, and a comment anchored on
-        /// `span.start`'s line would land inside the item rather than above it.
-        /// Every other block format keeps some token on the dash's own line, so
-        /// `lineStartBefore` is already the dash's line there.
-        fn leadingCommentLineStart(self: *const Self, parsed: Document, path: []const AST.PathSegment, span: Span) !usize {
-            const source = self.source.items;
-            if (@hasDecl(Language, "seqItemLineStart") and path.len > 0 and std.meta.activeTag(path[path.len - 1]) == .index)
-                return Language.seqItemLineStart(source, parsed, path);
-            return lineStartBefore(source, span.start);
+        /// which for a mapping entry is its key's line and for a sequence item
+        /// is its marker's line — a nested or empty item's value span can begin
+        /// on a LATER line than the `-` that introduces it, and a comment
+        /// anchored on the span's line would land inside the item rather than
+        /// above it. See `markerStart`.
+        fn leadingCommentLineStart(self: *const Self, parsed: Document, node: AST.Node) usize {
+            return lineStartBefore(self.source.items, markerStart(parsed, node));
         }
 
         /// Add an own-line comment ABOVE the node at `path` — the key's line for a
@@ -646,7 +677,7 @@ pub fn Editor(comptime Language: type) type {
             const node = try parsed.ast.getNodeByPath(path);
             const span = parsed.span(node);
             const source = self.source.items;
-            const line_start = try self.leadingCommentLineStart(parsed, path, span);
+            const line_start = self.leadingCommentLineStart(parsed, node);
             // A format whose line prefix is STRUCTURAL (fig's `>` marker run)
             // copies the raw prefix; everywhere else it is pure whitespace.
             // See `Syntax.structural_indent`.
@@ -744,9 +775,8 @@ pub fn Editor(comptime Language: type) type {
             // `getNodeByPath` below, which raises `NotFound`).
             if (self.commentsUnanchored(parsed, path)) return;
             const node = try parsed.ast.getNodeByPath(path);
-            const span = parsed.span(node);
             const source = self.source.items;
-            const line_start = try self.leadingCommentLineStart(parsed, path, span);
+            const line_start = self.leadingCommentLineStart(parsed, node);
             const block_start = commentBlockStart(source, line_start, self.syntax().comments.style);
             if (block_start == line_start) return; // nothing above to remove
             try self.replaceAtSpan(Span.init(block_start, line_start), "");
@@ -784,9 +814,8 @@ pub fn Editor(comptime Language: type) type {
             const parsed = try self.getParsed();
             if (self.commentsUnanchored(parsed, path)) return null;
             const node = try parsed.ast.getNodeByPath(path);
-            const span = parsed.span(node);
             const source = self.source.items;
-            const line_start = try self.leadingCommentLineStart(parsed, path, span);
+            const line_start = self.leadingCommentLineStart(parsed, node);
             const block_start = commentBlockStart(source, line_start, self.syntax().comments.style);
             if (block_start == line_start) return null; // no block above
 
@@ -1108,7 +1137,7 @@ pub fn Editor(comptime Language: type) type {
             if (parsed.isSection(val)) return self.refuse(.delete);
 
             const span = parsed.span(node);
-            const start = try self.leadingCommentLineStart(parsed, path, span);
+            const start = self.leadingCommentLineStart(parsed, node);
             const end = lineEndAfter(source, span.end -| 1);
             if (!self.ownsItsLines(start, span, marker)) return error.CommentsUnanchored;
             const structural = self.syntax().structural_indent;
@@ -1171,7 +1200,7 @@ pub fn Editor(comptime Language: type) type {
             const source = self.source.items;
             const parent_path = path[0 .. path.len - 1];
             const span = parsed.span(node);
-            const line_start = try self.leadingCommentLineStart(parsed, path, span);
+            const line_start = self.leadingCommentLineStart(parsed, node);
             if (!self.ownsItsLines(line_start, span, marker)) return error.CommentsUnanchored;
             const block_start = commentBlockStart(source, line_start, self.syntax().comments.style);
             return self.uncommentBlock(block_start, line_start, first_line, line_count, parent_path);
@@ -1422,9 +1451,8 @@ pub fn Editor(comptime Language: type) type {
             if (@hasDecl(Language, "appendToSeq")) return Language.appendToSeq(self, parsed, node, value_text);
             const last = (try parsed.ast.lastChild(&node)) orelse return error.NotASequence;
             const first_item = (try parsed.ast.child(&node)).?;
-            const dash_col = dashColumn(source, parsed.span(first_item).start);
             const insert_at = lineEndAfter(source, parsed.span(last).end -| 1);
-            try self.insertSeqLine(insert_at, dash_col, value_text);
+            try self.insertSeqLine(insert_at, markerStart(parsed, first_item), value_text);
         }
 
         /// Insert `value_text` before the first item of the sequence at `path`.
@@ -1444,10 +1472,8 @@ pub fn Editor(comptime Language: type) type {
             if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
             if (@hasDecl(Language, "prependToSeq")) return Language.prependToSeq(self, parsed, node, value_text);
             const first_item = (try parsed.ast.child(&node)) orelse return error.NotASequence;
-            const first_start = parsed.span(first_item).start;
-            const line_start = lineStartBefore(source, first_start);
-            const dash_col = dashColumn(source, first_start);
-            try self.insertSeqLine(line_start, dash_col, value_text);
+            const first_start = markerStart(parsed, first_item);
+            try self.insertSeqLine(lineStartBefore(source, first_start), first_start, value_text);
         }
 
         /// Remove the item at `index` from the sequence at `path`. `index ==
@@ -1456,21 +1482,17 @@ pub fn Editor(comptime Language: type) type {
         /// "the last item" here, so `contents[-]` deletes symmetrically with
         /// how it appends.
         ///
-        /// **Hook** `removeSeqItem(self, parsed, node, item, prev) !void` —
-        /// takes over the block arm, on the same terms as `appendToSeq`'s. It
-        /// is handed the resolved `item` and its predecessor rather than the
-        /// index, so the walk below is done once, here.
+        /// The block arm takes the item's whole owned block, from its leading
+        /// comment run above its marker's line (see `markerStart`) through
+        /// its last line.
         pub fn removeSeqItem(self: *Self, path: []const AST.PathSegment, index: usize) !void {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
             if (node.kind != .sequence) return error.NotASequence;
             const source = self.source.items;
             // Walk to the target item, keeping `prev` (its immediate
-            // preceding sibling, or null when it's first) alongside — both the
-            // `is_first` flag (for the flow path) and the block hook (whose
-            // callers may need to find the item's own line relative to its
-            // predecessor) need it, and computing it here keeps the walk to a
-            // single pass rather than repeating it inside the hook.
+            // preceding sibling, or null when it's first) alongside: the flow
+            // path's `is_first` needs it.
             var item = (try parsed.ast.child(&node)) orelse return error.NotFound;
             var prev: ?AST.Node = null;
             if (index == std.math.maxInt(usize)) {
@@ -1491,8 +1513,7 @@ pub fn Editor(comptime Language: type) type {
                 return;
             }
             if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
-            if (@hasDecl(Language, "removeSeqItem")) return Language.removeSeqItem(self, parsed, node, item, prev);
-            const line_start = commentBlockStart(source, lineStartBefore(source, item_span.start), self.syntax().comments.style);
+            const line_start = commentBlockStart(source, lineStartBefore(source, markerStart(parsed, item)), self.syntax().comments.style);
             const del_end = lineEndAfter(source, item_span.end -| 1);
             try self.replaceAtSpan(Span.init(line_start, del_end), "");
         }
@@ -1871,9 +1892,14 @@ pub fn Editor(comptime Language: type) type {
             const source = self.source.items;
             var spans: std.ArrayList(Span) = .empty;
             defer spans.deinit(self.allocator);
+            // Each item's block starts on its MARKER's line (see `markerStart`),
+            // which for a nested or empty item is above its span's.
+            var starts: std.ArrayList(usize) = .empty;
+            defer starts.deinit(self.allocator);
             var maybe = try parsed.ast.child(&node);
             while (maybe) |item| {
                 try spans.append(self.allocator, parsed.span(item));
+                try starts.append(self.allocator, markerStart(parsed, item));
                 maybe = parsed.ast.next(&item);
             }
             if (spans.items.len == 0) return;
@@ -1882,17 +1908,10 @@ pub fn Editor(comptime Language: type) type {
                 return;
             }
             if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
-            // Hook `reorderSeqItems(self, parsed, node, order) !void`, taking
-            // over the block arm — for a format whose item block boundaries
-            // can't be recovered from `spans.items[i].start` alone. The tiling/
-            // permutation/splice underneath is format-independent, so a hook is
-            // expected to reuse this file's `Block`/`fullOrder`/`appendBlockSep`
-            // rather than reimplement them.
-            if (@hasDecl(Language, "reorderSeqItems")) return Language.reorderSeqItems(self, parsed, node, order);
             var blocks: std.ArrayList(Block) = .empty;
             defer blocks.deinit(self.allocator);
-            for (spans.items) |s| {
-                try blocks.append(self.allocator, .{ .start = entryBlockStart(source, s, self.syntax().comments.style), .end = 0 });
+            for (starts.items) |at| {
+                try blocks.append(self.allocator, .{ .start = commentBlockStart(source, lineStartBefore(source, at), self.syntax().comments.style), .end = 0 });
             }
             const last_end = entryBlockEnd(source, spans.items[spans.items.len - 1]);
             tileBlocks(blocks.items, last_end);
@@ -1974,10 +1993,16 @@ pub fn Editor(comptime Language: type) type {
             // (its whole-file span for the flat formats' root) rather than
             // unwrapping a null.
             const maybe_last = try parsed.ast.lastChild(&mapping);
-            const col: usize = if (try parsed.ast.firstChildKey(&mapping)) |key_node|
-                columnOf(source, parsed.span(key_node).start)
+            var out: std.ArrayList(u8) = .empty;
+            defer out.deinit(self.allocator);
+            // The new entry copies the first key's line prefix (see
+            // `indentAt`); a mapping with no key yet starts at column 0.
+            var indent_buf: std.ArrayList(u8) = .empty;
+            defer indent_buf.deinit(self.allocator);
+            const indent: []const u8 = if (try parsed.ast.firstChildKey(&mapping)) |key_node|
+                try self.indentAt(&indent_buf, parsed.span(key_node).start)
             else
-                0;
+                "";
             const insert_at = if (maybe_last) |last|
                 lineEndAfter(source, parsed.span(last).end -| 1)
             else if (mapping.id == parsed.ast.root)
@@ -1998,12 +2023,10 @@ pub fn Editor(comptime Language: type) type {
                 // regardless of where exactly within the line it points.
                 lineEndAfter(source, parsed.span(mapping).start);
 
-            var out: std.ArrayList(u8) = .empty;
-            defer out.deinit(self.allocator);
             if (insert_at > 0 and source[insert_at - 1] != '\n') try out.append(self.allocator, '\n');
-            try out.appendNTimes(self.allocator, ' ', col);
+            try out.appendSlice(self.allocator, indent);
             try out.appendSlice(self.allocator, key_text);
-            try self.writeMapValue(&out, col, value_text);
+            try self.writeMapValue(&out, indent, value_text);
             try out.append(self.allocator, '\n');
             try self.replaceAtSpan(Span.init(insert_at, insert_at), out.items);
         }
@@ -2358,7 +2381,7 @@ pub fn Editor(comptime Language: type) type {
         /// column `col`. Scalars and block scalars stay inline (`key: value`);
         /// a block collection goes on the following lines, indented (a nested
         /// mapping at `col + 2`, an indentless sequence at `col`).
-        pub fn writeMapValue(self: *Self, out: *std.ArrayList(u8), col: usize, value_text: []const u8) !void {
+        pub fn writeMapValue(self: *Self, out: *std.ArrayList(u8), indent: []const u8, value_text: []const u8) !void {
             const v = stripTrailingNewline(value_text);
             const shape = self.valueShape(v);
             const is_seq = shape == .block_seq;
@@ -2372,32 +2395,50 @@ pub fn Editor(comptime Language: type) type {
             }
             if (shape == .inline_ or shape == .block_scalar) {
                 try out.appendSlice(self.allocator, try self.kvSep());
-                try reindentInto(out, self.allocator, v, col);
+                try reindentInto(out, self.allocator, v, indent);
                 return;
             }
             // Block collection value: descend onto the next lines. Only
             // reachable for languages with real nested block containers
             // (YAML/JSON5/fig) — dotenv/.properties values are always a
             // single line, so they never take this branch; the literal `:`
-            // below is that block-mapping syntax, not `kv_sep`.
-            const child_col = if (is_seq) col else col + 2;
+            // below is that block-mapping syntax, not `kv_sep`. A nested
+            // mapping sits one `indent_unit` deeper than its key; a block
+            // sequence may sit at the key's own column (YAML's `key:\n- a`).
+            var child: std.ArrayList(u8) = .empty;
+            defer child.deinit(self.allocator);
+            try child.appendSlice(self.allocator, indent);
+            if (!is_seq) try child.appendSlice(self.allocator, self.syntax().indent_unit);
             try out.append(self.allocator, ':');
             var it = std.mem.splitScalar(u8, v, '\n');
             while (it.next()) |line| {
                 try out.append(self.allocator, '\n');
-                if (line.len > 0) try out.appendNTimes(self.allocator, ' ', child_col);
+                if (line.len > 0) try out.appendSlice(self.allocator, child.items);
                 try out.appendSlice(self.allocator, line);
             }
         }
 
-        fn insertSeqLine(self: *Self, insert_at: usize, dash_col: usize, value_text: []const u8) !void {
+        /// Splice a new block-sequence item line at `insert_at`, shaped like
+        /// the item introduced at `sibling_marker`: that item's line prefix
+        /// (`indentAt`), then `Syntax.seq_item_marker`, then `value_text`
+        /// with its continuation lines re-indented under the marker.
+        fn insertSeqLine(self: *Self, insert_at: usize, sibling_marker: usize, value_text: []const u8) !void {
             const source = self.source.items;
+            const marker = self.syntax().seq_item_marker;
+            var indent_buf: std.ArrayList(u8) = .empty;
+            defer indent_buf.deinit(self.allocator);
+            const indent = try self.indentAt(&indent_buf, sibling_marker);
+            // Continuation lines of a multi-line value sit past the marker.
+            var cont: std.ArrayList(u8) = .empty;
+            defer cont.deinit(self.allocator);
+            try cont.appendSlice(self.allocator, indent);
+            try cont.appendNTimes(self.allocator, ' ', marker.len);
             var out: std.ArrayList(u8) = .empty;
             defer out.deinit(self.allocator);
             if (insert_at > 0 and source[insert_at - 1] != '\n') try out.append(self.allocator, '\n');
-            try out.appendNTimes(self.allocator, ' ', dash_col);
-            try out.appendSlice(self.allocator, "- ");
-            try reindentInto(&out, self.allocator, value_text, dash_col + 2);
+            try out.appendSlice(self.allocator, indent);
+            try out.appendSlice(self.allocator, marker);
+            try reindentInto(&out, self.allocator, value_text, cont.items);
             try out.append(self.allocator, '\n');
             try self.replaceAtSpan(Span.init(insert_at, insert_at), out.items);
         }
@@ -2428,18 +2469,22 @@ pub fn Editor(comptime Language: type) type {
             if (is_root) {
                 // Empty document: the whole source becomes a single entry.
                 try out.appendSlice(self.allocator, key_text);
-                try self.writeMapValue(&out, 0, value_text);
+                try self.writeMapValue(&out, "", value_text);
                 try out.append(self.allocator, '\n');
                 try self.replaceAtSpan(Span.init(0, source.len), out.items);
                 return;
             }
+            // The promoted mapping's first entry sits one `indent_unit` under
+            // the key that owned the null: that key's line prefix plus one.
             const line_start = lineStartBefore(source, null_span.start);
-            const key_col = firstNonSpace(source, line_start) - line_start;
-            const child_col = key_col + 2;
+            var child: std.ArrayList(u8) = .empty;
+            defer child.deinit(self.allocator);
+            _ = try self.indentAt(&child, firstNonSpace(source, line_start));
+            try child.appendSlice(self.allocator, self.syntax().indent_unit);
             try out.append(self.allocator, '\n');
-            try out.appendNTimes(self.allocator, ' ', child_col);
+            try out.appendSlice(self.allocator, child.items);
             try out.appendSlice(self.allocator, key_text);
-            try self.writeMapValue(&out, child_col, value_text);
+            try self.writeMapValue(&out, child.items, value_text);
             try self.replaceAtSpan(null_span, out.items);
         }
 
@@ -2671,14 +2716,6 @@ pub fn Editor(comptime Language: type) type {
 // are re-imported at the top of this file; what remains here is used by the
 // engine alone.
 
-/// Column of the `-` introducing the sequence item whose content begins at
-/// `item_content_start`. The item's node span starts *after* the dash, so we
-/// recover the dash from the first non-space byte on the item's line.
-fn dashColumn(source: []const u8, item_content_start: usize) usize {
-    const line_start = lineStartBefore(source, item_content_start);
-    return firstNonSpace(source, line_start) - line_start;
-}
-
 /// Byte index just past a flow container's opening delimiter (`{`, `[`, or
 /// ZON's two-byte `.{`). Used to splice the first entry/item into an empty
 /// container, where `span.start` alone isn't past the delimiter for ZON.
@@ -2899,18 +2936,18 @@ fn stripTrailingNewline(text: []const u8) []const u8 {
     return text;
 }
 
-/// Append `value_text` to `out`, re-indented so it sits at column `indent`.
+/// Append `value_text` to `out`, re-indented so its lines sit under `indent`.
 /// The first line is emitted verbatim (it follows `key: ` or `- `); every
-/// subsequent non-blank line is prefixed with `indent` spaces, preserving the
-/// serializer's own relative indentation. One trailing '\n' is stripped.
-fn reindentInto(out: *std.ArrayList(u8), allocator: std.mem.Allocator, value_text: []const u8, indent: usize) !void {
+/// subsequent non-blank line is prefixed with the `indent` bytes, preserving
+/// the serializer's own relative indentation. One trailing '\n' is stripped.
+fn reindentInto(out: *std.ArrayList(u8), allocator: std.mem.Allocator, value_text: []const u8, indent: []const u8) !void {
     const text = stripTrailingNewline(value_text);
     var it = std.mem.splitScalar(u8, text, '\n');
     var first = true;
     while (it.next()) |line| {
         if (!first) {
             try out.append(allocator, '\n');
-            if (line.len > 0) try out.appendNTimes(allocator, ' ', indent);
+            if (line.len > 0) try out.appendSlice(allocator, indent);
         }
         try out.appendSlice(allocator, line);
         first = false;

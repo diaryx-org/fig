@@ -522,6 +522,23 @@ pub const Syntax = struct {
     /// `NotAnInlineArray` when this is false.
     block_seq_editable: bool = true,
 
+    /// Whether this format has FLOW container syntax at all — a `{…}` or
+    /// `[…]` collection spelled inline, which the engine edits by comma-aware
+    /// splice rather than by line.
+    ///
+    /// The engine tells flow from block by sniffing a container's first byte
+    /// (`splice.isFlow`), and the sniff is right for every format that has
+    /// both shapes. It is wrong for a format that has neither: INI's root
+    /// span is the whole file, so a file opening with `[section]` reads as a
+    /// bracket-delimited flow root, and NestedText's `- item` lines are not
+    /// a flow sequence however a value happens to begin. Declaring false
+    /// here answers "block" before the sniff runs. Every format with a flow
+    /// spelling keeps the default; INI, NestedText, plist, dotenv and
+    /// `.properties` declare false. See `editor.Editor.isFlowNode`, which
+    /// also settles the one case a sniff cannot — a SECTION format's root,
+    /// whose first byte is the first header's `[` — from `section_noun`.
+    flow_containers: bool = true,
+
     /// Whether a single line of the form `k: v` is a block MAPPING entry
     /// rather than scalar text — the one value shape that cannot be told
     /// apart by sniffing, so it is settled by the language's own parser.

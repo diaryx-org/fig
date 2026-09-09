@@ -101,6 +101,31 @@ pub fn Editor(comptime Language: type) type {
             return Language.syntax(self.format);
         }
 
+        /// Whether `node` is a FLOW container — spelled inline, edited by
+        /// comma-aware splice — rather than a block one edited by line.
+        ///
+        /// The one place the engine asks. Three answers, in order:
+        ///
+        ///   1. A format with no flow syntax (`Syntax.flow_containers ==
+        ///      false`) has no flow containers, whatever a span begins with.
+        ///   2. A section format's root, and any section node, is block: the
+        ///      root's span opens on the first `[header]` (TOML, INI), and a
+        ///      section node's span is its header's name token, so the
+        ///      first-byte sniff would read either as a bracket-delimited
+        ///      flow container. No section format spells a flow root — fig,
+        ///      TOML and INI each reject one at parse.
+        ///   3. Otherwise the first-byte sniff, `splice.isFlow`, which is
+        ///      exact for every format that has both shapes.
+        ///
+        /// INI and TOML used to hook `insertKey` for no other reason than to
+        /// skip the sniff on their root; this is that skip, stated once as an
+        /// engine rule.
+        fn isFlowNode(self: *const Self, parsed: Document, node: AST.Node) bool {
+            if (!self.syntax().flow_containers) return false;
+            if (is_section_format and (node.id == parsed.ast.root or parsed.isSection(node))) return false;
+            return isFlow(self.source.items, parsed.span(node));
+        }
+
         /// Whether `path`'s final segment names a key the document RESOLVES but
         /// no physical entry declares — one supplied by the format's reference
         /// layer, which path navigation does not follow and therefore reports
@@ -567,7 +592,7 @@ pub fn Editor(comptime Language: type) type {
             const parent = parsed.ast.getValByPath(path[0 .. path.len - 1]) catch return false;
             if (parent.id == parsed.ast.root) return false;
             const parent_span = parsed.span(parent);
-            if (!isFlow(source, parent_span)) return false;
+            if (!self.isFlowNode(parsed, parent)) return false;
             const node = parsed.ast.getNodeByPath(path) catch return false;
             const line = lineStartBefore(source, parsed.span(node).start);
             // The opener is on this line, so what precedes the node is the
@@ -657,7 +682,7 @@ pub fn Editor(comptime Language: type) type {
             const val_span = parsed.span(val);
             const source = self.source.items;
             const is_block_collection = switch (std.meta.activeTag(val.kind)) {
-                .mapping, .sequence => !isFlow(source, val_span),
+                .mapping, .sequence => !self.isFlowNode(parsed, val),
                 else => false,
             };
             const start = if (is_block_collection)
@@ -857,7 +882,7 @@ pub fn Editor(comptime Language: type) type {
             }
             const source = self.source.items;
             const span = parsed.span(node);
-            const flow = isFlow(source, span);
+            const flow = self.isFlowNode(parsed, node);
             const structural = self.syntax().structural_indent;
 
             var last: ?AST.Node = null;
@@ -1266,12 +1291,11 @@ pub fn Editor(comptime Language: type) type {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
             const span = parsed.span(node);
-            const source = self.source.items;
             if (@hasDecl(Language, "insertKey"))
                 return Language.insertKey(self, parsed, path, node, span, key_text, value_text);
             switch (node.kind) {
                 .mapping => |first| {
-                    if (isFlow(source, span)) {
+                    if (self.isFlowNode(parsed, node)) {
                         try self.insertFlowMapEntry(parsed, node, span, first != null, key_text, value_text);
                     } else {
                         try self.insertBlockKey(parsed, node, key_text, value_text);
@@ -1333,7 +1357,7 @@ pub fn Editor(comptime Language: type) type {
             // first entry, the preceding comma otherwise) and always leaves the
             // enclosing braces intact, correct for every arity and position.
             const parent = try parsed.ast.getValByPath(path[0 .. path.len - 1]);
-            if (parent.kind == .mapping and isFlow(source, parsed.span(parent))) {
+            if (parent.kind == .mapping and self.isFlowNode(parsed, parent)) {
                 // Find the entry's immediate predecessor: `removeFlowItem` drops
                 // the *following* comma for the first entry and the *preceding*
                 // comma for any later one, so it needs to know which this is.
@@ -1387,7 +1411,7 @@ pub fn Editor(comptime Language: type) type {
             if (node.kind != .sequence) return error.NotASequence;
             const span = parsed.span(node);
             const source = self.source.items;
-            if (isFlow(source, span)) {
+            if (self.isFlowNode(parsed, node)) {
                 const first = node.kind.sequence;
                 try self.insertFlowItem(parsed, node, span, first != null, value_text);
                 return;
@@ -1413,7 +1437,7 @@ pub fn Editor(comptime Language: type) type {
             if (node.kind != .sequence) return error.NotASequence;
             const span = parsed.span(node);
             const source = self.source.items;
-            if (isFlow(source, span)) {
+            if (self.isFlowNode(parsed, node)) {
                 try self.prependFlowItem(parsed, node, span, node.kind.sequence != null, value_text);
                 return;
             }
@@ -1440,7 +1464,6 @@ pub fn Editor(comptime Language: type) type {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
             if (node.kind != .sequence) return error.NotASequence;
-            const span = parsed.span(node);
             const source = self.source.items;
             // Walk to the target item, keeping `prev` (its immediate
             // preceding sibling, or null when it's first) alongside — both the
@@ -1463,7 +1486,7 @@ pub fn Editor(comptime Language: type) type {
             }
             const is_first = prev == null;
             const item_span = parsed.span(item);
-            if (isFlow(source, span)) {
+            if (self.isFlowNode(parsed, node)) {
                 try self.removeFlowItem(item_span, is_first);
                 return;
             }
@@ -1757,7 +1780,7 @@ pub fn Editor(comptime Language: type) type {
             if (node.kind != .mapping) return error.NotAMapping;
             const first_id = node.kind.mapping orelse return; // empty mapping
             const source = self.source.items;
-            if (isFlow(source, parsed.span(node))) return error.NotAMapping;
+            if (self.isFlowNode(parsed, node)) return error.NotAMapping;
 
             // Gather each entry's key (for matching) and block, in document order.
             var entry_keys: std.ArrayList([]const u8) = .empty;
@@ -1854,7 +1877,7 @@ pub fn Editor(comptime Language: type) type {
                 maybe = parsed.ast.next(&item);
             }
             if (spans.items.len == 0) return;
-            if (isFlow(source, parsed.span(node))) {
+            if (self.isFlowNode(parsed, node)) {
                 try self.reorderFlowItems(spans.items, order);
                 return;
             }

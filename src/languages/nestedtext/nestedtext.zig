@@ -72,6 +72,8 @@ pub const Language = struct {
             // either rest-of-line text or a nested block — so `set` cannot
             // auto-vivify a missing ancestor.
             .empty_map_literal = null,
+            // Every container is a block of lines; there is no inline form.
+            .flow_containers = false,
         };
     }
 

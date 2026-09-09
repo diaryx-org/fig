@@ -102,6 +102,8 @@ pub const Language = struct {
             // No bare literal for an empty dict that the generic seed could
             // splice — a value is always a typed wrapper element.
             .empty_map_literal = null,
+            // A `<dict>`/`<array>` is an element, never an inline `{…}`.
+            .flow_containers = false,
         };
     }
 

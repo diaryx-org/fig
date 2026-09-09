@@ -62,6 +62,7 @@ pub const Language = struct {
             .kv_sep = "=",
             // Flat, same reasoning as dotenv.
             .empty_map_literal = "{}",
+            .flow_containers = false,
         };
     }
 };

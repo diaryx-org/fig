@@ -1,22 +1,15 @@
-//! INI-specific editing helpers for `Editor(Ini)`.
+//! INI editor tests for `Editor(Ini)`.
 //!
-//! The generic span-splice engine lives in `../../editor.zig`; this module holds
-//! the INI-only logic it delegates to, mirroring TOML/fig's own
-//! `editor_helper.zig` split (structural per-language decisions live here;
-//! `editor.zig` stays a one-line dispatch to them). INI is nearly flat like
-//! dotenv/.properties — one level of `[section]` nesting, no arrays/inline
-//! tables/dotted keys — so almost nothing is left here:
-//!
-//!   - `iniInsertKey`: INI has no flow syntax at all, so this skips the
-//!     generic `isFlow` sniff outright rather than risk a false positive — a
-//!     file opening directly with `[section]` would otherwise make `isFlow`
-//!     see the `[` and misdetect the root as a bracket-delimited flow
-//!     container (the same hazard TOML's tables have, which is why TOML
-//!     declares an `insertKey` hook of its own too). A reopened/scattered
-//!     section already threads correctly through the generic
-//!     `lastChild`-anchored block insert (parsing always appends a reopened
-//!     section's new entries to the tail of its child list, in file order —
-//!     see `parser.zig`'s `parseSectionHeader` merge branch).
+//! No INI-specific editing logic is left: the generic span-splice engine in
+//! `../../editor.zig` does every edit, driven by `ini.zig`'s `syntax`. This
+//! module used to hold one hook, `iniInsertKey`, whose whole job was to skip
+//! the engine's flow sniff on a root whose first byte is a `[section]`'s
+//! bracket; `Syntax.flow_containers = false` and the engine's own rule that a
+//! section format's root is block (`editor.Editor.isFlowNode`) say the same
+//! thing as data. A reopened/scattered section threads correctly through the
+//! generic `lastChild`-anchored block insert, because parsing always appends
+//! a reopened section's new entries to the tail of its child list, in file
+//! order — see `parser.zig`'s `parseSectionHeader` merge branch.
 //!
 //! Everything about a `[section]` as a WHOLE is the engine's. A section may be
 //! REOPENED (`[a]` … `[b]` … `[a]`), which the parser merges into one mapping
@@ -48,26 +41,8 @@ const Span = @import("../../util/span.zig");
 const editor = @import("../../editor.zig");
 const Ini = @import("ini.zig").Language;
 
-/// The concrete editor these ops drive — the INI arm of the generic engine.
+/// The concrete editor the tests drive — the INI arm of the generic engine.
 const IniEditor = editor.Editor(Ini);
-
-/// Insert `key_text = value_text` into the mapping at `node` (root or a
-/// section) — the same block-mapping primitive JSON/YAML/dotenv/.properties
-/// use (`Editor.insertBlockKey`), just reached without the generic `isFlow`
-/// check INI doesn't need (see the module doc). `node.kind` must already be
-/// `.mapping`; anything else is a real type error, not a container to insert
-/// into (e.g. a path landing on a plain scalar key).
-///
-/// Takes the full `insertKey` hook signature (see `editor.Editor.insertKey`);
-/// `path` and `span` are the generic engine's, unused here.
-pub fn iniInsertKey(self: *IniEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, span: Span, key_text: []const u8, value_text: []const u8) !void {
-    _ = path;
-    _ = span;
-    return switch (node.kind) {
-        .mapping => self.insertBlockKey(parsed, node, key_text, value_text),
-        else => error.NotAMapping,
-    };
-}
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 //

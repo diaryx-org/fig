@@ -68,6 +68,9 @@ pub const Language = struct {
             // is the two-character STRING `{}`, not a container — so `set`
             // cannot auto-vivify a missing ancestor here at all.
             .empty_map_literal = null,
+            // No `{…}`/`[…]` spelling at all: a `[` opening the file is the
+            // first section's header, which the flow sniff would misread.
+            .flow_containers = false,
             // A section format: a `[section]` may be reopened and so
             // scattered, and `parser.zig` records every section's header
             // lines in `Document.node_regions`. Its refusals say "section".
@@ -75,32 +78,20 @@ pub const Language = struct {
         };
     }
 
-    // ── Editing hooks ────────────────────────────────────────────────────────
+    // ── Editing ──────────────────────────────────────────────────────────────
     //
-    // Operations this format takes over from the generic splice engine.
-    // `Editor` dispatches on PRESENCE — `@hasDecl(Language, "insertKey")` — so
-    // declaring one here is the whole of opting in, and every operation not
-    // named below runs the generic implementation. Each signature is fixed by
-    // the `editor.Editor` method of the same name; see its doc comment for what
-    // the hook is handed and what it is expected to have done on return.
+    // No hooks. Every edit is the generic engine's, driven by `syntax` above:
+    // `insertKey` used to be hooked for one reason — to skip the flow sniff
+    // on a root whose first byte is a `[section]`'s bracket — and that is
+    // now `flow_containers = false` plus the engine's own rule that a
+    // section format's root is block (`editor.Editor.isFlowNode`).
     //
-    // The logic lives in `editor_helper.zig` (which holds this format's editor
-    // tests too), not here: this block is the DECLARATION of which operations
-    // are overridden, so a reader can see a format's whole answer in one struct
-    // without opening the helper.
-    const edit = @import("editor_helper.zig");
-
-    /// INI has no flow syntax at all, so this bypasses the generic `isFlow`
-    /// sniff rather than risk a `[section]`-opening file misreading its root as
-    /// a bracket-delimited flow container.
-    pub const insertKey = edit.iniInsertKey;
-
-    // No delete/replace/move/reorder guards: the engine's section rule covers
-    // them. A `[section]` is a section node (`Document.node_regions`) — its
-    // span is anchored at its first header's name token alone — and a section
-    // node cannot be line-spliced: `deleteKey`, `replaceValAtPath`, `moveKey`
-    // and `reorderKeys` refuse it (`CannotDeleteSection`, …) and point at the
-    // whole-container ops.
+    // No delete/replace/move/reorder guards either: the engine's section rule
+    // covers them. A `[section]` is a section node (`Document.node_regions`)
+    // — its span is anchored at its first header's name token alone — and a
+    // section node cannot be line-spliced: `deleteKey`, `replaceValAtPath`,
+    // `moveKey` and `reorderKeys` refuse it (`CannotDeleteSection`, …) and
+    // point at the whole-container ops.
 
     // ── Whole-container ops ──────────────────────────────────────────────────
     //

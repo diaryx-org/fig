@@ -70,6 +70,8 @@ pub const Language = struct {
             // path for it to seed. Kept as the shared default rather than
             // null, which would change the error a nested `set` reports.
             .empty_map_literal = "{}",
+            // Flat `KEY=value` lines; `{` is value text, never a container.
+            .flow_containers = false,
         };
     }
 };

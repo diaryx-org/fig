@@ -3,7 +3,7 @@ title = Runtime languages
 description = A format fig did not compile in — the Language contract carried as a vtable in-process and as a helper protocol out-of-process, with the compiled formats made to pass through the same contract first and fig-lua as the first outside implementor
 created = 2026-09-07
 status = draft
-updated = 2026-09-08
+updated = 2026-09-09
 part_of = [proposals](proposals.md)
 ```
 
@@ -11,8 +11,9 @@ part_of = [proposals](proposals.md)
 
 > **Status: DRAFT.** Written against `main` at e56489d, with core 3.0.0
 > (ABI 2) built and unreleased. §9 names the one thing this proposal asks
-> of 3.0 before it tags: a reserved range of format integers. Everything
-> else here is additive to core and is a 3.x minor, plus one new repository.
+> of 3.0 before it tags: a reserved range of format integers. That part has
+> landed on `main` ahead of the tag; §9 says where. Everything else here is
+> additive to core and is a 3.x minor, plus one new repository.
 >
 > The second draft. The first stated the editing contract as "`syntax` and
 > no hooks" and listed dialects, aliases, and the lossless envelope as
@@ -577,6 +578,11 @@ and `c_api.zig`'s pinned table gains a comptime check that no built-in value
 reaches it. That is a comment and an assertion, and it costs 3.0 nothing.
 Without it, a later minor could not add a runtime integer without arguing
 about whether the value collided with a possible future compiled format.
+
+**Done, on `main` ahead of the 3.0 tag.** The number lives once, as
+`Language.runtime_abi_base`; the registry refuses a row at or above it and
+the pin in `c_api.zig` refuses a literal there; fig.h and `fig-sys` each
+state it, and `zig build abi-check` holds both to the registry's value.
 
 ## 10. Sequencing
 

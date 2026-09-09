@@ -56,6 +56,11 @@ pub enum FigFormat {
     Nestedtext = 13,
 }
 
+/// Mirror of fig.h's `FIG_FORMAT_RUNTIME_BASE`: a format integer at or above
+/// this names a language registered at runtime, assigned per process and
+/// never a `FigFormat` variant. Every compiled-in variant above is below it.
+pub const FIG_FORMAT_RUNTIME_BASE: c_int = 4096;
+
 pub enum FigDocument {}
 
 pub type FigNodeId = u32;

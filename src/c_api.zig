@@ -135,6 +135,18 @@ comptime {
         @compileError("`FigFormat` no longer has exactly " ++
             std.fmt.comptimePrint("{d}", .{pinned.len}) ++ " members — a format added to the" ++
             " registry is a new C ABI value, so it must be added to this pin (and to fig.h) too");
+    // The pin itself stays below the runtime range. The registry check in
+    // `language.zig` proves the same of the rows the enum is built from; this
+    // one proves it of the literals, so that a pin written for a future format
+    // cannot promise a caller an integer the runtime registry may already have
+    // handed out.
+    for (pinned) |p| {
+        if (p[1] >= Languages.runtime_abi_base)
+            @compileError("the ABI pin gives '" ++ p[0] ++ "' the value " ++
+                std.fmt.comptimePrint("{d}", .{p[1]}) ++ ", which is inside the range reserved" ++
+                " for runtime-registered languages (FIG_FORMAT_RUNTIME_BASE = " ++
+                std.fmt.comptimePrint("{d}", .{Languages.runtime_abi_base}) ++ ")");
+    }
     for (pinned) |p| {
         if (!@hasField(FigFormat, p[0]))
             @compileError("`FigFormat` has no member '" ++ p[0] ++

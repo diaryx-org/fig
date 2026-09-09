@@ -176,6 +176,13 @@ native payloads and wasm, which is why they move with the core. The Rust
 `Format` enum gains the five formats it was missing, and `zig build
 abi-check` now holds every binding's format enum to the registry.
 
+One reservation is made ahead of the work it serves: fig.h gains
+`FIG_FORMAT_RUNTIME_BASE` (4096), the first integer no compiled-in format
+may take. The [runtime languages](proposals/runtime-languages.md) proposal
+asks for it now so that a later minor can hand out an integer to a language
+registered at runtime without arguing about whether a future format might
+have wanted it. Nothing else of that proposal is in 3.0.
+
 BREAKING-CHANGES.md is retired with this release: everything it listed has
 shipped, and a planned break is recorded from now on as a
 `Behavioural-change:` trailer, in this file's unreleased section.

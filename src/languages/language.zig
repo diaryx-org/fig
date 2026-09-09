@@ -153,6 +153,17 @@ pub const NESTEDTEXT = of("nestedtext");
 // tables in `list.rows` order, lifting each row to the gated `Dialect(Lang)` so
 // the `void` protocol holds exactly as it did when the rows were literal.
 
+/// The first `abi_value` no compiled-in format may take. Every integer at or
+/// above it is reserved for a language registered at runtime
+/// (`docs/proposals/runtime-languages.md` §4.3), where the integers are
+/// assigned per process and never pinned. Reserved in core 3.0 so that a
+/// later minor can hand out a runtime integer without asking whether the
+/// value might collide with a format compiled in after it. fig.h states the
+/// same number as `FIG_FORMAT_RUNTIME_BASE`, `zig build abi-check` holds the
+/// two equal, and the comptime block below refuses a registry row that
+/// reaches it.
+pub const runtime_abi_base: c_int = 4096;
+
 // The `void` protocol and the entry shape, re-exported from the leaf manifest
 // (where they moved so a language can name `Dialect(Language)` for its own
 // table). `cli/parse_dispatch.zig` re-exports the first two again under the
@@ -478,6 +489,17 @@ comptime {
                     "' share the ABI value " ++ std.fmt.comptimePrint("{d}", .{a.abi_value}) ++
                     " — released ABI values are permanent and unique");
         }
+    }
+    // And every compiled-in value sits below the runtime range: an integer at
+    // or above `runtime_abi_base` is assigned per process to a language
+    // registered at runtime, so a row taking one would be ambiguous with a
+    // registration in any process that made one.
+    for (dialects) |d| {
+        if (d.abi_value >= runtime_abi_base)
+            @compileError("format-registry entry '" ++ d.name ++ "' takes the ABI value " ++
+                std.fmt.comptimePrint("{d}", .{d.abi_value}) ++ ", but values from " ++
+                std.fmt.comptimePrint("{d}", .{runtime_abi_base}) ++
+                " up are reserved for languages registered at runtime (FIG_FORMAT_RUNTIME_BASE)");
     }
 
     // Sniff ranks are identities too: two dialects at one rank would have no

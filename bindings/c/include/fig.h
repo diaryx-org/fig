@@ -156,6 +156,14 @@ typedef enum FigFormat {
     FIG_FORMAT_NESTEDTEXT = 13,
 } FigFormat;
 
+// Format integers at or above this value name a language registered at
+// runtime rather than compiled in. They are assigned per process, in
+// registration order, and are never pinned here: a caller that persists a
+// format persists its name. Every compiled-in FIG_FORMAT_* enumerator is below
+// it, and always will be. Reserved in core 3.0 (ABI 2) ahead of the
+// registration entry points, which are a later minor.
+#define FIG_FORMAT_RUNTIME_BASE 4096
+
 // Capability bits, OR-combined in the return of fig_format_capabilities.
 typedef enum FigCapability {
     FIG_CAP_READ      = 1u << 0, // fig_parse accepts this format

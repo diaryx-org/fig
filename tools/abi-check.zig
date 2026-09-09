@@ -114,6 +114,30 @@ pub fn main(init: std.process.Init) !void {
         fail = true;
     }
 
+    // Runtime-range drift: fig.h's FIG_FORMAT_RUNTIME_BASE and fig-sys's mirror
+    // of it must both state the registry's `runtime_abi_base`. The registry
+    // refuses a compiled-in value at or above it at comptime; this is the check
+    // that the number a caller compiles against is the number that rule uses.
+    const want_base: i64 = fig.Language.runtime_abi_base;
+    const header_base = macroInt(header, "FIG_FORMAT_RUNTIME_BASE") orelse return error.MissingRuntimeBaseMacro;
+    if (@as(i64, header_base) != want_base) {
+        if (!fail) std.debug.print("abi-check: FAIL\n", .{});
+        std.debug.print(
+            "  runtime-range drift: fig.h FIG_FORMAT_RUNTIME_BASE is {d} but the format registry's runtime_abi_base is {d}\n",
+            .{ header_base, want_base },
+        );
+        fail = true;
+    }
+    const sys_base = rustConstInt(sys_src, "FIG_FORMAT_RUNTIME_BASE") orelse return error.MissingRuntimeBaseConst;
+    if (sys_base != want_base) {
+        if (!fail) std.debug.print("abi-check: FAIL\n", .{});
+        std.debug.print(
+            "  runtime-range drift: fig-sys FIG_FORMAT_RUNTIME_BASE is {d} but the format registry's runtime_abi_base is {d}\n",
+            .{ sys_base, want_base },
+        );
+        fail = true;
+    }
+
     // Format-enum drift: fig.h's FIG_FORMAT_* enumerators must match the format
     // registry name-for-name and value-for-value — and so must each binding's
     // mirror of them.
@@ -315,6 +339,25 @@ fn macroInt(text: []const u8, name: []const u8) ?u32 {
         if (!std.mem.eql(u8, macro, name)) continue;
         const value = it.next() orelse return null;
         return std.fmt.parseInt(u32, value, 10) catch null;
+    }
+    return null;
+}
+
+/// The value of a Rust `pub const <name>: <type> = <int>;` item, or null if
+/// no line declares one.
+fn rustConstInt(text: []const u8, name: []const u8) ?i64 {
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trimStart(u8, line, " \t");
+        if (!std.mem.startsWith(u8, trimmed, "pub const ")) continue;
+        const rest = trimmed["pub const ".len..];
+        if (!std.mem.startsWith(u8, rest, name)) continue;
+        if (rest.len == name.len or rest[name.len] != ':') continue;
+        const eq = std.mem.indexOfScalar(u8, rest, '=') orelse continue;
+        const semi = std.mem.indexOfScalar(u8, rest, ';') orelse continue;
+        if (semi <= eq) continue;
+        const value = std.mem.trim(u8, rest[eq + 1 .. semi], " \t");
+        return std.fmt.parseInt(i64, value, 10) catch null;
     }
     return null;
 }

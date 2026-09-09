@@ -1,18 +1,26 @@
 ```fig
 title = Runtime languages
-description = A format fig did not compile in — the Language contract carried as a vtable in-process and as a helper protocol out-of-process, with fig-lua as the first implementor and nothing added to core's size
+description = A format fig did not compile in — the Language contract carried as a vtable in-process and as a helper protocol out-of-process, with the compiled formats made to pass through the same contract first and fig-lua as the first outside implementor
 created = 2026-09-07
 status = draft
-updated = 2026-09-07
+updated = 2026-09-08
 part_of = [proposals](proposals.md)
 ```
 
 # Runtime languages
 
-> **Status: DRAFT.** Written against `main` at 838424f, with core 3.0.0
+> **Status: DRAFT.** Written against `main` at e56489d, with core 3.0.0
 > (ABI 2) built and unreleased. §9 names the one thing this proposal asks
 > of 3.0 before it tags: a reserved range of format integers. Everything
 > else here is additive to core and is a 3.x minor, plus one new repository.
+>
+> The second draft. The first stated the editing contract as "`syntax` and
+> no hooks" and listed dialects, aliases, and the lossless envelope as
+> things a runtime format does not get. Reading every hook (§4.4) showed
+> that each of those four is a small addition to the contract rather than
+> a limit of it, and that the compiled formats want the same additions.
+> §4 is rewritten on that basis, §8 records what is still open, and §10
+> sequences the core refactor before the first outside format.
 >
 > "Runtime" throughout means *resolved when the program runs*, as opposed to
 > a format compiled into `src/languages/`. It does not name Lua, wasm, or
@@ -34,15 +42,20 @@ contract into data. The [Language interface](language-interface.md) made
 every per-format fact a declaration that `validate` checks. [Derived
 regions](derived-regions.md) made whole-container editing generic over a
 table the parser fills. Pluggable formats made every enum a projection of one
-registry and named the boundary a format writes against. What is left of "a
-format" is a fixed set of declarations, a node table with spans, and a
-`syntax` record. None of that is inherently comptime. It is a vtable that
-happens to be spelled as declarations, and a vtable can be filled at runtime.
+registry and named the boundary a format writes against. Commit 2226998
+then proved the boundary is real: a `Language` written outside the tree,
+with its own name, extension, caps, dialect row, and syntax, passes
+`validate` and drives `Editor`. What is left of "a format" is a fixed set of
+declarations, a node table with spans, and a `syntax` record. None of that is
+inherently comptime. It is a vtable that happens to be spelled as
+declarations, and a vtable can be filled at runtime.
 
-This proposal was argued before and lost, as a request to embed a scripting
-engine in fig. It is argued again here as something narrower: **core defines
-the contract's two runtime carriers and nothing else.** The engines live in
-their own repositories and are peers of each other.
+The obvious shape, a scripting engine embedded in the core library, is
+rejected here before it is argued, because it fails on bundling: a VM in
+every binding, the wasm payload, and the static builds, paid by every
+consumer for a feature most never use. What is argued instead is narrower:
+**core defines the contract's two runtime carriers and nothing else.** The
+engines live in their own repositories and are peers of each other.
 
 ## 2. Where 3.0 stands
 
@@ -63,6 +76,10 @@ every section node. The editor (`src/editor.zig`, `editor/splice.zig`,
 declares no hooks gets every operation the splice engine can spell from
 `syntax` alone, and refuses the rest in its own vocabulary.
 
+The editor's one mutator is `replaceAtSpan`: splice a byte range, reparse,
+and roll the source back if the reparse fails. Every edit, generic or
+hooked, ends there. This is the fact §4.4 is built on.
+
 The per-format harness (`src/languages/harness.zig`) states what the engine
 relies on every format having and runs it over every compiled dialect: seeds
 parse, samples round-trip, regions are well-formed, an `Editor` constructs
@@ -75,13 +92,13 @@ threading note in `fig.h` promises that fig keeps no shared mutable global
 state.
 
 So: the contract is closed and checked, the parse result is a flat table
-the editor already consumes, the harness is the conformance suite, and the
-ABI addresses formats by integer. Each of those is a precondition for what
-follows, and each exists.
+the editor already consumes, every edit is a splice under a reparse net,
+the harness is the conformance suite, and the ABI addresses formats by
+integer. Each of those is a precondition for what follows, and each exists.
 
 ## 3. What is being asked for
 
-Three things, in order of how much they cost core.
+Five things, in order of how much they cost core.
 
 **3.1 A format resolved at runtime is a peer of a compiled one.** Every
 entry point that takes a format today accepts a runtime one: the CLI
@@ -89,37 +106,73 @@ actions, `fig_parse`, `fig_document_serialize`, `fig_editor_*`, the Rust
 `Document::parse`, the TypeScript `parse`. Nothing gains a second API for
 "but loaded".
 
+A runtime format joins at one of three tiers, and `caps` says which:
+
+- **Read.** `parse` only. `fig get`, `fig check`, and `fig convert` out of
+  the format. No `syntax`. This is most of the value for an HCL file or a
+  house dialect, and it is the tier a format author reaches first.
+- **Print.** Adds `print`, so `fig convert` into the format and `fig fmt`.
+- **Edit.** Adds `syntax` and, where the format needs them, the fragment
+  renderers of §4.4. The full `fig set`, `fig delete`, `fig move`, and the
+  comment ops.
+
 **3.2 The engine that produced the format is core's business only through
 one contract.** Core never links Lua, a wasm runtime, or a dynamic loader.
-What it links is a struct of function pointers and a protocol over pipes.
+What it links is a struct of function pointers. The process-spawning half
+lives beside the CLI and the Rust crate, not in the library, so the wasm
+build never carries it.
 
-**3.3 The first engine is a separate repository, `fig-lua`.** It is the
+**3.3 The compiled formats pass through the same contract.** Before the
+first outside format lands, the in-tree formats are made to edit through
+the node table, `Syntax`, and the renderers of §4, and the hooks that
+those replace are deleted. That is the proof the contract is complete, and
+it is what lets a runtime twin of a compiled format be checked against it
+byte for byte. §3.5 says why the compiled formats nonetheless stay
+compiled.
+
+**3.4 The first engine is a separate repository, `fig-lua`.** It is the
 canonical and recommended way to write a runtime format, because one script
 serves the CLI, Rust, and the browser. It is not the only way, and core
 does not know its name.
 
+**3.5 Not every format in Lua.** Once §3.3 holds, the contract would allow
+the compiled formats to be rewritten as scripts. That is not proposed. It
+would put a VM back into every binding, which is the objection §1 starts
+from, and it would make the YAML parser and its conformance suite slower
+for no gain. The invariant worth having is that every compiled format is
+*expressible* through the contract, checked by a runtime twin in the
+harness, not that every format is carried by it.
+
 ## 4. The contract
 
 The contract is what a compiled `Language` already declares, restated as
-values rather than declarations, and it has exactly one new part: the parse
-result crosses a boundary, so its shape has to be written down.
+values rather than declarations. It has one new part, the node table,
+because the parse result crosses a boundary and its shape has to be
+written down, and one changed part, the editing surface, because the
+hooks turned out to be mostly facts the parser dropped.
 
 ### 4.1 The node table
 
 A parse returns a flat table, one row per node in pre-order, plus a comment
-table. This is the shape `Document` already holds; it is stated here because
-it is now a contract rather than an implementation.
+table. This is the shape `Document` already holds, with four columns added
+that every compiled parser has in hand at the record site and currently
+discards.
 
 | Column | Meaning |
 |---|---|
-| `kind` | `FigNodeKind`: null, bool, int, float, string, sequence, mapping, keyvalue. `alias` is not accepted from a runtime format (§8.2). |
+| `kind` | `FigNodeKind`: null, bool, int, float, string, sequence, mapping, keyvalue, alias. An alias row's `text` is the anchor name it refers to. |
 | `parent` | Row index of the parent, or none for the root. |
-| `span` | `[start, end)` byte offsets into the input. Required of every node; the editor splices by it. |
-| `text` | For scalars, the *decoded* value as bytes; for int and float, the lexeme, as `fig_node_number` already returns it. |
-| `region` | For a section node only: one or more whole header lines, the rows `Document.node_regions` would hold. |
+| `span` | `[start, end)` byte offsets into the input. Required of every node; the editor splices by it. For a node with an anchor or tag, the span includes them, as YAML's does today. |
+| `text` | For scalars, the *decoded* value as bytes; for int and float, the lexeme, as `fig_node_number` already returns it; for an alias, the anchor name. |
+| `anchor` | The anchor name this node defines, or none. Present so that aliases resolve; core builds the anchor table from it in row order. |
+| `tag` | The tag on this node, or none. Optional; a format with no tag syntax leaves the column empty. |
+| `marker_start` | For an entry or item: the byte offset of the token that introduces it, the `-`, the `*`, the `<key>`, the key's first byte. This is where a leading comment goes and where a delete or reorder starts. |
+| `value_slot_start` | For a keyvalue or item: the byte offset where the value's text begins, past the separator and past any anchor or tag. This is where a value that changes shape is re-framed from. |
+| `is_flow` | For a container: whether it is spelled inline. The engine sniffs this from the first byte today, and two hooks exist only to dodge the sniff. |
+| `region` | For a section node only: one or more whole header lines, the rows `Document.node_regions` would hold, each with the span of the name mention inside it and whether that line opens a scope or is an in-line mention. |
 
 Comments are a side table keyed by row: leading (a run), trailing (at most
-one), dangling (a run), each with `text` and a line/block style, matching
+one), dangling (a run), each with `text` and a line or block style, matching
 `AST.NodeComments`. A format with no comment syntax declares `comments =
 null` in its `syntax` and returns none.
 
@@ -127,6 +180,14 @@ Key–value pairs are three rows, as they are in the AST: the `keyvalue`, its
 key, its value. That is the one place the table is less obvious than a
 tree, and it is chosen because it is what the editor, `fig_node_first_child`,
 and every binding already walk.
+
+The four added columns are what §4.4 cashes in. `marker_start` alone
+retires six of NestedText's eight hooks, which exist to recompute where an
+item's `-` is. The name spans in `region` retire TOML's rename, which
+re-lexes the source to find every `[a.b]` that spells a name the parser
+already had. `is_flow` retires INI's only hook. `value_slot_start` retires
+the colon scan in YAML's reframe and the anchor-stripping in its alias
+edit.
 
 A print takes the same table, produced by core from a document, and returns
 bytes. A runtime format's printer sees the AST the same way a compiled one
@@ -137,60 +198,164 @@ does, through the tree, and nothing else about the engine is exposed to it.
 Everything else a `Language` declares becomes a field of one record:
 
 - `name`, `extensions`, `caps` (`read`, `edit`, `serialize`,
-  `max_mapping_depth`; `lossless` is always null for a runtime format, §8.3).
-- `syntax`, exactly the `manifest.Syntax` fields: `comments`, `kv_sep`,
-  `key_style`, `key_sigil`, `empty_map_literal`, `block_seq_editable`,
-  `single_line_block_mapping`, `bare_document_mapping`, the flow-map
-  brackets, `structural_indent`, `section_noun`.
-- One dialect: `splice` (literal, json_string, or raw) and `empty_doc_seed`.
-  A runtime language has one dialect in this proposal; §8.1 is the argument
-  for leaving it there.
+  `max_mapping_depth`, `lossless`).
+- `lossless` is the ten booleans of `manifest.NativeKinds`, declared as
+  data. The `$fig` envelope encoder in `src/lossless.zig` never branches on
+  format identity; it reads exactly those ten, so a runtime format that
+  declares them gets the envelope. What a runtime format cannot do is add
+  an eleventh kind; that is a new `ExtKind` member and stays a core change.
+- `syntax`, the `manifest.Syntax` fields as they stand, plus the five §4.4
+  adds.
+- `dialects`, one or more rows, each with `name`, `extensions`, `splice`
+  (literal, json_string, or raw), `empty_doc_seed`, `specs`, and its own
+  `syntax` where it differs from the language's. A dialect in the compiled
+  formats is a mode value threaded to `parse`, a printer entry point, and a
+  `syntax` that may vary by mode; a runtime language's `parse` and `print`
+  take the row's name and its `syntax` is looked up per row, which is the
+  same thing with the mode spelled as a string.
 - `samples`, which are not optional here. §6 says why.
-
-No hooks. A runtime format edits through the splice engine and `syntax`
-alone, and refuses what `syntax` cannot spell. This is the largest
-deliberate omission in the proposal and §8.4 argues it.
+- The fragment renderers of §4.4, each optional.
 
 ### 4.3 The two carriers
 
 **In-process: a vtable.** A C struct with a `version` field first, the
-declarations of §4.2 as plain fields, and four function pointers: `parse`
-(input → node table), `print` (node table → bytes), `free` for what those
-allocated, and `describe`, which returns the record so a host can register a
-language it did not write. Registration is `fig_language_register(const
-FigLanguageVTable *, int *out_format)`. The vtable's `version` is the fifth
-versioned surface, and it is bumped on the same rule as `FIG_ABI_VERSION`:
-only when a field changes meaning.
+declarations of §4.2 as plain fields, and function pointers: `parse` (input
+and dialect to node table), `print` (node table and dialect to bytes),
+`free` for what those allocated, `describe`, which returns the record so a
+host can register a language it did not write, and one slot per renderer,
+null where the format declares none. Registration is
+`fig_language_register(const FigLanguageVTable *, int *out_format)`, one
+call per dialect row. The vtable's `version` is the fifth versioned
+surface, and it is bumped on the same rule as `FIG_ABI_VERSION`: only when
+a field changes meaning.
 
-**Out-of-process: a helper protocol.** The same four calls as a request and
+**Out-of-process: a helper protocol.** The same calls as a request and
 response over a child process's stdin and stdout. The request carries the
 input bytes; the response carries the node table serialized. This is the
 git remote helper model: the helper is any executable, in any language, that
-speaks the protocol. A helper is spawned once per fig invocation and is
-asked `describe` first.
+speaks the protocol. A helper is asked `describe` first. The CLI spawns it
+once per invocation; a long-lived host spawns it on first use, and a helper
+that exits is respawned on the next request and reported as a diagnostic if
+it exits again on the same one.
 
 The serialization is JSON, for one reason: every host that could write a
 helper already has a JSON library, and fig itself parses it. It is not fig's
 own format because a helper author should not need fig to write a helper.
 
-**These are the same contract.** Core holds one implementation of the
-helper protocol, and it is a vtable whose four functions talk to a process.
-The CLI registers helpers through the same `fig_language_register` path the
-libraries use. There is no third way in.
+**These are the same contract.** The helper runner is a vtable whose
+functions talk to a process. It lives beside the CLI and in the Rust crate,
+never in the library, and it registers through the same
+`fig_language_register` path a host uses for a vtable it wrote itself.
+There is no third way in.
+
+### 4.4 The editing surface
+
+The first draft said a runtime format edits through `syntax` alone and
+refuses the rest, and argued that hooks are for a handful of formats that
+are already compiled in. The count says otherwise. Of the ten editable
+compiled formats, six declare hooks, and every sectioned or
+indentation-structured one does:
+
+| Editable format | Hooks declared |
+|---|---|
+| json, dotenv, properties, zon | 0 |
+| ini | 1 |
+| toml | 2, plus 3 section ops |
+| yaml | 3 |
+| fig | 4 |
+| nestedtext | 8 |
+| plist | 10 |
+
+So "no hooks" would have meant "flat and flow formats only", and the
+worked examples the first draft named, HCL and NestedText, were both on
+the wrong side of that line. Reading all twenty-five gives a different
+picture. Every one ends in at most one `replaceAtSpan`. None mutates the
+AST, writes a side table, or calls back into the engine with state; the
+two engine methods hooks do call are read-only derivations over regions.
+A hook is already a pure function from the source, the node table, and
+the arguments to a splice. What forces it to be Zig is not engine access
+but three kinds of missing input, in decreasing order of how many hooks
+they account for.
+
+**Facts the parser dropped.** These are the four columns §4.1 adds. With
+`marker_start`, NestedText's `seqItemLineStart`, `removeSeqItem`, and
+`reorderSeqItems` are byte-for-byte the generic bodies. With name spans
+on regions, TOML's `replaceKeyAtPath` and `renameContainer` become
+"replace every recorded mention". With `is_flow`, INI declares nothing.
+With `value_slot_start`, the reframe in YAML and fig starts from a column
+the engine reads rather than one the hook scans for.
+
+**Engine constants that are really syntax.** Five fields join `Syntax`:
+
+- `indent_unit`: the bytes one nesting level adds, `"  "` for YAML, four
+  spaces for NestedText, `"> "` for fig. Today `col + 2` in the engine.
+- `seq_item_marker`: `"- "` for YAML, `"* "` for fig, `""` for plist. Today
+  a literal in `insertSeqLine`.
+- `comments.line` and `comments.trailing` become a pair, `open` and an
+  optional `close`, with an optional `forbidden_in_body`. plist's
+  `<!-- -->` is a pair; a prefix cannot spell it. This one change deletes
+  all six plist comment hooks, whose placement logic is identical to the
+  generic and which differ only in the delimiter.
+- `section_header`: `open`, `close`, `sep`, and whether index segments are
+  skipped, so `[a.b]` and `[[a]]` are data. This retires TOML's
+  `insertContainer` and `appendContainerToSeq`.
+- A `KeyStyle` variant for TOML's bare-or-quoted rule.
+
+And one policy change with no new field: the block insert copies the
+anchor line's prefix bytes instead of counting a column. That is what
+`structural_indent` already declares, and it is fig's whole reason for
+hooking `insertKey`, `appendToSeq`, and `prependToSeq`.
+
+**Fragment renderers.** What is left after the data is a short list of
+functions, each taking strings and returning a string, none touching the
+editor:
+
+| Renderer | Signature | Who needs it |
+|---|---|---|
+| `render_value` | `(text) -> text` | plist, which wraps every literal in a typed element |
+| `render_entry` | `(key, value, indent) -> text` | plist, NestedText |
+| `render_item` | `(value, indent) -> text` | plist, NestedText |
+| `render_key` | `(name, old_form) -> text or refuse` | NestedText's multiline keys |
+| `render_block` | `(text, depth) -> text or refuse` | fig and YAML, re-framing a value onto following lines |
+
+A renderer is called by the engine and its result is spliced under the
+reparse net, so a renderer that returns bad text is blamed for it the way
+a bad edit argument is today, and the file is untouched. `render_block`
+is the one that parses: it takes a fragment, parses it with the format's
+own `parse`, and reprints it at a depth. That is a call from the engine to
+the format's reader, which the engine makes on every splice anyway.
+
+No renderer receives engine state, performs a splice, or is called more
+than once per edit. That is the whole of what a runtime format can do to
+the editor, and after §3.3 it is the whole of what a compiled format can
+do too.
+
+**Aliases.** The alias node kind carries a name and nothing else; anchors
+are a side table; `resolveAlias`, `resolveDeep`, and `mergedChild` are
+core code in `src/ast/reader.zig` that key on kind, not on format. The
+alias-and-merge half of YAML's `materialize` is generic; the tag half is
+YAML vocabulary, `!!str` and friends and the `<<` spelling. A runtime
+format that returns alias rows and an `anchor` column, in document order,
+gets resolution, copy-on-write on edit, and `replaceValAtPathFollowing`
+from the engine with no format code. YAML's `keyIsInherited` becomes a
+question the engine asks the AST. Tag vocabulary and the merge key spelling
+stay YAML's until a script needs them, at which point they are two more
+fields. One guard is needed: `materialize` indexes the tag table without a
+length check, which is safe today only because YAML's parser fills it.
 
 ## 5. Why core links no engine
 
-The previous argument for a Lua extension was lost on bundling: a scripting
-VM in the core library and therefore in every binding, the wasm build, and
-the static payloads. That objection was right and still is. The design here
-survives it because the engines are not in core, and each host gets the
-carrier it can actually run:
+A scripting VM in the core library is a cost paid by every binding, the
+wasm build, and the static payloads for a feature most consumers never
+use. That objection is right and the design survives it because the
+engines are not in core, and each host gets the carrier it can actually
+run:
 
 | Host | In-process carrier | Out-of-process carrier |
 |---|---|---|
 | CLI (`fig` binary) | none: no engine linked | helpers on PATH, configured (§7.1) |
 | Rust (`fig` crate) | a `Language` trait; `fig-lua` implements it | the same helper runner, exposed as a function |
-| TypeScript (`@diaryx/fig`) | a JS object with the four members, called through wasm imports | none: no process |
+| TypeScript (`@diaryx/fig`) | a JS object with the contract's members, reached through wasm imports | none: no process |
 | Zig | the vtable directly | the helper runner |
 
 A wasm runtime cannot run inside the wasm build. A dynamic loader cannot
@@ -199,6 +364,13 @@ consumer for a feature most never use. Putting the engines outside makes
 every one of those a decision the consumer takes, and makes the set of
 engines open: a helper written in Python is a peer of `fig-lua` on the day
 it is written.
+
+The TypeScript row is the one that needs a sentence. The npm build is
+WASI, and a JS object is reached by the module importing a host function
+per contract member and calling out through it. The node table crosses as
+typed arrays in linear memory. A parse that calls out is not re-entrant
+with itself, which is fine, because the contract never asks a format to
+parse while it is parsing.
 
 ## 6. Validation is where the safety is
 
@@ -209,14 +381,21 @@ runs the same checks in the same order, and refuses on the first failure:
 1. The record is well-formed: `name` is an identifier, `extensions` are
    non-empty and not owned by a compiled format, `caps.edit` implies a
    `syntax`, `syntax` is coherent (a `section_noun` implies regions;
-   `comments = null` implies no comment ops).
+   `comments = null` implies no comment ops; a `section_header` implies a
+   `section_noun`).
 2. Every `sample` parses, prints, and reparses to the same node table.
 3. Every node table is well-formed: spans are within the input, nested
-   correctly, pre-ordered; regions are whole lines on container nodes,
-   sorted.
+   correctly, pre-ordered; `marker_start` and `value_slot_start` fall
+   inside their row's line; regions are whole lines on container nodes,
+   sorted, each name span inside its line; every alias names an anchor
+   defined on an earlier row.
 4. The `empty_doc_seed` parses.
 5. If `caps.edit`, an `Editor` constructs over every sample and a no-op
    splice is the identity.
+6. If `caps.edit`, each declared renderer is called over every sample's
+   nodes with an identity argument and the result reparses to the same
+   table. A renderer that cannot render its own format's samples is
+   refused at load, not at the first edit.
 
 That list is the harness. It is why `samples` is required of a runtime
 language when it is optional of a compiled one: a compiled format has its
@@ -258,15 +437,18 @@ fig fmt app.hcl
 fig set notes.md --embed hcl-frontmatter title Hi
 ```
 
-each does what it does for a built-in. Extension resolution already asks
-each language for the extensions it owns (`cli/args.zig`,
-`extensionFormat`); a registered language is asked last.
+each does what it does for a built-in, at the tier the format declares. A
+read-tier format answers `get`, `check`, and `convert` out of itself and
+refuses `set` with the same diagnostic a read-only compiled format gives.
+Extension resolution already asks each language for the extensions it owns
+(`src/cli/args.zig`, `extensionFormat`); a registered language is asked
+last.
 
-Two things stay different on purpose. A runtime format never joins content
+One thing stays different on purpose. A runtime format never joins content
 sniffing: `sniff_rank` is a frozen order over the built-ins and a helper that
 claimed too much would take files from them, so a runtime format resolves
-by extension or by name only. And a runtime format has no `--spec`
-versions.
+by extension or by name only. `--spec` works where the format declares
+`specs` on a dialect row, as it does for a compiled one.
 
 New actions: `fig lang list`, the built-in and registered formats with their
 capabilities, and `fig lang check`, §6.
@@ -280,17 +462,20 @@ spawn.
 ```rust
 pub trait Language {
     fn describe(&self) -> Description;
-    fn parse(&self, input: &[u8]) -> Result<NodeTable, ParseError>;
-    fn print(&self, doc: &NodeTable) -> Result<Vec<u8>, PrintError>;
+    fn parse(&self, input: &[u8], dialect: &str) -> Result<NodeTable, ParseError>;
+    fn print(&self, doc: &NodeTable, dialect: &str) -> Result<Vec<u8>, PrintError>;
+    fn render(&self, which: Renderer, args: RenderArgs) -> Result<Option<Vec<u8>>, RenderError> {
+        Ok(None)
+    }
 }
-pub fn register(lang: impl Language + 'static) -> Result<Format, LoadError>;
+pub fn register(lang: impl Language + 'static) -> Result<Vec<Format>, LoadError>;
 ```
 
 `Format` is `#[non_exhaustive]` already, so it gains a `Runtime(RuntimeId)`
 variant without a Rust major. `Document::parse`, `serialize`,
 `capabilities`, and the editor take it as they take any other. The helper
-runner is `fig::helper::spawn(command) -> Result<Format>`, for a Rust host
-that wants to use a helper without linking its engine.
+runner is `fig::helper::spawn(command) -> Result<Vec<Format>>`, for a Rust
+host that wants to use a helper without linking its engine.
 
 `fig-lua` is a crate implementing `Language` over a vendored Lua, plus a
 `fig-lua` binary speaking the helper protocol. One crate, both carriers.
@@ -299,9 +484,10 @@ that wants to use a helper without linking its engine.
 
 ```ts
 const hcl = registerLanguage({
-  describe: () => ({ name: "hcl", extensions: ["hcl"], caps, syntax, samples }),
-  parse: (input) => nodeTable,
-  print: (table) => bytes,
+  describe: () => ({ name: "hcl", dialects, caps, syntax, samples }),
+  parse: (input, dialect) => nodeTable,
+  print: (table, dialect) => bytes,
+  render: { value: (text) => text },
 });
 parse(input, hcl);
 ```
@@ -315,39 +501,41 @@ registering through the same call. The core package does not change size.
 
 A runtime format is one more `Language`: `src/languages/runtime/runtime.zig`
 declares `Type = RuntimeId`, a `Parser` and `Printer` that forward to the
-vtable at that id, one dialect row named `runtime`, and a `syntax` that
-reads the record. It passes `validate` like every other format, so the
-engine does not learn a new case. The reified enums each gain the one
-member `.runtime`, and the id rides beside it. That is the single break in
-the Zig API this proposal takes, and it is taken once for every engine that
-will ever exist.
+vtable at that id, one dialect row named `runtime`, a `syntax` that reads
+the record, and the renderers as hooks that forward to the vtable's slots.
+It passes `validate` like every other format, so the engine does not learn
+a new case. The reified enums each gain the one member `.runtime`, and the
+id rides beside it. That is the single break in the Zig API this proposal
+takes, and it is taken once for every engine that will ever exist.
+
+After §3.3, the compiled formats declare the same renderers where they
+declare hooks today, and the engine calls both through one path. A
+compiled renderer is a Zig function; a runtime one is a vtable slot. The
+engine does not know which.
 
 ## 8. Open questions and the answers taken
 
-**8.1 One dialect per runtime language.** A compiled language may declare
-several (`json`/`jsonc`/`json5`). A runtime one declares one. A format with
-dialects registers them as separate languages sharing a helper. Revisit if a
-real script needs otherwise.
+**8.1 Sniffing stays closed.** A runtime format is never a candidate in
+`Language.detect`. The reason is stated in §7.1 and there is no version of
+this proposal in which it changes.
 
-**8.2 No aliases.** YAML's `alias` node kind and its `materialize` step are
-a reference layer no other format has. A runtime format cannot produce an
-alias row. This is the one `FigNodeKind` the table refuses.
+**8.2 `FigFormat` is exhaustive.** The C entry points switch on it with
+`inline else`, and a runtime integer cannot be a member. Every conversion
+from the C `int` becomes a checked lookup that routes an integer at or
+above `FIG_FORMAT_RUNTIME_BASE` to the registry before the switch. That is
+work in §10 step 2, named here so it is not a surprise there.
 
-**8.3 No lossless envelope.** `caps.lossless` is null for every runtime
-format: the `$fig` envelope needs a typed value model and a place to carry
-it, and both are things a format author should get right in a compiled
-format first.
+**8.3 Tag vocabulary and the merge key.** The node table carries a `tag`
+column, but what a tag means, `!!str` collapsing a kind, `<<` merging a
+mapping, is YAML's and stays in its `materialize`. A runtime format that
+wants either declares nothing yet and gets the generic half: aliases
+resolve, tags ride through untouched. When a script needs the rest, it is
+a `tag_vocabulary` and a `merge_key` field, and YAML's become the first
+values of them.
 
-**8.4 No hooks.** Twenty-two editing hooks exist because a handful of
-formats need to spell a fragment the splice engine cannot: a TOML `[header]`
-line, a YAML block scalar. The first cut of runtime languages gets none of
-them. A runtime format edits through `syntax` and refuses the rest. The
-argument for stopping here: every hook is a function call with engine state
-on both sides, which is exactly what a boundary makes expensive and hard to
-validate, and the formats that need hooks are the ones that are already
-compiled in. If a runtime format turns out to need one, the right shape is
-probably a *data* answer, a new `Syntax` field, which is how the 2.x
-proposals removed hooks from compiled formats too.
+**8.4 A renderer per dialect.** A renderer is declared on the language and
+receives the dialect name. No compiled format needs a renderer that varies
+by dialect; if a runtime one does, the argument is already there.
 
 **8.5 Process-global state.** `fig.h` promises no shared mutable global
 state, and a registry is one. The answer taken: the registry is
@@ -365,6 +553,14 @@ persist its name, and `fig_format_by_name` resolves it. This is also why
 serialize a node table and run a request loop. That is small, and the first
 one lives as a module in the `fig` crate. A `fig-extension` crate is not
 created until a second implementor wants it.
+
+**8.8 What is not covered by the renderers.** The five renderers and five
+`Syntax` fields are the set the twenty-five hooks reduce to. A format
+that needs a sixth is a format no compiled one resembles, and the answer
+is the same one that produced the first five: read what it does, and if
+it is a fact the parser has, add a column; if it is a constant, add a
+field; if it is a string function, add a renderer. What is refused is a
+hook that receives the editor.
 
 ## 9. What 3.0 needs before it tags
 
@@ -385,27 +581,40 @@ about whether the value collided with a possible future compiled format.
 ## 10. Sequencing
 
 1. **core 3.0.0** (now): §9.
-2. **core 3.1**: the node table as a stated shape; `runtime.zig`; the
-   `.runtime` member; `fig_language_register`, `fig_format_by_name`, and the
+2. **core 3.1, the refactor**: the four node-table columns, filled by
+   every compiled parser; the five `Syntax` fields and the prefix-bytes
+   policy; the engine consuming them; the renderers as the hook set. Hooks
+   deleted one format at a time, INI first, then plist's six comment
+   hooks, then NestedText, then TOML's rename and section ops, then the
+   fig and YAML reframes. Each deletion is verified by the harness and the
+   format's own editor tests being unchanged. `keyIsInherited` and
+   `replaceValAtPathFollowing` become engine questions to the AST. No
+   behavioural change is expected; where one is found it is a
+   `Behavioural-change:` trailer, not a reason to keep the hook.
+3. **core 3.1, the carrier**: the node table as a stated shape;
+   `runtime.zig`; the `.runtime` member; `fig_language_register`,
+   `fig_format_by_name`, the checked integer lookup of §8.2, and the
    vtable in `fig.h`; the load-time harness; abi-check holds the vtable's
    `version`. Additive, ABI stays 2.
-3. **cli 4.1**: the helper carrier, `languages.figl`, `fig lang list`,
+4. **cli 4.1**: the helper runner, `languages.figl`, `fig lang list`,
    `fig lang check`.
-4. **fig-lua 0.1**: a new repository in `repos.figl`. The crate, the
-   binary, and one worked format, HCL or NestedText-in-Lua as the
-   conformance twin of a compiled format, so the harness has a known
-   answer to compare against.
-5. **rust 3.6, npm 3.1**: the trait, the object, the runner.
+5. **fig-lua 0.1**: a new repository in `repos.figl`. The crate, the
+   binary, and two worked formats: dotenv in Lua, the twin of the format
+   commit 2226998 already used to prove the boundary, and plist in Lua,
+   the twin of the format that declares the most hooks today. The harness
+   checks each against its compiled sibling byte for byte. HCL follows as
+   the first format with no sibling, at the read tier first.
+6. **rust 3.6, npm 3.1**: the trait, the object, the runner.
 
 Each step is verified as pluggable formats §7 was: `zig build check` green,
-the harness over the compiled formats unchanged, and the harness over the
-worked Lua format passing the same list.
+the harness over the compiled formats unchanged, and the harness over each
+Lua twin producing the same tables its sibling does.
 
 ## 11. What this is not
 
 It is not a plugin system for the engine. Nothing here lets a format change
 how the editor works, what a path means, or how a convert is diagnosed. It
 is exactly the format contract, carried across a boundary, and validated on
-the way in. That narrowness is what makes it a minor, and it is what makes
-"any format, from anywhere" true without making "anything, from anywhere"
-true.
+the way in. A renderer returns text; it never receives the editor. That
+narrowness is what makes it a minor, and it is what makes "any format, from
+anywhere" true without making "anything, from anywhere" true.

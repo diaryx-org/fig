@@ -27,15 +27,17 @@
 //!   - `plistAppendItem`/`plistPrependItem`: the array twins — a value element
 //!     on its own line, no `- ` dash (that's the YAML/block-list shape the
 //!     generic engine writes, which is why arrays can't ride it).
-//!   - comment ops: `<!-- ... -->`, not a `#`/`//`/`;` line marker.
 //!
-//! What DOESN'T live here: delete-key and remove-seq-item. Once `comments.style`
-//! is `.xml_comment` (see `editor.zig`), the generic line-based delete already
-//! does the right thing — a plist entry/item occupies whole lines, and the
-//! keyvalue's full-extent span (recorded by `parser.zig`) covers both the key
-//! and value lines, so `lineStartBefore(span.start)`→`lineEndAfter(span.end)`
-//! removes the entry cleanly, owned `<!-- -->` block and all. No plist branch
-//! needed there.
+//! What DOESN'T live here: delete-key, remove-seq-item and every comment op.
+//! Once `comments.style` is `.xml_comment` (see `editor.zig`), the generic
+//! line-based delete already does the right thing — a plist entry/item
+//! occupies whole lines, and the keyvalue's full-extent span (recorded by
+//! `parser.zig`) covers both the key and value lines, so
+//! `lineStartBefore(span.start)`→`lineEndAfter(span.end)` removes the entry
+//! cleanly, owned `<!-- -->` block and all. And `<!-- … -->` is declared as a
+//! `CommentDelimiter` pair in `plist.zig`, so the generic leading and
+//! trailing comment ops write and strip it themselves. No plist branch
+//! needed for any of them.
 
 const std = @import("std");
 const testing = std.testing;
@@ -242,132 +244,6 @@ fn appendDictEntry(allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent
     try out.appendSlice(allocator, "</key>\n");
     try out.appendSlice(allocator, indent);
     try out.appendSlice(allocator, rendered_value);
-}
-
-// ── comments (`<!-- ... -->`) ──────────────────────────────────────────────────
-
-/// Insert own-line `<!-- text -->` comment line(s) immediately above the entry
-/// at `path`, at its indentation. Multi-line `text` becomes one comment line
-/// per line. XML forbids `--` inside a comment, so text containing it is
-/// refused (`InvalidComment`) rather than emitted as malformed markup.
-pub fn plistAddLeadingComment(self: *PlistEditor, path: []const AST.PathSegment, text: []const u8) !void {
-    if (std.mem.indexOf(u8, text, "--") != null) return error.InvalidComment;
-    const parsed = try self.getParsed();
-    const node = try parsed.ast.getNodeByPath(path);
-    const source = self.source.items;
-    const line_start = lineStartBefore(source, parsed.span(node).start);
-    const indent = source[line_start..firstNonSpace(source, line_start)];
-
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-    var it = std.mem.splitScalar(u8, text, '\n');
-    while (it.next()) |line| {
-        try out.appendSlice(self.allocator, indent);
-        try out.appendSlice(self.allocator, "<!-- ");
-        try out.appendSlice(self.allocator, line);
-        try out.appendSlice(self.allocator, " -->\n");
-    }
-    try self.replaceAtSpan(Span.init(line_start, line_start), out.items);
-}
-
-/// Remove the owned run of `<!-- -->` comment lines immediately above the entry
-/// at `path` (contiguous, no blank line between — the same block the generic
-/// delete carries). A no-op when there is none.
-pub fn plistDeleteLeadingComments(self: *PlistEditor, path: []const AST.PathSegment) !void {
-    const parsed = try self.getParsed();
-    const node = try parsed.ast.getNodeByPath(path);
-    const source = self.source.items;
-    const line_start = lineStartBefore(source, parsed.span(node).start);
-    const block_start = splice.commentBlockStart(source, line_start, .xml_comment);
-    if (block_start == line_start) return;
-    try self.replaceAtSpan(Span.init(block_start, line_start), "");
-}
-
-/// Read back the owned `<!-- -->` comment block above the entry at `path`, with
-/// each line's indent and `<!-- ` / ` -->` delimiters stripped, rejoined by
-/// '\n'. Null when there is no block. Caller owns the returned bytes.
-pub fn plistGetLeadingComment(self: *PlistEditor, path: []const AST.PathSegment) !?[]u8 {
-    const parsed = try self.getParsed();
-    const node = try parsed.ast.getNodeByPath(path);
-    const source = self.source.items;
-    const line_start = lineStartBefore(source, parsed.span(node).start);
-    const block_start = splice.commentBlockStart(source, line_start, .xml_comment);
-    if (block_start == line_start) return null;
-
-    var out: std.ArrayList(u8) = .empty;
-    errdefer out.deinit(self.allocator);
-    var it = std.mem.splitScalar(u8, source[block_start..line_start], '\n');
-    var first = true;
-    while (it.next()) |raw| {
-        const trimmed = std.mem.trimStart(u8, std.mem.trimEnd(u8, raw, "\r"), " \t");
-        if (trimmed.len == 0) continue;
-        if (!first) try out.append(self.allocator, '\n');
-        first = false;
-        try out.appendSlice(self.allocator, stripCommentDelimiters(trimmed));
-    }
-    return try out.toOwnedSlice(self.allocator);
-}
-
-/// Set the same-line trailing comment on the value at `path`: replace an
-/// existing `<!-- -->` after the value element, or append one. `text` must be a
-/// single line and free of `--`.
-pub fn plistSetTrailingComment(self: *PlistEditor, path: []const AST.PathSegment, text: []const u8) !void {
-    if (std.mem.indexOfScalar(u8, text, '\n') != null) return error.MultilineComment;
-    if (std.mem.indexOf(u8, text, "--") != null) return error.InvalidComment;
-    const win = try trailingWindow(self, path);
-    const source = self.source.items;
-
-    var cut = if (std.mem.indexOf(u8, source[win.start..win.line_end], "<!--")) |rel|
-        win.start + rel
-    else
-        win.line_end;
-    while (cut > win.start and (source[cut - 1] == ' ' or source[cut - 1] == '\t')) cut -= 1;
-
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-    try out.appendSlice(self.allocator, " <!-- ");
-    try out.appendSlice(self.allocator, text);
-    try out.appendSlice(self.allocator, " -->");
-    try self.replaceAtSpan(Span.init(cut, win.line_end), out.items);
-}
-
-/// Remove the same-line trailing `<!-- -->` on the value at `path`, if any.
-pub fn plistDeleteTrailingComment(self: *PlistEditor, path: []const AST.PathSegment) !void {
-    const win = try trailingWindow(self, path);
-    const source = self.source.items;
-    const rel = std.mem.indexOf(u8, source[win.start..win.line_end], "<!--") orelse return;
-    var cut = win.start + rel;
-    while (cut > win.start and (source[cut - 1] == ' ' or source[cut - 1] == '\t')) cut -= 1;
-    try self.replaceAtSpan(Span.init(cut, win.line_end), "");
-}
-
-/// Read back the same-line trailing `<!-- -->` on the value at `path`, delimiters
-/// stripped. Null when there is none. Caller owns the returned bytes.
-pub fn plistGetTrailingComment(self: *PlistEditor, path: []const AST.PathSegment) !?[]u8 {
-    const win = try trailingWindow(self, path);
-    const source = self.source.items;
-    const rel = std.mem.indexOf(u8, source[win.start..win.line_end], "<!--") orelse return null;
-    const raw = std.mem.trimEnd(u8, source[win.start + rel .. win.line_end], " \t\r");
-    return try self.allocator.dupe(u8, stripCommentDelimiters(raw));
-}
-
-/// The `[start, line_end)` window just past the value element at `path` where a
-/// same-line trailing comment lives.
-fn trailingWindow(self: *PlistEditor, path: []const AST.PathSegment) !struct { start: usize, line_end: usize } {
-    const parsed = try self.getParsed();
-    const val = try parsed.ast.getValByPath(path);
-    const source = self.source.items;
-    const start = parsed.span(val).end;
-    const line_end = std.mem.indexOfScalarPos(u8, source, start, '\n') orelse source.len;
-    return .{ .start = start, .line_end = line_end };
-}
-
-/// Strip `<!--`/`-->` and the surrounding whitespace from a single-line comment.
-fn stripCommentDelimiters(s: []const u8) []const u8 {
-    var inner = s;
-    if (std.mem.startsWith(u8, inner, "<!--")) inner = inner[4..];
-    if (std.mem.endsWith(u8, inner, "-->")) inner = inner[0 .. inner.len - 3];
-    return std.mem.trim(u8, inner, " \t");
 }
 
 // ── shared indentation helpers ─────────────────────────────────────────────────

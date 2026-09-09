@@ -63,7 +63,7 @@ pub const Language = struct {
             // rest-of-line value text, not a comment (see `parser.zig`,
             // "rest-of-line values are 100% literal"). A trailing comment can
             // only ever be its own `#` line immediately after the entry.
-            .comments = .{ .style = .hash, .line = "#", .trailing = null },
+            .comments = .{ .style = .hash, .line = .{ .open = "#" }, .trailing = null },
             // An entry is a `key:` line this format's own `insertKey` hook
             // writes, so the generic engine never spells one. See
             // `Syntax.kv_sep`.

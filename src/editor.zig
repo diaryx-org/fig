@@ -567,8 +567,18 @@ pub fn Editor(comptime Language: type) type {
         /// which case the comment ops return `CommentsUnsupported`. Indexed by
         /// `self.format` because the splice is reparsed under that same
         /// dialect. See `Comments.line`.
-        fn lineCommentMarker(self: *const Self) ?[]const u8 {
+        fn lineCommentMarker(self: *const Self) ?lang.CommentDelimiter {
             return self.syntax().comments.line;
+        }
+
+        /// The own-line comment marker as a bare PREFIX, or null for a format
+        /// with no line comment or a paired one. The dangling and comment-out
+        /// ops prefix existing lines with a marker and strip one off; a pair
+        /// (`<!-- -->`) cannot be written that way, so they refuse it with
+        /// `CommentsUnsupported`, as plist's always did.
+        fn prefixCommentMarker(self: *const Self) ?[]const u8 {
+            const d = self.lineCommentMarker() orelse return null;
+            return if (d.close.len == 0) d.open else null;
         }
 
         /// The marker for a same-line TRAILING comment specifically, or null
@@ -576,7 +586,7 @@ pub fn Editor(comptime Language: type) type {
         /// `;`/`#` after a value is literal value text). Distinct from
         /// `lineCommentMarker`, which those two formats do have. See
         /// `Comments.trailing` for the full reasoning.
-        fn trailingCommentMarker(self: *const Self) ?[]const u8 {
+        fn trailingCommentMarker(self: *const Self) ?lang.CommentDelimiter {
             return self.syntax().comments.trailing;
         }
 
@@ -670,8 +680,8 @@ pub fn Editor(comptime Language: type) type {
         /// a flow collection (see `commentsUnanchored`) — there is no line to
         /// put a comment on that the node would own.
         pub fn addLeadingComment(self: *Self, path: []const AST.PathSegment, text: []const u8) !void {
-            if (@hasDecl(Language, "addLeadingComment")) return Language.addLeadingComment(self, path, text);
             const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
+            if (marker.forbidden) |f| if (std.mem.indexOf(u8, text, f) != null) return error.InvalidComment;
             const parsed = try self.getParsed();
             if (self.commentsUnanchored(parsed, path)) return error.CommentsUnanchored;
             const node = try parsed.ast.getNodeByPath(path);
@@ -712,8 +722,12 @@ pub fn Editor(comptime Language: type) type {
             const val = try parsed.ast.getValByPath(path);
             const val_span = parsed.span(val);
             const source = self.source.items;
+            // A block collection with no closing token of its own (see
+            // `Syntax.closed_containers`) has its trailing comment on the
+            // key's line; one that closes itself (`</dict>`) takes it after
+            // the close, like any scalar.
             const is_block_collection = switch (std.meta.activeTag(val.kind)) {
-                .mapping, .sequence => !self.isFlowNode(parsed, val),
+                .mapping, .sequence => !self.isFlowNode(parsed, val) and !self.syntax().closed_containers,
                 else => false,
             };
             const start = if (is_block_collection)
@@ -732,15 +746,15 @@ pub fn Editor(comptime Language: type) type {
         /// shares its parent's line inside a flow collection (see
         /// `commentsUnanchored`) — the end of that line is the parent's.
         pub fn setTrailingComment(self: *Self, path: []const AST.PathSegment, text: []const u8) !void {
-            if (@hasDecl(Language, "setTrailingComment")) return Language.setTrailingComment(self, path, text);
             const marker = self.trailingCommentMarker() orelse return error.CommentsUnsupported;
             if (std.mem.indexOfScalar(u8, text, '\n') != null) return error.MultilineComment;
+            if (marker.forbidden) |f| if (std.mem.indexOf(u8, text, f) != null) return error.InvalidComment;
             const win = try self.trailingCommentWindow(path) orelse return error.CommentsUnanchored;
             const source = self.source.items;
 
             // If a comment marker already follows on this line, splice from it
             // (replace); otherwise splice from the line's end (append).
-            var cut = if (std.mem.indexOf(u8, source[win.start..win.line_end], marker)) |rel|
+            var cut = if (std.mem.indexOf(u8, source[win.start..win.line_end], marker.open)) |rel|
                 win.start + rel
             else
                 win.line_end;
@@ -751,11 +765,7 @@ pub fn Editor(comptime Language: type) type {
             var buf: std.ArrayList(u8) = .empty;
             defer buf.deinit(self.allocator);
             try buf.appendSlice(self.allocator, " ");
-            try buf.appendSlice(self.allocator, marker);
-            if (text.len > 0) {
-                try buf.append(self.allocator, ' ');
-                try buf.appendSlice(self.allocator, text);
-            }
+            try renderComment(self.allocator, &buf, marker, text);
             try self.replaceAtSpan(Span.init(cut, win.line_end), buf.items);
         }
 
@@ -767,7 +777,6 @@ pub fn Editor(comptime Language: type) type {
         /// `commentsUnanchored`). Returns `CommentsUnsupported` for a dialect
         /// without comment syntax (strict JSON).
         pub fn deleteLeadingComments(self: *Self, path: []const AST.PathSegment) !void {
-            if (@hasDecl(Language, "deleteLeadingComments")) return Language.deleteLeadingComments(self, path);
             _ = self.lineCommentMarker() orelse return error.CommentsUnsupported;
             const parsed = try self.getParsed();
             // Not the node's block to remove (the path resolved: an
@@ -788,11 +797,10 @@ pub fn Editor(comptime Language: type) type {
         /// parent's (see `commentsUnanchored`). Returns `CommentsUnsupported`
         /// for a dialect without comment syntax (strict JSON).
         pub fn deleteTrailingComment(self: *Self, path: []const AST.PathSegment) !void {
-            if (@hasDecl(Language, "deleteTrailingComment")) return Language.deleteTrailingComment(self, path);
             const marker = self.trailingCommentMarker() orelse return error.CommentsUnsupported;
             const win = try self.trailingCommentWindow(path) orelse return; // not this node's line-end
             const source = self.source.items;
-            const rel = std.mem.indexOf(u8, source[win.start..win.line_end], marker) orelse return; // none
+            const rel = std.mem.indexOf(u8, source[win.start..win.line_end], marker.open) orelse return; // none
             var cut = win.start + rel;
             // Take the whitespace separating the value from the comment with it.
             while (cut > win.start and (source[cut - 1] == ' ' or source[cut - 1] == '\t')) cut -= 1;
@@ -809,7 +817,6 @@ pub fn Editor(comptime Language: type) type {
         /// (see `commentsUnanchored`). The caller owns the returned bytes. Returns
         /// `CommentsUnsupported` for a dialect without comment syntax (strict JSON).
         pub fn getLeadingComment(self: *Self, path: []const AST.PathSegment) !?[]u8 {
-            if (@hasDecl(Language, "getLeadingComment")) return Language.getLeadingComment(self, path);
             const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
             const parsed = try self.getParsed();
             if (self.commentsUnanchored(parsed, path)) return null;
@@ -843,11 +850,10 @@ pub fn Editor(comptime Language: type) type {
         /// (see `commentsUnanchored`). The caller owns the returned bytes. Returns
         /// `CommentsUnsupported` for a dialect without comment syntax (strict JSON).
         pub fn getTrailingComment(self: *Self, path: []const AST.PathSegment) !?[]u8 {
-            if (@hasDecl(Language, "getTrailingComment")) return Language.getTrailingComment(self, path);
             const marker = self.trailingCommentMarker() orelse return error.CommentsUnsupported;
             const win = try self.trailingCommentWindow(path) orelse return null;
             const source = self.source.items;
-            const rel = std.mem.indexOf(u8, source[win.start..win.line_end], marker) orelse
+            const rel = std.mem.indexOf(u8, source[win.start..win.line_end], marker.open) orelse
                 return null; // none
             const after = std.mem.trimEnd(u8, source[win.start + rel .. win.line_end], " \t\r");
             return try self.allocator.dupe(u8, stripLineCommentMarker(after, marker));
@@ -984,8 +990,7 @@ pub fn Editor(comptime Language: type) type {
         /// trio. A format whose comment syntax has no line marker (plist's
         /// `<!-- -->`) answers `CommentsUnsupported` until it declares one.
         pub fn getDanglingComment(self: *Self, path: []const AST.PathSegment) !?[]u8 {
-            if (@hasDecl(Language, "getDanglingComment")) return Language.getDanglingComment(self, path);
-            const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
+            const marker = self.prefixCommentMarker() orelse return error.CommentsUnsupported;
             const parsed = try self.getParsed();
             const anchor = try self.danglingAnchor(parsed, path);
             const end = self.danglingRunEnd(anchor, marker);
@@ -1002,7 +1007,7 @@ pub fn Editor(comptime Language: type) type {
                 const body = std.mem.trimEnd(u8, source[commentColumn(source, pos, structural)..line_end], "\r\n");
                 if (!first) try out.append(self.allocator, '\n');
                 first = false;
-                try out.appendSlice(self.allocator, stripLineCommentMarker(body, marker));
+                try out.appendSlice(self.allocator, stripLineCommentMarker(body, .{ .open = marker }));
                 pos = line_end;
             }
             return try out.toOwnedSlice(self.allocator);
@@ -1018,8 +1023,7 @@ pub fn Editor(comptime Language: type) type {
         ///
         /// **Hook** `addDanglingComment(self, path, text) !void`.
         pub fn addDanglingComment(self: *Self, path: []const AST.PathSegment, text: []const u8) !void {
-            if (@hasDecl(Language, "addDanglingComment")) return Language.addDanglingComment(self, path, text);
-            const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
+            const marker = self.prefixCommentMarker() orelse return error.CommentsUnsupported;
             const parsed = try self.getParsed();
             const anchor = try self.danglingAnchor(parsed, path);
             const at = self.danglingRunEnd(anchor, marker);
@@ -1029,7 +1033,7 @@ pub fn Editor(comptime Language: type) type {
             // A final line with no newline of its own would otherwise weld the
             // first comment onto it.
             if (at > 0 and self.source.items[at - 1] != '\n') try buf.append(self.allocator, '\n');
-            try renderLineComments(self.allocator, &buf, anchor.indent, marker, text);
+            try renderLineComments(self.allocator, &buf, anchor.indent, .{ .open = marker }, text);
             try self.replaceAtSpan(Span.init(at, at), buf.items);
         }
 
@@ -1040,8 +1044,7 @@ pub fn Editor(comptime Language: type) type {
         ///
         /// **Hook** `deleteDanglingComments(self, path) !void`.
         pub fn deleteDanglingComments(self: *Self, path: []const AST.PathSegment) !void {
-            if (@hasDecl(Language, "deleteDanglingComments")) return Language.deleteDanglingComments(self, path);
-            const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
+            const marker = self.prefixCommentMarker() orelse return error.CommentsUnsupported;
             const parsed = try self.getParsed();
             const anchor = try self.danglingAnchor(parsed, path);
             const end = self.danglingRunEnd(anchor, marker);
@@ -1127,8 +1130,7 @@ pub fn Editor(comptime Language: type) type {
         ///
         /// **Hook** `commentOut(self, path) !void`.
         pub fn commentOut(self: *Self, path: []const AST.PathSegment) !void {
-            if (@hasDecl(Language, "commentOut")) return Language.commentOut(self, path);
-            const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
+            const marker = self.prefixCommentMarker() orelse return error.CommentsUnsupported;
             if (path.len == 0) return error.UnsupportedShape;
             const parsed = try self.getParsed();
             const node = try parsed.ast.getNodeByPath(path);
@@ -1191,9 +1193,7 @@ pub fn Editor(comptime Language: type) type {
         ///
         /// **Hook** `uncommentLeading(self, path, first_line, line_count) !void`.
         pub fn uncommentLeading(self: *Self, path: []const AST.PathSegment, first_line: usize, line_count: usize) !void {
-            if (@hasDecl(Language, "uncommentLeading"))
-                return Language.uncommentLeading(self, path, first_line, line_count);
-            const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
+            const marker = self.prefixCommentMarker() orelse return error.CommentsUnsupported;
             if (path.len == 0) return error.UnsupportedShape;
             const parsed = try self.getParsed();
             const node = try parsed.ast.getNodeByPath(path);
@@ -1217,9 +1217,7 @@ pub fn Editor(comptime Language: type) type {
         /// **Hook** `uncommentDangling(self, container_path, first_line,
         /// line_count) !void`.
         pub fn uncommentDangling(self: *Self, container_path: []const AST.PathSegment, first_line: usize, line_count: usize) !void {
-            if (@hasDecl(Language, "uncommentDangling"))
-                return Language.uncommentDangling(self, container_path, first_line, line_count);
-            const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
+            const marker = self.prefixCommentMarker() orelse return error.CommentsUnsupported;
             const parsed = try self.getParsed();
             const anchor = try self.danglingAnchor(parsed, container_path);
             const end = self.danglingRunEnd(anchor, marker);
@@ -1245,7 +1243,7 @@ pub fn Editor(comptime Language: type) type {
             container_path: []const AST.PathSegment,
         ) !void {
             if (line_count == 0) return;
-            const marker = self.lineCommentMarker() orelse return error.CommentsUnsupported;
+            const marker = self.prefixCommentMarker() orelse return error.CommentsUnsupported;
             const structural = self.syntax().structural_indent;
             const source = self.source.items;
 
@@ -2739,13 +2737,19 @@ fn entryBlockEnd(source: []const u8, kv_span: Span) usize {
 }
 
 /// Strip a leading line-comment `marker` (and one following space) from `line`,
-/// the inverse of how `renderLineComments`/`setTrailingComment` emit a comment.
+/// the inverse of how `renderComment` emits a comment.
 /// `line` must already have its leading whitespace trimmed. A line that doesn't
 /// start with `marker` is returned unchanged.
-fn stripLineCommentMarker(line: []const u8, marker: []const u8) []const u8 {
-    if (!std.mem.startsWith(u8, line, marker)) return line;
-    var rest = line[marker.len..];
+fn stripLineCommentMarker(line: []const u8, marker: lang.CommentDelimiter) []const u8 {
+    if (!std.mem.startsWith(u8, line, marker.open)) return line;
+    var rest = line[marker.open.len..];
     if (rest.len > 0 and rest[0] == ' ') rest = rest[1..];
+    // A paired delimiter: drop the close and the one space before it, the
+    // inverse of `renderComment`.
+    if (marker.close.len > 0 and std.mem.endsWith(u8, rest, marker.close)) {
+        rest = rest[0 .. rest.len - marker.close.len];
+        if (rest.len > 0 and rest[rest.len - 1] == ' ') rest = rest[0 .. rest.len - 1];
+    }
     return rest;
 }
 
@@ -2767,26 +2771,36 @@ fn commentColumn(source: []const u8, line_start: usize, structural: bool) usize 
     return i;
 }
 
+/// Render one comment into `out`: `marker.open`, then a space and `line`
+/// unless `line` is empty, then — for a paired delimiter — a space and
+/// `marker.close`. `# text`, `<!-- text -->`, a bare `#`, `<!-- -->`.
+fn renderComment(allocator: std.mem.Allocator, out: *std.ArrayList(u8), marker: lang.CommentDelimiter, line: []const u8) !void {
+    try out.appendSlice(allocator, marker.open);
+    if (line.len > 0) {
+        try out.append(allocator, ' ');
+        try out.appendSlice(allocator, line);
+    }
+    if (marker.close.len > 0) {
+        try out.append(allocator, ' ');
+        try out.appendSlice(allocator, marker.close);
+    }
+}
+
 /// Render `text` as one or more own-line comments into `out`, each line being
-/// `indent` + `marker` (+ a space and the line's text, unless the line is empty)
-/// + '\n'. A single trailing newline in `text` is ignored so it never yields a
-/// stray empty comment line.
+/// `indent` + one `renderComment` + '\n'. A single trailing newline in `text`
+/// is ignored so it never yields a stray empty comment line.
 fn renderLineComments(
     allocator: std.mem.Allocator,
     out: *std.ArrayList(u8),
     indent: []const u8,
-    marker: []const u8,
+    marker: lang.CommentDelimiter,
     text: []const u8,
 ) !void {
     const body = if (std.mem.endsWith(u8, text, "\n")) text[0 .. text.len - 1] else text;
     var it = std.mem.splitScalar(u8, body, '\n');
     while (it.next()) |line| {
         try out.appendSlice(allocator, indent);
-        try out.appendSlice(allocator, marker);
-        if (line.len > 0) {
-            try out.append(allocator, ' ');
-            try out.appendSlice(allocator, line);
-        }
+        try renderComment(allocator, out, marker, line);
         try out.append(allocator, '\n');
     }
 }

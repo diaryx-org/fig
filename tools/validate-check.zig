@@ -163,7 +163,7 @@ const cases = [_]Case{
     .{
         .name = "trailing comment marker with no line comment marker",
         .syntax_body =
-        \\.comments = .{ .style = .hash, .line = null, .trailing = "#" },
+        \\.comments = .{ .style = .hash, .line = null, .trailing = .{ .open = "#" } },
         \\.kv_sep = ": ", .empty_map_literal = "{}",
         ,
         .expect = "trailing comment marker but no line comment marker",
@@ -217,14 +217,14 @@ const cases = [_]Case{
         .decls = "pub const appendToSeq = {};",
         .expect = "supplies 'appendToSeq', which the engine refuses before reaching",
     },
+    // The comment ops stopped being hookable when `CommentDelimiter` made a
+    // paired delimiter declarable: every format's comment syntax is data now,
+    // so a format that still spells one as a hook is declaring a name the
+    // contract does not have.
     .{
-        .name = "partial comment hooks with no marker in any dialect",
-        .syntax_body =
-        \\.comments = .{ .style = .hash, .line = null, .trailing = null },
-        \\.kv_sep = ": ", .empty_map_literal = null,
-        ,
+        .name = "comment op declared as a hook",
         .decls = "pub const addLeadingComment = {};",
-        .expect = "can then only ever return CommentsUnsupported",
+        .expect = "declares unknown 'addLeadingComment'",
     },
 };
 

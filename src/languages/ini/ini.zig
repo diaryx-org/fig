@@ -62,7 +62,7 @@ pub const Language = struct {
             // value on the SAME line is literal value text (see `parser.zig`,
             // "a value runs to end of line"). Splicing one in would corrupt
             // the value on reread, so trailing ops are refused.
-            .comments = .{ .style = .semicolon, .line = ";", .trailing = null },
+            .comments = .{ .style = .semicolon, .line = .{ .open = ";" }, .trailing = null },
             .kv_sep = " = ",
             // No literal spelling for an empty nested mapping — `{}` in INI
             // is the two-character STRING `{}`, not a container — so `set`

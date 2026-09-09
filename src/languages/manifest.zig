@@ -57,6 +57,21 @@ pub const CommentStyle = enum {
 /// presets below are exactly the "all three agree" case; a format whose
 /// answers diverge — INI, NestedText, plist — writes the literal out, and so
 /// does JSON, whose marker varies by dialect while its scanner does not.
+/// How one comment is delimited: the token that opens it and, for a paired
+/// syntax, the one that closes it. `#`, `//` and `;` are an `open` alone;
+/// plist's `<!-- … -->` is a pair. The engine writes a comment as
+/// `open`, a space, the text, and — when `close` is non-empty — a space and
+/// `close`; it strips the same shape when reading one back, and it finds a
+/// trailing comment by searching for `open`. A pair used to be inexpressible
+/// here, which is why plist hooked all six leading/trailing comment ops.
+pub const CommentDelimiter = struct {
+    open: []const u8,
+    close: []const u8 = "",
+    /// Text a comment body may not contain — `--` inside an XML comment —
+    /// refused as `InvalidComment` before anything is spliced.
+    forbidden: ?[]const u8 = null,
+};
+
 pub const Comments = struct {
     /// Selects the owned-comment-block scanner. See `CommentStyle`. Never
     /// null, and never redundant with `line`: the scanner is per-language
@@ -65,11 +80,12 @@ pub const Comments = struct {
     /// exist for the scanner to find.
     style: CommentStyle,
 
-    /// The own-line (leading) comment marker, or null when the dialect has
+    /// The own-line (leading) comment delimiter, or null when the dialect has
     /// none to write — strict JSON, where the comment ops return
-    /// `CommentsUnsupported`, and plist, whose `<!-- ... -->` is a delimiter
-    /// pair with no leader (it hooks all six comment ops instead).
-    line: ?[]const u8,
+    /// `CommentsUnsupported`. A paired delimiter (plist) serves the leading
+    /// and trailing ops; the dangling and comment-out ops need a bare prefix
+    /// and refuse a pair.
+    line: ?CommentDelimiter,
 
     /// The marker for a same-line TRAILING comment specifically, or null when
     /// the format has no such syntax.
@@ -82,13 +98,13 @@ pub const Comments = struct {
     /// as its own line immediately after the entry). Splicing one in anyway
     /// would silently corrupt the value on reread, so trailing ops are refused
     /// there.
-    trailing: ?[]const u8,
+    trailing: ?CommentDelimiter,
 
     /// `#` throughout — YAML, TOML, fig, dotenv, `.properties`.
-    pub const hash: Comments = .{ .style = .hash, .line = "#", .trailing = "#" };
+    pub const hash: Comments = .{ .style = .hash, .line = .{ .open = "#" }, .trailing = .{ .open = "#" } };
 
     /// `//` throughout — ZON, which follows Zig.
-    pub const slashes: Comments = .{ .style = .slashes, .line = "//", .trailing = "//" };
+    pub const slashes: Comments = .{ .style = .slashes, .line = .{ .open = "//" }, .trailing = .{ .open = "//" } };
 };
 
 /// How a logical mapping key renders as this format's key syntax on the `set`
@@ -556,6 +572,15 @@ pub const Syntax = struct {
     /// prefix (the bytes before its marker — see `Document.node_marker_spans`)
     /// followed by this. Used to be a `"- "` literal in the engine.
     seq_item_marker: []const u8 = "- ",
+
+    /// Whether a block container's span ends at a closing token of its own —
+    /// plist's `</dict>` and `</array>` — so a same-line trailing comment on
+    /// a container value follows that close. False for every line-structured
+    /// format, where a block collection has no closing token and its value
+    /// span begins at its first child on a later line, so the trailing
+    /// comment rides the KEY's line instead (`contents: # note`). Read by
+    /// `editor.Editor.trailingCommentWindow`.
+    closed_containers: bool = false,
 
     /// Whether a single line of the form `k: v` is a block MAPPING entry
     /// rather than scalar text — the one value shape that cannot be told

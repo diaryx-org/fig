@@ -84,26 +84,27 @@ pub const Language = struct {
     pub fn syntax(t: plist.Type) lang.Syntax {
         _ = t;
         return .{
-            // The owned-block SCANNER does run for plist — the line-based
-            // delete/remove paths use it — and recognizes own-line
-            // `<!-- ... -->`. But there is no line-comment MARKER, because
-            // plist has none: `<!-- -->` is a delimiter pair, not a leader,
-            // and `renderLineComments` can only write a leader. All six
-            // comment ops delegate to `plist/editor_helper.zig` before either
-            // marker is consulted, so neither is read today. Declaring null
-            // rather than a plausible-looking `"<!--"` keeps that honest: if a
-            // delegation were ever dropped, the op fails loudly with
-            // `CommentsUnsupported` instead of splicing a half-open comment
-            // into the document.
-            .comments = .{ .style = .xml_comment, .line = null, .trailing = null },
+            // A comment is the `<!-- … -->` PAIR, leading and trailing alike,
+            // and XML forbids `--` inside one. The owned-block scanner
+            // (`.xml_comment`) recognizes an own-line pair; the leading and
+            // trailing ops write and strip the pair; the dangling and
+            // comment-out ops, which need a bare prefix, refuse it.
+            .comments = .{
+                .style = .xml_comment,
+                .line = .{ .open = "<!--", .close = "-->", .forbidden = "--" },
+                .trailing = .{ .open = "<!--", .close = "-->", .forbidden = "--" },
+            },
             // An entry is a PAIR OF SIBLING ELEMENTS, not a `key<sep>value`
             // line, so no generic path writes one. See `Syntax.kv_sep`.
             .kv_sep = null,
             // No bare literal for an empty dict that the generic seed could
             // splice — a value is always a typed wrapper element.
             .empty_map_literal = null,
-            // A `<dict>`/`<array>` is an element, never an inline `{…}`.
+            // A `<dict>`/`<array>` is an element, never an inline `{…}`, and
+            // it closes itself, so a trailing comment on one follows
+            // `</dict>` rather than riding the `<key>` line.
             .flow_containers = false,
+            .closed_containers = true,
         };
     }
 
@@ -115,14 +116,15 @@ pub const Language = struct {
     // named below runs the generic implementation. Each signature is fixed by
     // the `editor.Editor` method of the same name; see its doc comment.
     //
-    // plist overrides more than any other format, and for one reason: an entry
+    // plist overrides the structural inserts, and for one reason: an entry
     // is a PAIR OF SIBLING ELEMENTS (`<key>k</key>` then a typed value element)
-    // on separate lines, not a `key<sep>value` line, so almost nothing in the
-    // line-oriented generic engine fits. Only the line-based delete/remove
-    // paths ride the generic code, which they can once `comments.style` is
-    // `.xml_comment`. The logic lives in `editor_helper.zig` (which holds this
-    // format's editor tests too); this block is the DECLARATION of which
-    // operations are overridden.
+    // on separate lines, not a `key<sep>value` line, and a value is always a
+    // typed element rather than a bare literal. The line-based delete/remove
+    // paths and every comment op are the generic engine's, driven by
+    // `syntax` above — the comment ops used to be hooked because a `<!-- -->`
+    // pair could not be declared; `CommentDelimiter` says it. The logic lives
+    // in `editor_helper.zig` (which holds this format's editor tests too);
+    // this block is the DECLARATION of which operations are overridden.
     const edit = @import("editor_helper.zig");
 
     /// A `<dict>` entry is two sibling elements, so this appends a rendered
@@ -135,18 +137,6 @@ pub const Language = struct {
     /// typing, or spliced verbatim when it already looks like `<…>`) and
     /// swapped for the whole element.
     pub const replaceValAtPath = edit.plistReplaceValue;
-
-    // All six comment ops. A plist comment is a `<!-- ... -->` PAIR, not a
-    // line prefixed by a marker, so none of the generic marker-scanning paths
-    // apply — which is why `syntax` declares `comments.line = null` here: with
-    // every one of these delegated, a marker is never read, and a null makes a
-    // dropped delegation fail loudly rather than splice a half-open comment.
-    pub const addLeadingComment = edit.plistAddLeadingComment;
-    pub const deleteLeadingComments = edit.plistDeleteLeadingComments;
-    pub const getLeadingComment = edit.plistGetLeadingComment;
-    pub const setTrailingComment = edit.plistSetTrailingComment;
-    pub const deleteTrailingComment = edit.plistDeleteTrailingComment;
-    pub const getTrailingComment = edit.plistGetTrailingComment;
 
     /// An `<array>` item is a whole typed element, so `value_text` is rendered
     /// into one and spliced at the existing children's indent — or, for an

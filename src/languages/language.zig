@@ -744,13 +744,7 @@ const Decls = struct {
         "insertKey",                 "replaceValAtPath",
         "replaceValAtPathFollowing", "replaceKeyAtPath",
         "keyIsInherited",            "appendToSeq",
-        "prependToSeq",              "addLeadingComment",
-        "deleteLeadingComments",
-        "getLeadingComment",         "setTrailingComment",
-        "deleteTrailingComment",     "getTrailingComment",
-        "addDanglingComment",        "deleteDanglingComments",
-        "getDanglingComment",        "commentOut",
-        "uncommentLeading",          "uncommentDangling",
+        "prependToSeq",
     };
 
     /// The whole-container ops a SECTION format (`Syntax.section_noun` non-
@@ -970,11 +964,9 @@ pub fn validate(comptime Lang: type) void {
         // `block_seq_editable` refusal, so a format that declares no editable
         // block sequences in any dialect can never reach one.
         var any_block_seq = false;
-        var any_line_comment = false;
         for (std.meta.tags(Lang.Type)) |t| {
             const s: Syntax = Lang.syntax(t);
             if (s.block_seq_editable) any_block_seq = true;
-            if (s.comments.line != null) any_line_comment = true;
         }
         if (!any_block_seq) {
             for ([_][]const u8{ "appendToSeq", "prependToSeq" }) |name| {
@@ -984,44 +976,6 @@ pub fn validate(comptime Lang: type) void {
             }
         }
 
-        // Comment hooks, the other direction. With no line-comment marker in
-        // ANY dialect, every comment op is either hooked or permanently
-        // `CommentsUnsupported` — so hooking SOME is almost certainly a
-        // dropped delegation rather than a decision. plist is the case this
-        // guards: `<!-- ... -->` is a delimiter pair with no leader, so it
-        // declares null and hooks all six deliberately (see `plist.zig`), and
-        // this makes losing one a compile error instead of a runtime refusal.
-        //
-        // Note this is the OPPOSITE of the rule the proposal's §4 proposed —
-        // "trailing_comment == null alongside a declared setTrailingComment is
-        // a contradiction". plist is exactly that pair, and is correct. A hook
-        // does not read the marker, so a null marker beside a hook is not a
-        // contradiction; it is the hook making the marker irrelevant.
-        if (!any_line_comment) {
-            // The six LEADING/TRAILING ops only. The dangling trio and the
-            // comment-out pair are deliberately outside the set: they are a
-            // later addition, and a format that hooked the six before they
-            // existed is not incoherent for leaving them to answer
-            // `CommentsUnsupported` — which is what plist does today. Hooking
-            // one of those six while dropping another is still the dropped
-            // delegation this rule is here to catch.
-            const comment_hooks = [_][]const u8{
-                "addLeadingComment",  "deleteLeadingComments", "getLeadingComment",
-                "setTrailingComment", "deleteTrailingComment", "getTrailingComment",
-            };
-            var declared = 0;
-            for (comment_hooks) |name| {
-                if (@hasDecl(Lang, name)) declared += 1;
-            }
-            if (declared != 0 and declared != comment_hooks.len) {
-                for (comment_hooks) |name| {
-                    if (!@hasDecl(Lang, name))
-                        @compileError("Language '" ++ Lang.name ++ "' has no line-comment marker" ++
-                            " in any dialect and hooks some comment ops but not '" ++ name ++
-                            "', which can then only ever return CommentsUnsupported");
-                }
-            }
-        }
     }
 }
 

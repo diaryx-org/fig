@@ -116,7 +116,7 @@ pub const Language = struct {
     /// That split — one scanner, a marker that varies — is why this is written
     /// out rather than taking the `Comments.slashes` preset.
     pub fn syntax(t: json.Type) lang.Syntax {
-        const marker: ?[]const u8 = if (t == .JSON) null else "//";
+        const marker: ?lang.CommentDelimiter = if (t == .JSON) null else .{ .open = "//" };
         return .{
             .comments = .{ .style = .slashes, .line = marker, .trailing = marker },
             .kv_sep = ": ",

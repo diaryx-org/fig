@@ -406,7 +406,10 @@ diagnostics: std.ArrayList(Diagnostic) = .empty,
 built_regions: std.ArrayList(Document.NodeRegion) = .empty,
 /// Every `*` element marker by built element id (arena-backed; becomes
 /// `Document.node_marker_spans`). See `TNode.marker`.
-markers: std.ArrayList(Document.MarkerEntry) = .empty,
+markers: std.ArrayList(Document.SpanEntry) = .empty,
+/// Every assignment's `=` by built `keyvalue` id (arena-backed; becomes
+/// `Document.node_sep_spans`). See `MEntry.sep_span`.
+seps: std.ArrayList(Document.SpanEntry) = .empty,
 
 // ── Intermediate tree types ─────────────────────────────────────────────────
 
@@ -488,6 +491,10 @@ const MEntry = struct {
     /// mirrors every other parser's `keyvalue.key` span convention, so
     /// `Editor(Fig)` can splice a rename in place.
     key_span: Span = Span.init(0, 0),
+    /// The `=` of a `key = value` assignment, or null for an entry with no
+    /// separator of its own (a header line, an `x[] = v` element target).
+    /// Recorded to `Document.node_sep_spans` in `buildContainer`.
+    sep_span: ?Span = null,
     /// Leading comments bind to the KEY (matches `AST.leadingCommentAnchor` for
     /// a `keyvalue`).
     key_leading: std.ArrayList(AST.Comment) = .empty,
@@ -590,6 +597,7 @@ pub fn parseAbstract(allocator: Allocator, input: []const u8, format: Type) !AST
     const parsed = try parse(allocator, input, format);
     allocator.free(parsed.node_spans);
     allocator.free(parsed.node_marker_spans);
+    allocator.free(parsed.node_sep_spans);
     allocator.free(parsed.node_regions);
     return parsed.ast;
 }
@@ -671,12 +679,14 @@ fn parseImpl(allocator: Allocator, input: []const u8, format: Type, out: ?*Repor
     errdefer ast.deinit();
     const node_spans = try b.takeSpans();
     errdefer allocator.free(node_spans);
-    const node_marker_spans = try Document.buildMarkerSpans(allocator, node_spans.len, self.markers.items);
+    const node_marker_spans = try Document.buildSpanTable(allocator, node_spans.len, self.markers.items);
     errdefer allocator.free(node_marker_spans);
+    const node_sep_spans = try Document.buildSpanTable(allocator, node_spans.len, self.seps.items);
+    errdefer allocator.free(node_sep_spans);
     const node_regions = try allocator.dupe(Document.NodeRegion, self.built_regions.items);
     Document.sortRegions(node_regions);
 
-    return .{ .source = input, .ast = ast, .node_spans = node_spans, .node_marker_spans = node_marker_spans, .node_regions = node_regions };
+    return .{ .source = input, .ast = ast, .node_spans = node_spans, .node_marker_spans = node_marker_spans, .node_sep_spans = node_sep_spans, .node_regions = node_regions };
 }
 
 /// Return `err` with the diagnostic caret pinned to `offset` — for the sites
@@ -1009,11 +1019,13 @@ fn parseKeyLine(self: *Parser, target: *PendingContainer, depth: u32) Error!void
         // `key: value` (the YAML habit) — the `:` is the offending token, not
         // the spot where the missing `=` was noticed, so pin the caret there.
         if (self.peek() != '=') return self.failAt(colon_pos, error.FigForeignSyntaxColon);
+        const eq = Span.init(self.pos, self.pos + 1);
         self.advance();
-        try self.finishAssignment(target, steps, type_name);
+        try self.finishAssignment(target, steps, type_name, eq);
     } else if (self.peek() == '=') {
+        const eq = Span.init(self.pos, self.pos + 1);
         self.advance();
-        try self.finishAssignment(target, steps, null);
+        try self.finishAssignment(target, steps, null, eq);
     } else {
         try self.finishHeader(target, steps, depth);
     }
@@ -1043,7 +1055,7 @@ fn finishHeader(self: *Parser, target: *PendingContainer, steps: []const Step, d
     };
 }
 
-fn finishAssignment(self: *Parser, target: *PendingContainer, steps: []const Step, type_name: ?[]const u8) Error!void {
+fn finishAssignment(self: *Parser, target: *PendingContainer, steps: []const Step, type_name: ?[]const u8, sep: Span) Error!void {
     self.skipSpacesTabs();
     const leading = try self.drainPendingLeading();
     const parent = try self.navigateIntermediate(target, steps);
@@ -1060,7 +1072,7 @@ fn finishAssignment(self: *Parser, target: *PendingContainer, steps: []const Ste
             // span instead.
             if (self.findEntry(m, k.name) != null) return self.failSpan(k.span.start, k.span.end, error.FigDuplicateKey);
             const entry = try self.allocator.create(MEntry);
-            entry.* = .{ .key = k.name, .key_span = k.span, .value = value_node };
+            entry.* = .{ .key = k.name, .key_span = k.span, .sep_span = sep, .value = value_node };
             try self.appendComments(&entry.key_leading, leading);
             try m.addEntry(self.allocator, entry);
         },
@@ -1253,7 +1265,10 @@ fn getOrCreateMapContainer(self: *Parser, m: *Mapping, seg: KeySeg) Error!*Pendi
     const child = try self.allocator.create(PendingContainer);
     child.* = .{};
     const entry = try self.allocator.create(MEntry);
-    entry.* = .{ .key = seg.name, .key_span = seg.span, .value = .{ .value = .{ .container = child }, .span = seg.span } };
+    // A header has no `=`; its container's body hangs under the key, and a
+    // replacement value is reframed from the key's end. A zero-width
+    // separator there says so (see `MEntry.sep_span`).
+    entry.* = .{ .key = seg.name, .key_span = seg.span, .sep_span = Span.init(seg.span.end, seg.span.end), .value = .{ .value = .{ .container = child }, .span = seg.span } };
     try m.addEntry(self.allocator, entry);
     return child;
 }
@@ -1307,7 +1322,9 @@ fn resolveHeaderFinal(self: *Parser, parent: *PendingContainer, last: Step) Erro
             const child = try self.allocator.create(PendingContainer);
             child.* = .{};
             const entry = try self.allocator.create(MEntry);
-            entry.* = .{ .key = k.name, .key_span = k.span, .value = .{ .value = .{ .container = child }, .span = k.span } };
+            // A header line's container hangs under the key; a replacement
+            // value reframes from the key's end (see `MEntry.sep_span`).
+            entry.* = .{ .key = k.name, .key_span = k.span, .sep_span = Span.init(k.span.end, k.span.end), .value = .{ .value = .{ .container = child }, .span = k.span } };
             try m.addEntry(self.allocator, entry);
             return .{ .container = child, .owner = &entry.value, .entry = entry };
         },
@@ -2106,6 +2123,7 @@ fn buildContainer(self: *Parser, b: *AST.Builder, c: *PendingContainer) Error!Bu
                 const value_id = try self.buildNode(b, &e.value);
                 const kv_id = try b.addKeyValue(key_id, value_id);
                 b.setSpan(kv_id, Span.init(e.key_span.start, e.value.span.end));
+                if (e.sep_span) |sep| try self.seps.append(self.allocator, .{ .node_id = kv_id, .span = sep });
                 end = @max(end, e.value.span.end);
                 kv_ids.appendAssumeCapacity(kv_id);
             }

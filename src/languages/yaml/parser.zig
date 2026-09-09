@@ -38,6 +38,11 @@ const OpenContainer = struct {
     /// container on the following lines, or the null a bare `-` becomes — is
     /// attached under its own dash, not the next one.
     current_marker: ?Span = null,
+    /// The `:` value indicator of the entry being parsed into this mapping,
+    /// recorded against the `keyvalue` node when `finishValue` builds it
+    /// (`Document.node_sep_spans`). Null for an explicit key that took no
+    /// indicator.
+    pending_sep_span: ?Span = null,
     continues_sequence_item: bool = false,
     // True for an indentless block sequence value: one opened (with no fresh
     // indent of its own) directly inside a mapping, so it shares that mapping's
@@ -67,7 +72,10 @@ node_spans: std.ArrayList(Span) = .empty,
 node_tags: std.ArrayList(?AST.Tag) = .empty,
 /// Every block-sequence item's `-` token, by item node id; becomes
 /// `Document.node_marker_spans`.
-markers: std.ArrayList(Document.MarkerEntry) = .empty,
+markers: std.ArrayList(Document.SpanEntry) = .empty,
+/// Every block-mapping entry's `:` indicator, by `keyvalue` node id; becomes
+/// `Document.node_sep_spans`.
+seps: std.ArrayList(Document.SpanEntry) = .empty,
 node_anchors: std.ArrayList(?[]const u8) = .empty,
 node_tag_spans: std.ArrayList(?Span) = .empty,
 node_anchor_spans: std.ArrayList(?Span) = .empty,
@@ -157,6 +165,7 @@ pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Ty
     allocator.free(parsed.node_tag_spans);
     allocator.free(parsed.node_anchor_spans);
     allocator.free(parsed.node_marker_spans);
+    allocator.free(parsed.node_sep_spans);
     return parsed.ast;
 }
 
@@ -355,6 +364,7 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
                     const colon = self.advance();
                     self.currentContainer().explicit_awaiting_value = false;
                     self.currentContainer().pending_value_span = colon.span.end;
+                    self.currentContainer().pending_sep_span = colon.span;
                     // An explicit value (`: - one`) may take a compact block sequence.
                     try self.parseMappingValue(true);
                 } else {
@@ -437,6 +447,7 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
                     const parent = self.containerById(mapping_id);
                     parent.pending_key = node_id;
                     parent.pending_value_span = colon.span.end;
+                    parent.pending_sep_span = colon.span;
                     try self.parseMappingValue(false);
                 } else {
                     try self.attachDeferredValue(node_id);
@@ -507,8 +518,10 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
     const node_anchor_spans = try self.node_anchor_spans.toOwnedSlice(self.allocator);
     errdefer self.allocator.free(node_anchor_spans);
     self.node_anchor_spans = .empty;
-    const node_marker_spans = try Document.buildMarkerSpans(self.allocator, nodes.len, self.markers.items);
+    const node_marker_spans = try Document.buildSpanTable(self.allocator, nodes.len, self.markers.items);
     errdefer self.allocator.free(node_marker_spans);
+    const node_sep_spans = try Document.buildSpanTable(self.allocator, nodes.len, self.seps.items);
+    errdefer self.allocator.free(node_sep_spans);
     const tag_directives = try self.tag_directives.toOwnedSlice(self.allocator);
     errdefer self.allocator.free(tag_directives);
     self.tag_directives = .empty;
@@ -535,6 +548,7 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
         .node_tag_spans = node_tag_spans,
         .node_anchor_spans = node_anchor_spans,
         .node_marker_spans = node_marker_spans,
+        .node_sep_spans = node_sep_spans,
     };
 }
 
@@ -618,6 +632,7 @@ pub fn deinit(self: *Parser) void {
     self.node_tag_spans.deinit(self.allocator);
     self.node_anchor_spans.deinit(self.allocator);
     self.markers.deinit(self.allocator);
+    self.seps.deinit(self.allocator);
     self.anchors.deinit(self.allocator);
     for (self.owned_strings.items) |string| {
         self.allocator.free(string);
@@ -752,6 +767,7 @@ fn parseMappingEntry(self: *Parser) ParserError!void {
         const parent = self.containerById(mapping_id);
         parent.pending_key = key_id;
         parent.pending_value_span = colon.span.end;
+        parent.pending_sep_span = colon.span;
     }
 
     // An implicit key (`key:`) may not take a compact block sequence on its own
@@ -909,6 +925,7 @@ fn parseExplicitKey(self: *Parser) ParserError!void {
                 const km = self.containerById(key_map_id);
                 km.pending_key = node_id;
                 km.pending_value_span = colon.span.end;
+                km.pending_sep_span = colon.span;
                 try self.parseMappingValue(false);
                 return;
             }
@@ -949,6 +966,7 @@ fn parseExplicitKey(self: *Parser) ParserError!void {
     const parent = self.containerById(mapping_id);
     parent.pending_key = key_id;
     parent.pending_value_span = self.node_spans.items[key_id].end;
+    parent.pending_sep_span = null;
     parent.explicit_awaiting_value = true;
 }
 
@@ -964,6 +982,7 @@ fn parseEmptyKeyEntry(self: *Parser) ParserError!void {
         const parent = self.containerById(mapping_id);
         parent.pending_key = key_id;
         parent.pending_value_span = colon.span.end;
+        parent.pending_sep_span = colon.span;
     }
     try self.parseMappingValue(false);
 }
@@ -1600,6 +1619,10 @@ fn finishValue(self: *Parser, value_id: AST.Node.Id) ParserError!void {
             });
             self.parking_container = prev_parking;
 
+            if (parent.pending_sep_span) |sep| {
+                try self.seps.append(self.allocator, .{ .node_id = pair_id, .span = sep });
+                parent.pending_sep_span = null;
+            }
             self.attachChild(parent, pair_id);
         },
     }

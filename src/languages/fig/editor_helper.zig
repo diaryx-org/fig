@@ -69,17 +69,8 @@ const lineEndAfter = splice.lineEndAfter;
 const firstNonSpace = splice.firstNonSpace;
 const isFlow = splice.isFlow;
 
-/// The marker-prefix text (leading whitespace + `>` run + the one load-bearing
-/// separator space, or "" at root) that precedes the content starting at
-/// `content_start` on its own line. Copying this verbatim for a new sibling
-/// line reproduces the exact depth *and* the file's spaced-vs-glued marker
-/// style, with no separate bookkeeping.
-fn linePrefix(source: []const u8, content_start: usize) []const u8 {
-    return source[lineStartBefore(source, content_start)..content_start];
-}
-
 // ============================================================================
-// block-container value framing (the fig arm of `replaceValAtPath`/`insertKey`)
+// renderTail — what follows a key (the fig `renderTail` renderer)
 // ============================================================================
 
 /// If `value_text` is a fig BLOCK-container fragment — a section body (`a = 1`
@@ -97,182 +88,47 @@ fn linePrefix(source: []const u8, content_start: usize) []const u8 {
 /// and need no further indentation. This is what lets a caller splice a block
 /// map/sequence into a document (e.g. a fenced embed) instead of freezing every
 /// short map inline as flow.
-fn blockBody(self: *FigEditor, depth: usize, value_text: []const u8) ?[]u8 {
+fn blockBody(allocator: std.mem.Allocator, depth: usize, value_text: []const u8) ?[]u8 {
     const t = std.mem.trim(u8, value_text, " \t\r\n");
     // Inline forms keep the direct splice: flow braces/brackets, quoted or
     // block-string scalars, and any single-line value.
     if (t.len == 0 or t[0] == '{' or t[0] == '[' or t[0] == '\'' or t[0] == '"') return null;
     if (std.mem.indexOfScalar(u8, t, '\n') == null) return null;
 
-    var parser: Fig.Parser = .{ .allocator = self.allocator };
+    var parser: Fig.Parser = .{ .allocator = allocator };
     var frag = Fig.parse(&parser, value_text, Fig.default_type) catch return null;
-    defer frag.deinit(self.allocator);
+    defer frag.deinit(allocator);
     switch (frag.ast.nodes[frag.ast.root].kind) {
         .mapping, .sequence => {},
         else => return null, // a multi-line scalar is still an inline value
     }
 
-    var w: Writer.Allocating = .init(self.allocator);
+    var w: Writer.Allocating = .init(allocator);
     defer w.deinit();
     Printer.printNode(&w.writer, &frag.ast, frag.ast.root, depth, .{}) catch return null;
-    return self.allocator.dupe(u8, w.written()) catch return null;
+    return allocator.dupe(u8, w.written()) catch return null;
 }
 
-/// The number of `>` marker cells on the line that `content_start` sits on —
-/// the marker depth of a key/element already written there. A block value that
-/// hangs under it prints one level deeper (`depth + 1`).
-fn markerDepth(source: []const u8, content_start: usize) usize {
-    return std.mem.count(u8, source[lineStartBefore(source, content_start)..content_start], ">");
-}
-
-/// Append a mapping entry's value tail after an already-written `<prefix><key>`:
-/// ` = <value>` for an inline value, or a newline plus the value re-framed as a
-/// block section (see `blockBody`) one level below the key at marker depth
-/// `key_depth`. No trailing newline is appended (the caller adds the line's own).
-fn appendKeyValueTail(self: *FigEditor, out: *std.ArrayList(u8), key_depth: usize, value_text: []const u8) !void {
-    if (blockBody(self, key_depth + 1, value_text)) |body| {
-        defer self.allocator.free(body);
-        try out.append(self.allocator, '\n');
+/// What follows a key on its entry line, after `<indent><key>`: ` = <value>`
+/// for an inline value, or a newline plus the value re-framed as a block
+/// section (see `blockBody`) one level below the key's marker depth — which
+/// is the count of `>` cells in `indent`, the structural prefix the engine
+/// copied from the key's line. An empty `key_text` is the document root,
+/// whose value is a whole document already and is taken as written. No
+/// trailing newline. See `editor.Editor.writeTail`.
+pub fn renderTail(allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, key_text: []const u8, value_text: []const u8) !void {
+    if (key_text.len == 0) return out.appendSlice(allocator, value_text);
+    const depth = std.mem.count(u8, indent, ">");
+    if (blockBody(allocator, depth + 1, value_text)) |body| {
+        defer allocator.free(body);
+        try out.append(allocator, '\n');
         // printNode ends every line (the last included) with '\n'; the caller
         // supplies the entry's own line break, so drop the printed trailing one.
-        try out.appendSlice(self.allocator, std.mem.trimEnd(u8, body, "\n"));
+        try out.appendSlice(allocator, std.mem.trimEnd(u8, body, "\n"));
     } else {
-        try out.appendSlice(self.allocator, " = ");
-        try out.appendSlice(self.allocator, value_text);
+        try out.appendSlice(allocator, " = ");
+        try out.appendSlice(allocator, value_text);
     }
-}
-
-/// Replace a mapping key's value, re-framing a block-container replacement onto
-/// the following lines as a nested section (`key` header + `> …` body) rather
-/// than splicing it into the old value's inline slot — which has no valid fig
-/// spelling for a block map/sequence. An inline replacement (flow container or
-/// scalar) keeps the direct span splice. This is fig's twin of YAML's
-/// `reframeMappingValue`; the generic engine routes here for any fig mapping
-/// value edit. A trailing comment on the rewritten entry line is not preserved
-/// when re-framing (rare on a machine-spliced value); the reparse net still
-/// guards correctness.
-///
-/// The `replaceValAtPath` hook (see `editor.Editor.replaceValAtPath`), so it
-/// owns every target — but only a MAPPING VALUE has an inline slot that a block
-/// container cannot occupy. A sequence item or the document root takes the
-/// generic direct splice, here rather than in the engine. `node` is unused: the
-/// decision is `path`'s to make.
-pub fn reframeMappingValue(self: *FigEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, val_span: Span, replacement: []const u8) !void {
-    _ = node;
-    if (path.len == 0 or std.meta.activeTag(path[path.len - 1]) != .key)
-        return self.replaceAtSpan(val_span, replacement);
-    const source = self.source.items;
-    const key_node = try parsed.ast.getKeyByPath(path);
-    const key_span = parsed.span(key_node);
-    const depth = markerDepth(source, key_span.start);
-    if (blockBody(self, depth + 1, replacement)) |body| {
-        defer self.allocator.free(body);
-        var out: std.ArrayList(u8) = .empty;
-        defer out.deinit(self.allocator);
-        try out.append(self.allocator, '\n');
-        try out.appendSlice(self.allocator, std.mem.trimEnd(u8, body, "\n"));
-        // Replace `= <old value>` (from just past the key through the old value's
-        // end) with the re-framed block; the key and its marker prefix stay put.
-        try self.replaceAtSpan(Span.init(key_span.end, val_span.end), out.items);
-        return;
-    }
-    try self.replaceAtSpan(val_span, replacement);
-}
-
-// ============================================================================
-// insertKey — `Editor(Fig).insertKey`'s fig branch
-// ============================================================================
-
-/// Insert `key_text = value_text` into the mapping `node` (a block or flow
-/// mapping; `is_root` when `node` is the document root, where keys carry zero
-/// markers). Dispatches on `isFlow`; block insertion lands the new line right
-/// after the mapping's last child's own full extent (safe even if `node`
-/// itself is a re-entered/scattered container — see module doc comment) with
-/// a marker-prefix copied from an existing child.
-///
-/// Takes the full `insertKey` hook signature (see `editor.Editor.insertKey`).
-pub fn figInsertKey(self: *FigEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, span: Span, key_text: []const u8, value_text: []const u8) !void {
-    // An empty path is the document root, whose keys carry zero markers.
-    const is_root = path.len == 0;
-    if (node.kind != .mapping) return error.NotAMapping;
-    const source = self.source.items;
-    if (isFlow(source, span))
-        return figInsertFlowEntry(self, parsed, node, span, key_text, value_text);
-
-    // The only empty block mapping is the root of an empty (or comments-only)
-    // document — a childless *nested* block container is `FigEmptyContainer` at
-    // parse time — so seeding a fresh file's first key just appends at
-    // end-of-source with no marker prefix (root keys always carry zero markers).
-    // With a child present there is always one to anchor the insertion on and
-    // (for a non-root mapping) to copy a prefix from.
-    if (try parsed.ast.lastChild(&node)) |last| {
-        const prefix: []const u8 = if (is_root) "" else blk: {
-            const first_key = (try parsed.ast.firstChildKey(&node)).?;
-            break :blk linePrefix(source, parsed.span(first_key).start);
-        };
-        const insert_at = lineEndAfter(source, parsed.span(last).end -| 1);
-        return spliceKeyLine(self, insert_at, prefix, key_text, value_text);
-    }
-    return spliceKeyLine(self, source.len, "", key_text, value_text);
-}
-
-/// Splice a `<prefix>key = value` line into the block mapping source at
-/// `insert_at`, ensuring it starts on its own line. Shared by the has-children
-/// and empty-root arms of `figInsertKey`.
-fn spliceKeyLine(self: *FigEditor, insert_at: usize, prefix: []const u8, key_text: []const u8, value_text: []const u8) !void {
-    const source = self.source.items;
-
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-    if (insert_at > 0 and source[insert_at - 1] != '\n') try out.append(self.allocator, '\n');
-    try out.appendSlice(self.allocator, prefix);
-    try out.appendSlice(self.allocator, key_text);
-    // A block-container value hangs under the key as a section one level below
-    // its marker depth (the leading `>` run copied into `prefix`); an inline
-    // value follows `key = ` directly.
-    try appendKeyValueTail(self, &out, std.mem.count(u8, prefix, ">"), value_text);
-    try out.append(self.allocator, '\n');
-    try self.replaceAtSpan(Span.init(insert_at, insert_at), out.items);
-}
-
-/// Splice `key_text <sep> value_text` into a flow mapping (`{ … }`), matching
-/// the object's own pair mode: fig-inline (`=`, bare-or-quoted keys) or JSON
-/// (`:`, quoted keys required) — a flow object may not mix the two
-/// (`FigMixedFlowSeparators`). An empty `{}` defaults to fig-inline, the
-/// native/first-class spelling. `key_text` is spliced verbatim (the same
-/// contract every other `insertKey` arm relies on): inserting an unquoted key
-/// into a JSON-mode object is caught by the reparse-rollback safety net
-/// (`replaceAtSpan`), not pre-validated here.
-fn figInsertFlowEntry(self: *FigEditor, parsed: Document, node: AST.Node, span: Span, key_text: []const u8, value_text: []const u8) !void {
-    const source = self.source.items;
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-
-    if (node.kind.mapping) |first_id| {
-        const kv = parsed.ast.nodes[first_id].kind.keyvalue;
-        const first_key_end = parsed.span(parsed.ast.nodes[kv.key]).end;
-        const after = firstNonSpace(source, first_key_end);
-        const sep: []const u8 = if (after < source.len and source[after] == ':') ": " else " = ";
-
-        var last = first_id;
-        while (parsed.ast.nodes[last].next_sibling) |n| last = n;
-        const at = parsed.span(parsed.ast.nodes[last]).end;
-
-        try out.appendSlice(self.allocator, ", ");
-        try out.appendSlice(self.allocator, key_text);
-        try out.appendSlice(self.allocator, sep);
-        try out.appendSlice(self.allocator, value_text);
-        try self.replaceAtSpan(Span.init(at, at), out.items);
-        return;
-    }
-
-    try out.append(self.allocator, ' ');
-    try out.appendSlice(self.allocator, key_text);
-    try out.appendSlice(self.allocator, " = ");
-    try out.appendSlice(self.allocator, value_text);
-    try out.append(self.allocator, ' ');
-    const at = span.start + 1; // just after '{'
-    try self.replaceAtSpan(Span.init(at, at), out.items);
 }
 
 // =======

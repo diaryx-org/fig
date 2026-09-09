@@ -160,6 +160,7 @@ pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Ty
     const doc = try parse(allocator, input, format);
     allocator.free(doc.node_spans);
     allocator.free(doc.node_marker_spans);
+    allocator.free(doc.node_sep_spans);
     return doc.ast;
 }
 
@@ -173,6 +174,7 @@ fn parseImpl(allocator: std.mem.Allocator, input: []const u8, format: Type, out:
         parser.arena.nodes.deinit(allocator);
         parser.arena.spans.deinit(allocator);
         parser.arena.markers.deinit(allocator);
+        parser.arena.seps.deinit(allocator);
         return err;
     };
 }
@@ -208,10 +210,14 @@ fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Documen
     errdefer self.allocator.free(nodes);
     const spans = try self.arena.spans.toOwnedSlice(self.allocator);
     errdefer self.allocator.free(spans);
-    const node_marker_spans = try Document.buildMarkerSpans(self.allocator, nodes.len, self.arena.markers.items);
+    const node_marker_spans = try Document.buildSpanTable(self.allocator, nodes.len, self.arena.markers.items);
     errdefer self.allocator.free(node_marker_spans);
     self.arena.markers.deinit(self.allocator);
     self.arena.markers = .empty;
+    const node_sep_spans = try Document.buildSpanTable(self.allocator, nodes.len, self.arena.seps.items);
+    errdefer self.allocator.free(node_sep_spans);
+    self.arena.seps.deinit(self.allocator);
+    self.arena.seps = .empty;
     const owned = try self.owned_strings.toOwnedSlice(self.allocator);
 
     var ast: AST = .{ .allocator = self.allocator, .root = root_id, .nodes = nodes, .owned_strings = owned };
@@ -220,7 +226,7 @@ fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Documen
         self.arena.node_comments = .empty;
     }
 
-    return .{ .source = input, .ast = ast, .node_spans = spans, .node_marker_spans = node_marker_spans };
+    return .{ .source = input, .ast = ast, .node_spans = spans, .node_marker_spans = node_marker_spans, .node_sep_spans = node_sep_spans };
 }
 
 // ── Line cursor ─────────────────────────────────────────────────────────────
@@ -453,6 +459,11 @@ fn parseDictBlock(self: *Parser, indent: usize) ParserError!AST.Node.Id {
             if (self.peek().indent <= indent) return self.failAtLine(self.peek(), error.MultilineKeyBadValue);
             const value_id = try self.parseRegion(indent, .err); // unreachable fallback: already validated deeper content exists
             _ = try flat_map.putEntry(&self.arena, map_id, key_id, value_id, .err);
+            // A multiline key has no separator token; its value's tail starts
+            // right after the key, so record a zero-width separator there —
+            // the editor still reframes the value (see the plain arm below).
+            const kv_id: AST.Node.Id = @intCast(self.arena.nodes.items.len - 1);
+            try self.arena.seps.append(self.allocator, .{ .node_id = kv_id, .span = Span.init(mk.span.end, mk.span.end) });
             end = self.arena.spans.items[value_id].end;
         } else if (l.kind == .other and self.isDictItemLine(l)) {
             const split = self.splitDictItem(l).?;
@@ -470,6 +481,12 @@ fn parseDictBlock(self: *Parser, indent: usize) ParserError!AST.Node.Id {
             try self.claimLeading(key_id);
             const value_id = try self.parseItemValue(Span.init(split.val_start, l.content.end), indent);
             _ = try flat_map.putEntry(&self.arena, map_id, key_id, value_id, .err);
+            // `putEntry` with `.err` always adds, and the `keyvalue` it adds
+            // is the newest node. Its `:` is the entry's separator, which is
+            // what lets the editor reframe the value (a multiline `: key`
+            // entry has none, and records none).
+            const kv_id: AST.Node.Id = @intCast(self.arena.nodes.items.len - 1);
+            try self.arena.seps.append(self.allocator, .{ .node_id = kv_id, .span = Span.init(split.key_end, split.key_end + 1) });
             end = self.arena.spans.items[value_id].end;
         } else {
             return self.failAtLine(l, error.ExpectedDictItem);

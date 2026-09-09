@@ -484,6 +484,19 @@ pub const Syntax = struct {
     /// cashed in.
     kv_sep: ?[]const u8,
 
+    /// Whether the flow-entry insert copies the separator the container's
+    /// FIRST entry uses — the bytes between that entry's key and value —
+    /// rather than writing `kv_sep`. True for fig, whose flow objects are
+    /// either `=`-mode or `:`-mode (JSON-embedded) and may not mix the two,
+    /// so the right separator is whichever the object already uses. An
+    /// empty flow mapping has no first entry and takes `kv_sep`.
+    flow_kv_sep_from_siblings: bool = false,
+
+    /// Bytes written inside the braces around a freshly created single
+    /// member of an EMPTY flow mapping: `" "` for fig's `{ x = 1 }`, none
+    /// for JSON's and YAML's tight `{x: 1}`.
+    flow_map_pad: []const u8 = "",
+
     /// How a logical key renders into this format's key syntax. See `KeyStyle`.
     key_style: KeyStyle = .verbatim,
 

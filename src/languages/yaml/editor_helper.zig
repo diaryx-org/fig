@@ -31,41 +31,6 @@ const columnOf = splice.columnOf;
 
 // --- reference layer + block-mapping value framing (the YAML arm of the engine) ---
 
-/// Replace a mapping key's value, re-emitting `: value` through `writeMapValue`
-/// so the new value's framing (inline scalar vs block collection on following
-/// lines) is always valid regardless of the old value's shape.
-///
-/// The `replaceValAtPath` hook (see `editor.Editor.replaceValAtPath`), so it
-/// owns every target — but only a MAPPING VALUE can change between inline and
-/// block framing. A sequence item or the document root has no `key:` to
-/// re-emit, so those take the generic direct splice, here rather than in the
-/// engine. `node` is unused: the decision is `path`'s to make.
-pub fn reframeMappingValue(self: *YamlEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, val_span: Span, replacement: []const u8) !void {
-    _ = node;
-    if (path.len == 0 or std.meta.activeTag(path[path.len - 1]) != .key)
-        return self.replaceAtSpan(val_span, replacement);
-    const source = self.source.items;
-    const key_node = try parsed.ast.getKeyByPath(path);
-    const key_span = parsed.span(key_node);
-    // The `:` indicator sits just past the key (a plain key cannot contain `:`,
-    // and a quoted key's `:` is inside `key_span`).
-    const colon = std.mem.indexOfScalarPos(u8, source, key_span.end, ':') orelse
-        return error.InvalidDocument;
-
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-    // A block value descends under the key's own line prefix.
-    var indent_buf: std.ArrayList(u8) = .empty;
-    defer indent_buf.deinit(self.allocator);
-    const indent = try self.indentAt(&indent_buf, key_span.start);
-    // writeMapValue emits the `:` itself, so replace from the existing colon
-    // through the old value's end (a null value is a zero-width span at the
-    // colon, hence the `@max`).
-    try self.writeMapValue(&out, indent, replacement);
-    const end = @max(val_span.end, colon + 1);
-    try self.replaceAtSpan(Span.init(colon, end), out.items);
-}
-
 /// True when `path`'s final `.key` segment is not a physical entry of its parent
 /// mapping but is supplied by a `<<` merge.
 pub fn mergeSuppliesKey(parsed: Document, path: []const AST.PathSegment) !bool {

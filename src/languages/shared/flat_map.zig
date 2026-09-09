@@ -29,7 +29,10 @@ pub const NodeArena = struct {
     node_comments: std.ArrayList(AST.NodeComments) = .empty,
     /// Block-sequence item markers (`Document.node_marker_spans`); only
     /// NestedText, of the arena's users, has a block sequence to record.
-    markers: std.ArrayList(Document.MarkerEntry) = .empty,
+    markers: std.ArrayList(Document.SpanEntry) = .empty,
+    /// Entry separators (`Document.node_sep_spans`); NestedText records its
+    /// plain keys' `:` so their values reframe.
+    seps: std.ArrayList(Document.SpanEntry) = .empty,
 
     pub fn addNode(self: *NodeArena, kind: AST.Node.Kind, span: Span) std.mem.Allocator.Error!AST.Node.Id {
         const id: AST.Node.Id = @intCast(self.nodes.items.len);
@@ -49,6 +52,7 @@ pub const NodeArena = struct {
         self.spans.deinit(self.allocator);
         self.node_comments.deinit(self.allocator);
         self.markers.deinit(self.allocator);
+        self.seps.deinit(self.allocator);
     }
 };
 

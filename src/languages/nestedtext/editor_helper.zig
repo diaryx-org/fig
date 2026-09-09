@@ -34,9 +34,9 @@
 //!      reorder's block boundaries, the leading-comment ops when `path` ends
 //!      in `.index` — read it, so none of those is NestedText's any more.
 //!      What is still this module's is RENDERING: a same-line value versus a
-//!      nested `>`-block, which the `replaceValAtPath` hook decides by
-//!      reframing from the `-` (`dashPosAfterPrev`/`dashPosByIndex` find it
-//!      by scanning; they go when that hook does).
+//!      nested `>`-block, which `renderItem` and `renderTail` decide; the
+//!      engine reframes an item from its recorded `-` and an entry from its
+//!      recorded `:`.
 //!
 //! An inline `{}`/`[]` container is a FLOW container to the engine, so an
 //! insert into one is the generic comma-aware splice (`{a: 1}`), using the
@@ -161,87 +161,17 @@ fn appendMultilineKeyLines(allocator: std.mem.Allocator, out: *std.ArrayList(u8)
     }
 }
 
-/// Whether the key at `key_span` is currently written in MULTILINE (`: key`)
-/// form rather than plain (`key:`) form. A multiline key's physical FIRST
-/// line, once you skip its indentation, starts with a `:` tag exactly like a
-/// tokenizer `.colon` line (`:` at end-of-line, or `:` followed by a space) —
-/// a plain key's line can never start that way (the tokenizer would have
-/// dispatched it as a multiline-key line to begin with, never handing the
-/// parser's `.other`/plain-key path a leading `": "`/bare-`:` to trip over),
-/// so this check is exact, not a heuristic.
-fn isMultilineKeySpan(source: []const u8, key_span: Span) bool {
-    const line_start = lineStartBefore(source, key_span.start);
-    const fns = firstNonSpace(source, line_start);
-    if (fns >= source.len or source[fns] != ':') return false;
-    if (fns + 1 >= source.len) return true;
-    const c = source[fns + 1];
-    return c == ' ' or c == '\n' or c == '\r';
-}
-
-/// Whether a value's span is the implicit empty-string SENTINEL (an omitted
-/// `key:`/`-` with nothing more-indented following — see `parser.zig`'s
-/// `MissingBehavior.empty_string`): its zero-width span sits at the START of
-/// whatever comes next (a dedented sibling's line, or EOF) rather than just
-/// before its own line's `\n` the way every other value shape's span does
-/// (same-line scalar, nested container, or an explicit `>`-block, even an
-/// empty one — `parseContainerAt`/`parseStringBlock` never produce a
-/// zero-width span). `ntReplaceValue` uses this to decide whether the
-/// replacement needs to supply its OWN trailing newline (sentinel: yes,
-/// nothing to reuse) or can rely on the original line's `\n` riding along
-/// just past the splice (every other shape: no).
-fn isEmptySentinel(span: Span) bool {
-    return span.len() == 0;
-}
-
-// ── Sequence item dash-position recovery ────────────────────────────────────
-
-/// Byte position of the `-` introducing the sequence item that immediately
-/// follows `prev` (or the FIRST item, when `prev` is null) in `seq`. For the
-/// first item this is recovered from the sequence node's own span — which,
-/// like a `.keyvalue`'s, is always anchored at the `-` line that started the
-/// block (see `parser.zig`'s `parseListBlock`) — regardless of whether that
-/// first item's own value is nested. For a later item, scans forward from
-/// `prev`'s owned content to the next real content line, skipping blank and
-/// comment lines exactly as `parser.zig`'s own `probeNext`/`skipBlank` do (so
-/// a leading comment immediately above the next item is correctly left
-/// un-skipped-past — it's that item's, not `prev`'s).
-fn dashPosAfterPrev(source: []const u8, parsed: Document, seq: AST.Node, prev: ?AST.Node) usize {
-    if (prev) |p| return firstNonSpace(source, nextContentLineStart(source, parsed.span(p).end));
-    return firstNonSpace(source, parsed.span(seq).start);
-}
-
-/// `dashPosAfterPrev`, but by ordinal `index` (0-based) rather than an
-/// already-in-hand `prev` node — for call sites (comment ops, `set`) that
-/// only have a `PathSegment.index`, not a live traversal cursor.
-fn dashPosByIndex(source: []const u8, parsed: Document, seq: AST.Node, index: usize) !usize {
-    if (index == 0) return dashPosAfterPrev(source, parsed, seq, null);
-    var prev = (try parsed.ast.child(&seq)) orelse return error.NotFound;
-    var i: usize = 0;
-    while (i < index - 1) : (i += 1) prev = parsed.ast.next(&prev) orelse return error.NotFound;
-    return dashPosAfterPrev(source, parsed, seq, prev);
-}
-
-/// Scan forward from byte `from` (the end of a sibling's owned content) past
-/// any blank/comment lines to the start of the next real content line — the
-/// only two things NestedText's grammar allows between block siblings (see
-/// `parser.zig`'s `skipBlank`/`probeNext`), so the line this lands on is
-/// guaranteed to be the next sibling's own tag line (or a leading comment
-/// belonging to it, which is exactly what a caller computing a comment-aware
-/// block boundary wants to land on next).
-fn nextContentLineStart(source: []const u8, from: usize) usize {
-    var i = lineEndAfter(source, from);
-    while (i < source.len) {
-        const line_end = lineEndAfter(source, i);
-        const fns = firstNonSpace(source, i);
-        const is_blank = fns >= source.len or fns >= line_end or source[fns] == '\n' or source[fns] == '\r';
-        const is_comment = !is_blank and source[fns] == '#';
-        if (is_blank or is_comment) {
-            i = line_end;
-            continue;
-        }
-        return i;
-    }
-    return i;
+/// Whether `key` as WRITTEN is in the multiline `: key` form rather than the
+/// plain `key:` form: its first line, once you skip its indentation, starts
+/// with a `:` tag exactly like a tokenizer `.colon` line (`:` at end-of-line,
+/// or `:` followed by a space) — a plain key's text can never start that way
+/// (the tokenizer would have dispatched it as a multiline-key line to begin
+/// with), so this check is exact, not a heuristic.
+fn isMultilineKeyText(key: []const u8) bool {
+    const k = std.mem.trimStart(u8, key, " \t");
+    if (k.len == 0 or k[0] != ':') return false;
+    if (k.len == 1) return true;
+    return k[1] == ' ' or k[1] == '\n' or k[1] == '\r';
 }
 
 // ── renderEntry / renderItem ─────────────────────────────────────────────────
@@ -278,99 +208,51 @@ pub fn renderItem(allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent:
     try appendValueTail(allocator, out, child.items, value_text, false);
 }
 
-// ── set / replaceValAtPath ───────────────────────────────────────────────────
+// ── renderTail / renderKey ───────────────────────────────────────────────────
 
-/// Replace the value at `path` (root, a `.key`, or an `.index`) by reframing
-/// from just past its key/dash through the old value's end with a freshly
-/// rendered `replacement` — see the module doc's "value framing" point for
-/// why a direct span splice (as most other languages' generic path does)
-/// can't work here. Overwrites whatever the old value's shape was (scalar or
-/// a whole nested container) with the new scalar `replacement` wholesale.
-///
-/// Takes the full `replaceValAtPath` hook signature (see
-/// `editor.Editor.replaceValAtPath`); `node` is the generic engine's, unused
-/// here — `span` is already its extent, and the reframe is keyed off `path`'s
-/// final segment (`.key`, `.index`, or the path-less root), all three of which
-/// this handles.
-pub fn ntReplaceValue(self: *NtEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, span: Span, replacement: []const u8) !void {
-    _ = node;
-    const source = self.source.items;
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-    const needs_own_newline = isEmptySentinel(span);
-
-    if (path.len == 0) {
-        try appendRootBlock(self.allocator, &out, replacement);
-        if (needs_own_newline) try out.append(self.allocator, '\n');
-        try self.replaceAtSpan(Span.init(0, span.end), out.items);
-        return;
-    }
-
-    switch (path[path.len - 1]) {
-        .key => {
-            const key_node = try parsed.ast.getKeyByPath(path);
-            const key_span = parsed.span(key_node);
-            var child: std.ArrayList(u8) = .empty;
-            defer child.deinit(self.allocator);
-            _ = try self.indentAt(&child, firstNonSpace(source, lineStartBefore(source, key_span.start)));
-            try child.appendSlice(self.allocator, indent_unit);
-            const multiline_key = isMultilineKeySpan(source, key_span);
-            if (!multiline_key) try out.append(self.allocator, ':');
-            try appendValueTail(self.allocator, &out, child.items, replacement, multiline_key);
-            if (needs_own_newline) try out.append(self.allocator, '\n');
-            try self.replaceAtSpan(Span.init(key_span.end, span.end), out.items);
-        },
-        .index => |idx| {
-            const seq = try parsed.ast.getValByPath(path[0 .. path.len - 1]);
-            if (seq.kind != .sequence) return error.NotASequence;
-            const dash_pos = try dashPosByIndex(source, parsed, seq, idx);
-            var child: std.ArrayList(u8) = .empty;
-            defer child.deinit(self.allocator);
-            _ = try self.indentAt(&child, dash_pos);
-            try child.appendSlice(self.allocator, indent_unit);
-            try appendValueTail(self.allocator, &out, child.items, replacement, false);
-            if (needs_own_newline) try out.append(self.allocator, '\n');
-            try self.replaceAtSpan(Span.init(dash_pos + 1, span.end), out.items);
-        },
-    }
+/// What follows a key: `:` and the value tail after a plain key, the tail
+/// alone (always nested) after a multiline `: key` — `key_text` is the key
+/// as written, so the form is read off it — or, for an empty `key_text`,
+/// the DOCUMENT ROOT: a `>`-block at column 0, always nested, since a bare
+/// top-level scalar line has no grammar at all (see `parser.zig`: an
+/// unrecognized `.other` line at the top level is a parse error). No
+/// trailing newline. See `editor.Editor.writeTail`.
+pub fn renderTail(allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, key_text: []const u8, value_text: []const u8) !void {
+    if (key_text.len == 0) return appendRootBlock(allocator, out, value_text);
+    var child: std.ArrayList(u8) = .empty;
+    defer child.deinit(allocator);
+    try child.appendSlice(allocator, indent);
+    try child.appendSlice(allocator, indent_unit);
+    const multiline_key = isMultilineKeyText(key_text);
+    if (!multiline_key) try out.append(allocator, ':');
+    try appendValueTail(allocator, out, child.items, value_text, multiline_key);
 }
 
-// ── replaceKeyAtPath ─────────────────────────────────────────────────────────
-
-/// Rename the key at `path` to `new_key_text`. Plain-to-plain and
-/// multiline-to-multiline rename in place (the colon, when present, sits
-/// outside the key's own span either way, so it's untouched); multiline-to-
-/// plain adds the trailing `:` a plain key needs (a multiline key's span
-/// carries no separator colon anywhere — see the module's `isMultilineKeySpan`
-/// doc). Plain-to-multiline is declined (`error.KeyRequiresMultilineForm`):
+/// The key `new_key` spelled over the old key `old_key` (as written).
+/// Plain-to-plain and multiline-to-multiline rename in place (the colon,
+/// when present, sits outside the key's own span either way, so it's
+/// untouched); multiline-to-plain adds the trailing `:` a plain key needs (a
+/// multiline key's span carries no separator colon anywhere). A multiline
+/// key's span starts at its line's indent, so that form carries `indent`
+/// itself. Plain-to-multiline is declined (`error.KeyRequiresMultilineForm`):
 /// when the current value is on the SAME line as the key, switching key forms
 /// would also have to relocate the value onto a nested line (multiline keys
 /// never have a same-line value), which is a value reframe this op doesn't
-/// attempt — delete and re-insert the entry instead.
-pub fn ntReplaceKey(self: *NtEditor, parsed: Document, path: []const AST.PathSegment, new_key_text: []const u8) !void {
-    const source = self.source.items;
-    const key_node = try parsed.ast.getKeyByPath(path);
-    const key_span = parsed.span(key_node);
-    const was_multiline = isMultilineKeySpan(source, key_span);
-    const wants_multiline = needsMultilineKey(new_key_text);
+/// attempt — delete and re-insert the entry instead. See
+/// `editor.Editor.replaceKeyAtPath`.
+pub fn renderKey(allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, new_key: []const u8, old_key: []const u8) !void {
+    const was_multiline = isMultilineKeyText(old_key);
+    const wants_multiline = needsMultilineKey(new_key);
     if (wants_multiline and !was_multiline) return error.KeyRequiresMultilineForm;
-
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
     if (wants_multiline) {
-        // A multiline key's span starts at its line start, indentation
-        // included, so the replacement carries the indent itself.
-        const line_start = lineStartBefore(source, key_span.start);
-        const indent = source[line_start..firstNonSpace(source, line_start)];
-        try out.appendSlice(self.allocator, indent);
-        try appendMultilineKeyLines(self.allocator, &out, indent, new_key_text);
+        try out.appendSlice(allocator, indent);
+        try appendMultilineKeyLines(allocator, out, indent, new_key);
     } else if (was_multiline) {
-        try out.appendSlice(self.allocator, new_key_text);
-        try out.append(self.allocator, ':');
+        try out.appendSlice(allocator, new_key);
+        try out.append(allocator, ':');
     } else {
-        try out.appendSlice(self.allocator, new_key_text);
+        try out.appendSlice(allocator, new_key);
     }
-    try self.replaceAtSpan(key_span, out.items);
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────

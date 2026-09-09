@@ -78,12 +78,13 @@ pub const Language = struct {
         };
     }
 
-    // ── Editing hooks and renderers ──────────────────────────────────────────
+    // ── Renderers ────────────────────────────────────────────────────────────
     //
-    // Two renderers say how NestedText spells an entry and an item, and two
-    // hooks remain for the reframes the engine cannot yet express. The
-    // engine dispatches on PRESENCE — `@hasDecl(Language, "renderEntry")` —
-    // and every operation not named below runs the generic implementation.
+    // No hooks. Four renderers say how NestedText spells an entry, an item,
+    // what follows a key, and a renamed key; every operation is the generic
+    // engine's. The engine dispatches on PRESENCE — `@hasDecl(Language,
+    // "renderEntry")` — and a renderer it finds is called with strings and
+    // returns a string.
     // The logic lives in `editor_helper.zig` (which holds this format's
     // editor tests too), not here: this block is the DECLARATION of what
     // this format supplies.
@@ -99,17 +100,21 @@ pub const Language = struct {
     /// an empty or multi-line value.
     pub const renderItem = edit.renderItem;
 
-    /// `replacement` is always a raw scalar (this format has no typed or quoted
-    /// literal syntax to splice verbatim) and has to be RENDERED same-line or
-    /// as a nested `>`-block per its shape — and since that shape may differ
-    /// from the old value's, the reframe runs from the key or dash through the
-    /// old value's end rather than over the value span alone.
-    pub const replaceValAtPath = edit.ntReplaceValue;
+    /// A value is always a raw scalar (this format has no typed or quoted
+    /// literal syntax to splice verbatim) RENDERED same-line or as a nested
+    /// `>`-block per its shape, so a replacement is reframed from the key —
+    /// `:` and the tail after a plain key, the tail alone after a multiline
+    /// `: key`, which has no separator — and the document root is a `>`
+    /// block at column 0. The parser records each plain key's `:` so the
+    /// engine knows to reframe.
+    pub const renderTail = edit.renderTail;
 
     /// A plain key's span excludes its trailing `:` while a multiline key has
-    /// no separator colon at all, so converting between the two forms means
-    /// adding or dropping one.
-    pub const replaceKeyAtPath = edit.ntReplaceKey;
+    /// no separator colon at all and starts at its line's indent, so a rename
+    /// spells the new key in whichever form it needs, adding or dropping the
+    /// colon — and refuses plain-to-multiline, which would also have to move
+    /// a same-line value.
+    pub const renderKey = edit.renderKey;
 };
 
 // Test discovery: importing `nestedtext.zig` (from root.zig) pulls in every

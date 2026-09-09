@@ -111,22 +111,20 @@ pub const Language = struct {
     // ── Editing hooks ────────────────────────────────────────────────────────
     //
     // Operations this format takes over from the generic splice engine.
-    // `Editor` dispatches on PRESENCE — `@hasDecl(Language, "insertKey")` — so
-    // declaring one here is the whole of opting in, and every operation not
-    // named below runs the generic implementation. Each signature is fixed by
-    // the `editor.Editor` method of the same name; see its doc comment.
+    // `Editor` dispatches on PRESENCE — `@hasDecl(Language, "keyIsInherited")`
+    // — so declaring one here is the whole of opting in, and every operation
+    // not named below runs the generic implementation. Each signature is
+    // fixed by the `editor.Editor` method of the same name; see its doc
+    // comment. The value reframe that used to be hooked here — re-emitting
+    // `: value` so a block collection can replace an inline one — is the
+    // engine's now: the parser records every entry's `:` and the engine
+    // rewrites everything after the key (`Document.node_sep_spans`).
     //
     // The logic lives in `editor_helper.zig` (which holds this format's editor
     // tests too), not here: this block is the DECLARATION of which operations
     // are overridden, so a reader can see a format's whole answer in one struct
     // without opening the helper.
     const edit = @import("editor_helper.zig");
-
-    /// A block collection has no inline `k: <block>` spelling, so the whole
-    /// `: value` is re-emitted and the new value's framing follows its own
-    /// shape — which a splice into the old value's slot cannot do (`k: []` to a
-    /// block list).
-    pub const replaceValAtPath = edit.reframeMappingValue;
 
     /// A `<<` merge supplies keys the mapping never spells out, so a key can
     /// resolve without any physical entry to edit or delete.

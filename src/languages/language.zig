@@ -741,9 +741,8 @@ const Decls = struct {
     /// vocabulary through `Syntax.section_noun`. See
     /// `docs/proposals/derived-regions.md`.
     const hooks = [_][]const u8{
-        "insertKey",                 "replaceValAtPath",
-        "replaceValAtPathFollowing", "replaceKeyAtPath",
-        "keyIsInherited",
+        "insertKey",      "replaceValAtPathFollowing",
+        "replaceKeyAtPath", "keyIsInherited",
     };
 
     /// Fragment renderers. Each is a pure function from strings to a string
@@ -752,11 +751,17 @@ const Decls = struct {
     /// `renderEntry(allocator, out, indent, key_text, value_text)` spells a
     /// block-mapping entry past its line's indent (plist's two-line pair,
     /// NestedText's `key:` and `>`-block), `renderItem(allocator, out,
-    /// indent, value_text)` a block-sequence item. None receives the editor
-    /// or performs a splice; the engine calls one at most once per edit and
-    /// splices the result. See `editor.Editor.renderedValue`, `writeEntry`
-    /// and `writeItem`, and `docs/proposals/runtime-languages.md` §4.4.
-    const renderers = [_][]const u8{ "renderValue", "renderEntry", "renderItem" };
+    /// indent, value_text)` a block-sequence item, `renderTail(allocator,
+    /// out, indent, key_text, value_text)` what follows a key — the
+    /// separator and the value inline, or the value re-framed as a block on
+    /// the following lines — and `renderKey(allocator, out, indent,
+    /// key_text, old_key)` a renamed key in the form the old one allows.
+    /// None receives the editor or performs a splice; the engine calls one
+    /// at most once per edit and splices the result. See
+    /// `editor.Editor.renderedValue`, `writeEntry`, `writeItem`, `writeTail`
+    /// and `replaceKeyAtPath`, and `docs/proposals/runtime-languages.md`
+    /// §4.4.
+    const renderers = [_][]const u8{ "renderValue", "renderEntry", "renderItem", "renderTail", "renderKey" };
 
     /// The whole-container ops a SECTION format (`Syntax.section_noun` non-
     /// null) may still supply itself. `deleteContainer`, `moveContainer` and

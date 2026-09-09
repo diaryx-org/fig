@@ -192,6 +192,24 @@ pub fn Editor(comptime Language: type) type {
             if (@hasDecl(Language, "renderEntry"))
                 return Language.renderEntry(self.allocator, out, indent, key_text, value_text);
             try out.appendSlice(self.allocator, key_text);
+            try self.writeTail(out, indent, key_text, value_text);
+        }
+
+        /// Write everything that follows a key on its entry: the separator
+        /// and the value inline (`: v`, ` = v`), or the value re-framed onto
+        /// the following lines as a block (`:` then indented lines; fig's
+        /// bare header over a `>` body). `key_text` is the key as written —
+        /// so a renderer can tell a NestedText multiline key, which takes no
+        /// separator — or empty for the DOCUMENT ROOT, where the value stands
+        /// alone. No trailing newline.
+        ///
+        /// **Renderer** `renderTail(allocator, out, indent, key_text,
+        /// value_text) !void`. Without it the tail is `writeMapValue`, which
+        /// is YAML's answer and the default for every line-structured format.
+        /// `value_text` has been through `renderedValue`.
+        fn writeTail(self: *Self, out: *std.ArrayList(u8), indent: []const u8, key_text: []const u8, value_text: []const u8) !void {
+            if (@hasDecl(Language, "renderTail"))
+                return Language.renderTail(self.allocator, out, indent, key_text, value_text);
             try self.writeMapValue(out, indent, value_text);
         }
 
@@ -364,16 +382,72 @@ pub fn Editor(comptime Language: type) type {
                 return err;
             };
             const span = parsed.span(node);
-            if (@hasDecl(Language, "replaceValAtPath"))
-                return Language.replaceValAtPath(self, parsed, path, node, span, replacement);
-            // The engine's veto, before anything is spliced — a target whose
-            // span is a header/dotted KEY, not a value slot. The root is let
-            // through: its span is the whole document, which is exactly what
-            // replacing the root means.
-            if (path.len > 0 and parsed.isSection(node)) return self.refuse(.replace);
+            const source = self.source.items;
             var buf: std.ArrayList(u8) = .empty;
             defer buf.deinit(self.allocator);
-            try self.replaceAtSpan(span, try self.renderedValue(&buf, replacement));
+            const rendered = try self.renderedValue(&buf, replacement);
+            var out: std.ArrayList(u8) = .empty;
+            defer out.deinit(self.allocator);
+            var indent_buf: std.ArrayList(u8) = .empty;
+            defer indent_buf.deinit(self.allocator);
+
+            // The document root: the value stands alone. A format that
+            // renders tails spells it (NestedText's `>` block); the rest
+            // splice it as written.
+            if (path.len == 0) {
+                if (!@hasDecl(Language, "renderTail")) return self.replaceAtSpan(span, rendered);
+                try self.writeTail(&out, "", "", rendered);
+                try self.terminateLine(&out, span.end);
+                return self.replaceAtSpan(Span.init(0, span.end), out.items);
+            }
+            // A mapping value whose entry records its separator is REFRAMED:
+            // everything after the key is rewritten through `writeTail`, so
+            // the value may change shape between inline and block. This runs
+            // ahead of the section veto because a format whose block
+            // container hangs under a bare header (fig) records a zero-width
+            // separator there, and its reframe rewrites the container's body
+            // in place. See `Document.node_sep_spans`.
+            if (std.meta.activeTag(path[path.len - 1]) == .key) {
+                const kv = try parsed.ast.getNodeByPath(path);
+                if (parsed.sepSpan(kv)) |sep| {
+                    const key_span = parsed.span(parsed.ast.nodes[kv.kind.keyvalue.key]);
+                    const indent = try self.indentAt(&indent_buf, key_span.start);
+                    try self.writeTail(&out, indent, source[key_span.start..key_span.end], rendered);
+                    // A null value is a zero-width span at the separator.
+                    const end = @max(span.end, sep.end);
+                    try self.terminateLine(&out, end);
+                    return self.replaceAtSpan(Span.init(key_span.end, end), out.items);
+                }
+            }
+            // The engine's veto, before anything is spliced — a target whose
+            // span is a header/dotted KEY, not a value slot.
+            if (parsed.isSection(node)) return self.refuse(.replace);
+            // A sequence item is reframed the same way when the format
+            // renders items and the parser recorded the item's marker: the
+            // marker and value are rewritten together through `writeItem`.
+            if (@hasDecl(Language, "renderItem") and std.meta.activeTag(path[path.len - 1]) == .index) {
+                if (parsed.markerSpan(node)) |m| {
+                    const indent = try self.indentAt(&indent_buf, m.start);
+                    try self.writeItem(&out, indent, rendered);
+                    try self.terminateLine(&out, span.end);
+                    return self.replaceAtSpan(Span.init(m.start, span.end), out.items);
+                }
+            }
+            try self.replaceAtSpan(span, rendered);
+        }
+
+        /// A reframe ends at `end`; when that byte sits at a LINE START —
+        /// the old value was an implicit empty whose zero-width span the
+        /// parser anchored on the following line, an empty document, or the
+        /// file's end after its last newline — the rewritten text has
+        /// consumed the old line's terminator (or never had one) and
+        /// supplies its own. Everywhere else the original newline still
+        /// follows the splice.
+        fn terminateLine(self: *Self, out: *std.ArrayList(u8), end: usize) !void {
+            const source = self.source.items;
+            const at_line_start = end == 0 or source[end - 1] == '\n';
+            if (at_line_start and !std.mem.endsWith(u8, out.items, "\n"))
+                try out.append(self.allocator, '\n');
         }
 
         /// Upsert a mapping value: replace the value at `path`, or — when only
@@ -608,6 +682,23 @@ pub fn Editor(comptime Language: type) type {
                 return Language.replaceKeyAtPath(self, parsed, path, replacement);
             const node = try parsed.ast.getKeyByPath(path);
             const span = parsed.span(node);
+            // **Renderer** `renderKey(allocator, out, indent, key_text,
+            // old_key) !void` — spells the new key in the form the old one's
+            // syntax allows, given the old key as written: NestedText's
+            // plain `key:` versus multiline `: key`, whose span carries no
+            // separator and starts at its line's indent. Without it the key
+            // is spliced verbatim.
+            if (@hasDecl(Language, "renderKey")) {
+                const source = self.source.items;
+                var out: std.ArrayList(u8) = .empty;
+                defer out.deinit(self.allocator);
+                var indent_buf: std.ArrayList(u8) = .empty;
+                defer indent_buf.deinit(self.allocator);
+                const line_start = lineStartBefore(source, span.start);
+                const indent = try self.indentAt(&indent_buf, firstNonSpace(source, line_start));
+                try Language.renderKey(self.allocator, &out, indent, replacement, source[span.start..span.end]);
+                return self.replaceAtSpan(span, out.items);
+            }
             try self.replaceAtSpan(span, replacement);
         }
 
@@ -2107,11 +2198,11 @@ pub fn Editor(comptime Language: type) type {
                 try self.writeEntry(&out, child.items, key_text, rendered);
                 return self.expandEmptyContainer(span, closed.map, base, out.items);
             } else if (mapping.id == parsed.ast.root)
-                // The root's span is the whole remaining document (dotenv/
-                // .properties/INI's root is always `Span.init(0, input.len)`
-                // — see each parser's `parseOnce`), so its `.end` is already
-                // the right splice point even with zero existing keys.
-                parsed.span(mapping).end
+                // An empty (or comments-only) document: the first entry goes
+                // at the end of whatever is there. For the flat formats the
+                // root's span is the whole input anyway; for fig it is not
+                // (a comments-only file has a zero-width root).
+                source.len
             else if (parsed.isSection(mapping))
                 // A childless SECTION (INI's empty `[section]` with nothing
                 // under it yet): its span is anchored at just the header's
@@ -2621,6 +2712,16 @@ pub fn Editor(comptime Language: type) type {
                 const last = (try parsed.ast.lastChild(&node)).?;
                 const last_end = parsed.span(last).end;
                 const close = span.end - 1; // the '}'
+                // The separator: `kv_sep`, or the bytes the first entry
+                // writes between its key and value for a format whose flow
+                // objects fix their own mode. See
+                // `Syntax.flow_kv_sep_from_siblings`.
+                const sep: []const u8 = if (self.syntax().flow_kv_sep_from_siblings) blk: {
+                    const first = parsed.ast.nodes[node.kind.mapping.?];
+                    const key_end = parsed.span(parsed.ast.nodes[first.kind.keyvalue.key]).end;
+                    const value_start = parsed.span(parsed.ast.nodes[first.kind.keyvalue.value]).start;
+                    break :blk source[key_end..value_start];
+                } else try self.kvSep();
                 // Multi-line layout: the closing brace is separated from the last
                 // member by a newline. Splice after the last member's value so the
                 // new entry lands on its own line, not jammed before the brace.
@@ -2638,7 +2739,7 @@ pub fn Editor(comptime Language: type) type {
                     try out.appendSlice(self.allocator, ",\n");
                     try out.appendNTimes(self.allocator, ' ', col);
                     try out.appendSlice(self.allocator, key_text);
-                    try out.appendSlice(self.allocator, try self.kvSep());
+                    try out.appendSlice(self.allocator, sep);
                     try out.appendSlice(self.allocator, value_text);
                     try self.replaceAtSpan(Span.init(last_end, last_end), out.items);
                     return;
@@ -2653,7 +2754,7 @@ pub fn Editor(comptime Language: type) type {
                 defer out.deinit(self.allocator);
                 try out.appendSlice(self.allocator, ", ");
                 try out.appendSlice(self.allocator, key_text);
-                try out.appendSlice(self.allocator, try self.kvSep());
+                try out.appendSlice(self.allocator, sep);
                 try out.appendSlice(self.allocator, value_text);
                 try self.replaceAtSpan(Span.init(last_end, last_end), out.items);
                 return;
@@ -2670,9 +2771,12 @@ pub fn Editor(comptime Language: type) type {
             try self.requireFlowValue(value_text);
             var out: std.ArrayList(u8) = .empty;
             defer out.deinit(self.allocator);
+            const pad = self.syntax().flow_map_pad;
+            try out.appendSlice(self.allocator, pad);
             try out.appendSlice(self.allocator, key_text);
             try out.appendSlice(self.allocator, try self.kvSep());
             try out.appendSlice(self.allocator, value_text);
+            try out.appendSlice(self.allocator, pad);
             const at = flowOpenEnd(self.source.items, span); // just after '{' (or ZON's '.{')
             try self.replaceAtSpan(Span.init(at, at), out.items);
         }

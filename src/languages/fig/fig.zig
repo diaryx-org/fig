@@ -77,12 +77,13 @@ pub const Language = struct {
         _ = t;
         return .{
             .comments = .hash,
-            // fig spells an entry `key = value`, but `insertKey` is hooked and
-            // picks the separator from the object it is inserting into — a
-            // flow object is `=`-mode or `:`-mode (JSON-embedded) and may not
-            // mix — so there is no one answer for the generic engine to write,
-            // and no generic path left that would read it. See `Syntax.kv_sep`.
-            .kv_sep = null,
+            // `key = value`. A flow object is `=`-mode or `:`-mode
+            // (JSON-embedded) and may not mix, so an insert into a non-empty
+            // one copies the separator its first entry uses; an empty one
+            // takes this, padded fig-inline style: `{ x = 1 }`.
+            .kv_sep = " = ",
+            .flow_kv_sep_from_siblings = true,
+            .flow_map_pad = " ",
             // A dotted-key format: the flow chain is the idiomatic
             // intermediate form, and `fig fmt` canonicalizes it back.
             .empty_map_literal = "{}",
@@ -103,38 +104,31 @@ pub const Language = struct {
         };
     }
 
-    // ── Editing hooks ────────────────────────────────────────────────────────
+    // ── Renderers ────────────────────────────────────────────────────────────
     //
-    // Operations this format takes over from the generic splice engine.
-    // `Editor` dispatches on PRESENCE — `@hasDecl(Language, "insertKey")` — so
-    // declaring one here is the whole of opting in, and every operation not
-    // named below runs the generic implementation. Each signature is fixed by
-    // the `editor.Editor` method of the same name; see its doc comment.
-    //
-    // The logic lives in `editor_helper.zig` (which holds this format's editor
-    // tests too), not here: this block is the DECLARATION of which operations
-    // are overridden, so a reader can see a format's whole answer in one struct
-    // without opening the helper.
+    // No hooks. Every edit is the generic engine's, driven by `syntax` above
+    // and by one string renderer: how fig spells what follows a key. The
+    // `>` marker prefix a block insert copies is `structural_indent`; where
+    // an insert lands (after the last child's full extent, correct for a
+    // re-entered container) and how a flow object's separator is chosen
+    // (`flow_kv_sep_from_siblings`) are engine rules. The logic lives in
+    // `editor_helper.zig` (which holds this format's editor tests too).
     const edit = @import("editor_helper.zig");
 
-    /// A block insert copies the anchor line's `>` marker prefix (section depth
-    /// is load-bearing, see `Syntax.structural_indent`) and lands after the
-    /// last child's full extent, which stays correct for a re-entered or
-    /// scattered container.
-    pub const insertKey = edit.figInsertKey;
+    /// ` = value` for an inline value; for a block map or sequence value,
+    /// which has no inline `key = <block>` spelling — section headers, `> `
+    /// and `* ` lines only parse standalone — a newline and the value
+    /// re-printed as a nested section one marker level below the key. The
+    /// document root takes the value as written.
+    pub const renderTail = edit.renderTail;
 
     // No delete guard: the engine's section rule covers it. Every block
     // container is a section node (`Document.node_regions`), and a section
     // node cannot be line-spliced — `deleteKey`, `moveKey` and `reorderKeys`
     // refuse it (`CannotDeleteContainer`, …) and point at the
-    // whole-container ops. `replaceValAtPath` is hooked below, and a hook
-    // owns its targets: a block container's value is re-framed in place.
-
-    /// A block map or sequence value has no inline `key = <block>` spelling —
-    /// section headers, `> ` and `* ` lines only parse standalone — so it is
-    /// re-framed onto the following lines as a nested section instead.
-    pub const replaceValAtPath = edit.reframeMappingValue;
-
+    // whole-container ops. A block container's VALUE is still replaceable:
+    // its entry records its `=`, so the engine reframes it through
+    // `renderTail` rather than splicing the section's span.
 
     // ── Whole-container ops ──────────────────────────────────────────────────
     //

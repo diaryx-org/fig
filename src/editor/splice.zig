@@ -1,39 +1,20 @@
-//! The API a format's editing hooks are written against.
+//! Source-coordinate utilities shared by the editor engine, the regions
+//! module and the formats' editor tests.
 //!
-//! A hook — a `Language` decl named for the `Editor` method it overrides (see
-//! `Decls.hooks` in `languages/language.zig`) — is handed the editor and
-//! does its own splicing. The surface it may reach is small and is stated
-//! here, as a file boundary rather than a new abstraction: the free
-//! functions below, plus the handful of `Editor` members named in the next
-//! paragraph. A change to anything in `editor.zig` outside that set cannot
-//! break a format, and a format author can read this one file and know what
-//! they may call. See `docs/proposals/pluggable-formats.md` §5.4.
-//!
-//! **The `Editor` members a hook may use.** These are methods on the generic
-//! `Editor(Language)` and so cannot live in this file; they are the contract
-//! all the same:
-//!
-//!   * `allocator`, `source` — the editor's allocator and its source buffer
-//!     (`source.items` is the current text).
-//!   * `replaceAtSpan(span, text)` — the one primitive every edit reduces to.
-//!   * `getParsed()` — the current parse, reparsed on demand after a splice.
-//!   * `sectionExtentEnd(parsed, node)` and `gatherRegions(parsed, node,
-//!     merge_touching)` — a section node's line regions, derived from
-//!     `Document.node_regions` (see `editor/regions.zig`).
-//!   * `writeMapValue(out, col, text)` — the engine's own `key: value`
-//!     writer, for a hook that only redirects where it lands.
-//!   * `insertBlockKey(parsed, node, key_text, value_text)` — the engine's
-//!     block-mapping insert, for a hook that only bypasses the flow sniff.
-//!
-//! Everything else `pub` on `Editor` is the public editing API (`set`,
-//! `deleteKey`, …) that a hook is *implementing*, not calling.
+//! This file used to be the API a format's editing hooks were written
+//! against, stated as a file boundary: what a hook could reach was the free
+//! functions here and a handful of `Editor` members. There are no hooks any
+//! more — a format states facts (`syntax`, what its parser records on
+//! `Document`) and spells fragments (the renderers, which are pure string
+//! functions) and never receives the editor — so the boundary is simply the
+//! engine's own. See `docs/proposals/runtime-languages.md` §4.4.
 //!
 //! **Source-coordinate utilities.** Editing reframes splice text against the
 //! raw source, because indentation, trailing newlines, and comments live
 //! *outside* any AST node span (node spans are tight: they exclude leading
 //! indent and, except for block scalars, the trailing newline; comments are
 //! not represented in the AST at all). The functions below are that
-//! arithmetic, shared by the engine, `editor/regions.zig` and every hook.
+//! arithmetic, shared by the engine and `editor/regions.zig`.
 
 const std = @import("std");
 const Span = @import("../util/span.zig");

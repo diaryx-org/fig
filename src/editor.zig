@@ -9,9 +9,9 @@ const Span = @import("util/span.zig");
 const json = @import("languages/json/json.zig");
 const json_string = @import("util/json_string.zig");
 const regions = @import("editor/regions.zig");
-/// The hook-facing surface: the source-coordinate utilities the engine, the
-/// regions module and every format's hooks share. Re-exported here for the
-/// engine's own use; a hook imports `editor/splice.zig` directly.
+/// The source-coordinate utilities the engine and the regions module share.
+/// Re-exported here for the engine's own use; a format's editor tests import
+/// `editor/splice.zig` directly.
 const splice = @import("editor/splice.zig");
 const lineStartBefore = splice.lineStartBefore;
 const lineEndAfter = splice.lineEndAfter;
@@ -35,36 +35,42 @@ const log = std.log.scoped(.editor);
 // (and from every `<lang>/<lang>.zig`) pulls in nothing else.
 const lang = @import("languages/manifest.zig");
 
-// The OPERATIONS half of the interface — the part `syntax` can't express.
+// The RENDERING half of the interface — the part `syntax` can't express.
 //
 // Where a format's editing need is a value (a separator, a marker, whether
 // block sequences are editable), it is declared on `Language.syntax` and read
-// above. Where it is LOGIC, the format declares a hook: a `pub` decl on its
-// `Language` struct named for the operation it takes over. This engine
-// dispatches on presence —
+// above. Where it is a FACT of the parse — where an item's marker is, where
+// an entry's separator is, which lines and name mentions belong to a section
+// — the parser records it on `Document` and the engine reads it. What is
+// left is how a format SPELLS a fragment, and for that a format declares a
+// renderer: a `pub` decl on its `Language` struct — `renderValue`,
+// `renderEntry`, `renderItem`, `renderTail`, `renderKey` — that is a pure
+// function from strings to a string. This engine dispatches on presence —
 //
-//     if (@hasDecl(Language, "insertKey")) return Language.insertKey(...);
+//     if (@hasDecl(Language, "renderTail")) return Language.renderTail(...);
 //
-// — so it names no format at all. Each hook's signature is fixed by its one
-// call site and documented on the method it overrides; the implementations
-// live in `<lang>/editor_helper.zig` (which also holds that language's editor
-// tests, so editor-test code sits next to the concern it exercises), and the
-// DECLARATION of which operations a format overrides, with the reason, sits in
-// the "Editing hooks" block of its `<lang>/<lang>.zig`. See
-// `docs/proposals/language-interface.md`.
+// — so it names no format at all, and it splices what a renderer returns
+// under the same reparse net as every other edit. No renderer receives the
+// editor, performs a splice, or is called more than once per edit. There
+// are no editing hooks any more: the twenty-five that existed each ended in
+// one splice and needed only a fact the parser had dropped, an engine
+// constant that was really syntax, or a string function, and each became
+// one of those. See `docs/proposals/runtime-languages.md` §4.4. The
+// implementations live in `<lang>/editor_helper.zig` (which also holds that
+// language's editor tests), and the DECLARATION of which renderers a format
+// supplies, with the reason, sits in the "Renderers" block of its
+// `<lang>/<lang>.zig`.
 //
-// What remains below is what hook dispatch does not reach:
+// What remains below is what renderer dispatch does not reach:
 //
 //   * `zon_edit.appendFieldName` is reached through `key_style`, as the
-//     rendering half of a syntax parameter rather than an operation override.
+//     rendering half of a syntax parameter.
 //   * The bare language tags below are used by this file's OWN tests, nothing
-//     else. The EXCLUSIVE whole-container operations (see that block) used to
-//     need `Language != Toml`/`!= Fig` guards and direct imports of those two
-//     formats' helper modules; they are `@hasDecl`-dispatched now, like every
-//     hook, so this file names no format outside its tests. Zig still has no
-//     conditional container-level declarations (`usingnamespace` was removed in
-//     0.15), so the methods exist for every format and refuse at comptime —
-//     but on a missing declaration rather than on a format's identity.
+//     else. The whole-container ops are generic over `section_noun`,
+//     `section_header` and what the parser records, and refuse at comptime
+//     for a format that declares none of it; Zig has no conditional
+//     container-level declarations (`usingnamespace` was removed in 0.15),
+//     so the methods exist for every format.
 const zon_edit = @import("languages/zon/editor_helper.zig");
 const Toml = @import("languages/toml/toml.zig").Language;
 const Fig = @import("languages/fig/fig.zig").Language;
@@ -233,6 +239,23 @@ pub fn Editor(comptime Language: type) type {
             try reindentInto(out, self.allocator, value_text, cont.items);
         }
 
+        /// Whether the entry `kv` of a block mapping is written OUTSIDE the
+        /// mapping's own lines: its value is a section whose name on that
+        /// line is a `.header` mention — the line opens the child's own
+        /// region rather than sitting on the parent's. See
+        /// `Document.node_mentions` and `insertBlockKey`.
+        fn outOfRegion(self: *const Self, parsed: Document, kv: AST.Node) bool {
+            if (kv.kind != .keyvalue) return false;
+            const val = parsed.ast.nodes[kv.kind.keyvalue.value];
+            if (!parsed.isSection(val)) return false;
+            const source = self.source.items;
+            const line = lineStartBefore(source, parsed.span(kv).start);
+            for (parsed.mentionsOf(val.id)) |m| {
+                if (m.kind == .header and lineStartBefore(source, m.span.start) == line) return true;
+            }
+            return false;
+        }
+
         /// Rewrite the EMPTY closed container at `span` (`<dict/>`,
         /// `<array></array>`) into its multi-line form around `body`, one
         /// entry or item already rendered against the child indent: the open
@@ -258,19 +281,20 @@ pub fn Editor(comptime Language: type) type {
         /// layer, which path navigation does not follow and therefore reports
         /// as `NotFound`.
         ///
-        /// **Hook** `keyIsInherited(parsed, path) !bool`. Declared by YAML
-        /// alone, where a `<<` merge supplies keys its own mapping never spells
-        /// out. With no hook the answer is false, which is correct for every
-        /// format that has no reference layer — so the two `NotFound` recovery
-        /// sites below need no language test of their own.
-        ///
-        /// A predicate rather than a recovery hook, because only the QUESTION
-        /// is the language's: `replaceValAtPath` answers it by shadowing the
-        /// inherited key with a local entry (copy-on-write) and `deleteKey` by
-        /// refusing outright, and both of those policies are generic.
-        fn keyIsInherited(parsed: Document, path: []const AST.PathSegment) !bool {
-            if (!@hasDecl(Language, "keyIsInherited")) return false;
-            return Language.keyIsInherited(parsed, path);
+        /// Only a format with a `Syntax.merge_key` (YAML's `<<`) has such
+        /// keys; for every other the answer is false, so the two `NotFound`
+        /// recovery sites below need no language test of their own. The
+        /// resolution itself is core (`AST.mergedChild`), and only the
+        /// QUESTION is asked here: `replaceValAtPath` answers it by shadowing
+        /// the inherited key with a local entry (copy-on-write) and
+        /// `deleteKey` by refusing outright, and both of those policies are
+        /// generic.
+        fn keyIsInherited(self: *const Self, parsed: Document, path: []const AST.PathSegment) !bool {
+            if (self.syntax().merge_key == null) return false;
+            if (path.len == 0 or std.meta.activeTag(path[path.len - 1]) != .key) return false;
+            const parent = parsed.ast.getValByPath(path[0 .. path.len - 1]) catch return false;
+            if (parent.kind != .mapping) return false;
+            return (parsed.ast.mergedChild(parent, path[path.len - 1].key) catch return false) != null;
         }
 
         allocator: std.mem.Allocator,
@@ -333,49 +357,42 @@ pub fn Editor(comptime Language: type) type {
         /// shadowing the merge. Use `replaceValAtPathFollowing` to edit through to
         /// a shared anchor instead.
         ///
-        /// **Hook** `replaceValAtPath(self, parsed, path, node, span,
-        /// replacement) !void` — replaces the splice below wholesale, for a
-        /// format where `replacement` cannot go into the old value's slot
-        /// verbatim. Two distinct reasons, both declared:
+        /// Two things stand between `replacement` and the old value's slot,
+        /// each a fact the format states rather than logic it supplies:
         ///
         ///   * The slot is not a bare literal. plist wraps every value in a
-        ///     typed element (`<integer>42</integer>`), and NestedText frames
-        ///     one either rest-of-line or as a nested `>`-block — so the text
-        ///     has to be RENDERED, not spliced.
-        ///   * The slot's shape can change. YAML and fig re-emit the whole
-        ///     `key<sep>value` so a block collection can descend onto the
+        ///     typed element (`<integer>42</integer>`), so the text is
+        ///     RENDERED through the format's `renderValue` first.
+        ///   * The slot's shape can change. Where the parser recorded the
+        ///     entry's separator (`Document.node_sep_spans` — YAML, fig,
+        ///     NestedText), everything after the key is rewritten through
+        ///     `writeTail`, so a block collection can descend onto the
         ///     following lines where the old value was inline (`k: []` → a
-        ///     block list), which a span splice cannot express. Both take the
-        ///     direct splice for a non-mapping target, inside the hook.
+        ///     block list), which a span splice cannot express. An item
+        ///     reframes the same way from its recorded marker when the format
+        ///     renders items.
         ///
-        /// A hook receives the resolved `node` and its `span`, so it never
-        /// repeats the path walk; a format that declares none (JSON, TOML, ZON,
-        /// INI, dotenv, `.properties`) has a literal syntax that splices
-        /// verbatim in place — for every target it can address at all, which for
-        /// TOML and INI is what the guard below decides.
-        ///
-        /// **Engine rule**, not a hook: a SECTION node — one the parser
-        /// recorded header lines for (`Document.node_regions`) — is refused
-        /// before the generic splice runs (`CannotReplaceTable` /
-        /// `CannotReplaceSection` / `CannotReplaceContainer`, in the format's
-        /// own vocabulary). In TOML and INI a container's node span is only
-        /// its KEY segment inside a `[header]` (or a dotted `a.b = 1` key)
-        /// rather than any value text: a container's body is assembled from
-        /// lines the span never covers, so splicing `replacement` into that
-        /// span would rewrite the header's NAME and silently rename the
-        /// section. The rule guards the engine's own splice only: a format
-        /// that hooks `replaceValAtPath` has taken that splice over and owns
-        /// its targets (fig re-frames a block container's value in place, so
-        /// its sections stay replaceable through the hook). The
-        /// whole-container ops (`deleteContainer`, `renameContainer`, …) are
-        /// what handle a section otherwise.
+        /// **Engine rule**: a SECTION node — one the parser recorded header
+        /// lines for (`Document.node_regions`) — is refused before the generic
+        /// splice runs (`CannotReplaceTable` / `CannotReplaceSection` /
+        /// `CannotReplaceContainer`, in the format's own vocabulary). In TOML
+        /// and INI a container's node span is only its KEY segment inside a
+        /// `[header]` (or a dotted `a.b = 1` key) rather than any value text:
+        /// a container's body is assembled from lines the span never covers,
+        /// so splicing `replacement` into that span would rewrite the header's
+        /// NAME and silently rename the section. A format whose block
+        /// container hangs under a bare header (fig) records a zero-width
+        /// separator there, and the reframe — which runs first — rewrites the
+        /// container's body in place. The whole-container ops
+        /// (`deleteContainer`, `renameContainer`, …) are what handle a section
+        /// otherwise.
         pub fn replaceValAtPath(self: *Self, path: []const AST.PathSegment, replacement: []const u8) !void {
             const parsed = try self.getParsed();
             const node = parsed.ast.getValByPath(path) catch |err| {
                 // An inherited key surfaces as NotFound (path nav doesn't follow
                 // the reference layer); copy-on-write it by inserting a local
                 // `key: value` entry that shadows what it inherits from.
-                if (err == error.NotFound and try keyIsInherited(parsed, path)) {
+                if (err == error.NotFound and try self.keyIsInherited(parsed, path)) {
                     try self.insertKey(path[0 .. path.len - 1], path[path.len - 1].key, replacement);
                     return;
                 }
@@ -642,6 +659,25 @@ pub fn Editor(comptime Language: type) type {
                     return out.toOwnedSlice(self.allocator);
                 },
                 .verbatim => return self.allocator.dupe(u8, key),
+                .bare_or_quoted => {
+                    var bare = key.len > 0;
+                    for (key) |c| {
+                        const ok = (c >= 'A' and c <= 'Z') or (c >= 'a' and c <= 'z') or
+                            (c >= '0' and c <= '9') or c == '_' or c == '-';
+                        if (!ok) bare = false;
+                    }
+                    if (bare) return self.allocator.dupe(u8, key);
+                    var out: std.ArrayList(u8) = .empty;
+                    defer out.deinit(self.allocator);
+                    try out.append(self.allocator, '"');
+                    for (key) |ch| switch (ch) {
+                        '"' => try out.appendSlice(self.allocator, "\\\""),
+                        '\\' => try out.appendSlice(self.allocator, "\\\\"),
+                        else => try out.append(self.allocator, ch),
+                    };
+                    try out.append(self.allocator, '"');
+                    return out.toOwnedSlice(self.allocator);
+                },
             }
         }
 
@@ -651,35 +687,55 @@ pub fn Editor(comptime Language: type) type {
         /// tag) prefix is preserved — only the anchored value's bytes are
         /// replaced. A non-alias target behaves exactly like `replaceValAtPath`.
         ///
-        /// **Hook** `replaceValAtPathFollowing(self, parsed, path, node, span,
-        /// replacement) !void`, same signature as `replaceValAtPath`'s. Declared
-        /// by YAML alone, because YAML alone HAS a reference layer: with no
-        /// hook, "following" and not following are the same operation, which is
-        /// exactly what the fall-through below expresses.
+        /// The alias kind, its resolution (`AST.resolveAlias`) and the anchor
+        /// and tag span tables are all core, so this is generic: a format
+        /// without a reference layer never produces an alias node, and for
+        /// it "following" and not following are the same operation.
         pub fn replaceValAtPathFollowing(self: *Self, path: []const AST.PathSegment, replacement: []const u8) !void {
             const parsed = try self.getParsed();
             const node = parsed.ast.getValByPath(path) catch {
                 return self.replaceValAtPath(path, replacement);
             };
-            if (@hasDecl(Language, "replaceValAtPathFollowing"))
-                return Language.replaceValAtPathFollowing(self, parsed, path, node, parsed.span(node), replacement);
+            if (node.kind == .alias) {
+                const target = parsed.ast.nodes[try parsed.ast.resolveAlias(node)];
+                var buf: std.ArrayList(u8) = .empty;
+                defer buf.deinit(self.allocator);
+                return self.replaceAtSpan(self.valueSpanWithoutProps(parsed, target), try self.renderedValue(&buf, replacement));
+            }
             try self.replaceValAtPath(path, replacement);
         }
 
-        /// Rename the key at `path`, leaving its value untouched.
-        ///
-        /// **Hook** `replaceKeyAtPath(self, parsed, path, replacement) !void` —
-        /// replaces this op wholesale, before the key node is resolved, for a
-        /// format where a key's span is not the whole of its syntax. Declared by
-        /// NestedText: a plain key's span excludes its trailing `:` (so a
-        /// plain-to-plain rename splices directly, as below), but a MULTILINE
-        /// key (`: key\n: continued`) has no separator colon in the source at
-        /// all, so converting between the two forms means adding or dropping
-        /// one.
+        /// The span of `node`'s value bytes, excluding any leading anchor or
+        /// tag property (the node's stored span starts at the property), so
+        /// that editing an anchored value keeps its anchor intact.
+        fn valueSpanWithoutProps(self: *const Self, parsed: Document, node: AST.Node) Span {
+            const source = self.source.items;
+            const full = parsed.span(node);
+            var start = full.start;
+            if (parsed.anchorSpan(node)) |a| start = @max(start, a.end);
+            if (parsed.tagSpan(node)) |t| start = @max(start, t.end);
+            while (start < full.end and (source[start] == ' ' or source[start] == '\t')) start += 1;
+            return Span.init(start, full.end);
+        }
+
+        /// Rename the key at `path`, leaving its value untouched. `replacement`
+        /// is key SYNTAX, spliced as given; a section's name is rewritten
+        /// wherever the format spells it, and a format whose key syntax has
+        /// more than one form spells the new key through `renderKey`.
         pub fn replaceKeyAtPath(self: *Self, path: []const AST.PathSegment, replacement: []const u8) !void {
             const parsed = try self.getParsed();
-            if (@hasDecl(Language, "replaceKeyAtPath"))
-                return Language.replaceKeyAtPath(self, parsed, path, replacement);
+            // A section node's name is written wherever the format spells
+            // it — every `[a.b]` sharing the prefix, every dotted line, every
+            // reopening — and only the first has a key node. Splicing that
+            // one span would leave the rest behind and SPLIT the container,
+            // so a section renames through its recorded mentions.
+            if (path.len > 0) {
+                if (parsed.ast.getValByPath(path)) |value| {
+                    const mentions = parsed.mentionsOf(value.id);
+                    if (parsed.isSection(value) and mentions.len > 0)
+                        return self.rewriteMentions(mentions, replacement);
+                } else |_| {}
+            }
             const node = try parsed.ast.getKeyByPath(path);
             const span = parsed.span(node);
             // **Renderer** `renderKey(allocator, out, indent, key_text,
@@ -1144,9 +1200,10 @@ pub fn Editor(comptime Language: type) type {
         /// JSON); `UnsupportedShape` for a scalar, or a flow container with no
         /// line for a run to sit on (see `danglingAnchor`).
         ///
-        /// **Hook** `getDanglingComment(self, path) !?[]u8`, as for the leading
-        /// trio. A format whose comment syntax has no line marker (plist's
-        /// `<!-- -->`) answers `CommentsUnsupported` until it declares one.
+        /// A format whose comment syntax is a paired delimiter rather than a
+        /// bare prefix (plist's `<!-- -->`) answers `CommentsUnsupported`: the
+        /// dangling and comment-out ops write a marker onto existing lines
+        /// and strip one off, which a pair cannot be.
         pub fn getDanglingComment(self: *Self, path: []const AST.PathSegment) !?[]u8 {
             const marker = self.prefixCommentMarker() orelse return error.CommentsUnsupported;
             const parsed = try self.getParsed();
@@ -1178,8 +1235,6 @@ pub fn Editor(comptime Language: type) type {
         /// `CommentsUnsupported` for a dialect without comment syntax (strict
         /// JSON); `UnsupportedShape` for a scalar, or a flow container with no
         /// line for a run to sit on (see `danglingAnchor`).
-        ///
-        /// **Hook** `addDanglingComment(self, path, text) !void`.
         pub fn addDanglingComment(self: *Self, path: []const AST.PathSegment, text: []const u8) !void {
             const marker = self.prefixCommentMarker() orelse return error.CommentsUnsupported;
             const parsed = try self.getParsed();
@@ -1199,8 +1254,6 @@ pub fn Editor(comptime Language: type) type {
         /// `path`'s body. A no-op when there is none. `CommentsUnsupported` for
         /// a dialect without comment syntax (strict JSON); `UnsupportedShape`
         /// for a scalar, or a flow container with no line for a run to sit on.
-        ///
-        /// **Hook** `deleteDanglingComments(self, path) !void`.
         pub fn deleteDanglingComments(self: *Self, path: []const AST.PathSegment) !void {
             const marker = self.prefixCommentMarker() orelse return error.CommentsUnsupported;
             const parsed = try self.getParsed();
@@ -1285,8 +1338,6 @@ pub fn Editor(comptime Language: type) type {
         /// `CannotDeleteContainer`) for the reason `deleteKey` refuses it: its
         /// span is a name inside a header, and its body is lines this op cannot
         /// see.
-        ///
-        /// **Hook** `commentOut(self, path) !void`.
         pub fn commentOut(self: *Self, path: []const AST.PathSegment) !void {
             const marker = self.prefixCommentMarker() orelse return error.CommentsUnsupported;
             if (path.len == 0) return error.UnsupportedShape;
@@ -1348,8 +1399,6 @@ pub fn Editor(comptime Language: type) type {
         /// dialect without comment syntax (strict JSON); `UnsupportedShape` for
         /// the root, and `CommentsUnanchored` for a node that does not own its
         /// lines (`ownsItsLines`), as the six comment ops answer it.
-        ///
-        /// **Hook** `uncommentLeading(self, path, first_line, line_count) !void`.
         pub fn uncommentLeading(self: *Self, path: []const AST.PathSegment, first_line: usize, line_count: usize) !void {
             const marker = self.prefixCommentMarker() orelse return error.CommentsUnsupported;
             if (path.len == 0) return error.UnsupportedShape;
@@ -1371,9 +1420,6 @@ pub fn Editor(comptime Language: type) type {
         /// following sibling to be the leading block of.
         ///
         /// Same guarantee, same errors — see `uncommentLeading`.
-        ///
-        /// **Hook** `uncommentDangling(self, container_path, first_line,
-        /// line_count) !void`.
         pub fn uncommentDangling(self: *Self, container_path: []const AST.PathSegment, first_line: usize, line_count: usize) !void {
             const marker = self.prefixCommentMarker() orelse return error.CommentsUnsupported;
             const parsed = try self.getParsed();
@@ -1467,17 +1513,13 @@ pub fn Editor(comptime Language: type) type {
         /// inside the braces for flow `{}`. If `path` resolves to a `null` value
         /// (a bare `key:`), promotes it to a one-entry nested mapping.
         ///
-        /// **Hook** `insertKey(self, parsed, path, node, span, key_text,
-        /// value_text) !void` — replaces this op wholesale: `node` is already
-        /// resolved from `path` and `span` is its extent, and the hook owns
-        /// everything below, including the flow/block decision. Declared by
-        /// TOML, fig, INI, plist and NestedText.
+        /// The flow/block decision is `isFlowNode`'s; a block entry is spelled
+        /// through `writeEntry` (a `renderEntry` where the format declares
+        /// one), a flow entry with `kv_sep` or the separator its siblings use.
         pub fn insertKey(self: *Self, path: []const AST.PathSegment, key_text: []const u8, value_text: []const u8) !void {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
             const span = parsed.span(node);
-            if (@hasDecl(Language, "insertKey"))
-                return Language.insertKey(self, parsed, path, node, span, key_text, value_text);
             switch (node.kind) {
                 .mapping => |first| {
                     if (self.isFlowNode(parsed, node)) {
@@ -1509,7 +1551,7 @@ pub fn Editor(comptime Language: type) type {
                 // there is no syntax to un-inherit it; deleting the source it
                 // comes from is a different operation. Refuse explicitly rather
                 // than report it missing.
-                if (err == error.NotFound and try keyIsInherited(parsed, path))
+                if (err == error.NotFound and try self.keyIsInherited(parsed, path))
                     return error.MergeOnlyKey;
                 return err;
             };
@@ -1584,12 +1626,10 @@ pub fn Editor(comptime Language: type) type {
 
         /// Append `value_text` as a new item to the sequence at `path`.
         ///
-        /// **Hook** `appendToSeq(self, parsed, node, value_text) !void` — takes
-        /// over the BLOCK arm only. A flow (`[…]`) sequence is comma-delimited
-        /// the same way in every format that has one, so it keeps the generic
-        /// path, and a format whose block sequences aren't editable at all
-        /// (`block_seq_editable`, i.e. TOML) has already refused above. Declared
-        /// by plist, fig and NestedText.
+        /// A flow (`[…]`) sequence is comma-delimited the same way in every
+        /// format that has one and takes the generic splice; a block item is
+        /// spelled through `writeItem` (a `renderItem` where the format
+        /// declares one) after the first item's line prefix.
         pub fn appendToSeq(self: *Self, path: []const AST.PathSegment, value_text: []const u8) !void {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
@@ -1634,8 +1674,7 @@ pub fn Editor(comptime Language: type) type {
 
         /// Insert `value_text` before the first item of the sequence at `path`.
         ///
-        /// **Hook** `prependToSeq(self, parsed, node, value_text) !void` — the
-        /// block-arm twin of `appendToSeq`'s, on the same terms.
+        /// The block-arm twin of `appendToSeq`'s, on the same terms.
         pub fn prependToSeq(self: *Self, path: []const AST.PathSegment, value_text: []const u8) !void {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
@@ -2168,17 +2207,35 @@ pub fn Editor(comptime Language: type) type {
             // children. Fall back to column 0 and the mapping's own span end
             // (its whole-file span for the flat formats' root) rather than
             // unwrapping a null.
-            const maybe_last = try parsed.ast.lastChild(&mapping);
+            // The children written on this mapping's OWN lines. A child
+            // reached through a header line of its own (`[a.b]` under `[a]`,
+            // a `[[x]]` element) sits outside the mapping's region, and an
+            // entry spliced after it would be silently reparented; a dotted
+            // child (`b.c = 1`) or a fig header at the parent's depth is on
+            // the parent's lines and anchors the insert like any scalar. See
+            // `Document.node_mentions`.
+            var maybe_last: ?AST.Node = null;
+            var first_key: ?AST.Node = null;
+            var skipped = false;
+            var cur = try parsed.ast.child(&mapping);
+            while (cur) |kv| : (cur = parsed.ast.next(&kv)) {
+                if (self.outOfRegion(parsed, kv)) {
+                    skipped = true;
+                    continue;
+                }
+                if (first_key == null) first_key = if (kv.kind == .keyvalue) parsed.ast.nodes[kv.kind.keyvalue.key] else kv;
+                maybe_last = kv;
+            }
             var out: std.ArrayList(u8) = .empty;
             defer out.deinit(self.allocator);
             var val_buf: std.ArrayList(u8) = .empty;
             defer val_buf.deinit(self.allocator);
             const rendered = try self.renderedValue(&val_buf, value_text);
-            // The new entry copies the first key's line prefix (see
-            // `indentAt`); a mapping with no key yet starts at column 0.
+            // The new entry copies the first in-region key's line prefix (see
+            // `indentAt`); a mapping with no such key starts at column 0.
             var indent_buf: std.ArrayList(u8) = .empty;
             defer indent_buf.deinit(self.allocator);
-            const indent: []const u8 = if (try parsed.ast.firstChildKey(&mapping)) |key_node|
+            const indent: []const u8 = if (first_key) |key_node|
                 try self.indentAt(&indent_buf, parsed.span(key_node).start)
             else
                 "";
@@ -2198,11 +2255,14 @@ pub fn Editor(comptime Language: type) type {
                 try self.writeEntry(&out, child.items, key_text, rendered);
                 return self.expandEmptyContainer(span, closed.map, base, out.items);
             } else if (mapping.id == parsed.ast.root)
-                // An empty (or comments-only) document: the first entry goes
-                // at the end of whatever is there. For the flat formats the
-                // root's span is the whole input anyway; for fig it is not
-                // (a comments-only file has a zero-width root).
-                source.len
+                // A root with every child under a header of its own (a
+                // header-first TOML or INI file) takes its first own entry at
+                // the top, above the first header; an empty (or
+                // comments-only) document takes it at the end of whatever is
+                // there. For the flat formats the root's span is the whole
+                // input anyway; for fig it is not (a comments-only file has a
+                // zero-width root).
+                (if (skipped) 0 else source.len)
             else if (parsed.isSection(mapping))
                 // A childless SECTION (INI's empty `[section]` with nothing
                 // under it yet): its span is anchored at just the header's
@@ -2247,14 +2307,15 @@ pub fn Editor(comptime Language: type) type {
         //     section node cannot be line-spliced; use the container op —
         //     spelled in the format's own vocabulary through `refuse`.
         //
-        // What stays a hook is what needs to SPELL a fragment or find a name:
-        // `insertContainer` and `appendContainerToSeq` write a new `[header]`
-        // line, and `renameContainer` rewrites every place a table's name is
-        // spelled (its headers AND its dotted lines), which is a different
-        // question from where its regions are. Those three keep the
-        // `@hasDecl` dispatch every hook uses, and `requireSectionOp`'s
-        // comptime refusal for a format that declares none. See
-        // `docs/proposals/derived-regions.md` for the catalogue.
+        // The other three used to be hooks, because each had to SPELL a
+        // fragment or find a name. `insertContainer` and
+        // `appendContainerToSeq` write a new `[header]` line, which
+        // `Syntax.section_header` now declares; `renameContainer` rewrites
+        // every place a table's name is spelled (its headers AND its dotted
+        // lines), which `Document.node_mentions` now records. Both are
+        // generic below, with a comptime refusal for a format that declares
+        // no header syntax. See `docs/proposals/derived-regions.md` and
+        // `docs/proposals/runtime-languages.md` §4.4.
         //
         // The methods exist for every format either way — Zig has no
         // conditional container-level declarations since `usingnamespace`
@@ -2279,7 +2340,7 @@ pub fn Editor(comptime Language: type) type {
 
         /// The line-splice ops the section rule refuses, and the error each
         /// refusal is spelled with per `SectionNoun`.
-        const SectionOp = enum { delete, replace, move, reorder, not_a_section };
+        const SectionOp = enum { delete, replace, move, reorder, not_a_section, exists };
 
         /// The engine's refusal in this format's vocabulary. Returns an error
         /// VALUE (not a union) so a caller writes `return self.refuse(.delete)`.
@@ -2298,6 +2359,9 @@ pub fn Editor(comptime Language: type) type {
             CannotReorderTables,
             CannotReorderSections,
             CannotReorderContainers,
+            TableExists,
+            SectionExists,
+            ContainerExists,
         } {
             // A format with no section nodes never reaches here (`isSection`
             // is false for all its nodes), so `.container` is only the type's
@@ -2328,6 +2392,11 @@ pub fn Editor(comptime Language: type) type {
                     .section => error.CannotReorderSections,
                     .container => error.CannotReorderContainers,
                 },
+                .exists => switch (noun) {
+                    .table => error.TableExists,
+                    .section => error.SectionExists,
+                    .container => error.ContainerExists,
+                },
             };
         }
 
@@ -2343,19 +2412,17 @@ pub fn Editor(comptime Language: type) type {
         /// The coalesced region set of the section node `node`: its header
         /// lines (creating line and every re-entry, each with its owned
         /// comment block) plus every line of its subtree, in one ascending,
-        /// disjoint list the caller owns. `pub` for the format hooks that need
-        /// the regions for a different purpose than the ops below — TOML's
-        /// rename addresses each header region's start, and asks for
-        /// `merge_touching = false` so a region merged with a touching
-        /// neighbour does not hide one.
+        /// disjoint list the caller owns. `merge_touching = false` keeps two
+        /// regions that meet exactly apart, for a caller that addresses each
+        /// region's own start.
         pub fn gatherRegions(self: *const Self, parsed: Document, node: AST.Node, merge_touching: bool) !std.ArrayList(Region) {
             return regions.gatherNormalized(parsed, self.source.items, self.allocator, node, self.syntax().comments.style, merge_touching);
         }
 
         /// Byte offset just past the last line of the section node `node`'s
         /// subtree — where a new sibling section can be spliced without
-        /// splitting it. For the `insertContainer`/`appendContainerToSeq`
-        /// hooks, which place a header after a parent's whole extent.
+        /// splitting it. `insertContainer` and `appendContainerToSeq` place a
+        /// header there.
         pub fn sectionExtentEnd(self: *const Self, parsed: Document, node: AST.Node) !usize {
             return regions.extentEnd(parsed, self.source.items, self.allocator, node, self.syntax().comments.style);
         }
@@ -2377,31 +2444,110 @@ pub fn Editor(comptime Language: type) type {
             try regions.spliceOut(self, used.items);
         }
 
-        /// Create a new container at `path` whose body is `body_text` (verbatim
-        /// entry lines, possibly empty), spliced where no existing key is
-        /// reparented.
-        ///
-        /// **Hook** `insertContainer(self, path, body_text) !void` — a hook
-        /// rather than generic because it has to SPELL the new header line
-        /// (`[a.b]`) in the format's syntax. TOML alone declares it; fig
-        /// vivifies through `set`, and INI cannot vivify at all.
-        pub fn insertContainer(self: *Self, path: []const AST.PathSegment, body_text: []const u8) !void {
-            comptime requireSectionOp("insertContainer");
-            return Language.insertContainer(self, path, body_text);
+        /// Splice `rendered` over every one of `mentions` (sorted by start,
+        /// as `Document.mentionsOf` returns them) in one whole-document
+        /// rewrite, so a rename either lands everywhere or rolls back.
+        fn rewriteMentions(self: *Self, mentions: []const Document.NodeMention, rendered: []const u8) !void {
+            const source = self.source.items;
+            var out: std.ArrayList(u8) = .empty;
+            defer out.deinit(self.allocator);
+            var pos: usize = 0;
+            for (mentions) |m| {
+                if (m.span.start < pos) continue; // the same token reached twice
+                try out.appendSlice(self.allocator, source[pos..m.span.start]);
+                try out.appendSlice(self.allocator, rendered);
+                pos = m.span.end;
+            }
+            try out.appendSlice(self.allocator, source[pos..]);
+            try self.replaceAtSpan(Span.init(0, source.len), out.items);
         }
 
-        /// Rename the leaf segment of the container at `path` to `new_leaf`,
-        /// rewriting every header that shares the prefix.
-        ///
-        /// **Hook** `renameContainer(self, path, new_leaf) !void`. Only TOML
-        /// needs it: a fig or INI header carries its key in one tight span the
-        /// generic `replaceKeyAtPath` already rewrites, while a TOML rename
-        /// must also reach `[a.b]`, `[a.b.c]`, `[[a.b]]` and every dotted
-        /// line that spells the name — "where is this node's NAME written",
-        /// which the region table does not answer.
+        /// Render `path` as a header's dotted path: each key through
+        /// `formatInsertKey`, joined by the header's `sep`, index segments
+        /// left out when the header says so.
+        fn writeHeaderPath(self: *Self, out: *std.ArrayList(u8), hdr: lang.SectionHeader, path: []const AST.PathSegment) !void {
+            var first = true;
+            for (path) |seg| switch (seg) {
+                .index => |i| if (!hdr.skip_index) {
+                    if (!first) try out.appendSlice(self.allocator, hdr.sep);
+                    first = false;
+                    try out.print(self.allocator, "{d}", .{i});
+                },
+                .key => |k| {
+                    if (!first) try out.appendSlice(self.allocator, hdr.sep);
+                    first = false;
+                    const rendered = try self.formatInsertKey(k);
+                    defer self.allocator.free(rendered);
+                    try out.appendSlice(self.allocator, rendered);
+                },
+            };
+        }
+
+        /// Splice a new header line (`open` + path + `close`) and `body_text`
+        /// (verbatim entry lines, possibly empty) at `insert_at`, on a line
+        /// of its own with a blank line before it when it does not open the
+        /// file.
+        fn spliceHeader(self: *Self, insert_at: usize, open: []const u8, close: []const u8, path: []const AST.PathSegment, body_text: []const u8) !void {
+            const hdr = self.syntax().section_header.?;
+            const source = self.source.items;
+            var out: std.ArrayList(u8) = .empty;
+            defer out.deinit(self.allocator);
+            if (insert_at > 0 and source[insert_at - 1] != '\n') try out.append(self.allocator, '\n');
+            if (insert_at > 0) try out.append(self.allocator, '\n');
+            try out.appendSlice(self.allocator, open);
+            try self.writeHeaderPath(&out, hdr, path);
+            try out.appendSlice(self.allocator, close);
+            try out.append(self.allocator, '\n');
+            if (body_text.len > 0) {
+                try out.appendSlice(self.allocator, body_text);
+                if (body_text[body_text.len - 1] != '\n') try out.append(self.allocator, '\n');
+            }
+            try self.replaceAtSpan(Span.init(insert_at, insert_at), out.items);
+        }
+
+        /// Create a new container at `path` whose body is `body_text` (verbatim
+        /// entry lines, possibly empty): a header line spelled per
+        /// `Syntax.section_header`, spliced past the parent's whole derived
+        /// extent — or at end-of-file for a root-level container — so no
+        /// existing key is reparented. Refuses an existing target in the
+        /// format's vocabulary (`TableExists`). Comptime-refused for a format
+        /// with no header syntax.
+        pub fn insertContainer(self: *Self, path: []const AST.PathSegment, body_text: []const u8) !void {
+            comptime requireHeaderSyntax("insertContainer");
+            if (path.len == 0) return self.refuse(.not_a_section);
+            const parsed = try self.getParsed();
+            if (parsed.ast.getValByPath(path)) |_| {
+                return self.refuse(.exists);
+            } else |_| {}
+            const hdr = self.syntax().section_header.?;
+            const insert_at = blk: {
+                if (path.len > 1) {
+                    if (parsed.ast.getValByPath(path[0 .. path.len - 1])) |parent| {
+                        if (parent.kind == .mapping) break :blk try self.sectionExtentEnd(parsed, parent);
+                    } else |_| {}
+                }
+                break :blk self.source.items.len;
+            };
+            try self.spliceHeader(insert_at, hdr.open, hdr.close, path, body_text);
+        }
+
+        /// Rename the leaf segment of the container at `path` to the logical
+        /// key `new_leaf`, rendered per `key_style` and written over every
+        /// place the format spells the name (`Document.node_mentions`): the
+        /// container's own header, every descendant header sharing the
+        /// prefix, every dotted line, every reopening. Refuses a target that
+        /// is not a section, or whose format recorded no mentions, in the
+        /// format's vocabulary.
         pub fn renameContainer(self: *Self, path: []const AST.PathSegment, new_leaf: []const u8) !void {
-            comptime requireSectionOp("renameContainer");
-            return Language.renameContainer(self, path, new_leaf);
+            comptime requireSectionFormat("renameContainer");
+            if (path.len == 0) return self.refuse(.not_a_section);
+            const parsed = try self.getParsed();
+            const node = try self.sectionAt(parsed, path);
+            const mentions = parsed.mentionsOf(node.id);
+            if (mentions.len == 0) return self.refuse(.not_a_section);
+            const rendered = try self.formatInsertKey(new_leaf);
+            defer self.allocator.free(rendered);
+            try self.rewriteMentions(mentions, rendered);
         }
 
         /// Move the container at `src_path` before the container at
@@ -2462,15 +2608,49 @@ pub fn Editor(comptime Language: type) type {
         }
 
         /// Append a new element (body `body_text`) to the container sequence at
-        /// `path` — TOML's `[[header]]` array-of-tables append.
-        ///
-        /// **Hook** `appendContainerToSeq(self, path, body_text) !void` — a
-        /// hook for the same reason as `insertContainer`: it spells the new
-        /// `[[header]]` line.
+        /// `path` — TOML's `[[header]]` array-of-tables append. The element's
+        /// header is spelled per `Syntax.section_header`'s sequence form and
+        /// spliced past the current last element's whole extent, so a nested
+        /// sub-table inside it is not split. A target that is not a sequence
+        /// of containers is `NotAnArrayOfTables`. Comptime-refused for a
+        /// format with no sequence-header syntax.
         pub fn appendContainerToSeq(self: *Self, path: []const AST.PathSegment, body_text: []const u8) !void {
-            comptime requireSectionOp("appendContainerToSeq");
-            return Language.appendContainerToSeq(self, path, body_text);
+            comptime requireHeaderSyntax("appendContainerToSeq");
+            const parsed = try self.getParsed();
+            const node = try parsed.ast.getValByPath(path);
+            if (node.kind != .sequence) return error.NotAnArrayOfTables;
+            var elem = node.kind.sequence orelse return error.NotAnArrayOfTables;
+            var last_elem = elem;
+            while (true) {
+                if (parsed.ast.nodes[elem].kind != .mapping) return error.NotAnArrayOfTables;
+                last_elem = elem;
+                elem = parsed.ast.nodes[elem].next_sibling orelse break;
+            }
+            const hdr = self.syntax().section_header.?;
+            const seq_open = hdr.seq_open orelse return error.NotAnArrayOfTables;
+            const insert_at = try self.sectionExtentEnd(parsed, parsed.ast.nodes[last_elem]);
+            try self.spliceHeader(insert_at, seq_open, hdr.seq_close.?, path, body_text);
         }
+
+        /// Whether any dialect declares a `section_header`, and whether any
+        /// declares its sequence form: the comptime gates on the two ops
+        /// that write a header line.
+        const has_section_header = blk: {
+            var any = false;
+            for (std.meta.tags(Language.Type)) |t| {
+                if (Language.syntax(t).section_header != null) any = true;
+            }
+            break :blk any;
+        };
+        const has_seq_header = blk: {
+            var any = false;
+            for (std.meta.tags(Language.Type)) |t| {
+                if (Language.syntax(t).section_header) |h| {
+                    if (h.seq_open != null) any = true;
+                }
+            }
+            break :blk any;
+        };
 
         /// Whether this format has the whole-container op `op` — the
         /// runtime-dispatchable form of the comptime refusals, for callers
@@ -2481,17 +2661,13 @@ pub fn Editor(comptime Language: type) type {
         /// that switch would instantiate it for YAML and JSON too and stop the
         /// build. Guarding each arm with this turns "this format has no such
         /// operation" into `unsupported_format`, which is what a C caller can
-        /// act on. The three generic ops are had by every section format; the
-        /// three hooks by the formats that declare them. No format is named.
+        /// act on. Delete, move, reorder and rename are had by every section
+        /// format; the two that write a header line by a format declaring
+        /// `section_header`. No format is named.
         pub fn hasContainerOp(comptime op: []const u8) bool {
-            if (comptime isGenericContainerOp(op)) return is_section_format;
-            return @hasDecl(Language, op);
-        }
-
-        fn isGenericContainerOp(comptime op: []const u8) bool {
-            return std.mem.eql(u8, op, "deleteContainer") or
-                std.mem.eql(u8, op, "moveContainer") or
-                std.mem.eql(u8, op, "reorderContainers");
+            if (comptime std.mem.eql(u8, op, "insertContainer")) return has_section_header;
+            if (comptime std.mem.eql(u8, op, "appendContainerToSeq")) return has_seq_header;
+            return is_section_format;
         }
 
         /// The comptime refusal shared by the three generic ops: a format with
@@ -2502,13 +2678,14 @@ pub fn Editor(comptime Language: type) type {
                     "' is not a section format — its `syntax().section_noun` is null in every dialect");
         }
 
-        /// The comptime refusal shared by the three hooked ops. Names the
-        /// format and the declaration it is missing, since "this format has
-        /// no such operation" is the whole content of the error.
-        fn requireSectionOp(comptime op: []const u8) void {
-            if (!@hasDecl(Language, op))
-                @compileError("'" ++ op ++ "' is a whole-container op that '" ++ Language.name ++
-                    "' does not declare — see the \"Editing hooks\" block of its <lang>.zig");
+        /// The comptime refusal for the two ops that write a header line: a
+        /// format that declares no `section_header` (or no sequence form of
+        /// it) has no spelling for one.
+        fn requireHeaderSyntax(comptime op: []const u8) void {
+            const has = if (comptime std.mem.eql(u8, op, "appendContainerToSeq")) has_seq_header else has_section_header;
+            if (!has)
+                @compileError("'" ++ op ++ "' writes a header line, and '" ++ Language.name ++
+                    "' declares no `syntax().section_header` for it in any dialect");
         }
 
         /// How a splice's `value_text` is *spelled* — whether it stands as an
@@ -2916,9 +3093,8 @@ pub fn Editor(comptime Language: type) type {
 // SOURCE-COORDINATE UTILS
 // ======================
 //
-// The shared ones live in `editor/splice.zig` (the hook-facing surface) and
-// are re-imported at the top of this file; what remains here is used by the
-// engine alone.
+// The shared ones live in `editor/splice.zig` and are re-imported at the top
+// of this file; what remains here is used by the engine alone.
 
 /// Byte index just past a flow container's opening delimiter (`{`, `[`, or
 /// ZON's two-byte `.{`). Used to splice the first entry/item into an empty

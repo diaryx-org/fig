@@ -410,6 +410,11 @@ markers: std.ArrayList(Document.SpanEntry) = .empty,
 /// Every assignment's `=` by built `keyvalue` id (arena-backed; becomes
 /// `Document.node_sep_spans`). See `MEntry.sep_span`.
 seps: std.ArrayList(Document.SpanEntry) = .empty,
+/// Every block container's name mentions (arena-backed; becomes
+/// `Document.node_mentions`): its creating key and each `.key` re-entry.
+/// A fig header sits on its parent's own lines, so every mention is an
+/// `.entry`.
+built_mentions: std.ArrayList(Document.NodeMention) = .empty,
 
 // ── Intermediate tree types ─────────────────────────────────────────────────
 
@@ -439,6 +444,10 @@ const PendingContainer = struct {
     /// the editor's region gather can remove/relocate every physical header
     /// occurrence.
     reentries: std.ArrayList(usize) = .empty,
+    /// The key token of each `.key` re-entry above (an `xs[i]` re-entry has
+    /// none), for `Document.node_mentions`: every place this container's
+    /// name is written, so a rename reaches each.
+    reentry_names: std.ArrayList(Span) = .empty,
 
     fn open(self: *PendingContainer) Error!*PendingContainer {
         return if (self.closed) error.FigClosedFlowValue else self;
@@ -599,6 +608,7 @@ pub fn parseAbstract(allocator: Allocator, input: []const u8, format: Type) !AST
     allocator.free(parsed.node_marker_spans);
     allocator.free(parsed.node_sep_spans);
     allocator.free(parsed.node_regions);
+    allocator.free(parsed.node_mentions);
     return parsed.ast;
 }
 
@@ -685,8 +695,11 @@ fn parseImpl(allocator: Allocator, input: []const u8, format: Type, out: ?*Repor
     errdefer allocator.free(node_sep_spans);
     const node_regions = try allocator.dupe(Document.NodeRegion, self.built_regions.items);
     Document.sortRegions(node_regions);
+    errdefer allocator.free(node_regions);
+    const node_mentions = try allocator.dupe(Document.NodeMention, self.built_mentions.items);
+    Document.sortMentions(node_mentions);
 
-    return .{ .source = input, .ast = ast, .node_spans = node_spans, .node_marker_spans = node_marker_spans, .node_sep_spans = node_sep_spans, .node_regions = node_regions };
+    return .{ .source = input, .ast = ast, .node_spans = node_spans, .node_marker_spans = node_marker_spans, .node_sep_spans = node_sep_spans, .node_regions = node_regions, .node_mentions = node_mentions };
 }
 
 /// Return `err` with the diagnostic caret pinned to `offset` — for the sites
@@ -1317,6 +1330,7 @@ fn resolveHeaderFinal(self: *Parser, parent: *PendingContainer, last: Step) Erro
                 // A header re-opening an existing container: record this
                 // line's position on it (see `PendingContainer.reentries`).
                 try c.reentries.append(self.allocator, k.span.start);
+                try c.reentry_names.append(self.allocator, k.span);
                 return .{ .container = c, .owner = &e.value, .entry = e };
             }
             const child = try self.allocator.create(PendingContainer);
@@ -2121,6 +2135,11 @@ fn buildContainer(self: *Parser, b: *AST.Builder, c: *PendingContainer) Error!Bu
                 b.setSpan(key_id, e.key_span);
                 if (e.key_leading.items.len > 0) try b.setComments(key_id, .{ .leading = e.key_leading.items });
                 const value_id = try self.buildNode(b, &e.value);
+                if (e.value.value == .container and !e.value.value.container.closed) {
+                    try self.built_mentions.append(self.allocator, .{ .node_id = value_id, .span = e.key_span, .kind = .entry });
+                    for (e.value.value.container.reentry_names.items) |name|
+                        try self.built_mentions.append(self.allocator, .{ .node_id = value_id, .span = name, .kind = .entry });
+                }
                 const kv_id = try b.addKeyValue(key_id, value_id);
                 b.setSpan(kv_id, Span.init(e.key_span.start, e.value.span.end));
                 if (e.sep_span) |sep| try self.seps.append(self.allocator, .{ .node_id = kv_id, .span = sep });

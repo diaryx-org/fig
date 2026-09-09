@@ -11,11 +11,12 @@
 //! of asking what it is. See `docs/proposals/language-interface.md`.
 //!
 //! This module is the PARAMETER half of that interface — the answers a format
-//! can give as a value. The other half is operations it takes over outright,
-//! which are declared as hooks in the "Editing hooks" block of each
+//! can give as a value. The other half is how a format SPELLS a fragment the
+//! engine cannot: the renderers, declared in the "Renderers" block of a
 //! `<lang>/<lang>.zig` and dispatched by `@hasDecl` from `editor.zig`; they
-//! need no types here, because a hook's signature is fixed by the `Editor`
-//! method it overrides.
+//! need no types here, because each is a pure function from strings to a
+//! string whose signature is fixed by the `Editor` method that calls it
+//! (`Decls.renderers` in `language.zig` lists them).
 //!
 //! It also holds the shape of a format-registry entry, `Dialect`, since each
 //! language now declares its own dialects (`Language.dialects`) and
@@ -122,6 +123,26 @@ pub const KeyStyle = enum {
     /// ZON's struct-field syntax, which always carries a leading `.`
     /// (`b` -> `.b`, quoted as `.@"has space"` when not a bare identifier).
     zon_field,
+    /// Bare when every byte is `[A-Za-z0-9_-]`, else a basic-quoted string
+    /// with `"` and `\` escaped — TOML's key rule, used for a header path's
+    /// segments and a renamed table's leaf as well as an inserted key.
+    bare_or_quoted,
+};
+
+/// How a section format spells a header line that opens a container of its
+/// own: `[` + path + `]` for a TOML table, `[[` + path + `]]` for an element
+/// of an array of tables, an INI `[section]`. See `Syntax.section_header`.
+pub const SectionHeader = struct {
+    open: []const u8,
+    close: []const u8,
+    /// The element-of-a-sequence form, or null for a format without one.
+    seq_open: ?[]const u8 = null,
+    seq_close: ?[]const u8 = null,
+    /// Joins the path's key segments, each rendered per `key_style`.
+    sep: []const u8 = ".",
+    /// Whether index segments are left out of the path — `[[a.b]]` always
+    /// names `a`'s last element, so the index is implied.
+    skip_index: bool = true,
 };
 
 /// What `fig` can do with a format, as declared by the format itself.
@@ -472,16 +493,13 @@ pub const Syntax = struct {
     /// spaces, INI always pads it. See each `printer.zig`.
     ///
     /// The null is not "no separator" — it is "not the generic engine's
-    /// question". fig and TOML spell an entry `key = value` but hook
-    /// `insertKey` and decide the separator from the source there (fig's flow
-    /// objects are `=`-mode or `:`-mode and may not mix, so there is no one
-    /// answer to declare); plist's entries are a pair of sibling ELEMENTS and
-    /// NestedText's are `key:` lines its own helper writes. All four used to
-    /// declare `": "` — a value no code read, and for fig one its own parser
-    /// rejects (`FigFlowBareKeyColon`). `language.validate` requires a null
-    /// here to come with an `insertKey` hook, which is what makes every
-    /// consumer below unreachable; `editor.Editor.kvSep` is where that is
-    /// cashed in.
+    /// question". plist's entries are a pair of sibling ELEMENTS with no
+    /// separator to write, and its `renderEntry` spells the whole entry;
+    /// `language.validate` requires a null here to come with one, which is
+    /// what makes every consumer below unreachable, and `editor.Editor.kvSep`
+    /// is where that is cashed in. A format with a flow form whose separator
+    /// varies by object (fig) declares its default here and
+    /// `flow_kv_sep_from_siblings` beside it.
     kv_sep: ?[]const u8,
 
     /// Whether the flow-entry insert copies the separator the container's
@@ -665,6 +683,26 @@ pub const Syntax = struct {
     /// all three — "a section node cannot be line-spliced; use the container
     /// op" — and only the noun in the error differs.
     section_noun: ?SectionNoun = null,
+
+    /// How a header line that opens a container of its own is spelled, for
+    /// a section format that has one — TOML's `[a.b]` and `[[a.b]]`. With
+    /// it the engine's `insertContainer` and `appendContainerToSeq` are
+    /// live: they render the path through `key_style`, frame it with these
+    /// tokens, and splice the line past the parent's whole extent. Null for
+    /// a section format whose containers are not opened by a header line
+    /// the engine could write on its own (fig's headers are bare dotted
+    /// paths that `set` already creates; INI cannot vivify), and those ops
+    /// refuse at comptime there as before.
+    section_header: ?SectionHeader = null,
+
+    /// The key that MERGES another mapping's entries into this one — YAML's
+    /// `<<` — or null for a format with no such key. With it declared, a key
+    /// the document resolves through a merge but never spells out is
+    /// INHERITED: `replaceValAtPath` shadows it with a local entry
+    /// (copy-on-write) and `deleteKey` refuses it with `MergeOnlyKey`, since
+    /// there is no syntax to un-inherit one. The merge's resolution is core
+    /// (`AST.mergedChild`); this field says whether the format has it.
+    merge_key: ?[]const u8 = null,
 };
 
 /// An opening and closing token pair. See `Syntax.closed_containers`.

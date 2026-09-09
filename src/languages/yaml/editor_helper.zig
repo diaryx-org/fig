@@ -1,16 +1,18 @@
-//! YAML-specific editing logic and tests for `Editor(Yaml)`.
+//! YAML editor tests for `Editor(Yaml)`.
 //!
-//! Mirrors `toml/editor_helper.zig`: the format-specific arm of the generic
-//! engine lives here, next to the tests that exercise it, so `editor.zig` stays
-//! format-agnostic. The logic below is the YAML reference layer (merge-key
-//! detection, anchored-value spans) plus block-mapping value reframing, reached
-//! as HOOKS: `yaml.zig` declares each on its `Language` and the generic engine
-//! dispatches on `@hasDecl`, naming no format. See that file's "Editing hooks"
-//! block for which operations YAML takes over and why.
+//! No YAML-specific editing logic is left. The generic span-splice engine in
+//! `../../editor.zig` does every edit, driven by `yaml.zig`'s `syntax` and by
+//! what `parser.zig` records — every entry's `:` in `Document.node_sep_spans`,
+//! every item's `-` in `node_marker_spans`, the anchor and tag spans — and by
+//! the reference layer that is core: the alias node kind, `AST.resolveAlias`
+//! and `AST.mergedChild`. This module used to hold three hooks: the value
+//! reframe (re-emitting `: value` so a block collection can replace an inline
+//! one), which the engine does from the recorded separator; the inherited-key
+//! predicate, which the engine asks once `merge_key` is declared; and the
+//! follow-mode replace through an alias, which is generic over core kinds.
 //!
-//! The tests cover the public `Editor(Yaml)` surface end-to-end — alias
-//! copy-on-write / opt-in follow / merge materialization, inline<->block value
-//! reframing, comment-aware delete/move, and block/flow sequence ops.
+//! The tests below pin every one of those behaviours in YAML's own shapes;
+//! the logic they exercise lives in `editor.zig`.
 
 const std = @import("std");
 
@@ -30,46 +32,6 @@ const YamlEditor = editor.Editor(Yaml);
 const columnOf = splice.columnOf;
 
 // --- reference layer + block-mapping value framing (the YAML arm of the engine) ---
-
-/// True when `path`'s final `.key` segment is not a physical entry of its parent
-/// mapping but is supplied by a `<<` merge.
-pub fn mergeSuppliesKey(parsed: Document, path: []const AST.PathSegment) !bool {
-    if (path.len == 0 or std.meta.activeTag(path[path.len - 1]) != .key) return false;
-    const parent = parsed.ast.getValByPath(path[0 .. path.len - 1]) catch return false;
-    if (parent.kind != .mapping) return false;
-    return (parsed.ast.mergedChild(parent, path[path.len - 1].key) catch return false) != null;
-}
-
-/// Follow-mode replace: when the target is an alias (`b: *x`), edit the
-/// ANCHORED value instead, so every alias to that anchor reflects the change.
-///
-/// The `replaceValAtPathFollowing` hook (see
-/// `editor.Editor.replaceValAtPathFollowing`). A non-alias target is handed
-/// straight back to the plain `replaceValAtPath`, which is that op's documented
-/// contract — so the whole of "following" is this one branch, and the reference
-/// layer stays out of the generic engine. `span` is unused: the alias arm
-/// splices the anchored node's span, not the alias's.
-pub fn replaceAliasTarget(self: *YamlEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, span: Span, replacement: []const u8) !void {
-    _ = span;
-    if (node.kind == .alias) {
-        const target = parsed.ast.nodes[try parsed.ast.resolveAlias(node)];
-        return self.replaceAtSpan(valueSpanWithoutProps(self, parsed, target), replacement);
-    }
-    return self.replaceValAtPath(path, replacement);
-}
-
-/// The span of `node`'s value bytes, excluding any leading `&anchor`/`!tag`
-/// property prefix (the node's stored span starts at the property). Used by
-/// follow-mode so editing the anchored value keeps the anchor intact.
-pub fn valueSpanWithoutProps(self: *YamlEditor, parsed: Document, node: AST.Node) Span {
-    const source = self.source.items;
-    const full = parsed.span(node);
-    var start = full.start;
-    if (parsed.anchorSpan(node)) |a| start = @max(start, a.end);
-    if (parsed.tagSpan(node)) |t| start = @max(start, t.end);
-    while (start < full.end and (source[start] == ' ' or source[start] == '\t')) start += 1;
-    return Span.init(start, full.end);
-}
 
 // =======
 // TESTS

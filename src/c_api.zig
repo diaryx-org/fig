@@ -799,7 +799,7 @@ fn editStatus(err: anyerror) FigStatus {
         // shape (e.g. appending to a non-array-of-tables, deleting a table by the
         // scalar ops, inserting a key/table that already exists). These are caller
         // errors, not malformed-source reparse failures.
-        error.NotATable, error.NotAnInlineArray, error.NotAnArrayOfTables, error.TableExists, error.DuplicateKey, error.MergeOnlyKey => .invalid_argument,
+        error.NotATable, error.NotAnInlineArray, error.NotAnArrayOfTables, error.TableExists, error.SectionExists, error.ContainerExists, error.DuplicateKey, error.MergeOnlyKey => .invalid_argument,
         // The pre-op guards: a scalar op addressed a whole scattered container,
         // whose node span covers only the header line (delete) or just the name
         // inside it (replace), so the generic splice would orphan or rename what
@@ -1481,7 +1481,9 @@ pub export fn fig_editor_set_sequence(
 // editor's pre-op guards), and these are where that request goes instead.
 //
 // Only the section formats have them (`Editor.hasContainerOp`): TOML all six,
-// INI and fig the generic delete/move/reorder three, and everything else none
+// INI and fig the four that need no header syntax (delete, move, reorder and
+// rename, over the header lines and name mentions their parsers record; the
+// two that write a `[header]` line need a `section_header`), and everything else none
 // — YAML, JSON and the rest nest their containers in one contiguous region, so
 // the key ops already handle them and there is nothing to derive. A format
 // that lacks the op answers `unsupported_format`, the same answer
@@ -4498,17 +4500,22 @@ test "fig_editor whole-container ops answer unsupported_format where the format 
         try std.testing.expectEqual(FigStatus.ok, fig_editor_delete_key(ed, &path, 1));
         try expectEditorSource(ed, "b:\n  y: 2\n");
     }
-    // INI declares the delete/move/reorder three but not the other half: a
-    // section has no `[[array]]` form, and its name is one span the generic
-    // `replace_key` already rewrites.
+    // INI has the delete/move/reorder three and rename — its parser records
+    // every `[section]` header's name, reopenings included, so a rename
+    // reaches each — but not the two that write a header line: it declares
+    // no `section_header`, and a section has no `[[array]]` form.
     {
-        const src = "[a]\nx = 1\n[b]\ny = 2\n";
+        const src = "[a]\nx = 1\n[b]\ny = 2\n[a]\nz = 3\n";
         var ed: ?*FigEditor = null;
         try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.ini), &ed));
         defer fig_editor_destroy(ed);
         const leaf = "q";
-        try std.testing.expectEqual(FigStatus.unsupported_format, fig_editor_rename_container(ed, &path, 1, leaf.ptr, leaf.len));
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_delete_container(ed, &path, 1));
+        const body = "";
+        try std.testing.expectEqual(FigStatus.unsupported_format, fig_editor_insert_container(ed, &path, 1, body.ptr, body.len));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_rename_container(ed, &path, 1, leaf.ptr, leaf.len));
+        try expectEditorSource(ed, "[q]\nx = 1\n[b]\ny = 2\n[q]\nz = 3\n");
+        const q = [_]FigPathSegment{keySeg("q")};
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_delete_container(ed, &q, 1));
         try expectEditorSource(ed, "[b]\ny = 2\n");
     }
 }
@@ -4849,7 +4856,8 @@ test "editStatus: every editor refusal is a caller error, not parse_error" {
         error.NotASequence,             error.NotAContainer,
         error.UnsupportedShape,         error.NotATable,
         error.NotAnInlineArray,         error.NotAnArrayOfTables,
-        error.TableExists,              error.DuplicateKey,
+        error.TableExists,              error.SectionExists,
+        error.ContainerExists,          error.DuplicateKey,
         error.MergeOnlyKey,             error.CannotDeleteTable,
         error.CannotDeleteSection,      error.CannotDeleteContainer,
         error.CannotReplaceTable,       error.CannotReplaceSection,

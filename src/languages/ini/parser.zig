@@ -51,6 +51,9 @@ comments_seen: bool = false,
 /// just the first. Threaded out to `Document.node_regions`, the same table
 /// fig's and TOML's parsers fill for the same reason.
 built_regions: std.ArrayList(Document.NodeRegion) = .empty,
+/// Every `[section]` header's name token, on the section it names — the
+/// first header and each reopening. Becomes `Document.node_mentions`.
+built_mentions: std.ArrayList(Document.NodeMention) = .empty,
 
 recover: bool = false,
 diagnostics: std.ArrayList(Diagnostic) = .empty,
@@ -189,6 +192,7 @@ pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Ty
     const doc = try parse(allocator, input, format);
     allocator.free(doc.node_spans);
     allocator.free(doc.node_regions);
+    allocator.free(doc.node_mentions);
     return doc.ast;
 }
 
@@ -242,6 +246,7 @@ fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Documen
     // Covers both exits, so `parseImpl`'s error path needs no arm for it
     // (unlike `arena.nodes`/`spans`, which are only moved out on success).
     defer self.built_regions.deinit(self.allocator);
+    defer self.built_mentions.deinit(self.allocator);
     defer {
         for (self.arena.node_comments.items) |nc| {
             self.allocator.free(nc.leading);
@@ -284,8 +289,11 @@ fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Documen
 
     const node_regions = try self.allocator.dupe(Document.NodeRegion, self.built_regions.items);
     Document.sortRegions(node_regions);
+    errdefer self.allocator.free(node_regions);
+    const node_mentions = try self.allocator.dupe(Document.NodeMention, self.built_mentions.items);
+    Document.sortMentions(node_mentions);
 
-    return .{ .source = input, .ast = ast, .node_spans = spans, .node_regions = node_regions };
+    return .{ .source = input, .ast = ast, .node_spans = spans, .node_regions = node_regions, .node_mentions = node_mentions };
 }
 
 // ── Token cursor ────────────────────────────────────────────────────────────
@@ -366,6 +374,7 @@ fn parseSectionHeader(self: *Parser) ParserError!void {
         // node's span (the section's own anchors the first `[a]`), so record it
         // for the editor's region gather — see `built_regions`.
         try self.recordHeader(kv.value, name_tok.span.start);
+        try self.built_mentions.append(self.allocator, .{ .node_id = kv.value, .span = name_tok.span, .kind = .header });
         try self.addWarning(.duplicate_section, name_tok.span);
     } else {
         const key_id = try self.arena.addNode(.{ .string = name }, name_tok.span);
@@ -373,6 +382,7 @@ fn parseSectionHeader(self: *Parser) ParserError!void {
         const map_id = try self.arena.addNode(.{ .mapping = null }, name_tok.span);
         _ = try flat_map.putEntry(&self.arena, self.root_id, key_id, map_id, .overwrite);
         try self.recordHeader(map_id, name_tok.span.start);
+        try self.built_mentions.append(self.allocator, .{ .node_id = map_id, .span = name_tok.span, .kind = .header });
         self.current_table = map_id;
     }
 }

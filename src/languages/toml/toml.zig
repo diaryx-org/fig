@@ -87,11 +87,14 @@ pub const Language = struct {
         _ = t;
         return .{
             .comments = .hash,
-            // TOML spells an entry `key = value`, and every path where that
-            // matters is delegated to `toml/editor_helper.zig` — so the
-            // generic engine never writes a TOML separator. See
-            // `Syntax.kv_sep`.
-            .kv_sep = null,
+            // `key = value`, in a block table and an inline one alike; an
+            // empty inline table takes its first entry padded, `{ k = v }`.
+            .kv_sep = " = ",
+            .flow_map_pad = " ",
+            // A key is bare when it can be, else basic-quoted — for an
+            // inserted key, a header path's segments and a renamed table's
+            // leaf alike.
+            .key_style = .bare_or_quoted,
             // The dotted-key formats keep the flow `{}` chain as the
             // idiomatic intermediate form — `fig fmt` canonicalizes
             // `a = { b = { c = v }}` back to `a.b.c = v`.
@@ -104,62 +107,28 @@ pub const Language = struct {
             // assembled from scattered lines, which `parser.zig` records in
             // `Document.node_regions`. Its refusals say "table".
             .section_noun = .table,
+            // `[a.b]` opens a table, `[[a.b]]` an element of an array of
+            // tables; an index segment is implied and left out.
+            .section_header = .{ .open = "[", .close = "]", .seq_open = "[[", .seq_close = "]]" },
         };
     }
 
-    // ── Editing hooks ────────────────────────────────────────────────────────
+    // ── Editing ──────────────────────────────────────────────────────────────
     //
-    // Operations this format takes over from the generic splice engine.
-    // `Editor` dispatches on PRESENCE — `@hasDecl(Language, "insertKey")` — so
-    // declaring one here is the whole of opting in, and every operation not
-    // named below runs the generic implementation. Each signature is fixed by
-    // the `editor.Editor` method of the same name; see its doc comment.
+    // No hooks. Every edit is the generic engine's, driven by `syntax` above
+    // and by what `parser.zig` records: a table's header lines
+    // (`Document.node_regions`, which the whole-container delete, move and
+    // reorder gather) and every place a table's name is spelled
+    // (`Document.node_mentions`). The engine keeps an inserted entry inside
+    // the intended table by skipping children that sit under a header of
+    // their own, spells a new `[a.b]` or `[[a.b]]` from `section_header`,
+    // and renames a table by rewriting each mention — its own header,
+    // every descendant header sharing the prefix, every dotted line — which
+    // is what `toml/editor_helper.zig` used to do by scanning the source.
+    // That file now holds this format's editor tests.
     //
-    // The logic lives in `editor_helper.zig` (which holds this format's editor
-    // tests too), not here: this block is the DECLARATION of which operations
-    // are overridden, so a reader can see a format's whole answer in one struct
-    // without opening the helper.
-    const edit = @import("editor_helper.zig");
-
-    /// TOML splits a logical table across scattered `[header]` and dotted-key
-    /// lines, so a new entry has to land at the end of the intended table's own
-    /// header region — never after a sub-table header, which would silently
-    /// reparent it.
-    pub const insertKey = edit.tomlInsertKey;
-
-    // No delete/replace/move/reorder guards: the engine's section rule covers
-    // them. A block table is a section node (`Document.node_regions`), and a
-    // section node cannot be line-spliced — `deleteKey`, `replaceValAtPath`,
-    // `moveKey` and `reorderKeys` refuse it in this format's vocabulary
+    // The line-splice ops refuse a section node in this format's vocabulary
     // (`CannotDeleteTable`, …) and point at the whole-container ops.
-
-    /// A table's name is written once per `[header]`/dotted line that mentions
-    /// it, but only the first has a key node — so the generic one-span splice
-    /// renames that mention and leaves the rest behind, splitting the table.
-    /// Routes a block table to `renameContainer`'s multi-mention rewrite.
-    pub const replaceKeyAtPath = edit.tomlReplaceKey;
-
-    // ── Whole-container ops ──────────────────────────────────────────────────
-    //
-    // `deleteContainer`, `moveContainer` and `reorderContainers` are GENERIC:
-    // `editor.zig` derives a table's scattered regions from `Document.
-    // node_regions` and needs nothing from here. The three below are the ops
-    // that have to SPELL something TOML — a `[header]` line, or every mention
-    // of a table's name — and stay hooks; `Editor` dispatches on `@hasDecl`
-    // for them exactly as for the hooks above.
-
-    /// A new `[path]` table, spliced past the parent's whole subtree so no
-    /// existing key is reparented.
-    pub const insertContainer = edit.insertTable;
-
-    /// TOML alone needs a rename op: the renamed segment appears in every
-    /// descendant header (`[a.b]`, `[a.b.c]`, `[[a.b]]`) and every dotted line
-    /// that spells it, not just its own key node.
-    pub const renameContainer = edit.renameTable;
-
-    /// A new `[[header]]` element on the end of an array-of-tables, past every
-    /// line of the current last element's subtree.
-    pub const appendContainerToSeq = edit.appendTableToArray;
 };
 
 // Test discovery for the TOML module: importing `toml.zig` (from root.zig) pulls

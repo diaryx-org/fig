@@ -221,7 +221,7 @@ const Materializer = struct {
     // ── tags ──────────────────────────────────────────────────────────────
 
     fn applyScalarTag(self: *const Materializer, node: AST.Node) Error!AST.Node.Kind {
-        const name = self.coreName(self.src.node_tags[node.id] orelse return node.kind) orelse
+        const name = self.coreName(self.src.tagOf(node.id) orelse return node.kind) orelse
             return self.customTag(node.id, node.kind);
         if (std.mem.eql(u8, name, "str")) return .{ .string = self.scalarText(node) };
         if (std.mem.eql(u8, name, "null")) return .null_;
@@ -234,7 +234,7 @@ const Materializer = struct {
     }
 
     fn checkCollectionTag(self: *const Materializer, node: AST.Node, comptime want: enum { seq, map }) Error!void {
-        const tag = self.src.node_tags[node.id] orelse return;
+        const tag = self.src.tagOf(node.id) orelse return;
         if (self.coreName(tag)) |name| {
             const ok = if (want == .seq) "seq" else "map";
             if (std.mem.eql(u8, name, ok)) return;
@@ -249,7 +249,7 @@ const Materializer = struct {
     /// `!!int`). A custom/collection tag is not carried — it was already applied
     /// (collections) or errored/dropped (custom) by `applyScalarTag`.
     fn carryScalarTag(self: *Materializer, src_id: AST.Node.Id, new_id: AST.Node.Id) Error!void {
-        const name = self.coreName(self.src.node_tags[src_id] orelse return) orelse return;
+        const name = self.coreName(self.src.tagOf(src_id) orelse return) orelse return;
         const kind: AST.Tag.KindTag =
             if (std.mem.eql(u8, name, "str")) .string else if (std.mem.eql(u8, name, "int")) .integer else if (std.mem.eql(u8, name, "float")) .float else if (std.mem.eql(u8, name, "bool")) .boolean else if (std.mem.eql(u8, name, "null")) .null_ else return; // seq/map (collection) or unrecognized — nothing to carry
         self.out_tags.items[new_id] = .{ .kind = kind };
@@ -279,7 +279,7 @@ const Materializer = struct {
     /// verbatim non-specific `!` is a no-op; any other custom tag is rejected in
     /// strict mode and dropped (node kept as parsed) in lax mode.
     fn customTag(self: *const Materializer, id: AST.Node.Id, kind: AST.Node.Kind) Error!AST.Node.Kind {
-        switch (self.src.node_tags[id] orelse return kind) {
+        switch (self.src.tagOf(id) orelse return kind) {
             .kind => return kind,
             .text => |t| if (std.mem.eql(u8, t, "!")) return kind,
         }

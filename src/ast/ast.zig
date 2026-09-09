@@ -214,6 +214,12 @@ pub const NodeComments = struct {
 
 /// Read the comments bound to `id`, tolerating a short or absent `node_comments`
 /// table (returns the empty value for ids past its end).
+/// The type tag on node `id`, or null — null too when the document declares
+/// no tags at all (`node_tags` is empty), which a raw index would not survive.
+pub fn tagOf(self: *const AST, id: Node.Id) ?Tag {
+    return if (id < self.node_tags.len) self.node_tags[id] else null;
+}
+
 pub fn comments(self: *const AST, id: Node.Id) NodeComments {
     return if (id < self.node_comments.len) self.node_comments[id] else .{};
 }

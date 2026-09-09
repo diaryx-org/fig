@@ -74,11 +74,40 @@ node_sep_spans: []const ?Span = &.{},
 /// one line-splice rule (see `editor.zig`, "Whole-container structural
 /// editing") and behind the recursion in `gather`.
 node_regions: []const NodeRegion = &.{},
+/// Every place a SECTION node's NAME is written, as a span the editor can
+/// splice a new name over: a TOML table's own `[a]`, the `a` in `[a.b]`
+/// and `[[a.c]]`, the `a` in a dotted `a.b = 1`; an INI `[section]` and each
+/// reopening; a fig block container's header and each re-entry. Sorted by
+/// `(node_id, span.start)` like `node_regions`; empty for a document of a
+/// format with no sections.
+///
+/// `kind` says how the mention sits relative to the node's PARENT: a
+/// `.header` opens a region of the node's own, outside the parent's lines
+/// (`[a.b]` is not inside `[a]`'s text; a reopened INI `[a]` is a new
+/// region), while an `.entry` mention is on one of the parent's own entry
+/// lines (a dotted key, a fig header at the parent's depth). The editor's
+/// block insert reads it to keep a new entry inside the intended table —
+/// after the last child written on the parent's own lines, never after a
+/// sub-table header — and `renameContainer` and a section's
+/// `replaceKeyAtPath` rewrite every mention at once, which is the whole of
+/// what TOML's rename hook did by scanning.
+node_mentions: []const NodeMention = &.{},
 
 /// One physical header line belonging to node `node_id`: `[start, end)` is the
 /// whole line, `end` just past its newline (or `source.len` on an unterminated
 /// final line). See `node_regions`.
 pub const NodeRegion = struct { node_id: AST.Node.Id, start: usize, end: usize };
+
+/// One place section node `node_id`'s name is written. See `node_mentions`.
+pub const NodeMention = struct { node_id: AST.Node.Id, span: Span, kind: MentionKind };
+
+/// How a mention sits relative to the node's parent. See `node_mentions`.
+pub const MentionKind = enum {
+    /// A header line of the node's own, outside its parent's lines.
+    header,
+    /// On one of the parent's own entry lines.
+    entry,
+};
 
 pub fn deinit(self: Document, allocator: std.mem.Allocator) void {
     var ast = self.ast;
@@ -89,6 +118,37 @@ pub fn deinit(self: Document, allocator: std.mem.Allocator) void {
     allocator.free(self.node_marker_spans);
     allocator.free(self.node_sep_spans);
     allocator.free(self.node_regions);
+    allocator.free(self.node_mentions);
+}
+
+/// The name mentions recorded for node `id`, in source order — empty for a
+/// node that is not a section, or whose format records none. O(log n) over
+/// `node_mentions`.
+pub fn mentionsOf(self: Document, id: AST.Node.Id) []const NodeMention {
+    const all = self.node_mentions;
+    var lo: usize = 0;
+    var hi: usize = all.len;
+    while (lo < hi) {
+        const mid = lo + (hi - lo) / 2;
+        if (all[mid].node_id < id) lo = mid + 1 else hi = mid;
+    }
+    const first = lo;
+    hi = all.len;
+    while (lo < hi) {
+        const mid = lo + (hi - lo) / 2;
+        if (all[mid].node_id <= id) lo = mid + 1 else hi = mid;
+    }
+    return all[first..lo];
+}
+
+/// Sort a parser's accumulated mentions into `node_mentions` order.
+pub fn sortMentions(mentions: []NodeMention) void {
+    std.mem.sort(NodeMention, mentions, {}, struct {
+        fn lt(_: void, a: NodeMention, b: NodeMention) bool {
+            if (a.node_id != b.node_id) return a.node_id < b.node_id;
+            return a.span.start < b.span.start;
+        }
+    }.lt);
 }
 
 /// Source span of the key/value separator on the `keyvalue` node `node`, or

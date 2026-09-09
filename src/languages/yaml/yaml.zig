@@ -98,6 +98,9 @@ pub const Language = struct {
         _ = t;
         return .{
             .comments = .hash,
+            // `<<` merges another mapping's entries in; a key resolved only
+            // through it is inherited (shadowed on write, refused on delete).
+            .merge_key = "<<",
             .kv_sep = ": ",
             // The empty seed rather than `{}` — see `Syntax.empty_map_literal`
             // for why the two are not interchangeable here.
@@ -108,31 +111,17 @@ pub const Language = struct {
         };
     }
 
-    // ── Editing hooks ────────────────────────────────────────────────────────
+    // ── Editing ──────────────────────────────────────────────────────────────
     //
-    // Operations this format takes over from the generic splice engine.
-    // `Editor` dispatches on PRESENCE — `@hasDecl(Language, "keyIsInherited")`
-    // — so declaring one here is the whole of opting in, and every operation
-    // not named below runs the generic implementation. Each signature is
-    // fixed by the `editor.Editor` method of the same name; see its doc
-    // comment. The value reframe that used to be hooked here — re-emitting
-    // `: value` so a block collection can replace an inline one — is the
-    // engine's now: the parser records every entry's `:` and the engine
-    // rewrites everything after the key (`Document.node_sep_spans`).
-    //
-    // The logic lives in `editor_helper.zig` (which holds this format's editor
-    // tests too), not here: this block is the DECLARATION of which operations
-    // are overridden, so a reader can see a format's whole answer in one struct
-    // without opening the helper.
-    const edit = @import("editor_helper.zig");
-
-    /// A `<<` merge supplies keys the mapping never spells out, so a key can
-    /// resolve without any physical entry to edit or delete.
-    pub const keyIsInherited = edit.mergeSuppliesKey;
-
-    /// YAML alone has a reference layer, so it alone can distinguish following
-    /// an alias to its anchor from severing it.
-    pub const replaceValAtPathFollowing = edit.replaceAliasTarget;
+    // No hooks and no renderers: YAML is the format the generic engine was
+    // written against. Its reference layer is core — the alias node kind,
+    // `AST.resolveAlias` and `AST.mergedChild`, the anchor and tag span
+    // tables on `Document` — so follow-mode replace and inherited-key
+    // detection are the engine's, the latter switched on by `merge_key`
+    // above. The value reframe that lets a block collection replace an
+    // inline one is the engine's too: the parser records every entry's `:`
+    // (`Document.node_sep_spans`) and the engine rewrites everything after
+    // the key. `editor_helper.zig` holds this format's editor tests.
 };
 
 // Test discovery: importing `yaml.zig` (from root.zig) pulls in every YAML

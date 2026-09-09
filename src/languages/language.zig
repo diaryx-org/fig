@@ -683,9 +683,9 @@ fn tryParse(comptime Lang: type, allocator: Allocator, input: []const u8, t: Lan
 /// implementation it meant to override, and corrupts a file on the first edit.
 /// That was reproduced on the tree, not imagined — see the proposal's §10.5.
 ///
-/// Adding a hook to `editor.zig` means adding its name here too. That is the
-/// deliberate cost of the check, and the compiler charges it immediately: a
-/// hook the list does not know is a hook no format can declare.
+/// Adding a renderer to `editor.zig` means adding its name here too. That is
+/// the deliberate cost of the check, and the compiler charges it immediately:
+/// a renderer the list does not know is one no format can declare.
 const Decls = struct {
     /// Required of every format, editable or not.
     ///
@@ -724,26 +724,26 @@ const Decls = struct {
     ///     format declares some; an out-of-tree one may.
     const optional = [_][]const u8{ "printNode", "materialize", "TagMode", "parseAbstract", "samples" };
 
-    /// Editing hooks. Declaring one takes over `editor.Editor`'s method of the
-    /// same name — except `keyIsInherited` (a predicate the engine queries),
-    /// which is named for what it answers rather than for a method.
-    /// Signatures are documented on the
-    /// `Editor` method each overrides; see `editor.zig`. What a hook may CALL
-    /// is `editor/splice.zig`: its free functions and the `Editor` members its
-    /// module doc names, and nothing else in the engine.
+    /// Editing hooks: none. A hook was a `pub` decl that took over an
+    /// `editor.Editor` method wholesale, with the editor in hand. Twenty-five
+    /// existed across six formats, and every one ended in a single splice
+    /// and was Zig only for want of a fact the parser had dropped (now a
+    /// `Document` table — markers, separators, regions, mentions), an engine
+    /// constant that was really syntax (now a `Syntax` field), or a string
+    /// function (now a renderer below). The set is kept, empty, so that the
+    /// closed-set check names a hook a format still spells as unknown
+    /// rather than silently never dispatching. See
+    /// `docs/proposals/runtime-languages.md` §4.4.
     ///
-    /// There are no `*Guard` vetoes any more. The four that existed
+    /// There are no `*Guard` vetoes either. The four that existed
     /// (`deleteKeyGuard`, `replaceValGuard`, `moveKeyGuard`,
     /// `reorderKeysGuard`) each refused a generic op on a SCATTERED container
     /// (a TOML `[header]` table, an INI `[section]`, a fig block container),
-    /// and that is now one engine rule over `Document.node_regions` — a
-    /// section node cannot be line-spliced — spelled in the format's
-    /// vocabulary through `Syntax.section_noun`. See
+    /// and that is one engine rule over `Document.node_regions` — a section
+    /// node cannot be line-spliced — spelled in the format's vocabulary
+    /// through `Syntax.section_noun`. See
     /// `docs/proposals/derived-regions.md`.
-    const hooks = [_][]const u8{
-        "insertKey",      "replaceValAtPathFollowing",
-        "replaceKeyAtPath", "keyIsInherited",
-    };
+    const hooks = [_][]const u8{};
 
     /// Fragment renderers. Each is a pure function from strings to a string
     /// the engine splices under the reparse net: `renderValue(allocator,
@@ -763,26 +763,6 @@ const Decls = struct {
     /// §4.4.
     const renderers = [_][]const u8{ "renderValue", "renderEntry", "renderItem", "renderTail", "renderKey" };
 
-    /// The whole-container ops a SECTION format (`Syntax.section_noun` non-
-    /// null) may still supply itself. `deleteContainer`, `moveContainer` and
-    /// `reorderContainers` are not here: they are generic over
-    /// `Document.node_regions` and belong to every section format. These
-    /// three remain hooks because each has to SPELL a fragment or find a
-    /// name — a new `[header]` line, or every mention of a table's name —
-    /// which the region table does not answer. Unlike `hooks` they override
-    /// nothing: `editor.Editor`'s method of the same name dispatches on
-    /// `@hasDecl` and refuses at comptime for a format that declares nothing
-    /// (see its `requireSectionOp`).
-    ///
-    /// Kept as a separate set from `hooks` because the reachability rules below
-    /// do not apply: a hook can be unreachable behind a `syntax` refusal, while
-    /// one of these IS the operation and is reachable whenever it is declared.
-    /// The one coherence rule they carry is `validate`'s: a format that
-    /// declares one must be a section format.
-    const exclusive = [_][]const u8{
-        "insertContainer", "renameContainer", "appendContainerToSeq",
-    };
-
     fn has(comptime set: []const []const u8, comptime name: []const u8) bool {
         for (set) |k| if (std.mem.eql(u8, k, name)) return true;
         return false;
@@ -790,8 +770,7 @@ const Decls = struct {
 
     fn known(comptime name: []const u8) bool {
         return has(&required, name) or has(&required_edit, name) or
-            has(&optional, name) or has(&hooks, name) or has(&exclusive, name) or
-            has(&renderers, name);
+            has(&optional, name) or has(&hooks, name) or has(&renderers, name);
     }
 
     /// The known name `name` differs from only by letter case, or null.
@@ -801,7 +780,7 @@ const Decls = struct {
     /// slip (`insertkey`, `appendtoseq`), and that is the one this catches. A
     /// wilder misspelling still fails; it just fails without a suggestion.
     fn nearest(comptime name: []const u8) ?[]const u8 {
-        for ([_][]const []const u8{ &required, &required_edit, &optional, &hooks, &exclusive }) |set| {
+        for ([_][]const []const u8{ &required, &required_edit, &optional, &hooks, &renderers }) |set| {
             for (set) |k| if (std.ascii.eqlIgnoreCase(k, name)) return k;
         }
         return null;
@@ -928,7 +907,7 @@ pub fn validate(comptime Lang: type) void {
 
         // The closed set. `@typeInfo(...).decls` lists only PUBLIC
         // declarations, so a format's private helpers — the
-        // `const edit = @import("editor_helper.zig")` each hooks block opens
+        // `const edit = @import("editor_helper.zig")` a renderers block opens
         // with — are invisible here and need no exemption.
         for (@typeInfo(Lang).@"struct".decls) |d| {
             if (Decls.known(d.name)) continue;
@@ -936,41 +915,20 @@ pub fn validate(comptime Lang: type) void {
                 if (Decls.nearest(d.name)) |near|
                     " — did you mean '" ++ near ++ "'?"
                 else
-                    ". Editing hooks must be named for the `editor.Editor` method they" ++
-                        " override, and added to `Decls.hooks` in language.zig" ++
-                        " (or `Decls.exclusive` for a whole-container op).");
+                    ". A fragment renderer must be one of `Decls.renderers` in language.zig;" ++
+                        " there are no editing hooks.");
         }
 
         // Coherence: a format that says it cannot be edited must not declare
-        // editing behaviour. Without this, `caps.edit = false` and a live hook
-        // can disagree indefinitely — nothing else reads both. Whole-container
-        // ops count: `Editor` is where they are reached, so declaring one on a
-        // format with no editor is the same contradiction.
+        // editing behaviour. Without this, `caps.edit = false` and a live
+        // renderer can disagree indefinitely — nothing else reads both.
         if (!Lang.caps.edit) {
-            for (Decls.hooks ++ Decls.exclusive ++ Decls.renderers) |name| {
+            for (Decls.hooks ++ Decls.renderers) |name| {
                 if (@hasDecl(Lang, name))
                     @compileError("Language '" ++ Lang.name ++ "' declares caps.edit = false" ++
-                        " but supplies the editing hook '" ++ name ++ "'");
+                        " but supplies the editing renderer '" ++ name ++ "'");
             }
             return;
-        }
-
-        // Coherence: the whole-container hooks address section nodes, and only
-        // a section format (`Syntax.section_noun` non-null in some dialect)
-        // has any. Declared on any other format, the hook would be reachable
-        // and would find nothing to address — a contradiction between the
-        // manifest and the declaration, caught here rather than at runtime.
-        var any_section = false;
-        for (std.meta.tags(Lang.Type)) |t| {
-            const s: Syntax = Lang.syntax(t);
-            if (s.section_noun != null) any_section = true;
-        }
-        if (!any_section) {
-            for (Decls.exclusive) |name| {
-                if (@hasDecl(Lang, name))
-                    @compileError("Language '" ++ Lang.name ++ "' is not a section format (section_noun" ++
-                        " is null in every dialect) but supplies the whole-container op '" ++ name ++ "'");
-            }
         }
 
         // The remaining rules are about hooks being REACHABLE. Both follow from

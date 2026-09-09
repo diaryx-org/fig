@@ -753,8 +753,9 @@ test "fig reorderKeys refuses a reorder that shifts a block container" {
     try expectFigSource(&ed, "x = 1\na\n> p = 1\nb\n> q = 2\n");
 }
 
-test "fig replaceValAtPath still re-frames a contiguous block container through its hook" {
-    // The section rule guards only the ENGINE's splice; fig's hook owns the
+test "fig replaceValAtPath still re-frames a contiguous block container from its recorded separator" {
+    // The section rule guards only the ENGINE's splice; a fig header records
+    // a zero-width separator, so the reframe runs first and owns the
     // target and re-frames the value in place.
     var ed = try newFigEditor("a\n> p = 1\nz = 0\n");
     defer ed.deinit();

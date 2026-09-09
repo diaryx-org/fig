@@ -38,19 +38,13 @@
 //!      reframing from the `-` (`dashPosAfterPrev`/`dashPosByIndex` find it
 //!      by scanning; they go when that hook does).
 //!
-//! **Deliberately out of scope** (declined with a clear error rather than
-//! guessed at): inserting into a genuinely EMPTY inline `{}`/`[]` container.
-//! NestedText's reader accepts these as childless `.mapping`/`.sequence`
-//! nodes (unlike a block dict/list, which always has >=1 entry by
-//! construction — see `parser.zig`'s `parseContainerAt`), but the printer
-//! never emits them and expanding one into block form is a `plist`-style
-//! "expand empty container" transform this session didn't have budget for;
-//! `ntInsertKey`/`ntAppendItem`/`ntPrependItem` all raise
-//! `error.EmptyInlineContainer` there instead of silently doing nothing (or
-//! something wrong). `set`'s auto-vivify (`editor.zig`) excludes NestedText
-//! for the same reason: its seed IS exactly this shape, which would only
-//! defer the same error by one step. Also out of scope: a `value_text`
-//! that's itself a nested container fragment (inserting/setting a whole new
+//! An inline `{}`/`[]` container is a FLOW container to the engine, so an
+//! insert into one is the generic comma-aware splice (`{a: 1}`), using the
+//! `kv_sep` declared for exactly that. `set`'s auto-vivify (`editor.zig`)
+//! still excludes NestedText: its printer never writes the inline form, so a
+//! vivified ancestor would be a shape the format itself avoids.
+//!
+//! Out of scope: a `value_text` that's itself a nested container fragment (inserting/setting a whole new
 //! sub-mapping/sub-list via CLI text) — every op here treats `value_text` as
 //! a raw SCALAR string, matching NestedText's own "strings all the way down"
 //! design; structural composition of brand-new nested containers isn't
@@ -75,12 +69,11 @@ const lineEndAfter = splice.lineEndAfter;
 const firstNonSpace = splice.firstNonSpace;
 const columnOf = splice.columnOf;
 
-/// Matches `printer.zig`'s own `indent_width` — NestedText only requires a
-/// nested region's indent to be GREATER than its parent's (any amount), but
-/// this editor always writes the same fixed step the printer does, exactly
-/// like YAML/TOML hardcode `col + 2` rather than sniffing the document's own
-/// convention.
-const indent_width: usize = 4;
+/// The nesting step, as `nestedtext.zig` declares it — the same fixed step
+/// `printer.zig` writes. NestedText only requires a nested region's indent to
+/// be GREATER than its parent's, but this editor never sniffs the document's
+/// own convention, exactly as YAML's engine path does not.
+const indent_unit: []const u8 = NestedText.syntax(.NESTEDTEXT).indent_unit;
 
 // ── Value rendering ──────────────────────────────────────────────────────────
 
@@ -88,10 +81,10 @@ const indent_width: usize = 4;
 /// its own line terminator: `" " ++ text` when `text` fits on the same line
 /// (non-empty, no literal `\n`) and isn't `force_nested`; otherwise a nested
 /// `>`-block, one line per physical line of `text` (an empty line becomes a
-/// bare `>`), each at `child_col` spaces — mirroring `printer.zig`'s
+/// bare `>`), each under `child_indent` — mirroring `printer.zig`'s
 /// `writeStringBlock`. Never emits a trailing newline after the last line
 /// (the caller decides whether one is needed — see `ntReplaceValue`).
-fn appendValueTail(allocator: std.mem.Allocator, out: *std.ArrayList(u8), child_col: usize, text: []const u8, force_nested: bool) !void {
+fn appendValueTail(allocator: std.mem.Allocator, out: *std.ArrayList(u8), child_indent: []const u8, text: []const u8, force_nested: bool) !void {
     if (!force_nested and text.len != 0 and std.mem.indexOfScalar(u8, text, '\n') == null) {
         try out.append(allocator, ' ');
         try out.appendSlice(allocator, text);
@@ -100,7 +93,7 @@ fn appendValueTail(allocator: std.mem.Allocator, out: *std.ArrayList(u8), child_
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |line| {
         try out.append(allocator, '\n');
-        try out.appendNTimes(allocator, ' ', child_col);
+        try out.appendSlice(allocator, child_indent);
         if (line.len == 0) {
             try out.append(allocator, '>');
         } else {
@@ -145,17 +138,20 @@ fn needsMultilineKey(key: []const u8) bool {
 }
 
 /// Append `key`'s multiline `: line` form (one `: line` — or bare `:` for an
-/// empty line — per physical line of `key`, each at `col` spaces), mirroring
-/// `printer.zig`'s `writeMultilineKeyLines`. No leading/trailing newline (the
-/// caller sequences it against whatever follows), matching `appendValueTail`'s
-/// convention.
-fn appendMultilineKeyLines(allocator: std.mem.Allocator, out: *std.ArrayList(u8), col: usize, key: []const u8) !void {
+/// empty line — per physical line of `key`), mirroring `printer.zig`'s
+/// `writeMultilineKeyLines`. The FIRST line's indent is the caller's (the
+/// engine has written it); every later line is prefixed with `indent`. No
+/// leading/trailing newline (the caller sequences it against whatever
+/// follows), matching `appendValueTail`'s convention.
+fn appendMultilineKeyLines(allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, key: []const u8) !void {
     var it = std.mem.splitScalar(u8, key, '\n');
     var first = true;
     while (it.next()) |line| {
-        if (!first) try out.append(allocator, '\n');
+        if (!first) {
+            try out.append(allocator, '\n');
+            try out.appendSlice(allocator, indent);
+        }
         first = false;
-        try out.appendNTimes(allocator, ' ', col);
         if (line.len == 0) {
             try out.append(allocator, ':');
         } else {
@@ -248,56 +244,38 @@ fn nextContentLineStart(source: []const u8, from: usize) usize {
     return i;
 }
 
-// ── insertKey ────────────────────────────────────────────────────────────────
+// ── renderEntry / renderItem ─────────────────────────────────────────────────
 
-/// Insert a `key_text:`/`: key_text` entry (rendering `value_text` same-line
-/// or as a nested `>`-block per its shape) into the mapping at `node` — the
-/// root promoted from an empty document (`.null_`), or an existing non-empty
-/// block mapping. See the module doc for why a childless (inline `{}`)
-/// mapping is declined rather than expanded.
-///
-/// Takes the full `insertKey` hook signature (see `editor.Editor.insertKey`);
-/// `path` and `span` are the generic engine's, unused here.
-pub fn ntInsertKey(self: *NtEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, span: Span, key_text: []const u8, value_text: []const u8) !void {
-    _ = path;
-    _ = span;
-    const source = self.source.items;
-    switch (node.kind) {
-        .null_ => {
-            var out: std.ArrayList(u8) = .empty;
-            defer out.deinit(self.allocator);
-            try appendKeyLine(self.allocator, &out, 0, key_text, value_text);
-            try self.replaceAtSpan(Span.init(0, source.len), out.items);
-        },
-        .mapping => {
-            if (try parsed.ast.child(&node) == null) return error.EmptyInlineContainer;
-            const col = columnOf(source, firstNonSpace(source, parsed.span(node).start));
-            const last = (try parsed.ast.lastChild(&node)).?;
-            const insert_at = lineEndAfter(source, parsed.span(last).end -| 1);
-            var out: std.ArrayList(u8) = .empty;
-            defer out.deinit(self.allocator);
-            if (insert_at > 0 and source[insert_at - 1] != '\n') try out.append(self.allocator, '\n');
-            try appendKeyLine(self.allocator, &out, col, key_text, value_text);
-            try self.replaceAtSpan(Span.init(insert_at, insert_at), out.items);
-        },
-        else => return error.NotAMapping,
+/// One block-mapping entry after its line's `indent`: `key:` plus the value
+/// tail, or the `: key` multiline form (per `needsMultilineKey`) over a value
+/// that is then always nested. Continuation lines sit at `indent` plus one
+/// `indent_unit`. No trailing newline. See `editor.Editor.writeEntry`.
+pub fn renderEntry(allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, key_text: []const u8, value_text: []const u8) !void {
+    var child: std.ArrayList(u8) = .empty;
+    defer child.deinit(allocator);
+    try child.appendSlice(allocator, indent);
+    try child.appendSlice(allocator, indent_unit);
+    if (needsMultilineKey(key_text)) {
+        try appendMultilineKeyLines(allocator, out, indent, key_text);
+        // A multiline key's value has no same-line form at all — always nested.
+        try appendValueTail(allocator, out, child.items, value_text, true);
+    } else {
+        try out.appendSlice(allocator, key_text);
+        try out.append(allocator, ':');
+        try appendValueTail(allocator, out, child.items, value_text, false);
     }
 }
 
-/// `col`-indented `key_text:`/`: key_text` line (plain vs. multiline form per
-/// `needsMultilineKey`) plus its rendered value, terminated by a single `\n`.
-fn appendKeyLine(allocator: std.mem.Allocator, out: *std.ArrayList(u8), col: usize, key_text: []const u8, value_text: []const u8) !void {
-    if (needsMultilineKey(key_text)) {
-        try appendMultilineKeyLines(allocator, out, col, key_text);
-        // A multiline key's value has no same-line form at all — always nested.
-        try appendValueTail(allocator, out, col + indent_width, value_text, true);
-    } else {
-        try out.appendNTimes(allocator, ' ', col);
-        try out.appendSlice(allocator, key_text);
-        try out.append(allocator, ':');
-        try appendValueTail(allocator, out, col + indent_width, value_text, false);
-    }
-    try out.append(allocator, '\n');
+/// One block-sequence item after its line's `indent`: `-` plus the value
+/// tail (same-line, or a nested `>`-block one `indent_unit` deeper). No
+/// trailing newline. See `editor.Editor.writeItem`.
+pub fn renderItem(allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, value_text: []const u8) !void {
+    var child: std.ArrayList(u8) = .empty;
+    defer child.deinit(allocator);
+    try child.appendSlice(allocator, indent);
+    try child.appendSlice(allocator, indent_unit);
+    try out.append(allocator, '-');
+    try appendValueTail(allocator, out, child.items, value_text, false);
 }
 
 // ── set / replaceValAtPath ───────────────────────────────────────────────────
@@ -332,10 +310,13 @@ pub fn ntReplaceValue(self: *NtEditor, parsed: Document, path: []const AST.PathS
         .key => {
             const key_node = try parsed.ast.getKeyByPath(path);
             const key_span = parsed.span(key_node);
-            const col = columnOf(source, firstNonSpace(source, lineStartBefore(source, key_span.start)));
+            var child: std.ArrayList(u8) = .empty;
+            defer child.deinit(self.allocator);
+            _ = try self.indentAt(&child, firstNonSpace(source, lineStartBefore(source, key_span.start)));
+            try child.appendSlice(self.allocator, indent_unit);
             const multiline_key = isMultilineKeySpan(source, key_span);
             if (!multiline_key) try out.append(self.allocator, ':');
-            try appendValueTail(self.allocator, &out, col + indent_width, replacement, multiline_key);
+            try appendValueTail(self.allocator, &out, child.items, replacement, multiline_key);
             if (needs_own_newline) try out.append(self.allocator, '\n');
             try self.replaceAtSpan(Span.init(key_span.end, span.end), out.items);
         },
@@ -343,8 +324,11 @@ pub fn ntReplaceValue(self: *NtEditor, parsed: Document, path: []const AST.PathS
             const seq = try parsed.ast.getValByPath(path[0 .. path.len - 1]);
             if (seq.kind != .sequence) return error.NotASequence;
             const dash_pos = try dashPosByIndex(source, parsed, seq, idx);
-            const col = columnOf(source, dash_pos);
-            try appendValueTail(self.allocator, &out, col + indent_width, replacement, false);
+            var child: std.ArrayList(u8) = .empty;
+            defer child.deinit(self.allocator);
+            _ = try self.indentAt(&child, dash_pos);
+            try child.appendSlice(self.allocator, indent_unit);
+            try appendValueTail(self.allocator, &out, child.items, replacement, false);
             if (needs_own_newline) try out.append(self.allocator, '\n');
             try self.replaceAtSpan(Span.init(dash_pos + 1, span.end), out.items);
         },
@@ -374,8 +358,12 @@ pub fn ntReplaceKey(self: *NtEditor, parsed: Document, path: []const AST.PathSeg
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(self.allocator);
     if (wants_multiline) {
-        const col = columnOf(source, lineStartBefore(source, key_span.start));
-        try appendMultilineKeyLines(self.allocator, &out, col, new_key_text);
+        // A multiline key's span starts at its line start, indentation
+        // included, so the replacement carries the indent itself.
+        const line_start = lineStartBefore(source, key_span.start);
+        const indent = source[line_start..firstNonSpace(source, line_start)];
+        try out.appendSlice(self.allocator, indent);
+        try appendMultilineKeyLines(self.allocator, &out, indent, new_key_text);
     } else if (was_multiline) {
         try out.appendSlice(self.allocator, new_key_text);
         try out.append(self.allocator, ':');
@@ -383,43 +371,6 @@ pub fn ntReplaceKey(self: *NtEditor, parsed: Document, path: []const AST.PathSeg
         try out.appendSlice(self.allocator, new_key_text);
     }
     try self.replaceAtSpan(key_span, out.items);
-}
-
-// ── append / prepend ─────────────────────────────────────────────────────────
-
-/// Append `value_text` (rendered same-line or as a nested `>`-block) as a new
-/// last item of the block sequence `seq`. `seq` is always non-empty here — a
-/// genuinely empty sequence can only be the inline `[]` form, which
-/// `editor.zig`'s `isFlow` check routes to the generic flow-item path before
-/// this is ever reached.
-pub fn ntAppendItem(self: *NtEditor, parsed: Document, seq: AST.Node, value_text: []const u8) !void {
-    const source = self.source.items;
-    const dash_col = columnOf(source, firstNonSpace(source, parsed.span(seq).start));
-    const last = (try parsed.ast.lastChild(&seq)).?;
-    const insert_at = lineEndAfter(source, parsed.span(last).end -| 1);
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-    if (insert_at > 0 and source[insert_at - 1] != '\n') try out.append(self.allocator, '\n');
-    try out.appendNTimes(self.allocator, ' ', dash_col);
-    try out.append(self.allocator, '-');
-    try appendValueTail(self.allocator, &out, dash_col + indent_width, value_text, false);
-    try out.append(self.allocator, '\n');
-    try self.replaceAtSpan(Span.init(insert_at, insert_at), out.items);
-}
-
-/// Insert `value_text` before the first item of the block sequence `seq`.
-pub fn ntPrependItem(self: *NtEditor, parsed: Document, seq: AST.Node, value_text: []const u8) !void {
-    const source = self.source.items;
-    const dash_pos = firstNonSpace(source, parsed.span(seq).start);
-    const dash_col = columnOf(source, dash_pos);
-    const line_start = lineStartBefore(source, dash_pos);
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-    try out.appendNTimes(self.allocator, ' ', dash_col);
-    try out.append(self.allocator, '-');
-    try appendValueTail(self.allocator, &out, dash_col + indent_width, value_text, false);
-    try out.append(self.allocator, '\n');
-    try self.replaceAtSpan(Span.init(line_start, line_start), out.items);
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -456,11 +407,8 @@ test "insertKey: a key needing multiline form gets the `: key` spelling" {
     try expectEdit("insertKey", "a: 1\n", .{ &[_]AST.PathSegment{}, "- looks like a list tag", "v" }, "a: 1\n: - looks like a list tag\n    > v\n");
 }
 
-test "insertKey: declines a childless inline `{}` target" {
-    var ed: NtEditor = .{ .allocator = testing.allocator, .format = .NESTEDTEXT };
-    try ed.init("{}");
-    defer ed.deinit();
-    try testing.expectError(error.EmptyInlineContainer, ed.insertKey(&.{}, "a", "1"));
+test "insertKey: fills a childless inline `{}` through the generic flow insert" {
+    try expectEdit("insertKey", "{}", .{ &[_]AST.PathSegment{}, "a", "1" }, "{a: 1}");
 }
 
 test "set: same-line scalar replace, autodetecting old shape" {

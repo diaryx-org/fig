@@ -573,14 +573,22 @@ pub const Syntax = struct {
     /// followed by this. Used to be a `"- "` literal in the engine.
     seq_item_marker: []const u8 = "- ",
 
-    /// Whether a block container's span ends at a closing token of its own —
-    /// plist's `</dict>` and `</array>` — so a same-line trailing comment on
-    /// a container value follows that close. False for every line-structured
-    /// format, where a block collection has no closing token and its value
-    /// span begins at its first child on a later line, so the trailing
-    /// comment rides the KEY's line instead (`contents: # note`). Read by
-    /// `editor.Editor.trailingCommentWindow`.
-    closed_containers: bool = false,
+    /// The tokens that open and close a block container, for a format whose
+    /// block containers close themselves — plist's `<dict>`/`</dict>` and
+    /// `<array>`/`</array>` — or null for every line-structured format, where
+    /// a block collection has no closing token at all.
+    ///
+    /// Two things read it. The engine expands an EMPTY container of such a
+    /// format (`<dict/>`) into its multi-line form around the first entry or
+    /// item it inserts, since the childless form has no line to splice
+    /// after; a format declaring null refuses that insert with
+    /// `EmptyInlineContainer`, having no spelling for it. And a same-line
+    /// trailing comment on a container value follows the close here, where
+    /// in a line-structured format the value span begins at its first child
+    /// on a later line and the comment rides the KEY's line (`contents: #
+    /// note`). See `editor.Editor.expandEmptyContainer` and
+    /// `trailingCommentWindow`.
+    closed_containers: ?ClosedContainers = null,
 
     /// Whether a single line of the form `k: v` is a block MAPPING entry
     /// rather than scalar text — the one value shape that cannot be told
@@ -645,6 +653,13 @@ pub const Syntax = struct {
     /// op" — and only the noun in the error differs.
     section_noun: ?SectionNoun = null,
 };
+
+/// An opening and closing token pair. See `Syntax.closed_containers`.
+pub const Delimiters = struct { open: []const u8, close: []const u8 };
+
+/// The self-closing block container spellings of a format whose containers
+/// have them. See `Syntax.closed_containers`.
+pub const ClosedContainers = struct { map: Delimiters, seq: Delimiters };
 
 /// What a section format calls its scattered container — the one word that
 /// differs between the three formats' otherwise identical refusals. See

@@ -177,7 +177,7 @@ const cases = [_]Case{
         .syntax_body =
         \\.comments = .hash, .kv_sep = null, .empty_map_literal = "{}",
         ,
-        .expect = "declares kv_sep = null but does not hook insertKey",
+        .expect = "declares kv_sep = null but neither hooks insertKey nor declares renderEntry",
     },
     .{
         // The closed set covers whole-container ops too (`Decls.exclusive`), so
@@ -209,13 +209,13 @@ const cases = [_]Case{
         .expect = "declares unknown 'deleteContainer'",
     },
     .{
-        .name = "sequence hook under block_seq_editable = false",
+        .name = "item renderer under block_seq_editable = false",
         .syntax_body =
         \\.comments = .hash, .kv_sep = ": ", .empty_map_literal = "{}",
         \\.block_seq_editable = false,
         ,
-        .decls = "pub const appendToSeq = {};",
-        .expect = "supplies 'appendToSeq', which the engine refuses before reaching",
+        .decls = "pub const renderItem = {};",
+        .expect = "supplies 'renderItem', which the engine refuses before reaching",
     },
     // The comment ops stopped being hookable when `CommentDelimiter` made a
     // paired delimiter declarable: every format's comment syntax is data now,

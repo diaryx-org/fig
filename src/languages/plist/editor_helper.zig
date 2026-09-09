@@ -8,7 +8,8 @@
 //! (`<string>fig</string>`) — on two separate lines, and a value has no bare
 //! literal spelling at all. That breaks every assumption the generic block-map
 //! helpers make (`kv_sep`, one-line entries, splice-a-literal-value), so the
-//! structural ops are implemented here from scratch:
+//! two string renderers below say how plist spells them, and the generic
+//! engine does the rest:
 //!
 //!   - `renderValue`: the crux. A CLI value string (`fig set app.plist k=42`)
 //!     has no plist meaning until it's wrapped in a typed element. We reuse the
@@ -19,16 +20,15 @@
 //!     A value that already starts with `<` is spliced VERBATIM — the escape
 //!     hatch for `<data>` (which can't be sniffed from bare text), an explicit
 //!     `<date>`, a nested `<dict>`/`<array>`, or forcing a type (`<string>2.0`).
-//!   - `plistReplaceValue` (set/edit): render, then swap the value element's
-//!     full-extent span.
-//!   - `plistInsertKey`: append a two-line `<key>`/value entry to a `<dict>`,
-//!     matching the existing children's indent (or expanding an empty
-//!     `<dict/>`).
-//!   - `plistAppendItem`/`plistPrependItem`: the array twins — a value element
-//!     on its own line, no `- ` dash (that's the YAML/block-list shape the
-//!     generic engine writes, which is why arrays can't ride it).
+//!   - `renderEntry`: a dict entry is two lines, `<key>k</key>` then the
+//!     value element at the same indent.
 //!
-//! What DOESN'T live here: delete-key, remove-seq-item and every comment op.
+//! Replace, insert, append and prepend are the engine's: it renders the value
+//! through `renderValue`, writes an entry through `renderEntry` or an item as
+//! the bare element (`seq_item_marker = ""`), and expands an empty `<dict/>`
+//! or `<array/>` from `Syntax.closed_containers`.
+//!
+//! Delete-key, remove-seq-item and every comment op are generic too.
 //! Once `comments.style` is `.xml_comment` (see `editor.zig`), the generic
 //! line-based delete already does the right thing — a plist entry/item
 //! occupies whole lines, and the keyvalue's full-extent span (recorded by
@@ -57,8 +57,6 @@ const sniff = @import("../fig/tokenizer.zig");
 /// The concrete editor these ops drive — the plist arm of the generic engine.
 const PlistEditor = editor.Editor(Plist);
 
-const lineStartBefore = splice.lineStartBefore;
-const firstNonSpace = splice.firstNonSpace;
 
 // ── value rendering ────────────────────────────────────────────────────────────
 
@@ -104,170 +102,18 @@ fn appendEscaped(allocator: std.mem.Allocator, out: *std.ArrayList(u8), s: []con
     };
 }
 
-// ── set / edit ─────────────────────────────────────────────────────────────────
+// ── entry rendering ────────────────────────────────────────────────────────────
 
-/// Replace the value element at `node` (a value node from `getValByPath`) with
-/// a freshly rendered typed element. The node's span is the whole
-/// `<type>…</type>`, so this swaps the element wholesale — the plist analogue of
-/// the line-oriented formats' in-place value splice.
-///
-/// Takes the full `replaceValAtPath` hook signature (see
-/// `editor.Editor.replaceValAtPath`); `path` and `node` are the generic
-/// engine's, unused here — `span` is already `node`'s extent, and a plist value
-/// element is swapped whole whether it sits under a key or an array index.
-pub fn plistReplaceValue(self: *PlistEditor, parsed: Document, path: []const AST.PathSegment, node: AST.Node, span: Span, replacement: []const u8) !void {
-    _ = parsed;
-    _ = path;
-    _ = node;
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-    try renderValue(self.allocator, &out, replacement);
-    try self.replaceAtSpan(span, out.items);
-}
-
-// ── insert (dict) / append+prepend (array) ─────────────────────────────────────
-
-/// Insert `<key>key_text</key>` + rendered value as a new entry in the `<dict>`
-/// at `dict`. Appends after the last existing entry (matching its indent), or
-/// expands an empty `<dict/>`/`<dict></dict>` into the multi-line form.
-///
-/// Takes the full `insertKey` hook signature (see `editor.Editor.insertKey`);
-/// `path` and `span` are the generic engine's, unused here.
-pub fn plistInsertKey(self: *PlistEditor, parsed: Document, path: []const AST.PathSegment, dict: AST.Node, span: Span, key_text: []const u8, value_text: []const u8) !void {
-    _ = path;
-    _ = span;
-    if (dict.kind != .mapping) return error.NotAMapping;
-    const source = self.source.items;
-
-    var val: std.ArrayList(u8) = .empty;
-    defer val.deinit(self.allocator);
-    try renderValue(self.allocator, &val, value_text);
-
-    if (try parsed.ast.child(&dict)) |first_entry| {
-        // Non-empty: splice after the last entry's value, on a fresh line at
-        // the existing children's indentation.
-        const indent = lineIndent(source, parsed.span(first_entry).start);
-        const insert_at = parsed.span((try parsed.ast.lastChild(&dict)).?).end;
-        var out: std.ArrayList(u8) = .empty;
-        defer out.deinit(self.allocator);
-        try out.append(self.allocator, '\n');
-        try appendDictEntry(self.allocator, &out, indent, key_text, val.items);
-        try self.replaceAtSpan(Span.init(insert_at, insert_at), out.items);
-    } else {
-        try expandEmptyContainer(self, parsed, dict, "dict", key_text, val.items);
-    }
-}
-
-/// Append a rendered value element as a new item to the `<array>` at `seq`.
-pub fn plistAppendItem(self: *PlistEditor, parsed: Document, seq: AST.Node, value_text: []const u8) !void {
-    const source = self.source.items;
-    var val: std.ArrayList(u8) = .empty;
-    defer val.deinit(self.allocator);
-    try renderValue(self.allocator, &val, value_text);
-
-    if (try parsed.ast.child(&seq)) |first_item| {
-        const indent = lineIndent(source, parsed.span(first_item).start);
-        const insert_at = parsed.span((try parsed.ast.lastChild(&seq)).?).end;
-        var out: std.ArrayList(u8) = .empty;
-        defer out.deinit(self.allocator);
-        try out.append(self.allocator, '\n');
-        try out.appendSlice(self.allocator, indent);
-        try out.appendSlice(self.allocator, val.items);
-        try self.replaceAtSpan(Span.init(insert_at, insert_at), out.items);
-    } else {
-        try expandEmptyContainer(self, parsed, seq, "array", null, val.items);
-    }
-}
-
-/// Insert a rendered value element before the first item of the `<array>` at
-/// `seq`.
-pub fn plistPrependItem(self: *PlistEditor, parsed: Document, seq: AST.Node, value_text: []const u8) !void {
-    const source = self.source.items;
-    var val: std.ArrayList(u8) = .empty;
-    defer val.deinit(self.allocator);
-    try renderValue(self.allocator, &val, value_text);
-
-    if (try parsed.ast.child(&seq)) |first_item| {
-        const item_start = parsed.span(first_item).start;
-        const indent = lineIndent(source, item_start);
-        const line_start = lineStartBefore(source, item_start);
-        var out: std.ArrayList(u8) = .empty;
-        defer out.deinit(self.allocator);
-        try out.appendSlice(self.allocator, indent);
-        try out.appendSlice(self.allocator, val.items);
-        try out.append(self.allocator, '\n');
-        try self.replaceAtSpan(Span.init(line_start, line_start), out.items);
-    } else {
-        try expandEmptyContainer(self, parsed, seq, "array", null, val.items);
-    }
-}
-
-/// Rewrite an empty `<dict/>`/`<array/>` (or `<…></…>`) into the multi-line
-/// form holding one entry/item. `key_text != null` → a dict entry (a
-/// `<key>`/value pair); null → a bare array item.
-fn expandEmptyContainer(self: *PlistEditor, parsed: Document, container: AST.Node, tag: []const u8, key_text: ?[]const u8, rendered_value: []const u8) !void {
-    const source = self.source.items;
-    const span = parsed.span(container);
-    const base = lineIndent(source, span.start);
-    const unit = indentUnit(source);
-
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(self.allocator);
-    try out.append(self.allocator, '<');
-    try out.appendSlice(self.allocator, tag);
-    try out.appendSlice(self.allocator, ">\n");
-    if (key_text) |k| {
-        var child_indent: std.ArrayList(u8) = .empty;
-        defer child_indent.deinit(self.allocator);
-        try child_indent.appendSlice(self.allocator, base);
-        try child_indent.appendSlice(self.allocator, unit);
-        try appendDictEntry(self.allocator, &out, child_indent.items, k, rendered_value);
-    } else {
-        try out.appendSlice(self.allocator, base);
-        try out.appendSlice(self.allocator, unit);
-        try out.appendSlice(self.allocator, rendered_value);
-    }
-    try out.append(self.allocator, '\n');
-    try out.appendSlice(self.allocator, base);
-    try out.appendSlice(self.allocator, "</");
-    try out.appendSlice(self.allocator, tag);
-    try out.append(self.allocator, '>');
-    try self.replaceAtSpan(span, out.items);
-}
-
-/// `<indent><key>key</key>\n<indent><value…>` — a dict entry's two lines, the
-/// key and value at the same indent (matching the printer's layout).
-fn appendDictEntry(allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, key: []const u8, rendered_value: []const u8) !void {
-    try out.appendSlice(allocator, indent);
+/// `<key>key</key>\n<indent><value…>` — a dict entry's two lines, the key
+/// and value at the same indent (matching the printer's layout). The first
+/// line's indent is the engine's; `rendered_value` has been through
+/// `renderValue`. See `editor.Editor.writeEntry`.
+pub fn renderEntry(allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, key: []const u8, rendered_value: []const u8) !void {
     try out.appendSlice(allocator, "<key>");
     try appendEscaped(allocator, out, key);
     try out.appendSlice(allocator, "</key>\n");
     try out.appendSlice(allocator, indent);
     try out.appendSlice(allocator, rendered_value);
-}
-
-// ── shared indentation helpers ─────────────────────────────────────────────────
-
-/// The leading whitespace (indent) of the line containing byte `at`.
-fn lineIndent(source: []const u8, at: usize) []const u8 {
-    const ls = lineStartBefore(source, at);
-    return source[ls..firstNonSpace(source, ls)];
-}
-
-/// One indentation unit for this document: the leading whitespace of the first
-/// indented element line. A plist's first child sits exactly one level in, so
-/// its own indent IS the unit — tabs for Xcode/`plutil`, two spaces for fig's
-/// printer. Falls back to two spaces for a single-line/compact document.
-fn indentUnit(source: []const u8) []const u8 {
-    var ls: usize = 0;
-    while (ls < source.len) {
-        const le = std.mem.indexOfScalarPos(u8, source, ls, '\n') orelse source.len;
-        const fns = firstNonSpace(source, ls);
-        if (fns > ls and fns < le and source[fns] == '<') return source[ls..fns];
-        if (le == source.len) break;
-        ls = le + 1;
-    }
-    return "  ";
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────

@@ -104,50 +104,34 @@ pub const Language = struct {
             // it closes itself, so a trailing comment on one follows
             // `</dict>` rather than riding the `<key>` line.
             .flow_containers = false,
-            .closed_containers = true,
+            .closed_containers = .{
+                .map = .{ .open = "<dict>", .close = "</dict>" },
+                .seq = .{ .open = "<array>", .close = "</array>" },
+            },
+            // An item is a bare element on its own line.
+            .seq_item_marker = "",
         };
     }
 
-    // ── Editing hooks ────────────────────────────────────────────────────────
+    // ── Renderers ────────────────────────────────────────────────────────────
     //
-    // Operations this format takes over from the generic splice engine.
-    // `Editor` dispatches on PRESENCE — `@hasDecl(Language, "insertKey")` — so
-    // declaring one here is the whole of opting in, and every operation not
-    // named below runs the generic implementation. Each signature is fixed by
-    // the `editor.Editor` method of the same name; see its doc comment.
-    //
-    // plist overrides the structural inserts, and for one reason: an entry
-    // is a PAIR OF SIBLING ELEMENTS (`<key>k</key>` then a typed value element)
-    // on separate lines, not a `key<sep>value` line, and a value is always a
-    // typed element rather than a bare literal. The line-based delete/remove
-    // paths and every comment op are the generic engine's, driven by
-    // `syntax` above — the comment ops used to be hooked because a `<!-- -->`
-    // pair could not be declared; `CommentDelimiter` says it. The logic lives
-    // in `editor_helper.zig` (which holds this format's editor tests too);
-    // this block is the DECLARATION of which operations are overridden.
+    // No hooks. Everything structural about editing a plist is the generic
+    // engine's, driven by `syntax` above; what the engine cannot know is how
+    // this format SPELLS a value and an entry, and those are the two string
+    // renderers below. A value is always a typed element, never a bare
+    // literal, and an entry is a PAIR OF SIBLING ELEMENTS (`<key>k</key>` then
+    // the value element) on two lines rather than a `key<sep>value` line. The
+    // logic lives in `editor_helper.zig` (which holds this format's editor
+    // tests too).
     const edit = @import("editor_helper.zig");
 
-    /// A `<dict>` entry is two sibling elements, so this appends a rendered
-    /// `<key>`/value pair rather than splicing a `key<sep>value` line — and
-    /// expands an empty `<dict/>` into its multi-line form.
-    pub const insertKey = edit.plistInsertKey;
+    /// A CLI value string rendered into a typed element: fig `sniffBare`
+    /// typing, or spliced verbatim when it already looks like `<…>`. The
+    /// engine passes every value it splices through this.
+    pub const renderValue = edit.renderValue;
 
-    /// There are no bare scalar literals here — a value is always a typed
-    /// wrapper element — so `replacement` is rendered into one (fig `sniffBare`
-    /// typing, or spliced verbatim when it already looks like `<…>`) and
-    /// swapped for the whole element.
-    pub const replaceValAtPath = edit.plistReplaceValue;
-
-    /// An `<array>` item is a whole typed element, so `value_text` is rendered
-    /// into one and spliced at the existing children's indent — or, for an
-    /// empty `<array/>`, expanded into the multi-line form first.
-    ///
-    /// These are the BLOCK arm only, which is all plist ever reaches: a
-    /// container's span runs from its opening `<` (see `parser.zig`'s
-    /// `extent`), so the generic `isFlow` sniff ahead of them is always false,
-    /// and `block_seq_editable` is the default true.
-    pub const appendToSeq = edit.plistAppendItem;
-    pub const prependToSeq = edit.plistPrependItem;
+    /// `<key>k</key>`, a newline, the indent, and the rendered value.
+    pub const renderEntry = edit.renderEntry;
 };
 
 // Test discovery: importing `plist.zig` (from root.zig) pulls in every plist

@@ -64,40 +64,40 @@ pub const Language = struct {
             // "rest-of-line values are 100% literal"). A trailing comment can
             // only ever be its own `#` line immediately after the entry.
             .comments = .{ .style = .hash, .line = .{ .open = "#" }, .trailing = null },
-            // An entry is a `key:` line this format's own `insertKey` hook
-            // writes, so the generic engine never spells one. See
-            // `Syntax.kv_sep`.
-            .kv_sep = null,
+            // The inline dict form, `{a: 1, b: 2}`, is what the generic
+            // flow-entry insert writes; a block entry goes through
+            // `renderEntry`.
+            .kv_sep = ": ",
             // No literal spelling for an empty nested dict — every value is
             // either rest-of-line text or a nested block — so `set` cannot
             // auto-vivify a missing ancestor.
             .empty_map_literal = null,
-            // Every container is a block of lines; there is no inline form.
-            .flow_containers = false,
             // Four-space nesting; an item is `- value`.
             .indent_unit = "    ",
             .seq_item_marker = "- ",
         };
     }
 
-    // ── Editing hooks ────────────────────────────────────────────────────────
+    // ── Editing hooks and renderers ──────────────────────────────────────────
     //
-    // Operations this format takes over from the generic splice engine.
-    // `Editor` dispatches on PRESENCE — `@hasDecl(Language, "insertKey")` — so
-    // declaring one here is the whole of opting in, and every operation not
-    // named below runs the generic implementation. Each signature is fixed by
-    // the `editor.Editor` method of the same name; see its doc comment.
-    //
-    // The logic lives in `editor_helper.zig` (which holds this format's editor
-    // tests too), not here: this block is the DECLARATION of which operations
-    // are overridden, so a reader can see a format's whole answer in one struct
-    // without opening the helper.
+    // Two renderers say how NestedText spells an entry and an item, and two
+    // hooks remain for the reframes the engine cannot yet express. The
+    // engine dispatches on PRESENCE — `@hasDecl(Language, "renderEntry")` —
+    // and every operation not named below runs the generic implementation.
+    // The logic lives in `editor_helper.zig` (which holds this format's
+    // editor tests too), not here: this block is the DECLARATION of what
+    // this format supplies.
     const edit = @import("editor_helper.zig");
 
-    /// Values are framed either rest-of-line or as a nested `>`-block, on a
-    /// 4-space nesting convention — neither of which the YAML/fig-shaped
-    /// generic block insert (2-space, bare `:` continuation) can write.
-    pub const insertKey = edit.ntInsertKey;
+    /// A value is framed either rest-of-line or as a nested `>`-block, on
+    /// a four-space nesting convention, and a key that cannot be spelled
+    /// plain takes the `: key` multiline form — none of which `key`,
+    /// `kv_sep`, value on one line can write.
+    pub const renderEntry = edit.renderEntry;
+
+    /// The item twin: `- value`, or a bare `-` over a nested `>`-block for
+    /// an empty or multi-line value.
+    pub const renderItem = edit.renderItem;
 
     /// `replacement` is always a raw scalar (this format has no typed or quoted
     /// literal syntax to splice verbatim) and has to be RENDERED same-line or
@@ -110,14 +110,6 @@ pub const Language = struct {
     /// no separator colon at all, so converting between the two forms means
     /// adding or dropping one.
     pub const replaceKeyAtPath = edit.ntReplaceKey;
-
-    /// Renders a multiline or empty value as a nested `>`-block rather than
-    /// `insertSeqLine`'s bare reindent. Where the item's line is, and what a
-    /// new sibling's prefix is, the engine reads from the `-` the parser
-    /// records (`Document.node_marker_spans`); remove and reorder, and the
-    /// comment ops keyed by `.index`, are generic for the same reason.
-    pub const appendToSeq = edit.ntAppendItem;
-    pub const prependToSeq = edit.ntPrependItem;
 };
 
 // Test discovery: importing `nestedtext.zig` (from root.zig) pulls in every

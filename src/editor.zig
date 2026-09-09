@@ -165,6 +165,76 @@ pub fn Editor(comptime Language: type) type {
             return buf.items[from..];
         }
 
+        /// `value_text` as this format spells a value in place — rendered
+        /// through the format's `renderValue` when it declares one (plist
+        /// wraps every literal in a typed element), else verbatim. Appended to
+        /// `buf` when rendered; the returned slice is what to splice.
+        ///
+        /// **Renderer** `renderValue(allocator, out, value_text) !void`.
+        fn renderedValue(self: *const Self, buf: *std.ArrayList(u8), value_text: []const u8) ![]const u8 {
+            if (!@hasDecl(Language, "renderValue")) return value_text;
+            const from = buf.items.len;
+            try Language.renderValue(self.allocator, buf, value_text);
+            return buf.items[from..];
+        }
+
+        /// Write one block-mapping entry after its line's `indent` has been
+        /// written: the key, the separator and the value, with any further
+        /// lines the entry spans prefixed by `indent` (plist's value element
+        /// on a second line, NestedText's `>`-block). No trailing newline.
+        ///
+        /// **Renderer** `renderEntry(allocator, out, indent, key_text,
+        /// value_text) !void` — declared by a format whose entry is not
+        /// `key`, `kv_sep`, value on one line. Without it the entry is the
+        /// key followed by `writeMapValue`. `value_text` has been through
+        /// `renderedValue` already.
+        fn writeEntry(self: *Self, out: *std.ArrayList(u8), indent: []const u8, key_text: []const u8, value_text: []const u8) !void {
+            if (@hasDecl(Language, "renderEntry"))
+                return Language.renderEntry(self.allocator, out, indent, key_text, value_text);
+            try out.appendSlice(self.allocator, key_text);
+            try self.writeMapValue(out, indent, value_text);
+        }
+
+        /// Write one block-sequence item after its line's `indent`: the
+        /// `seq_item_marker` and the value, with continuation lines of a
+        /// multi-line value re-indented past the marker. No trailing newline.
+        ///
+        /// **Renderer** `renderItem(allocator, out, indent, value_text)
+        /// !void` — declared by a format whose item is not marker-then-value
+        /// (NestedText renders an empty or multi-line value as a `>`-block
+        /// under a bare `-`). `value_text` has been through `renderedValue`.
+        fn writeItem(self: *Self, out: *std.ArrayList(u8), indent: []const u8, value_text: []const u8) !void {
+            if (@hasDecl(Language, "renderItem"))
+                return Language.renderItem(self.allocator, out, indent, value_text);
+            const marker = self.syntax().seq_item_marker;
+            var cont: std.ArrayList(u8) = .empty;
+            defer cont.deinit(self.allocator);
+            try cont.appendSlice(self.allocator, indent);
+            try cont.appendNTimes(self.allocator, ' ', marker.len);
+            try out.appendSlice(self.allocator, marker);
+            try reindentInto(out, self.allocator, value_text, cont.items);
+        }
+
+        /// Rewrite the EMPTY closed container at `span` (`<dict/>`,
+        /// `<array></array>`) into its multi-line form around `body`, one
+        /// entry or item already rendered against the child indent: the open
+        /// token, the body one `indent_unit` under the container's own line
+        /// prefix, and the close token back at that prefix. See
+        /// `Syntax.closed_containers`.
+        fn expandEmptyContainer(self: *Self, span: Span, delims: lang.Delimiters, base: []const u8, body: []const u8) !void {
+            var out: std.ArrayList(u8) = .empty;
+            defer out.deinit(self.allocator);
+            try out.appendSlice(self.allocator, delims.open);
+            try out.append(self.allocator, '\n');
+            try out.appendSlice(self.allocator, base);
+            try out.appendSlice(self.allocator, self.syntax().indent_unit);
+            try out.appendSlice(self.allocator, body);
+            try out.append(self.allocator, '\n');
+            try out.appendSlice(self.allocator, base);
+            try out.appendSlice(self.allocator, delims.close);
+            try self.replaceAtSpan(span, out.items);
+        }
+
         /// Whether `path`'s final segment names a key the document RESOLVES but
         /// no physical entry declares — one supplied by the format's reference
         /// layer, which path navigation does not follow and therefore reports
@@ -301,7 +371,9 @@ pub fn Editor(comptime Language: type) type {
             // through: its span is the whole document, which is exactly what
             // replacing the root means.
             if (path.len > 0 and parsed.isSection(node)) return self.refuse(.replace);
-            try self.replaceAtSpan(span, replacement);
+            var buf: std.ArrayList(u8) = .empty;
+            defer buf.deinit(self.allocator);
+            try self.replaceAtSpan(span, try self.renderedValue(&buf, replacement));
         }
 
         /// Upsert a mapping value: replace the value at `path`, or — when only
@@ -392,15 +464,10 @@ pub fn Editor(comptime Language: type) type {
                     // `value_text`). Rather than teach the seed a plist spelling,
                     // surface the original `NotFound` — an intermediate `<dict>`
                     // must already exist to land a nested key.
-                    // NestedText joins INI/plist here: the vivify seed is the
-                    // flow `{}` literal, and while NestedText's reader DOES
-                    // accept that as a genuinely empty (childless) mapping,
-                    // this editor's own `ntInsertKey` declines to insert into
-                    // one (see its module doc — expanding an inline `{}`
-                    // into block form is deliberately out of scope) — so
-                    // vivifying through it would only trade today's clear
-                    // `NotFound` for a confusing `EmptyInlineContainer` one
-                    // step later, after already splicing the `{}` in.
+                    // NestedText joins INI/plist here: its printer never
+                    // writes the inline `{}` form, so a vivified ancestor
+                    // would be a shape the format itself avoids, holding a
+                    // value that then has to stay inline.
                     //
                     // `NotAMapping` joins `NotFound` as vivifiable in exactly
                     // one shape: when what stands in the way is an EMPTY node (a
@@ -727,7 +794,7 @@ pub fn Editor(comptime Language: type) type {
             // key's line; one that closes itself (`</dict>`) takes it after
             // the close, like any scalar.
             const is_block_collection = switch (std.meta.activeTag(val.kind)) {
-                .mapping, .sequence => !self.isFlowNode(parsed, val) and !self.syntax().closed_containers,
+                .mapping, .sequence => !self.isFlowNode(parsed, val) and self.syntax().closed_containers == null,
                 else => false,
             };
             const start = if (is_block_collection)
@@ -1446,11 +1513,32 @@ pub fn Editor(comptime Language: type) type {
             // A non-flow TOML sequence is an array-of-tables; use
             // `appendContainerToSeq` for those. (TOML has no block scalar array.)
             if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
-            if (@hasDecl(Language, "appendToSeq")) return Language.appendToSeq(self, parsed, node, value_text);
-            const last = (try parsed.ast.lastChild(&node)) orelse return error.NotASequence;
+            const last = (try parsed.ast.lastChild(&node)) orelse return self.expandEmptySeq(parsed, node, value_text);
             const first_item = (try parsed.ast.child(&node)).?;
             const insert_at = lineEndAfter(source, parsed.span(last).end -| 1);
             try self.insertSeqLine(insert_at, markerStart(parsed, first_item), value_text);
+        }
+
+        /// The first item into an EMPTY block sequence: only a format whose
+        /// containers close themselves has a spelling for one (`<array/>`,
+        /// expanded); any other has no line to splice after.
+        fn expandEmptySeq(self: *Self, parsed: Document, node: AST.Node, value_text: []const u8) !void {
+            const closed = self.syntax().closed_containers orelse return error.NotASequence;
+            const span = parsed.span(node);
+            var base_buf: std.ArrayList(u8) = .empty;
+            defer base_buf.deinit(self.allocator);
+            const base = try self.indentAt(&base_buf, span.start);
+            var child: std.ArrayList(u8) = .empty;
+            defer child.deinit(self.allocator);
+            try child.appendSlice(self.allocator, base);
+            try child.appendSlice(self.allocator, self.syntax().indent_unit);
+            var val_buf: std.ArrayList(u8) = .empty;
+            defer val_buf.deinit(self.allocator);
+            const rendered = try self.renderedValue(&val_buf, value_text);
+            var body: std.ArrayList(u8) = .empty;
+            defer body.deinit(self.allocator);
+            try self.writeItem(&body, child.items, rendered);
+            try self.expandEmptyContainer(span, closed.seq, base, body.items);
         }
 
         /// Insert `value_text` before the first item of the sequence at `path`.
@@ -1468,8 +1556,7 @@ pub fn Editor(comptime Language: type) type {
                 return;
             }
             if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
-            if (@hasDecl(Language, "prependToSeq")) return Language.prependToSeq(self, parsed, node, value_text);
-            const first_item = (try parsed.ast.child(&node)) orelse return error.NotASequence;
+            const first_item = (try parsed.ast.child(&node)) orelse return self.expandEmptySeq(parsed, node, value_text);
             const first_start = markerStart(parsed, first_item);
             try self.insertSeqLine(lineStartBefore(source, first_start), first_start, value_text);
         }
@@ -1993,6 +2080,9 @@ pub fn Editor(comptime Language: type) type {
             const maybe_last = try parsed.ast.lastChild(&mapping);
             var out: std.ArrayList(u8) = .empty;
             defer out.deinit(self.allocator);
+            var val_buf: std.ArrayList(u8) = .empty;
+            defer val_buf.deinit(self.allocator);
+            const rendered = try self.renderedValue(&val_buf, value_text);
             // The new entry copies the first key's line prefix (see
             // `indentAt`); a mapping with no key yet starts at column 0.
             var indent_buf: std.ArrayList(u8) = .empty;
@@ -2003,28 +2093,44 @@ pub fn Editor(comptime Language: type) type {
                 "";
             const insert_at = if (maybe_last) |last|
                 lineEndAfter(source, parsed.span(last).end -| 1)
-            else if (mapping.id == parsed.ast.root)
+            else if (self.syntax().closed_containers) |closed| {
+                // A childless closed container (`<dict/>`, root or nested):
+                // rewrite it in its multi-line form around the new entry.
+                const span = parsed.span(mapping);
+                var base_buf: std.ArrayList(u8) = .empty;
+                defer base_buf.deinit(self.allocator);
+                const base = try self.indentAt(&base_buf, span.start);
+                var child: std.ArrayList(u8) = .empty;
+                defer child.deinit(self.allocator);
+                try child.appendSlice(self.allocator, base);
+                try child.appendSlice(self.allocator, self.syntax().indent_unit);
+                try self.writeEntry(&out, child.items, key_text, rendered);
+                return self.expandEmptyContainer(span, closed.map, base, out.items);
+            } else if (mapping.id == parsed.ast.root)
                 // The root's span is the whole remaining document (dotenv/
                 // .properties/INI's root is always `Span.init(0, input.len)`
                 // — see each parser's `parseOnce`), so its `.end` is already
                 // the right splice point even with zero existing keys.
                 parsed.span(mapping).end
-            else
-                // A childless NON-ROOT mapping is only reachable for INI (an
-                // empty `[section]` with nothing under it yet): unlike the
-                // root, its span is anchored at just the header's name token
-                // (see `ini/parser.zig`'s `parseSectionHeader`), not the
-                // section's body extent — splicing at `.end` would land
-                // inside the `[section]` line itself. Anchor on the header
-                // LINE's end instead; `span.start` is guaranteed to fall
-                // somewhere on that line, so `lineEndAfter` finds it
+            else if (parsed.isSection(mapping))
+                // A childless SECTION (INI's empty `[section]` with nothing
+                // under it yet): its span is anchored at just the header's
+                // name token (see `ini/parser.zig`'s `parseSectionHeader`),
+                // not the section's body extent — splicing at `.end` would
+                // land inside the `[section]` line itself. Anchor on the
+                // header LINE's end instead; `span.start` is guaranteed to
+                // fall somewhere on that line, so `lineEndAfter` finds it
                 // regardless of where exactly within the line it points.
-                lineEndAfter(source, parsed.span(mapping).start);
+                lineEndAfter(source, parsed.span(mapping).start)
+            else
+                // A childless block mapping with no closing token has no line
+                // to splice after and no spelling for its first entry
+                // (NestedText's inline `{}` reached as a block target).
+                return error.EmptyInlineContainer;
 
             if (insert_at > 0 and source[insert_at - 1] != '\n') try out.append(self.allocator, '\n');
             try out.appendSlice(self.allocator, indent);
-            try out.appendSlice(self.allocator, key_text);
-            try self.writeMapValue(&out, indent, value_text);
+            try self.writeEntry(&out, indent, key_text, rendered);
             try out.append(self.allocator, '\n');
             try self.replaceAtSpan(Span.init(insert_at, insert_at), out.items);
         }
@@ -2418,25 +2524,20 @@ pub fn Editor(comptime Language: type) type {
 
         /// Splice a new block-sequence item line at `insert_at`, shaped like
         /// the item introduced at `sibling_marker`: that item's line prefix
-        /// (`indentAt`), then `Syntax.seq_item_marker`, then `value_text`
-        /// with its continuation lines re-indented under the marker.
+        /// (`indentAt`), then the item as `writeItem` spells it.
         fn insertSeqLine(self: *Self, insert_at: usize, sibling_marker: usize, value_text: []const u8) !void {
             const source = self.source.items;
-            const marker = self.syntax().seq_item_marker;
             var indent_buf: std.ArrayList(u8) = .empty;
             defer indent_buf.deinit(self.allocator);
             const indent = try self.indentAt(&indent_buf, sibling_marker);
-            // Continuation lines of a multi-line value sit past the marker.
-            var cont: std.ArrayList(u8) = .empty;
-            defer cont.deinit(self.allocator);
-            try cont.appendSlice(self.allocator, indent);
-            try cont.appendNTimes(self.allocator, ' ', marker.len);
+            var val_buf: std.ArrayList(u8) = .empty;
+            defer val_buf.deinit(self.allocator);
+            const rendered = try self.renderedValue(&val_buf, value_text);
             var out: std.ArrayList(u8) = .empty;
             defer out.deinit(self.allocator);
             if (insert_at > 0 and source[insert_at - 1] != '\n') try out.append(self.allocator, '\n');
             try out.appendSlice(self.allocator, indent);
-            try out.appendSlice(self.allocator, marker);
-            try reindentInto(&out, self.allocator, value_text, cont.items);
+            try self.writeItem(&out, indent, rendered);
             try out.append(self.allocator, '\n');
             try self.replaceAtSpan(Span.init(insert_at, insert_at), out.items);
         }
@@ -2464,10 +2565,12 @@ pub fn Editor(comptime Language: type) type {
             // `writeMapValue` emits the separator itself, so a block value
             // (`- a`, `k: v`) descends onto the following lines instead of being
             // jammed inline after the `:` — where it would not parse.
+            var val_buf: std.ArrayList(u8) = .empty;
+            defer val_buf.deinit(self.allocator);
+            const rendered = try self.renderedValue(&val_buf, value_text);
             if (is_root) {
                 // Empty document: the whole source becomes a single entry.
-                try out.appendSlice(self.allocator, key_text);
-                try self.writeMapValue(&out, "", value_text);
+                try self.writeEntry(&out, "", key_text, rendered);
                 try out.append(self.allocator, '\n');
                 try self.replaceAtSpan(Span.init(0, source.len), out.items);
                 return;
@@ -2481,8 +2584,7 @@ pub fn Editor(comptime Language: type) type {
             try child.appendSlice(self.allocator, self.syntax().indent_unit);
             try out.append(self.allocator, '\n');
             try out.appendSlice(self.allocator, child.items);
-            try out.appendSlice(self.allocator, key_text);
-            try self.writeMapValue(&out, child.items, value_text);
+            try self.writeEntry(&out, child.items, key_text, rendered);
             try self.replaceAtSpan(null_span, out.items);
         }
 

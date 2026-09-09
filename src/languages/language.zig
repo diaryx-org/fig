@@ -743,9 +743,20 @@ const Decls = struct {
     const hooks = [_][]const u8{
         "insertKey",                 "replaceValAtPath",
         "replaceValAtPathFollowing", "replaceKeyAtPath",
-        "keyIsInherited",            "appendToSeq",
-        "prependToSeq",
+        "keyIsInherited",
     };
+
+    /// Fragment renderers. Each is a pure function from strings to a string
+    /// the engine splices under the reparse net: `renderValue(allocator,
+    /// out, value_text)` spells a value (plist's typed element),
+    /// `renderEntry(allocator, out, indent, key_text, value_text)` spells a
+    /// block-mapping entry past its line's indent (plist's two-line pair,
+    /// NestedText's `key:` and `>`-block), `renderItem(allocator, out,
+    /// indent, value_text)` a block-sequence item. None receives the editor
+    /// or performs a splice; the engine calls one at most once per edit and
+    /// splices the result. See `editor.Editor.renderedValue`, `writeEntry`
+    /// and `writeItem`, and `docs/proposals/runtime-languages.md` §4.4.
+    const renderers = [_][]const u8{ "renderValue", "renderEntry", "renderItem" };
 
     /// The whole-container ops a SECTION format (`Syntax.section_noun` non-
     /// null) may still supply itself. `deleteContainer`, `moveContainer` and
@@ -774,7 +785,8 @@ const Decls = struct {
 
     fn known(comptime name: []const u8) bool {
         return has(&required, name) or has(&required_edit, name) or
-            has(&optional, name) or has(&hooks, name) or has(&exclusive, name);
+            has(&optional, name) or has(&hooks, name) or has(&exclusive, name) or
+            has(&renderers, name);
     }
 
     /// The known name `name` differs from only by letter case, or null.
@@ -896,15 +908,16 @@ pub fn validate(comptime Lang: type) void {
                     @compileError("Language declares a trailing comment marker but no line comment marker");
 
                 // Coherence: `kv_sep = null` says "the generic engine never
-                // writes an entry for me". Every path that would is under the
-                // generic `insertKey`, so the claim holds exactly when that op
-                // is hooked — and `Editor.kvSep` refuses rather than
-                // fabricating a separator if one is ever reached anyway.
+                // writes `key<sep>value` for me". Every path that would is
+                // under the generic `insertKey`, so the claim holds exactly
+                // when that op is hooked or the entry is spelled by a
+                // `renderEntry` renderer — and `Editor.kvSep` refuses rather
+                // than fabricating a separator if one is ever reached anyway.
                 // Without this the null would be a silent `UnsupportedShape`
                 // on an ordinary `set` instead of a compile error here.
-                if (s.kv_sep == null and !@hasDecl(Lang, "insertKey"))
-                    @compileError("Language declares kv_sep = null but does not hook insertKey," ++
-                        " so the generic entry-insert paths have no separator to write");
+                if (s.kv_sep == null and !@hasDecl(Lang, "insertKey") and !@hasDecl(Lang, "renderEntry"))
+                    @compileError("Language declares kv_sep = null but neither hooks insertKey nor" ++
+                        " declares renderEntry, so the generic entry-insert paths have no separator to write");
             }
         }
 
@@ -929,7 +942,7 @@ pub fn validate(comptime Lang: type) void {
         // ops count: `Editor` is where they are reached, so declaring one on a
         // format with no editor is the same contradiction.
         if (!Lang.caps.edit) {
-            for (Decls.hooks ++ Decls.exclusive) |name| {
+            for (Decls.hooks ++ Decls.exclusive ++ Decls.renderers) |name| {
                 if (@hasDecl(Lang, name))
                     @compileError("Language '" ++ Lang.name ++ "' declares caps.edit = false" ++
                         " but supplies the editing hook '" ++ name ++ "'");
@@ -960,16 +973,16 @@ pub fn validate(comptime Lang: type) void {
         // than taste: a hook the engine can never call is a silent no-op, and
         // silent is the failure mode this whole section exists to remove.
 
-        // A block-sequence hook sits below `editor.zig`'s
+        // The block-sequence item renderer sits below `editor.zig`'s
         // `block_seq_editable` refusal, so a format that declares no editable
-        // block sequences in any dialect can never reach one.
+        // block sequences in any dialect can never reach it.
         var any_block_seq = false;
         for (std.meta.tags(Lang.Type)) |t| {
             const s: Syntax = Lang.syntax(t);
             if (s.block_seq_editable) any_block_seq = true;
         }
         if (!any_block_seq) {
-            for ([_][]const u8{ "appendToSeq", "prependToSeq" }) |name| {
+            for ([_][]const u8{"renderItem"}) |name| {
                 if (@hasDecl(Lang, name))
                     @compileError("Language '" ++ Lang.name ++ "' declares block_seq_editable = false" ++
                         " but supplies '" ++ name ++ "', which the engine refuses before reaching");

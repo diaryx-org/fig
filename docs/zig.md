@@ -165,11 +165,19 @@ the shape (`Type`, `default_type`, `parse`, `print`) the generic engines
 list of language modules this build actually contains.
 
 That assertion is also the contract for a format declared *outside* the tree:
-a type that passes `Language.validate` can be given to `Editor`, its editing
-hooks may use what `src/editor/splice.zig` exports and the `Editor` members
-that file's module doc names, and it appears in no registry-derived enum —
-no `SerializeFormat` member, no CLI selector, no C ABI value, no embedded
-spelling; those belong to the formats listed in `src/languages/list.zig`.
+a type that passes `Language.validate` can be given to `Editor`, and it
+appears in no registry-derived enum — no `SerializeFormat` member, no CLI
+selector, no C ABI value, no embedded spelling; those belong to the formats
+listed in `src/languages/list.zig`. There are no editing hooks: what a format
+tells the editor is its `syntax` (the declared half), what its parser records
+on `Document` beside the spans — each block-sequence item's marker, each
+entry's separator, a section's header lines and every place its name is
+written — and, where the format spells a fragment in a way no declaration
+covers, a *renderer*: `renderValue`, `renderEntry`, `renderItem`,
+`renderTail` or `renderKey`, each a pure function from strings to a string
+that the engine splices under the same reparse net as any other edit. The
+renderers are documented on `Decls.renderers` in `src/languages/language.zig`
+and on the `Editor` methods that call them.
 `zig build validate-check` proves the claim rather than describing it: one
 of its cases declares such a `Language` in a temporary directory, hands it to
 `Editor`, and runs a `set` and a `deleteKey` through it.
@@ -178,7 +186,9 @@ Every "Edit" ✅ above goes through the *same* generic `Editor(Language)` engine
 (next section) — ZON included, splicing its `.key = value` struct-field syntax
 and `.{}`/`.@"..."` quoting rules exactly like JSON gets `"key": value`. Only
 TOML, fig and INI additionally get the whole-table/whole-container structural
-ops listed near the end of that section.
+ops listed near the end of that section: delete, move, reorder and rename for
+all three, and the two that write a `[header]` line for TOML, which alone
+declares a `section_header`.
 
 ## Reading data
 

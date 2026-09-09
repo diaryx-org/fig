@@ -9,11 +9,13 @@ part_of = [proposals](proposals.md)
 
 # Runtime languages
 
-> **Status: DRAFT.** Written against `main` at e56489d, with core 3.0.0
-> (ABI 2) built and unreleased. §9 names the one thing this proposal asks
-> of 3.0 before it tags: a reserved range of format integers. That part has
-> landed on `main` ahead of the tag; §9 says where. Everything else here is
-> additive to core and is a 3.x minor, plus one new repository.
+> **Status: DRAFT, §3.3 and §9 implemented.** Written against `main` at
+> e56489d, with core 3.0.0 (ABI 2) built and unreleased. §9's reserved range
+> and §3.3's refactor — the compiled formats editing through the contract,
+> every hook deleted — both landed on `main` ahead of the 3.0 tag; §4.4 and
+> §10 say where and what differed. What remains, the carriers of §4.3 and
+> everything after them, is additive to core and is a 3.x minor, plus one
+> new repository.
 >
 > The second draft. The first stated the editing contract as "`syntax` and
 > no hooks" and listed dialects, aliases, and the lossless envelope as
@@ -331,6 +333,37 @@ than once per edit. That is the whole of what a runtime format can do to
 the editor, and after §3.3 it is the whole of what a compiled format can
 do too.
 
+**As implemented.** The refactor landed on `main` before the 3.0 tag, in
+seven commits from 70dcfdd, and the contract it arrived at differs from
+the draft above in the details that only doing it could settle:
+
+- The node table's item column is a marker *span* (`node_marker_spans`),
+  and `value_slot_start` is the *separator* span (`node_sep_spans`), from
+  which the value slot follows; a recorded separator is also the parser's
+  statement that the entry's value reframes, and a zero-width one marks a
+  value hanging under a bare key (a fig header, a NestedText multiline
+  key). `is_flow` is not a column: `Syntax.flow_containers` plus one engine
+  rule (a section format's root and its section nodes are block) settled
+  every sniff that a hook existed to dodge. The `region` column's name
+  spans became a table of their own, `node_mentions`, each mention marked
+  as a header line of the node's own or a mention on its parent's entry
+  line; TOML, INI and fig all record them, so `renameContainer` is generic
+  for all three.
+- `Syntax` gained more than five fields: `indent_unit`, `seq_item_marker`,
+  the `CommentDelimiter` pair with `forbidden` text, `section_header` (with
+  its sequence form), and a `bare_or_quoted` `KeyStyle` as drafted, plus
+  `flow_containers`, `closed_containers` (a self-closing container's
+  tokens, which is also what expands an empty `<dict/>`),
+  `flow_kv_sep_from_siblings` and `flow_map_pad` for fig's flow objects,
+  and `merge_key`, which is what `keyIsInherited` became.
+- The renderers are `renderValue`, `renderEntry`, `renderItem`,
+  `renderTail` and `renderKey`. `render_block` became `renderTail` — what
+  follows a key, separator included, inline or re-framed — because fig's
+  block form drops the separator and YAML's keeps it, which no engine rule
+  could know. An empty `key_text` to `renderTail` is the document root.
+- `replaceValAtPathFollowing` needed nothing: the alias kind, its
+  resolution and the anchor and tag span tables are all core.
+
 **Aliases.** The alias node kind carries a name and nothing else; anchors
 are a side table; `resolveAlias`, `resolveDeep`, and `mergedChild` are
 core code in `src/ast/reader.zig` that key on kind, not on format. The
@@ -587,16 +620,19 @@ state it, and `zig build abi-check` holds both to the registry's value.
 ## 10. Sequencing
 
 1. **core 3.0.0** (now): §9.
-2. **core 3.1, the refactor**: the four node-table columns, filled by
-   every compiled parser; the five `Syntax` fields and the prefix-bytes
-   policy; the engine consuming them; the renderers as the hook set. Hooks
-   deleted one format at a time, INI first, then plist's six comment
-   hooks, then NestedText, then TOML's rename and section ops, then the
-   fig and YAML reframes. Each deletion is verified by the harness and the
-   format's own editor tests being unchanged. `keyIsInherited` and
-   `replaceValAtPathFollowing` become engine questions to the AST. No
-   behavioural change is expected; where one is found it is a
-   `Behavioural-change:` trailer, not a reason to keep the hook.
+2. **The refactor — done, in core 3.0 rather than 3.1** (70dcfdd and the
+   six commits after it): the node-table columns, filled by every compiled
+   parser; the `Syntax` fields and the prefix-bytes policy; the engine
+   consuming them; the renderers as the hook set. Hooks were deleted one
+   format at a time in the order given here — INI, plist's comment hooks,
+   the sequence hooks, the renderers, the reframes, TOML, YAML — each step
+   verified by the harness and the format's own editor tests. The
+   behavioural changes found are recorded as `Behavioural-change:` trailers
+   on the commits: a plist entry appended after a commented value now lands
+   after the comment, an empty plist container expands with the declared
+   unit, an empty comment is written `<!-- -->`, and NestedText's empty
+   inline `{}` and `[]` accept an insert. §4.4's "as implemented" note has
+   what differed from this draft.
 3. **core 3.1, the carrier**: the node table as a stated shape;
    `runtime.zig`; the `.runtime` member; `fig_language_register`,
    `fig_format_by_name`, the checked integer lookup of §8.2, and the

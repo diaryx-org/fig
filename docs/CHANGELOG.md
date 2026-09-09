@@ -177,12 +177,25 @@ native payloads and wasm, which is why they move with the core. The Rust
 `Format` enum gains the five formats it was missing, and `zig build
 abi-check` now holds every binding's format enum to the registry.
 
-One reservation is made ahead of the work it serves: fig.h gains
-`FIG_FORMAT_RUNTIME_BASE` (4096), the first integer no compiled-in format
-may take. The [runtime languages](proposals/runtime-languages.md) proposal
-asks for it now so that a later minor can hand out an integer to a language
-registered at runtime without arguing about whether a future format might
-have wanted it. Nothing else of that proposal is in 3.0.
+Two things from the [runtime languages](proposals/runtime-languages.md)
+proposal ride along. fig.h gains `FIG_FORMAT_RUNTIME_BASE` (4096), the first
+integer no compiled-in format may take, reserved now so that a later minor
+can hand out an integer to a language registered at runtime without arguing
+about whether a future format might have wanted it. And the editing hooks
+are gone: the twenty-five per-format overrides of the editor's methods, each
+of which ended in one splice and was Zig only for want of a fact the parser
+had dropped, an engine constant that was really syntax, or a string
+function. Each became one of those — a `Document` table the parser fills
+(item markers, entry separators, a section's name mentions), a `Syntax`
+field (`indent_unit`, `seq_item_marker`, a comment delimiter pair,
+`section_header`, `merge_key`), or one of five pure renderers — and the
+compiled formats now edit through exactly the contract a runtime format
+will. A Zig consumer with an out-of-tree `Language` that declared a hook
+sees it refused by `validate` as an unknown declaration. Along the way INI
+and fig gain `renameContainer`, a NestedText rename that dropped an
+indented multiline key's indent is fixed, and YAML's materialize no longer
+indexes an absent tag table. The carrier itself — registering a language
+at runtime — is not in 3.0.
 
 BREAKING-CHANGES.md is retired with this release: everything it listed has
 shipped, and a planned break is recorded from now on as a

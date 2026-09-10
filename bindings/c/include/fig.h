@@ -1028,7 +1028,11 @@ typedef struct FigCommentRow { uint32_t node; int slot; int style; FigStr text; 
 #define FIG_COMMENT_BLOCK 1
 
 // What parse returns and print receives. Zero rows is refused: a format whose
-// empty input is the empty document returns one FIG_NODE_NULL row.
+// empty input is the empty document returns one FIG_NODE_NULL row. A print
+// may be handed a table whose root is a scalar — a fragment, the text an
+// editor will splice (fig_value_serialize of a scalar): a printer spells it
+// as the scalar stands alone in the format, which for a format with no such
+// spelling is the text itself.
 // `owner` is the helper's own handle on the memory behind a table its parse
 // returned — set there, read back in free_table, never touched by fig.
 typedef struct FigNodeTable {

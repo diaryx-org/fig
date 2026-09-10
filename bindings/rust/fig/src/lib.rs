@@ -25,6 +25,11 @@ use std::ptr::NonNull;
 
 pub use diagnostics::{Warning, WarningCause, WarningCode};
 pub use editor::{Editor, Segment};
+/// The out-of-process carrier of a runtime language: JSON over stdio. Needs
+/// the `json` feature, since fig reads and writes the wire itself.
+#[cfg(feature = "json")]
+pub mod helper;
+pub mod language;
 pub use embed::{Embed, EmbedType, Extracted, Region, Span, detect, split};
 pub use error::{Error, ParseError};
 pub use value::{ExtKind, Value};
@@ -90,9 +95,78 @@ pub enum Format {
     /// NestedText (<https://nestedtext.org>). Nested (dict/list) but
     /// deliberately untyped — every leaf is a string.
     Nestedtext,
+    /// A language registered at runtime through [`language::register`] —
+    /// the value that call returns, a peer of every variant above at every
+    /// entry point that takes a `Format`. Its integer is assigned per
+    /// process: persist the name and resolve it with [`Format::by_name`].
+    Runtime(RuntimeFormat),
+}
+
+/// The per-process identity of a [`Format::Runtime`]. Opaque; compare it,
+/// copy it, do not persist it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct RuntimeFormat(c_int);
+
+impl Format {
+    /// The C ABI integer.
+    pub(crate) fn to_c(self) -> c_int {
+        match self {
+            Format::Runtime(r) => r.0,
+            other => ffi::FigFormat::from(other) as c_int,
+        }
+    }
+
+    /// The `Format` an ABI integer names, or `None` for one this crate
+    /// cannot name (a value below the runtime base that is no compiled
+    /// format this crate knows of, or a runtime value never handed out).
+    pub(crate) fn from_c(value: c_int) -> Option<Format> {
+        if value >= ffi::FIG_FORMAT_RUNTIME_BASE {
+            // Only an integer the registry handed out reports a capability.
+            if unsafe { ffi::fig_format_capabilities(value) } == 0 {
+                return None;
+            }
+            return Some(Format::Runtime(RuntimeFormat(value)));
+        }
+        Some(match value {
+            v if v == ffi::FigFormat::Json as c_int => Format::Json,
+            v if v == ffi::FigFormat::Jsonc as c_int => Format::Jsonc,
+            v if v == ffi::FigFormat::Json5 as c_int => Format::Json5,
+            v if v == ffi::FigFormat::Yaml as c_int => Format::Yaml,
+            v if v == ffi::FigFormat::Toml as c_int => Format::Toml,
+            v if v == ffi::FigFormat::Zon as c_int => Format::Zon,
+            v if v == ffi::FigFormat::Fig as c_int => Format::Fig,
+            v if v == ffi::FigFormat::Ini as c_int => Format::Ini,
+            v if v == ffi::FigFormat::Dotenv as c_int => Format::Dotenv,
+            v if v == ffi::FigFormat::Properties as c_int => Format::Properties,
+            v if v == ffi::FigFormat::Plist as c_int => Format::Plist,
+            v if v == ffi::FigFormat::Nestedtext as c_int => Format::Nestedtext,
+            _ => return None,
+        })
+    }
+
+    /// The format named `name`: a compiled format's registry name (`"json5"`,
+    /// `"yaml"`, …) or a language registered at runtime. `None` when nothing
+    /// answers to it in this process.
+    pub fn by_name(name: &str) -> Option<Format> {
+        let c = std::ffi::CString::new(name).ok()?;
+        let value = unsafe { ffi::fig_format_by_name(c.as_ptr()) };
+        if value < 0 {
+            return None;
+        }
+        Format::from_c(value)
+    }
 }
 
 impl From<Format> for ffi::FigFormat {
+    /// The compiled format's ABI enumerator.
+    ///
+    /// # Panics
+    ///
+    /// On [`Format::Runtime`], which has no `FigFormat` enumerator — its
+    /// integer is per process and lives above every variant of that enum.
+    /// This crate never calls it for one; a caller reaching `fig_sys`
+    /// directly should take [`Format`]'s integer from the entry points that
+    /// accept it instead.
     fn from(format: Format) -> Self {
         match format {
             Format::Json => ffi::FigFormat::Json,
@@ -107,6 +181,7 @@ impl From<Format> for ffi::FigFormat {
             Format::Properties => ffi::FigFormat::Properties,
             Format::Plist => ffi::FigFormat::Plist,
             Format::Nestedtext => ffi::FigFormat::Nestedtext,
+            Format::Runtime(_) => panic!("a runtime Format has no FigFormat enumerator"),
         }
     }
 }
@@ -288,11 +363,20 @@ pub struct Capabilities {
     pub serialize: bool,
 }
 
+impl Capabilities {
+    pub const fn new(read: bool, edit: bool, serialize: bool) -> Self {
+        Capabilities {
+            read,
+            edit,
+            serialize,
+        }
+    }
+}
+
 /// Query what this build can do with `format` (read/edit/serialize). Lets a host
 /// pick a working format up front instead of probing via `UnsupportedFormat`.
 pub fn capabilities(format: Format) -> Capabilities {
-    let ffi_format: ffi::FigFormat = format.into();
-    let bits = unsafe { ffi::fig_format_capabilities(ffi_format as c_int) };
+    let bits = unsafe { ffi::fig_format_capabilities(format.to_c()) };
     Capabilities {
         read: bits & (1 << 0) != 0,
         edit: bits & (1 << 1) != 0,
@@ -308,7 +392,6 @@ pub struct Document {
 impl Document {
     pub fn parse(input: &[u8], format: Format) -> Result<Self, Error> {
         let mut raw = std::ptr::null_mut();
-        let ffi_format: ffi::FigFormat = format.into();
 
         // `fig_parse_ex` fills `err` on failure; on a parse error we project its
         // message/location into `Error::Parse`. Other statuses fold through
@@ -318,7 +401,7 @@ impl Document {
             ffi::fig_parse_ex(
                 input.as_ptr(),
                 input.len(),
-                ffi_format as i32,
+                format.to_c(),
                 &mut raw,
                 &mut err,
             )
@@ -520,14 +603,13 @@ impl Document {
         format: Format,
         options: SerializeOptions,
     ) -> Result<String, Error> {
-        let ffi_format: ffi::FigFormat = format.into();
         let ffi_options: ffi::FigSerializeOptions = options.into();
         let mut ptr_out: *const u8 = std::ptr::null();
         let mut len: usize = 0;
         Error::from_status(unsafe {
             ffi::fig_document_serialize(
                 self.raw.as_ptr(),
-                ffi_format as c_int,
+                format.to_c(),
                 &ffi_options,
                 &mut ptr_out,
                 &mut len,
@@ -554,16 +636,10 @@ impl Document {
         format: Format,
         options: SerializeOptions,
     ) -> Result<Vec<Warning>, Error> {
-        let ffi_format: ffi::FigFormat = format.into();
         let ffi_options: ffi::FigSerializeOptions = options.into();
         let mut count: usize = 0;
         Error::from_status(unsafe {
-            ffi::fig_document_diagnose(
-                self.raw.as_ptr(),
-                ffi_format as c_int,
-                &ffi_options,
-                &mut count,
-            )
+            ffi::fig_document_diagnose(self.raw.as_ptr(), format.to_c(), &ffi_options, &mut count)
         })?;
         let mut out = Vec::with_capacity(count);
         for i in 0..count {

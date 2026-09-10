@@ -7,7 +7,7 @@
 //! on this one. Direct use is `unsafe` and unstable across ABI-version bumps.
 #![allow(non_camel_case_types)]
 
-use std::os::raw::c_int;
+use std::os::raw::{c_char, c_int, c_void};
 
 /// A fig C ABI status code, as a transparent wrapper over the raw `c_int` the
 /// ABI returns — deliberately *not* a Rust `enum`.
@@ -885,4 +885,291 @@ unsafe extern "C" {
         out_ptr: *mut *const u8,
         out_len: *mut usize,
     ) -> FigStatus;
+}
+
+// ── Runtime languages ──────────────────────────────────────────────────────
+//
+// Mirrors of fig.h's "Runtime languages" section: the vtable a host fills to
+// register a language, and the node table its parse returns and its print
+// receives. Field for field with the header; `zig build abi-check` runs a
+// C-hosted language through the same structs, and the `fig` crate's tests run
+// a Rust-hosted one through these.
+
+/// Mirror of `FIG_LANGUAGE_VTABLE_VERSION`.
+pub const FIG_LANGUAGE_VTABLE_VERSION: u32 = 1;
+/// Mirror of `FIG_OFFSET_NONE` / `FIG_LEN_NONE`: an absent optional span or
+/// string.
+pub const FIG_OFFSET_NONE: usize = usize::MAX;
+pub const FIG_LEN_NONE: usize = usize::MAX;
+/// Mirror of `FIG_ROW_NONE`: the root's `parent`.
+pub const FIG_ROW_NONE: u32 = u32::MAX;
+/// Mirror of `FIG_EXT_NONE`.
+pub const FIG_EXT_NONE: c_int = -1;
+
+pub const FIG_MENTION_HEADER: c_int = 0;
+pub const FIG_MENTION_ENTRY: c_int = 1;
+pub const FIG_COMMENT_LEADING: c_int = 0;
+pub const FIG_COMMENT_TRAILING: c_int = 1;
+pub const FIG_COMMENT_DANGLING: c_int = 2;
+pub const FIG_COMMENT_LINE: c_int = 0;
+pub const FIG_COMMENT_BLOCK: c_int = 1;
+
+impl FigStr {
+    /// The absent optional string.
+    pub const NONE: FigStr = FigStr {
+        ptr: std::ptr::null(),
+        len: FIG_LEN_NONE,
+    };
+}
+
+impl FigSpan {
+    /// The absent optional span.
+    pub const NONE: FigSpan = FigSpan {
+        start: FIG_OFFSET_NONE,
+        end: FIG_OFFSET_NONE,
+    };
+}
+
+/// Mirror of `FigNodeRow`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigNodeRow {
+    pub kind: c_int,
+    pub ext_kind: c_int,
+    pub parent: u32,
+    pub span: FigSpan,
+    pub text: FigStr,
+    pub anchor: FigStr,
+    pub anchor_span: FigSpan,
+    pub tag: FigStr,
+    pub tag_span: FigSpan,
+    pub marker: FigSpan,
+    pub sep: FigSpan,
+}
+
+/// Mirror of `FigRegionRow`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigRegionRow {
+    pub node: u32,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Mirror of `FigMentionRow`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigMentionRow {
+    pub node: u32,
+    pub span: FigSpan,
+    pub kind: c_int,
+}
+
+/// Mirror of `FigCommentRow`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigCommentRow {
+    pub node: u32,
+    pub slot: c_int,
+    pub style: c_int,
+    pub text: FigStr,
+}
+
+/// Mirror of `FigNodeTable`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigNodeTable {
+    pub rows: *const FigNodeRow,
+    pub row_count: usize,
+    pub regions: *const FigRegionRow,
+    pub region_count: usize,
+    pub mentions: *const FigMentionRow,
+    pub mention_count: usize,
+    pub comments: *const FigCommentRow,
+    pub comment_count: usize,
+    pub owner: *mut c_void,
+}
+
+/// Mirror of `FigPrintOptions`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigPrintOptions {
+    pub pretty: bool,
+    pub strip_comments: bool,
+    pub indent: u8,
+    pub width: u16,
+}
+
+/// Mirror of `FigCommentDelimiter`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigCommentDelimiter {
+    pub open: *const c_char,
+    pub close: *const c_char,
+    pub forbidden: *const c_char,
+}
+
+/// Mirror of `FigComments`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigComments {
+    pub style: c_int,
+    pub line: FigCommentDelimiter,
+    pub trailing: FigCommentDelimiter,
+}
+
+/// Mirror of `FigSectionHeader`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigSectionHeader {
+    pub open: *const c_char,
+    pub close: *const c_char,
+    pub seq_open: *const c_char,
+    pub seq_close: *const c_char,
+    pub sep: *const c_char,
+    pub skip_index: bool,
+}
+
+/// Mirror of `FigClosedContainers`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigClosedContainers {
+    pub map_open: *const c_char,
+    pub map_close: *const c_char,
+    pub seq_open: *const c_char,
+    pub seq_close: *const c_char,
+}
+
+/// Mirror of `FigSyntax`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigSyntax {
+    pub comments: FigComments,
+    pub kv_sep: *const c_char,
+    pub flow_kv_sep_from_siblings: bool,
+    pub flow_map_pad: *const c_char,
+    pub key_style: c_int,
+    pub key_sigil: u8,
+    pub empty_map_literal: *const c_char,
+    pub block_seq_editable: bool,
+    pub flow_containers: bool,
+    pub indent_unit: *const c_char,
+    pub seq_item_marker: *const c_char,
+    pub closed_containers: FigClosedContainers,
+    pub single_line_block_mapping: bool,
+    pub bare_document_mapping: bool,
+    pub flow_map_open: *const c_char,
+    pub flow_map_close: *const c_char,
+    pub structural_indent: bool,
+    pub section_noun: c_int,
+    pub section_header: FigSectionHeader,
+    pub merge_key: *const c_char,
+}
+
+/// Mirror of `FigNativeKinds`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FigNativeKinds {
+    pub null_: bool,
+    pub offset_datetime: bool,
+    pub local_datetime: bool,
+    pub local_date: bool,
+    pub local_time: bool,
+    pub enum_literal: bool,
+    pub char_literal: bool,
+    pub number_special: bool,
+    pub plist_date: bool,
+    pub plist_data: bool,
+}
+
+/// Mirror of `FigDialectDesc`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigDialectDesc {
+    pub name: *const c_char,
+    pub extensions: *const *const c_char,
+    pub splice: c_int,
+    pub empty_doc_seed: *const c_char,
+    pub syntax: *const FigSyntax,
+}
+
+pub type FigParseFn = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    dialect: *const c_char,
+    input: FigStr,
+    out: *mut FigNodeTable,
+    err: *mut FigError,
+) -> c_int;
+pub type FigPrintFn = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    dialect: *const c_char,
+    table: *const FigNodeTable,
+    options: *const FigPrintOptions,
+    out: *mut FigStr,
+    err: *mut FigError,
+) -> c_int;
+pub type FigFreeTableFn = unsafe extern "C" fn(ctx: *mut c_void, table: *mut FigNodeTable);
+pub type FigFreeBytesFn = unsafe extern "C" fn(ctx: *mut c_void, bytes: FigStr);
+pub type FigRenderValueFn = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    dialect: *const c_char,
+    value: FigStr,
+    out: *mut FigStr,
+    err: *mut FigError,
+) -> c_int;
+pub type FigRenderEntryFn = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    dialect: *const c_char,
+    indent: FigStr,
+    key: FigStr,
+    value: FigStr,
+    out: *mut FigStr,
+    err: *mut FigError,
+) -> c_int;
+pub type FigRenderItemFn = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    dialect: *const c_char,
+    indent: FigStr,
+    value: FigStr,
+    out: *mut FigStr,
+    err: *mut FigError,
+) -> c_int;
+pub type FigRenderTailFn = FigRenderEntryFn;
+pub type FigRenderKeyFn = FigRenderEntryFn;
+
+/// Mirror of `FigLanguageVTable`. The five `render_*` slots and `print` are
+/// `Option`, which is the null pointer on the C side.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct FigLanguageVTable {
+    pub version: u32,
+    pub ctx: *mut c_void,
+    pub name: *const c_char,
+    pub caps: u32,
+    pub max_mapping_depth: u8,
+    pub lossless: *const FigNativeKinds,
+    pub syntax: *const FigSyntax,
+    pub dialects: *const FigDialectDesc,
+    pub dialect_count: usize,
+    pub samples: *const FigStr,
+    pub sample_count: usize,
+    pub parse: FigParseFn,
+    pub print: Option<FigPrintFn>,
+    pub free_table: FigFreeTableFn,
+    pub free_bytes: FigFreeBytesFn,
+    pub render_value: Option<FigRenderValueFn>,
+    pub render_entry: Option<FigRenderEntryFn>,
+    pub render_item: Option<FigRenderItemFn>,
+    pub render_tail: Option<FigRenderTailFn>,
+    pub render_key: Option<FigRenderKeyFn>,
+}
+
+unsafe extern "C" {
+    pub fn fig_language_vtable_version() -> u32;
+    pub fn fig_language_register(
+        vt: *const FigLanguageVTable,
+        out_format: *mut c_int,
+        out_err: *mut FigError,
+    ) -> FigStatus;
+    pub fn fig_format_by_name(name: *const c_char) -> c_int;
 }

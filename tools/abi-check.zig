@@ -160,17 +160,29 @@ pub fn main(init: std.process.Init) !void {
         fail = true;
     }
 
+    const sys_vt = rustConstInt(sys_src, "FIG_LANGUAGE_VTABLE_VERSION") orelse return error.MissingVTableVersionConst;
+    if (sys_vt != fig.Runtime.vtable_version) {
+        if (!fail) std.debug.print("abi-check: FAIL\n", .{});
+        std.debug.print(
+            "  vtable-version drift: fig-sys FIG_LANGUAGE_VTABLE_VERSION is {d} but runtime.vtable_version is {d}\n",
+            .{ sys_vt, fig.Runtime.vtable_version },
+        );
+        fail = true;
+    }
+
     // Format-enum drift: fig.h's FIG_FORMAT_* enumerators must match the format
     // registry name-for-name and value-for-value — and so must each binding's
     // mirror of them.
     const formats = try parseEnumerators(arena, header, "typedef enum FigFormat", .values_required);
-    try checkFormats(arena, "fig.h", formats, .c_macro, &fail);
+    try checkFormats(arena, "fig.h", formats, .c_macro, &.{}, &fail);
     const sys_formats = try parseEnumerators(arena, sys_src, "pub enum FigFormat", .values_required);
-    try checkFormats(arena, "fig-sys FigFormat", sys_formats, .pascal_valued, &fail);
+    try checkFormats(arena, "fig-sys FigFormat", sys_formats, .pascal_valued, &.{}, &fail);
     const ts_formats = try parseEnumerators(arena, ts_src, "export enum Format", .values_required);
-    try checkFormats(arena, "TypeScript Format", ts_formats, .pascal_valued, &fail);
+    try checkFormats(arena, "TypeScript Format", ts_formats, .pascal_valued, &.{}, &fail);
     const rust_formats = try parseEnumerators(arena, rust_src, "pub enum Format", .names_only);
-    try checkFormats(arena, "Rust Format", rust_formats, .pascal_named, &fail);
+    // `Format::Runtime(RuntimeFormat)` is the one member no registry entry
+    // backs: a language registered at runtime, whose integer is per process.
+    try checkFormats(arena, "Rust Format", rust_formats, .pascal_named, &.{"Runtime(RuntimeFormat)"}, &fail);
 
     // Extended-scalar-kind drift: fig.h's FIG_EXT_* enumerators and the two
     // binding mirrors must match the core's `ExtKind` name-for-name, and
@@ -205,8 +217,10 @@ const NameStyle = enum {
 
 /// Compare one surface's enumerators against the registry in both directions,
 /// setting `fail` (and printing a line naming the surface, the enumerator and
-/// both values) for each disagreement.
-fn checkFormats(arena: std.mem.Allocator, surface: []const u8, formats: []const FormatEnumerator, style: NameStyle, fail: *bool) !void {
+/// both values) for each disagreement. `extras` are the members the surface
+/// carries deliberately beyond the registry, spelled as the surface spells
+/// them.
+fn checkFormats(arena: std.mem.Allocator, surface: []const u8, formats: []const FormatEnumerator, style: NameStyle, extras: []const []const u8, fail: *bool) !void {
     // Registry -> surface: every format must be declared, with its exact value
     // where the surface carries one.
     inline for (fig.Language.dialects) |d| {
@@ -245,6 +259,9 @@ fn checkFormats(arena: std.mem.Allocator, surface: []const u8, formats: []const 
             const want_name = try enumeratorName(arena, d.name, style);
             if (std.mem.eql(u8, want_name, e.name)) found = true;
         }
+        for (extras) |x| if (std.mem.eql(u8, x, e.name)) {
+            found = true;
+        };
         if (!found) {
             if (!fail.*) std.debug.print("abi-check: FAIL\n", .{});
             std.debug.print(

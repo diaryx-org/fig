@@ -21,10 +21,24 @@ fn plist_date_and_data_reach_the_wrapper() {
     let doc = Document::parse(src, Format::Plist).expect("plist parses");
     let value = doc.to_value().expect("to_value");
     let map = value.as_mapping().expect("root is a dict");
-    let get = |k: &str| map.iter().find(|(key, _)| key.as_str() == Some(k)).map(|(_, v)| v).unwrap();
+    let get = |k: &str| {
+        map.iter()
+            .find(|(key, _)| key.as_str() == Some(k))
+            .map(|(_, v)| v)
+            .unwrap()
+    };
     assert_eq!(
         get("when"),
-        &Value::Extended { kind: ExtKind::PlistDate, text: "2026-09-10T12:00:00Z".into() }
+        &Value::Extended {
+            kind: ExtKind::PlistDate,
+            text: "2026-09-10T12:00:00Z".into()
+        }
     );
-    assert_eq!(get("blob"), &Value::Extended { kind: ExtKind::PlistData, text: "aGVsbG8=".into() });
+    assert_eq!(
+        get("blob"),
+        &Value::Extended {
+            kind: ExtKind::PlistData,
+            text: "aGVsbG8=".into()
+        }
+    );
 }

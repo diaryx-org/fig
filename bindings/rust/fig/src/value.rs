@@ -44,7 +44,7 @@ pub enum ExtKind {
 
 impl ExtKind {
     /// The C ABI enumerator (`FigExtKind`) for this kind.
-    fn to_c(self) -> c_int {
+    pub(crate) fn to_c(self) -> c_int {
         match self {
             ExtKind::OffsetDateTime => 0,
             ExtKind::LocalDateTime => 1,
@@ -219,12 +219,11 @@ impl Value {
 
         let mut ptr_out: *const u8 = ptr::null();
         let mut len: usize = 0;
-        let ffi_format: ffi::FigFormat = format.into();
         Error::from_status(unsafe {
             ffi::fig_value_serialize_opts(
                 guard.0,
                 root,
-                ffi_format as i32,
+                format.to_c(),
                 &ffi_options,
                 &mut ptr_out,
                 &mut len,
@@ -258,11 +257,10 @@ impl Value {
         let guard = ValueGuard(raw);
 
         let root = build(guard.0, self)?;
-        let ffi_format: ffi::FigFormat = format.into();
         let ffi_options: ffi::FigSerializeOptions = options.into();
         let mut count: usize = 0;
         Error::from_status(unsafe {
-            ffi::fig_value_diagnose(guard.0, root, ffi_format as c_int, &ffi_options, &mut count)
+            ffi::fig_value_diagnose(guard.0, root, format.to_c(), &ffi_options, &mut count)
         })?;
         let mut out = Vec::with_capacity(count);
         for i in 0..count {
@@ -1234,8 +1232,14 @@ mod tests {
     #[test]
     fn parse_number_reads_radix_prefixes_and_separators() {
         assert_eq!(Value::parse_number("0xFF", false).unwrap(), Value::Int(255));
-        assert_eq!(Value::parse_number("0o755", false).unwrap(), Value::Int(493));
-        assert_eq!(Value::parse_number("0b1010", false).unwrap(), Value::Int(10));
+        assert_eq!(
+            Value::parse_number("0o755", false).unwrap(),
+            Value::Int(493)
+        );
+        assert_eq!(
+            Value::parse_number("0b1010", false).unwrap(),
+            Value::Int(10)
+        );
         assert_eq!(
             Value::parse_number("1_000_000", false).unwrap(),
             Value::Int(1_000_000)
@@ -1250,8 +1254,14 @@ mod tests {
         );
 
         // Signs ride on the prefix form too.
-        assert_eq!(Value::parse_number("-0o755", false).unwrap(), Value::Int(-493));
-        assert_eq!(Value::parse_number("+0xFF", false).unwrap(), Value::Int(255));
+        assert_eq!(
+            Value::parse_number("-0o755", false).unwrap(),
+            Value::Int(-493)
+        );
+        assert_eq!(
+            Value::parse_number("+0xFF", false).unwrap(),
+            Value::Int(255)
+        );
 
         // The shape that started this: a `build.zig.zon` fingerprint sits above
         // `i64::MAX`, so it must widen to `Uint` rather than fail.

@@ -88,10 +88,8 @@ impl Editor {
     /// Open an editor over a copy of `input` in the given format.
     pub fn open(input: &[u8], format: Format) -> Result<Self, Error> {
         let mut raw = std::ptr::null_mut();
-        let ffi_format: ffi::FigFormat = format.into();
-        let status = unsafe {
-            ffi::fig_editor_create(input.as_ptr(), input.len(), ffi_format as i32, &mut raw)
-        };
+        let status =
+            unsafe { ffi::fig_editor_create(input.as_ptr(), input.len(), format.to_c(), &mut raw) };
         Error::from_status(status)?;
         let raw = NonNull::new(raw).ok_or(Error::Internal)?;
         Ok(Self { raw, format })

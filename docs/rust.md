@@ -164,6 +164,53 @@ it has there, and `zig build abi-check` refuses a core whose registry this enum
 `#[non_exhaustive]`, a format the core gains later is a **minor** release — see
 [Forward compatibility](#forward-compatibility-non_exhaustive).
 
+### Runtime languages
+
+One variant is not in the core's registry: `Format::Runtime`, a language
+registered while the program runs. Implement [`language::Language`] — a
+[`Description`](language::Description) of what the format declares (the same
+declarations a compiled format makes: capabilities, dialects, the `Syntax`
+the splice engine writes it with, and a few sample documents), a `parse`
+that returns a [`NodeTable`](language::NodeTable), a `print` where the
+format serializes, and any fragment renderers the editor needs — and hand
+it to [`language::register`]:
+
+```rust
+use fig::language::{Description, Language, LanguageError, NodeKind, NodeRow, NodeTable};
+use fig::{Document, Format, Span};
+
+struct Hcl;
+impl Language for Hcl {
+    fn describe(&self) -> Description {
+        let mut d = Description::new("hcl");
+        d.samples = vec!["a = 1\n".into()];
+        d
+    }
+    fn parse(&self, _dialect: &str, input: &[u8]) -> Result<NodeTable, LanguageError> {
+        let mut t = NodeTable::new();
+        t.push(NodeRow::new(NodeKind::Mapping, None, Span { start: 0, end: input.len() }));
+        // … one row per node, in pre-order
+        Ok(t)
+    }
+}
+
+let hcl = fig::language::register(Hcl)?[0];
+let doc = Document::parse(b"a = 1\n", hcl)?;   // a peer of Format::Toml at every call
+assert_eq!(Format::by_name("hcl"), Some(hcl));
+```
+
+The core validates the description by the rules it holds its own formats to
+and runs its harness over the samples — each is parsed, printed, reparsed
+and edited — before anything is registered; a description that fails is
+refused as [`Error::Language`] with the reason. A registered language lives
+for the rest of the process, and its `Format` is per process: persist the
+name and resolve it with `Format::by_name`.
+
+The same `Language` can be served to the `fig` command line as a helper
+process — JSON over stdin and stdout — with [`helper::serve`], which is what
+a helper crate's `main` is. The wire is documented on the `helper` module.
+See `docs/proposals/runtime-languages.md` in the core for the design.
+
 ## Reading data
 
 For a typed result, reach for the [serde or derive](#typed-structs-serde-or-derive)

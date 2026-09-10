@@ -77,6 +77,10 @@ pub enum Error {
     /// offending value, since an `i128` payload would force 16-byte alignment
     /// on the whole `Error` enum and bloat every `Result<_, Error>` site.
     IntOutOfRange { ty: &'static str },
+    /// A runtime language was refused by [`language::register`](crate::language::register),
+    /// or a call into one failed: the reason, as the core or the language
+    /// gave it.
+    Language(String),
 }
 
 /// Details of a parse failure, projected from the C ABI's `FigError`.
@@ -212,6 +216,7 @@ impl fmt::Display for Error {
             Error::UnsupportedOperation => f.write_str("unsupported operation"),
             Error::NotFound => f.write_str("path or region not found"),
             Error::Internal => f.write_str("internal error"),
+            Error::Language(msg) => write!(f, "runtime language: {msg}"),
             Error::Utf8 => f.write_str("scalar was not valid UTF-8"),
             Error::Number(raw) => write!(f, "invalid number: {raw}"),
             Error::Message(msg) => f.write_str(msg),

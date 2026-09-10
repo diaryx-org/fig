@@ -26,6 +26,18 @@ include = [
 name = "fig"
 path = "src/lib.rs"
 
+# `Format::Runtime(RuntimeFormat)` — a language registered while the program
+# runs — made `Format` a non-unit enum in rust 3.6, which cargo-semver-checks
+# reads as a major: an enum with a tuple variant has no defined discriminants,
+# so a downstream `Format::Yaml as isize` stops compiling. That cast was never
+# part of what `Format` promised: the enum is `#[non_exhaustive]`, declares no
+# discriminants, and its member order is the core registry's rather than the
+# C ABI's values, so the integer a cast yielded meant nothing a caller could
+# use. The lint is held at `warn` for exactly that variant; every other
+# breaking change it knows of still fails `zig build check`.
+[package.metadata.cargo-semver-checks.lints]
+enum_discriminants_undefined_non_unit_variant = "warn"
+
 # JSON is in `default`, not implied by the base crate: `--no-default-features`
 # compiles it out too (like any other language). `serde` is opt-in — the crate
 # parses, edits, and serializes through the `Value` tree (and `#[derive]`) with

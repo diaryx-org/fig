@@ -217,13 +217,19 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     // who only touches the Zig core (and has no Rust installed) still gets a
     // useful `check`; the step warns and skips rather than failing. CI installs
     // cargo, so there the suite runs for real.
+    //
+    // Built from THIS tree's core, never the prebuilt payload archive: with the
+    // default feature set `fig-sys` would otherwise link whatever `libfig.a`
+    // a `build-payload-lib.sh` run last left under `fig-sys-<target>/lib`,
+    // and a `check` that tests the binding against a stale core is not a
+    // check. Zig is on PATH here by construction.
     const rust_test_script =
         \\set -eu
         \\if ! command -v cargo >/dev/null 2>&1; then
         \\  echo "rust tests: cargo not found — skipping (install Rust to run them)."
         \\  exit 0
         \\fi
-        \\cargo test --workspace
+        \\FIG_SYS_FORCE_SOURCE=1 cargo test --workspace
     ;
     const rust_test = b.addSystemCommand(&.{ "sh", "-c", rust_test_script });
     rust_test.setCwd(b.path("bindings/rust"));

@@ -547,7 +547,9 @@ pub fn register(allocator: Allocator, vt: *const VTable) RegisterError!c_int {
     defer mutex.unlock();
 
     if (registry_allocator) |a| {
-        if (a.ptr != allocator.ptr or a.vtable != allocator.vtable) return error.AllocatorMismatch;
+        // By vtable: a stateless allocator (`c_allocator`) has an undefined
+        // `ptr`, and two of them are the same allocator.
+        if (a.vtable != allocator.vtable) return error.AllocatorMismatch;
     } else registry_allocator = allocator;
 
     const name = std.mem.span(vt.name);

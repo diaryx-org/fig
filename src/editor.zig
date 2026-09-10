@@ -2349,7 +2349,11 @@ pub fn Editor(comptime Language: type) type {
         /// Whether this format has section nodes at all — a non-null
         /// `section_noun` in any dialect. Comptime, so the generic ops and the
         /// line-splice rule can be compiled out for every other format.
-        const is_section_format = blk: {
+        ///
+        /// A runtime language (`languages/runtime.zig`) has no comptime
+        /// dialect table; it declares `runtime` and the answer is "may be",
+        /// with `syntax()` deciding per entry at the call.
+        const is_section_format = @hasDecl(Language, "runtime") or blk: {
             var any = false;
             for (std.meta.tags(Language.Type)) |t| {
                 if (Language.syntax(t).section_noun != null) any = true;
@@ -2654,14 +2658,14 @@ pub fn Editor(comptime Language: type) type {
         /// Whether any dialect declares a `section_header`, and whether any
         /// declares its sequence form: the comptime gates on the two ops
         /// that write a header line.
-        const has_section_header = blk: {
+        const has_section_header = @hasDecl(Language, "runtime") or blk: {
             var any = false;
             for (std.meta.tags(Language.Type)) |t| {
                 if (Language.syntax(t).section_header != null) any = true;
             }
             break :blk any;
         };
-        const has_seq_header = blk: {
+        const has_seq_header = @hasDecl(Language, "runtime") or blk: {
             var any = false;
             for (std.meta.tags(Language.Type)) |t| {
                 if (Language.syntax(t).section_header) |h| {

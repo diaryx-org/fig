@@ -606,6 +606,15 @@ comptime {
         @compileError("`canonical` is not a registry entry and cannot be sniffed");
 }
 
+/// Whether `name` is a compiled-in format's dialect name — what a runtime
+/// registration may not reuse (`languages/runtime.zig`).
+pub fn isCompiledName(name: []const u8) bool {
+    inline for (dialects) |d| {
+        if (std.mem.eql(u8, d.name, name)) return true;
+    }
+    return false;
+}
+
 /// A format `detect` can recognize: the registry entries with a
 /// `sniff_rank`, in registry order (NOT probe order — see `sniff_order`).
 /// The `jsonc` dialect and `canonical` are deliberately excluded: jsonc
@@ -726,7 +735,11 @@ const Decls = struct {
     ///     runtime (`languages/runtime.zig`) answers `Editor.hasRenderer`
     ///     itself; a compiled format never declares it, since presence is
     ///     `@hasDecl` there.
-    const optional = [_][]const u8{ "printNode", "materialize", "TagMode", "parseAbstract", "samples", "hasRenderer" };
+    ///   * `runtime` — the same language's marker that its dialect table is
+    ///     not a comptime fact: the editor's two gates that read every
+    ///     dialect's `syntax` at comptime (may it have sections, may it
+    ///     spell a header) answer "ask the entry" instead.
+    const optional = [_][]const u8{ "printNode", "materialize", "TagMode", "parseAbstract", "samples", "hasRenderer", "runtime" };
 
     /// Editing hooks: none. A hook was a `pub` decl that took over an
     /// `editor.Editor` method wholesale, with the editor in hand. Twenty-five
@@ -949,7 +962,10 @@ pub fn validate(comptime Lang: type) void {
         // The block-sequence item renderer sits below `editor.zig`'s
         // `block_seq_editable` refusal, so a format that declares no editable
         // block sequences in any dialect can never reach it.
-        var any_block_seq = false;
+        //
+        // A runtime language has no dialect table to read here; its record
+        // is held to the same rule by `runtime.validateVTable`.
+        var any_block_seq = @hasDecl(Lang, "runtime");
         for (std.meta.tags(Lang.Type)) |t| {
             const s: Syntax = Lang.syntax(t);
             if (s.block_seq_editable) any_block_seq = true;

@@ -1,6 +1,9 @@
 //! By convention, root.zig is the root source file when making a package.
 const build_options = @import("build_options");
 pub const Language = @import("languages/language.zig");
+/// A format resolved when the program runs: the contract as a vtable, the
+/// registry, and the `Language` over it. `docs/proposals/runtime-languages.md`.
+pub const Runtime = @import("languages/runtime.zig");
 // TODO: Language.detect(file: []const u8);
 
 pub const Editor = @import("editor.zig").Editor;
@@ -42,6 +45,7 @@ test {
     // literal.
     _ = @import("languages/language.zig");
     _ = @import("languages/harness.zig");
+    _ = @import("languages/runtime.zig");
     _ = @import("languages/shared/flat_map.zig");
     _ = @import("document.zig");
     _ = @import("editor.zig");

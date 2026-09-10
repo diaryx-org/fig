@@ -705,7 +705,6 @@ pub const Syntax = struct {
     merge_key: ?[]const u8 = null,
 };
 
-/// An opening and closing token pair. See `Syntax.closed_containers`.
 /// The five fragment renderers a format may declare — `Decls.renderers` in
 /// `language.zig`, as an enum the engine can ask about. `Editor.hasRenderer`
 /// answers for a compiled language from `@hasDecl` and for a runtime one
@@ -730,6 +729,7 @@ pub const Renderer = enum {
     }
 };
 
+/// An opening and closing token pair. See `Syntax.closed_containers`.
 pub const Delimiters = struct { open: []const u8, close: []const u8 };
 
 /// The self-closing block container spellings of a format whose containers

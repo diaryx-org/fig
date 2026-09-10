@@ -174,8 +174,9 @@ on `Document` beside the spans — each block-sequence item's marker, each
 entry's separator, a section's header lines and every place its name is
 written — and, where the format spells a fragment in a way no declaration
 covers, a *renderer*: `renderValue`, `renderEntry`, `renderItem`,
-`renderTail` or `renderKey`, each a pure function from strings to a string
-that the engine splices under the same reparse net as any other edit. The
+`renderTail` or `renderKey`, each a pure function from the dialect and
+strings to a string that the engine splices under the same reparse net as
+any other edit. The
 renderers are documented on `Decls.renderers` in `src/languages/language.zig`
 and on the `Editor` methods that call them.
 `zig build validate-check` proves the claim rather than describing it: one

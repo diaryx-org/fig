@@ -57,12 +57,11 @@ const sniff = @import("../fig/tokenizer.zig");
 /// The concrete editor these ops drive — the plist arm of the generic engine.
 const PlistEditor = editor.Editor(Plist);
 
-
 // ── value rendering ────────────────────────────────────────────────────────────
 
 /// Render a CLI value string into a plist typed element, appended to `out`.
 /// See the module header for the typing rules and the `<`-prefix escape hatch.
-pub fn renderValue(allocator: std.mem.Allocator, out: *std.ArrayList(u8), value_text: []const u8) !void {
+pub fn renderValue(_: Plist.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), value_text: []const u8) !void {
     const t = std.mem.trim(u8, value_text, " \t\r\n");
     if (t.len > 0 and t[0] == '<') {
         // Explicit element (or element tree): the caller has spelled the plist
@@ -108,7 +107,7 @@ fn appendEscaped(allocator: std.mem.Allocator, out: *std.ArrayList(u8), s: []con
 /// and value at the same indent (matching the printer's layout). The first
 /// line's indent is the engine's; `rendered_value` has been through
 /// `renderValue`. See `editor.Editor.writeEntry`.
-pub fn renderEntry(allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, key: []const u8, rendered_value: []const u8) !void {
+pub fn renderEntry(_: Plist.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, key: []const u8, rendered_value: []const u8) !void {
     try out.appendSlice(allocator, "<key>");
     try appendEscaped(allocator, out, key);
     try out.appendSlice(allocator, "</key>\n");
@@ -150,7 +149,7 @@ test "renderValue: fig sniffBare picks the typed element" {
     for (cases) |c| {
         var out: std.ArrayList(u8) = .empty;
         defer out.deinit(testing.allocator);
-        try renderValue(testing.allocator, &out, c.in);
+        try renderValue(.XML, testing.allocator, &out, c.in);
         try testing.expectEqualStrings(c.out, out.items);
     }
 }
@@ -158,7 +157,7 @@ test "renderValue: fig sniffBare picks the typed element" {
 test "renderValue: null has no plist type" {
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(testing.allocator);
-    try testing.expectError(error.NullUnsupported, renderValue(testing.allocator, &out, "null"));
+    try testing.expectError(error.NullUnsupported, renderValue(.XML, testing.allocator, &out, "null"));
 }
 
 test "set replaces a value, preserving or changing type by autodetection" {

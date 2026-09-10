@@ -706,6 +706,30 @@ pub const Syntax = struct {
 };
 
 /// An opening and closing token pair. See `Syntax.closed_containers`.
+/// The five fragment renderers a format may declare — `Decls.renderers` in
+/// `language.zig`, as an enum the engine can ask about. `Editor.hasRenderer`
+/// answers for a compiled language from `@hasDecl` and for a runtime one
+/// from the language's own `hasRenderer(t, which)`, since a vtable answers
+/// with a null pointer rather than an absent declaration.
+pub const Renderer = enum {
+    value,
+    entry,
+    item,
+    tail,
+    key,
+
+    /// The declaration name: `renderValue` for `.value`.
+    pub fn declName(comptime self: Renderer) []const u8 {
+        return switch (self) {
+            .value => "renderValue",
+            .entry => "renderEntry",
+            .item => "renderItem",
+            .tail => "renderTail",
+            .key => "renderKey",
+        };
+    }
+};
+
 pub const Delimiters = struct { open: []const u8, close: []const u8 };
 
 /// The self-closing block container spellings of a format whose containers

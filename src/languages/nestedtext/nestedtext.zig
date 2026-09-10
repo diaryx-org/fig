@@ -82,9 +82,9 @@ pub const Language = struct {
     //
     // No hooks. Four renderers say how NestedText spells an entry, an item,
     // what follows a key, and a renamed key; every operation is the generic
-    // engine's. The engine dispatches on PRESENCE — `@hasDecl(Language,
-    // "renderEntry")` — and a renderer it finds is called with strings and
-    // returns a string.
+    // engine's. The engine dispatches on PRESENCE — `Editor.hasRenderer`,
+    // which is `@hasDecl` here — and a renderer it finds is called with the
+    // dialect and strings, and returns a string.
     // The logic lives in `editor_helper.zig` (which holds this format's
     // editor tests too), not here: this block is the DECLARATION of what
     // this format supplies.

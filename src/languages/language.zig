@@ -722,7 +722,11 @@ const Decls = struct {
     ///     that `languages/harness.zig` parses, prints, reparses and edits
     ///     to check what the engine assumes of every format. Every in-tree
     ///     format declares some; an out-of-tree one may.
-    const optional = [_][]const u8{ "printNode", "materialize", "TagMode", "parseAbstract", "samples" };
+    ///   * `hasRenderer` — a language whose renderers are resolved at
+    ///     runtime (`languages/runtime.zig`) answers `Editor.hasRenderer`
+    ///     itself; a compiled format never declares it, since presence is
+    ///     `@hasDecl` there.
+    const optional = [_][]const u8{ "printNode", "materialize", "TagMode", "parseAbstract", "samples", "hasRenderer" };
 
     /// Editing hooks: none. A hook was a `pub` decl that took over an
     /// `editor.Editor` method wholesale, with the editor in hand. Twenty-five
@@ -745,21 +749,27 @@ const Decls = struct {
     /// `docs/proposals/derived-regions.md`.
     const hooks = [_][]const u8{};
 
-    /// Fragment renderers. Each is a pure function from strings to a string
-    /// the engine splices under the reparse net: `renderValue(allocator,
-    /// out, value_text)` spells a value (plist's typed element),
-    /// `renderEntry(allocator, out, indent, key_text, value_text)` spells a
-    /// block-mapping entry past its line's indent (plist's two-line pair,
-    /// NestedText's `key:` and `>`-block), `renderItem(allocator, out,
-    /// indent, value_text)` a block-sequence item, `renderTail(allocator,
-    /// out, indent, key_text, value_text)` what follows a key — the
-    /// separator and the value inline, or the value re-framed as a block on
-    /// the following lines — and `renderKey(allocator, out, indent,
-    /// key_text, old_key)` a renamed key in the form the old one allows.
-    /// None receives the editor or performs a splice; the engine calls one
-    /// at most once per edit and splices the result. See
-    /// `editor.Editor.renderedValue`, `writeEntry`, `writeItem`, `writeTail`
-    /// and `replaceKeyAtPath`, and `docs/proposals/runtime-languages.md`
+    /// Fragment renderers. Each is a pure function from the dialect and
+    /// strings to a string the engine splices under the reparse net:
+    /// `renderValue(t, allocator, out, value_text)` spells a value (plist's
+    /// typed element), `renderEntry(t, allocator, out, indent, key_text,
+    /// value_text)` spells a block-mapping entry past its line's indent
+    /// (plist's two-line pair, NestedText's `key:` and `>`-block),
+    /// `renderItem(t, allocator, out, indent, value_text)` a block-sequence
+    /// item, `renderTail(t, allocator, out, indent, key_text, value_text)`
+    /// what follows a key — the separator and the value inline, or the
+    /// value re-framed as a block on the following lines — and
+    /// `renderKey(t, allocator, out, indent, key_text, old_key)` a renamed
+    /// key in the form the old one allows. `t` is the editor's dialect; no
+    /// compiled renderer varies by it, and a runtime language's must
+    /// (`docs/proposals/runtime-languages.md` §8.4). None receives the
+    /// editor or performs a splice; the engine calls one at most once per
+    /// edit and splices the result. The engine asks whether a renderer is
+    /// present through `Editor.hasRenderer` — `@hasDecl` for a compiled
+    /// language; a language may declare `hasRenderer(t, which)` itself and
+    /// answer at runtime, which is how a vtable's null slot is an absent
+    /// renderer. See `editor.Editor.renderedValue`, `writeEntry`,
+    /// `writeItem`, `writeTail` and `replaceKeyAtPath`, and the proposal's
     /// §4.4.
     const renderers = [_][]const u8{ "renderValue", "renderEntry", "renderItem", "renderTail", "renderKey" };
 
@@ -951,7 +961,6 @@ pub fn validate(comptime Lang: type) void {
                         " but supplies '" ++ name ++ "', which the engine refuses before reaching");
             }
         }
-
     }
 }
 

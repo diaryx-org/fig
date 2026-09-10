@@ -180,7 +180,7 @@ fn isMultilineKeyText(key: []const u8) bool {
 /// tail, or the `: key` multiline form (per `needsMultilineKey`) over a value
 /// that is then always nested. Continuation lines sit at `indent` plus one
 /// `indent_unit`. No trailing newline. See `editor.Editor.writeEntry`.
-pub fn renderEntry(allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, key_text: []const u8, value_text: []const u8) !void {
+pub fn renderEntry(_: NestedText.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, key_text: []const u8, value_text: []const u8) !void {
     var child: std.ArrayList(u8) = .empty;
     defer child.deinit(allocator);
     try child.appendSlice(allocator, indent);
@@ -199,7 +199,7 @@ pub fn renderEntry(allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent
 /// One block-sequence item after its line's `indent`: `-` plus the value
 /// tail (same-line, or a nested `>`-block one `indent_unit` deeper). No
 /// trailing newline. See `editor.Editor.writeItem`.
-pub fn renderItem(allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, value_text: []const u8) !void {
+pub fn renderItem(_: NestedText.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, value_text: []const u8) !void {
     var child: std.ArrayList(u8) = .empty;
     defer child.deinit(allocator);
     try child.appendSlice(allocator, indent);
@@ -217,7 +217,7 @@ pub fn renderItem(allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent:
 /// top-level scalar line has no grammar at all (see `parser.zig`: an
 /// unrecognized `.other` line at the top level is a parse error). No
 /// trailing newline. See `editor.Editor.writeTail`.
-pub fn renderTail(allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, key_text: []const u8, value_text: []const u8) !void {
+pub fn renderTail(_: NestedText.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, key_text: []const u8, value_text: []const u8) !void {
     if (key_text.len == 0) return appendRootBlock(allocator, out, value_text);
     var child: std.ArrayList(u8) = .empty;
     defer child.deinit(allocator);
@@ -240,7 +240,7 @@ pub fn renderTail(allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent:
 /// never have a same-line value), which is a value reframe this op doesn't
 /// attempt — delete and re-insert the entry instead. See
 /// `editor.Editor.replaceKeyAtPath`.
-pub fn renderKey(allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, new_key: []const u8, old_key: []const u8) !void {
+pub fn renderKey(_: NestedText.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, new_key: []const u8, old_key: []const u8) !void {
     const was_multiline = isMultilineKeyText(old_key);
     const wants_multiline = needsMultilineKey(new_key);
     if (wants_multiline and !was_multiline) return error.KeyRequiresMultilineForm;

@@ -45,12 +45,19 @@ const lang = @import("languages/manifest.zig");
 // left is how a format SPELLS a fragment, and for that a format declares a
 // renderer: a `pub` decl on its `Language` struct — `renderValue`,
 // `renderEntry`, `renderItem`, `renderTail`, `renderKey` — that is a pure
-// function from strings to a string. This engine dispatches on presence —
+// function from strings to a string, given the dialect it is spelling for.
+// This engine dispatches on presence —
 //
-//     if (@hasDecl(Language, "renderTail")) return Language.renderTail(...);
+//     if (self.hasRenderer(.tail)) return Language.renderTail(self.format, ...);
 //
 // — so it names no format at all, and it splices what a renderer returns
-// under the same reparse net as every other edit. No renderer receives the
+// under the same reparse net as every other edit. `hasRenderer` is
+// `@hasDecl` for a compiled language, where presence is a fact of the
+// source, and the language's own `hasRenderer(t, which)` for one whose
+// renderers are function pointers filled at runtime, where presence is a
+// null check; either way the answer gates the same branch, so the two
+// carriers of `docs/proposals/runtime-languages.md` §4.3 drive one engine.
+// No renderer receives the
 // editor, performs a splice, or is called more than once per edit. There
 // are no editing hooks any more: the twenty-five that existed each ended in
 // one splice and needed only a fact the parser had dropped, an engine
@@ -171,16 +178,28 @@ pub fn Editor(comptime Language: type) type {
             return buf.items[from..];
         }
 
+        /// Whether this format renders `which` for the editor's dialect.
+        /// Comptime-known for a compiled language — the decl is there or it
+        /// is not, and the branch it gates is not analyzed when it is not —
+        /// and a runtime answer from a language that declares `hasRenderer`
+        /// itself, which is how a vtable says which of its slots are null.
+        /// `inline` is what makes the compiled answer comptime at the call
+        /// site.
+        inline fn hasRenderer(self: *const Self, comptime which: lang.Renderer) bool {
+            if (@hasDecl(Language, "hasRenderer")) return Language.hasRenderer(self.format, which);
+            return @hasDecl(Language, which.declName());
+        }
+
         /// `value_text` as this format spells a value in place — rendered
         /// through the format's `renderValue` when it declares one (plist
         /// wraps every literal in a typed element), else verbatim. Appended to
         /// `buf` when rendered; the returned slice is what to splice.
         ///
-        /// **Renderer** `renderValue(allocator, out, value_text) !void`.
+        /// **Renderer** `renderValue(t, allocator, out, value_text) !void`.
         fn renderedValue(self: *const Self, buf: *std.ArrayList(u8), value_text: []const u8) ![]const u8 {
-            if (!@hasDecl(Language, "renderValue")) return value_text;
+            if (!self.hasRenderer(.value)) return value_text;
             const from = buf.items.len;
-            try Language.renderValue(self.allocator, buf, value_text);
+            try Language.renderValue(self.format, self.allocator, buf, value_text);
             return buf.items[from..];
         }
 
@@ -189,14 +208,14 @@ pub fn Editor(comptime Language: type) type {
         /// lines the entry spans prefixed by `indent` (plist's value element
         /// on a second line, NestedText's `>`-block). No trailing newline.
         ///
-        /// **Renderer** `renderEntry(allocator, out, indent, key_text,
+        /// **Renderer** `renderEntry(t, allocator, out, indent, key_text,
         /// value_text) !void` — declared by a format whose entry is not
         /// `key`, `kv_sep`, value on one line. Without it the entry is the
         /// key followed by `writeMapValue`. `value_text` has been through
         /// `renderedValue` already.
         fn writeEntry(self: *Self, out: *std.ArrayList(u8), indent: []const u8, key_text: []const u8, value_text: []const u8) !void {
-            if (@hasDecl(Language, "renderEntry"))
-                return Language.renderEntry(self.allocator, out, indent, key_text, value_text);
+            if (self.hasRenderer(.entry))
+                return Language.renderEntry(self.format, self.allocator, out, indent, key_text, value_text);
             try out.appendSlice(self.allocator, key_text);
             try self.writeTail(out, indent, key_text, value_text);
         }
@@ -209,13 +228,13 @@ pub fn Editor(comptime Language: type) type {
         /// separator — or empty for the DOCUMENT ROOT, where the value stands
         /// alone. No trailing newline.
         ///
-        /// **Renderer** `renderTail(allocator, out, indent, key_text,
+        /// **Renderer** `renderTail(t, allocator, out, indent, key_text,
         /// value_text) !void`. Without it the tail is `writeMapValue`, which
         /// is YAML's answer and the default for every line-structured format.
         /// `value_text` has been through `renderedValue`.
         fn writeTail(self: *Self, out: *std.ArrayList(u8), indent: []const u8, key_text: []const u8, value_text: []const u8) !void {
-            if (@hasDecl(Language, "renderTail"))
-                return Language.renderTail(self.allocator, out, indent, key_text, value_text);
+            if (self.hasRenderer(.tail))
+                return Language.renderTail(self.format, self.allocator, out, indent, key_text, value_text);
             try self.writeMapValue(out, indent, value_text);
         }
 
@@ -223,13 +242,13 @@ pub fn Editor(comptime Language: type) type {
         /// `seq_item_marker` and the value, with continuation lines of a
         /// multi-line value re-indented past the marker. No trailing newline.
         ///
-        /// **Renderer** `renderItem(allocator, out, indent, value_text)
+        /// **Renderer** `renderItem(t, allocator, out, indent, value_text)
         /// !void` — declared by a format whose item is not marker-then-value
         /// (NestedText renders an empty or multi-line value as a `>`-block
         /// under a bare `-`). `value_text` has been through `renderedValue`.
         fn writeItem(self: *Self, out: *std.ArrayList(u8), indent: []const u8, value_text: []const u8) !void {
-            if (@hasDecl(Language, "renderItem"))
-                return Language.renderItem(self.allocator, out, indent, value_text);
+            if (self.hasRenderer(.item))
+                return Language.renderItem(self.format, self.allocator, out, indent, value_text);
             const marker = self.syntax().seq_item_marker;
             var cont: std.ArrayList(u8) = .empty;
             defer cont.deinit(self.allocator);
@@ -412,7 +431,7 @@ pub fn Editor(comptime Language: type) type {
             // renders tails spells it (NestedText's `>` block); the rest
             // splice it as written.
             if (path.len == 0) {
-                if (!@hasDecl(Language, "renderTail")) return self.replaceAtSpan(span, rendered);
+                if (!self.hasRenderer(.tail)) return self.replaceAtSpan(span, rendered);
                 try self.writeTail(&out, "", "", rendered);
                 try self.terminateLine(&out, span.end);
                 return self.replaceAtSpan(Span.init(0, span.end), out.items);
@@ -442,7 +461,7 @@ pub fn Editor(comptime Language: type) type {
             // A sequence item is reframed the same way when the format
             // renders items and the parser recorded the item's marker: the
             // marker and value are rewritten together through `writeItem`.
-            if (@hasDecl(Language, "renderItem") and std.meta.activeTag(path[path.len - 1]) == .index) {
+            if (self.hasRenderer(.item) and std.meta.activeTag(path[path.len - 1]) == .index) {
                 if (parsed.markerSpan(node)) |m| {
                     const indent = try self.indentAt(&indent_buf, m.start);
                     try self.writeItem(&out, indent, rendered);
@@ -738,13 +757,13 @@ pub fn Editor(comptime Language: type) type {
             }
             const node = try parsed.ast.getKeyByPath(path);
             const span = parsed.span(node);
-            // **Renderer** `renderKey(allocator, out, indent, key_text,
+            // **Renderer** `renderKey(t, allocator, out, indent, key_text,
             // old_key) !void` — spells the new key in the form the old one's
             // syntax allows, given the old key as written: NestedText's
             // plain `key:` versus multiline `: key`, whose span carries no
             // separator and starts at its line's indent. Without it the key
             // is spliced verbatim.
-            if (@hasDecl(Language, "renderKey")) {
+            if (self.hasRenderer(.key)) {
                 const source = self.source.items;
                 var out: std.ArrayList(u8) = .empty;
                 defer out.deinit(self.allocator);
@@ -752,7 +771,7 @@ pub fn Editor(comptime Language: type) type {
                 defer indent_buf.deinit(self.allocator);
                 const line_start = lineStartBefore(source, span.start);
                 const indent = try self.indentAt(&indent_buf, firstNonSpace(source, line_start));
-                try Language.renderKey(self.allocator, &out, indent, replacement, source[span.start..span.end]);
+                try Language.renderKey(self.format, self.allocator, &out, indent, replacement, source[span.start..span.end]);
                 return self.replaceAtSpan(span, out.items);
             }
             try self.replaceAtSpan(span, replacement);

@@ -195,6 +195,11 @@ pub const NodeTable = extern struct {
     mention_count: usize = 0,
     comments: ?[*]const CommentRow = null,
     comment_count: usize = 0,
+    /// The helper's own handle on the memory behind the table, set by
+    /// `parse` and read back by `free_table`; core never touches it. A
+    /// helper whose rows and strings live in one allocation it can find
+    /// from `rows` may leave it null.
+    owner: ?*anyopaque = null,
 
     pub fn rowSlice(self: *const NodeTable) []const NodeRow {
         const p = self.rows orelse return &.{};

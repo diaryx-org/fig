@@ -1029,11 +1029,14 @@ typedef struct FigCommentRow { uint32_t node; int slot; int style; FigStr text; 
 
 // What parse returns and print receives. Zero rows is refused: a format whose
 // empty input is the empty document returns one FIG_NODE_NULL row.
+// `owner` is the helper's own handle on the memory behind a table its parse
+// returned — set there, read back in free_table, never touched by fig.
 typedef struct FigNodeTable {
     const FigNodeRow    *rows;      size_t row_count;
     const FigRegionRow  *regions;   size_t region_count;
     const FigMentionRow *mentions;  size_t mention_count;
     const FigCommentRow *comments;  size_t comment_count;
+    void                *owner;
 } FigNodeTable;
 
 // The subset of FigSerializeOptions a printer outside fig is told.

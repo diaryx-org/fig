@@ -118,6 +118,7 @@ static int parse(void *ctx, const char *dialect, FigStr input, FigNodeTable *out
     out->mention_count = 0;
     out->comments = ncomments ? comments : NULL;
     out->comment_count = ncomments;
+    out->owner = NULL;
     if (!ncomments) free(comments);
     return 0;
 }

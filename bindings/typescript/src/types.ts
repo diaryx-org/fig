@@ -94,7 +94,7 @@ export enum NodeKind {
 }
 
 /** A format-specific scalar kind (TOML datetimes, ZON enum/char literals, JSON5
- *  non-finite numbers). */
+ *  non-finite numbers, plist dates and data). Mirrors `FigExtKind`. */
 export enum ExtKind {
   OffsetDateTime = 0,
   LocalDateTime = 1,
@@ -104,6 +104,10 @@ export enum ExtKind {
   CharLiteral = 5,
   /** A non-finite JSON5 number (`Infinity`/`-Infinity`/`NaN`). */
   NumberSpecial = 6,
+  /** A plist `<date>`: the raw ISO-8601 timestamp, verbatim. */
+  PlistDate = 7,
+  /** A plist `<data>`: the base64 payload with all whitespace stripped. */
+  PlistData = 8,
 }
 
 /** What kind of loss a {@link Warning} describes. Mirrors `FigWarningCode`. */

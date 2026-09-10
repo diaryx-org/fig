@@ -35,6 +35,11 @@ pub enum ExtKind {
     /// A non-finite JSON5 number (`Infinity`/`-Infinity`/`NaN`); text is the
     /// literal as written.
     NumberSpecial,
+    /// A plist `<date>`; text is the raw ISO-8601 timestamp, verbatim.
+    PlistDate,
+    /// A plist `<data>`; text is the base64 payload with all whitespace
+    /// stripped.
+    PlistData,
 }
 
 impl ExtKind {
@@ -48,6 +53,8 @@ impl ExtKind {
             ExtKind::EnumLiteral => 4,
             ExtKind::CharLiteral => 5,
             ExtKind::NumberSpecial => 6,
+            ExtKind::PlistDate => 7,
+            ExtKind::PlistData => 8,
         }
     }
 
@@ -61,6 +68,8 @@ impl ExtKind {
             4 => ExtKind::EnumLiteral,
             5 => ExtKind::CharLiteral,
             6 => ExtKind::NumberSpecial,
+            7 => ExtKind::PlistDate,
+            8 => ExtKind::PlistData,
             _ => return None,
         })
     }

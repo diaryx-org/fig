@@ -73,6 +73,9 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     abi_check_run.addFileArg(b.path("bindings/rust/fig-sys/src/lib.rs"));
     abi_check_run.addFileArg(b.path("bindings/typescript/src/types.ts"));
     abi_check_run.addFileArg(b.path("bindings/rust/fig/src/lib.rs"));
+    // The Rust wrapper's `ExtKind`, diffed against the core's with fig.h's
+    // `FigExtKind` and the TypeScript `ExtKind`.
+    abi_check_run.addFileArg(b.path("bindings/rust/fig/src/value.rs"));
 
     const abi_probe_c = b.addExecutable(.{
         .name = "abi_probe_c",

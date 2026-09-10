@@ -33,9 +33,16 @@
 //! values are the `From` impl's business). Each used to drift on its own; the
 //! Rust wrapper went five formats behind before this check existed.
 //!
+//! `FigExtKind` is held the same way: fig.h's `FIG_EXT_*` (name and value),
+//! the TypeScript `ExtKind` (name and value) and the Rust `ExtKind` (name
+//! only) are each diffed against the core's `AST.Node.Kind.Extended.ExtKind`,
+//! whose ordinal is the ABI value. It was not, and fig.h and both bindings
+//! stopped at `number_special` for a release while `fig_node_extended` was
+//! already returning the two plist kinds after it.
+//!
 //! Usage (driven by build.zig):
 //!   abi-check <header.h> <impl.zig> <major.minor.patch> <abi-version>
-//!             <fig-sys/lib.rs> <typescript/types.ts> <fig/lib.rs>
+//!             <fig-sys/lib.rs> <typescript/types.ts> <fig/lib.rs> <fig/value.rs>
 
 const std = @import("std");
 /// For `Language.dialects` — the format registry, which owns the canonical
@@ -60,6 +67,7 @@ pub fn main(init: std.process.Init) !void {
     const sys_path = args.next() orelse return error.MissingArgument;
     const ts_path = args.next() orelse return error.MissingArgument;
     const rust_path = args.next() orelse return error.MissingArgument;
+    const rust_value_path = args.next() orelse return error.MissingArgument;
 
     const cwd = std.Io.Dir.cwd();
     const header = try cwd.readFileAlloc(io, header_path, arena, .limited(max_file));
@@ -67,6 +75,7 @@ pub fn main(init: std.process.Init) !void {
     const sys_src = try cwd.readFileAlloc(io, sys_path, arena, .limited(max_file));
     const ts_src = try cwd.readFileAlloc(io, ts_path, arena, .limited(max_file));
     const rust_src = try cwd.readFileAlloc(io, rust_path, arena, .limited(max_file));
+    const rust_value_src = try cwd.readFileAlloc(io, rust_value_path, arena, .limited(max_file));
 
     // Declared: `fig_x(` tokens on non-comment header lines (so prose mentions
     // like "release with fig_free" don't count as declarations).
@@ -150,9 +159,20 @@ pub fn main(init: std.process.Init) !void {
     const rust_formats = try parseEnumerators(arena, rust_src, "pub enum Format", .names_only);
     try checkFormats(arena, "Rust Format", rust_formats, .pascal_named, &fail);
 
+    // Extended-scalar-kind drift: fig.h's FIG_EXT_* enumerators and the two
+    // binding mirrors must match the core's `ExtKind` name-for-name, and
+    // value-for-value where the surface states one.
+    const ext_kinds = try parseEnumerators(arena, header, "typedef enum FigExtKind", .values_required);
+    try checkExtKinds(arena, "fig.h", ext_kinds, .c_macro, &fail);
+    const ts_ext_kinds = try parseEnumerators(arena, ts_src, "export enum ExtKind", .values_required);
+    try checkExtKinds(arena, "TypeScript ExtKind", ts_ext_kinds, .pascal_valued, &fail);
+    const rust_ext_kinds = try parseEnumerators(arena, rust_value_src, "pub enum ExtKind", .names_only);
+    try checkExtKinds(arena, "Rust ExtKind", rust_ext_kinds, .pascal_named, &fail);
+
     if (fail) std.process.exit(1);
     std.debug.print("abi-check: symbol diff OK ({d} symbols), version {s}, ABI v{d}\n", .{ exported.len, want_version, want_abi_int });
     std.debug.print("abi-check: FIG_FORMAT_* enumerators OK ({d} formats) — fig.h, fig-sys, the TypeScript and Rust `Format` enums all match the format registry\n", .{formats.len});
+    std.debug.print("abi-check: FIG_EXT_* enumerators OK ({d} kinds) — fig.h, the TypeScript and Rust `ExtKind` enums all match the core's ExtKind\n", .{ext_kinds.len});
 }
 
 /// One enumerator of a format enum: its name as spelled in that surface, and
@@ -220,6 +240,93 @@ fn checkFormats(arena: std.mem.Allocator, surface: []const u8, formats: []const 
             );
             fail.* = true;
         }
+    }
+}
+
+/// The core's extended-scalar kinds: the ABI value of each is its ordinal,
+/// which is what `c_api.zig`'s `FigExtKind` pins and `fig_node_extended`
+/// returns.
+const ExtKind = fig.AST.Node.Kind.Extended.ExtKind;
+
+/// `checkFormats` for `FigExtKind`: every core `ExtKind` member must be
+/// declared on the surface, with its ordinal as the value where the surface
+/// carries one, and the surface may declare nothing the core does not have.
+fn checkExtKinds(arena: std.mem.Allocator, surface: []const u8, kinds: []const FormatEnumerator, style: NameStyle, fail: *bool) !void {
+    inline for (@typeInfo(ExtKind).@"enum".fields) |f| {
+        const want_name = try extKindName(arena, f.name, style);
+        if (findFormat(kinds, want_name)) |e| {
+            if (style != .pascal_named) {
+                if (e.value) |got| {
+                    if (got != @as(i64, f.value)) {
+                        if (!fail.*) std.debug.print("abi-check: FAIL\n", .{});
+                        std.debug.print(
+                            "  {s}: ext-kind value drift: {s} = {d} but the core's ExtKind gives '{s}' the value {d}\n",
+                            .{ surface, want_name, got, f.name, f.value },
+                        );
+                        fail.* = true;
+                    }
+                } else {
+                    if (!fail.*) std.debug.print("abi-check: FAIL\n", .{});
+                    std.debug.print("  {s}: {s} states no value, but the core's ExtKind gives '{s}' the value {d}\n", .{ surface, want_name, f.name, f.value });
+                    fail.* = true;
+                }
+            }
+        } else {
+            if (!fail.*) std.debug.print("abi-check: FAIL\n", .{});
+            std.debug.print(
+                "  {s}: missing enumerator: the core's ExtKind has '{s}' (value {d}) but {s} is not declared\n",
+                .{ surface, f.name, f.value, want_name },
+            );
+            fail.* = true;
+        }
+    }
+    for (kinds) |e| {
+        var found = false;
+        inline for (@typeInfo(ExtKind).@"enum".fields) |f| {
+            const want_name = try extKindName(arena, f.name, style);
+            if (std.mem.eql(u8, want_name, e.name)) found = true;
+        }
+        if (!found) {
+            if (!fail.*) std.debug.print("abi-check: FAIL\n", .{});
+            std.debug.print("  {s}: unknown enumerator: {s} matches no core ExtKind member\n", .{ surface, e.name });
+            fail.* = true;
+        }
+    }
+}
+
+/// The spelling of a core `ExtKind` member on a given surface:
+/// `FIG_EXT_OFFSET_DATETIME` in C; `OffsetDateTime` in Rust and TypeScript,
+/// where the snake_case member name is upper-camel-cased at each underscore
+/// — except `datetime`, which both bindings spell `DateTime`.
+fn extKindName(arena: std.mem.Allocator, name: []const u8, style: NameStyle) ![]const u8 {
+    switch (style) {
+        .c_macro => {
+            const out = try arena.alloc(u8, "FIG_EXT_".len + name.len);
+            @memcpy(out[0.."FIG_EXT_".len], "FIG_EXT_");
+            _ = std.ascii.upperString(out["FIG_EXT_".len..], name);
+            return out;
+        },
+        .pascal_valued, .pascal_named => {
+            var out: std.ArrayList(u8) = .empty;
+            var up = true;
+            var i: usize = 0;
+            while (i < name.len) : (i += 1) {
+                const c = name[i];
+                if (c == '_') {
+                    up = true;
+                    continue;
+                }
+                if (std.mem.startsWith(u8, name[i..], "datetime")) {
+                    try out.appendSlice(arena, "DateTime");
+                    i += "datetime".len - 1;
+                    up = false;
+                    continue;
+                }
+                try out.append(arena, if (up) std.ascii.toUpper(c) else c);
+                up = false;
+            }
+            return out.items;
+        },
     }
 }
 

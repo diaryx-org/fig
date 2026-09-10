@@ -748,7 +748,9 @@ typedef struct FigKeyValue {
 } FigKeyValue;
 
 // Format-specific scalar kinds (TOML datetimes, ZON enum/char literals, JSON5
-// non-finite numbers).
+// non-finite numbers, plist dates and data). Mirrors the core's `ExtKind`;
+// `zig build abi-check` holds this enum, the Rust `ExtKind` and the TypeScript
+// `ExtKind` to it name-for-name.
 typedef enum FigExtKind {
     FIG_EXT_OFFSET_DATETIME = 0,
     FIG_EXT_LOCAL_DATETIME  = 1,
@@ -757,6 +759,10 @@ typedef enum FigExtKind {
     FIG_EXT_ENUM_LITERAL    = 4,
     FIG_EXT_CHAR_LITERAL    = 5,
     FIG_EXT_NUMBER_SPECIAL  = 6,
+    // A plist <date>: the raw ISO-8601 timestamp, verbatim.
+    FIG_EXT_PLIST_DATE      = 7,
+    // A plist <data>: the base64 payload with all whitespace stripped.
+    FIG_EXT_PLIST_DATA      = 8,
 } FigExtKind;
 
 FigStatus fig_value_create(FigValue **out_value);

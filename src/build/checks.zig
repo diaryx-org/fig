@@ -93,10 +93,23 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     abi_probe_cpp.root_module.addIncludePath(b.path("bindings/c/include"));
     abi_probe_cpp.root_module.linkLibrary(c_lib);
 
-    const abi_check_step = b.step("abi-check", "Check the C ABI surface: symbol diff + C/C++ header probe");
+    // The runtime-language probe is RUN, not only built: a language written in
+    // C fills every struct in fig.h's runtime section and the Zig side reads
+    // them, which is the layout agreement the symbol diff cannot see.
+    const abi_runtime_probe = b.addExecutable(.{
+        .name = "abi_runtime_probe",
+        .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true }),
+    });
+    abi_runtime_probe.root_module.addCSourceFile(.{ .file = b.path("tools/abi_runtime_probe.c") });
+    abi_runtime_probe.root_module.addIncludePath(b.path("bindings/c/include"));
+    abi_runtime_probe.root_module.linkLibrary(c_lib);
+    const abi_runtime_probe_run = b.addRunArtifact(abi_runtime_probe);
+
+    const abi_check_step = b.step("abi-check", "Check the C ABI surface: symbol diff + C/C++ header probe + a C-hosted runtime language");
     abi_check_step.dependOn(&abi_check_run.step);
     abi_check_step.dependOn(&abi_probe_c.step);
     abi_check_step.dependOn(&abi_probe_cpp.step);
+    abi_check_step.dependOn(&abi_runtime_probe_run.step);
 
     // SemVer gate: diff the current C ABI against the most recent `v*` git tag
     // and turn the delta into a version verdict (removed/changed symbol -> major,

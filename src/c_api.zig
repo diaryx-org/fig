@@ -26,6 +26,13 @@ const Languages = @import("languages/language.zig");
 // gated import of its own.
 const Lossless = @import("lossless.zig");
 const Diagnostics = @import("diagnostics.zig");
+/// A format registered at runtime (`fig_language_register`): the vtable and
+/// node-table shapes this file re-exports under their `Fig*` names, the
+/// registry an integer at or above `FIG_FORMAT_RUNTIME_BASE` resolves in,
+/// and the one `Language` every such format is read, edited and printed
+/// through. Every entry point that takes a format integer asks
+/// `runtimeOf` first; see `docs/proposals/runtime-languages.md` §8.2.
+const Runtime = @import("languages/runtime.zig");
 
 /// Logging for the C ABI build (this file is the static-lib root, so its
 /// `std_options` wins). The default `std.log` handler writes to stderr via
@@ -220,10 +227,101 @@ pub export fn fig_format_capabilities(format: c_int) u32 {
     // An unknown integer reports nothing, which is also what a `void` (compiled
     // out) language reports — `capsOf` returns 0 for it, so the build gate needs
     // no test of its own here.
+    if (runtimeOf(format)) |e| return capsBits(e.language.caps);
     const f = std.enums.fromInt(FigFormat, format) orelse return 0;
     return switch (f) {
         inline else => |tag| comptime capsOf(Languages.entryFor(@tagName(tag)).Lang),
     };
+}
+
+/// The registry entry a format integer at or above `FIG_FORMAT_RUNTIME_BASE`
+/// names, or null — for an integer below it (a compiled format, resolved by
+/// the caller's own switch) and for one never handed out. The checked
+/// lookup every entry point taking `int format` opens with.
+fn runtimeOf(format: c_int) ?*const Runtime.Entry {
+    return Runtime.entryByAbi(format);
+}
+
+// ==================
+// RUNTIME LANGUAGES
+// ==================
+//
+// A format fig did not compile in, registered by a host as a vtable. The
+// shapes are `languages/runtime.zig`'s, stated in fig.h under these names
+// and held to it by `zig build abi-check`; the registry, the validation and
+// the load-time harness are that file's too. This section is the two entry
+// points and the re-exports.
+
+pub const FigLanguageVTable = Runtime.VTable;
+pub const FigNodeTable = Runtime.NodeTable;
+pub const FigNodeRow = Runtime.NodeRow;
+pub const FigRegionRow = Runtime.RegionRow;
+pub const FigMentionRow = Runtime.MentionRow;
+pub const FigCommentRow = Runtime.CommentRow;
+pub const FigSyntax = Runtime.SyntaxDesc;
+pub const FigComments = Runtime.CommentsDesc;
+pub const FigCommentDelimiter = Runtime.CommentDelimiterDesc;
+pub const FigSectionHeader = Runtime.SectionHeaderDesc;
+pub const FigClosedContainers = Runtime.ClosedContainersDesc;
+pub const FigNativeKinds = Runtime.NativeKindsDesc;
+pub const FigDialectDesc = Runtime.DialectDesc;
+pub const FigPrintOptions = Runtime.PrintOptions;
+
+/// The `version` a `FigLanguageVTable` must carry; fig.h's
+/// `FIG_LANGUAGE_VTABLE_VERSION`, held equal by abi-check.
+pub export fn fig_language_vtable_version() u32 {
+    return Runtime.vtable_version;
+}
+
+/// Register a language. On `.ok`, `*out_format` is the format integer of
+/// its first dialect row — at or above `FIG_FORMAT_RUNTIME_BASE`, assigned
+/// per process — and the rows after it take the integers after it. Every
+/// entry point taking a format accepts it from then on, at the tier the
+/// record's `caps` declare.
+///
+/// The record is validated by the rules a compiled format is held to, and
+/// its `samples` are parsed, printed, reparsed and edited before anything is
+/// registered; a record that fails either is refused with the reason in
+/// `out_err` and registers nothing. `fig_language_register` copies what
+/// `vt` points to; `vt->ctx` and the function pointers must stay valid for
+/// the life of the process, since a format cannot be unregistered.
+///
+/// A name already registered — or a compiled-in format's — is refused as
+/// `invalid_argument`. Registration takes a lock; every other call on a
+/// registered format is lock-free and reads only settled values, so the
+/// threading note at the top of fig.h holds.
+pub export fn fig_language_register(vt: ?*const FigLanguageVTable, out_format: ?*c_int, out_err: ?*FigError) FigStatus {
+    const out = out_format orelse return fillError(out_err, .invalid_argument, "out_format is null");
+    out.* = -1;
+    const record = vt orelse return fillError(out_err, .invalid_argument, "vtable is null");
+    const abi = Runtime.register(activeAllocator(), record) catch |err| return switch (err) {
+        error.OutOfMemory => fillError(out_err, .out_of_memory, "out of memory"),
+        error.InvalidLanguage, error.HarnessFailed, error.NameTaken => fillError(out_err, .invalid_argument, Runtime.lastRefusal()),
+        error.AllocatorMismatch, error.RegistryFull => fillError(out_err, .unsupported_operation, "the language registry cannot take another registration"),
+    };
+    out.* = abi;
+    return .ok;
+}
+
+/// The format integer of the dialect named `name` — a compiled format's
+/// registry name (`json5`, `yaml`, …) or a registered language's — or -1.
+/// The only stable way to persist a runtime format: its integer is assigned
+/// per process, its name is not.
+pub export fn fig_format_by_name(name: ?[*:0]const u8) c_int {
+    const n = std.mem.span(name orelse return -1);
+    if (Runtime.entryByName(n)) |e| return e.abi;
+    inline for (Languages.dialects) |d| {
+        if (std.mem.eql(u8, d.name, n)) return d.abi_value;
+    }
+    return -1;
+}
+
+fn capsBits(caps: Languages.Caps) u32 {
+    var bits: u32 = 0;
+    if (caps.read) bits |= @intFromEnum(FigCapability.read);
+    if (caps.edit) bits |= @intFromEnum(FigCapability.edit);
+    if (caps.serialize) bits |= @intFromEnum(FigCapability.serialize);
+    return bits;
 }
 
 /// The `FigCapability` bits `Lang` declares, or 0 when it is compiled out.
@@ -262,7 +360,11 @@ const DocumentHandle = struct {
     document: Document,
     /// The format `source` was parsed as. `fig_document_serialize` consults it to
     /// decide whether to collapse YAML's reference layer before printing.
+    /// Meaningless when `runtime` is set.
     format: FigFormat,
+    /// The runtime language `source` was parsed by, when it was one. Such a
+    /// document has no reference layer to collapse.
+    runtime: ?*const Runtime.Entry = null,
     /// Reused across `fig_document_serialize` calls; holds the bytes the most
     /// recent call returned (cleared and refilled each time). Mirrors
     /// `ValueHandle.rendered`.
@@ -328,15 +430,10 @@ pub export fn fig_free(ptr: ?[*]u8, len: usize) void {
 /// may be appended later without breaking an older layout. Caller-owned (no
 /// allocation, no handle lifetime) is what lets it carry a message for a failure
 /// that happens *before* any document handle exists.
-pub const FigError = extern struct {
-    size: u32,
-    code: c_int,
-    byte_offset: usize,
-    line: u32,
-    column: u32,
-    message_len: usize,
-    message: [256]u8,
-};
+///
+/// One definition: `Runtime.ErrorInfo` is this struct, since a runtime
+/// language's `parse` fills the same record a C caller reads.
+pub const FigError = Runtime.ErrorInfo;
 
 /// Whether the caller-reported `FigError.size` covers `field` (same rule as
 /// `optionCovers`). A field past `size` is absent in the caller's layout and
@@ -400,8 +497,13 @@ pub export fn fig_parse_ex(
     const input = sliceOf(input_ptr, input_len) orelse
         return fillError(out_err, .invalid_argument, "null input with nonzero length");
 
-    const fig_format = std.enums.fromInt(FigFormat, format) orelse
-        return fillError(out_err, .unsupported_format, "unsupported or unknown format");
+    const runtime_entry = runtimeOf(format);
+    const fig_format = if (runtime_entry != null)
+        // Any member: `handle.format` is not read for a runtime document.
+        @as(FigFormat, @enumFromInt(format_abi_values[0]))
+    else
+        std.enums.fromInt(FigFormat, format) orelse
+            return fillError(out_err, .unsupported_format, "unsupported or unknown format");
 
     const allocator = activeAllocator();
 
@@ -415,8 +517,21 @@ pub export fn fig_parse_ex(
     // On any parser error: free the not-yet-installed source/handle and report
     // the error name as the message. The parser error set is payload-free, so the
     // name is the best diagnostic available until per-parser span plumbing lands;
-    // `byte_offset`/`line`/`column` stay 0 for now.
-    const doc = switch (fig_format) {
+    // `byte_offset`/`line`/`column` stay 0 for now. A runtime language's
+    // parser fills a `FigError` itself, and that is what is reported.
+    const doc = if (runtime_entry) |e| blk: {
+        var parser: Runtime.Language.Parser = .{ .allocator = allocator };
+        break :blk Runtime.Language.parse(&parser, source, e.typeOf()) catch |err| {
+            allocator.free(source);
+            allocator.destroy(handle);
+            if (err == error.OutOfMemory) return fillError(out_err, .out_of_memory, "out of memory");
+            const status = fillError(out_err, .parse_error, parser.lastMessage());
+            if (out_err) |oe| if (errCovers(oe.size, "byte_offset")) {
+                oe.byte_offset = parser.last_error.byte_offset;
+            };
+            return status;
+        };
+    } else switch (fig_format) {
         inline else => |f| blk: {
             const d = comptime Languages.entryFor(@tagName(f));
             // The void guard first: a format compiled out of this build has no
@@ -435,6 +550,7 @@ pub export fn fig_parse_ex(
         .source = source,
         .document = doc,
         .format = fig_format,
+        .runtime = runtime_entry,
         .rendered = std.Io.Writer.Allocating.init(allocator),
         .diag_arena = std.heap.ArenaAllocator.init(allocator),
     };
@@ -872,6 +988,11 @@ pub const FigEditor = opaque {};
 // fig, zon, … before). Nothing observes it: the tag is internal, never
 // serialized, never crosses the ABI, and every switch over the union is
 // `inline else`.
+//
+// Plus one arm that is not a compiled language: `runtime`, the `Editor` over
+// `Runtime.Language`, which every runtime format is edited through — the
+// `format` payload names the registry entry. It is the `.runtime` member the
+// proposal's §10 asks for, and the whole of what the C API's editor gains.
 const editor_variants = blk: {
     const Variant = struct { name: [:0]const u8, Lang: type };
     var variants: []const Variant = &.{};
@@ -879,6 +1000,7 @@ const editor_variants = blk: {
         if (!Lang.caps.edit) continue;
         variants = variants ++ &[_]Variant{.{ .name = Lang.name, .Lang = Lang }};
     }
+    variants = variants ++ &[_]Variant{.{ .name = "runtime", .Lang = Runtime.Language }};
     break :blk variants;
 };
 
@@ -938,14 +1060,15 @@ pub export fn fig_editor_create(
     // document; a non-null pointer with a length is read as-is.
     const slice = sliceOf(input_ptr, input_len) orelse return .invalid_argument;
 
-    const fig_format = std.enums.fromInt(FigFormat, format) orelse return .unsupported_format;
-
     const allocator = activeAllocator();
     // The backend is chosen BEFORE the handle is allocated, so the three ways a
     // format can be refused — unknown value, compiled out, no in-place editor —
     // all return without anything to free. `activeAllocator` itself allocates
     // nothing.
-    const inner: EditorUnion = switch (fig_format) {
+    const inner: EditorUnion = if (runtimeOf(format)) |e| blk: {
+        if (!e.language.caps.edit) return .unsupported_format;
+        break :blk @unionInit(EditorUnion, "runtime", .{ .allocator = allocator, .format = e.typeOf() });
+    } else switch (std.enums.fromInt(FigFormat, format) orelse return .unsupported_format) {
         inline else => |f| blk: {
             const d = comptime Languages.entryFor(@tagName(f));
             // Compiled out of this build, and a format with a reader and a
@@ -2653,6 +2776,22 @@ fn extKindOf(kind: c_int) ?AST.Node.Kind.Extended.ExtKind {
 /// compiled-out format, rather than serialize rejecting it at print time while
 /// diagnose silently accepts it). The `FormatDisabled` arms in the printers
 /// remain as defense-in-depth for any path that bypasses this map.
+/// A serialize target: a compiled format, or a runtime one printed through
+/// its vtable. `targetOf` is `serializeFormatOf` with the §8.2 lookup in
+/// front of it.
+const Target = union(enum) {
+    compiled: AST.SerializeFormat,
+    runtime: *const Runtime.Entry,
+};
+
+fn targetOf(format: c_int) ?Target {
+    if (runtimeOf(format)) |e| {
+        if (!e.language.caps.serialize) return null;
+        return .{ .runtime = e };
+    }
+    return .{ .compiled = serializeFormatOf(format) orelse return null };
+}
+
 fn serializeFormatOf(format: c_int) ?AST.SerializeFormat {
     @setEvalBranchQuota(30_000);
     const f = std.enums.fromInt(FigFormat, format) orelse return null;
@@ -2686,6 +2825,17 @@ fn serializeStatus(err: AST.SerializeError) FigStatus {
         error.InvalidKey,
         => .unsupported_format,
         error.WriteFailed => .out_of_memory,
+    };
+}
+
+/// `serializeStatus` for a runtime printer: the vtable's refusal is the
+/// format saying it cannot write the tree, which is `unsupported_format`
+/// like every compiled printer's representability failure; building the
+/// table it was handed can only fail on allocation.
+fn runtimePrintStatus(err: anyerror) FigStatus {
+    return switch (err) {
+        error.OutOfMemory, error.WriteFailed => .out_of_memory,
+        else => .unsupported_format,
     };
 }
 
@@ -2929,7 +3079,7 @@ pub export fn fig_value_serialize_opts(
     const p = out_ptr orelse return .invalid_argument;
     const l = out_len orelse return .invalid_argument;
     const handle = valueFrom(value) orelse return .invalid_argument;
-    const fmt = serializeFormatOf(format) orelse return .unsupported_format;
+    const target = targetOf(format) orelse return .unsupported_format;
     if (root >= handle.builder.nodes.items.len) return .invalid_argument;
 
     handle.rendered.clearRetainingCapacity();
@@ -2937,8 +3087,12 @@ pub export fn fig_value_serialize_opts(
     // Fragment mode: this is a caller-built `Value`, never a whole document, so
     // a fig scalar/null root renders its ordinary spelling instead of erroring
     // `FigUnrepresentableRoot` (that rule is for `fig_document_serialize`/CLI
-    // whole-document output — see `AST.serializeFragmentWith`).
-    ast.serializeFragmentWith(&handle.rendered.writer, fmt, serializeOptionsOf(options)) catch |err| return serializeStatus(err);
+    // whole-document output — see `AST.serializeFragmentWith`). A runtime
+    // printer is handed the subtree from `root` and decides for itself.
+    switch (target) {
+        .compiled => |fmt| ast.serializeFragmentWith(&handle.rendered.writer, fmt, serializeOptionsOf(options)) catch |err| return serializeStatus(err),
+        .runtime => |e| Runtime.printNodeWith(e, &handle.rendered.writer, &ast, root, serializeOptionsOf(options)) catch |err| return runtimePrintStatus(err),
+    }
 
     const bytes = handle.rendered.written();
     p.* = bytes.ptr;
@@ -2988,7 +3142,7 @@ pub export fn fig_document_serialize(
     const l = out_len orelse return .invalid_argument;
     const public_doc = doc orelse return .invalid_argument;
     const handle: *DocumentHandle = @ptrCast(@alignCast(public_doc));
-    const fmt = serializeFormatOf(format) orelse return .unsupported_format;
+    const target = targetOf(format) orelse return .unsupported_format;
     const opts = serializeOptionsOf(options);
 
     // Intermediate ASTs (materialized / lossless-decoded / -encoded) live in this
@@ -2999,10 +3153,13 @@ pub export fn fig_document_serialize(
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const ast = prepareDocumentAst(handle, fmt, options, arena) catch |err| return convertStatus(err);
+    const ast = prepareDocumentAst(handle, target, options, arena) catch |err| return convertStatus(err);
 
     handle.rendered.clearRetainingCapacity();
-    ast.serializeWith(&handle.rendered.writer, fmt, opts) catch |err| return serializeStatus(err);
+    switch (target) {
+        .compiled => |fmt| ast.serializeWith(&handle.rendered.writer, fmt, opts) catch |err| return serializeStatus(err),
+        .runtime => |e| Runtime.printWith(e, &handle.rendered.writer, ast, opts) catch |err| return runtimePrintStatus(err),
+    }
     const bytes = handle.rendered.written();
     p.* = bytes.ptr;
     l.* = bytes.len;
@@ -3016,7 +3173,7 @@ pub export fn fig_document_serialize(
 /// outlives the call). Returns the source AST unchanged when no transform applies.
 /// Errors: `OutOfMemory`, or an un-collapsible YAML reference layer from
 /// `materialize` — both mapped via `convertStatus` at the call site.
-fn prepareDocumentAst(handle: *DocumentHandle, fmt: AST.SerializeFormat, options: ?*const FigSerializeOptions, arena: std.mem.Allocator) !*const AST {
+fn prepareDocumentAst(handle: *DocumentHandle, target: Target, options: ?*const FigSerializeOptions, arena: std.mem.Allocator) !*const AST {
     @setEvalBranchQuota(30_000);
 
     // Whether the source dialect is being written back out AS ITSELF while
@@ -3024,19 +3181,23 @@ fn prepareDocumentAst(handle: *DocumentHandle, fmt: AST.SerializeFormat, options
     // round-trips and both passes below would only strip it. Derived rather
     // than named: a language declares `materialize` exactly when it has such a
     // layer (an optional `Language` decl — see `Decls.optional` in
-    // languages/language.zig), and YAML is the only one in tree that does.
-    const ref_layer_round_trip = switch (handle.format) {
+    // languages/language.zig), and YAML is the only one in tree that does. A
+    // runtime source has no such layer.
+    const ref_layer_round_trip = if (handle.runtime != null) false else switch (handle.format) {
         inline else => |f| blk: {
             const d = comptime Languages.entryFor(@tagName(f));
             if (comptime d.Lang == void or !@hasDecl(d.Lang, "materialize")) break :blk false;
-            break :blk fmt == @field(AST.SerializeFormat, d.name);
+            break :blk switch (target) {
+                .compiled => |fmt| fmt == @field(AST.SerializeFormat, d.name),
+                .runtime => false,
+            };
         },
     };
 
     // Leaving that dialect for another: collapse the reference layer first
     // (strict tag mode, matching the CLI default — unknown/custom tags become
     // `unsupported_format`).
-    const base_ast: *const AST = if (ref_layer_round_trip) &handle.document.ast else switch (handle.format) {
+    const base_ast: *const AST = if (ref_layer_round_trip or handle.runtime != null) &handle.document.ast else switch (handle.format) {
         inline else => |f| blk: {
             const d = comptime Languages.entryFor(@tagName(f));
             // A gated-out source language cannot be `handle.format` at all (the
@@ -3059,7 +3220,10 @@ fn prepareDocumentAst(handle: *DocumentHandle, fmt: AST.SerializeFormat, options
         // `manifest.Caps.lossless` for the per-format rationale — `.fig`,
         // INI/dotenv/.properties/plist/NestedText have no envelope of
         // their own to encode into).
-        const native: ?Lossless.NativeKinds = Lossless.nativeFor(fmt);
+        const native: ?Lossless.NativeKinds = switch (target) {
+            .compiled => |fmt| Lossless.nativeFor(fmt),
+            .runtime => |e| e.language.caps.lossless,
+        };
         const decoded = try arena.create(AST);
         decoded.* = try Lossless.decode(arena, base_ast);
         const n = native orelse return decoded;
@@ -3209,12 +3373,17 @@ pub export fn fig_document_diagnose(
     oc.* = 0;
     const public_doc = doc orelse return .invalid_argument;
     const handle: *DocumentHandle = @ptrCast(@alignCast(public_doc));
+    // What a runtime target can hold is not yet derived from its record
+    // (`diagnostics.zig`'s table is per compiled format), so a diagnose
+    // against one is an operation with no answer rather than a format this
+    // build lacks.
+    if (runtimeOf(format) != null) return .unsupported_operation;
     const fmt = serializeFormatOf(format) orelse return .unsupported_format;
 
     _ = handle.diag_arena.reset(.retain_capacity);
     handle.diag_warnings = &.{}; // a failed analyze must not leave a stale set indexable
     const arena = handle.diag_arena.allocator();
-    const ast = prepareDocumentAst(handle, fmt, options, arena) catch |err| return convertStatus(err);
+    const ast = prepareDocumentAst(handle, .{ .compiled = fmt }, options, arena) catch |err| return convertStatus(err);
     const warnings = Diagnostics.analyze(arena, ast, ast.root, fmt, diagnoseOptionsOf(options)) catch return .out_of_memory;
     handle.diag_warnings = warnings;
     oc.* = warnings.len;
@@ -3250,6 +3419,7 @@ pub export fn fig_value_diagnose(
     // (see `fig_document_diagnose`).
     oc.* = 0;
     const handle = valueFrom(value) orelse return .invalid_argument;
+    if (runtimeOf(format) != null) return .unsupported_operation; // as fig_document_diagnose
     const fmt = serializeFormatOf(format) orelse return .unsupported_format;
     if (root >= handle.builder.nodes.items.len) return .invalid_argument;
 
@@ -4594,6 +4764,93 @@ test "fig_version matches build options and string form" {
         build_options.version_patch,
     });
     try std.testing.expectEqualStrings(expected, std.mem.span(s));
+}
+
+test "a runtime language registers through the C ABI and is a peer at every entry point" {
+    defer Runtime.deinitAll();
+    var alloc: Runtime.test_language.Alloc = .{ .allocator = std.testing.allocator };
+    const vt = Runtime.test_language.vtable(&alloc);
+
+    // Register; the integer is in the runtime range, resolves by name, and
+    // reports the record's capabilities.
+    var format: c_int = 0;
+    var err: FigError = Runtime.ErrorInfo.empty;
+    try std.testing.expectEqual(FigStatus.ok, fig_language_register(&vt, &format, &err));
+    try std.testing.expect(format >= Languages.runtime_abi_base);
+    try std.testing.expectEqual(format, fig_format_by_name("tinykv"));
+    try std.testing.expectEqual(@as(c_int, -1), fig_format_by_name("nosuch"));
+    try std.testing.expectEqual(@as(c_int, 1), fig_format_by_name("json"));
+    const all = @intFromEnum(FigCapability.read) | @intFromEnum(FigCapability.edit) | @intFromEnum(FigCapability.serialize);
+    try std.testing.expectEqual(all, fig_format_capabilities(format));
+    try std.testing.expectEqual(@as(u32, 0), fig_format_capabilities(format + 7));
+
+    // A second registration of the same name is refused with the reason.
+    var again: c_int = 0;
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_language_register(&vt, &again, &err));
+    try std.testing.expect(std.mem.indexOf(u8, err.text(), "already registered") != null);
+    try std.testing.expectEqual(@as(c_int, -1), again);
+
+    // Parse, walk, convert out — and convert a JSON document in.
+    const src = "# note\nx=1\ny=two\n";
+    var doc: ?*FigDocument = null;
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, format, &doc));
+    defer fig_document_destroy(doc.?);
+    const root = fig_document_root(doc);
+    try std.testing.expectEqual(FigNodeKind.mapping, fig_node_kind(doc, root));
+    try std.testing.expectEqual(@as(usize, 2), fig_node_child_count(doc, root));
+    var ptr: [*c]const u8 = undefined;
+    var len: usize = undefined;
+    if (comptime build_options.lang_json) {
+        try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(doc, @intFromEnum(FigFormat.json), null, &ptr, &len));
+        try std.testing.expectEqualStrings("{\n  \"x\": \"1\",\n  \"y\": \"two\"\n}\n", ptr[0..len]);
+        const json = "{\"k\": \"v\"}";
+        var jdoc: ?*FigDocument = null;
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(json.ptr, json.len, @intFromEnum(FigFormat.json), &jdoc));
+        defer fig_document_destroy(jdoc.?);
+        try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(jdoc, format, null, &ptr, &len));
+        try std.testing.expectEqualStrings("k=v\n", ptr[0..len]);
+        // Diagnose against a runtime target has no answer yet.
+        var n: usize = 0;
+        try std.testing.expectEqual(FigStatus.unsupported_operation, fig_document_diagnose(jdoc, format, null, &n));
+    }
+    // Print it as itself, comment and all.
+    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(doc, format, null, &ptr, &len));
+    try std.testing.expectEqualStrings(src, ptr[0..len]);
+
+    // A parse failure carries the helper's message and offset.
+    const bad = "x=1\nnope\n";
+    var bad_doc: ?*FigDocument = null;
+    var perr: FigError = Runtime.ErrorInfo.empty;
+    try std.testing.expectEqual(FigStatus.parse_error, fig_parse_ex(bad.ptr, bad.len, format, &bad_doc, &perr));
+    try std.testing.expectEqualStrings("expected key=value", perr.text());
+    try std.testing.expectEqual(@as(usize, 4), perr.byte_offset);
+
+    // Edit through the one runtime editor arm.
+    var ed: ?*FigEditor = null;
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, format, &ed));
+    defer fig_editor_destroy(ed);
+    const seg = [_]FigPathSegment{.{ .kind = 0, .key_ptr = "x", .key_len = 1, .index = 0 }};
+    const ten = "10";
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_replace_val(ed, &seg, 1, ten.ptr, ten.len));
+    const z = "z";
+    const three = "3";
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_insert_key(ed, null, 0, z.ptr, z.len, three.ptr, three.len));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_source(ed, &ptr, &len));
+    try std.testing.expectEqualStrings("# note\nx=10\ny=two\nz=3\n", ptr[0..len]);
+
+    // A value built by hand prints through the vtable too.
+    var value: ?*FigValue = null;
+    try std.testing.expectEqual(FigStatus.ok, fig_value_create(&value));
+    defer fig_value_destroy(value);
+    var k: FigNodeId = undefined;
+    var v: FigNodeId = undefined;
+    var m: FigNodeId = undefined;
+    try std.testing.expectEqual(FigStatus.ok, fig_value_string(value, "a", 1, &k));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_string(value, "b", 1, &v));
+    const pair = [_]FigKeyValue{.{ .key = k, .value = v }};
+    try std.testing.expectEqual(FigStatus.ok, fig_value_map(value, &pair, 1, &m));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(value, m, format, &ptr, &len));
+    try std.testing.expectEqualStrings("a=b\n", ptr[0..len]);
 }
 
 test "fig_format_capabilities reports the per-format matrix" {

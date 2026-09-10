@@ -57,7 +57,11 @@ uint32_t fig_abi_version(void);
 // fig_format_capabilities) may run concurrently on different threads. A SINGLE
 // handle — FigDocument, FigEditor, FigEmbed, or FigValue — is NOT internally
 // synchronized: never call two functions on the same handle concurrently;
-// serialize access externally if you must share one across threads.
+// serialize access externally if you must share one across threads. The one
+// process-wide table is the runtime-language registry (fig_language_register):
+// it is append-only, a registration takes a lock and is complete before its
+// integer is returned, and every later read of a registered entry is of an
+// immutable value, so the rule above still holds.
 //
 // Borrowed buffers: functions that return bytes through (out_ptr, out_len) do
 // not transfer ownership — the bytes are borrowed from the handle. There are two
@@ -930,6 +934,266 @@ typedef struct FigWarning {
   const uint8_t *note;
   size_t note_len;
 } FigWarning;
+
+// ============================================================================
+// Runtime languages
+//
+// A format fig did not compile in. A host fills a FigLanguageVTable — the
+// same declarations a compiled format makes, as fields, with parse/print as
+// function pointers — and fig_language_register hands back a format integer
+// at or above FIG_FORMAT_RUNTIME_BASE that every entry point taking `int
+// format` accepts from then on: fig_parse, fig_document_serialize,
+// fig_value_serialize, fig_editor_create and fig_format_capabilities alike.
+// The format is a peer of a compiled one at the tier its `caps` declare.
+//
+// The vtable's parse returns, and its print receives, a FigNodeTable: one
+// FigNodeRow per node in pre-order (row index is node id; a parent precedes
+// its children; a keyvalue is followed by its key row then its value row)
+// plus three side tables. It is the shape fig_node_* walks, flattened. Every
+// string and array the vtable points to is COPIED by fig_language_register;
+// `ctx` and the function pointers must stay valid for the life of the
+// process, since a format is never unregistered.
+//
+// Every vtable function returns 0 on success. On failure it returns a nonzero
+// value — FIG_STATUS_* values are the convention — and fills the FigError it
+// was given; the message is what a caller sees. Memory a function hands back
+// (the table from parse, the bytes from print and each renderer) is the
+// helper's, and fig returns it through free_table / free_bytes once it has
+// copied what it needs.
+//
+// Two things stay closed. A runtime format never joins content sniffing —
+// it is selected by name or by extension, never guessed — and its integer is
+// per process: persist the NAME and resolve it with fig_format_by_name.
+// fig_document_diagnose / fig_value_diagnose against a runtime target return
+// FIG_STATUS_UNSUPPORTED_OPERATION in this release.
+// ============================================================================
+
+// The version of FigLanguageVTable this header describes; set vtable.version
+// to it. Bumped only when a field of the vtable or of a struct it reaches
+// changes meaning — an appended field is not a bump.
+#define FIG_LANGUAGE_VTABLE_VERSION 1
+
+// A `size_t` that says "no offset": FigSpan { FIG_OFFSET_NONE, FIG_OFFSET_NONE }
+// is an absent optional span, and a FigStr with len == FIG_LEN_NONE is an
+// absent optional string (distinct from the empty string, which is a value).
+#define FIG_OFFSET_NONE SIZE_MAX
+#define FIG_LEN_NONE SIZE_MAX
+// The row index that says "no row": the root's `parent`.
+#define FIG_ROW_NONE UINT32_MAX
+// FigNodeRow.ext_kind for a row that is not an extended scalar.
+#define FIG_EXT_NONE (-1)
+
+// One node. `kind` is a FigNodeKind (for an extended scalar, the kind
+// fig_node_kind would report; `ext_kind` decides). `text` is a scalar's decoded
+// bytes; an int or float's lexeme; `true`/`false` for a bool; an alias's target
+// anchor name; an extended kind's payload; FIG_LEN_NONE for a container or
+// null. `span` is required of every row a parse returns and is
+// FIG_OFFSET_NONE in a table fig builds for print. `marker` is the `-`/`*`
+// that introduces a block-sequence item; `sep` the token separating a
+// keyvalue's key from its value (zero-width: the value hangs under a bare
+// key).
+typedef struct FigNodeRow {
+    int      kind;
+    int      ext_kind;
+    uint32_t parent;
+    FigSpan  span;
+    FigStr   text;
+    FigStr   anchor;
+    FigSpan  anchor_span;
+    FigStr   tag;
+    FigSpan  tag_span;
+    FigSpan  marker;
+    FigSpan  sep;
+} FigNodeRow;
+
+// One whole header line of a SECTION node (a TOML `[table]`, an INI
+// `[section]`): `[start, end)`, `end` just past the newline. A node with a
+// row here is a section, which the editor never line-splices.
+typedef struct FigRegionRow { uint32_t node; size_t start, end; } FigRegionRow;
+
+// One place a section node's name is written. `kind` is FIG_MENTION_HEADER
+// for a header line of the node's own, FIG_MENTION_ENTRY for a mention on the
+// parent's entry line (a dotted key).
+typedef struct FigMentionRow { uint32_t node; FigSpan span; int kind; } FigMentionRow;
+#define FIG_MENTION_HEADER 0
+#define FIG_MENTION_ENTRY  1
+
+// One comment bound to a row. Rows are grouped by node and in source order
+// within a slot; at most one trailing per node.
+typedef struct FigCommentRow { uint32_t node; int slot; int style; FigStr text; } FigCommentRow;
+#define FIG_COMMENT_LEADING  0
+#define FIG_COMMENT_TRAILING 1
+#define FIG_COMMENT_DANGLING 2
+#define FIG_COMMENT_LINE  0
+#define FIG_COMMENT_BLOCK 1
+
+// What parse returns and print receives. Zero rows is refused: a format whose
+// empty input is the empty document returns one FIG_NODE_NULL row.
+typedef struct FigNodeTable {
+    const FigNodeRow    *rows;      size_t row_count;
+    const FigRegionRow  *regions;   size_t region_count;
+    const FigMentionRow *mentions;  size_t mention_count;
+    const FigCommentRow *comments;  size_t comment_count;
+} FigNodeTable;
+
+// The subset of FigSerializeOptions a printer outside fig is told.
+typedef struct FigPrintOptions {
+    bool     pretty;
+    bool     strip_comments;
+    uint8_t  indent;
+    uint16_t width;
+} FigPrintOptions;
+
+// How one comment is delimited: `open` alone (`#`, `//`), or a pair
+// (`<!--`, `-->`). `forbidden` is text a comment body may not contain
+// (`--` inside an XML comment). NULL `open` = no such comment.
+typedef struct FigCommentDelimiter {
+    const char *open;
+    const char *close;
+    const char *forbidden;
+} FigCommentDelimiter;
+
+// A format's comment surface. `style` selects the owned-comment-block
+// scanner: 0 hash (`#`), 1 slashes (`//` and `/* */`), 2 semicolon (`;`),
+// 3 xml_comment (`<!-- -->`). `line` is the own-line delimiter; `trailing`
+// the same-line one; either may have a NULL `open`.
+typedef struct FigComments {
+    int                 style;
+    FigCommentDelimiter line;
+    FigCommentDelimiter trailing;
+} FigComments;
+
+// How a section format spells a header line that opens a container:
+// `open` + path + `close` (`[`/`]`), and the element-of-a-sequence form
+// (`[[`/`]]`) where the format has one. `sep` joins path segments (default
+// `.`); `skip_index` leaves index segments out of the path. NULL `open` =
+// no header syntax.
+typedef struct FigSectionHeader {
+    const char *open;
+    const char *close;
+    const char *seq_open;
+    const char *seq_close;
+    const char *sep;
+    bool        skip_index;
+} FigSectionHeader;
+
+// The self-closing spellings of an empty block container, where a format has
+// them (plist's `<dict/>`, `<array/>`). NULL `map_open` = none.
+typedef struct FigClosedContainers {
+    const char *map_open;
+    const char *map_close;
+    const char *seq_open;
+    const char *seq_close;
+} FigClosedContainers;
+
+// What the generic splice engine needs to know about a format's surface
+// syntax — the `Syntax` record a compiled format declares, field for field.
+// A NULL string takes the field's default (indent_unit "  ", seq_item_marker
+// "- ", flow_map_open/close "{"/"}", flow_map_pad ""). `key_style`: 0
+// verbatim, 1 json_quoted, 2 zon_field, 3 bare_or_quoted. `key_sigil`: a
+// byte every key starts with, or 0. `section_noun`: -1 none, 0 table, 1
+// section, 2 container. `kv_sep` NULL means the engine never writes
+// `key<sep>value` for this format, which requires a render_entry.
+typedef struct FigSyntax {
+    FigComments         comments;
+    const char         *kv_sep;
+    bool                flow_kv_sep_from_siblings;
+    const char         *flow_map_pad;
+    int                 key_style;
+    uint8_t             key_sigil;
+    const char         *empty_map_literal;
+    bool                block_seq_editable;
+    bool                flow_containers;
+    const char         *indent_unit;
+    const char         *seq_item_marker;
+    FigClosedContainers closed_containers;
+    bool                single_line_block_mapping;
+    bool                bare_document_mapping;
+    const char         *flow_map_open;
+    const char         *flow_map_close;
+    bool                structural_indent;
+    int                 section_noun;
+    FigSectionHeader    section_header;
+    const char         *merge_key;
+} FigSyntax;
+
+// Which kinds this format holds natively — what the `$fig` lossless envelope
+// need not wrap. One field per FigExtKind, in that order, plus null.
+typedef struct FigNativeKinds {
+    bool null_;
+    bool offset_datetime;
+    bool local_datetime;
+    bool local_date;
+    bool local_time;
+    bool enum_literal;
+    bool char_literal;
+    bool number_special;
+    bool plist_date;
+    bool plist_data;
+} FigNativeKinds;
+
+// One dialect of a language. The first row's `name` must be the language's,
+// and is what fig_format_by_name resolves. `extensions` is a NULL-terminated
+// array. `splice`: how edit text is taken — 0 literal, 1 json_string, 2 raw.
+// `empty_doc_seed`: what `set` writes to a file that does not exist yet, or
+// NULL to refuse creation. `syntax`: this dialect's own where it differs
+// from the language's, else NULL.
+typedef struct FigDialectDesc {
+    const char        *name;
+    const char *const *extensions;
+    int                splice;
+    const char        *empty_doc_seed;
+    const FigSyntax   *syntax;
+} FigDialectDesc;
+
+// The vtable. `caps` is FIG_CAP_* bits; `max_mapping_depth` 0 is unbounded;
+// `lossless` NULL means no envelope; `syntax` is required iff FIG_CAP_EDIT;
+// `print` iff FIG_CAP_SERIALIZE; `samples` is required and non-empty. The
+// five render_* slots are optional and NULL where the format declares none:
+// each spells one fragment for the editor (`indent` is the target line's
+// indentation, `key`/`value`/`old_key` are as written) and returns the text
+// through `out`, which fig frees with free_bytes.
+typedef struct FigLanguageVTable {
+    uint32_t              version;
+    void                 *ctx;
+    const char           *name;
+    uint32_t              caps;
+    uint8_t               max_mapping_depth;
+    const FigNativeKinds *lossless;
+    const FigSyntax      *syntax;
+    const FigDialectDesc *dialects;
+    size_t                dialect_count;
+    const FigStr         *samples;
+    size_t                sample_count;
+
+    int  (*parse)(void *ctx, const char *dialect, FigStr input, FigNodeTable *out, FigError *err);
+    int  (*print)(void *ctx, const char *dialect, const FigNodeTable *table, const FigPrintOptions *options, FigStr *out, FigError *err);
+    void (*free_table)(void *ctx, FigNodeTable *table);
+    void (*free_bytes)(void *ctx, FigStr bytes);
+
+    int (*render_value)(void *ctx, const char *dialect, FigStr value, FigStr *out, FigError *err);
+    int (*render_entry)(void *ctx, const char *dialect, FigStr indent, FigStr key, FigStr value, FigStr *out, FigError *err);
+    int (*render_item)(void *ctx, const char *dialect, FigStr indent, FigStr value, FigStr *out, FigError *err);
+    int (*render_tail)(void *ctx, const char *dialect, FigStr indent, FigStr key, FigStr value, FigStr *out, FigError *err);
+    int (*render_key)(void *ctx, const char *dialect, FigStr indent, FigStr key, FigStr old_key, FigStr *out, FigError *err);
+} FigLanguageVTable;
+
+// The FIG_LANGUAGE_VTABLE_VERSION of the linked library.
+uint32_t fig_language_vtable_version(void);
+
+// Register a language. On FIG_STATUS_OK writes the format integer of its
+// first dialect row to *out_format (the rows after it take the integers after
+// it). The record is validated by the rules a compiled format is held to, and
+// every sample is parsed, printed, reparsed and edited before anything is
+// registered; a record that fails either is refused as
+// FIG_STATUS_INVALID_ARGUMENT with the reason in `out_err` (nullable), and
+// registers nothing. A name already registered, or a compiled-in format's, is
+// refused the same way.
+FigStatus fig_language_register(const FigLanguageVTable *vt, int *out_format, FigError *out_err);
+
+// The format integer of the dialect named `name` — a compiled format's
+// registry name ("json5", "yaml", …) or a registered language's — or -1.
+int fig_format_by_name(const char *name);
 
 // Report HOW MANY events serializing the whole parsed document to `format` would
 // produce, using the same pipeline fig_document_serialize prints from (YAML

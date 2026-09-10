@@ -914,11 +914,12 @@ fn checkRegistration(allocator: Allocator, reg: *const Registered) !void {
                     return error.HarnessFailed;
                 };
                 defer second.deinit(allocator);
-                const a = try canonicalOf(allocator, &first.ast);
-                defer allocator.free(a);
-                const b = try canonicalOf(allocator, &second.ast);
-                defer allocator.free(b);
-                if (!std.mem.eql(u8, a, b)) {
+                // Positional: a table's ids are its pre-order, so the same
+                // tree reparsed is the same rows in the same order — which
+                // is not true of every compiled parser, and why
+                // `harness.zig` compares canonical text instead. (The
+                // canonical printer is a build option, not a given.)
+                if (!first.ast.eql(second.ast) or !first.ast.commentsEql(second.ast)) {
                     refuse("'{s}': print then reparse changed a sample's tree", .{e.name});
                     return error.HarnessFailed;
                 }
@@ -941,13 +942,6 @@ fn checkRegistration(allocator: Allocator, reg: *const Registered) !void {
             }
         }
     }
-}
-
-fn canonicalOf(allocator: Allocator, ast: *const AST) ![]u8 {
-    var out: std.Io.Writer.Allocating = .init(allocator);
-    defer out.deinit();
-    try ast.serializeWith(&out.writer, .canonical, .{});
-    return allocator.dupe(u8, out.written());
 }
 
 fn expectRegionsWellFormed(doc: Document, source: []const u8) !void {
@@ -1356,11 +1350,18 @@ fn appendRows(arena: Allocator, ast: *const AST, id: Node.Id, parent: u32, rows:
 
 /// Print `ast` in the dialect `e` names, through the vtable.
 pub fn printWith(e: *const Entry, writer: *std.Io.Writer, ast: *const AST, options: AST.SerializeOptions) !void {
+    return printNodeWith(e, writer, ast, ast.root, options);
+}
+
+/// `printWith` from `root`: the subtree as the whole table, which is what
+/// `fig_value_serialize` asks for. A runtime printer is not told it is a
+/// fragment; the table's root is its document.
+pub fn printNodeWith(e: *const Entry, writer: *std.Io.Writer, ast: *const AST, root: Node.Id, options: AST.SerializeOptions) !void {
     const reg = e.language;
     const print = reg.vt.print orelse return error.FormatDisabled;
     var arena_state = std.heap.ArenaAllocator.init(ast.allocator);
     defer arena_state.deinit();
-    const built = try documentToTable(arena_state.allocator(), ast, ast.root);
+    const built = try documentToTable(arena_state.allocator(), ast, root);
     const opts: PrintOptions = .{
         .pretty = options.pretty,
         .strip_comments = options.strip_comments,
@@ -1635,8 +1636,12 @@ test "a malformed table is refused, not read" {
 // edits through `Editor(Language)`, prints, and then registers two broken
 // records to see them refused.
 
+/// TESTS ONLY: `tinykv`, for `c_api.zig`'s tests to register through the
+/// exports. Nothing outside a `test` block references it.
+pub const test_language = TinyKv;
+
 const TinyKv = struct {
-    const Alloc = struct { allocator: Allocator };
+    pub const Alloc = struct { allocator: Allocator };
 
     fn parse(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Str, out: *NodeTable, err: *ErrorInfo) callconv(.c) c_int {
         _ = dialect;
@@ -1742,7 +1747,7 @@ const TinyKv = struct {
     const dialects = [_]DialectDesc{.{ .name = "tinykv", .extensions = &extensions, .splice = 2, .empty_doc_seed = "" }};
     const samples = [_]Str{ Str.of("a=1\nb=two\n"), Str.of("# top\nk=v\n") };
 
-    fn vtable(alloc: *Alloc) VTable {
+    pub fn vtable(alloc: *Alloc) VTable {
         return .{
             .version = vtable_version,
             .ctx = alloc,

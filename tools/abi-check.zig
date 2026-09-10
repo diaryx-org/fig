@@ -147,6 +147,19 @@ pub fn main(init: std.process.Init) !void {
         fail = true;
     }
 
+    // Vtable-version drift: fig.h's FIG_LANGUAGE_VTABLE_VERSION is what a host
+    // writes into a FigLanguageVTable, and the registry refuses any other
+    // value, so the macro and `runtime.vtable_version` must agree.
+    const header_vt = macroInt(header, "FIG_LANGUAGE_VTABLE_VERSION") orelse return error.MissingVTableVersionMacro;
+    if (header_vt != fig.Runtime.vtable_version) {
+        if (!fail) std.debug.print("abi-check: FAIL\n", .{});
+        std.debug.print(
+            "  vtable-version drift: fig.h FIG_LANGUAGE_VTABLE_VERSION is {d} but runtime.vtable_version is {d}\n",
+            .{ header_vt, fig.Runtime.vtable_version },
+        );
+        fail = true;
+    }
+
     // Format-enum drift: fig.h's FIG_FORMAT_* enumerators must match the format
     // registry name-for-name and value-for-value — and so must each binding's
     // mirror of them.

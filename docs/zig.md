@@ -183,6 +183,39 @@ and on the `Editor` methods that call them.
 of its cases declares such a `Language` in a temporary directory, hands it to
 `Editor`, and runs a `set` and a `deleteKey` through it.
 
+### Runtime languages
+
+A format can also join *after* the build: `fig.Runtime` carries the same
+contract as a table of function pointers filled when the program runs —
+the declarations of a `Language` as fields, `parse` and `print` as function
+pointers, the five renderers as pointers that may be null — and a registry
+that hands out a format integer at or above `Language.runtime_abi_base`
+for it. `Runtime.register(allocator, &vtable)` validates the record by the
+rules `Language.validate` applies at comptime, runs the checks of
+`languages/harness.zig` over the samples it declares (parse, print,
+reparse to the same tree, an `Editor` over each), and only then publishes
+it; a record that fails either is refused with the reason in
+`Runtime.lastRefusal()` and registers nothing. `Runtime.Language` is then
+a `Language` whose `Type` names a registered dialect:
+
+```zig
+const abi = try fig.Runtime.register(allocator, &vtable);
+const entry = fig.Runtime.entryByAbi(abi).?;
+const doc = try fig.Runtime.Language.Parser.parse(allocator, source, entry.typeOf());
+var ed: fig.Editor(fig.Runtime.Language) = .{ .allocator = allocator, .format = entry.typeOf() };
+```
+
+`parse` returns, and `print` receives, a `Runtime.NodeTable`: one row per
+node in pre-order (row index is node id) with the columns `Document`
+carries — kind, parent, span, text, anchor, tag, item marker, entry
+separator — plus regions, mentions and comments as side tables. The
+shapes are `extern struct`s, stated in `fig.h` under `FigLanguageVTable`
+and `FigNodeTable` and registered from C through `fig_language_register`;
+`tools/abi_runtime_probe.c` is the smallest complete host, written in C,
+and `zig build abi-check` runs it. What a runtime format cannot do is add a
+node kind, join content sniffing, or receive the editor: a renderer returns
+text. See `docs/proposals/runtime-languages.md`.
+
 Every "Edit" ✅ above goes through the *same* generic `Editor(Language)` engine
 (next section) — ZON included, splicing its `.key = value` struct-field syntax
 and `.{}`/`.@"..."` quoting rules exactly like JSON gets `"key": value`. Only

@@ -3,19 +3,22 @@ title = Runtime languages
 description = A format fig did not compile in — the Language contract carried as a vtable in-process and as a helper protocol out-of-process, with the compiled formats made to pass through the same contract first and fig-lua as the first outside implementor
 created = 2026-09-07
 status = draft
-updated = 2026-09-09
+updated = 2026-09-10
 part_of = [proposals](proposals.md)
 ```
 
 # Runtime languages
 
-> **Status: DRAFT, §3.3 and §9 implemented.** Written against `main` at
-> e56489d, with core 3.0.0 (ABI 2) built and unreleased. §9's reserved range
-> and §3.3's refactor — the compiled formats editing through the contract,
-> every hook deleted — both landed on `main` ahead of the 3.0 tag; §4.4 and
-> §10 say where and what differed. What remains, the carriers of §4.3 and
-> everything after them, is additive to core and is a 3.x minor, plus one
-> new repository.
+> **Status: DRAFT, §3.3 and §9 implemented; the carrier in progress.**
+> Written against `main` at e56489d, with core 3.0.0 (ABI 2) built and
+> unreleased. §9's reserved range and §3.3's refactor — the compiled
+> formats editing through the contract, every hook deleted — both landed
+> on `main` ahead of the 3.0 tag; §4.4 and §10 say where and what
+> differed. The carriers of §4.3 land in 3.0 as well: the tag waits until
+> the first outside format runs through them (§10), so that a 3.0 consumer
+> gets a contract that has been crossed, not one that has only been
+> stated. What 3.0 then adds over 2.x is additive at the ABI (ABI stays 2);
+> the rest is one new repository and the bindings' half.
 >
 > The second draft. The first stated the editing contract as "`syntax` and
 > no hooks" and listed dialects, aliases, and the lossless envelope as
@@ -156,45 +159,53 @@ hooks turned out to be mostly facts the parser dropped.
 
 ### 4.1 The node table
 
-A parse returns a flat table, one row per node in pre-order, plus a comment
-table. This is the shape `Document` already holds, with four columns added
-that every compiled parser has in hand at the record site and currently
-discards.
+A parse returns a flat table, one row per node in pre-order, plus three
+side tables. This is the shape `Document` already holds — its columns are
+`AST.Node`, `node_spans`, and the span and region tables the §3.3 refactor
+added — restated as values rather than as slices of a Zig struct. Row
+index is node id, which is what `AST.Node.Id` already is.
 
 | Column | Meaning |
 |---|---|
-| `kind` | `FigNodeKind`: null, bool, int, float, string, sequence, mapping, keyvalue, alias. An alias row's `text` is the anchor name it refers to. |
-| `parent` | Row index of the parent, or none for the root. |
+| `kind` | `FigNodeKind`: null, bool, int, float, string, sequence, mapping, keyvalue, alias — what `fig_node_kind` reports. |
+| `ext_kind` | `FigExtKind` or none. A plist date, a TOML datetime, a ZON enum literal: the node `fig_node_kind` reports as a string or int and `fig_node_extended` tells apart. |
+| `parent` | Row index of the parent, or none for the root. Core rebuilds `next_sibling` from it. |
 | `span` | `[start, end)` byte offsets into the input. Required of every node; the editor splices by it. For a node with an anchor or tag, the span includes them, as YAML's does today. |
-| `text` | For scalars, the *decoded* value as bytes; for int and float, the lexeme, as `fig_node_number` already returns it; for an alias, the anchor name. |
-| `anchor` | The anchor name this node defines, or none. Present so that aliases resolve; core builds the anchor table from it in row order. |
-| `tag` | The tag on this node, or none. Optional; a format with no tag syntax leaves the column empty. |
-| `marker_start` | For an entry or item: the byte offset of the token that introduces it, the `-`, the `*`, the `<key>`, the key's first byte. This is where a leading comment goes and where a delete or reorder starts. |
-| `value_slot_start` | For a keyvalue or item: the byte offset where the value's text begins, past the separator and past any anchor or tag. This is where a value that changes shape is re-framed from. |
-| `is_flow` | For a container: whether it is spelled inline. The engine sniffs this from the first byte today, and two hooks exist only to dodge the sniff. |
-| `region` | For a section node only: one or more whole header lines, the rows `Document.node_regions` would hold, each with the span of the name mention inside it and whether that line opens a scope or is an in-line mention. |
+| `text` | For scalars, the *decoded* value as bytes; for int and float, the lexeme, as `fig_node_number` already returns it; for an alias, the anchor name; for an extended kind, its payload. |
+| `anchor`, `anchor_span` | The anchor name this node defines and where it is written, or none. Present so that aliases resolve; core builds the anchor table from it in row order. |
+| `tag`, `tag_span` | The tag on this node, verbatim, and where it is written, or none. A format with no tag syntax leaves the column empty. |
+| `marker` | For a block-sequence item: the span of the token that introduces it — the `-`, the `*` — or none. Where a leading comment goes and where a delete or reorder starts (`Document.node_marker_spans`). |
+| `sep` | For a keyvalue: the span of the token that separates key from value, or none. A recorded separator is the parser's statement that the value *reframes* rather than splices in place; a zero-width one marks a value hanging under a bare key (`Document.node_sep_spans`). |
 
-Comments are a side table keyed by row: leading (a run), trailing (at most
-one), dangling (a run), each with `text` and a line or block style, matching
-`AST.NodeComments`. A format with no comment syntax declares `comments =
-null` in its `syntax` and returns none.
+The side tables, each sorted by row:
+
+- **regions** — `(node, start, end)`: the whole header lines of a
+  *section* node, one per line that created or re-opened it
+  (`Document.node_regions`). Presence here is what makes a node a
+  section.
+- **mentions** — `(node, span, header | entry)`: every place a section
+  node's name is written, and whether that line is a header of the node's
+  own or a mention on its parent's entry line (`Document.node_mentions`).
+- **comments** — `(node, leading | trailing | dangling, line | block,
+  text)`: `AST.NodeComments`, flattened. A format with no comment syntax
+  declares `comments = null` in its `syntax` and returns none.
 
 Key–value pairs are three rows, as they are in the AST: the `keyvalue`, its
 key, its value. That is the one place the table is less obvious than a
 tree, and it is chosen because it is what the editor, `fig_node_first_child`,
 and every binding already walk.
 
-The four added columns are what §4.4 cashes in. `marker_start` alone
-retires six of NestedText's eight hooks, which exist to recompute where an
-item's `-` is. The name spans in `region` retire TOML's rename, which
-re-lexes the source to find every `[a.b]` that spells a name the parser
-already had. `is_flow` retires INI's only hook. `value_slot_start` retires
-the colon scan in YAML's reframe and the anchor-stripping in its alias
-edit.
+The first draft of this table had `marker_start` and `value_slot_start` as
+offsets and an `is_flow` column. Doing §3.3 settled all three: the marker
+and the separator are spans (a zero-width separator is a fact the editor
+reads), and `is_flow` is `Syntax.flow_containers` plus one engine rule. The
+table above is the shape as built, and §4.4's "as implemented" note says
+what each column retired.
 
 A print takes the same table, produced by core from a document, and returns
-bytes. A runtime format's printer sees the AST the same way a compiled one
-does, through the tree, and nothing else about the engine is exposed to it.
+bytes. Spans are none on that side. A runtime format's printer sees the
+AST the same way a compiled one does, through the tree, and nothing else
+about the engine is exposed to it.
 
 ### 4.2 The declarations
 
@@ -557,7 +568,7 @@ this proposal in which it changes.
 `inline else`, and a runtime integer cannot be a member. Every conversion
 from the C `int` becomes a checked lookup that routes an integer at or
 above `FIG_FORMAT_RUNTIME_BASE` to the registry before the switch. That is
-work in §10 step 2, named here so it is not a surprise there.
+work in §10 step 3, named here so it is not a surprise there.
 
 **8.3 Tag vocabulary and the merge key.** The node table carries a `tag`
 column, but what a tag means, `!!str` collapsing a kind, `<<` merging a
@@ -619,8 +630,8 @@ state it, and `zig build abi-check` holds both to the registry's value.
 
 ## 10. Sequencing
 
-1. **core 3.0.0** (now): §9.
-2. **The refactor — done, in core 3.0 rather than 3.1** (70dcfdd and the
+1. **core 3.0** (now): §9. Done.
+2. **The refactor — done, in core 3.0** (70dcfdd and the
    six commits after it): the node-table columns, filled by every compiled
    parser; the `Syntax` fields and the prefix-bytes policy; the engine
    consuming them; the renderers as the hook set. Hooks were deleted one
@@ -633,20 +644,40 @@ state it, and `zig build abi-check` holds both to the registry's value.
    unit, an empty comment is written `<!-- -->`, and NestedText's empty
    inline `{}` and `[]` accept an insert. §4.4's "as implemented" note has
    what differed from this draft.
-3. **core 3.1, the carrier**: the node table as a stated shape;
-   `runtime.zig`; the `.runtime` member; `fig_language_register`,
-   `fig_format_by_name`, the checked integer lookup of §8.2, and the
-   vtable in `fig.h`; the load-time harness; abi-check holds the vtable's
-   `version`. Additive, ABI stays 2.
-4. **cli 4.1**: the helper runner, `languages.figl`, `fig lang list`,
-   `fig lang check`.
-5. **fig-lua 0.1**: a new repository in `repos.figl`. The crate, the
-   binary, and two worked formats: dotenv in Lua, the twin of the format
-   commit 2226998 already used to prove the boundary, and plist in Lua,
-   the twin of the format that declares the most hooks today. The harness
-   checks each against its compiled sibling byte for byte. HCL follows as
-   the first format with no sibling, at the read tier first.
-6. **rust 3.6, npm 3.1**: the trait, the object, the runner.
+3. **core 3.0, the carrier** — in 3.0 rather than a later minor, because
+   the tag waits for step 6. The node table of §4.1 as a C shape;
+   `runtime.zig`, which converts it to and from a `Document`, validates a
+   vtable by the same rules `Language.validate` applies at comptime, and
+   keeps the registry of §8.5; a `Runtime` `Language` whose `Type` indexes
+   that registry, so `Editor` and the harness instantiate once over it and
+   the C API's editor union gains one `.runtime` arm; `fig_language_register`,
+   `fig_format_by_name`, the checked integer lookup of §8.2 at every
+   `FigFormat` entry point, and the vtable in `fig.h`; registration runs the
+   harness over the declared `samples` and refuses on failure; abi-check
+   holds the vtable's `version`. One engine edit: the renderers' presence
+   is a question (`hasRenderer`) rather than a `@hasDecl`, since a runtime
+   language answers it with a null pointer. Additive, ABI stays 2.
+4. **rust 3.6**: the `Language` trait and the object, registering through
+   the vtable; the helper SDK of §8.7 as a module — a table serializer and
+   a request loop — since the first helper is written against it.
+5. **cli 4.1**: the helper runner, `languages.figl`, `fig lang list`,
+   `fig lang check`, and `--lang <name>` to select a registered language
+   by name where the extension would resolve to a compiled one.
+6. **fig-lua 0.1**: a new repository in `repos.figl`. A Rust crate on
+   `mlua` with Lua 5.4 vendored, a binary that speaks the helper protocol,
+   and two worked formats as `.lua` files: dotenv, the twin of the format
+   commit 2226998 already used to prove the boundary, and plist, the twin
+   of the format that declared the most hooks. `fig lang check` holds each
+   to its compiled sibling table for table. The bar for the 3.0 tag is
+   `fig get secrets.env --lang lua-dotenv` answering through the helper
+   with the same table the compiled format gives. HCL follows as the first
+   format with no sibling, at the read tier first.
+7. **npm 3.1**: the object and the runner.
+
+The first draft had the bindings after fig-lua. That was backwards: fig-lua
+is a Rust crate registering through the Rust binding, so the binding's
+half comes first, and the CLI's runner is what the tag is measured by, so
+it comes before the repository it runs.
 
 Each step is verified as pluggable formats §7 was: `zig build check` green,
 the harness over the compiled formats unchanged, and the harness over each

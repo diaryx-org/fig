@@ -621,8 +621,12 @@ impl Renderer {
 /// What a renderer is handed. Which fields are set depends on the
 /// [`Renderer`]: `value` for all but `Key`; `indent` for all but `Value`;
 /// `key` for `Entry`, `Tail` and `Key`; `old_key` for `Key`.
+///
+/// Constructible, like the description structs, so a test of a
+/// [`Language`] can call its `render` directly; `Default` is every field
+/// empty, so `RenderArgs { value: b"42", ..Default::default() }` is the
+/// idiom for one renderer's arguments.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[non_exhaustive]
 pub struct RenderArgs<'a> {
     pub dialect: &'a str,
     pub indent: &'a [u8],

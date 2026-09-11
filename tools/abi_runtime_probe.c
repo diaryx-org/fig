@@ -205,6 +205,7 @@ int main(void) {
     vt.version = FIG_LANGUAGE_VTABLE_VERSION;
     vt.name = "tinykv";
     vt.caps = FIG_CAP_READ | FIG_CAP_EDIT | FIG_CAP_SERIALIZE;
+    vt.max_mapping_depth = 0; /* flat: no mapping inside the root (FIG_DEPTH_NONE would be unbounded) */
     vt.syntax = &syntax;
     vt.dialects = dialects;
     vt.dialect_count = 1;

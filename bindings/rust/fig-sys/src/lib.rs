@@ -905,6 +905,8 @@ pub const FIG_LEN_NONE: usize = usize::MAX;
 pub const FIG_ROW_NONE: u32 = u32::MAX;
 /// Mirror of `FIG_EXT_NONE`.
 pub const FIG_EXT_NONE: c_int = -1;
+/// Mirror of `FIG_DEPTH_NONE`: a vtable's `max_mapping_depth` when unbounded.
+pub const FIG_DEPTH_NONE: c_int = -1;
 
 pub const FIG_MENTION_HEADER: c_int = 0;
 pub const FIG_MENTION_ENTRY: c_int = 1;
@@ -1146,7 +1148,7 @@ pub struct FigLanguageVTable {
     pub ctx: *mut c_void,
     pub name: *const c_char,
     pub caps: u32,
-    pub max_mapping_depth: u8,
+    pub max_mapping_depth: c_int,
     pub lossless: *const FigNativeKinds,
     pub syntax: *const FigSyntax,
     pub dialects: *const FigDialectDesc,

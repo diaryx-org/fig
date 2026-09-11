@@ -705,7 +705,7 @@ struct Registration {
     lang: Box<dyn Language>,
     name: CString,
     caps: u32,
-    max_mapping_depth: u8,
+    max_mapping_depth: c_int,
     lossless: Option<Box<ffi::FigNativeKinds>>,
     syntax: Option<Box<CSyntax>>,
     dialects: Vec<ffi::FigDialectDesc>,
@@ -931,7 +931,9 @@ impl Registration {
             lang,
             name,
             caps,
-            max_mapping_depth: desc.max_mapping_depth.unwrap_or(0),
+            max_mapping_depth: desc
+                .max_mapping_depth
+                .map_or(ffi::FIG_DEPTH_NONE, c_int::from),
             lossless,
             syntax,
             dialects,

@@ -982,6 +982,9 @@ typedef struct FigWarning {
 #define FIG_ROW_NONE UINT32_MAX
 // FigNodeRow.ext_kind for a row that is not an extended scalar.
 #define FIG_EXT_NONE (-1)
+// FigLanguageVTable.max_mapping_depth for a format with no depth limit. 0 is
+// a limit — a flat format (dotenv, INI) holds no mapping inside its root.
+#define FIG_DEPTH_NONE (-1)
 
 // One node. `kind` is a FigNodeKind (for an extended scalar, the kind
 // fig_node_kind would report; `ext_kind` decides). `text` is a scalar's decoded
@@ -1153,7 +1156,8 @@ typedef struct FigDialectDesc {
     const FigSyntax   *syntax;
 } FigDialectDesc;
 
-// The vtable. `caps` is FIG_CAP_* bits; `max_mapping_depth` 0 is unbounded;
+// The vtable. `caps` is FIG_CAP_* bits; `max_mapping_depth` is
+// FIG_DEPTH_NONE when unbounded, else the mapping nesting the format holds;
 // `lossless` NULL means no envelope; `syntax` is required iff FIG_CAP_EDIT;
 // `print` iff FIG_CAP_SERIALIZE; `samples` is required and non-empty. The
 // five render_* slots are optional and NULL where the format declares none:
@@ -1165,7 +1169,7 @@ typedef struct FigLanguageVTable {
     void                 *ctx;
     const char           *name;
     uint32_t              caps;
-    uint8_t               max_mapping_depth;
+    int                   max_mapping_depth;
     const FigNativeKinds *lossless;
     const FigSyntax      *syntax;
     const FigDialectDesc *dialects;

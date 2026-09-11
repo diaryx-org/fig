@@ -126,6 +126,9 @@ pub const RowKind = enum(c_int) {
 /// `NodeRow.ext_kind`: a `FigExtKind` value (the ordinal of `ExtKind`), or
 /// `no_ext_kind`.
 pub const no_ext_kind: c_int = -1;
+/// `FIG_DEPTH_NONE`: a vtable's `max_mapping_depth` when the format holds
+/// mappings to any depth.
+pub const no_depth_limit: c_int = -1;
 
 /// One node. Row index is node id; rows are in pre-order, so a parent
 /// precedes its children and a keyvalue is followed by its key row and then
@@ -408,8 +411,9 @@ pub const VTable = extern struct {
     name: [*:0]const u8,
     /// Bits of `FigCapability`: 1 read, 2 edit, 4 serialize.
     caps: u32,
-    /// `Caps.max_mapping_depth`; 0 for unbounded.
-    max_mapping_depth: u8 = 0,
+    /// `Caps.max_mapping_depth`; `no_depth_limit` for unbounded. 0 is a
+    /// limit: a flat format holds no mapping inside its root.
+    max_mapping_depth: c_int = no_depth_limit,
     /// `Caps.lossless`, or null for no envelope.
     lossless: ?*const NativeKindsDesc = null,
     /// Required iff `caps` has the edit bit.
@@ -527,7 +531,10 @@ pub const RegisterError = error{
 pub threadlocal var last_refusal: [512]u8 = undefined;
 pub threadlocal var last_refusal_len: usize = 0;
 
-fn refuse(comptime fmt: []const u8, args: anytype) void {
+/// Record why a registration is about to be refused. Public so a host
+/// that builds a vtable from something else (the CLI's helper runner) can
+/// report through the same channel when that something fails to load.
+pub fn refuse(comptime fmt: []const u8, args: anytype) void {
     const s = std.fmt.bufPrint(&last_refusal, fmt, args) catch &last_refusal;
     last_refusal_len = s.len;
 }
@@ -581,7 +588,7 @@ pub fn register(allocator: Allocator, vt: *const VTable) RegisterError!c_int {
         .read = vt.caps & cap_read != 0,
         .edit = vt.caps & cap_edit != 0,
         .serialize = vt.caps & cap_serialize != 0,
-        .max_mapping_depth = if (vt.max_mapping_depth == 0) null else vt.max_mapping_depth,
+        .max_mapping_depth = if (vt.max_mapping_depth < 0) null else @intCast(vt.max_mapping_depth),
         .lossless = if (vt.lossless) |l| nativeKindsOf(l) else null,
     };
     reg.syntax = if (vt.syntax) |s| try syntaxOf(arena, s) else null;
@@ -717,6 +724,10 @@ pub fn validateVTable(vt: *const VTable) bool {
     }
     if (vt.caps & cap_read == 0) {
         refuse("'{s}' declares no read capability; a language must at least parse", .{name});
+        return false;
+    }
+    if (vt.max_mapping_depth > std.math.maxInt(u8)) {
+        refuse("'{s}' declares max_mapping_depth {d}; a limit is at most 255, and FIG_DEPTH_NONE is no limit", .{ name, vt.max_mapping_depth });
         return false;
     }
     if (vt.dialect_count == 0) {

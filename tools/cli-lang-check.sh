@@ -90,6 +90,15 @@ printf 'A=1\n\n\nB=2\n' > f.tkv
 "$fig" fmt f.tkv 2>/dev/null
 expect "fmt" "$(printf 'A=1\nB=2')" "$(cat f.tkv)"
 
+# An edit whose text does not reparse is reported as the text's fault, and
+# names the language (a runtime format has no `@tagName`).
+set +e
+err="$("$fig" set s.tkv D "$(printf 'two\nlines')" 2>&1 >/dev/null)"
+status=$?
+set -e
+[ "$status" -ne 0 ] || fail "a value with a line break was accepted"
+case "$err" in *"is not a valid value for s.tkv (tinykv)"*) ;; *) fail "bad edit text not reported for the language: $err" ;; esac
+
 # A parse failure is reported with the helper's message and at its offset.
 printf 'A=1\nnope\n' > bad.tkv
 set +e

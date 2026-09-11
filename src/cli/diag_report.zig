@@ -316,7 +316,7 @@ fn reportBadEditTextImpl(term: *Io.Terminal, file: []const u8, format: ?Format, 
     else
         try term.writer.print(": one of the new values is not valid ", .{});
     if (format) |f|
-        try term.writer.print("for {s} ({s})\n", .{ file, @tagName(f) })
+        try term.writer.print("for {s} ({s})\n", .{ file, types.name(f) })
     else
         try term.writer.print("for {s}\n", .{file});
 

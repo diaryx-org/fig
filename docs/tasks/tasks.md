@@ -10,6 +10,7 @@ contents
 > * [A runtime target has no loss diagnostics](runtime-target-loss-diagnostics.md)
 > * [`fig patch` into a runtime target is refused](patch-into-a-runtime-target.md)
 > * [An entry appended after `export KEY=value` is indented to the key's column](dotenv-export-indents-an-appended-entry.md)
+> * [The Rust editor spells a key through the format's printer, which for plist is `<string>k</string>`](rust-editor-spells-a-plist-key-through-the-printer.md)
 ```
 
 # Tasks

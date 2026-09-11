@@ -385,7 +385,7 @@ pub const ParseFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, input: 
 pub const PrintFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, table: *const NodeTable, options: *const PrintOptions, out: *Str, err: *ErrorInfo) callconv(.c) c_int;
 pub const FreeTableFn = *const fn (ctx: ?*anyopaque, table: *NodeTable) callconv(.c) void;
 pub const FreeBytesFn = *const fn (ctx: ?*anyopaque, bytes: Str) callconv(.c) void;
-pub const RenderValueFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, value: Str, out: *Str, err: *ErrorInfo) callconv(.c) c_int;
+pub const RenderValueFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, value: Str, literal: [*:0]const u8, out: *Str, err: *ErrorInfo) callconv(.c) c_int;
 pub const RenderEntryFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, indent: Str, key: Str, value: Str, out: *Str, err: *ErrorInfo) callconv(.c) c_int;
 pub const RenderItemFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, indent: Str, value: Str, out: *Str, err: *ErrorInfo) callconv(.c) c_int;
 pub const RenderTailFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, indent: Str, key: Str, value: Str, out: *Str, err: *ErrorInfo) callconv(.c) c_int;
@@ -1563,12 +1563,12 @@ pub const Language = struct {
         };
     }
 
-    pub fn renderValue(t: Type, allocator: Allocator, out: *std.ArrayList(u8), value_text: []const u8) !void {
+    pub fn renderValue(t: Type, allocator: Allocator, out: *std.ArrayList(u8), value_text: []const u8, literal: manifest.Literal) !void {
         const e = entryOf(t);
         const vt = &e.language.vt;
         var s: Str = .{};
         var err: ErrorInfo = .empty;
-        if ((vt.render_value orelse return error.UnsupportedShape)(vt.ctx, e.dialectZ(), Str.of(value_text), &s, &err) != 0) return rendererError(&err);
+        if ((vt.render_value orelse return error.UnsupportedShape)(vt.ctx, e.dialectZ(), Str.of(value_text), @tagName(literal).ptr, &s, &err) != 0) return rendererError(&err);
         defer vt.free_bytes(vt.ctx, s);
         try out.appendSlice(allocator, s.slice() orelse "");
     }

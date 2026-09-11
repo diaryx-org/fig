@@ -1163,7 +1163,11 @@ typedef struct FigDialectDesc {
 // five render_* slots are optional and NULL where the format declares none:
 // each spells one fragment for the editor (`indent` is the target line's
 // indentation, `key`/`value`/`old_key` are as written) and returns the text
-// through `out`, which fig frees with free_bytes.
+// through `out`, which fig frees with free_bytes. `literal` is what fig's
+// bare-literal rules make of `value` trimmed — "null", "bool", "int",
+// "float", "datetime" or "string" — classified once by fig so that every
+// format means the same thing by `42`; a renderer spells the kind it is
+// told.
 typedef struct FigLanguageVTable {
     uint32_t              version;
     void                 *ctx;
@@ -1182,7 +1186,7 @@ typedef struct FigLanguageVTable {
     void (*free_table)(void *ctx, FigNodeTable *table);
     void (*free_bytes)(void *ctx, FigStr bytes);
 
-    int (*render_value)(void *ctx, const char *dialect, FigStr value, FigStr *out, FigError *err);
+    int (*render_value)(void *ctx, const char *dialect, FigStr value, const char *literal, FigStr *out, FigError *err);
     int (*render_entry)(void *ctx, const char *dialect, FigStr indent, FigStr key, FigStr value, FigStr *out, FigError *err);
     int (*render_item)(void *ctx, const char *dialect, FigStr indent, FigStr value, FigStr *out, FigError *err);
     int (*render_tail)(void *ctx, const char *dialect, FigStr indent, FigStr key, FigStr value, FigStr *out, FigError *err);

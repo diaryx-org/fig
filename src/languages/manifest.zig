@@ -729,6 +729,39 @@ pub const Renderer = enum {
     }
 };
 
+/// What fig's bare-literal rules make of the text a value renderer is
+/// handed: `null`, `true`/`false`, a number (integer or float), a datetime
+/// shape, or a string — the classification the `.fig` dialect gives a bare
+/// token (`languages/fig/tokenizer.zig`'s `sniffBare`: `Yes` and `007` stay
+/// strings), computed once by the engine over the text trimmed of
+/// whitespace and passed to `renderValue`, so that no format restates the
+/// rule and every format's `set` means the same thing by `42`. A datetime
+/// is a string in the node table; here it is its own answer, since a
+/// renderer spells it differently (plist's `<date>`). The tag names are the
+/// spelling on the runtime vtable and the helper wire.
+pub const Literal = enum {
+    @"null",
+    bool,
+    int,
+    float,
+    datetime,
+    string,
+
+    /// The literal named `name`, or null.
+    pub fn parse(name: []const u8) ?Literal {
+        inline for (@typeInfo(Literal).@"enum".fields) |f| {
+            if (eql(f.name, name)) return @field(Literal, f.name);
+        }
+        return null;
+    }
+
+    fn eql(a: []const u8, b: []const u8) bool {
+        if (a.len != b.len) return false;
+        for (a, b) |x, y| if (x != y) return false;
+        return true;
+    }
+};
+
 /// An opening and closing token pair. See `Syntax.closed_containers`.
 pub const Delimiters = struct { open: []const u8, close: []const u8 };
 

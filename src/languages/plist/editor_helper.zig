@@ -13,7 +13,8 @@
 //!
 //!   - `renderValue`: the crux. A CLI value string (`fig set app.plist k=42`)
 //!     has no plist meaning until it's wrapped in a typed element. We reuse the
-//!     `.fig` dialect's own literal-else-string classifier (`sniffBare`) to pick
+//!     `.fig` dialect's own literal-else-string classifier — the engine's
+//!     `literalOf`, handed in as `Literal` — to pick
 //!     the type — `true`/`false` → `<true/>`/`<false/>`, integer → `<integer>`,
 //!     float → `<real>`, any datetime shape → `<date>`, everything else →
 //!     `<string>` (XML-escaped). `null` has no plist type (`NullUnsupported`).
@@ -52,7 +53,7 @@ const Plist = @import("plist.zig").Language;
 // obeys the exact same literal-else-string rules the fig language documents
 // (Norway-safe booleans, leading-zero-stays-string, datetime sniffing). Pure
 // functions on caller-owned slices; compiles regardless of `-Dfig`.
-const sniff = @import("../fig/tokenizer.zig");
+const lang = @import("../manifest.zig");
 
 /// The concrete editor these ops drive — the plist arm of the generic engine.
 const PlistEditor = editor.Editor(Plist);
@@ -61,7 +62,7 @@ const PlistEditor = editor.Editor(Plist);
 
 /// Render a CLI value string into a plist typed element, appended to `out`.
 /// See the module header for the typing rules and the `<`-prefix escape hatch.
-pub fn renderValue(_: Plist.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), value_text: []const u8) !void {
+pub fn renderValue(_: Plist.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), value_text: []const u8, literal: lang.Literal) !void {
     const t = std.mem.trim(u8, value_text, " \t\r\n");
     if (t.len > 0 and t[0] == '<') {
         // Explicit element (or element tree): the caller has spelled the plist
@@ -70,11 +71,12 @@ pub fn renderValue(_: Plist.Type, allocator: std.mem.Allocator, out: *std.ArrayL
         try out.appendSlice(allocator, t);
         return;
     }
-    switch (sniff.sniffBare(t)) {
-        .null_ => return error.NullUnsupported, // plist has no null primitive
-        .boolean => |b| try out.appendSlice(allocator, if (b) "<true/>" else "<false/>"),
-        .number => |n| try wrapText(allocator, out, if (n.kind == .integer) "integer" else "real", n.raw, false),
-        .datetime => |d| try wrapText(allocator, out, "date", d.raw, false),
+    switch (literal) {
+        .null => return error.NullUnsupported, // plist has no null primitive
+        .bool => try out.appendSlice(allocator, if (std.mem.eql(u8, t, "true")) "<true/>" else "<false/>"),
+        .int => try wrapText(allocator, out, "integer", t, false),
+        .float => try wrapText(allocator, out, "real", t, false),
+        .datetime => try wrapText(allocator, out, "date", t, false),
         .string => try wrapText(allocator, out, "string", t, true),
     }
 }
@@ -131,7 +133,7 @@ fn expectEdit(comptime op: []const u8, src: []const u8, args: anytype, expected:
     try testing.expectEqualStrings(expected, ed.source.items);
 }
 
-test "renderValue: fig sniffBare picks the typed element" {
+test "renderValue: the engine's literal picks the typed element" {
     const cases = [_]struct { in: []const u8, out: []const u8 }{
         .{ .in = "42", .out = "<integer>42</integer>" },
         .{ .in = "-7", .out = "<integer>-7</integer>" },
@@ -149,7 +151,7 @@ test "renderValue: fig sniffBare picks the typed element" {
     for (cases) |c| {
         var out: std.ArrayList(u8) = .empty;
         defer out.deinit(testing.allocator);
-        try renderValue(.XML, testing.allocator, &out, c.in);
+        try renderValue(.XML, testing.allocator, &out, c.in, editor.literalOf(c.in));
         try testing.expectEqualStrings(c.out, out.items);
     }
 }
@@ -157,7 +159,7 @@ test "renderValue: fig sniffBare picks the typed element" {
 test "renderValue: null has no plist type" {
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(testing.allocator);
-    try testing.expectError(error.NullUnsupported, renderValue(.XML, testing.allocator, &out, "null"));
+    try testing.expectError(error.NullUnsupported, renderValue(.XML, testing.allocator, &out, "null", .null));
 }
 
 test "set replaces a value, preserving or changing type by autodetection" {

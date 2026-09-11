@@ -22,7 +22,7 @@
 //! {"op":"describe"}
 //! {"op":"parse","dialect":"hcl","input":"…"}
 //! {"op":"print","dialect":"hcl","table":{…},"options":{"pretty":true,"strip_comments":false,"indent":2,"width":80}}
-//! {"op":"render","which":"value","dialect":"hcl","indent":"","key":"","value":"…","old_key":""}
+//! {"op":"render","which":"value","dialect":"hcl","indent":"","key":"","value":"…","literal":"string","old_key":""}
 //! ```
 //!
 //! Responses:
@@ -55,9 +55,9 @@ use std::io::{BufRead, Write};
 
 use crate::language::{
     ClosedContainers, CommentDelimiter, CommentForm, CommentRow, CommentSlot, CommentStyle,
-    Comments, Description, Dialect, KeyStyle, Language, LanguageError, MentionKind, MentionRow,
-    NativeKinds, NodeKind, NodeRow, NodeTable, PrintOptions, RegionRow, RenderArgs, Renderer,
-    Renderers, SectionHeader, SectionNoun, Splice, Syntax,
+    Comments, Description, Dialect, KeyStyle, Language, LanguageError, Literal, MentionKind,
+    MentionRow, NativeKinds, NodeKind, NodeRow, NodeTable, PrintOptions, RegionRow, RenderArgs,
+    Renderer, Renderers, SectionHeader, SectionNoun, Splice, Syntax,
 };
 use crate::{Capabilities, Document, ExtKind, Format, SerializeOptions, Span, Value};
 
@@ -154,6 +154,9 @@ fn handle_inner(lang: &dyn Language, request: &str) -> Result<Value, LanguageErr
                 indent: field("indent").as_bytes(),
                 key: field("key").as_bytes(),
                 value: field("value").as_bytes(),
+                // Absent or unknown: a string, which is what a renderer does
+                // with any text it cannot type.
+                literal: Literal::from_name(field("literal")).unwrap_or_default(),
                 old_key: field("old_key").as_bytes(),
             };
             let out = lang.render(which, args)?;

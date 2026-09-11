@@ -751,35 +751,42 @@ fn outputCall(h: *Helper, request: []const u8, out: *Runtime.Str, err: *Runtime.
     return 0;
 }
 
-fn renderCall(ctx: ?*anyopaque, which: []const u8, dialect: [*:0]const u8, indent: Runtime.Str, key: Runtime.Str, value: Runtime.Str, old_key: Runtime.Str, out: *Runtime.Str, err: *Runtime.ErrorInfo) c_int {
+fn renderCall(ctx: ?*anyopaque, which: []const u8, dialect: [*:0]const u8, indent: Runtime.Str, key: Runtime.Str, value: Runtime.Str, literal: ?[*:0]const u8, old_key: Runtime.Str, out: *Runtime.Str, err: *Runtime.ErrorInfo) c_int {
     const h = helperOf(ctx);
     var req: Io.Writer.Allocating = .init(h.allocator);
     defer req.deinit();
     const w = &req.writer;
     w.print("{{\"op\":\"render\",\"which\":\"{s}\",\"dialect\":", .{which}) catch return 3;
     jsonString(w, std.mem.span(dialect)) catch return 3;
-    inline for (.{ .{ "indent", indent }, .{ "key", key }, .{ "value", value }, .{ "old_key", old_key } }) |pair| {
+    inline for (.{ .{ "indent", indent }, .{ "key", key }, .{ "value", value } }) |pair| {
         w.print(",\"{s}\":", .{pair[0]}) catch return 3;
         jsonString(w, pair[1].slice() orelse "") catch return 3;
     }
+    // What fig made of the value, for the value renderer alone.
+    if (literal) |l| {
+        w.writeAll(",\"literal\":") catch return 3;
+        jsonString(w, std.mem.span(l)) catch return 3;
+    }
+    w.writeAll(",\"old_key\":") catch return 3;
+    jsonString(w, old_key.slice() orelse "") catch return 3;
     w.writeAll("}") catch return 3;
     return outputCall(h, req.written(), out, err);
 }
 
-fn renderValueThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, value: Runtime.Str, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
-    return renderCall(ctx, "value", dialect, .{}, .{}, value, .{}, out, err);
+fn renderValueThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, value: Runtime.Str, literal: [*:0]const u8, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
+    return renderCall(ctx, "value", dialect, .{}, .{}, value, literal, .{}, out, err);
 }
 fn renderEntryThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, indent: Runtime.Str, key: Runtime.Str, value: Runtime.Str, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
-    return renderCall(ctx, "entry", dialect, indent, key, value, .{}, out, err);
+    return renderCall(ctx, "entry", dialect, indent, key, value, null, .{}, out, err);
 }
 fn renderItemThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, indent: Runtime.Str, value: Runtime.Str, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
-    return renderCall(ctx, "item", dialect, indent, .{}, value, .{}, out, err);
+    return renderCall(ctx, "item", dialect, indent, .{}, value, null, .{}, out, err);
 }
 fn renderTailThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, indent: Runtime.Str, key: Runtime.Str, value: Runtime.Str, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
-    return renderCall(ctx, "tail", dialect, indent, key, value, .{}, out, err);
+    return renderCall(ctx, "tail", dialect, indent, key, value, null, .{}, out, err);
 }
 fn renderKeyThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, indent: Runtime.Str, key: Runtime.Str, old_key: Runtime.Str, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
-    return renderCall(ctx, "key", dialect, indent, key, .{}, old_key, out, err);
+    return renderCall(ctx, "key", dialect, indent, key, .{}, null, old_key, out, err);
 }
 
 // ── the table on the wire ──────────────────────────────────────────────────

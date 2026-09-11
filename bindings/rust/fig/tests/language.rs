@@ -4,8 +4,8 @@
 //! lines and `#` comments — the same one the core's C probe hosts.
 
 use fig::language::{
-    CommentForm, CommentRow, CommentSlot, Description, Dialect, Language, LanguageError, NodeKind,
-    NodeRow, NodeTable, PrintOptions, RenderArgs, Renderer, Renderers, Splice, Syntax,
+    CommentForm, CommentRow, CommentSlot, Description, Dialect, Language, LanguageError, Literal,
+    NodeKind, NodeRow, NodeTable, PrintOptions, RenderArgs, Renderer, Renderers, Splice, Syntax,
 };
 use fig::{Capabilities, Document, Editor, Error, Format, Segment, Span, Value};
 
@@ -148,9 +148,16 @@ impl Language for TinyKv {
     }
 
     fn render(&self, which: Renderer, args: RenderArgs<'_>) -> Result<Vec<u8>, LanguageError> {
-        // A value is written upper-cased, so the renderer's hand is visible.
+        // A value is written upper-cased, so the renderer's hand is visible;
+        // a number the core classified as one is marked `#`, so the
+        // literal's hand is too.
         assert_eq!(which, Renderer::Value);
-        Ok(args.value.to_ascii_uppercase())
+        let mut out = match args.literal {
+            Literal::Int | Literal::Float => b"#".to_vec(),
+            _ => Vec::new(),
+        };
+        out.extend(args.value.to_ascii_uppercase());
+        Ok(out)
     }
 }
 
@@ -189,11 +196,20 @@ fn a_rust_language_is_a_peer_at_every_entry_point() {
         other => panic!("expected a parse error, got {other:?}"),
     }
 
-    // Edit: the value renderer upper-cases what is spliced.
+    // Edit: the value renderer upper-cases what is spliced, and is told
+    // what fig's bare-literal rules made of it — `42` is a number, `007`
+    // and `Yes` are strings — without classifying anything itself.
     let mut ed = Editor::open(src.as_bytes(), tkv).expect("editor");
     ed.replace_value(&[Segment::Key("x")], "ten").unwrap();
     ed.insert_value(&[], "z", "three").unwrap();
-    assert_eq!(ed.source().unwrap(), "# note\nx=TEN\ny=two\nz=THREE\n");
+    ed.insert_value(&[], "n", "42").unwrap();
+    ed.insert_value(&[], "f", "2.5").unwrap();
+    ed.insert_value(&[], "id", "007").unwrap();
+    ed.insert_value(&[], "yes", "Yes").unwrap();
+    assert_eq!(
+        ed.source().unwrap(),
+        "# note\nx=TEN\ny=two\nz=THREE\nn=#42\nf=#2.5\nid=007\nyes=YES\n"
+    );
 
     // Registering the name again is refused with the reason.
     match fig::language::register(TinyKv) {
@@ -272,6 +288,12 @@ fn the_helper_wire_round_trips_describe_parse_print_and_render() {
         r#"{"op":"render","which":"value","dialect":"tinykv","value":"abc"}"#,
     );
     assert_eq!(resp.get("output").and_then(Value::as_str), Some("ABC"));
+    // `literal` rides the request; absent, it is a string.
+    let resp = helper::handle(
+        &lang,
+        r#"{"op":"render","which":"value","dialect":"tinykv","value":"42","literal":"int"}"#,
+    );
+    assert_eq!(resp.get("output").and_then(Value::as_str), Some("#42"));
     let resp = helper::handle(&lang, r#"{"op":"parse","dialect":"tinykv","input":"nope"}"#);
     assert_eq!(resp.get("ok").and_then(Value::as_bool), Some(false));
     assert_eq!(

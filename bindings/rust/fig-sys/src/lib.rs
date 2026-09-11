@@ -1116,6 +1116,7 @@ pub type FigRenderValueFn = unsafe extern "C" fn(
     ctx: *mut c_void,
     dialect: *const c_char,
     value: FigStr,
+    literal: *const c_char,
     out: *mut FigStr,
     err: *mut FigError,
 ) -> c_int;

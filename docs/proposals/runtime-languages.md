@@ -326,7 +326,7 @@ editor:
 
 | Renderer | Signature | Who needs it |
 |---|---|---|
-| `render_value` | `(text) -> text` | plist, which wraps every literal in a typed element |
+| `render_value` | `(text, literal) -> text` | plist, which wraps every literal in a typed element; `literal` is what fig's bare-literal rules make of the text, classified once by the engine |
 | `render_entry` | `(key, value, indent) -> text` | plist, NestedText |
 | `render_item` | `(value, indent) -> text` | plist, NestedText |
 | `render_key` | `(name, old_form) -> text or refuse` | NestedText's multiline keys |

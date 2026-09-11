@@ -34,6 +34,7 @@ const log = std.log.scoped(.editor);
 // `docs/proposals/language-interface.md`. A leaf module, so importing it here
 // (and from every `<lang>/<lang>.zig`) pulls in nothing else.
 const lang = @import("languages/manifest.zig");
+const sniff = @import("languages/fig/tokenizer.zig");
 
 // The RENDERING half of the interface — the part `syntax` can't express.
 //
@@ -88,6 +89,21 @@ const Properties = @import("languages/properties/properties.zig").Language;
 const Ini = @import("languages/ini/ini.zig").Language;
 const Plist = @import("languages/plist/plist.zig").Language;
 const NestedText = @import("languages/nestedtext/nestedtext.zig").Language;
+
+/// What fig's bare-literal rules make of `text`, trimmed of whitespace:
+/// the `Literal` a value renderer is handed. The `.fig` dialect's own
+/// classifier (`sniffBare`), so `true`, `42`, `2.5`, `2026-09-10` and
+/// `null` are typed and `Yes`, `007` and `TRUE` stay strings, in every
+/// format alike.
+pub fn literalOf(text: []const u8) lang.Literal {
+    return switch (sniff.sniffBare(std.mem.trim(u8, text, " \t\r\n"))) {
+        .null_ => .null,
+        .boolean => .bool,
+        .number => |n| if (n.kind == .integer) .int else .float,
+        .datetime => .datetime,
+        .string => .string,
+    };
+}
 
 pub fn Editor(comptime Language: type) type {
     @import("languages/language.zig").validate(Language);
@@ -195,11 +211,14 @@ pub fn Editor(comptime Language: type) type {
         /// wraps every literal in a typed element), else verbatim. Appended to
         /// `buf` when rendered; the returned slice is what to splice.
         ///
-        /// **Renderer** `renderValue(t, allocator, out, value_text) !void`.
+        /// **Renderer** `renderValue(t, allocator, out, value_text, literal)
+        /// !void`, where `literal` is `literalOf(value_text)`: the engine
+        /// classifies the text once, by fig's own bare-literal rules, so a
+        /// renderer spells a kind it is told rather than deciding one.
         fn renderedValue(self: *const Self, buf: *std.ArrayList(u8), value_text: []const u8) ![]const u8 {
             if (!self.hasRenderer(.value)) return value_text;
             const from = buf.items.len;
-            try Language.renderValue(self.format, self.allocator, buf, value_text);
+            try Language.renderValue(self.format, self.allocator, buf, value_text, literalOf(value_text));
             return buf.items[from..];
         }
 

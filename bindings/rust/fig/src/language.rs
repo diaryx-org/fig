@@ -618,20 +618,70 @@ impl Renderer {
     }
 }
 
+/// What fig's bare-literal rules make of the text a value renderer is
+/// handed: `null`, `true`/`false`, a number, a datetime shape, or a
+/// string. The core classifies the text once, trimmed of whitespace, by
+/// the `.fig` dialect's own rules (`Yes`, `007` and `TRUE` stay strings),
+/// and every format's `set` means the same thing by `42`; a renderer
+/// spells the kind it is told. A datetime is a string in the node table
+/// and its own answer here, since a renderer spells it differently.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Literal {
+    Null,
+    Bool,
+    Int,
+    Float,
+    Datetime,
+    #[default]
+    String,
+}
+
+impl Literal {
+    /// The name on the vtable and the wire: `null`, `bool`, `int`,
+    /// `float`, `datetime`, `string`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Literal::Null => "null",
+            Literal::Bool => "bool",
+            Literal::Int => "int",
+            Literal::Float => "float",
+            Literal::Datetime => "datetime",
+            Literal::String => "string",
+        }
+    }
+
+    /// The literal named `name`, or `None`.
+    pub fn from_name(name: &str) -> Option<Literal> {
+        Some(match name {
+            "null" => Literal::Null,
+            "bool" => Literal::Bool,
+            "int" => Literal::Int,
+            "float" => Literal::Float,
+            "datetime" => Literal::Datetime,
+            "string" => Literal::String,
+            _ => return None,
+        })
+    }
+}
+
 /// What a renderer is handed. Which fields are set depends on the
-/// [`Renderer`]: `value` for all but `Key`; `indent` for all but `Value`;
-/// `key` for `Entry`, `Tail` and `Key`; `old_key` for `Key`.
+/// [`Renderer`]: `value` for all but `Key`, and with it, for `Value`
+/// only, `literal`, what fig's bare-literal rules make of that value;
+/// `indent` for all but `Value`; `key` for `Entry`, `Tail` and `Key`;
+/// `old_key` for `Key`.
 ///
 /// Constructible, like the description structs, so a test of a
 /// [`Language`] can call its `render` directly; `Default` is every field
-/// empty, so `RenderArgs { value: b"42", ..Default::default() }` is the
-/// idiom for one renderer's arguments.
+/// empty and `literal` a string, so `RenderArgs { value: b"42", literal:
+/// Literal::Int, ..Default::default() }` is the idiom for one renderer's
+/// arguments.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RenderArgs<'a> {
     pub dialect: &'a str,
     pub indent: &'a [u8],
     pub key: &'a [u8],
     pub value: &'a [u8],
+    pub literal: Literal,
     pub old_key: &'a [u8],
 }
 
@@ -1392,15 +1442,20 @@ unsafe extern "C" fn render_value_thunk(
     ctx: *mut c_void,
     dialect: *const c_char,
     value: ffi::FigStr,
+    literal: *const c_char,
     out: *mut ffi::FigStr,
     err: *mut ffi::FigError,
 ) -> c_int {
+    // A name this crate does not know is a core newer than it; the
+    // fallback is what a renderer does with any text it cannot type.
+    let literal = Literal::from_name(unsafe { dialect_of(literal) }).unwrap_or_default();
     render_thunk_body(
         ctx,
         Renderer::Value,
         dialect,
         RenderArgs {
             value: bytes_of(value),
+            literal,
             ..Default::default()
         },
         out,

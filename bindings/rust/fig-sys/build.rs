@@ -42,7 +42,7 @@ fn main() {
 /// Any other combination — an extra language or a disabled default — requires
 /// compiling the core from source so the linked archive matches.
 /// (serde/derive/indexmap are Rust-only and don't affect this; they aren't
-/// fig-sys features, and neither is the no-op `xml`.)
+/// fig-sys features.)
 fn features_match_prebuilt() -> bool {
     let on = |name: &str| env::var_os(format!("CARGO_FEATURE_{name}")).is_some();
     on("JSON")

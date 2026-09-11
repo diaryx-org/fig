@@ -73,9 +73,6 @@ dotenv = ["fig-sys/dotenv"]
 properties = ["fig-sys/properties"]
 plist = ["fig-sys/plist"]
 nestedtext = ["fig-sys/nestedtext"]
-# No-op since core 3.0 removed generic XML (there is nothing left to gate).
-# Kept so a dependent's feature list still resolves; goes at the next major.
-xml = []
 
 [dependencies]
 # The `-sys` layer: raw FFI + the `links = "fig"` build script that provides

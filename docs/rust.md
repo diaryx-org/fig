@@ -115,7 +115,6 @@ change to the language set means the library has to be rebuilt from Zig source.
 | `properties` | ✅    | Java `.properties` parser/printer/editor.                               |
 | `plist`    |         | Apple XML property list parser/printer/editor.                          |
 | `nestedtext` | ✅    | NestedText parser/printer/editor.                                       |
-| `xml`      |         | No-op: generic XML left the core in 3.0. Kept so a feature list resolves; goes at the next Rust major. |
 
 The default set is `json`, `yaml`, `toml`, `fig`, `ini`, `dotenv`, `properties`,
 `nestedtext` — the core's own defaults, which is also what the prebuilt archive is

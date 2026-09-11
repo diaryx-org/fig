@@ -52,9 +52,6 @@ dotenv = []
 properties = []
 plist = []
 nestedtext = []
-# No-op since core 3.0 removed generic XML; kept so a dependent's feature
-# list still resolves.
-xml = []
 
 # Prebuilt-library payload crates, one per tier-1 target. Each is a target-gated
 # dependency: Cargo activates (and downloads) only the one whose `cfg` matches

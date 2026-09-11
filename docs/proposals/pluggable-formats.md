@@ -3,7 +3,7 @@ title = Pluggable formats
 description = What fig 3.0 is for — the format set written down once, every per-format fact declared by the format, and the editing contract a format writes against named in one place
 created = 2026-09-04
 status = implemented
-updated = 2026-09-07
+updated = 2026-09-11
 part_of = [proposals](proposals.md)
 ```
 
@@ -592,6 +592,14 @@ bump: XML removal (5a25681), the embed ABI (ecb689f), the `Native` alias
   here, and a planned break is now a `Behavioural-change:` trailer on the
   commit that lands it, gathered into the changelog's unreleased section —
   the same place a shipped one is recorded, which is where a consumer looks.
+
+Revised before the tag (2026-09-11): the Rust crate goes out as **4.0.0**,
+not 3.5.0. The runtime carrier landed ahead of the release
+([runtime-languages](runtime-languages.md)), and `Format::Runtime(u32)` makes
+`Format::X as isize` stop compiling — cargo-semver-checks calls that
+major-level — and VERSIONING.md's rule is that majors are not sacred: a core
+major is a consumer major, and a new epoch is marked by one. The `xml`
+feature leaves with it, as the bullet above said it would.
 
 What 3.0 is not: an extensibility story beyond the tree. §4's boundary — the
 engine is generic over any `Language` that passes `validate`, the registry

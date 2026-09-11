@@ -9,7 +9,7 @@ part_of = [proposals](proposals.md)
 
 # Runtime languages
 
-> **Status: DRAFT, §3.3, §9 and the carrier (core, rust, cli) implemented; fig-lua next.**
+> **Status: DRAFT; §3.3, §9, the carrier (core, rust, cli) and fig-lua implemented; npm (§10 step 7) next.**
 > Written against `main` at e56489d, with core 3.0.0 (ABI 2) built and
 > unreleased. §9's reserved range and §3.3's refactor — the compiled
 > formats editing through the contract, every hook deleted — both landed
@@ -681,7 +681,15 @@ state it, and `zig build abi-check` holds both to the registry's value.
    to its compiled sibling table for table. The bar for the 3.0 tag is
    `fig get secrets.env --lang lua-dotenv` answering through the helper
    with the same table the compiled format gives. HCL follows as the first
-   format with no sibling, at the read tier first.
+   format with no sibling, at the read tier first. Done, in the
+   `fig-lua` checkout (2026-09-10, ahead of the repository being created):
+   `lua-dotenv` and `lua-plist` pass `fig lang check --against` on every
+   fixture and on fig's plist corpus, refuse what the compiled parsers
+   refuse with the same words at the same offsets, and leave the same file
+   as the compiled format after the same edits. Two things the twins
+   surfaced in the compiled formats are filed as tasks: an entry appended
+   after `export KEY=value` is indented to the key's column, and the Rust
+   editor spells a key through the printer, which for plist is an element.
 7. **npm 3.1**: the object and the runner.
 
 The first draft had the bindings after fig-lua. That was backwards: fig-lua

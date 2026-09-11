@@ -135,11 +135,14 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **runtime** — FigNodeTable.owner, the helper's handle on a parse's memory for free_table ([`b2ecb63`](https://github.com/diaryx-org/fig/commit/b2ecb63880f6e64222d836113bb60d8308182e26))
 - **rust** — Format::Runtime, the Language trait and register, and the helper wire ([`d7e50e3`](https://github.com/diaryx-org/fig/commit/d7e50e3a5c33994e0d9ec7db3a5764585f20b65f))
 - **cli** — languages.figl, the helper runner, fig lang list/check, and --lang ([`eaac04a`](https://github.com/diaryx-org/fig/commit/eaac04ab83ff1b1356ff054a35992a74c6716f08))
+- **cli** — fig lang table, the node table a file parses to ([`e206a11`](https://github.com/diaryx-org/fig/commit/e206a11b32e884d188d8e5cc58a27310eca85edc))
+- **rust** — RenderArgs is constructible, so a Language's render can be called by its own tests ([`c150d2d`](https://github.com/diaryx-org/fig/commit/c150d2ded19596c7a2bccb65c520451b6eeaa144))
 
 ### Fixed
 
 - **abi** — name plist's two extended kinds in fig.h and both bindings, and hold FigExtKind in abi-check ([`d46db7c`](https://github.com/diaryx-org/fig/commit/d46db7c35b3252f24bae804ba86adfe7c37152c0))
 - **runtime** — FIG_DEPTH_NONE, so a vtable can declare a flat format ([`a9e5879`](https://github.com/diaryx-org/fig/commit/a9e5879ccf4749a20af11e676815e3ae6a7d66ab))
+- **cli** — name a runtime format in the bad-edit-text report rather than panic on @tagName ([`761db09`](https://github.com/diaryx-org/fig/commit/761db09b9830268709cf0a9f619480e6332724f9))
 
 ### Changed
 

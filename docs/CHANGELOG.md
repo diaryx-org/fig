@@ -130,6 +130,16 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 
 - **rust** — Format gains ini, dotenv, properties, plist and nestedtext; abi-check holds every binding's format enum to the registry ([`aebc2f7`](https://github.com/diaryx-org/fig/commit/aebc2f71e4b3268c70b701beed5975d4984c8b09))
 - **c-api** — reserve FIG_FORMAT_RUNTIME_BASE for languages registered at runtime ([`3d8b7b3`](https://github.com/diaryx-org/fig/commit/3d8b7b32eacd88ad1df6bd1e975b85156d67c89d))
+- **runtime** — the contract as a vtable, the node table, the registry, and a Language over it ([`0bcbe05`](https://github.com/diaryx-org/fig/commit/0bcbe05c56f55dc1f11929341166f9de5f88825b))
+- **c-api** — fig_language_register and fig_format_by_name; a runtime format is a peer at every entry point ([`15f2fb7`](https://github.com/diaryx-org/fig/commit/15f2fb71380b13cc8826f0d405ba72c1f8f39aa7))
+- **runtime** — FigNodeTable.owner, the helper's handle on a parse's memory for free_table ([`b2ecb63`](https://github.com/diaryx-org/fig/commit/b2ecb63880f6e64222d836113bb60d8308182e26))
+- **rust** — Format::Runtime, the Language trait and register, and the helper wire ([`d7e50e3`](https://github.com/diaryx-org/fig/commit/d7e50e3a5c33994e0d9ec7db3a5764585f20b65f))
+- **cli** — languages.figl, the helper runner, fig lang list/check, and --lang ([`eaac04a`](https://github.com/diaryx-org/fig/commit/eaac04ab83ff1b1356ff054a35992a74c6716f08))
+
+### Fixed
+
+- **abi** — name plist's two extended kinds in fig.h and both bindings, and hold FigExtKind in abi-check ([`d46db7c`](https://github.com/diaryx-org/fig/commit/d46db7c35b3252f24bae804ba86adfe7c37152c0))
+- **runtime** — FIG_DEPTH_NONE, so a vtable can declare a flat format ([`a9e5879`](https://github.com/diaryx-org/fig/commit/a9e5879ccf4749a20af11e676815e3ae6a7d66ab))
 
 ### Changed
 
@@ -139,6 +149,7 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **editor** — value, entry and item renderers, retiring plist's and NestedText's insert hooks ([`bbc6338`](https://github.com/diaryx-org/fig/commit/bbc6338082595c26d68b33b905ed66ef8c040e20))
 - **editor** — reframe values from a recorded separator, retiring the fig, YAML and NestedText reframe hooks ([`9b6c34b`](https://github.com/diaryx-org/fig/commit/9b6c34b3c47c262fa0f02af89bfedb981187384a))
 - **editor** — name mentions and header syntax retire TOML's five hooks; merge_key and core aliases retire YAML's two — no editing hooks remain ([`f5d96a7`](https://github.com/diaryx-org/fig/commit/f5d96a730c344533c029a58aecd033e35b46e2f6))
+- **editor** — renderers take the dialect and the engine asks hasRenderer, so presence can be a runtime answer ([`8cb44fa`](https://github.com/diaryx-org/fig/commit/8cb44faca3b1c390762a4c97abdfa53cceca8bc4))
 
 ### Behavioural changes
 
@@ -196,6 +207,15 @@ one and silently join it.
 - a Zig consumer with an out-of-tree `Language` that
 declared an editing hook (`insertKey`, `replaceValAtPath`, …) is refused
 by `Language.validate` as an unknown declaration.
+
+- (Rust) `Document::to_value` on a plist `<date>` or `<data>` now yields `Value::Extended { kind: PlistDate | PlistData, .. }` rather than `Value::Str`. (TypeScript) `asExtended` now returns `ExtKind.PlistDate`/`ExtKind.PlistData` where it returned the unnamed integers 7 and 8.
+
+- (Rust) `Format` has a tuple variant, so `Format::X as
+  isize` no longer compiles; the integer it yielded was never the ABI value.
+
+- (Rust) `Capabilities` gains a `Default` impl and
+  `Capabilities::new`, and `Error` gains a `Language(String)` variant a
+  `match` without a `_` arm did not have to name.
 
 <!-- git-cliff:end -->
 

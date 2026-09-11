@@ -137,6 +137,7 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **cli** — languages.figl, the helper runner, fig lang list/check, and --lang ([`eaac04a`](https://github.com/diaryx-org/fig/commit/eaac04ab83ff1b1356ff054a35992a74c6716f08))
 - **cli** — fig lang table, the node table a file parses to ([`e206a11`](https://github.com/diaryx-org/fig/commit/e206a11b32e884d188d8e5cc58a27310eca85edc))
 - **rust** — RenderArgs is constructible, so a Language's render can be called by its own tests ([`c150d2d`](https://github.com/diaryx-org/fig/commit/c150d2ded19596c7a2bccb65c520451b6eeaa144))
+- **editor** — the value renderer is told what fig's bare-literal rules make of the text, as `literal` ([`c80b7f8`](https://github.com/diaryx-org/fig/commit/c80b7f8445416f0352e163f3e2a8d9a35b89a7fe))
 
 ### Fixed
 
@@ -219,6 +220,12 @@ by `Language.validate` as an unknown declaration.
 - (Rust) `Capabilities` gains a `Default` impl and
   `Capabilities::new`, and `Error` gains a `Language(String)` variant a
   `match` without a `_` arm did not have to name.
+
+- a compiled `Language` declaring `renderValue` takes a fifth argument, `literal: Literal`, and the engine no longer expects it to classify the text itself. plist is the only one in tree and is updated.
+
+- `FigLanguageVTable.render_value` takes `const char *literal` after `value`; a host that registered a value renderer against the previous header must add the parameter. `FIG_LANGUAGE_VTABLE_VERSION` stays 1 because no release carried the previous shape.
+
+- the helper wire's `render` request for `which:"value"` carries `"literal"`; a helper that ignores it is unaffected, and one reading `RenderArgs` from the Rust crate sees the new field, a string when absent.
 
 <!-- git-cliff:end -->
 

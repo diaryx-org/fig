@@ -9,6 +9,7 @@ contents
 > * [YAML `!!int`/`!!float` is applied without checking the lexeme, and `%TAG !!` is not honoured](yaml-int-tag-applied-without-checking-the-lexeme.md)
 > * [A runtime target has no loss diagnostics](runtime-target-loss-diagnostics.md)
 > * [`fig patch` into a runtime target is refused](patch-into-a-runtime-target.md)
+> * [An entry appended after `export KEY=value` is indented to the key's column](dotenv-export-indents-an-appended-entry.md)
 ```
 
 # Tasks

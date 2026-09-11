@@ -199,7 +199,8 @@ $ fig lang check lua-dotenv --against dotenv secrets.env
 ```
 
 `fig lang list` shows every compiled and configured language; `fig lang check`
-holds a configured one to a compiled twin, table for table.
+holds a configured one to a compiled twin, table for table; `fig lang table`
+prints the table a file parses to, which is what a twin has to produce.
 
 ## Nushell
 

@@ -1285,6 +1285,62 @@ pub fn documentToTable(arena: Allocator, ast: *const AST, root: Node.Id) Allocat
 /// live in the arena `documentToTable` was given.
 pub const Table = struct { table: NodeTable, strings: []const []const u8 };
 
+/// The table a `parse` of `doc`'s source would have to answer with: rows
+/// as `documentToTable` builds them, plus every source-coupled column the
+/// document records — node spans, item markers, entry separators, anchor
+/// and tag spans, header regions and name mentions. What a twin of a
+/// compiled format is held to, row for row.
+pub fn fullTable(arena: Allocator, doc: *const Document) Allocator.Error!Table {
+    const ast = &doc.ast;
+    var built = try documentToTable(arena, ast, ast.root);
+    const rows = @constCast(built.table.rows.?[0..built.table.row_count]);
+    // Pre-order row i is node `ids[i]`; the walk is the one `appendRows`
+    // makes.
+    var ids: std.ArrayList(Node.Id) = .empty;
+    try preorder(arena, ast, ast.root, &ids);
+    var regions: std.ArrayList(RegionRow) = .empty;
+    var mentions: std.ArrayList(MentionRow) = .empty;
+    for (ids.items, rows, 0..) |id, *row, i| {
+        const node = ast.nodes[id];
+        row.span = CSpan.of(doc.span(node));
+        if (doc.markerSpan(node)) |sp| row.marker = CSpan.of(sp);
+        if (doc.sepSpan(node)) |sp| row.sep = CSpan.of(sp);
+        if (doc.anchorSpan(node)) |sp| row.anchor_span = CSpan.of(sp);
+        if (doc.tagSpan(node)) |sp| row.tag_span = CSpan.of(sp);
+        for (doc.regionsOf(id)) |r| try regions.append(arena, .{ .node = @intCast(i), .start = r.start, .end = r.end });
+        for (doc.mentionsOf(id)) |m| try mentions.append(arena, .{
+            .node = @intCast(i),
+            .span = CSpan.of(m.span),
+            .kind = if (m.kind == .header) mention_header else mention_entry,
+        });
+    }
+    const region_slice = try regions.toOwnedSlice(arena);
+    const mention_slice = try mentions.toOwnedSlice(arena);
+    built.table.regions = if (region_slice.len == 0) null else region_slice.ptr;
+    built.table.region_count = region_slice.len;
+    built.table.mentions = if (mention_slice.len == 0) null else mention_slice.ptr;
+    built.table.mention_count = mention_slice.len;
+    return built;
+}
+
+fn preorder(arena: Allocator, ast: *const AST, id: Node.Id, out: *std.ArrayList(Node.Id)) Allocator.Error!void {
+    try out.append(arena, id);
+    switch (ast.nodes[id].kind) {
+        .sequence, .mapping => |first| {
+            var next = first;
+            while (next) |child| {
+                try preorder(arena, ast, child, out);
+                next = ast.nodes[child].next_sibling;
+            }
+        },
+        .keyvalue => |kv| {
+            try preorder(arena, ast, kv.key, out);
+            try preorder(arena, ast, kv.value, out);
+        },
+        else => {},
+    }
+}
+
 fn appendRows(arena: Allocator, ast: *const AST, id: Node.Id, parent: u32, rows: *std.ArrayList(NodeRow), comments: *std.ArrayList(CommentRow), strings: *std.ArrayList([]const u8)) Allocator.Error!void {
     const node = ast.nodes[id];
     const row_index: u32 = @intCast(rows.items.len);
@@ -1621,6 +1677,23 @@ test "a mapping table round-trips through Document and back" {
         try testing.expect(got.span.span() == null);
     }
     try testing.expectEqual(@as(usize, 1), built.table.comment_count);
+
+    // `fullTable` is the parse's own answer back: every span, the
+    // separators, and the comment, as they were given.
+    const full = try fullTable(arena.allocator(), &doc);
+    const full_rows = full.table.rowSlice();
+    try testing.expectEqual(rows.len, full_rows.len);
+    for (rows, full_rows) |want, got| {
+        try testing.expectEqual(want.span.start, got.span.start);
+        try testing.expectEqual(want.span.end, got.span.end);
+        try testing.expectEqual(want.sep.span() == null, got.sep.span() == null);
+        if (want.sep.span()) |sp| try testing.expectEqual(sp.start, got.sep.span().?.start);
+        try testing.expect(got.marker.span() == null);
+    }
+    try testing.expectEqual(@as(usize, 0), full.table.region_count);
+    try testing.expectEqual(@as(usize, 0), full.table.mention_count);
+    try testing.expectEqual(@as(usize, 1), full.table.comment_count);
+    try testing.expectEqual(@as(u32, 2), full.table.commentSlice()[0].node);
 }
 
 test "a malformed table is refused, not read" {

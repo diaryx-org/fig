@@ -61,6 +61,13 @@ expect "get by extension" "$(printf '# secret\nA=1\nB=two')" "$("$fig" get s.tkv
 expect "get a scalar" "1" "$("$fig" get s.tkv A 2>/dev/null)"
 expect "get as json" "$(printf '{\n  "A": "1",\n  "B": "two"\n}')" "$("$fig" get s.tkv -o json -q 2>/dev/null)"
 
+# `lang table` prints the node table the helper answered `parse` with —
+# spans, texts and comments as it gave them, and what `check --against`
+# compares.
+expect "lang table" \
+    '{"rows":[{"kind":"mapping","parent":null,"span":[0,19]},{"kind":"keyvalue","parent":0,"span":[9,12],"sep":[10,11]},{"kind":"string","parent":1,"span":[9,10],"text":"A"},{"kind":"string","parent":1,"span":[11,12],"text":"1"},{"kind":"keyvalue","parent":0,"span":[13,18],"sep":[14,15]},{"kind":"string","parent":4,"span":[13,14],"text":"B"},{"kind":"string","parent":4,"span":[15,18],"text":"two"}],"regions":[],"mentions":[],"comments":[{"node":2,"slot":"leading","style":"line","text":"secret"}]}' \
+    "$("$fig" lang table s.tkv 2>/dev/null)"
+
 # The editor over the helper: every edit lands, and the rest of the file is
 # untouched.
 "$fig" set s.tkv A 10 2>/dev/null

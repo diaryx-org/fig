@@ -1081,102 +1081,108 @@ pub fn check(io: Io, a: Allocator, out: *Io.Terminal, err_term: *Io.Terminal, na
     try out.writer.flush();
 }
 
+/// `fig lang table <file> [-i <format>]`: the file's node table as the
+/// JSON a helper answers `parse` with. What an implementor of a twin reads
+/// to see what the compiled format produces, and what `check --against`
+/// then holds the twin to.
+pub fn printTable(io: Io, a: Allocator, out: *Io.Terminal, err_term: *Io.Terminal, file: []const u8, input: ?Format) !void {
+    const args = @import("args.zig");
+    const parse_dispatch = @import("parse_dispatch.zig");
+    const fileio = @import("fileio.zig");
+    const handle = try fileio.getInput(io, file, .read_only);
+    defer if (!std.mem.eql(u8, file, "-")) handle.close(io);
+    const content = try fileio.readAll(a, io, handle);
+    const format = input orelse
+        (if (args.detectLanguageFromFileEnding(file)) |d| d.format else try parse_dispatch.resolveFormatFromContent(a, content, file));
+    var reports: parse_dispatch.Reports = .{};
+    const doc = parse_dispatch.parseSliceAs(format, .{}, a, content, false, &reports) catch |err| {
+        try reports.reportDiagnostics(err_term, content, file);
+        return err;
+    };
+    var arena = std.heap.ArenaAllocator.init(a);
+    defer arena.deinit();
+    const t = try Runtime.fullTable(arena.allocator(), &doc);
+    try tableToJson(out.writer, &t.table);
+    try out.writer.writeAll("\n");
+    try out.writer.flush();
+}
+
 /// Compare two documents of the same source as the tables a helper would
-/// produce for them: kinds, parents, texts, spans, markers, separators,
-/// anchors, tags, regions, mentions and comments. Reports the first
-/// difference and returns true on one.
+/// produce for them — `Runtime.fullTable` of each, which is exactly what
+/// `fig lang table` prints — row for row: kind, parent, text, span,
+/// marker, separator, anchor, tag, then the regions, mentions and
+/// comments. Reports the first difference and returns true on one.
 fn diffDocuments(a: Allocator, term: *Io.Terminal, label: []const u8, mine_name: []const u8, theirs_name: []const u8, mine: fig.Document, theirs: fig.Document) !bool {
     var arena = std.heap.ArenaAllocator.init(a);
     defer arena.deinit();
-    const x = try Runtime.documentToTable(arena.allocator(), &mine.ast, mine.ast.root);
-    const y = try Runtime.documentToTable(arena.allocator(), &theirs.ast, theirs.ast.root);
-    const xr = x.table.rowSlice();
-    const yr = y.table.rowSlice();
+    const x = (try Runtime.fullTable(arena.allocator(), &mine)).table;
+    const y = (try Runtime.fullTable(arena.allocator(), &theirs)).table;
+    const xr = x.rowSlice();
+    const yr = y.rowSlice();
     if (xr.len != yr.len) {
         try term.writer.print("{s}: `{s}` produces {d} rows, `{s}` {d}\n", .{ label, mine_name, xr.len, theirs_name, yr.len });
         return true;
     }
-    // `documentToTable` walks in pre-order, so row i of each is the same
-    // node; the spans, markers and separators come from the documents,
-    // by node id, which the pre-order walk maps to.
-    var i: usize = 0;
-    while (i < xr.len) : (i += 1) {
-        const p = xr[i];
-        const q = yr[i];
+    for (xr, yr, 0..) |p, q, i| {
         if (p.kind != q.kind or p.ext_kind != q.ext_kind or p.parent != q.parent) {
             try term.writer.print("{s}: row {d} differs in kind or parent ({s}: kind {d} parent {d}; {s}: kind {d} parent {d})\n", .{ label, i, mine_name, p.kind, p.parent, theirs_name, q.kind, q.parent });
             return true;
         }
-        const pt = p.text.slice() orelse "";
-        const qt = q.text.slice() orelse "";
-        if (!std.mem.eql(u8, pt, qt)) {
-            try term.writer.print("{s}: row {d} text differs ({s}: {s}; {s}: {s})\n", .{ label, i, mine_name, pt, theirs_name, qt });
-            return true;
-        }
-        const pa = p.anchor.slice() orelse "";
-        const qa = q.anchor.slice() orelse "";
-        if (!std.mem.eql(u8, pa, qa)) {
-            try term.writer.print("{s}: row {d} anchor differs\n", .{ label, i });
-            return true;
-        }
-        const ptag = p.tag.slice() orelse "";
-        const qtag = q.tag.slice() orelse "";
-        if (!std.mem.eql(u8, ptag, qtag)) {
-            try term.writer.print("{s}: row {d} tag differs\n", .{ label, i });
-            return true;
-        }
-    }
-    // The source-coupled columns, by the documents' own tables. Pre-order
-    // row i is AST node id `order[i]`; rebuild that mapping.
-    const mine_ids = try preorderIds(arena.allocator(), &mine.ast);
-    const theirs_ids = try preorderIds(arena.allocator(), &theirs.ast);
-    i = 0;
-    while (i < mine_ids.len) : (i += 1) {
-        const mn = mine.ast.nodes[mine_ids[i]];
-        const tn = theirs.ast.nodes[theirs_ids[i]];
-        if (!mine.span(mn).eql(theirs.span(tn))) {
-            try term.writer.print("{s}: row {d} span differs ({s}: [{d},{d}); {s}: [{d},{d}))\n", .{ label, i, mine_name, mine.span(mn).start, mine.span(mn).end, theirs_name, theirs.span(tn).start, theirs.span(tn).end });
-            return true;
-        }
-        const columns = .{
-            .{ "item marker", mine.markerSpan(mn), theirs.markerSpan(tn) },
-            .{ "separator", mine.sepSpan(mn), theirs.sepSpan(tn) },
-            .{ "anchor span", mine.anchorSpan(mn), theirs.anchorSpan(tn) },
-            .{ "tag span", mine.tagSpan(mn), theirs.tagSpan(tn) },
+        const texts = .{
+            .{ "text", p.text, q.text },
+            .{ "anchor", p.anchor, q.anchor },
+            .{ "tag", p.tag, q.tag },
         };
-        inline for (columns) |col| {
-            if (!optSpanEql(col[1], col[2])) {
-                try term.writer.print("{s}: row {d} {s} differs ({s}: {f}; {s}: {f})\n", .{ label, i, col[0], mine_name, fmtSpan(col[1]), theirs_name, fmtSpan(col[2]) });
+        inline for (texts) |col| {
+            if (!optStrEql(col[1].slice(), col[2].slice())) {
+                try term.writer.print("{s}: row {d} {s} differs ({s}: {s}; {s}: {s})\n", .{ label, i, col[0], mine_name, col[1].slice() orelse "none", theirs_name, col[2].slice() orelse "none" });
                 return true;
             }
         }
-        const mr = mine.regionsOf(mn.id);
-        const tr = theirs.regionsOf(tn.id);
-        if (mr.len != tr.len) {
-            try term.writer.print("{s}: row {d} has {d} header lines in `{s}` and {d} in `{s}`\n", .{ label, i, mr.len, mine_name, tr.len, theirs_name });
-            return true;
-        }
-        for (mr, tr) |r1, r2| if (r1.start != r2.start or r1.end != r2.end) {
-            try term.writer.print("{s}: row {d} header lines differ\n", .{ label, i });
-            return true;
+        const spans = .{
+            .{ "span", p.span, q.span },
+            .{ "item marker", p.marker, q.marker },
+            .{ "separator", p.sep, q.sep },
+            .{ "anchor span", p.anchor_span, q.anchor_span },
+            .{ "tag span", p.tag_span, q.tag_span },
         };
-        const mm = mine.mentionsOf(mn.id);
-        const tm = theirs.mentionsOf(tn.id);
-        if (mm.len != tm.len) {
-            try term.writer.print("{s}: row {d} has {d} name mentions in `{s}` and {d} in `{s}`\n", .{ label, i, mm.len, mine_name, tm.len, theirs_name });
-            return true;
-        }
-        for (mm, tm) |m1, m2| if (!m1.span.eql(m2.span) or m1.kind != m2.kind) {
-            try term.writer.print("{s}: row {d} name mentions differ\n", .{ label, i });
-            return true;
-        };
-        const mc = mine.ast.comments(mn.id);
-        const tc = theirs.ast.comments(tn.id);
-        if (!mc.eql(tc)) {
-            try term.writer.print("{s}: row {d} comments differ\n", .{ label, i });
-            return true;
+        inline for (spans) |col| {
+            if (!optSpanEql(col[1].span(), col[2].span())) {
+                try term.writer.print("{s}: row {d} {s} differs ({s}: {f}; {s}: {f})\n", .{ label, i, col[0], mine_name, fmtSpan(col[1].span()), theirs_name, fmtSpan(col[2].span()) });
+                return true;
+            }
         }
     }
+    const xg = x.regionSlice();
+    const yg = y.regionSlice();
+    if (xg.len != yg.len) {
+        try term.writer.print("{s}: `{s}` records {d} header lines, `{s}` {d}\n", .{ label, mine_name, xg.len, theirs_name, yg.len });
+        return true;
+    }
+    for (xg, yg, 0..) |r1, r2, i| if (r1.node != r2.node or r1.start != r2.start or r1.end != r2.end) {
+        try term.writer.print("{s}: header line {d} differs ({s}: row {d} [{d},{d}); {s}: row {d} [{d},{d}))\n", .{ label, i, mine_name, r1.node, r1.start, r1.end, theirs_name, r2.node, r2.start, r2.end });
+        return true;
+    };
+    const xm = x.mentionSlice();
+    const ym = y.mentionSlice();
+    if (xm.len != ym.len) {
+        try term.writer.print("{s}: `{s}` records {d} name mentions, `{s}` {d}\n", .{ label, mine_name, xm.len, theirs_name, ym.len });
+        return true;
+    }
+    for (xm, ym, 0..) |m1, m2, i| if (m1.node != m2.node or m1.kind != m2.kind or !optSpanEql(m1.span.span(), m2.span.span())) {
+        try term.writer.print("{s}: name mention {d} differs ({s}: row {d} {f}; {s}: row {d} {f})\n", .{ label, i, mine_name, m1.node, fmtSpan(m1.span.span()), theirs_name, m2.node, fmtSpan(m2.span.span()) });
+        return true;
+    };
+    const xc = x.commentSlice();
+    const yc = y.commentSlice();
+    if (xc.len != yc.len) {
+        try term.writer.print("{s}: `{s}` records {d} comments, `{s}` {d}\n", .{ label, mine_name, xc.len, theirs_name, yc.len });
+        return true;
+    }
+    for (xc, yc, 0..) |c1, c2, i| if (c1.node != c2.node or c1.slot != c2.slot or c1.style != c2.style or !optStrEql(c1.text.slice(), c2.text.slice())) {
+        try term.writer.print("{s}: comment {d} differs ({s}: row {d} slot {d} `{s}`; {s}: row {d} slot {d} `{s}`)\n", .{ label, i, mine_name, c1.node, c1.slot, c1.text.slice() orelse "", theirs_name, c2.node, c2.slot, c2.text.slice() orelse "" });
+        return true;
+    };
     return false;
 }
 
@@ -1195,29 +1201,10 @@ fn optSpanEql(a: ?fig.Span, b: ?fig.Span) bool {
     return a.?.eql(b.?);
 }
 
-fn preorderIds(a: Allocator, ast: *const fig.AST) ![]const fig.AST.Node.Id {
-    var out: std.ArrayList(fig.AST.Node.Id) = .empty;
-    try walk(a, ast, ast.root, &out);
-    return out.toOwnedSlice(a);
-}
-
-fn walk(a: Allocator, ast: *const fig.AST, id: fig.AST.Node.Id, out: *std.ArrayList(fig.AST.Node.Id)) !void {
-    try out.append(a, id);
-    const node = ast.nodes[id];
-    switch (node.kind) {
-        .sequence, .mapping => |first| {
-            var next = first;
-            while (next) |c| {
-                try walk(a, ast, c, out);
-                next = ast.nodes[c].next_sibling;
-            }
-        },
-        .keyvalue => |kv| {
-            try walk(a, ast, kv.key, out);
-            try walk(a, ast, kv.value, out);
-        },
-        else => {},
-    }
+fn optStrEql(a: ?[]const u8, b: ?[]const u8) bool {
+    if (a == null and b == null) return true;
+    if (a == null or b == null) return false;
+    return std.mem.eql(u8, a.?, b.?);
 }
 
 // ── tests ──────────────────────────────────────────────────────────────────

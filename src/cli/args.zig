@@ -1354,6 +1354,15 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     log.err("Missing format after --against\n", .{});
                     return ArgError.UnsupportedFileFormat;
                 };
+            } else if (std.mem.eql(u8, arg, "--input") or std.mem.eql(u8, arg, "-i")) {
+                const name = args.next() orelse {
+                    log.err("Missing format after --input\n", .{});
+                    return ArgError.UnsupportedFileFormat;
+                };
+                opts.input = parseFormatName(name) orelse {
+                    log.err("Unsupported input format: {s}\n", .{name});
+                    return ArgError.UnsupportedFileFormat;
+                };
             } else {
                 try positionals.append(allocator, arg);
             }
@@ -1369,8 +1378,16 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 opts.name = positionals.items[1];
                 opts.files = try allocator.dupe([]const u8, positionals.items[2..]);
             }
+        } else if (std.mem.eql(u8, positionals.items[0], "table")) {
+            opts.verb = .table;
+            if (positionals.items.len < 2) {
+                if (!opts.requested_help) log.err("lang table needs a file (e.g. `fig lang table secrets.env`).\n", .{});
+                opts.requested_help = true;
+            } else {
+                opts.name = positionals.items[1];
+            }
         } else {
-            log.err("Unknown lang verb: {s} (list, check)\n", .{positionals.items[0]});
+            log.err("Unknown lang verb: {s} (list, check, table)\n", .{positionals.items[0]});
             opts.requested_help = true;
         }
         config.options = .{ .lang = opts };
@@ -1863,7 +1880,7 @@ test "parseConfig: --lang is taken from anywhere in the line and names the forma
     languages.setLangOverride(null);
 }
 
-test "parseConfig routes lang: list by default, check with a name, --against and files" {
+test "parseConfig routes lang: list by default, check with a name, --against and files, table with -i" {
     const t = std.testing;
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
@@ -1881,6 +1898,12 @@ test "parseConfig routes lang: list by default, check with a name, --against and
     try t.expectEqualStrings("dotenv", c2.options.lang.against.?);
     try t.expectEqual(@as(usize, 2), c2.options.lang.files.len);
     try t.expectEqualStrings("b.env", c2.options.lang.files[1]);
+
+    var table = TestArgs{ .items = &.{ "fig", "lang", "table", "secrets.env", "-i", "json" } };
+    const ct = try parseConfig(a, &table);
+    try t.expectEqual(types.LangOptions.Verb.table, ct.options.lang.verb);
+    try t.expectEqualStrings("secrets.env", ct.options.lang.name);
+    try t.expectEqual(Format.json, ct.options.lang.input.?);
 
     // `check --help` asks for the help text without a name.
     var helpful = TestArgs{ .items = &.{ "fig", "lang", "check", "--help" } };

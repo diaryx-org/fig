@@ -665,7 +665,9 @@ state it, and `zig build abi-check` holds both to the registry's value.
    by name where the extension would resolve to a compiled one. Done on
    `main`: `src/cli/languages.zig` is the runner (a vtable over a child
    process, registered through the same `Runtime.register` a host's own
-   vtable is) and the configuration; `tools/cli-lang-check.sh` drives the
+   vtable is) and the configuration, and `fig lang table <file>` prints the
+   table a compiled format gives — what a twin is written against;
+   `tools/cli-lang-check.sh` drives the
    built CLI through the Rust crate's `tinykv_helper` example at every
    action, and `zig build check` runs it. Two things it does not yet do:
    a `get` of a runtime target has no loss diagnostics (`fig_document_diagnose`

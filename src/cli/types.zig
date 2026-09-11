@@ -155,11 +155,14 @@ pub const CliAction = enum {
 };
 
 pub const LangOptions = struct {
-    pub const Verb = enum { list, check };
+    pub const Verb = enum { list, check, table };
     requested_help: bool = false,
     verb: Verb = .list,
-    /// `check`'s language name.
+    /// `check`'s language name; `table`'s file.
     name: []const u8 = "",
+    /// `table -i <format>`: the format to read the file as, else its
+    /// extension decides, else its contents.
+    input: ?Format = null,
     /// `check --against <compiled>`: the compiled format to hold it to.
     against: ?[]const u8 = null,
     /// `check`'s files, parsed by both and compared.

@@ -422,6 +422,7 @@ pub const Help = struct {
         try term.writer.print(
             \\Usage: {s} lang list
             \\       {s} lang check <name> [--against <format>] [files...]
+            \\       {s} lang table <file> [-i <format>]
             \\  Languages fig did not compile in. One is a helper program that
             \\  speaks the wire in fig's Rust crate (`fig::helper`), configured in
             \\  a `languages.figl`:
@@ -452,11 +453,15 @@ pub const Help = struct {
             \\    compare the tables row for row, the way a reimplementation of a
             \\    compiled language is proven (`{s} lang check lua-dotenv --against
             \\    dotenv secrets.env`). Exits 1 on the first difference.
+            \\  table <file>: parse the file (as -i <format>, else by its extension,
+            \\    else by its contents) and print its node table as the JSON a
+            \\    helper would answer `parse` with — what a twin has to produce,
+            \\    row for row, to pass `check --against`.
             \\
             \\  --lang <name>, on any action, names the language a file is read and
             \\  written in, whatever its extension: `{s} get secrets.env --lang lua-dotenv`.
             \\
-        , .{ binary_name, binary_name, binary_name, binary_name });
+        , .{ binary_name, binary_name, binary_name, binary_name, binary_name });
         try term.writer.flush();
     }
 };

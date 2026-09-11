@@ -58,7 +58,7 @@ const cli_version = std.SemanticVersion.parse("4.0.0") catch
 /// toolchain-parsed package manifest with its own schema) or the C ABI (which
 /// only ever exposes things a consumer might actually branch on). Surfaced
 /// only by the CLI's `fig version`.
-const epoch = "Sierra";
+const epoch = "Texas Everbearing";
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});

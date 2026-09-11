@@ -11,7 +11,7 @@ part_of = [docs](docs.md)
 
 `fig` follows SemVer strictly. This means, in practice, that **major releases are not sacred** and will be bumped even on small-size releases if it is functionally a major breaking change according to SemVer.
 
-Therefore, starting with version v2.0.0, the `fig` project now has what some call an "epoch"—a "marketing" version that changes less often than major releases. For v2.0.0, this is "Sierra," a kind of fig fruit.
+Therefore, starting with version v2.0.0, the `fig` project now has what some call an "epoch"—a "marketing" version that changes less often than major releases. Each is a fig cultivar: v2.0.0 is "Sierra," and v3.0.0 is "Texas Everbearing" — a core that bears languages without limit, through the runtime carrier and its Lua sister crate. The name lives in `build.zig` (`epoch`) and is surfaced only by `fig version`.
 
 
 ## Independent versioning
@@ -30,7 +30,7 @@ This guarantees:
 
 Equality is **not** required — an artifact may run ahead of the core for artifact-only releases. Enforced by `zig build version-floor` (`tools/version-floor.zig`) in CI (via `zig build check`).
 
-The CLI is on this list because its compatibility contract is its own — flags, defaults, exit codes — and is orthogonal to the library API and the C ABI. A CLI-only breaking change (e.g. flipping a flag's default, removing a flag) bumps `cli_version`'s major without forcing a core/ABI release; a core-only change doesn't force a CLI bump either. `fig version` prints both numbers, e.g. `fig 3.0.0 (core 2.0.0 "Sierra")`.
+The CLI is on this list because its compatibility contract is its own — flags, defaults, exit codes — and is orthogonal to the library API and the C ABI. A CLI-only breaking change (e.g. flipping a flag's default, removing a flag) bumps `cli_version`'s major without forcing a core/ABI release; a core-only change doesn't force a CLI bump either. `fig version` prints both numbers, e.g. `fig 4.0.0 (core 3.0.0 "Texas Everbearing")`.
 
 `fig-wasi` (`bindings/wasi/package.json`, the npx-able CLI-over-WASI package) is the one exception to "independent": it's a repackaging of the CLI binary itself — same actions, same compatibility contract — not a separate binding, so its version must equal `cli_version` **exactly** (a pin, not a floor), checked by `version-floor` alongside the `fig-macros` pin (see below).
 

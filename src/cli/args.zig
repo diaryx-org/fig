@@ -6,6 +6,7 @@ const fig = @import("fig");
 const build_options = @import("build_options");
 
 const gron = @import("gron.zig");
+const languages = @import("languages.zig");
 const types = @import("types.zig");
 const fileio = @import("fileio.zig");
 
@@ -27,7 +28,10 @@ pub fn parseFormatName(name: []const u8) ?Format {
     // duplicated arm in every switch over the enum, and nothing else. It
     // collapses here instead, so downstream code only ever sees `.yaml`.
     if (std.mem.eql(u8, name, "yml")) return .yaml;
-    return std.meta.stringToEnum(Format, name);
+    if (std.meta.stringToEnum(Format, name)) |f| return f;
+    // A language the CLI did not compile in: configured in `languages.figl`
+    // (spawned and registered on this first ask) or already registered.
+    return languages.resolveName(name);
 }
 
 pub fn parsePath(allocator: std.mem.Allocator, path: []const u8) ![]fig.AST.PathSegment {
@@ -82,6 +86,11 @@ pub fn parsePath(allocator: std.mem.Allocator, path: []const u8) ![]fig.AST.Path
 /// is missing/unrecognized — the caller then falls back to content sniffing
 /// (`Language.detect`) rather than failing outright.
 pub fn detectLanguageFromFileEnding(file_path: []const u8) ?Detected {
+    // `--lang <name>` names the language outright, whatever the extension
+    // says — it is how a file a compiled format owns by extension is read
+    // through a runtime language instead (`secrets.env --lang lua-dotenv`).
+    if (languages.langOverride()) |f| return .{ .format = f };
+
     const dot = std.mem.findLast(u8, file_path, ".");
     const ext = file_path[(dot orelse 0) + 1 .. file_path.len];
 
@@ -117,6 +126,11 @@ pub fn detectLanguageFromFileEnding(file_path: []const u8) ?Detected {
     // `--input dotenv` for those. The canonical form deliberately owns no
     // extension at all — select it with `--input canonical`.
     if (extensionFormat(ext)) |format| return .{ .format = format };
+
+    // Last, the languages `languages.figl` configures: a compiled format's
+    // extension always wins, so a configured language is only reached by an
+    // extension nothing compiled in owns (proposal §7.1).
+    if (languages.resolveExtension(ext)) |format| return .{ .format = format };
 
     return null;
 }
@@ -337,9 +351,43 @@ pub fn resolveEmbedType(io: Io, allocator: std.mem.Allocator, input: Io.File, em
     return fig.Embed.detect(content) orelse .{ .frontmatter = .yaml };
 }
 
-pub fn parseConfig(allocator: std.mem.Allocator, args: anytype) ArgError!CliConfig {
+/// The argument list with `--lang <name>` taken out: the one flag every
+/// action accepts, read here once rather than in each action's loop, and
+/// recorded for `detectLanguageFromFileEnding` to answer with.
+const Args = struct {
+    items: []const []const u8,
+    i: usize = 0,
+    fn next(self: *Args) ?[]const u8 {
+        if (self.i >= self.items.len) return null;
+        defer self.i += 1;
+        return self.items[self.i];
+    }
+};
+
+pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliConfig {
     const log = std.log.scoped(.parseConfig);
     var config = CliConfig{};
+
+    var collected: std.ArrayList([]const u8) = .empty;
+    while (args_in.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--lang")) {
+            const name = args_in.next() orelse {
+                log.err("Missing language name after --lang\n", .{});
+                return ArgError.UnsupportedFileFormat;
+            };
+            const format = parseFormatName(name) orelse {
+                // A refused helper has already said why, through `ensure`.
+                if (!languages.isConfigured(name)) log.err("No language named `{s}`: not a compiled format, and no languages.figl configures it (see `fig lang --help`)\n", .{name});
+                return ArgError.UnsupportedFileFormat;
+            };
+            languages.setLangOverride(format);
+            continue;
+        }
+        collected.append(allocator, arg) catch return ArgError.OutOfMemory;
+    }
+    var args_storage: Args = .{ .items = collected.items };
+    const args = &args_storage;
+
     config.binary_name = args.next() orelse "fig";
 
     const action_str = args.next() orelse {
@@ -1293,6 +1341,39 @@ pub fn parseConfig(allocator: std.mem.Allocator, args: anytype) ArgError!CliConf
             .diff = diff_mode,
             .quiet = quiet,
         } };
+    } else if (std.mem.eql(u8, action_str, "lang")) {
+        config.action = .lang;
+        var opts: types.LangOptions = .{};
+        var positionals: std.ArrayList([]const u8) = .empty;
+        defer positionals.deinit(allocator);
+        while (args.next()) |arg| {
+            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                opts.requested_help = true;
+            } else if (std.mem.eql(u8, arg, "--against")) {
+                opts.against = args.next() orelse {
+                    log.err("Missing format after --against\n", .{});
+                    return ArgError.UnsupportedFileFormat;
+                };
+            } else {
+                try positionals.append(allocator, arg);
+            }
+        }
+        if (positionals.items.len == 0 or std.mem.eql(u8, positionals.items[0], "list")) {
+            opts.verb = .list;
+        } else if (std.mem.eql(u8, positionals.items[0], "check")) {
+            opts.verb = .check;
+            if (positionals.items.len < 2) {
+                if (!opts.requested_help) log.err("lang check needs a language name (e.g. `fig lang check lua-dotenv --against dotenv`).\n", .{});
+                opts.requested_help = true;
+            } else {
+                opts.name = positionals.items[1];
+                opts.files = try allocator.dupe([]const u8, positionals.items[2..]);
+            }
+        } else {
+            log.err("Unknown lang verb: {s} (list, check)\n", .{positionals.items[0]});
+            opts.requested_help = true;
+        }
+        config.options = .{ .lang = opts };
     } else if (externalCommandName(action_str)) |name| {
         // Git's fallback, and the reason fig-schema can grow a CLI without
         // fig growing a `schema` action: a word fig has no verb for is handed
@@ -1757,4 +1838,52 @@ test "parseConfig routes convert: whole-file mode, embed mode, and their guards"
     const mdforcedc = try parseConfig(a, &mdforced);
     try t.expectEqual(Format.yaml, mdforcedc.options.convert.from);
     try t.expect(!mdforcedc.options.convert.detect);
+}
+
+test "parseConfig: --lang is taken from anywhere in the line and names the format" {
+    if (comptime !build_options.lang_json) return error.SkipZigTest;
+    const t = std.testing;
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var args = TestArgs{ .items = &.{ "fig", "get", "secrets.env", "--lang", "json" } };
+    const config = try parseConfig(a, &args);
+    try t.expectEqual(types.CliAction.get, config.action);
+    try t.expectEqualStrings("secrets.env", config.options.get.file);
+    try t.expectEqual(Format.json, languages.langOverride().?);
+    // The override is what the extension would otherwise decide.
+    try t.expectEqual(Format.json, detectLanguageFromFileEnding("secrets.env").?.format);
+    languages.setLangOverride(.yaml);
+    try t.expectEqual(Format.yaml, detectLanguageFromFileEnding("secrets.env").?.format);
+
+    // `--lang nosuch` and a bare `--lang` return `UnsupportedFileFormat`
+    // after a `log.err` — the test runner counts a logged error as a
+    // failure, so that path is proven by `tools/cli-lang-check.sh` instead.
+    languages.setLangOverride(null);
+}
+
+test "parseConfig routes lang: list by default, check with a name, --against and files" {
+    const t = std.testing;
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var bare = TestArgs{ .items = &.{ "fig", "lang" } };
+    const c1 = try parseConfig(a, &bare);
+    try t.expectEqual(types.CliAction.lang, c1.action);
+    try t.expectEqual(types.LangOptions.Verb.list, c1.options.lang.verb);
+
+    var check = TestArgs{ .items = &.{ "fig", "lang", "check", "lua-dotenv", "--against", "dotenv", "a.env", "b.env" } };
+    const c2 = try parseConfig(a, &check);
+    try t.expectEqual(types.LangOptions.Verb.check, c2.options.lang.verb);
+    try t.expectEqualStrings("lua-dotenv", c2.options.lang.name);
+    try t.expectEqualStrings("dotenv", c2.options.lang.against.?);
+    try t.expectEqual(@as(usize, 2), c2.options.lang.files.len);
+    try t.expectEqualStrings("b.env", c2.options.lang.files[1]);
+
+    // `check --help` asks for the help text without a name.
+    var helpful = TestArgs{ .items = &.{ "fig", "lang", "check", "--help" } };
+    const c3 = try parseConfig(a, &helpful);
+    try t.expect(c3.options.lang.requested_help);
 }

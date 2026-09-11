@@ -12,6 +12,8 @@ pub const Editor = @import("editor.zig").Editor;
 /// byte-identical. See its module doc for the merge rule and what it refuses.
 pub const Patch = @import("patch.zig");
 pub const Document = @import("document.zig");
+/// A `[start, end)` byte range — what `Document`'s span tables hold.
+pub const Span = @import("util/span.zig");
 pub const AST = @import("ast/ast.zig");
 pub const Embed = @import("embed.zig");
 pub const Lossless = @import("lossless.zig");

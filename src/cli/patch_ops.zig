@@ -67,6 +67,11 @@ pub fn applyToSlice(
         // and gron is a CLI-only projection.
         .canonical => return error.UnsupportedCanonicalEdit,
         .gron => return error.UnsupportedGronEdit,
+        // A patch renders each spliced subtree through the target's
+        // serializer, which a runtime format reaches only through its
+        // vtable; `patchAs` is generic over a `SerializeFormat`, so a
+        // runtime target is refused here until it is not.
+        _ => return error.UnsupportedRuntimePatch,
         inline else => |f| {
             const d = comptime fig.Language.entryFor(@tagName(f));
             if (comptime d.Lang == void) return error.FormatDisabled;

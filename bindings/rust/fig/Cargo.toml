@@ -88,3 +88,9 @@ indexmap = { version = "2", optional = true }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
+
+# The helper executable `tools/cli-lang-check.sh` spawns from the CLI. The
+# wire is JSON, which the `helper` module reads with fig's own json format.
+[[example]]
+name = "tinykv_helper"
+required-features = ["json"]

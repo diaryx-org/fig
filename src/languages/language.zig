@@ -15,6 +15,7 @@ pub const KeyStyle = manifest.KeyStyle;
 pub const Caps = manifest.Caps;
 pub const NativeKinds = manifest.NativeKinds;
 pub const Syntax = manifest.Syntax;
+pub const SectionNoun = manifest.SectionNoun;
 
 /// The one list of formats — `src/languages/list.zig` — re-exported so a
 /// consumer that is genuinely per-format (the build, `validate-check`, the

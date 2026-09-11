@@ -3,10 +3,12 @@ title = Tasks
 description = Deferred work with a done state — a bug is a task with a repro
 author = adammharris
 created = 2026-09-04
-updated = 2026-09-07
+updated = 2026-09-10
 part_of = [docs](/docs/docs.md)
 contents
 > * [YAML `!!int`/`!!float` is applied without checking the lexeme, and `%TAG !!` is not honoured](yaml-int-tag-applied-without-checking-the-lexeme.md)
+> * [A runtime target has no loss diagnostics](runtime-target-loss-diagnostics.md)
+> * [`fig patch` into a runtime target is refused](patch-into-a-runtime-target.md)
 ```
 
 # Tasks

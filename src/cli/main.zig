@@ -18,6 +18,7 @@ const types = @import("types.zig");
 const help = @import("help.zig");
 const args_mod = @import("args.zig");
 const actions = @import("actions.zig");
+const languages = @import("languages.zig");
 
 // CLI-only sibling modules pulled in only through `actions.zig`/`args.zig`'s
 // imports; referenced again in the `test {}` block at the bottom of this file
@@ -120,6 +121,11 @@ pub fn main(init: std.process.Init) !void {
     // it can't clobber `stderr_terminal`'s bytes when stderr is redirected.
     g_log_terminal = &stderr_terminal;
 
+    // The languages the CLI did not compile in are resolved while arguments
+    // are parsed (`--input <name>`, an extension, `--lang`), and resolving
+    // one spawns its helper, so the module that does it needs `io` first.
+    languages.init(io, init.arena.allocator(), init.environ_map);
+
     // Accessing command line arguments:
     var args = try init.minimal.args.iterateAllocator(init.gpa);
     defer args.deinit();
@@ -131,6 +137,14 @@ pub fn main(init: std.process.Init) !void {
             inline for (@typeInfo(types.Format).@"enum".fields) |field|
                 supported_formats = supported_formats ++ std.fmt.comptimePrint("\n- {s}", .{field.name});
             try stderr_terminal.writer.print("Supported formats:{s}\n", .{supported_formats});
+            // And the languages a `languages.figl` configures, by name only —
+            // listing is not the moment to spawn each one.
+            const configured = languages.configured();
+            if (configured.len > 0) {
+                try stderr_terminal.writer.writeAll("Configured languages (`fig lang list`):");
+                for (configured) |c| try stderr_terminal.writer.print("\n- {s}", .{c.name});
+                try stderr_terminal.writer.writeAll("\n");
+            }
             try stderr_terminal.writer.flush();
             std.process.exit(2);
         },
@@ -218,6 +232,7 @@ fn dispatch(a: std.mem.Allocator, io: Io, stdout_terminal: *Io.Terminal, stderr_
         .fmt => actions.runFmt(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.fmt),
         .convert => actions.runConvert(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.convert),
         .patch => actions.runPatch(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.patch),
+        .lang => actions.runLang(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.lang),
         .external => actions.runExternal(io, stdout_terminal, stderr_terminal, config.binary_name, config.options.external),
     };
 }

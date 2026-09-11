@@ -29,7 +29,45 @@ const L = fig.Language;
 // bindings as `fig_editor_*_container`, but not from this CLI, which has no
 // verb for a whole container yet). `gron` is a CLI-only echo format with no
 // `AST.SerializeFormat` counterpart.
-pub const Format = @Enum(L.EnumTag(format_names), .exhaustive, format_names, &L.enumValues(format_names));
+///
+/// NON-EXHAUSTIVE, as of cli 4.1: a value at or above `runtime_base` names a
+/// language registered at runtime (`languages.zig`) — `runtime_base + i`
+/// for the registry's entry `i` — and every switch over the enum has a `_`
+/// arm for it, which reads the entry through `runtimeEntry`. The named
+/// members are the compiled formats, and `@tagName` is only ever applied to
+/// one of those; `name` is the spelling that covers both.
+pub const Format = @Enum(u16, .nonexhaustive, format_names, &format_values);
+
+const format_values = blk: {
+    var values: [format_names.len]u16 = undefined;
+    for (&values, 0..) |*v, i| v.* = @intCast(i);
+    break :blk values;
+};
+
+/// The first `Format` value naming a runtime language. The same number as
+/// the C ABI's `FIG_FORMAT_RUNTIME_BASE` — so the CLI's value for a runtime
+/// entry is its ABI integer — though the two are separate enumerations (a
+/// compiled CLI member is its registry position, not its ABI value).
+pub const runtime_base: u16 = @intCast(fig.Language.runtime_abi_base);
+
+/// The `Format` naming the registry entry `e`.
+pub fn runtimeFormat(e: *const fig.Runtime.Entry) Format {
+    return @enumFromInt(runtime_base + e.index);
+}
+
+/// The registry entry `f` names, or null for a compiled format.
+pub fn runtimeEntry(f: Format) ?*const fig.Runtime.Entry {
+    const v = @intFromEnum(f);
+    if (v < runtime_base) return null;
+    return fig.Runtime.entryAt(v - runtime_base);
+}
+
+/// What `f` is called: the member name of a compiled format, the registered
+/// name of a runtime one. Use this wherever a format is printed.
+pub fn name(f: Format) []const u8 {
+    if (runtimeEntry(f)) |e| return e.name;
+    return @tagName(f);
+}
 
 /// Every format registry entry (`languages/language.zig`'s `dialects`), in
 /// registry order, plus the two members no `Language` backs: `canonical` after
@@ -88,7 +126,10 @@ pub fn toSerializeFormat(f: Format) ?fig.AST.SerializeFormat {
         .properties => .properties,
         .plist => .plist,
         .nestedtext => .nestedtext,
-        .gron => null,
+        // gron has no serializer; a runtime format prints through its
+        // entry (`fig.Runtime.printWith`), which is not a `SerializeFormat`
+        // either. Both are intercepted before the serializer dispatch.
+        .gron, _ => null,
     };
 }
 
@@ -105,9 +146,24 @@ pub const CliAction = enum {
     fmt,
     convert,
     patch,
+    /// `fig lang list` / `fig lang check`: the languages the CLI did not
+    /// compile in. See `LangOptions` and `cli/languages.zig`.
+    lang,
     /// Not one of fig's own verbs: a word handed off to a `fig-<word>`
     /// executable on PATH. See `ExternalOptions`.
     external,
+};
+
+pub const LangOptions = struct {
+    pub const Verb = enum { list, check };
+    requested_help: bool = false,
+    verb: Verb = .list,
+    /// `check`'s language name.
+    name: []const u8 = "",
+    /// `check --against <compiled>`: the compiled format to hold it to.
+    against: ?[]const u8 = null,
+    /// `check`'s files, parsed by both and compared.
+    files: []const []const u8 = &.{},
 };
 
 pub const HelpOptions = struct {
@@ -457,6 +513,7 @@ pub const CliActionOptions = union(CliAction) {
     fmt: FmtOptions,
     convert: ConvertOptions,
     patch: PatchOptions,
+    lang: LangOptions,
     external: ExternalOptions,
 };
 
@@ -583,7 +640,7 @@ pub fn targetFile(config: CliConfig) ?[]const u8 {
         // `external` never touches a file itself — whatever it does with its
         // arguments is the other binary's business, and its failures are its
         // own to report.
-        .help, .version, .check, .external => null,
+        .help, .version, .check, .lang, .external => null,
     };
 }
 

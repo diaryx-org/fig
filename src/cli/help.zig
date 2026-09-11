@@ -24,6 +24,11 @@ pub const Help = struct {
             \\  convert: convert a file (or a host document's embedded region)
             \\    from one format/archetype to another, in place
             \\  patch: merge one document into another, in place and losslessly
+            \\  lang: list the languages fig knows, or check a configured one
+            \\
+            \\Every action takes --lang <name> to read and write a file through
+            \\a language configured in languages.figl rather than by extension
+            \\(`{s} lang --help`).
             \\
             \\Any other action is handed to a `fig-<action>` program on your PATH,
             \\the way git does: `{s} schema lint f.json` runs `fig-schema lint f.json`
@@ -32,7 +37,7 @@ pub const Help = struct {
             \\For information on action options, pass --help or -h
             \\to the action you would like to learn about.
             \\
-        , .{ binary_name, binary_name });
+        , .{ binary_name, binary_name, binary_name });
         try term.writer.flush();
     }
 
@@ -411,6 +416,47 @@ pub const Help = struct {
             \\  whole document root with a non-mapping (that is a copy, not a patch).
             \\
         , .{binary_name});
+        try term.writer.flush();
+    }
+    pub fn lang(term: *Io.Terminal, binary_name: []const u8) !void {
+        try term.writer.print(
+            \\Usage: {s} lang list
+            \\       {s} lang check <name> [--against <format>] [files...]
+            \\  Languages fig did not compile in. One is a helper program that
+            \\  speaks the wire in fig's Rust crate (`fig::helper`), configured in
+            \\  a `languages.figl`:
+            \\
+            \\    language[]
+            \\    > name = lua-dotenv
+            \\    > extensions = [env]
+            \\    > command = [fig-lua, ~/.config/fig/languages/dotenv.lua]
+            \\
+            \\  found, earlier file winning a name, at $FIG_LANGUAGES (a file path),
+            \\  .fig/languages.figl in the working directory or any ancestor, and
+            \\  $XDG_CONFIG_HOME/fig/languages.figl (~/.config/fig/languages.figl).
+            \\  `name` is what --input, --output and --lang accept; `extensions`
+            \\  resolves a file to it, but a compiled format's extension always
+            \\  wins, so a twin of a compiled language is reached with --lang.
+            \\
+            \\  Nothing is spawned until a name or extension the CLI cannot resolve
+            \\  itself is asked for; the helper is then started once and asked to
+            \\  parse its own samples, print and reparse them, and take a no-op
+            \\  edit, and is refused with the reason if any of that fails.
+            \\
+            \\  list: every compiled format, and every configured language with
+            \\    what it can do (read, edit, serialize), its extensions and the
+            \\    file that configured it — or why it was refused.
+            \\  check <name>: load the language and report what the harness found.
+            \\    --against <format>: also hold it to a compiled format — parse each
+            \\    of the language's samples and each file given with both, and
+            \\    compare the tables row for row, the way a reimplementation of a
+            \\    compiled language is proven (`{s} lang check lua-dotenv --against
+            \\    dotenv secrets.env`). Exits 1 on the first difference.
+            \\
+            \\  --lang <name>, on any action, names the language a file is read and
+            \\  written in, whatever its extension: `{s} get secrets.env --lang lua-dotenv`.
+            \\
+        , .{ binary_name, binary_name, binary_name, binary_name });
         try term.writer.flush();
     }
 };

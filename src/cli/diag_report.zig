@@ -278,6 +278,7 @@ fn spliceStyle(format: Format) SpliceStyle {
     return switch (format) {
         // Neither has an in-place editor, so no edit text ever reaches here.
         .canonical, .gron => .literal,
+        _ => if (types.runtimeEntry(format)) |e| e.splice else .literal,
         inline else => |f| comptime fig.Language.entryFor(@tagName(f)).splice,
     };
 }
@@ -397,6 +398,21 @@ pub fn reportSerializeError(term: *Io.Terminal, err: fig.AST.SerializeError) nor
         error.FigUnrepresentableRoot => "a scalar value cannot be the root of a .fig/.figl document; use canonical form or another output format instead (see docs/spec.md § 2)",
         error.UnsupportedValue => "this document contains an array, or a table nested deeper than this format allows (INI: one level of `[section]`; dotenv/`.properties`: none)",
         error.InvalidKey => "a mapping key is not valid in this output format (a dotenv key must be a bash identifier: `[A-Za-z_][A-Za-z0-9_]*`)",
+    };
+    term.writer.print("error: {s}\n", .{message}) catch {};
+    term.writer.flush() catch {};
+    std.process.exit(1);
+}
+
+/// `reportSerializeError` for a runtime language's print: the language
+/// refused the tree (its own reason was reported through the helper's
+/// stderr, which the CLI leaves connected), or it declares no printer.
+pub fn reportRuntimePrintError(term: *Io.Terminal, err: anyerror) noreturn {
+    const message: []const u8 = switch (err) {
+        error.RuntimePrintFailed => "the language's printer refused this document",
+        error.FormatNotSerializable, error.FormatDisabled => "this language declares no printer; it can be read but not written",
+        error.WriteFailed => "failed to write output",
+        else => @errorName(err),
     };
     term.writer.print("error: {s}\n", .{message}) catch {};
     term.writer.flush() catch {};

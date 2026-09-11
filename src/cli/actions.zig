@@ -18,6 +18,7 @@ const parse_dispatch = @import("parse_dispatch.zig");
 const edit_ops = @import("edit_ops.zig");
 const patch_ops = @import("patch_ops.zig");
 const reformat = @import("reformat.zig");
+const languages = @import("languages.zig");
 const external = @import("external.zig");
 
 const Help = help.Help;
@@ -34,7 +35,8 @@ const Io = std.Io;
 /// strict refuses them.
 fn materializeFor(a: std.mem.Allocator, format: Format, ast: *const fig.AST, mode: enum { lax, strict }) !*const fig.AST {
     return switch (format) {
-        .canonical, .gron => ast,
+        // A runtime source has no reference layer either.
+        .canonical, .gron, _ => ast,
         inline else => |f| blk: {
             const d = comptime fig.Language.entryFor(@tagName(f));
             if (comptime d.Lang == void or !@hasDecl(d.Lang, "materialize")) break :blk ast;
@@ -129,7 +131,7 @@ pub fn runSet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
                 std.process.exit(2);
             }
             const seed: []const u8 = if (opts.embed != null or opts.detect_embed) "" else edit_ops.emptyDocSeed(opts.format) orelse {
-                try stderr_term.writer.print("error: cannot create {s}: {s} has no empty-document form to seed a new file. Start from an existing file.\n", .{ opts.file, @tagName(opts.format) });
+                try stderr_term.writer.print("error: cannot create {s}: {s} has no empty-document form to seed a new file. Start from an existing file.\n", .{ opts.file, types.name(opts.format) });
                 try stderr_term.writer.flush();
                 std.process.exit(2);
             };
@@ -326,10 +328,7 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
         // for the rest of the rationale: JSON5 reuse, canonical/fig
         // decode-only, INI/dotenv/properties/plist/NestedText's lack of an
         // envelope of their own).
-        const maybe_native: ?fig.Lossless.NativeKinds = if (to == .gron)
-            fig.Lossless.nativeFor(.json)
-        else
-            fig.Lossless.nativeFor(types.toSerializeFormat(to) orelse unreachable); // gron handled above
+        const maybe_native: ?fig.Lossless.NativeKinds = parse_dispatch.nativeForFormat(to);
         const decoded = try a.create(fig.AST);
         decoded.* = try fig.Lossless.decode(a, base_ast);
         const native = maybe_native orelse break :blk decoded;
@@ -352,7 +351,30 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
         return;
     }
 
-    const target: fig.AST.SerializeFormat = types.toSerializeFormat(to) orelse unreachable; // handled by the early return above
+    // A runtime target prints through its vtable, with the same lossy
+    // strips a compiled one gets; it has no loss diagnostics yet. A scalar
+    // comes back as the fragment the editor would splice — the value as it
+    // stands alone, no newline — where a compiled printer ends the line
+    // itself, so `get` ends it here to print the same as one.
+    if (types.runtimeEntry(to)) |e| {
+        var out: std.Io.Writer.Allocating = .init(a);
+        defer out.deinit();
+        parse_dispatch.printRuntime(a, &out.writer, e, ast, node_id, opts.serialize, opts.lossless) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => |x| diag_report.reportRuntimePrintError(stderr_term, x),
+        };
+        const text = out.written();
+        try stdout_term.writer.writeAll(text);
+        const is_container = switch (ast.nodes[node_id].kind) {
+            .mapping, .sequence => true,
+            else => false,
+        };
+        if (!is_container and text.len > 0 and text[text.len - 1] != '\n') try stdout_term.writer.writeByte('\n');
+        try stdout_term.writer.flush();
+        return;
+    }
+
+    const target: fig.AST.SerializeFormat = types.toSerializeFormat(to) orelse unreachable; // handled by the early returns above
 
     // Surface everything the conversion would silently lose (comments
     // dropped/degraded, values dropped/degraded) — unless `--quiet`. The
@@ -522,9 +544,9 @@ pub fn runCheck(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_
                 // Echo the pinned version alongside the format when one
                 // was requested, so `ok` states exactly what was checked.
                 if (opts.spec) |spec|
-                    try stdout_term.writer.print(": {s} ({s} {s})\n", .{ file, @tagName(fmt), spec })
+                    try stdout_term.writer.print(": {s} ({s} {s})\n", .{ file, types.name(fmt), spec })
                 else
-                    try stdout_term.writer.print(": {s} ({s})\n", .{ file, @tagName(fmt) });
+                    try stdout_term.writer.print(": {s} ({s})\n", .{ file, types.name(fmt) });
                 // Authoring-time lints: the file is valid (still `ok`),
                 // but likely-mistake lines print right below it. Rendered
                 // live against the real terminal (not buffered into a
@@ -849,6 +871,17 @@ fn finishConvert(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, input:
     } else if (!write) {
         try stdout_term.writer.writeAll(result);
         try stdout_term.writer.flush();
+    }
+}
+
+pub fn runLang(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_term: *Io.Terminal, binary_name: []const u8, opts: types.LangOptions) !void {
+    if (opts.requested_help) {
+        try Help.lang(stderr_term, binary_name);
+        return;
+    }
+    switch (opts.verb) {
+        .list => try languages.list(io, a, stdout_term),
+        .check => try languages.check(io, a, stdout_term, stderr_term, opts.name, opts.against, opts.files),
     }
 }
 

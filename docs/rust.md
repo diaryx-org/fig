@@ -208,8 +208,22 @@ name and resolve it with `Format::by_name`.
 
 The same `Language` can be served to the `fig` command line as a helper
 process — JSON over stdin and stdout — with [`helper::serve`], which is what
-a helper crate's `main` is. The wire is documented on the `helper` module.
-See `docs/proposals/runtime-languages.md` in the core for the design.
+a helper crate's `main` is:
+
+```rust,ignore
+fn main() -> std::io::Result<()> {
+    fig::helper::serve(Hcl)
+}
+```
+
+The CLI spawns it from a `languages.figl` — `name`, the `extensions` it
+owns, and the `command` to run — and it is then a format every action
+accepts, by extension or by `--lang <name>`; `fig lang list` shows what
+loaded and `fig lang check <name> --against <format>` holds it to a
+compiled twin. `examples/tinykv_helper.rs` is a complete helper, and
+`tools/cli-lang-check.sh` in the core drives the CLI through it. The wire
+is documented on the `helper` module; see
+`docs/proposals/runtime-languages.md` in the core for the design.
 
 ## Reading data
 

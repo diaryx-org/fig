@@ -236,6 +236,18 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     rust_test.has_side_effects = true;
     check_step.dependOn(&rust_test.step);
 
+    // The CLI's end of the runtime-language carrier: the Rust crate's
+    // `tinykv_helper` example, named in a `languages.figl`, driven through
+    // every action of the built `fig` (`tools/cli-lang-check.sh`). The C
+    // probe above proves the in-process ABI; this proves the wire and the
+    // helper runner, which is what `fig-lua` will be spoken to through.
+    // Gated on cargo the same way, since the helper is a cargo example.
+    const cli_lang_check = b.addSystemCommand(&.{ "sh", "tools/cli-lang-check.sh" });
+    cli_lang_check.addArtifactArg(arts.exe);
+    cli_lang_check.setCwd(b.path("."));
+    cli_lang_check.has_side_effects = true;
+    check_step.dependOn(&cli_lang_check.step);
+
     // TypeScript binding test suite, gated on a local npm toolchain, a new enough
     // Node, AND installed deps. The tests import the built wasm module, so build
     // first. Skips (with a note) when npm is absent, when Node predates 24, or when

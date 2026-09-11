@@ -55,6 +55,9 @@ pub fn resolveSpec(format: Format, spec_str: ?[]const u8) error{UnsupportedSpec}
         // canonical oracle grammar is the AST's own 1:1 encoding, and gron is a
         // projection of JSON.
         .canonical, .gron => error.UnsupportedSpec,
+        // A runtime dialect is selected by name; its rows carry no `--spec`
+        // versions (proposal §4.2 defers them).
+        _ => error.UnsupportedSpec,
         inline else => |f| {
             const d = comptime L.entryFor(@tagName(f));
             // Two ways `--spec` is inapplicable, and they report identically:
@@ -193,11 +196,17 @@ pub const Reports = struct {
     dotenv: ReportOf(L.DOTENV) = emptyReport(L.DOTENV),
     properties: ReportOf(L.PROPERTIES) = emptyReport(L.PROPERTIES),
     nestedtext: ReportOf(L.NESTEDTEXT) = emptyReport(L.NESTEDTEXT),
+    /// A runtime language's failure: already rendered, since a helper hands
+    /// over a message and an offset rather than a code this file could
+    /// describe. `short_label` is the language's name.
+    runtime: ?fig.ParseDiagnostic.Rendered = null,
 
     /// Print a `file:line:col` teaching message for each language that recorded
     /// a single parse diagnostic. At most one ever has: only the format that
     /// was actually parsed fills a report.
     pub fn reportDiagnostics(self: *const Reports, term: *Io.Terminal, source: []const u8, file: []const u8) !void {
+        if (self.runtime) |d|
+            try diag_report.reportParseError(term, source, file, d.offset, d.end, d.message, d.short_label);
         inline for (reporting) |r| {
             if (comptime r[1] != void) {
                 const P = r[1].Parser;
@@ -229,6 +238,11 @@ pub const Reports = struct {
     /// the single `diag` when a language recorded one but no error list. Null
     /// when no language recorded anything.
     pub fn renderErrors(self: *const Reports, allocator: std.mem.Allocator) !?[]const fig.ParseDiagnostic.Rendered {
+        if (self.runtime) |d| {
+            const one = try allocator.alloc(fig.ParseDiagnostic.Rendered, 1);
+            one[0] = d;
+            return one;
+        }
         inline for (reporting) |r| {
             if (comptime r[1] != void) {
                 const P = r[1].Parser;
@@ -316,6 +330,24 @@ pub fn parseSliceAs(format: Format, spec: Spec, allocator: std.mem.Allocator, co
         // gron ("ungron") reconstructs the AST from its `path = value` lines,
         // reusing the JSON parser for each RHS — so it needs JSON compiled in.
         .gron => if (comptime build_options.lang_json) gron.parseDocument(allocator, content) else error.FormatDisabled,
+        // A language registered at runtime: its own `parse`, through the
+        // one `Runtime.Language`. Its diagnostic is the message and offset
+        // the helper gave, landed in `reports.runtime` for the same
+        // `file:line:col` report the compiled parsers get.
+        _ => {
+            const e = types.runtimeEntry(format) orelse return error.FormatDisabled;
+            var parser: fig.Runtime.Language.Parser = .{ .allocator = allocator };
+            return fig.Runtime.Language.parse(&parser, content, e.typeOf()) catch |err| {
+                if (err == error.RuntimeParseFailed) {
+                    reports.runtime = .{
+                        .offset = parser.last_error.byte_offset,
+                        .message = try allocator.dupe(u8, parser.lastMessage()),
+                        .short_label = e.name,
+                    };
+                }
+                return err;
+            };
+        },
         inline else => |f| {
             const d = comptime L.entryFor(@tagName(f));
             if (comptime d.Lang == void) return error.FormatDisabled;
@@ -392,6 +424,42 @@ pub fn flatStripDepth(target: fig.AST.SerializeFormat) ?usize {
     };
 }
 
+/// The lossless-envelope declaration of a CLI output format: what the
+/// `$fig` envelope pass encodes for. gron's value layer is JSON, so it takes
+/// JSON's; a runtime target's is its entry's `caps.lossless`; every other
+/// member is its `SerializeFormat`'s language.
+pub fn nativeForFormat(to: Format) ?fig.Lossless.NativeKinds {
+    if (to == .gron) return fig.Lossless.nativeFor(.json);
+    if (types.runtimeEntry(to)) |e| return e.language.caps.lossless;
+    return fig.Lossless.nativeFor(types.toSerializeFormat(to) orelse unreachable);
+}
+
+/// Print `ast` from `node_id` in the runtime language `e` — the tail of
+/// `get`, `fmt` and `convert` for a target that is not a `SerializeFormat`:
+/// the same lossy strips a compiled target gets, read off the entry's own
+/// declarations (`caps.lossless` for the null strip, `max_mapping_depth` for
+/// the flat strip), then the vtable's `print`. What is not here is the
+/// loss diagnostics: `Diagnostics.analyze` is a table over the compiled
+/// formats, and a runtime target has no row in it yet.
+pub fn printRuntime(allocator: std.mem.Allocator, writer: *Io.Writer, e: *const fig.Runtime.Entry, ast: *const fig.AST, node_id: fig.AST.Node.Id, serialize: fig.AST.SerializeOptions, lossless: bool) !void {
+    if (!e.language.caps.serialize) return error.FormatNotSerializable;
+    const caps = e.language.caps;
+    const null_strip: ?fig.Lossless.NativeKinds = if (!lossless) blk: {
+        const native = caps.lossless orelse break :blk null;
+        break :blk if (native.null) null else native;
+    } else null;
+    const depth: ?usize = if (!lossless) (if (caps.max_mapping_depth) |d| @as(usize, d) else null) else null;
+    if (null_strip) |native| {
+        const result = try fig.Lossless.lossyStrip(allocator, ast, node_id, native);
+        if (result.ast) |stripped| try fig.Runtime.printWith(e, writer, &stripped, serialize);
+    } else if (depth) |d| {
+        const result = try fig.FlatStrip.lossyStrip(allocator, ast, node_id, d);
+        if (result.ast) |stripped| try fig.Runtime.printWith(e, writer, &stripped, serialize);
+    } else {
+        try fig.Runtime.printNodeWith(e, writer, ast, node_id, serialize);
+    }
+}
+
 /// Sniff `content` with `Language.detect`, emit an info-level log of what was
 /// inferred, and return it — the fallback when neither `--input` nor the file
 /// extension pinned the format. Errors (after a clear message) if nothing matches.
@@ -401,7 +469,7 @@ pub fn resolveFormatFromContent(allocator: std.mem.Allocator, content: []const u
         return error.UnsupportedFileFormat;
     };
     const format = mapDetected(detected);
-    std.log.scoped(.detect).info("inferred format `{s}` for `{s}` from its contents", .{ @tagName(format), file_path });
+    std.log.scoped(.detect).info("inferred format `{s}` for `{s}` from its contents", .{ types.name(format), file_path });
     return format;
 }
 

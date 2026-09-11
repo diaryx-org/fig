@@ -42,6 +42,16 @@ pub fn reformatSlice(
     };
     try reports.reportWarnings(term, content, file_path, quiet, strict);
 
+    if (types.runtimeEntry(format)) |e| {
+        var out: std.Io.Writer.Allocating = .init(allocator);
+        defer out.deinit();
+        parse_dispatch.printRuntime(allocator, &out.writer, e, &doc.ast, doc.ast.root, serialize, false) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => |x| diag_report.reportRuntimePrintError(term, x),
+        };
+        return out.toOwnedSlice();
+    }
+
     const target: fig.AST.SerializeFormat = types.toSerializeFormat(format) orelse unreachable; // rejected up front above
 
     if (!quiet or strict) {
@@ -151,7 +161,7 @@ pub fn convertSlice(
         // it holds — see `manifest.Caps.lossless` for the per-format
         // rationale (JSON5 reuse, canonical/fig decode-only, INI/dotenv/
         // properties/plist/NestedText's lack of an envelope).
-        const maybe_native: ?fig.Lossless.NativeKinds = fig.Lossless.nativeFor(types.toSerializeFormat(to) orelse unreachable);
+        const maybe_native: ?fig.Lossless.NativeKinds = parse_dispatch.nativeForFormat(to);
         const decoded = try allocator.create(fig.AST);
         decoded.* = try fig.Lossless.decode(allocator, base_ast);
         const native = maybe_native orelse break :blk decoded;
@@ -159,6 +169,16 @@ pub fn convertSlice(
         encoded.* = try fig.Lossless.encode(allocator, decoded, native);
         break :blk encoded;
     } else base_ast;
+
+    if (types.runtimeEntry(to)) |e| {
+        var out: std.Io.Writer.Allocating = .init(allocator);
+        defer out.deinit();
+        parse_dispatch.printRuntime(allocator, &out.writer, e, ast, ast.root, serialize, lossless) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => |x| diag_report.reportRuntimePrintError(term, x),
+        };
+        return out.toOwnedSlice();
+    }
 
     const target: fig.AST.SerializeFormat = types.toSerializeFormat(to) orelse unreachable; // rejected up front above
 

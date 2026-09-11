@@ -179,6 +179,28 @@ PATH, the way `git` does — so installing a tool named `fig-schema` makes
 `fig schema ...` run it, with every argument after the action passed through
 untouched.
 
+A format `fig` doesn't compile in can be a program too. A `languages.figl`
+(in `.fig/` beside your files, or under `~/.config/fig/`) names a helper —
+any executable speaking the [helper wire](docs/rust.md#runtime-languages),
+such as a `fig-lua` script — and it becomes a format every action accepts,
+by extension or by `--lang`:
+
+```fig
+language[]
+> name = lua-dotenv
+> extensions = [env]
+> command = [fig-lua, ~/.config/fig/languages/dotenv.lua]
+```
+
+```bash
+$ fig get secrets.env --lang lua-dotenv
+$ fig lang list
+$ fig lang check lua-dotenv --against dotenv secrets.env
+```
+
+`fig lang list` shows every compiled and configured language; `fig lang check`
+holds a configured one to a compiled twin, table for table.
+
 ## Nushell
 
 [`bindings/nushell`](bindings/nushell) is a [nushell](https://www.nushell.sh) plugin

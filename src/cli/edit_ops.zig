@@ -303,6 +303,7 @@ pub fn emptyDocSeed(format: Format) ?[]const u8 {
         // The canonical oracle grammar is a parse/print pair and gron is a
         // projection; neither is a stored format anyone creates from scratch.
         .canonical, .gron => null,
+        _ => if (types.runtimeEntry(format)) |e| e.empty_doc_seed else null,
         inline else => |f| comptime fig.Language.entryFor(@tagName(f)).empty_doc_seed,
     };
 }
@@ -367,6 +368,25 @@ pub fn route(
         .canonical => return error.UnsupportedCanonicalEdit,
         // gron is a CLI-only get/echo projection with no in-place editor.
         .gron => return error.UnsupportedGronEdit,
+        // A runtime language: the one `Editor(Runtime.Language)`, with the
+        // entry's dialect as its `format`; whether it edits at all and how
+        // it takes text are the entry's own facts, read at the call.
+        _ => {
+            const e = types.runtimeEntry(format) orelse return error.FormatDisabled;
+            if (!e.language.caps.edit) return error.FormatNotEditable;
+            switch (req) {
+                .get_comment => |g| return getCommentFromFile(fig.Runtime.Language, allocator, io, file, g.path, g.inline_comment, e.typeOf()),
+                .apply => |ap| {
+                    if (e.splice == .json_string) {
+                        const j = try jsonifyEdit(allocator, ap.op, ap.text);
+                        try applyToFile(fig.Runtime.Language, allocator, io, file, ap.path, j.text, j.op, e.typeOf());
+                    } else {
+                        try applyToFile(fig.Runtime.Language, allocator, io, file, ap.path, ap.text, ap.op, e.typeOf());
+                    }
+                    return null;
+                },
+            }
+        },
         inline else => |f| {
             const d = comptime fig.Language.entryFor(@tagName(f));
             if (comptime d.Lang == void) return error.FormatDisabled;

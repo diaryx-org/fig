@@ -125,6 +125,7 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **languages** — remove generic XML as a selectable format ([`5a25681`](https://github.com/diaryx-org/fig/commit/5a25681a580ba5ccf8a614cd45e6d533928e8d6d))
 - **c-api** — select an embed by (container, format) instead of a flat FigEmbedType ([`ecb689f`](https://github.com/diaryx-org/fig/commit/ecb689fafe2149022f5908481b8655bd3b5a459e))
 - **root** — drop the deprecated `Native` alias for `Canonical` ([`20c7767`](https://github.com/diaryx-org/fig/commit/20c776794d2517507a70aaffdda4f0ebee60fd53))
+- **rust** — drop the no-op `xml` feature ([`93d7a17`](https://github.com/diaryx-org/fig/commit/93d7a17d8c27779bcc56ab4b78f4c447a2fbd316))
 
 ### Added
 
@@ -226,6 +227,10 @@ by `Language.validate` as an unknown declaration.
 - `FigLanguageVTable.render_value` takes `const char *literal` after `value`; a host that registered a value renderer against the previous header must add the parameter. `FIG_LANGUAGE_VTABLE_VERSION` stays 1 because no release carried the previous shape.
 
 - the helper wire's `render` request for `which:"value"` carries `"literal"`; a helper that ignores it is unaffected, and one reading `RenderArgs` from the Rust crate sees the new field, a string when absent.
+
+- (Rust) `fig` and `fig-sys` no longer declare an `xml`
+  feature; a dependent naming it in `features = [...]` fails to resolve and
+  should delete the entry, which changed nothing since 3.5.0.
 
 <!-- git-cliff:end -->
 

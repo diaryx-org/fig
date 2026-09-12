@@ -719,6 +719,40 @@ test "round-trips comments: leading, trailing, line, block" {
     );
 }
 
+test "round-trips a trailing comment on an empty container that has a sibling" {
+    // The comma comes before the comment: `{} // e,` would read back as a
+    // comment `e,` on `{}` and no separator at all.
+    try expectRoundTrip(
+        \\{
+        \\  "a": {}, // on an empty mapping
+        \\  "b": [], // on an empty sequence
+        \\  "c": 1
+        \\}
+    );
+    try expectRoundTrip(
+        \\[
+        \\  [], // first
+        \\  {} // last
+        \\]
+    );
+    try expectRoundTrip("{} // on an inline root");
+}
+
+test "round-trips a comment between an entry's colon and its value" {
+    // Bound as the value's leading comment, and printed back where it was
+    // read from, so it is neither lost nor moved above the key.
+    try expectRoundTrip(
+        \\{
+        \\  "a": /* block */ 1,
+        \\  "b": // line
+        \\    2,
+        \\  "c": /* before a block */ [
+        \\    3
+        \\  ]
+        \\}
+    );
+}
+
 test "captures comment attachment onto the right nodes" {
     var ast = try parseAbstract(testing.allocator,
         \\{

@@ -55,10 +55,9 @@ pub fn print(writer: *Writer, ast: *const AST) Error!void {
     var p: Printer = .{ .writer = writer, .ast = ast };
     try p.leadingComments(ast.leadingCommentAnchor(ast.root), 0);
     try p.node(ast.root, 0);
-    // A container root emitted its own trailing beside its opening delimiter; a
-    // scalar root's trailing is emitted here.
-    if (!p.isContainer(ast.trailingCommentAnchor(ast.root)))
-        try p.trailingComment(ast.trailingCommentAnchor(ast.root));
+    // A block container root emitted its own trailing beside its opening
+    // delimiter; a scalar root's, or an inline `{}`/`[]` root's, goes here.
+    if (!p.isBlockContainer(ast.root)) try p.trailingComment(ast.root);
     // A container root emits its own dangling run inside its closing delimiter
     // (see `container`); a non-container root has no body for EOF orphans to
     // live in, so they print here, one per line, after the value.
@@ -102,6 +101,21 @@ fn node(self: *Printer, id: AST.Node.Id, depth: usize) Error!void {
         .keyvalue => |kv| {
             try self.node(kv.key, depth);
             try self.writer.writeAll(": ");
+            // A comment between the `:` and the value is the value's leading
+            // comment (the parser's `claimLeading(value)`), and it stays
+            // there: a block comment on the line, a line comment ending it
+            // with the value on the next. An entry's leading comments proper
+            // are on its key, written by the container above the line.
+            for (self.ast.comments(kv.value).leading) |c| {
+                try self.writeComment(c);
+                switch (c.style) {
+                    .block => try self.writer.writeByte(' '),
+                    .line => {
+                        try self.writer.writeByte('\n');
+                        try self.writeIndent(depth + 1);
+                    },
+                }
+            }
             try self.node(kv.value, depth);
         },
     }
@@ -164,10 +178,12 @@ fn container(self: *Printer, node_id: AST.Node.Id, open: u8, close: u8, first_ch
     const dangling = self.ast.comments(node_id).dangling;
     // Only a truly empty container (no children, no trailing orphan comments)
     // prints inline; otherwise it opens a block so the dangling run has a home.
+    // An inline one's trailing comment is written by whoever writes the line
+    // — the parent, after the comma, as for a scalar — so that `[] // c,`
+    // never happens, which the parser would read as a comment `c,`.
     if (first_child == null and dangling.len == 0) {
         try self.writer.writeByte(open);
         try self.writer.writeByte(close);
-        try self.trailingComment(node_id); // empty inline container: `[] // c`
         return;
     }
     // Guard the recursion below; the inline fast path above never descends.
@@ -186,9 +202,10 @@ fn container(self: *Printer, node_id: AST.Node.Id, open: u8, close: u8, first_ch
         try self.node(id, depth + 1);
         current_id = self.ast.nodes[id].next_sibling;
         if (current_id != null) try self.writer.writeByte(',');
-        // A container child emits its own trailing beside its opener; skip here.
+        // A block container child emitted its own trailing beside its opener;
+        // a scalar's or an inline container's goes here, after the comma.
         const anchor = self.ast.trailingCommentAnchor(id);
-        if (!self.isContainer(anchor)) try self.trailingComment(anchor);
+        if (!self.isBlockContainer(anchor)) try self.trailingComment(anchor);
         try self.writer.writeByte('\n');
     }
     // Comments dangling at the end of the body (after the last child, or the
@@ -202,13 +219,25 @@ fn container(self: *Printer, node_id: AST.Node.Id, open: u8, close: u8, first_ch
     try self.writer.writeByte(close);
 }
 
-/// Whether `id` is a container node (whose own trailing comment is emitted beside
-/// its opening delimiter, not by its parent).
+/// Whether `id` is a container node.
 fn isContainer(self: *const Printer, id: AST.Node.Id) bool {
     return switch (self.ast.nodes[id].kind) {
         .sequence, .mapping => true,
         else => false,
     };
+}
+
+/// Whether `id` is a container that prints as a block — one with children or
+/// dangling comments — and so emits its own trailing comment beside its
+/// opening delimiter, rather than leaving it to whoever writes its line.
+fn isBlockContainer(self: *const Printer, id: AST.Node.Id) bool {
+    if (!self.isContainer(id)) return false;
+    const first_child = switch (self.ast.nodes[id].kind) {
+        .sequence => |first| first,
+        .mapping => |first| first,
+        else => unreachable,
+    };
+    return first_child != null or self.ast.comments(id).dangling.len != 0;
 }
 
 /// Emit a node's leading comments, one per line at `depth`, each terminated by a
@@ -331,6 +360,48 @@ test "emits leading and trailing comments" {
         \\{
         \\  // greeting
         \\  "name": "fig" // inline
+        \\}
+        \\
+    , out.written());
+}
+
+test "an empty container's trailing comment follows its comma" {
+    const Parser = @import("parser.zig");
+    var ast = try Parser.parseAbstract(std.testing.allocator,
+        \\{ "a": {}, // e
+        \\  "b": [], "c": 1 }
+    );
+    defer ast.deinit();
+
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try print(&out.writer, &ast);
+    try std.testing.expectEqualStrings(
+        \\{
+        \\  "a": {}, // e
+        \\  "b": [],
+        \\  "c": 1
+        \\}
+        \\
+    , out.written());
+}
+
+test "a value's leading comment stays between the colon and the value" {
+    const Parser = @import("parser.zig");
+    var ast = try Parser.parseAbstract(std.testing.allocator,
+        \\{ "a": /* b */ 1, "c": // l
+        \\ 2 }
+    );
+    defer ast.deinit();
+
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try print(&out.writer, &ast);
+    try std.testing.expectEqualStrings(
+        \\{
+        \\  "a": /* b */ 1,
+        \\  "c": // l
+        \\    2
         \\}
         \\
     , out.written());

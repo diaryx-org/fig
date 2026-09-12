@@ -139,12 +139,14 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **cli** — fig lang table, the node table a file parses to ([`e206a11`](https://github.com/diaryx-org/fig/commit/e206a11b32e884d188d8e5cc58a27310eca85edc))
 - **rust** — RenderArgs is constructible, so a Language's render can be called by its own tests ([`c150d2d`](https://github.com/diaryx-org/fig/commit/c150d2ded19596c7a2bccb65c520451b6eeaa144))
 - **editor** — the value renderer is told what fig's bare-literal rules make of the text, as `literal` ([`c80b7f8`](https://github.com/diaryx-org/fig/commit/c80b7f8445416f0352e163f3e2a8d9a35b89a7fe))
+- **npm** — runtime languages — a format written in JavaScript ([`daff282`](https://github.com/diaryx-org/fig/commit/daff282c47c116b6f8ade2e46011d2fe5ba012c3))
 
 ### Fixed
 
 - **abi** — name plist's two extended kinds in fig.h and both bindings, and hold FigExtKind in abi-check ([`d46db7c`](https://github.com/diaryx-org/fig/commit/d46db7c35b3252f24bae804ba86adfe7c37152c0))
 - **runtime** — FIG_DEPTH_NONE, so a vtable can declare a flat format ([`a9e5879`](https://github.com/diaryx-org/fig/commit/a9e5879ccf4749a20af11e676815e3ae6a7d66ab))
 - **cli** — name a runtime format in the bad-edit-text report rather than panic on @tagName ([`761db09`](https://github.com/diaryx-org/fig/commit/761db09b9830268709cf0a9f619480e6332724f9))
+- **canonical** — print an empty container's trailing comment after the comma, and a value's leading comment at all ([`051cd8b`](https://github.com/diaryx-org/fig/commit/051cd8bc8166449fb399a9aed1420dd2e7199a91))
 
 ### Changed
 
@@ -155,6 +157,7 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **editor** — reframe values from a recorded separator, retiring the fig, YAML and NestedText reframe hooks ([`9b6c34b`](https://github.com/diaryx-org/fig/commit/9b6c34b3c47c262fa0f02af89bfedb981187384a))
 - **editor** — name mentions and header syntax retire TOML's five hooks; merge_key and core aliases retire YAML's two — no editing hooks remain ([`f5d96a7`](https://github.com/diaryx-org/fig/commit/f5d96a730c344533c029a58aecd033e35b46e2f6))
 - **editor** — renderers take the dialect and the engine asks hasRenderer, so presence can be a runtime answer ([`8cb44fa`](https://github.com/diaryx-org/fig/commit/8cb44faca3b1c390762a4c97abdfa53cceca8bc4))
+- **cli** — lift the helper wire's codec into fig.Wire over a Transport ([`5c1258f`](https://github.com/diaryx-org/fig/commit/5c1258f26db07452e6d41899a16bac3839ecefd5))
 
 ### Behavioural changes
 
@@ -231,6 +234,10 @@ by `Language.validate` as an unknown declaration.
 - (Rust) `fig` and `fig-sys` no longer declare an `xml`
   feature; a dependent naming it in `features = [...]` fails to resolve and
   should delete the entry, which changed nothing since 3.5.0.
+
+- canonical output for an empty `{}` or `[]` that carries a trailing comment and has a later sibling is `{}, // c` rather than `{} // c,`; the old spelling reparsed with the comma inside the comment text.
+
+- a comment between an entry's `:` and its value survives a canonical print as `"k": /* c */ v` (or `// c` with the value on the next line); it used to be dropped.
 
 <!-- git-cliff:end -->
 

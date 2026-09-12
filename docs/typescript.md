@@ -2,7 +2,7 @@
 title = Using fig in Typescript
 author = adammharris
 created = 2026-07-05T21:35:14-06:00
-updated = 2026-08-20T10:00:00-06:00
+updated = 2026-09-12T11:00:00-06:00
 part_of = [docs](docs.md)
 ```
 
@@ -31,6 +31,7 @@ serve** — it runs in Node, Bun, Deno, and the browser.
 - [Markdown frontmatter & embeds](#markdown-frontmatter--embeds)
 - [Serialization options](#serialization-options)
 - [Diagnostics & lossless conversion](#diagnostics--lossless-conversion)
+- [Runtime languages](#runtime-languages)
 - [Errors](#errors)
 - [Managing resources](#managing-resources)
 - [API reference](#api-reference)
@@ -476,6 +477,125 @@ convert("a: null\nb: 1\n", Format.Yaml, Format.Toml, { lossless: true });
 
 There's also a top-level `diagnose(value, format, options?)` for a built `Value`.
 
+## Runtime languages
+
+A format the module did not compile in can be an object. `registerLanguage`
+takes a `Language` — what the format declares, and the functions it is — and
+hands back a `Format` that every call above accepts from then on, at the tier
+its `caps` declare: `Document.parse`, `Editor.open`, `convert`, `capabilities`,
+all of them, with the format's own parser reading and its own printer writing,
+and fig's splice engine editing between them.
+
+```ts
+import { registerLanguage, parse, convert, Editor, Format, type Language } from "@diaryx/fig";
+
+const tinykv: Language = {
+  name: "tinykv",
+  caps: { read: true, edit: true, serialize: true },
+  max_mapping_depth: 0,                     // flat: no mapping inside the root
+  syntax: {
+    comments: { style: "hash", line: { open: "#" }, trailing: { open: "#" } },
+    kv_sep: "=",
+    empty_map_literal: "{}",
+    flow_containers: false,
+  },
+  dialects: [{ name: "tinykv", extensions: ["tkv"], splice: "raw", empty_doc_seed: "" }],
+  samples: ["a=1\n# two\nb=two words # trailing\n"],
+
+  parse(dialect, input) {
+    // one row per node, in pre-order; row index is node id; spans are
+    // BYTE offsets into the input, [start, end)
+    const rows = [{ kind: "mapping", parent: null, span: [0, input.length] }];
+    // … a keyvalue row, then its key row, then its value row, per line
+    return { rows, comments: [] };
+  },
+  print(dialect, table, options) {
+    // the same table back, spans absent; return the document as text
+    return "…";
+  },
+};
+
+const fmt = registerLanguage(tinykv);
+parse("a=1\n", fmt);                        // → { a: "1" }
+convert("a=1\n", fmt, Format.Json);         // → '{\n  "a": "1"\n}\n'
+using ed = Editor.open("a=1\n", fmt);
+ed.set(["b"], "2");                          // the splice engine writes `b=2` from `syntax`
+ed.source();                                 // → "a=1\nb=2\n"
+```
+
+The object is fig's **helper wire**, as a value: the same `description` a
+helper process answers `describe` with, the same node table its `parse`
+answers, spelled with the wire's own field names — `max_mapping_depth`,
+`empty_doc_seed`, `ext_kind` — rather than camelCase, on purpose. That is
+what makes it one contract across hosts: a `.lua` script for `fig-lua`, a
+Rust `Language`, and this object all declare the same fields, and what
+`fig lang table <file>` prints for any file the CLI can read is exactly what
+your `parse` must return for it. The shapes are documented once, on the
+`helper` module of the [Rust crate](https://docs.rs/fig) (`bindings/rust/fig/src/helper.rs`);
+the TypeScript types `Language`, `NodeTable`, `NodeRow`, `Syntax` and the
+rest mirror them field for field, and `docs/proposals/runtime-languages.md`
+in the core is the design.
+
+**What registration checks.** The description is validated by the rules a
+compiled format is held to, and every sample is parsed, printed, reparsed and
+edited before anything is registered — so a language whose `syntax` cannot
+splice its own samples, or whose `print` does not round-trip its `parse`, is
+refused with the reason as a `FigError`, and nothing is registered. A name
+already taken — a compiled format's, or a language registered earlier — is
+refused the same way; twin a compiled format under a name of your own
+(`js-dotenv`, not `dotenv`). Refuse input from `parse` by throwing a
+`LanguageError` with a message and byte offset; anything else you throw is
+reported as a parse error without one. A registered language lives for the
+rest of the process, and its `Format` integer is assigned per process — persist
+the **name** and resolve it with `formatByName(name)`, which also answers for
+compiled formats (`formatByName("yaml")` is `Format.Yaml`).
+
+**Editing needs no code.** fig's splice engine writes an edit from `syntax`
+alone — what a comment looks like, what separates a key from its value, how
+containers open and close — and reparses through your `parse` to find its
+spans. A format whose fragments cannot be spelled from constants (a typed
+element, an entry whose key wraps its value) declares `renderers` and answers
+`render(which, args)` for `"value"`, `"entry"`, `"item"`, `"tail"` or `"key"`;
+the value renderer is told what fig's own literal rules made of the text
+(`args.literal`: `"int"`, `"bool"`, `"string"`, …), so every format means the
+same thing by `42` and a renderer spells a kind rather than deciding one.
+
+**The same object is a CLI helper.** `serve(lang)` runs the wire over a
+process's stdin and stdout, which is what the `fig` command line speaks to a
+helper it spawns — so the language you wrote for the browser is a format the
+CLI reads, converts and edits, by name or by extension:
+
+```js
+// ~/.config/fig/languages/tinykv.mjs
+import { serve } from "@diaryx/fig";
+import { tinykv } from "./tinykv-language.mjs";
+await serve(tinykv);
+```
+
+```fig
+# ~/.config/fig/languages.figl
+language[]
+> name = tinykv
+> extensions = [tkv]
+> command = [node, ~/.config/fig/languages/tinykv.mjs]
+```
+
+```sh
+fig get settings.tkv
+fig lang check tinykv                          # the same harness registration runs
+fig lang check js-dotenv --against dotenv *.env # a twin, held to its compiled sibling row for row
+```
+
+`bindings/typescript/test/languages/dotenv.ts` in the repository is a complete twin of the compiled
+`dotenv` format — parser and printer, held by the test suite to the compiled
+parser's tables and to its edits — and is what a new language is best written
+against. `handle(lang, requestLine)` is the wire itself, one JSON line to one,
+if you want to carry it over something other than a pipe.
+
+Two things stay closed. A runtime format never joins content sniffing — it is
+selected by name or by extension, never guessed — and `Document.diagnose`
+against a runtime target reports `UnsupportedOperation` in this release.
+
 ## Errors
 
 Failures throw a `FigError` carrying a `status` (`Status` enum) and, for parse
@@ -541,6 +661,12 @@ manage the handle for you, so no cleanup is needed.
 - `diagnose(value, format, options?)` — lossy-conversion warnings for a `Value`.
 - `valueText(value, format, options?)` — serialized form for splicing into edits.
 - `version()` / `versionString()` / `capabilities(format)` — introspection.
+- `registerLanguage(lang)` — register a format written in JavaScript; returns
+  its `Format`. `formatByName(name)` — the `Format` of a compiled or
+  registered name, or `null`.
+- `serve(lang, io?)` — run `lang` as a `fig` CLI helper over stdin/stdout.
+  `handle(lang, line)` — the wire, one request line to one response line.
+  `describe(lang)` — the wire's `description` of `lang`.
 - `split(host, kind)` — read-only `[content, body]` of an embed.
 - `detect(source)` — which `EmbedType` a host opens with, or `null`.
 
@@ -560,9 +686,15 @@ manage the handle for you, so no cleanup is needed.
   `V.string()`, `V.bool()`, `V.extended()`, `V.seq()`, `V.map()`).
 - `Format`, `NodeKind`, `ExtKind`, `EmbedType`, `Status`, `WarningCode`,
   `WarningCause` — enums.
-- `FigError` — the thrown error type.
+- `FigError` — the thrown error type. `LanguageError` — how a `Language`
+  refuses its input, with a byte offset.
 - Types: `Value`, `JsValue` (read side), `JsInput` (write side), `Segment`,
   `SerializeOptions`, `Warning`, `Region`, `Span`, `Version`, `Capabilities`.
+- Runtime-language types, the wire's shapes field for field: `Language`,
+  `Dialect`, `Syntax`, `Comments`, `CommentDelimiter`, `SectionHeader`,
+  `ClosedContainers`, `NativeKinds`, `Renderer`, `Literal`, `RenderArgs`,
+  `PrintOptions`, `NodeTable`, `NodeRow`, `RowKind`, `RowExtKind`, `RowSpan`,
+  `RegionRow`, `MentionRow`, `CommentRow`, `HelperIo`.
 
 ## Developing the binding
 

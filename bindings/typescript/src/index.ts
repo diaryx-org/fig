@@ -26,6 +26,34 @@ export { type Segment } from "./edit-ops.ts";
 export { V, fromJS, toJS, serialize, valueText, diagnose, type Value, type JsValue, type JsInput } from "./value.ts";
 export { version, versionString, capabilities, type Version, type Capabilities } from "./meta.ts";
 export { init, isReady } from "./ffi.ts";
+export {
+  registerLanguage,
+  formatByName,
+  handle,
+  describe,
+  LanguageError,
+  type Language,
+  type Dialect,
+  type Syntax,
+  type Comments,
+  type CommentDelimiter,
+  type SectionHeader,
+  type ClosedContainers,
+  type NativeKinds,
+  type Renderer,
+  type Literal,
+  type RenderArgs,
+  type PrintOptions,
+  type NodeTable,
+  type NodeRow,
+  type RowKind,
+  type RowExtKind,
+  type RowSpan,
+  type RegionRow,
+  type MentionRow,
+  type CommentRow,
+} from "./language.ts";
+export { serve, type HelperIo } from "./helper.ts";
 
 import { Document } from "./document.ts";
 import { serialize as serializeValue } from "./value.ts";

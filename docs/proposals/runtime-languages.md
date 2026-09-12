@@ -3,13 +3,13 @@ title = Runtime languages
 description = A format fig did not compile in — the Language contract carried as a vtable in-process and as a helper protocol out-of-process, with the compiled formats made to pass through the same contract first and fig-lua as the first outside implementor
 created = 2026-09-07
 status = draft
-updated = 2026-09-10
+updated = 2026-09-12
 part_of = [proposals](proposals.md)
 ```
 
 # Runtime languages
 
-> **Status: DRAFT; §3.3, §9, the carrier (core, rust, cli) and fig-lua implemented; npm (§10 step 7) next.**
+> **Status: DRAFT; §3.3, §9, the carrier (core, rust, cli, npm) and fig-lua implemented; every step of §10 is on `main`.**
 > Written against `main` at e56489d, with core 3.0.0 (ABI 2) built and
 > unreleased. §9's reserved range and §3.3's refactor — the compiled
 > formats editing through the contract, every hook deleted — both landed
@@ -410,12 +410,27 @@ every one of those a decision the consumer takes, and makes the set of
 engines open: a helper written in Python is a peer of `fig-lua` on the day
 it is written.
 
-The TypeScript row is the one that needs a sentence. The npm build is
-WASI, and a JS object is reached by the module importing a host function
-per contract member and calling out through it. The node table crosses as
-typed arrays in linear memory. A parse that calls out is not re-entrant
-with itself, which is fine, because the contract never asks a format to
-parse while it is parsing.
+The TypeScript row is the one that needs a sentence. The npm build is a
+freestanding wasm reactor, and a JS object is reached by the module
+importing a host function and calling out through it. A parse that calls
+out is not re-entrant with itself, which is fine, because the contract
+never asks a format to parse while it is parsing.
+
+*As implemented* (2026-09-12): one import rather than one per member, and
+the wire rather than typed arrays. The module imports `fig_host.call` — a
+request line in, a response line out — and its vtable is the helper
+wire's (`src/languages/wire.zig`, the CLI runner's codec lifted into the
+`fig` module and given a `Transport`), over a transport whose one call is
+that import. The JS side of it is `handle`, the same function `serve`
+runs over stdin and stdout. Two things follow that the draft's typed
+arrays would not have given: the object a JS author writes *is* the wire
+document, with the wire's field names, so the shapes are stated once and
+`fig lang table` is the oracle for a twin in every host; and the same
+object is a CLI helper (`serve`) with no second code path. The cost is a
+JSON round trip per call and 44 KiB of wasm for the scanner and the
+codec, against a module of a megabyte. Typed arrays stay the
+optimization to take if a profile ever asks for one; nothing about the
+contract changes if it does.
 
 ## 6. Validation is where the safety is
 
@@ -541,6 +556,15 @@ The object is the in-process carrier; the wasm calls back through imports,
 and the node table is passed as typed arrays. `@diaryx/fig-lua`, if it
 exists, is a second package carrying its own wasm with the Lua VM in it,
 registering through the same call. The core package does not change size.
+
+*As implemented*: the object is the wire's description with the functions
+on it — `name`, `caps`, `syntax`, `dialects`, `samples` as fields, not a
+`describe()`; `parse(dialect, input)` and `print(dialect, table,
+options)` in the wire's argument order; `render(which, args)` for the
+renderers `renderers` names — so that `docs/typescript.md` can say "the
+object is the wire document" and mean it. The table crosses as JSON, not
+typed arrays (§5). `serve(lang)` is the runner: the same object as a CLI
+helper. The core package grew by the wire codec, 44 KiB.
 
 ### 7.4 Zig
 
@@ -690,7 +714,19 @@ state it, and `zig build abi-check` holds both to the registry's value.
    surfaced in the compiled formats are filed as tasks: an entry appended
    after `export KEY=value` is indented to the key's column, and the Rust
    editor spells a key through the printer, which for plist is an element.
-7. **npm 3.1**: the object and the runner.
+7. **npm 3.1**: the object and the runner. Done on `main` (2026-09-12):
+   `registerLanguage(lang)` registers a `Language` object through
+   `fig_host_language_register`, a wasm-only export in `src/wasm_host.zig`
+   that builds the wire's vtable over the `fig_host.call` import;
+   `formatByName`; `serve(lang)`, the runner, which is the same object as
+   a helper process for the CLI; `handle`, the wire itself. The proof is
+   `bindings/typescript/test/languages/dotenv.ts`, the JavaScript twin of
+   the compiled `dotenv`, held by the suite to the compiled parser's
+   tables (fig-lua's fixtures, copied) and to the compiled editor's
+   output edit for edit, and by `fig lang check js-dotenv --against
+   dotenv` over the same fixtures with Node as the helper. §5's "as
+   implemented" note says what differed from the draft. The version is
+   Adam's to name.
 
 The first draft had the bindings after fig-lua. That was backwards: fig-lua
 is a Rust crate registering through the Rust binding, so the binding's
@@ -699,7 +735,7 @@ it comes before the repository it runs.
 
 Each step is verified as pluggable formats §7 was: `zig build check` green,
 the harness over the compiled formats unchanged, and the harness over each
-Lua twin producing the same tables its sibling does.
+Lua or JavaScript twin producing the same tables its sibling does.
 
 ## 11. What this is not
 

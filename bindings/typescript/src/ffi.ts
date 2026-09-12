@@ -7,10 +7,12 @@
 // (Document, Editor, Embed, serialize) speaks in JS types and never touches a
 // pointer.
 //
-// The module imports nothing and exports its memory. Instantiation is lazy: the
-// first FFI call compiles it synchronously (fine under Node and Web Workers). A
-// browser main thread forbids synchronous compilation of modules >4 KB, so
-// there a caller must `await init()` once before any other call — see `init`.
+// The module imports one host function — `fig_host.call`, through which a
+// language written in JavaScript answers the core (see language.ts) — and
+// exports its memory. Instantiation is lazy: the first FFI call compiles it
+// synchronously (fine under Node and Web Workers). A browser main thread
+// forbids synchronous compilation of modules >4 KB, so there a caller must
+// `await init()` once before any other call — see `init`.
 import { WASM_BASE64 } from "./wasm-bytes.ts";
 import type { SerializeOptions } from "./types.ts";
 
@@ -39,6 +41,12 @@ interface Exports {
   fig_version(): number;
   fig_version_string(): number;
   fig_format_capabilities(format: number): number;
+  fig_format_by_name(name: number): number;
+  /** Register the language the host knows as `lang` (see language.ts):
+   *  the module asks it to describe itself through `fig_host.call` and
+   *  registers the result as `fig_language_register` would a C vtable.
+   *  Exported by the wasm module alone; not a C ABI entry point. */
+  fig_host_language_register(lang: number, out_format: number, out_err: number): number;
 
   fig_parse(input: number, input_len: number, format: number, out_doc: number): number;
   fig_parse_ex(input: number, input_len: number, format: number, out_doc: number, out_err: number): number;
@@ -171,6 +179,21 @@ function decodeBase64(b64: string): Uint8Array<ArrayBuffer> {
   return out;
 }
 
+/** The one import: a request line for language `lang` at `(ptr, len)` in
+ *  linear memory, answered into `*outPtr`/`*outLen` with `fig_alloc`ed bytes
+ *  the module frees; nonzero when the host cannot answer at all. language.ts
+ *  installs the real handler with `setHostCall` when it loads; until then —
+ *  a build that never imports it — the stub answers "cannot", which the core
+ *  reports as a refusal to register. */
+export type HostCall = (lang: number, ptr: number, len: number, outPtr: number, outLen: number) => number;
+let hostCall: HostCall = () => 1;
+export function setHostCall(fn: HostCall): void {
+  hostCall = fn;
+}
+function imports(): WebAssembly.Imports {
+  return { fig_host: { call: (lang: number, ptr: number, len: number, outPtr: number, outLen: number) => hostCall(lang, ptr, len, outPtr, outLen) } };
+}
+
 // The instance is created lazily so that merely importing the package never
 // compiles wasm — which would throw on a browser main thread (sync compile of a
 // >4 KB module is disallowed there). `ensure()` does the sync compile on first
@@ -183,7 +206,7 @@ let initPromise: Promise<void> | null = null;
 function ensure(): Exports {
   if (exports) return exports;
   try {
-    const instance = new WebAssembly.Instance(new WebAssembly.Module(decodeBase64(WASM_BASE64)));
+    const instance = new WebAssembly.Instance(new WebAssembly.Module(decodeBase64(WASM_BASE64)), imports());
     exports = instance.exports as unknown as Exports;
   } catch (err) {
     throw new Error(
@@ -205,7 +228,7 @@ function ensure(): Exports {
 export function init(): Promise<void> {
   if (exports) return Promise.resolve();
   if (initPromise) return initPromise;
-  initPromise = WebAssembly.instantiate(decodeBase64(WASM_BASE64), {}).then(({ instance }) => {
+  initPromise = WebAssembly.instantiate(decodeBase64(WASM_BASE64), imports()).then(({ instance }) => {
     exports = instance.exports as unknown as Exports;
   });
   return initPromise;
@@ -225,15 +248,15 @@ const fig: Exports = new Proxy({} as Exports, {
   },
 }) as Exports;
 
-const encoder = new TextEncoder();
-const decoder = new TextDecoder("utf-8", { fatal: false });
+export const encoder = new TextEncoder();
+export const decoder = new TextDecoder("utf-8", { fatal: false });
 
 /** A fresh view over linear memory. `memory.grow` detaches the old buffer, so a
  *  view must be re-derived after any allocation rather than cached. */
-function u8(): Uint8Array {
+export function u8(): Uint8Array {
   return new Uint8Array(ensure().memory.buffer);
 }
-function dv(): DataView {
+export function dv(): DataView {
   return new DataView(ensure().memory.buffer);
 }
 

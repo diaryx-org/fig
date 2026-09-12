@@ -34,6 +34,15 @@ const Diagnostics = @import("diagnostics.zig");
 /// `runtimeOf` first; see `docs/proposals/runtime-languages.md` §8.2.
 const Runtime = @import("languages/runtime.zig");
 
+// The wasm module's half of the runtime-language carrier: a language
+// whose functions are JavaScript, reached through a wasm import. Exported
+// by the wasm build alone — it is the TypeScript binding's bridge, not a
+// C ABI entry point, and `fig.h` does not declare it. `abi-check` reads
+// this file's `export fn` markers, so the export lives in its own file.
+comptime {
+    if (builtin.cpu.arch.isWasm()) _ = @import("wasm_host.zig");
+}
+
 /// Logging for the C ABI build (this file is the static-lib root, so its
 /// `std_options` wins). The default `std.log` handler writes to stderr via
 /// `std.Io.Threaded`, which does not exist on `wasm32-freestanding` (no posix
@@ -448,7 +457,8 @@ fn errCovers(size: u32, comptime field: []const u8) bool {
 /// caller's `size`, so an older/smaller struct receives only the fields it
 /// declared. `byte_offset`/`line`/`column` are 0 ("unknown") in this release —
 /// surfacing the failing span from each parser is a planned follow-up.
-fn fillError(out_err: ?*FigError, status: FigStatus, message: []const u8) FigStatus {
+/// Public for `wasm_host.zig`, whose one export reports the same way.
+pub fn fillError(out_err: ?*FigError, status: FigStatus, message: []const u8) FigStatus {
     const e = out_err orelse return status;
     const size = e.size;
     if (errCovers(size, "code")) e.code = @intFromEnum(status);

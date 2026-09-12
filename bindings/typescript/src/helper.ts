@@ -9,7 +9,7 @@
 //
 // ```js
 // // dotenv.mjs
-// import { serve } from "@diaryx/fig";
+// import { serve } from "@diaryx/fig/helper";
 // import { dotenv } from "./my-dotenv.mjs";
 // await serve(dotenv);
 // ```
@@ -27,7 +27,39 @@
 // or bytes, the output any function that takes a line — so the package's
 // declarations stay free of `@types/node`, and a test drives it with an
 // array.
-import { handle, type Language } from "./language.ts";
+//
+// This module is `@diaryx/fig/helper`: the wire and `serve`, and nothing
+// the wasm module is needed for. A helper imports it rather than the
+// package root and loads no module bytes — `import { serve } from
+// "@diaryx/fig/helper"` — and what it re-exports from `wire.ts` is the same
+// `Language`, `handle` and `LanguageError` the root exports.
+import { handle, type Language } from "./wire.ts";
+
+export {
+  handle,
+  describe,
+  LanguageError,
+  type Language,
+  type Dialect,
+  type Syntax,
+  type Comments,
+  type CommentDelimiter,
+  type SectionHeader,
+  type ClosedContainers,
+  type NativeKinds,
+  type Renderer,
+  type Literal,
+  type RenderArgs,
+  type PrintOptions,
+  type NodeTable,
+  type NodeRow,
+  type RowKind,
+  type RowExtKind,
+  type RowSpan,
+  type RegionRow,
+  type MentionRow,
+  type CommentRow,
+} from "./wire.ts";
 
 /** Where `serve` reads requests and writes responses. */
 export interface HelperIo {

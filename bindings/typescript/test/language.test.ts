@@ -218,3 +218,20 @@ test("serve: the same wire over any line source", async () => {
   assert.deepEqual((JSON.parse(out[1]!) as { table: NodeTable }).table.rows.length, 4);
   assert.equal((JSON.parse(out[2]!) as { ok: boolean }).ok, false);
 });
+
+test("the helper subpath loads the wire and nothing the wasm module is needed for", () => {
+  // `@diaryx/fig/helper` is what a helper process and an embedding runner
+  // import; it must never pull the module bytes in. Read as source: an
+  // import that reaches `ffi.ts` or `wasm-bytes.ts`, directly or through
+  // `language.ts`, is the regression.
+  for (const file of ["wire.ts", "helper.ts"]) {
+    const source = readFileSync(join(process.cwd(), "src", file), "utf8");
+    const imports = [...source.matchAll(/from "\.\/([^"]+)"/g)].map((m) => m[1]!);
+    assert.ok(imports.length > 0 || file === "wire.ts", `${file} imports something`);
+    for (const target of imports) {
+      assert.ok(!/^(ffi|wasm-bytes|language|types)\.ts$/.test(target), `${file} imports ${target}`);
+    }
+  }
+  const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as { exports: Record<string, { default: string }> };
+  assert.equal(pkg.exports["./helper"]?.default, "./dist/helper.js");
+});

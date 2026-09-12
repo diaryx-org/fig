@@ -2,7 +2,7 @@
 title = Using fig in Typescript
 author = adammharris
 created = 2026-07-05T21:35:14-06:00
-updated = 2026-09-12T11:00:00-06:00
+updated = 2026-09-12T14:00:00-06:00
 part_of = [docs](docs.md)
 ```
 
@@ -563,11 +563,13 @@ same thing by `42` and a renderer spells a kind rather than deciding one.
 **The same object is a CLI helper.** `serve(lang)` runs the wire over a
 process's stdin and stdout, which is what the `fig` command line speaks to a
 helper it spawns — so the language you wrote for the browser is a format the
-CLI reads, converts and edits, by name or by extension:
+CLI reads, converts and edits, by name or by extension. Import it from
+`@diaryx/fig/helper`, which is the wire and `serve` alone: a helper process
+never needs the wasm module, and this entry does not load it.
 
 ```js
 // ~/.config/fig/languages/tinykv.mjs
-import { serve } from "@diaryx/fig";
+import { serve } from "@diaryx/fig/helper";
 import { tinykv } from "./tinykv-language.mjs";
 await serve(tinykv);
 ```
@@ -666,7 +668,9 @@ manage the handle for you, so no cleanup is needed.
   registered name, or `null`.
 - `serve(lang, io?)` — run `lang` as a `fig` CLI helper over stdin/stdout.
   `handle(lang, line)` — the wire, one request line to one response line.
-  `describe(lang)` — the wire's `description` of `lang`.
+  `describe(lang)` — the wire's `description` of `lang`. All three, the
+  `Language` types and `LanguageError` are also `@diaryx/fig/helper`, which
+  loads no wasm.
 - `split(host, kind)` — read-only `[content, body]` of an embed.
 - `detect(source)` — which `EmbedType` a host opens with, or `null`.
 

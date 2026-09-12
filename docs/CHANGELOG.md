@@ -140,6 +140,7 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **rust** — RenderArgs is constructible, so a Language's render can be called by its own tests ([`c150d2d`](https://github.com/diaryx-org/fig/commit/c150d2ded19596c7a2bccb65c520451b6eeaa144))
 - **editor** — the value renderer is told what fig's bare-literal rules make of the text, as `literal` ([`c80b7f8`](https://github.com/diaryx-org/fig/commit/c80b7f8445416f0352e163f3e2a8d9a35b89a7fe))
 - **npm** — runtime languages — a format written in JavaScript ([`daff282`](https://github.com/diaryx-org/fig/commit/daff282c47c116b6f8ade2e46011d2fe5ba012c3))
+- **npm** — @diaryx/fig/helper — the wire and serve without the wasm module ([`42ee808`](https://github.com/diaryx-org/fig/commit/42ee8082e71fd55e67e6d65f696591cf649e2cf1))
 
 ### Fixed
 

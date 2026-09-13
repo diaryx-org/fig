@@ -151,6 +151,7 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **editor** — a runtime language's flow root is a flow container, not a section root ([`504edb7`](https://github.com/diaryx-org/fig/commit/504edb71dc166881d3867e3f6fd360c661efa922))
 - **ini** — a `[ ]` header — a name of only whitespace — is an empty name, refused ([`b3976e6`](https://github.com/diaryx-org/fig/commit/b3976e6be4f66a27ab0bdfa2a45c5c81556bce05))
 - **runtime** — a core-schema tag on the wire decodes to the kind tag it encoded ([`4b4fd01`](https://github.com/diaryx-org/fig/commit/4b4fd01224a55df9ee7683260dccbddd08dceb6b))
+- **properties** — an empty value spans where a value would begin, and `set` on a bare key writes the separator ([`f543684`](https://github.com/diaryx-org/fig/commit/f5436849c447e51cba58d3bc7f40a206a5023a09))
 
 ### Changed
 
@@ -262,6 +263,12 @@ gives a node with a kind tag (`AST.Tag.kind`), which the fig printer
 re-emits as `: type =` and `fig_node_tag` reports as such; it used to
 give a text tag of that spelling, which fig dropped and YAML re-emitted
 verbatim. Any other tag text is unchanged.
+
+- in `.properties`, the value of a key with nothing
+after its separator now spans `[end of separator, same)` instead of
+`[end of key, same)`, and its keyvalue span ends there too; `fig set` on
+such a key, or on a key with no separator, now produces `key=value`
+rather than gluing the value to the key.
 
 <!-- git-cliff:end -->
 

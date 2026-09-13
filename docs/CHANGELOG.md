@@ -154,6 +154,7 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **properties** — an empty value spans where a value would begin, and `set` on a bare key writes the separator ([`f543684`](https://github.com/diaryx-org/fig/commit/f5436849c447e51cba58d3bc7f40a206a5023a09))
 - **editor** — an inserted key is spelled as the format spells a key, at every entry ([`447bcda`](https://github.com/diaryx-org/fig/commit/447bcda394826139db318a174d7d9e859223d626))
 - **cli** — `--lang` and `lang check` reach every dialect of a configured language ([`b5cba7a`](https://github.com/diaryx-org/fig/commit/b5cba7a57fbbedcae78081cfb030fc3cdf9fe3d5))
+- **runtime** — a renderer's refusal is reported in the helper's own words ([`872f06e`](https://github.com/diaryx-org/fig/commit/872f06e5aa7d3e0345d46fc2e07e2962973d4a9e))
 
 ### Changed
 
@@ -280,6 +281,11 @@ key style — `.k` in ZON (was `k`, refused), `"has space"` in TOML (was
 the name of a further dialect of a configured language, spawning helpers
 as needed to find it; a name nobody serves is still refused, after every
 unspawned helper has been asked.
+
+- an edit that a runtime language's renderer declines
+now fails with `RendererRefused` (`FIG_STATUS_INVALID_ARGUMENT` at the
+C ABI, as before) and the CLI reports the helper's message rather than
+the `--seq` text.
 
 <!-- git-cliff:end -->
 

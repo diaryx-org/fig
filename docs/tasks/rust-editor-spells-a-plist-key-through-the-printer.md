@@ -1,13 +1,23 @@
 ```fig
 title = The Rust editor spells a key through the format's printer, which for plist is `<string>k</string>`
 description = `Editor::insert_value(&[], "n", 42)` on a plist fails to reparse — the key is rendered by `value_text(Value::Str("n"), Plist)`, which prints a typed `<string>` element, and the entry renderer then escapes that into `<key>&lt;string&gt;n&lt;/string&gt;</key>`; every format whose scalar spelling is not the bare text is affected
-status = open
+status = in-progress
 created = 2026-09-10
-updated = 2026-09-10
+updated = 2026-09-12
 part_of = [tasks](tasks.md)
 ```
 
 # The Rust editor spells a key through the format's printer
+
+**Status (2026-09-12):** the insert half is done — `447bcda` added
+`insertNamedKey` and the C ABI's `fig_editor_insert_named_key` /
+`fig_embed_insert_named_key`, and the Rust and TypeScript `insert_value`
+family hands the key over as a name for the format to spell. What remains
+is `replace_key` (Rust) / `replaceKey` (TypeScript), which still spell the
+new key through `value_text`; the repro below for plist now lands the key,
+and the same call on ZON or NestedText spells `"k"` / `> k`. See also
+[the value path for a format that renders tails](rust-editor-spells-a-nestedtext-value-through-the-printer.md),
+the sibling of this one on the value side.
 
 **Repro** (`bindings/rust`, with the `plist` feature):
 

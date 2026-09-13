@@ -3,7 +3,7 @@ title = Tasks
 description = Deferred work with a done state — a bug is a task with a repro
 author = adammharris
 created = 2026-09-04
-updated = 2026-09-10
+updated = 2026-09-12
 part_of = [docs](/docs/docs.md)
 contents
 > * [YAML `!!int`/`!!float` is applied without checking the lexeme, and `%TAG !!` is not honoured](yaml-int-tag-applied-without-checking-the-lexeme.md)
@@ -11,6 +11,7 @@ contents
 > * [`fig patch` into a runtime target is refused](patch-into-a-runtime-target.md)
 > * [An entry appended after `export KEY=value` is indented to the key's column](dotenv-export-indents-an-appended-entry.md)
 > * [The Rust editor spells a key through the format's printer, which for plist is `<string>k</string>`](rust-editor-spells-a-plist-key-through-the-printer.md)
+> * [The Rust and TypeScript editors spell a NestedText value through the printer, which is a `>` block](rust-editor-spells-a-nestedtext-value-through-the-printer.md)
 > * [Editor: read and write the dangling anchor, and comment a node out and back in](dangling-comments-and-comment-out-ops.md)
 > * [Everything-on `zig build test` fails to compile](everything-on-test-build-fails.md)
 > * [A flow sequence item reports, and deletes, its parent's leading comment](flow-item-leading-comment-is-the-parents.md)

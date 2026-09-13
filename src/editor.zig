@@ -480,6 +480,22 @@ pub fn Editor(comptime Language: type) type {
             // The engine's veto, before anything is spliced — a target whose
             // span is a header/dotted KEY, not a value slot.
             if (parsed.isSection(node)) return self.refuse(.replace);
+            // An empty value whose span sits exactly at the key's end was
+            // written with NO separator — a bare `.properties` key, `flag`
+            // alone on its line — so the value cannot simply take the slot:
+            // `flagx` would read back as a longer key. The separator goes in
+            // with it, as an insert would write it.
+            if (span.start == span.end and std.meta.activeTag(path[path.len - 1]) == .key) {
+                const kv = try parsed.ast.getNodeByPath(path);
+                const key_span = parsed.span(parsed.ast.nodes[kv.kind.keyvalue.key]);
+                if (span.start == key_span.end) {
+                    if (self.syntax().kv_sep) |sep| {
+                        try out.appendSlice(self.allocator, sep);
+                        try out.appendSlice(self.allocator, rendered);
+                        return self.replaceAtSpan(span, out.items);
+                    }
+                }
+            }
             // A sequence item is reframed the same way when the format
             // renders items and the parser recorded the item's marker: the
             // marker and value are rewritten together through `writeItem`.
@@ -4588,6 +4604,17 @@ test "properties set seeds the first key into an empty document" {
 test "properties set inserts a second key using '=', no spaces" {
     if (comptime !build_options.lang_properties) return error.SkipZigTest;
     try expectSet(Properties, .PROPERTIES, "foo=bar\n", &.{.{ .key = "baz" }}, "qux", "foo=bar\nbaz=qux\n");
+}
+
+test "properties set on a bare key — no separator — writes the separator with the value" {
+    if (comptime !build_options.lang_properties) return error.SkipZigTest;
+    // `flag` alone on its line is a key with an empty value at the key's
+    // end; the value cannot take that slot alone, or `flagx` reads back as
+    // the key `flagx`.
+    try expectSet(Properties, .PROPERTIES, "flag\nb=1\n", &.{.{ .key = "flag" }}, "x", "flag=x\nb=1\n");
+    // A value that is empty after a separator keeps the separator it has.
+    try expectSet(Properties, .PROPERTIES, "k=\n", &.{.{ .key = "k" }}, "x", "k=x\n");
+    try expectSet(Properties, .PROPERTIES, "k :   \n", &.{.{ .key = "k" }}, "x", "k :   x\n");
 }
 
 test "properties deleteKey removes the only entry, leaving an empty file" {

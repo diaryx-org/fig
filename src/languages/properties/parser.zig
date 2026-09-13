@@ -311,14 +311,12 @@ fn parseKeyValue(self: *Parser) ParserError!void {
     _ = self.advance();
     const key_str = try self.decodeEscaped(self.tokenText(key_tok));
 
-    var value_str: []const u8 = "";
-    var value_span = Span.init(key_tok.span.end, key_tok.span.end);
-    if (self.peek().kind == .value) {
-        const value_tok = self.peek();
-        _ = self.advance();
-        value_str = try self.decodeEscaped(self.tokenText(value_tok));
-        value_span = value_tok.span;
-    }
+    // The tokenizer always emits a value, zero-width when the line has
+    // none — where one would begin, after the separator.
+    const value_tok = self.peek();
+    _ = self.advance();
+    const value_str = try self.decodeEscaped(self.tokenText(value_tok));
+    const value_span = value_tok.span;
 
     const key_id = try self.arena.addNode(.{ .string = key_str }, key_tok.span);
     try self.claimLeading(key_id);

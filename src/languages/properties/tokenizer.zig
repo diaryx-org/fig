@@ -41,8 +41,9 @@ pub const Kind = enum {
     end_of_file,
     /// escape-aware raw key span (decoded by the parser)
     key,
-    /// escape-aware raw value span (decoded by the parser); absent when the
-    /// line had no separator, or nothing follows one
+    /// escape-aware raw value span (decoded by the parser); zero-width,
+    /// where a value would begin, when the line had no separator or nothing
+    /// follows one
     value,
     /// `#`/`!` line comment; span covers the content only (leader excluded)
     comment,
@@ -133,7 +134,16 @@ fn lexKeyValueLine(self: *Tokenizer) TokenizeError!void {
         self.i += 1;
         while (self.i < self.str.len and isInlineWs(self.str[self.i])) self.i += 1;
     }
-    if (self.i >= self.str.len or self.str[self.i] == '\n' or self.str[self.i] == '\r') return; // no value
+    if (self.i >= self.str.len or self.str[self.i] == '\n' or self.str[self.i] == '\r') {
+        // Nothing follows: an empty value, spanning nothing where a value
+        // would begin — after the separator and its whitespace, not at the
+        // key's end — so that an editor writing a value into that slot
+        // keeps the separator the line already has. A bare key with no
+        // separator at all puts it at the key's end, and the editor writes
+        // the separator with the value there.
+        try self.emit(.value, self.i, self.i);
+        return;
+    }
 
     const value_start = self.i;
     try self.scanEscaped(false);

@@ -134,16 +134,18 @@ impl Editor {
         key: &str,
         value: impl Into<Value>,
     ) -> Result<(), Error> {
-        let key_text = value_text(&Value::Str(key.to_string()), self.format)?;
+        // The key is a NAME; the editor spells it as the format spells a
+        // key (`.k` in ZON, `"k"` in JSON) — a string value, which this used
+        // to send, is not a key in ZON.
         let val = value_text(&value.into(), self.format)?;
         let p = to_ffi_path(path);
         let status = unsafe {
-            ffi::fig_editor_insert_key(
+            ffi::fig_editor_insert_named_key(
                 self.ptr(),
                 p.as_ptr(),
                 p.len(),
-                key_text.as_ptr(),
-                key_text.len(),
+                key.as_ptr(),
+                key.len(),
                 val.as_ptr(),
                 val.len(),
             )
@@ -224,16 +226,15 @@ impl Editor {
         value: impl Into<Value>,
         options: SerializeOptions,
     ) -> Result<(), Error> {
-        let key_text = value_text(&Value::Str(key.to_string()), self.format)?;
         let val = value_text_with(&value.into(), self.format, options)?;
         let p = to_ffi_path(path);
         let status = unsafe {
-            ffi::fig_editor_insert_key(
+            ffi::fig_editor_insert_named_key(
                 self.ptr(),
                 p.as_ptr(),
                 p.len(),
-                key_text.as_ptr(),
-                key_text.len(),
+                key.as_ptr(),
+                key.len(),
                 val.as_ptr(),
                 val.len(),
             )

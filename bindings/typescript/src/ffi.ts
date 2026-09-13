@@ -86,6 +86,7 @@ interface Exports {
   fig_editor_uncomment_leading(ed: number, path: number, path_len: number, first_line: number, line_count: number): number;
   fig_editor_uncomment_dangling(ed: number, path: number, path_len: number, first_line: number, line_count: number): number;
   fig_editor_insert_key(ed: number, path: number, path_len: number, key: number, key_len: number, val: number, val_len: number): number;
+  fig_editor_insert_named_key(ed: number, path: number, path_len: number, name: number, name_len: number, val: number, val_len: number): number;
   fig_editor_delete_key(ed: number, path: number, path_len: number): number;
   fig_editor_append_seq(ed: number, path: number, path_len: number, val: number, val_len: number): number;
   fig_editor_prepend_seq(ed: number, path: number, path_len: number, val: number, val_len: number): number;
@@ -141,6 +142,7 @@ interface Exports {
   fig_embed_uncomment_leading(em: number, path: number, path_len: number, first_line: number, line_count: number): number;
   fig_embed_uncomment_dangling(em: number, path: number, path_len: number, first_line: number, line_count: number): number;
   fig_embed_insert_key(em: number, path: number, path_len: number, key: number, key_len: number, val: number, val_len: number): number;
+  fig_embed_insert_named_key(em: number, path: number, path_len: number, name: number, name_len: number, val: number, val_len: number): number;
   fig_embed_delete_key(em: number, path: number, path_len: number): number;
   fig_embed_append_seq(em: number, path: number, path_len: number, val: number, val_len: number): number;
   fig_embed_prepend_seq(em: number, path: number, path_len: number, val: number, val_len: number): number;

@@ -1460,6 +1460,30 @@ pub export fn fig_editor_insert_key(
     };
 }
 
+/// `fig_editor_insert_key` with the key's NAME rather than its syntax: the
+/// name is spelled as the document's format spells a key — `.name` in ZON,
+/// quoted in strict JSON, quoted when it must be in TOML — which is what a
+/// binding that took the name from its caller wants. `fig_editor_insert_key`
+/// stays for a caller that has the syntax already.
+pub export fn fig_editor_insert_named_key(
+    ed: ?*FigEditor,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    name_ptr: ?[*]const u8,
+    name_len: usize,
+    val_ptr: ?[*]const u8,
+    val_len: usize,
+) FigStatus {
+    const handle = editorFrom(ed) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    const name = sliceOf(name_ptr, name_len) orelse return .invalid_argument;
+    const val = sliceOf(val_ptr, val_len) orelse return .invalid_argument;
+    return switch (handle.inner) {
+        inline else => |*e| if (e.insertNamedKey(path, name, val)) .ok else |err| editStatus(err),
+    };
+}
+
 pub export fn fig_editor_delete_key(
     ed: ?*FigEditor,
     path_ptr: ?[*]const FigPathSegment,
@@ -2460,6 +2484,27 @@ pub export fn fig_embed_uncomment_dangling(
     const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
     return switch (handle.editor) {
         inline else => |*e| if (e.uncommentDangling(path, first_line, line_count)) .ok else |err| editStatus(err),
+    };
+}
+
+/// `fig_embed_insert_key` with the key's NAME rather than its syntax, as
+/// `fig_editor_insert_named_key` is to `fig_editor_insert_key`.
+pub export fn fig_embed_insert_named_key(
+    em: ?*FigEmbed,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    name_ptr: ?[*]const u8,
+    name_len: usize,
+    val_ptr: ?[*]const u8,
+    val_len: usize,
+) FigStatus {
+    const handle = embedFrom(em) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    const name = sliceOf(name_ptr, name_len) orelse return .invalid_argument;
+    const val = sliceOf(val_ptr, val_len) orelse return .invalid_argument;
+    return switch (handle.editor) {
+        inline else => |*e| if (e.insertNamedKey(path, name, val)) .ok else |err| editStatus(err),
     };
 }
 
@@ -4583,6 +4628,34 @@ test "fig_editor_create edits ZON through the C ABI" {
     var len: usize = undefined;
     try std.testing.expectEqual(FigStatus.ok, fig_editor_source(ed, &ptr, &len));
     try std.testing.expectEqualStrings(".{ .title = \"old\", .port = 9090 }", ptr[0..len]);
+}
+
+test "fig_editor_insert_named_key spells the name as the format does" {
+    // `insert_key` takes key SYNTAX; a binding that has a name from its
+    // caller used to spell it as a string value, which is `"new"` in ZON —
+    // a string where a `.new` field must be. The named entry spells it.
+    if (comptime build_options.lang_zon) {
+        const src = ".{ .a = 1 }";
+        var ed: ?*FigEditor = null;
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.zon), &ed));
+        defer fig_editor_destroy(ed);
+        const name = "new";
+        const val = "true";
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_insert_named_key(ed, null, 0, name.ptr, name.len, val.ptr, val.len));
+        const spaced = "has space";
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_insert_named_key(ed, null, 0, spaced.ptr, spaced.len, val.ptr, val.len));
+        try expectEditorSource(ed, ".{ .a = 1, .new = true, .@\"has space\" = true }");
+    }
+    if (comptime build_options.lang_json) {
+        const src = "{\"a\": 1}";
+        var ed: ?*FigEditor = null;
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.json), &ed));
+        defer fig_editor_destroy(ed);
+        const name = "k\"q";
+        const val = "2";
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_insert_named_key(ed, null, 0, name.ptr, name.len, val.ptr, val.len));
+        try expectEditorSource(ed, "{\"a\": 1, \"k\\\"q\": 2}");
+    }
 }
 
 /// Read back an editor's source, for the whole-container tests below.

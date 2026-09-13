@@ -202,6 +202,17 @@ test("Editor inserts while preserving the rest", () => {
   assert.equal(ed.source(), "a: 1\nb: 2\nc: 3\n");
 });
 
+test("Editor.insertValue takes the key's name and spells it as the format does", () => {
+  // JSON quotes and escapes it; TOML quotes it when it must; a name that is
+  // already its own syntax lands as it is.
+  using json = Editor.open('{"a": 1}', Format.Json);
+  json.insertValue([], 'k"q', 2);
+  assert.equal(json.source(), '{"a": 1, "k\\"q": 2}');
+  using toml = Editor.open("a = 1\n", Format.Toml);
+  toml.insertValue([], "has space", 2);
+  assert.equal(toml.source(), 'a = 1\n"has space" = 2\n');
+});
+
 test("Editor.set replaces an existing key or inserts a missing one", () => {
   using ed = Editor.open("a: 1\nb: 2\n", Format.Yaml);
   ed.set(["a"], 9); // existing → replace

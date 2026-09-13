@@ -697,11 +697,12 @@ pub fn Editor(comptime Language: type) type {
             try self.reparse();
         }
 
-        /// Render a logical mapping key into this format's key syntax for the
-        /// `set` insert branch, as the format's declared `key_style` says —
-        /// see `Syntax.KeyStyle` for what each spelling is and why.
-        /// Always returns an owned slice (the caller frees it).
-        fn formatInsertKey(self: *Self, key: []const u8) ![]u8 {
+        /// Render a logical mapping key into this format's key syntax — for
+        /// the `set` insert branch, and for a caller of `insertKey` that has
+        /// a key NAME rather than key syntax — as the format's declared
+        /// `key_style` says; see `Syntax.KeyStyle` for what each spelling is
+        /// and why. Always returns an owned slice (the caller frees it).
+        pub fn formatInsertKey(self: *Self, key: []const u8) ![]u8 {
             switch (self.syntax().key_style) {
                 .json_quoted => {
                     var w = std.Io.Writer.Allocating.init(self.allocator);
@@ -1588,6 +1589,17 @@ pub fn Editor(comptime Language: type) type {
                 .null_ => try self.promoteNullToMapping(span, node.id == parsed.ast.root, key_text, value_text),
                 else => return error.NotAMapping,
             }
+        }
+
+        /// `insertKey` for a caller that has the key's NAME rather than its
+        /// syntax: the name is spelled as this format spells a key
+        /// (`formatInsertKey` — `.name` in ZON, quoted in strict JSON, quoted
+        /// when it must be in TOML) and inserted. What every binding and the
+        /// CLI want, since a name is what a user types.
+        pub fn insertNamedKey(self: *Self, path: []const AST.PathSegment, name: []const u8, value_text: []const u8) !void {
+            const rendered = try self.formatInsertKey(name);
+            defer self.allocator.free(rendered);
+            return self.insertKey(path, rendered, value_text);
         }
 
         /// Delete the mapping entry at `path` (which must name a key). For a

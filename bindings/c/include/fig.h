@@ -411,9 +411,17 @@ FigStatus fig_editor_uncomment_leading(FigEditor *editor, const FigPathSegment *
                                        size_t path_len, size_t first_line, size_t line_count);
 FigStatus fig_editor_uncomment_dangling(FigEditor *editor, const FigPathSegment *path,
                                         size_t path_len, size_t first_line, size_t line_count);
+// Insert `key: val` into the mapping at `path`. `key` is key SYNTAX, spliced
+// as given (`"k"` for JSON, `.k` for ZON); `val` is value syntax.
 FigStatus fig_editor_insert_key(FigEditor *editor, const FigPathSegment *path, size_t path_len,
                                 const uint8_t *key, size_t key_len,
                                 const uint8_t *val, size_t val_len);
+// The same with the key's NAME: spelled as the format spells a key (`.name`
+// in ZON, quoted in strict JSON, quoted when it must be in TOML) before the
+// insert. What a caller holding a name from its user wants.
+FigStatus fig_editor_insert_named_key(FigEditor *editor, const FigPathSegment *path, size_t path_len,
+                                      const uint8_t *name, size_t name_len,
+                                      const uint8_t *val, size_t val_len);
 FigStatus fig_editor_delete_key(FigEditor *editor, const FigPathSegment *path, size_t path_len);
 FigStatus fig_editor_append_seq(FigEditor *editor, const FigPathSegment *path, size_t path_len,
                                 const uint8_t *val, size_t val_len);
@@ -692,6 +700,9 @@ FigStatus fig_embed_uncomment_leading(FigEmbed *embed, const FigPathSegment *pat
                                       size_t path_len, size_t first_line, size_t line_count);
 FigStatus fig_embed_uncomment_dangling(FigEmbed *embed, const FigPathSegment *path,
                                        size_t path_len, size_t first_line, size_t line_count);
+FigStatus fig_embed_insert_named_key(FigEmbed *embed, const FigPathSegment *path, size_t path_len,
+                                     const uint8_t *name, size_t name_len,
+                                     const uint8_t *val, size_t val_len);
 FigStatus fig_embed_insert_key(FigEmbed *embed, const FigPathSegment *path, size_t path_len,
                                const uint8_t *key, size_t key_len,
                                const uint8_t *val, size_t val_len);

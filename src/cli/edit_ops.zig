@@ -65,7 +65,10 @@ fn applyOp(
         .set_trailing_comment => try editor.setTrailingComment(path, text),
         .delete_leading_comments => try editor.deleteLeadingComments(path),
         .delete_trailing_comment => try editor.deleteTrailingComment(path),
-        .insert_key => |key| try editor.insertKey(path, key, text),
+        // The CLI's key is a NAME; `insertKey` takes key syntax, so it is
+        // spelled as the format spells one first — `.name` in ZON, quoted
+        // for strict JSON — exactly as `set`'s insert branch spells it.
+        .insert_key => |key| try editor.insertNamedKey(path, key, text),
         .set => try editor.set(path, text),
         .set_sequence => |items| try editor.setSequence(path, items),
         .append_seq => try editor.appendToSeq(path, text),
@@ -258,9 +261,12 @@ pub fn opSeedsEmptyRegion(op: EditOp) bool {
 }
 
 /// Recast an edit for a JSON-family target: strict JSON has no bare literals,
-/// so an inserted/replaced key or value must be wrapped as a JSON string (parity
-/// with `edit`'s value replacement). Comment and delete ops carry no value and
-/// pass through untouched. Returns the (possibly requoted) text and op.
+/// so an inserted/replaced value, or a replacement key, must be wrapped as a
+/// JSON string (parity with `edit`'s value replacement). An inserted key is
+/// left as the name it is — `applyOp` spells it through the format's own
+/// `key_style`, which quotes it for JSON. Comment and delete ops carry no
+/// value and pass through untouched. Returns the (possibly requoted) text and
+/// op.
 pub fn jsonifyEdit(allocator: std.mem.Allocator, op: EditOp, text: []const u8) !struct { text: []const u8, op: EditOp } {
     const text_out = switch (op) {
         .replace_value, .replace_key, .insert_key, .set, .append_seq, .prepend_seq => try std.fmt.allocPrint(allocator, "\"{s}\"", .{text}),
@@ -269,7 +275,6 @@ pub fn jsonifyEdit(allocator: std.mem.Allocator, op: EditOp, text: []const u8) !
         .set_sequence, .add_leading_comment, .set_trailing_comment, .delete_leading_comments, .delete_trailing_comment, .delete_key, .remove_seq_item => text,
     };
     const op_out: EditOp = switch (op) {
-        .insert_key => |key| .{ .insert_key = try std.fmt.allocPrint(allocator, "\"{s}\"", .{key}) },
         .set_sequence => |items| blk: {
             const quoted = try allocator.alloc([]const u8, items.len);
             for (items, 0..) |it, i| quoted[i] = try std.fmt.allocPrint(allocator, "\"{s}\"", .{it});
@@ -660,6 +665,30 @@ test "applyEdit performs the structural ops on .properties, including from-empty
 // tests below can't state: that the seed for a format they don't exercise is
 // still exactly these bytes. plist's is fix #1 of the registry work — it was
 // `null` here before the switch became a registry read.
+test "applyEdit insert_key spells the key as the format does: `.name` in ZON, quoted in JSON" {
+    const t = std.testing;
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // The CLI's `insert` carries a key NAME; before this, ZON got `new = 5`
+    // spliced in — no `.` — and every ZON insert was refused as invalid.
+    if (comptime build_options.lang_zon) {
+        const Z = fig.Language.ZON;
+        const dia = comptime fig.Language.entryFor("zon").dialect;
+        const out = try applyEdit(Z, a, ".{\n    .a = 1,\n}\n", &.{}, "5", .{ .insert_key = "new" }, dia);
+        try t.expectEqualStrings(".{\n    .a = 1,\n    .new = 5,\n}\n", out);
+        const quoted = try applyEdit(Z, a, ".{ .a = 1 }", &.{}, "5", .{ .insert_key = "has space" }, dia);
+        try t.expectEqualStrings(".{ .a = 1, .@\"has space\" = 5 }", quoted);
+    }
+    if (comptime build_options.lang_json) {
+        const J = fig.Language.JSON;
+        const dia = comptime fig.Language.entryFor("json").dialect;
+        const j = try jsonifyEdit(a, .{ .insert_key = "k\"q" }, "v");
+        const out = try applyEdit(J, a, "{\"a\": 1}", &.{}, j.text, j.op, dia);
+        try t.expectEqualStrings("{\"a\": 1, \"k\\\"q\": \"v\"}", out);
+    }
+}
+
 test "emptyDocSeed: every seed is the byte string the registry declares" {
     const t = std.testing;
     try t.expectEqualStrings("{}\n", emptyDocSeed(.json).?);
@@ -677,15 +706,16 @@ test "emptyDocSeed: every seed is the byte string the registry declares" {
         try t.expectEqual(@as(?[]const u8, null), emptyDocSeed(f));
 }
 
-test "jsonifyEdit quotes inserted key and value, leaves deletes bare" {
+test "jsonifyEdit quotes an inserted value and leaves its key a name, leaves deletes bare" {
     const t = std.testing;
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
 
+    // The key stays a name: `applyOp` spells it through `key_style`.
     const ins = try jsonifyEdit(a, .{ .insert_key = "k" }, "v");
     try t.expectEqualStrings("\"v\"", ins.text);
-    try t.expectEqualStrings("\"k\"", ins.op.insert_key);
+    try t.expectEqualStrings("k", ins.op.insert_key);
 
     const app = try jsonifyEdit(a, .append_seq, "v");
     try t.expectEqualStrings("\"v\"", app.text);

@@ -477,16 +477,15 @@ impl Embed {
         key: &str,
         value: impl Into<Value>,
     ) -> Result<(), Error> {
-        let key_text = value_text(&Value::Str(key.to_string()), self.inner)?;
         let val = value_text(&value.into(), self.inner)?;
         let p = to_ffi_path(path);
         let status = unsafe {
-            ffi::fig_embed_insert_key(
+            ffi::fig_embed_insert_named_key(
                 self.ptr(),
                 p.as_ptr(),
                 p.len(),
-                key_text.as_ptr(),
-                key_text.len(),
+                key.as_ptr(),
+                key.len(),
                 val.as_ptr(),
                 val.len(),
             )
@@ -539,16 +538,15 @@ impl Embed {
         value: impl Into<Value>,
         options: SerializeOptions,
     ) -> Result<(), Error> {
-        let key_text = value_text(&Value::Str(key.to_string()), self.inner)?;
         let val = value_text_with(&value.into(), self.inner, options)?;
         let p = to_ffi_path(path);
         let status = unsafe {
-            ffi::fig_embed_insert_key(
+            ffi::fig_embed_insert_named_key(
                 self.ptr(),
                 p.as_ptr(),
                 p.len(),
-                key_text.as_ptr(),
-                key_text.len(),
+                key.as_ptr(),
+                key.len(),
                 val.as_ptr(),
                 val.len(),
             )

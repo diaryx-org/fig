@@ -551,6 +551,15 @@ unsafe extern "C" {
         val: *const u8,
         val_len: usize,
     ) -> FigStatus;
+    pub fn fig_editor_insert_named_key(
+        editor: *mut FigEditor,
+        path: *const FigPathSegment,
+        path_len: usize,
+        name: *const u8,
+        name_len: usize,
+        val: *const u8,
+        val_len: usize,
+    ) -> FigStatus;
     pub fn fig_editor_delete_key(
         editor: *mut FigEditor,
         path: *const FigPathSegment,
@@ -815,6 +824,15 @@ unsafe extern "C" {
         path_len: usize,
         key: *const u8,
         key_len: usize,
+        val: *const u8,
+        val_len: usize,
+    ) -> FigStatus;
+    pub fn fig_embed_insert_named_key(
+        embed: *mut FigEmbed,
+        path: *const FigPathSegment,
+        path_len: usize,
+        name: *const u8,
+        name_len: usize,
         val: *const u8,
         val_len: usize,
     ) -> FigStatus;

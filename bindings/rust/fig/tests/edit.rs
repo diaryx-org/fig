@@ -971,3 +971,16 @@ fn container_ops_are_unsupported_where_the_key_ops_already_suffice() {
     ed.delete(&[Segment::Key("a")]).unwrap();
     assert_eq!(ed.source().unwrap(), "b:\n  y: 2\n");
 }
+
+#[test]
+fn editor_insert_takes_the_keys_name_and_spells_it_as_the_format_does() {
+    // JSON quotes and escapes it; TOML quotes it when it must. (ZON, where
+    // a string value is not a key at all, is off in the default feature
+    // set; the runtime twins hold it to `.name` there.)
+    let mut json = Editor::open(b"{\"a\": 1}", Format::Json).unwrap();
+    json.insert(&[], "k\"q", &2).unwrap();
+    assert_eq!(json.source().unwrap(), "{\"a\": 1, \"k\\\"q\": 2}");
+    let mut toml = Editor::open(b"a = 1\n", Format::Toml).unwrap();
+    toml.insert(&[], "has space", &2).unwrap();
+    assert_eq!(toml.source().unwrap(), "a = 1\n\"has space\" = 2\n");
+}

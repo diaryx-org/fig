@@ -17,7 +17,9 @@ export interface EditFns {
   replaceVal(h: number, path: number, pathLen: number, repl: number, replLen: number): number;
   replaceKey(h: number, path: number, pathLen: number, repl: number, replLen: number): number;
   set(h: number, path: number, pathLen: number, val: number, valLen: number): number;
-  insertKey(h: number, path: number, pathLen: number, key: number, keyLen: number, val: number, valLen: number): number;
+  /** Insert by the key's NAME: the editor spells it as the format spells a
+   *  key (`.k` in ZON, `"k"` in JSON). */
+  insertNamedKey(h: number, path: number, pathLen: number, name: number, nameLen: number, val: number, valLen: number): number;
   deleteKey(h: number, path: number, pathLen: number): number;
   appendSeq(h: number, path: number, pathLen: number, val: number, valLen: number): number;
   prependSeq(h: number, path: number, pathLen: number, val: number, valLen: number): number;
@@ -148,14 +150,16 @@ export abstract class Editable {
     }
   }
 
-  /** Insert `key:` mapped to already-serialized `text` at `path`. */
+  /** Insert `key:` mapped to already-serialized `text` at `path`. `key` is
+   *  the key's name; the editor spells it as the format spells a key — a
+   *  string value, which this used to send, is not a key in ZON. */
   insertValueRaw(path: readonly Segment[], key: string, text: string): void {
     const frame = new Frame();
     try {
       const p = encodePath(frame, path);
-      const k = frame.str(valueText(V.string(key), this.textFormat));
+      const k = frame.str(key);
       const t = frame.str(text);
-      check(this.fns.insertKey(this.live(), p.ptr, p.len, k.ptr, k.len, t.ptr, t.len), "insertValue");
+      check(this.fns.insertNamedKey(this.live(), p.ptr, p.len, k.ptr, k.len, t.ptr, t.len), "insertValue");
     } finally {
       frame.dispose();
     }

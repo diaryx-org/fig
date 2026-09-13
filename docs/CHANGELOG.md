@@ -152,7 +152,8 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **ini** — a `[ ]` header — a name of only whitespace — is an empty name, refused ([`b3976e6`](https://github.com/diaryx-org/fig/commit/b3976e6be4f66a27ab0bdfa2a45c5c81556bce05))
 - **runtime** — a core-schema tag on the wire decodes to the kind tag it encoded ([`4b4fd01`](https://github.com/diaryx-org/fig/commit/4b4fd01224a55df9ee7683260dccbddd08dceb6b))
 - **properties** — an empty value spans where a value would begin, and `set` on a bare key writes the separator ([`f543684`](https://github.com/diaryx-org/fig/commit/f5436849c447e51cba58d3bc7f40a206a5023a09))
-- **editor** — an inserted key is spelled as the format spells a key, at every entry ([`2ce57c2`](https://github.com/diaryx-org/fig/commit/2ce57c22f4c4ec7ef722f812248aa46cc4b72734))
+- **editor** — an inserted key is spelled as the format spells a key, at every entry ([`447bcda`](https://github.com/diaryx-org/fig/commit/447bcda394826139db318a174d7d9e859223d626))
+- **cli** — `--lang` and `lang check` reach every dialect of a configured language ([`b5cba7a`](https://github.com/diaryx-org/fig/commit/b5cba7a57fbbedcae78081cfb030fc3cdf9fe3d5))
 
 ### Changed
 
@@ -274,6 +275,11 @@ rather than gluing the value to the key.
 - `fig insert` spells the new key through the format's
 key style — `.k` in ZON (was `k`, refused), `"has space"` in TOML (was
 `has space`, refused), `"k\"q"` in JSON (was `"k"q"`, refused). Rust
+
+- `--lang <name>` and `fig lang check <name>` accept
+the name of a further dialect of a configured language, spawning helpers
+as needed to find it; a name nobody serves is still refused, after every
+unspawned helper has been asked.
 
 <!-- git-cliff:end -->
 

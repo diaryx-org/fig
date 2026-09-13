@@ -149,6 +149,7 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **cli** — name a runtime format in the bad-edit-text report rather than panic on @tagName ([`761db09`](https://github.com/diaryx-org/fig/commit/761db09b9830268709cf0a9f619480e6332724f9))
 - **canonical** — print an empty container's trailing comment after the comma, and a value's leading comment at all ([`051cd8b`](https://github.com/diaryx-org/fig/commit/051cd8bc8166449fb399a9aed1420dd2e7199a91))
 - **editor** — a runtime language's flow root is a flow container, not a section root ([`504edb7`](https://github.com/diaryx-org/fig/commit/504edb71dc166881d3867e3f6fd360c661efa922))
+- **ini** — a `[ ]` header — a name of only whitespace — is an empty name, refused ([`b3976e6`](https://github.com/diaryx-org/fig/commit/b3976e6be4f66a27ab0bdfa2a45c5c81556bce05))
 
 ### Changed
 
@@ -248,6 +249,11 @@ from, or appending to, a one-line root `[...]` or `{...}` used to fail
 with an edit-text refusal (the line splice took the whole document); a
 multi-line root was edited by line and could strand a separator comma.
 Compiled formats are unchanged.
+
+- an INI document with a section header whose name is
+only spaces or tabs (`[ ]`, `[\t]`) is now refused with `InvalidKey`
+("a key/section name cannot be empty"), at the `]`. It used to parse to
+a section with a garbage name, and printing it could crash the process.
 
 <!-- git-cliff:end -->
 

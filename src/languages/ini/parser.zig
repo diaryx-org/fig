@@ -461,6 +461,21 @@ test "section nesting" {
     try testing.expectEqualStrings("localhost", v.kind.string);
 }
 
+test "a section name of only whitespace is an empty name, refused" {
+    // `[ ]` used to tokenize to an inverted span (trimmed from both ends
+    // independently), which read as garbage and crashed the printer.
+    for ([_][]const u8{ "[ ]\n", "[\t]\n", "a = 1\n[  ]\nb = 2\n" }) |src| {
+        var report: Report = .{};
+        try testing.expectError(error.InvalidKey, parseWithReport(testing.allocator, src, .INI, &report));
+        testing.allocator.free(report.warnings);
+    }
+    var report: Report = .{};
+    try testing.expectError(error.InvalidKey, parseWithReport(testing.allocator, "x = 1\n[ ]\n", .INI, &report));
+    testing.allocator.free(report.warnings);
+    // Pinned to the empty name: the `]`, where the trimmed name ends.
+    try testing.expectEqual(@as(usize, 8), report.diag.?.offset);
+}
+
 test "repeated section merges entries and warns" {
     var report: Report = .{};
     const doc = try parseWithReport(testing.allocator, "[a]\nx = 1\n[a]\ny = 2\n", .INI, &report);

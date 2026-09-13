@@ -128,7 +128,7 @@ fn lexSectionHeader(self: *Tokenizer) TokenizeError!void {
         self.i += 1;
     }
     if (self.i >= self.str.len) return error.UnclosedSection;
-    try self.emit(.text, trimStart(self.str, start), trimEnd(self.str, start, self.i));
+    try self.emitTrimmed(start, self.i);
     try self.emit(.close_bracket, self.i, self.i + 1);
     self.i += 1;
     // Only whitespace may trail a header on its own line.
@@ -143,7 +143,7 @@ fn lexKey(self: *Tokenizer) TokenizeError!void {
         self.i += 1;
     }
     if (self.i >= self.str.len or self.str[self.i] != '=') return error.MissingEquals;
-    try self.emit(.text, trimStart(self.str, start), trimEnd(self.str, start, self.i));
+    try self.emitTrimmed(start, self.i);
     try self.emit(.equals, self.i, self.i + 1);
     self.i += 1;
     self.in_value = true;
@@ -156,7 +156,17 @@ fn lexKey(self: *Tokenizer) TokenizeError!void {
 fn lexValueText(self: *Tokenizer) TokenizeError!void {
     const start = self.i;
     while (!self.atLineEnd(self.i)) self.i += 1;
-    try self.emit(.text, trimStart(self.str, start), trimEnd(self.str, start, self.i));
+    try self.emitTrimmed(start, self.i);
+}
+
+/// A `.text` token over `[start, end)` with the surrounding spaces and tabs
+/// left out. Trimmed from the front first and the back no further than
+/// that, so a run that is ALL whitespace — `[ ]`'s name — is an empty span
+/// at its end rather than an inverted one (start past end), which the
+/// parser read as garbage and the printer once crashed on.
+fn emitTrimmed(self: *Tokenizer, start: usize, end: usize) TokenizeError!void {
+    const s = trimStart(self.str, start);
+    try self.emit(.text, s, trimEnd(self.str, s, end));
 }
 
 fn trimStart(str: []const u8, start: usize) usize {

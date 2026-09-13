@@ -142,6 +142,7 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **npm** — runtime languages — a format written in JavaScript ([`daff282`](https://github.com/diaryx-org/fig/commit/daff282c47c116b6f8ade2e46011d2fe5ba012c3))
 - **npm** — @diaryx/fig/helper — the wire and serve without the wasm module ([`42ee808`](https://github.com/diaryx-org/fig/commit/42ee8082e71fd55e67e6d65f696591cf649e2cf1))
 - **runtime** — a language declares its reference layer, and its tag directives ride the table ([`17ec1e6`](https://github.com/diaryx-org/fig/commit/17ec1e6a45229d926a6193315445c51987728a5b))
+- **cli** — `fig lang table --spec` reads a file as a version of its format ([`d9796ea`](https://github.com/diaryx-org/fig/commit/d9796ea931e90532f723a4182556d5308009ca5e))
 
 ### Fixed
 

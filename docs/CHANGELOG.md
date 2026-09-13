@@ -141,6 +141,7 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **editor** — the value renderer is told what fig's bare-literal rules make of the text, as `literal` ([`c80b7f8`](https://github.com/diaryx-org/fig/commit/c80b7f8445416f0352e163f3e2a8d9a35b89a7fe))
 - **npm** — runtime languages — a format written in JavaScript ([`daff282`](https://github.com/diaryx-org/fig/commit/daff282c47c116b6f8ade2e46011d2fe5ba012c3))
 - **npm** — @diaryx/fig/helper — the wire and serve without the wasm module ([`42ee808`](https://github.com/diaryx-org/fig/commit/42ee8082e71fd55e67e6d65f696591cf649e2cf1))
+- **runtime** — a language declares its reference layer, and its tag directives ride the table ([`17ec1e6`](https://github.com/diaryx-org/fig/commit/17ec1e6a45229d926a6193315445c51987728a5b))
 
 ### Fixed
 
@@ -286,6 +287,14 @@ unspawned helper has been asked.
 now fails with `RendererRefused` (`FIG_STATUS_INVALID_ARGUMENT` at the
 C ABI, as before) and the CLI reports the helper's message rather than
 the `--seq` text.
+
+- `fig_format_capabilities` reports `FIG_CAP_REFERENCES` (bit 3) for YAML; a host comparing the mask against exactly `READ|EDIT|SERIALIZE` sees a new value.
+
+- `FigNodeTable` gains `directives`/`directive_count` before `owner`; a C host built against the previous header must recompile (core 3.0 is unreleased, so no released ABI changes).
+
+- a runtime language that declares `references` and returns aliases, merges or tags now has that layer collapsed when converted to a format without one, as YAML is; one that does not declare it is unchanged.
+
+- `fig.Language.YAML.materialize`/`TagMode` are gone from the Zig API; the pass is `fig.Materialize.materialize` with `fig.Materialize.TagMode`.
 
 <!-- git-cliff:end -->
 

@@ -852,7 +852,7 @@ pub fn runLang(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_t
     switch (opts.verb) {
         .list => try languages.list(io, a, stdout_term),
         .check => try languages.check(io, a, stdout_term, stderr_term, opts.name, opts.against, opts.files),
-        .table => try languages.printTable(io, a, stdout_term, stderr_term, opts.name, opts.input),
+        .table => try languages.printTable(io, a, stdout_term, stderr_term, opts.name, opts.input, opts.spec),
     }
 }
 

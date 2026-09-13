@@ -163,6 +163,9 @@ pub const LangOptions = struct {
     /// `table -i <format>`: the format to read the file as, else its
     /// extension decides, else its contents.
     input: ?Format = null,
+    /// `table --spec <version>`: the version of that format to read it
+    /// as, where the format has one (`check`'s `--spec`).
+    spec: ?[]const u8 = null,
     /// `check --against <compiled>`: the compiled format to hold it to.
     against: ?[]const u8 = null,
     /// `check`'s files, parsed by both and compared.

@@ -1363,6 +1363,11 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     log.err("Unsupported input format: {s}\n", .{name});
                     return ArgError.UnsupportedFileFormat;
                 };
+            } else if (std.mem.eql(u8, arg, "--spec") or std.mem.eql(u8, arg, "-s")) {
+                opts.spec = args.next() orelse {
+                    log.err("Missing version value after {s}\n", .{arg});
+                    return ArgError.MissingCheckArgument;
+                };
             } else {
                 try positionals.append(allocator, arg);
             }
@@ -1904,6 +1909,11 @@ test "parseConfig routes lang: list by default, check with a name, --against and
     try t.expectEqual(types.LangOptions.Verb.table, ct.options.lang.verb);
     try t.expectEqualStrings("secrets.env", ct.options.lang.name);
     try t.expectEqual(Format.json, ct.options.lang.input.?);
+    try t.expect(ct.options.lang.spec == null);
+
+    var versioned = TestArgs{ .items = &.{ "fig", "lang", "table", "a.yaml", "--spec", "1.1" } };
+    const cv = try parseConfig(a, &versioned);
+    try t.expectEqualStrings("1.1", cv.options.lang.spec.?);
 
     // `check --help` asks for the help text without a name.
     var helpful = TestArgs{ .items = &.{ "fig", "lang", "check", "--help" } };

@@ -559,11 +559,13 @@ pub fn check(io: Io, a: Allocator, out: *Io.Terminal, err_term: *Io.Terminal, na
     try out.writer.flush();
 }
 
-/// `fig lang table <file> [-i <format>]`: the file's node table as the
-/// JSON a helper answers `parse` with. What an implementor of a twin reads
-/// to see what the compiled format produces, and what `check --against`
-/// then holds the twin to.
-pub fn printTable(io: Io, a: Allocator, out: *Io.Terminal, err_term: *Io.Terminal, file: []const u8, input: ?Format) !void {
+/// `fig lang table <file> [-i <format>] [--spec <version>]`: the file's
+/// node table as the JSON a helper answers `parse` with. What an
+/// implementor of a twin reads to see what the compiled format produces,
+/// and what `check --against` then holds the twin to. `--spec` selects a
+/// version of the format as `check`'s does (YAML 1.1's resolution, TOML
+/// 1.0's grammar), so a twin of that version has a table to read too.
+pub fn printTable(io: Io, a: Allocator, out: *Io.Terminal, err_term: *Io.Terminal, file: []const u8, input: ?Format, spec_str: ?[]const u8) !void {
     const args = @import("args.zig");
     const parse_dispatch = @import("parse_dispatch.zig");
     const fileio = @import("fileio.zig");
@@ -572,8 +574,13 @@ pub fn printTable(io: Io, a: Allocator, out: *Io.Terminal, err_term: *Io.Termina
     const content = try fileio.readAll(a, io, handle);
     const format = input orelse
         (if (args.detectLanguageFromFileEnding(file)) |d| d.format else try parse_dispatch.resolveFormatFromContent(a, content, file));
+    const spec = parse_dispatch.resolveSpec(format, spec_str) catch {
+        try err_term.writer.print("error: --spec {s} is not a version of {s}\n", .{ spec_str.?, types.name(format) });
+        try err_term.writer.flush();
+        return error.UnsupportedSpec;
+    };
     var reports: parse_dispatch.Reports = .{};
-    const doc = parse_dispatch.parseSliceAs(format, .{}, a, content, false, &reports) catch |err| {
+    const doc = parse_dispatch.parseSliceAs(format, spec, a, content, false, &reports) catch |err| {
         try reports.reportDiagnostics(err_term, content, file);
         return err;
     };

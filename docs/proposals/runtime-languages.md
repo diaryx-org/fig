@@ -70,8 +70,9 @@ engines live in their own repositories and are peers of each other.
 - **Required** — `Type`, `Parser`, `Printer`, `default_type`, `parse`,
   `print`, `name`, `extensions`, `caps`, `dialects`.
 - **Required of an editable format** — `syntax(t: Type) Syntax`.
-- **Optional** — `printNode`, `samples`, `materialize`/`TagMode` (YAML),
-  `parseAbstract` (deserializable dialects).
+- **Optional** — `printNode`, `samples`, `materialize`/`TagMode` (YAML;
+  since moved to core as `src/materialize.zig`, gated by `caps.references`
+  — see §8.3), `parseAbstract` (deserializable dialects).
 - **Twenty-two editing hooks** and **three section-only ops**, each
   dispatched by `@hasDecl` and each overriding a generic engine method.
 
@@ -159,7 +160,7 @@ hooks turned out to be mostly facts the parser dropped.
 
 ### 4.1 The node table
 
-A parse returns a flat table, one row per node in pre-order, plus three
+A parse returns a flat table, one row per node in pre-order, plus four
 side tables. This is the shape `Document` already holds — its columns are
 `AST.Node`, `node_spans`, and the span and region tables the §3.3 refactor
 added — restated as values rather than as slices of a Zig struct. Row
@@ -189,6 +190,14 @@ The side tables, each sorted by row:
 - **comments** — `(node, leading | trailing | dangling, line | block,
   text)`: `AST.NodeComments`, flattened. A format with no comment syntax
   declares `comments = null` in its `syntax` and returns none.
+- **directives** — `(handle, prefix)`: the document's tag-handle
+  declarations, in source order (`AST.tag_directives`, a YAML `%TAG`).
+  A tag spelled with a named handle (`!e!foo`) is legal only in a document
+  that declares the handle, so a printer that keeps the tag has to keep the
+  declaration: a parse returns those it read, and a print of a whole
+  document — never of a fragment, which has no directives prefix — receives
+  them back. Added when the YAML twin needed it; every other format has
+  none, and the array is omitted on the wire when empty.
 
 Key–value pairs are three rows, as they are in the AST: the `keyvalue`, its
 key, its value. That is the one place the table is less obvious than a
@@ -212,7 +221,10 @@ about the engine is exposed to it.
 Everything else a `Language` declares becomes a field of one record:
 
 - `name`, `extensions`, `caps` (`read`, `edit`, `serialize`,
-  `max_mapping_depth`, `lossless`).
+  `references`, `max_mapping_depth`, `lossless`). `references` says the
+  format has a reference layer — its parse may return the anchor, alias
+  and tag columns, and its print spells them — which is what decides when
+  the layer is collapsed on the way out (§8.3).
 - `lossless` is the ten booleans of `manifest.NativeKinds`, declared as
   data. The `$fig` envelope encoder in `src/lossless.zig` never branches on
   format identity; it reads exactly those ten, so a runtime format that
@@ -601,6 +613,19 @@ wants either declares nothing yet and gets the generic half: aliases
 resolve, tags ride through untouched. When a script needs the rest, it is
 a `tag_vocabulary` and a `merge_key` field, and YAML's become the first
 values of them.
+
+*As landed (2026-09-12):* `merge_key` is a `Syntax` field, and the tag
+vocabulary did not need to be one. `materialize` reads only the AST and
+its side-tables, so it moved to core (`src/materialize.zig`) unchanged,
+and what the CLI and `fig_document_serialize` needed was not a second
+vocabulary but a declaration of *which languages have the layer*:
+`Caps.references`, `FIG_CAP_REFERENCES` on the C ABI, `caps.references`
+on the wire. A document is collapsed when it leaves a language that
+declares it for one that does not, and kept when both do — so a runtime
+twin of YAML answers as the compiled one on either side of a conversion,
+and a runtime source with aliases no longer reaches the JSON printer
+uncollapsed (it used to: "a runtime source has no reference layer" was
+assumed, not asked).
 
 **8.4 A renderer per dialect.** A renderer is declared on the language and
 receives the dialect name. No compiled format needs a renderer that varies

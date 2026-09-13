@@ -173,6 +173,12 @@ typedef enum FigCapability {
     FIG_CAP_READ      = 1u << 0, // fig_parse accepts this format
     FIG_CAP_EDIT      = 1u << 1, // fig_editor_*/fig_embed_* accept this format
     FIG_CAP_SERIALIZE = 1u << 2, // fig_*_serialize can write this format
+    // The format has a reference layer — anchors, aliases, `<<` merges, tags
+    // (YAML's). fig_document_serialize collapses it when a document leaves
+    // such a format for one without the bit, and keeps it when the target
+    // has the bit too. A runtime format sets it in its vtable's `caps` when
+    // its parse may return anchor, alias or tag columns.
+    FIG_CAP_REFERENCES = 1u << 3,
 } FigCapability;
 
 // Bitmask of FIG_CAP_* describing what this build can do with `format`. Reflects
@@ -960,7 +966,7 @@ typedef struct FigWarning {
 // The vtable's parse returns, and its print receives, a FigNodeTable: one
 // FigNodeRow per node in pre-order (row index is node id; a parent precedes
 // its children; a keyvalue is followed by its key row then its value row)
-// plus three side tables. It is the shape fig_node_* walks, flattened. Every
+// plus four side tables. It is the shape fig_node_* walks, flattened. Every
 // string and array the vtable points to is COPIED by fig_language_register;
 // `ctx` and the function pointers must stay valid for the life of the
 // process, since a format is never unregistered.
@@ -1041,6 +1047,15 @@ typedef struct FigCommentRow { uint32_t node; int slot; int style; FigStr text; 
 #define FIG_COMMENT_LINE  0
 #define FIG_COMMENT_BLOCK 1
 
+// One tag-handle declaration of the document — a YAML `%TAG` directive's
+// handle (`!e!`, or a redefined `!`/`!!`) and the prefix it expands to. A
+// tag spelled with a named handle is legal only in a document that declares
+// it, so the declarations travel with the rows: a parse returns those it
+// read, in source order, and a print of a whole document (never of a
+// fragment) receives them back to re-emit above any tag that uses one. A
+// format without directives has none.
+typedef struct FigDirectiveRow { FigStr handle; FigStr prefix; } FigDirectiveRow;
+
 // What parse returns and print receives. Zero rows is refused: a format whose
 // empty input is the empty document returns one FIG_NODE_NULL row. A print
 // may be handed a table whose root is a scalar — a fragment, the text an
@@ -1050,11 +1065,12 @@ typedef struct FigCommentRow { uint32_t node; int slot; int style; FigStr text; 
 // `owner` is the helper's own handle on the memory behind a table its parse
 // returned — set there, read back in free_table, never touched by fig.
 typedef struct FigNodeTable {
-    const FigNodeRow    *rows;      size_t row_count;
-    const FigRegionRow  *regions;   size_t region_count;
-    const FigMentionRow *mentions;  size_t mention_count;
-    const FigCommentRow *comments;  size_t comment_count;
-    void                *owner;
+    const FigNodeRow      *rows;       size_t row_count;
+    const FigRegionRow    *regions;    size_t region_count;
+    const FigMentionRow   *mentions;   size_t mention_count;
+    const FigCommentRow   *comments;   size_t comment_count;
+    const FigDirectiveRow *directives; size_t directive_count;
+    void                  *owner;
 } FigNodeTable;
 
 // The subset of FigSerializeOptions a printer outside fig is told.

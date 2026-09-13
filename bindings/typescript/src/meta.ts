@@ -32,11 +32,21 @@ export interface Capabilities {
   edit: boolean;
   /** The serializers can write this format. */
   serialize: boolean;
+  /** The format has a reference layer — anchors, aliases, `<<` merges, tags
+   *  (YAML's). A document leaving such a format for one without is collapsed
+   *  first; one written to a format that has the layer too keeps it. */
+  references: boolean;
 }
 
-/** Query what this build can do with `format` (read / edit / serialize), so a
- *  host can pick a working format up front instead of probing for errors. */
+/** Query what this build can do with `format` (read / edit / serialize /
+ *  references), so a host can pick a working format up front instead of
+ *  probing for errors. */
 export function capabilities(format: Format): Capabilities {
   const bits = fig.fig_format_capabilities(format) >>> 0;
-  return { read: (bits & 1) !== 0, edit: (bits & 2) !== 0, serialize: (bits & 4) !== 0 };
+  return {
+    read: (bits & 1) !== 0,
+    edit: (bits & 2) !== 0,
+    serialize: (bits & 4) !== 0,
+    references: (bits & 8) !== 0,
+  };
 }

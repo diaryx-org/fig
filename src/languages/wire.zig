@@ -261,6 +261,7 @@ fn vtableFromDescription(a: Allocator, t: *Transport, desc: std.json.Value) !Run
         if (boolOr(c.object, "read", false)) caps |= Runtime.cap_read;
         if (boolOr(c.object, "edit", false)) caps |= Runtime.cap_edit;
         if (boolOr(c.object, "serialize", false)) caps |= Runtime.cap_serialize;
+        if (boolOr(c.object, "references", false)) caps |= Runtime.cap_references;
     };
     // `null` (or absent) is unbounded; 0 is a flat format.
     const depth: c_int = if (o.get("max_mapping_depth")) |d| (if (d == .integer and d.integer >= 0 and d.integer < 256) @intCast(d.integer) else Runtime.no_depth_limit) else Runtime.no_depth_limit;
@@ -604,10 +605,21 @@ pub fn tableFromJson(a: Allocator, v: std.json.Value) !Runtime.NodeTable {
             try comments.append(a, .{ .node = try u32Of(c.object.get("node")), .slot = slot, .style = style, .text = if (text.slice() == null) Runtime.Str.of("") else text });
         }
     };
+    var directives: std.ArrayList(Runtime.DirectiveRow) = .empty;
+    if (o.get("directives")) |dv| if (dv == .array) {
+        for (dv.array.items) |d| {
+            if (d != .object) return error.MalformedTable;
+            const handle = try strOf(a, d.object.get("handle"));
+            const prefix = try strOf(a, d.object.get("prefix"));
+            if (handle.slice() == null or prefix.slice() == null) return error.MalformedTable;
+            try directives.append(a, .{ .handle = handle, .prefix = prefix });
+        }
+    };
     const row_slice = try rows.toOwnedSlice(a);
     const region_slice = try regions.toOwnedSlice(a);
     const mention_slice = try mentions.toOwnedSlice(a);
     const comment_slice = try comments.toOwnedSlice(a);
+    const directive_slice = try directives.toOwnedSlice(a);
     return .{
         .rows = row_slice.ptr,
         .row_count = row_slice.len,
@@ -617,6 +629,8 @@ pub fn tableFromJson(a: Allocator, v: std.json.Value) !Runtime.NodeTable {
         .mention_count = mention_slice.len,
         .comments = comment_slice.ptr,
         .comment_count = comment_slice.len,
+        .directives = directive_slice.ptr,
+        .directive_count = directive_slice.len,
     };
 }
 
@@ -677,7 +691,22 @@ pub fn tableToJson(w: *Io.Writer, t: *const Runtime.NodeTable) !void {
         try jsonString(w, c.text.slice() orelse "");
         try w.writeByte('}');
     }
-    try w.writeAll("]}");
+    try w.writeAll("]");
+    // Absent, not empty, for the formats that have none — which is every
+    // helper written before the column existed.
+    if (t.directive_count > 0) {
+        try w.writeAll(",\"directives\":[");
+        for (t.directiveSlice(), 0..) |d, i| {
+            if (i > 0) try w.writeByte(',');
+            try w.writeAll("{\"handle\":");
+            try jsonString(w, d.handle.slice() orelse "");
+            try w.writeAll(",\"prefix\":");
+            try jsonString(w, d.prefix.slice() orelse "");
+            try w.writeByte('}');
+        }
+        try w.writeByte(']');
+    }
+    try w.writeAll("}");
 }
 
 // ── tests ──────────────────────────────────────────────────────────────────
@@ -783,7 +812,8 @@ test "parse crosses as a request line and comes back as a table; print gets the 
         \\{"ok":true,"table":{"rows":[{"kind":"mapping","parent":null,"span":[0,4]},
         \\{"kind":"keyvalue","parent":0,"span":[0,3],"sep":[1,2]},{"kind":"string","parent":1,"span":[0,1],"text":"a"},
         \\{"kind":"string","parent":1,"span":[2,3],"text":"1"}],"regions":[],"mentions":[],
-        \\"comments":[{"node":2,"slot":"leading","style":"line","text":"hi"}]}}
+        \\"comments":[{"node":2,"slot":"leading","style":"line","text":"hi"}],
+        \\"directives":[{"handle":"!e!","prefix":"tag:x/"}]}}
         ,
         .print_response = "{\"ok\":true,\"output\":\"a=1\\n\"}",
     };
@@ -794,6 +824,8 @@ test "parse crosses as a request line and comes back as a table; print gets the 
     try t.expectEqualStrings("{\"op\":\"parse\",\"dialect\":\"wire-kv\",\"input\":\"a=1\\n\"}", s.last_request.items);
     try t.expectEqual(@as(usize, 4), table.row_count);
     try t.expectEqual(@as(usize, 1), table.comment_count);
+    try t.expectEqual(@as(usize, 1), table.directive_count);
+    try t.expectEqualStrings("tag:x/", table.directiveSlice()[0].prefix.slice().?);
     try t.expectEqualStrings("a", table.rowSlice()[2].text.slice().?);
     try t.expectEqual(@as(usize, 1), table.rowSlice()[1].sep.span().?.start);
     try t.expect(table.rowSlice()[0].sep.span() == null);
@@ -805,6 +837,7 @@ test "parse crosses as a request line and comes back as a table; print gets the 
     // The print request carries the table as `parse` answered it.
     try t.expect(std.mem.indexOf(u8, s.last_request.items, "\"sep\":[1,2]") != null);
     try t.expect(std.mem.indexOf(u8, s.last_request.items, "\"slot\":\"leading\"") != null);
+    try t.expect(std.mem.indexOf(u8, s.last_request.items, "\"directives\":[{\"handle\":\"!e!\",\"prefix\":\"tag:x/\"}]") != null);
     try t.expect(std.mem.indexOf(u8, s.last_request.items, "\"options\":{\"pretty\":true,\"strip_comments\":false,\"indent\":2,\"width\":80}") != null);
     freeBytesThunk(&s.transport, out);
     freeTableThunk(&s.transport, &table);

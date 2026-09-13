@@ -20,6 +20,10 @@ pub const Span = @import("util/span.zig");
 pub const AST = @import("ast/ast.zig");
 pub const Embed = @import("embed.zig");
 pub const Lossless = @import("lossless.zig");
+/// Collapsing a document's reference layer — aliases, merges, tags, anchors —
+/// into a core AST, when it leaves a language that carries one for a
+/// language that does not. See its module doc.
+pub const Materialize = @import("materialize.zig");
 /// Lossy-mode stripping for INI/dotenv/`.properties` — `Lossless`'s sibling
 /// for the three flat/shallow-only formats, whose capability model is
 /// depth-based rather than scalar-kind-based. See its module doc.
@@ -59,6 +63,7 @@ test {
     _ = @import("patch.zig");
     _ = @import("embed.zig");
     _ = @import("lossless.zig");
+    _ = @import("materialize.zig");
     _ = @import("flat_strip.zig");
     _ = @import("diagnostics.zig");
     _ = @import("parse_diagnostic.zig");

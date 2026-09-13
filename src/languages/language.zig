@@ -723,9 +723,6 @@ const Decls = struct {
     ///
     ///   * `printNode` — every format but plist, whose `print` is
     ///     written inline.
-    ///   * `materialize`/`TagMode` — YAML only: collapsing the reference layer
-    ///     before a non-YAML printer sees the tree. Callers already gate on
-    ///     `@hasDecl(Lang, "materialize")`.
     ///   * `parseAbstract` — the AST-only parse `deserialize.zig` dispatches
     ///     through. Required of exactly the languages with a `deserializable`
     ///     dialect row (a `validate` rule below), optional for the rest.
@@ -741,7 +738,7 @@ const Decls = struct {
     ///     not a comptime fact: the editor's two gates that read every
     ///     dialect's `syntax` at comptime (may it have sections, may it
     ///     spell a header) answer "ask the entry" instead.
-    const optional = [_][]const u8{ "printNode", "materialize", "TagMode", "parseAbstract", "samples", "hasRenderer", "runtime" };
+    const optional = [_][]const u8{ "printNode", "parseAbstract", "samples", "hasRenderer", "runtime" };
 
     /// Editing hooks: none. A hook was a `pub` decl that took over an
     /// `editor.Editor` method wholesale, with the editor in hand. Twenty-five

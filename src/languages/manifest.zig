@@ -167,6 +167,15 @@ pub const Caps = struct {
     edit: bool = false,
     /// `print` can write this format.
     serialize: bool = false,
+    /// This format has a reference layer: its `parse` may return anchors,
+    /// aliases, `<<` merges and tags, and its `print` spells them. A
+    /// document carrying one is written out intact when the target declares
+    /// this too, and collapsed by `Materialize` first when it does not —
+    /// which is the whole of how the CLI and the C ABI decide to run that
+    /// pass, so a language that produces alias rows without declaring this
+    /// hands another format's printer an alias it cannot spell. YAML alone
+    /// in tree; a runtime language declares it as `caps.references`.
+    references: bool = false,
     /// What the lossless `$fig` envelope pass (`lossless.zig`) may assume
     /// about this format's value model on OUTPUT, or null when the format
     /// takes no envelope at all.

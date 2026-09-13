@@ -208,7 +208,8 @@ var ed: fig.Editor(fig.Runtime.Language) = .{ .allocator = allocator, .format = 
 `parse` returns, and `print` receives, a `Runtime.NodeTable`: one row per
 node in pre-order (row index is node id) with the columns `Document`
 carries — kind, parent, span, text, anchor, tag, item marker, entry
-separator — plus regions, mentions and comments as side tables. The
+separator — plus regions, mentions, comments and tag directives as side
+tables. The
 shapes are `extern struct`s, stated in `fig.h` under `FigLanguageVTable`
 and `FigNodeTable` and registered from C through `fig_language_register`;
 `tools/abi_runtime_probe.c` is the smallest complete host, written in C,

@@ -27,29 +27,6 @@ const EditOp = types.EditOp;
 const append_index = types.append_index;
 const Io = std.Io;
 
-/// Collapse `ast`'s reference layer (aliases, merges, tags) for a source in
-/// `format`, or hand it back untouched when the source language has none.
-/// Dispatched on the registry: a language declares `materialize` exactly when
-/// it has such a layer (an optional `Language` decl — YAML alone today), so
-/// this names no format. `mode` is the tag policy — lax keeps unknown tags,
-/// strict refuses them.
-fn materializeFor(a: std.mem.Allocator, format: Format, ast: *const fig.AST, mode: enum { lax, strict }) !*const fig.AST {
-    return switch (format) {
-        // A runtime source has no reference layer either.
-        .canonical, .gron, _ => ast,
-        inline else => |f| blk: {
-            const d = comptime fig.Language.entryFor(@tagName(f));
-            if (comptime d.Lang == void or !@hasDecl(d.Lang, "materialize")) break :blk ast;
-            const mat = try a.create(fig.AST);
-            mat.* = try d.Lang.materialize(a, ast, switch (mode) {
-                .lax => .lax,
-                .strict => .strict,
-            });
-            break :blk mat;
-        },
-    };
-}
-
 pub fn runHelp(stderr_term: *Io.Terminal, binary_name: []const u8) !void {
     try stderr_term.writer.print(help.title_string, .{});
     try Help.general(stderr_term, binary_name);
@@ -298,27 +275,20 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
         break :blk parsed;
     };
 
-    // Converting YAML to a non-YAML format resolves the reference layer
-    // first (aliases → copies, merges → flattened, tags applied/dropped).
-    // YAML→YAML keeps it intact for round-trip; JSON never has it.
-    const src_is_yaml = from == .yaml;
-    const dst_is_yaml = to == .yaml;
-    const base_ast: *const fig.AST = if (src_is_yaml and !dst_is_yaml) blk: {
-        // Reachable only when the source is YAML, so YAML is compiled in.
-        // Dispatched on the source format's registry entry: a language
-        // declares `materialize` exactly when it has a reference layer to
-        // collapse (an optional `Language` decl), so this names no format —
-        // the same shape as `c_api.zig`'s `prepareDocumentAst`.
-        break :blk try materializeFor(a, from, &doc.ast, if (opts.lax_tags) .lax else .strict);
-    } else &doc.ast;
+    // Leaving a language with a reference layer for one without resolves
+    // the layer first (aliases → copies, merges → flattened, tags
+    // applied/dropped). YAML→YAML keeps it intact for round-trip; JSON
+    // never has it. Each side is asked, not named (`Caps.references`).
+    const keeps_references = parse_dispatch.carriesReferences(from) and parse_dispatch.carriesReferences(to);
+    const base_ast = try parse_dispatch.materializeFor(a, from, to, &doc.ast, if (opts.lax_tags) .lax else .strict);
 
     // Lossless mode: decode any `$fig` envelopes in the input back to
     // their real node kinds, then re-encode for the target format. Skipped
-    // for YAML→YAML, whose reference layer (anchors/tags) lives in
-    // side-tables the core-AST passes would strip — and which round-trips
-    // losslessly already. The passes operate on a core AST, so any
-    // non-YAML source (or a materialized YAML source) is safe.
-    const ast: *const fig.AST = if (opts.lossless and !(src_is_yaml and dst_is_yaml)) blk: {
+    // when the reference layer is kept (YAML→YAML): it lives in side-tables
+    // the core-AST passes would strip — and it round-trips losslessly
+    // already. The passes operate on a core AST, so any source without the
+    // layer, or one materialized above, is safe.
+    const ast: *const fig.AST = if (opts.lossless and !keeps_references) blk: {
         // gron is CLI-only — it has no `SerializeFormat` of its own, so no
         // `caps.lossless` — but its value layer is JSON, so it encodes for
         // JSON's declaration: an unrepresentable value (a TOML datetime,
@@ -342,7 +312,7 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     // gron is a CLI-only projection that derives straight from the AST,
     // so it has no `SerializeFormat`: print it here and return, bypassing
     // the serializer dispatch, the lossy/lossless diagnostics below, and
-    // the C ABI entirely. YAML aliases are already materialized above.
+    // the C ABI entirely. Aliases are already materialized above.
     if (to == .gron) {
         if (comptime build_options.lang_json) {
             try gron.printNode(stdout_term.writer, ast, node_id, opts.gron_projection);
@@ -746,10 +716,10 @@ fn loadPatch(
 
     var ast: *const fig.AST = &doc.ast;
     if (doc.ast.anchors.len > 0) {
-        // A patch must not carry unresolved aliases (see `patch.zig`); only a
-        // language with a reference layer can have produced any, and it is
-        // the one that declares `materialize`.
-        ast = try materializeFor(a, format, &doc.ast, .lax);
+        // A patch must not carry unresolved aliases (see `patch.zig`).
+        // Whichever language produced the anchors, the target has not seen
+        // them, so the pass runs on the fact rather than the declaration.
+        ast = try parse_dispatch.materialize(a, &doc.ast, .lax);
     }
 
     const root = if (opts.from.len == 0) ast.root else (try ast.getValByPath(opts.from)).id;

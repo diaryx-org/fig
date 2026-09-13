@@ -6,7 +6,6 @@ const lang = @import("../manifest.zig");
 pub const Parser = @import("parser.zig");
 pub const Tokenizer = @import("tokenizer.zig");
 pub const Printer = @import("printer.zig");
-pub const Materialize = @import("materialize.zig");
 pub const Type = enum {
     v1_2_2,
     /// YAML 1.1 (2005). Differs from 1.2 almost entirely in *scalar type
@@ -34,18 +33,15 @@ pub const Language = struct {
     /// `deserialize.zig` maps onto a Zig type. Optional `Language` decl,
     /// required exactly of a language with a `deserializable` dialect row.
     pub const parseAbstract = yaml.Parser.parseAbstract;
-    /// Collapse the reference layer (aliases/merges/tags/anchors) into a core AST
-    /// before handing it to a non-YAML printer. Optional Language decl: callers
-    /// gate on `@hasDecl(Lang, "materialize")`.
-    pub const materialize = Materialize.materialize;
-    pub const TagMode = Materialize.TagMode;
-
     pub const name = "yaml";
     pub const extensions: []const []const u8 = &.{ "yaml", "yml" };
     pub const caps: lang.Caps = .{
         .read = true,
         .edit = true,
         .serialize = true,
+        // Anchors, aliases, `<<` merges and tags: the layer `Materialize`
+        // collapses when a document leaves YAML for a format without one.
+        .references = true,
         // The core schema has a `null` and none of the extended scalars
         // (a `!!timestamp` is a 1.1 tag, not a core kind), so those ride in
         // a `$fig` envelope.
@@ -131,6 +127,5 @@ test {
     _ = @import("tokenizer.zig");
     _ = @import("parser.zig");
     _ = @import("printer.zig");
-    _ = @import("materialize.zig");
     _ = @import("editor_helper.zig");
 }

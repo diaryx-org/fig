@@ -28,7 +28,7 @@ const Embed = @import("../../embed.zig");
 // gates JSON out of the `Language` registry.
 const JsonParser = @import("../json/parser.zig");
 const JsonPrinter = @import("../json/printer.zig");
-const materialize = @import("materialize.zig").materialize;
+const materialize = @import("../../materialize.zig").materialize;
 
 const max_fixture_size = 1024 * 1024;
 

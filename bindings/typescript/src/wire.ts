@@ -218,15 +218,27 @@ export interface CommentRow {
   text: string;
 }
 
+/** One tag-handle declaration — a YAML `%TAG` directive's handle (`!e!`, or
+ *  a redefined `!`/`!!`) and the prefix it expands to. A tag spelled with a
+ *  named handle is legal only in a document that declares it, so a parse
+ *  returns those it read, in source order, and a print of a whole document
+ *  (never of a fragment) receives them back to re-emit above any tag that
+ *  uses one. */
+export interface DirectiveRow {
+  handle: string;
+  prefix: string;
+}
+
 /** What `parse` returns and `print` receives: the tree, flat. Zero rows is
  *  refused — a format whose empty input is the empty document returns one
- *  `null` row. `regions`, `mentions` and `comments` may be omitted when
- *  empty. */
+ *  `null` row. `regions`, `mentions`, `comments` and `directives` may be
+ *  omitted when empty. */
 export interface NodeTable {
   rows: NodeRow[];
   regions?: RegionRow[];
   mentions?: MentionRow[];
   comments?: CommentRow[];
+  directives?: DirectiveRow[];
 }
 
 // ── the language ───────────────────────────────────────────────────────────
@@ -238,7 +250,11 @@ export interface Language {
   /** Must differ from every compiled format's name and every language
    *  already registered; `dialects[0].name` must equal it. */
   name: string;
-  caps: { read?: boolean; edit?: boolean; serialize?: boolean };
+  /** `references`: the format has a reference layer — anchors, aliases,
+   *  `<<` merges, tags — so its parse may return those columns and its print
+   *  spells them; fig collapses the layer only when a document leaves such
+   *  a format for one without. */
+  caps: { read?: boolean; edit?: boolean; serialize?: boolean; references?: boolean };
   /** How deep a mapping may nest: `null` (or omitted) is unbounded, `0` a
    *  flat format holding no mapping inside its root. */
   max_mapping_depth?: number | null;
@@ -299,7 +315,7 @@ type Request =
 export function describe(lang: Language): Record<string, unknown> {
   return {
     name: lang.name,
-    caps: { read: !!lang.caps.read, edit: !!lang.caps.edit, serialize: !!lang.caps.serialize },
+    caps: { read: !!lang.caps.read, edit: !!lang.caps.edit, serialize: !!lang.caps.serialize, references: !!lang.caps.references },
     max_mapping_depth: lang.max_mapping_depth ?? null,
     lossless: lang.lossless ?? null,
     syntax: lang.syntax ?? null,
@@ -351,7 +367,9 @@ function handleInner(lang: Language, requestLine: string): Record<string, unknow
         throw new LanguageError("parse: dialect and input are strings");
       }
       const table = lang.parse(req.dialect, req.input);
-      return { ok: true, table: { rows: table.rows, regions: table.regions ?? [], mentions: table.mentions ?? [], comments: table.comments ?? [] } };
+      const out: Record<string, unknown> = { rows: table.rows, regions: table.regions ?? [], mentions: table.mentions ?? [], comments: table.comments ?? [] };
+      if (table.directives && table.directives.length > 0) out.directives = table.directives;
+      return { ok: true, table: out };
     }
     case "print": {
       if (!lang.print) throw new LanguageError(`${lang.name} does not serialize`);

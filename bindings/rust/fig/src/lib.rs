@@ -361,6 +361,11 @@ pub struct Capabilities {
     pub edit: bool,
     /// The serializers can write this format.
     pub serialize: bool,
+    /// The format has a reference layer — anchors, aliases, `<<` merges,
+    /// tags (YAML's). A document leaving such a format for one without is
+    /// collapsed first (aliases to copies, merges flattened, tags applied);
+    /// one written to a format that has the layer too keeps it.
+    pub references: bool,
 }
 
 impl Capabilities {
@@ -369,7 +374,14 @@ impl Capabilities {
             read,
             edit,
             serialize,
+            references: false,
         }
+    }
+
+    /// The same capabilities with `references` set.
+    pub const fn with_references(mut self, references: bool) -> Self {
+        self.references = references;
+        self
     }
 }
 
@@ -381,6 +393,7 @@ pub fn capabilities(format: Format) -> Capabilities {
         read: bits & (1 << 0) != 0,
         edit: bits & (1 << 1) != 0,
         serialize: bits & (1 << 2) != 0,
+        references: bits & (1 << 3) != 0,
     }
 }
 

@@ -131,7 +131,9 @@ whose feature is off returns [`Error::UnsupportedFormat`] at runtime, so query
 use fig::{capabilities, Format};
 
 let caps = capabilities(Format::Toml);
-// caps.read, caps.edit, caps.serialize — all bools.
+// caps.read, caps.edit, caps.serialize, caps.references — all bools; the
+// last says the format has a reference layer (anchors, aliases, tags —
+// YAML's), which a conversion collapses when leaving it for a format without.
 ```
 
 ## Formats

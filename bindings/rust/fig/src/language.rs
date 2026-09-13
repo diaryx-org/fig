@@ -72,11 +72,7 @@ impl Description {
     pub fn new(name: &str) -> Self {
         Description {
             name: name.to_owned(),
-            caps: Capabilities {
-                read: true,
-                edit: false,
-                serialize: false,
-            },
+            caps: Capabilities::default(),
             dialects: vec![Dialect::new(name)],
             ..Default::default()
         }
@@ -85,11 +81,7 @@ impl Description {
 
 impl Default for Capabilities {
     fn default() -> Self {
-        Capabilities {
-            read: true,
-            edit: false,
-            serialize: false,
-        }
+        Capabilities::new(true, false, false)
     }
 }
 
@@ -334,7 +326,7 @@ pub struct ClosedContainers {
 
 /// What a parse returns and a print receives: one [`NodeRow`] per node in
 /// pre-order — row index is node id, a parent precedes its children, a
-/// keyvalue is followed by its key row and then its value row — plus three
+/// keyvalue is followed by its key row and then its value row — plus four
 /// side tables. It is the shape the core's `Document` holds, as values.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -343,6 +335,11 @@ pub struct NodeTable {
     pub regions: Vec<RegionRow>,
     pub mentions: Vec<MentionRow>,
     pub comments: Vec<CommentRow>,
+    /// The document's tag-handle declarations, in source order. A parse
+    /// returns those it read; a print of a whole document — never of a
+    /// fragment — receives them back, to re-emit above any tag that uses
+    /// one. Empty for a format without directives.
+    pub directives: Vec<DirectiveRow>,
 }
 
 impl NodeTable {
@@ -516,6 +513,15 @@ pub struct CommentRow {
     pub slot: CommentSlot,
     pub style: CommentForm,
     pub text: String,
+}
+
+/// One tag-handle declaration — a YAML `%TAG` directive's handle (`!e!`,
+/// or a redefined `!`/`!!`) and the prefix it expands to. A tag spelled
+/// with a named handle is legal only in a document that declares it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DirectiveRow {
+    pub handle: String,
+    pub prefix: String,
 }
 
 /// Where a comment sits on its node.
@@ -914,6 +920,9 @@ impl Registration {
         if desc.caps.serialize {
             caps |= 1 << 2;
         }
+        if desc.caps.references {
+            caps |= 1 << 3;
+        }
         let lossless = desc.lossless.map(|l| {
             Box::new(ffi::FigNativeKinds {
                 null_: l.null,
@@ -1107,6 +1116,7 @@ struct TableHolder {
     regions: Vec<ffi::FigRegionRow>,
     mentions: Vec<ffi::FigMentionRow>,
     comments: Vec<ffi::FigCommentRow>,
+    directives: Vec<ffi::FigDirectiveRow>,
 }
 
 fn str_of(s: &Option<String>) -> ffi::FigStr {
@@ -1191,12 +1201,27 @@ fn table_to_c(table: NodeTable) -> Box<TableHolder> {
             },
         })
         .collect();
+    let directives = table
+        .directives
+        .iter()
+        .map(|d| ffi::FigDirectiveRow {
+            handle: ffi::FigStr {
+                ptr: d.handle.as_ptr(),
+                len: d.handle.len(),
+            },
+            prefix: ffi::FigStr {
+                ptr: d.prefix.as_ptr(),
+                len: d.prefix.len(),
+            },
+        })
+        .collect();
     Box::new(TableHolder {
         _table: table,
         rows,
         regions,
         mentions,
         comments,
+        directives,
     })
 }
 
@@ -1211,6 +1236,8 @@ impl TableHolder {
             mention_count: self.mentions.len(),
             comments: self.comments.as_ptr(),
             comment_count: self.comments.len(),
+            directives: self.directives.as_ptr(),
+            directive_count: self.directives.len(),
             owner,
         }
     }
@@ -1255,6 +1282,11 @@ pub(crate) fn table_from_c(t: &ffi::FigNodeTable) -> Result<NodeTable, LanguageE
         &[][..]
     } else {
         unsafe { std::slice::from_raw_parts(t.comments, t.comment_count) }
+    };
+    let directives = if t.directives.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(t.directives, t.directive_count) }
     };
     let mut out = NodeTable::new();
     for r in rows {
@@ -1313,6 +1345,14 @@ pub(crate) fn table_from_c(t: &ffi::FigNodeTable) -> Result<NodeTable, LanguageE
                 CommentForm::Line
             },
             text: text_of(c.text)?.unwrap_or_default(),
+        });
+    }
+    for d in directives {
+        out.directives.push(DirectiveRow {
+            handle: text_of(d.handle)?
+                .ok_or_else(|| LanguageError::new("a directive has no handle"))?,
+            prefix: text_of(d.prefix)?
+                .ok_or_else(|| LanguageError::new("a directive has no prefix"))?,
         });
     }
     Ok(out)

@@ -546,9 +546,11 @@ test("version and capabilities", () => {
   const v = version();
   assert.equal(versionString(), `${v.major}.${v.minor}.${v.patch}`);
   const json = capabilities(Format.Json);
-  assert.deepEqual(json, { read: true, edit: true, serialize: true });
+  assert.deepEqual(json, { read: true, edit: true, serialize: true, references: false });
   const fig = capabilities(Format.Fig);
-  assert.deepEqual(fig, { read: true, edit: true, serialize: true });
+  assert.deepEqual(fig, { read: true, edit: true, serialize: true, references: false });
+  // YAML alone has a reference layer.
+  assert.deepEqual(capabilities(Format.Yaml), { read: true, edit: true, serialize: true, references: true });
 });
 
 test("Document.serialize converts cross-format", () => {
@@ -564,11 +566,11 @@ test("Document.serialize converts cross-format", () => {
 // FIG_WASM_PLIST=1), so it is absent from the module this suite tests.
 test("2.4 config formats: capabilities, parse/convert, and edit", () => {
   for (const f of [Format.Ini, Format.Dotenv, Format.Properties, Format.Nestedtext]) {
-    assert.deepEqual(capabilities(f), { read: true, edit: true, serialize: true }, `capabilities(${Format[f]})`);
+    assert.deepEqual(capabilities(f), { read: true, edit: true, serialize: true, references: false }, `capabilities(${Format[f]})`);
   }
   // plist is opt-in and not in the default payload — capabilities report it off,
   // so a consumer can detect it at runtime instead of hitting an unsupported error.
-  assert.deepEqual(capabilities(Format.Plist), { read: false, edit: false, serialize: false });
+  assert.deepEqual(capabilities(Format.Plist), { read: false, edit: false, serialize: false, references: false });
 
   // INI: read into the tree and convert out to JSON. Scalars are untyped
   // strings (INI carries no type info), so `8080` round-trips as "8080".

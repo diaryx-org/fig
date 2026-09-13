@@ -424,6 +424,40 @@ pub fn flatStripDepth(target: fig.AST.SerializeFormat) ?usize {
     };
 }
 
+/// Whether `f`'s language declares a reference layer — anchors, aliases,
+/// merges, tags — as `Caps.references`: the compiled declaration for a
+/// compiled format, the entry's for a runtime one. gron and canonical are
+/// projections of the core AST and carry none.
+pub fn carriesReferences(f: Format) bool {
+    return switch (f) {
+        .canonical, .gron => false,
+        _ => if (types.runtimeEntry(f)) |e| e.language.caps.references else false,
+        inline else => |c| comptime blk: {
+            const d = fig.Language.entryFor(@tagName(c));
+            break :blk d.Lang != void and d.Lang.caps.references;
+        },
+    };
+}
+
+/// `ast` as the printer for `to` must see it: collapsed by `Materialize`
+/// when it leaves a language that carries a reference layer for one that
+/// does not, and untouched otherwise — a YAML→YAML conversion keeps its
+/// anchors, a JSON→anything one has none to collapse. Neither side is named:
+/// each is asked (`carriesReferences`), so a runtime twin of YAML answers as
+/// YAML does. `mode` is the tag policy — lax keeps unknown tags, strict
+/// refuses them. The copy lives in `a`.
+pub fn materializeFor(a: std.mem.Allocator, from: Format, to: Format, ast: *const fig.AST, mode: fig.Materialize.TagMode) !*const fig.AST {
+    if (!carriesReferences(from) or carriesReferences(to)) return ast;
+    return materialize(a, ast, mode);
+}
+
+/// `Materialize.materialize` into a copy allocated in `a`.
+pub fn materialize(a: std.mem.Allocator, ast: *const fig.AST, mode: fig.Materialize.TagMode) !*const fig.AST {
+    const mat = try a.create(fig.AST);
+    mat.* = try fig.Materialize.materialize(a, ast, mode);
+    return mat;
+}
+
 /// The lossless-envelope declaration of a CLI output format: what the
 /// `$fig` envelope pass encodes for. gron's value layer is JSON, so it takes
 /// JSON's; a runtime target's is its entry's `caps.lossless`; every other

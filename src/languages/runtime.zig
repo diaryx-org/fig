@@ -186,6 +186,15 @@ pub const comment_leading: c_int = 0;
 pub const comment_trailing: c_int = 1;
 pub const comment_dangling: c_int = 2;
 
+/// One tag-handle declaration of the document — a YAML `%TAG` directive's
+/// handle (`!e!`, or a redefined `!`/`!!`) and the prefix it expands to.
+/// `AST.TagDirective`. A tag spelled with a named handle is legal only in a
+/// document that declares it, so the declarations travel with the rows: a
+/// parse returns those it read, in source order, and a print of a whole
+/// document receives them back to re-emit above any tag that uses one.
+/// Empty for every format without directives.
+pub const DirectiveRow = extern struct { handle: Str, prefix: Str };
+
 /// What `parse` returns and `print` receives. Zero rows is the empty
 /// document — a format whose empty input is a null document returns one
 /// `null` row instead.
@@ -198,6 +207,8 @@ pub const NodeTable = extern struct {
     mention_count: usize = 0,
     comments: ?[*]const CommentRow = null,
     comment_count: usize = 0,
+    directives: ?[*]const DirectiveRow = null,
+    directive_count: usize = 0,
     /// The helper's own handle on the memory behind the table, set by
     /// `parse` and read back by `free_table`; core never touches it. A
     /// helper whose rows and strings live in one allocation it can find
@@ -219,6 +230,10 @@ pub const NodeTable = extern struct {
     pub fn commentSlice(self: *const NodeTable) []const CommentRow {
         const p = self.comments orelse return &.{};
         return p[0..self.comment_count];
+    }
+    pub fn directiveSlice(self: *const NodeTable) []const DirectiveRow {
+        const p = self.directives orelse return &.{};
+        return p[0..self.directive_count];
     }
 };
 
@@ -442,6 +457,7 @@ pub const VTable = extern struct {
 pub const cap_read: u32 = 1 << 0;
 pub const cap_edit: u32 = 1 << 1;
 pub const cap_serialize: u32 = 1 << 2;
+pub const cap_references: u32 = 1 << 3;
 
 // ============================================================================
 // THE REGISTRY
@@ -588,6 +604,7 @@ pub fn register(allocator: Allocator, vt: *const VTable) RegisterError!c_int {
         .read = vt.caps & cap_read != 0,
         .edit = vt.caps & cap_edit != 0,
         .serialize = vt.caps & cap_serialize != 0,
+        .references = vt.caps & cap_references != 0,
         .max_mapping_depth = if (vt.max_mapping_depth < 0) null else @intCast(vt.max_mapping_depth),
         .lossless = if (vt.lossless) |l| nativeKindsOf(l) else null,
     };
@@ -1022,6 +1039,7 @@ pub fn tableToDocument(allocator: Allocator, source: []const u8, table: *const N
         allocator.free(ast.node_anchors);
         allocator.free(ast.anchors);
         allocator.free(ast.node_tags);
+        allocator.free(ast.tag_directives);
         for (ast.node_comments) |x| {
             allocator.free(x.leading);
             allocator.free(x.dangling);
@@ -1238,6 +1256,19 @@ pub fn tableToDocument(allocator: Allocator, source: []const u8, table: *const N
         }
     }
 
+    const directive_rows = table.directiveSlice();
+    if (directive_rows.len > 0) {
+        const directives = try allocator.alloc(AST.TagDirective, directive_rows.len);
+        errdefer allocator.free(directives);
+        for (directive_rows, directives) |r, *d| {
+            d.* = .{
+                .handle = try own(allocator, &owned, r.handle.slice() orelse return error.MalformedTable),
+                .prefix = try own(allocator, &owned, r.prefix.slice() orelse return error.MalformedTable),
+            };
+        }
+        ast.tag_directives = directives;
+    }
+
     ast.nodes = nodes;
     ast.owned_strings = try owned.toOwnedSlice(allocator);
     return .{
@@ -1280,8 +1311,11 @@ fn own(allocator: Allocator, owned: *std.ArrayList([]const u8), s: []const u8) A
 }
 
 /// The table a `print` receives: `ast` from `root` in pre-order, strings
-/// borrowed from the AST, spans none. Allocated in `arena`; nothing to free
-/// but the arena.
+/// borrowed from the AST, spans none. The document's tag directives ride
+/// along only when `root` is the document's own root: a fragment printed
+/// for a splice has no directives prefix, as a compiled printer's
+/// `printNode` writes none. Allocated in `arena`; nothing to free but the
+/// arena.
 pub fn documentToTable(arena: Allocator, ast: *const AST, root: Node.Id) Allocator.Error!Table {
     var rows: std.ArrayList(NodeRow) = .empty;
     var comments: std.ArrayList(CommentRow) = .empty;
@@ -1289,12 +1323,19 @@ pub fn documentToTable(arena: Allocator, ast: *const AST, root: Node.Id) Allocat
     try appendRows(arena, ast, root, no_node, &rows, &comments, &strings);
     const row_slice = try rows.toOwnedSlice(arena);
     const comment_slice = try comments.toOwnedSlice(arena);
+    var directives: std.ArrayList(DirectiveRow) = .empty;
+    if (root == ast.root) {
+        for (ast.tag_directives) |d| try directives.append(arena, .{ .handle = Str.of(d.handle), .prefix = Str.of(d.prefix) });
+    }
+    const directive_slice = try directives.toOwnedSlice(arena);
     return .{
         .table = .{
             .rows = row_slice.ptr,
             .row_count = row_slice.len,
             .comments = if (comment_slice.len == 0) null else comment_slice.ptr,
             .comment_count = comment_slice.len,
+            .directives = if (directive_slice.len == 0) null else directive_slice.ptr,
+            .directive_count = directive_slice.len,
         },
         .strings = try strings.toOwnedSlice(arena),
     };
@@ -1307,8 +1348,9 @@ pub const Table = struct { table: NodeTable, strings: []const []const u8 };
 /// The table a `parse` of `doc`'s source would have to answer with: rows
 /// as `documentToTable` builds them, plus every source-coupled column the
 /// document records — node spans, item markers, entry separators, anchor
-/// and tag spans, header regions and name mentions. What a twin of a
-/// compiled format is held to, row for row.
+/// and tag spans, header regions and name mentions — and the document's
+/// tag directives. What a twin of a compiled format is held to, row for
+/// row.
 pub fn fullTable(arena: Allocator, doc: *const Document) Allocator.Error!Table {
     const ast = &doc.ast;
     var built = try documentToTable(arena, ast, ast.root);
@@ -1745,6 +1787,34 @@ test "a core-schema tag on the wire is a kind tag, and any other a text tag" {
     const back = built.table.rowSlice();
     try testing.expectEqualStrings("!!int", back[3].tag.slice().?);
     try testing.expectEqualStrings("!custom", back[6].tag.slice().?);
+}
+
+test "a tag directive travels with the rows, and only a whole document's print gets it back" {
+    // `!e!foo` is legal only in a document declaring `!e!`, so a twin of
+    // YAML that read the `%TAG` line has to hand it over for the printer
+    // to write back; a fragment (a splice's text) has no directives prefix.
+    const src = "%TAG !e! tag:x/\n---\n!e!foo bar\n";
+    const rows = [_]NodeRow{
+        .{ .kind = @intFromEnum(RowKind.string), .parent = no_node, .span = .{ .start = 20, .end = 29 }, .text = Str.of("bar"), .tag = Str.of("!e!foo") },
+    };
+    const directives = [_]DirectiveRow{.{ .handle = Str.of("!e!"), .prefix = Str.of("tag:x/") }};
+    const table: NodeTable = .{ .rows = &rows, .row_count = rows.len, .directives = &directives, .directive_count = 1 };
+    const doc = try tableToDocument(testing.allocator, src, &table);
+    defer doc.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 1), doc.ast.tag_directives.len);
+    try testing.expectEqualStrings("!e!", doc.ast.tag_directives[0].handle);
+    try testing.expectEqualStrings("tag:x/", doc.ast.tag_directives[0].prefix);
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const whole = try fullTable(arena.allocator(), &doc);
+    try testing.expectEqual(@as(usize, 1), whole.table.directiveSlice().len);
+    try testing.expectEqualStrings("tag:x/", whole.table.directiveSlice()[0].prefix.slice().?);
+
+    // A directive with no prefix is not one.
+    const bad = [_]DirectiveRow{.{ .handle = Str.of("!e!"), .prefix = .none }};
+    const bad_table: NodeTable = .{ .rows = &rows, .row_count = rows.len, .directives = &bad, .directive_count = 1 };
+    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &bad_table));
 }
 
 test "a malformed table is refused, not read" {

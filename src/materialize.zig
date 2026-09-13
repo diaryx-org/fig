@@ -1,6 +1,16 @@
-//! Materialization: collapse the YAML reference/annotation layer (aliases, merge
-//! keys, tags, anchors) into the universal core AST, so a non-YAML printer — or
-//! any consumer that wants concrete data — never has to know about it.
+//! Materialization: collapse a document's reference/annotation layer (aliases,
+//! merge keys, tags, anchors) into the universal core AST, so a printer for a
+//! format without one — or any consumer that wants concrete data — never has
+//! to know about it.
+//!
+//! The layer is YAML's, and the rules here are YAML's (the `<<` merge, the
+//! core-schema `!!` tags), but the pass reads only the AST and its
+//! side-tables, so it collapses the layer whichever language built it — the
+//! compiled YAML or a runtime twin of it. Which languages HAVE the layer is
+//! declared, as `Caps.references` (`manifest.zig`); the CLI and the C ABI run
+//! this pass when a document leaves a language that declares it for one that
+//! does not. `Lossless` and `FlatStrip` are its siblings, the other two
+//! AST-to-AST passes a conversion may run.
 //!
 //! `materialize` returns a NEW AST allocated in the given (arena) allocator:
 //!   - aliases (`*name`)      → a deep copy of the anchor's subtree
@@ -16,7 +26,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const AST = @import("../../ast/ast.zig");
+const AST = @import("ast/ast.zig");
 
 pub const TagMode = enum { strict, lax };
 
@@ -335,7 +345,10 @@ fn eqlAny(s: []const u8, options: []const []const u8) bool {
 
 // ── tests ────────────────────────────────────────────────────────────────
 const testing = std.testing;
-const Parser = @import("parser.zig");
+const build_options = @import("build_options");
+// By path, like `conformance.zig`'s: these exercise the pass over what the
+// compiled YAML parser builds, and skip when it is gated out of the build.
+const Parser = @import("languages/yaml/parser.zig");
 
 fn hasAlias(ast: AST) bool {
     for (ast.nodes) |n| if (n.kind == .alias) return true;
@@ -343,6 +356,7 @@ fn hasAlias(ast: AST) bool {
 }
 
 test "materialize: alias expands to a copied subtree" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const doc = try Parser.parse(testing.allocator, "a: &x [1, 2]\nb: *x\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -360,6 +374,7 @@ test "materialize: alias expands to a copied subtree" {
 }
 
 test "materialize: merge flattens with host and earlier-source precedence" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const src =
         \\base: &b
         \\  x: 1
@@ -384,6 +399,7 @@ test "materialize: merge flattens with host and earlier-source precedence" {
 }
 
 test "materialize: core tags applied AND kept as normalized kind tags" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const doc = try Parser.parse(testing.allocator, "a: !!str 123\nb: !!int \"42\"\nc: !!null x\nd: 7\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -406,6 +422,7 @@ test "materialize: core tags applied AND kept as normalized kind tags" {
 }
 
 test "materialize: unknown tag strict errors, lax drops" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const doc = try Parser.parse(testing.allocator, "x: !custom 1\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -416,6 +433,7 @@ test "materialize: unknown tag strict errors, lax drops" {
 }
 
 test "materialize: collection-tag mismatch and cyclic alias error" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     {
         const doc = try Parser.parse(testing.allocator, "x: !!str [1, 2]\n", .v1_2_2);
         defer doc.deinit(testing.allocator);

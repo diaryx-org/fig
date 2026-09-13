@@ -55,7 +55,7 @@ const jsDotenv = registerLanguage(dotenv);
 
 test("registerLanguage hands back a runtime format every entry point accepts", () => {
   assert.ok(jsDotenv >= 4096, `runtime formats start at FIG_FORMAT_RUNTIME_BASE, got ${jsDotenv}`);
-  assert.deepEqual(capabilities(jsDotenv), { read: true, edit: true, serialize: true });
+  assert.deepEqual(capabilities(jsDotenv), { read: true, edit: true, serialize: true, references: false });
   assert.equal(formatByName("js-dotenv"), jsDotenv);
   assert.equal(formatByName("dotenv"), Format.Dotenv);
   assert.equal(formatByName("json5"), Format.Json5);

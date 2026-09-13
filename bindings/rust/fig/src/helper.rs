@@ -34,19 +34,20 @@
 //! {"ok":false,"message":"…","byte_offset":12}
 //! ```
 //!
-//! A description is `{"name","caps":{"read","edit","serialize"},
+//! A description is `{"name","caps":{"read","edit","serialize","references"},
 //! "max_mapping_depth":n|null,"lossless":{…}|null,"syntax":{…}|null,
 //! "dialects":[{"name","extensions":[…],"splice":"literal|json_string|raw",
 //! "empty_doc_seed":"…"|null,"syntax":{…}|null}],"samples":[…],
 //! "renderers":["value",…]}`; a syntax is the fields of
 //! [`Syntax`] by name, with enums as their lower-case names and absent
 //! optionals as `null`. A table is `{"rows":[…],"regions":[…],"mentions":[…],
-//! "comments":[…]}`: a row is `{"kind":"mapping","parent":0,"span":[s,e],
-//! "text":"…"}` plus `ext_kind`, `anchor`, `anchor_span`, `tag`,
+//! "comments":[…],"directives":[…]}`: a row is `{"kind":"mapping","parent":0,
+//! "span":[s,e],"text":"…"}` plus `ext_kind`, `anchor`, `anchor_span`, `tag`,
 //! `tag_span`, `marker` and `sep` where present (an absent optional is
 //! omitted, not `null`); a region `{"node","start","end"}`; a mention
 //! `{"node","span":[s,e],"kind":"header|entry"}`; a comment `{"node",
-//! "slot":"leading|trailing|dangling","style":"line|block","text"}`.
+//! "slot":"leading|trailing|dangling","style":"line|block","text"}`; a
+//! directive `{"handle","prefix"}`, and the array is omitted when empty.
 //!
 //! The JSON is read and written by fig itself; this module needs no JSON
 //! library and adds none.
@@ -55,7 +56,8 @@ use std::io::{BufRead, Write};
 
 use crate::language::{
     ClosedContainers, CommentDelimiter, CommentForm, CommentRow, CommentSlot, CommentStyle,
-    Comments, Description, Dialect, KeyStyle, Language, LanguageError, Literal, MentionKind,
+    Comments, Description, Dialect, DirectiveRow, KeyStyle, Language, LanguageError, Literal,
+    MentionKind,
     MentionRow, NativeKinds, NodeKind, NodeRow, NodeTable, PrintOptions, RegionRow, RenderArgs,
     Renderer, Renderers, SectionHeader, SectionNoun, Splice, Syntax,
 };
@@ -296,6 +298,7 @@ pub fn description_to_value(d: &Description) -> Value {
                 ("read", Value::Bool(d.caps.read)),
                 ("edit", Value::Bool(d.caps.edit)),
                 ("serialize", Value::Bool(d.caps.serialize)),
+                ("references", Value::Bool(d.caps.references)),
             ]),
         ),
         (
@@ -398,7 +401,8 @@ pub fn description_from_value(v: &Value) -> Result<Description, LanguageError> {
     }
     Ok(Description {
         name: str_field(v, "name")?.to_owned(),
-        caps: Capabilities::new(flag("read"), flag("edit"), flag("serialize")),
+        caps: Capabilities::new(flag("read"), flag("edit"), flag("serialize"))
+            .with_references(flag("references")),
         max_mapping_depth: v
             .get("max_mapping_depth")
             .and_then(Value::as_u64)
@@ -833,12 +837,26 @@ pub fn table_to_value(t: &NodeTable) -> Value {
             ])
         })
         .collect();
-    map(vec![
+    let mut fields = vec![
         ("rows", Value::Seq(rows)),
         ("regions", Value::Seq(regions)),
         ("mentions", Value::Seq(mentions)),
         ("comments", Value::Seq(comments)),
-    ])
+    ];
+    if !t.directives.is_empty() {
+        let directives = t
+            .directives
+            .iter()
+            .map(|d| {
+                map(vec![
+                    ("handle", Value::Str(d.handle.clone())),
+                    ("prefix", Value::Str(d.prefix.clone())),
+                ])
+            })
+            .collect();
+        fields.push(("directives", Value::Seq(directives)));
+    }
+    map(fields)
 }
 
 /// A table from the wire.
@@ -915,6 +933,12 @@ pub fn table_from_value(v: &Value) -> Result<NodeTable, LanguageError> {
                 CommentForm::Line
             },
             text: str_field(c, "text")?.to_owned(),
+        });
+    }
+    for d in v.get("directives").and_then(Value::as_seq).unwrap_or(&[]) {
+        t.directives.push(DirectiveRow {
+            handle: str_field(d, "handle")?.to_owned(),
+            prefix: str_field(d, "prefix")?.to_owned(),
         });
     }
     Ok(t)

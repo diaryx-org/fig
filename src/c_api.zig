@@ -19,12 +19,12 @@ const build_options = @import("build_options");
 /// a `void` language has no parser, printer, dialect or `caps` to reach past
 /// it.
 const Languages = @import("languages/language.zig");
-// Cross-format conversion helpers used by `fig_document_serialize`. `Lossless`
-// is format-agnostic (always compiled in); collapsing YAML's reference layer is
-// reached through the registry as `Lang.materialize` (an optional `Language`
-// decl only YAML declares — see `prepareDocumentAst`) rather than through a
-// gated import of its own.
+// Cross-format conversion helpers used by `fig_document_serialize`. Both are
+// format-agnostic AST passes, always compiled in: `Lossless` for the `$fig`
+// envelope, `Materialize` for collapsing a reference layer on the way out of
+// a language that declares one (`Caps.references` — see `prepareDocumentAst`).
 const Lossless = @import("lossless.zig");
+const Materialize = @import("materialize.zig");
 const Diagnostics = @import("diagnostics.zig");
 /// A format registered at runtime (`fig_language_register`): the vtable and
 /// node-table shapes this file re-exports under their `Fig*` names, the
@@ -222,6 +222,10 @@ pub const FigCapability = enum(u32) {
     edit = 1 << 1,
     /// `fig_*_serialize` can write this format.
     serialize = 1 << 2,
+    /// The format has a reference layer — anchors, aliases, merges, tags —
+    /// which `fig_document_serialize` collapses when a document leaves it for
+    /// a format without one, and keeps when the target has one too.
+    references = 1 << 3,
     _,
 };
 
@@ -330,6 +334,7 @@ fn capsBits(caps: Languages.Caps) u32 {
     if (caps.read) bits |= @intFromEnum(FigCapability.read);
     if (caps.edit) bits |= @intFromEnum(FigCapability.edit);
     if (caps.serialize) bits |= @intFromEnum(FigCapability.serialize);
+    if (caps.references) bits |= @intFromEnum(FigCapability.references);
     return bits;
 }
 
@@ -358,6 +363,7 @@ fn capsOf(comptime Lang: type) u32 {
     if (Lang.caps.read) bits |= @intFromEnum(FigCapability.read);
     if (Lang.caps.edit) bits |= @intFromEnum(FigCapability.edit);
     if (Lang.caps.serialize) bits |= @intFromEnum(FigCapability.serialize);
+    if (Lang.caps.references) bits |= @intFromEnum(FigCapability.references);
     return bits;
 }
 
@@ -368,11 +374,11 @@ const DocumentHandle = struct {
     source: []u8,
     document: Document,
     /// The format `source` was parsed as. `fig_document_serialize` consults it to
-    /// decide whether to collapse YAML's reference layer before printing.
+    /// decide whether to collapse a reference layer before printing.
     /// Meaningless when `runtime` is set.
     format: FigFormat,
-    /// The runtime language `source` was parsed by, when it was one. Such a
-    /// document has no reference layer to collapse.
+    /// The runtime language `source` was parsed by, when it was one; its
+    /// entry's `caps.references` then says whether there is a layer.
     runtime: ?*const Runtime.Entry = null,
     /// Reused across `fig_document_serialize` calls; holds the bytes the most
     /// recent call returned (cleared and refilled each time). Mirrors
@@ -3224,49 +3230,58 @@ pub export fn fig_document_serialize(
     return .ok;
 }
 
+/// Whether a source or target carries a reference layer (`Caps.references`):
+/// the compiled language's declaration, or the runtime entry's.
+fn sourceCarriesReferences(handle: *const DocumentHandle) bool {
+    if (handle.runtime) |e| return e.language.caps.references;
+    return switch (handle.format) {
+        inline else => |f| comptime blk: {
+            const d = Languages.entryFor(@tagName(f));
+            break :blk d.Lang != void and d.Lang.caps.references;
+        },
+    };
+}
+
+fn targetCarriesReferences(target: Target) bool {
+    return switch (target) {
+        .runtime => |e| e.language.caps.references,
+        .compiled => |fmt| switch (fmt) {
+            .canonical => false,
+            inline else => |f| comptime blk: {
+                const d = Languages.entryFor(@tagName(f));
+                break :blk d.Lang != void and d.Lang.caps.references;
+            },
+        },
+    };
+}
+
 /// Run the same source→target AST pipeline `fig_document_serialize` prints from:
-/// collapse YAML's reference layer when leaving YAML (strict tags), then — under
-/// `lossless` — decode any `$fig` envelopes and re-encode for the target. All
-/// intermediate ASTs live in `arena` (their strings borrow the source AST, which
-/// outlives the call). Returns the source AST unchanged when no transform applies.
-/// Errors: `OutOfMemory`, or an un-collapsible YAML reference layer from
-/// `materialize` — both mapped via `convertStatus` at the call site.
+/// collapse the reference layer when leaving a language that has one for one
+/// that has not (strict tags), then — under `lossless` — decode any `$fig`
+/// envelopes and re-encode for the target. All intermediate ASTs live in
+/// `arena` (their strings borrow the source AST, which outlives the call).
+/// Returns the source AST unchanged when no transform applies. Errors:
+/// `OutOfMemory`, or an un-collapsible reference layer from `Materialize` —
+/// both mapped via `convertStatus` at the call site.
 fn prepareDocumentAst(handle: *DocumentHandle, target: Target, options: ?*const FigSerializeOptions, arena: std.mem.Allocator) !*const AST {
     @setEvalBranchQuota(30_000);
 
-    // Whether the source dialect is being written back out AS ITSELF while
-    // carrying a reference layer — the YAML→YAML case, where the layer already
-    // round-trips and both passes below would only strip it. Derived rather
-    // than named: a language declares `materialize` exactly when it has such a
-    // layer (an optional `Language` decl — see `Decls.optional` in
-    // languages/language.zig), and YAML is the only one in tree that does. A
-    // runtime source has no such layer.
-    const ref_layer_round_trip = if (handle.runtime != null) false else switch (handle.format) {
-        inline else => |f| blk: {
-            const d = comptime Languages.entryFor(@tagName(f));
-            if (comptime d.Lang == void or !@hasDecl(d.Lang, "materialize")) break :blk false;
-            break :blk switch (target) {
-                .compiled => |fmt| fmt == @field(AST.SerializeFormat, d.name),
-                .runtime => false,
-            };
-        },
-    };
+    // Whether a reference layer is being written back out to a language that
+    // spells one — the YAML→YAML case, where the layer already round-trips
+    // and both passes below would only strip it. Each side is asked, not
+    // named: `Caps.references` is the declaration, so a runtime twin of YAML
+    // answers as the compiled one does, on either side.
+    const source_refs = sourceCarriesReferences(handle);
+    const ref_layer_round_trip = source_refs and targetCarriesReferences(target);
 
-    // Leaving that dialect for another: collapse the reference layer first
+    // Leaving that layer for a language without one: collapse it first
     // (strict tag mode, matching the CLI default — unknown/custom tags become
     // `unsupported_format`).
-    const base_ast: *const AST = if (ref_layer_round_trip or handle.runtime != null) &handle.document.ast else switch (handle.format) {
-        inline else => |f| blk: {
-            const d = comptime Languages.entryFor(@tagName(f));
-            // A gated-out source language cannot be `handle.format` at all (the
-            // document was parsed by it), and a language with no reference layer
-            // has nothing to collapse.
-            if (comptime d.Lang == void or !@hasDecl(d.Lang, "materialize")) break :blk &handle.document.ast;
-            const mat = try arena.create(AST);
-            mat.* = try d.Lang.materialize(arena, &handle.document.ast, .strict);
-            break :blk mat;
-        },
-    };
+    const base_ast: *const AST = if (source_refs and !ref_layer_round_trip) blk: {
+        const mat = try arena.create(AST);
+        mat.* = try Materialize.materialize(arena, &handle.document.ast, .strict);
+        break :blk mat;
+    } else &handle.document.ast;
 
     // Lossless: decode any `$fig` envelopes in the source back to real kinds, then
     // re-encode for the target. Skipped for YAML→YAML (its reference layer already
@@ -3293,23 +3308,23 @@ fn prepareDocumentAst(handle: *DocumentHandle, target: Target, options: ?*const 
 }
 
 // What the two `handle.format == .yaml` / `fmt == .yaml` tests above USED to
-// say, pinned as a literal so replacing them with a derivation is a checked
+// say, pinned as a literal so replacing them with a declaration is a checked
 // claim rather than an asserted one: of the languages compiled into this build,
-// `yaml` is the only one that declares `materialize`. The dispatch is already
-// general — a second language growing a reference layer would be collapsed
-// correctly without another edit there — so this pin exists to make that a
-// DELIBERATE change (extend the list here) rather than a silent one.
+// `yaml` is the only one that declares `caps.references`. The dispatch is
+// already general — a second language growing a reference layer would be
+// collapsed correctly without another edit there — so this pin exists to make
+// that a DELIBERATE change (extend the list here) rather than a silent one.
 comptime {
     for (Languages.dialects) |d| {
         if (d.Lang == void) continue;
-        const declares = @hasDecl(d.Lang, "materialize");
+        const declares = d.Lang.caps.references;
         const expected = std.mem.eql(u8, d.name, "yaml");
         if (declares and !expected)
-            @compileError("'" ++ d.name ++ "' now declares `materialize`, so `prepareDocumentAst`" ++
+            @compileError("'" ++ d.name ++ "' now declares `caps.references`, so `prepareDocumentAst`" ++
                 " collapses its reference layer on the way out — correct, but new: add it to this" ++
                 " pin once that is what you meant");
         if (!declares and expected)
-            @compileError("`yaml` no longer declares `materialize`, so `fig_document_serialize` has" ++
+            @compileError("`yaml` no longer declares `caps.references`, so `fig_document_serialize` has" ++
                 " stopped collapsing its reference layer when leaving YAML");
     }
 }
@@ -4944,6 +4959,7 @@ test "fig_format_capabilities reports the per-format matrix" {
     const read = @intFromEnum(FigCapability.read);
     const edit = @intFromEnum(FigCapability.edit);
     const serialize = @intFromEnum(FigCapability.serialize);
+    const references = @intFromEnum(FigCapability.references);
 
     // JSON family: always fully supported, regardless of build options.
     for ([_]FigFormat{ .json, .jsonc, .json5 }) |f| {
@@ -4951,8 +4967,9 @@ test "fig_format_capabilities reports the per-format matrix" {
     }
 
     // Gated formats: capabilities track both inherent support and the build gate.
+    // YAML alone has a reference layer.
     try std.testing.expectEqual(
-        if (build_options.lang_yaml) read | edit | serialize else 0,
+        if (build_options.lang_yaml) read | edit | serialize | references else 0,
         fig_format_capabilities(@intFromEnum(FigFormat.yaml)),
     );
     try std.testing.expectEqual(

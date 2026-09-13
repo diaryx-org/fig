@@ -270,6 +270,22 @@ fn the_helper_wire_round_trips_describe_parse_print_and_render() {
     assert_eq!(table.comments[0].text, "c");
     assert_eq!(table.rows[1].sep, Some(Span { start: 5, end: 6 }));
 
+    // A table's tag directives cross both ways, and are omitted when there
+    // are none — which is every table a format without them answers with.
+    assert!(!helper::encode(&helper::table_to_value(&table)).contains("directives"));
+    let mut with = table.clone();
+    with.directives.push(fig::language::DirectiveRow {
+        handle: "!e!".into(),
+        prefix: "tag:x/".into(),
+    });
+    let encoded = helper::encode(&helper::table_to_value(&with));
+    assert!(encoded.contains(r#""directives":[{"handle":"!e!","prefix":"tag:x/"}]"#));
+    let decoded = fig::Document::parse(encoded.as_bytes(), Format::Json)
+        .unwrap()
+        .to_value()
+        .unwrap();
+    assert_eq!(helper::table_from_value(&decoded).unwrap(), with);
+
     // print: the same table goes out and the text comes back.
     let req = Value::Map(vec![
         ("op".into(), "print".into()),

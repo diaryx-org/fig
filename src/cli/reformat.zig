@@ -141,21 +141,14 @@ pub fn convertSlice(
     };
     try reports.reportWarnings(term, content, file_path, quiet, strict);
 
-    // Converting YAML to a non-YAML format resolves the reference layer first
-    // (aliases → copies, merges → flattened, tags applied/dropped). YAML→YAML
-    // keeps it intact for round-trip; JSON never has it. Mirrors `get`.
-    const src_is_yaml = from == .yaml;
-    const dst_is_yaml = to == .yaml;
-    const base_ast: *const fig.AST = if (src_is_yaml and !dst_is_yaml) blk: {
-        if (comptime build_options.lang_yaml) {
-            const mode: fig.Language.YAML.TagMode = if (lax_tags) .lax else .strict;
-            const mat = try allocator.create(fig.AST);
-            mat.* = try fig.Language.YAML.materialize(allocator, &doc.ast, mode);
-            break :blk mat;
-        } else unreachable;
-    } else &doc.ast;
+    // Leaving a language with a reference layer for one without resolves
+    // the layer first (aliases → copies, merges → flattened, tags
+    // applied/dropped); YAML→YAML keeps it intact for round-trip. Mirrors
+    // `get`.
+    const keeps_references = parse_dispatch.carriesReferences(from) and parse_dispatch.carriesReferences(to);
+    const base_ast = try parse_dispatch.materializeFor(allocator, from, to, &doc.ast, if (lax_tags) .lax else .strict);
 
-    const ast: *const fig.AST = if (lossless and !(src_is_yaml and dst_is_yaml)) blk: {
+    const ast: *const fig.AST = if (lossless and !keeps_references) blk: {
         // `to` is never `.gron` here (rejected up front above), so it always
         // has a `SerializeFormat` counterpart, whose language declares what
         // it holds — see `manifest.Caps.lossless` for the per-format

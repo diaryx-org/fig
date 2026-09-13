@@ -588,8 +588,9 @@ pub fn printTable(io: Io, a: Allocator, out: *Io.Terminal, err_term: *Io.Termina
 /// Compare two documents of the same source as the tables a helper would
 /// produce for them — `Runtime.fullTable` of each, which is exactly what
 /// `fig lang table` prints — row for row: kind, parent, text, span,
-/// marker, separator, anchor, tag, then the regions, mentions and
-/// comments. Reports the first difference and returns true on one.
+/// marker, separator, anchor, tag, then the regions, mentions, comments
+/// and tag directives. Reports the first difference and returns true on
+/// one.
 fn diffDocuments(a: Allocator, term: *Io.Terminal, label: []const u8, mine_name: []const u8, theirs_name: []const u8, mine: fig.Document, theirs: fig.Document) !bool {
     var arena = std.heap.ArenaAllocator.init(a);
     defer arena.deinit();
@@ -659,6 +660,16 @@ fn diffDocuments(a: Allocator, term: *Io.Terminal, label: []const u8, mine_name:
     }
     for (xc, yc, 0..) |c1, c2, i| if (c1.node != c2.node or c1.slot != c2.slot or c1.style != c2.style or !optStrEql(c1.text.slice(), c2.text.slice())) {
         try term.writer.print("{s}: comment {d} differs ({s}: row {d} slot {d} `{s}`; {s}: row {d} slot {d} `{s}`)\n", .{ label, i, mine_name, c1.node, c1.slot, c1.text.slice() orelse "", theirs_name, c2.node, c2.slot, c2.text.slice() orelse "" });
+        return true;
+    };
+    const xd = x.directiveSlice();
+    const yd = y.directiveSlice();
+    if (xd.len != yd.len) {
+        try term.writer.print("{s}: `{s}` records {d} tag directives, `{s}` {d}\n", .{ label, mine_name, xd.len, theirs_name, yd.len });
+        return true;
+    }
+    for (xd, yd, 0..) |d1, d2, i| if (!optStrEql(d1.handle.slice(), d2.handle.slice()) or !optStrEql(d1.prefix.slice(), d2.prefix.slice())) {
+        try term.writer.print("{s}: tag directive {d} differs ({s}: `{s}` → `{s}`; {s}: `{s}` → `{s}`)\n", .{ label, i, mine_name, d1.handle.slice() orelse "", d1.prefix.slice() orelse "", theirs_name, d2.handle.slice() orelse "", d2.prefix.slice() orelse "" });
         return true;
     };
     return false;

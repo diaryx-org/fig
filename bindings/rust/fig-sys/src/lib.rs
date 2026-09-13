@@ -995,6 +995,14 @@ pub struct FigCommentRow {
     pub text: FigStr,
 }
 
+/// Mirror of `FigDirectiveRow`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigDirectiveRow {
+    pub handle: FigStr,
+    pub prefix: FigStr,
+}
+
 /// Mirror of `FigNodeTable`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -1007,6 +1015,8 @@ pub struct FigNodeTable {
     pub mention_count: usize,
     pub comments: *const FigCommentRow,
     pub comment_count: usize,
+    pub directives: *const FigDirectiveRow,
+    pub directive_count: usize,
     pub owner: *mut c_void,
 }
 

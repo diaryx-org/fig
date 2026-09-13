@@ -244,22 +244,37 @@ pub fn langOverride() ?Format {
 
 /// Whether some `languages.figl` names `name` at all — for the message when
 /// `--lang` cannot be resolved: a name nobody configured is a different
-/// mistake from a helper that was refused, which `ensure` has reported.
+/// mistake from a helper that was refused, which `ensure` has reported. A
+/// name that turned out to be a further dialect of a configured language
+/// (`resolveName` found it in the registry) counts as configured.
 pub fn isConfigured(name: []const u8) bool {
     load();
-    return findConfigured(name) != null;
+    return findConfigured(name) != null or Runtime.entryByName(name) != null;
 }
 
 /// The `Format` of the configured language named `name`, spawning and
 /// registering its helper on first ask; null when no configured language
 /// has the name, or when it was registered already under another
 /// mechanism and the registry knows it.
+///
+/// A `languages.figl` block names a language, and a language may serve
+/// more than one dialect — `lua-json5` and `lua-jsonc` from one helper —
+/// whose names only its `describe` knows. A name no block carries is
+/// therefore looked for among the dialects of the languages not yet
+/// spawned, spawning each in turn until one answers to it. A helper that
+/// fails along the way is not reported here — the name asked for is not
+/// its — and `fig lang list` shows the refusal.
 pub fn resolveName(name: []const u8) ?Format {
     // Already in the registry — a name registered by whatever means.
     if (Runtime.entryByName(name)) |e| return types.runtimeFormat(e);
     load();
-    const c = findConfigured(name) orelse return null;
-    return ensureLogged(c);
+    if (findConfigured(name)) |c| return ensureLogged(c);
+    for (state.configured.items) |*c| {
+        if (c.entry != null or c.failure != null) continue;
+        _ = ensure(c);
+        if (Runtime.entryByName(name)) |e| return types.runtimeFormat(e);
+    }
+    return null;
 }
 
 /// The `Format` of the configured language owning `ext`, or null.
@@ -489,7 +504,9 @@ pub fn check(io: Io, a: Allocator, out: *Io.Terminal, err_term: *Io.Terminal, na
             try out.writer.flush();
             std.process.exit(1);
         }
-    else {
+    else resolveName(name) orelse {
+        // Not a block's name, and not a further dialect of any language
+        // that could be spawned.
         try err_term.writer.print("error: no language named `{s}` is configured (see `fig lang --help`)\n", .{name});
         try err_term.writer.flush();
         std.process.exit(2);

@@ -1632,11 +1632,14 @@ pub const Language = struct {
         try out.appendSlice(allocator, s.slice() orelse "");
     }
 
-    /// A renderer's refusal, in the editor's vocabulary: a renderer that
-    /// declines a value is the format saying the value has no spelling.
-    fn rendererError(err: *const ErrorInfo) error{ UnsupportedShape, NullUnsupported, InvalidComment } {
-        _ = err;
-        return error.UnsupportedShape;
+    /// A renderer's refusal: the format saying the text has no spelling
+    /// here — a key that needs a form the slot cannot take, a null where
+    /// the format has none. The helper's own words are kept in
+    /// `last_refusal`, for a caller that reports them (`lastRefusal`).
+    fn rendererError(err: *const ErrorInfo) error{RendererRefused} {
+        const text = err.text();
+        refuse("{s}", .{if (text.len > 0) text else "the renderer declined"});
+        return error.RendererRefused;
     }
 };
 

@@ -946,6 +946,9 @@ fn editStatus(err: anyerror) FigStatus {
         // `{}`/`[]` (expanding one into block form is out of scope) and renaming
         // a key to text that needs the multiline `: key` form.
         error.EmptyInlineContainer, error.KeyRequiresMultilineForm => .invalid_argument,
+        // A runtime language's renderer declined the text (its reason is in
+        // `Runtime.lastRefusal()`): the request, not the source.
+        error.RendererRefused => .invalid_argument,
         // A block-spelled value (`- a`, `k: v`, `|`) was handed to a splice into
         // a flow `{…}`/`[…]` container, which has no way to hold it.
         error.BlockValueIntoFlow => .invalid_argument,
@@ -5208,7 +5211,7 @@ test "editStatus: every editor refusal is a caller error, not parse_error" {
         error.KeyRequiresMultilineForm, error.BlockValueIntoFlow,
         error.CommentsUnsupported,      error.NullUnsupported,
         error.MultilineComment,         error.InvalidComment,
-        error.CommentsUnanchored,
+        error.CommentsUnanchored,       error.RendererRefused,
     };
     for (refusals) |err| {
         const status = editStatus(err);

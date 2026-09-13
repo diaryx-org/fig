@@ -204,6 +204,12 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
             try term.setColor(.reset);
             try term.writer.print(": replace the whole list instead — `{s} set <file> <path> '[...]'`. On TOML that loses nothing, as its arrays carry no per-item comments.\n", .{binary_name});
         },
+        // A runtime language's renderer declined the text it was handed — a
+        // key that needs a spelling the slot cannot take, a value the format
+        // has no form for. The helper said why, in its own words.
+        error.RendererRefused => {
+            try term.writer.print(": the language declined to spell this edit: {s}\n", .{fig.Runtime.lastRefusal()});
+        },
         // The editor's uncomment refusal. Reachable through the library (and
         // any `fig-<action>` program built on it) rather than through a
         // built-in action today, but it is an editor error like the ones above

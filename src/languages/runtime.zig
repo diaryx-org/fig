@@ -1155,7 +1155,7 @@ pub fn tableToDocument(allocator: Allocator, source: []const u8, table: *const N
         const tspans = try allocator.alloc(?Span, rows.len);
         tag_spans = tspans;
         for (rows, 0..) |r, i| {
-            tags[i] = if (r.tag.slice()) |t| .{ .text = try own(allocator, &owned, t) } else null;
+            tags[i] = if (r.tag.slice()) |t| try tagOfText(allocator, &owned, t) else null;
             tspans[i] = r.tag_span.span();
         }
     }
@@ -1251,6 +1251,25 @@ pub fn tableToDocument(allocator: Allocator, source: []const u8, table: *const N
         .node_regions = regions,
         .node_mentions = mentions,
     };
+}
+
+/// A tag as the wire spells it, decoded to what `tableFromDocument` encoded:
+/// the seven core-schema spellings (`!!int`, `!!str`, …) are *kind* tags —
+/// a runtime language's `: int =` is the same type assertion a compiled
+/// fig's is, and the printers honour only that form — and anything else is
+/// a verbatim text tag, kept for the format that can spell it.
+fn tagOfText(allocator: Allocator, owned: *std.ArrayList([]const u8), t: []const u8) Allocator.Error!AST.Tag {
+    const kinds = [_]struct { text: []const u8, kind: AST.Tag.KindTag }{
+        .{ .text = "!!null", .kind = .null_ },
+        .{ .text = "!!bool", .kind = .boolean },
+        .{ .text = "!!str", .kind = .string },
+        .{ .text = "!!int", .kind = .integer },
+        .{ .text = "!!float", .kind = .float },
+        .{ .text = "!!seq", .kind = .sequence },
+        .{ .text = "!!map", .kind = .mapping },
+    };
+    for (kinds) |k| if (std.mem.eql(u8, t, k.text)) return .{ .kind = k.kind };
+    return .{ .text = try own(allocator, owned, t) };
 }
 
 fn own(allocator: Allocator, owned: *std.ArrayList([]const u8), s: []const u8) Allocator.Error![]const u8 {
@@ -1694,6 +1713,35 @@ test "a mapping table round-trips through Document and back" {
     try testing.expectEqual(@as(usize, 0), full.table.mention_count);
     try testing.expectEqual(@as(usize, 1), full.table.comment_count);
     try testing.expectEqual(@as(u32, 2), full.table.commentSlice()[0].node);
+}
+
+test "a core-schema tag on the wire is a kind tag, and any other a text tag" {
+    // The encoder spells a `.kind` tag as YAML's core schema does
+    // (`!!int`); reading it back as verbatim text lost the assertion — a
+    // runtime fig's `port: int = 5432` reached the printers untagged.
+    const src = "a: 1\nb: 2\n";
+    const rows = [_]NodeRow{
+        .{ .kind = @intFromEnum(RowKind.mapping), .parent = no_node, .span = .{ .start = 0, .end = src.len } },
+        .{ .kind = @intFromEnum(RowKind.keyvalue), .parent = 0, .span = .{ .start = 0, .end = 4 } },
+        .{ .kind = @intFromEnum(RowKind.string), .parent = 1, .span = .{ .start = 0, .end = 1 }, .text = Str.of("a") },
+        .{ .kind = @intFromEnum(RowKind.int), .parent = 1, .span = .{ .start = 3, .end = 4 }, .text = Str.of("1"), .tag = Str.of("!!int") },
+        .{ .kind = @intFromEnum(RowKind.keyvalue), .parent = 0, .span = .{ .start = 5, .end = 9 } },
+        .{ .kind = @intFromEnum(RowKind.string), .parent = 4, .span = .{ .start = 5, .end = 6 }, .text = Str.of("b") },
+        .{ .kind = @intFromEnum(RowKind.int), .parent = 4, .span = .{ .start = 8, .end = 9 }, .text = Str.of("2"), .tag = Str.of("!custom") },
+    };
+    const table: NodeTable = .{ .rows = &rows, .row_count = rows.len };
+    const doc = try tableToDocument(testing.allocator, src, &table);
+    defer doc.deinit(testing.allocator);
+    try testing.expectEqual(AST.Tag{ .kind = .integer }, doc.ast.tagOf(3).?);
+    try testing.expectEqualStrings("!custom", doc.ast.tagOf(6).?.text);
+
+    // And back out as it came in.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const built = try documentToTable(arena.allocator(), &doc.ast, doc.ast.root);
+    const back = built.table.rowSlice();
+    try testing.expectEqualStrings("!!int", back[3].tag.slice().?);
+    try testing.expectEqualStrings("!custom", back[6].tag.slice().?);
 }
 
 test "a malformed table is refused, not read" {

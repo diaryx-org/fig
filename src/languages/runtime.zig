@@ -1900,6 +1900,120 @@ test "a language registered from Zig parses, edits and prints through the contra
     try testing.expectEqualStrings("expected key=value", parser.lastMessage());
 }
 
+// `tinylist`: `[a, b, c]`, bare words in brackets, nothing else — a FLOW
+// format, so that the engine's one runtime-shaped question, whether a
+// runtime language's root is a flow container or a section root, is asked
+// and answered from Zig.
+const TinyList = struct {
+    pub const Alloc = TinyKv.Alloc;
+
+    fn parse(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Str, out: *NodeTable, err: *ErrorInfo) callconv(.c) c_int {
+        _ = dialect;
+        const a: *Alloc = @ptrCast(@alignCast(ctx.?));
+        const src = input.slice() orelse "";
+        const body = std.mem.trimEnd(u8, src, " \n");
+        if (body.len < 2 or body[0] != '[' or body[body.len - 1] != ']') {
+            err.set("expected [a, b]");
+            return 2;
+        }
+        var rows: std.ArrayList(NodeRow) = .empty;
+        rows.append(a.allocator, .{ .kind = @intFromEnum(RowKind.sequence), .parent = no_node, .span = .{ .start = 0, .end = body.len } }) catch return 255;
+        var at: usize = 1;
+        while (at < body.len - 1) {
+            if (body[at] == ' ' or body[at] == ',') {
+                at += 1;
+                continue;
+            }
+            var end = at;
+            while (end < body.len - 1 and body[end] != ',' and body[end] != ' ') end += 1;
+            rows.append(a.allocator, .{ .kind = @intFromEnum(RowKind.string), .parent = 0, .span = .{ .start = at, .end = end }, .text = Str.of(body[at..end]) }) catch return 255;
+            at = end;
+        }
+        const r = rows.toOwnedSlice(a.allocator) catch return 255;
+        out.* = .{ .rows = r.ptr, .row_count = r.len };
+        return 0;
+    }
+
+    fn freeTable(ctx: ?*anyopaque, table: *NodeTable) callconv(.c) void {
+        const a: *Alloc = @ptrCast(@alignCast(ctx.?));
+        a.allocator.free(table.rowSlice());
+    }
+
+    fn print(ctx: ?*anyopaque, dialect: [*:0]const u8, table: *const NodeTable, options: *const PrintOptions, out: *Str, err: *ErrorInfo) callconv(.c) c_int {
+        _ = dialect;
+        _ = options;
+        const a: *Alloc = @ptrCast(@alignCast(ctx.?));
+        const rows = table.rowSlice();
+        var buf: std.ArrayList(u8) = .empty;
+        buf.append(a.allocator, '[') catch return 255;
+        for (rows[1..], 0..) |row, i| {
+            if (row.kind != @intFromEnum(RowKind.string)) {
+                err.set("tinylist holds a flat list of words");
+                buf.deinit(a.allocator);
+                return 4;
+            }
+            if (i > 0) buf.appendSlice(a.allocator, ", ") catch return 255;
+            buf.appendSlice(a.allocator, row.text.slice() orelse "") catch return 255;
+        }
+        buf.appendSlice(a.allocator, "]\n") catch return 255;
+        const s = buf.toOwnedSlice(a.allocator) catch return 255;
+        out.* = Str.of(s);
+        return 0;
+    }
+
+    const syntax: SyntaxDesc = .{
+        .comments = .{ .style = @intFromEnum(manifest.CommentStyle.hash), .line = .{}, .trailing = .{} },
+        // Never written — the format has no mapping — but a null needs a
+        // `render_entry` beside it, and the list is what is under test.
+        .kv_sep = ": ",
+        .empty_map_literal = null,
+        .flow_containers = true,
+    };
+    const extensions = [_]?[*:0]const u8{ "tlist", null };
+    const dialects = [_]DialectDesc{.{ .name = "tinylist", .extensions = &extensions, .splice = 0, .empty_doc_seed = "[]\n" }};
+    const samples = [_]Str{Str.of("[a, b]\n")};
+
+    pub fn vtable(alloc: *Alloc) VTable {
+        return .{
+            .version = vtable_version,
+            .ctx = alloc,
+            .name = "tinylist",
+            .caps = cap_read | cap_edit | cap_serialize,
+            .max_mapping_depth = 0,
+            .syntax = &syntax,
+            .dialects = &dialects,
+            .dialect_count = dialects.len,
+            .samples = &samples,
+            .sample_count = samples.len,
+            .parse = parse,
+            .print = print,
+            .free_table = freeTable,
+            .free_bytes = TinyKv.freeBytes,
+        };
+    }
+};
+
+test "a runtime language's flow root is edited by comma-aware splice, not as a section root" {
+    // `Editor.is_section_format` is "may be" for a runtime language; the
+    // dialect's `section_noun` settles it at the call. Before it did, a
+    // runtime `[a, b, c]` was taken for a section root and its items were
+    // deleted by line — the whole document, for a one-line list.
+    defer deinitAll();
+    var alloc: TinyList.Alloc = .{ .allocator = testing.allocator };
+    const vt = TinyList.vtable(&alloc);
+    const abi = try register(testing.allocator, &vt);
+    const e = entryByAbi(abi).?;
+    var ed: editor.Editor(Language) = .{ .allocator = testing.allocator, .format = e.typeOf() };
+    defer ed.deinit();
+    try ed.init("[a, b, c]\n");
+    try ed.removeSeqItem(&.{}, 1);
+    try testing.expectEqualStrings("[a, c]\n", ed.source.items);
+    try ed.removeSeqItem(&.{}, 1);
+    try testing.expectEqualStrings("[a]\n", ed.source.items);
+    try ed.appendToSeq(&.{}, "d");
+    try testing.expectEqualStrings("[a, d]\n", ed.source.items);
+}
+
 test "registration refuses a record that fails validation or the harness" {
     defer deinitAll();
     var alloc: TinyKv.Alloc = .{ .allocator = testing.allocator };

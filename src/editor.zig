@@ -151,7 +151,10 @@ pub fn Editor(comptime Language: type) type {
         /// engine rule.
         fn isFlowNode(self: *const Self, parsed: Document, node: AST.Node) bool {
             if (!self.syntax().flow_containers) return false;
-            if (is_section_format and (node.id == parsed.ast.root or parsed.isSection(node))) return false;
+            // `is_section_format` is "may be" for a runtime language, so the
+            // dialect's own `section_noun` settles it at the call: a runtime
+            // JSON's `[1, 2]` root is a flow sequence, not a section root.
+            if (is_section_format and self.syntax().section_noun != null and (node.id == parsed.ast.root or parsed.isSection(node))) return false;
             return isFlow(self.source.items, parsed.span(node));
         }
 

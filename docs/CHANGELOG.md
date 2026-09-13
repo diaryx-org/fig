@@ -152,6 +152,7 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **ini** — a `[ ]` header — a name of only whitespace — is an empty name, refused ([`b3976e6`](https://github.com/diaryx-org/fig/commit/b3976e6be4f66a27ab0bdfa2a45c5c81556bce05))
 - **runtime** — a core-schema tag on the wire decodes to the kind tag it encoded ([`4b4fd01`](https://github.com/diaryx-org/fig/commit/4b4fd01224a55df9ee7683260dccbddd08dceb6b))
 - **properties** — an empty value spans where a value would begin, and `set` on a bare key writes the separator ([`f543684`](https://github.com/diaryx-org/fig/commit/f5436849c447e51cba58d3bc7f40a206a5023a09))
+- **editor** — an inserted key is spelled as the format spells a key, at every entry ([`2ce57c2`](https://github.com/diaryx-org/fig/commit/2ce57c22f4c4ec7ef722f812248aa46cc4b72734))
 
 ### Changed
 
@@ -269,6 +270,10 @@ after its separator now spans `[end of separator, same)` instead of
 `[end of key, same)`, and its keyvalue span ends there too; `fig set` on
 such a key, or on a key with no separator, now produces `key=value`
 rather than gluing the value to the key.
+
+- `fig insert` spells the new key through the format's
+key style — `.k` in ZON (was `k`, refused), `"has space"` in TOML (was
+`has space`, refused), `"k\"q"` in JSON (was `"k"q"`, refused). Rust
 
 <!-- git-cliff:end -->
 

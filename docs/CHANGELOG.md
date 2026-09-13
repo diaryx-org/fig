@@ -148,6 +148,7 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - **runtime** — FIG_DEPTH_NONE, so a vtable can declare a flat format ([`a9e5879`](https://github.com/diaryx-org/fig/commit/a9e5879ccf4749a20af11e676815e3ae6a7d66ab))
 - **cli** — name a runtime format in the bad-edit-text report rather than panic on @tagName ([`761db09`](https://github.com/diaryx-org/fig/commit/761db09b9830268709cf0a9f619480e6332724f9))
 - **canonical** — print an empty container's trailing comment after the comma, and a value's leading comment at all ([`051cd8b`](https://github.com/diaryx-org/fig/commit/051cd8bc8166449fb399a9aed1420dd2e7199a91))
+- **editor** — a runtime language's flow root is a flow container, not a section root ([`504edb7`](https://github.com/diaryx-org/fig/commit/504edb71dc166881d3867e3f6fd360c661efa922))
 
 ### Changed
 
@@ -239,6 +240,14 @@ by `Language.validate` as an unknown declaration.
 - canonical output for an empty `{}` or `[]` that carries a trailing comment and has a later sibling is `{}, // c` rather than `{} // c,`; the old spelling reparsed with the comma inside the comment text.
 
 - a comment between an entry's `:` and its value survives a canonical print as `"k": /* c */ v` (or `// c` with the value on the next line); it used to be dropped.
+
+- a runtime language whose `syntax` declares
+`flow_containers` and no `section_noun` now edits its root container by
+comma-aware splice, as the compiled flow formats do. Deleting an item
+from, or appending to, a one-line root `[...]` or `{...}` used to fail
+with an edit-text refusal (the line splice took the whole document); a
+multi-line root was edited by line and could strand a separator comma.
+Compiled formats are unchanged.
 
 <!-- git-cliff:end -->
 

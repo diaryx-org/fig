@@ -336,7 +336,7 @@ const Helper = struct {
     /// response line, parsed into a `std.json.Value` tree in `out_arena`,
     /// which the caller owns.
     fn call(t: *Wire.Transport, out_arena: Allocator, request: []const u8) anyerror!std.json.Value {
-        const self: *Helper = @fieldParentPtr("transport", t);
+        const self: *Helper = @alignCast(@fieldParentPtr("transport", t));
         try self.writer.interface.writeAll(request);
         try self.writer.interface.writeByte('\n');
         try self.writer.interface.flush();

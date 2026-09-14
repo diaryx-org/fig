@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="456" viewBox="0 0 720 456" role="img" aria-label="Any format that follows the rules is a language: fig asks every language to describe, read, write and render; ten are built in, and a script in JavaScript, Lua or Rust can be taught at runtime, inside the program or beside it as a helper">
+<title>Any format that follows the rules is a language: fig asks every language to describe, read, write and render; ten are built in, and a script in JavaScript, Lua or Rust can be taught at runtime, inside the program or beside it as a helper</title>
+<style>
+  .t { font-family: Iowan Old Style, Palatino, Georgia, serif }
+  .b, .m, .k { font-family: Helvetica Neue, Helvetica, Arial, sans-serif }
+  .mono { font-family: SF Mono, Menlo, Consolas, monospace }
+  .grid, .axis, .box, .boxp, .chip, .card { stroke-width:1 }
+  .ln { stroke-width:1.6; fill:none }
+
+  .card { fill:#FAFAF9; stroke:#E3E1DC }
+  .t { fill:#2C2130 } .b { fill:#5E4A66 } .m { fill:#8A7590 } .k { fill:#2C2130 }
+  .plum { fill:#52355C } .pink { fill:#D4576B } .stem { fill:#7A5A37 }
+  .soft { fill:#52355C; fill-opacity:.4 }
+  .grid { stroke:#E3E1DC } .axis { stroke:#C7C4BD }
+  .box { fill:#F2F1EE; stroke:#E3E1DC }
+  .boxp { fill:#52355C; fill-opacity:.09; stroke:#52355C; stroke-opacity:.6 }
+  .chip { fill:#FFFFFF; stroke:#E3E1DC }
+  .ln { stroke:#52355C }
+  .g-stem { stroke:#7A5A37 } .g-skin { fill:#52355C } .g-mid { fill:#F2E6D8 }
+  .g-flesh { fill:#D4576B } .g-seed { fill:#F6EADC }
+  @media (prefers-color-scheme: dark) {
+  .card { fill:#161517; stroke:#333136 }
+  .t { fill:#EFE6F1 } .b { fill:#C9B6CE } .m { fill:#8E7A96 } .k { fill:#EFE6F1 }
+  .plum { fill:#7A5187 } .pink { fill:#E06A7D } .stem { fill:#B08954 }
+  .soft { fill:#7A5187; fill-opacity:.4 }
+  .grid { stroke:#333136 } .axis { stroke:#4A474D }
+  .box { fill:#1F1E21; stroke:#333136 }
+  .boxp { fill:#7A5187; fill-opacity:.09; stroke:#7A5187; stroke-opacity:.6 }
+  .chip { fill:#2A292D; stroke:#333136 }
+  .ln { stroke:#7A5187 }
+  .g-stem { stroke:#B08954 } .g-skin { fill:#7A5187 } .g-mid { fill:#EEDFCC }
+  .g-flesh { fill:#E06A7D } .g-seed { fill:#F3E4CF }
+  }
+</style>
+<defs><path id="f" d="M0,-40 C-1,-30 -8,-26 -16,-18 C-25,-9 -30,2 -30,12 C-30,29 -17,40 0,40 C17,40 30,29 30,12 C30,2 25,-9 16,-18 C8,-26 1,-30 0,-40 Z"/></defs>
+<rect x="0.5" y="0.5" width="719" height="455" rx="14" class="card"/>
+<g transform="translate(680,44) scale(0.32)"><path class="g-stem" d="M0,-40 C1,-46 3,-50 8,-54" fill="none" stroke-width="4.5" stroke-linecap="round"/><use href="#f" class="g-skin"/><g transform="scale(0.84)"><use href="#f" class="g-mid"/></g><g transform="scale(0.70)"><use href="#f" class="g-flesh"/></g><g class="g-seed"><circle cx="0" cy="-14" r="2.1"/><circle cx="-7" cy="-6" r="2.1"/><circle cx="7" cy="-6" r="2.1"/><circle cx="-13" cy="3" r="2.1"/><circle cx="0" cy="2" r="2.1"/><circle cx="13" cy="3" r="2.1"/><circle cx="-8" cy="11" r="2.1"/><circle cx="8" cy="11" r="2.1"/><circle cx="-15" cy="12" r="2.1"/><circle cx="15" cy="12" r="2.1"/><circle cx="0" cy="19" r="2.1"/><circle cx="-7" cy="24" r="2.1"/><circle cx="7" cy="24" r="2.1"/></g></g>
+<text x="28" y="36" class="t" font-size="22" text-anchor="start" font-weight="normal" >Any format that follows the rules is a language</text>
+<text x="28" y="58" class="b" font-size="12.5" text-anchor="start" font-weight="normal" >fig no longer needs a format compiled in. It needs the format to answer four questions.</text>
+<rect x="28" y="80" width="664" height="108" rx="10" class="boxp"/>
+<text x="44" y="104" class="t" font-size="16" text-anchor="start" font-weight="normal" >The rules</text>
+<text x="124" y="104" class="m" font-size="11.5" text-anchor="start" font-weight="normal" >what fig asks of every language, built in or not</text>
+<text x="44.0" y="136" class="k mono" font-size="14" text-anchor="start" font-weight="600" >describe</text>
+<text x="44.0" y="156" class="b" font-size="11.5" text-anchor="start" font-weight="normal" >what am I called,</text>
+<text x="44.0" y="171" class="b" font-size="11.5" text-anchor="start" font-weight="normal" >which files are mine</text>
+<text x="202.0" y="136" class="k mono" font-size="14" text-anchor="start" font-weight="600" >read</text>
+<text x="202.0" y="156" class="b" font-size="11.5" text-anchor="start" font-weight="normal" >turn a file into</text>
+<text x="202.0" y="171" class="b" font-size="11.5" text-anchor="start" font-weight="normal" >a table of rows</text>
+<text x="360.0" y="136" class="k mono" font-size="14" text-anchor="start" font-weight="600" >write</text>
+<text x="360.0" y="156" class="b" font-size="11.5" text-anchor="start" font-weight="normal" >turn the table back</text>
+<text x="360.0" y="171" class="b" font-size="11.5" text-anchor="start" font-weight="normal" >into the file, as it was</text>
+<text x="518.0" y="136" class="k mono" font-size="14" text-anchor="start" font-weight="600" >render</text>
+<text x="518.0" y="156" class="b" font-size="11.5" text-anchor="start" font-weight="normal" >spell a new value</text>
+<text x="518.0" y="171" class="b" font-size="11.5" text-anchor="start" font-weight="normal" >the way this format would</text>
+<path class="ln" d="M360.0,188 V214"/>
+<path class="ln" d="M186.0,214 H534.0"/>
+<path class="ln" d="M186.0,214 V230"/>
+<path class="plum" d="M181.0,229 L186.0,237 L191.0,229 Z"/>
+<path class="ln" d="M534.0,214 V230"/>
+<path class="plum" d="M529.0,229 L534.0,237 L539.0,229 Z"/>
+<rect x="28" y="238" width="316" height="172" rx="10" class="box"/>
+<text x="44" y="264" class="t" font-size="16" text-anchor="start" font-weight="normal" >Built in</text>
+<text x="44" y="283" class="b" font-size="11.5" text-anchor="start" font-weight="normal" >ten formats, compiled into fig in Zig</text>
+<rect x="44" y="301" width="41" height="19" rx="9.5" class="chip"/>
+<text x="64.64" y="314" class="k mono" font-size="11" text-anchor="middle" font-weight="normal" >JSON</text>
+<rect x="91.28" y="301" width="41" height="19" rx="9.5" class="chip"/>
+<text x="111.92" y="314" class="k mono" font-size="11" text-anchor="middle" font-weight="normal" >YAML</text>
+<rect x="138.56" y="301" width="41" height="19" rx="9.5" class="chip"/>
+<text x="159.2" y="314" class="k mono" font-size="11" text-anchor="middle" font-weight="normal" >TOML</text>
+<rect x="185.84" y="301" width="34" height="19" rx="9.5" class="chip"/>
+<text x="203.07" y="314" class="k mono" font-size="11" text-anchor="middle" font-weight="normal" >ZON</text>
+<rect x="226.3" y="301" width="34" height="19" rx="9.5" class="chip"/>
+<text x="243.53" y="314" class="k mono" font-size="11" text-anchor="middle" font-weight="normal" >INI</text>
+<rect x="266.76" y="301" width="48" height="19" rx="9.5" class="chip"/>
+<text x="290.81" y="314" class="k mono" font-size="11" text-anchor="middle" font-weight="normal" >plist</text>
+<rect x="44" y="327" width="55" height="19" rx="9.5" class="chip"/>
+<text x="71.46000000000001" y="340" class="k mono" font-size="11" text-anchor="middle" font-weight="normal" >dotenv</text>
+<rect x="104.92" y="327" width="82" height="19" rx="9.5" class="chip"/>
+<text x="146.02" y="340" class="k mono" font-size="11" text-anchor="middle" font-weight="normal" >properties</text>
+<rect x="193.12" y="327" width="82" height="19" rx="9.5" class="chip"/>
+<text x="234.22" y="340" class="k mono" font-size="11" text-anchor="middle" font-weight="normal" >NestedText</text>
+<rect x="281.32" y="327" width="34" height="19" rx="9.5" class="chip"/>
+<text x="298.55" y="340" class="k mono" font-size="11" text-anchor="middle" font-weight="normal" >fig</text>
+<text x="44" y="394" class="m" font-size="11" text-anchor="start" font-weight="normal" >what fig could read before this epoch</text>
+<rect x="376" y="238" width="316" height="172" rx="10" class="box"/>
+<text x="392" y="264" class="t" font-size="16" text-anchor="start" font-weight="normal" >Taught at runtime</text>
+<text x="392" y="283" class="b" font-size="11.5" text-anchor="start" font-weight="normal" >a script in JavaScript or Lua, or a Rust crate</text>
+<rect x="392" y="301" width="82" height="19" rx="9.5" class="chip"/>
+<text x="433.1" y="314" class="k mono" font-size="11" text-anchor="middle" font-weight="normal" >JavaScript</text>
+<rect x="480.2" y="301" width="34" height="19" rx="9.5" class="chip"/>
+<text x="497.43" y="314" class="k mono" font-size="11" text-anchor="middle" font-weight="normal" >Lua</text>
+<rect x="520.66" y="301" width="41" height="19" rx="9.5" class="chip"/>
+<text x="541.3" y="314" class="k mono" font-size="11" text-anchor="middle" font-weight="normal" >Rust</text>
+<rect x="567.9399999999999" y="301" width="89" height="19" rx="9.5" class="chip"/>
+<text x="612.4499999999999" y="314" class="k mono" font-size="11" text-anchor="middle" font-weight="normal" >WebAssembly</text>
+<text x="392" y="344" class="k" font-size="11.5" text-anchor="start" font-weight="600" >inside the program</text>
+<text x="392" y="359" class="b" font-size="11" text-anchor="start" font-weight="normal" >embedded in an app, a library, or a browser</text>
+<text x="392" y="379" class="k" font-size="11.5" text-anchor="start" font-weight="600" >beside it, as a helper</text>
+<text x="392" y="394" class="b" font-size="11" text-anchor="start" font-weight="normal" >a small process the CLI starts; they talk in lines of text</text>
+<text x="360.0" y="436" class="b" font-size="12.5" text-anchor="middle" font-weight="normal" >Both come in through the same door. From then on, fig treats them alike.</text>
+
+</svg>

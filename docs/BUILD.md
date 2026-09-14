@@ -3,6 +3,7 @@ title = fig build instructions
 author = adammharris
 date = 2026-07-04
 updated = 2026-07-04T15:48:19-06:00
+part_of = [fig docs](/docs/docs.md)
 ```
 
 # Building `fig`

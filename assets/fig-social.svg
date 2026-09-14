@@ -2,7 +2,7 @@
   <defs>
     <path id="f" d="M0,-40 C-1,-30 -8,-26 -16,-18 C-25,-9 -30,2 -30,12 C-30,29 -17,40 0,40 C17,40 30,29 30,12 C30,2 25,-9 16,-18 C8,-26 1,-30 0,-40 Z"/>
   </defs>
-  <rect width="1280" height="640" fill="#241A28"/>
+  <rect width="1280" height="640" fill="#161517"/>
 
   <g transform="translate(523,248) scale(1.5)">
     <path d="M0,-40 C1,-46 3,-50 8,-54" fill="none" stroke="#B08954" stroke-width="4.5" stroke-linecap="round"/>

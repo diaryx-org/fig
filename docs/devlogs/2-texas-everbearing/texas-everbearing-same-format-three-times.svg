@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="683" viewBox="0 0 720 683" role="img" aria-label="Lines of code for each of the ten formats fig ships, written in Zig (13,871 lines in all), JavaScript (6,536) and Lua (6,944)">
+<title>Lines of code for each of the ten formats fig ships, written in Zig (13,871 lines in all), JavaScript (6,536) and Lua (6,944)</title>
+<style>
+  .t { font-family: Iowan Old Style, Palatino, Georgia, serif }
+  .b, .m, .k { font-family: Helvetica Neue, Helvetica, Arial, sans-serif }
+  .mono { font-family: SF Mono, Menlo, Consolas, monospace }
+  .grid, .axis, .box, .boxp, .chip, .card { stroke-width:1 }
+  .ln { stroke-width:1.6; fill:none }
+
+  .card { fill:#FAFAF9; stroke:#E3E1DC }
+  .t { fill:#2C2130 } .b { fill:#5E4A66 } .m { fill:#8A7590 } .k { fill:#2C2130 }
+  .plum { fill:#52355C } .pink { fill:#D4576B } .stem { fill:#7A5A37 }
+  .soft { fill:#52355C; fill-opacity:.4 }
+  .grid { stroke:#E3E1DC } .axis { stroke:#C7C4BD }
+  .box { fill:#F2F1EE; stroke:#E3E1DC }
+  .boxp { fill:#52355C; fill-opacity:.09; stroke:#52355C; stroke-opacity:.6 }
+  .chip { fill:#FFFFFF; stroke:#E3E1DC }
+  .ln { stroke:#52355C }
+  .g-stem { stroke:#7A5A37 } .g-skin { fill:#52355C } .g-mid { fill:#F2E6D8 }
+  .g-flesh { fill:#D4576B } .g-seed { fill:#F6EADC }
+  @media (prefers-color-scheme: dark) {
+  .card { fill:#161517; stroke:#333136 }
+  .t { fill:#EFE6F1 } .b { fill:#C9B6CE } .m { fill:#8E7A96 } .k { fill:#EFE6F1 }
+  .plum { fill:#7A5187 } .pink { fill:#E06A7D } .stem { fill:#B08954 }
+  .soft { fill:#7A5187; fill-opacity:.4 }
+  .grid { stroke:#333136 } .axis { stroke:#4A474D }
+  .box { fill:#1F1E21; stroke:#333136 }
+  .boxp { fill:#7A5187; fill-opacity:.09; stroke:#7A5187; stroke-opacity:.6 }
+  .chip { fill:#2A292D; stroke:#333136 }
+  .ln { stroke:#7A5187 }
+  .g-stem { stroke:#B08954 } .g-skin { fill:#7A5187 } .g-mid { fill:#EEDFCC }
+  .g-flesh { fill:#E06A7D } .g-seed { fill:#F3E4CF }
+  }
+</style>
+<defs><path id="f" d="M0,-40 C-1,-30 -8,-26 -16,-18 C-25,-9 -30,2 -30,12 C-30,29 -17,40 0,40 C17,40 30,29 30,12 C30,2 25,-9 16,-18 C8,-26 1,-30 0,-40 Z"/></defs>
+<rect x="0.5" y="0.5" width="719" height="682" rx="14" class="card"/>
+<g transform="translate(680,44) scale(0.32)"><path class="g-stem" d="M0,-40 C1,-46 3,-50 8,-54" fill="none" stroke-width="4.5" stroke-linecap="round"/><use href="#f" class="g-skin"/><g transform="scale(0.84)"><use href="#f" class="g-mid"/></g><g transform="scale(0.70)"><use href="#f" class="g-flesh"/></g><g class="g-seed"><circle cx="0" cy="-14" r="2.1"/><circle cx="-7" cy="-6" r="2.1"/><circle cx="7" cy="-6" r="2.1"/><circle cx="-13" cy="3" r="2.1"/><circle cx="0" cy="2" r="2.1"/><circle cx="13" cy="3" r="2.1"/><circle cx="-8" cy="11" r="2.1"/><circle cx="8" cy="11" r="2.1"/><circle cx="-15" cy="12" r="2.1"/><circle cx="15" cy="12" r="2.1"/><circle cx="0" cy="19" r="2.1"/><circle cx="-7" cy="24" r="2.1"/><circle cx="7" cy="24" r="2.1"/></g></g>
+<text x="28" y="36" class="t" font-size="22" text-anchor="start" font-weight="normal" >Every format fig ships, written again as a script</text>
+<text x="28" y="58" class="b" font-size="12.5" text-anchor="start" font-weight="normal" >Lines of code, tests excluded. Zig is compiled into fig; the twins are files fig loads when asked.</text>
+<rect x="28" y="75" width="10" height="10" rx="2" class="plum"/>
+<text x="43" y="84" class="b" font-size="12" text-anchor="start" font-weight="normal" >Zig, compiled in</text>
+<text x="149.8" y="84" class="m" font-size="11.5" text-anchor="start" font-weight="normal" >13,871 in all</text>
+<rect x="249.6" y="75" width="10" height="10" rx="2" class="pink"/>
+<text x="264.6" y="84" class="b" font-size="12" text-anchor="start" font-weight="normal" >JavaScript, fig-quickjs</text>
+<text x="415.5" y="84" class="m" font-size="11.5" text-anchor="start" font-weight="normal" >6,536 in all</text>
+<rect x="509.0" y="75" width="10" height="10" rx="2" class="stem"/>
+<text x="524.0" y="84" class="b" font-size="12" text-anchor="start" font-weight="normal" >Lua, fig-lua</text>
+<text x="605.6" y="84" class="m" font-size="11.5" text-anchor="start" font-weight="normal" >6,944 in all</text>
+<line x1="116.0" y1="106" x2="116.0" y2="605" class="axis"/>
+<text x="116.0" y="621" class="m" font-size="11" text-anchor="middle" font-weight="normal" >0</text>
+<line x1="276.0" y1="106" x2="276.0" y2="605" class="grid"/>
+<text x="276.0" y="621" class="m" font-size="11" text-anchor="middle" font-weight="normal" >1,000</text>
+<line x1="436.0" y1="106" x2="436.0" y2="605" class="grid"/>
+<text x="436.0" y="621" class="m" font-size="11" text-anchor="middle" font-weight="normal" >2,000</text>
+<line x1="596.0" y1="106" x2="596.0" y2="605" class="grid"/>
+<text x="596.0" y="621" class="m" font-size="11" text-anchor="middle" font-weight="normal" >3,000</text>
+<text x="104" y="134.5" class="k mono" font-size="12.5" text-anchor="end" font-weight="600" >yaml</text>
+<path class="plum" d="M116,112 H636.8 a4,4 0 0 1 4,4 V119 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="646.8" y="121" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >3,280</text>
+<path class="pink" d="M116,125 H487.0 a4,4 0 0 1 4,4 V132 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="497.04" y="134" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >2,344</text>
+<path class="stem" d="M116,138 H513.3 a4,4 0 0 1 4,4 V145 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="523.28" y="147" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >2,508</text>
+<text x="104" y="184.5" class="k mono" font-size="12.5" text-anchor="end" font-weight="600" >fig</text>
+<path class="plum" d="M116,162 H563.7 a4,4 0 0 1 4,4 V169 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="573.6800000000001" y="171" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >2,823</text>
+<path class="pink" d="M116,175 H405.3 a4,4 0 0 1 4,4 V182 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="415.28000000000003" y="184" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >1,833</text>
+<path class="stem" d="M116,188 H415.5 a4,4 0 0 1 4,4 V195 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="425.52" y="197" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >1,897</text>
+<text x="104" y="234.5" class="k mono" font-size="12.5" text-anchor="end" font-weight="600" >toml</text>
+<path class="plum" d="M116,212 H391.4 a4,4 0 0 1 4,4 V219 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="401.36" y="221" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >1,746</text>
+<path class="pink" d="M116,225 H224.6 a4,4 0 0 1 4,4 V232 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="234.64" y="234" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >704</text>
+<path class="stem" d="M116,238 H235.7 a4,4 0 0 1 4,4 V245 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="245.68" y="247" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >773</text>
+<text x="104" y="284.5" class="k mono" font-size="12.5" text-anchor="end" font-weight="600" >json</text>
+<path class="plum" d="M116,262 H348.6 a4,4 0 0 1 4,4 V269 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="358.64" y="271" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >1,479</text>
+<path class="pink" d="M116,275 H148.2 a4,4 0 0 1 4,4 V282 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="158.16" y="284" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >226</text>
+<path class="stem" d="M116,288 H148.2 a4,4 0 0 1 4,4 V295 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="158.16" y="297" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >226</text>
+<text x="104" y="334.5" class="k mono" font-size="12.5" text-anchor="end" font-weight="600" >nestedtext</text>
+<path class="plum" d="M116,312 H271.0 a4,4 0 0 1 4,4 V319 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="281.03999999999996" y="321" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >994</text>
+<path class="pink" d="M116,325 H176.8 a4,4 0 0 1 4,4 V332 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="186.8" y="334" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >405</text>
+<path class="stem" d="M116,338 H179.4 a4,4 0 0 1 4,4 V345 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="189.36" y="347" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >421</text>
+<text x="104" y="384.5" class="k mono" font-size="12.5" text-anchor="end" font-weight="600" >plist</text>
+<path class="plum" d="M116,362 H254.2 a4,4 0 0 1 4,4 V369 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="264.24" y="371" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >889</text>
+<path class="pink" d="M116,375 H145.9 a4,4 0 0 1 4,4 V382 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="155.92000000000002" y="384" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >212</text>
+<path class="stem" d="M116,388 H150.7 a4,4 0 0 1 4,4 V395 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="160.72" y="397" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >242</text>
+<text x="104" y="434.5" class="k mono" font-size="12.5" text-anchor="end" font-weight="600" >dotenv</text>
+<path class="plum" d="M116,412 H227.0 a4,4 0 0 1 4,4 V419 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="237.04000000000002" y="421" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >719</text>
+<path class="pink" d="M116,425 H132.0 a4,4 0 0 1 4,4 V432 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="142.0" y="434" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >125</text>
+<path class="stem" d="M116,438 H132.8 a4,4 0 0 1 4,4 V445 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="142.8" y="447" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >130</text>
+<text x="104" y="484.5" class="k mono" font-size="12.5" text-anchor="end" font-weight="600" >zon</text>
+<path class="plum" d="M116,462 H219.7 a4,4 0 0 1 4,4 V469 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="229.68" y="471" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >673</text>
+<path class="pink" d="M116,475 H174.7 a4,4 0 0 1 4,4 V482 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="184.72" y="484" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >392</text>
+<path class="stem" d="M116,488 H178.4 a4,4 0 0 1 4,4 V495 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="188.4" y="497" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >415</text>
+<text x="104" y="534.5" class="k mono" font-size="12.5" text-anchor="end" font-weight="600" >ini</text>
+<path class="plum" d="M116,512 H219.2 a4,4 0 0 1 4,4 V519 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="229.2" y="521" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >670</text>
+<path class="pink" d="M116,525 H135.4 a4,4 0 0 1 4,4 V532 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="145.36" y="534" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >146</text>
+<path class="stem" d="M116,538 H137.1 a4,4 0 0 1 4,4 V545 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="147.12" y="547" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >157</text>
+<text x="104" y="584.5" class="k mono" font-size="12.5" text-anchor="end" font-weight="600" >properties</text>
+<path class="plum" d="M116,562 H207.7 a4,4 0 0 1 4,4 V569 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="217.68" y="571" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >598</text>
+<path class="pink" d="M116,575 H135.8 a4,4 0 0 1 4,4 V582 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="145.84" y="584" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >149</text>
+<path class="stem" d="M116,588 H140.0 a4,4 0 0 1 4,4 V595 a4,4 0 0 1 -4,4 H116 Z"/>
+<text x="150.0" y="597" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >175</text>
+<text x="28" y="649" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >The twins do the same job in about half the lines, leaning on a grammar library each runtime ships.</text>
+<text x="28" y="663" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >Zig json also reads JSONC and JSON5, which the scripts serve from a second twin; Zig plist includes the XML tokenizer it shares (188).</text>
+
+</svg>

@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="292" viewBox="0 0 720 292" role="img" aria-label="Editing hooks per compiled format: 28 at core 2.9, none at 3.0">
+<title>Editing hooks per compiled format: 28 at core 2.9, none at 3.0</title>
+<style>
+  .t { font-family: Iowan Old Style, Palatino, Georgia, serif }
+  .b, .m, .k { font-family: Helvetica Neue, Helvetica, Arial, sans-serif }
+  .mono { font-family: SF Mono, Menlo, Consolas, monospace }
+  .grid, .axis, .box, .boxp, .chip, .card { stroke-width:1 }
+  .ln { stroke-width:1.6; fill:none }
+
+  .card { fill:#FAFAF9; stroke:#E3E1DC }
+  .t { fill:#2C2130 } .b { fill:#5E4A66 } .m { fill:#8A7590 } .k { fill:#2C2130 }
+  .plum { fill:#52355C } .pink { fill:#D4576B } .stem { fill:#7A5A37 }
+  .soft { fill:#52355C; fill-opacity:.4 }
+  .grid { stroke:#E3E1DC } .axis { stroke:#C7C4BD }
+  .box { fill:#F2F1EE; stroke:#E3E1DC }
+  .boxp { fill:#52355C; fill-opacity:.09; stroke:#52355C; stroke-opacity:.6 }
+  .chip { fill:#FFFFFF; stroke:#E3E1DC }
+  .ln { stroke:#52355C }
+  .g-stem { stroke:#7A5A37 } .g-skin { fill:#52355C } .g-mid { fill:#F2E6D8 }
+  .g-flesh { fill:#D4576B } .g-seed { fill:#F6EADC }
+  @media (prefers-color-scheme: dark) {
+  .card { fill:#161517; stroke:#333136 }
+  .t { fill:#EFE6F1 } .b { fill:#C9B6CE } .m { fill:#8E7A96 } .k { fill:#EFE6F1 }
+  .plum { fill:#7A5187 } .pink { fill:#E06A7D } .stem { fill:#B08954 }
+  .soft { fill:#7A5187; fill-opacity:.4 }
+  .grid { stroke:#333136 } .axis { stroke:#4A474D }
+  .box { fill:#1F1E21; stroke:#333136 }
+  .boxp { fill:#7A5187; fill-opacity:.09; stroke:#7A5187; stroke-opacity:.6 }
+  .chip { fill:#2A292D; stroke:#333136 }
+  .ln { stroke:#7A5187 }
+  .g-stem { stroke:#B08954 } .g-skin { fill:#7A5187 } .g-mid { fill:#EEDFCC }
+  .g-flesh { fill:#E06A7D } .g-seed { fill:#F3E4CF }
+  }
+</style>
+<defs><path id="f" d="M0,-40 C-1,-30 -8,-26 -16,-18 C-25,-9 -30,2 -30,12 C-30,29 -17,40 0,40 C17,40 30,29 30,12 C30,2 25,-9 16,-18 C8,-26 1,-30 0,-40 Z"/></defs>
+<rect x="0.5" y="0.5" width="719" height="291" rx="14" class="card"/>
+<g transform="translate(680,44) scale(0.32)"><path class="g-stem" d="M0,-40 C1,-46 3,-50 8,-54" fill="none" stroke-width="4.5" stroke-linecap="round"/><use href="#f" class="g-skin"/><g transform="scale(0.84)"><use href="#f" class="g-mid"/></g><g transform="scale(0.70)"><use href="#f" class="g-flesh"/></g><g class="g-seed"><circle cx="0" cy="-14" r="2.1"/><circle cx="-7" cy="-6" r="2.1"/><circle cx="7" cy="-6" r="2.1"/><circle cx="-13" cy="3" r="2.1"/><circle cx="0" cy="2" r="2.1"/><circle cx="13" cy="3" r="2.1"/><circle cx="-8" cy="11" r="2.1"/><circle cx="8" cy="11" r="2.1"/><circle cx="-15" cy="12" r="2.1"/><circle cx="15" cy="12" r="2.1"/><circle cx="0" cy="19" r="2.1"/><circle cx="-7" cy="24" r="2.1"/><circle cx="7" cy="24" r="2.1"/></g></g>
+<text x="28" y="36" class="t" font-size="22" text-anchor="start" font-weight="normal" >The special cases a format used to need</text>
+<text x="28" y="58" class="b" font-size="12.5" text-anchor="start" font-weight="normal" >At core 2.9, six formats handed the editor 28 custom hooks to patch up edits. At 3.0 there are none to hand over.</text>
+<text x="556" y="138" class="t" font-size="60" text-anchor="end" font-weight="normal" >28</text>
+<text x="570" y="138" class="m" font-size="30" text-anchor="start" font-weight="normal" >→</text>
+<text x="606" y="138" class="t" font-size="60" text-anchor="start" font-weight="normal" >0</text>
+<text x="692" y="160" class="b" font-size="12" text-anchor="end" font-weight="normal" >hooks a format may declare</text>
+<text x="106" y="99" class="k mono" font-size="12.5" text-anchor="end" font-weight="normal" >plist</text>
+<path class="plum" d="M118,88 H396.0 a4,4 0 0 1 4,4 V97 a4,4 0 0 1 -4,4 H118 Z"/>
+<text x="406.0" y="99" class="m" font-size="11" text-anchor="start" font-weight="normal" >10</text>
+<text x="106" y="120" class="k mono" font-size="12.5" text-anchor="end" font-weight="normal" >nestedtext</text>
+<path class="plum" d="M118,109 H339.6 a4,4 0 0 1 4,4 V118 a4,4 0 0 1 -4,4 H118 Z"/>
+<text x="349.6" y="120" class="m" font-size="11" text-anchor="start" font-weight="normal" >8</text>
+<text x="106" y="141" class="k mono" font-size="12.5" text-anchor="end" font-weight="normal" >fig</text>
+<path class="plum" d="M118,130 H226.8 a4,4 0 0 1 4,4 V139 a4,4 0 0 1 -4,4 H118 Z"/>
+<text x="236.8" y="141" class="m" font-size="11" text-anchor="start" font-weight="normal" >4</text>
+<text x="106" y="162" class="k mono" font-size="12.5" text-anchor="end" font-weight="normal" >yaml</text>
+<path class="plum" d="M118,151 H198.6 a4,4 0 0 1 4,4 V160 a4,4 0 0 1 -4,4 H118 Z"/>
+<text x="208.6" y="162" class="m" font-size="11" text-anchor="start" font-weight="normal" >3</text>
+<text x="106" y="183" class="k mono" font-size="12.5" text-anchor="end" font-weight="normal" >toml</text>
+<path class="plum" d="M118,172 H170.4 a4,4 0 0 1 4,4 V181 a4,4 0 0 1 -4,4 H118 Z"/>
+<text x="180.4" y="183" class="m" font-size="11" text-anchor="start" font-weight="normal" >2</text>
+<text x="106" y="204" class="k mono" font-size="12.5" text-anchor="end" font-weight="normal" >ini</text>
+<path class="plum" d="M118,193 H142.2 a4,4 0 0 1 4,4 V202 a4,4 0 0 1 -4,4 H118 Z"/>
+<text x="152.2" y="204" class="m" font-size="11" text-anchor="start" font-weight="normal" >1</text>
+<line x1="118" y1="84" x2="118" y2="214" class="axis"/>
+<text x="28" y="244" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >Each hook became something the parser records about the file, or one of five renderers any language can use.</text>
+<text x="28" y="258" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >That is what makes a script possible: a language describes its file, and fig does the editing.</text>
+<text x="28" y="272" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >Counted from src/languages/&lt;format&gt;/&lt;format&gt;.zig at core/v2.9.0.</text>
+
+</svg>

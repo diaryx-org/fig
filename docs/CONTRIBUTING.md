@@ -3,6 +3,7 @@ title = Contributing
 author = adammharris
 created = 2026-07-04T16:43:09-06:00
 updated = 2026-07-04T16:43:09-06:00
+part_of = [fig docs](/docs/docs.md)
 ```
 
 # Contributing to `fig`

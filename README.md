@@ -7,6 +7,7 @@ updated = 2026-08-27T22:45:00-06:00
 contents = [[fig docs](docs/docs.md)]
 config = .config/prov.yaml
 about = about.md
+registry = registry.yaml
 ```
 
 <h1 align="center">

@@ -120,11 +120,15 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
+_No commits since the last release tag._
+
+<!-- git-cliff:end -->
+
+## core 3.0.1 · npm 3.0.1
+
 ### Fixed
 
 - **cli** — align-cast the helper recovered from its transport for wasm32 ([`a11c6d3`](https://github.com/diaryx-org/fig/commit/a11c6d3ef4d200aae28d1b0ae246a88716dba392))
-
-<!-- git-cliff:end -->
 
 ## core 3.0.0
 

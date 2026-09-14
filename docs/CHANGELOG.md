@@ -120,6 +120,12 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
+_No commits since the last release tag._
+
+<!-- git-cliff:end -->
+
+## core 3.0.0
+
 ### Breaking
 
 - **languages** — remove generic XML as a selectable format ([`5a25681`](https://github.com/diaryx-org/fig/commit/5a25681a580ba5ccf8a614cd45e6d533928e8d6d))
@@ -296,8 +302,6 @@ the `--seq` text.
 - a runtime language that declares `references` and returns aliases, merges or tags now has that layer collapsed when converted to a format without one, as YAML is; one that does not declare it is unchanged.
 
 - `fig.Language.YAML.materialize`/`TagMode` are gone from the Zig API; the pass is `fig.Materialize.materialize` with `fig.Materialize.TagMode`.
-
-<!-- git-cliff:end -->
 
 ### Why a major
 

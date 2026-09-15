@@ -16,4 +16,5 @@ fixity: attachments
 recycle_bin: false
 history: off
 about: off
-workspace_id: ''
+workspace_id: fig
+root: README.md

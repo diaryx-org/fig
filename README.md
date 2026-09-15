@@ -1,4 +1,5 @@
 ```fig
+part_of = id:org/kv2bv2m
 title = fig
 version = 3.0.1
 author = adammharris
@@ -6,8 +7,8 @@ created = 2026-05-08
 updated = 2026-08-27T22:45:00-06:00
 contents = [[fig docs](docs/docs.md)]
 config = .config/prov.yaml
-about = about.md
 registry = registry.yaml
+id = b9j9zgk
 ```
 
 <h1 align="center">

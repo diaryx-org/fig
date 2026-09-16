@@ -18,3 +18,18 @@ history: off
 about: off
 workspace_id: fig
 root: README.md
+# Build output under the Rust bindings carries copies of docs/ that
+# cargo-semver-checks unpacks; they are not this workspace's documents.
+out_of_scope:
+- bindings/rust/target
+fields:
+  audience:
+    values: closed
+    vocabulary: '[Audiences](/vocab/audiences.md)'
+    reify: true
+exports:
+  www:
+    label: fig on diaryx.org
+    gate:
+      field: audience
+      value: public

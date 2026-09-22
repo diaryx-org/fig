@@ -12,7 +12,7 @@ references:
 id_storage: both
 updated: ''
 identity: lazy
-fixity: attachments
+fixity: on
 recycle_bin: false
 history: off
 about: off
@@ -22,14 +22,27 @@ root: README.md
 # cargo-semver-checks unpacks; they are not this workspace's documents.
 out_of_scope:
 - bindings/rust/target
+- history
 fields:
   audience:
     values: closed
     vocabulary: '[Audiences](/vocab/audiences.md)'
     reify: true
+  created: { type: date }
+  date_of_document: { type: date }
 exports:
   www:
     label: fig on diaryx.org
-    gate:
-      field: audience
-      value: public
+    gate: { field: audience, value: public }
+    hold: draft
+relations:
+  transcription:
+    cardinality: many
+    inverse: transcription_of
+    means: transcriptions of this document's artifact
+  transcription_of:
+    cardinality: many
+    inverse: transcription
+    means: the record this document is a transcription of
+created: ''
+record_deletions: false

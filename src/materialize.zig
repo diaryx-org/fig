@@ -27,6 +27,10 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const AST = @import("ast/ast.zig");
+// The core schema's number grammar, as the compiled YAML reads a plain
+// scalar — pure functions of a lexeme, so a runtime twin's AST is judged by
+// the same rules.
+const yaml_scalar = @import("languages/yaml/parser.zig");
 
 pub const TagMode = enum { strict, lax };
 
@@ -236,8 +240,8 @@ const Materializer = struct {
         if (std.mem.eql(u8, name, "str")) return .{ .string = self.scalarText(node) };
         if (std.mem.eql(u8, name, "null")) return .null_;
         if (std.mem.eql(u8, name, "bool")) return self.asBool(node);
-        if (std.mem.eql(u8, name, "int")) return .{ .number = .{ .raw = self.scalarText(node), .kind = .integer } };
-        if (std.mem.eql(u8, name, "float")) return .{ .number = .{ .raw = self.scalarText(node), .kind = .float } };
+        if (std.mem.eql(u8, name, "int")) return self.asNumber(node, .integer);
+        if (std.mem.eql(u8, name, "float")) return self.asNumber(node, .float);
         if (std.mem.eql(u8, name, "seq") or std.mem.eql(u8, name, "map")) return error.TagTypeMismatch;
         // a `!!`-secondary tag with an unrecognized core name is custom.
         return self.customTag(node.id, node.kind);
@@ -270,9 +274,8 @@ const Materializer = struct {
     /// it is a genuinely custom tag. A `.kind` tag names its type directly; a
     /// `.text` tag is decoded from its YAML spelling via `coreTagName`.
     fn coreName(self: *const Materializer, tag: AST.Tag) ?[]const u8 {
-        _ = self;
         return switch (tag) {
-            .text => |t| coreTagName(t),
+            .text => |t| coreTagName(self.src.tag_directives, t),
             .kind => |k| switch (k) {
                 .null_ => "null",
                 .boolean => "bool",
@@ -295,6 +298,23 @@ const Materializer = struct {
         }
         if (self.mode == .strict) return error.UnknownTag;
         return kind;
+    }
+
+    /// A `!!int`/`!!float` payload, refused unless its text reads as that
+    /// kind — every printer writes a number's text bare, so `!!int 1 - 3`
+    /// would print as `1 - 3` in JSON. Read by YAML 1.2's core schema or
+    /// 1.1's, since the AST does not say which the document was: `!!int
+    /// 0x1A` and `!!int 1_000` both pass. A `!!float` also takes a decimal
+    /// integer's text (`!!float 1`), as the core schema's float does.
+    fn asNumber(self: *const Materializer, node: AST.Node, comptime want: @FieldType(AST.Node.Kind.Number, "kind")) Error!AST.Node.Kind {
+        const t = self.scalarText(node);
+        const ok = switch (want) {
+            .integer => yaml_scalar.classifyNumber(t) == .integer or yaml_scalar.classify1_1Number(t) == .integer,
+            .float => (yaml_scalar.classifyNumber(t) != .not_number and !hasRadixPrefix(t)) or
+                yaml_scalar.classify1_1Number(t) == .float,
+        };
+        if (!ok) return error.TagTypeMismatch;
+        return .{ .number = .{ .raw = t, .kind = want } };
     }
 
     fn asBool(self: *const Materializer, node: AST.Node) Error!AST.Node.Kind {
@@ -322,8 +342,7 @@ const Materializer = struct {
 /// If `tag` names a YAML core-schema type, returns the bare name (`str`, `int`,
 /// `bool`, `null`, `seq`, `map`, …). Accepts the `!!name` shorthand and the
 /// verbose `tag:yaml.org,2002:name` form (with or without `!<>`).
-fn coreTagName(tag: []const u8) ?[]const u8 {
-    if (tag.len >= 3 and tag[0] == '!' and tag[1] == '!') return tag[2..];
+fn coreTagName(directives: []const AST.TagDirective, tag: []const u8) ?[]const u8 {
     const core = "tag:yaml.org,2002:";
     if (tag.len >= 3 and tag[0] == '!' and tag[1] == '<' and tag[tag.len - 1] == '>') {
         const inner = tag[2 .. tag.len - 1];
@@ -331,7 +350,32 @@ fn coreTagName(tag: []const u8) ?[]const u8 {
         return null;
     }
     if (std.mem.startsWith(u8, tag, core)) return tag[core.len..];
-    return null;
+    if (tag.len == 0 or tag[0] != '!') return null;
+    // A shorthand `handle` + `suffix`: `!!int`, `!e!int`, or the primary
+    // `!int`. A `%TAG` directive in the document can bind any handle,
+    // `!!` and `!` included, to a prefix of its own; unbound, `!!` is the
+    // core schema's and `!` a local tag's.
+    const close = if (tag.len > 1) std.mem.indexOfScalarPos(u8, tag, 1, '!') else null;
+    const handle = if (close) |c| tag[0 .. c + 1] else "!";
+    const suffix = tag[handle.len..];
+    const prefix = for (directives) |d| {
+        if (std.mem.eql(u8, d.handle, handle)) break d.prefix;
+    } else if (std.mem.eql(u8, handle, "!!")) core else return null;
+    // `prefix ++ suffix` names a core type when it is `core ++ name`. A
+    // prefix that runs past `core` into the name is not a spelling anyone
+    // writes, and is read as custom.
+    if (prefix.len > core.len or !std.mem.startsWith(u8, core, prefix)) return null;
+    const rest = core[prefix.len..];
+    if (!std.mem.startsWith(u8, suffix, rest)) return null;
+    const name = suffix[rest.len..];
+    return if (name.len == 0) null else name;
+}
+
+/// Whether `t` spells an integer by radix (`0x1A`, `0o17`, `0b101`), which a
+/// `!!float` does not take.
+fn hasRadixPrefix(t: []const u8) bool {
+    const s = if (t.len > 0 and (t[0] == '+' or t[0] == '-')) t[1..] else t;
+    return s.len > 2 and s[0] == '0' and std.mem.indexOfScalar(u8, "xXoObB", s[1]) != null;
 }
 
 fn contains(haystack: []const []const u8, needle: []const u8) bool {
@@ -447,5 +491,50 @@ test "materialize: collection-tag mismatch and cyclic alias error" {
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
         try testing.expectError(error.AliasCycle, materialize(arena.allocator(), &doc.ast, .strict));
+    }
+}
+
+test "materialize: a numeric tag refuses a payload that is not that kind of number" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    const cases = [_]struct { src: []const u8, ok: bool }{
+        .{ .src = "x: !!int 1 - 3\n", .ok = false },
+        .{ .src = "x: !!int 1.5\n", .ok = false },
+        .{ .src = "x: !!float abc\n", .ok = false },
+        .{ .src = "x: !!float 0x1A\n", .ok = false },
+        .{ .src = "x: !!int 0x1A\n", .ok = true },
+        .{ .src = "x: !!int \"42\"\n", .ok = true },
+        .{ .src = "x: !!int 1_000\n", .ok = true }, // YAML 1.1's spelling
+        .{ .src = "x: !!float 1\n", .ok = true },
+        .{ .src = "x: !!float -.inf\n", .ok = true },
+    };
+    for (cases) |c| {
+        const doc = try Parser.parse(testing.allocator, c.src, .v1_2_2);
+        defer doc.deinit(testing.allocator);
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const got = materialize(arena.allocator(), &doc.ast, .strict);
+        if (c.ok) _ = try got else try testing.expectError(error.TagTypeMismatch, got);
+    }
+}
+
+test "materialize: a %TAG directive that rebinds `!!` or `!` decides whether a tag is core" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    {
+        // P76L: `!!` bound elsewhere makes `!!int` a custom tag.
+        const doc = try Parser.parse(testing.allocator, "%TAG !! tag:example.com,2000:app/\n---\n!!int 1 - 3\n", .v1_2_2);
+        defer doc.deinit(testing.allocator);
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        try testing.expectError(error.UnknownTag, materialize(arena.allocator(), &doc.ast, .strict));
+    }
+    {
+        // `!` bound to the core prefix makes `!int` the core int.
+        const doc = try Parser.parse(testing.allocator, "%TAG ! tag:yaml.org,2002:\n---\nx: !int \"7\"\n", .v1_2_2);
+        defer doc.deinit(testing.allocator);
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const mat = try materialize(arena.allocator(), &doc.ast, .strict);
+        const x = try mat.getValByPath(&.{.{ .key = "x" }});
+        try testing.expect(x.kind == .number and x.kind.number.kind == .integer);
     }
 }

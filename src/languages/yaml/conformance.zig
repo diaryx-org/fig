@@ -45,13 +45,11 @@ const reprint_baseline = 289;
 // Accept documents that convert to JSON: materialized, printed as JSON, and the
 // printed bytes read back by fig's own JSON parser — what `fig get -o json`
 // does. Short of 289 by the 14 fixtures whose custom tag materialize refuses in
-// strict mode, the 15 whose mapping key is a collection (no JSON spelling, so
-// `NonStringKey`), and P76L, where `!!int 1 - 3` yields a number node holding a
-// lexeme that is not a number — `applyScalarTag` checks a `!!bool` payload but
-// not an `!!int`/`!!float` one, so the bare `1 - 3` it prints is not JSON. That
-// last one is a tag-application bug, not a printer one; raise this to 260 with
-// it, and to 289 as the other two classes gain answers.
-const json_baseline = 259;
+// strict mode — P76L among them, whose `%TAG !!` remaps the secondary handle so
+// its `!!int` is custom — and the 15 whose mapping key is a collection (no
+// JSON spelling, so `NonStringKey`). Raise this to 289 as those classes gain
+// answers.
+const json_baseline = 260;
 const reject_baseline = 93;
 // Multi-document streams parsed via Embed.extractStream (the single-document
 // parser refuses a stream; the splitter feeds it one document at a time).

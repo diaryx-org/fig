@@ -1772,7 +1772,7 @@ fn digitRun(s: []const u8, comptime pred: fn (u8) bool) bool {
 /// Classify a plain scalar against the YAML 1.1 int/float tags. Order matters:
 /// `.inf`/`.nan` and sexagesimal are checked before the radix prefixes, and the
 /// radix prefixes before the decimal/octal/float fork.
-fn classify1_1Number(source: []const u8) NumberClass {
+pub fn classify1_1Number(source: []const u8) NumberClass {
     if (source.len == 0) return .not_number;
     if (isInfNan(source)) return .float;
 
@@ -2086,13 +2086,13 @@ fn appendCodepoint(decoded: *std.ArrayList(u8), allocator: std.mem.Allocator, co
     };
 }
 
-const NumberClass = enum { not_number, integer, float };
+pub const NumberClass = enum { not_number, integer, float };
 
 // The YAML tokenizer doesn't distinguish numbers from other plain scalars, so
 // we classify them here against the YAML 1.2.2 core schema: decimal ints with
 // an optional sign, hex (0x) and octal (0o) ints, floats with fractions and/or
 // exponents, and the special floats .inf / .nan.
-fn classifyNumber(source: []const u8) NumberClass {
+pub fn classifyNumber(source: []const u8) NumberClass {
     if (source.len == 0) return .not_number;
     if (isInfNan(source)) return .float;
 

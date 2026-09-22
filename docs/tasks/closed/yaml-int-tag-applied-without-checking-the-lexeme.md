@@ -1,13 +1,22 @@
 ```fig
 title = YAML `!!int`/`!!float` is applied without checking the lexeme, and `%TAG !!` is not honoured
 description = `!!int 1 - 3` materializes to a number node whose text is `1 - 3`, which every printer then writes bare (`fig get -o json` emits `1 - 3`), and a `%TAG !!` directive that remaps the secondary handle is ignored, so the tag is read as the core int rather than a custom one
-status = open
+status = done
 created = 2026-09-07
-updated = 2026-09-07
-part_of = [tasks](tasks.md)
+updated = 2026-09-22
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # YAML `!!int`/`!!float` is applied without checking the lexeme, and `%TAG !!` is not honoured
+
+**Status.** Done, in `fix(yaml): a numeric tag checks its payload, and a
+%TAG directive can rebind the !! and ! handles` (2026-09-22). Both halves
+are in `materialize.zig` rather than the parser: a tag keeps its source
+spelling and the document's `%TAG` directives ride on the AST, so the
+materializer expands the handle through them before deciding a tag is
+core, and `asNumber` refuses an `!!int`/`!!float` payload that neither the
+1.2 nor the 1.1 number grammar reads as that kind. The `json` baseline is
+260.
 
 **Repro.** With `fig` at 3cf899f:
 

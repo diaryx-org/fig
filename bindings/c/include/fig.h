@@ -1090,6 +1090,10 @@ typedef struct FigNodeTable {
 } FigNodeTable;
 
 // The subset of FigSerializeOptions a printer outside fig is told.
+// fig-abi: host-written — fig allocates this and a language only reads it
+// through the pointer it is handed, so a field may be appended (a language
+// built against an older header never reads past what it knows); no field
+// is ever reordered, retyped or removed.
 typedef struct FigPrintOptions {
     bool     pretty;
     bool     strip_comments;

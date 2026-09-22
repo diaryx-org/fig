@@ -39,7 +39,8 @@
 //! Coverage: the exported function surface (names + normalized signatures) AND
 //! the `typedef struct/enum` surface — struct field layout (order, type, array
 //! size) and enum *values* — applying fig's forward-compat policy (size-gated
-//! structs may append fields = MINOR; adding an enumerator = MINOR; reordering/
+//! structs, and structs marked `// fig-abi: host-written`, may append fields =
+//! MINOR; adding an enumerator = MINOR; reordering/
 //! retyping/removing a field or changing an enumerator's value = MAJOR). C has no
 //! name mangling, so this string-level compare of normalized declarations stands
 //! in for a real symbol-table diff. NOT expanded: typedef/macro aliases and
@@ -115,6 +116,11 @@ const Aggregate = struct {
     /// A struct whose first field is `uint32_t size` — the version-tag marker of
     /// the size-gated forward-compat policy, for which appending fields is safe.
     size_gated: bool,
+    /// A struct whose comment block carries `fig-abi: host-written`: fig
+    /// allocates it, one at a time, and hands a callee a pointer to read, so
+    /// a callee built against an older header reads the fields it knows at
+    /// the offsets they had. Appending a field is safe; nothing else is.
+    host_written: bool = false,
     fields: []Field, // structs
     enumerators: []Enumerator, // enums
 };
@@ -497,6 +503,25 @@ fn lessThanFn(_: void, a: Fn, b: Fn) bool {
 // value silently reassigns meaning under every caller — a break.
 // ============================================================================
 
+/// The structs the header marks `fig-abi: host-written`: each mark names the
+/// `typedef struct <Tag>` that follows it. Read off the raw header, since the
+/// mark is a comment and `collectAggregates` parses comment-stripped text.
+fn hostWrittenNames(arena: std.mem.Allocator, header: []const u8) ![]const []const u8 {
+    const mark = "fig-abi: host-written";
+    var names: std.ArrayList([]const u8) = .empty;
+    var i: usize = 0;
+    while (std.mem.indexOfPos(u8, header, i, mark)) |at| {
+        i = at + mark.len;
+        const td = std.mem.indexOfPos(u8, header, i, "typedef") orelse break;
+        var k = skipWs(header, td + "typedef".len);
+        if (!std.mem.eql(u8, readIdent(header, k), "struct")) continue;
+        k = skipWs(header, k + "struct".len);
+        const tag = readIdent(header, k);
+        if (tag.len > 0) try names.append(arena, tag);
+    }
+    return names.items;
+}
+
 const AggDiff = struct { verdict: Verdict, lines: [][]const u8 };
 
 fn skipWs(s: []const u8, idx: usize) usize {
@@ -515,6 +540,7 @@ fn readIdent(s: []const u8, idx: usize) []const u8 {
 /// Aggregate. Opaque handles (`typedef struct Foo Foo;`, no `{`) carry no layout
 /// and are skipped, as is anything that is not a struct/enum typedef.
 fn collectAggregates(arena: std.mem.Allocator, header: []const u8) ![]Aggregate {
+    const host_written = try hostWrittenNames(arena, header);
     const no_comments = try stripComments(arena, header);
     const text = try stripDirectives(arena, no_comments);
 
@@ -584,6 +610,9 @@ fn collectAggregates(arena: std.mem.Allocator, header: []const u8) ![]Aggregate 
                 .name = name,
                 .is_struct = true,
                 .size_gated = gated,
+                .host_written = for (host_written) |hw| {
+                    if (std.mem.eql(u8, hw, name)) break true;
+                } else false,
                 .fields = fields,
                 .enumerators = &.{},
             });
@@ -775,8 +804,11 @@ fn diffStruct(arena: std.mem.Allocator, lines: *std.ArrayList([]const u8), b: Ag
     }
 
     // Appending fields is safe ONLY for a size-versioned struct (its layout is
-    // size-gated). For any other struct it changes sizeof and is a break.
-    const gated = b.size_gated and c.size_gated;
+    // size-gated), or one the current header marks host-written — which is a
+    // promise about who allocates it, true of the baseline too, so the mark
+    // is read off the current header alone. For any other struct it changes
+    // sizeof and is a break.
+    const gated = (b.size_gated and c.size_gated) or c.host_written;
     if (c.fields.len < b.fields.len) {
         v = worse(v, .major);
         try lines.append(arena, try std.fmt.allocPrint(arena, "- {s}: {d} field(s) removed (MAJOR)", .{ c.name, b.fields.len - c.fields.len }));
@@ -785,7 +817,8 @@ fn diffStruct(arena: std.mem.Allocator, lines: *std.ArrayList([]const u8), b: Ag
         while (k < c.fields.len) : (k += 1) {
             if (gated) {
                 v = worse(v, .minor);
-                try lines.append(arena, try std.fmt.allocPrint(arena, "+ {s}: field `{s}` appended (size-gated, MINOR)", .{ c.name, c.fields[k].sig }));
+                const why = if (b.size_gated and c.size_gated) "size-gated" else "host-written";
+                try lines.append(arena, try std.fmt.allocPrint(arena, "+ {s}: field `{s}` appended ({s}, MINOR)", .{ c.name, c.fields[k].sig, why }));
             } else {
                 v = worse(v, .major);
                 try lines.append(arena, try std.fmt.allocPrint(arena, "+ {s}: field `{s}` added (not size-gated — changes layout, MAJOR)", .{ c.name, c.fields[k].sig }));

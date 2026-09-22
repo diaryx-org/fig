@@ -1,13 +1,22 @@
 ```fig
 title = An entry appended after `export KEY=value` is indented to the key's column
 description = `fig set f.env NEW v` on a file whose last entry has an `export ` prefix writes `       NEW=v`, padded to the column the key starts at, because the entry's span starts at the key and the editor pads a new sibling to the previous one's column
-status = open
+status = done
 created = 2026-09-10
-updated = 2026-09-10
-part_of = [tasks](tasks.md)
+updated = 2026-09-22
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # An entry appended after `export KEY=value` is indented to the key's column
+
+**Status.** Done, by neither fix below: `fix(editor): a new line pads to
+its anchor's column only past a sequence item marker` (2026-09-22) made
+the editor's indent rule pad only past an item marker, which is the
+"distinguish a marker prefix from a word" branch, reached from
+[`indentAt`'s own task](/docs/tasks/closed/indent-at-pads-to-the-anchor-column.md) for every
+format at once. The dotenv parser is unchanged — no span moved, so neither
+the twins nor a span reader has anything to follow — and a test in
+`editor.zig` holds the repro to `NEW=v` at column 0.
 
 **Repro.**
 

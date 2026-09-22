@@ -4714,6 +4714,17 @@ test "dotenv deleteKey removes the only entry, leaving an empty file" {
     try testing.expectEqualStrings("AGAIN=v2\n", ed.source.items);
 }
 
+test "dotenv: an entry appended after an `export` entry starts at column 0" {
+    // The entry's span starts at its key, past `export `; a new sibling
+    // takes the line's indent, not the key's column (see `indentAt`).
+    if (comptime !build_options.lang_dotenv) return error.SkipZigTest;
+    var ed: Editor(Dotenv) = .{ .allocator = testing.allocator, .format = .DOTENV };
+    try ed.init("export D=p\n");
+    defer ed.deinit();
+    try ed.set(&.{.{ .key = "NEW" }}, "v");
+    try testing.expectEqualStrings("export D=p\nNEW=v\n", ed.source.items);
+}
+
 test "dotenv comment ops use # and round-trip" {
     if (comptime !build_options.lang_dotenv) return error.SkipZigTest;
     var ed: Editor(Dotenv) = .{ .allocator = testing.allocator, .format = .DOTENV };

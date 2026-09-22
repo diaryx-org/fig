@@ -10,7 +10,6 @@ contents
 > * [The item and value renderers are not told the key they are rendering under](renderers-are-not-told-the-parent-key.md)
 > * [A runtime target has no loss diagnostics](runtime-target-loss-diagnostics.md)
 > * [`fig patch` into a runtime target is refused](patch-into-a-runtime-target.md)
-> * [An entry appended after `export KEY=value` is indented to the key's column](dotenv-export-indents-an-appended-entry.md)
 > * [A mapping or list spliced into NestedText lands as a multi-line string](nestedtext-container-value-lands-as-a-string.md)
 > * [A runtime printer is not told when it prints splice text, so it prints a whole document](/docs/tasks/runtime-printer-is-not-told-it-prints-splice-text.md)
 > * [Closed tasks](/docs/tasks/closed/closed.md)

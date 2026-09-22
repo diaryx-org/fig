@@ -178,6 +178,19 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
             try term.setColor(.reset);
             try term.writer.print(": to remove it whole — header, entries, and every place it is reopened — `{s} delete <file> <path>`.\n", .{binary_name});
         },
+        // An insert under a section that is only ever named as the prefix
+        // of its children's headers — TOML's implicit `a` made by `[a.b]`.
+        error.ImplicitSection => {
+            try term.writer.writeAll(": that section has no header line of its own — it is only named as part of its children's headers — so there is no line to put the new entry under\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("note");
+            try term.setColor(.reset);
+            try term.writer.writeAll(": writing it after the first of those headers would put it in that child instead.\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("help");
+            try term.setColor(.reset);
+            try term.writer.writeAll(": give the section a header of its own first — `[a]` for TOML's `[a.b]` — and try again.\n");
+        },
         // `fig comment` on an element or entry of a one-line flow collection.
         // Worth its own sentence for the same reason as the arms above: the
         // error is about the PATH, and the generic `fig check` note below

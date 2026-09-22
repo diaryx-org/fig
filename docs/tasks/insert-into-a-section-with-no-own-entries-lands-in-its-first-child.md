@@ -1,13 +1,22 @@
 ```fig
 title = An insert into a section with no entries of its own lands inside its first child
 description = `insertBlockKey` anchors a section that has only header-introduced children on the line after its first header, which is the first child's body; TOML's `set a.y 2` with only `[a.b]` present writes `y` into `a.b`
-status = open
+status = done
 created = 2026-09-14
-updated = 2026-09-14
+updated = 2026-09-22
 part_of = [tasks](tasks.md)
 ```
 
 # An insert into a section with no entries of its own lands inside its first child
+
+**Status.** Done, in `fix(editor): an insert into a section with no own
+entries anchors on its own header, or is refused` (2026-09-22).
+`insertBlockKey` anchors on the first header line recorded for the
+section that is not a child's header — so `[a.b]` … `[a]` takes `y` under
+`[a]` — and refuses with `ImplicitSection` when every one is, which `set`
+reports as it is rather than as the replace's `NotFound`. Tests in
+`editor.zig` cover TOML's implicit table (one and two levels deep), an
+explicit header before and after the child's, and INI's empty section.
 
 **Repro.** Compiled TOML, on `main` at 66c00f8:
 

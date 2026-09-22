@@ -297,6 +297,28 @@ pub fn Editor(comptime Language: type) type {
             return false;
         }
 
+        /// The end of the first header line recorded for the section
+        /// `mapping` that is its OWN — not the header of one of its
+        /// children. A section whose every header line opens a child — an
+        /// implicit TOML table `a` made by `[a.b]`, a git config `[a "b"]`
+        /// passing through `a` — has no line to take an entry under, and an
+        /// entry spliced after the first of them would land in that child;
+        /// it is refused (`ImplicitSection`). `insertContainer` is the op
+        /// that can write it a header.
+        fn ownHeaderLineEnd(self: *const Self, parsed: Document, mapping: AST.Node) !usize {
+            const source = self.source.items;
+            header: for (parsed.regionsOf(mapping.id)) |region| {
+                const line = lineStartBefore(source, region.start);
+                var cur = try parsed.ast.child(&mapping);
+                while (cur) |kv| : (cur = parsed.ast.next(&kv)) {
+                    if (self.outOfRegion(parsed, kv) and lineStartBefore(source, parsed.span(kv).start) == line)
+                        continue :header;
+                }
+                return lineEndAfter(source, region.start);
+            }
+            return error.ImplicitSection;
+        }
+
         /// Rewrite the EMPTY closed container at `span` (`<dict/>`,
         /// `<array></array>`) into its multi-line form around `body`, one
         /// entry or item already rendered against the child indent: the open
@@ -593,7 +615,9 @@ pub fn Editor(comptime Language: type) type {
                     // one that cannot hold this value. Reporting the replace's
                     // `NotFound` there would send the caller looking for a
                     // missing key that isn't the problem.
-                    if (insert_err == error.BlockValueIntoFlow) return insert_err;
+                    // `ImplicitSection` is the same: the parent is there,
+                    // with no line of its own to take the entry under.
+                    if (insert_err == error.BlockValueIntoFlow or insert_err == error.ImplicitSection) return insert_err;
                     // The parent mapping itself is missing (an intermediate key
                     // is absent — `NotFound`, NOT the `NotAMapping` of a scalar
                     // standing where a map should be, which must never be
@@ -2341,15 +2365,14 @@ pub fn Editor(comptime Language: type) type {
                 // zero-width root).
                 (if (skipped) 0 else source.len)
             else if (parsed.isSection(mapping))
-                // A childless SECTION (INI's empty `[section]` with nothing
-                // under it yet): its span is anchored at just the header's
-                // name token (see `ini/parser.zig`'s `parseSectionHeader`),
-                // not the section's body extent — splicing at `.end` would
-                // land inside the `[section]` line itself. Anchor on the
-                // header LINE's end instead; `span.start` is guaranteed to
-                // fall somewhere on that line, so `lineEndAfter` finds it
-                // regardless of where exactly within the line it points.
-                lineEndAfter(source, parsed.span(mapping).start)
+                // A SECTION with no entry on its own lines (INI's empty
+                // `[section]` with nothing under it yet): its span is
+                // anchored at just the header's name token (see
+                // `ini/parser.zig`'s `parseSectionHeader`), not the section's
+                // body extent — splicing at `.end` would land inside the
+                // `[section]` line itself. Anchor on the end of a header
+                // LINE of its own instead.
+                try self.ownHeaderLineEnd(parsed, mapping)
             else
                 // A childless block mapping with no closing token has no line
                 // to splice after and no spelling for its first entry
@@ -4476,6 +4499,30 @@ test "set rolls back a vivified ancestor when the leaf insert fails" {
         ed.set(&.{ .{ .key = "a" }, .{ .key = "b" } }, "[unclosed"),
     );
     try testing.expectEqualStrings("title: t\n", ed.source.items);
+}
+
+test "an insert into a section with no own entries takes a header line of its own, or is refused" {
+    if (comptime build_options.lang_toml) {
+        // `a` is implicit: its one header line is `[a.b]`'s, and an entry
+        // written after it would belong to `a.b`.
+        var ed: Editor(Toml) = .{ .allocator = testing.allocator, .format = .TOML_1_1 };
+        try ed.init("[a.b]\nx = 1\n");
+        defer ed.deinit();
+        try testing.expectError(error.ImplicitSection, ed.set(&.{ .{ .key = "a" }, .{ .key = "y" } }, "2"));
+        try testing.expectEqualStrings("[a.b]\nx = 1\n", ed.source.items);
+        // Deeper: `a` and `a.b` both pass through `[a.b.c]`.
+        var deep: Editor(Toml) = .{ .allocator = testing.allocator, .format = .TOML_1_1 };
+        try deep.init("[a.b.c]\nx = 1\n");
+        defer deep.deinit();
+        try testing.expectError(error.ImplicitSection, deep.set(&.{ .{ .key = "a" }, .{ .key = "b" }, .{ .key = "y" } }, "2"));
+        // A header of its own, before or after the child's, is the anchor.
+        try expectSet(Toml, .TOML_1_1, "[a.b]\nx = 1\n[a]\n", &.{ .{ .key = "a" }, .{ .key = "y" } }, "2", "[a.b]\nx = 1\n[a]\ny = 2\n");
+        try expectSet(Toml, .TOML_1_1, "[a]\n[a.b]\nx = 1\n", &.{ .{ .key = "a" }, .{ .key = "y" } }, "2", "[a]\ny = 2\n[a.b]\nx = 1\n");
+    }
+    if (comptime build_options.lang_ini) {
+        // The case the header-line anchor was written for stays right.
+        try expectSet(Ini, .INI, "[a]\n[b]\nk = 1\n", &.{ .{ .key = "a" }, .{ .key = "y" } }, "2", "[a]\ny = 2\n[b]\nk = 1\n");
+    }
 }
 
 test "set surfaces a section veto rather than inserting a second entry of that name" {

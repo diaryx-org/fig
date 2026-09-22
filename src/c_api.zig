@@ -958,6 +958,9 @@ fn editStatus(err: anyerror) FigStatus {
         // A block-spelled value (`- a`, `k: v`, `|`) was handed to a splice into
         // a flow `{…}`/`[…]` container, which has no way to hold it.
         error.BlockValueIntoFlow => .invalid_argument,
+        // An insert into a section with no header line of its own — an
+        // implicit TOML table — where every line it is named on opens a child.
+        error.ImplicitSection => .invalid_argument,
         // The target dialect has no comment syntax (strict JSON).
         error.CommentsUnsupported => .unsupported_format,
         // The addressed node shares its parent's line inside a flow collection
@@ -5229,6 +5232,7 @@ test "editStatus: every editor refusal is a caller error, not parse_error" {
         error.CommentsUnsupported,      error.NullUnsupported,
         error.MultilineComment,         error.InvalidComment,
         error.CommentsUnanchored,       error.RendererRefused,
+        error.ImplicitSection,
     };
     for (refusals) |err| {
         const status = editStatus(err);

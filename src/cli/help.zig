@@ -49,6 +49,8 @@ pub const Help = struct {
             \\    verbatim; JSON is quoted as a string). A string therefore needs
             \\    its own quotes, INSIDE the shell's: '"v2.1.0"'
             \\  path format: dot syntax for keys, bracket syntax for indices
+            \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',
+            \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
             \\    example: school.class[0].student[3]
             \\  .md/.markdown files: edits the frontmatter/endmatter in place —
             \\    its archetype (YAML/JSON/TOML/fig frontmatter, fenced ```lang
@@ -90,6 +92,8 @@ pub const Help = struct {
             \\    is quoted as a string, as with `edit`). A created key is rendered
             \\    in the target syntax too, so new keys work for strict JSON.
             \\  path format: dot syntax for keys, bracket syntax for indices
+            \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',
+            \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
             \\    example: school.class[0].student[3]
             \\  .md/.markdown files: upserts the frontmatter/endmatter, creating
             \\    it (as YAML) if absent — the archetype is otherwise sniffed
@@ -112,6 +116,8 @@ pub const Help = struct {
             \\  value: a literal in the file's format (YAML/TOML/ZON verbatim); for
             \\    JSON it is quoted as a string, as with `edit`.
             \\  path format: dot syntax for keys, bracket syntax for indices.
+            \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',
+            \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
             \\  .md/.markdown files: edits the frontmatter/endmatter in place —
             \\    its archetype is sniffed from the file (YAML by default).
             \\
@@ -130,6 +136,8 @@ pub const Help = struct {
             \\  [[array-of-tables]] element — removes all of it, header, entries
             \\  and every place it is reopened further down the file.
             \\  path format: dot syntax for keys, bracket syntax for indices
+            \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',
+            \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
             \\    example: school.class[0].student[3]
             \\    [-] or [$] in place of an index means "the last item"
             \\  .md/.markdown files: edits the frontmatter/endmatter in place —
@@ -154,6 +162,8 @@ pub const Help = struct {
             \\    JSONC/JSON5/ZON. Strict JSON has no comments (rejected).
             \\  <text> may span multiple lines (leading only): one comment line each.
             \\  path format: dot syntax for keys, bracket syntax for indices
+            \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',
+            \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
             \\    example: school.class[0].student[3]
             \\  .md/.markdown files: comments the frontmatter/endmatter in
             \\    place — its archetype is sniffed from the file (YAML by
@@ -234,6 +244,8 @@ pub const Help = struct {
             \\  --body: print the host prose OUTSIDE the fences (the body span) instead
             \\    of the embed content; the whole file when there is no such region.
             \\  path format: dot syntax for keys, bracket syntax for indices
+            \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',
+            \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
             \\    example: school.class[0].student[3]
             \\  .md/.markdown files: reads the frontmatter/endmatter, whichever
             \\    archetype it turns out to be

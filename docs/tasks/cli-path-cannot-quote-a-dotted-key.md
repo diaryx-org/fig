@@ -1,13 +1,19 @@
 ```fig
 title = A command-line path cannot name a key that contains a `.` or a `[`
 description = `parsePath` splits on `.` and `[` with no quoting or escaping, so `maven.compiler.source` under `<properties>`, an ssh `Host github.com`, or any TOML quoted key with a dot is unreachable from `get`, `set`, `delete` and `comment`
-status = open
+status = done
 created = 2026-09-14
-updated = 2026-09-14
+updated = 2026-09-22
 part_of = [tasks](tasks.md)
 ```
 
 # A command-line path cannot name a key that contains a `.` or a `[`
+
+**Status.** Done, in `feat(cli): a path key can be quoted or escaped to
+hold a . or [` (2026-09-22). `parsePath` takes `a."b.c"` (JSON's escapes
+inside), `a.'b.c'` (verbatim), `a["b.c"]` / `a['b.c']` — the bracket form
+`-o gron` prints, so a gron line reads back — and `a.b\.c`; every
+action's `--help` says so under "path format".
 
 **Repro.** Compiled TOML:
 

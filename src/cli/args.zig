@@ -34,6 +34,20 @@ pub fn parseFormatName(name: []const u8) ?Format {
     return languages.resolveName(name);
 }
 
+/// Parse a command-line path — `a.b[2].c` — into segments. A `.` separates
+/// keys and a `[n]` is an index; `[-]`/`[$]` is the end sentinel.
+///
+/// A key that holds a `.` or a `[` is written quoted or escaped:
+///
+///   * `a."b.c"` — double quotes, with JSON's escapes inside (`\"`, `\\`,
+///     `\n`, `\u00e9`, …);
+///   * `a.'b.c'` — single quotes, verbatim, as a TOML literal key;
+///   * `a["b.c"]` / `a['b.c']` — the same quoting in brackets, which is how
+///     `-o gron` prints such a key, so a gron line reads back;
+///   * `a.b\.c` — a backslash in a bare key takes the next byte as it is.
+///
+/// Key bytes are allocated from `allocator` where quoting or escaping
+/// changed them, and otherwise borrowed from `path`.
 pub fn parsePath(allocator: std.mem.Allocator, path: []const u8) ![]fig.AST.PathSegment {
     const log = std.log.scoped(.parsePath);
     var path_in_progress: std.ArrayList(fig.AST.PathSegment) = .empty;
@@ -45,6 +59,17 @@ pub fn parsePath(allocator: std.mem.Allocator, path: []const u8) ![]fig.AST.Path
                 i += 1;
             },
             '[' => {
+                // A quoted key in brackets — gron's spelling of a key that
+                // is not a bare identifier.
+                if (i + 1 < path.len and (path[i + 1] == '"' or path[i + 1] == '\'')) {
+                    i += 1;
+                    const key = try quotedKey(allocator, path, &i);
+                    if (i >= path.len or path[i] != ']') return ArgError.InvalidPath;
+                    i += 1;
+                    log.debug("key: {s}", .{key});
+                    try path_in_progress.append(allocator, .{ .key = key });
+                    continue;
+                }
                 // Skip open bracket
                 const start = i + 1;
                 i = start;
@@ -67,12 +92,35 @@ pub fn parsePath(allocator: std.mem.Allocator, path: []const u8) ![]fig.AST.Path
                 // Skip close bracket
                 i += 1;
             },
+            '"', '\'' => {
+                const key = try quotedKey(allocator, path, &i);
+                // A quoted key ends its segment.
+                if (i < path.len and path[i] != '.' and path[i] != '[') return ArgError.InvalidPath;
+                log.debug("key: {s}", .{key});
+                try path_in_progress.append(allocator, .{ .key = key });
+            },
             else => {
                 const start = i;
-                // Loop until a dot or open bracket
-                while (i < path.len and path[i] != '.' and path[i] != '[') : (i += 1) {}
+                var escaped = false;
+                // Loop until a dot or open bracket; a backslash carries the
+                // byte after it past both.
+                while (i < path.len and path[i] != '.' and path[i] != '[') : (i += 1) {
+                    if (path[i] == '\\') {
+                        if (i + 1 >= path.len) return ArgError.InvalidPath;
+                        escaped = true;
+                        i += 1;
+                    }
+                }
                 if (i == start) return ArgError.InvalidPath;
-                const key = path[start..i];
+                const key = if (!escaped) path[start..i] else blk: {
+                    var out: std.ArrayList(u8) = .empty;
+                    var j = start;
+                    while (j < i) : (j += 1) {
+                        if (path[j] == '\\') j += 1;
+                        try out.append(allocator, path[j]);
+                    }
+                    break :blk try out.toOwnedSlice(allocator);
+                };
 
                 log.debug("key: {s}", .{key});
                 try path_in_progress.append(allocator, .{ .key = key });
@@ -80,6 +128,63 @@ pub fn parsePath(allocator: std.mem.Allocator, path: []const u8) ![]fig.AST.Path
         }
     }
     return path_in_progress.toOwnedSlice(allocator);
+}
+
+/// The key quoted at `path[i.*]` — `'…'` verbatim, `"…"` with JSON's
+/// escapes decoded — leaving `i.*` just past the closing quote.
+fn quotedKey(allocator: std.mem.Allocator, path: []const u8, i: *usize) ![]const u8 {
+    const quote = path[i.*];
+    const start = i.* + 1;
+    var j = start;
+    if (quote == '\'') {
+        while (j < path.len and path[j] != '\'') : (j += 1) {}
+        if (j >= path.len) return ArgError.InvalidPath;
+        i.* = j + 1;
+        return path[start..j];
+    }
+    var out: std.ArrayList(u8) = .empty;
+    while (true) : (j += 1) {
+        if (j >= path.len) return ArgError.InvalidPath;
+        const c = path[j];
+        if (c == '"') break;
+        if (c != '\\') {
+            try out.append(allocator, c);
+            continue;
+        }
+        j += 1;
+        if (j >= path.len) return ArgError.InvalidPath;
+        switch (path[j]) {
+            '"', '\\', '/' => |e| try out.append(allocator, e),
+            'b' => try out.append(allocator, 0x08),
+            'f' => try out.append(allocator, 0x0c),
+            'n' => try out.append(allocator, '\n'),
+            'r' => try out.append(allocator, '\r'),
+            't' => try out.append(allocator, '\t'),
+            'u' => {
+                var cp: u21 = try hex4(path, j + 1);
+                j += 4;
+                // A high surrogate takes the `\uXXXX` low half after it.
+                if (cp >= 0xD800 and cp <= 0xDBFF) {
+                    if (j + 2 >= path.len or path[j + 1] != '\\' or path[j + 2] != 'u') return ArgError.InvalidPath;
+                    const lo = try hex4(path, j + 3);
+                    if (lo < 0xDC00 or lo > 0xDFFF) return ArgError.InvalidPath;
+                    cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                    j += 6;
+                } else if (cp >= 0xDC00 and cp <= 0xDFFF) return ArgError.InvalidPath;
+                var buf: [4]u8 = undefined;
+                const n = std.unicode.utf8Encode(cp, &buf) catch return ArgError.InvalidPath;
+                try out.appendSlice(allocator, buf[0..n]);
+            },
+            else => return ArgError.InvalidPath,
+        }
+    }
+    i.* = j + 1;
+    return out.toOwnedSlice(allocator);
+}
+
+fn hex4(path: []const u8, at: usize) !u21 {
+    if (at + 4 > path.len) return ArgError.InvalidPath;
+    return std.fmt.parseInt(u21, path[at .. at + 4], 16) catch ArgError.InvalidPath;
 }
 
 /// Infer the parse strategy from a file's extension, or null when the extension
@@ -1473,6 +1578,35 @@ test "parsePath reads the [-]/[$] append sentinel and literal indices" {
 
     const literal = try parsePath(a, "a.b[2]");
     try t.expectEqual(@as(usize, 2), literal[2].index);
+}
+
+test "parsePath takes a key with a `.` or `[` quoted, bracketed or escaped" {
+    const t = std.testing;
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    for ([_][]const u8{ "a.\"b.c\"", "a.'b.c'", "a[\"b.c\"]", "a['b.c']", "a.b\\.c" }) |spelling| {
+        const p = try parsePath(a, spelling);
+        try t.expectEqual(@as(usize, 2), p.len);
+        try t.expectEqualStrings("a", p[0].key);
+        try t.expectEqualStrings("b.c", p[1].key);
+    }
+    // A quoted segment is followed by more path, and holds a `[` too.
+    const deeper = try parsePath(a, "\"x[0]\".y[1]");
+    try t.expectEqualStrings("x[0]", deeper[0].key);
+    try t.expectEqualStrings("y", deeper[1].key);
+    try t.expectEqual(@as(usize, 1), deeper[2].index);
+    // Double quotes decode JSON's escapes, which is how gron prints a key.
+    const esc = try parsePath(a, "[\"q\\\"\\u00e9\\ud83d\\ude00\"]");
+    try t.expectEqualStrings("q\"\u{e9}\u{1f600}", esc[0].key);
+    // Single quotes are verbatim.
+    const lit = try parsePath(a, "'a\\n'");
+    try t.expectEqualStrings("a\\n", lit[0].key);
+    // An unclosed quote, a quote run into more key, and a trailing
+    // backslash are refused.
+    for ([_][]const u8{ "a.\"b", "a.'b", "a.\"b\"c", "a\\", "[\"b\"", "[\"\\x\"]" }) |bad|
+        try t.expectError(ArgError.InvalidPath, parsePath(a, bad));
 }
 
 test "parseConfig routes insert/delete to the right action and path tail" {

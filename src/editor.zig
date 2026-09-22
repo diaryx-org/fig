@@ -697,7 +697,7 @@ pub fn Editor(comptime Language: type) type {
                             try self.restoreSource(backup);
                             return leaf_err;
                         };
-                    } else return replace_err;
+                    } else return if (insert_err == error.ContainerClosesOnItsLine) insert_err else replace_err;
                 };
             };
         }
@@ -2393,6 +2393,19 @@ pub fn Editor(comptime Language: type) type {
                 // to splice after and no spelling for its first entry
                 // (NestedText's inline `{}` reached as a block target).
                 return error.EmptyInlineContainer;
+
+            // A container that closes on its last entry's line (plist's
+            // `<key>o</key><dict>…</dict>`, OpenStep's `o = {a = 1; };`)
+            // has no line of its own to append after: the line end is past
+            // its close, and an entry there lands in the enclosing mapping.
+            // Its span ending after that entry, but no later than the line
+            // does, is how it shows. A block mapping's span ends at its last
+            // entry, and a flat format's root runs on to the end of input,
+            // so the rule is only a closed-container format's.
+            if (self.syntax().closed_containers != null) if (maybe_last) |last| {
+                const span = parsed.span(mapping);
+                if (span.end > parsed.span(last).end and span.end <= insert_at) return error.ContainerClosesOnItsLine;
+            };
 
             if (insert_at > 0 and source[insert_at - 1] != '\n') try out.append(self.allocator, '\n');
             try out.appendSlice(self.allocator, indent);

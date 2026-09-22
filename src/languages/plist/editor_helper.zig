@@ -203,6 +203,14 @@ test "an empty dict after its key on one line expands under the line's indent, n
     );
 }
 
+test "insertKey refuses a dict that closes on its last entry's line" {
+    // Appending after the line would land the entry in the outer dict.
+    var ed: PlistEditor = .{ .allocator = testing.allocator, .format = .XML };
+    try ed.init("<dict>\n\t<key>o</key><dict><key>a</key><string>x</string></dict>\n</dict>\n");
+    defer ed.deinit();
+    try testing.expectError(error.ContainerClosesOnItsLine, ed.insertKey(&[_]AST.PathSegment{.{ .key = "o" }}, "b", "y"));
+}
+
 test "insertKey appends a two-line entry at the children's indent" {
     try expectEdit(
         "insertKey",

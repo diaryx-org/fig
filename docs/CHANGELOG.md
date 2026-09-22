@@ -120,7 +120,61 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
-_No commits since the last release tag._
+### Added
+
+- **cli** — a path key can be quoted or escaped to hold a . or [ ([`66727cc`](https://github.com/diaryx-org/fig/commit/66727cce0079a263458c6c60a70703b106912511))
+
+### Fixed
+
+- **editor** — set inserts only when the key is absent, not when its replace was refused ([`7f3394f`](https://github.com/diaryx-org/fig/commit/7f3394f7cd1fe0cfc9eb501fa32e16ab9dfcf78f))
+- **cli** — delete removes a whole section through deleteContainer ([`96e4a35`](https://github.com/diaryx-org/fig/commit/96e4a3572a93f874d023dcefd2fae124c8246cb7))
+- **editor** — an insert into a section with no own entries anchors on its own header, or is refused ([`3c24899`](https://github.com/diaryx-org/fig/commit/3c248990f79d8b2e0fe0cb91748d86199f3fcfcd))
+- **editor** — a binding hands the editor a key's name and a value's splice text, not a standalone document ([`88240a7`](https://github.com/diaryx-org/fig/commit/88240a79165425038c0c4fb9063ebba4033e6920))
+- **editor** — a new line pads to its anchor's column only past a sequence item marker ([`63c448b`](https://github.com/diaryx-org/fig/commit/63c448b36604502f1fbbda91c88b40e7698a4c07))
+- **yaml** — a numeric tag checks its payload, and a %TAG directive can rebind the !! and ! handles ([`4b33d23`](https://github.com/diaryx-org/fig/commit/4b33d23816020f42af97bf2842096c51bb8183ff))
+- **nestedtext** — a container or multi-line string is spliced as a nested block, and an empty container prints as {} or [] ([`edb80f6`](https://github.com/diaryx-org/fig/commit/edb80f640f6506d8f799109889d3e106632eb1c4))
+- **editor** — an entry into a container that closes on its last entry's line is refused, not appended outside it ([`0304c11`](https://github.com/diaryx-org/fig/commit/0304c1187d2f6710725f22622cb841652cf03e43))
+- **editor** — the one-line container refusal needs a close token, and covers sequences too ([`027f8c4`](https://github.com/diaryx-org/fig/commit/027f8c49e4f605953d687e476b79214f040c075a))
+
+### Behavioural changes
+
+- `set` on a path whose replace is refused — a table or section, or replacement text that does not reparse in place — returns that refusal and never inserts a second entry of the same name. Callers reading `splice_rejected` after a vetoed section replace now see it false; the CLI reports the section refusal instead of an invalid value.
+
+- `fig delete <file> <path>` on a table, section, block container or array-of-tables element deletes all of it where it used to fail with `CannotDeleteTable` / `CannotDeleteSection` / `CannotDeleteContainer` (or `NotAnInlineArray` for `x[0]` on a TOML `[[x]]`).
+
+- a command-line path in which a key segment begins with `"` or `'`, or contains a `\`, is read as quoted or escaped rather than as those characters literally; `a."b"` names the key `b`, where it named `"b"`, and an unclosed quote or trailing backslash is an invalid path.
+
+- `set`/`insertKey` of a new key under a section that has no header line of its own (TOML `[a.b]` alone, then `a.y`) fails with `ImplicitSection` / `FIG_STATUS_INVALID_ARGUMENT` where it used to write the key into the first child section. Where the section's own header follows its child's, the key is written under that header.
+
+- Rust `Editor::replace_key`/`Embed::replace_key` and TypeScript `replaceKey` take the new key as a name and spell it as the format spells a key: `.k` in ZON (was `"k"`, refused), `<key>k</key>` in plist (was refused), `"k\"q"` in JSON. A caller that passed key syntax — a quoted TOML key, a ZON `@"…"` — now has it quoted again.
+
+- `fig edit --key` takes the new key as a name, as `fig insert` does since 447bcda: `has space` in TOML lands as `"has space"` (was refused), `x y` in ZON as `.@"x y"` (was refused), `b&c` in plist as `<key>b&amp;c</key>` (was refused), and `k"q` in JSON as `"k\"q"` (was `"k"q"`, refused). A key typed as syntax is spelled again, as it would be by `insert`.
+
+- the Rust and TypeScript editors' `insert_value`/`replace_value`/`set` family now lands values in plist (every one was refused) and splices a NestedText scalar once: `name: h2` where it wrote `name: > h2`.
+
+- `fig patch` into plist lands values (it was refused), and into NestedText writes a scalar once (`name: h2`, was `name: > h2`).
+
+- `fig get <file> <path> -o plist` on a dict or array renders it (it panicked on an integer underflow).
+
+- an entry added to an empty container that sits after its key on the key's line is indented one `indent_unit` under that line, where it was padded out to the container's column — `<key>a</key><dict/>` on a tab-indented line expands to `\t  <key>x</key>`, was a tab and fourteen spaces. An entry anchored on a key that follows anything but an item marker on its line takes that line's indent.
+
+- converting YAML out of YAML (`fig get -o json` and the like, `fig_document_serialize`) refuses an `!!int`/`!!float` whose text is not that kind of number with a tag type mismatch, where it wrote the text bare. `!!float 0x1A` is refused too.
+
+- in a document whose `%TAG` rebinds `!!`, a `!!` tag is custom — refused by a strict conversion, dropped by a lax one — where it was read as the core type. A document that binds `!` to `tag:yaml.org,2002:` has its `!int`/`!str`/… applied as core types, where they were custom.
+
+- converting to NestedText writes an empty nested container as `{}` or `[]` on the line under its key, and an empty root as `{}`, where it wrote a bare `key:` (read back as an empty string) or nothing.
+
+- a value set, inserted or patched into NestedText from a binding or `fig patch` lands as nested entries or items when it is a mapping or list, where it landed as a `>` block string.
+
+- `fig set`/`insert` on NestedText with an argument that begins with a line break and whose rest is NestedText (`$'\nx: 1'`) writes that nested value rather than a `>` block string.
+
+- a runtime language's `print` receives `splice: true` in its options when fig asks for splice text (a binding's editor value, `fig patch`), and the wire's print request carries `"splice"`.
+
+- inserting a key (`fig set`/`fig insert`, the bindings' `insert_value`/`set`) into a plist dict, or a runtime closed-container language's mapping, whose close is on its last entry's line is refused with `ContainerClosesOnItsLine` (`FIG_STATUS_INVALID_ARGUMENT`), where the entry was written into the enclosing dict.
+
+- inserting into a braceless closed-container root (a runtime OpenStep `.strings` file) works again, as it did before 0304c11.
+
+- appending an item to a plist array, or a runtime closed-container language's sequence, that closes on its last item's line is refused with `ContainerClosesOnItsLine` (`FIG_STATUS_INVALID_ARGUMENT`), where the item was written into the container around it.
 
 <!-- git-cliff:end -->
 

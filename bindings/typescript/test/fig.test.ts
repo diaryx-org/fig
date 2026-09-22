@@ -213,6 +213,27 @@ test("Editor.insertValue takes the key's name and spells it as the format does",
   assert.equal(toml.source(), 'a = 1\n"has space" = 2\n');
 });
 
+test("Editor.replaceKey takes the key's name and spells it as the format does", () => {
+  using json = Editor.open('{"a": 1}', Format.Json);
+  json.replaceKey(["a"], 'k"q');
+  assert.equal(json.source(), '{"k\\"q": 1}');
+  using toml = Editor.open("a = 1\n", Format.Toml);
+  toml.replaceKey(["a"], "has space");
+  assert.equal(toml.source(), '"has space" = 1\n');
+});
+
+test("Editor splices a NestedText value as plain text, blocked once", () => {
+  using ed = Editor.open("name: fig\n", Format.Nestedtext);
+  ed.replaceValue(["name"], "h2");
+  assert.equal(ed.source(), "name: h2\n");
+  ed.insertValue([], "new", "two\nlines");
+  assert.equal(ed.source(), "name: h2\nnew:\n    > two\n    > lines\n");
+});
+
+test("serialize stays a whole document where splice text does not", () => {
+  assert.equal(serialize("h2", Format.Nestedtext), "> h2\n");
+});
+
 test("Editor.set replaces an existing key or inserts a missing one", () => {
   using ed = Editor.open("a: 1\nb: 2\n", Format.Yaml);
   ed.set(["a"], 9); // existing → replace

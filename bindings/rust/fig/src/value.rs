@@ -715,9 +715,10 @@ fn build(handle: *mut ffi::FigValue, value: &Value) -> Result<ffi::FigNodeId, Er
     Ok(id)
 }
 
-/// The splice text for an editor value: the value rendered in `format`, minus
-/// the trailing newline the serializer appends (the editor owns newline
-/// framing).
+/// The splice text for an editor value: the value rendered in `format` as the
+/// editor takes it (the `splice` option — plist's bare element, a NestedText
+/// scalar's plain text), minus the trailing newline the serializer appends
+/// (the editor owns newline framing).
 pub(crate) fn value_text(value: &Value, format: Format) -> Result<String, Error> {
     // The text is spliced inline (`key = <text>`), so for the fig dialect a
     // container must render as flow — its block spelling (`* ` element lines,
@@ -725,6 +726,7 @@ pub(crate) fn value_text(value: &Value, format: Format) -> Result<String, Error>
     // bare string after the splice. Other formats keep their defaults: their
     // block spellings splice correctly (YAML) or don't arise.
     let mut ffi_options: crate::ffi::FigSerializeOptions = SerializeOptions::default().into();
+    ffi_options.splice = 1;
     if format == Format::Fig {
         ffi_options.flow = 1;
     }
@@ -751,7 +753,8 @@ pub(crate) fn value_text_with(
     format: Format,
     options: SerializeOptions,
 ) -> Result<String, Error> {
-    let ffi_options: crate::ffi::FigSerializeOptions = options.into(); // flow = 0
+    let mut ffi_options: crate::ffi::FigSerializeOptions = options.into(); // flow = 0
+    ffi_options.splice = 1;
     let mut s = value.serialize_ffi(format, ffi_options)?;
     if s.ends_with('\n') {
         s.pop();

@@ -13,8 +13,8 @@ contents
 > * [A runtime target has no loss diagnostics](runtime-target-loss-diagnostics.md)
 > * [`fig patch` into a runtime target is refused](patch-into-a-runtime-target.md)
 > * [An entry appended after `export KEY=value` is indented to the key's column](dotenv-export-indents-an-appended-entry.md)
-> * [The Rust editor spells a key through the format's printer, which for plist is `<string>k</string>`](rust-editor-spells-a-plist-key-through-the-printer.md)
-> * [The Rust and TypeScript editors spell a NestedText value through the printer, which is a `>` block](rust-editor-spells-a-nestedtext-value-through-the-printer.md)
+> * [A mapping or list spliced into NestedText lands as a multi-line string](nestedtext-container-value-lands-as-a-string.md)
+> * [A runtime printer is not told when it prints splice text, so it prints a whole document](/docs/tasks/runtime-printer-is-not-told-it-prints-splice-text.md)
 > * [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 

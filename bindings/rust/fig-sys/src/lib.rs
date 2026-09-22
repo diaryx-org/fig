@@ -242,6 +242,11 @@ pub struct FigSerializeOptions {
     /// `value_text`); not exposed on the public `SerializeOptions` — inline is
     /// a property of *where* the text goes, not a caller style preference.
     pub flow: u8,
+    /// Nonzero renders the value as the editor takes it spliced into a
+    /// document (plist's bare element, a NestedText scalar's plain text).
+    /// Set by the editors' splice path; not exposed on the public
+    /// `SerializeOptions`.
+    pub splice: u8,
 }
 
 /// One lossy event from `fig_*_diagnose`, pulled by index via `fig_*_warning`.
@@ -458,6 +463,13 @@ unsafe extern "C" {
         path_len: usize,
         repl: *const u8,
         repl_len: usize,
+    ) -> FigStatus;
+    pub fn fig_editor_replace_named_key(
+        editor: *mut FigEditor,
+        path: *const FigPathSegment,
+        path_len: usize,
+        name: *const u8,
+        name_len: usize,
     ) -> FigStatus;
     pub fn fig_editor_set(
         editor: *mut FigEditor,
@@ -734,6 +746,13 @@ unsafe extern "C" {
         path_len: usize,
         repl: *const u8,
         repl_len: usize,
+    ) -> FigStatus;
+    pub fn fig_embed_replace_named_key(
+        fm: *mut FigEmbed,
+        path: *const FigPathSegment,
+        path_len: usize,
+        name: *const u8,
+        name_len: usize,
     ) -> FigStatus;
     pub fn fig_embed_set(
         fm: *mut FigEmbed,

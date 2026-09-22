@@ -132,6 +132,9 @@ pub const Language = struct {
 
     /// `<key>k</key>`, a newline, the indent, and the rendered value.
     pub const renderEntry = edit.renderEntry;
+
+    /// A renamed key, as `<key>k</key>`: the key's span is the whole element.
+    pub const renderKey = edit.renderKey;
 };
 
 // Test discovery: importing `plist.zig` (from root.zig) pulls in every plist

@@ -57,12 +57,22 @@ pub fn print(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Er
     try writer.flush();
 }
 
+/// Prints `ast.root` as splice text — the bare plistObject with no wrapper,
+/// which is what the editor splices (`renderValue` takes a leading `<` as an
+/// element already spelled). See `AST.SerializeOptions.splice`.
+pub fn printSplice(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Error!void {
+    try printNode(writer, ast, ast.root, 0, options);
+    try writer.flush();
+}
+
 /// Prints the subtree rooted at `id` as a bare plistObject — no `<plist>`
 /// wrapper, no trailing newline, no flush (used for partial/`--path` renders,
-/// mirroring every other printer's `printNode`).
+/// mirroring every other printer's `printNode`). `depth` 0 is the top level,
+/// as it is for every other printer; `value` counts a container's CHILDREN's
+/// depth, one more than its own, which is the level `print` gives the root.
 pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize, options: AST.SerializeOptions) Error!void {
     var p: Printer = .{ .writer = writer, .ast = ast, .options = options };
-    try p.value(id, depth);
+    try p.value(id, depth + 1);
 }
 
 fn value(self: *Printer, id: AST.Node.Id, depth: usize) Error!void {
@@ -314,4 +324,16 @@ test "foreign extended kind degrades to <string>" {
     defer output.deinit();
     try print(&output.writer, &ast, .{});
     try testing.expect(std.mem.indexOf(u8, output.written(), "<string>fast</string>") != null);
+}
+
+test "splice text is the bare element, and a container's lines sit at the top level" {
+    var doc = try Parser.parse(testing.allocator, "<dict><key>q</key><array><integer>1</integer></array></dict>", .XML);
+    defer doc.deinit(testing.allocator);
+    var output: Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    try printSplice(&output.writer, &doc.ast, .{});
+    try testing.expectEqualStrings("<dict>\n  <key>q</key>\n  <array>\n    <integer>1</integer>\n  </array>\n</dict>", output.written());
+    output.clearRetainingCapacity();
+    try printNode(&output.writer, &doc.ast, doc.ast.root, 0, .{});
+    try testing.expectEqualStrings("<dict>\n  <key>q</key>\n  <array>\n    <integer>1</integer>\n  </array>\n</dict>", output.written());
 }

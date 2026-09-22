@@ -108,13 +108,32 @@ fn appendEscaped(allocator: std.mem.Allocator, out: *std.ArrayList(u8), s: []con
 /// `<key>key</key>\n<indent><value…>` — a dict entry's two lines, the key
 /// and value at the same indent (matching the printer's layout). The first
 /// line's indent is the engine's; `rendered_value` has been through
-/// `renderValue`. See `editor.Editor.writeEntry`.
+/// `renderValue`, and a container's further lines (a `<dict>` fragment's
+/// entries and close tag) are moved under `indent` as well. See
+/// `editor.Editor.writeEntry`.
 pub fn renderEntry(_: Plist.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, key: []const u8, rendered_value: []const u8) !void {
     try out.appendSlice(allocator, "<key>");
     try appendEscaped(allocator, out, key);
     try out.appendSlice(allocator, "</key>\n");
     try out.appendSlice(allocator, indent);
-    try out.appendSlice(allocator, rendered_value);
+    var lines = std.mem.splitScalar(u8, rendered_value, '\n');
+    try out.appendSlice(allocator, lines.first());
+    while (lines.next()) |line| {
+        try out.append(allocator, '\n');
+        if (line.len > 0) try out.appendSlice(allocator, indent);
+        try out.appendSlice(allocator, line);
+    }
+}
+
+/// A renamed key: `<key>new_key</key>`, escaped. A key's span is the whole
+/// element, so a bare name spliced over it would drop the tags. See
+/// `editor.Editor.replaceKeyAtPath`.
+pub fn renderKey(_: Plist.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, new_key: []const u8, old_key: []const u8) !void {
+    _ = indent;
+    _ = old_key;
+    try out.appendSlice(allocator, "<key>");
+    try appendEscaped(allocator, out, new_key);
+    try out.appendSlice(allocator, "</key>");
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────
@@ -160,6 +179,10 @@ test "renderValue: null has no plist type" {
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(testing.allocator);
     try testing.expectError(error.NullUnsupported, renderValue(.XML, testing.allocator, &out, "null", .null));
+}
+
+test "replaceKeyAtPath renames a key inside its element, escaped" {
+    try expectEdit("replaceKeyAtPath", "<dict><key>a</key><string>x</string></dict>", .{ &[_]AST.PathSegment{.{ .key = "a" }}, "b&c" }, "<dict><key>b&amp;c</key><string>x</string></dict>");
 }
 
 test "set replaces a value, preserving or changing type by autodetection" {

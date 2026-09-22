@@ -347,6 +347,10 @@ FigStatus fig_editor_replace_val(FigEditor *editor, const FigPathSegment *path,
                                  size_t path_len, const uint8_t *repl, size_t repl_len);
 FigStatus fig_editor_replace_key(FigEditor *editor, const FigPathSegment *path,
                                  size_t path_len, const uint8_t *repl, size_t repl_len);
+// The same with the new key's NAME, spelled as the format spells a key, as
+// fig_editor_insert_named_key is to fig_editor_insert_key.
+FigStatus fig_editor_replace_named_key(FigEditor *editor, const FigPathSegment *path,
+                                       size_t path_len, const uint8_t *name, size_t name_len);
 // Upsert: replace the value at `path`, or—when only the trailing key is absent—
 // insert it as a new mapping entry. `path` must end in a key (a path ending in a
 // sequence index returns FIG_STATUS_INVALID_ARGUMENT); only the final leaf is
@@ -669,6 +673,8 @@ FigStatus fig_embed_replace_val(FigEmbed *embed, const FigPathSegment *path,
                                 size_t path_len, const uint8_t *repl, size_t repl_len);
 FigStatus fig_embed_replace_key(FigEmbed *embed, const FigPathSegment *path,
                                 size_t path_len, const uint8_t *repl, size_t repl_len);
+FigStatus fig_embed_replace_named_key(FigEmbed *embed, const FigPathSegment *path,
+                                      size_t path_len, const uint8_t *name, size_t name_len);
 // Upsert on the embedded config (mirrors fig_editor_set): replace the value at
 // `path`, or insert it when only the trailing key is absent. `path` must end in
 // a key.
@@ -864,6 +870,16 @@ typedef struct FigSerializeOptions {
   // padding, so sizeof does not change -- a zero-initialized older caller reads
   // as the default (off), per the same forward-compat rule as the fields above.
   uint8_t flow;
+  // fig_value_serialize_opts only: nonzero renders the value as the editor
+  // takes it spliced into a document, rather than as a document of its own —
+  // for plist the bare element without the XML declaration, DOCTYPE and
+  // <plist> wrapper, for NestedText a scalar as its plain text (the editor
+  // spells the `>` block where one is needed). Every other format renders the
+  // same either way. The bindings' editor splice paths set it; a caller
+  // serializing a value to write out leaves it zero. Appended after `flow`,
+  // in the last byte of the 12-byte layout's padding, so sizeof does not
+  // change and an older caller reads as the default (off).
+  uint8_t splice;
 } FigSerializeOptions;
 
 // As fig_value_serialize, but `options` (NULL => defaults) controls output style

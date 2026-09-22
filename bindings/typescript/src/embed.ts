@@ -20,7 +20,7 @@ const REGISTRY = handleRegistry((handle) => fig.fig_embed_destroy(handle));
 // import (which throws on a browser main thread). See editor.ts / ffi.ts `init`.
 const EMBED_FNS: EditFns = {
   replaceVal: (...a) => fig.fig_embed_replace_val(...a),
-  replaceKey: (...a) => fig.fig_embed_replace_key(...a),
+  replaceNamedKey: (...a) => fig.fig_embed_replace_named_key(...a),
   set: (...a) => fig.fig_embed_set(...a),
   insertNamedKey: (...a) => fig.fig_embed_insert_named_key(...a),
   deleteKey: (...a) => fig.fig_embed_delete_key(...a),

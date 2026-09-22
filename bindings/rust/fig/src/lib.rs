@@ -314,6 +314,7 @@ impl From<SerializeOptions> for ffi::FigSerializeOptions {
             // Not a public style option — the editors' splice path sets this
             // directly (see `value_text`).
             flow: 0,
+            splice: 0,
         }
     }
 }

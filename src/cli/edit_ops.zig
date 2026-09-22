@@ -60,7 +60,8 @@ fn applyOp(
 ) !void {
     switch (op) {
         .replace_value => try editor.replaceValAtPath(path, text),
-        .replace_key => try editor.replaceKeyAtPath(path, text),
+        // The new key is a NAME too, spelled the same way.
+        .replace_key => try editor.replaceNamedKey(path, text),
         .add_leading_comment => try editor.addLeadingComment(path, text),
         .set_trailing_comment => try editor.setTrailingComment(path, text),
         .delete_leading_comments => try editor.deleteLeadingComments(path),
@@ -298,18 +299,19 @@ pub fn opSeedsEmptyRegion(op: EditOp) bool {
 }
 
 /// Recast an edit for a JSON-family target: strict JSON has no bare literals,
-/// so an inserted/replaced value, or a replacement key, must be wrapped as a
-/// JSON string (parity with `edit`'s value replacement). An inserted key is
-/// left as the name it is — `applyOp` spells it through the format's own
-/// `key_style`, which quotes it for JSON. Comment and delete ops carry no
+/// so an inserted/replaced value must be wrapped as a JSON string (parity with
+/// `edit`'s value replacement). An inserted or replacement key is left as the
+/// name it is — `applyOp` spells it through the format's own `key_style`,
+/// which quotes and escapes it for JSON. Comment and delete ops carry no
 /// value and pass through untouched. Returns the (possibly requoted) text and
 /// op.
 pub fn jsonifyEdit(allocator: std.mem.Allocator, op: EditOp, text: []const u8) !struct { text: []const u8, op: EditOp } {
     const text_out = switch (op) {
-        .replace_value, .replace_key, .insert_key, .set, .append_seq, .prepend_seq => try std.fmt.allocPrint(allocator, "\"{s}\"", .{text}),
-        // `set_sequence` carries its items in the op payload (requoted below);
-        // comment ops and structural deletes carry no value text.
-        .set_sequence, .add_leading_comment, .set_trailing_comment, .delete_leading_comments, .delete_trailing_comment, .delete_key, .remove_seq_item => text,
+        .replace_value, .insert_key, .set, .append_seq, .prepend_seq => try std.fmt.allocPrint(allocator, "\"{s}\"", .{text}),
+        // A replacement key is a name `applyOp` spells; `set_sequence`
+        // carries its items in the op payload (requoted below); comment ops
+        // and structural deletes carry no value text.
+        .replace_key, .set_sequence, .add_leading_comment, .set_trailing_comment, .delete_leading_comments, .delete_trailing_comment, .delete_key, .remove_seq_item => text,
     };
     const op_out: EditOp = switch (op) {
         .set_sequence => |items| blk: {

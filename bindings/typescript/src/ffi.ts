@@ -72,6 +72,7 @@ interface Exports {
   fig_editor_destroy(ed: number): void;
   fig_editor_replace_val(ed: number, path: number, path_len: number, repl: number, repl_len: number): number;
   fig_editor_replace_key(ed: number, path: number, path_len: number, repl: number, repl_len: number): number;
+  fig_editor_replace_named_key(ed: number, path: number, path_len: number, name: number, name_len: number): number;
   fig_editor_set(ed: number, path: number, path_len: number, val: number, val_len: number): number;
   fig_editor_add_leading_comment(ed: number, path: number, path_len: number, text: number, text_len: number): number;
   fig_editor_set_trailing_comment(ed: number, path: number, path_len: number, text: number, text_len: number): number;
@@ -128,6 +129,7 @@ interface Exports {
   fig_embed_destroy(em: number): void;
   fig_embed_replace_val(em: number, path: number, path_len: number, repl: number, repl_len: number): number;
   fig_embed_replace_key(em: number, path: number, path_len: number, repl: number, repl_len: number): number;
+  fig_embed_replace_named_key(em: number, path: number, path_len: number, name: number, name_len: number): number;
   fig_embed_set(em: number, path: number, path_len: number, val: number, val_len: number): number;
   fig_embed_add_leading_comment(em: number, path: number, path_len: number, text: number, text_len: number): number;
   fig_embed_set_trailing_comment(em: number, path: number, path_len: number, text: number, text_len: number): number;
@@ -404,7 +406,7 @@ export function readCString(ptr: number): string {
 // byte size, so the core reads every field we set). All fields are written
 // explicitly; passing NULL (ptr 0) instead would select all defaults.
 const SERIALIZE_OPTIONS_SIZE = 12;
-export function encodeOptions(frame: Frame, options?: SerializeOptions, flow = false): number {
+export function encodeOptions(frame: Frame, options?: SerializeOptions, flow = false, splice = false): number {
   const pretty = options?.pretty === false ? 0 : 1;
   const indent = options?.indent ?? 2;
   const strip = options?.stripComments ? 1 : 0;
@@ -415,9 +417,11 @@ export function encodeOptions(frame: Frame, options?: SerializeOptions, flow = f
       SERIALIZE_OPTIONS_SIZE, 0, 0, 0, // u32 size (LE)
       pretty, indent, strip, lossless,
       width & 0xff, (width >> 8) & 0xff, // u16 width (LE) at offset 8
-      // `flow` (fig fragments render containers inline; set by the editors'
-      // splice path, not a public style option) at offset 10, then padding.
-      flow ? 1 : 0, 0,
+      // `flow` (fig fragments render containers inline) at offset 10 and
+      // `splice` (the value as the editor takes it: plist's bare element, a
+      // NestedText scalar's plain text) at 11 — both set by the editors'
+      // splice path, neither a public style option.
+      flow ? 1 : 0, splice ? 1 : 0,
     ]),
   );
 }

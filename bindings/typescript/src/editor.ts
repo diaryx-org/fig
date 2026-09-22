@@ -26,7 +26,7 @@ const REGISTRY = handleRegistry((handle) => fig.fig_editor_destroy(handle));
 // side-effect-free (see ffi.ts `init`).
 const EDITOR_FNS: EditFns = {
   replaceVal: (...a) => fig.fig_editor_replace_val(...a),
-  replaceKey: (...a) => fig.fig_editor_replace_key(...a),
+  replaceNamedKey: (...a) => fig.fig_editor_replace_named_key(...a),
   set: (...a) => fig.fig_editor_set(...a),
   insertNamedKey: (...a) => fig.fig_editor_insert_named_key(...a),
   deleteKey: (...a) => fig.fig_editor_delete_key(...a),

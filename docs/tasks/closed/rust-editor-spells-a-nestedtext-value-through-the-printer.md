@@ -1,13 +1,27 @@
 ```fig
 title = The Rust and TypeScript editors spell a NestedText value through the printer, which is a `>` block
 description = `Editor::replace_value(&[Key("name")], "h2")` on a NestedText document lands `name: > h2` — the value is rendered by `value_text(Value::Str("h2"), Nestedtext)`, which prints a scalar root as a `> h2` string block, and the format's tail renderer then blocks that text again; every format whose scalar root is not the bare text and whose editor renders tails is affected
-status = open
+status = done
 created = 2026-09-12
-updated = 2026-09-12
-part_of = [tasks](tasks.md)
+updated = 2026-09-22
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # The Rust and TypeScript editors spell a NestedText value through the printer
+
+**Status.** Done, in `fix(editor): a binding hands the editor a key's name
+and a value's splice text, not a standalone document` (2026-09-22), and not
+by the fix proposed below. Whether the editor renders tails does not say
+what plist needs, whose value is a whole wrapped document; what the
+bindings lacked is a way to ask for the value as the editor takes it. That
+is a `splice` bit in `FigSerializeOptions`, beside `flow` and set where
+`flow` is, which a printer answers through `printSplice` — NestedText's
+writes a scalar as its plain text. `fig patch` into NestedText, which
+blocked a value twice the same way, sets it too; a value serialized to be
+written out is still a `>` block. Two gaps stay
+open: [a container into NestedText](/docs/tasks/nestedtext-container-value-lands-as-a-string.md),
+and [a runtime format, whose printer is not told it prints splice
+text](/docs/tasks/runtime-printer-is-not-told-it-prints-splice-text.md).
 
 **Repro** (`bindings/rust`; NestedText is in the default feature set):
 

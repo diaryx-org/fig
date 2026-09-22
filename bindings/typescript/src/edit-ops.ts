@@ -15,7 +15,8 @@ import { V, valueText, valueTextWith, type JsInput, type Value } from "./value.t
 /** The bound C ABI edit functions a concrete editor supplies. */
 export interface EditFns {
   replaceVal(h: number, path: number, pathLen: number, repl: number, replLen: number): number;
-  replaceKey(h: number, path: number, pathLen: number, repl: number, replLen: number): number;
+  /** Rename by the key's NAME, spelled as `insertNamedKey` spells one. */
+  replaceNamedKey(h: number, path: number, pathLen: number, name: number, nameLen: number): number;
   set(h: number, path: number, pathLen: number, val: number, valLen: number): number;
   /** Insert by the key's NAME: the editor spells it as the format spells a
    *  key (`.k` in ZON, `"k"` in JSON). */
@@ -61,13 +62,14 @@ export abstract class Editable {
     this.replaceValueRaw(path, valueText(value, this.textFormat));
   }
 
-  /** Replace the key at `path` with `key`. */
+  /** Rename the key at `path` to `key`, a name the format spells as it
+   *  spells a key (`.k` in ZON, `"k"` in JSON, `<key>k</key>` in plist). */
   replaceKey(path: readonly Segment[], key: string): void {
     const frame = new Frame();
     try {
       const p = encodePath(frame, path);
-      const t = frame.str(valueText(V.string(key), this.textFormat));
-      check(this.fns.replaceKey(this.live(), p.ptr, p.len, t.ptr, t.len), "replaceKey");
+      const t = frame.str(key);
+      check(this.fns.replaceNamedKey(this.live(), p.ptr, p.len, t.ptr, t.len), "replaceKey");
     } finally {
       frame.dispose();
     }

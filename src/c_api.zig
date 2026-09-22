@@ -1171,6 +1171,25 @@ pub export fn fig_editor_replace_key(
     };
 }
 
+/// `fig_editor_replace_key` with the new key's NAME rather than its syntax,
+/// spelled as the document's format spells a key — as
+/// `fig_editor_insert_named_key` is to `fig_editor_insert_key`.
+pub export fn fig_editor_replace_named_key(
+    ed: ?*FigEditor,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    name_ptr: ?[*]const u8,
+    name_len: usize,
+) FigStatus {
+    const handle = editorFrom(ed) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    const name = sliceOf(name_ptr, name_len) orelse return .invalid_argument;
+    return switch (handle.inner) {
+        inline else => |*e| if (e.replaceNamedKey(path, name)) .ok else |err| editStatus(err),
+    };
+}
+
 /// Upsert: replace the value at `path`, or insert it when only the trailing key
 /// is absent (the `path` must end in a key). Folds replace-or-insert into one
 /// op; see `Editor.set`.
@@ -2283,6 +2302,24 @@ pub export fn fig_embed_replace_key(
     };
 }
 
+/// `fig_embed_replace_key` with the new key's NAME rather than its syntax, as
+/// `fig_editor_replace_named_key` is to `fig_editor_replace_key`.
+pub export fn fig_embed_replace_named_key(
+    em: ?*FigEmbed,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    name_ptr: ?[*]const u8,
+    name_len: usize,
+) FigStatus {
+    const handle = embedFrom(em) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    const name = sliceOf(name_ptr, name_len) orelse return .invalid_argument;
+    return switch (handle.editor) {
+        inline else => |*e| if (e.replaceNamedKey(path, name)) .ok else |err| editStatus(err),
+    };
+}
+
 /// Upsert on the embedded config: replace the value at `path`, or insert it when
 /// only the trailing key is absent (the `path` must end in a key). Mirrors
 /// `fig_editor_set`.
@@ -3087,6 +3124,12 @@ pub const FigSerializeOptions = extern struct {
     /// size does not change — a zero-initialized older caller reads as the
     /// default (off), matching the other appended fields' forward-compat rule.
     flow: u8 = 0,
+    /// `fig_value_serialize_opts` only: nonzero renders the value as the
+    /// editor takes it spliced into a document — see `AST.SerializeOptions.
+    /// splice`. The bindings' editor splice paths set it. Appended after
+    /// `flow`, in the last byte of the 12-byte layout's padding, so the size
+    /// does not change and an older caller reads as the default (off).
+    splice: u8 = 0,
 };
 
 /// Whether a caller-reported options `size` fully covers `field`. Fields beyond
@@ -3109,6 +3152,7 @@ fn serializeOptionsOf(options: ?*const FigSerializeOptions) AST.SerializeOptions
     if (optionCovers(o.size, "strip_comments")) out.strip_comments = o.strip_comments != 0;
     if (optionCovers(o.size, "width")) out.width = if (o.width == 0) 80 else o.width;
     if (optionCovers(o.size, "flow")) out.flow = o.flow != 0;
+    if (optionCovers(o.size, "splice")) out.splice = o.splice != 0;
     return out;
 }
 
@@ -4676,6 +4720,34 @@ test "fig_editor_insert_named_key spells the name as the format does" {
         const val = "2";
         try std.testing.expectEqual(FigStatus.ok, fig_editor_insert_named_key(ed, null, 0, name.ptr, name.len, val.ptr, val.len));
         try expectEditorSource(ed, "{\"a\": 1, \"k\\\"q\": 2}");
+    }
+}
+
+test "fig_editor_replace_named_key spells the new name as the format does" {
+    // ZON's key span is the field name after its `.`, so a rename keeps
+    // the dot where it stands and spells only the name.
+    if (comptime build_options.lang_zon) {
+        const src = ".{ .a = 1, .b = 2 }";
+        var ed: ?*FigEditor = null;
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.zon), &ed));
+        defer fig_editor_destroy(ed);
+        const a = [_]FigPathSegment{keySeg("a")};
+        const b = [_]FigPathSegment{keySeg("b")};
+        const k = "k";
+        const spaced = "has space";
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_replace_named_key(ed, &a, 1, k.ptr, k.len));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_replace_named_key(ed, &b, 1, spaced.ptr, spaced.len));
+        try expectEditorSource(ed, ".{ .k = 1, .@\"has space\" = 2 }");
+    }
+    if (comptime build_options.lang_plist) {
+        const src = "<dict><key>a</key><string>x</string></dict>";
+        var ed: ?*FigEditor = null;
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.plist), &ed));
+        defer fig_editor_destroy(ed);
+        const a = [_]FigPathSegment{keySeg("a")};
+        const name = "b&c";
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_replace_named_key(ed, &a, 1, name.ptr, name.len));
+        try expectEditorSource(ed, "<dict><key>b&amp;c</key><string>x</string></dict>");
     }
 }
 

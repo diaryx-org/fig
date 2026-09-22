@@ -132,6 +132,15 @@ pub const SerializeOptions = struct {
     /// sections (callers do treat that output as a whole document, which flow
     /// would break). Ignored by every other format and by the document path.
     flow: bool = false,
+    /// Fragment path only: render the value as the editor takes it spliced
+    /// into a document, not as a document of its own. A printer whose
+    /// document differs from that declares `printSplice`: plist's drops the
+    /// XML declaration, DOCTYPE and `<plist>` wrapper; NestedText's writes a
+    /// scalar as its plain text, since the editor's renderers spell the `>`
+    /// block where the value lands. Set by the bindings' editor splice
+    /// paths and by `fig patch`; `false` (default) for a value serialized to
+    /// be written out, which must stay a whole document.
+    splice: bool = false,
 };
 
 /// `self`, or a comment-stripped *view* of it when `options.strip_comments` is
@@ -195,9 +204,11 @@ pub fn serializeWith(self: *const AST, writer: *Writer, format: SerializeFormat,
 /// bare scalar/null root, since a *whole fig document* (`fig fmt`, `fig get`,
 /// `fig_document_serialize`) can't be spelled that way. A value fragment built
 /// by the caller (`fig_value_serialize_opts`, backing the editors'
-/// `replace`/`set`) is never asked to stand alone as a document — it's spliced
-/// into existing source — so it uses that module's `printFragment` instead,
-/// which allows that root.
+/// `replace`/`set` and the bindings' `serialize`) is not a whole fig document,
+/// so it uses that module's `printFragment` instead, which allows that root.
+///
+/// With `options.splice` the fragment is the editor's splice text, and a
+/// printer that declares `printSplice` renders it — see that option.
 pub fn serializeFragmentWith(self: *const AST, writer: *Writer, format: SerializeFormat, options: SerializeOptions) SerializeError!void {
     @setEvalBranchQuota(30_000);
     var buf: AST = undefined;
@@ -218,6 +229,9 @@ pub fn serializeFragmentWith(self: *const AST, writer: *Writer, format: Serializ
         inline else => |f| {
             const d = comptime Language.entryFor(@tagName(f));
             if (comptime d.Lang == void) return error.FormatDisabled;
+            if (comptime @hasDecl(d.Lang.Printer, "printSplice")) {
+                if (options.splice) return d.Lang.Printer.printSplice(writer, ast, options);
+            }
             return @field(d.Lang.Printer, d.print_name)(writer, ast, options);
         },
     };

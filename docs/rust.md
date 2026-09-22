@@ -407,7 +407,7 @@ Common operations (identical on [`Editor`] and [`Embed`]):
 ```rust
 ed.insert_value(&[], "key", &value)?;                 // add a mapping entry
 ed.replace_value(path, &value)?;                      // change a value
-ed.replace_key(path, "new_key")?;                     // rename a key (framed as the format's string)
+ed.replace_key(path, "new_key")?;                     // rename a key (a name, spelled as the format spells a key)
 ed.set_value(path, &value)?;                          // upsert (replace or insert)
 ed.delete(path)?;                                     // remove a mapping entry
 ed.append_value(&[Segment::Key("list")], &value)?;    // push onto a sequence

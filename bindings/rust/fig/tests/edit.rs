@@ -984,3 +984,66 @@ fn editor_insert_takes_the_keys_name_and_spells_it_as_the_format_does() {
     toml.insert(&[], "has space", &2).unwrap();
     assert_eq!(toml.source().unwrap(), "a = 1\n\"has space\" = 2\n");
 }
+
+#[test]
+fn editor_replace_key_takes_the_keys_name_and_spells_it_as_the_format_does() {
+    let mut json = Editor::open(b"{\"a\": 1}", Format::Json).unwrap();
+    json.replace_key(&[Segment::Key("a")], "k\"q").unwrap();
+    assert_eq!(json.source().unwrap(), "{\"k\\\"q\": 1}");
+    let mut toml = Editor::open(b"a = 1\n", Format::Toml).unwrap();
+    toml.replace_key(&[Segment::Key("a")], "has space").unwrap();
+    assert_eq!(toml.source().unwrap(), "\"has space\" = 1\n");
+    let mut nt = Editor::open(b"a: 1\n", Format::Nestedtext).unwrap();
+    nt.replace_key(&[Segment::Key("a")], "k").unwrap();
+    assert_eq!(nt.source().unwrap(), "k: 1\n");
+}
+
+#[cfg(feature = "zon")]
+#[test]
+fn editor_replace_key_spells_a_zon_field() {
+    let mut ed = Editor::open(b".{ .a = 1 }", Format::Zon).unwrap();
+    ed.replace_key(&[Segment::Key("a")], "k").unwrap();
+    assert_eq!(ed.source().unwrap(), ".{ .k = 1 }");
+}
+
+#[cfg(feature = "plist")]
+#[test]
+fn editor_plist_keys_are_names_on_insert_and_replace() {
+    let src = b"<dict>\n  <key>a</key>\n  <string>x</string>\n</dict>\n";
+    let mut ed = Editor::open(src, Format::Plist).unwrap();
+    ed.insert_value(&[], "n", 42i64).unwrap();
+    assert_eq!(
+        ed.source().unwrap(),
+        "<dict>\n  <key>a</key>\n  <string>x</string>\n  <key>n</key>\n  <integer>42</integer>\n</dict>\n"
+    );
+    ed.replace_key(&[Segment::Key("a")], "b&c").unwrap();
+    assert_eq!(
+        ed.source().unwrap(),
+        "<dict>\n  <key>b&amp;c</key>\n  <string>x</string>\n  <key>n</key>\n  <integer>42</integer>\n</dict>\n"
+    );
+}
+
+#[test]
+fn editor_nestedtext_value_is_spliced_as_plain_text_and_blocked_once() {
+    let mut ed = Editor::open(b"name: fig\n", Format::Nestedtext).unwrap();
+    ed.replace_value(&[Segment::Key("name")], "h2").unwrap();
+    assert_eq!(ed.source().unwrap(), "name: h2\n");
+    ed.insert_value(&[], "new", "two\nlines").unwrap();
+    assert_eq!(ed.source().unwrap(), "name: h2\nnew:\n    > two\n    > lines\n");
+}
+
+#[test]
+fn serialize_is_still_a_whole_document_where_splice_text_is_not() {
+    // The editor's splice text is a NestedText scalar's plain text; a value
+    // serialized to be written out stays a document, whose scalar is a block.
+    let v = fig::Value::Str("h2".into());
+    assert_eq!(v.serialize(Format::Nestedtext).unwrap(), "> h2\n");
+}
+
+#[cfg(feature = "plist")]
+#[test]
+fn serialize_keeps_the_plist_wrapper() {
+    let out = fig::Value::Int(42).serialize(Format::Plist).unwrap();
+    assert!(out.starts_with("<?xml"), "{out}");
+    assert!(out.contains("<plist version=\"1.0\">"), "{out}");
+}

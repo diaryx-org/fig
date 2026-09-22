@@ -50,6 +50,19 @@ pub fn print(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Er
     try writer.flush();
 }
 
+/// Print `ast.root` as splice text — what the editor splices, not a
+/// document. A scalar is its plain text: the editor's `renderTail`/
+/// `renderEntry`/`renderItem` choose the same-line or `>`-block form for
+/// the place it lands, so the `>` block a scalar root takes as a document
+/// would be blocked twice. See `AST.SerializeOptions.splice`.
+pub fn printSplice(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Error!void {
+    switch (ast.nodes[ast.root].kind) {
+        .null_, .mapping, .sequence => return print(writer, ast, options),
+        else => try writer.writeAll(try scalarText(ast, ast.root)),
+    }
+    try writer.flush();
+}
+
 /// Print the subtree at `id` as a standalone fragment, re-rooting a shallow
 /// copy of `ast` — same trick INI's `printNode` uses.
 pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize, options: AST.SerializeOptions) Error!void {
@@ -341,4 +354,15 @@ test "null mid-tree is unsupported" {
     var output: Writer.Allocating = .init(std_testing.allocator);
     defer output.deinit();
     try std_testing.expectError(error.NullUnsupported, print(&output.writer, &ast, .{}));
+}
+
+test "a scalar's splice text is its plain text, which the editor blocks where it lands" {
+    var b = AST.Builder.init(std_testing.allocator);
+    defer b.deinit();
+    var ast = try b.finish(try b.addString("two\nlines"));
+    defer ast.deinit();
+    var output: Writer.Allocating = .init(std_testing.allocator);
+    defer output.deinit();
+    try printSplice(&output.writer, &ast, .{});
+    try std_testing.expectEqualStrings("two\nlines", output.written());
 }

@@ -461,10 +461,9 @@ impl Embed {
 
     /// Replace the key at `path` with `key`.
     pub fn replace_key(&mut self, path: &[Segment], key: &str) -> Result<(), Error> {
-        let repl = value_text(&Value::Str(key.to_string()), self.inner)?;
         let p = to_ffi_path(path);
         let status = unsafe {
-            ffi::fig_embed_replace_key(self.ptr(), p.as_ptr(), p.len(), repl.as_ptr(), repl.len())
+            ffi::fig_embed_replace_named_key(self.ptr(), p.as_ptr(), p.len(), key.as_ptr(), key.len())
         };
         Error::from_status(status)
     }

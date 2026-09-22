@@ -240,7 +240,7 @@ Common operations (available on both `Editor` and `Embed`):
 ```ts
 ed.insertValue([], "key", value);      // add a mapping entry
 ed.replaceValue(path, value);          // change a value
-ed.replaceKey(path, "newKey");         // rename a key (framed as the format's string)
+ed.replaceKey(path, "newKey");         // rename a key (a name, spelled as the format spells a key)
 ed.set(path, value);                   // upsert (replace or insert)
 ed.delete(path);                       // remove a mapping entry
 ed.appendValue(["list"], value);       // push onto a sequence

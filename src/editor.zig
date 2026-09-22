@@ -848,6 +848,18 @@ pub fn Editor(comptime Language: type) type {
             try self.replaceAtSpan(span, replacement);
         }
 
+        /// `replaceKeyAtPath` for a caller that has the new key's NAME rather
+        /// than its syntax, as `insertNamedKey` is to `insertKey`: the name is
+        /// spelled by `formatInsertKey` and the rename goes on as before. A
+        /// ZON key's span is the field name after its `.`, so the dot that
+        /// spelling leads with is left where it already stands.
+        pub fn replaceNamedKey(self: *Self, path: []const AST.PathSegment, name: []const u8) !void {
+            const rendered = try self.formatInsertKey(name);
+            defer self.allocator.free(rendered);
+            const text = if (self.syntax().key_style == .zon_field) rendered[1..] else rendered;
+            return self.replaceKeyAtPath(path, text);
+        }
+
         // ========
         // COMMENTS
         // ========

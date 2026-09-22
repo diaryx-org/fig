@@ -7,3 +7,7 @@ zig-out
 # artifacts) — only ever populated when those steps are run locally.
 .zig
 dist
+# The Diaryx app's historica store for this checkout: snapshots of the working
+# tree as it stood, which can hold whatever was in it — the app's publish
+# secrets once did.
+history/

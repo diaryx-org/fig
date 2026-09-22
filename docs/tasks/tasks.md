@@ -3,7 +3,7 @@ title = Tasks
 description = Deferred work with a done state — a bug is a task with a repro
 author = adammharris
 created = 2026-09-04
-updated = 2026-09-14
+updated = 2026-09-22
 part_of = [docs](/docs/docs.md)
 contents
 > * [An insert into a section with no entries of its own lands inside its first child](insert-into-a-section-with-no-own-entries-lands-in-its-first-child.md)
@@ -12,7 +12,7 @@ contents
 > * [The item and value renderers are not told the key they are rendering under](renderers-are-not-told-the-parent-key.md)
 > * [`indentAt` pads to the anchor token's column, which is wrong when the anchor is a value or a header key](indent-at-pads-to-the-anchor-column.md)
 > * [`fig delete` never reaches `deleteContainer`, so a section, table or block cannot be deleted from the command line](cli-delete-never-reaches-delete-container.md)
-> * [A command-line path cannot name a key that contains a `.` or a `[`](cli-path-cannot-quote-a-dotted-key.md)
+> * [A command-line path cannot name a key that contains a `.` or an opening bracket](cli-path-cannot-quote-a-dotted-key.md)
 > * [YAML `!!int`/`!!float` is applied without checking the lexeme, and `%TAG !!` is not honoured](yaml-int-tag-applied-without-checking-the-lexeme.md)
 > * [A runtime target has no loss diagnostics](runtime-target-loss-diagnostics.md)
 > * [`fig patch` into a runtime target is refused](patch-into-a-runtime-target.md)

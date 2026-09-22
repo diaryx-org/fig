@@ -2411,7 +2411,7 @@ pub fn Editor(comptime Language: type) type {
         /// A runtime language (`languages/runtime.zig`) has no comptime
         /// dialect table; it declares `runtime` and the answer is "may be",
         /// with `syntax()` deciding per entry at the call.
-        const is_section_format = @hasDecl(Language, "runtime") or blk: {
+        pub const is_section_format = @hasDecl(Language, "runtime") or blk: {
             var any = false;
             for (std.meta.tags(Language.Type)) |t| {
                 if (Language.syntax(t).section_noun != null) any = true;

@@ -168,6 +168,16 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
             try term.setColor(.reset);
             try term.writer.print(": edit the keys inside it instead — `{s} set <file> <path>.<key> <value>`.\n", .{binary_name});
         },
+        // The same refusal on an op that removes lines — `comment` taking a
+        // node out. `delete` itself never reaches here: it hands a section to
+        // the whole-container delete.
+        error.CannotDeleteTable, error.CannotDeleteSection, error.CannotDeleteContainer => {
+            try term.writer.writeAll(": that path names a whole block table/section, whose entries are lines this op cannot take out one by one\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("help");
+            try term.setColor(.reset);
+            try term.writer.print(": to remove it whole — header, entries, and every place it is reopened — `{s} delete <file> <path>`.\n", .{binary_name});
+        },
         // `fig comment` on an element or entry of a one-line flow collection.
         // Worth its own sentence for the same reason as the arms above: the
         // error is about the PATH, and the generic `fig check` note below

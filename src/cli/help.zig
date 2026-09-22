@@ -126,6 +126,9 @@ pub const Help = struct {
             \\    a.b.key      -> delete that mapping entry (with its own comments)
             \\    a.list[2]    -> remove item 2 from the sequence a.list
             \\    a.list[-]    -> remove the last item of the sequence a.list
+            \\  A path naming a whole [table]/[section]/block container — or one
+            \\  [[array-of-tables]] element — removes all of it, header, entries
+            \\  and every place it is reopened further down the file.
             \\  path format: dot syntax for keys, bracket syntax for indices
             \\    example: school.class[0].student[3]
             \\    [-] or [$] in place of an index means "the last item"

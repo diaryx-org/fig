@@ -1,13 +1,21 @@
 ```fig
 title = `fig delete` never reaches `deleteContainer`, so a section, table or block cannot be deleted from the command line
 description = the CLI's delete routes to `deleteKey`, which the engine refuses for a section node (`CannotDeleteSection` / `CannotDeleteTable` / `CannotDeleteContainer`); the container op that exists for exactly this is reachable from the bindings and not from the CLI
-status = open
+status = done
 created = 2026-09-14
-updated = 2026-09-14
+updated = 2026-09-22
 part_of = [tasks](tasks.md)
 ```
 
 # `fig delete` never reaches `deleteContainer`, so a section, table or block cannot be deleted from the command line
+
+**Status.** Done, in `fix(cli): delete removes a whole section through
+deleteContainer` (2026-09-22). `fig delete` asks whether the path's value
+is a section node and, if it is, runs `deleteContainer` on it rather than
+`deleteKey`; an index path does the same for an array-of-tables element,
+`[-]` resolved to the last one. The refusal that remains — from an op
+that is not `delete` — is a sentence pointing at `fig delete`, not the
+enum name and a hint about parse errors.
 
 **Repro.** Compiled INI:
 

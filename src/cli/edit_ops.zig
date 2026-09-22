@@ -73,9 +73,46 @@ fn applyOp(
         .set_sequence => |items| try editor.setSequence(path, items),
         .append_seq => try editor.appendToSeq(path, text),
         .prepend_seq => try editor.prependToSeq(path, text),
-        .delete_key => try editor.deleteKey(path),
-        .remove_seq_item => |index| try editor.removeSeqItem(path, index),
+        .delete_key => if (!try deleteIfSection(Lang, editor, path)) try editor.deleteKey(path),
+        .remove_seq_item => |index| {
+            // A sequence of sections — TOML's `[[x]]` — has its elements
+            // addressed by index, so the section check wants the full path.
+            var full: std.ArrayList(fig.AST.PathSegment) = .empty;
+            defer full.deinit(editor.allocator);
+            try full.appendSlice(editor.allocator, path);
+            try full.append(editor.allocator, .{ .index = lastIndex(Lang, editor, path, index) });
+            if (!try deleteIfSection(Lang, editor, full.items)) try editor.removeSeqItem(path, index);
+        },
     }
+}
+
+/// `delete` on a path whose value is a SECTION — a TOML table or
+/// array-of-tables element, an INI section, a fig block container, a runtime
+/// language's section — deletes the whole container. `deleteKey` and
+/// `removeSeqItem` refuse one, because its body is lines they cannot see;
+/// `deleteContainer` is the op that gathers every region of it. Returns
+/// whether it did, so the caller runs the ordinary op otherwise.
+fn deleteIfSection(comptime Lang: type, editor: *fig.Editor(Lang), path: []const fig.AST.PathSegment) !bool {
+    if (comptime !fig.Editor(Lang).is_section_format) return false;
+    const parsed = try editor.getParsed();
+    const node = parsed.ast.getValByPath(path) catch return false;
+    if (!parsed.isSection(node)) return false;
+    try editor.deleteContainer(path);
+    return true;
+}
+
+/// `index`, with the end sentinel `[-]`/`[$]` (`maxInt`) resolved to the
+/// last item of the sequence at `path`. Anything that is not a non-empty
+/// sequence is returned as given, for `removeSeqItem` to refuse.
+fn lastIndex(comptime Lang: type, editor: *fig.Editor(Lang), path: []const fig.AST.PathSegment, index: usize) usize {
+    if (index != std.math.maxInt(usize)) return index;
+    const parsed = editor.getParsed() catch return index;
+    const seq = parsed.ast.getValByPath(path) catch return index;
+    if (seq.kind != .sequence) return index;
+    var item = (parsed.ast.child(&seq) catch return index) orelse return index;
+    var last: usize = 0;
+    while (parsed.ast.next(&item)) |nxt| : (last += 1) item = nxt;
+    return last;
 }
 
 pub fn applyToFile(
@@ -598,6 +635,39 @@ test "applyEdit performs the structural ops on dotenv, including from-empty inse
     }
 }
 
+test "applyEdit deletes a TOML table and an array-of-tables element whole" {
+    if (comptime !build_options.lang_toml) return error.SkipZigTest;
+    const t = std.testing;
+    const T = fig.Language.TOML;
+    const dia = T.default_type;
+    const src = "[[x]]\na = 1\n[[x]]\na = 2\n[y]\nb = 1\n";
+    {
+        var path = [_]fig.AST.PathSegment{.{ .key = "y" }};
+        const out = try applyEdit(T, t.allocator, src, &path, "", .delete_key, dia);
+        defer t.allocator.free(out);
+        try t.expectEqualStrings("[[x]]\na = 1\n[[x]]\na = 2\n", out);
+    }
+    {
+        var path = [_]fig.AST.PathSegment{.{ .key = "x" }};
+        const out = try applyEdit(T, t.allocator, src, &path, "", .{ .remove_seq_item = 0 }, dia);
+        defer t.allocator.free(out);
+        try t.expectEqualStrings("[[x]]\na = 2\n[y]\nb = 1\n", out);
+    }
+    {
+        var path = [_]fig.AST.PathSegment{.{ .key = "x" }};
+        const out = try applyEdit(T, t.allocator, src, &path, "", .{ .remove_seq_item = std.math.maxInt(usize) }, dia);
+        defer t.allocator.free(out);
+        try t.expectEqualStrings("[[x]]\na = 1\n[y]\nb = 1\n", out);
+    }
+    // An inline array still takes the ordinary item delete.
+    {
+        var path = [_]fig.AST.PathSegment{.{ .key = "a" }};
+        const out = try applyEdit(T, t.allocator, "a = [1, 2]\n", &path, "", .{ .remove_seq_item = std.math.maxInt(usize) }, dia);
+        defer t.allocator.free(out);
+        try t.expectEqualStrings("a = [1]\n", out);
+    }
+}
+
 test "applyEdit performs the structural ops on ini, root and section" {
     if (comptime !build_options.lang_ini) return error.SkipZigTest;
     const t = std.testing;
@@ -617,11 +687,14 @@ test "applyEdit performs the structural ops on ini, root and section" {
         defer t.allocator.free(out);
         try t.expectEqualStrings("[server]\nhost = localhost\nport = 80\n", out);
     }
-    // delete_key on a `[section]` header itself is refused, not silently
-    // corrupted.
+    // delete_key on a `[section]` deletes the whole section — every
+    // occurrence of it — through `deleteContainer`, which `deleteKey`
+    // refuses in favour of.
     {
         var dk_path = [_]fig.AST.PathSegment{.{ .key = "server" }};
-        try t.expectError(error.CannotDeleteSection, applyEdit(I, t.allocator, "[server]\nhost = localhost\n", &dk_path, "", .delete_key, dia));
+        const out = try applyEdit(I, t.allocator, "[server]\nhost = localhost\n[other]\nk = v\n[server]\nport = 80\n", &dk_path, "", .delete_key, dia);
+        defer t.allocator.free(out);
+        try t.expectEqualStrings("[other]\nk = v\n", out);
     }
     // replace_value on the `[section]` header is refused for the same reason —
     // the section's span is its NAME, so this used to rewrite `[server]` into

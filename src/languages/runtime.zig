@@ -56,8 +56,11 @@ const ExtKind = Node.Kind.Extended.ExtKind;
 // ============================================================================
 //
 // Every struct below is `extern`, and every one is stated in fig.h under the
-// `Fig` prefix. A field is added at the END of a struct only, and only with a
-// bump of `vtable_version`; a field never changes meaning. `Str` and `CSpan`
+// `Fig` prefix. A field is added at the END of a struct only, and a field
+// never changes meaning. Changing a field's meaning is a bump of
+// `vtable_version`; appending one is not, where only fig writes the struct
+// and a language only reads it (`PrintOptions`) — an older language never
+// reads past what it knows. `Str` and `CSpan`
 // are the same two-word records fig.h has carried as `FigStr` and `FigSpan`
 // since 2.x, restated here so this file is a leaf.
 
@@ -273,13 +276,21 @@ pub const ErrorInfo = extern struct {
     }
 };
 
-/// The subset of `AST.SerializeOptions` a printer outside core is told. A
-/// field appended here is a `vtable_version` bump.
+/// The subset of `AST.SerializeOptions` a printer outside core is told. fig
+/// writes it and a language reads it, so a field appended here reaches a
+/// language that knows it and is never read by one that does not — not a
+/// `vtable_version` bump.
 pub const PrintOptions = extern struct {
     pretty: bool = true,
     strip_comments: bool = false,
     indent: u8 = 2,
     width: u16 = 80,
+    /// Print the value as the editor takes it spliced into a document, not
+    /// as a document of its own — `AST.SerializeOptions.splice`. A language
+    /// whose document wraps its root (plist) or spells a scalar root
+    /// differently from a scalar in place (NestedText's `>` block) answers
+    /// it; every other prints the same either way.
+    splice: bool = false,
 };
 
 /// `manifest.CommentDelimiter`.
@@ -1502,6 +1513,7 @@ pub fn printNodeWith(e: *const Entry, writer: *std.Io.Writer, ast: *const AST, r
         .strip_comments = options.strip_comments,
         .indent = options.indent,
         .width = options.width,
+        .splice = options.splice,
     };
     var out: Str = .{};
     var err: ErrorInfo = .empty;

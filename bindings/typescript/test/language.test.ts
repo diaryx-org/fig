@@ -19,6 +19,7 @@ import {
   handle,
   parse,
   registerLanguage,
+  serialize,
   serve,
   type Language,
   type NodeTable,
@@ -234,4 +235,25 @@ test("the helper subpath loads the wire and nothing the wasm module is needed fo
   }
   const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as { exports: Record<string, { default: string }> };
   assert.equal(pkg.exports["./helper"]?.default, "./dist/helper.js");
+});
+
+test("a runtime printer is told when it prints splice text", () => {
+  const seen: boolean[] = [];
+  const spy = registerLanguage({
+    ...dotenv,
+    name: "js-dotenv-splice",
+    dialects: [{ ...dotenv.dialects[0]!, name: "js-dotenv-splice", extensions: ["env-splice"] }],
+    print: (d, t, o) => {
+      seen.push(o.splice);
+      return dotenv.print!(d, t, o);
+    },
+  });
+  seen.length = 0; // registration prints the samples, as a document
+  using ed = Editor.open("A=1\n", spy);
+  ed.insertValue([], "B", "two");
+  assert.equal(ed.source(), "A=1\nB=two\n");
+  assert.deepEqual(seen, [true]);
+  seen.length = 0;
+  serialize({ C: "3" }, spy);
+  assert.deepEqual(seen, [false]);
 });

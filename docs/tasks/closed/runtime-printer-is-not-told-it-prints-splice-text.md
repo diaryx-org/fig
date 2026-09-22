@@ -1,13 +1,22 @@
 ```fig
 title = A runtime printer is not told when it prints splice text, so it prints a whole document
 description = the splice text the bindings and `fig patch` hand the editor comes from a runtime format's `print`, whose `PrintOptions` carry no `splice` bit — a runtime plist or NestedText twin spells a scalar as its wrapped or `>`-blocked document, which the compiled formats stopped doing when they declared `printSplice`
-status = open
+status = done
 created = 2026-09-22
 updated = 2026-09-22
-part_of = [tasks](tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # A runtime printer is not told when it prints splice text, so it prints a whole document
+
+**Status.** Done in the core, in the same commit as [the NestedText
+container task](/docs/tasks/closed/nestedtext-container-value-lands-as-a-string.md):
+`FigPrintOptions` gains `splice`, the wire's print request carries
+`"splice"`, and the Rust `PrintOptions` and TypeScript `PrintOptions` have
+the field. Appended rather than versioned: fig writes the struct and a
+language only reads it, so an older language never reads past what it
+knows, and `vtable_version` stays 1. The fig-quickjs twins answering it is
+that repository's work.
 
 **Where.** The bindings' editor paths and `Patch.render` serialize a value
 with the `splice` option — the text the editor takes. For a compiled

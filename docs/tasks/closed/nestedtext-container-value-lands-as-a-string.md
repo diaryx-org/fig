@@ -1,13 +1,24 @@
 ```fig
 title = A mapping or list spliced into NestedText lands as a multi-line string
 description = `fig patch` of `{"m": {"x": "1"}}` into a NestedText file, or a binding's `insert_value` of a map, writes `m:` over `> x: 1` — the editor's renderers take their value text as a string, which is right for a CLI argument and wrong for a container fragment
-status = open
+status = done
 created = 2026-09-22
 updated = 2026-09-22
-part_of = [tasks](tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # A mapping or list spliced into NestedText lands as a multi-line string
+
+**Status.** Done, in `fix(nestedtext): a container or multi-line string is
+spliced as a nested block, and an empty container prints as {} or []`
+(2026-09-22). Splice text now says what follows `key:` in place: a one-line
+scalar is its text, and a value that must be nested — a container, or a
+string with a line break — is a newline and then its nested block, which
+`printSplice` writes and the renderers (`nestedBlock`) re-indent under the
+key when the rest reads as NestedText. A CLI argument is a string as
+before unless it opens with a line break and the rest is NestedText on its
+own. Writing the tests found the printer spelled an empty nested container
+as a bare `key:`, which reads back as the empty string; it is `{}`/`[]` now.
 
 **Repro.**
 

@@ -429,7 +429,7 @@ fn printThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, table: *const Runtime.No
     jsonString(w, std.mem.span(dialect)) catch return 3;
     w.writeAll(",\"table\":") catch return 3;
     tableToJson(w, table) catch return 3;
-    w.print(",\"options\":{{\"pretty\":{},\"strip_comments\":{},\"indent\":{d},\"width\":{d}}}}}", .{ options.pretty, options.strip_comments, options.indent, options.width }) catch return 3;
+    w.print(",\"options\":{{\"pretty\":{},\"strip_comments\":{},\"indent\":{d},\"width\":{d},\"splice\":{}}}}}", .{ options.pretty, options.strip_comments, options.indent, options.width, options.splice }) catch return 3;
     return outputCall(t, req.written(), out, err);
 }
 
@@ -838,7 +838,7 @@ test "parse crosses as a request line and comes back as a table; print gets the 
     try t.expect(std.mem.indexOf(u8, s.last_request.items, "\"sep\":[1,2]") != null);
     try t.expect(std.mem.indexOf(u8, s.last_request.items, "\"slot\":\"leading\"") != null);
     try t.expect(std.mem.indexOf(u8, s.last_request.items, "\"directives\":[{\"handle\":\"!e!\",\"prefix\":\"tag:x/\"}]") != null);
-    try t.expect(std.mem.indexOf(u8, s.last_request.items, "\"options\":{\"pretty\":true,\"strip_comments\":false,\"indent\":2,\"width\":80}") != null);
+    try t.expect(std.mem.indexOf(u8, s.last_request.items, "\"options\":{\"pretty\":true,\"strip_comments\":false,\"indent\":2,\"width\":80,\"splice\":false}") != null);
     freeBytesThunk(&s.transport, out);
     freeTableThunk(&s.transport, &table);
 }

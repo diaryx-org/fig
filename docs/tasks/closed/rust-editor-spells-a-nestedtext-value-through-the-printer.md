@@ -19,9 +19,9 @@ is a `splice` bit in `FigSerializeOptions`, beside `flow` and set where
 writes a scalar as its plain text. `fig patch` into NestedText, which
 blocked a value twice the same way, sets it too; a value serialized to be
 written out is still a `>` block. Two gaps stay
-open: [a container into NestedText](/docs/tasks/nestedtext-container-value-lands-as-a-string.md),
+open: [a container into NestedText](/docs/tasks/closed/nestedtext-container-value-lands-as-a-string.md),
 and [a runtime format, whose printer is not told it prints splice
-text](/docs/tasks/runtime-printer-is-not-told-it-prints-splice-text.md).
+text](/docs/tasks/closed/runtime-printer-is-not-told-it-prints-splice-text.md).
 
 **Repro** (`bindings/rust`; NestedText is in the default feature set):
 

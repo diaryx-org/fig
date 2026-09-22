@@ -230,6 +230,12 @@ test("Editor splices a NestedText value as plain text, blocked once", () => {
   assert.equal(ed.source(), "name: h2\nnew:\n    > two\n    > lines\n");
 });
 
+test("Editor takes a container into NestedText as nested entries", () => {
+  using ed = Editor.open("name: fig\n", Format.Nestedtext);
+  ed.insertValue([], "m", { x: "1", l: ["a", "b"] });
+  assert.equal(ed.source(), "name: fig\nm:\n    x: 1\n    l:\n        - a\n        - b\n");
+});
+
 test("serialize stays a whole document where splice text does not", () => {
   assert.equal(serialize("h2", Format.Nestedtext), "> h2\n");
 });

@@ -1095,6 +1095,13 @@ typedef struct FigPrintOptions {
     bool     strip_comments;
     uint8_t  indent;
     uint16_t width;
+    // Print the value as the editor takes it spliced into a document, not as
+    // a document of its own: a root the document wraps (plist's <plist>) or
+    // a scalar root spelled differently from a scalar in place (NestedText's
+    // `>` block) is written bare. Every other language prints the same
+    // either way. Appended; fig writes this struct and a language only reads
+    // it, so an older language never reads it — not a vtable version bump.
+    bool     splice;
 } FigPrintOptions;
 
 // How one comment is delimited: `open` alone (`#`, `//`), or a pair

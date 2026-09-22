@@ -547,6 +547,12 @@ pub struct PrintOptions {
     pub strip_comments: bool,
     pub indent: u8,
     pub width: u16,
+    /// Print the value as the editor takes it spliced into a document, not
+    /// as a document of its own: a root the document wraps (plist's
+    /// `<plist>`) or a scalar root spelled differently from a scalar in
+    /// place (NestedText's `>` block) is written bare. The bindings' editor
+    /// text and `fig patch` set it; every other print leaves it `false`.
+    pub splice: bool,
 }
 
 impl Default for PrintOptions {
@@ -556,6 +562,7 @@ impl Default for PrintOptions {
             strip_comments: false,
             indent: 2,
             width: 80,
+            splice: false,
         }
     }
 }
@@ -1428,6 +1435,7 @@ unsafe extern "C" fn print_thunk(
         strip_comments: opts.strip_comments,
         indent: opts.indent,
         width: opts.width,
+        splice: opts.splice,
     };
     let result = catch_unwind(AssertUnwindSafe(|| {
         let table = table_from_c(unsafe { &*table })?;

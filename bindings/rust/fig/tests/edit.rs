@@ -1047,3 +1047,15 @@ fn serialize_keeps_the_plist_wrapper() {
     assert!(out.starts_with("<?xml"), "{out}");
     assert!(out.contains("<plist version=\"1.0\">"), "{out}");
 }
+
+#[test]
+fn editor_nestedtext_takes_a_container_as_nested_entries() {
+    use fig::Value;
+    let mut ed = Editor::open(b"name: fig\n", Format::Nestedtext).unwrap();
+    let m = Value::Map(vec![
+        (Value::Str("x".into()), Value::Str("1".into())),
+        (Value::Str("l".into()), Value::Seq(vec![Value::Str("a".into()), Value::Str("b".into())])),
+    ]);
+    ed.insert_value(&[], "m", m).unwrap();
+    assert_eq!(ed.source().unwrap(), "name: fig\nm:\n    x: 1\n    l:\n        - a\n        - b\n");
+}

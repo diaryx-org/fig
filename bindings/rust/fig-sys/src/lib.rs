@@ -1047,6 +1047,7 @@ pub struct FigPrintOptions {
     pub strip_comments: bool,
     pub indent: u8,
     pub width: u16,
+    pub splice: bool,
 }
 
 /// Mirror of `FigCommentDelimiter`.

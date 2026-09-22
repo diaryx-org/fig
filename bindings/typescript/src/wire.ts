@@ -145,6 +145,11 @@ export interface PrintOptions {
   strip_comments: boolean;
   indent: number;
   width: number;
+  /** Print the value as the editor takes it spliced into a document, not as
+   *  a document of its own: a root the document wraps (plist's `<plist>`) or
+   *  a scalar root spelled differently from a scalar in place (NestedText's
+   *  `>` block) is written bare. Every other print leaves it `false`. */
+  splice: boolean;
 }
 
 // ── the node table ─────────────────────────────────────────────────────────
@@ -382,6 +387,7 @@ function handleInner(lang: Language, requestLine: string): Record<string, unknow
         strip_comments: o.strip_comments ?? false,
         indent: o.indent ?? 2,
         width: o.width ?? 80,
+        splice: o.splice ?? false,
       };
       return { ok: true, output: lang.print(req.dialect, req.table, options) };
     }

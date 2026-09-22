@@ -60,6 +60,7 @@ const Span = @import("../../util/span.zig");
 const editor = @import("../../editor.zig");
 const splice = @import("../../editor/splice.zig");
 const NestedText = @import("nestedtext.zig").Language;
+const Parser = @import("parser.zig");
 
 /// The concrete editor these ops drive — the NestedText arm of the generic engine.
 const NtEditor = editor.Editor(NestedText);
@@ -85,6 +86,15 @@ const indent_unit: []const u8 = NestedText.syntax(.NESTEDTEXT).indent_unit;
 /// `writeStringBlock`. Never emits a trailing newline after the last line
 /// (the caller decides whether one is needed — see `ntReplaceValue`).
 fn appendValueTail(allocator: std.mem.Allocator, out: *std.ArrayList(u8), child_indent: []const u8, text: []const u8, force_nested: bool) !void {
+    if (nestedBlock(allocator, text)) |block| {
+        var lines = std.mem.splitScalar(u8, block, '\n');
+        while (lines.next()) |line| {
+            try out.append(allocator, '\n');
+            if (line.len > 0) try out.appendSlice(allocator, child_indent);
+            try out.appendSlice(allocator, line);
+        }
+        return;
+    }
     if (!force_nested and text.len != 0 and std.mem.indexOfScalar(u8, text, '\n') == null) {
         try out.append(allocator, ' ');
         try out.appendSlice(allocator, text);
@@ -103,12 +113,30 @@ fn appendValueTail(allocator: std.mem.Allocator, out: *std.ArrayList(u8), child_
     }
 }
 
+/// The nested block `text` spells, when it spells one: a newline and then
+/// lines that read as a NestedText value on their own — a dict, a list, a
+/// `>` string, an inline `{}`/`[]` — returned without the newline and
+/// without a trailing one. Otherwise null, and `text` is a string. This is
+/// how splice text says a value is nested (`printer.zig`'s `printSplice`
+/// writes a container or a multi-line string so); a string argument means
+/// structure only if it starts with a line break AND the rest is
+/// NestedText.
+fn nestedBlock(allocator: std.mem.Allocator, text: []const u8) ?[]const u8 {
+    if (text.len < 2 or text[0] != '\n') return null;
+    const block = std.mem.trimEnd(u8, text[1..], "\n");
+    if (block.len == 0) return null;
+    const doc = Parser.parse(allocator, block, .NESTEDTEXT) catch return null;
+    defer doc.deinit(allocator);
+    return if (doc.ast.nodes[doc.ast.root].kind == .null_) null else block;
+}
+
 /// Render `text` as a ROOT document value: a `>`-block at column 0, no
 /// leading marker (the whole-document root has no `key:`/`-` to follow) and
 /// always nested — a bare top-level scalar line has no grammar at all (see
 /// `parser.zig`: an unrecognized `.other` line at the top level is a parse
 /// error; only dict/list/string(`>`)/inline forms are valid there).
 fn appendRootBlock(allocator: std.mem.Allocator, out: *std.ArrayList(u8), text: []const u8) !void {
+    if (nestedBlock(allocator, text)) |block| return out.appendSlice(allocator, block);
     var it = std.mem.splitScalar(u8, text, '\n');
     var first = true;
     while (it.next()) |line| {
@@ -457,4 +485,17 @@ test "deleteKey removes a whole nested-value entry (generic engine, no override 
         .{&[_]AST.PathSegment{.{ .key = "server" }}},
         "a: 1\nb: 2\n",
     );
+}
+
+test "a value that opens with a line break and reads as NestedText is nested, not blocked" {
+    const P = &[_]AST.PathSegment{.{ .key = "m" }};
+    // Splice text for a mapping, a list and an empty dict (`printSplice`).
+    try expectEdit("set", "k: v\n", .{ P, "\nx: 1\ny:\n    - a" }, "k: v\nm:\n    x: 1\n    y:\n        - a\n");
+    try expectEdit("set", "k: v\n", .{ P, "\n- a\n- b" }, "k: v\nm:\n    - a\n    - b\n");
+    try expectEdit("set", "k: v\n", .{ P, "\n{}" }, "k: v\nm:\n    {}\n");
+    try expectEdit("set", "k: v\nm: 1\n", .{ P, "\nx: 1" }, "k: v\nm:\n    x: 1\n");
+    // A string argument stays a string: no leading break, or a rest that is
+    // not NestedText on its own.
+    try expectEdit("set", "k: v\n", .{ P, "x: 1\ny: 2" }, "k: v\nm:\n    > x: 1\n    > y: 2\n");
+    try expectEdit("set", "k: v\n", .{ P, "\nhello" }, "k: v\nm:\n    >\n    > hello\n");
 }

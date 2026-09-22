@@ -50,15 +50,27 @@ pub fn print(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Er
     try writer.flush();
 }
 
-/// Print `ast.root` as splice text — what the editor splices, not a
-/// document. A scalar is its plain text: the editor's `renderTail`/
-/// `renderEntry`/`renderItem` choose the same-line or `>`-block form for
-/// the place it lands, so the `>` block a scalar root takes as a document
-/// would be blocked twice. See `AST.SerializeOptions.splice`.
+/// Print `ast.root` as splice text — what follows `key:` or `-` in place,
+/// not a document. A one-line scalar is its plain text, which the editor's
+/// `renderTail`/`renderEntry`/`renderItem` put on the same line (or block,
+/// if empty). Anything that must be NESTED — a container, or a string with a
+/// line break — is a newline and then its nested block at depth 0, which the
+/// renderers re-indent under the key rather than block as a string. See
+/// `AST.SerializeOptions.splice` and `editor_helper.zig`'s `nestedBlock`.
 pub fn printSplice(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Error!void {
     switch (ast.nodes[ast.root].kind) {
-        .null_, .mapping, .sequence => return print(writer, ast, options),
-        else => try writer.writeAll(try scalarText(ast, ast.root)),
+        .null_ => return print(writer, ast, options),
+        .mapping, .sequence => {
+            try writer.writeByte('\n');
+            return print(writer, ast, options);
+        },
+        else => {
+            const text = try scalarText(ast, ast.root);
+            if (std.mem.indexOfScalar(u8, text, '\n') != null) {
+                try writer.writeByte('\n');
+                try writeStringBlock(writer, 0, text);
+            } else try writer.writeAll(text);
+        },
     }
     try writer.flush();
 }
@@ -75,6 +87,9 @@ pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize
 // ── Containers ───────────────────────────────────────────────────────────────
 
 fn printMapping(w: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize) Error!void {
+    // An empty mapping has no block spelling — `key:` over nothing reads as
+    // the empty string — so it takes the inline `{}` on a line of its own.
+    if (ast.nodes[id].kind.mapping == null) return printEmpty(w, ast, id, depth, "{}");
     var cur = ast.nodes[id].kind.mapping;
     while (cur) |kv_id| : (cur = ast.nodes[kv_id].next_sibling) {
         const kv = ast.nodes[kv_id].kind.keyvalue;
@@ -95,6 +110,7 @@ fn printMapping(w: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize) Erro
 }
 
 fn printSequence(w: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize) Error!void {
+    if (ast.nodes[id].kind.sequence == null) return printEmpty(w, ast, id, depth, "[]");
     var cur = ast.nodes[id].kind.sequence;
     while (cur) |item_id| : (cur = ast.nodes[item_id].next_sibling) {
         try printLeadingComments(w, ast, ast.leadingCommentAnchor(item_id), depth);
@@ -104,6 +120,15 @@ fn printSequence(w: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize) Err
         try printTrailingComment(w, ast, ast.trailingCommentAnchor(item_id), depth);
     }
     try printDanglingComments(w, ast, id, depth);
+}
+
+/// An empty container as its inline form on a line of its own, after any
+/// comments it carries.
+fn printEmpty(w: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize, inline_form: []const u8) Error!void {
+    try printDanglingComments(w, ast, id, depth);
+    try writeIndent(w, depth);
+    try w.writeAll(inline_form);
+    try w.writeByte('\n');
 }
 
 /// Render the value half of a `key:`/`-` item already written up to (but not
@@ -356,7 +381,7 @@ test "null mid-tree is unsupported" {
     try std_testing.expectError(error.NullUnsupported, print(&output.writer, &ast, .{}));
 }
 
-test "a scalar's splice text is its plain text, which the editor blocks where it lands" {
+test "a multi-line string's splice text is its nested `>` block, after a newline" {
     var b = AST.Builder.init(std_testing.allocator);
     defer b.deinit();
     var ast = try b.finish(try b.addString("two\nlines"));
@@ -364,5 +389,10 @@ test "a scalar's splice text is its plain text, which the editor blocks where it
     var output: Writer.Allocating = .init(std_testing.allocator);
     defer output.deinit();
     try printSplice(&output.writer, &ast, .{});
-    try std_testing.expectEqualStrings("two\nlines", output.written());
+    try std_testing.expectEqualStrings("\n> two\n> lines\n", output.written());
+}
+
+test "an empty container prints as its inline form on a line of its own" {
+    try expectRoundTrip("a:\n    {}\nb:\n    []\nc:\n    - []\n");
+    try expectPrint("{}\n", "{}\n");
 }

@@ -21,7 +21,7 @@
 //! ```json
 //! {"op":"describe"}
 //! {"op":"parse","dialect":"hcl","input":"…"}
-//! {"op":"print","dialect":"hcl","table":{…},"options":{"pretty":true,"strip_comments":false,"indent":2,"width":80}}
+//! {"op":"print","dialect":"hcl","table":{…},"options":{"pretty":true,"strip_comments":false,"indent":2,"width":80,"splice":false}}
 //! {"op":"render","which":"value","dialect":"hcl","indent":"","key":"","value":"…","literal":"string","old_key":""}
 //! ```
 //!
@@ -128,6 +128,7 @@ fn handle_inner(lang: &dyn Language, request: &str) -> Result<Value, LanguageErr
                         .unwrap_or(false),
                     indent: o.get("indent").and_then(Value::as_u64).unwrap_or(2) as u8,
                     width: o.get("width").and_then(Value::as_u64).unwrap_or(80) as u16,
+                    splice: o.get("splice").and_then(Value::as_bool).unwrap_or(false),
                 },
                 None => PrintOptions::default(),
             };

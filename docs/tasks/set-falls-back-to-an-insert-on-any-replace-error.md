@@ -1,13 +1,22 @@
 ```fig
 title = `set` falls back to an insert on any replace error, so a refused replace becomes a duplicate entry
 description = `Editor.set` catches every error from `replaceValAtPath` and inserts the key into the parent instead; when the replace was refused for cause — a section veto, a splice the reparse rolled back — the parent gains a second entry of that name
-status = open
+status = done
 created = 2026-09-14
-updated = 2026-09-14
+updated = 2026-09-22
 part_of = [tasks](tasks.md)
 ```
 
 # `set` falls back to an insert on any replace error, so a refused replace becomes a duplicate entry
+
+**Status.** Done, in `fix(editor): set inserts only when the key is
+absent, not when its replace was refused` (2026-09-22). `set` falls back
+to `insertKey` on `NotFound` and `NotAMapping` alone and surfaces every
+other replace error as it is. Tests in `editor.zig` hold a TOML table and
+an INI section veto to one entry, an error, and `splice_rejected` false —
+the flag the insert attempt used to set, which sent the CLI blaming the
+value for a veto — and a YAML replace the reparse rolled back to the
+parse error and an unchanged document.
 
 **Repro.** With fig-quickjs's `pom.mjs` configured as `js-pom` (or any
 runtime language whose value renderer can produce text the reparse

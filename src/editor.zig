@@ -572,10 +572,18 @@ pub fn Editor(comptime Language: type) type {
                 // into the format's key syntax before splicing. `insertKey`
                 // re-validates the parent (a mapping, or an empty/null root it
                 // promotes), so a non-mapping parent still errors; surface the
-                // original replace error when the insert can't proceed. Falling
-                // back on any replace error (not just `NotFound`) is what lets
-                // `set` seed a freshly-created, still-empty document — where
-                // navigating to the key fails with `NotAMapping`.
+                // original replace error when the insert can't proceed.
+                // `NotAMapping` falls back beside `NotFound` because it is what
+                // navigating into a freshly-created, still-empty document says.
+                //
+                // Every other replace error means the key IS there and the
+                // replace was refused for cause — a section veto
+                // (`CannotReplaceTable` …), or a splice the reparse rolled back
+                // — and an insert does not cure that: it would write a second
+                // entry of the same name beside the first. Those surface as
+                // they are.
+                if (replace_err != error.NotFound and replace_err != error.NotAMapping)
+                    return replace_err;
                 const key_text = try self.formatInsertKey(path[path.len - 1].key);
                 defer self.allocator.free(key_text);
                 self.insertKey(path[0 .. path.len - 1], key_text, value_text) catch |insert_err| {
@@ -4468,6 +4476,38 @@ test "set rolls back a vivified ancestor when the leaf insert fails" {
         ed.set(&.{ .{ .key = "a" }, .{ .key = "b" } }, "[unclosed"),
     );
     try testing.expectEqualStrings("title: t\n", ed.source.items);
+}
+
+test "set surfaces a section veto rather than inserting a second entry of that name" {
+    // The key exists and the replace was refused for cause; an insert
+    // does not cure that, and trying it is what sent the CLI blaming the
+    // value (`splice_rejected`) for a veto the value had nothing to do with.
+    if (comptime build_options.lang_toml) {
+        var ed: Editor(Toml) = .{ .allocator = testing.allocator, .format = .TOML_1_1 };
+        try ed.init("[a]\nx = 1\n");
+        defer ed.deinit();
+        try testing.expectError(error.CannotReplaceTable, ed.set(&.{.{ .key = "a" }}, "2"));
+        try testing.expect(!ed.splice_rejected);
+        try testing.expectEqualStrings("[a]\nx = 1\n", ed.source.items);
+    }
+    if (comptime build_options.lang_ini) {
+        var ed: Editor(Ini) = .{ .allocator = testing.allocator, .format = .INI };
+        try ed.init("[user]\nname = x\n");
+        defer ed.deinit();
+        try testing.expectError(error.CannotReplaceSection, ed.set(&.{.{ .key = "user" }}, "1"));
+        try testing.expect(!ed.splice_rejected);
+        try testing.expectEqualStrings("[user]\nname = x\n", ed.source.items);
+    }
+}
+
+test "set surfaces a rolled-back replace rather than inserting a second entry of that name" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    var ed: Editor(Yaml) = .{ .allocator = testing.allocator, .format = .v1_2_2 };
+    try ed.init("a: 1\nb: 2\n");
+    defer ed.deinit();
+    try testing.expect(std.meta.isError(ed.set(&.{.{ .key = "a" }}, "\"open")));
+    try testing.expect(ed.splice_rejected);
+    try testing.expectEqualStrings("a: 1\nb: 2\n", ed.source.items);
 }
 
 test "set reports the flow container, not a missing key, when a block value can't land" {

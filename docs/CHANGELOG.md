@@ -120,6 +120,12 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
+_No commits since the last release tag._
+
+<!-- git-cliff:end -->
+
+## core 3.1.0 · npm 3.1.0
+
 ### Added
 
 - **cli** — a path key can be quoted or escaped to hold a . or [ ([`66727cc`](https://github.com/diaryx-org/fig/commit/66727cce0079a263458c6c60a70703b106912511))
@@ -175,8 +181,6 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - inserting into a braceless closed-container root (a runtime OpenStep `.strings` file) works again, as it did before 0304c11.
 
 - appending an item to a plist array, or a runtime closed-container language's sequence, that closes on its last item's line is refused with `ContainerClosesOnItsLine` (`FIG_STATUS_INVALID_ARGUMENT`), where the item was written into the container around it.
-
-<!-- git-cliff:end -->
 
 ## core 3.0.1 · npm 3.0.1
 

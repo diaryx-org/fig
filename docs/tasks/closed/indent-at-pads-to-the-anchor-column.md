@@ -1,13 +1,24 @@
 ```fig
 title = `indentAt` pads to the anchor token's column, which is wrong when the anchor is a value or a header key
 description = the indentation a new line copies is the anchor line's leading whitespace padded with spaces out to the anchor's column; for an empty container after `key = ` and for a section key inside `[…]` that column is not a line indent, and the splice comes out as `\t\t\t       \tx = y;` or ` user = 1`
-status = open
+status = done
 created = 2026-09-14
-updated = 2026-09-14
-part_of = [tasks](tasks.md)
+updated = 2026-09-22
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # `indentAt` pads to the anchor token's column, which is wrong when the anchor is a value or a header key
+
+**Status.** Done, in `fix(editor): a new line pads to its anchor's column
+only past a sequence item marker` (2026-09-22). `indentAt` pads when what
+stands between the line's indent and the anchor is item markers — read off
+the bytes against `seq_item_marker`, which is what `node_marker_spans`
+would say and needs no parse — and takes the line's leading whitespace
+alone otherwise. Held by a plist test (`<key>a</key><dict/>` on a
+tab-indented line expands under the tab) and a YAML one (`- k: v` and
+`- - k: v` siblings still align under the key). The OpenStep and gitconfig
+repros are runtime modules in fig-quickjs, and take the fix when that
+repository next builds against this core.
 
 **Repro.** Any format with `closed_containers` whose empty container sits
 after its key on the key's line — fig-quickjs's `openstep.mjs`, or plist

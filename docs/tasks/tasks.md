@@ -8,7 +8,6 @@ part_of = [docs](/docs/docs.md)
 contents
 > * [The lossy strips and the `$fig` envelope rebuild the AST without its tags, anchors and directives](lossy-strips-drop-tags-and-anchors.md)
 > * [The item and value renderers are not told the key they are rendering under](renderers-are-not-told-the-parent-key.md)
-> * [`indentAt` pads to the anchor token's column, which is wrong when the anchor is a value or a header key](indent-at-pads-to-the-anchor-column.md)
 > * [YAML `!!int`/`!!float` is applied without checking the lexeme, and `%TAG !!` is not honoured](yaml-int-tag-applied-without-checking-the-lexeme.md)
 > * [A runtime target has no loss diagnostics](runtime-target-loss-diagnostics.md)
 > * [`fig patch` into a runtime target is refused](patch-into-a-runtime-target.md)

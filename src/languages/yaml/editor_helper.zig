@@ -798,3 +798,14 @@ test "yaml setSequence declines a non-sequence target" {
     defer ed.deinit();
     try std.testing.expectError(error.NotASequence, ed.setSequence(&.{.{ .key = "a" }}, &.{"x"}));
 }
+
+test "a key inserted into an item's mapping aligns under the item's keys, past each marker" {
+    var ed = try newYamlEditor("x:\n  - k: v\n    j: w\n");
+    defer ed.deinit();
+    try ed.set(&.{ .{ .key = "x" }, .{ .index = 0 }, .{ .key = "n" } }, "1");
+    try expectSource(&ed, "x:\n  - k: v\n    j: w\n    n: 1\n");
+    var nested = try newYamlEditor("x:\n  - - k: v\n");
+    defer nested.deinit();
+    try nested.set(&.{ .{ .key = "x" }, .{ .index = 0 }, .{ .index = 0 }, .{ .key = "n" } }, "1");
+    try expectSource(&nested, "x:\n  - - k: v\n      n: 1\n");
+}

@@ -194,6 +194,15 @@ test "set replaces a value, preserving or changing type by autodetection" {
     try expectEdit("set", "<dict><key>v</key><string>1.0</string></dict>", .{ &[_]AST.PathSegment{.{ .key = "v" }}, "<string>2.0</string>" }, "<dict><key>v</key><string>2.0</string></dict>");
 }
 
+test "an empty dict after its key on one line expands under the line's indent, not the dict's column" {
+    try expectEdit(
+        "insertKey",
+        "<dict>\n\t<key>a</key><dict/>\n</dict>\n",
+        .{ &[_]AST.PathSegment{.{ .key = "a" }}, "x", "y" },
+        "<dict>\n\t<key>a</key><dict>\n\t  <key>x</key>\n\t  <string>y</string>\n\t</dict>\n</dict>\n",
+    );
+}
+
 test "insertKey appends a two-line entry at the children's indent" {
     try expectEdit(
         "insertKey",

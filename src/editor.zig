@@ -177,12 +177,14 @@ pub fn Editor(comptime Language: type) type {
         /// start to `at`, which reproduces the depth and the file's spaced or
         /// glued marker style. For every other format it is the line's
         /// leading whitespace, kept as the bytes it is so a tab-indented file
-        /// stays tab-indented, padded with spaces out to `at`'s column when
-        /// `at` sits past some other token on its line — a key inside a
-        /// `- key: v` item, whose siblings align under the key and not under
-        /// the dash. The engine used to count a column and write that many
-        /// spaces, which lost tabs and was fig's whole reason for hooking
-        /// three insert operations.
+        /// stays tab-indented, padded with spaces out to `at`'s column only
+        /// when what stands between is sequence item markers — a key inside
+        /// a `- key: v` item, whose siblings align under the key and not
+        /// under the dash. Past any other token — a value's `{` after its
+        /// key, a section key inside `[…]`, a plist `<key>…</key>` — the
+        /// line's own indent is the answer. The engine used to count a
+        /// column and write that many spaces, which lost tabs and was fig's
+        /// whole reason for hooking three insert operations.
         pub fn indentAt(self: *const Self, buf: *std.ArrayList(u8), at: usize) ![]const u8 {
             const source = self.source.items;
             const line_start = lineStartBefore(source, at);
@@ -192,7 +194,8 @@ pub fn Editor(comptime Language: type) type {
             } else {
                 const ws_end = @min(firstNonSpace(source, line_start), at);
                 try buf.appendSlice(self.allocator, source[line_start..ws_end]);
-                try buf.appendNTimes(self.allocator, ' ', at - ws_end);
+                if (onlyItemMarkers(source[ws_end..at], self.syntax().seq_item_marker))
+                    try buf.appendNTimes(self.allocator, ' ', at - ws_end);
             }
             return buf.items[from..];
         }
@@ -3446,6 +3449,26 @@ fn keyNodeIs(doc: Document, id: AST.Node.Id, name: []const u8) bool {
 fn stripTrailingNewline(text: []const u8) []const u8 {
     if (text.len > 0 and text[text.len - 1] == '\n') return text[0 .. text.len - 1];
     return text;
+}
+
+/// Whether `gap` — the bytes between a line's indent and a token on it — is
+/// one or more sequence item markers and the blanks after them (`- `, or
+/// `- - ` for an item of an item), which is when the token's siblings align
+/// under the token rather than under the line's indent. See `indentAt`.
+fn onlyItemMarkers(gap: []const u8, seq_item_marker: []const u8) bool {
+    const marker = std.mem.trim(u8, seq_item_marker, " \t");
+    if (marker.len == 0) return false;
+    var i: usize = 0;
+    var saw = false;
+    while (i < gap.len) {
+        if (gap[i] == ' ' or gap[i] == '\t') {
+            i += 1;
+        } else if (std.mem.startsWith(u8, gap[i..], marker)) {
+            i += marker.len;
+            saw = true;
+        } else return false;
+    }
+    return saw;
 }
 
 /// Append `value_text` to `out`, re-indented so its lines sit under `indent`.

@@ -211,6 +211,13 @@ test "insertKey refuses a dict that closes on its last entry's line" {
     try testing.expectError(error.ContainerClosesOnItsLine, ed.insertKey(&[_]AST.PathSegment{.{ .key = "o" }}, "b", "y"));
 }
 
+test "appendToSeq refuses an array that closes on its last item's line" {
+    var ed: PlistEditor = .{ .allocator = testing.allocator, .format = .XML };
+    try ed.init("<dict>\n\t<key>l</key><array><string>a</string></array>\n</dict>\n");
+    defer ed.deinit();
+    try testing.expectError(error.ContainerClosesOnItsLine, ed.appendToSeq(&[_]AST.PathSegment{.{ .key = "l" }}, "b"));
+}
+
 test "insertKey appends a two-line entry at the children's indent" {
     try expectEdit(
         "insertKey",

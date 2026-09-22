@@ -1763,6 +1763,10 @@ pub fn Editor(comptime Language: type) type {
             const last = (try parsed.ast.lastChild(&node)) orelse return self.expandEmptySeq(parsed, node, value_text);
             const first_item = (try parsed.ast.child(&node)).?;
             const insert_at = lineEndAfter(source, parsed.span(last).end -| 1);
+            if (self.syntax().closed_containers) |closed| {
+                if (closesOnLastLine(source, parsed.span(node), parsed.span(last), closed.seq.close, insert_at))
+                    return error.ContainerClosesOnItsLine;
+            }
             try self.insertSeqLine(insert_at, markerStart(parsed, first_item), value_text);
         }
 
@@ -2398,13 +2402,10 @@ pub fn Editor(comptime Language: type) type {
             // `<key>o</key><dict>…</dict>`, OpenStep's `o = {a = 1; };`)
             // has no line of its own to append after: the line end is past
             // its close, and an entry there lands in the enclosing mapping.
-            // Its span ending after that entry, but no later than the line
-            // does, is how it shows. A block mapping's span ends at its last
-            // entry, and a flat format's root runs on to the end of input,
-            // so the rule is only a closed-container format's.
-            if (self.syntax().closed_containers != null) if (maybe_last) |last| {
-                const span = parsed.span(mapping);
-                if (span.end > parsed.span(last).end and span.end <= insert_at) return error.ContainerClosesOnItsLine;
+            // See `closesOnLastLine`.
+            if (self.syntax().closed_containers) |closed| if (maybe_last) |last| {
+                if (closesOnLastLine(source, parsed.span(mapping), parsed.span(last), closed.map.close, insert_at))
+                    return error.ContainerClosesOnItsLine;
             };
 
             if (insert_at > 0 and source[insert_at - 1] != '\n') try out.append(self.allocator, '\n');
@@ -3462,6 +3463,19 @@ fn keyNodeIs(doc: Document, id: AST.Node.Id, name: []const u8) bool {
 fn stripTrailingNewline(text: []const u8) []const u8 {
     if (text.len > 0 and text[text.len - 1] == '\n') return text[0 .. text.len - 1];
     return text;
+}
+
+/// Whether a closed-container format's container closes on the line its last
+/// child ends on (plist's `<key>o</key><dict>…</dict>`, OpenStep's
+/// `o = {a = 1; };`, `(a, b)`): its span ends on its `close` token, after
+/// that child and no later than the line (`insert_at`, the line end an
+/// append splices at). Such a container has no line of its own to append
+/// after, and an entry or item there lands in the container around it. A
+/// braceless root (an OpenStep `.strings` file) ends at the end of input,
+/// not on a close, and is appended to like any flat root.
+fn closesOnLastLine(source: []const u8, span: Span, last: Span, close: []const u8, insert_at: usize) bool {
+    if (span.end <= last.end or span.end > insert_at) return false;
+    return close.len > 0 and std.mem.endsWith(u8, source[0..span.end], close);
 }
 
 /// Whether `gap` — the bytes between a line's indent and a token on it — is

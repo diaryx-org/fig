@@ -152,7 +152,7 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
         error.NotASequence => try term.writer.writeAll(": a segment of this path is not a sequence, so it has no indices to address\n"),
         error.IndexOutOfBounds => try term.writer.writeAll(": that index is past the end of the sequence\n"),
         error.ContainerClosesOnItsLine => {
-            try term.writer.writeAll(": that container closes on the line of its last entry, so a new entry has no line of its own to go on\n");
+            try term.writer.writeAll(": that container closes on the line of its last entry or item, so a new one has no line of its own to go on\n");
             try term.setColor(.blue);
             try term.writer.writeAll("help");
             try term.setColor(.reset);

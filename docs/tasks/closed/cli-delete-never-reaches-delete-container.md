@@ -4,7 +4,7 @@ description = the CLI's delete routes to `deleteKey`, which the engine refuses f
 status = done
 created = 2026-09-14
 updated = 2026-09-22
-part_of = [tasks](tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # `fig delete` never reaches `deleteContainer`, so a section, table or block cannot be deleted from the command line

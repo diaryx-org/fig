@@ -4,7 +4,7 @@ description = `getLeadingComment` on an item of a one-line array (`members = ["a
 status = done
 created = 2026-09-07
 updated = 2026-09-07
-part_of = [tasks](tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # A flow sequence item reports, and deletes, its parent's leading comment

@@ -4,7 +4,7 @@ description = `fig get -o yaml` and `fig fmt` lose a `%TAG` directive (so a `!e!
 status = done
 created = 2026-09-04
 updated = 2026-09-07
-part_of = [tasks](tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # YAML printer drops `%TAG` directives and root collection properties

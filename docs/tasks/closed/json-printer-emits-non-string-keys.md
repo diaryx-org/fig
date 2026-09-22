@@ -4,7 +4,7 @@ description = `fig get -o json` on a YAML document with a null, number, boolean 
 status = done
 created = 2026-09-04
 updated = 2026-09-07
-part_of = [tasks](tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # JSON printer emits a non-string mapping key as invalid JSON

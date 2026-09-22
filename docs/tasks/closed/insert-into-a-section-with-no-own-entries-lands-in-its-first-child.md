@@ -4,7 +4,7 @@ description = `insertBlockKey` anchors a section that has only header-introduced
 status = done
 created = 2026-09-14
 updated = 2026-09-22
-part_of = [tasks](tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # An insert into a section with no entries of its own lands inside its first child

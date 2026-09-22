@@ -125,7 +125,7 @@ fn node(self: *Printer, id: AST.Node.Id, depth: usize) Error!void {
 /// and losing a whole document over `23:` would help nobody, while a collection
 /// key has no reading at all. Until this existed the key node was
 /// printed as a value, so those documents came out as bytes no JSON parser
-/// accepts (docs/tasks/json-printer-emits-non-string-keys.md).
+/// accepts (docs/tasks/closed/json-printer-emits-non-string-keys.md).
 ///
 /// Spelling can collide — a YAML document with both `null:` and `"null":`, or
 /// with two null keys (2JQS's `: a` / `: b`), emits the same name twice. That is

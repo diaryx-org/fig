@@ -1012,7 +1012,7 @@ test "yaml printer: a nested block sequence leaves no trailing space after the d
 test "yaml printer: every key kind has a spelling that re-parses" {
     // A YAML mapping key is any node. The printer used to read every key as a
     // `.string` and crash on the rest (30 yaml-test-suite accept documents —
-    // docs/tasks/yaml-printer-panics-on-accept-corpus.md); each kind now has
+    // docs/tasks/closed/yaml-printer-panics-on-accept-corpus.md); each kind now has
     // a spelling the parser reads back to the same node.
     // null (2JQS: `: a`), number (74H7, with its tag kept), boolean.
     try expectRoundTrip(": a\n", "null: a\n");

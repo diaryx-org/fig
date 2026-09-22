@@ -4,7 +4,7 @@ description = The editor exposes leading and trailing comments per path but not 
 status = done
 created = 2026-09-07
 updated = 2026-09-07
-part_of = [tasks](tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # Editor: read and write the dangling anchor, and comment a node out and back in

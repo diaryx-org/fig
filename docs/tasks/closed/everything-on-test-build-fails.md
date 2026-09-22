@@ -4,7 +4,7 @@ description = `zig build test -Dxml=true -Dplist=true -Dcanonical=true` fails in
 status = done
 created = 2026-09-04
 updated = 2026-09-04
-part_of = [tasks](tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # Everything-on `zig build test` fails to compile

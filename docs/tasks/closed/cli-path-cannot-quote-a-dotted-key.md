@@ -4,7 +4,7 @@ description = `parsePath` splits on `.` and `[` with no quoting or escaping, so 
 status = done
 created = 2026-09-14
 updated = 2026-09-22
-part_of = [tasks](tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # A command-line path cannot name a key that contains a `.` or a `[`

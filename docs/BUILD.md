@@ -98,7 +98,7 @@ You can use a **package manager** to make updating easier. Right now, `fig` only
 
 ## nix-darwin
 
-I personally use Nix on my Macbook to manage packages.
+I personally use Nix on my MacBook to manage packages.
 I integrate it with Homebrew by adding this to my `configuration.nix`:
 
 ```nix

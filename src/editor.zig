@@ -921,7 +921,7 @@ pub fn Editor(comptime Language: type) type {
         /// `addLeadingComment` inserted above the parent's line (on fig, whose
         /// indent is the raw line prefix, it spliced the prefix `members = [`
         /// back in as well). See
-        /// `docs/tasks/flow-item-leading-comment-is-the-parents.md`.
+        /// `docs/tasks/closed/flow-item-leading-comment-is-the-parents.md`.
         ///
         /// The test is what SHARES the line, not the node's column: the parent
         /// is flow, and either the parent's opener (`key = [`) or a preceding

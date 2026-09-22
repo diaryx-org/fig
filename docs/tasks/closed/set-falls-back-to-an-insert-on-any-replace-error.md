@@ -4,7 +4,7 @@ description = `Editor.set` catches every error from `replaceValAtPath` and inser
 status = done
 created = 2026-09-14
 updated = 2026-09-22
-part_of = [tasks](tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # `set` falls back to an insert on any replace error, so a refused replace becomes a duplicate entry

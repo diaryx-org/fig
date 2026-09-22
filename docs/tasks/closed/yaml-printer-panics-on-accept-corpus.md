@@ -4,7 +4,7 @@ description = `fig get` and `fig fmt` on 30 of the 289 yaml-test-suite accept do
 status = done
 created = 2026-09-04
 updated = 2026-09-04
-part_of = [tasks](tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # YAML printer panics on some accept-corpus documents

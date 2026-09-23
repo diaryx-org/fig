@@ -42,8 +42,21 @@ pub const Error = error{
 
 /// Collapse `ast`'s reference layer into a fresh core AST built in `arena`.
 pub fn materialize(arena: Allocator, ast: *const AST, mode: TagMode) Error!AST {
+    var culprit: ?AST.Node.Id = null;
+    return materializeReporting(arena, ast, mode, &culprit);
+}
+
+/// `materialize`, but on failure also sets `culprit` to the id (in `ast`) of
+/// the node the pass failed on — the tagged node an `UnknownTag` or
+/// `TagTypeMismatch` is about, the alias an `AliasCycle` came back through —
+/// so a caller holding the node's source span can point at it. Untouched on
+/// success.
+pub fn materializeReporting(arena: Allocator, ast: *const AST, mode: TagMode, culprit: *?AST.Node.Id) Error!AST {
     var m: Materializer = .{ .src = ast, .arena = arena, .mode = mode };
-    const root = try m.copy(ast.nodes[ast.root]);
+    const root = m.copy(ast.nodes[ast.root]) catch |err| {
+        culprit.* = m.culprit;
+        return err;
+    };
     var result: AST = .{
         .allocator = arena,
         .owned_strings = &.{},
@@ -76,6 +89,9 @@ const Materializer = struct {
     /// Anchor target ids currently being expanded, to catch structural cycles
     /// (`&a [*a]`) and self-merges (`&m { <<: *m }`).
     path: std.ArrayList(AST.Node.Id) = .empty,
+    /// The innermost source node whose copy failed — the first `copy` frame
+    /// an error unwinds through. See `materializeReporting`.
+    culprit: ?AST.Node.Id = null,
 
     fn emit(self: *Materializer, kind: AST.Node.Kind) Error!AST.Node.Id {
         const id: AST.Node.Id = @intCast(self.out.items.len);
@@ -110,6 +126,9 @@ const Materializer = struct {
     /// Deep-copy `node` into the output, expanding aliases/merges and applying
     /// tags. Returns the new node id.
     fn copy(self: *Materializer, node: AST.Node) Error!AST.Node.Id {
+        errdefer if (self.culprit == null) {
+            self.culprit = node.id;
+        };
         switch (node.kind) {
             .alias => {
                 const target = try self.src.resolveDeep(node);
@@ -474,6 +493,31 @@ test "materialize: unknown tag strict errors, lax drops" {
     try testing.expectError(error.UnknownTag, materialize(arena.allocator(), &doc.ast, .strict));
     const mat = try materialize(arena.allocator(), &doc.ast, .lax);
     try testing.expectEqualSlices(u8, "1", (try mat.getValByPath(&.{.{ .key = "x" }})).kind.number.raw);
+}
+
+test "materializeReporting names the node a tag failure is about" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    const src = "ok: 1\nlist:\n  - 2\n  - !custom 3\n";
+    const doc = try Parser.parse(testing.allocator, src, .v1_2_2);
+    defer doc.deinit(testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var culprit: ?AST.Node.Id = null;
+    try testing.expectError(error.UnknownTag, materializeReporting(arena.allocator(), &doc.ast, .strict, &culprit));
+    // The tagged item itself, not the sequence or mapping around it: its tag
+    // span is what a report underlines.
+    const span = doc.node_tag_spans[culprit.?].?;
+    try testing.expectEqualStrings("!custom", src[span.start..span.end]);
+
+    // Reached through an alias, the failure is still about the anchored node
+    // that carries the tag.
+    const aliased = "a: &x !custom 1\nb: *x\n";
+    const doc2 = try Parser.parse(testing.allocator, aliased, .v1_2_2);
+    defer doc2.deinit(testing.allocator);
+    culprit = null;
+    try testing.expectError(error.UnknownTag, materializeReporting(arena.allocator(), &doc2.ast, .strict, &culprit));
+    const span2 = doc2.node_tag_spans[culprit.?].?;
+    try testing.expectEqualStrings("!custom", aliased[span2.start..span2.end]);
 }
 
 test "materialize: collection-tag mismatch and cyclic alias error" {

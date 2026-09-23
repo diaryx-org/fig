@@ -318,6 +318,76 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
     }
 }
 
+/// Report a document the reference-layer pass (`fig.Materialize`) refused on
+/// its way out of YAML, and exit(1). `node` is the source node the pass
+/// failed on, when its span is an offset into `file` (see
+/// `parse_dispatch.materializeFor`); the report then points at the tag — or,
+/// for a cyclic alias, at the alias — with the source line under it. `target`
+/// names the format being converted to.
+pub fn reportMaterializeError(term: *Io.Terminal, err: fig.Materialize.Error, doc: *const fig.Document, node: ?fig.AST.Node.Id, file: []const u8, target: []const u8) noreturn {
+    reportMaterializeErrorImpl(term, err, doc, node, file, target) catch {};
+    term.writer.flush() catch {};
+    std.process.exit(1);
+}
+
+fn reportMaterializeErrorImpl(term: *Io.Terminal, err: fig.Materialize.Error, doc: *const fig.Document, node: ?fig.AST.Node.Id, file: []const u8, target: []const u8) !void {
+    const source = doc.source;
+    // The span to point at: the tag for a tag failure, the alias itself for
+    // a cycle. Null when there is nothing to point into.
+    const span: ?fig.Span = if (node) |id| switch (err) {
+        error.AliasCycle => if (id < doc.node_spans.len) doc.node_spans[id] else null,
+        else => doc.tagSpan(doc.ast.nodes[id]),
+    } else null;
+    const tag: ?[]const u8 = if (span) |s| (if (err != error.AliasCycle and s.end <= source.len) source[s.start..s.end] else null) else null;
+
+    var buf: [512]u8 = undefined;
+    const message: []const u8, const short_label: []const u8 = switch (err) {
+        error.UnknownTag => .{
+            if (tag) |t|
+                std.fmt.bufPrint(&buf, "`{s}` is a custom YAML tag, and {s} has no way to carry one", .{ t, target }) catch "a custom YAML tag has no representation in the output format"
+            else
+                std.fmt.bufPrint(&buf, "this document has a custom YAML tag, and {s} has no way to carry one", .{target}) catch "a custom YAML tag has no representation in the output format",
+            "unknown tag",
+        },
+        error.TagTypeMismatch => .{
+            if (tag) |t|
+                std.fmt.bufPrint(&buf, "this value does not read as the type its `{s}` tag names", .{t}) catch "a value does not read as the type its tag names"
+            else
+                "a value in this document does not read as the type its `!!` tag names",
+            "tag does not fit value",
+        },
+        error.AliasCycle => .{
+            std.fmt.bufPrint(&buf, "this alias sits inside the node it refers to, so it cannot be expanded into {s}, which has no references", .{target}) catch "a cyclic alias cannot be expanded",
+            "cyclic alias",
+        },
+        else => unreachable,
+    };
+
+    if (span) |s| {
+        try printDiag(term, source, file, s.start, s.end, "error", .red, message, short_label);
+    } else {
+        try term.setColor(.red);
+        try term.writer.writeAll("error");
+        try term.setColor(.reset);
+        try term.writer.print(": {s}: {s}\n", .{ file, message });
+    }
+    switch (err) {
+        error.UnknownTag => {
+            try term.setColor(.blue);
+            try term.writer.writeAll("help");
+            try term.setColor(.reset);
+            try term.writer.writeAll(": pass --lax-tags to drop unknown tags and keep each value as it was parsed, or convert to YAML, which keeps them.\n");
+        },
+        error.TagTypeMismatch => {
+            try term.setColor(.blue);
+            try term.writer.writeAll("help");
+            try term.setColor(.reset);
+            try term.writer.writeAll(": change the value to one the tag's type can read, or remove the tag.\n");
+        },
+        else => {},
+    }
+}
+
 /// How a format takes the caller's text, which decides what the fix is when the
 /// text turns out not to fit: spliced in verbatim as source (so a string needs
 /// its own quotes), wrapped as a JSON string (so `"`/`\` need escaping), or

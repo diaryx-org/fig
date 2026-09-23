@@ -122,6 +122,9 @@ pub fn convertSlice(
     from: Format,
     to: Format,
     content: []const u8,
+    /// `content` is the whole of `file_path`, not a region extracted from
+    /// it — so a span in it names the line the user sees.
+    whole_file: bool,
     serialize: fig.AST.SerializeOptions,
     lossless: bool,
     lax_tags: bool,
@@ -146,7 +149,7 @@ pub fn convertSlice(
     // applied/dropped); YAML→YAML keeps it intact for round-trip. Mirrors
     // `get`.
     const keeps_references = parse_dispatch.carriesReferences(from) and parse_dispatch.carriesReferences(to);
-    const base_ast = try parse_dispatch.materializeFor(allocator, from, to, &doc.ast, if (lax_tags) .lax else .strict);
+    const base_ast = try parse_dispatch.materializeFor(allocator, term, from, to, &doc, file_path, whole_file, if (lax_tags) .lax else .strict);
 
     const ast: *const fig.AST = if (lossless and !keeps_references) blk: {
         // `to` is never `.gron` here (rejected up front above), so it always

@@ -448,9 +448,30 @@ pub fn carriesReferences(f: Format) bool {
 /// each is asked (`carriesReferences`), so a runtime twin of YAML answers as
 /// YAML does. `mode` is the tag policy — lax keeps unknown tags, strict
 /// refuses them. The copy lives in `a`.
-pub fn materializeFor(a: std.mem.Allocator, from: Format, to: Format, ast: *const fig.AST, mode: fig.Materialize.TagMode) !*const fig.AST {
-    if (!carriesReferences(from) or carriesReferences(to)) return ast;
-    return materialize(a, ast, mode);
+///
+/// A document the pass refuses — a custom tag under strict mode, a tag its
+/// value does not fit, an alias inside its own anchor — is reported to `term`
+/// against `file` and the process exits 1, the status the unreported error
+/// had. The report points at the node when `located`: the document was parsed
+/// from the whole of `file`, so its spans are offsets into what `file` shows
+/// the user. An embedded document's spans are offsets into the extracted
+/// region, and would name the wrong line.
+pub fn materializeFor(a: std.mem.Allocator, term: *Io.Terminal, from: Format, to: Format, doc: *const fig.Document, file: []const u8, located: bool, mode: fig.Materialize.TagMode) !*const fig.AST {
+    if (!carriesReferences(from) or carriesReferences(to)) return &doc.ast;
+    const mat = try a.create(fig.AST);
+    var culprit: ?fig.AST.Node.Id = null;
+    mat.* = fig.Materialize.materializeReporting(a, &doc.ast, mode, &culprit) catch |err| switch (err) {
+        error.UnknownTag, error.TagTypeMismatch, error.AliasCycle => diag_report.reportMaterializeError(
+            term,
+            err,
+            doc,
+            if (located) culprit else null,
+            file,
+            types.name(to),
+        ),
+        else => return err,
+    };
+    return mat;
 }
 
 /// `Materialize.materialize` into a copy allocated in `a`.

@@ -236,6 +236,9 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     var from = opts.from;
     var to = opts.to;
 
+    // Whether `doc`'s spans are offsets into the file itself — false for an
+    // embedded region, whose spans count from the region's own start.
+    var whole_file = true;
     const doc = if (try args_mod.resolveEmbedType(io, a, input, opts.embed, opts.detect_embed)) |embed_type| blk_embed: {
         // `embed_type` may have just been sniffed at runtime
         // (`detect_embed`), in which case the parse-time
@@ -248,6 +251,7 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
         // actual frontmatter turned out to be fig or JSON).
         from = args_mod.embedFormat(embed_type);
         if (!opts.output_explicit) to = from;
+        whole_file = false;
         break :blk_embed try edit_ops.parseEmbeddedFromFile(a, io, input, embed_type);
     } else blk: {
         // Read once so detection and parsing share the same bytes — a
@@ -280,7 +284,7 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     // applied/dropped). YAML→YAML keeps it intact for round-trip; JSON
     // never has it. Each side is asked, not named (`Caps.references`).
     const keeps_references = parse_dispatch.carriesReferences(from) and parse_dispatch.carriesReferences(to);
-    const base_ast = try parse_dispatch.materializeFor(a, from, to, &doc.ast, if (opts.lax_tags) .lax else .strict);
+    const base_ast = try parse_dispatch.materializeFor(a, stderr_term, from, to, &doc, opts.file, whole_file, if (opts.lax_tags) .lax else .strict);
 
     // Lossless mode: decode any `$fig` envelopes in the input back to
     // their real node kinds, then re-encode for the target format. Skipped
@@ -899,6 +903,7 @@ pub fn runConvert(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
             args_mod.embedFormat(source_type),
             args_mod.embedFormat(to_embed_type),
             inner,
+            false,
             opts.serialize,
             opts.lossless,
             opts.lax_tags,
@@ -937,6 +942,7 @@ pub fn runConvert(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
         from,
         opts.to,
         content,
+        true,
         opts.serialize,
         opts.lossless,
         opts.lax_tags,

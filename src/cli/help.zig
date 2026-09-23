@@ -1,7 +1,81 @@
 //! `--help`/usage text for the `fig` CLI, one function per action plus the
 //! top-level `general` summary. Pure output — no parsing or state.
+//!
+//! The two lists that drifted per action — the format names `--input`/
+//! `--output` take and the `--embed` archetypes — are derived or shared
+//! (`formatList`, `embed_archetypes`), so every action's help says what the
+//! argument parser accepts.
 const std = @import("std");
+const fig = @import("fig");
+const build_options = @import("build_options");
+const types = @import("types.zig");
 const Io = std.Io;
+
+/// Whether the compiled `Format` member `name` is in this build: a registry
+/// entry whose language was not compiled out, `canonical` when
+/// `-Dcanonical=true`, and `gron`, which the CLI always carries.
+fn compiledIn(comptime name: []const u8) bool {
+    if (comptime std.mem.eql(u8, name, "gron")) return true;
+    if (comptime std.mem.eql(u8, name, "canonical")) return build_options.lang_canonical;
+    return fig.Language.entryFor(name).Lang != void;
+}
+
+/// The format names `parseFormatName` accepts in this build — every compiled
+/// `Format` member, less `except` (gron for an action that writes a stored
+/// document) — comma-separated and wrapped under `indent` to fit 72 columns.
+/// Derived from the enum, so a new format is listed everywhere at once.
+fn formatList(comptime indent: []const u8, comptime except: []const []const u8) []const u8 {
+    comptime {
+        @setEvalBranchQuota(50_000);
+        var out: []const u8 = indent;
+        var col = indent.len;
+        var first = true;
+        fields: for (@typeInfo(types.Format).@"enum".fields) |f| {
+            for (except) |e| if (std.mem.eql(u8, e, f.name)) continue :fields;
+            if (!compiledIn(f.name)) continue;
+            const word = f.name;
+            if (!first) {
+                if (col + 2 + word.len > 72) {
+                    out = out ++ ",\n" ++ indent;
+                    col = indent.len;
+                } else {
+                    out = out ++ ", ";
+                    col += 2;
+                }
+            }
+            out = out ++ word;
+            col += word.len;
+            first = false;
+        }
+        return out ++ "\n";
+    }
+}
+
+/// The languages an embed archetype's `<lang>` takes — the registry's
+/// embeddable formats, the same set `args.embedTypeFromName` loops over.
+const embed_langs = blk: {
+    var out: []const u8 = "";
+    for (@typeInfo(fig.Embed.InnerFormat).@"enum".fields, 0..) |f, i|
+        out = out ++ (if (i == 0) "" else ", ") ++ f.name;
+    break :blk out;
+};
+
+/// The `--embed <archetype>` vocabulary, indented to sit under the flag's own
+/// line — the one text every action that takes `--embed` prints, matching
+/// `args.embedTypeFromName`.
+pub const embed_archetypes =
+    "    Parametric families take a <lang> — " ++ embed_langs ++ ":\n" ++
+    \\    `md-<lang>` (---<lang> frontmatter; bare `frontmatter` is ---/YAML,
+    \\    so there is no `md-yaml`), `fenced-<lang>` (```lang code block),
+    \\    `html-script[-<lang>]` (<script type="application/<lang>"> data
+    \\    island) and `html-code[-<lang>]` (<pre><code class="language-<lang>">
+    \\    visible block); a bare html-script/html-code is fig. Plus the fixed
+    \\    presets `frontmatter-json` (;;;), `frontmatter-toml` (+++), and
+    \\    `endmatter` (trailing ```endmatter block). Also accepted:
+    \\    `frontmatter-yaml`, `semicolons`, `plus`, `endmatter-yaml`, and
+    \\    `frontmatter-fig` (the older name of `fenced-fig`).
+    \\
+;
 
 pub const title_string = "\n=========\n   FIG\n=========\n\n";
 
@@ -22,7 +96,8 @@ pub const Help = struct {
             \\  check: validate that one or more files parse cleanly
             \\  fmt: reformat a file in place (house style; gofmt-style)
             \\  convert: convert a file (or a host document's embedded region)
-            \\    from one format/archetype to another, in place
+            \\    from one format/archetype to another; prints to stdout, or
+            \\    writes the file in place with --write
             \\  patch: merge one document into another, in place and losslessly
             \\  lang: list the languages fig knows, or check a configured one
             \\
@@ -33,6 +108,11 @@ pub const Help = struct {
             \\Any other action is handed to a `fig-<action>` program on your PATH,
             \\the way git does: `{s} schema lint f.json` runs `fig-schema lint f.json`
             \\with every argument after `schema` passed through untouched.
+            \\
+            \\Colour: stdout and stderr are each coloured when they are a
+            \\terminal. NO_COLOR (set, to anything) turns colour off;
+            \\CLICOLOR_FORCE turns it on where the stream is not a terminal.
+            \\NO_COLOR wins when both are set.
             \\
             \\For information on action options, pass --help or -h
             \\to the action you would like to learn about.
@@ -79,17 +159,13 @@ pub const Help = struct {
             \\    the comments on items that survive (only new items are inserted,
             \\    only dropped ones removed; result order matches the arguments).
             \\  --embed <archetype>: target an embedded region of a host file.
-            \\    Parametric families take a language: `md-<lang>` (---<lang>
-            \\    frontmatter; bare `frontmatter` is ---/YAML), `fenced-<lang>`
-            \\    (```lang code block), `html-script[-<lang>]` (<script
-            \\    type="application/<lang>"> data island), and `html-code[-<lang>]`
-            \\    (<pre><code class="language-<lang>"> visible block). Plus the fixed
-            \\    presets `frontmatter-json` (;;;), `frontmatter-toml` (+++), and
-            \\    `endmatter` (trailing ```endmatter block). When the host has no
-            \\    such block, it is CREATED (frontmatter at the top, endmatter at
-            \\    the bottom) and seeded with <path>: <value> — unless one would
-            \\    go at the top of a host that already has frontmatter of another
-            \\    kind, which is refused (`{s} convert --to-embed` changes it).
+            \\
+        ++ embed_archetypes ++
+            \\    When the host has no such block, it is CREATED (frontmatter at
+            \\    the top, endmatter at the bottom) and seeded with <path>:
+            \\    <value> — unless one would go at the top of a host that already
+            \\    has frontmatter of another kind, which is refused (`{s} convert
+            \\    --to-embed` changes it).
             \\  value: a literal in the target format (YAML/TOML/ZON verbatim; JSON
             \\    is quoted as a string, as with `edit`). A created key is rendered
             \\    in the target syntax too, so new keys work for strict JSON.
@@ -177,10 +253,14 @@ pub const Help = struct {
 
     pub fn get(term: *Io.Terminal, binary_name: []const u8) !void {
         try term.writer.print(
-            \\Usage: {s} get [--input json|json5|yaml|toml|zon|canonical|fig|ini|dotenv|properties|nestedtext|gron] [--output json|json5|yaml|toml|zon|canonical|fig|ini|dotenv|properties|nestedtext|gron] <file> [path]
+            \\Usage: {s} get [--input <format>] [--output <format>] <file> [path]
             \\  -i, --input: input format of file (defaults to the file extension,
             \\    then to sniffing the file's contents if the extension is unknown)
             \\  -o, --output:   output format (defaults to the input format)
+            \\  <format> is one of these, or a language configured in
+            \\    languages.figl (`{s} lang list`):
+            \\
+        ++ formatList("    ", &.{}) ++
             \\  canonical: the AST's 1:1 oracle text encoding; usable as input or
             \\    output, e.g. to inspect how any document parses. (Owns no file
             \\    extension — select it explicitly.) Compiled in only with
@@ -234,15 +314,19 @@ pub const Help = struct {
             \\    (e.g. a null in TOML, a TOML datetime in JSON) via a $fig
             \\    envelope, and reconstruct any such envelope in the input.
             \\    --lossy (the default) emits clean, idiomatic output instead.
-            \\  -q, --quiet: suppress warnings on stderr — lossy conversions, and
-            \\    fig authoring lints (`Yes`-style strings, a likely missing comma
-            \\    in a flow value, indent/marker-count disagreement, ...).
+            \\  --lax-tags: drop unknown/custom YAML tags instead of erroring, when
+            \\    converting away from YAML.
+            \\  -q, --quiet, --no-warnings: suppress warnings on stderr — lossy
+            \\    conversions, and fig authoring lints (`Yes`-style strings, a
+            \\    likely missing comma in a flow value, indent/marker-count
+            \\    disagreement, ...).
             \\  --strict: treat any warning as an error (exit non-zero).
-            \\  --embed <archetype>: read an embedded region of a host file —
-            \\    `frontmatter`, `frontmatter-json`, `frontmatter-fig`, or
-            \\    `endmatter`. Without this flag, a `.md`/`.markdown` file has
-            \\    its archetype sniffed from the content (falling back to
-            \\    `frontmatter`/YAML when none is found).
+            \\  --embed <archetype>: read an embedded region of a host file.
+            \\    Without this flag, a `.md`/`.markdown` file has its archetype
+            \\    sniffed from the content (falling back to `frontmatter`/YAML
+            \\    when none is found).
+            \\
+        ++ embed_archetypes ++
             \\  --body: print the host prose OUTSIDE the fences (the body span) instead
             \\    of the embed content; the whole file when there is no such region.
             \\  path format: dot syntax for keys, bracket syntax for indices
@@ -252,7 +336,7 @@ pub const Help = struct {
             \\  .md/.markdown files: reads the frontmatter/endmatter, whichever
             \\    archetype it turns out to be
             \\
-        , .{binary_name});
+        , .{ binary_name, binary_name });
         try term.writer.flush();
     }
 
@@ -262,22 +346,23 @@ pub const Help = struct {
             \\  Validate that each file parses cleanly as its format. Prints an
             \\  `ok` line per file and exits 0 when all parse; prints an error
             \\  line to stderr for each failing file and exits 1 if any fail.
-            \\  -i, --input: parse every file as this format (json, jsonc, json5,
-            \\    yaml, toml, zon, canonical, ini, dotenv, properties,
-            \\    nestedtext).
+            \\  -i, --input: parse every file as this format — one of these, or a
+            \\    language configured in languages.figl (`{s} lang list`):
+            \\
+        ++ formatList("    ", &.{}) ++
             \\    Default: infer from each file's extension, then by sniffing
             \\    its contents.
             \\  -s, --spec: validate against a specific language version, where one
             \\    is selectable: TOML `1.0`/`1.1` (default 1.1), YAML `1.2.2`/`1.1`
             \\    (default 1.2.2).
             \\    JSON strictness is the format itself (json vs jsonc vs json5).
-            \\  -q, --quiet: suppress the per-file `ok` lines and fig authoring
-            \\    warnings; errors still print.
+            \\  -q, --quiet, --no-warnings: suppress the per-file `ok` lines and
+            \\    fig authoring warnings; errors still print.
             \\  reads stdin when <file> is `-`.
             \\  .md/.markdown files: validates the frontmatter/endmatter,
             \\    whichever archetype it turns out to be (YAML by default).
             \\
-        , .{binary_name});
+        , .{ binary_name, binary_name });
         try term.writer.flush();
     }
 
@@ -297,7 +382,10 @@ pub const Help = struct {
             \\    stdout instead of the whole reformatted file; nothing is printed
             \\    (and exit is 0) when the file is already clean.
             \\  -i, --input: input format (defaults to the file extension, then
-            \\    to sniffing the file's contents if the extension is unknown).
+            \\    to sniffing the file's contents if the extension is unknown) —
+            \\    one of these, or a language configured in languages.figl:
+            \\
+        ++ formatList("    ", &.{"gron"}) ++
             \\  --compact: single-line output with minimal whitespace (JSON, JSON5, ZON).
             \\  --pretty: multi-line, indented output (the default).
             \\  --indent N: spaces per indent level for pretty JSON, and for TOML's
@@ -305,13 +393,14 @@ pub const Help = struct {
             \\  --width N: TOML column budget (default 80); a mapping/array that fits
             \\    stays inline, a wider one expands to a [section] / wrapped array.
             \\  --strip-comments: drop comments instead of re-emitting them.
-            \\  -q, --quiet: suppress warnings on stderr.
+            \\  -q, --quiet, --no-warnings: suppress warnings on stderr.
             \\  --strict: treat any warning as an error (exit non-zero, no write).
-            \\  --embed <archetype>: reformat an embedded region of a host file —
-            \\    `frontmatter`, `frontmatter-json`, `frontmatter-fig`, or
-            \\    `endmatter` — instead of the whole file. Without this flag, a
-            \\    `.md`/`.markdown` file has its archetype sniffed from the
-            \\    content (falling back to `frontmatter`/YAML when none is found).
+            \\  --embed <archetype>: reformat an embedded region of a host file
+            \\    instead of the whole file. Without this flag, a `.md`/`.markdown`
+            \\    file has its archetype sniffed from the content (falling back to
+            \\    `frontmatter`/YAML when none is found).
+            \\
+        ++ embed_archetypes ++
             \\  reads stdin when <file> is `-`, but only with --dry-run/--diff:
             \\    there is nowhere to write an in-place result back to.
             \\  .md/.markdown files: reformats the frontmatter/endmatter in
@@ -337,9 +426,10 @@ pub const Help = struct {
             \\    whose extension implies an embedded region (`.md`/`.markdown`) is
             \\    rejected here — use embed-archetype mode, or pass --input to force
             \\    whole-file conversion anyway.
-            \\  -i, --input, -o, --output: json, json5, yaml, toml, zon, canonical,
-            \\    fig, ini, dotenv, properties, nestedtext. canonical is compiled in
-            \\    only with `-Dcanonical=true`.
+            \\  -i, --input, -o, --output: one of these, or a language configured
+            \\    in languages.figl:
+            \\
+        ++ formatList("    ", &.{"gron"}) ++
             \\
             \\  Embed-archetype mode (--to-embed): rehouse a host document's
             \\    embedded region from one archetype's fence-and-content convention
@@ -348,9 +438,9 @@ pub const Help = struct {
             \\    leaving the surrounding prose byte-identical. The source archetype
             \\    is --embed, else sniffed from the file's own fences (falling back
             \\    to frontmatter/YAML when none is found).
-            \\  --embed, --to-embed <archetype>: frontmatter (---/YAML), frontmatter-json
-            \\    (;;;/JSON), frontmatter-fig (```fig fenced block), or endmatter
-            \\    (trailing ```endmatter block).
+            \\  --embed, --to-embed <archetype>:
+            \\
+        ++ embed_archetypes ++
             \\
             \\  -w, --write: write the converted result back to <file> in place
             \\    (skipped if it's already byte-identical) instead of printing it.
@@ -363,7 +453,7 @@ pub const Help = struct {
             \\    natively via a $fig envelope (default --lossy).
             \\  --lax-tags: drop unknown/custom YAML tags instead of erroring, when
             \\    converting away from YAML.
-            \\  -q, --quiet: suppress warnings on stderr.
+            \\  -q, --quiet, --no-warnings: suppress warnings on stderr.
             \\  --strict: treat any warning as an error (exit non-zero, no write).
             \\  reads stdin when <file> is `-`, but only without --write.
             \\
@@ -483,3 +573,33 @@ pub const Help = struct {
         try term.writer.flush();
     }
 };
+
+test "every format the help lists is one the argument parser accepts" {
+    const args = @import("args.zig");
+    inline for (comptime .{ formatList("", &.{}), formatList("", &.{"gron"}) }) |list| {
+        var it = std.mem.tokenizeAny(u8, list, ", \n");
+        while (it.next()) |name| try std.testing.expect(args.parseFormatName(name) != null);
+    }
+}
+
+test "every --embed archetype the help names is one the argument parser accepts" {
+    const args = @import("args.zig");
+    var langs = std.mem.tokenizeAny(u8, embed_langs, ", ");
+    while (langs.next()) |l| {
+        var buf: [64]u8 = undefined;
+        for ([_][]const u8{ "md-", "fenced-", "html-script-", "html-code-" }) |family| {
+            const name = try std.fmt.bufPrint(&buf, "{s}{s}", .{ family, l });
+            // `md-yaml` is deliberately not a spelling, and the help says so.
+            if (std.mem.eql(u8, name, "md-yaml")) {
+                try std.testing.expect(args.embedTypeFromName(name) == null);
+                continue;
+            }
+            try std.testing.expect(args.embedTypeFromName(name) != null);
+        }
+    }
+    for ([_][]const u8{
+        "frontmatter",      "frontmatter-json", "frontmatter-toml", "endmatter",
+        "html-script",      "html-code",        "frontmatter-yaml", "semicolons",
+        "plus",             "endmatter-yaml",   "frontmatter-fig",
+    }) |name| try std.testing.expect(args.embedTypeFromName(name) != null);
+}

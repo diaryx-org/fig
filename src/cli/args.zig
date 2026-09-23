@@ -401,7 +401,16 @@ test "embedTypeName round-trips through embedTypeFromName" {
 
 /// The `--embed <archetype>` names accepted by `embedTypeFromName`, for error
 /// messages — one source of truth so a new archetype is listed everywhere.
-pub const embed_archetype_names = "frontmatter, md-json, md-toml, md-fig, fenced-yaml, fenced-json, fenced-toml, fenced-fig, frontmatter-json (;;;), frontmatter-toml (+++), html-script[-yaml/json/toml], html-code[-yaml/json/toml], endmatter";
+/// The `<lang>` half is derived from `Embed.InnerFormat`, the set the
+/// parametric loop in `embedTypeFromName` spells, so it cannot fall behind it.
+pub const embed_archetype_names = blk: {
+    var langs: []const u8 = "";
+    for (@typeInfo(fig.Embed.InnerFormat).@"enum".fields, 0..) |f, i|
+        langs = langs ++ (if (i == 0) "" else ", ") ++ f.name;
+    break :blk "frontmatter, frontmatter-json (;;;), frontmatter-toml (+++), endmatter, " ++
+        "md-<lang>, fenced-<lang>, html-script[-<lang>], html-code[-<lang>]; " ++
+        "<lang> is one of " ++ langs ++ " (there is no md-yaml: that is `frontmatter`)";
+};
 
 /// The CLI `Format` an embed archetype's content is written in — the `get`
 /// action's `--input`/`--output` twin of `Embed.innerFormat`. Lets an explicit

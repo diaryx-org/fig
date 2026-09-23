@@ -120,9 +120,67 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
-_No commits since the last release tag._
+### Fixed
+
+- **editor** — inserting a key the mapping already holds is refused, not written a second time ([`a9123a9`](https://github.com/diaryx-org/fig/commit/a9123a9baa27634d1d1c7d23450403f7e47ae592))
+- **embed** — creating a leading block is refused when the host already opens with frontmatter of another archetype ([`acd78f8`](https://github.com/diaryx-org/fig/commit/acd78f8cc244ccf59aedc84b21ab273b266df78a))
+- **cli** — log lines a user sees read `error:`/`warning:`, and a sniffed format is not announced ([`00158e7`](https://github.com/diaryx-org/fig/commit/00158e7c4c83fe832eb9f9a767fc6c4fb7e80c1c))
+- **yaml** — a parse error carries a byte offset and a teaching message ([`52f65c7`](https://github.com/diaryx-org/fig/commit/52f65c7f98f5b5b6bda6c04e094e769713657233))
+- **cli** — a YAML tag a conversion refuses is pointed at, with --lax-tags named ([`d4975c9`](https://github.com/diaryx-org/fig/commit/d4975c9be38ec35937d50bdb43e4cad78d7955f5))
+- **cli** — an edit on a file that does not parse says where, not "run fig check" ([`7cebfb5`](https://github.com/diaryx-org/fig/commit/7cebfb52e2fe321519032c9dbd09ee79ad8f828d))
+
+### Behavioural changes
+
+- `fig insert <file> <path>.<key> <value>` where the key already exists exits 1 with "that key already exists" and leaves the file untouched. It used to exit 0 and write a second entry of that name (YAML, JSON/JSONC/JSON5, INI, ZON, dotenv, .properties, NestedText), or, for TOML and fig, report the value as invalid.
+
+- `fig_editor_insert_key`/`fig_editor_insert_named_key`/`fig_embed_insert_key`/`fig_embed_insert_named_key` (Rust `insert_value`, TypeScript `insertValue`) return `FIG_STATUS_INVALID_ARGUMENT` (`DuplicateKey`) for a key the target mapping already holds, where they returned `FIG_STATUS_OK` and wrote a duplicate entry — or, for fig documents via a named key, `FIG_STATUS_PARSE_ERROR`.
+
+- `fig set --embed <archetype>` on a host whose first line opens complete frontmatter of a different archetype — `---`, `---<lang>`, `;;;`, `+++`, or a fenced ```` ```<lang> ```` block — exits 1 and leaves the file untouched, where it used to prepend a second block above the first. `--embed endmatter` is unaffected.
+
+- `fig_embed_open_or_init` (Rust `Embed::open_or_init`, TypeScript `Embed.openOrInit`) returns `FIG_STATUS_UNSUPPORTED_OPERATION` (`UnsupportedOperation`) instead of `FIG_STATUS_OK` when asked for a non-endmatter archetype the host lacks while the host opens with frontmatter of another archetype. `Embed.initRegion` returns `error.FrontmatterExists` in the same case.
+
+- CLI argument errors and warnings on stderr read `error: <message>` / `warning: <message>` instead of `error(parseConfig): <message>` / `warning(languages): <message>`, with no blank line after them. Exit codes are unchanged.
+
+- a release build of the CLI no longer prints `info(detect): inferred format `<fmt>` for `<file>` from its contents` on stderr when it sniffs an input's format (stdin `-`, or an unknown extension).
+
+- `fig get`, `fmt` and `convert` on a YAML file, and
+  `fig patch` on a YAML patch document, that does not parse exit 2 with
+  a `file:line:col` report, where they exited 1 with
+  `error: <ErrorName>` and a note pointing at `fig check`. Exit 2 is
+  what every other format's parse failure already returned from these
+  actions.
+
+- `fig check` on a YAML file that does not parse
+  prints the error's message, `--> file:line:col`, the source line and a
+  caret, where it printed `error: file: <ErrorName>`. The exit status is
+  unchanged.
+
+- `fig get -o <format>` and `fig convert` from YAML to
+  a format without tags, on a document with a custom tag, a tag its value
+  does not fit (`!!int abc`), or an alias inside its own anchor, print a
+  sentence naming the tag or alias, its `file:line:col` and source line,
+  and (for a custom tag) a help line naming `--lax-tags`, where they
+  printed `error: UnknownTag` / `TagTypeMismatch` / `AliasCycle` and a
+  note pointing at `fig check`. The exit status is unchanged.
+
+- `fig edit`/`set`/`insert`/`delete`/`comment`/`patch`
+  on a file that does not parse, in a format with located reports (YAML,
+  JSON, TOML, INI, dotenv, `.properties`, NestedText, fig), print the
+  `file:line:col` report `fig check` would, where they printed
+  `error: <ErrorName>` and a note pointing at `fig check`. The exit
+  status is unchanged (1).
+
+- an unhandled error on a single-file action no longer
+  carries the `note: if <file> itself does not parse, `fig check <file>`
+  says where.` line.
 
 <!-- git-cliff:end -->
+
+This release brings the Rust crate up to the core. Besides the changes listed
+above, it carries everything under *core 3.1.0 · npm 3.1.0* below: splice
+text for binding values, key renames that take a name, plist and NestedText
+edits from the bindings, and `PrintOptions.splice` for runtime languages.
+`fig-sys` adds a `splice` field to `FigSerializeOptions` and `FigPrintOptions`.
 
 ## core 3.1.0 · npm 3.1.0
 

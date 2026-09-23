@@ -120,6 +120,12 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
+_No commits since the last release tag._
+
+<!-- git-cliff:end -->
+
+## rust 4.1.0
+
 ### Fixed
 
 - **editor** — inserting a key the mapping already holds is refused, not written a second time ([`a9123a9`](https://github.com/diaryx-org/fig/commit/a9123a9baa27634d1d1c7d23450403f7e47ae592))
@@ -173,8 +179,6 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 - an unhandled error on a single-file action no longer
   carries the `note: if <file> itself does not parse, `fig check <file>`
   says where.` line.
-
-<!-- git-cliff:end -->
 
 This release brings the Rust crate up to the core. Besides the changes listed
 above, it carries everything under *core 3.1.0 · npm 3.1.0* below: splice

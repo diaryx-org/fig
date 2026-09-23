@@ -231,10 +231,37 @@ pub fn main(init: std.process.Init) !void {
         // which, sharing fd 2 positionally with `stderr_terminal`, clobbers
         // whatever this process already wrote (the same hazard documented for
         // `std.log` above, and in `diag_report`). The most common one by far
-        // is a parse failure on the target file itself, so the report points
-        // at `fig check`, which renders the real `file:line:col` diagnostic.
-        else => diag_report.reportUnhandled(&stderr_terminal, err, types.targetFile(config), config.binary_name),
+        // is a parse failure on the target file itself, which is reported
+        // where it is, below, whenever its format can say where.
+        else => {
+            // An action that parses its file without a report (the in-place
+            // editors) lets a parse failure escape as a bare error name.
+            // Parse the file again the way `check` does, and when that
+            // locates the failure, the located report IS the answer — it
+            // replaces the error name rather than pointing the user at a
+            // second command.
+            if (types.parseTarget(config)) |t|
+                if (reportParseFailure(a, io, &stderr_terminal, t)) std.process.exit(1);
+            diag_report.reportUnhandled(&stderr_terminal, err, types.targetFile(config), config.binary_name);
+        },
     };
+}
+
+/// Re-parse `t.file` as `check` would and print every located parse error it
+/// finds. True when there was at least one to print; false when the file
+/// parses, cannot be read, or fails in a format with no located report — in
+/// which case the caller's generic report is all there is to say.
+fn reportParseFailure(a: std.mem.Allocator, io: std.Io, term: *std.Io.Terminal, t: types.ParseTarget) bool {
+    var source: ?[]const u8 = null;
+    var errors: ?[]const fig.ParseDiagnostic.Rendered = null;
+    var warnings: ?[]const fig.ParseDiagnostic.Rendered = null;
+    _ = parse_dispatch.checkOne(a, io, t.file, t.format, null, &source, &errors, &warnings) catch {
+        const errs = errors orelse return false;
+        for (errs) |d| diag_report.printDiag(term, source.?, t.file, d.offset, d.end, "error", .red, d.message, d.short_label) catch return true;
+        term.writer.flush() catch {};
+        return true;
+    };
+    return false;
 }
 
 fn dispatch(a: std.mem.Allocator, io: Io, stdout_terminal: *Io.Terminal, stderr_terminal: *Io.Terminal, config: types.CliConfig) !void {

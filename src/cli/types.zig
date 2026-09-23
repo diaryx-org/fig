@@ -650,6 +650,30 @@ pub fn targetFile(config: CliConfig) ?[]const u8 {
     };
 }
 
+/// The single file `config`'s action parses, and the format to parse it as —
+/// null where the action resolves that itself (`--detect` sniffing, or an
+/// embedded region, whose host format is the extension's to decide). What
+/// `main` hands `parse_dispatch.checkOne` to locate a parse failure that
+/// escaped the action unreported. Null for stdin, which cannot be read twice,
+/// and for everything `targetFile` is null for.
+pub const ParseTarget = struct { file: []const u8, format: ?Format };
+
+pub fn parseTarget(config: CliConfig) ?ParseTarget {
+    const t: ParseTarget = switch (config.options) {
+        inline .edit, .set, .insert, .delete, .comment, .patch => |o| .{
+            .file = o.file,
+            .format = if (o.detect or o.embed != null or o.detect_embed) null else o.format,
+        },
+        inline .get, .fmt, .convert => |o| .{
+            .file = o.file,
+            .format = if (o.detect or o.embed != null or o.detect_embed) null else o.from,
+        },
+        .help, .version, .check, .lang, .external => return null,
+    };
+    if (std.mem.eql(u8, t.file, "-")) return null;
+    return t;
+}
+
 pub const ArgError = error{ UnsupportedFileFormat, MissingEditArgument, MissingSetArgument, MissingInsertArgument, MissingDeleteArgument, MissingGetArgument, MissingCommentArgument, MissingCheckArgument, MissingFmtArgument, MissingConvertArgument, MissingPatchArgument, OutOfMemory, Overflow, InvalidCharacter, InvalidPath };
 
 /// Result of mapping a file extension to a parse strategy. `embed_detect` is

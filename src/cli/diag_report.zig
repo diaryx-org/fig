@@ -128,10 +128,11 @@ pub fn reportParseError(term: *Io.Terminal, source: []const u8, file: []const u8
 /// The binary's last line of defense: report an error that reached `main`
 /// without any handler of its own, then exit(1). Named errors that a user can
 /// actually act on get a sentence; the rest print their name (as the escaping
-/// path used to) but without the stack trace that came with it — and, when the
-/// action worked on one file, with a pointer at `fig check`, which renders the
-/// real `file:line:col` report for the overwhelmingly common cause: the file
-/// doesn't parse. See `main`'s call site for why nothing is left to escape.
+/// path used to) but without the stack trace that came with it. The
+/// overwhelmingly common cause, a file that does not parse, never reaches
+/// here in a format with a located report: `main` re-parses the target the
+/// way `check` does and prints that report instead. See `main`'s call site
+/// for why nothing is left to escape.
 pub fn reportUnhandled(term: *Io.Terminal, err: anyerror, file: ?[]const u8, binary_name: []const u8) noreturn {
     reportUnhandledImpl(term, err, file, binary_name) catch {};
     term.writer.flush() catch {};
@@ -162,8 +163,8 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
         // sections, fig block containers). Worth a sentence of its own: the
         // raw error name reads like a limitation of the
         // tool, when what it means is that the path names a header rather than a
-        // value — and the generic `fig check` note below would send the user
-        // hunting for a parse error in a file that parses fine.
+        // value — and a bare error name reads like a parse error in a file
+        // that parses fine.
         error.CannotReplaceTable, error.CannotReplaceSection, error.CannotReplaceContainer => {
             try term.writer.writeAll(": that path names a whole block table/section, which has no single value to replace\n");
             try term.setColor(.blue);
@@ -218,9 +219,8 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
         },
         // `fig comment` on an element or entry of a one-line flow collection.
         // Worth its own sentence for the same reason as the arms above: the
-        // error is about the PATH, and the generic `fig check` note below
-        // would send the user hunting for a parse error in a file that parses
-        // fine. The old behaviour was worse than a refusal — it edited the
+        // error is about the PATH, and a bare error name reads like a parse
+        // error in a file that parses fine. The old behaviour was worse than a refusal — it edited the
         // parent's comment through the item.
         error.CommentsUnanchored => {
             try term.writer.writeAll(": that path names an item of a one-line `[...]`/`{...}`, which shares its parent's line and so owns no comment of its own\n");
@@ -239,8 +239,8 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
         // come with an `insertKey` hook — see `tools/validate-check.zig`).
         // Its by-value matching needs every item text to parse as a standalone
         // document, which no TOML scalar does — so TOML declines on every
-        // input, and the generic `fig check` note below would send the user
-        // hunting for a parse error in a file that parses fine.
+        // input, and a bare error name reads like a parse error in a file
+        // that parses fine.
         error.UnsupportedShape => {
             try term.writer.writeAll(": this is not a flat list of scalars, so `--seq` cannot diff it\n");
             try term.setColor(.blue);
@@ -272,8 +272,8 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
         },
         // The refusals `fig.Patch` makes rather than guessing (see its module
         // doc). Each names a shape the caller has to resolve in one of the two
-        // documents; the generic `fig check` note below would send them
-        // hunting for a parse error in two files that both parse fine.
+        // documents; a bare error name reads like a parse error in two files
+        // that both parse fine.
         error.PatchThroughAlias => {
             try term.writer.writeAll(": the patch targets a value that is a YAML alias (`*name`), which belongs to whatever defined its anchor\n");
             try term.setColor(.blue);
@@ -306,15 +306,10 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
             try term.setColor(.reset);
             try term.writer.writeAll(": --lossless carries values the target has no native form for (a null into TOML, a datetime into JSON) through a $fig envelope.\n");
         },
-        else => {
-            try term.writer.print(": {s}\n", .{@errorName(err)});
-            if (file) |f| {
-                try term.setColor(.blue);
-                try term.writer.writeAll("note");
-                try term.setColor(.reset);
-                try term.writer.print(": if {s} itself does not parse, `{s} check {s}` says where.\n", .{ f, binary_name, f });
-            }
-        },
+        // No pointer at `fig check` here: `main` has already run the parse
+        // `check` would, and found nothing it could locate — so `check` would
+        // print this same name, and sending the user to it said nothing new.
+        else => try term.writer.print(": {s}\n", .{@errorName(err)}),
     }
 }
 

@@ -1645,6 +1645,34 @@ test "parseConfig routes insert/delete to the right action and path tail" {
     try t.expectEqual(Format.toml, dc.options.delete.format);
 }
 
+test "parseTarget names the file a failed action is re-parsed from, and its format" {
+    const t = std.testing;
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // An in-place edit: the file and the format its extension named.
+    var set = TestArgs{ .items = &.{ "fig", "set", "f.yaml", "a", "1" } };
+    const st = types.parseTarget(try parseConfig(a, &set)).?;
+    try t.expectEqualStrings("f.yaml", st.file);
+    try t.expectEqual(@as(?Format, .yaml), st.format);
+
+    // A read: its `from` format.
+    var get = TestArgs{ .items = &.{ "fig", "get", "f.toml" } };
+    try t.expectEqual(@as(?Format, .toml), types.parseTarget(try parseConfig(a, &get)).?.format);
+
+    // A host document: the region is the extension's to find, so no format
+    // is forced onto the whole file.
+    var md = TestArgs{ .items = &.{ "fig", "set", "notes.md", "a", "1" } };
+    try t.expectEqual(@as(?Format, null), types.parseTarget(try parseConfig(a, &md)).?.format);
+
+    // stdin has been read once already, and `check` reports for itself.
+    var stdin = TestArgs{ .items = &.{ "fig", "get", "-", "-i", "json" } };
+    try t.expect(types.parseTarget(try parseConfig(a, &stdin)) == null);
+    var check = TestArgs{ .items = &.{ "fig", "check", "f.yaml" } };
+    try t.expect(types.parseTarget(try parseConfig(a, &check)) == null);
+}
+
 test "parseConfig hands an unknown action to fig-<action> with its arguments untouched" {
     const t = std.testing;
     var arena = std.heap.ArenaAllocator.init(t.allocator);

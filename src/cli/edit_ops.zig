@@ -764,6 +764,41 @@ test "applyEdit insert_key spells the key as the format does: `.name` in ZON, qu
     }
 }
 
+test "applyEdit insert_key refuses a key that already exists, and does not blame the value" {
+    const t = std.testing;
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // `fig insert y.yaml a 3` on `a: 1` used to exit 0 with a second `a: 3`
+    // in the file (YAML, JSON, INI, ZON, dotenv, .properties), and TOML/fig
+    // reported the rejected reparse as a bad VALUE. `set` is the op for an
+    // existing key.
+    if (comptime build_options.lang_yaml) {
+        const Y = fig.Language.YAML;
+        const dia = comptime fig.Language.entryFor("yaml").dialect;
+        try t.expectError(error.DuplicateKey, applyEdit(Y, a, "a: 1\n", &.{}, "3", .{ .insert_key = "a" }, dia));
+        var p = [_]fig.AST.PathSegment{.{ .key = "a" }};
+        const set = try applyEdit(Y, a, "a: 1\n", &p, "3", .set, dia);
+        try t.expectEqualStrings("a: 3\n", set);
+    }
+    if (comptime build_options.lang_json) {
+        const J = fig.Language.JSON;
+        const dia = comptime fig.Language.entryFor("json").dialect;
+        const j = try jsonifyEdit(a, .{ .insert_key = "s" }, "x");
+        try t.expectError(error.DuplicateKey, applyEdit(J, a, "{\"s\":\"hi\"}", &.{}, j.text, j.op, dia));
+    }
+    if (comptime build_options.lang_ini) {
+        const I = fig.Language.INI;
+        const dia = comptime fig.Language.entryFor("ini").dialect;
+        var p = [_]fig.AST.PathSegment{.{ .key = "a" }};
+        try t.expectError(error.DuplicateKey, applyEdit(I, a, "[a]\nx = 1\n", &p, "2", .{ .insert_key = "x" }, dia));
+    }
+    if (comptime build_options.lang_toml) {
+        const T = fig.Language.TOML;
+        try t.expectError(error.DuplicateKey, applyEdit(T, a, "a = 1\n", &.{}, "3", .{ .insert_key = "a" }, T.default_type));
+    }
+}
+
 test "emptyDocSeed: every seed is the byte string the registry declares" {
     const t = std.testing;
     try t.expectEqualStrings("{}\n", emptyDocSeed(.json).?);

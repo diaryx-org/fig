@@ -1621,10 +1621,26 @@ pub fn Editor(comptime Language: type) type {
         /// The flow/block decision is `isFlowNode`'s; a block entry is spelled
         /// through `writeEntry` (a `renderEntry` where the format declares
         /// one), a flow entry with `kv_sep` or the separator its siblings use.
+        ///
+        /// **Engine rule**: an insert never gives a mapping a second entry of
+        /// a name it already holds. Most parsers here accept a repeated key
+        /// (YAML, JSON, INI, ZON, dotenv, .properties), so the reparse after
+        /// the splice cannot be the net: the mapping's repeated names are
+        /// counted before and after, and an insert that adds one is rolled
+        /// back with `DuplicateKey` — the error TOML's parser already raised
+        /// for the same request. Counting rather than looking the key up is
+        /// what lets this work from key SYNTAX, whose name only the reparse
+        /// knows; a document that already repeated a name is not refused an
+        /// unrelated insert. `insertNamedKey` refuses up front, by name.
         pub fn insertKey(self: *Self, path: []const AST.PathSegment, key_text: []const u8, value_text: []const u8) !void {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
             const span = parsed.span(node);
+            const repeated_before = try self.repeatedKeyCount(parsed.ast, node);
+            // Snapshot for the duplicate rollback below; the splice's own
+            // rollback covers a reparse failure.
+            const backup = try self.allocator.dupe(u8, self.source.items);
+            defer self.allocator.free(backup);
             switch (node.kind) {
                 .mapping => |first| {
                     if (self.isFlowNode(parsed, node)) {
@@ -1636,6 +1652,37 @@ pub fn Editor(comptime Language: type) type {
                 .null_ => try self.promoteNullToMapping(span, node.id == parsed.ast.root, key_text, value_text),
                 else => return error.NotAMapping,
             }
+            const after = try self.getParsed();
+            const node_after = after.ast.getValByPath(path) catch return;
+            if (try self.repeatedKeyCount(after.ast, node_after) > repeated_before) {
+                try self.restoreSource(backup);
+                return error.DuplicateKey;
+            }
+        }
+
+        /// How many direct entries of `mapping` repeat a string key an
+        /// earlier entry already has — 0 for a node that is not a mapping.
+        fn repeatedKeyCount(self: *const Self, ast: AST, mapping: AST.Node) !usize {
+            const first = switch (mapping.kind) {
+                .mapping => |f| f,
+                else => return 0,
+            };
+            var seen: std.StringHashMapUnmanaged(void) = .empty;
+            defer seen.deinit(self.allocator);
+            var repeated: usize = 0;
+            var entry = first;
+            while (entry) |id| : (entry = ast.nodes[id].next_sibling) {
+                const kv = switch (ast.nodes[id].kind) {
+                    .keyvalue => |kv| kv,
+                    else => continue,
+                };
+                const name = switch (ast.nodes[kv.key].kind) {
+                    .string => |s| s,
+                    else => continue,
+                };
+                if ((try seen.getOrPut(self.allocator, name)).found_existing) repeated += 1;
+            }
+            return repeated;
         }
 
         /// `insertKey` for a caller that has the key's NAME rather than its
@@ -1643,7 +1690,30 @@ pub fn Editor(comptime Language: type) type {
         /// (`formatInsertKey` — `.name` in ZON, quoted in strict JSON, quoted
         /// when it must be in TOML) and inserted. What every binding and the
         /// CLI want, since a name is what a user types.
+        ///
+        /// A name the mapping at `path` already holds is refused with
+        /// `DuplicateKey` before anything is spliced — for every format
+        /// alike, where `insertKey` would otherwise report whatever the
+        /// reparse said (fig's parser rejects the repeat as a parse error,
+        /// which reads as if the VALUE were malformed). `set` is the op
+        /// that replaces an existing key's value.
         pub fn insertNamedKey(self: *Self, path: []const AST.PathSegment, name: []const u8, value_text: []const u8) !void {
+            const parsed = try self.getParsed();
+            if (parsed.ast.getValByPath(path)) |parent| {
+                if (parent.kind == .mapping) {
+                    var entry = parent.kind.mapping;
+                    while (entry) |id| : (entry = parsed.ast.nodes[id].next_sibling) {
+                        const kv = switch (parsed.ast.nodes[id].kind) {
+                            .keyvalue => |kv| kv,
+                            else => continue,
+                        };
+                        switch (parsed.ast.nodes[kv.key].kind) {
+                            .string => |s| if (std.mem.eql(u8, s, name)) return error.DuplicateKey,
+                            else => {},
+                        }
+                    }
+                }
+            } else |_| {} // `insertKey` reports a bad parent path in its own terms
             const rendered = try self.formatInsertKey(name);
             defer self.allocator.free(rendered);
             return self.insertKey(path, rendered, value_text);
@@ -4617,6 +4687,68 @@ test "set surfaces a rolled-back replace rather than inserting a second entry of
     try testing.expect(std.meta.isError(ed.set(&.{.{ .key = "a" }}, "\"open")));
     try testing.expect(ed.splice_rejected);
     try testing.expectEqualStrings("a: 1\nb: 2\n", ed.source.items);
+}
+
+test "insertNamedKey refuses a key the mapping already holds, in every format" {
+    // Most parsers accept a repeated key, so without the engine's own check
+    // the insert went through and the file gained a second entry.
+    if (comptime build_options.lang_yaml) {
+        var ed: Editor(Yaml) = .{ .allocator = testing.allocator, .format = .v1_2_2 };
+        try ed.init("a: 1\nm:\n  x: 1\n");
+        defer ed.deinit();
+        try testing.expectError(error.DuplicateKey, ed.insertNamedKey(&.{}, "a", "3"));
+        try testing.expectError(error.DuplicateKey, ed.insertNamedKey(&.{.{ .key = "m" }}, "x", "3"));
+        try testing.expect(!ed.splice_rejected);
+        try testing.expectEqualStrings("a: 1\nm:\n  x: 1\n", ed.source.items);
+        // A new name still lands.
+        try ed.insertNamedKey(&.{}, "b", "2");
+        try testing.expectEqualStrings("a: 1\nm:\n  x: 1\nb: 2\n", ed.source.items);
+    }
+    if (comptime build_options.lang_json) {
+        var ed: Editor(json.Language) = .{ .allocator = testing.allocator, .format = .JSON };
+        try ed.init("{\"s\": \"hi\"}");
+        defer ed.deinit();
+        try testing.expectError(error.DuplicateKey, ed.insertNamedKey(&.{}, "s", "\"x\""));
+        try testing.expectEqualStrings("{\"s\": \"hi\"}", ed.source.items);
+    }
+    if (comptime build_options.lang_ini) {
+        var ed: Editor(Ini) = .{ .allocator = testing.allocator, .format = .INI };
+        try ed.init("[a]\nx = 1\n");
+        defer ed.deinit();
+        try testing.expectError(error.DuplicateKey, ed.insertNamedKey(&.{.{ .key = "a" }}, "x", "2"));
+        try testing.expectEqualStrings("[a]\nx = 1\n", ed.source.items);
+    }
+    if (comptime build_options.lang_fig) {
+        // fig's parser rejects the repeat itself; the name check answers
+        // first, so it is `DuplicateKey` here too, not a blamed value.
+        var ed: Editor(Fig) = .{ .allocator = testing.allocator, .format = .Fig };
+        try ed.init("a = 1\n");
+        defer ed.deinit();
+        try testing.expectError(error.DuplicateKey, ed.insertNamedKey(&.{}, "a", "3"));
+        try testing.expect(!ed.splice_rejected);
+    }
+}
+
+test "insertKey rolls back an insert that repeats a name, from key syntax" {
+    if (comptime build_options.lang_json) {
+        // The key arrives as syntax (`"s"`), so only the reparse knows its name.
+        var ed: Editor(json.Language) = .{ .allocator = testing.allocator, .format = .JSON };
+        try ed.init("{\"s\": \"hi\"}");
+        defer ed.deinit();
+        try testing.expectError(error.DuplicateKey, ed.insertKey(&.{}, "\"s\"", "\"x\""));
+        try testing.expectEqualStrings("{\"s\": \"hi\"}", ed.source.items);
+    }
+    if (comptime build_options.lang_yaml) {
+        // A document that already repeats a name is not refused an
+        // unrelated insert — only an insert that adds a repeat is.
+        var ed: Editor(Yaml) = .{ .allocator = testing.allocator, .format = .v1_2_2 };
+        try ed.init("a: 1\na: 2\n");
+        defer ed.deinit();
+        try ed.insertKey(&.{}, "b", "3");
+        try testing.expectEqualStrings("a: 1\na: 2\nb: 3\n", ed.source.items);
+        try testing.expectError(error.DuplicateKey, ed.insertKey(&.{}, "b", "4"));
+        try testing.expectEqualStrings("a: 1\na: 2\nb: 3\n", ed.source.items);
+    }
 }
 
 test "set reports the flow container, not a missing key, when a block value can't land" {

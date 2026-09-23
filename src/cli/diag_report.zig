@@ -185,6 +185,15 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
             try term.setColor(.reset);
             try term.writer.print(": to remove it whole — header, entries, and every place it is reopened — `{s} delete <file> <path>`.\n", .{binary_name});
         },
+        // `insert` naming a key the mapping already holds. The engine
+        // refuses it rather than write a second entry of that name.
+        error.DuplicateKey => {
+            try term.writer.writeAll(": that key already exists, and `insert` only adds new ones\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("help");
+            try term.setColor(.reset);
+            try term.writer.print(": to change its value — `{s} set <file> <path> <value>` (or `{s} edit`, which only replaces).\n", .{ binary_name, binary_name });
+        },
         // An insert under a section that is only ever named as the prefix
         // of its children's headers — TOML's implicit `a` made by `[a.b]`.
         error.ImplicitSection => {

@@ -3979,6 +3979,24 @@ test "toml editor c abi maps a shape-mismatch edit to invalid_argument" {
     try std.testing.expectEqualStrings("a = 1\n", ptr[0..len]);
 }
 
+test "yaml editor c abi refuses inserting a key that already exists" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    // YAML's parser accepts a repeated key, so this used to return ok and
+    // leave `a: 1\na: 2\n`; the engine refuses it now, by name or by syntax.
+    const src = "a: 1\n";
+    var ed: ?*FigEditor = null;
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.yaml), &ed));
+    defer fig_editor_destroy(ed);
+    const a = "a";
+    const two = "2";
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_editor_insert_named_key(ed, null, 0, a.ptr, a.len, two.ptr, two.len));
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_editor_insert_key(ed, null, 0, a.ptr, a.len, two.ptr, two.len));
+    var ptr: [*c]const u8 = undefined;
+    var len: usize = undefined;
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_source(ed, &ptr, &len));
+    try std.testing.expectEqualStrings("a: 1\n", ptr[0..len]);
+}
+
 test "frontmatter c abi preserves fences and body" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntitle: Hi\n# keep\ntags:\n- x\n---\n# Body\ntext\n";

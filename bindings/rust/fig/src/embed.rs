@@ -315,7 +315,11 @@ impl Embed {
     /// exists (placed per the archetype — frontmatter at the top, endmatter at
     /// the bottom) instead of failing with [`Error::NotFound`]. A subsequent
     /// [`set`](Self::set)/[`insert`](Self::insert) lands the first entry. An
-    /// existing region is opened unchanged; a malformed one still errors.
+    /// existing region is opened unchanged; a malformed one still errors. A
+    /// block that goes at the top is refused with
+    /// [`Error::UnsupportedOperation`] when `host` already opens with
+    /// frontmatter of another archetype, rather than pushing it off the first
+    /// line.
     pub fn open_or_init(host: &[u8], kind: EmbedType) -> Result<Self, Error> {
         let mut raw = std::ptr::null_mut();
         let (container, format) = kind.parts();

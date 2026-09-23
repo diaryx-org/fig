@@ -194,6 +194,15 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
             try term.setColor(.reset);
             try term.writer.print(": to change its value — `{s} set <file> <path> <value>` (or `{s} edit`, which only replaces).\n", .{ binary_name, binary_name });
         },
+        // `set --embed <archetype>` creating a block at the top of a host
+        // whose first line already opens frontmatter of another archetype.
+        error.FrontmatterExists => {
+            try term.writer.writeAll(": the file already has frontmatter of another kind, and a new block at the top would push it off the first line\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("help");
+            try term.setColor(.reset);
+            try term.writer.print(": to edit the frontmatter it has, leave out --embed (a .md file's is sniffed) or name that archetype; to change its archetype, `{s} convert --to-embed <archetype> --write <file>`.\n", .{binary_name});
+        },
         // An insert under a section that is only ever named as the prefix
         // of its children's headers — TOML's implicit `a` made by `[a.b]`.
         error.ImplicitSection => {

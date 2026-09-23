@@ -87,7 +87,9 @@ pub const Help = struct {
             \\    presets `frontmatter-json` (;;;), `frontmatter-toml` (+++), and
             \\    `endmatter` (trailing ```endmatter block). When the host has no
             \\    such block, it is CREATED (frontmatter at the top, endmatter at
-            \\    the bottom) and seeded with <path>: <value>.
+            \\    the bottom) and seeded with <path>: <value> — unless one would
+            \\    go at the top of a host that already has frontmatter of another
+            \\    kind, which is refused (`{s} convert --to-embed` changes it).
             \\  value: a literal in the target format (YAML/TOML/ZON verbatim; JSON
             \\    is quoted as a string, as with `edit`). A created key is rendered
             \\    in the target syntax too, so new keys work for strict JSON.
@@ -99,7 +101,7 @@ pub const Help = struct {
             \\    it (as YAML) if absent — the archetype is otherwise sniffed
             \\    from the file, not assumed from the extension.
             \\
-        , .{ binary_name, binary_name });
+        , .{ binary_name, binary_name, binary_name });
         try term.writer.flush();
     }
 

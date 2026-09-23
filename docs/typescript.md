@@ -410,7 +410,10 @@ re-encodes span-aware on `render`, so an edit preserves every untouched byte's
 original encoding and canonically encodes only what changed.
 
 - `Embed.openOrInit(host, kind)` creates the block if none exists, so the first
-  `set` lands cleanly.
+  `set` lands cleanly. A block that goes at the top is refused
+  (`UnsupportedOperation`) when the host already opens with frontmatter of
+  another archetype, rather than pushing it off the first line; `retype`
+  changes a region's archetype.
 - `Embed.extract(host, kind)` / `split(host, kind)` locate the region *without*
   parsing — handy for just reading the raw frontmatter and body apart.
 - `detect(source)` sniffs which `EmbedType` a host opens with, or `null`.

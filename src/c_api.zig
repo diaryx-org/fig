@@ -2239,7 +2239,10 @@ pub export fn fig_embed_open(
 /// empty one (placed per the archetype: frontmatter at the top, endmatter at the
 /// bottom) instead of returning `not_found` — so a subsequent `fig_embed_set` /
 /// `fig_embed_insert_key` lands the first entry. An existing region is opened
-/// unchanged. A malformed region (open fence with no close) still fails.
+/// unchanged. A malformed region (open fence with no close) still fails. A
+/// block that goes at the top is refused (`unsupported_operation`) when the
+/// host already opens with frontmatter of another archetype — see
+/// `Embed.initRegion`.
 pub export fn fig_embed_open_or_init(
     input_ptr: ?[*]const u8,
     input_len: usize,
@@ -2259,7 +2262,13 @@ pub export fn fig_embed_open_or_init(
         return embedHandleFromHost(allocator, host, region, t, out);
     } else |err| switch (err) {
         error.NotFound => {
-            const created = Embed.initRegion(allocator, input, t) catch return .out_of_memory;
+            // A block that would go in front of the host's existing
+            // frontmatter of another archetype is refused, not prepended
+            // (`Embed.initRegion`); `fig_embed_retype` is the op that re-houses it.
+            const created = Embed.initRegion(allocator, input, t) catch |init_err| return switch (init_err) {
+                error.FrontmatterExists => .unsupported_operation,
+                error.OutOfMemory => .out_of_memory,
+            };
             return embedHandleFromHost(allocator, created.host, created.region, t, out);
         },
         else => return .parse_error,
@@ -4409,6 +4418,19 @@ test "fig_embed_open_or_init appends an endmatter block at the bottom" {
     var len: usize = undefined;
     try std.testing.expectEqual(FigStatus.ok, fig_embed_render(out_fm, &ptr, &len));
     try std.testing.expectEqualStrings("# Title\n\nbody text\n```endmatter\nk: v\n```\n", ptr[0..len]);
+}
+
+test "fig_embed_open_or_init refuses a leading block in front of frontmatter of another archetype" {
+    if (comptime !build_options.lang_json or !build_options.lang_yaml) return error.SkipZigTest;
+    // Prepending `;;;` used to leave the `---` block under it, no longer on
+    // the first line and so no longer frontmatter.
+    const md = "---\ntitle: x\n---\nbody\n";
+    var out_fm: ?*FigEmbed = null;
+    try std.testing.expectEqual(FigStatus.unsupported_operation, fig_embed_open_or_init(md.ptr, md.len, @intFromEnum(FigEmbedContainer.semicolons_json), @intFromEnum(FigFormat.json), &out_fm));
+    try std.testing.expect(out_fm == null);
+    // Endmatter goes after everything and displaces nothing.
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @intFromEnum(FigEmbedContainer.endmatter_yaml), @intFromEnum(FigFormat.yaml), &out_fm));
+    fig_embed_destroy(out_fm);
 }
 
 test "embed c abi edits json frontmatter (`;;;` fences, JSON inner editor)" {

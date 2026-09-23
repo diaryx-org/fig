@@ -710,6 +710,32 @@ pub fn locateRegion(source: []const u8, t: Type) Error!Region {
     return locate(source, archetypeOf(t));
 }
 
+/// The `.start` archetype whose OPEN delimiter is `source`'s first line (after
+/// a BOM), if any: a fenced ```` ```<lang> ````, a `---<lang>` (or bare `---`)
+/// frontmatter, or a `;;;`/`+++` block. Their leading tokens are mutually
+/// distinct, so the order of the checks cannot change the answer.
+fn leadingOpen(source: []const u8) ?Type {
+    var i: usize = 0;
+    if (std.mem.startsWith(u8, source, utf8_bom)) i += utf8_bom.len;
+    const eol = lineEnd(source, i);
+    const first = std.mem.trim(u8, std.mem.trimEnd(u8, source[i..eol], "\r\n"), " \t");
+    if (parseFencedOpen(first)) |f| return .{ .fenced = f };
+    if (parseFrontmatterOpen(first)) |f| return .{ .frontmatter = f };
+    if (std.mem.eql(u8, first, ";;;")) return .semicolons_json;
+    if (std.mem.eql(u8, first, "+++")) return .plus_toml;
+    return null;
+}
+
+/// The document's frontmatter: the `.start` region that opens on `source`'s
+/// first line AND closes, whatever its archetype — or null. Unlike `detect`,
+/// an open delimiter with no close is not a region here (a markdown file that
+/// begins with a `---` rule has no frontmatter to displace).
+pub fn leadingRegion(source: []const u8) ?Type {
+    const t = leadingOpen(source) orelse return null;
+    _ = locateRegion(source, t) catch return null;
+    return t;
+}
+
 /// Best-effort content sniffing for which embed archetype `source` uses — the
 /// `Embed` counterpart to `Language.detect`. Recognizes an OPEN delimiter (not a
 /// full `locate`, which also demands a matching close — an unterminated block
@@ -730,12 +756,7 @@ pub fn detect(source: []const u8) ?Type {
     if (std.mem.startsWith(u8, source, utf8_bom)) i += utf8_bom.len;
 
     // First-line (`.start`) conventions.
-    const eol = lineEnd(source, i);
-    const first = std.mem.trim(u8, std.mem.trimEnd(u8, source[i..eol], "\r\n"), " \t");
-    if (parseFencedOpen(first)) |f| return .{ .fenced = f };
-    if (parseFrontmatterOpen(first)) |f| return .{ .frontmatter = f };
-    if (std.mem.eql(u8, first, ";;;")) return .semicolons_json;
-    if (std.mem.eql(u8, first, "+++")) return .plus_toml;
+    if (leadingOpen(source)) |t| return t;
 
     // Scanned conventions.
     if (scanForDelim(source, i, archetypeOf(.endmatter_yaml).open) != null) return .endmatter_yaml;
@@ -784,8 +805,16 @@ pub const Initialized = struct { host: []u8, region: Region };
 /// blank line is inserted between fence and body, so the output matches the
 /// hand-rolled `---\n…\n---\n{body}` shape. The returned `host` is caller-owned.
 ///
-pub fn initRegion(allocator: Allocator, source: []const u8, t: Type) !Initialized {
+/// Refused with `error.FrontmatterExists` when the block would go at the top
+/// (a `.start` or `.middle` archetype) and `source` already opens with a
+/// complete region of another archetype (`leadingRegion`): the new block
+/// would push that one off the first line, where it stops being frontmatter,
+/// and leave the file with two metadata blocks, only one of them read.
+/// `retype` is what moves a region from one archetype to another. An `.end`
+/// block goes after everything and displaces nothing, so it is never refused.
+pub fn initRegion(allocator: Allocator, source: []const u8, t: Type) (InitError || Allocator.Error)!Initialized {
     const a = archetypeOf(t);
+    if (a.location != .end) if (leadingRegion(source)) |_| return InitError.FrontmatterExists;
     const open_tok = delimLiteral(a.open);
     const close_tok = delimLiteral(a.close);
     // The empty inner document seeded between the fences — the format
@@ -865,6 +894,13 @@ pub fn initRegion(allocator: Allocator, source: []const u8, t: Type) !Initialize
     std.debug.assert(regionTilesSource(region, built));
     return .{ .host = built, .region = region };
 }
+
+pub const InitError = error{
+    /// `source` already opens with a complete region of another archetype —
+    /// its frontmatter — and the block `initRegion` was asked to create would
+    /// have to go in front of it. See `initRegion`.
+    FrontmatterExists,
+};
 
 pub const RetypeError = error{
     /// The source region sits MID-document (an HTML `<script>` data island or a
@@ -1580,6 +1616,31 @@ test "detect: recognizes TOML and fenced-label frontmatter" {
     try testing.expectEqual(@as(?Type, .{ .fenced = .json }), detect("```json\n{\"t\":1}\n```\nbody\n"));
     // A ```fig fence still wins its own detection, not the new fenced labels.
     try testing.expectEqual(@as(?Type, .{ .fenced = .fig }), detect("```fig\nt = 1\n```\nbody\n"));
+}
+
+test "initRegion: refuses a leading block in front of another archetype's frontmatter" {
+    // Every archetype that goes at the top — frontmatter of any spelling, a
+    // fenced block, and a `.middle` island (which a fresh one is placed at the
+    // top too) — would push existing frontmatter off the first line.
+    const hosts = [_][]const u8{
+        "---\ntitle: x\n---\nbody\n",
+        ";;;\n{\"a\": 1}\n;;;\nbody\n",
+        "+++\na = 1\n+++\nbody\n",
+        "```yaml\na: 1\n```\nbody\n",
+        "\xEF\xBB\xBF---json\n{}\n---\nbody\n",
+    };
+    const tops = [_]Type{ .semicolons_json, .plus_toml, .{ .frontmatter = .toml }, .{ .fenced = .fig }, .{ .html_script = .json } };
+    for (hosts) |h| for (tops) |t| {
+        if (std.meta.eql(leadingRegion(h), @as(?Type, t))) continue;
+        try testing.expectError(error.FrontmatterExists, initRegion(testing.allocator, h, t));
+    };
+    // Endmatter goes after everything, so it coexists.
+    const end = try initRegion(testing.allocator, hosts[0], .endmatter_yaml);
+    testing.allocator.free(end.host);
+    // A leading `---` with no close is a markdown rule, not frontmatter.
+    const rule = try initRegion(testing.allocator, "---\nbody\n", .semicolons_json);
+    defer testing.allocator.free(rule.host);
+    try testing.expectEqualStrings(";;;\n{}\n;;;\n---\nbody\n", rule.host);
 }
 
 test "initRegion: a TOML-inner archetype seeds an empty +++ block" {

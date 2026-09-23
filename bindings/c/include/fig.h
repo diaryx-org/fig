@@ -665,7 +665,10 @@ FigStatus fig_embed_open(const uint8_t *input, size_t input_len, int container, 
 // one (frontmatter at the top, endmatter at the bottom) instead of returning
 // FIG_STATUS_NOT_FOUND — so a subsequent fig_embed_set / fig_embed_insert_key
 // lands the first entry. An existing region is opened unchanged; a malformed one
-// (open fence with no close) still fails.
+// (open fence with no close) still fails. A block that goes at the top (every
+// archetype but endmatter) is refused with FIG_STATUS_UNSUPPORTED_OPERATION
+// when the host already opens with frontmatter of another archetype, rather
+// than pushing it off the first line; fig_embed_retype changes an archetype.
 FigStatus fig_embed_open_or_init(const uint8_t *input, size_t input_len, int container, int format, FigEmbed **out_embed);
 void fig_embed_destroy(FigEmbed *embed);
 

@@ -583,7 +583,10 @@ println!("{}", fm.render()?);
   and re-encodes span-aware on `render`, so an edit preserves every untouched
   byte's original encoding and canonically encodes only what changed.
 - `Embed::open_or_init(host, kind)` creates the block if none exists, so the
-  first `set` lands cleanly.
+  first `set` lands cleanly. A block that goes at the top is refused
+  ([`Error::UnsupportedOperation`]) when the host already opens with
+  frontmatter of another archetype, rather than pushing it off the first line;
+  `retype` changes a region's archetype.
 - `Embed::extract(host, kind)` / `split(content, kind)` locate the region
   *without* parsing — handy for reading the raw frontmatter and body apart.
   [`Extracted`] gives you `region()`, `content()` and `body()`.

@@ -799,6 +799,34 @@ test "applyEdit insert_key refuses a key that already exists, and does not blame
     }
 }
 
+test "applyToEmbed refuses a new leading block in front of another archetype's frontmatter" {
+    if (comptime !build_options.lang_json or !build_options.lang_yaml) return error.SkipZigTest;
+    const t = std.testing;
+    const io = t.io;
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // `fig set --embed frontmatter-json p.md k 1` on YAML frontmatter used to
+    // prepend a `;;;` block, leaving the `---` one under it — two metadata
+    // blocks, the original no longer on the first line.
+    const md = "---\ntitle: x\n---\nbody\n";
+    const file = try tmp.dir.createFile(io, "p.md", .{ .read = true });
+    defer file.close(io);
+    try file.writeStreamingAll(io, md);
+    var p = [_]fig.AST.PathSegment{.{ .key = "k" }};
+    try t.expectError(error.FrontmatterExists, applyToEmbed(a, io, file, .semicolons_json, &p, "1", .set));
+    const back = try tmp.dir.readFileAlloc(io, "p.md", a, .limited(1 << 20));
+    try t.expectEqualStrings(md, back);
+
+    // Endmatter goes at the bottom and displaces nothing.
+    try applyToEmbed(a, io, file, .endmatter_yaml, &p, "1", .set);
+    const both = try tmp.dir.readFileAlloc(io, "p.md", a, .limited(1 << 20));
+    try t.expectEqualStrings(md ++ "```endmatter\nk: 1\n```\n", both);
+}
+
 test "emptyDocSeed: every seed is the byte string the registry declares" {
     const t = std.testing;
     try t.expectEqualStrings("{}\n", emptyDocSeed(.json).?);

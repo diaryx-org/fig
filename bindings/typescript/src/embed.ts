@@ -116,7 +116,10 @@ export class Embed extends Editable {
   /** Open the embed of `kind` in `host`, creating an empty region when none
    *  exists (frontmatter at the top, endmatter at the bottom) instead of throwing
    *  `NotFound` — so a subsequent {@link set}/{@link insertValue} lands the first
-   *  entry. An existing region is opened unchanged; a malformed one still throws. */
+   *  entry. An existing region is opened unchanged; a malformed one still throws.
+   *  A block that goes at the top throws `UnsupportedOperation` when `host`
+   *  already opens with frontmatter of another archetype, rather than pushing
+   *  it off the first line. */
   static openOrInit(host: string | Uint8Array, kind: EmbedType): Embed {
     return Embed.openWith(host, kind, fig.fig_embed_open_or_init, "fig_embed_open_or_init");
   }

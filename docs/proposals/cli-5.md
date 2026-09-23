@@ -118,7 +118,10 @@ missing comment stays a no-op: deleting what is absent is not an error for
 ## 5. Exit codes are written down
 
 VERSIONING names exit codes as part of the CLI's contract, and nothing states
-them. Observed today, and proposed as the contract:
+them — and the codes in use disagree. A file that does not parse exits 2 from
+`get` and `fmt` but 1 from `check` and `set`, so the same broken file is a
+"wrong command line" to one action and a "failed operation" to the next.
+Proposed as the contract:
 
 | code | meaning |
 |---|---|
@@ -126,8 +129,9 @@ them. Observed today, and proposed as the contract:
 | 1 | the operation failed on the document: a parse error, a missing path, a refused edit, `fmt --dry-run` finding a change |
 | 2 | the command line is wrong: unknown action or flag, missing or surplus argument, a value that is not a value |
 
-`fig --help` and the man-page-shaped text in `help.zig` carry the table; the
-CLI tests hold each row to at least one case.
+A parse error is a failure on the document, so `get`, `fmt` and `convert` move
+from 2 to 1. `fig --help` carries the table, and the CLI tests hold each row to
+at least one case per action.
 
 ## 6. One version, one tag
 

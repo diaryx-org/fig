@@ -494,16 +494,22 @@ pub fn printRuntime(allocator: std.mem.Allocator, writer: *Io.Writer, e: *const 
     }
 }
 
-/// Sniff `content` with `Language.detect`, emit an info-level log of what was
-/// inferred, and return it — the fallback when neither `--input` nor the file
-/// extension pinned the format. Errors (after a clear message) if nothing matches.
+/// Sniff `content` with `Language.detect` and return what it inferred — the
+/// fallback when neither `--input` nor the file extension pinned the format.
+/// Errors (after a clear message) if nothing matches.
+///
+/// A successful guess is logged at DEBUG level only, so a release build says
+/// nothing: `cat f | fig get - a` is a pipeline, and a note on stderr for
+/// every sniffed stdin is noise in it — as silent as a file whose extension
+/// resolved it. The guess matters only when it is wrong, and then the parse
+/// fails and says so.
 pub fn resolveFormatFromContent(allocator: std.mem.Allocator, content: []const u8, file_path: []const u8) !Format {
     const detected = fig.Language.detect(allocator, content) orelse {
         std.log.scoped(.detect).err("could not infer the format of `{s}` from its contents; pass an explicit format", .{file_path});
         return error.UnsupportedFileFormat;
     };
     const format = mapDetected(detected);
-    std.log.scoped(.detect).info("inferred format `{s}` for `{s}` from its contents", .{ types.name(format), file_path });
+    std.log.scoped(.detect).debug("inferred format `{s}` for `{s}` from its contents", .{ types.name(format), file_path });
     return format;
 }
 

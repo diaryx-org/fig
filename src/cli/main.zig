@@ -63,6 +63,15 @@ pub const std_options: std.Options = .{ .logFn = logFn };
 /// fall back to the stdlib default.
 var g_log_terminal: ?*Io.Terminal = null;
 
+///
+/// What reaches a user is written in the CLI's own voice — `error: …`,
+/// `warning: …`, `note: …`, coloured like every diagnostic `diag_report`
+/// prints — not the stdlib's `error(parseConfig): …`, whose scope is the name
+/// of the function that logged it. A format's trailing newline (several
+/// `parseConfig` messages carry one) is dropped so each message is one line.
+/// Debug lines keep the stdlib's `debug(scope):` shape: they exist only in a
+/// Debug build, for whoever is developing fig, and the scope is what they
+/// are for.
 fn logFn(
     comptime level: std.log.Level,
     comptime scope: @EnumLiteral(),
@@ -70,11 +79,21 @@ fn logFn(
     args: anytype,
 ) void {
     const t = g_log_terminal orelse return std.log.defaultLog(level, scope, format, args);
-    std.log.defaultLogFileTerminal(level, scope, format, args, t.*) catch return;
     // `std.log.defaultLog` flushes before returning (its `unlockStderr` does
     // so implicitly); match that so a log line right before `process.exit`
     // isn't lost sitting in `stderr_terminal`'s buffer.
-    t.writer.flush() catch {};
+    defer t.writer.flush() catch {};
+    const label: []const u8, const color: Io.Terminal.Color = switch (level) {
+        .debug => return std.log.defaultLogFileTerminal(level, scope, format, args, t.*) catch {},
+        .err => .{ "error", .red },
+        .warn => .{ "warning", .yellow },
+        .info => .{ "note", .blue },
+    };
+    const body = comptime std.mem.trimEnd(u8, format, "\n");
+    t.setColor(color) catch {};
+    t.writer.writeAll(label) catch return;
+    t.setColor(.reset) catch {};
+    t.writer.print(": " ++ body ++ "\n", args) catch return;
 }
 
 // The core library's version — the same numbers `fig_version` exposes over
@@ -235,6 +254,25 @@ fn dispatch(a: std.mem.Allocator, io: Io, stdout_terminal: *Io.Terminal, stderr_
         .lang => actions.runLang(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.lang),
         .external => actions.runExternal(io, stdout_terminal, stderr_terminal, config.binary_name, config.options.external),
     };
+}
+
+test "logFn writes a user-facing line in the CLI's voice, not std.log's `level(scope):`" {
+    var out: Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    var term: Io.Terminal = .{ .writer = &out.writer, .mode = .no_color };
+    const saved = g_log_terminal;
+    g_log_terminal = &term;
+    defer g_log_terminal = saved;
+
+    // A trailing newline in the format (as `parseConfig`'s carry) still
+    // makes one line, not a line and a blank one.
+    logFn(.err, .parseConfig, "No path provided.\n", .{});
+    logFn(.warn, .languages, "could not read {s}", .{"x.figl"});
+    logFn(.info, .detect, "a {s}", .{"notice"});
+    try std.testing.expectEqualStrings(
+        "error: No path provided.\nwarning: could not read x.figl\nnote: a notice\n",
+        out.written(),
+    );
 }
 
 // Pull every CLI-only leaf module's tests into the exe test binary. `gron`/

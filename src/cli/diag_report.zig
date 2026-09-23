@@ -24,7 +24,7 @@ const EditTextKind = types.EditTextKind;
 /// word and the highlight+`short_label` in `color`, and the `-->` pointer plus
 /// the `N |` gutter in blue. Language-agnostic (every field is plain data —
 /// see `fig.ParseDiagnostic.Rendered`), so every covered language (fig, JSON,
-/// TOML, INI, dotenv, `.properties`, NestedText; YAML to come) renders through
+/// TOML, INI, dotenv, `.properties`, NestedText, YAML) renders through
 /// this one function; only `renderAll`'s
 /// per-language `describe`/`shortLabel` calls differ. This is a CLI-only
 /// sibling of a language's own `Diagnostic.renderAlloc`/`Warning.renderAlloc`

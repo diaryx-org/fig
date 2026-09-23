@@ -148,12 +148,221 @@ source: []const u8 = "",
 /// through `scalarKind1_1` (1.1 tag-repository resolution); `.v1_2_2` uses the
 /// 1.2 core schema. The spec fixtures under `testdata/yaml-1.1/` pin 1.1.
 version: Type = .v1_2_2,
+/// Where the parse failed and why, set at the moment it did (see
+/// `Diagnostic`). A site that knows more than the error it returns — the
+/// `[` a missing `]` belongs to, the `\` of a bad escape — calls `failAt`;
+/// every other failure is pinned by `parseOnce` on the token the cursor rests
+/// on when the error reaches it. Read by `parseWithReport`.
+failure: ?Diagnostic = null,
 
 const PendingTag = struct { text: []const u8, span: Span };
 const PendingAnchor = struct { name: []const u8, span: Span };
 
 const ParseError = error{ UnexpectedToken, EmptyDocument, UnclosedString, InvalidUnicodeEscape, MultipleDocuments, DuplicateProperty, UndefinedAlias, InvalidDirective, UndefinedTagHandle };
 const ParserError = ParseError || std.mem.Allocator.Error;
+
+const parse_diagnostic = @import("../../parse_diagnostic.zig");
+
+/// Every error a YAML parse can return: the tokenizer's (it runs to completion
+/// before the parser starts, and rejects indentation, tabs, and malformed
+/// properties itself) and the parser's own.
+pub const Error = ParseError || Tokenizer.TokenizeError || std.mem.Allocator.Error;
+
+/// What a diagnostic says, one level finer than `Error`. The error a parse
+/// RETURNS is part of the library's contract (the C ABI maps it to a status,
+/// the conformance suite pins it), so a finer account of the same failure —
+/// the flow collection that never closed, rather than the `UnexpectedToken`
+/// the parser returns for it — lives here instead, beside the offset. Each
+/// `Error` has a code of its own (`codeFor`); the rest are refinements a
+/// failure site picks when it knows more.
+pub const Code = enum {
+    unexpected_token,
+    /// A `[` with no `]` before the end of the document. Points at the `[`.
+    unclosed_flow_sequence,
+    /// A `{` with no `}` before the end of the document. Points at the `{`.
+    unclosed_flow_mapping,
+    /// Something other than `,` or `]` after a flow sequence item.
+    flow_sequence_separator,
+    /// Something other than `,` or `}` after a flow mapping entry.
+    flow_mapping_separator,
+    /// A `]`/`}` with no open flow collection to close.
+    unmatched_flow_close,
+    /// A `key: value` whose value itself reads as a `key: value` on the same line.
+    nested_mapping_on_line,
+    /// A block collection begun on the `---` line.
+    block_on_document_start_line,
+    /// A block collection with no key to be the value of: indented under an
+    /// entry that already has a value on its own line.
+    continuation_after_value,
+    /// Content after an inline value on the same line.
+    trailing_content,
+    /// A value where no key or item is waiting for one.
+    stray_value,
+    /// A plain scalar in flow that begins with a block indicator or `#`.
+    indicator_in_flow,
+    /// A continuation line inside `[...]`/`{...}` not indented past the
+    /// line the collection opened on.
+    flow_indent,
+    /// A `key: - item` — a block sequence begun on its key's line.
+    sequence_on_key_line,
+    /// A `key:` at the column of a sequence's `- ` items, with no mapping
+    /// around the sequence to return to.
+    key_beside_sequence,
+    empty_document,
+    unclosed_string,
+    invalid_escape,
+    invalid_unicode_escape,
+    multiple_documents,
+    duplicate_property,
+    undefined_alias,
+    invalid_directive,
+    /// A directive with no `---` after it.
+    missing_document_start,
+    undefined_tag_handle,
+    invalid_indent,
+    tab_indent,
+    invalid_block_header,
+    invalid_tag,
+    invalid_anchor,
+    invalid_alias,
+    out_of_memory,
+};
+
+/// The code a failure gets when its site said nothing finer.
+pub fn codeFor(err: Error) Code {
+    return switch (err) {
+        error.UnexpectedToken => .unexpected_token,
+        error.EmptyDocument => .empty_document,
+        error.UnclosedString => .unclosed_string,
+        error.InvalidUnicodeEscape => .invalid_unicode_escape,
+        error.MultipleDocuments => .multiple_documents,
+        error.DuplicateProperty => .duplicate_property,
+        error.UndefinedAlias => .undefined_alias,
+        error.InvalidDirective => .invalid_directive,
+        error.UndefinedTagHandle => .undefined_tag_handle,
+        error.InvalidIndent => .invalid_indent,
+        error.TabIndent => .tab_indent,
+        error.InvalidBlockHeader => .invalid_block_header,
+        error.InvalidTag => .invalid_tag,
+        error.InvalidAnchor => .invalid_anchor,
+        error.InvalidAlias => .invalid_alias,
+        error.OutOfMemory => .out_of_memory,
+    };
+}
+
+/// The teaching message for `code` — one sentence naming the fix, the same
+/// contract as the other languages' `describe` (DESIGN.md "every diagnostic
+/// names the fix").
+pub fn describe(code: Code) []const u8 {
+    return switch (code) {
+        .unexpected_token => "YAML cannot fit this into the structure around it; check this line's indentation against the lines above, and for a missing `:` after a key or `- ` before an item",
+        .unclosed_flow_sequence => "this `[` is never closed; add the matching `]` (a flow sequence may span lines, but must end before the document does)",
+        .unclosed_flow_mapping => "this `{` is never closed; add the matching `}` (a flow mapping may span lines, but must end before the document does)",
+        .flow_sequence_separator => "expected `,` or `]` after this flow sequence item; separate items with commas, and quote an item that contains `[`, `]`, `{`, `}`, `,` or a leading `- `",
+        .flow_mapping_separator => "expected `,` or `}` after this flow mapping entry; separate entries with commas, and quote a key or value that contains `[`, `]`, `{`, `}`, `,` or a leading `- `",
+        .unmatched_flow_close => "this closing bracket has no opening `[`/`{` to match; remove it, or quote the value if the bracket is meant as text",
+        .nested_mapping_on_line => "a mapping cannot start on the same line as another key's value; put the nested `key: value` on its own, more-indented line, or quote the value if the `: ` is text",
+        .block_on_document_start_line => "a block mapping or sequence cannot start on the `---` line; move it to the next line",
+        .continuation_after_value => "this is indented under an entry that already has a value, so it has no key to belong to; dedent it to be a sibling, or move the entry's value onto its own lines below it",
+        .trailing_content => "unexpected content after this line's value; a value ends its line — put the next entry on a line of its own, or quote the value if this is part of it",
+        .stray_value => "this value belongs to no key or item; indent it under the key it is the value of, or add a `:` if it is meant to be a key",
+        .indicator_in_flow => "a plain value inside `[...]`/`{...}` cannot start with `- `, `? `, `: ` or `#` — flow items are separated by commas, not dashes; drop the indicator, or quote the value",
+        .flow_indent => "this line is still inside a `[`/`{` opened above — either that bracket was never closed, or this line continues it and must be indented past the line it opened on (only the closing bracket may sit at that column)",
+        .sequence_on_key_line => "a block sequence cannot start on the same line as its key; put `- item` on the next line, indented under the key (or use a flow sequence `[a, b]`), or quote the value if the dash is text",
+        .key_beside_sequence => "a `key:` cannot sit at the same indentation as a sequence's `- ` items; make every entry at this level a `- item` or every one a `key: value`, or indent the key under an item",
+        .empty_document => "the document is empty",
+        .unclosed_string => "unclosed quoted string; add the closing quote, and escape any quote of the same kind inside it (`\\\"` in double quotes, `''` in single)",
+        .invalid_escape => "invalid escape in a double-quoted string; YAML allows \\0 \\a \\b \\t \\n \\v \\f \\r \\e \\\" \\/ \\\\ \\N \\_ \\L \\P \\xXX \\uXXXX \\UXXXXXXXX — use single quotes for a literal backslash",
+        .invalid_unicode_escape => "invalid unicode escape; the hex digits after `\\x`/`\\u`/`\\U` must name a valid codepoint (and not a lone surrogate)",
+        .multiple_documents => "a second document in the stream; fig reads one YAML document per file — remove the extra `---`/`...` or split the file",
+        .duplicate_property => "this node already has an anchor or tag of this kind; a node takes at most one `&anchor` and one `!tag`",
+        .undefined_alias => "this alias names no anchor defined before it; define `&name` on an earlier node, or check the spelling",
+        .invalid_directive => "malformed or misplaced directive; `%YAML` takes one `major.minor` version (once per document), `%TAG` a handle and a prefix, and both must come before the `---`",
+        .missing_document_start => "a directive must be followed by a `---` line before the document's content",
+        .undefined_tag_handle => "this tag uses a named handle (`!name!`) that no `%TAG` directive declares; declare it above the `---`, or use `!` or `!!`",
+        .invalid_indent => "inconsistent indentation; this line's indent matches no enclosing block — align it with its siblings, or indent it further under a key that ends with `:`",
+        .tab_indent => "a tab cannot indent YAML structure; indent with spaces",
+        .invalid_block_header => "invalid block scalar header; `|` or `>` takes at most one indentation digit (1-9) and one chomping indicator (`-` or `+`)",
+        .invalid_tag => "malformed tag; a tag is `!name`, `!!type`, `!handle!name` or `!<uri>`, followed by a space before its value",
+        .invalid_anchor => "malformed anchor; `&` must be followed by a name and a space before its value",
+        .invalid_alias => "malformed alias; `*` must be followed by the name of an anchor — quote the value if the `*` is text",
+        .out_of_memory => "out of memory",
+    };
+}
+
+/// A few words for the caret annotation.
+pub fn shortLabel(code: Code) []const u8 {
+    return switch (code) {
+        .unexpected_token => "unexpected token",
+        .unclosed_flow_sequence => "unclosed `[`",
+        .unclosed_flow_mapping => "unclosed `{`",
+        .flow_sequence_separator => "expected `,` or `]`",
+        .flow_mapping_separator => "expected `,` or `}`",
+        .unmatched_flow_close => "unmatched close",
+        .nested_mapping_on_line => "nested mapping on one line",
+        .block_on_document_start_line => "block collection on `---` line",
+        .continuation_after_value => "no key for this",
+        .trailing_content => "trailing content",
+        .stray_value => "value with no key",
+        .indicator_in_flow => "block indicator in flow",
+        .flow_indent => "still inside `[`/`{`",
+        .sequence_on_key_line => "sequence on key line",
+        .key_beside_sequence => "key among sequence items",
+        .empty_document => "empty document",
+        .unclosed_string => "unclosed string",
+        .invalid_escape => "invalid escape",
+        .invalid_unicode_escape => "invalid unicode escape",
+        .multiple_documents => "second document",
+        .duplicate_property => "duplicate property",
+        .undefined_alias => "undefined alias",
+        .invalid_directive => "invalid directive",
+        .missing_document_start => "missing `---`",
+        .undefined_tag_handle => "undeclared tag handle",
+        .invalid_indent => "bad indentation",
+        .tab_indent => "tab indentation",
+        .invalid_block_header => "invalid block header",
+        .invalid_tag => "invalid tag",
+        .invalid_anchor => "invalid anchor",
+        .invalid_alias => "invalid alias",
+        .out_of_memory => "out of memory",
+    };
+}
+
+/// A parse failure and the byte span it points at — the shape every other
+/// language's `Diagnostic` has, so the CLI renders a YAML failure through the
+/// same `file:line:col` report (see `parse_diagnostic.zig`).
+pub const Diagnostic = struct {
+    code: Code,
+    offset: usize,
+    end: ?usize = null,
+
+    /// 1-based line/column of `offset`, plus the full offending line.
+    pub fn locate(self: Diagnostic, source: []const u8) parse_diagnostic.Location {
+        return parse_diagnostic.locateOffset(source, self.offset);
+    }
+
+    /// Render `file:line:col: error: <message>` + source line + caret.
+    pub fn renderAlloc(self: Diagnostic, allocator: std.mem.Allocator, source: []const u8, file: []const u8) std.mem.Allocator.Error![]u8 {
+        return parse_diagnostic.renderReportAlloc(allocator, source, self.offset, file, "error", describe(self.code));
+    }
+};
+
+/// Everything a parse reports besides the tree. A lone `diag`, like
+/// NestedText's: the parser stops at its first error and has no authoring
+/// lints, so there is no error list and no `Warning` type to carry.
+pub const Report = struct { diag: ?Diagnostic = null };
+
+/// `parse`, but on failure also fills `out.diag` with where the parse failed
+/// and why. The error returned is the one `parse` returns — the diagnostic
+/// adds to it, it never changes it.
+pub fn parseWithReport(allocator: std.mem.Allocator, input: []const u8, format: Type, out: *Report) Error!Document {
+    var parser: Parser = .{ .allocator = allocator };
+    defer parser.deinit();
+    return parser.parseOnce(input, format) catch |err| {
+        out.diag = parser.failure;
+        return err;
+    };
+}
 
 /// Primary entry point
 /// Pass allocator, input, and type, and get a Document.
@@ -177,9 +386,10 @@ pub fn parse(allocator: std.mem.Allocator, input: []const u8, format: Type) !Doc
 
 /// Secondary entry point, called on a parser object.
 /// Caller must handle memory by calling `defer deinit` or similar.
-pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
+pub fn parseOnce(self: *Parser, input: []const u8, format: Type) Error!Document {
     self.source = input;
     self.version = format;
+    self.failure = null;
 
     var tokenizer: Tokenizer = .{
         .allocator = self.allocator,
@@ -187,8 +397,81 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
         .type = format,
     };
 
-    self.tokens = try tokenizer.tokenize();
+    self.tokens = tokenizer.tokenize() catch |err| {
+        if (tokenizer.failure) |f| {
+            // Under-indentation inside `[...]`/`{...}` breaks a different
+            // rule from the block one, and has a different fix.
+            const code: Code = if (err == error.InvalidIndent and tokenizer.flow_depth > 0) .flow_indent else codeFor(err);
+            self.failure = .{ .code = code, .offset = f.offset, .end = f.end };
+        }
+        return err;
+    };
     defer self.allocator.free(self.tokens);
+
+    return self.parseTokens(input) catch |err| {
+        // A site that knew better already said where; everything else is
+        // pinned on the token the cursor rests on, which for a token that
+        // does not fit is the token itself.
+        if (self.failure == null and err != error.OutOfMemory) {
+            const at = self.tokens[@min(self.index, self.tokens.len - 1)];
+            self.failure = .{
+                .code = codeFor(err),
+                .offset = at.span.start,
+                .end = if (at.span.end > at.span.start) at.span.end else null,
+            };
+        }
+        // A token that does not fit, on a line indented with a tab: the
+        // tokenizer lets a tab through wherever it could be separation rather
+        // than indentation, so the structure it breaks is only noticed here —
+        // and the tab is what to fix.
+        if (self.failure) |f| switch (f.code) {
+            .unexpected_token, .stray_value => if (leadingTab(input, f.offset)) |tab| {
+                self.failure = .{ .code = .tab_indent, .offset = tab };
+            },
+            else => {},
+        };
+        return err;
+    };
+}
+
+/// The offset of a tab in the leading whitespace of the line holding `pos`,
+/// or null when that line is indented with spaces alone.
+fn leadingTab(source: []const u8, pos: usize) ?usize {
+    const at = @min(pos, source.len);
+    const line_start = if (std.mem.lastIndexOfScalar(u8, source[0..at], '\n')) |nl| nl + 1 else 0;
+    var i = line_start;
+    while (i < source.len and (source[i] == ' ' or source[i] == '\t')) : (i += 1) {
+        if (source[i] == '\t') return i;
+    }
+    return null;
+}
+
+/// Record that the parse failed at `span` for the reason `code`, and hand
+/// back `err` to return — the error is the contract, `code` the account of it
+/// (see `Code`).
+fn failAt(self: *Parser, err: ParseError, code: Code, span: Span) ParseError {
+    self.failure = .{ .code = code, .offset = span.start, .end = if (span.end > span.start) span.end else null };
+    return err;
+}
+
+/// `failAt` on the token the cursor rests on.
+fn failHere(self: *Parser, err: ParseError, code: Code) ParseError {
+    return self.failAt(err, code, self.peek().span);
+}
+
+/// The byte offset of `slice` in the source, when it is a view into it — the
+/// scalar decoders are handed token text, and report a bad escape where it
+/// sits. Null for text from anywhere else.
+fn sourceOffsetOf(self: *const Parser, slice: []const u8) ?usize {
+    const base = @intFromPtr(self.source.ptr);
+    const at = @intFromPtr(slice.ptr);
+    if (at < base or at > base + self.source.len) return null;
+    return at - base;
+}
+
+/// The statement loop and document assembly, over the tokens `parseOnce`
+/// produced.
+fn parseTokens(self: *Parser, input: []const u8) ParserError!Document {
 
     // Reserve once so `advance` (non-fallible) can buffer leading comments with
     // `appendAssumeCapacity`. There can be at most one comment per token.
@@ -208,7 +491,7 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
         // content, a `...` end, or EOF means the marker is missing.
         if (self.directives_pending) switch (self.peek().kind) {
             .directive, .newline, .doc_start => {},
-            else => return ParseError.InvalidDirective,
+            else => return self.failHere(ParseError.InvalidDirective, .missing_document_start),
         };
         switch (self.peek().kind) {
             .indent => {
@@ -319,7 +602,10 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
                     self.nodes.items.len > 0 or self.container_stack.items.len > 0)
                     return ParseError.InvalidDirective;
                 const tok = self.advance();
-                try self.parseDirective(tok.source(self.source));
+                self.parseDirective(tok.source(self.source)) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => |e| return self.failAt(e, codeFor(e), tok.span),
+                };
                 self.directives_pending = true;
             },
             .doc_end => {
@@ -329,7 +615,7 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
             .dash => {
                 if (self.doc_ended) return ParseError.MultipleDocuments;
                 // A block sequence cannot begin on the `---` marker line.
-                if (self.on_doc_start_line) return ParseError.UnexpectedToken;
+                if (self.on_doc_start_line) return self.failHere(ParseError.UnexpectedToken, .block_on_document_start_line);
                 // A block sequence's `-` must begin its own line. A property on the
                 // same line before it (`&anchor - x`) is invalid — unlike a compact
                 // `: - x` value, which is parsed in parseMappingValue, not here.
@@ -378,7 +664,7 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
                 try self.closeSequenceItemContinuation();
                 if (self.isMappingStart()) {
                     // A block mapping cannot begin on the `---` marker line.
-                    if (self.on_doc_start_line) return ParseError.UnexpectedToken;
+                    if (self.on_doc_start_line) return self.failHere(ParseError.UnexpectedToken, .block_on_document_start_line);
                     try self.parseMappingEntry();
                 } else if (self.container_stack.items.len == 0 and self.root == null) {
                     // A bare scalar is a valid single-node document, but a plain
@@ -394,7 +680,7 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
                     const value_id = try self.parseScalar();
                     try self.attachDeferredValue(value_id);
                 } else {
-                    return ParseError.UnexpectedToken;
+                    return self.failHere(ParseError.UnexpectedToken, .stray_value);
                 }
             },
             .alias => {
@@ -410,7 +696,7 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
                     const value_id = try self.parseAlias();
                     try self.attachDeferredValue(value_id);
                 } else {
-                    return ParseError.UnexpectedToken;
+                    return self.failHere(ParseError.UnexpectedToken, .stray_value);
                 }
             },
             .block_header => {
@@ -424,7 +710,7 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
                     const value_id = try self.parseBlockScalar();
                     try self.attachDeferredValue(value_id);
                 } else {
-                    return ParseError.UnexpectedToken;
+                    return self.failHere(ParseError.UnexpectedToken, .stray_value);
                 }
             },
             .flow_seq_start, .flow_map_start => {
@@ -475,6 +761,7 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
                 };
             },
             .end_of_file => break,
+            .flow_seq_end, .flow_map_end => return self.failHere(ParseError.UnexpectedToken, .unmatched_flow_close),
             else => return ParseError.UnexpectedToken,
         }
     }
@@ -487,7 +774,8 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) !Document {
 
     // A parked container property that never opened a container means two
     // properties of one kind decorated a single node (`&a &b scalar`) — invalid.
-    if (self.container_anchor != null or self.container_tag != null) return ParseError.DuplicateProperty;
+    if (self.container_anchor) |p| return self.failAt(ParseError.DuplicateProperty, .duplicate_property, p.span);
+    if (self.container_tag) |p| return self.failAt(ParseError.DuplicateProperty, .duplicate_property, p.span);
 
     // Every alias must reference an anchor defined earlier in the document.
     try self.resolveAliasesOrError();
@@ -817,7 +1105,7 @@ fn parseMappingValue(self: *Parser, allow_compact: bool) ParserError!void {
             // the `continues_sequence_item` flag stops the next indent from
             // opening a fresh container, and the sequence closes on the matching
             // dedent or the next shallower entry (via closeSequenceItemContinuation).
-            if (!allow_compact) return ParseError.UnexpectedToken;
+            if (!allow_compact) return self.failHere(ParseError.UnexpectedToken, .sequence_on_key_line);
             const seq_id = try self.openContainer(.sequence, self.peek().span.start);
             self.containerById(seq_id).continues_sequence_item = true;
             try self.parseSequenceEntry();
@@ -849,7 +1137,9 @@ fn requireValueEnd(self: *Parser) ParserError!void {
     while (self.peek().kind == .whitespace) _ = self.advance();
     switch (self.peek().kind) {
         .newline, .comment, .dedent, .end_of_file => {},
-        else => return ParseError.UnexpectedToken,
+        .colon => return self.failHere(ParseError.UnexpectedToken, .nested_mapping_on_line),
+        .flow_seq_end, .flow_map_end => return self.failHere(ParseError.UnexpectedToken, .unmatched_flow_close),
+        else => return self.failHere(ParseError.UnexpectedToken, .trailing_content),
     }
 }
 
@@ -990,7 +1280,15 @@ fn parseEmptyKeyEntry(self: *Parser) ParserError!void {
 fn parseScalar(self: *Parser) ParserError!AST.Node.Id {
     if (self.peek().kind != .scalar) return ParseError.UnexpectedToken;
     const token = self.advance();
-    return self.addNode(try self.scalarKind(token.source(self.source)), token.span);
+    // The decoders run on a token already consumed, so one that fails without
+    // saying where (an unclosed quote) is pinned on that token here — the
+    // cursor has moved past it.
+    const kind = self.scalarKind(token.source(self.source)) catch |err| {
+        if (self.failure == null and err != error.OutOfMemory)
+            self.failure = .{ .code = codeFor(err), .offset = token.span.start, .end = token.span.end };
+        return err;
+    };
+    return self.addNode(kind, token.span);
 }
 
 /// Validates that every `*name` alias references an anchor `&name` defined
@@ -1008,7 +1306,7 @@ fn resolveAliasesOrError(self: *Parser) ParserError!void {
             if (a.node >= node.id) break; // sorted by id; no anchor at/after the alias
             if (std.mem.eql(u8, a.name, name)) found = true;
         }
-        if (!found) return ParseError.UndefinedAlias;
+        if (!found) return self.failAt(ParseError.UndefinedAlias, .undefined_alias, self.node_spans.items[node.id]);
     }
 }
 
@@ -1244,7 +1542,7 @@ fn parseFlowNode(self: *Parser) ParserError!AST.Node.Id {
         .flow_map_start => self.parseFlowMapping(),
         .alias => self.parseAlias(),
         .scalar => {
-            if (invalidFlowScalar(self.peek().source(self.source))) return ParseError.UnexpectedToken;
+            if (invalidFlowScalar(self.peek().source(self.source))) return self.failHere(ParseError.UnexpectedToken, .indicator_in_flow);
             return self.parseScalar();
         },
         else => ParseError.UnexpectedToken,
@@ -1279,7 +1577,7 @@ fn parseFlowSequence(self: *Parser) ParserError!AST.Node.Id {
 
     self.skipFlowTrivia();
     while (self.peek().kind != .flow_seq_end) {
-        if (self.peek().kind == .end_of_file) return ParseError.UnexpectedToken;
+        if (self.peek().kind == .end_of_file) return self.failAt(ParseError.UnexpectedToken, .unclosed_flow_sequence, open.span);
 
         const item = try self.parseFlowSequenceItem();
         if (last) |prev| {
@@ -1296,7 +1594,8 @@ fn parseFlowSequence(self: *Parser) ParserError!AST.Node.Id {
                 self.skipFlowTrivia();
             },
             .flow_seq_end => {},
-            else => return ParseError.UnexpectedToken,
+            .end_of_file => return self.failAt(ParseError.UnexpectedToken, .unclosed_flow_sequence, open.span),
+            else => return self.failHere(ParseError.UnexpectedToken, .flow_sequence_separator),
         }
     }
 
@@ -1366,7 +1665,7 @@ fn parseFlowMapping(self: *Parser) ParserError!AST.Node.Id {
 
     self.skipFlowTrivia();
     while (self.peek().kind != .flow_map_end) {
-        if (self.peek().kind == .end_of_file) return ParseError.UnexpectedToken;
+        if (self.peek().kind == .end_of_file) return self.failAt(ParseError.UnexpectedToken, .unclosed_flow_mapping, open.span);
 
         // An optional `?` introduces the key explicitly; in flow either the key
         // or the value (or both) may be empty (`{? a :, : b, ?}`).
@@ -1421,7 +1720,8 @@ fn parseFlowMapping(self: *Parser) ParserError!AST.Node.Id {
                 self.skipFlowTrivia();
             },
             .flow_map_end => {},
-            else => return ParseError.UnexpectedToken,
+            .end_of_file => return self.failAt(ParseError.UnexpectedToken, .unclosed_flow_mapping, open.span),
+            else => return self.failHere(ParseError.UnexpectedToken, .flow_mapping_separator),
         }
     }
 
@@ -1463,7 +1763,7 @@ fn ensureContainer(self: *Parser, kind: ContainerKind) ParserError!AST.Node.Id {
             for (self.container_stack.items[0 .. self.container_stack.items.len - 1]) |c| {
                 if (c.kind == .mapping) has_enclosing_mapping = true;
             }
-            if (!has_enclosing_mapping) return ParseError.UnexpectedToken;
+            if (!has_enclosing_mapping) return self.failHere(ParseError.UnexpectedToken, .key_beside_sequence);
 
             try self.closePendingEmptyValue();
             const id = try self.closeContainer(self.node_spans.items[current.id].end);
@@ -1586,7 +1886,10 @@ fn finishValue(self: *Parser, value_id: AST.Node.Id) ParserError!void {
                 return;
             }
 
-            const key_id = parent.pending_key orelse return ParseError.UnexpectedToken;
+            const key_id = parent.pending_key orelse {
+                const at = self.node_spans.items[value_id].start;
+                return self.failAt(ParseError.UnexpectedToken, .continuation_after_value, .init(at, at));
+            };
             parent.pending_key = null;
             parent.explicit_awaiting_value = false;
 
@@ -2045,22 +2348,24 @@ fn getDoubleQuotedString(self: *Parser, source: []const u8) ParserError![]const 
             '_' => try appendCodepoint(&decoded, self.allocator, 0xA0),
             'L' => try appendCodepoint(&decoded, self.allocator, 0x2028),
             'P' => try appendCodepoint(&decoded, self.allocator, 0x2029),
-            'x' => {
-                const codepoint = try parseHexEscape(inner, index + 1, 2);
-                try appendCodepoint(&decoded, self.allocator, codepoint);
-                index += 2;
+            'x', 'u', 'U' => {
+                const digits: usize = switch (inner[index]) {
+                    'x' => 2,
+                    'u' => 4,
+                    else => 8,
+                };
+                const codepoint = parseHexEscape(inner, index + 1, digits) catch |err|
+                    return self.escapeFail(err, inner, index, digits);
+                appendCodepoint(&decoded, self.allocator, codepoint) catch |err|
+                    return self.escapeFail(err, inner, index, digits);
+                index += digits;
             },
-            'u' => {
-                const codepoint = try parseHexEscape(inner, index + 1, 4);
-                try appendCodepoint(&decoded, self.allocator, codepoint);
-                index += 4;
+            else => {
+                // Point at the backslash and the character it failed to escape.
+                if (self.sourceOffsetOf(inner)) |base|
+                    return self.failAt(ParseError.UnexpectedToken, .invalid_escape, .init(base + index - 1, base + index + 1));
+                return ParseError.UnexpectedToken;
             },
-            'U' => {
-                const codepoint = try parseHexEscape(inner, index + 1, 8);
-                try appendCodepoint(&decoded, self.allocator, codepoint);
-                index += 8;
-            },
-            else => return ParseError.UnexpectedToken,
         }
         index += 1;
     }
@@ -2072,6 +2377,17 @@ fn ownString(self: *Parser, string: []const u8) ParserError![]const u8 {
     errdefer self.allocator.free(string);
     try self.owned_strings.append(self.allocator, string);
     return string;
+}
+
+/// Pin a failed `\x`/`\u`/`\U` escape on its own bytes — the backslash, the
+/// letter, and up to `digits` hex digits — and hand `err` back to return.
+fn escapeFail(self: *Parser, err: ParserError, inner: []const u8, index: usize, digits: usize) ParserError {
+    if (err == error.OutOfMemory) return err;
+    if (self.sourceOffsetOf(inner)) |base| {
+        const end = @min(index + 1 + digits, inner.len);
+        self.failure = .{ .code = codeFor(err), .offset = base + index - 1, .end = base + end };
+    }
+    return err;
 }
 
 fn parseHexEscape(source: []const u8, start: usize, digits: usize) ParserError!u21 {
@@ -2252,7 +2568,7 @@ fn pendingPropOnLineOf(self: *const Parser, at: usize) bool {
 /// duplicate on one node.
 fn stashAnchor(self: *Parser, name: []const u8, span: Span) ParserError!void {
     if (self.pending_anchor) |prev| {
-        if (self.container_anchor != null) return ParseError.DuplicateProperty;
+        if (self.container_anchor != null) return self.failAt(ParseError.DuplicateProperty, .duplicate_property, span);
         self.container_anchor = prev;
         self.pending_anchor = null;
     }
@@ -2278,9 +2594,9 @@ fn validateTagHandle(self: *const Parser, text: []const u8) ParseError!void {
 }
 
 fn stashTag(self: *Parser, text: []const u8, span: Span) ParserError!void {
-    try self.validateTagHandle(text);
+    self.validateTagHandle(text) catch |err| return self.failAt(err, .undefined_tag_handle, span);
     if (self.pending_tag) |prev| {
-        if (self.container_tag != null) return ParseError.DuplicateProperty;
+        if (self.container_tag != null) return self.failAt(ParseError.DuplicateProperty, .duplicate_property, span);
         self.container_tag = prev;
         self.pending_tag = null;
     }
@@ -2412,6 +2728,97 @@ fn testParserError(input: []const u8, expected_error: anyerror) !void {
     } else |err| {
         try testing.expectEqual(expected_error, err);
     }
+}
+
+/// `input` fails with `expected_error` — the same error `parse` returns — and
+/// `parseWithReport` locates it at 1-based `line`:`column` with `code`.
+fn expectReport(input: []const u8, expected_error: anyerror, code: Code, line: usize, column: usize) !void {
+    try testParserError(input, expected_error);
+    var report: Report = .{};
+    if (parseWithReport(testing.allocator, input, .v1_2_2, &report)) |doc| {
+        defer doc.deinit(testing.allocator);
+        return error.TestExpectedError;
+    } else |err| try testing.expectEqual(expected_error, err);
+    const d = report.diag orelse return error.TestExpectedDiagnostic;
+    errdefer std.debug.print("input {f}: got {t} at {d}:{d}\n", .{ std.zig.fmtString(input), d.code, d.locate(input).line, d.locate(input).column });
+    try testing.expectEqual(code, d.code);
+    const loc = d.locate(input);
+    try testing.expectEqual(line, loc.line);
+    try testing.expectEqual(column, loc.column);
+}
+
+test "parseWithReport locates each class of YAML error" {
+    // Flow collections: the unclosed one is reported at its opener, however
+    // far the end of the document is from it.
+    try expectReport("a: [\n", error.UnexpectedToken, .unclosed_flow_sequence, 1, 4);
+    try expectReport("x: [a, b\n", error.UnexpectedToken, .unclosed_flow_sequence, 1, 4);
+    try expectReport("a: {b: 1\n", error.UnexpectedToken, .unclosed_flow_mapping, 1, 4);
+    try expectReport("outer:\n  inner: [1, {a: 2}\n", error.UnexpectedToken, .unclosed_flow_sequence, 2, 10);
+    try expectReport("a: [1, 2\nb: 3\n", error.UnexpectedToken, .unclosed_flow_sequence, 1, 4);
+    // An unclosed one followed by a line shallower than the one it opened
+    // on: the tokenizer notices first, at the line that cannot continue it.
+    try expectReport("outer:\n  inner: [1, {a: 2}\nnext: 3\n", error.InvalidIndent, .flow_indent, 3, 1);
+    try expectReport("x: [a]]\n", error.UnexpectedToken, .unmatched_flow_close, 1, 7);
+    try expectReport("]\n", error.UnexpectedToken, .unmatched_flow_close, 1, 1);
+    try expectReport("x: [\"b\" c]\n", error.UnexpectedToken, .flow_sequence_separator, 1, 9);
+    try expectReport("x: {a: \"1\" b: 2}\n", error.UnexpectedToken, .flow_mapping_separator, 1, 12);
+    try expectReport("a: [- x]\n", error.UnexpectedToken, .indicator_in_flow, 1, 5);
+    try expectReport("flow: [a,\nb]\n", error.InvalidIndent, .flow_indent, 2, 1);
+
+    // Indentation and tabs.
+    try expectReport("a:\n  b: 1\n c: 2\n", error.InvalidIndent, .invalid_indent, 3, 2);
+    try expectReport("a:\n\tb: 1\n", error.TabIndent, .tab_indent, 2, 1);
+    try expectReport("- a\n\t- b\n", error.TabIndent, .tab_indent, 2, 1);
+    // A tab the tokenizer let through as separation, where the parser then
+    // finds nothing that fits: the tab is still what the report names.
+    try expectReport("foo: |\n\t bar\n", error.UnexpectedToken, .tab_indent, 2, 1);
+    try expectReport("a: b\n  c: d\n", error.UnexpectedToken, .continuation_after_value, 2, 3);
+    try expectReport("key:\nvalue\n", error.UnexpectedToken, .stray_value, 2, 1);
+    try expectReport("- item1\n- item2\ninvalid: x\n", error.UnexpectedToken, .key_beside_sequence, 3, 1);
+
+    // One line holding more than one node.
+    try expectReport("a: b: c\n", error.UnexpectedToken, .nested_mapping_on_line, 1, 5);
+    try expectReport("key: \"v\" no key: nor value\n", error.UnexpectedToken, .trailing_content, 1, 10);
+    try expectReport("key: - a\n", error.UnexpectedToken, .sequence_on_key_line, 1, 6);
+    try expectReport("--- a: b\n", error.UnexpectedToken, .block_on_document_start_line, 1, 5);
+
+    // Scalars: the quote that never closes, the escape that is not one.
+    try expectReport("bad: \"abc\n", error.UnclosedString, .unclosed_string, 1, 6);
+    try expectReport("bad: 'abc\n", error.UnclosedString, .unclosed_string, 1, 6);
+    try expectReport("bad: \"ok \\c\"\n", error.UnexpectedToken, .invalid_escape, 1, 10);
+    try expectReport("bad: \"\\uD800\"\n", error.InvalidUnicodeEscape, .invalid_unicode_escape, 1, 7);
+    try expectReport("a: |0\n  x\n", error.InvalidBlockHeader, .invalid_block_header, 1, 4);
+
+    // Properties, aliases, directives, documents.
+    try expectReport("a: 1\nb: *missing\n", error.UndefinedAlias, .undefined_alias, 2, 4);
+    try expectReport("!!str !!int x\n", error.DuplicateProperty, .duplicate_property, 1, 1);
+    try expectReport("--- !prefix!A\na: b\n", error.UndefinedTagHandle, .undefined_tag_handle, 1, 5);
+    try expectReport("a: !<x y\n", error.InvalidTag, .invalid_tag, 1, 4);
+    try expectReport("a: &\n", error.InvalidAnchor, .invalid_anchor, 1, 4);
+    try expectReport("a: *\n", error.InvalidAlias, .invalid_alias, 1, 4);
+    try expectReport("%YAML 1.2 foo\n---\n", error.InvalidDirective, .invalid_directive, 1, 1);
+    try expectReport("%YAML 1.2\na: 1\n", error.InvalidDirective, .missing_document_start, 2, 1);
+    try expectReport("a: 1\n---\nb: 2\n", error.MultipleDocuments, .multiple_documents, 2, 1);
+}
+
+test "parseWithReport underlines the offending bytes where it knows them" {
+    var report: Report = .{};
+    const src = "bad: \"x \\q y\"\n";
+    try testing.expectError(error.UnexpectedToken, parseWithReport(testing.allocator, src, .v1_2_2, &report));
+    const d = report.diag.?;
+    try testing.expectEqualStrings("\\q", src[d.offset..d.end.?]);
+
+    report = .{};
+    const tag = "a: 1\nb: !e!x 2\n";
+    try testing.expectError(error.UndefinedTagHandle, parseWithReport(testing.allocator, tag, .v1_2_2, &report));
+    try testing.expectEqualStrings("!e!x", tag[report.diag.?.offset..report.diag.?.end.?]);
+}
+
+test "parseWithReport leaves the report empty on a clean parse" {
+    var report: Report = .{};
+    const doc = try parseWithReport(testing.allocator, "a: [1, 2]\nb: {c: d}\n", .v1_2_2, &report);
+    defer doc.deinit(testing.allocator);
+    try testing.expect(report.diag == null);
 }
 
 test "yaml tag: attaches to mapping value and extends span left" {

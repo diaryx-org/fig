@@ -43,7 +43,14 @@ pub const Kind = enum {
     }
 };
 
-const TokenizeError = error{ InvalidIndent, TabIndent, InvalidBlockHeader, InvalidTag, InvalidAnchor, InvalidAlias, OutOfMemory, UnclosedString };
+pub const TokenizeError = error{ InvalidIndent, TabIndent, InvalidBlockHeader, InvalidTag, InvalidAnchor, InvalidAlias, OutOfMemory, UnclosedString };
+
+/// Where a tokenize failure fired, recorded by `fail` at the site that
+/// returns it: the byte the report points at, and — when the offender has
+/// an extent worth underlining — where it ends. The tokenizer reads a whole
+/// line before it judges it, so `self.i` has usually moved on by the time an
+/// error returns; this is the only record of where the problem was.
+pub const Failure = struct { offset: usize, end: ?usize = null };
 
 const Line = struct {
     start: usize,
@@ -65,6 +72,9 @@ fn trimCR(source: []const u8, start: usize, nl: usize) usize {
 
 tokens: std.ArrayList(Token) = .empty,
 i: usize = 0,
+/// The location of the error `tokenize` returned, if it returned one (see
+/// `Failure`). Null after a clean tokenize, and after `OutOfMemory`.
+failure: ?Failure = null,
 pending_block: ?PendingBlock = null,
 flow_depth: usize = 0,
 // Indentation of the line on which the outermost flow collection opened, and
@@ -142,7 +152,7 @@ pub fn tokenize(self: *Tokenizer) ![]const Token {
             const indent = line.content_start - line.start;
             const first = self.source[line.content_start];
             if (!self.flow_root and first != ']' and first != '}' and indent <= self.flow_open_indent) {
-                return TokenizeError.InvalidIndent;
+                return self.fail(TokenizeError.InvalidIndent, line.content_start, null);
             }
             try self.tokenizeLineContent(line);
             if (self.i == line.newline_end and line.newline_end > line.end) {
@@ -194,7 +204,7 @@ pub fn tokenize(self: *Tokenizer) ![]const Token {
                 try indent_stack.append(self.allocator, .{ .indent = indent, .prop_only = prop_only });
                 current_indent = indent;
             }
-            if (indent != current_indent) return TokenizeError.InvalidIndent;
+            if (indent != current_indent) return self.fail(TokenizeError.InvalidIndent, line.content_start, null);
         }
 
         // Record the content column of a block-sequence entry on its level, so a
@@ -254,7 +264,7 @@ pub fn tokenize(self: *Tokenizer) ![]const Token {
         // A tab in the indentation of a block mapping key or sequence entry is
         // using the tab as structural indentation, which YAML forbids. (A tab
         // before plain-scalar content is separation and is allowed.)
-        if (self.tabIndentedStructure(line)) return TokenizeError.TabIndent;
+        if (self.tabIndentedStructure(line)) return self.fail(TokenizeError.TabIndent, line.content_start, null);
 
         try self.tokenizeLineContent(line);
         if (self.i == line.newline_end) {
@@ -464,7 +474,7 @@ fn tokenizeLineContent(self: *Tokenizer, line_in: Line) TokenizeError!void {
                     // At value start (outside flow) a `|`/`>` can only be a block
                     // header; one with a malformed indicator (`|0`, `|10`, doubled
                     // chomping) is invalid — a plain scalar may not begin with it.
-                    return TokenizeError.InvalidBlockHeader;
+                    return self.fail(TokenizeError.InvalidBlockHeader, cursor, nonBlankEnd(self.source, cursor, line.end));
                 }
                 try self.handlePlain(cursor, &line, &cursor, &at_content_start);
             },
@@ -477,7 +487,7 @@ fn tokenizeLineContent(self: *Tokenizer, line_in: Line) TokenizeError!void {
                     // A block sequence `-` separated from a preceding `?`/`:` by a
                     // tab uses the tab as the new collection's indentation, which
                     // is forbidden (`?\t-`, `:\t-`).
-                    if (cursor > line.content_start and self.source[cursor - 1] == '\t') return TokenizeError.TabIndent;
+                    if (cursor > line.content_start and self.source[cursor - 1] == '\t') return self.fail(TokenizeError.TabIndent, cursor - 1, null);
                     // A block scalar that is this sequence entry's value (`- |2`)
                     // indents relative to the dash's column.
                     block_owner_indent = cursor - line.start;
@@ -515,11 +525,11 @@ fn tokenizeLineContent(self: *Tokenizer, line_in: Line) TokenizeError!void {
                         // `!a{}b` (a flow indicator butted onto the tag in block
                         // context) are malformed.
                         if (!tagSeparated(self.source, end, line.end, self.flow_depth > 0))
-                            return TokenizeError.InvalidTag;
+                            return self.fail(TokenizeError.InvalidTag, cursor, nonBlankEnd(self.source, cursor, line.end));
                         try self.addToken(.init(.tag, .init(cursor, end)));
                         cursor = end;
                     } else {
-                        return TokenizeError.InvalidTag;
+                        return self.fail(TokenizeError.InvalidTag, cursor, nonBlankEnd(self.source, cursor, line.end));
                     }
                 } else {
                     try self.handlePlain(cursor, &line, &cursor, &at_content_start);
@@ -533,7 +543,7 @@ fn tokenizeLineContent(self: *Tokenizer, line_in: Line) TokenizeError!void {
                 if (self.flow_depth > 0 or at_content_start) {
                     const end = anchorNameEnd(self.source, cursor + 1, line.end);
                     if (end == cursor + 1 or !tagSeparated(self.source, end, line.end, self.flow_depth > 0))
-                        return TokenizeError.InvalidAnchor;
+                        return self.fail(TokenizeError.InvalidAnchor, cursor, nonBlankEnd(self.source, cursor, line.end));
                     try self.addToken(.init(.anchor, .init(cursor, end)));
                     cursor = end;
                 } else {
@@ -547,7 +557,7 @@ fn tokenizeLineContent(self: *Tokenizer, line_in: Line) TokenizeError!void {
                 if (self.flow_depth > 0 or at_content_start) {
                     const end = anchorNameEnd(self.source, cursor + 1, line.end);
                     if (end == cursor + 1 or !tagSeparated(self.source, end, line.end, self.flow_depth > 0))
-                        return TokenizeError.InvalidAlias;
+                        return self.fail(TokenizeError.InvalidAlias, cursor, nonBlankEnd(self.source, cursor, line.end));
                     try self.addToken(.init(.alias, .init(cursor, end)));
                     cursor = end;
                     at_content_start = false;
@@ -988,6 +998,8 @@ fn consumeBlockBody(self: *Tokenizer, info: PendingBlock) TokenizeError!void {
     // Smallest column at which a tab appears in a leading empty line. A tab is
     // invalid only inside the indentation zone, i.e. before the content indent.
     var min_blank_tab: ?usize = null;
+    // Where that tab is, for the report.
+    var blank_tab_at: ?usize = null;
     var last_end = body_start;
 
     while (self.i < self.source.len) {
@@ -1016,12 +1028,15 @@ fn consumeBlockBody(self: *Tokenizer, info: PendingBlock) TokenizeError!void {
                 // fixes the auto-detected content indent. A tab inside the
                 // indentation zone (`foo: |\n\t...`) stays an error.
                 if (ws > spaces and (info.root or indent > info.header_indent)) {
-                    if (max_leading_blank > indent) return TokenizeError.InvalidIndent;
+                    if (max_leading_blank > indent) return self.fail(TokenizeError.InvalidIndent, spaces, null);
                     content_indent = indent;
                 } else {
                     if (ws > spaces) {
                         const tab_col = spaces - line_start;
-                        if (min_blank_tab == null or tab_col < min_blank_tab.?) min_blank_tab = tab_col;
+                        if (min_blank_tab == null or tab_col < min_blank_tab.?) {
+                            min_blank_tab = tab_col;
+                            blank_tab_at = spaces;
+                        }
                     }
                     if (indent > max_leading_blank) max_leading_blank = indent;
                 }
@@ -1035,8 +1050,8 @@ fn consumeBlockBody(self: *Tokenizer, info: PendingBlock) TokenizeError!void {
             } else {
                 // A root block scalar's content may sit at column 0.
                 if (!info.root and indent <= info.header_indent) break;
-                if (max_leading_blank > indent) return TokenizeError.InvalidIndent;
-                if (min_blank_tab) |col| if (col < indent) return TokenizeError.TabIndent;
+                if (max_leading_blank > indent) return self.fail(TokenizeError.InvalidIndent, spaces, null);
+                if (min_blank_tab) |col| if (col < indent) return self.fail(TokenizeError.TabIndent, blank_tab_at.?, null);
                 content_indent = indent;
             }
         }
@@ -1047,7 +1062,7 @@ fn consumeBlockBody(self: *Tokenizer, info: PendingBlock) TokenizeError!void {
 
     // An empty block scalar whose only lines carried tabs has tabs in the
     // indentation zone (there is no content to measure against).
-    if (content_indent == null and min_blank_tab != null) return TokenizeError.TabIndent;
+    if (content_indent == null and min_blank_tab != null) return self.fail(TokenizeError.TabIndent, blank_tab_at.?, null);
 
     if (last_end > body_start) {
         try self.addToken(.init(.block_scalar, .init(body_start, last_end)));
@@ -1059,7 +1074,7 @@ fn consumeBlockBody(self: *Tokenizer, info: PendingBlock) TokenizeError!void {
 // continuation line: it may not be a document marker, carry a tab in its
 // indentation, or — when `floor` is set — be indented no more than `floor`.
 // The parser folds the captured line breaks when it decodes the string.
-fn multilineQuotedEnd(self: *const Tokenizer, start: usize, floor: ?usize) TokenizeError!usize {
+fn multilineQuotedEnd(self: *Tokenizer, start: usize, floor: ?usize) TokenizeError!usize {
     const source = self.source;
     const double = source[start] == '"';
     var i = start + 1;
@@ -1067,7 +1082,7 @@ fn multilineQuotedEnd(self: *const Tokenizer, start: usize, floor: ?usize) Token
         const c = source[i];
         if (c == '\n') {
             const line_start = i + 1;
-            if (self.docMarkerAt(line_start)) return TokenizeError.UnclosedString;
+            if (self.docMarkerAt(line_start)) return self.fail(TokenizeError.UnclosedString, start, null);
             var spaces = line_start;
             while (spaces < source.len and source[spaces] == ' ') spaces += 1;
             var ws = line_start;
@@ -1078,7 +1093,7 @@ fn multilineQuotedEnd(self: *const Tokenizer, start: usize, floor: ?usize) Token
             if (!blank) {
                 // Indentation is measured in spaces; a tab after them is
                 // separation. Under-indentation (too few spaces) is the error.
-                if (floor) |f| if (spaces - line_start <= f) return TokenizeError.InvalidIndent;
+                if (floor) |f| if (spaces - line_start <= f) return self.fail(TokenizeError.InvalidIndent, spaces, null);
             }
             i += 1;
             continue;
@@ -1102,7 +1117,22 @@ fn multilineQuotedEnd(self: *const Tokenizer, start: usize, floor: ?usize) Token
         }
         i += 1;
     }
-    return TokenizeError.UnclosedString;
+    return self.fail(TokenizeError.UnclosedString, start, null);
+}
+
+/// Record where `err` fired (see `Failure`) and hand it back to return.
+fn fail(self: *Tokenizer, err: TokenizeError, offset: usize, end: ?usize) TokenizeError {
+    self.failure = .{ .offset = offset, .end = end };
+    return err;
+}
+
+/// The end of the run of non-blank bytes starting at `start` (bounded by
+/// `limit`) — the extent a report underlines for a malformed tag, anchor, or
+/// block header.
+fn nonBlankEnd(source: []const u8, start: usize, limit: usize) usize {
+    var i = start;
+    while (i < limit and !isBlank(source[i])) i += 1;
+    return i;
 }
 
 /// True when a document marker (`---`/`...`) begins at column-0 position `pos`.

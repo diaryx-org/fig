@@ -168,6 +168,7 @@ const reporting = .{
     .{ "dotenv", L.DOTENV, "dotenv authoring" },
     .{ "properties", L.PROPERTIES, ".properties authoring" },
     .{ "nestedtext", L.NESTEDTEXT, "NestedText authoring" },
+    .{ "yaml", L.YAML, "YAML authoring" },
 };
 
 /// A language's `Parser.Report` when it is compiled in, `void` when gated out.
@@ -196,6 +197,7 @@ pub const Reports = struct {
     dotenv: ReportOf(L.DOTENV) = emptyReport(L.DOTENV),
     properties: ReportOf(L.PROPERTIES) = emptyReport(L.PROPERTIES),
     nestedtext: ReportOf(L.NESTEDTEXT) = emptyReport(L.NESTEDTEXT),
+    yaml: ReportOf(L.YAML) = emptyReport(L.YAML),
     /// A runtime language's failure: already rendered, since a helper hands
     /// over a message and an offset rather than a code this file could
     /// describe. `short_label` is the language's name.

@@ -77,6 +77,22 @@ pub const embed_archetypes =
     \\
 ;
 
+/// How `edit`/`set`/`insert` read a value argument (`value_arg.zig`).
+pub const value_reading =
+    \\  <value> is read as a fig value and written in the file's own syntax,
+    \\    so it means the same thing in every format: 5, 2.5, true, null and
+    \\    2026-09-22 are typed; hello, hello world, Yes and 007 are strings;
+    \\    [1, 2] and {{a = 1, b = [x]}} are a sequence and a mapping; '"5"' is
+    \\    the string 5. An empty value, one with a line break or with space
+    \\    at either end, and one whose # would start a comment are strings
+    \\    as written.
+    \\  --string: take <value> as a string, whatever it looks like
+    \\    (`set f.json version --string 1.10`)
+    \\  --raw: splice <value> verbatim as source text in the file's format,
+    \\    for what only it can spell (a YAML anchor, a TOML local datetime)
+    \\
+;
+
 pub const title_string = "\n=========\n   FIG\n=========\n\n";
 
 pub const Help = struct {
@@ -105,6 +121,23 @@ pub const Help = struct {
             \\a language configured in languages.figl rather than by extension
             \\(`{s} lang --help`).
             \\
+            \\Arguments are read strictly: a word beginning with - that is not one
+            \\of the action's flags, or one more argument than the action takes,
+            \\is a usage error (exit 2). `--` ends the flags, so a file or value
+            \\that begins with - goes after it (`{s} get -- -x.yaml`); `-` alone is
+            \\stdin, and a negative number (-5, -2.5) is a value wherever it
+            \\stands. fig has no bare -inf or nan (they are strings), so
+            \\-inf reads as a flag.
+            \\
+            \\Exit status, for every action:
+            \\  0  done (for `fmt --dry-run`/`--diff` and `check`: nothing to
+            \\     change, everything parses)
+            \\  1  the operation failed on the document: it does not parse, a
+            \\     path or file is missing, an edit was refused, `fmt --dry-run`
+            \\     found a change, `--strict` found a warning
+            \\  2  the command line is wrong: an unknown action or flag, a missing
+            \\     or surplus argument, a path or value that does not parse
+            \\
             \\Any other action is handed to a `fig-<action>` program on your PATH,
             \\the way git does: `{s} schema lint f.json` runs `fig-schema lint f.json`
             \\with every argument after `schema` passed through untouched.
@@ -117,17 +150,18 @@ pub const Help = struct {
             \\For information on action options, pass --help or -h
             \\to the action you would like to learn about.
             \\
-        , .{ binary_name, binary_name, binary_name });
+        , .{ binary_name, binary_name, binary_name, binary_name });
         try term.writer.flush();
     }
 
     pub fn edit(term: *Io.Terminal, binary_name: []const u8) !void {
         try term.writer.print(
-            \\Usage: {s} edit [--key] <file> <path> <replacement>
-            \\  --key: edit the object key at path instead of the value
-            \\  replacement: a literal in the target format (YAML/TOML/ZON/figl
-            \\    verbatim; JSON is quoted as a string). A string therefore needs
-            \\    its own quotes, INSIDE the shell's: '"v2.1.0"'
+            \\Usage: {s} edit [--string | --raw] <file> <path> <value>
+            \\       {s} edit --key <file> <path> <name>
+            \\  Replaces the value at <path>.
+            \\  --key: rename the key at <path> to <name> instead
+            \\
+        ++ value_reading ++
             \\  path format: dot syntax for keys, bracket syntax for indices
             \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',
             \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
@@ -137,14 +171,14 @@ pub const Help = struct {
             \\    frontmatter, YAML endmatter) is sniffed from the file,
             \\    defaulting to YAML when none is found
             \\
-        , .{binary_name});
+        , .{ binary_name, binary_name });
         try term.writer.flush();
     }
 
     pub fn set(term: *Io.Terminal, binary_name: []const u8) !void {
         try term.writer.print(
-            \\Usage: {s} set [--embed <archetype>] <file> <path> <value>
-            \\       {s} set [--embed <archetype>] --seq <file> <path> <item>...
+            \\Usage: {s} set [--embed <archetype>] [--string | --raw] <file> <path> <value>
+            \\       {s} set [--embed <archetype>] [--string | --raw] --seq <file> <path> <item>...
             \\  Upsert: replace the value at <path>, or create it when absent —
             \\    one verb for `edit`+`insert`. Missing parent maps along <path>
             \\    are auto-created (`mkdir -p`); a segment that is an existing
@@ -166,9 +200,10 @@ pub const Help = struct {
             \\    <value> — unless one would go at the top of a host that already
             \\    has frontmatter of another kind, which is refused (`{s} convert
             \\    --to-embed` changes it).
-            \\  value: a literal in the target format (YAML/TOML/ZON verbatim; JSON
-            \\    is quoted as a string, as with `edit`). A created key is rendered
-            \\    in the target syntax too, so new keys work for strict JSON.
+            \\
+        ++ value_reading ++
+            \\    A created key is written in the file's syntax too, so new keys
+            \\    work for strict JSON. Each --seq <item> is read the same way.
             \\  path format: dot syntax for keys, bracket syntax for indices
             \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',
             \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
@@ -183,7 +218,7 @@ pub const Help = struct {
 
     pub fn insert(term: *Io.Terminal, binary_name: []const u8) !void {
         try term.writer.print(
-            \\Usage: {s} insert <file> <path> <value>
+            \\Usage: {s} insert [--string | --raw] <file> <path> <value>
             \\  Adds a new entry. The last path segment names the slot to create:
             \\    a.b.newkey   -> insert key `newkey` into the mapping at a.b
             \\    a.list[0]    -> prepend <value> as the first item of a.list
@@ -191,8 +226,8 @@ pub const Help = struct {
             \\  An empty parent targets the root container, so the document's own
             \\    root (mapping vs list) decides which form applies — not the format.
             \\  Mid-sequence insert (e.g. list[2]) is not yet supported.
-            \\  value: a literal in the file's format (YAML/TOML/ZON verbatim); for
-            \\    JSON it is quoted as a string, as with `edit`.
+            \\
+        ++ value_reading ++
             \\  path format: dot syntax for keys, bracket syntax for indices.
             \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',
             \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
@@ -234,8 +269,8 @@ pub const Help = struct {
             \\  --delete: remove the targeted comment instead of adding it; <text>
             \\    is then omitted (a no-op when there is no such comment)
             \\  --get: print the targeted comment to stdout (markers stripped) and
-            \\    make no change; <text> is then omitted (prints a blank line when
-            \\    there is no such comment)
+            \\    make no change; <text> is then omitted (exits 1, printing
+            \\    nothing, when there is no such comment)
             \\  the comment marker is added for you: # for YAML/TOML, // for
             \\    JSONC/JSON5/ZON. Strict JSON has no comments (rejected).
             \\  <text> may span multiple lines (leading only): one comment line each.
@@ -257,6 +292,11 @@ pub const Help = struct {
             \\  -i, --input: input format of file (defaults to the file extension,
             \\    then to sniffing the file's contents if the extension is unknown)
             \\  -o, --output:   output format (defaults to the input format)
+            \\  [path]: a scalar there prints as its text and a newline — a string
+            \\    unquoted, anything else as fig spells it (42, true, null) — in
+            \\    every format, so $(fig get f name) is the value. A container
+            \\    prints as a document. With -o, the fragment prints in that
+            \\    format's own spelling (-o json: "hi").
             \\  <format> is one of these, or a language configured in
             \\    languages.figl (`{s} lang list`):
             \\
@@ -320,7 +360,7 @@ pub const Help = struct {
             \\    conversions, and fig authoring lints (`Yes`-style strings, a
             \\    likely missing comma in a flow value, indent/marker-count
             \\    disagreement, ...).
-            \\  --strict: treat any warning as an error (exit non-zero).
+            \\  --strict: treat any warning as an error (exit 1).
             \\  --embed <archetype>: read an embedded region of a host file.
             \\    Without this flag, a `.md`/`.markdown` file has its archetype
             \\    sniffed from the content (falling back to `frontmatter`/YAML
@@ -394,7 +434,7 @@ pub const Help = struct {
             \\    stays inline, a wider one expands to a [section] / wrapped array.
             \\  --strip-comments: drop comments instead of re-emitting them.
             \\  -q, --quiet, --no-warnings: suppress warnings on stderr.
-            \\  --strict: treat any warning as an error (exit non-zero, no write).
+            \\  --strict: treat any warning as an error (exit 1, no write).
             \\  --embed <archetype>: reformat an embedded region of a host file
             \\    instead of the whole file. Without this flag, a `.md`/`.markdown`
             \\    file has its archetype sniffed from the content (falling back to
@@ -454,7 +494,7 @@ pub const Help = struct {
             \\  --lax-tags: drop unknown/custom YAML tags instead of erroring, when
             \\    converting away from YAML.
             \\  -q, --quiet, --no-warnings: suppress warnings on stderr.
-            \\  --strict: treat any warning as an error (exit non-zero, no write).
+            \\  --strict: treat any warning as an error (exit 1, no write).
             \\  reads stdin when <file> is `-`, but only without --write.
             \\
         , .{ binary_name, binary_name });

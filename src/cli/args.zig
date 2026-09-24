@@ -130,6 +130,18 @@ pub fn parsePath(allocator: std.mem.Allocator, path: []const u8) ![]fig.AST.Path
     return path_in_progress.toOwnedSlice(allocator);
 }
 
+/// `parsePath` for a path on the command line: one that does not parse is a
+/// usage error (exit 2) naming it, rather than an error name escaping `main`.
+fn pathArg(allocator: std.mem.Allocator, path: []const u8) ArgError![]fig.AST.PathSegment {
+    return parsePath(allocator, path) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            std.log.scoped(.parseConfig).err("`{s}` is not a path: keys are separated by `.`, an index is `[n]` (or `[-]` for the end), and a key holding `.` or `[` is quoted: a.\"b.c\"\n", .{path});
+            return ArgError.InvalidPath;
+        },
+    };
+}
+
 /// The key quoted at `path[i.*]` — `'…'` verbatim, `"…"` with JSON's
 /// escapes decoded — leaving `i.*` just past the closing quote.
 fn quotedKey(allocator: std.mem.Allocator, path: []const u8, i: *usize) ![]const u8 {
@@ -478,13 +490,121 @@ const Args = struct {
     }
 };
 
+/// An action's positional arguments, read strictly. An argument that begins
+/// with `-` and is none of the action's flags is a usage error, not a file
+/// name; `--` ends the flags, so everything after it is a positional (a file
+/// really named `-x` is `-- -x`). `-` alone (stdin) and a negative number
+/// (`fig set f.yaml n -5`) are positionals wherever they stand.
+///
+/// Each action's loop asks `rest` first, so `--` and what follows it never
+/// reach the flag comparisons, and hands `add` whatever no flag matched.
+const Positionals = struct {
+    items: std.ArrayList([]const u8) = .empty,
+    /// Set once `--` is seen.
+    flags_done: bool = false,
+
+    /// True when `arg` is taken here without being read as a flag: `--`
+    /// itself, or anything after it.
+    fn rest(self: *Positionals, allocator: std.mem.Allocator, arg: []const u8) ArgError!bool {
+        if (self.flags_done) {
+            try self.items.append(allocator, arg);
+            return true;
+        }
+        if (std.mem.eql(u8, arg, "--")) {
+            self.flags_done = true;
+            return true;
+        }
+        return false;
+    }
+
+    /// Take `arg`, which matched none of `action`'s flags, as a positional.
+    /// False, having said so, when it is spelled like a flag.
+    fn add(self: *Positionals, allocator: std.mem.Allocator, action: []const u8, arg: []const u8) ArgError!bool {
+        if (spelledAsFlag(arg)) {
+            std.log.scoped(.parseConfig).err("{s} has no flag {s} (a file or value that begins with `-` goes after `--`)\n", .{ action, arg });
+            return false;
+        }
+        try self.items.append(allocator, arg);
+        return true;
+    }
+
+    /// False, having said so, when there are more than `max` positionals.
+    fn atMost(self: *const Positionals, action: []const u8, max: usize, what: []const u8) bool {
+        if (self.items.items.len <= max) return true;
+        std.log.scoped(.parseConfig).err("{s} takes {s}; unexpected argument: {s}\n", .{ action, what, self.items.items[max] });
+        return false;
+    }
+
+    fn deinit(self: *Positionals, allocator: std.mem.Allocator) void {
+        self.items.deinit(allocator);
+    }
+};
+
+/// Whether `flag` takes the next argument as its value in `action` — every
+/// flag of every action that does, for `parseConfig`'s `--lang` pre-pass,
+/// which reads the line before any action does. `--seq` takes a strategy in
+/// `patch` and nothing in `set`.
+fn takesValue(flag: []const u8, action: []const u8) bool {
+    const valued = [_][]const u8{
+        "--lang",     "--input",       "-i",            "--output",  "-o",
+        "--embed",    "--to-embed",    "--indent",      "--width",   "--gron-root",
+        "--gron-sep", "--gron-term",   "--at",          "--from",    "--delete",
+        "--comments", "--patch-input", "--patch-embed", "--against", "--spec",
+        "-s",
+    };
+    for (valued) |v| if (std.mem.eql(u8, flag, v)) return !(std.mem.eql(u8, flag, "--delete") and !isPatch(action));
+    return std.mem.eql(u8, flag, "--seq") and isPatch(action);
+}
+
+fn isPatch(action: []const u8) bool {
+    return std.mem.eql(u8, action, "patch") or std.mem.eql(u8, action, "p");
+}
+
+/// Whether `arg` reads as a flag: a leading `-` with something after it
+/// that does not start a number. `-inf` and `-nan` are flags here: fig has
+/// no bare non-finite float (docs/spec.md § 5.3 — bare `-inf` is the string
+/// it spells), so taking one as a value would quietly write a string where
+/// a float was meant. `-- -inf` passes the string on purpose.
+fn spelledAsFlag(arg: []const u8) bool {
+    if (arg.len < 2 or arg[0] != '-') return false;
+    return !(std.ascii.isDigit(arg[1]) or arg[1] == '.');
+}
+
+/// Take `arg` as `--string`/`--raw` into `mode`, refusing the pair: true when
+/// it was one of them. `null` in `mode` is "not given" (the default reading).
+fn valueModeFlag(action: []const u8, arg: []const u8, mode: *?types.ValueMode, usage: ArgError) ArgError!bool {
+    const this: types.ValueMode = if (std.mem.eql(u8, arg, "--string"))
+        .string
+    else if (std.mem.eql(u8, arg, "--raw"))
+        .raw
+    else
+        return false;
+    if (mode.*) |prev| if (prev != this) {
+        std.log.scoped(.parseConfig).err("{s}: --string and --raw are two readings of the value; pass one.\n", .{action});
+        return usage;
+    };
+    mode.* = this;
+    return true;
+}
+
+fn isHelp(arg: []const u8) bool {
+    return std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h");
+}
+
 pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliConfig {
     const log = std.log.scoped(.parseConfig);
     var config = CliConfig{};
 
     var collected: std.ArrayList([]const u8) = .empty;
+    // Past `--` every argument is a positional, `--lang` included — unless
+    // that `--` is the value of the flag before it (`--gron-sep --`), which
+    // ends nothing.
+    var flags_done = false;
+    var prev: []const u8 = "";
     while (args_in.next()) |arg| {
-        if (std.mem.eql(u8, arg, "--lang")) {
+        defer prev = arg;
+        if (std.mem.eql(u8, arg, "--") and !takesValue(prev, if (collected.items.len > 1) collected.items[1] else "")) flags_done = true;
+        if (!flags_done and std.mem.eql(u8, arg, "--lang")) {
             const name = args_in.next() orelse {
                 log.err("Missing language name after --lang\n", .{});
                 return ArgError.UnsupportedFileFormat;
@@ -520,45 +640,54 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         config.action = .edit;
 
         var edit_key = false;
-        var file_path_arg = args.next();
-        if (file_path_arg) |arg| {
-            if (std.mem.eql(u8, arg, "--key")) {
+        var value_mode: ?types.ValueMode = null;
+        var requested_help = false;
+        var positionals: Positionals = .{};
+        defer positionals.deinit(allocator);
+        while (args.next()) |arg| {
+            if (try positionals.rest(allocator, arg)) continue;
+            if (isHelp(arg)) {
+                requested_help = true;
+            } else if (std.mem.eql(u8, arg, "--key")) {
                 edit_key = true;
-                file_path_arg = args.next();
-            }
+            } else if (try valueModeFlag("edit", arg, &value_mode, ArgError.MissingEditArgument)) {
+                // taken
+            } else if (!try positionals.add(allocator, "edit", arg)) return ArgError.MissingEditArgument;
         }
-        const file_path = file_path_arg orelse {
-            log.err("No file provided.\n", .{});
+        if (edit_key and value_mode != null and !requested_help) {
+            log.err("edit --key renames a key; --string and --raw read a value.\n", .{});
             return ArgError.MissingEditArgument;
-        };
+        }
+        const pos = positionals.items.items;
 
-        const requested_help = std.mem.eql(u8, file_path, "--help") or std.mem.eql(u8, file_path, "-h");
-
+        var file_path: []const u8 = "";
         var path: []fig.AST.PathSegment = &.{};
         var replacement: []const u8 = "";
         if (!requested_help) {
-            const path_str = args.next() orelse {
-                log.err("No path provided.\n", .{});
+            if (pos.len < 3) {
+                log.err("{s}\n", .{switch (pos.len) {
+                    0 => "No file provided.",
+                    1 => "No path provided.",
+                    else => "No replacement provided.",
+                }});
                 return ArgError.MissingEditArgument;
-            };
-            path = try parsePath(allocator, path_str);
-
-            replacement = args.next() orelse {
-                log.err("No replacement provided.\n", .{});
-                return ArgError.MissingEditArgument;
-            };
+            }
+            if (!positionals.atMost("edit", 3, "a file, a path and a value")) return ArgError.MissingEditArgument;
+            file_path = pos[0];
+            path = try pathArg(allocator, pos[1]);
+            replacement = pos[2];
         }
 
-        // Skip extension detection when the user only asked for help (the
-        // "file" is then `--help`, which has no real format). An unrecognized
-        // extension is not an error here: `detect = true` defers to content
-        // sniffing in the handler.
+        // Skip extension detection when the user only asked for help. An
+        // unrecognized extension is not an error here: `detect = true`
+        // defers to content sniffing in the handler.
         const ext = if (requested_help) null else detectLanguageFromFileEnding(file_path);
         config.options = .{ .edit = .{
             .file = file_path,
             .path = path,
             .replacement = replacement,
             .key = edit_key,
+            .value_mode = value_mode orelse .fig,
             .requested_help = requested_help,
             .format = if (ext) |d| d.format else .json,
             .detect = !requested_help and ext == null,
@@ -572,16 +701,20 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         // Positionals follow: file, path, then the value (or, with `--seq`, the
         // sequence items).
         var seq = false;
+        var value_mode: ?types.ValueMode = null;
         var embed_override: ?fig.Embed.Type = null;
         var requested_help = false;
-        var positionals: std.ArrayList([]const u8) = .empty;
+        var positionals: Positionals = .{};
         defer positionals.deinit(allocator);
 
         while (args.next()) |arg| {
-            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            if (try positionals.rest(allocator, arg)) continue;
+            if (isHelp(arg)) {
                 requested_help = true;
             } else if (std.mem.eql(u8, arg, "--seq")) {
                 seq = true;
+            } else if (try valueModeFlag("set", arg, &value_mode, ArgError.MissingSetArgument)) {
+                // taken
             } else if (std.mem.eql(u8, arg, "--embed")) {
                 const name = args.next() orelse {
                     log.err("Missing archetype after {s}\n", .{arg});
@@ -591,31 +724,32 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     log.err("Unknown --embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
                     return ArgError.UnsupportedFileFormat;
                 };
-            } else {
-                try positionals.append(allocator, arg);
-            }
+            } else if (!try positionals.add(allocator, "set", arg)) return ArgError.MissingSetArgument;
         }
+        const pos = positionals.items.items;
 
         if (requested_help) {
             config.options = .{ .set = .{ .file = "", .path = &.{}, .value = "", .requested_help = true, .format = .json } };
         } else {
             // Need file, path, and at least one value (a scalar, or one or more
             // sequence items with `--seq`).
-            if (positionals.items.len < 3) {
+            if (pos.len < 3) {
                 log.err("set needs a file, a path, and a value (e.g. `fig set f.yaml a.b 1`).\n", .{});
                 return ArgError.MissingSetArgument;
             }
-            const file_path = positionals.items[0];
-            const path = try parsePath(allocator, positionals.items[1]);
+            if (!seq and !positionals.atMost("set", 3, "a file, a path and one value (--seq takes several)")) return ArgError.MissingSetArgument;
+            const file_path = pos[0];
+            const path = try pathArg(allocator, pos[1]);
             const ext = detectLanguageFromFileEnding(file_path);
             const embed = embed_override;
             config.options = .{
                 .set = .{
                     .file = file_path,
                     .path = path,
-                    .value = if (seq) "" else positionals.items[2],
+                    .value = if (seq) "" else pos[2],
                     .seq = seq,
-                    .values = if (seq) try allocator.dupe([]const u8, positionals.items[2..]) else &.{},
+                    .values = if (seq) try allocator.dupe([]const u8, pos[2..]) else &.{},
+                    .value_mode = value_mode orelse .fig,
                     .requested_help = false,
                     .format = if (ext) |d| d.format else .json,
                     // Skip content sniffing when targeting an embed (the inner format
@@ -629,25 +763,36 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
     } else if (std.mem.eql(u8, action_str, "insert") or std.mem.eql(u8, action_str, "i")) {
         config.action = .insert;
 
-        const file_path = args.next() orelse {
-            log.err("No file provided.\n", .{});
-            return ArgError.MissingInsertArgument;
-        };
-        const requested_help = std.mem.eql(u8, file_path, "--help") or std.mem.eql(u8, file_path, "-h");
+        var value_mode: ?types.ValueMode = null;
+        var requested_help = false;
+        var positionals: Positionals = .{};
+        defer positionals.deinit(allocator);
+        while (args.next()) |arg| {
+            if (try positionals.rest(allocator, arg)) continue;
+            if (isHelp(arg)) {
+                requested_help = true;
+            } else if (try valueModeFlag("insert", arg, &value_mode, ArgError.MissingInsertArgument)) {
+                // taken
+            } else if (!try positionals.add(allocator, "insert", arg)) return ArgError.MissingInsertArgument;
+        }
+        const pos = positionals.items.items;
 
+        var file_path: []const u8 = "";
         var path: []fig.AST.PathSegment = &.{};
         var value: []const u8 = "";
         if (!requested_help) {
-            const path_str = args.next() orelse {
-                log.err("No path provided.\n", .{});
+            if (pos.len < 3) {
+                log.err("{s}\n", .{switch (pos.len) {
+                    0 => "No file provided.",
+                    1 => "No path provided.",
+                    else => "No value provided.",
+                }});
                 return ArgError.MissingInsertArgument;
-            };
-            path = try parsePath(allocator, path_str);
-
-            value = args.next() orelse {
-                log.err("No value provided.\n", .{});
-                return ArgError.MissingInsertArgument;
-            };
+            }
+            if (!positionals.atMost("insert", 3, "a file, a path and a value")) return ArgError.MissingInsertArgument;
+            file_path = pos[0];
+            path = try pathArg(allocator, pos[1]);
+            value = pos[2];
         }
 
         const ext = if (requested_help) null else detectLanguageFromFileEnding(file_path);
@@ -655,6 +800,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             .file = file_path,
             .path = path,
             .value = value,
+            .value_mode = value_mode orelse .fig,
             .requested_help = requested_help,
             .format = if (ext) |d| d.format else .json,
             .detect = !requested_help and ext == null,
@@ -664,19 +810,27 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
     } else if (std.mem.eql(u8, action_str, "delete") or std.mem.eql(u8, action_str, "d")) {
         config.action = .delete;
 
-        const file_path = args.next() orelse {
-            log.err("No file provided.\n", .{});
-            return ArgError.MissingDeleteArgument;
-        };
-        const requested_help = std.mem.eql(u8, file_path, "--help") or std.mem.eql(u8, file_path, "-h");
+        var requested_help = false;
+        var positionals: Positionals = .{};
+        defer positionals.deinit(allocator);
+        while (args.next()) |arg| {
+            if (try positionals.rest(allocator, arg)) continue;
+            if (isHelp(arg)) {
+                requested_help = true;
+            } else if (!try positionals.add(allocator, "delete", arg)) return ArgError.MissingDeleteArgument;
+        }
+        const pos = positionals.items.items;
 
+        var file_path: []const u8 = "";
         var path: []fig.AST.PathSegment = &.{};
         if (!requested_help) {
-            const path_str = args.next() orelse {
-                log.err("No path provided.\n", .{});
+            if (pos.len < 2) {
+                log.err("{s}\n", .{if (pos.len == 0) "No file provided." else "No path provided."});
                 return ArgError.MissingDeleteArgument;
-            };
-            path = try parsePath(allocator, path_str);
+            }
+            if (!positionals.atMost("delete", 2, "a file and a path")) return ArgError.MissingDeleteArgument;
+            file_path = pos[0];
+            path = try pathArg(allocator, pos[1]);
         }
 
         const ext = if (requested_help) null else detectLanguageFromFileEnding(file_path);
@@ -692,45 +846,45 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
     } else if (std.mem.eql(u8, action_str, "comment") or std.mem.eql(u8, action_str, "c")) {
         config.action = .comment;
 
-        // Leading flags, in any order: `--inline`, `--delete`, `--get`. Consume
-        // them until the first non-flag token (the file).
+        // Flags, in any order: `--inline`, `--delete`, `--get`.
         var inline_comment = false;
         var delete = false;
         var get = false;
-        var file_path_arg = args.next();
-        while (file_path_arg) |arg| {
-            if (std.mem.eql(u8, arg, "--inline")) {
+        var requested_help = false;
+        var positionals: Positionals = .{};
+        defer positionals.deinit(allocator);
+        while (args.next()) |arg| {
+            if (try positionals.rest(allocator, arg)) continue;
+            if (isHelp(arg)) {
+                requested_help = true;
+            } else if (std.mem.eql(u8, arg, "--inline")) {
                 inline_comment = true;
             } else if (std.mem.eql(u8, arg, "--delete")) {
                 delete = true;
             } else if (std.mem.eql(u8, arg, "--get")) {
                 get = true;
-            } else break;
-            file_path_arg = args.next();
+            } else if (!try positionals.add(allocator, "comment", arg)) return ArgError.MissingCommentArgument;
         }
-        const file_path = file_path_arg orelse {
-            log.err("No file provided.\n", .{});
-            return ArgError.MissingCommentArgument;
-        };
+        const pos = positionals.items.items;
 
-        const requested_help = std.mem.eql(u8, file_path, "--help") or std.mem.eql(u8, file_path, "-h");
-
+        var file_path: []const u8 = "";
         var path: []fig.AST.PathSegment = &.{};
         var text: []const u8 = "";
         if (!requested_help) {
-            const path_str = args.next() orelse {
-                log.err("No path provided.\n", .{});
-                return ArgError.MissingCommentArgument;
-            };
-            path = try parsePath(allocator, path_str);
-
             // Delete/get need no text; add/set requires it.
-            if (!delete and !get) {
-                text = args.next() orelse {
-                    log.err("No comment text provided.\n", .{});
-                    return ArgError.MissingCommentArgument;
-                };
+            const wants_text = !delete and !get;
+            if (pos.len < 2 or (wants_text and pos.len < 3)) {
+                log.err("{s}\n", .{switch (pos.len) {
+                    0 => "No file provided.",
+                    1 => "No path provided.",
+                    else => "No comment text provided.",
+                }});
+                return ArgError.MissingCommentArgument;
             }
+            if (!positionals.atMost("comment", if (wants_text) 3 else 2, if (wants_text) "a file, a path and the comment text" else "a file and a path with --get/--delete")) return ArgError.MissingCommentArgument;
+            file_path = pos[0];
+            path = try pathArg(allocator, pos[1]);
+            if (wants_text) text = pos[2];
         }
 
         const ext = if (requested_help) null else detectLanguageFromFileEnding(file_path);
@@ -764,11 +918,15 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         var gron_root: ?[]const u8 = null;
         var gron_sep: ?[]const u8 = null;
         var gron_term: ?[]const u8 = null;
-        var positionals: std.ArrayList([]const u8) = .empty;
+        var requested_help = false;
+        var positionals: Positionals = .{};
         defer positionals.deinit(allocator);
 
         while (args.next()) |arg| {
-            if (std.mem.eql(u8, arg, "--lax-tags")) {
+            if (try positionals.rest(allocator, arg)) continue;
+            if (isHelp(arg)) {
+                requested_help = true;
+            } else if (std.mem.eql(u8, arg, "--lax-tags")) {
                 lax_tags = true;
             } else if (std.mem.eql(u8, arg, "--gron-root")) {
                 gron_root = args.next() orelse {
@@ -857,21 +1015,20 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     log.err("Unsupported format: {s}\n", .{fmt});
                     return ArgError.UnsupportedFileFormat;
                 };
-            } else {
-                try positionals.append(allocator, arg);
-            }
+            } else if (!try positionals.add(allocator, "get", arg)) return ArgError.MissingGetArgument;
         }
+        const pos = positionals.items.items;
 
-        const file_path = if (positionals.items.len > 0) positionals.items[0] else {
+        if (!requested_help and pos.len == 0) {
             log.err("No file provided.\n", .{});
             return ArgError.MissingGetArgument;
-        };
-
-        const requested_help = std.mem.eql(u8, file_path, "--help") or std.mem.eql(u8, file_path, "-h");
+        }
+        if (!requested_help and !positionals.atMost("get", 2, "a file and at most one path")) return ArgError.MissingGetArgument;
+        const file_path = if (pos.len > 0) pos[0] else "-";
 
         var path: ?[]fig.AST.PathSegment = null;
-        if (!requested_help and positionals.items.len > 1) {
-            path = try parsePath(allocator, positionals.items[1]);
+        if (!requested_help and pos.len > 1) {
+            path = try pathArg(allocator, pos[1]);
         }
 
         const detected_input: ?Detected = if (!requested_help and input_override == null)
@@ -924,11 +1081,12 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         var spec: ?[]const u8 = null;
         var quiet = false;
         var requested_help = false;
-        var files: std.ArrayList([]const u8) = .empty;
+        var files: Positionals = .{};
         defer files.deinit(allocator);
 
         while (args.next()) |arg| {
-            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            if (try files.rest(allocator, arg)) continue;
+            if (isHelp(arg)) {
                 requested_help = true;
             } else if (std.mem.eql(u8, arg, "--quiet") or std.mem.eql(u8, arg, "-q") or std.mem.eql(u8, arg, "--no-warnings")) {
                 quiet = true;
@@ -946,12 +1104,10 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     log.err("Missing version value after {s}\n", .{arg});
                     return ArgError.MissingCheckArgument;
                 };
-            } else {
-                try files.append(allocator, arg);
-            }
+            } else if (!try files.add(allocator, "check", arg)) return ArgError.MissingCheckArgument;
         }
 
-        if (!requested_help and files.items.len == 0) {
+        if (!requested_help and files.items.items.len == 0) {
             log.err("No file provided.\n", .{});
             return ArgError.MissingCheckArgument;
         }
@@ -961,7 +1117,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 // toOwnedSlice: the whole slice (allocated in the arena passed to
                 // parseConfig) outlives this function, unlike `get` which only keeps
                 // copies of individual positional headers.
-                .files = try files.toOwnedSlice(allocator),
+                .files = try files.items.toOwnedSlice(allocator),
                 .format = input_override,
                 .spec = spec,
                 .quiet = quiet,
@@ -979,11 +1135,12 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         var requested_help = false;
         var embed_override: ?fig.Embed.Type = null;
         var serialize: fig.AST.SerializeOptions = .{};
-        var positionals: std.ArrayList([]const u8) = .empty;
+        var positionals: Positionals = .{};
         defer positionals.deinit(allocator);
 
         while (args.next()) |arg| {
-            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            if (try positionals.rest(allocator, arg)) continue;
+            if (isHelp(arg)) {
                 requested_help = true;
             } else if (std.mem.eql(u8, arg, "--dry-run")) {
                 dry_run = true;
@@ -1037,19 +1194,17 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     log.err("Unsupported format: {s}\n", .{fmt_name});
                     return ArgError.UnsupportedFileFormat;
                 };
-            } else {
-                try positionals.append(allocator, arg);
-            }
+            } else if (!try positionals.add(allocator, "fmt", arg)) return ArgError.MissingFmtArgument;
         }
 
-        if (!requested_help and positionals.items.len == 0) {
+        if (!requested_help and positionals.items.items.len == 0) {
             log.err("No file provided.\n", .{});
             return ArgError.MissingFmtArgument;
         }
         // `fmt` reformats a whole file (or a whole embedded region) — there is no
         // sub-document path argument the way `get`/`edit`/etc. take one.
-        if (!requested_help and positionals.items.len > 1) {
-            log.err("fmt takes a single file, not a path within it: {s}\n", .{positionals.items[1]});
+        if (!requested_help and positionals.items.items.len > 1) {
+            log.err("fmt takes a single file, not a path within it: {s}\n", .{positionals.items.items[1]});
             return ArgError.MissingFmtArgument;
         }
         if (!requested_help and dry_run and diff_mode) {
@@ -1057,7 +1212,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             return ArgError.MissingFmtArgument;
         }
 
-        const file_path = if (positionals.items.len > 0) positionals.items[0] else "-";
+        const file_path = if (positionals.items.items.len > 0) positionals.items.items[0] else "-";
 
         const detected_input: ?Detected = if (!requested_help and input_override == null)
             detectLanguageFromFileEnding(file_path)
@@ -1100,11 +1255,12 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         var diff_mode = false;
         var requested_help = false;
         var serialize: fig.AST.SerializeOptions = .{};
-        var positionals: std.ArrayList([]const u8) = .empty;
+        var positionals: Positionals = .{};
         defer positionals.deinit(allocator);
 
         while (args.next()) |arg| {
-            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            if (try positionals.rest(allocator, arg)) continue;
+            if (isHelp(arg)) {
                 requested_help = true;
             } else if (std.mem.eql(u8, arg, "--write") or std.mem.eql(u8, arg, "-w")) {
                 write = true;
@@ -1185,17 +1341,15 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     log.err("Unsupported format: {s}\n", .{fmt_name});
                     return ArgError.UnsupportedFileFormat;
                 };
-            } else {
-                try positionals.append(allocator, arg);
-            }
+            } else if (!try positionals.add(allocator, "convert", arg)) return ArgError.MissingConvertArgument;
         }
 
-        if (!requested_help and positionals.items.len == 0) {
+        if (!requested_help and positionals.items.items.len == 0) {
             log.err("No file provided.\n", .{});
             return ArgError.MissingConvertArgument;
         }
-        if (!requested_help and positionals.items.len > 1) {
-            log.err("convert takes a single file, not a path within it: {s}\n", .{positionals.items[1]});
+        if (!requested_help and positionals.items.items.len > 1) {
+            log.err("convert takes a single file, not a path within it: {s}\n", .{positionals.items.items[1]});
             return ArgError.MissingConvertArgument;
         }
         if (!requested_help and output_override != null and to_embed_override != null) {
@@ -1215,7 +1369,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             return ArgError.MissingConvertArgument;
         }
 
-        const file_path = if (positionals.items.len > 0) positionals.items[0] else "-";
+        const file_path = if (positionals.items.items.len > 0) positionals.items.items[0] else "-";
 
         const detected_input: ?Detected = if (!requested_help) detectLanguageFromFileEnding(file_path) else null;
 
@@ -1287,11 +1441,12 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         var diff_mode = false;
         var quiet = false;
         var requested_help = false;
-        var positionals: std.ArrayList([]const u8) = .empty;
+        var positionals: Positionals = .{};
         defer positionals.deinit(allocator);
 
         while (args.next()) |arg| {
-            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            if (try positionals.rest(allocator, arg)) continue;
+            if (isHelp(arg)) {
                 requested_help = true;
             } else if (std.mem.eql(u8, arg, "--dry-run")) {
                 dry_run = true;
@@ -1312,19 +1467,19 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     log.err("Missing path after {s}\n", .{arg});
                     return ArgError.MissingPatchArgument;
                 };
-                at = try parsePath(allocator, p);
+                at = try pathArg(allocator, p);
             } else if (std.mem.eql(u8, arg, "--from")) {
                 const p = args.next() orelse {
                     log.err("Missing path after {s}\n", .{arg});
                     return ArgError.MissingPatchArgument;
                 };
-                from = try parsePath(allocator, p);
+                from = try pathArg(allocator, p);
             } else if (std.mem.eql(u8, arg, "--delete")) {
                 const p = args.next() orelse {
                     log.err("Missing path after {s}\n", .{arg});
                     return ArgError.MissingPatchArgument;
                 };
-                const parsed_path = try parsePath(allocator, p);
+                const parsed_path = try pathArg(allocator, p);
                 if (parsed_path.len == 0) {
                     log.err("--delete needs a path within the document; the root cannot be deleted.\n", .{});
                     return ArgError.MissingPatchArgument;
@@ -1408,24 +1563,22 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     log.err("Unknown --patch-embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
                     return ArgError.UnsupportedFileFormat;
                 };
-            } else {
-                try positionals.append(allocator, arg);
-            }
+            } else if (!try positionals.add(allocator, "patch", arg)) return ArgError.MissingPatchArgument;
         }
 
-        if (!requested_help and positionals.items.len < 2) {
+        if (!requested_help and positionals.items.items.len < 2) {
             log.err("patch takes two files: the document to change, then the one supplying the change.\n", .{});
             return ArgError.MissingPatchArgument;
         }
-        if (!requested_help and positionals.items.len > 2) {
-            log.err("patch takes two files; use --at/--from to name a path within one: {s}\n", .{positionals.items[2]});
+        if (!requested_help and positionals.items.items.len > 2) {
+            log.err("patch takes two files; use --at/--from to name a path within one: {s}\n", .{positionals.items.items[2]});
             return ArgError.MissingPatchArgument;
         }
         // Both from a pipe would mean reading one stream twice and getting
         // half of each; the second read comes back empty and the failure is
         // an empty patch, which is silent. Refuse it up front.
-        const target_path = if (positionals.items.len > 0) positionals.items[0] else "-";
-        const source_path = if (positionals.items.len > 1) positionals.items[1] else "-";
+        const target_path = if (positionals.items.items.len > 0) positionals.items.items[0] else "-";
+        const source_path = if (positionals.items.items.len > 1) positionals.items.items[1] else "-";
         if (!requested_help and std.mem.eql(u8, target_path, "-") and std.mem.eql(u8, source_path, "-")) {
             log.err("only one of the two files can be stdin.\n", .{});
             return ArgError.MissingPatchArgument;
@@ -1458,10 +1611,11 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
     } else if (std.mem.eql(u8, action_str, "lang")) {
         config.action = .lang;
         var opts: types.LangOptions = .{};
-        var positionals: std.ArrayList([]const u8) = .empty;
+        var positionals: Positionals = .{};
         defer positionals.deinit(allocator);
         while (args.next()) |arg| {
-            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            if (try positionals.rest(allocator, arg)) continue;
+            if (isHelp(arg)) {
                 opts.requested_help = true;
             } else if (std.mem.eql(u8, arg, "--against")) {
                 opts.against = args.next() orelse {
@@ -1480,34 +1634,35 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             } else if (std.mem.eql(u8, arg, "--spec") or std.mem.eql(u8, arg, "-s")) {
                 opts.spec = args.next() orelse {
                     log.err("Missing version value after {s}\n", .{arg});
-                    return ArgError.MissingCheckArgument;
+                    return ArgError.MissingLangArgument;
                 };
-            } else {
-                try positionals.append(allocator, arg);
-            }
+            } else if (!try positionals.add(allocator, "lang", arg)) return ArgError.MissingLangArgument;
         }
-        if (positionals.items.len == 0 or std.mem.eql(u8, positionals.items[0], "list")) {
+        const pos = positionals.items.items;
+        if (pos.len == 0 or std.mem.eql(u8, pos[0], "list")) {
             opts.verb = .list;
-        } else if (std.mem.eql(u8, positionals.items[0], "check")) {
+            if (!opts.requested_help and !positionals.atMost("lang list", 1, "no arguments")) return ArgError.MissingLangArgument;
+        } else if (std.mem.eql(u8, pos[0], "check")) {
             opts.verb = .check;
-            if (positionals.items.len < 2) {
-                if (!opts.requested_help) log.err("lang check needs a language name (e.g. `fig lang check lua-dotenv --against dotenv`).\n", .{});
-                opts.requested_help = true;
-            } else {
-                opts.name = positionals.items[1];
-                opts.files = try allocator.dupe([]const u8, positionals.items[2..]);
+            if (pos.len >= 2) {
+                opts.name = pos[1];
+                opts.files = try allocator.dupe([]const u8, pos[2..]);
+            } else if (!opts.requested_help) {
+                log.err("lang check needs a language name (e.g. `fig lang check lua-dotenv --against dotenv`).\n", .{});
+                return ArgError.MissingLangArgument;
             }
-        } else if (std.mem.eql(u8, positionals.items[0], "table")) {
+        } else if (std.mem.eql(u8, pos[0], "table")) {
             opts.verb = .table;
-            if (positionals.items.len < 2) {
-                if (!opts.requested_help) log.err("lang table needs a file (e.g. `fig lang table secrets.env`).\n", .{});
-                opts.requested_help = true;
-            } else {
-                opts.name = positionals.items[1];
+            if (pos.len >= 2) {
+                opts.name = pos[1];
+                if (!opts.requested_help and !positionals.atMost("lang table", 2, "one file")) return ArgError.MissingLangArgument;
+            } else if (!opts.requested_help) {
+                log.err("lang table needs a file (e.g. `fig lang table secrets.env`).\n", .{});
+                return ArgError.MissingLangArgument;
             }
         } else {
-            log.err("Unknown lang verb: {s} (list, check, table)\n", .{positionals.items[0]});
-            opts.requested_help = true;
+            log.err("Unknown lang verb: {s} (list, check, table)\n", .{pos[0]});
+            return ArgError.MissingLangArgument;
         }
         config.options = .{ .lang = opts };
     } else if (externalCommandName(action_str)) |name| {
@@ -2090,4 +2245,69 @@ test "parseConfig routes lang: list by default, check with a name, --against and
     var helpful = TestArgs{ .items = &.{ "fig", "lang", "check", "--help" } };
     const c3 = try parseConfig(a, &helpful);
     try t.expect(c3.options.lang.requested_help);
+}
+
+test "parseConfig: `--` ends the flags, a negative number is a value, and flags stand anywhere" {
+    const t = std.testing;
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // A file whose name begins with `-`, after `--`.
+    var dashed = TestArgs{ .items = &.{ "fig", "get", "--", "-x.yaml", "a" } };
+    const dc = try parseConfig(a, &dashed);
+    try t.expectEqualStrings("-x.yaml", dc.options.get.file);
+    try t.expectEqualStrings("a", dc.options.get.path.?[0].key);
+
+    // A value that begins with `-`: a number stands on its own, anything
+    // else goes after `--`, and `--help` there is a value too.
+    var neg = TestArgs{ .items = &.{ "fig", "set", "f.yaml", "n", "-5" } };
+    try t.expectEqualStrings("-5", (try parseConfig(a, &neg)).options.set.value);
+    var frac = TestArgs{ .items = &.{ "fig", "insert", "f.yaml", "n", "-.5" } };
+    try t.expectEqualStrings("-.5", (try parseConfig(a, &frac)).options.insert.value);
+    var word = TestArgs{ .items = &.{ "fig", "edit", "f.yaml", "n", "--", "--help" } };
+    const wc = try parseConfig(a, &word);
+    try t.expect(!wc.options.edit.requested_help);
+    try t.expectEqualStrings("--help", wc.options.edit.replacement);
+
+    // `-` alone is stdin, not a flag.
+    var stdin = TestArgs{ .items = &.{ "fig", "delete", "-", "a" } };
+    try t.expectEqualStrings("-", (try parseConfig(a, &stdin)).options.delete.file);
+
+    // A flag after the positionals is still a flag.
+    var late = TestArgs{ .items = &.{ "fig", "comment", "f.yaml", "a", "--get", "--inline" } };
+    const lc = try parseConfig(a, &late);
+    try t.expect(lc.options.comment.get and lc.options.comment.inline_comment);
+    var key = TestArgs{ .items = &.{ "fig", "edit", "f.yaml", "a", "b", "--key" } };
+    try t.expect((try parseConfig(a, &key)).options.edit.key);
+
+    // `--lang` after `--` is a positional, not the global flag.
+    var lang = TestArgs{ .items = &.{ "fig", "check", "--", "--lang" } };
+    const lgc = try parseConfig(a, &lang);
+    try t.expectEqualStrings("--lang", lgc.options.check.files[0]);
+    try t.expectEqual(@as(?Format, null), languages.langOverride());
+
+    // The refusals (an unknown flag, one positional too many) return the
+    // action's usage error after a `log.err`, which this runner counts as a
+    // failure — `tools/cli-args-check.sh` drives them through the binary.
+}
+
+test "spelledAsFlag: a leading `-` is a flag unless it starts a number or stands alone" {
+    const t = std.testing;
+    for ([_][]const u8{ "-x", "--bogus", "-h", "--", "-inf", "-nan" }) |s| try t.expect(spelledAsFlag(s));
+    for ([_][]const u8{ "-", "-5", "-0.5", "-.5", "x", "" }) |s| try t.expect(!spelledAsFlag(s));
+}
+
+test "parseConfig: a `--` that is a flag's value does not end the flags for --lang" {
+    if (comptime !build_options.lang_json) return error.SkipZigTest;
+    const t = std.testing;
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    defer languages.setLangOverride(null);
+
+    var args = TestArgs{ .items = &.{ "fig", "get", "f.txt", "--gron-sep", "--", "--lang", "json" } };
+    const config = try parseConfig(a, &args);
+    try t.expectEqualStrings("--", config.options.get.gron_projection.assign);
+    try t.expectEqual(Format.json, languages.langOverride().?);
 }

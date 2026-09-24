@@ -178,11 +178,22 @@ pub const HelpOptions = struct {
 
 pub const VersionOptions = struct {};
 
+/// How a value argument (`set`/`insert`/`edit`) is read — see `value_arg.zig`.
+pub const ValueMode = enum {
+    /// As a fig value: `5` a number, `hello` a string, `[1, 2]` a sequence.
+    fig,
+    /// `--string`: a string, whatever it looks like.
+    string,
+    /// `--raw`: the text itself, spliced as source in the file's format.
+    raw,
+};
+
 pub const EditOptions = struct {
     file: []const u8,
     path: []fig.AST.PathSegment,
     replacement: []const u8,
     key: bool = false,
+    value_mode: ValueMode = .fig,
     requested_help: bool = false,
     format: Format,
     /// Set when the format could not be inferred from the file extension:
@@ -209,6 +220,7 @@ pub const SetOptions = struct {
     /// instead of upserting a single scalar.
     seq: bool = false,
     values: []const []const u8 = &.{},
+    value_mode: ValueMode = .fig,
     requested_help: bool = false,
     format: Format,
     detect: bool = false,
@@ -231,6 +243,7 @@ pub const InsertOptions = struct {
     /// (mapping vs sequence) decides which applies — not the file format.
     path: []fig.AST.PathSegment,
     value: []const u8,
+    value_mode: ValueMode = .fig,
     requested_help: bool = false,
     format: Format,
     /// Set when the format could not be inferred from the extension; the
@@ -579,13 +592,17 @@ pub const SplicedText = struct {
 /// What a piece of spliced text was meant to be — only ever used to word the
 /// report in `diag_report.reportBadEditText` ("the new value" vs "the new key").
 pub const EditTextKind = enum {
+    /// A value argument, read as a fig value (or with `--string`) and
+    /// rendered in the file's own spelling.
     value,
+    /// A `--raw` value argument, spliced as the user typed it.
+    raw_value,
     key,
     comment,
 
     pub fn noun(self: EditTextKind) []const u8 {
         return switch (self) {
-            .value => "value",
+            .value, .raw_value => "value",
             .key => "key",
             .comment => "comment text",
         };
@@ -601,19 +618,19 @@ pub fn splicedText(config: CliConfig) ?SplicedText {
             .file = o.file,
             .format = if (o.detect) null else o.format,
             // `--key` makes the argument a replacement KEY, not a value.
-            .kind = if (o.key) .key else .value,
+            .kind = if (o.key) .key else valueKind(o.value_mode),
             .text = o.replacement,
         },
         .set => |o| .{
             .file = o.file,
             .format = if (o.detect) null else o.format,
-            .kind = .value,
+            .kind = valueKind(o.value_mode),
             .text = if (o.seq) null else o.value,
         },
         .insert => |o| .{
             .file = o.file,
             .format = if (o.detect) null else o.format,
-            .kind = .value,
+            .kind = valueKind(o.value_mode),
             .text = o.value,
         },
         .comment => |o| .{
@@ -624,6 +641,26 @@ pub fn splicedText(config: CliConfig) ?SplicedText {
         },
         else => null,
     };
+}
+
+/// The key an edit that may create one names — the last segment of
+/// `insert`'s or `set`'s path — for the report when the document refuses
+/// the key itself (`error.InvalidEditKey`).
+pub fn createdKey(config: CliConfig) ?[]const u8 {
+    const path = switch (config.options) {
+        .set => |o| o.path,
+        .insert => |o| o.path,
+        else => return null,
+    };
+    if (path.len == 0) return null;
+    return switch (path[path.len - 1]) {
+        .key => |k| k,
+        .index => null,
+    };
+}
+
+fn valueKind(mode: ValueMode) EditTextKind {
+    return if (mode == .raw) .raw_value else .value;
 }
 
 /// The single file `config`'s action works on, when it has exactly one — so a
@@ -674,7 +711,7 @@ pub fn parseTarget(config: CliConfig) ?ParseTarget {
     return t;
 }
 
-pub const ArgError = error{ UnsupportedFileFormat, MissingEditArgument, MissingSetArgument, MissingInsertArgument, MissingDeleteArgument, MissingGetArgument, MissingCommentArgument, MissingCheckArgument, MissingFmtArgument, MissingConvertArgument, MissingPatchArgument, OutOfMemory, Overflow, InvalidCharacter, InvalidPath };
+pub const ArgError = error{ UnsupportedFileFormat, MissingEditArgument, MissingSetArgument, MissingInsertArgument, MissingDeleteArgument, MissingGetArgument, MissingCommentArgument, MissingCheckArgument, MissingFmtArgument, MissingConvertArgument, MissingPatchArgument, MissingLangArgument, OutOfMemory, Overflow, InvalidCharacter, InvalidPath };
 
 /// Result of mapping a file extension to a parse strategy. `embed_detect` is
 /// set when the file is a host document whose config lives in an embedded

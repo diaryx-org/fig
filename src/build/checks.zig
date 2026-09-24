@@ -236,6 +236,16 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     rust_test.has_side_effects = true;
     check_step.dependOn(&rust_test.step);
 
+    // The CLI's usage errors, through the built binary: an unknown flag or a
+    // surplus positional is exit 2 and touches nothing, `--` ends the flags,
+    // a missing comment is exit 1 (`tools/cli-args-check.sh`). The unit tests
+    // cannot reach these, since the runner fails any test that logs an error.
+    const cli_args_check = b.addSystemCommand(&.{ "sh", "tools/cli-args-check.sh" });
+    cli_args_check.addArtifactArg(arts.exe);
+    cli_args_check.setCwd(b.path("."));
+    cli_args_check.has_side_effects = true;
+    check_step.dependOn(&cli_args_check.step);
+
     // The CLI's end of the runtime-language carrier: the Rust crate's
     // `tinykv_helper` example, named in a `languages.figl`, driven through
     // every action of the built `fig` (`tools/cli-lang-check.sh`). The C

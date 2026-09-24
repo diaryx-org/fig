@@ -531,7 +531,7 @@ pub fn check(io: Io, a: Allocator, out: *Io.Terminal, err_term: *Io.Terminal, na
             const content = Io.Dir.cwd().readFileAlloc(io, f, a, .limited(64 << 20)) catch |rerr| {
                 try err_term.writer.print("error: could not read {s}: {s}\n", .{ f, @errorName(rerr) });
                 try err_term.writer.flush();
-                std.process.exit(2);
+                std.process.exit(1);
             };
             try inputs.append(a, .{ .label = f, .content = content });
         }

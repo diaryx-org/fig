@@ -114,7 +114,7 @@ pub fn renderAll(a: std.mem.Allocator, items: anytype, comptime describeFn: anyt
     return out;
 }
 
-/// Render one parse failure as a `printDiag` teaching report and exit(2) — the
+/// Render one parse failure as a `printDiag` teaching report and exit(1) — the
 /// `get`-time twin of `check`'s per-error loop, for the single diagnostic a
 /// non-recovering parse produces. Shared by every language with a `Report`
 /// (every one whose parser declares `parseWithReport`) so `get`'s error path doesn't repeat this
@@ -122,7 +122,9 @@ pub fn renderAll(a: std.mem.Allocator, items: anytype, comptime describeFn: anyt
 pub fn reportParseError(term: *Io.Terminal, source: []const u8, file: []const u8, offset: usize, end: ?usize, message: []const u8, short_label: []const u8) !void {
     try printDiag(term, source, file, offset, end, "error", .red, message, short_label);
     try term.writer.flush();
-    std.process.exit(2);
+    // A file that does not parse is a failure on the document, not a wrong
+    // command line: exit 1, as `check` and the editing actions always did.
+    std.process.exit(1);
 }
 
 /// The binary's last line of defense: report an error that reached `main`
@@ -403,8 +405,9 @@ fn spliceStyle(format: Format) SpliceStyle {
 }
 
 /// Report an edit whose *argument* — not the file — is what doesn't parse, and
-/// exit(2). `edit`/`set`/`insert` splice the text the user typed straight into
-/// the document, so when the reparse fails the underlying error describes the
+/// exit: 2 when the text was source the user typed, 1 when it was a fig value
+/// the document refused (see below). `edit`/`set`/`insert` splice the text
+/// into the document, so when the reparse fails the underlying error describes the
 /// spliced bytes ("not a valid TOML number" for a git sha) while pointing at a
 /// file the user believes is fine. `edit_ops.applyEdit` turns that case into
 /// `error.InvalidEditText` (it knows the document parsed before the splice);
@@ -414,13 +417,16 @@ fn spliceStyle(format: Format) SpliceStyle {
 /// here — the wording then stays format-agnostic rather than risk naming the
 /// wrong one. `text` is null for `set --seq`, whose several values give
 /// nothing single to quote back.
-pub fn reportBadEditText(term: *Io.Terminal, file: []const u8, format: ?Format, kind: EditTextKind, text: ?[]const u8) noreturn {
-    reportBadEditTextImpl(term, file, format, kind, text) catch {};
+pub fn reportBadEditText(term: *Io.Terminal, file: []const u8, format: ?Format, kind: EditTextKind, text: ?[]const u8, rendered: ?[]const u8) noreturn {
+    reportBadEditTextImpl(term, file, format, kind, text, rendered) catch {};
     term.writer.flush() catch {};
-    std.process.exit(2);
+    // Text the user wrote as source (a `--raw` value, a key, a comment) that
+    // does not parse is the command line's fault: exit 2. A fig value was
+    // already read cleanly; the document refusing its spelling is exit 1.
+    std.process.exit(if (kind == .value) 1 else 2);
 }
 
-fn reportBadEditTextImpl(term: *Io.Terminal, file: []const u8, format: ?Format, kind: EditTextKind, text: ?[]const u8) !void {
+fn reportBadEditTextImpl(term: *Io.Terminal, file: []const u8, format: ?Format, kind: EditTextKind, text: ?[]const u8, rendered: ?[]const u8) !void {
     // Long text (a pasted blob, a whole inline table) would bury the message;
     // enough is shown to recognize which argument is meant.
     const max_shown = 120;
@@ -443,14 +449,31 @@ fn reportBadEditTextImpl(term: *Io.Terminal, file: []const u8, format: ?Format, 
     try term.setColor(.blue);
     try term.writer.writeAll("note");
     try term.setColor(.reset);
+    if (kind == .value) {
+        // Read as a fig value and spelled as this format spells it: the
+        // spelling was refused where it landed, not the user's text. Show
+        // that spelling when it differs from what was typed.
+        const fmt_name = if (format) |f| types.name(f) else "the file's format";
+        if (rendered) |r| if (text == null or !std.mem.eql(u8, r, text.?)) {
+            const r_shown = r[0..@min(r.len, max_shown)];
+            try term.writer.print(
+                ": the value was read as a fig value and written as {s} writes it — `{s}{s}` — and the document would not take that there; --raw splices your text as it stands.\n",
+                .{ fmt_name, r_shown, if (r.len > max_shown) "…" else "" },
+            );
+            return;
+        };
+        try term.writer.print(
+            ": the value was read as a fig value and written as {s} writes it, and the document would not take it there; --raw splices your text as it stands.\n",
+            .{fmt_name},
+        );
+        return;
+    }
     switch (style) {
-        .literal => try term.writer.print(
+        // The JSON family splices its keys, comments and `--raw` values as
+        // source, like every other literal format.
+        .literal, .json_string => try term.writer.print(
             ": the {s} is spliced in verbatim, as source text — so it has to stand on its own as a valid {s} literal.\n",
-            .{ kind.noun(), if (format) |f| @tagName(f) else "document" },
-        ),
-        .json_string => try term.writer.print(
-            ": the {s} is inserted as a JSON string, so a `\"` or `\\` inside it must be escaped.\n",
-            .{kind.noun()},
+            .{ kind.noun(), if (format) |f| types.name(f) else "document" },
         ),
         .raw => try term.writer.print(
             ": the {s} is written out as-is, so it cannot contain a line break or this format's own separators.\n",
@@ -461,17 +484,35 @@ fn reportBadEditTextImpl(term: *Io.Terminal, file: []const u8, format: ?Format, 
     // The overwhelmingly common case: text that needed quotes and lost the
     // ones the shell ate. Only offered when the text isn't already quoted —
     // re-suggesting quotes on `"..."` would just be wrong.
-    if (style == .literal and kind != .comment) if (shown) |s| {
+    if (style != .raw and kind == .raw_value) if (shown) |s| {
         if (s.len > 0 and s[0] != '"' and s[0] != '\'') {
             try term.setColor(.blue);
             try term.writer.writeAll("help");
             try term.setColor(.reset);
             try term.writer.print(
-                ": for a string, pass the quotes too — your shell strips the ones you type: '\"{s}{s}\"'\n",
+                ": for a string, drop --raw, or pass the quotes too — your shell strips the ones you type: '\"{s}{s}\"'\n",
                 .{ s, if (elided) "…" else "" },
             );
         }
     };
+}
+
+/// A value argument the file's format has no spelling for — `null` into
+/// TOML, a sequence into dotenv — refused before anything was written, and
+/// exit(1): the command line was fine, the document cannot hold it.
+pub fn reportUnwritableValue(term: *Io.Terminal, file: []const u8, err: anyerror) noreturn {
+    const why: []const u8 = switch (err) {
+        error.UnwritableNull => "this format has no null; to leave the key without a value, `delete` it",
+        error.UnwritableNested => "this format holds only flat values there, so a sequence or a table cannot be written",
+        error.UnwritableKey => "the value has a key this format cannot spell",
+        else => @errorName(err),
+    };
+    term.setColor(.red) catch {};
+    term.writer.writeAll("error") catch {};
+    term.setColor(.reset) catch {};
+    term.writer.print(": the value cannot be written to {s}: {s}\n", .{ file, why }) catch {};
+    term.writer.flush() catch {};
+    std.process.exit(1);
 }
 
 /// A scalar/null value reaching the fig printer as a document root has no
@@ -539,7 +580,7 @@ pub fn reportRuntimePrintError(term: *Io.Terminal, err: anyerror) noreturn {
 }
 
 /// Print every parse-time authoring warning in `warnings` (unless `--quiet`),
-/// then exit(2) if `--strict` and any fired — `get`'s shared `--quiet`/
+/// then exit(1) if `--strict` and any fired — `get`'s shared `--quiet`/
 /// `--strict` contract for a language's authoring-time lints (fig's, JSON's
 /// `duplicate_key`, …), so each language's call site is one line instead of
 /// repeating the print/flush/strict-abort sequence.
@@ -552,6 +593,7 @@ pub fn handleParseWarnings(term: *Io.Terminal, source: []const u8, file: []const
     if (strict) {
         try term.writer.print("error: {d} {s} warning(s); --strict aborts.\n", .{ warnings.len, kind_name });
         try term.writer.flush();
-        std.process.exit(2);
+        // The document's lints, like `get`'s lossy `--strict`: exit 1.
+        std.process.exit(1);
     }
 }

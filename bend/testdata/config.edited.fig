@@ -1,0 +1,12 @@
+# config.fig — Deploy settings
+service
+> name = api          # must match the DNS record
+> replicas = 5 # bumped for Black Friday
+> ports
+> > * 80
+> > * 443
+
+worker
+> retries = 3
+> timeout = 30s
+> replicas = 1

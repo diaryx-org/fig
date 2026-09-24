@@ -229,16 +229,18 @@ pub fn main(init: std.process.Init) !void {
     dispatch(a, io, &stdout_terminal, &stderr_terminal, config) catch |err| switch (err) {
         error.InvalidEditText => {
             const spliced = types.splicedText(config).?;
-            diag_report.reportBadEditText(&stderr_terminal, spliced.file, spliced.format, spliced.kind, spliced.text);
+            diag_report.reportBadEditText(&stderr_terminal, spliced.file, spliced.format, spliced.kind, spliced.text, edit_ops.refused_rendering);
+        },
+        // The document took `0` no better than the value, so the KEY is what
+        // it refused (`edit_ops.applyValueEdit`): the user typed it wrong.
+        error.InvalidEditKey => {
+            const spliced = types.splicedText(config).?;
+            diag_report.reportBadEditText(&stderr_terminal, spliced.file, spliced.format, .key, types.createdKey(config), null);
         },
         // A value argument the file's format cannot hold, from rendering it
-        // (`value_arg.render`); nothing was written. `get` and `patch`
-        // report their own serializer errors, so these only reach here from
-        // the actions that take a value.
-        error.NullUnsupported, error.UnsupportedValue, error.NonStringKey, error.InvalidKey => if (types.splicedText(config)) |spliced|
-            diag_report.reportUnwritableValue(&stderr_terminal, spliced.file, err)
-        else
-            diag_report.reportUnhandled(&stderr_terminal, err, types.targetFile(config), config.binary_name),
+        // (`value_arg.render`, which names these so a parse error the file
+        // raises never lands here); nothing was written.
+        error.UnwritableNull, error.UnwritableNested, error.UnwritableKey => diag_report.reportUnwritableValue(&stderr_terminal, types.targetFile(config) orelse "the file", err),
         // Everything an action didn't report itself stops HERE with a plain
         // line, instead of escaping to the Zig runtime's default handler.
         // Letting it escape printed a bare `error: <ErrorName>` plus an

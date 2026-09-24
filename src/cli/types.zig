@@ -643,6 +643,22 @@ pub fn splicedText(config: CliConfig) ?SplicedText {
     };
 }
 
+/// The key an edit that may create one names — the last segment of
+/// `insert`'s or `set`'s path — for the report when the document refuses
+/// the key itself (`error.InvalidEditKey`).
+pub fn createdKey(config: CliConfig) ?[]const u8 {
+    const path = switch (config.options) {
+        .set => |o| o.path,
+        .insert => |o| o.path,
+        else => return null,
+    };
+    if (path.len == 0) return null;
+    return switch (path[path.len - 1]) {
+        .key => |k| k,
+        .index => null,
+    };
+}
+
 fn valueKind(mode: ValueMode) EditTextKind {
     return if (mode == .raw) .raw_value else .value;
 }

@@ -83,8 +83,9 @@ pub const value_reading =
     \\    so it means the same thing in every format: 5, 2.5, true, null and
     \\    2026-09-22 are typed; hello, hello world, Yes and 007 are strings;
     \\    [1, 2] and {{a = 1, b = [x]}} are a sequence and a mapping; '"5"' is
-    \\    the string 5. An empty value, one with a line break, and one whose
-    \\    # would start a comment are strings as written.
+    \\    the string 5. An empty value, one with a line break or with space
+    \\    at either end, and one whose # would start a comment are strings
+    \\    as written.
     \\  --string: take <value> as a string, whatever it looks like
     \\    (`set f.json version --string 1.10`)
     \\  --raw: splice <value> verbatim as source text in the file's format,
@@ -124,7 +125,9 @@ pub const Help = struct {
             \\of the action's flags, or one more argument than the action takes,
             \\is a usage error (exit 2). `--` ends the flags, so a file or value
             \\that begins with - goes after it (`{s} get -- -x.yaml`); `-` alone is
-            \\stdin, and a negative number is a value wherever it stands.
+            \\stdin, and a negative number (-5, -2.5) is a value wherever it
+            \\stands. fig has no bare -inf or nan (they are strings), so
+            \\-inf reads as a flag.
             \\
             \\Exit status, for every action:
             \\  0  done (for `fmt --dry-run`/`--diff` and `check`: nothing to
@@ -197,6 +200,7 @@ pub const Help = struct {
             \\    <value> — unless one would go at the top of a host that already
             \\    has frontmatter of another kind, which is refused (`{s} convert
             \\    --to-embed` changes it).
+            \\
         ++ value_reading ++
             \\    A created key is written in the file's syntax too, so new keys
             \\    work for strict JSON. Each --seq <item> is read the same way.
@@ -222,6 +226,7 @@ pub const Help = struct {
             \\  An empty parent targets the root container, so the document's own
             \\    root (mapping vs list) decides which form applies — not the format.
             \\  Mid-sequence insert (e.g. list[2]) is not yet supported.
+            \\
         ++ value_reading ++
             \\  path format: dot syntax for keys, bracket syntax for indices.
             \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',

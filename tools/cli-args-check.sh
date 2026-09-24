@@ -114,6 +114,32 @@ rm -f new.toml
 exits "null into a new TOML file" 1 set new.toml k null
 [ ! -e new.toml ] || fail "a refused value left new.toml behind"
 
+# Space at either end keeps a value a string as typed.
+"$fig" set v.json w 'hello ' 2>/dev/null
+[ "$("$fig" get v.json w 2>/dev/null)" = 'hello ' ] || fail "a trailing space was dropped from a value"
+# A file that does not parse is reported where it fails, even when its
+# parser's error shares a name with a value the format cannot hold.
+printf '[s]\n = 1\n' >bad.ini
+cp bad.ini orig.ini
+for cmd in "set bad.ini s.a 1" "comment bad.ini s.a hi" "delete bad.ini s.a"; do
+    set +e
+    # shellcheck disable=SC2086
+    err="$("$fig" $cmd 2>&1 >/dev/null)"
+    status=$?
+    set -e
+    [ "$status" -eq 1 ] || fail "fig $cmd on a malformed INI exited $status, want 1"
+    case "$err" in *"bad.ini:2:2"*) ;; *) fail "fig $cmd on a malformed INI did not point at 2:2: $err" ;; esac
+done
+cmp -s bad.ini orig.ini || fail "an edit of a malformed INI changed it"
+# A key the document cannot spell is the key's fault, not the value's.
+printf 'A=1\n' >k.env
+set +e
+err="$("$fig" insert k.env 'bad key' x 2>&1 >/dev/null)"
+status=$?
+set -e
+[ "$status" -eq 2 ] || fail "an unspellable key exited $status, want 2"
+case "$err" in *"not a valid key"*) ;; *) fail "an unspellable key was not reported as the key: $err" ;; esac
+
 # `get` prints a scalar as its text and a newline, in every format; -o asks
 # for that format's spelling.
 printf '{"s": "hi", "n": 42, "z": null, "o": {"a": 1}}\n' >g.json

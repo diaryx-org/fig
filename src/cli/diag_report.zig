@@ -417,8 +417,8 @@ fn spliceStyle(format: Format) SpliceStyle {
 /// here — the wording then stays format-agnostic rather than risk naming the
 /// wrong one. `text` is null for `set --seq`, whose several values give
 /// nothing single to quote back.
-pub fn reportBadEditText(term: *Io.Terminal, file: []const u8, format: ?Format, kind: EditTextKind, text: ?[]const u8) noreturn {
-    reportBadEditTextImpl(term, file, format, kind, text) catch {};
+pub fn reportBadEditText(term: *Io.Terminal, file: []const u8, format: ?Format, kind: EditTextKind, text: ?[]const u8, rendered: ?[]const u8) noreturn {
+    reportBadEditTextImpl(term, file, format, kind, text, rendered) catch {};
     term.writer.flush() catch {};
     // Text the user wrote as source (a `--raw` value, a key, a comment) that
     // does not parse is the command line's fault: exit 2. A fig value was
@@ -426,7 +426,7 @@ pub fn reportBadEditText(term: *Io.Terminal, file: []const u8, format: ?Format, 
     std.process.exit(if (kind == .value) 1 else 2);
 }
 
-fn reportBadEditTextImpl(term: *Io.Terminal, file: []const u8, format: ?Format, kind: EditTextKind, text: ?[]const u8) !void {
+fn reportBadEditTextImpl(term: *Io.Terminal, file: []const u8, format: ?Format, kind: EditTextKind, text: ?[]const u8, rendered: ?[]const u8) !void {
     // Long text (a pasted blob, a whole inline table) would bury the message;
     // enough is shown to recognize which argument is meant.
     const max_shown = 120;
@@ -451,10 +451,20 @@ fn reportBadEditTextImpl(term: *Io.Terminal, file: []const u8, format: ?Format, 
     try term.setColor(.reset);
     if (kind == .value) {
         // Read as a fig value and spelled as this format spells it: the
-        // spelling was refused where it landed, not the user's text.
+        // spelling was refused where it landed, not the user's text. Show
+        // that spelling when it differs from what was typed.
+        const fmt_name = if (format) |f| types.name(f) else "the file's format";
+        if (rendered) |r| if (text == null or !std.mem.eql(u8, r, text.?)) {
+            const r_shown = r[0..@min(r.len, max_shown)];
+            try term.writer.print(
+                ": the value was read as a fig value and written as {s} writes it — `{s}{s}` — and the document would not take that there; --raw splices your text as it stands.\n",
+                .{ fmt_name, r_shown, if (r.len > max_shown) "…" else "" },
+            );
+            return;
+        };
         try term.writer.print(
             ": the value was read as a fig value and written as {s} writes it, and the document would not take it there; --raw splices your text as it stands.\n",
-            .{if (format) |f| types.name(f) else "the file's format"},
+            .{fmt_name},
         );
         return;
     }
@@ -492,10 +502,9 @@ fn reportBadEditTextImpl(term: *Io.Terminal, file: []const u8, format: ?Format, 
 /// exit(1): the command line was fine, the document cannot hold it.
 pub fn reportUnwritableValue(term: *Io.Terminal, file: []const u8, err: anyerror) noreturn {
     const why: []const u8 = switch (err) {
-        error.NullUnsupported => "this format has no null; to leave the key without a value, `delete` it",
-        error.UnsupportedValue => "this format holds only flat values there, so a sequence or a table cannot be written",
-        error.NonStringKey => "this format's keys are strings, and the value has a key that is not one",
-        error.InvalidKey => "the value has a key this format cannot spell",
+        error.UnwritableNull => "this format has no null; to leave the key without a value, `delete` it",
+        error.UnwritableNested => "this format holds only flat values there, so a sequence or a table cannot be written",
+        error.UnwritableKey => "the value has a key this format cannot spell",
         else => @errorName(err),
     };
     term.setColor(.red) catch {};

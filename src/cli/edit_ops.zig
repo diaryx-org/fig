@@ -1,14 +1,14 @@
 //! In-place editing plumbing shared by `edit`/`set`/`insert`/`delete`/
 //! `comment`: the single span-splice path (`applyEdit`) behind every
 //! structural op, its embed-aware twin (`applyToEmbed`), and the small
-//! per-format helpers (JSON requoting, empty-document seeds) those two lean
-//! on.
+//! helpers (value rendering, empty-document seeds) those two lean on.
 const std = @import("std");
 const fig = @import("fig");
 const build_options = @import("build_options");
 
 const types = @import("types.zig");
 const fileio = @import("fileio.zig");
+const value_arg = @import("value_arg.zig");
 
 const Format = types.Format;
 const EditOp = types.EditOp;
@@ -123,15 +123,70 @@ pub fn applyToFile(
     file: Io.File,
     path: []fig.AST.PathSegment,
     text: []const u8,
+    value: OpValue,
     op: EditOp,
+    format: Format,
     dialect: Lang.Type,
 ) !void {
     const content = try fileio.readAll(allocator, io, file);
     defer allocator.free(content);
 
-    const edited = try applyEdit(Lang, allocator, content, path, text, op, dialect);
+    const edited = try applyValueEdit(Lang, allocator, content, path, text, value, op, format, dialect);
     try file.writePositionalAll(io, edited, 0);
     try file.setLength(io, edited.len);
+}
+
+/// The text a value argument was written as when the document refused it —
+/// set just before `applyValueEdit` returns `error.InvalidEditText` for a
+/// rendered value, so the report can show the spelling that was refused
+/// rather than only what was typed. Null otherwise. The CLI makes one edit
+/// per run, so one slot is all there is to hold.
+pub var refused_rendering: ?[]const u8 = null;
+
+/// `applyEdit` with `value` rendered into `format` first — the one place a
+/// value argument meets the document, for a whole file (`applyToFile`) and
+/// an embedded region (`applyToEmbed`) alike. Two retries live here, each on
+/// the one copy of `content`, so neither reads or parses the file again:
+///
+///   * a value rendered in the format's own layout (a YAML block) whose site
+///     is inside a flow collection (`k: {a: 1}`) is refused having written
+///     nothing, and goes again on one line (`Layout.flow`), which is what
+///     fits there;
+///   * an op that may create a key (`insert_key`, `set`) whose splice is
+///     refused goes again with `0` — a value every format spells — and when
+///     that is refused too the KEY is what the document would not take:
+///     `error.InvalidEditKey`, so the report names the key, not the value.
+pub fn applyValueEdit(
+    comptime Lang: type,
+    allocator: std.mem.Allocator,
+    content: []const u8,
+    path: []fig.AST.PathSegment,
+    text: []const u8,
+    value: OpValue,
+    op: EditOp,
+    format: Format,
+    dialect: Lang.Type,
+) ![]u8 {
+    refused_rendering = null;
+    var r = try renderEdit(allocator, text, value, op, format, .natural);
+    const first = applyEdit(Lang, allocator, content, path, r.text, r.op, dialect);
+    if (first) |edited| return edited else |err| switch (err) {
+        error.BlockValueIntoFlow => if (value.any()) {
+            r = try renderEdit(allocator, text, value, op, format, .flow);
+            if (applyEdit(Lang, allocator, content, path, r.text, r.op, dialect)) |edited| return edited else |e| if (e != error.InvalidEditText) return e;
+        } else return err,
+        error.InvalidEditText => {},
+        else => return err,
+    }
+    // The splice was refused (`InvalidEditText`): say which half of it.
+    switch (op) {
+        .insert_key, .set => if (applyEdit(Lang, allocator, content, path, "0", op, dialect)) |probe| {
+            allocator.free(probe);
+        } else |e| if (e == error.InvalidEditText) return error.InvalidEditKey,
+        else => {},
+    }
+    if (value.one != null) refused_rendering = r.text;
+    return error.InvalidEditText;
 }
 
 /// Read back a comment from `content` (parsed under `dialect`) without writing:
@@ -219,6 +274,7 @@ pub fn applyToEmbed(
     embed_type: fig.Embed.Type,
     path: []fig.AST.PathSegment,
     text: []const u8,
+    value: OpValue,
     op: EditOp,
 ) !void {
     const content = try fileio.readAll(allocator, io, file);
@@ -258,20 +314,13 @@ pub fn applyToEmbed(
     // Keyed on the archetype's inner FORMAT, not the archetype itself: a fenced
     // ```yaml block edits identically to `---` YAML, `+++`/```toml to TOML, etc.
     // The per-format facts are `route`'s, read from the same registry entries:
-    // which language module and dialect to reparse under, and whether the edit
-    // text needs requoting first (`.json_string` — JSON frontmatter is plain
-    // strict JSON, so an inserted/replaced key or value is wrapped as a JSON
-    // string, while a comment op rides through unquoted and the editor rejects
-    // it, strict JSON having no comment syntax).
+    // which language module and dialect to reparse under, and the format a
+    // value argument is rendered into (`renderEdit`).
     const edited_decoded = switch (fig.Embed.innerFormat(embed_type)) {
         inline else => |f| blk: {
             const d = comptime fig.Language.entryFor(@tagName(f));
             if (comptime d.Lang == void) return error.FormatDisabled;
-            if (comptime d.splice == .json_string) {
-                const j = try jsonifyEdit(allocator, op, text);
-                break :blk try applyEdit(d.Lang, allocator, decoded.text, path, j.text, j.op, d.dialect);
-            }
-            break :blk try applyEdit(d.Lang, allocator, decoded.text, path, text, op, d.dialect);
+            break :blk try applyValueEdit(d.Lang, allocator, decoded.text, path, text, value, op, @field(Format, @tagName(f)), d.dialect);
         },
     };
     defer allocator.free(edited_decoded);
@@ -298,26 +347,32 @@ pub fn opSeedsEmptyRegion(op: EditOp) bool {
     };
 }
 
-/// Recast an edit for a JSON-family target: strict JSON has no bare literals,
-/// so an inserted/replaced value must be wrapped as a JSON string (parity with
-/// `edit`'s value replacement). An inserted or replacement key is left as the
-/// name it is — `applyOp` spells it through the format's own `key_style`,
-/// which quotes and escapes it for JSON. Comment and delete ops carry no
-/// value and pass through untouched. Returns the (possibly requoted) text and
-/// op.
-pub fn jsonifyEdit(allocator: std.mem.Allocator, op: EditOp, text: []const u8) !struct { text: []const u8, op: EditOp } {
-    const text_out = switch (op) {
-        .replace_value, .insert_key, .set, .append_seq, .prepend_seq => try std.fmt.allocPrint(allocator, "\"{s}\"", .{text}),
-        // A replacement key is a name `applyOp` spells; `set_sequence`
-        // carries its items in the op payload (requoted below); comment ops
-        // and structural deletes carry no value text.
-        .replace_key, .set_sequence, .add_leading_comment, .set_trailing_comment, .delete_leading_comments, .delete_trailing_comment, .delete_key, .remove_seq_item => text,
-    };
+/// The value an op carries, read (`value_arg.read`) but not yet rendered:
+/// `renderEdit` spells it once the target format is known. `one` is the
+/// value of `set`/`insert`/`edit`; `items` are `set --seq`'s. Empty for an op
+/// with no value (a comment, a delete, a key rename), whose text is spliced
+/// as it stands.
+pub const OpValue = struct {
+    one: ?value_arg.Value = null,
+    items: []const value_arg.Value = &.{},
+
+    fn any(self: OpValue) bool {
+        return self.one != null or self.items.len > 0;
+    }
+};
+
+/// `text`/`op` with `value` rendered into `format` in place of the argument
+/// text: the edit's own text for `one`, each `set_sequence` item for `items`.
+/// The same for every format — a JSON file gets `5` for the number and
+/// `"hello"` for the string, where it used to get every argument quoted.
+pub fn renderEdit(allocator: std.mem.Allocator, text: []const u8, value: OpValue, op: EditOp, format: Format, layout: value_arg.Layout) !struct { text: []const u8, op: EditOp } {
+    const text_out = if (value.one) |v| try value_arg.render(allocator, v, format, layout) else text;
     const op_out: EditOp = switch (op) {
-        .set_sequence => |items| blk: {
-            const quoted = try allocator.alloc([]const u8, items.len);
-            for (items, 0..) |it, i| quoted[i] = try std.fmt.allocPrint(allocator, "\"{s}\"", .{it});
-            break :blk .{ .set_sequence = quoted };
+        .set_sequence => |items| if (value.items.len == 0) op else blk: {
+            std.debug.assert(value.items.len == items.len);
+            const rendered = try allocator.alloc([]const u8, value.items.len);
+            for (value.items, 0..) |v, i| rendered[i] = try value_arg.render(allocator, v, format, layout);
+            break :blk .{ .set_sequence = rendered };
         },
         else => op,
     };
@@ -357,7 +412,7 @@ pub fn emptyDocSeed(format: Format) ?[]const u8 {
 pub const EditRequest = union(enum) {
     /// Splice an edit into the file in place. `text`/`op` are exactly what
     /// `applyToFile` takes.
-    apply: struct { path: []fig.AST.PathSegment, text: []const u8, op: EditOp },
+    apply: struct { path: []fig.AST.PathSegment, text: []const u8, value: OpValue = .{}, op: EditOp },
     /// Read one comment back without writing (`comment --get`).
     get_comment: struct { path: []fig.AST.PathSegment, inline_comment: bool },
 };
@@ -382,13 +437,11 @@ pub const EditRequest = union(enum) {
 ///     plist, despite being XML-based, is a strict typed subset with a real
 ///     editor (`Editor(Plist)` renders typed value elements and `<!-- -->`
 ///     comments), which is why it routes here like everything else.
-///   * HOW the edit text is spliced — `Entry.splice`. The JSON family is
-///     `.json_string`, so its text and any inserted key are requoted through
-///     `jsonifyEdit` first (strict JSON has no bare literals); every other
-///     format takes the text as it stands, whether that means splicing it
-///     verbatim as source (`.literal`: YAML/TOML/ZON/fig) or rendering it
-///     (`.raw`: INI/dotenv/`.properties`, and plist/NestedText, which build a
-///     value element or a scalar rather than splicing syntax).
+///   * HOW a value argument is spelled — `renderEdit`, which renders the
+///     value read from the command line into this format as a binding's
+///     value is rendered (`value_arg.render`): `5` is a number and `hello` a
+///     string whatever the format. Text with no value behind it — a comment,
+///     a key name, a `--raw` argument — is spliced as it stands.
 ///   * WHICH dialect to reparse under — `Entry.dialect`, which is what keeps a
 ///     JSONC/JSON5 file's comments valid on reparse and what used to be the
 ///     hand-written `jsonDialect`.
@@ -421,12 +474,7 @@ pub fn route(
             switch (req) {
                 .get_comment => |g| return getCommentFromFile(fig.Runtime.Language, allocator, io, file, g.path, g.inline_comment, e.typeOf()),
                 .apply => |ap| {
-                    if (e.splice == .json_string) {
-                        const j = try jsonifyEdit(allocator, ap.op, ap.text);
-                        try applyToFile(fig.Runtime.Language, allocator, io, file, ap.path, j.text, j.op, e.typeOf());
-                    } else {
-                        try applyToFile(fig.Runtime.Language, allocator, io, file, ap.path, ap.text, ap.op, e.typeOf());
-                    }
+                    try applyToFile(fig.Runtime.Language, allocator, io, file, ap.path, ap.text, ap.value, ap.op, format, e.typeOf());
                     return null;
                 },
             }
@@ -438,12 +486,7 @@ pub fn route(
             switch (req) {
                 .get_comment => |g| return getCommentFromFile(d.Lang, allocator, io, file, g.path, g.inline_comment, d.dialect),
                 .apply => |ap| {
-                    if (comptime d.splice == .json_string) {
-                        const j = try jsonifyEdit(allocator, ap.op, ap.text);
-                        try applyToFile(d.Lang, allocator, io, file, ap.path, j.text, j.op, d.dialect);
-                    } else {
-                        try applyToFile(d.Lang, allocator, io, file, ap.path, ap.text, ap.op, d.dialect);
-                    }
+                    try applyToFile(d.Lang, allocator, io, file, ap.path, ap.text, ap.value, ap.op, format, d.dialect);
                     return null;
                 },
             }
@@ -468,9 +511,10 @@ pub fn applyToFileAs(
     format: Format,
     path: []fig.AST.PathSegment,
     text: []const u8,
+    value: OpValue,
     op: EditOp,
 ) !void {
-    _ = try route(allocator, io, file, format, .{ .apply = .{ .path = path, .text = text, .op = op } });
+    _ = try route(allocator, io, file, format, .{ .apply = .{ .path = path, .text = text, .value = value, .op = op } });
 }
 
 /// Read one comment back from `file` as `format` without writing — the
@@ -498,10 +542,11 @@ pub fn applyStructuralEdit(
     embed: ?fig.Embed.Type,
     path: []fig.AST.PathSegment,
     text: []const u8,
+    value: OpValue,
     op: EditOp,
 ) !void {
-    if (embed) |embed_type| return applyToEmbed(allocator, io, input, embed_type, path, text, op);
-    return applyToFileAs(allocator, io, input, resolved, path, text, op);
+    if (embed) |embed_type| return applyToEmbed(allocator, io, input, embed_type, path, text, value, op);
+    return applyToFileAs(allocator, io, input, resolved, path, text, value, op);
 }
 
 test "applyEdit performs the structural ops on YAML" {
@@ -758,7 +803,7 @@ test "applyEdit insert_key spells the key as the format does: `.name` in ZON, qu
     if (comptime build_options.lang_json) {
         const J = fig.Language.JSON;
         const dia = comptime fig.Language.entryFor("json").dialect;
-        const j = try jsonifyEdit(a, .{ .insert_key = "k\"q" }, "v");
+        const j = try renderEdit(a, "v", try figValue(a, "v"), .{ .insert_key = "k\"q" }, .json, .natural);
         const out = try applyEdit(J, a, "{\"a\": 1}", &.{}, j.text, j.op, dia);
         try t.expectEqualStrings("{\"a\": 1, \"k\\\"q\": \"v\"}", out);
     }
@@ -784,7 +829,7 @@ test "applyEdit insert_key refuses a key that already exists, and does not blame
     if (comptime build_options.lang_json) {
         const J = fig.Language.JSON;
         const dia = comptime fig.Language.entryFor("json").dialect;
-        const j = try jsonifyEdit(a, .{ .insert_key = "s" }, "x");
+        const j = try renderEdit(a, "x", try figValue(a, "x"), .{ .insert_key = "s" }, .json, .natural);
         try t.expectError(error.DuplicateKey, applyEdit(J, a, "{\"s\":\"hi\"}", &.{}, j.text, j.op, dia));
     }
     if (comptime build_options.lang_ini) {
@@ -817,12 +862,12 @@ test "applyToEmbed refuses a new leading block in front of another archetype's f
     defer file.close(io);
     try file.writeStreamingAll(io, md);
     var p = [_]fig.AST.PathSegment{.{ .key = "k" }};
-    try t.expectError(error.FrontmatterExists, applyToEmbed(a, io, file, .semicolons_json, &p, "1", .set));
+    try t.expectError(error.FrontmatterExists, applyToEmbed(a, io, file, .semicolons_json, &p, "1", .{}, .set));
     const back = try tmp.dir.readFileAlloc(io, "p.md", a, .limited(1 << 20));
     try t.expectEqualStrings(md, back);
 
     // Endmatter goes at the bottom and displaces nothing.
-    try applyToEmbed(a, io, file, .endmatter_yaml, &p, "1", .set);
+    try applyToEmbed(a, io, file, .endmatter_yaml, &p, "1", .{}, .set);
     const both = try tmp.dir.readFileAlloc(io, "p.md", a, .limited(1 << 20));
     try t.expectEqualStrings(md ++ "```endmatter\nk: 1\n```\n", both);
 }
@@ -844,45 +889,53 @@ test "emptyDocSeed: every seed is the byte string the registry declares" {
         try t.expectEqual(@as(?[]const u8, null), emptyDocSeed(f));
 }
 
-test "jsonifyEdit quotes an inserted value and leaves its key a name, leaves deletes bare" {
+/// `text` read as a fig value, as the CLI reads a value argument.
+fn figValue(a: std.mem.Allocator, text: []const u8) !OpValue {
+    var sink: std.Io.Writer.Discarding = .init(&.{});
+    var term: Io.Terminal = .{ .writer = &sink.writer, .mode = .no_color };
+    return .{ .one = try value_arg.read(a, &term, text, .fig) };
+}
+
+test "renderEdit spells a value as the format does and leaves a key a name, a delete bare" {
+    if (comptime !build_options.lang_json or !build_options.lang_fig) return error.SkipZigTest;
     const t = std.testing;
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
 
     // The key stays a name: `applyOp` spells it through `key_style`.
-    const ins = try jsonifyEdit(a, .{ .insert_key = "k" }, "v");
+    const ins = try renderEdit(a, "v", try figValue(a, "v"), .{ .insert_key = "k" }, .json, .natural);
     try t.expectEqualStrings("\"v\"", ins.text);
     try t.expectEqualStrings("k", ins.op.insert_key);
 
-    const app = try jsonifyEdit(a, .append_seq, "v");
-    try t.expectEqualStrings("\"v\"", app.text);
+    // A number is a number in JSON too; it used to arrive as `"5"`.
+    const num = try renderEdit(a, "5", try figValue(a, "5"), .append_seq, .json, .natural);
+    try t.expectEqualStrings("5", num.text);
 
-    const del = try jsonifyEdit(a, .delete_key, "");
+    const del = try renderEdit(a, "", .{}, .delete_key, .json, .natural);
     try t.expectEqualStrings("", del.text);
     try t.expectEqual(EditOp.delete_key, del.op);
 
-    // set quotes its value; set_sequence requotes each item.
-    const s = try jsonifyEdit(a, .set, "v");
-    try t.expectEqualStrings("\"v\"", s.text);
-    try t.expectEqual(EditOp.set, s.op);
-
-    const items = [_][]const u8{ "x", "y" };
-    const sq = try jsonifyEdit(a, .{ .set_sequence = &items }, "");
+    // set_sequence renders each item.
+    var sink: std.Io.Writer.Discarding = .init(&.{});
+    var term: Io.Terminal = .{ .writer = &sink.writer, .mode = .no_color };
+    const raw_items = [_][]const u8{ "x", "true" };
+    const items = [_]value_arg.Value{ try value_arg.read(a, &term, "x", .fig), try value_arg.read(a, &term, "true", .fig) };
+    const sq = try renderEdit(a, "", .{ .items = &items }, .{ .set_sequence = &raw_items }, .json, .natural);
     try t.expectEqualStrings("\"x\"", sq.op.set_sequence[0]);
-    try t.expectEqualStrings("\"y\"", sq.op.set_sequence[1]);
+    try t.expectEqualStrings("true", sq.op.set_sequence[1]);
 }
 
 // Regression: `.json5` used to be a hard-refused branch in both `runEdit`
 // and `applyStructuralEdit` (`error.UnsupportedJson5Edit`) even though
 // `Editor(json.Language)` with `.format = .JSON5` fully supports every
 // structural op (see `languages/json/editor_helper.zig`). These exercise the
-// CLI's own dispatch path — `jsonifyEdit` requoting text/keys, then
+// CLI's own dispatch path — `renderEdit` spelling the value, then
 // `applyEdit` reparsing under the `json5` registry entry's dialect (`.JSON5`)
 // — the same two calls `route` makes, so a re-introduced gate would only be
 // caught by hitting this path, not by the lower-level editor tests alone.
-test "applyEdit performs the structural ops on JSON5 via the CLI's jsonify+dialect path" {
-    if (comptime !build_options.lang_json) return error.SkipZigTest;
+test "applyEdit performs the structural ops on JSON5 via the CLI's render+dialect path" {
+    if (comptime !build_options.lang_json or !build_options.lang_fig) return error.SkipZigTest;
     const t = std.testing;
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
@@ -891,34 +944,33 @@ test "applyEdit performs the structural ops on JSON5 via the CLI's jsonify+diale
     const dia = comptime fig.Language.entryFor("json5").dialect;
     try t.expectEqual(J.Type.JSON5, dia);
 
-    // insert_key requotes both the new key and value, landing valid JSON5
-    // (unquoted keys elsewhere in the document are untouched).
+    // insert_key quotes the new key and writes the value as the number it
+    // is (unquoted keys elsewhere in the document are untouched).
     {
-        const j = try jsonifyEdit(a, .{ .insert_key = "port" }, "8080");
+        const j = try renderEdit(a, "8080", try figValue(a, "8080"), .{ .insert_key = "port" }, .json5, .natural);
         const out = try applyEdit(J, a, "{ host: 'localhost' }", &.{}, j.text, j.op, dia);
-        try t.expectEqualStrings("{ host: 'localhost', \"port\": \"8080\" }", out);
+        try t.expectEqualStrings("{ host: 'localhost', \"port\": 8080 }", out);
     }
-    // replace_value (the `edit` action, without --key) requotes the
-    // replacement as a JSON string, same as JSON/JSONC.
+    // replace_value (the `edit` action, without --key): a string stays one.
     {
-        var p = [_]fig.AST.PathSegment{.{ .key = "port" }};
-        const j = try jsonifyEdit(a, .replace_value, "9090");
+        var p = [_]fig.AST.PathSegment{.{ .key = "host" }};
+        const j = try renderEdit(a, "example.org", try figValue(a, "example.org"), .replace_value, .json5, .natural);
         const out = try applyEdit(J, a, "{ host: 'localhost', port: 8080 }", &p, j.text, j.op, dia);
-        try t.expectEqualStrings("{ host: 'localhost', port: \"9090\" }", out);
+        try t.expectEqualStrings("{ host: \"example.org\", port: 8080 }", out);
     }
-    // delete_key carries no requoted text and drops the entry outright.
+    // delete_key carries no value and drops the entry outright.
     {
         var p = [_]fig.AST.PathSegment{.{ .key = "port" }};
-        const j = try jsonifyEdit(a, .delete_key, "");
+        const j = try renderEdit(a, "", .{}, .delete_key, .json5, .natural);
         const out = try applyEdit(J, a, "{ host: 'localhost', port: 8080 }", &p, j.text, j.op, dia);
         try t.expectEqualStrings("{ host: 'localhost' }", out);
     }
     // append_seq onto a trailing-comma array doesn't double the comma.
     {
         var p = [_]fig.AST.PathSegment{.{ .key = "tags" }};
-        const j = try jsonifyEdit(a, .append_seq, "3");
+        const j = try renderEdit(a, "3", try figValue(a, "3"), .append_seq, .json5, .natural);
         const out = try applyEdit(J, a, "{ tags: [1, 2,] }", &p, j.text, j.op, dia);
-        try t.expectEqualStrings("{ tags: [1, 2, \"3\",] }", out);
+        try t.expectEqualStrings("{ tags: [1, 2, 3,] }", out);
     }
 }
 
@@ -940,8 +992,8 @@ test "emptyDocSeed: seedable formats round-trip a first `set`, others refuse" {
     const yaml = try applyEdit(fig.Language.YAML, a, emptyDocSeed(.yaml).?, &path, "world", .set, fig.Language.YAML.default_type);
     try t.expectEqualStrings("hello: world\n", yaml);
 
-    // JSON: `{}` seed, value requoted through the JSON path like the CLI does.
-    const jv = try jsonifyEdit(a, .set, "world");
+    // JSON: `{}` seed, value rendered through the JSON path like the CLI does.
+    const jv = try renderEdit(a, "world", try figValue(a, "world"), .set, .json, .natural);
     const json = try applyEdit(fig.Language.JSON, a, emptyDocSeed(.json).?, &path, jv.text, jv.op, .JSON);
     try t.expect(std.mem.indexOf(u8, json, "\"hello\"") != null);
     try t.expect(std.mem.indexOf(u8, json, "\"world\"") != null);
@@ -993,4 +1045,23 @@ test "emptyDocSeed: plist seeds a document a from-scratch `set` lands into" {
     const doc = try P.Parser.parse(a, out, P.default_type);
     const node = try doc.ast.getValByPath(&path);
     try t.expectEqualStrings("someval", node.kind.string);
+}
+
+test "applyValueEdit blames the key when the document takes no value under it" {
+    if (comptime !build_options.lang_dotenv or !build_options.lang_fig) return error.SkipZigTest;
+    const t = std.testing;
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const D = fig.Language.DOTENV;
+    const dia = comptime fig.Language.entryFor("dotenv").dialect;
+
+    // `bad key` is no bash identifier: `0` fares no better than `x`, so the
+    // key is what was refused — not the value, as the report used to say.
+    try t.expectError(error.InvalidEditKey, applyValueEdit(D, a, "A=1\n", &.{}, "x", try figValue(a, "x"), .{ .insert_key = "bad key" }, .dotenv, dia));
+    try t.expectEqual(@as(?[]const u8, null), refused_rendering);
+
+    // A good key with a value the format takes lands as usual.
+    const ok = try applyValueEdit(D, a, "A=1\n", &.{}, "x", try figValue(a, "x"), .{ .insert_key = "B" }, .dotenv, dia);
+    try t.expectEqualStrings("A=1\nB=x\n", ok);
 }

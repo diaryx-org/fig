@@ -18,6 +18,7 @@ const types = @import("types.zig");
 const help = @import("help.zig");
 const args_mod = @import("args.zig");
 const actions = @import("actions.zig");
+const value_arg = @import("value_arg.zig");
 const languages = @import("languages.zig");
 
 // CLI-only sibling modules pulled in only through `actions.zig`/`args.zig`'s
@@ -207,6 +208,12 @@ pub fn main(init: std.process.Init) !void {
             try Help.patch(&stderr_terminal, "fig");
             std.process.exit(2);
         },
+        ArgError.MissingLangArgument => {
+            try Help.lang(&stderr_terminal, "fig");
+            std.process.exit(2);
+        },
+        // Said what was wrong with it already (`args.pathArg`).
+        ArgError.InvalidPath => std.process.exit(2),
         else => return err,
     };
 
@@ -222,8 +229,18 @@ pub fn main(init: std.process.Init) !void {
     dispatch(a, io, &stdout_terminal, &stderr_terminal, config) catch |err| switch (err) {
         error.InvalidEditText => {
             const spliced = types.splicedText(config).?;
-            diag_report.reportBadEditText(&stderr_terminal, spliced.file, spliced.format, spliced.kind, spliced.text);
+            diag_report.reportBadEditText(&stderr_terminal, spliced.file, spliced.format, spliced.kind, spliced.text, edit_ops.refused_rendering);
         },
+        // The document took `0` no better than the value, so the KEY is what
+        // it refused (`edit_ops.applyValueEdit`): the user typed it wrong.
+        error.InvalidEditKey => {
+            const spliced = types.splicedText(config).?;
+            diag_report.reportBadEditText(&stderr_terminal, spliced.file, spliced.format, .key, types.createdKey(config), null);
+        },
+        // A value argument the file's format cannot hold, from rendering it
+        // (`value_arg.render`, which names these so a parse error the file
+        // raises never lands here); nothing was written.
+        error.UnwritableNull, error.UnwritableNested, error.UnwritableKey => diag_report.reportUnwritableValue(&stderr_terminal, types.targetFile(config) orelse "the file", err),
         // Everything an action didn't report itself stops HERE with a plain
         // line, instead of escaping to the Zig runtime's default handler.
         // Letting it escape printed a bare `error: <ErrorName>` plus an
@@ -268,7 +285,7 @@ fn dispatch(a: std.mem.Allocator, io: Io, stdout_terminal: *Io.Terminal, stderr_
     return switch (config.action) {
         .help => actions.runHelp(stderr_terminal, config.binary_name),
         .version => actions.runVersion(stdout_terminal, cli_version, core_version, epoch),
-        .edit => actions.runEdit(a, io, stdout_terminal, config.binary_name, config.options.edit),
+        .edit => actions.runEdit(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.edit),
         .set => actions.runSet(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.set),
         .insert => actions.runInsert(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.insert),
         .delete => actions.runDelete(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.delete),
@@ -320,4 +337,5 @@ test {
     _ = actions;
     _ = gron;
     _ = diff;
+    _ = value_arg;
 }

@@ -3,7 +3,7 @@ title = CLI 5
 description = One reading of a value argument, a scalar printed as its text, strict arguments, one version and one tag — the command-line changes a fig 5.0 would carry
 created = 2026-09-22
 status = draft
-updated = 2026-09-22
+updated = 2026-09-24
 part_of = [proposals](proposals.md)
 ```
 
@@ -16,6 +16,23 @@ part_of = [proposals](proposals.md)
 > output, help text that disagrees with the parser — are fixed as ordinary
 > commits and are not argued here. What is left changes what an existing
 > command line does, which is what a major version is for.
+>
+> **Progress.** §1 (a value argument is a fig value), §2 (`get` prints a
+> scalar as its text), §3 (strict arguments), §4 (a missing comment exits
+> 1) and §5 (exit codes written down) have landed, with
+> `Behavioural-change:` trailers; `tools/cli-args-check.sh` holds them to
+> the built binary, §5 as one case per action per row. The line §5 draws:
+> 2 is what the command line alone gets wrong, before the file is read; 1
+> is everything the document decides. `patch --dry-run`/`--diff` stay 0
+> on a change, as their help always said — a patch is expected to change
+> the file, where `fmt --dry-run` is a check that it need not. Two details §1
+> left open were settled in the code: an argument that is empty, holds a
+> line break or space at either end, or whose `#` would start a comment is
+> a string as written;
+> and a value whose natural layout cannot land where it is going (a YAML
+> block inside a flow mapping) is written on one line instead. A TOML
+> table given as a value is written as an inline table, which also fixed
+> `fig patch` of a new table into TOML.
 
 The CLI's compatibility contract is its own — flags, defaults, exit codes
 ([VERSIONING](/docs/VERSIONING.md)) — and it has drifted in ways no single

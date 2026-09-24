@@ -96,7 +96,7 @@ set +e
 err="$("$fig" set s.tkv D "$(printf 'two\nlines')" 2>&1 >/dev/null)"
 status=$?
 set -e
-[ "$status" -ne 0 ] || fail "a value with a line break was accepted"
+[ "$status" -eq 1 ] || fail "a value with a line break the helper refuses exited $status, want 1"
 case "$err" in *"is not a valid value for s.tkv (tinykv)"*) ;; *) fail "bad edit text not reported for the language: $err" ;; esac
 
 # A parse failure is reported with the helper's message and at its offset.
@@ -105,7 +105,7 @@ set +e
 err="$("$fig" get bad.tkv 2>&1 >/dev/null)"
 status=$?
 set -e
-[ "$status" -ne 0 ] || fail "a parse error exited 0"
+[ "$status" -eq 1 ] || fail "a parse error exited $status, want 1"
 case "$err" in *"expected key=value"*"bad.tkv:2:1"*) ;; *) fail "parse error not reported at the helper's offset: $err" ;; esac
 
 # A name nobody configured, and a helper that cannot start, are refused
@@ -114,7 +114,7 @@ set +e
 err="$("$fig" get s.tkv --lang nosuch 2>&1 >/dev/null)"
 status=$?
 set -e
-[ "$status" -ne 0 ] || fail "--lang nosuch exited 0"
+[ "$status" -eq 2 ] || fail "--lang nosuch exited $status, want 2"
 case "$err" in *"No language named \`nosuch\`"*) ;; *) fail "unknown --lang not refused by name: $err" ;; esac
 printf 'language[]\n> name = broken\n> command = [/nonexistent/helper]\n' > broken.figl
 set +e

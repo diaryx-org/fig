@@ -212,6 +212,8 @@ pub fn main(init: std.process.Init) !void {
             try Help.lang(&stderr_terminal, "fig");
             std.process.exit(2);
         },
+        // Said what was wrong with it already (`args.pathArg`).
+        ArgError.InvalidPath => std.process.exit(2),
         else => return err,
     };
 

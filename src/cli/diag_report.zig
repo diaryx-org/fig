@@ -114,7 +114,7 @@ pub fn renderAll(a: std.mem.Allocator, items: anytype, comptime describeFn: anyt
     return out;
 }
 
-/// Render one parse failure as a `printDiag` teaching report and exit(2) — the
+/// Render one parse failure as a `printDiag` teaching report and exit(1) — the
 /// `get`-time twin of `check`'s per-error loop, for the single diagnostic a
 /// non-recovering parse produces. Shared by every language with a `Report`
 /// (every one whose parser declares `parseWithReport`) so `get`'s error path doesn't repeat this
@@ -122,7 +122,9 @@ pub fn renderAll(a: std.mem.Allocator, items: anytype, comptime describeFn: anyt
 pub fn reportParseError(term: *Io.Terminal, source: []const u8, file: []const u8, offset: usize, end: ?usize, message: []const u8, short_label: []const u8) !void {
     try printDiag(term, source, file, offset, end, "error", .red, message, short_label);
     try term.writer.flush();
-    std.process.exit(2);
+    // A file that does not parse is a failure on the document, not a wrong
+    // command line: exit 1, as `check` and the editing actions always did.
+    std.process.exit(1);
 }
 
 /// The binary's last line of defense: report an error that reached `main`
@@ -403,8 +405,9 @@ fn spliceStyle(format: Format) SpliceStyle {
 }
 
 /// Report an edit whose *argument* — not the file — is what doesn't parse, and
-/// exit(2). `edit`/`set`/`insert` splice the text the user typed straight into
-/// the document, so when the reparse fails the underlying error describes the
+/// exit: 2 when the text was source the user typed, 1 when it was a fig value
+/// the document refused (see below). `edit`/`set`/`insert` splice the text
+/// into the document, so when the reparse fails the underlying error describes the
 /// spliced bytes ("not a valid TOML number" for a git sha) while pointing at a
 /// file the user believes is fine. `edit_ops.applyEdit` turns that case into
 /// `error.InvalidEditText` (it knows the document parsed before the splice);
@@ -417,7 +420,10 @@ fn spliceStyle(format: Format) SpliceStyle {
 pub fn reportBadEditText(term: *Io.Terminal, file: []const u8, format: ?Format, kind: EditTextKind, text: ?[]const u8) noreturn {
     reportBadEditTextImpl(term, file, format, kind, text) catch {};
     term.writer.flush() catch {};
-    std.process.exit(2);
+    // Text the user wrote as source (a `--raw` value, a key, a comment) that
+    // does not parse is the command line's fault: exit 2. A fig value was
+    // already read cleanly; the document refusing its spelling is exit 1.
+    std.process.exit(if (kind == .value) 1 else 2);
 }
 
 fn reportBadEditTextImpl(term: *Io.Terminal, file: []const u8, format: ?Format, kind: EditTextKind, text: ?[]const u8) !void {
@@ -565,7 +571,7 @@ pub fn reportRuntimePrintError(term: *Io.Terminal, err: anyerror) noreturn {
 }
 
 /// Print every parse-time authoring warning in `warnings` (unless `--quiet`),
-/// then exit(2) if `--strict` and any fired — `get`'s shared `--quiet`/
+/// then exit(1) if `--strict` and any fired — `get`'s shared `--quiet`/
 /// `--strict` contract for a language's authoring-time lints (fig's, JSON's
 /// `duplicate_key`, …), so each language's call site is one line instead of
 /// repeating the print/flush/strict-abort sequence.
@@ -578,6 +584,7 @@ pub fn handleParseWarnings(term: *Io.Terminal, source: []const u8, file: []const
     if (strict) {
         try term.writer.print("error: {d} {s} warning(s); --strict aborts.\n", .{ warnings.len, kind_name });
         try term.writer.flush();
-        std.process.exit(2);
+        // The document's lints, like `get`'s lossy `--strict`: exit 1.
+        std.process.exit(1);
     }
 }

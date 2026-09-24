@@ -126,6 +126,15 @@ pub const Help = struct {
             \\that begins with - goes after it (`{s} get -- -x.yaml`); `-` alone is
             \\stdin, and a negative number is a value wherever it stands.
             \\
+            \\Exit status, for every action:
+            \\  0  done (for `fmt --dry-run`/`--diff` and `check`: nothing to
+            \\     change, everything parses)
+            \\  1  the operation failed on the document: it does not parse, a
+            \\     path or file is missing, an edit was refused, `fmt --dry-run`
+            \\     found a change, `--strict` found a warning
+            \\  2  the command line is wrong: an unknown action or flag, a missing
+            \\     or surplus argument, a path or value that does not parse
+            \\
             \\Any other action is handed to a `fig-<action>` program on your PATH,
             \\the way git does: `{s} schema lint f.json` runs `fig-schema lint f.json`
             \\with every argument after `schema` passed through untouched.
@@ -346,7 +355,7 @@ pub const Help = struct {
             \\    conversions, and fig authoring lints (`Yes`-style strings, a
             \\    likely missing comma in a flow value, indent/marker-count
             \\    disagreement, ...).
-            \\  --strict: treat any warning as an error (exit non-zero).
+            \\  --strict: treat any warning as an error (exit 1).
             \\  --embed <archetype>: read an embedded region of a host file.
             \\    Without this flag, a `.md`/`.markdown` file has its archetype
             \\    sniffed from the content (falling back to `frontmatter`/YAML
@@ -420,7 +429,7 @@ pub const Help = struct {
             \\    stays inline, a wider one expands to a [section] / wrapped array.
             \\  --strip-comments: drop comments instead of re-emitting them.
             \\  -q, --quiet, --no-warnings: suppress warnings on stderr.
-            \\  --strict: treat any warning as an error (exit non-zero, no write).
+            \\  --strict: treat any warning as an error (exit 1, no write).
             \\  --embed <archetype>: reformat an embedded region of a host file
             \\    instead of the whole file. Without this flag, a `.md`/`.markdown`
             \\    file has its archetype sniffed from the content (falling back to
@@ -480,7 +489,7 @@ pub const Help = struct {
             \\  --lax-tags: drop unknown/custom YAML tags instead of erroring, when
             \\    converting away from YAML.
             \\  -q, --quiet, --no-warnings: suppress warnings on stderr.
-            \\  --strict: treat any warning as an error (exit non-zero, no write).
+            \\  --strict: treat any warning as an error (exit 1, no write).
             \\  reads stdin when <file> is `-`, but only without --write.
             \\
         , .{ binary_name, binary_name });

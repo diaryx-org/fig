@@ -4,7 +4,8 @@
 # an error. An unknown flag and a surplus positional are exit 2 with nothing
 # on stdout and no file touched; `--` ends the flags; a missing comment is
 # exit 1, like a missing path; a value argument means the same thing in every
-# format, and `get` prints a scalar as its text. Run by `zig build check` with
+# format, and `get` prints a scalar as its text; and every action exits by the
+# 0/1/2 table `fig --help` states. Run by `zig build check` with
 # the built CLI as $1; run by hand as `sh tools/cli-args-check.sh zig-out/bin/fig`.
 set -eu
 
@@ -123,5 +124,65 @@ is "get a number" 42 "$("$fig" get g.json n 2>/dev/null)"
 is "get a null" null "$("$fig" get g.json z 2>/dev/null)"
 is "get -o json" '"hi"' "$("$fig" get g.json s -o json 2>/dev/null)"
 [ "$("$fig" get g.json s 2>/dev/null | od -An -c | tr -d ' ')" = 'hi\n' ] || fail "get of a scalar does not end in one newline"
+
+# Exit status: every action holds each row of the contract `fig --help`
+# states — 0 done, 1 failed on the document, 2 a wrong command line. Each
+# row runs against fresh copies of the fixtures.
+mkdir fixtures
+printf 'a: 1\n' >fixtures/ok.yaml
+printf 'a: [1\n' >fixtures/bad.yaml
+printf 'a:   1\n' >fixtures/messy.yaml
+printf 'b: 2\n' >fixtures/o.yaml
+row() { # row <want> <args...>
+    want="$1"
+    shift
+    rm -rf run && cp -R fixtures run
+    set +e
+    (cd run && "$fig" "$@" >/dev/null 2>&1)
+    got=$?
+    set -e
+    [ "$got" -eq "$want" ] || fail "exit status: fig $*: exited $got, want $want"
+}
+row 0 get ok.yaml a
+row 1 get bad.yaml
+row 1 get ok.yaml zz
+row 1 get nosuch.yaml
+row 2 get ok.yaml 'a['
+row 0 set ok.yaml b 2
+row 1 set bad.yaml a 2
+row 1 set ok.yaml a.x 1
+row 2 set ok.yaml a '[1'
+row 0 insert ok.yaml c 3
+row 1 insert ok.yaml a 3
+row 2 insert ok.yaml c
+row 0 edit ok.yaml a 2
+row 1 edit ok.yaml zz 2
+row 2 edit ok.yaml a
+row 0 delete ok.yaml a
+row 1 delete ok.yaml zz
+row 2 delete ok.yaml a b
+row 0 comment ok.yaml a hi
+row 1 comment --get ok.yaml a
+row 1 comment bad.yaml a hi
+row 2 comment ok.yaml
+row 0 check ok.yaml
+row 1 check bad.yaml
+row 2 check
+row 0 fmt --dry-run ok.yaml
+row 1 fmt --dry-run messy.yaml
+row 1 fmt bad.yaml
+row 2 fmt --dry-run --diff ok.yaml
+row 0 convert -o json ok.yaml
+row 1 convert -o json bad.yaml
+row 2 convert ok.yaml
+row 0 patch --dry-run ok.yaml o.yaml
+row 1 patch ok.yaml bad.yaml
+row 2 patch ok.yaml
+row 2 patch --at 'x[' ok.yaml o.yaml
+row 0 lang list
+row 1 lang table nosuch.yaml
+row 2 lang bogus
+row 0 version
+row 2 nosuchaction
 
 echo "cli-args-check: ok"

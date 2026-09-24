@@ -494,11 +494,12 @@ pub fn runComment(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
             // Strict JSON has no comment syntax: there can be nothing to get.
             // The one refusal the shared dispatch can't state, because it is
             // about a DIALECT of an otherwise comment-carrying language — and
-            // it is a message-and-exit(2), not an error value.
+            // it is a message-and-exit(1), not an error value: the
+            // document's format refuses, as it would a missing path.
             .json => {
                 try stderr_term.writer.print("error: strict JSON has no comments; use a .jsonc or .json5 file instead.\n", .{});
                 try stderr_term.writer.flush();
-                std.process.exit(2);
+                std.process.exit(1);
             },
             // Everything else reads its comment through the shared editor
             // dispatch. A format whose grammar has no same-line comment (INI,
@@ -538,7 +539,7 @@ pub fn runComment(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
         .json => {
             try stderr_term.writer.print("error: strict JSON has no comments; use a .jsonc or .json5 file instead.\n", .{});
             try stderr_term.writer.flush();
-            std.process.exit(2);
+            std.process.exit(1);
         },
         // Everything else goes through the shared editor dispatch — JSONC/
         // JSON5's `//` comments reparse under their own dialect there, and
@@ -945,7 +946,7 @@ pub fn runConvert(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
                 .{opts.file},
             );
             try stderr_term.writer.flush();
-            std.process.exit(2);
+            std.process.exit(1);
         };
         const region = try fig.Embed.locateRegion(content, source_type);
         const inner = content[region.content.start..region.content.end];
@@ -977,7 +978,7 @@ pub fn runConvert(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
                     .{ opts.file, args_mod.embedTypeName(to_embed_type) },
                 );
                 try stderr_term.writer.flush();
-                std.process.exit(2);
+                std.process.exit(1);
             },
             else => |e| return e,
         };

@@ -18,9 +18,14 @@ part_of = [proposals](proposals.md)
 > command line does, which is what a major version is for.
 >
 > **Progress.** §1 (a value argument is a fig value), §2 (`get` prints a
-> scalar as its text), §3 (strict arguments) and §4 (a missing comment
-> exits 1) have landed, with `Behavioural-change:` trailers;
-> `tools/cli-args-check.sh` holds them to the built binary. Two details §1
+> scalar as its text), §3 (strict arguments), §4 (a missing comment exits
+> 1) and §5 (exit codes written down) have landed, with
+> `Behavioural-change:` trailers; `tools/cli-args-check.sh` holds them to
+> the built binary, §5 as one case per action per row. The line §5 draws:
+> 2 is what the command line alone gets wrong, before the file is read; 1
+> is everything the document decides. `patch --dry-run`/`--diff` stay 0
+> on a change, as their help always said — a patch is expected to change
+> the file, where `fmt --dry-run` is a check that it need not. Two details §1
 > left open were settled in the code: an argument that is empty, holds a
 > line break, or whose `#` would start a comment is a string as written;
 > and a value whose natural layout cannot land where it is going (a YAML

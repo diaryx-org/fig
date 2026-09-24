@@ -130,6 +130,18 @@ pub fn parsePath(allocator: std.mem.Allocator, path: []const u8) ![]fig.AST.Path
     return path_in_progress.toOwnedSlice(allocator);
 }
 
+/// `parsePath` for a path on the command line: one that does not parse is a
+/// usage error (exit 2) naming it, rather than an error name escaping `main`.
+fn pathArg(allocator: std.mem.Allocator, path: []const u8) ArgError![]fig.AST.PathSegment {
+    return parsePath(allocator, path) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            std.log.scoped(.parseConfig).err("`{s}` is not a path: keys are separated by `.`, an index is `[n]` (or `[-]` for the end), and a key holding `.` or `[` is quoted: a.\"b.c\"\n", .{path});
+            return ArgError.InvalidPath;
+        },
+    };
+}
+
 /// The key quoted at `path[i.*]` — `'…'` verbatim, `"…"` with JSON's
 /// escapes decoded — leaving `i.*` just past the closing quote.
 fn quotedKey(allocator: std.mem.Allocator, path: []const u8, i: *usize) ![]const u8 {
@@ -635,7 +647,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             }
             if (!positionals.atMost("edit", 3, "a file, a path and a value")) return ArgError.MissingEditArgument;
             file_path = pos[0];
-            path = try parsePath(allocator, pos[1]);
+            path = try pathArg(allocator, pos[1]);
             replacement = pos[2];
         }
 
@@ -700,7 +712,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             }
             if (!seq and !positionals.atMost("set", 3, "a file, a path and one value (--seq takes several)")) return ArgError.MissingSetArgument;
             const file_path = pos[0];
-            const path = try parsePath(allocator, pos[1]);
+            const path = try pathArg(allocator, pos[1]);
             const ext = detectLanguageFromFileEnding(file_path);
             const embed = embed_override;
             config.options = .{
@@ -752,7 +764,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             }
             if (!positionals.atMost("insert", 3, "a file, a path and a value")) return ArgError.MissingInsertArgument;
             file_path = pos[0];
-            path = try parsePath(allocator, pos[1]);
+            path = try pathArg(allocator, pos[1]);
             value = pos[2];
         }
 
@@ -791,7 +803,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             }
             if (!positionals.atMost("delete", 2, "a file and a path")) return ArgError.MissingDeleteArgument;
             file_path = pos[0];
-            path = try parsePath(allocator, pos[1]);
+            path = try pathArg(allocator, pos[1]);
         }
 
         const ext = if (requested_help) null else detectLanguageFromFileEnding(file_path);
@@ -844,7 +856,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             }
             if (!positionals.atMost("comment", if (wants_text) 3 else 2, if (wants_text) "a file, a path and the comment text" else "a file and a path with --get/--delete")) return ArgError.MissingCommentArgument;
             file_path = pos[0];
-            path = try parsePath(allocator, pos[1]);
+            path = try pathArg(allocator, pos[1]);
             if (wants_text) text = pos[2];
         }
 
@@ -989,7 +1001,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
 
         var path: ?[]fig.AST.PathSegment = null;
         if (!requested_help and pos.len > 1) {
-            path = try parsePath(allocator, pos[1]);
+            path = try pathArg(allocator, pos[1]);
         }
 
         const detected_input: ?Detected = if (!requested_help and input_override == null)
@@ -1428,19 +1440,19 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     log.err("Missing path after {s}\n", .{arg});
                     return ArgError.MissingPatchArgument;
                 };
-                at = try parsePath(allocator, p);
+                at = try pathArg(allocator, p);
             } else if (std.mem.eql(u8, arg, "--from")) {
                 const p = args.next() orelse {
                     log.err("Missing path after {s}\n", .{arg});
                     return ArgError.MissingPatchArgument;
                 };
-                from = try parsePath(allocator, p);
+                from = try pathArg(allocator, p);
             } else if (std.mem.eql(u8, arg, "--delete")) {
                 const p = args.next() orelse {
                     log.err("Missing path after {s}\n", .{arg});
                     return ArgError.MissingPatchArgument;
                 };
-                const parsed_path = try parsePath(allocator, p);
+                const parsed_path = try pathArg(allocator, p);
                 if (parsed_path.len == 0) {
                     log.err("--delete needs a path within the document; the root cannot be deleted.\n", .{});
                     return ArgError.MissingPatchArgument;

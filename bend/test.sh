@@ -29,3 +29,12 @@ test "$status" = 1
 status=0; "$tmp/fig" frobnicate x 2>/dev/null || status=$?
 test "$status" = 2
 echo "edits: ok"
+
+# Differential check against the Zig fig, when one is given: FIG=zig-out/bin/fig
+if [ -n "${FIG:-}" ]; then
+  cp testdata/config.fig "$tmp/zig.fig"
+  "$FIG" set "$tmp/zig.fig" service.replicas 5
+  "$FIG" comment --inline "$tmp/zig.fig" service.replicas "bumped for Black Friday"
+  cmp "$tmp/zig.fig" testdata/config.edited.fig
+  echo "zig fig agrees: ok"
+fi

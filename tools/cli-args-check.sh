@@ -3,8 +3,9 @@
 # the unit tests cannot reach, since the test runner fails any test that logs
 # an error. An unknown flag and a surplus positional are exit 2 with nothing
 # on stdout and no file touched; `--` ends the flags; a missing comment is
-# exit 1, like a missing path. Run by `zig build check` with the built CLI as
-# $1; run by hand as `sh tools/cli-args-check.sh zig-out/bin/fig`.
+# exit 1, like a missing path; a value argument means the same thing in every
+# format, and `get` prints a scalar as its text. Run by `zig build check` with
+# the built CLI as $1; run by hand as `sh tools/cli-args-check.sh zig-out/bin/fig`.
 set -eu
 
 fig="$1"
@@ -77,5 +78,50 @@ exits "comment --get missing" 1 comment --get f.yaml b
 exits "comment --get --inline missing" 1 comment --get --inline f.yaml a
 exits "comment --get no such path" 1 comment --get f.yaml zz
 exits "comment --delete missing" 0 comment --delete f.yaml b
+
+# A value argument is a fig value, spelled as each format spells it.
+is() { # is <label> <want> <got>
+    [ "$2" = "$3" ] || fail "$(printf '%s\n--- want\n%s\n--- got\n%s' "$1" "$2" "$3")"
+}
+printf '{"k": 0}\n' >v.json
+printf 'k: 0\n' >v.yaml
+printf 'k = 0\n' >v.toml
+"$fig" set v.json n 5 2>/dev/null
+"$fig" set v.json s hello 2>/dev/null
+"$fig" set v.json z null 2>/dev/null
+"$fig" set v.json l '[1, 2]' 2>/dev/null
+"$fig" set v.json q '"5"' 2>/dev/null
+"$fig" set v.json v --string 1.10 2>/dev/null
+"$fig" edit v.json k true 2>/dev/null
+is "values into JSON" '{"k": true, "n": 5, "s": "hello", "z": null, "l": [1,2], "q": "5", "v": "1.10"}' "$(cat v.json)"
+"$fig" set v.yaml n 5 2>/dev/null
+"$fig" set v.yaml s 'a: b' 2>/dev/null
+"$fig" set v.yaml m '{a = 1}' 2>/dev/null
+is "values into YAML" "$(printf "k: 0\nn: 5\ns: 'a: b'\nm:\n  a: 1")" "$(cat v.yaml)"
+"$fig" set v.toml s hello 2>/dev/null
+"$fig" set v.toml m '{a = 1, b = [x]}' 2>/dev/null
+"$fig" set v.toml d --raw 1979-05-27T07:32:00 2>/dev/null
+is "values into TOML" "$(printf 'k = 0\ns = "hello"\nm = { a = 1, b = ["x"] }\nd = 1979-05-27T07:32:00')" "$(cat v.toml)"
+# A value that is not one is the command line's fault; one the format cannot
+# hold is the document's. Neither writes anything.
+cp v.toml orig.toml
+exits "unclosed value" 2 set v.toml k '[1, 2'
+exits "--string with --raw" 2 set v.toml k --string --raw x
+exits "null into TOML" 1 set v.toml k null
+cmp -s v.toml orig.toml || fail "a refused value changed v.toml"
+rm -f new.toml
+exits "null into a new TOML file" 1 set new.toml k null
+[ ! -e new.toml ] || fail "a refused value left new.toml behind"
+
+# `get` prints a scalar as its text and a newline, in every format; -o asks
+# for that format's spelling.
+printf '{"s": "hi", "n": 42, "z": null, "o": {"a": 1}}\n' >g.json
+printf 's = "hi"\n' >g.toml
+is "get a JSON string" hi "$("$fig" get g.json s 2>/dev/null)"
+is "get a TOML string" hi "$("$fig" get g.toml s 2>/dev/null)"
+is "get a number" 42 "$("$fig" get g.json n 2>/dev/null)"
+is "get a null" null "$("$fig" get g.json z 2>/dev/null)"
+is "get -o json" '"hi"' "$("$fig" get g.json s -o json 2>/dev/null)"
+[ "$("$fig" get g.json s 2>/dev/null | od -An -c | tr -d ' ')" = 'hi\n' ] || fail "get of a scalar does not end in one newline"
 
 echo "cli-args-check: ok"

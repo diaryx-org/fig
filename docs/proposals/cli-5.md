@@ -17,9 +17,16 @@ part_of = [proposals](proposals.md)
 > commits and are not argued here. What is left changes what an existing
 > command line does, which is what a major version is for.
 >
-> **Progress.** §3 (strict arguments) and §4 (a missing comment exits 1)
-> have landed, with `Behavioural-change:` trailers;
-> `tools/cli-args-check.sh` holds them to the built binary.
+> **Progress.** §1 (a value argument is a fig value), §2 (`get` prints a
+> scalar as its text), §3 (strict arguments) and §4 (a missing comment
+> exits 1) have landed, with `Behavioural-change:` trailers;
+> `tools/cli-args-check.sh` holds them to the built binary. Two details §1
+> left open were settled in the code: an argument that is empty, holds a
+> line break, or whose `#` would start a comment is a string as written;
+> and a value whose natural layout cannot land where it is going (a YAML
+> block inside a flow mapping) is written on one line instead. A TOML
+> table given as a value is written as an inline table, which also fixed
+> `fig patch` of a new table into TOML.
 
 The CLI's compatibility contract is its own — flags, defaults, exit codes
 ([VERSIONING](/docs/VERSIONING.md)) — and it has drifted in ways no single

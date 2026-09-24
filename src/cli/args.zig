@@ -535,6 +535,23 @@ fn spelledAsFlag(arg: []const u8) bool {
     return !(std.ascii.isDigit(arg[1]) or arg[1] == '.');
 }
 
+/// Take `arg` as `--string`/`--raw` into `mode`, refusing the pair: true when
+/// it was one of them. `null` in `mode` is "not given" (the default reading).
+fn valueModeFlag(action: []const u8, arg: []const u8, mode: *?types.ValueMode, usage: ArgError) ArgError!bool {
+    const this: types.ValueMode = if (std.mem.eql(u8, arg, "--string"))
+        .string
+    else if (std.mem.eql(u8, arg, "--raw"))
+        .raw
+    else
+        return false;
+    if (mode.*) |prev| if (prev != this) {
+        std.log.scoped(.parseConfig).err("{s}: --string and --raw are two readings of the value; pass one.\n", .{action});
+        return usage;
+    };
+    mode.* = this;
+    return true;
+}
+
 fn isHelp(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h");
 }
@@ -584,6 +601,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         config.action = .edit;
 
         var edit_key = false;
+        var value_mode: ?types.ValueMode = null;
         var requested_help = false;
         var positionals: Positionals = .{};
         defer positionals.deinit(allocator);
@@ -593,7 +611,13 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 requested_help = true;
             } else if (std.mem.eql(u8, arg, "--key")) {
                 edit_key = true;
+            } else if (try valueModeFlag("edit", arg, &value_mode, ArgError.MissingEditArgument)) {
+                // taken
             } else if (!try positionals.add(allocator, "edit", arg)) return ArgError.MissingEditArgument;
+        }
+        if (edit_key and value_mode != null and !requested_help) {
+            log.err("edit --key renames a key; --string and --raw read a value.\n", .{});
+            return ArgError.MissingEditArgument;
         }
         const pos = positionals.items.items;
 
@@ -624,6 +648,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             .path = path,
             .replacement = replacement,
             .key = edit_key,
+            .value_mode = value_mode orelse .fig,
             .requested_help = requested_help,
             .format = if (ext) |d| d.format else .json,
             .detect = !requested_help and ext == null,
@@ -637,6 +662,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         // Positionals follow: file, path, then the value (or, with `--seq`, the
         // sequence items).
         var seq = false;
+        var value_mode: ?types.ValueMode = null;
         var embed_override: ?fig.Embed.Type = null;
         var requested_help = false;
         var positionals: Positionals = .{};
@@ -648,6 +674,8 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 requested_help = true;
             } else if (std.mem.eql(u8, arg, "--seq")) {
                 seq = true;
+            } else if (try valueModeFlag("set", arg, &value_mode, ArgError.MissingSetArgument)) {
+                // taken
             } else if (std.mem.eql(u8, arg, "--embed")) {
                 const name = args.next() orelse {
                     log.err("Missing archetype after {s}\n", .{arg});
@@ -682,6 +710,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     .value = if (seq) "" else pos[2],
                     .seq = seq,
                     .values = if (seq) try allocator.dupe([]const u8, pos[2..]) else &.{},
+                    .value_mode = value_mode orelse .fig,
                     .requested_help = false,
                     .format = if (ext) |d| d.format else .json,
                     // Skip content sniffing when targeting an embed (the inner format
@@ -695,6 +724,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
     } else if (std.mem.eql(u8, action_str, "insert") or std.mem.eql(u8, action_str, "i")) {
         config.action = .insert;
 
+        var value_mode: ?types.ValueMode = null;
         var requested_help = false;
         var positionals: Positionals = .{};
         defer positionals.deinit(allocator);
@@ -702,6 +732,8 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             if (try positionals.rest(allocator, arg)) continue;
             if (isHelp(arg)) {
                 requested_help = true;
+            } else if (try valueModeFlag("insert", arg, &value_mode, ArgError.MissingInsertArgument)) {
+                // taken
             } else if (!try positionals.add(allocator, "insert", arg)) return ArgError.MissingInsertArgument;
         }
         const pos = positionals.items.items;
@@ -729,6 +761,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             .file = file_path,
             .path = path,
             .value = value,
+            .value_mode = value_mode orelse .fig,
             .requested_help = requested_help,
             .format = if (ext) |d| d.format else .json,
             .detect = !requested_help and ext == null,

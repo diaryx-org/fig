@@ -443,14 +443,21 @@ fn reportBadEditTextImpl(term: *Io.Terminal, file: []const u8, format: ?Format, 
     try term.setColor(.blue);
     try term.writer.writeAll("note");
     try term.setColor(.reset);
+    if (kind == .value) {
+        // Read as a fig value and spelled as this format spells it: the
+        // spelling was refused where it landed, not the user's text.
+        try term.writer.print(
+            ": the value was read as a fig value and written as {s} writes it, and the document would not take it there; --raw splices your text as it stands.\n",
+            .{if (format) |f| types.name(f) else "the file's format"},
+        );
+        return;
+    }
     switch (style) {
-        .literal => try term.writer.print(
+        // The JSON family splices its keys, comments and `--raw` values as
+        // source, like every other literal format.
+        .literal, .json_string => try term.writer.print(
             ": the {s} is spliced in verbatim, as source text — so it has to stand on its own as a valid {s} literal.\n",
-            .{ kind.noun(), if (format) |f| @tagName(f) else "document" },
-        ),
-        .json_string => try term.writer.print(
-            ": the {s} is inserted as a JSON string, so a `\"` or `\\` inside it must be escaped.\n",
-            .{kind.noun()},
+            .{ kind.noun(), if (format) |f| types.name(f) else "document" },
         ),
         .raw => try term.writer.print(
             ": the {s} is written out as-is, so it cannot contain a line break or this format's own separators.\n",
@@ -461,17 +468,36 @@ fn reportBadEditTextImpl(term: *Io.Terminal, file: []const u8, format: ?Format, 
     // The overwhelmingly common case: text that needed quotes and lost the
     // ones the shell ate. Only offered when the text isn't already quoted —
     // re-suggesting quotes on `"..."` would just be wrong.
-    if (style == .literal and kind != .comment) if (shown) |s| {
+    if (style != .raw and kind == .raw_value) if (shown) |s| {
         if (s.len > 0 and s[0] != '"' and s[0] != '\'') {
             try term.setColor(.blue);
             try term.writer.writeAll("help");
             try term.setColor(.reset);
             try term.writer.print(
-                ": for a string, pass the quotes too — your shell strips the ones you type: '\"{s}{s}\"'\n",
+                ": for a string, drop --raw, or pass the quotes too — your shell strips the ones you type: '\"{s}{s}\"'\n",
                 .{ s, if (elided) "…" else "" },
             );
         }
     };
+}
+
+/// A value argument the file's format has no spelling for — `null` into
+/// TOML, a sequence into dotenv — refused before anything was written, and
+/// exit(1): the command line was fine, the document cannot hold it.
+pub fn reportUnwritableValue(term: *Io.Terminal, file: []const u8, err: anyerror) noreturn {
+    const why: []const u8 = switch (err) {
+        error.NullUnsupported => "this format has no null; to leave the key without a value, `delete` it",
+        error.UnsupportedValue => "this format holds only flat values there, so a sequence or a table cannot be written",
+        error.NonStringKey => "this format's keys are strings, and the value has a key that is not one",
+        error.InvalidKey => "the value has a key this format cannot spell",
+        else => @errorName(err),
+    };
+    term.setColor(.red) catch {};
+    term.writer.writeAll("error") catch {};
+    term.setColor(.reset) catch {};
+    term.writer.print(": the value cannot be written to {s}: {s}\n", .{ file, why }) catch {};
+    term.writer.flush() catch {};
+    std.process.exit(1);
 }
 
 /// A scalar/null value reaching the fig printer as a document root has no

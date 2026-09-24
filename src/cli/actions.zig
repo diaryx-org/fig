@@ -16,6 +16,7 @@ const fileio = @import("fileio.zig");
 const diag_report = @import("diag_report.zig");
 const parse_dispatch = @import("parse_dispatch.zig");
 const edit_ops = @import("edit_ops.zig");
+const value_arg = @import("value_arg.zig");
 const patch_ops = @import("patch_ops.zig");
 const reformat = @import("reformat.zig");
 const languages = @import("languages.zig");
@@ -51,11 +52,15 @@ pub fn runVersion(stdout_term: *Io.Terminal, cli_version: []const u8, core_versi
     try stdout_term.writer.flush();
 }
 
-pub fn runEdit(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, binary_name: []const u8, opts: types.EditOptions) !void {
+pub fn runEdit(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_term: *Io.Terminal, binary_name: []const u8, opts: types.EditOptions) !void {
     if (opts.requested_help) {
         try Help.edit(stdout_term, binary_name);
         return;
     }
+    // A replacement VALUE is read before the file is touched, so one that is
+    // not a value exits 2 with the file as it was; a replacement key is a
+    // name, spelled by the editor.
+    const value: edit_ops.OpValue = if (opts.key) .{} else .{ .one = try value_arg.read(a, stderr_term, opts.replacement, opts.value_mode) };
     const input = try fileio.getInput(io, opts.file, .read_write);
     defer if (!std.mem.eql(u8, opts.file, "-")) input.close(io);
 
@@ -64,14 +69,14 @@ pub fn runEdit(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, binary_n
     // — a value or key node has a tight, contiguous span, so the generic
     // editor handles even a TOML table assembled from scattered headers — so
     // it routes through the shared editor dispatch like every other edit. That
-    // is also where the JSON family's requoting of the replacement, the
-    // refusal of a read-only format and the canonical/gron refusals now live;
-    // see `edit_ops.route`.
+    // is also where the value is spelled in the file's format, and where the
+    // refusal of a read-only format and the canonical/gron refusals live; see
+    // `edit_ops.route`.
     if (try args_mod.resolveEmbedType(io, a, input, opts.embed, opts.detect_embed)) |embed_type| {
-        try edit_ops.applyToEmbed(a, io, input, embed_type, opts.path, opts.replacement, op);
+        try edit_ops.applyToEmbed(a, io, input, embed_type, opts.path, opts.replacement, value, op);
     } else {
         const resolved = if (opts.detect) try parse_dispatch.detectFileFormat(io, a, opts.file) else opts.format;
-        try edit_ops.applyToFileAs(a, io, input, resolved, opts.path, opts.replacement, op);
+        try edit_ops.applyToFileAs(a, io, input, resolved, opts.path, opts.replacement, value, op);
     }
 }
 
@@ -85,6 +90,12 @@ pub fn runSet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
         try stderr_term.writer.flush();
         std.process.exit(2);
     }
+    // Read before any file is created or opened: see `runEdit`.
+    const value: edit_ops.OpValue = if (opts.seq) blk: {
+        const items = try a.alloc(value_arg.Value, opts.values.len);
+        for (opts.values, items) |text, *item| item.* = try value_arg.read(a, stderr_term, text, opts.value_mode);
+        break :blk .{ .items = items };
+    } else .{ .one = try value_arg.read(a, stderr_term, opts.value, opts.value_mode) };
     // `set` upserts, so it may target a file that doesn't exist yet:
     // create it and seed a minimal valid empty document (see
     // `createSeededFile`/`emptyDocSeed`) so the editor lands the first
@@ -132,7 +143,7 @@ pub fn runSet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     // failure. A merely-missing parent map is no longer a failure: `set`
     // auto-vivifies it (see `Editor.set`).
     const embed = try args_mod.resolveEmbedType(io, a, input, opts.embed, opts.detect_embed);
-    edit_ops.applyStructuralEdit(a, io, input, resolved, embed, opts.path, text, op) catch |err| {
+    edit_ops.applyStructuralEdit(a, io, input, resolved, embed, opts.path, text, value, op) catch |err| {
         if (created) fileio.deleteCreatedFile(io, opts.file);
         return err;
     };
@@ -143,6 +154,8 @@ pub fn runInsert(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr
         try Help.insert(stdout_term, binary_name);
         return;
     }
+    // Read before the file is opened: see `runEdit`.
+    const value: edit_ops.OpValue = .{ .one = try value_arg.read(a, stderr_term, opts.value, opts.value_mode) };
     const input = try fileio.getInput(io, opts.file, .read_write);
     defer if (!std.mem.eql(u8, opts.file, "-")) input.close(io);
 
@@ -158,7 +171,7 @@ pub fn runInsert(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr
     const resolved = if (opts.detect) try parse_dispatch.detectFileFormat(io, a, opts.file) else opts.format;
     const embed = try args_mod.resolveEmbedType(io, a, input, opts.embed, opts.detect_embed);
     switch (opts.path[opts.path.len - 1]) {
-        .key => |key| try edit_ops.applyStructuralEdit(a, io, input, resolved, embed, parent, opts.value, .{ .insert_key = key }),
+        .key => |key| try edit_ops.applyStructuralEdit(a, io, input, resolved, embed, parent, opts.value, value, .{ .insert_key = key }),
         .index => |index| {
             // The editor only prepends or appends; an addressable middle
             // index has no primitive, so reject it rather than guess.
@@ -171,7 +184,7 @@ pub fn runInsert(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr
                 try stderr_term.writer.flush();
                 std.process.exit(2);
             };
-            try edit_ops.applyStructuralEdit(a, io, input, resolved, embed, parent, opts.value, op);
+            try edit_ops.applyStructuralEdit(a, io, input, resolved, embed, parent, opts.value, value, op);
         },
     }
 }
@@ -194,8 +207,8 @@ pub fn runDelete(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr
     // A trailing index removes that item from the parent sequence; a
     // trailing key deletes the mapping entry named by the full path.
     switch (opts.path[opts.path.len - 1]) {
-        .index => |index| try edit_ops.applyStructuralEdit(a, io, input, resolved, embed, opts.path[0 .. opts.path.len - 1], "", .{ .remove_seq_item = index }),
-        .key => try edit_ops.applyStructuralEdit(a, io, input, resolved, embed, opts.path, "", .delete_key),
+        .index => |index| try edit_ops.applyStructuralEdit(a, io, input, resolved, embed, opts.path[0 .. opts.path.len - 1], "", .{}, .{ .remove_seq_item = index }),
+        .key => try edit_ops.applyStructuralEdit(a, io, input, resolved, embed, opts.path, "", .{}, .delete_key),
     }
 }
 
@@ -313,6 +326,20 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
 
     const node_id = if (opts.path) |p| (try ast.getValByPath(p)).id else ast.root;
 
+    // A scalar at a path prints as its text and a newline, the way `jq -r`
+    // does, whatever the file's format: a string unquoted, anything else as
+    // fig spells it (`42`, `true`, `null`, a datetime as written). `-o`
+    // asks for a format's own spelling of the fragment and keeps getting it
+    // (`fig get f name -o json` → `"hi"`). CLI 5 §2.
+    if (opts.path != null and !opts.output_explicit) {
+        if (try scalarText(a, ast, node_id)) |text| {
+            try stdout_term.writer.writeAll(text);
+            try stdout_term.writer.writeByte('\n');
+            try stdout_term.writer.flush();
+            return;
+        }
+    }
+
     // gron is a CLI-only projection that derives straight from the AST,
     // so it has no `SerializeFormat`: print it here and return, bypassing
     // the serializer dispatch, the lossy/lossless diagnostics below, and
@@ -429,6 +456,26 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     try stdout_term.writer.flush();
 }
 
+/// The text `get` prints for the scalar at `id`, or null for a container
+/// (and for an unresolved alias, which prints as the format writes it).
+fn scalarText(a: std.mem.Allocator, ast: *const fig.AST, id: fig.AST.Node.Id) !?[]const u8 {
+    switch (ast.nodes[id].kind) {
+        .string => |s| return s,
+        .null_, .boolean, .number, .extended => {},
+        .sequence, .mapping, .keyvalue, .alias => return null,
+    }
+    // fig's spelling, when fig is compiled in; JSON's otherwise, which
+    // agrees for every scalar but a datetime (a JSON string, unquoted here).
+    var view = ast.*;
+    view.root = id;
+    var w: std.Io.Writer.Allocating = .init(a);
+    const target: fig.AST.SerializeFormat = if (comptime build_options.lang_fig) .fig else .json;
+    try view.serializeFragmentWith(&w.writer, target, .{});
+    const text = std.mem.trimEnd(u8, w.written(), "\n");
+    if (comptime !build_options.lang_fig) if (ast.nodes[id].kind == .extended and text.len > 0 and text[0] == '"') return ast.nodes[id].kind.extended.text;
+    return text;
+}
+
 pub fn runComment(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_term: *Io.Terminal, binary_name: []const u8, opts: types.CommentOptions) !void {
     if (opts.requested_help) {
         try Help.comment(stdout_term, binary_name);
@@ -483,7 +530,7 @@ pub fn runComment(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
         (if (opts.inline_comment) .set_trailing_comment else .add_leading_comment);
 
     if (try args_mod.resolveEmbedType(io, a, input, opts.embed, opts.detect_embed)) |embed_type| {
-        try edit_ops.applyToEmbed(a, io, input, embed_type, opts.path, opts.text, op);
+        try edit_ops.applyToEmbed(a, io, input, embed_type, opts.path, opts.text, .{}, op);
     } else switch (resolved) {
         // Strict JSON has no comment syntax: fail with a clear message
         // rather than letting the editor surface a bare error. Same explicit
@@ -497,7 +544,7 @@ pub fn runComment(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
         // JSON5's `//` comments reparse under their own dialect there, and
         // `--inline` set/delete on a format with no same-line comment syntax
         // surfaces `error.CommentsUnsupported` from the editor.
-        else => try edit_ops.applyToFileAs(a, io, input, resolved, opts.path, opts.text, op),
+        else => try edit_ops.applyToFileAs(a, io, input, resolved, opts.path, opts.text, .{}, op),
     }
 }
 

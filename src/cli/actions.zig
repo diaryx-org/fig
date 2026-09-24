@@ -459,10 +459,16 @@ pub fn runComment(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
             // `error.CommentsUnsupported` from the editor under `--inline`.
             else => try edit_ops.getCommentAs(a, io, input, resolved, opts.path, opts.inline_comment),
         };
-        // Print the comment followed by a newline. An absent comment (null)
-        // and a present-but-empty one both print just the newline — the CLI
-        // can't distinguish them, but the bindings can (Option / null).
-        try stdout_term.writer.print("{s}\n", .{comment orelse ""});
+        // A missing comment is a missing path: nothing on stdout and exit 1,
+        // the way `get` answers for a path that is not there, so "is there a
+        // comment" is `if fig comment --get …`. A present-but-empty one
+        // prints just its newline.
+        const text = comment orelse {
+            try stderr_term.writer.print("error: no {s}comment at that path\n", .{if (opts.inline_comment) "inline " else ""});
+            try stderr_term.writer.flush();
+            std.process.exit(1);
+        };
+        try stdout_term.writer.print("{s}\n", .{text});
         try stdout_term.writer.flush();
         return;
     }

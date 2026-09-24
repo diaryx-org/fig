@@ -207,6 +207,10 @@ pub fn main(init: std.process.Init) !void {
             try Help.patch(&stderr_terminal, "fig");
             std.process.exit(2);
         },
+        ArgError.MissingLangArgument => {
+            try Help.lang(&stderr_terminal, "fig");
+            std.process.exit(2);
+        },
         else => return err,
     };
 

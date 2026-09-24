@@ -3,7 +3,7 @@ title = CLI 5
 description = One reading of a value argument, a scalar printed as its text, strict arguments, one version and one tag — the command-line changes a fig 5.0 would carry
 created = 2026-09-22
 status = draft
-updated = 2026-09-22
+updated = 2026-09-24
 part_of = [proposals](proposals.md)
 ```
 
@@ -16,6 +16,10 @@ part_of = [proposals](proposals.md)
 > output, help text that disagrees with the parser — are fixed as ordinary
 > commits and are not argued here. What is left changes what an existing
 > command line does, which is what a major version is for.
+>
+> **Progress.** §3 (strict arguments) and §4 (a missing comment exits 1)
+> have landed, with `Behavioural-change:` trailers;
+> `tools/cli-args-check.sh` holds them to the built binary.
 
 The CLI's compatibility contract is its own — flags, defaults, exit codes
 ([VERSIONING](/docs/VERSIONING.md)) — and it has drifted in ways no single

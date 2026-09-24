@@ -105,6 +105,12 @@ pub const Help = struct {
             \\a language configured in languages.figl rather than by extension
             \\(`{s} lang --help`).
             \\
+            \\Arguments are read strictly: a word beginning with - that is not one
+            \\of the action's flags, or one more argument than the action takes,
+            \\is a usage error (exit 2). `--` ends the flags, so a file or value
+            \\that begins with - goes after it (`{s} get -- -x.yaml`); `-` alone is
+            \\stdin, and a negative number is a value wherever it stands.
+            \\
             \\Any other action is handed to a `fig-<action>` program on your PATH,
             \\the way git does: `{s} schema lint f.json` runs `fig-schema lint f.json`
             \\with every argument after `schema` passed through untouched.
@@ -117,7 +123,7 @@ pub const Help = struct {
             \\For information on action options, pass --help or -h
             \\to the action you would like to learn about.
             \\
-        , .{ binary_name, binary_name, binary_name });
+        , .{ binary_name, binary_name, binary_name, binary_name });
         try term.writer.flush();
     }
 
@@ -234,8 +240,8 @@ pub const Help = struct {
             \\  --delete: remove the targeted comment instead of adding it; <text>
             \\    is then omitted (a no-op when there is no such comment)
             \\  --get: print the targeted comment to stdout (markers stripped) and
-            \\    make no change; <text> is then omitted (prints a blank line when
-            \\    there is no such comment)
+            \\    make no change; <text> is then omitted (exits 1, printing
+            \\    nothing, when there is no such comment)
             \\  the comment marker is added for you: # for YAML/TOML, // for
             \\    JSONC/JSON5/ZON. Strict JSON has no comments (rejected).
             \\  <text> may span multiple lines (leading only): one comment line each.

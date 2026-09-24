@@ -22,7 +22,8 @@ bend main.bend -o fig         # native binary via clang
 ./test.sh                     # all of the above, checked against goldens
 ```
 
-The top-level README's demo reproduces byte for byte:
+The top-level README's demo reproduces byte for byte, and matches what the
+Zig `fig` writes for the same commands:
 
 ```diff
  service
@@ -122,18 +123,22 @@ Honest findings from writing this:
   heavy there. Formats would likely be added one line-oriented or
   token-oriented machine at a time.
 - **Strings are cons lists of `Char`, and `Nat` is unary.** That suits proofs
-  but is slow for bulk text. Measured with the compiled binary on a 4-core
-  container:
+  but is slow for bulk text. The comparison below uses the compiled Bend binary
+  and the real fig built with Zig 0.16.0 (`zig build -Doptimize=ReleaseFast`).
+  Each figure is the mean of 5 runs, including process start, on a 4-core
+  container. The two write identical bytes for every `set` here.
 
-  | Input | `get` | `set` | `json5` |
+  | Input | `get` Zig / Bend | `set` Zig / Bend | JSON5 Zig / Bend |
   | --- | --- | --- | --- |
-  | 12k lines, 170 KB | 0.04 s | 0.07 s | 0.06 s |
-  | 120k lines, 1.7 MB | 0.47 s | 0.74 s | 0.77 s |
+  | 1 line | 2 / 2 ms | | |
+  | 12k lines, 170 KB | 25 / 43 ms | 42 / 59 ms | 24 / 57 ms |
+  | 120k lines, 1.7 MB | 210 / 455 ms | 422 / 706 ms | 236 / 753 ms |
 
-  Scaling is linear, and fine for config files. A production port would lex
-  from `Array<U32>` bytes with `U32` offsets, and keep `Nat`/`String` at the
-  proof boundary (`splice`). Zig was not available in this environment, so
-  there is no side-by-side number.
+  Bend is 1.5 to 3.2 times slower. That understates the gap, because the Zig
+  parser does strictly more: the full dialect, diagnostics and warnings, and a
+  reusable document. Still, it is the same order of magnitude, and scaling is
+  linear. A production port would lex from `Array<U32>` bytes with `U32`
+  offsets, and keep `Nat`/`String` at the proof boundary (`splice`).
 - **A Base gotcha.** `String.concat` ends in `append(last, "")`, so it copies
   its last element. Writing `concat([..., rest_of_document])` inside a
   recursive printer made `json5` quadratic (4 s instead of 0.04 s on 12k

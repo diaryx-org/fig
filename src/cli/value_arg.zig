@@ -12,8 +12,9 @@
 //!     typed; `hello world`, `Yes` and `007` are strings (the last two with
 //!     the lint the dialect gives them); `[1, 2]` and `{a = 1}` are
 //!     structures; `'"5"'` is the string `5`. An empty argument, one with a
-//!     line break in it, and one in which a `#` would start a comment
-//!     (`see #3`) are strings as written — a command line has no comments.
+//!     line break in it or space at either end, and one in which a `#`
+//!     would start a comment (`see #3`) are strings as written — a command
+//!     line has no comments, and fig's reading would trim or split them.
 //!     An argument that is none of these (`[1, 2`) is a usage error.
 //!   * `.string` (`--string`) — a string, whatever it looks like.
 //!   * `.raw` (`--raw`) — the argument's own text, spliced as source in the
@@ -63,7 +64,11 @@ fn readFig(allocator: std.mem.Allocator, term: *Io.Terminal, text: []const u8) !
     // needs no parser.
     if (comptime !build_options.lang_fig) return .{ .tree = try stringTree(allocator, text) };
 
-    if (std.mem.trim(u8, text, " \t").len == 0 or std.mem.indexOfAny(u8, text, "\r\n") != null)
+    // Empty, blank, with a line break, or with space at either end: fig's
+    // reading would drop or split what the user typed, so it is a string as
+    // typed (`' x'` stays ` x`, where `v =  x` would trim it).
+    const trimmed = std.mem.trim(u8, text, " \t");
+    if (trimmed.len == 0 or trimmed.len != text.len or std.mem.indexOfAny(u8, text, "\r\n") != null)
         return .{ .tree = try stringTree(allocator, text) };
 
     const source = try std.mem.concat(allocator, u8, &.{ prefix, text, "\n" });
@@ -115,7 +120,7 @@ pub const Layout = enum {
 
 /// The splice text for `value` in `format` — what the editor takes for it.
 /// A value the format has no spelling for (`null` in TOML, a table in
-/// dotenv) is the serializer's error, for the caller to report.
+/// dotenv) is `error.Unwritable*`, for the caller to report.
 pub fn render(allocator: std.mem.Allocator, value: Value, format: Format, layout: Layout) ![]const u8 {
     const ast = switch (value) {
         .raw => |text| return text,
@@ -142,7 +147,15 @@ pub fn render(allocator: std.mem.Allocator, value: Value, format: Format, layout
             .json
         else
             types.toSerializeFormat(format) orelse return error.UnsupportedValueTarget;
-        try ast.serializeFragmentWith(&w.writer, target, options);
+        // Renamed, so a value the format cannot hold is never mistaken for a
+        // parse error the file raised under the same name (INI's and TOML's
+        // parsers raise `InvalidKey` on a malformed file).
+        ast.serializeFragmentWith(&w.writer, target, options) catch |err| return switch (err) {
+            error.NullUnsupported => error.UnwritableNull,
+            error.UnsupportedValue => error.UnwritableNested,
+            error.NonStringKey, error.InvalidKey => error.UnwritableKey,
+            else => err,
+        };
     }
     // Every printer ends a document with a newline; a spliced value never
     // carries one (an appended flow item would land on a line of its own).
@@ -171,6 +184,8 @@ test "a fig reading types what fig types and keeps the rest a string" {
         .{ "see #3", "\"see #3\"" },
         .{ "#3", "\"#3\"" },
         .{ "", "\"\"" },
+        .{ "hello ", "\"hello \"" },
+        .{ " 5", "\" 5\"" },
         .{ "two\nlines", "\"two\\nlines\"" },
         .{ "[1, 2]", "[1,2]" },
         .{ "{a = 1, b = [x]}", "{\"a\":1,\"b\":[\"x\"]}" },

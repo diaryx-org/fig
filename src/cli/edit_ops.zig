@@ -123,15 +123,70 @@ pub fn applyToFile(
     file: Io.File,
     path: []fig.AST.PathSegment,
     text: []const u8,
+    value: OpValue,
     op: EditOp,
+    format: Format,
     dialect: Lang.Type,
 ) !void {
     const content = try fileio.readAll(allocator, io, file);
     defer allocator.free(content);
 
-    const edited = try applyEdit(Lang, allocator, content, path, text, op, dialect);
+    const edited = try applyValueEdit(Lang, allocator, content, path, text, value, op, format, dialect);
     try file.writePositionalAll(io, edited, 0);
     try file.setLength(io, edited.len);
+}
+
+/// The text a value argument was written as when the document refused it —
+/// set just before `applyValueEdit` returns `error.InvalidEditText` for a
+/// rendered value, so the report can show the spelling that was refused
+/// rather than only what was typed. Null otherwise. The CLI makes one edit
+/// per run, so one slot is all there is to hold.
+pub var refused_rendering: ?[]const u8 = null;
+
+/// `applyEdit` with `value` rendered into `format` first — the one place a
+/// value argument meets the document, for a whole file (`applyToFile`) and
+/// an embedded region (`applyToEmbed`) alike. Two retries live here, each on
+/// the one copy of `content`, so neither reads or parses the file again:
+///
+///   * a value rendered in the format's own layout (a YAML block) whose site
+///     is inside a flow collection (`k: {a: 1}`) is refused having written
+///     nothing, and goes again on one line (`Layout.flow`), which is what
+///     fits there;
+///   * an op that may create a key (`insert_key`, `set`) whose splice is
+///     refused goes again with `0` — a value every format spells — and when
+///     that is refused too the KEY is what the document would not take:
+///     `error.InvalidEditKey`, so the report names the key, not the value.
+pub fn applyValueEdit(
+    comptime Lang: type,
+    allocator: std.mem.Allocator,
+    content: []const u8,
+    path: []fig.AST.PathSegment,
+    text: []const u8,
+    value: OpValue,
+    op: EditOp,
+    format: Format,
+    dialect: Lang.Type,
+) ![]u8 {
+    refused_rendering = null;
+    var r = try renderEdit(allocator, text, value, op, format, .natural);
+    const first = applyEdit(Lang, allocator, content, path, r.text, r.op, dialect);
+    if (first) |edited| return edited else |err| switch (err) {
+        error.BlockValueIntoFlow => if (value.any()) {
+            r = try renderEdit(allocator, text, value, op, format, .flow);
+            if (applyEdit(Lang, allocator, content, path, r.text, r.op, dialect)) |edited| return edited else |e| if (e != error.InvalidEditText) return e;
+        } else return err,
+        error.InvalidEditText => {},
+        else => return err,
+    }
+    // The splice was refused (`InvalidEditText`): say which half of it.
+    switch (op) {
+        .insert_key, .set => if (applyEdit(Lang, allocator, content, path, "0", op, dialect)) |probe| {
+            allocator.free(probe);
+        } else |e| if (e == error.InvalidEditText) return error.InvalidEditKey,
+        else => {},
+    }
+    if (value.one != null) refused_rendering = r.text;
+    return error.InvalidEditText;
 }
 
 /// Read back a comment from `content` (parsed under `dialect`) without writing:
@@ -265,14 +320,7 @@ pub fn applyToEmbed(
         inline else => |f| blk: {
             const d = comptime fig.Language.entryFor(@tagName(f));
             if (comptime d.Lang == void) return error.FormatDisabled;
-            const format = @field(Format, @tagName(f));
-            const r = try renderEdit(allocator, text, value, op, format, .natural);
-            break :blk applyEdit(d.Lang, allocator, decoded.text, path, r.text, r.op, d.dialect) catch |err| {
-                // See `route`: a block value landing in a flow collection.
-                if (err != error.BlockValueIntoFlow or !value.any()) return err;
-                const flow = try renderEdit(allocator, text, value, op, format, .flow);
-                break :blk try applyEdit(d.Lang, allocator, decoded.text, path, flow.text, flow.op, d.dialect);
-            };
+            break :blk try applyValueEdit(d.Lang, allocator, decoded.text, path, text, value, op, @field(Format, @tagName(f)), d.dialect);
         },
     };
     defer allocator.free(edited_decoded);
@@ -426,12 +474,7 @@ pub fn route(
             switch (req) {
                 .get_comment => |g| return getCommentFromFile(fig.Runtime.Language, allocator, io, file, g.path, g.inline_comment, e.typeOf()),
                 .apply => |ap| {
-                    const r = try renderEdit(allocator, ap.text, ap.value, ap.op, format, .natural);
-                    applyToFile(fig.Runtime.Language, allocator, io, file, ap.path, r.text, r.op, e.typeOf()) catch |err| {
-                        if (err != error.BlockValueIntoFlow or !ap.value.any()) return err;
-                        const flow = try renderEdit(allocator, ap.text, ap.value, ap.op, format, .flow);
-                        try applyToFile(fig.Runtime.Language, allocator, io, file, ap.path, flow.text, flow.op, e.typeOf());
-                    };
+                    try applyToFile(fig.Runtime.Language, allocator, io, file, ap.path, ap.text, ap.value, ap.op, format, e.typeOf());
                     return null;
                 },
             }
@@ -443,16 +486,7 @@ pub fn route(
             switch (req) {
                 .get_comment => |g| return getCommentFromFile(d.Lang, allocator, io, file, g.path, g.inline_comment, d.dialect),
                 .apply => |ap| {
-                    const r = try renderEdit(allocator, ap.text, ap.value, ap.op, format, .natural);
-                    applyToFile(d.Lang, allocator, io, file, ap.path, r.text, r.op, d.dialect) catch |err| {
-                        // A value rendered in the format's own layout (a
-                        // YAML block) whose site is inside a flow collection
-                        // (`k: {a: 1}`) is refused, having written nothing;
-                        // it goes again on one line, which is what fits.
-                        if (err != error.BlockValueIntoFlow or !ap.value.any()) return err;
-                        const flow = try renderEdit(allocator, ap.text, ap.value, ap.op, format, .flow);
-                        try applyToFile(d.Lang, allocator, io, file, ap.path, flow.text, flow.op, d.dialect);
-                    };
+                    try applyToFile(d.Lang, allocator, io, file, ap.path, ap.text, ap.value, ap.op, format, d.dialect);
                     return null;
                 },
             }
@@ -1011,4 +1045,23 @@ test "emptyDocSeed: plist seeds a document a from-scratch `set` lands into" {
     const doc = try P.Parser.parse(a, out, P.default_type);
     const node = try doc.ast.getValByPath(&path);
     try t.expectEqualStrings("someval", node.kind.string);
+}
+
+test "applyValueEdit blames the key when the document takes no value under it" {
+    if (comptime !build_options.lang_dotenv or !build_options.lang_fig) return error.SkipZigTest;
+    const t = std.testing;
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const D = fig.Language.DOTENV;
+    const dia = comptime fig.Language.entryFor("dotenv").dialect;
+
+    // `bad key` is no bash identifier: `0` fares no better than `x`, so the
+    // key is what was refused — not the value, as the report used to say.
+    try t.expectError(error.InvalidEditKey, applyValueEdit(D, a, "A=1\n", &.{}, "x", try figValue(a, "x"), .{ .insert_key = "bad key" }, .dotenv, dia));
+    try t.expectEqual(@as(?[]const u8, null), refused_rendering);
+
+    // A good key with a value the format takes lands as usual.
+    const ok = try applyValueEdit(D, a, "A=1\n", &.{}, "x", try figValue(a, "x"), .{ .insert_key = "B" }, .dotenv, dia);
+    try t.expectEqualStrings("A=1\nB=x\n", ok);
 }

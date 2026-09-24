@@ -540,8 +540,31 @@ const Positionals = struct {
     }
 };
 
+/// Whether `flag` takes the next argument as its value in `action` — every
+/// flag of every action that does, for `parseConfig`'s `--lang` pre-pass,
+/// which reads the line before any action does. `--seq` takes a strategy in
+/// `patch` and nothing in `set`.
+fn takesValue(flag: []const u8, action: []const u8) bool {
+    const valued = [_][]const u8{
+        "--lang",     "--input",       "-i",            "--output",  "-o",
+        "--embed",    "--to-embed",    "--indent",      "--width",   "--gron-root",
+        "--gron-sep", "--gron-term",   "--at",          "--from",    "--delete",
+        "--comments", "--patch-input", "--patch-embed", "--against", "--spec",
+        "-s",
+    };
+    for (valued) |v| if (std.mem.eql(u8, flag, v)) return !(std.mem.eql(u8, flag, "--delete") and !isPatch(action));
+    return std.mem.eql(u8, flag, "--seq") and isPatch(action);
+}
+
+fn isPatch(action: []const u8) bool {
+    return std.mem.eql(u8, action, "patch") or std.mem.eql(u8, action, "p");
+}
+
 /// Whether `arg` reads as a flag: a leading `-` with something after it
-/// that does not start a number.
+/// that does not start a number. `-inf` and `-nan` are flags here: fig has
+/// no bare non-finite float (docs/spec.md § 5.3 — bare `-inf` is the string
+/// it spells), so taking one as a value would quietly write a string where
+/// a float was meant. `-- -inf` passes the string on purpose.
 fn spelledAsFlag(arg: []const u8) bool {
     if (arg.len < 2 or arg[0] != '-') return false;
     return !(std.ascii.isDigit(arg[1]) or arg[1] == '.');
@@ -573,10 +596,14 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
     var config = CliConfig{};
 
     var collected: std.ArrayList([]const u8) = .empty;
-    // Past `--` every argument is a positional, `--lang` included.
+    // Past `--` every argument is a positional, `--lang` included — unless
+    // that `--` is the value of the flag before it (`--gron-sep --`), which
+    // ends nothing.
     var flags_done = false;
+    var prev: []const u8 = "";
     while (args_in.next()) |arg| {
-        if (std.mem.eql(u8, arg, "--")) flags_done = true;
+        defer prev = arg;
+        if (std.mem.eql(u8, arg, "--") and !takesValue(prev, if (collected.items.len > 1) collected.items[1] else "")) flags_done = true;
         if (!flags_done and std.mem.eql(u8, arg, "--lang")) {
             const name = args_in.next() orelse {
                 log.err("Missing language name after --lang\n", .{});
@@ -1059,7 +1086,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
 
         while (args.next()) |arg| {
             if (try files.rest(allocator, arg)) continue;
-            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            if (isHelp(arg)) {
                 requested_help = true;
             } else if (std.mem.eql(u8, arg, "--quiet") or std.mem.eql(u8, arg, "-q") or std.mem.eql(u8, arg, "--no-warnings")) {
                 quiet = true;
@@ -1113,7 +1140,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
 
         while (args.next()) |arg| {
             if (try positionals.rest(allocator, arg)) continue;
-            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            if (isHelp(arg)) {
                 requested_help = true;
             } else if (std.mem.eql(u8, arg, "--dry-run")) {
                 dry_run = true;
@@ -1233,7 +1260,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
 
         while (args.next()) |arg| {
             if (try positionals.rest(allocator, arg)) continue;
-            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            if (isHelp(arg)) {
                 requested_help = true;
             } else if (std.mem.eql(u8, arg, "--write") or std.mem.eql(u8, arg, "-w")) {
                 write = true;
@@ -1419,7 +1446,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
 
         while (args.next()) |arg| {
             if (try positionals.rest(allocator, arg)) continue;
-            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            if (isHelp(arg)) {
                 requested_help = true;
             } else if (std.mem.eql(u8, arg, "--dry-run")) {
                 dry_run = true;
@@ -1588,7 +1615,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         defer positionals.deinit(allocator);
         while (args.next()) |arg| {
             if (try positionals.rest(allocator, arg)) continue;
-            if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            if (isHelp(arg)) {
                 opts.requested_help = true;
             } else if (std.mem.eql(u8, arg, "--against")) {
                 opts.against = args.next() orelse {
@@ -2267,6 +2294,20 @@ test "parseConfig: `--` ends the flags, a negative number is a value, and flags 
 
 test "spelledAsFlag: a leading `-` is a flag unless it starts a number or stands alone" {
     const t = std.testing;
-    for ([_][]const u8{ "-x", "--bogus", "-h", "--", "-inf" }) |s| try t.expect(spelledAsFlag(s));
+    for ([_][]const u8{ "-x", "--bogus", "-h", "--", "-inf", "-nan" }) |s| try t.expect(spelledAsFlag(s));
     for ([_][]const u8{ "-", "-5", "-0.5", "-.5", "x", "" }) |s| try t.expect(!spelledAsFlag(s));
+}
+
+test "parseConfig: a `--` that is a flag's value does not end the flags for --lang" {
+    if (comptime !build_options.lang_json) return error.SkipZigTest;
+    const t = std.testing;
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    defer languages.setLangOverride(null);
+
+    var args = TestArgs{ .items = &.{ "fig", "get", "f.txt", "--gron-sep", "--", "--lang", "json" } };
+    const config = try parseConfig(a, &args);
+    try t.expectEqualStrings("--", config.options.get.gron_projection.assign);
+    try t.expectEqual(Format.json, languages.langOverride().?);
 }

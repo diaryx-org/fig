@@ -27,7 +27,8 @@ part_of = [proposals](proposals.md)
 > on a change, as their help always said — a patch is expected to change
 > the file, where `fmt --dry-run` is a check that it need not. Two details §1
 > left open were settled in the code: an argument that is empty, holds a
-> line break, or whose `#` would start a comment is a string as written;
+> line break or space at either end, or whose `#` would start a comment is
+> a string as written;
 > and a value whose natural layout cannot land where it is going (a YAML
 > block inside a flow mapping) is written on one line instead. A TOML
 > table given as a value is written as an inline table, which also fixed

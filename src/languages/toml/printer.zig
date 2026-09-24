@@ -549,6 +549,20 @@ pub fn print(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Er
     try writer.flush();
 }
 
+/// Print the value as the editor takes it spliced after `key = ` — see
+/// `AST.SerializeOptions.splice`. A value position holds only an inline
+/// value, so a table prints as an inline table (`{ a = 1 }`) and an array of
+/// tables as an inline array, never as the `[header]` sections a document
+/// gives them: those are lines of their own, which a splice cannot carry
+/// (`fig set f.toml k '{a = 1}'` and `fig patch` of a new table were refused
+/// as unreadable before this existed). A new `[section]` is
+/// `Editor.insertContainer`'s, not a value's.
+pub fn printSplice(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Error!void {
+    _ = options;
+    try writeInline(writer, ast, ast.root);
+    try writer.flush();
+}
+
 /// Print the subtree at `id` as a standalone fragment (used by `get <path>`): a
 /// mapping prints as a document body rooted there; any other node prints inline.
 pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize, options: AST.SerializeOptions) Error!void {
@@ -936,4 +950,13 @@ test "round-trips deeply nested empty and dotted tables" {
         \\w = "deep"
         \\
     );
+}
+
+test "printSplice writes a table and an array of tables inline, as a value position holds them" {
+    var ast = try Parser.parseAbstract(std.testing.allocator, "a = 1\nb = [\"x\"]\n[[t]]\nc = 2\n", .TOML_1_1);
+    defer ast.deinit();
+    var output: Writer.Allocating = .init(std.testing.allocator);
+    defer output.deinit();
+    try printSplice(&output.writer, &ast, .{});
+    try std.testing.expectEqualStrings("{ a = 1, b = [\"x\"], t = [{ c = 2 }] }", output.written());
 }

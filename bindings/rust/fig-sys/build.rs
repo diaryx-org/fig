@@ -313,6 +313,12 @@ fn zig_target_for_cargo_target(target: &str, host: &str) -> Option<&'static str>
         "aarch64-pc-windows-gnu" => Some("aarch64-windows-gnu"),
         "x86_64-pc-windows-gnu" => Some("x86_64-windows-gnu"),
         "i686-pc-windows-gnu" => Some("x86-windows-gnu"),
+        // Zig bundles no bionic, so the Android archives are built without
+        // libc, allocating through `smp_allocator` (`activeAllocator` in
+        // c_api.zig), and need no NDK sysroot. Only the two ABIs Android
+        // still ships are here.
+        "aarch64-linux-android" => Some("aarch64-linux-android"),
+        "x86_64-linux-android" => Some("x86_64-linux-android"),
         "aarch64-unknown-linux-gnu" => Some("aarch64-linux-gnu"),
         "aarch64-unknown-linux-musl" => Some("aarch64-linux-musl"),
         "arm-unknown-linux-gnueabi" => Some("arm-linux-gnueabi"),

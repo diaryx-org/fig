@@ -234,6 +234,16 @@ row 2 replace --key ok.yaml a c
 row 2 get --embed frontmatter-fig ok.yaml
 row 2 set --embed frontmatter-json ok.yaml a 1
 row 2 convert --to-embed frontmatter-toml ok.yaml
+# An unknown archetype is named and listed, and not followed by the format
+# list, which is about an unreadable file, not a mistyped archetype.
+err="$(cd fixtures && "$fig" get --embed bogus ok.yaml 2>&1 >/dev/null || true)"
+case "$err" in
+*"Unknown --embed archetype: bogus"*) ;;
+*) fail "unknown archetype: $err" ;;
+esac
+case "$err" in
+*"Supported formats"*) fail "unknown archetype prints the format list: $err" ;;
+esac
 row 0 delete ok.yaml a
 row 1 delete ok.yaml zz
 row 2 delete ok.yaml a b

@@ -731,7 +731,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 };
                 embed_override = embedTypeFromName(name) orelse {
                     log.err("Unknown --embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
-                    return ArgError.UnsupportedFileFormat;
+                    return ArgError.UnknownArchetype;
                 };
             } else if (!try positionals.add(allocator, "set", arg)) return ArgError.MissingSetArgument;
         }
@@ -974,7 +974,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 };
                 embed_override = embedTypeFromName(name) orelse {
                     log.err("Unknown --embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
-                    return ArgError.UnsupportedFileFormat;
+                    return ArgError.UnknownArchetype;
                 };
             } else if (std.mem.eql(u8, arg, "--body")) {
                 body = true;
@@ -1176,7 +1176,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 };
                 embed_override = embedTypeFromName(name) orelse {
                     log.err("Unknown --embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
-                    return ArgError.UnsupportedFileFormat;
+                    return ArgError.UnknownArchetype;
                 };
             } else if (std.mem.eql(u8, arg, "--indent")) {
                 const n = args.next() orelse {
@@ -1305,7 +1305,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 };
                 embed_override = embedTypeFromName(name) orelse {
                     log.err("Unknown --embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
-                    return ArgError.UnsupportedFileFormat;
+                    return ArgError.UnknownArchetype;
                 };
             } else if (std.mem.eql(u8, arg, "--to-embed")) {
                 const name = args.next() orelse {
@@ -1314,7 +1314,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 };
                 to_embed_override = embedTypeFromName(name) orelse {
                     log.err("Unknown --to-embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
-                    return ArgError.UnsupportedFileFormat;
+                    return ArgError.UnknownArchetype;
                 };
             } else if (std.mem.eql(u8, arg, "--indent")) {
                 const n = args.next() orelse {
@@ -1573,7 +1573,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 };
                 embed_override = embedTypeFromName(name) orelse {
                     log.err("Unknown --embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
-                    return ArgError.UnsupportedFileFormat;
+                    return ArgError.UnknownArchetype;
                 };
             } else if (std.mem.eql(u8, arg, "--patch-embed")) {
                 const name = args.next() orelse {
@@ -1582,7 +1582,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 };
                 patch_embed_override = embedTypeFromName(name) orelse {
                     log.err("Unknown --patch-embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
-                    return ArgError.UnsupportedFileFormat;
+                    return ArgError.UnknownArchetype;
                 };
             } else if (!try positionals.add(allocator, "patch", arg)) return ArgError.MissingPatchArgument;
         }

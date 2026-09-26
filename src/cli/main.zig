@@ -216,8 +216,10 @@ pub fn main(init: std.process.Init) !void {
             try Help.lang(&stderr_terminal, "fig");
             std.process.exit(2);
         },
-        // Said what was wrong with it already (`args.pathArg`).
-        ArgError.InvalidPath => std.process.exit(2),
+        // Each has said what was wrong already (`args.pathArg`, the archetype
+        // error), and nothing more is worth adding: the format list would
+        // only mislead after a bad archetype name.
+        ArgError.InvalidPath, ArgError.UnknownArchetype => std.process.exit(2),
         // `help`/`version` with an argument after them: said which already.
         ArgError.SurplusArgument => {
             try stderr_terminal.writer.writeAll("See `fig --help`.\n");

@@ -343,8 +343,6 @@ and no regeneration can reach a released section.
 
 ### Since cli 4.0.1
 
-_A draft intro for 5.0.0 — rewrite or cut it when the release is cut._
-
 5.0.0 is the first release in which every artifact carries one version and one
 `v*` tag, so it is the first CLI release since `cli/v4.0.1` and the first core,
 crate and npm release since `core/v3.1.0`, `rust/v4.1.0` and `npm/v3.1.0`. (The
@@ -368,8 +366,9 @@ usage error; `fig comment --get` on a path with no comment exits 1; the exit
 codes are written down — 1 for the document, 2 for the command line; and
 `edit` is split into `replace` and `rename`. For a runtime language, every
 renderer now takes one request that names the container its fragment goes
-into (3ed9e7c), and a renderer written against 4.x has to be rebuilt against
-it.
+into, and a renderer written against 4.x has to be rebuilt against it.
+[Migrating to 5.0](migrating-to-5.md) says what to write instead of each
+break, for every artifact.
 
 ## rust 4.1.0
 

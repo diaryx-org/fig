@@ -215,6 +215,11 @@ row 2 set ok.yaml a '[1'
 row 0 insert ok.yaml c 3
 row 1 insert ok.yaml a 3
 row 2 insert ok.yaml c
+printf 'l: [a, b, c]\n' >fixtures/seq.yaml
+row 0 insert seq.yaml 'l[0]' z
+row 0 insert seq.yaml 'l[-]' z
+row 1 insert seq.yaml 'l[1]' z
+cmp -s run/seq.yaml fixtures/seq.yaml || fail "a refused mid-sequence insert changed the file"
 row 0 replace ok.yaml a 2
 row 1 replace ok.yaml zz 2
 row 2 replace ok.yaml a

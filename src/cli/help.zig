@@ -239,7 +239,8 @@ pub const Help = struct {
             \\    a.list[-]    -> append <value> as the last item ([$] also works)
             \\  An empty parent targets the root container, so the document's own
             \\    root (mapping vs list) decides which form applies — not the format.
-            \\  Mid-sequence insert (e.g. list[2]) is not yet supported.
+            \\  There is no insert in the middle of a sequence (list[2]): `set --seq`
+            \\    rewrites the whole sequence.
             \\
         ++ value_reading ++
             \\  path format: dot syntax for keys, bracket syntax for indices.

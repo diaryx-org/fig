@@ -174,15 +174,18 @@ pub fn runInsert(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr
         .key => |key| try edit_ops.applyStructuralEdit(a, io, input, resolved, embed, parent, opts.value, value, .{ .insert_key = key }),
         .index => |index| {
             // The editor only prepends or appends; an addressable middle
-            // index has no primitive, so reject it rather than guess.
+            // index has no primitive, so reject it rather than guess. A
+            // refused edit, not a wrong command line — `[3]` is a well-formed
+            // path — so exit 1, as every other edit the editor cannot make
+            // (cli-5 §5).
             const op: EditOp = if (index == 0)
                 .prepend_seq
             else if (index == append_index)
                 .append_seq
             else {
-                try stderr_term.writer.print("error: sequence insert supports only [0] (prepend) or [-]/[$] (append); mid-sequence insert is not yet available.\n", .{});
+                try stderr_term.writer.print("error: insert puts a sequence item at [0] (prepend) or [-]/[$] (append); there is no insert in the middle of a sequence, so [{d}] is refused and nothing was written (`set --seq` rewrites the whole sequence).\n", .{index});
                 try stderr_term.writer.flush();
-                std.process.exit(2);
+                std.process.exit(1);
             };
             try edit_ops.applyStructuralEdit(a, io, input, resolved, embed, parent, opts.value, value, op);
         },

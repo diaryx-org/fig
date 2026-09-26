@@ -815,7 +815,7 @@ pub fn register(lang: impl Language) -> Result<Vec<Format>, Error> {
     let mut format: c_int = -1;
     let mut err = ffi::FigError::new();
     let status = unsafe { ffi::fig_language_register(&vt, &mut format, &mut err) };
-    if status != ffi::FigStatus(ffi::FigStatus::OK) {
+    if status != ffi::FigStatus::OK {
         let len = err.message_len.min(err.message.len());
         let message = String::from_utf8_lossy(&err.message[..len]).into_owned();
         if message.is_empty() {
@@ -1546,11 +1546,11 @@ unsafe extern "C" fn parse_thunk(
         }
         Ok(Err(e)) => {
             fill_err(err, &e);
-            ffi::FigStatus::PARSE_ERROR
+            ffi::FigStatus::PARSE_ERROR.0
         }
         Err(p) => {
             fill_err(err, &panic_message(p));
-            ffi::FigStatus::INTERNAL_ERROR
+            ffi::FigStatus::INTERNAL_ERROR.0
         }
     }
 }
@@ -1609,11 +1609,11 @@ unsafe extern "C" fn print_thunk(
         }
         Ok(Err(e)) => {
             fill_err(err, &e);
-            ffi::FigStatus::UNSUPPORTED_FORMAT
+            ffi::FigStatus::UNSUPPORTED_FORMAT.0
         }
         Err(p) => {
             fill_err(err, &panic_message(p));
-            ffi::FigStatus::INTERNAL_ERROR
+            ffi::FigStatus::INTERNAL_ERROR.0
         }
     }
 }
@@ -1646,11 +1646,11 @@ fn render_thunk_body(
         }
         Ok(Err(e)) => {
             fill_err(err, &e);
-            ffi::FigStatus::UNSUPPORTED_OPERATION
+            ffi::FigStatus::UNSUPPORTED_OPERATION.0
         }
         Err(p) => {
             fill_err(err, &panic_message(p));
-            ffi::FigStatus::INTERNAL_ERROR
+            ffi::FigStatus::INTERNAL_ERROR.0
         }
     }
 }

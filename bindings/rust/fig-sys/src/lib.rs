@@ -15,25 +15,25 @@ use std::os::raw::{c_char, c_int, c_void};
 /// A fieldless `#[repr(C)]` enum returned by value from an `extern "C"` function
 /// is undefined behavior the instant the callee returns a discriminant the enum
 /// does not list, and fig's status set is allowed to grow after 1.0. The newtype
-/// preserves any code unchanged; compare against the associated constants and
-/// route unrecognized values through a fallback (the `fig` crate does this in
-/// its `Error::from_status`).
+/// preserves any code unchanged. Compare against the associated constants —
+/// each is a `FigStatus`, so `status == FigStatus::OK` and a `match` arm both
+/// work — and route unrecognized values through a fallback (the `fig` crate
+/// does this in its `Error::from_status`).
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FigStatus(pub c_int);
 
-#[allow(dead_code)]
 impl FigStatus {
-    pub const OK: c_int = 0;
-    pub const INVALID_ARGUMENT: c_int = 1;
-    pub const PARSE_ERROR: c_int = 2;
-    pub const OUT_OF_MEMORY: c_int = 3;
-    pub const UNSUPPORTED_FORMAT: c_int = 4;
-    pub const NOT_FOUND: c_int = 5;
+    pub const OK: FigStatus = FigStatus(0);
+    pub const INVALID_ARGUMENT: FigStatus = FigStatus(1);
+    pub const PARSE_ERROR: FigStatus = FigStatus(2);
+    pub const OUT_OF_MEMORY: FigStatus = FigStatus(3);
+    pub const UNSUPPORTED_FORMAT: FigStatus = FigStatus(4);
+    pub const NOT_FOUND: FigStatus = FigStatus(5);
     /// The operation is not defined for these arguments, though each is
     /// individually valid. Added in core 2.7.0; see `fig_embed_retype`.
-    pub const UNSUPPORTED_OPERATION: c_int = 6;
-    pub const INTERNAL_ERROR: c_int = 255;
+    pub const UNSUPPORTED_OPERATION: FigStatus = FigStatus(6);
+    pub const INTERNAL_ERROR: FigStatus = FigStatus(255);
 }
 
 #[repr(C)]

@@ -281,7 +281,7 @@ pub fn detect(source: &str) -> Option<EmbedType> {
     let status = unsafe {
         ffi::fig_embed_detect(source.as_ptr(), source.len(), &mut container, &mut format)
     };
-    if status.0 != ffi::FigStatus::OK {
+    if status != ffi::FigStatus::OK {
         return None;
     }
     EmbedType::from_parts(container, format)
@@ -739,7 +739,7 @@ impl Embed {
                 )
             }
         };
-        if status.0 == ffi::FigStatus::NOT_FOUND {
+        if status == ffi::FigStatus::NOT_FOUND {
             return Ok(None);
         }
         Error::from_status(status)?;
@@ -783,7 +783,7 @@ impl Embed {
         let status = unsafe {
             ffi::fig_embed_get_dangling_comment(self.ptr(), p.as_ptr(), p.len(), &mut ptr, &mut len)
         };
-        if status.0 == ffi::FigStatus::NOT_FOUND {
+        if status == ffi::FigStatus::NOT_FOUND {
             return Ok(None);
         }
         Error::from_status(status)?;

@@ -451,7 +451,7 @@ impl Editor {
                 )
             }
         };
-        if status.0 == ffi::FigStatus::NOT_FOUND {
+        if status == ffi::FigStatus::NOT_FOUND {
             return Ok(None);
         }
         Error::from_status(status)?;
@@ -509,7 +509,7 @@ impl Editor {
                 &mut len,
             )
         };
-        if status.0 == ffi::FigStatus::NOT_FOUND {
+        if status == ffi::FigStatus::NOT_FOUND {
             return Ok(None);
         }
         Error::from_status(status)?;

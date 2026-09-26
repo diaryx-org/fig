@@ -603,7 +603,7 @@ use fig::{Embed, EmbedType};
 
 let md = "---\ntitle: Hello\ntags:\n- draft\n---\n# Body\n\ntext\n";
 
-let mut fm = Embed::open(md.as_bytes(), EmbedType::FrontmatterYaml)?;
+let mut fm = Embed::open(md.as_bytes(), EmbedType::Frontmatter)?;
 fm.set_value(&["title".into()], "Hello, world")?;
 fm.append_value(&["tags".into()], "published")?;
 
@@ -624,16 +624,16 @@ println!("{}", fm.render()?);
 
   | Container | Variants |
   | --------- | -------- |
-  | Markdown frontmatter | `FrontmatterYaml` (bare `---`), `MdFrontmatterJson` (`---json`), `MdFrontmatterToml`, `MdFrontmatterFig` |
-  | Fenced code block | `FrontmatterFig` (```` ```fig ````), `FencedYaml`, `FencedJson`, `FencedToml` |
+  | Markdown frontmatter | `Frontmatter` (bare `---`), `MdJson` (`---json`), `MdToml`, `MdFig` |
+  | Fenced code block | `FencedFig` (```` ```fig ````), `FencedYaml`, `FencedJson`, `FencedToml` |
   | HTML data island | `HtmlScriptFig`, `HtmlScriptYaml`, `HtmlScriptJson`, `HtmlScriptToml` — `<script type="application/…">` |
   | HTML visible code | `HtmlCodeFig`, `HtmlCodeYaml`, `HtmlCodeJson`, `HtmlCodeToml` — `<pre><code class="language-…">` |
 
-  Plus three conventions with their own distinct delimiter: `FrontmatterJson`
-  (`;;;`), `PlusToml` (`+++`, the Hugo/Zola convention), and `EndmatterYaml` (a
-  trailing ```` ```endmatter ```` block). The first four names are historical —
-  `FrontmatterJson` is the `;;;` form and `FrontmatterFig` the fenced one — and
-  are kept because their ABI values are frozen.
+  Plus three conventions with their own distinct delimiter: `Semicolons`
+  (`;;;` JSON), `Plus` (`+++` TOML, the Hugo/Zola convention), and `Endmatter`
+  (a trailing ```` ```endmatter ```` YAML block). Each name is the CLI's
+  `--embed` archetype in `UpperCamelCase` (`semicolons`, `fenced-fig`), and the
+  TypeScript binding's `EmbedType` values are the same names as strings.
 
   The `HtmlCode*` variants are entity-encoded on disk. Editing decodes on open
   and re-encodes span-aware on `render`, so an edit preserves every untouched
@@ -867,6 +867,8 @@ change in behaviour, except the `rust-version` floor.
 | `ed.replace(p, &x)`, `insert`, `set`, `append`, `prepend` (serde) | `ed.replace_value(p, x)` &c., with `fig::to_value(&x)?` for a `Serialize` value |
 | `ed.delete(p)` / `ed.remove_item(p, i)` | `ed.delete_key(p)` / `ed.delete_item(p, i)` |
 | `ed.replace_key(p, k)` | `ed.rename_key(p, k)` |
+| `EmbedType::FrontmatterYaml` / `FrontmatterJson` / `EndmatterYaml` / `FrontmatterFig` / `PlusToml` | `EmbedType::Frontmatter` / `Semicolons` / `Endmatter` / `FencedFig` / `Plus` |
+| `EmbedType::MdFrontmatterJson` / `…Toml` / `…Fig` | `EmbedType::MdJson` / `MdToml` / `MdFig` |
 | `delete_leading_comments` / `delete_dangling_comments` | `delete_leading_comment` / `delete_dangling_comment` |
 | `set_sequence(p, &[Value])` | `set_sequence(p, items)` over any `impl Into<Value>` items |
 | `fig::split(s, k) -> (content, body)` | `fig::split(s, k) -> (before, content, after)` |

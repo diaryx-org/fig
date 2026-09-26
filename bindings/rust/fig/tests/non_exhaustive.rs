@@ -53,7 +53,7 @@ fn growable_enums_are_matchable_with_a_wildcard_and_still_constructible() {
     };
     assert!(!msg.is_empty());
 
-    let _embed = fig::EmbedType::FrontmatterYaml;
+    let _embed = fig::EmbedType::Frontmatter;
 }
 
 #[test]

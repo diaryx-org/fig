@@ -22,22 +22,22 @@ use crate::{Format, SerializeOptions, ffi};
 /// Which embedded config to open — the flat mirror of fig's parametric
 /// `Embed.Type`. The three parametric families (markdown `---<lang>`
 /// frontmatter, ```` ```<lang> ```` fenced blocks, `<script type>` HTML data
-/// islands) are enumerated once per format. The first four names are historical
-/// (`FrontmatterJson` is the `;;;` block, `FrontmatterFig` is the ```` ```fig ````
-/// fenced block); the rest are grouped by container.
+/// islands) are enumerated once per format. Each name is the CLI's archetype
+/// name (`--embed semicolons`, `--embed fenced-fig`) in `UpperCamelCase`, as
+/// the TypeScript binding's string values are.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum EmbedType {
     /// `---` … `---`/`...` bare YAML frontmatter.
-    FrontmatterYaml,
+    Frontmatter,
     /// `;;;` … `;;;` JSON frontmatter.
-    FrontmatterJson,
+    Semicolons,
     /// YAML in a trailing ```` ```endmatter ```` code block.
-    EndmatterYaml,
+    Endmatter,
     /// ```` ```fig ```` … ```` ``` ```` fenced block (the fig authoring dialect).
-    FrontmatterFig,
+    FencedFig,
     /// `+++` … `+++` TOML frontmatter — the Hugo/Zola convention.
-    PlusToml,
+    Plus,
     /// ```` ```yaml ```` fenced block.
     FencedYaml,
     /// ```` ```json ```` fenced block.
@@ -45,11 +45,11 @@ pub enum EmbedType {
     /// ```` ```toml ```` fenced block.
     FencedToml,
     /// `---json` … `---` markdown frontmatter.
-    MdFrontmatterJson,
+    MdJson,
     /// `---toml` … `---` markdown frontmatter.
-    MdFrontmatterToml,
+    MdToml,
     /// `---fig` … `---` markdown frontmatter.
-    MdFrontmatterFig,
+    MdFig,
     /// `<script type="application/figl">` … `</script>` HTML data island.
     HtmlScriptFig,
     /// `<script type="application/yaml">` … `</script>` HTML data island.
@@ -79,17 +79,17 @@ impl EmbedType {
         use ffi::FigEmbedContainer as C;
         use ffi::FigFormat as F;
         match self {
-            EmbedType::FrontmatterYaml => (C::MdFrontmatter, F::Yaml),
-            EmbedType::FrontmatterJson => (C::SemicolonsJson, F::Json),
-            EmbedType::EndmatterYaml => (C::EndmatterYaml, F::Yaml),
-            EmbedType::FrontmatterFig => (C::Fenced, F::Fig),
-            EmbedType::PlusToml => (C::PlusToml, F::Toml),
+            EmbedType::Frontmatter => (C::MdFrontmatter, F::Yaml),
+            EmbedType::Semicolons => (C::SemicolonsJson, F::Json),
+            EmbedType::Endmatter => (C::EndmatterYaml, F::Yaml),
+            EmbedType::FencedFig => (C::Fenced, F::Fig),
+            EmbedType::Plus => (C::PlusToml, F::Toml),
             EmbedType::FencedYaml => (C::Fenced, F::Yaml),
             EmbedType::FencedJson => (C::Fenced, F::Json),
             EmbedType::FencedToml => (C::Fenced, F::Toml),
-            EmbedType::MdFrontmatterJson => (C::MdFrontmatter, F::Json),
-            EmbedType::MdFrontmatterToml => (C::MdFrontmatter, F::Toml),
-            EmbedType::MdFrontmatterFig => (C::MdFrontmatter, F::Fig),
+            EmbedType::MdJson => (C::MdFrontmatter, F::Json),
+            EmbedType::MdToml => (C::MdFrontmatter, F::Toml),
+            EmbedType::MdFig => (C::MdFrontmatter, F::Fig),
             EmbedType::HtmlScriptFig => (C::HtmlScript, F::Fig),
             EmbedType::HtmlScriptYaml => (C::HtmlScript, F::Yaml),
             EmbedType::HtmlScriptJson => (C::HtmlScript, F::Json),
@@ -113,9 +113,9 @@ impl EmbedType {
             v if v == C::Fenced as i32 => C::Fenced,
             v if v == C::HtmlScript as i32 => C::HtmlScript,
             v if v == C::HtmlCode as i32 => C::HtmlCode,
-            v if v == C::SemicolonsJson as i32 => return Some(EmbedType::FrontmatterJson),
-            v if v == C::PlusToml as i32 => return Some(EmbedType::PlusToml),
-            v if v == C::EndmatterYaml as i32 => return Some(EmbedType::EndmatterYaml),
+            v if v == C::SemicolonsJson as i32 => return Some(EmbedType::Semicolons),
+            v if v == C::PlusToml as i32 => return Some(EmbedType::Plus),
+            v if v == C::EndmatterYaml as i32 => return Some(EmbedType::Endmatter),
             _ => return None,
         };
         let f = match format {
@@ -126,14 +126,14 @@ impl EmbedType {
             _ => return None,
         };
         Some(match (c, f) {
-            (C::MdFrontmatter, F::Yaml) => EmbedType::FrontmatterYaml,
-            (C::MdFrontmatter, F::Json) => EmbedType::MdFrontmatterJson,
-            (C::MdFrontmatter, F::Toml) => EmbedType::MdFrontmatterToml,
-            (C::MdFrontmatter, F::Fig) => EmbedType::MdFrontmatterFig,
+            (C::MdFrontmatter, F::Yaml) => EmbedType::Frontmatter,
+            (C::MdFrontmatter, F::Json) => EmbedType::MdJson,
+            (C::MdFrontmatter, F::Toml) => EmbedType::MdToml,
+            (C::MdFrontmatter, F::Fig) => EmbedType::MdFig,
             (C::Fenced, F::Yaml) => EmbedType::FencedYaml,
             (C::Fenced, F::Json) => EmbedType::FencedJson,
             (C::Fenced, F::Toml) => EmbedType::FencedToml,
-            (C::Fenced, F::Fig) => EmbedType::FrontmatterFig,
+            (C::Fenced, F::Fig) => EmbedType::FencedFig,
             (C::HtmlScript, F::Yaml) => EmbedType::HtmlScriptYaml,
             (C::HtmlScript, F::Json) => EmbedType::HtmlScriptJson,
             (C::HtmlScript, F::Toml) => EmbedType::HtmlScriptToml,
@@ -151,23 +151,23 @@ impl EmbedType {
     /// embed's content instead of duplicating the archetype→format mapping.
     pub fn inner_format(self) -> Format {
         match self {
-            EmbedType::FrontmatterYaml
-            | EmbedType::EndmatterYaml
+            EmbedType::Frontmatter
+            | EmbedType::Endmatter
             | EmbedType::FencedYaml
             | EmbedType::HtmlScriptYaml
             | EmbedType::HtmlCodeYaml => Format::Yaml,
-            EmbedType::FrontmatterJson
+            EmbedType::Semicolons
             | EmbedType::FencedJson
-            | EmbedType::MdFrontmatterJson
+            | EmbedType::MdJson
             | EmbedType::HtmlScriptJson
             | EmbedType::HtmlCodeJson => Format::Json,
-            EmbedType::FrontmatterFig
-            | EmbedType::MdFrontmatterFig
+            EmbedType::FencedFig
+            | EmbedType::MdFig
             | EmbedType::HtmlScriptFig
             | EmbedType::HtmlCodeFig => Format::Fig,
-            EmbedType::PlusToml
+            EmbedType::Plus
             | EmbedType::FencedToml
-            | EmbedType::MdFrontmatterToml
+            | EmbedType::MdToml
             | EmbedType::HtmlScriptToml
             | EmbedType::HtmlCodeToml => Format::Toml,
         }
@@ -387,8 +387,8 @@ impl Embed {
     /// use fig::{Embed, EmbedType};
     /// let out = Embed::retype(
     ///     "---\ntitle: hi\n---\n# body\n",
-    ///     EmbedType::FrontmatterYaml,
-    ///     EmbedType::PlusToml,
+    ///     EmbedType::Frontmatter,
+    ///     EmbedType::Plus,
     ///     "title = \"hi\"\n",
     /// )?;
     /// assert_eq!(out, "+++\ntitle = \"hi\"\n+++\n# body\n");

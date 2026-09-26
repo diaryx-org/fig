@@ -718,10 +718,10 @@ state it, and `zig build abi-check` holds both to the registry's value.
    table a compiled format gives — what a twin is written against;
    `tools/cli-lang-check.sh` drives the
    built CLI through the Rust crate's `tinykv_helper` example at every
-   action, and `zig build check` runs it. Two things it does not yet do:
+   action, and `zig build check` runs it. One thing it does not yet do:
    a `get` of a runtime target has no loss diagnostics (`fig_document_diagnose`
-   answers `unsupported_operation` for one), and `patch` into a runtime
-   target is refused.
+   answers `unsupported_operation` for one). `patch` into a runtime target
+   was the other, and goes through `Editor(Runtime.Language)` now.
 6. **fig-lua 0.1**: a new repository in `repos.figl`. A Rust crate on
    `mlua` with Lua 5.4 vendored, a binary that speaks the helper protocol,
    and two worked formats as `.lua` files: dotenv, the twin of the format

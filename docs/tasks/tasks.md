@@ -9,7 +9,6 @@ contents
 > * [The lossy strips and the `$fig` envelope rebuild the AST without its tags, anchors and directives](lossy-strips-drop-tags-and-anchors.md)
 > * [The item and value renderers are not told the key they are rendering under](renderers-are-not-told-the-parent-key.md)
 > * [A runtime target has no loss diagnostics](runtime-target-loss-diagnostics.md)
-> * [`fig patch` into a runtime target is refused](patch-into-a-runtime-target.md)
 > * [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 

@@ -1,11 +1,12 @@
 # git-cliff, for every diaryx-org repository.
 #
 # One file, one style. The canonical copy lives beside the shared release tooling
-# in diaryx-org/devtools, which fig deliberately does not use — see
-# docs/VERSIONING.md — so this is a copy, and `tools/changelog.sh` and
-# `.github/workflows/release-binaries.yml` read it from the checkout. It differs
-# from the canonical file in exactly one line, marked below; keep it that way, and
-# `diff` against devtools/cliff.toml before changing anything else here.
+# in diaryx-org/devtools. fig releases through that tooling (`dx release`, see
+# docs/VERSIONING.md), and `.config/release.toml` points it at this copy with
+# `cliff_config`, because fig's tag history needs a pattern of its own. It
+# differs from the canonical file in exactly one line, marked below; keep it
+# that way, and `diff` against devtools/cliff.toml before changing anything else
+# here.
 #
 # The consumer is a program rather than a person: a repo's release tooling
 # regenerates the region between the `git-cliff:begin`/`git-cliff:end` markers
@@ -83,24 +84,27 @@ filter_commits = false
 protect_breaking_commits = true
 split_commits = false
 sort_commits = "oldest"
-# THE ONE LINE THIS COPY CHANGES. fig ships four independently versioned
-# artifacts off one tree — core, cli, rust, npm — each with its own tag prefix
-# (see docs/VERSIONING.md), so there is no single `v*` line to walk. Matching all
-# four makes "unreleased" mean "described by no release yet", which is the
-# question this file answers: one changelog for one repository, not four
-# interleaved ones. The three bare `v*` tags predating the scheme are left out
-# deliberately.
+# THE ONE LINE THIS COPY CHANGES. From 5.0.0 fig releases every artifact under
+# one version and one `vX.Y.Z` tag, as the canonical pattern expects — but its
+# history is not that shape. Before 5.0.0 it shipped four independently
+# versioned artifacts, each on its own prefixed line (`core/v3.1.0`,
+# `cli/v4.0.1`, `rust/v4.1.0`, `npm/v3.1.0`), and three bare tags from before
+# even that (`v1.0.0`, `v2.0.0`, `v2.5.1`) are ancestors of every commit since.
+# So this admits:
 #
-# A release usually pushes several of these tags at the same commit, and git-cliff
-# picks one name per commit for its section heading. That does not matter here: the
-# heading is not git-cliff's to write. `## Unreleased` is handwritten, and cutting
-# a release renames it by hand to name every artifact that moved
-# (`## core 2.6.0 · cli 3.5.3 · rust 3.2.0 · npm 2.6.0`). git-cliff owns only the
-# bytes between the markers.
+#   * the four prefixed lines, as history — without them the first 5.0.0
+#     section would reach back past every release since v2.5.1;
+#   * `v5` through `v9`, and any two-or-more-digit major (`v10`, …), as the one
+#     line from here on;
+#
+# and leaves out the three bare pre-scheme tags, which would otherwise be read
+# as the newest `v*` tags there are. Before the first `v5.0.0`, "unreleased"
+# therefore starts at the newest prefixed tag (`rust/v4.1.0`); after it, at the
+# newest `v*`.
 #
 # Anchored, because this is a regex and not a glob: unanchored, a `v[0-9]*`
 # pattern matches every tag with a `v` anywhere in it.
-tag_pattern = '^(core|cli|npm|rust)/v[0-9]'
+tag_pattern = '^((core|cli|npm|rust)/v[0-9]|v([5-9]|[1-9][0-9]+)\.)'
 
 commit_preprocessors = [
   # The house convention is often spelled with the colon dropped — `add(editor) a

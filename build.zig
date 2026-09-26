@@ -11,18 +11,17 @@ const checks = @import("src/build/checks.zig");
 //   * src/build/Context.zig   — the inputs every stage shares (target, optimize, …)
 //   * src/build/Options.zig   — the `-D` knobs baked into `build_options`
 //   * src/build/artifacts.zig — the fig lib, CLI, LSP, C ABI (static+shared), wasm/wasi
-//   * src/build/tools.zig     — vendor-rust, gen-*-conformance, sync/check-figl, version-set
+//   * src/build/tools.zig     — vendor-rust, gen-*-conformance, sync/check-figl, version-sync
 //   * src/build/tests.zig     — test, conformance, fuzz, install-tests
-//   * src/build/checks.zig    — abi/semver/floor guards, rust/ts suites, the `check` gate
+//   * src/build/checks.zig    — abi/semver guards, rust/ts suites, the `check` gate
 //
-// The four package-identity constants below stay HERE, not in Options.zig,
-// because external tooling treats build.zig as their canonical home — e.g.
-// `tools/version-floor.zig` and `tools/version-set.zig` read/write `cli_version`
-// out of this file. They are handed to the rest of the graph via `Options.Versions`.
+// The package-identity constants below stay HERE, not in Options.zig, and are
+// handed to the rest of the graph via `Options.Versions`.
 
-/// The canonical package version, parsed once from `build.zig.zon`'s `.version`
-/// so the C ABI's `fig_version*` accessors and the version-drift check both read
-/// from a single source instead of a hand-synced trio of integers.
+/// The one version every artifact ships under — the core, the CLI, the Rust
+/// crates and both npm packages (see docs/VERSIONING.md) — parsed once from
+/// `build.zig.zon`'s `.version`, so the C ABI's `fig_version*` accessors, `fig
+/// version`, and the version-drift check all read from a single source.
 const version = std.SemanticVersion.parse(@import("build.zig.zon").version) catch
     @compileError("invalid `.version` in build.zig.zon");
 
@@ -35,26 +34,12 @@ const version = std.SemanticVersion.parse(@import("build.zig.zon").version) catc
 /// ABI diff against the last release tag is breaking.
 const abi_version: u8 = 3;
 
-/// The `fig` CLI binary's OWN SemVer track — independent of `.version` above,
-/// the same way the Rust crate and npm package are independent of it (see
-/// "Independent versioning" in docs/VERSIONING.md). The CLI's compatibility
-/// contract is its flags/defaults/exit codes, not the library API or the C
-/// ABI, so a CLI-only breaking change (e.g. flipping a flag's default) bumps
-/// this without forcing a core/ABI release, and vice versa — a core-only
-/// change doesn't force a CLI bump. The one invariant tying it to core: it
-/// must stay >= `version` above (enforced by `zig build version-floor`,
-/// alongside the Rust/npm floor checks), since the CLI always embeds
-/// whatever core it's built against. Surfaced via `fig version`, which prints
-/// both numbers.
-const cli_version = std.SemanticVersion.parse("4.0.0") catch
-    @compileError("invalid cli_version");
-
 /// The current "epoch" — a marketing name that changes far less often than
 /// `version`'s major (see docs/VERSIONING.md: "major releases are not
 /// sacred," so this exists precisely to give users a stable, human-facing
 /// handle across a run of otherwise-eager SemVer bumps). Purely cosmetic —
 /// no compatibility contract, so it lives here as a bare constant (like
-/// `abi_version`/`cli_version`) rather than in build.zig.zon (a
+/// `abi_version`) rather than in build.zig.zon (a
 /// toolchain-parsed package manifest with its own schema) or the C ABI (which
 /// only ever exposes things a consumer might actually branch on). Surfaced
 /// only by the CLI's `fig version`.
@@ -66,9 +51,8 @@ pub fn build(b: *std.Build) void {
     const strip = b.option(bool, "strip", "Strip debug information") orelse (optimize == .ReleaseSmall);
 
     const ver: Options.Versions = .{
-        .core = version,
+        .version = version,
         .abi = abi_version,
-        .cli = cli_version,
         .epoch = epoch,
     };
 
@@ -84,7 +68,7 @@ pub fn build(b: *std.Build) void {
     // `build_options` has to arrive as a plain .zig file the `build-exe`
     // command line can name. Emitting it from `fig_options` rather than
     // hand-maintaining a copy is what keeps it from drifting. Attached to each
-    // `cli/v*` release by .github/workflows/release-binaries.yml.
+    // `v*` release by .github/workflows/release-binaries.yml.
     const wasi_options_step = b.step("wasi-options", "Write build_options.zig for a build-system-free build");
     wasi_options_step.dependOn(&b.addInstallFileWithDir(fig_options.getOutput(), .prefix, "build_options.zig").step);
 
@@ -108,6 +92,7 @@ pub fn build(b: *std.Build) void {
         .check_figl_step = tools_result.check_figl_step,
         .validate_check_step = tools_result.validate_check_step,
         .vendor_check_step = tools_result.vendor_check_step,
+        .version_check_step = tools_result.version_check_step,
         .test_step = tests_result.test_step,
         .conformance_step = tests_result.conformance_step,
     });

@@ -45,26 +45,25 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
 
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
-    // The release tool's changelog cut (tools/release.zig). It lives out in
-    // tools/ rather than src/, but it is the one maintenance tool that rewrites
-    // a file by hand instead of shelling out to something that owns the format,
-    // and a mistake in it is only visible once a release is already history —
-    // so its `test` blocks run with everything else. `addTest` compiles the
-    // file for those blocks; the tool's `main` is not run.
-    const release_tool_tests = b.addTest(.{
+    // The version sync's scanners (tools/version-sync.zig). It lives out in
+    // tools/ rather than src/, but it splices version strings into manifests by
+    // hand, and a scanner that takes the wrong line is only visible once a
+    // release has written it — so its `test` blocks run with everything else.
+    // `addTest` compiles the file for those blocks; the tool's `main` is not run.
+    const version_sync_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/release.zig"),
+            .root_source_file = b.path("tools/version-sync.zig"),
             .target = target,
             .optimize = ctx.optimize,
         }),
         .filters = test_filters,
     });
-    const run_release_tool_tests = b.addRunArtifact(release_tool_tests);
+    const run_version_sync_tests = b.addRunArtifact(version_sync_tests);
 
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
-    test_step.dependOn(&run_release_tool_tests.step);
+    test_step.dependOn(&run_version_sync_tests.step);
 
     // The conformance corpora vendored into `testdata/` (~2.7k cases: the
     // upstream yaml-test-suite, toml-test, json5-tests, JSONTestSuite, the

@@ -40,7 +40,7 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 # The native binding. `default-features` carries json/yaml/toml/fig, which is
 # also the feature set fig-sys ships a prebuilt `libfig.a` for — so building
 # this plugin needs no Zig toolchain on a tier-1 target.
-fig = { path = "../rust/fig", version = "3.3.0" }
+fig = { path = "../rust/fig", version = "5.0.0" }
 
 [dev-dependencies]
 nu-plugin-test-support = "=0.115.1"

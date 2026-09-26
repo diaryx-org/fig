@@ -1,10 +1,10 @@
 #!/bin/sh
-# Pre-commit: keep the C ABI surface and the cross-artifact versions consistent.
+# Pre-commit: keep the C ABI surface and fig's one version consistent.
 # Each check runs only when files it cares about are part of this commit, so a
 # commit that touches neither pays nothing. Bypass with `git commit --no-verify`.
 #
 # The policy these enforce is the *code*, not VERSIONING.md (which just describes
-# it): tools/abi-check.zig and tools/version-floor.zig are the source of truth, run
+# it): tools/abi-check.zig and tools/version-sync.zig are the source of truth, run
 # here and in CI. This shim is the one piece that must stay shell — a git hook is
 # exec'd as a program and a .zig file cannot carry a shebang — so the Zig logic
 # lives behind `zig build <step>` and this just dispatches to it.
@@ -26,14 +26,14 @@ case "$staged" in
         ;;
 esac
 
-# Cross-artifact version floor (binding >= embedded core) + the fig-macros pin,
-# when any version-bearing manifest is staged. Cheap and tag-independent, unlike
-# semver-check (a release gate that needs git tags), which stays CI-only.
+# Every file carrying fig's one version agrees with build.zig.zon, when any of
+# them is staged. Cheap and tag-independent, unlike semver-check (a release gate
+# that needs git tags), which stays CI-only.
 case "$staged" in
-    *build.zig.zon* | *bindings/rust/Cargo.toml* | *bindings/typescript/package.json*)
-        printf 'pre-commit: version manifest staged — running version-floor\n'
-        ( cd "$root" && zig build version-floor ) || {
-            printf 'pre-commit: version-floor failed; commit aborted (use --no-verify to bypass)\n' >&2
+    *build.zig.zon* | *build.zig.figl* | *bindings/c/include/fig.h* | *README.md* | *bindings/rust/Cargo.toml* | *package.json* | *package-lock.json*)
+        printf 'pre-commit: version-bearing file staged — running version-check\n'
+        ( cd "$root" && zig build version-check ) || {
+            printf 'pre-commit: version-check failed; run `zig build version-sync` and stage the result (use --no-verify to bypass)\n' >&2
             exit 1
         }
         ;;

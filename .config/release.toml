@@ -1,0 +1,90 @@
+# What the shared release tooling needs to know about fig.
+#
+# fig ships five artifacts off one tree — the Zig core, the `fig` CLI, the Rust
+# crates, `@diaryx/fig` and `@diaryx/fig-wasi` — and from 5.0.0 they share one
+# version and one `v*` tag (docs/VERSIONING.md). Like twig, the version is
+# decided in `build.zig.zon` rather than a Cargo manifest, and the Rust
+# workspace that copies it lives under `bindings/rust/` with its own lockfile.
+name = "fig"
+url = "https://github.com/diaryx-org/fig"
+release_branch = "main"
+
+# Where the version is decided. The prefix is matched against the raw line, so
+# the zon's indentation is part of it.
+manifest = "build.zig.zon"
+version_prefix = '    .version = "'
+# The zon is not a Cargo manifest: there is no root Cargo.lock to update and no
+# `{ path = …, version = … }` entries to retarget here.
+cargo_workspace = false
+
+# The Cargo workspace that follows that version — `[workspace.package]`, the
+# internal `[workspace.dependencies]` pins (fig-sys, fig-macros and the five
+# fig-sys-<target> payload crates), and its lockfile beside it.
+mirrors = ["bindings/rust/Cargo.toml"]
+
+# Everything else the version reaches, which no Cargo-manifest rewrite finds:
+# the figl source build.zig.zon is generated from, fig.h's FIG_VERSION_*
+# macros, README.md's frontmatter, both package.json files and their lockfiles.
+# `zig build version-sync` copies the zon's version into each of them
+# (tools/version-sync.zig), and `zig build version-check` — part of `zig build
+# check` — fails on any that disagrees. It writes bindings/rust/Cargo.toml too,
+# to the version `mirrors` has already written; the overlap is deliberate, so
+# that `zig build version-sync` on its own still does the whole job.
+post_bump = "zig build version-sync"
+extra_version_files = [
+  "figl/build.zig.figl",
+  "bindings/c/include/fig.h",
+  "README.md",
+  "bindings/typescript/package.json",
+  "bindings/typescript/package-lock.json",
+  "bindings/wasi/package.json",
+  "bindings/wasi/package-lock.json",
+]
+
+# fig keeps its own copy of the cliff config, differing from the shared one in
+# `tag_pattern` alone: its history carries the four prefixed per-artifact lines
+# from before 5.0.0 (`core/v…`, `cli/v…`, `rust/v…`, `npm/v…`) and three bare
+# tags from before those (`v1.0.0`, `v2.0.0`, `v2.5.1`) that must not be read as
+# the newest `v*`. See the comment on `tag_pattern` there.
+cliff_config = ".config/cliff.toml"
+
+# Where the changelog's `v*` sections begin. The sections before 5.0.0 are
+# headed by the artifacts that moved (`## core 3.1.0 · npm 3.1.0`) and cover
+# the prefixed tags; the three bare tags predate the changelog altogether. So
+# the backfill starts at the first one-version release rather than inventing
+# sections for `v1.0.0`, `v2.0.0` and `v2.5.1`.
+changelog_since = "v5.0.0"
+
+# What to run before cutting. Each repo owns its own CI; this names it.
+verify = "zig build check"
+# …and here, after the bump rather than before it. `zig build check` runs
+# `version-check` and `semver-check`, which judge the versions in the tree, so
+# running it first would be checking the versions this release replaces. A
+# failure after the bump restores the tree.
+verify_after_bump = true
+
+# What pushing the tag sets off, most consequential first. The warning printed
+# before the push is handed back to you is composed from these.
+[[tag_starts]]
+workflow = "release.yml"
+does = "uploads fig, fig-macros, fig-sys and the five fig-sys-<target> payload crates to crates.io"
+
+[[tag_starts]]
+workflow = "release-npm.yml"
+does = "publishes @diaryx/fig to npm"
+
+[[tag_starts]]
+workflow = "release-npm-wasi.yml"
+does = "publishes @diaryx/fig-wasi to npm"
+
+[[tag_starts]]
+workflow = "homebrew.yml"
+does = "builds the macOS and Linux CLI binaries and writes the tap"
+
+[[tag_starts]]
+workflow = "release-binaries.yml"
+does = "attaches the Windows and WASI CLI binaries to the GitHub release"
+
+[[tag_starts]]
+system = "tangled.org"
+does = "cross-compiles the CLI and attaches every build to the tag as an artifact (.tangled/workflows/release.yml), if a spindle is attached"

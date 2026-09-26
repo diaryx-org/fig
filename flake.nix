@@ -18,15 +18,16 @@
         pkgs = import nixpkgs { inherit system; };
         zig = diaryx-nix.lib.${system}.zig;
 
-        # This flake ships the `fig` CLI binary, which carries its OWN SemVer
-        # track (`cli_version` in build.zig), independent of the core library
-        # version in build.zig.zon. Parse that so the flake reports the same
-        # version as `fig version` rather than the core number.
-        cliVersion =
-          let m = builtins.match ''.*cli_version = std\.SemanticVersion\.parse\("([^"]+)"\).*''
-                    (builtins.readFile ./build.zig);
+        # Every fig artifact, the CLI this flake ships included, carries the one
+        # version decided in build.zig.zon's `.version` (see docs/VERSIONING.md),
+        # so the flake reads it from there and reports what `fig version` does.
+        # `.minimum_zig_version` has `_version`, never `.version`, so the match
+        # cannot take it.
+        figVersion =
+          let m = builtins.match ''.*[[:space:]]\.version = "([^"]+)".*''
+                    (builtins.readFile ./build.zig.zon);
           in if m == null
-             then throw "fig flake: could not find `cli_version` in build.zig"
+             then throw "fig flake: could not find `.version` in build.zig.zon"
              else builtins.head m;
       in {
         packages = rec {
@@ -34,7 +35,7 @@
 
           fig = pkgs.stdenv.mkDerivation {
             pname = "fig";
-            version = cliVersion;
+            version = figVersion;
             src = ./.;
 
             nativeBuildInputs = [ zig ];
@@ -69,10 +70,10 @@
           program = "${self.packages.${system}.fig}/bin/fig";
         };
 
-        # git-cliff comes with the shared shell: it drives tools/changelog.sh,
-        # which regenerates the generated region of docs/CHANGELOG.md. Not
-        # needed to build or test fig — only to cut a release — so `zig build
-        # changelog` still says how to get it rather than assuming this shell.
+        # git-cliff comes with the shared shell: `dx changelog` and `dx release`
+        # drive it to regenerate the generated region of docs/CHANGELOG.md. Not
+        # needed to build or test fig — only to cut a release — so `dx` still
+        # says how to get it rather than assuming this shell.
         devShells.default = diaryx-nix.devShells.${system}.zig;
       });
 }

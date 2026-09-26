@@ -432,7 +432,7 @@ pub fn Editor(comptime Language: type) type {
         /// and every edit routes through that one splice gate). The error
         /// itself can't say this: it is an ordinary parse error, identical to
         /// what a malformed input file produces. Callers that hand a user's
-        /// raw text through — the CLI's `edit`/`set`/`insert` — read this to
+        /// raw text through — the CLI's `replace`/`set`/`insert` — read this to
         /// blame the text instead of the file. Cleared at the top of each
         /// splice, so it always describes the most recent one.
         splice_rejected: bool = false,

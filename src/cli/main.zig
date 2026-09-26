@@ -168,8 +168,12 @@ pub fn main(init: std.process.Init) !void {
             try stderr_terminal.writer.flush();
             std.process.exit(2);
         },
-        ArgError.MissingEditArgument => {
-            try Help.edit(&stderr_terminal, "fig");
+        ArgError.MissingReplaceArgument => {
+            try Help.replace(&stderr_terminal, "fig");
+            std.process.exit(2);
+        },
+        ArgError.MissingRenameArgument => {
+            try Help.rename(&stderr_terminal, "fig");
             std.process.exit(2);
         },
         ArgError.MissingSetArgument => {
@@ -221,7 +225,7 @@ pub fn main(init: std.process.Init) !void {
 
     // Now, act on config. One failure is intercepted here rather than left to
     // escape as a bare `error: <ErrorName>`: an edit whose spliced TEXT is
-    // what doesn't parse (`fig edit c.toml dep.rev cc5e7e51` — a git sha the
+    // what doesn't parse (`fig replace c.toml dep.rev cc5e7e51` — a git sha the
     // TOML parser can only read as a malformed number). `edit_ops.applyEdit`
     // tags that case; this is the only place that knows which argument the
     // text came from, so it is where the report is written. See
@@ -285,7 +289,8 @@ fn dispatch(a: std.mem.Allocator, io: Io, stdout_terminal: *Io.Terminal, stderr_
     return switch (config.action) {
         .help => actions.runHelp(stderr_terminal, config.binary_name),
         .version => actions.runVersion(stdout_terminal, cli_version, core_version, epoch),
-        .edit => actions.runEdit(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.edit),
+        .replace => actions.runEdit(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.replace),
+        .rename => actions.runEdit(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.rename),
         .set => actions.runSet(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.set),
         .insert => actions.runInsert(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.insert),
         .delete => actions.runDelete(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.delete),

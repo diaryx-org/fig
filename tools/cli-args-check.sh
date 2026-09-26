@@ -41,7 +41,9 @@ cp f.yaml orig.yaml
 exits "get --bogus" 2 get --bogus f.yaml
 exits "set --bogus" 2 set --bogus f.yaml a 1
 [ ! -e ./--bogus ] || fail "set --bogus created a file named --bogus"
-exits "edit --bogus" 2 edit f.yaml a 1 --bogus
+exits "replace --bogus" 2 replace f.yaml a 1 --bogus
+exits "rename --bogus" 2 rename f.yaml a c --bogus
+exits "rename --string" 2 rename --string f.yaml a c
 exits "insert -x" 2 insert -x f.yaml c 1
 exits "delete --bogus" 2 delete --bogus f.yaml a
 exits "comment --bogus" 2 comment --bogus f.yaml a hi
@@ -54,7 +56,8 @@ exits "lang --bogus" 2 lang --bogus
 # One positional past the action's last is a usage error.
 exits "get surplus" 2 get f.yaml a b
 exits "set surplus" 2 set f.yaml a 1 2
-exits "edit surplus" 2 edit f.yaml a 1 2
+exits "replace surplus" 2 replace f.yaml a 1 2
+exits "rename surplus" 2 rename f.yaml a c d
 exits "insert surplus" 2 insert f.yaml c 1 2
 exits "delete surplus" 2 delete f.yaml a b
 exits "comment surplus" 2 comment f.yaml a hi there
@@ -93,7 +96,7 @@ printf 'k = 0\n' >v.toml
 "$fig" set v.json l '[1, 2]' 2>/dev/null
 "$fig" set v.json q '"5"' 2>/dev/null
 "$fig" set v.json v --string 1.10 2>/dev/null
-"$fig" edit v.json k true 2>/dev/null
+"$fig" replace v.json k true 2>/dev/null
 is "values into JSON" '{"k": true, "n": 5, "s": "hello", "z": null, "l": [1,2], "q": "5", "v": "1.10"}' "$(cat v.json)"
 "$fig" set v.yaml n 5 2>/dev/null
 "$fig" set v.yaml s 'a: b' 2>/dev/null
@@ -113,6 +116,11 @@ cmp -s v.toml orig.toml || fail "a refused value changed v.toml"
 rm -f new.toml
 exits "null into a new TOML file" 1 set new.toml k null
 [ ! -e new.toml ] || fail "a refused value left new.toml behind"
+
+# `rename` renames the key and keeps its value and comments.
+printf '# lead\na: 1 # trail\n' >r.yaml
+"$fig" rename r.yaml a b 2>/dev/null
+is "rename" "$(printf '# lead\nb: 1 # trail')" "$(cat r.yaml)"
 
 # Space at either end keeps a value a string as typed.
 "$fig" set v.json w 'hello ' 2>/dev/null
@@ -181,9 +189,16 @@ row 2 set ok.yaml a '[1'
 row 0 insert ok.yaml c 3
 row 1 insert ok.yaml a 3
 row 2 insert ok.yaml c
-row 0 edit ok.yaml a 2
-row 1 edit ok.yaml zz 2
-row 2 edit ok.yaml a
+row 0 replace ok.yaml a 2
+row 1 replace ok.yaml zz 2
+row 2 replace ok.yaml a
+row 0 rename ok.yaml a c
+row 1 rename ok.yaml zz c
+row 2 rename ok.yaml a
+# `edit` was split into `replace` and `rename` (cli-5 §7): it is no longer
+# an action, and neither is `--key`.
+row 2 edit ok.yaml a 2
+row 2 replace --key ok.yaml a c
 row 0 delete ok.yaml a
 row 1 delete ok.yaml zz
 row 2 delete ok.yaml a b

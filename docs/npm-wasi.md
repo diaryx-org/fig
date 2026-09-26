@@ -17,7 +17,7 @@ part_of = [docs](docs.md)
 > install`) — see [the main CLI docs](/README.md#command-line-interface).
 
 `@diaryx/fig-wasi` runs the real `fig` command-line tool — the same
-`get`/`set`/`edit`/`insert`/`delete`/`comment`/`check`/`fmt`/`convert` actions
+`get`/`set`/`replace`/`rename`/`insert`/`delete`/`comment`/`check`/`fmt`/`convert` actions
 the native binary has — with **no install step, no per-platform binary, and no
 native build**. It ships a single WASI (WebAssembly System Interface) module
 and runs it under Node's built-in WASI support, so `npx` works anywhere Node

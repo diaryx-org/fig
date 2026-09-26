@@ -1,5 +1,5 @@
 //! A value argument — `set`'s value and `--seq` items, `insert`'s value,
-//! `edit`'s replacement — read once as a fig value and rendered into whatever
+//! `replace`'s replacement — read once as a fig value and rendered into whatever
 //! format it lands in, the way a binding's `Value` is (CLI 5 §1). The format
 //! decides the spelling, never the meaning: `fig set f version 5` writes the
 //! number 5 into JSON, YAML and TOML alike, and `hello` is a string in all

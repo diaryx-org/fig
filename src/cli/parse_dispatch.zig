@@ -595,7 +595,7 @@ pub fn resolveFormatFromContent(allocator: std.mem.Allocator, content: []const u
 }
 
 /// Open `file_path` read-only and sniff its contents. For the in-place edit paths
-/// (`edit`/`comment`), which then re-open the file read-write to splice it — so
+/// (`replace`/`rename`/`comment`), which then re-open the file read-write to splice it — so
 /// detection reads through a separate handle and never disturbs the edit read.
 pub fn detectFileFormat(io: Io, allocator: std.mem.Allocator, file_path: []const u8) !Format {
     const probe = try fileio.getInput(io, file_path, .read_only);

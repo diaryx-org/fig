@@ -195,7 +195,7 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
             try term.setColor(.blue);
             try term.writer.writeAll("help");
             try term.setColor(.reset);
-            try term.writer.print(": to change its value — `{s} set <file> <path> <value>` (or `{s} edit`, which only replaces).\n", .{ binary_name, binary_name });
+            try term.writer.print(": to change its value — `{s} set <file> <path> <value>` (or `{s} replace`, which only replaces).\n", .{ binary_name, binary_name });
         },
         // `set --embed <archetype>` creating a block at the top of a host
         // whose first line already opens frontmatter of another archetype.
@@ -406,7 +406,7 @@ fn spliceStyle(format: Format) SpliceStyle {
 
 /// Report an edit whose *argument* — not the file — is what doesn't parse, and
 /// exit: 2 when the text was source the user typed, 1 when it was a fig value
-/// the document refused (see below). `edit`/`set`/`insert` splice the text
+/// the document refused (see below). `replace`/`rename`/`set`/`insert` splice the text
 /// into the document, so when the reparse fails the underlying error describes the
 /// spliced bytes ("not a valid TOML number" for a git sha) while pointing at a
 /// file the user believes is fine. `edit_ops.applyEdit` turns that case into

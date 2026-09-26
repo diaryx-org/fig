@@ -718,7 +718,7 @@ pub fn parseTarget(config: CliConfig) ?ParseTarget {
     return t;
 }
 
-pub const ArgError = error{ UnsupportedFileFormat, MissingReplaceArgument, MissingRenameArgument, MissingSetArgument, MissingInsertArgument, MissingDeleteArgument, MissingGetArgument, MissingCommentArgument, MissingCheckArgument, MissingFmtArgument, MissingConvertArgument, MissingPatchArgument, MissingLangArgument, OutOfMemory, Overflow, InvalidCharacter, InvalidPath };
+pub const ArgError = error{ UnsupportedFileFormat, MissingReplaceArgument, MissingRenameArgument, MissingSetArgument, MissingInsertArgument, MissingDeleteArgument, MissingGetArgument, MissingCommentArgument, MissingCheckArgument, MissingFmtArgument, MissingConvertArgument, MissingPatchArgument, MissingLangArgument, SurplusArgument, OutOfMemory, Overflow, InvalidCharacter, InvalidPath };
 
 /// Result of mapping a file extension to a parse strategy. `embed_detect` is
 /// set when the file is a host document whose config lives in an embedded

@@ -2895,10 +2895,7 @@ fn extKindOf(kind: c_int) ?AST.Node.Kind.Extended.ExtKind {
 /// A serialize target: a compiled format, or a runtime one printed through
 /// its vtable. `targetOf` is `serializeFormatOf` with the §8.2 lookup in
 /// front of it.
-const Target = union(enum) {
-    compiled: AST.SerializeFormat,
-    runtime: *const Runtime.Entry,
-};
+const Target = Runtime.Target;
 
 fn targetOf(format: c_int) ?Target {
     if (runtimeOf(format)) |e| {
@@ -3505,18 +3502,15 @@ pub export fn fig_document_diagnose(
     oc.* = 0;
     const public_doc = doc orelse return .invalid_argument;
     const handle: *DocumentHandle = @ptrCast(@alignCast(public_doc));
-    // What a runtime target can hold is not yet derived from its record
-    // (`diagnostics.zig`'s table is per compiled format), so a diagnose
-    // against one is an operation with no answer rather than a format this
-    // build lacks.
-    if (runtimeOf(format) != null) return .unsupported_operation;
-    const fmt = serializeFormatOf(format) orelse return .unsupported_format;
+    // A runtime target is held to what its record declares — see
+    // `Diagnostics.analyzeFor`.
+    const target = targetOf(format) orelse return .unsupported_format;
 
     _ = handle.diag_arena.reset(.retain_capacity);
     handle.diag_warnings = &.{}; // a failed analyze must not leave a stale set indexable
     const arena = handle.diag_arena.allocator();
-    const ast = prepareDocumentAst(handle, .{ .compiled = fmt }, options, arena) catch |err| return convertStatus(err);
-    const warnings = Diagnostics.analyze(arena, ast, ast.root, fmt, diagnoseOptionsOf(options)) catch return .out_of_memory;
+    const ast = prepareDocumentAst(handle, target, options, arena) catch |err| return convertStatus(err);
+    const warnings = Diagnostics.analyzeFor(arena, ast, ast.root, target, diagnoseOptionsOf(options)) catch return .out_of_memory;
     handle.diag_warnings = warnings;
     oc.* = warnings.len;
     return .ok;
@@ -3551,15 +3545,14 @@ pub export fn fig_value_diagnose(
     // (see `fig_document_diagnose`).
     oc.* = 0;
     const handle = valueFrom(value) orelse return .invalid_argument;
-    if (runtimeOf(format) != null) return .unsupported_operation; // as fig_document_diagnose
-    const fmt = serializeFormatOf(format) orelse return .unsupported_format;
+    const target = targetOf(format) orelse return .unsupported_format; // as fig_document_diagnose
     if (root >= handle.builder.nodes.items.len) return .invalid_argument;
 
     _ = handle.diag_arena.reset(.retain_capacity);
     handle.diag_warnings = &.{};
     const arena = handle.diag_arena.allocator();
     const ast = handle.builder.view(root) catch return .out_of_memory; // borrows the builder; never deinit'd
-    const warnings = Diagnostics.analyze(arena, &ast, root, fmt, diagnoseOptionsOf(options)) catch return .out_of_memory;
+    const warnings = Diagnostics.analyzeFor(arena, &ast, root, target, diagnoseOptionsOf(options)) catch return .out_of_memory;
     handle.diag_warnings = warnings;
     oc.* = warnings.len;
     return .ok;
@@ -5028,9 +5021,22 @@ test "a runtime language registers through the C ABI and is a peer at every entr
         defer fig_document_destroy(jdoc.?);
         try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(jdoc, format, null, &ptr, &len));
         try std.testing.expectEqualStrings("k=v\n", ptr[0..len]);
-        // Diagnose against a runtime target has no answer yet.
-        var n: usize = 0;
-        try std.testing.expectEqual(FigStatus.unsupported_operation, fig_document_diagnose(jdoc, format, null, &n));
+        // Diagnose against a runtime target answers from its record:
+        // nothing lost from a flat string map, and a table nested past its
+        // `max_mapping_depth` of 0 dropped, as the print drops it.
+        var n: usize = 9;
+        try std.testing.expectEqual(FigStatus.ok, fig_document_diagnose(jdoc, format, null, &n));
+        try std.testing.expectEqual(@as(usize, 0), n);
+        const nested = "{\"a\": {\"b\": \"1\"}, \"c\": \"2\"}";
+        var ndoc: ?*FigDocument = null;
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(nested.ptr, nested.len, @intFromEnum(FigFormat.json), &ndoc));
+        defer fig_document_destroy(ndoc.?);
+        try std.testing.expectEqual(FigStatus.ok, fig_document_diagnose(ndoc, format, null, &n));
+        try std.testing.expectEqual(@as(usize, 1), n);
+        var w: FigWarning = .{ .size = @sizeOf(FigWarning), .code = 0, .cause = 0, .path = null, .path_len = 0, .note = null, .note_len = 0 };
+        try std.testing.expectEqual(FigStatus.ok, fig_document_warning(ndoc, 0, &w));
+        try std.testing.expectEqual(warningCodeInt(.value_dropped), w.code);
+        try std.testing.expectEqualStrings("a", w.path[0..w.path_len]);
     }
     // Print it as itself, comment and all.
     try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(doc, format, null, &ptr, &len));

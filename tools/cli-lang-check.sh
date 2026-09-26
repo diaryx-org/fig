@@ -93,6 +93,14 @@ printf '{"k":"v"}' > j.json
 expect "convert in" "k=v" "$("$fig" convert j.json -o tinykv 2>/dev/null)"
 printf 'a:\n  b: 1\nc: 2\nd: true\n' > n.yaml
 expect "flat strip" "$(printf 'c=2\nd=true')" "$("$fig" get n.yaml -o tinykv 2>/dev/null)"
+# ...and warned about, as a compiled flat format's is: the warning is read
+# off the same declaration the strip is, and `--strict` refuses it.
+expect "loss warning" "warning: dropped table value at \`a\` (tinykv cannot represent it)" "$("$fig" get n.yaml -o tinykv 2>&1 >/dev/null | grep '^warning')"
+set +e
+"$fig" convert n.yaml -o tinykv --strict >/dev/null 2>&1
+status=$?
+set -e
+[ "$status" -eq 1 ] || fail "--strict let a lossy convert to tinykv through (exit $status)"
 printf 'A=1\n\n\nB=2\n' > f.tkv
 "$fig" fmt f.tkv 2>/dev/null
 expect "fmt" "$(printf 'A=1\nB=2')" "$(cat f.tkv)"
@@ -105,6 +113,24 @@ status=$?
 set -e
 [ "$status" -eq 1 ] || fail "a value with a line break the helper refuses exited $status, want 1"
 case "$err" in *"is not a valid value for s.tkv (tinykv)"*) ;; *) fail "bad edit text not reported for the language: $err" ;; esac
+
+# A value the language cannot hold where it lands is refused, and nothing
+# is written: a mapping is a fine tinykv document, `x=1`, which spliced
+# after `D=` would read back as the string `x=1`.
+cp s.tkv before.tkv
+set +e
+err="$("$fig" set s.tkv D '{x = 1}' 2>&1 >/dev/null)"
+status=$?
+set -e
+[ "$status" -eq 1 ] || fail "a mapping value into tinykv exited $status, want 1"
+case "$err" in *"cannot be written to s.tkv"*) ;; *) fail "a mapping value into tinykv not refused: $err" ;; esac
+printf 'D:\n  x: 1\n' > nested.yaml
+set +e
+"$fig" patch s.tkv nested.yaml >/dev/null 2>&1
+status=$?
+set -e
+[ "$status" -eq 1 ] || fail "a nested patch into tinykv exited $status, want 1"
+expect "refused edits wrote nothing" "$(cat before.tkv)" "$(cat s.tkv)"
 
 # A parse failure is reported with the helper's message and at its offset.
 printf 'A=1\nnope\n' > bad.tkv

@@ -135,6 +135,17 @@ pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize
     }
 }
 
+/// The editor's splice text: what follows `key = ` on one line. A mapping
+/// has no spelling there — a section is a header of its own, which a value
+/// splice cannot write — so it is refused here rather than printed as the
+/// document it would be (`c = 1`), which spliced after `u = ` reads back as
+/// the string `c = 1`.
+pub fn printSplice(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Error!void {
+    _ = options;
+    try writeValue(writer, ast, ast.root);
+    try writer.flush();
+}
+
 // ── Keys and values ─────────────────────────────────────────────────────────
 
 fn keyText(ast: *const AST, key_id: AST.Node.Id) Error![]const u8 {
@@ -294,4 +305,22 @@ test "double-nested section is unsupported" {
     var output: Writer.Allocating = .init(a);
     defer output.deinit();
     try std_testing.expectError(error.UnsupportedValue, print(&output.writer, &ast, .{}));
+}
+
+test "a splice is one value line, and a mapping has none" {
+    const a = std_testing.allocator;
+    var b = AST.Builder.init(a);
+    defer b.deinit();
+    const k = try b.addString("c");
+    const v = try b.addString("1");
+    const map = try b.addMapping(&.{.{ .key = k, .value = v }});
+    var ast = try b.finish(map);
+    defer ast.deinit();
+    var output: Writer.Allocating = .init(a);
+    defer output.deinit();
+    try std_testing.expectError(error.UnsupportedValue, printSplice(&output.writer, &ast, .{ .splice = true }));
+    var scalar = ast;
+    scalar.root = v;
+    try printSplice(&output.writer, &scalar, .{ .splice = true });
+    try std_testing.expectEqualStrings("1", output.written());
 }

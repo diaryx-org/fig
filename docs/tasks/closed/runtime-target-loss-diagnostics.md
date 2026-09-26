@@ -1,13 +1,36 @@
 ```fig
 title = A runtime target has no loss diagnostics
 description = `fig get -o <runtime>` and `fig convert -o <runtime>` print without the dropped-comment and lossy-value warnings a compiled target gets, and `fig_document_diagnose` answers `FIG_STATUS_UNSUPPORTED_OPERATION` for a runtime format
-status = open
+status = done
 created = 2026-09-10
-updated = 2026-09-10
-part_of = [tasks](tasks.md)
+updated = 2026-09-26
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # A runtime target has no loss diagnostics
+
+**Status.** Done, in `feat: loss diagnostics for a runtime target, and a
+value refused where the target cannot hold it`.
+`Diagnostics.analyzeFor` takes a `Runtime.Target`. For a runtime language
+it reads the same two declarations `printRuntime` strips by: `lossless`
+(a missing `null` dropped, a missing extended scalar degraded) and
+`max_mapping_depth` (a `null`, a sequence, or a mapping past the depth
+dropped). It also reads `syntax` for comments, and claims nothing about
+them for a language that declares none, whose printer is handed every
+comment. `printRuntime` now applies
+both strips when a language declares both. The CLI's `get`, `convert` and
+`fmt` warn through one `reportLoss`, and `fig_document_diagnose` and
+`fig_value_diagnose` answer for a runtime format. One difference from
+`-o dotenv`: a runtime target is not warned that a number or boolean
+degrades to a string, because nothing in its declaration says so.
+
+The same analysis, run at the depth where an edited value lands
+(`Options.depth`, `Diagnostics.firstDropped`), now refuses a `set`,
+`insert` or `patch` whose value the target cannot hold there. Before, a
+mapping into dotenv, `.properties`, INI below a section, or a flat runtime
+language was printed as a document and spliced in as text (`n=x=1`).
+INI's printer gets a `printSplice` that refuses a mapping, since a value
+splice cannot write a section.
 
 **Repro.** With a `languages.figl` naming a flat-map helper (the
 `tinykv_helper` example in `bindings/rust/fig`):

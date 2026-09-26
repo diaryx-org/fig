@@ -597,9 +597,11 @@ parser's tables and to its edits — and is what a new language is best written
 against. `handle(lang, requestLine)` is the wire itself, one JSON line to one,
 if you want to carry it over something other than a pipe.
 
-Two things stay closed. A runtime format never joins content sniffing — it is
-selected by name or by extension, never guessed — and `Document.diagnose`
-against a runtime target reports `UnsupportedOperation` in this release.
+A runtime format never joins content sniffing — it is selected by name or by
+extension, never guessed. `Document.diagnose` against a runtime target reports
+what its registration declares it cannot hold: a kind missing from `lossless`,
+what `max_mapping_depth` forbids, and a comment its `syntax` has no delimiter
+for.
 
 ## Errors
 

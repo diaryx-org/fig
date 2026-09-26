@@ -114,7 +114,13 @@ fn patchAs(
         // It arrives as a plain parse error that reads as if the target were
         // malformed, so relabel it; `main` reports it against the patch.
         if (editor.splice_rejected) return error.PatchRenderRejected;
-        return err;
+        // A value the target has no spelling for at all, or not where it
+        // lands: the same refusal `set` makes, under the name `main` reports.
+        return switch (err) {
+            error.NullUnsupported => error.UnwritableNull,
+            error.UnsupportedValue => error.UnwritableNested,
+            else => err,
+        };
     };
     return .{ .content = try allocator.dupe(u8, editor.source.items), .stats = stats };
 }

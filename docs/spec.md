@@ -422,4 +422,4 @@ The normative warning set: `string_looks_like_literal` (§ 4.2), `string_leading
 
 ## 12. File extensions
 
-The canonical file extension is **`.figl`**; **`.fig`** is accepted for compatibility. Both select the authoring dialect.
+The file extension is **`.figl`**, and it selects the authoring dialect.

@@ -227,12 +227,13 @@ pub fn detectLanguageFromFileEnding(file_path: []const u8) ?Detected {
     // no `Language` declares. `yml` is NOT one of them any more: it falls
     // through to `extensionFormat` below, where `Language.YAML.extensions`
     // owns it and resolves it to `.yaml` — the same parse it always got.
-    if (std.meta.stringToEnum(Format, ext)) |format| return .{ .format = format };
+    // The one exception is `fig`: its extension is `.figl`, and `.fig`,
+    // accepted until 5.0, is no longer the format's.
+    if (std.meta.stringToEnum(Format, ext)) |format| if (format != .fig) return .{ .format = format };
 
     // Otherwise ask the languages. Each declares the extensions it owns
     // (`Language.extensions`), which is where the ones that DON'T match an enum
-    // member name live: `.figl` (fig's canonical extension — `.fig` is the
-    // back-compat spelling, and matches the enum anyway), `.env` (dotenv files
+    // member name live: `.figl` (fig's extension), `.env` (dotenv files
     // are conventionally named exactly `.env`, so the last-dot split gives a
     // literal `env`), and `.nt` (NestedText's conventional extension). Those
     // three used to be hand-written special cases here; they are now the
@@ -1981,10 +1982,8 @@ test "detectLanguageFromFileEnding: .md/.markdown defer the archetype to a runti
     try t.expectEqual(Format.fig, figl_ext.format);
     try t.expect(!figl_ext.embed_detect);
 
-    // `.fig` remains accepted for back-compat.
-    const fig_ext = detectLanguageFromFileEnding("f.fig").?;
-    try t.expectEqual(Format.fig, fig_ext.format);
-    try t.expect(!fig_ext.embed_detect);
+    // `.fig` is not an extension of the format any more (5.0).
+    try t.expect(detectLanguageFromFileEnding("f.fig") == null);
 }
 
 test "yml is an accepted spelling of yaml, as a --input value and as an extension" {

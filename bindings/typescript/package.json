@@ -1,7 +1,7 @@
 {
   "name": "@diaryx/fig",
   "version": "5.0.0",
-  "description": "JSON/JSONC/JSON5/YAML/TOML parsing (plus optional ZON), comment-preserving editing, and cross-format serialization, backed by a Zig core compiled to WebAssembly.",
+  "description": "JSON, JSONC, JSON5, YAML, TOML, INI, dotenv, .properties, NestedText and fig parsing (ZON and plist opt-in), comment-preserving editing, and cross-format serialization, backed by a Zig core compiled to WebAssembly.",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -16,11 +16,15 @@
     "./helper": {
       "types": "./dist/helper.d.ts",
       "default": "./dist/helper.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
     "src",
+    "!src/wasm-bytes.ts",
+    "!dist/wasm-bytes.js.map",
+    "!dist/wasm-bytes.d.ts.map",
     "README.md",
     "LICENSE-MIT",
     "LICENSE-APACHE"
@@ -52,11 +56,11 @@
     "url": "https://github.com/diaryx-org/fig/issues"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "build:wasm": "node scripts/build-wasm.mjs",
-    "build": "npm run build:wasm && tsc -p tsconfig.json",
+    "build": "npm run build:wasm && tsc -p tsconfig.json && node scripts/drop-wasm-bytes-maps.mjs",
     "prepack": "node scripts/vendor-publish-files.mjs",
     "prepublishOnly": "npm run build && npm test",
     "test": "tsc -p tsconfig.test.json && node --test 'test/**/*.test.ts'",
@@ -64,7 +68,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
-    "typescript": "^5.6.0"
+    "typescript": "^5.8.0"
   },
   "sideEffects": false
 }

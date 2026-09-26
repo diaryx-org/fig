@@ -67,18 +67,21 @@ pub fn applyToSlice(
         // and gron is a CLI-only projection.
         .canonical => return error.UnsupportedCanonicalEdit,
         .gron => return error.UnsupportedGronEdit,
-        // A patch renders each spliced subtree through the target's
-        // serializer, which a runtime format reaches only through its
-        // vtable; `patchAs` is generic over a `SerializeFormat`, so a
-        // runtime target is refused here until it is not.
-        _ => return error.UnsupportedRuntimePatch,
+        // A runtime language: the one `Editor(Runtime.Language)`, as in
+        // `edit_ops.route`, with patch subtrees rendered by the entry's own
+        // printer through its vtable.
+        _ => {
+            const e = types.runtimeEntry(format) orelse return error.FormatDisabled;
+            if (!e.language.caps.edit) return error.FormatNotEditable;
+            return patchAs(fig.Runtime.Language, allocator, content, e.typeOf(), .{ .runtime = e }, req);
+        },
         inline else => |f| {
             const d = comptime fig.Language.entryFor(@tagName(f));
             if (comptime d.Lang == void) return error.FormatDisabled;
             if (comptime !d.Lang.caps.edit) return error.FormatNotEditable;
             // `toSerializeFormat` is null only for gron, returned above.
             const target = comptime (types.toSerializeFormat(f) orelse unreachable);
-            return patchAs(d.Lang, allocator, content, d.dialect, target, req);
+            return patchAs(d.Lang, allocator, content, d.dialect, .{ .compiled = target }, req);
         },
     }
 }
@@ -88,14 +91,14 @@ fn patchAs(
     allocator: std.mem.Allocator,
     content: []const u8,
     dialect: Lang.Type,
-    target: fig.AST.SerializeFormat,
+    target: fig.Patch.Target,
     req: Request,
 ) !Result {
     var editor: fig.Editor(Lang) = .{ .allocator = allocator, .format = dialect };
     try editor.init(content);
     defer editor.deinit();
 
-    const stats = fig.Patch.apply(
+    const stats = fig.Patch.applyTo(
         Lang,
         &editor,
         target,

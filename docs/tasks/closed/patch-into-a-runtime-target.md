@@ -1,13 +1,20 @@
 ```fig
 title = `fig patch` into a runtime target is refused
 description = `fig patch target.tkv overlay.yaml` exits with `UnsupportedRuntimePatch`; the merge is a compiled-editor operation and has not been made to go through `Editor(Runtime.Language)`
-status = open
+status = done
 created = 2026-09-10
-updated = 2026-09-10
-part_of = [tasks](tasks.md)
+updated = 2026-09-26
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # `fig patch` into a runtime target is refused
+
+**Status.** Done, in `feat(cli): patch into a runtime language`.
+`fig.Patch.applyTo` takes a `Patch.Target`, which is a compiled
+`SerializeFormat` or a runtime entry whose printer renders each subtree,
+and `patch_ops.applyToSlice` fills the runtime arm with
+`Editor(Runtime.Language)` as `edit_ops.route` does. `fig.Patch.apply`
+is unchanged. `tools/cli-lang-check.sh` patches a `.tkv` file.
 
 **Repro.** With a `languages.figl` naming the `tinykv_helper` example:
 

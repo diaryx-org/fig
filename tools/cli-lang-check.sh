@@ -3,7 +3,7 @@
 # executable (the Rust crate's `tinykv_helper` example, over
 # `fig::helper::serve`) is named in a `languages.figl`, and the `fig` binary
 # is driven through it — `lang list`, `lang check`, `get` by `--lang` and by
-# extension, `set`, `insert`, `delete`, `comment`, `check`, `convert` both
+# extension, `set`, `insert`, `delete`, `comment`, `patch`, `check`, `convert` both
 # ways, `fmt`, a parse error with the helper's message and offset, and a
 # refused helper. Run by `zig build check` with the built CLI as $1; run by
 # hand as `sh tools/cli-lang-check.sh zig-out/bin/fig`.
@@ -76,6 +76,13 @@ expect "lang table" \
 "$fig" comment s.tkv C "about c" 2>/dev/null
 expect "edited file" "$(printf '# secret\nA=10\n# about c\nC=three')" "$(cat s.tkv)"
 expect "check" "ok: s.tkv (tinykv)" "$("$fig" check s.tkv 2>/dev/null)"
+
+# A patch is those edits in a loop, through the same editor: a value the
+# target agrees on is left alone, a changed one replaced, a new one added.
+printf 'a=1\nb=2\n' > p.tkv
+printf 'a: 1\nb: 20\nc: 3\n' > overlay.yaml
+"$fig" patch p.tkv overlay.yaml 2>/dev/null
+expect "patched file" "$(printf 'a=1\nb=20\nc=3')" "$(cat p.tkv)"
 
 # Conversion both ways, and fmt through the helper's printer. A nested
 # mapping is stripped before the print the way a compiled flat format's

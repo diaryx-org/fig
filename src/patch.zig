@@ -60,6 +60,7 @@ const std = @import("std");
 const AST = @import("ast/ast.zig");
 const Document = @import("document.zig");
 const editor_mod = @import("editor.zig");
+const Runtime = @import("languages/runtime.zig");
 
 const Id = AST.Node.Id;
 
@@ -157,10 +158,34 @@ pub fn apply(
     deletes: []const Deletion,
     options: Options,
 ) !Stats {
+    return applyTo(Language, editor, .{ .compiled = target_format }, at, patch, from, deletes, options);
+}
+
+/// What patch subtrees are rendered as: a compiled `SerializeFormat`, or a
+/// runtime language's entry, whose printer is reached through its vtable.
+pub const Target = union(enum) {
+    compiled: AST.SerializeFormat,
+    runtime: *const Runtime.Entry,
+};
+
+/// `apply` for any `Target` — the one a runtime language's
+/// `Editor(Runtime.Language)` needs, since its printer is not a
+/// `SerializeFormat`. The same contract: `target` must be what `editor` is
+/// editing.
+pub fn applyTo(
+    comptime Language: type,
+    editor: *editor_mod.Editor(Language),
+    target: Target,
+    at: []const AST.PathSegment,
+    patch: *const AST,
+    from: Id,
+    deletes: []const Deletion,
+    options: Options,
+) !Stats {
     var w: Walker(Language) = .{
         .editor = editor,
         .allocator = editor.allocator,
-        .target_format = target_format,
+        .target = target,
         .options = options,
     };
     defer w.path.deinit(w.allocator);
@@ -180,7 +205,7 @@ fn Walker(comptime Language: type) type {
 
         editor: *Ed,
         allocator: std.mem.Allocator,
-        target_format: AST.SerializeFormat,
+        target: Target,
         options: Options,
         /// The target path currently being merged into. Grows and shrinks as
         /// `mergeMapping` descends; its backing memory is this walker's, while
@@ -321,7 +346,7 @@ fn Walker(comptime Language: type) type {
             // fig's block spellings (`* ` items, section headers) only parse as
             // standalone lines, so a fragment spliced after `key = ` has to be
             // flow — the same reason the C ABI's value serializer sets this.
-            if (self.target_format == .fig) options.flow = true;
+            if (self.target == .compiled and self.target.compiled == .fig) options.flow = true;
             // What the editor takes, not a document: plist's bare element
             // rather than a wrapped `<plist>`, a NestedText scalar's plain
             // text rather than a `>` block.
@@ -329,7 +354,10 @@ fn Walker(comptime Language: type) type {
 
             var w = std.Io.Writer.Allocating.init(self.allocator);
             defer w.deinit();
-            try view.serializeFragmentWith(&w.writer, self.target_format, options);
+            switch (self.target) {
+                .compiled => |f| try view.serializeFragmentWith(&w.writer, f, options),
+                .runtime => |e| try Runtime.printNodeWith(e, &w.writer, &view, id, options),
+            }
             // Every printer terminates a DOCUMENT with a newline. What the
             // editor takes is a VALUE — the same text a `fig set` argument
             // supplies, which never carries one — and it splices what it is

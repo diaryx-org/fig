@@ -365,15 +365,16 @@ Every value method has a `*Raw` twin — `replaceValueRaw`, `insertValueRaw`,
 
 ## Markdown frontmatter & embeds
 
-`Embed` edits a config block embedded in a host file — YAML/JSON/`fig`
-frontmatter, or YAML endmatter — leaving the fences and surrounding prose intact.
+`Embed` edits a config block embedded in a host file — markdown frontmatter, a
+fenced code block, a trailing endmatter block, or an HTML data island, holding
+JSON, YAML, TOML or `fig` — leaving the fences and surrounding prose intact.
 
 ```ts
 import { Embed, EmbedType } from "@diaryx/fig";
 
 const md = "---\ntitle: Hello\ntags:\n- draft\n---\n# Body\n\ntext\n";
 
-using fm = Embed.open(md, EmbedType.FrontmatterYaml);
+using fm = Embed.open(md, EmbedType.Frontmatter);
 fm.set(["title"], "Hello, world");
 fm.appendValue(["tags"], "published");
 
@@ -389,34 +390,44 @@ console.log(fm.render());
 // text
 ```
 
-`EmbedType` selects the container *and* the inner format — four container
-families crossed with the four embeddable formats (JSON, YAML, TOML, fig):
+`EmbedType` selects the container *and* the inner format. Each value is the
+archetype's name as the `fig` command line spells it (`fig get --embed
+fenced-fig`), so `EmbedType.FencedFig === "fenced-fig"` and a stored value is
+readable. Four container families cross the four embeddable formats:
 
-| Container | Variants |
-| --------- | -------- |
-| Markdown frontmatter | `FrontmatterYaml` (bare `---`), `MdFrontmatterJson` (`---json`), `MdFrontmatterToml`, `MdFrontmatterFig` |
-| Fenced code block | `FrontmatterFig` (```` ```fig ````), `FencedYaml`, `FencedJson`, `FencedToml` |
-| HTML data island | `HtmlScriptFig`, `HtmlScriptYaml`, `HtmlScriptJson`, `HtmlScriptToml` — `<script type="application/…">` |
-| HTML visible code | `HtmlCodeFig`, `HtmlCodeYaml`, `HtmlCodeJson`, `HtmlCodeToml` — `<pre><code class="language-…">` |
+| Container | Members | `--embed` names |
+| --------- | ------- | --------------- |
+| Markdown frontmatter | `Frontmatter` (bare `---`, YAML), `MdJson` (`---json`), `MdToml`, `MdFig` | `frontmatter`, `md-json`, `md-toml`, `md-fig` |
+| Fenced code block | `FencedYaml`, `FencedJson`, `FencedToml`, `FencedFig` (```` ```<lang> ````) | `fenced-<lang>` |
+| HTML data island | `HtmlScriptYaml`, `HtmlScriptJson`, `HtmlScriptToml`, `HtmlScriptFig` — `<script type="application/…">` | `html-script-<lang>` |
+| HTML visible code | `HtmlCodeYaml`, `HtmlCodeJson`, `HtmlCodeToml`, `HtmlCodeFig` — `<pre><code class="language-…">` | `html-code-<lang>` |
 
-Plus three conventions with their own distinct delimiter: `FrontmatterJson`
-(`;;;`), `PlusToml` (`+++`, the Hugo/Zola convention), and `EndmatterYaml` (a
-trailing ```` ```endmatter ```` block). The first four names are historical —
-`FrontmatterJson` is the `;;;` form and `FrontmatterFig` the fenced one — and
-are kept because their ABI values are frozen.
+Plus three presets with their own distinct delimiter, each pinned to one
+format: `Semicolons` (`;;;`, JSON), `Plus` (`+++`, TOML — the Hugo/Zola
+convention), and `Endmatter` (a trailing ```` ```endmatter ```` block, YAML).
 
-The `HtmlCode*` variants are entity-encoded on disk. Editing decodes on open and
+The `HtmlCode*` members are entity-encoded on disk. Editing decodes on open and
 re-encodes span-aware on `render`, so an edit preserves every untouched byte's
 original encoding and canonically encodes only what changed.
 
+Everything that takes an archetype is a static on `Embed`:
+
+- `Embed.open(host, kind)` opens the block, throwing `NotFound` when there is
+  none and `ParseError` when its content does not
+  parse.
 - `Embed.openOrInit(host, kind)` creates the block if none exists, so the first
   `set` lands cleanly. A block that goes at the top is refused
   (`UnsupportedOperation`) when the host already opens with frontmatter of
   another archetype, rather than pushing it off the first line; `retype`
   changes a region's archetype.
-- `Embed.extract(host, kind)` / `split(host, kind)` locate the region *without*
-  parsing — handy for just reading the raw frontmatter and body apart.
-- `detect(source)` sniffs which `EmbedType` a host opens with, or `null`.
+- `Embed.extract(host, kind)` locates the region *without* parsing and returns
+  its byte spans — `openFence`, `content`, `closeFence`, and the host on either
+  side, `bodyBefore` and `bodyAfter`, which with the other three tile the
+  source exactly.
+- `Embed.split(host, kind)` is the same as text: `[content, body]`, where the
+  body is the host with the whole block cut out, or `null` when there is no
+  such region.
+- `Embed.detect(host)` sniffs which `EmbedType` a host opens with, or `null`.
 - `replaceBody(text)` swaps the prose while keeping the (possibly edited) config.
 - `Embed.retype(host, from, to, content)` re-houses the block under a *different*
   archetype's fences — the splice half of "convert this file's embed style", with
@@ -676,8 +687,6 @@ manage the handle for you, so no cleanup is needed.
   `describe(lang)` — the wire's `description` of `lang`. All three, the
   `Language` types and `LanguageError` are also `@diaryx/fig/helper`, which
   loads no wasm.
-- `split(host, kind)` — read-only `[content, body]` of an embed.
-- `detect(source)` — which `EmbedType` a host opens with, or `null`.
 
 **Classes**
 
@@ -686,8 +695,9 @@ manage the handle for you, so no cleanup is needed.
   `firstChild`, `nextSibling`, `childCount`, `keyOf`, `valueOf`, `asBool`,
   `asString`, `asNumberRaw`, `asExtended`).
 - `Editor` — comment-preserving editor: `open`, `source`, and the edit methods.
-- `Embed` — frontmatter/embed editor: `open`, `openOrInit`, `extract`, `retype`,
-  `render`, `replaceBody`, and the edit methods.
+- `Embed` — frontmatter/embed editor: the statics `open`, `openOrInit`,
+  `extract`, `split`, `detect` and `retype`; the instance methods `render`,
+  `replaceBody`, and the edit methods.
 
 **Values & enums**
 

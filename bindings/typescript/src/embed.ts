@@ -1,16 +1,118 @@
 // Comment-preserving editing of a config embedded in a host file — markdown
-// YAML/JSON frontmatter or YAML endmatter.
+// frontmatter (`---`, `---<lang>`, `;;;`, `+++`), a fenced code block, a
+// trailing endmatter block, or an HTML `<script>` / `<pre><code>` island,
+// holding JSON, YAML, TOML or fig.
 //
 // `Embed.open` locates the region, edits its content in the region's inner
-// format (YAML or JSON, fixed by the archetype), and `render` re-assembles the
-// host file with the fences and surrounding text byte-identical. The edit
-// methods are inherited from `Editable`. `extract` is a parse-free locator that
-// just reports the fence/content byte spans. Release with `dispose`.
-import { check, embedParts, EmbedType, embedTypeOf, FigError, Format, Status } from "./types.ts";
+// format (fixed by the archetype), and `render` re-assembles the host file with
+// the fences and surrounding text byte-identical. The edit methods are
+// inherited from `Editable`. The parse-free locators are statics beside it —
+// `Embed.extract` (the byte spans), `Embed.split` (the text) and
+// `Embed.detect` (which archetype) — and so is `Embed.retype`. Release with
+// `dispose`.
+import { check, FigError, Format, Status } from "./types.ts";
 import { fig, Frame, handleRegistry, readOutSlice, readU32, writeU32 } from "./ffi.ts";
 import { Editable, type EditFns } from "./edit-ops.ts";
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+/** An embed archetype: where the block sits in the host, how it is fenced, and
+ *  which format its content is written in. Each value is the archetype's name
+ *  as the `fig` command line spells it (`fig get --embed fenced-fig …`), so a
+ *  stored `EmbedType` is readable and means the same thing to both.
+ *
+ *  | Family | Members | Fence |
+ *  | ------ | ------- | ----- |
+ *  | Markdown frontmatter | `Frontmatter` (YAML), `MdJson`, `MdToml`, `MdFig` | `---`, `---json`, … |
+ *  | Fenced code block | `FencedYaml`, `FencedJson`, `FencedToml`, `FencedFig` | ```` ```<lang> ```` |
+ *  | HTML data island | `HtmlScriptYaml`, …`Json`, …`Toml`, …`Fig` | `<script type="application/<lang>">` |
+ *  | HTML visible code | `HtmlCodeYaml`, …`Json`, …`Toml`, …`Fig` | `<pre><code class="language-<lang>">`, entity-encoded |
+ *  | Presets | `Semicolons` (JSON), `Plus` (TOML), `Endmatter` (YAML) | `;;;`, `+++`, a trailing ```` ```endmatter ```` |
+ *
+ *  A closed set: the binding names every archetype the core can locate, and
+ *  {@link Embed.detect} answers `null` for a pair it has no name for. An
+ *  `as const` object like the numeric enums (see the ENUMS note atop
+ *  types.ts). */
+export const EmbedType = {
+  Frontmatter: "frontmatter",
+  MdJson: "md-json",
+  MdToml: "md-toml",
+  MdFig: "md-fig",
+  FencedYaml: "fenced-yaml",
+  FencedJson: "fenced-json",
+  FencedToml: "fenced-toml",
+  FencedFig: "fenced-fig",
+  HtmlScriptYaml: "html-script-yaml",
+  HtmlScriptJson: "html-script-json",
+  HtmlScriptToml: "html-script-toml",
+  HtmlScriptFig: "html-script-fig",
+  HtmlCodeYaml: "html-code-yaml",
+  HtmlCodeJson: "html-code-json",
+  HtmlCodeToml: "html-code-toml",
+  HtmlCodeFig: "html-code-fig",
+  Semicolons: "semicolons",
+  Plus: "plus",
+  Endmatter: "endmatter",
+} as const;
+export type EmbedType = (typeof EmbedType)[keyof typeof EmbedType];
+
+// The container half of the C ABI's embed selector (`FigEmbedContainer`),
+// which takes a (container, format) pair where this binding takes one name.
+// Internal: `EmbedType` is the whole public vocabulary.
+const Container = {
+  MdFrontmatter: 0, //  ---<lang> (bare --- is YAML)
+  Fenced: 1, //         ```<lang>
+  HtmlScript: 2, //     <script type="application/<lang>">
+  HtmlCode: 3, //       <pre><code class="language-<lang>"> (entity-encoded)
+  SemicolonsJson: 4, // ;;; preset, JSON
+  PlusToml: 5, //       +++ preset, TOML
+  EndmatterYaml: 6, //  ```endmatter preset, YAML
+} as const;
+
+/** Each archetype's (container, inner format) pair: the C ABI's selector, and
+ *  the format the embed's content is edited in. */
+const PARTS: Record<EmbedType, readonly [number, Format]> = {
+  [EmbedType.Frontmatter]: [Container.MdFrontmatter, Format.Yaml],
+  [EmbedType.MdJson]: [Container.MdFrontmatter, Format.Json],
+  [EmbedType.MdToml]: [Container.MdFrontmatter, Format.Toml],
+  [EmbedType.MdFig]: [Container.MdFrontmatter, Format.Fig],
+  [EmbedType.FencedYaml]: [Container.Fenced, Format.Yaml],
+  [EmbedType.FencedJson]: [Container.Fenced, Format.Json],
+  [EmbedType.FencedToml]: [Container.Fenced, Format.Toml],
+  [EmbedType.FencedFig]: [Container.Fenced, Format.Fig],
+  [EmbedType.HtmlScriptYaml]: [Container.HtmlScript, Format.Yaml],
+  [EmbedType.HtmlScriptJson]: [Container.HtmlScript, Format.Json],
+  [EmbedType.HtmlScriptToml]: [Container.HtmlScript, Format.Toml],
+  [EmbedType.HtmlScriptFig]: [Container.HtmlScript, Format.Fig],
+  [EmbedType.HtmlCodeYaml]: [Container.HtmlCode, Format.Yaml],
+  [EmbedType.HtmlCodeJson]: [Container.HtmlCode, Format.Json],
+  [EmbedType.HtmlCodeToml]: [Container.HtmlCode, Format.Toml],
+  [EmbedType.HtmlCodeFig]: [Container.HtmlCode, Format.Fig],
+  [EmbedType.Semicolons]: [Container.SemicolonsJson, Format.Json],
+  [EmbedType.Plus]: [Container.PlusToml, Format.Toml],
+  [EmbedType.Endmatter]: [Container.EndmatterYaml, Format.Yaml],
+};
+
+/** The {@link EmbedType} for a pair the core reports, or `null` for one this
+ *  binding has no name for. A preset container pins its own format, so the
+ *  format half is not compared for one. */
+function embedTypeOf(container: number, format: number): EmbedType | null {
+  for (const [kind, [c, f]] of Object.entries(PARTS) as Array<[EmbedType, readonly [number, Format]]>) {
+    if (c === container && (f === format || c >= Container.SemicolonsJson)) return kind;
+  }
+  return null;
+}
+
+/** `PARTS[kind]`, refusing a string that is not an archetype — the type says
+ *  `EmbedType`, but a value read from storage or a plain-JS caller may not be
+ *  one, and the C ABI should not be handed `undefined`. */
+function partsOf(kind: EmbedType): readonly [number, Format] {
+  // `hasOwn`, not a lookup: `PARTS` is a plain object, and `"constructor"` or
+  // `"toString"` would find what it inherits from `Object.prototype`.
+  if (!Object.hasOwn(PARTS, kind)) throw new FigError(Status.InvalidArgument, "embed", { message: `unknown embed archetype ${JSON.stringify(kind)}` });
+  return PARTS[kind];
+}
 
 // Frees the handle of an Embed dropped without dispose() (leak backstop only).
 const REGISTRY = handleRegistry((handle) => fig.fig_embed_destroy(handle));
@@ -58,31 +160,18 @@ export interface Span {
  *  With the three region spans they tile the source exactly —
  *  `bodyBefore ++ openFence ++ content ++ closeFence ++ bodyAfter === source`,
  *  a leading UTF-8 BOM heading `bodyBefore` — so a caller can rebuild the host
- *  without losing a byte.
- *
- *  `body` is the historical one-sided view: the suffix after the close fence
- *  for frontmatter, the prefix before the open fence for endmatter. For a
- *  mid-document block (an HTML `<script>` data island) that is only ever half
- *  the host, so prefer the two sides when reassembling. */
+ *  without losing a byte. */
 export interface Region {
   openFence: Span;
   content: Span;
   closeFence: Span;
-  body: Span;
   bodyBefore: Span;
   bodyAfter: Span;
 }
 
-/** The inner editing format an embed archetype carries (`---`/endmatter ⇒ YAML,
- *  `;;;` ⇒ JSON, `+++` ⇒ TOML, ```fig ⇒ the fig authoring dialect, and each
- *  ```lang fenced label ⇒ that `lang`) — the format half of `embedParts`. */
-function innerFormat(kind: EmbedType): Format {
-  return embedParts(kind)[1];
-}
-
 export class Embed extends Editable {
   private constructor(handle: number, kind: EmbedType) {
-    super(handle, EMBED_FNS, innerFormat(kind));
+    super(handle, EMBED_FNS, partsOf(kind)[1]);
     REGISTRY?.register(this, handle, this);
   }
 
@@ -93,7 +182,7 @@ export class Embed extends Editable {
     name: string,
   ): Embed {
     const bytes = typeof host === "string" ? encoder.encode(host) : host;
-    const [container, format] = embedParts(kind);
+    const [container, format] = partsOf(kind);
     const frame = new Frame();
     const out = frame.alloc(4);
     try {
@@ -152,8 +241,8 @@ export class Embed extends Editable {
   ): string {
     const hostBytes = typeof host === "string" ? encoder.encode(host) : host;
     const contentBytes = typeof content === "string" ? encoder.encode(content) : content;
-    const [fromContainer, fromFormat] = embedParts(from);
-    const [toContainer, toFormat] = embedParts(to);
+    const [fromContainer, fromFormat] = partsOf(from);
+    const [toContainer, toFormat] = partsOf(to);
     const frame = new Frame();
     try {
       const h = frame.bytes(hostBytes);
@@ -204,18 +293,63 @@ export class Embed extends Editable {
       const REGION_SIZE = 52;
       const region = frame.alloc(REGION_SIZE);
       writeU32(region, REGION_SIZE);
-      const [container, format] = embedParts(kind);
+      const [container, format] = partsOf(kind);
       check(fig.fig_embed_extract(ptr, bytes.length, container, format, region), "fig_embed_extract");
-      // Spans start after the 4-byte `size` field: offsets 4, 12, 20, 28, 36, 44.
+      // Spans start after the 4-byte `size` field: offsets 4, 12, 20, 28, 36,
+      // 44. The span at 28 is the C struct's one-sided `body`, which the two
+      // sides after it supersede; it is not surfaced.
       const span = (off: number): Span => ({ start: readU32(region + off), end: readU32(region + off + 4) });
       return {
         openFence: span(4),
         content: span(12),
         closeFence: span(20),
-        body: span(28),
         bodyBefore: span(36),
         bodyAfter: span(44),
       };
+    } finally {
+      frame.dispose();
+    }
+  }
+
+  /** Split an embedded region of `kind` from its host without parsing — the
+   *  read-only `[content, body]` twin of opening an {@link Embed}. Returns
+   *  `null` when `host` has no such region (or its opening fence has no
+   *  close). The first item is the text between the fences (no fences); the
+   *  second is the host with the whole block cut out — `bodyBefore` then
+   *  `bodyAfter` — which is the prose after frontmatter, the prose before
+   *  endmatter, and both sides of a mid-document island. Slicing is done on
+   *  UTF-8 bytes, so multi-byte content is handled correctly. */
+  static split(host: string | Uint8Array, kind: EmbedType): [string, string] | null {
+    const bytes = typeof host === "string" ? encoder.encode(host) : host;
+    let region: Region;
+    try {
+      region = Embed.extract(bytes, kind);
+    } catch (err) {
+      // NotFound / unterminated fence; anything else is not "no region".
+      if (err instanceof FigError && (err.status === Status.NotFound || err.status === Status.ParseError)) return null;
+      throw err;
+    }
+    const text = (s: Span) => decoder.decode(bytes.subarray(s.start, s.end));
+    return [text(region.content), text(region.bodyBefore) + text(region.bodyAfter)];
+  }
+
+  /** Best-effort sniff of which embed archetype `host` uses: try each known
+   *  archetype's OPEN delimiter and return the first that matches, or `null`
+   *  when `host` opens none of them. Only the open delimiter is checked — an
+   *  unterminated block is still *recognized* as its archetype, so a follow-up
+   *  {@link Embed.extract}/{@link Embed.open} surfaces the real error instead
+   *  of a misleading "nothing found". */
+  static detect(host: string | Uint8Array): EmbedType | null {
+    const bytes = typeof host === "string" ? encoder.encode(host) : host;
+    const frame = new Frame();
+    try {
+      const ptr = frame.bytes(bytes);
+      // Two 4-byte out slots: the container, then the inner format.
+      const out = frame.alloc(8);
+      const status = fig.fig_embed_detect(ptr, bytes.length, out, out + 4);
+      if (status === Status.NotFound) return null;
+      check(status, "fig_embed_detect");
+      return embedTypeOf(readU32(out), readU32(out + 4));
     } finally {
       frame.dispose();
     }
@@ -255,49 +389,5 @@ export class Embed extends Editable {
     this.disposed = true;
     REGISTRY?.unregister(this);
     fig.fig_embed_destroy(this.handle);
-  }
-}
-
-const decoder = new TextDecoder();
-
-/** Split an embedded region of `kind` from its host body without parsing — the
- *  read-only `[content, body]` twin of opening an {@link Embed}. Returns `null`
- *  when `content` has no such region (or its opening fence has no close). The
- *  first item is the text between the fences (no fences); the second is the host
- *  prose outside them. Slicing is done on UTF-8 bytes, so multi-byte content is
- *  handled correctly. */
-export function split(content: string, kind: EmbedType): [string, string] | null {
-  const bytes = encoder.encode(content);
-  let region: Region;
-  try {
-    region = Embed.extract(bytes, kind);
-  } catch {
-    return null; // NotFound / unterminated fence
-  }
-  const inner = decoder.decode(bytes.subarray(region.content.start, region.content.end));
-  const body = decoder.decode(bytes.subarray(region.body.start, region.body.end));
-  return [inner, body];
-}
-
-/** Best-effort sniff of which embed archetype `source` uses: try each known
- *  archetype's OPEN delimiter and return the first that matches, or `null` when
- *  `source` opens none of them. Only the open delimiter is checked — an
- *  unterminated block is still *recognized* as its archetype, so a follow-up
- *  {@link Embed.extract}/{@link Embed.open} surfaces the real error instead of a
- *  misleading "nothing found". Pair with the archetype's inner format
- *  (`---`/endmatter ⇒ YAML, `;;;` ⇒ JSON, ```fig ⇒ fig) to parse the content. */
-export function detect(source: string | Uint8Array): EmbedType | null {
-  const bytes = typeof source === "string" ? encoder.encode(source) : source;
-  const frame = new Frame();
-  try {
-    const ptr = frame.bytes(bytes);
-    // Two 4-byte out slots: the container, then the inner format.
-    const out = frame.alloc(8);
-    const status = fig.fig_embed_detect(ptr, bytes.length, out, out + 4);
-    if (status === Status.NotFound) return null;
-    check(status, "fig_embed_detect");
-    return embedTypeOf(readU32(out), readU32(out + 4));
-  } finally {
-    frame.dispose();
   }
 }

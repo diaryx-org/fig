@@ -6,7 +6,6 @@ created = 2026-09-04
 updated = 2026-09-22
 part_of = [docs](/docs/docs.md)
 contents
-> * [The lossy strips and the `$fig` envelope rebuild the AST without its tags, anchors and directives](lossy-strips-drop-tags-and-anchors.md)
 > * [The item and value renderers are not told the key they are rendering under](renderers-are-not-told-the-parent-key.md)
 > * [A runtime target has no loss diagnostics](runtime-target-loss-diagnostics.md)
 > * [Closed tasks](/docs/tasks/closed/closed.md)

@@ -64,7 +64,7 @@ pub fn lossyStrip(arena: Allocator, ast: *const AST, root_id: Id, max_depth: usi
     }
     const root = try s.copy(ast.nodes[root_id], "", 0);
     var stripped: AST = .{ .allocator = arena, .root = root, .nodes = try s.out.toOwnedSlice(arena) };
-    if (s.any_comments) stripped.node_comments = try s.out_comments.toOwnedSlice(arena);
+    try Lossless.finish(&s, &stripped);
     return .{ .ast = stripped, .dropped = try s.dropped.toOwnedSlice(arena) };
 }
 
@@ -75,6 +75,7 @@ const Stripper = struct {
     out: std.ArrayList(AST.Node) = .empty,
     out_comments: std.ArrayList(AST.NodeComments) = .empty,
     any_comments: bool = false,
+    side: Lossless.SideTables = .{},
     dropped: std.ArrayList([]const u8) = .empty,
 
     /// `node` is never itself unrepresentable here — the caller (`lossyStrip`

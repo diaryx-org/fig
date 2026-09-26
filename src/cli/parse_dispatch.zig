@@ -630,3 +630,59 @@ test "resolveSpec maps YAML version strings" {
     try t.expectError(error.UnsupportedSpec, resolveSpec(.yaml, "1.3"));
     try t.expectError(error.UnsupportedSpec, resolveSpec(.yaml, "2"));
 }
+
+// What the runtime printer in the test below was handed as the root row's tag.
+var seen_root_tag: [32]u8 = undefined;
+var seen_root_tag_len: usize = 0;
+var inner_print: ?fig.Runtime.PrintFn = null;
+
+fn recordRootTag(
+    ctx: ?*anyopaque,
+    dialect: [*:0]const u8,
+    table: *const fig.Runtime.NodeTable,
+    options: *const fig.Runtime.PrintOptions,
+    out: *fig.Runtime.Str,
+    err: *fig.Runtime.ErrorInfo,
+) callconv(.c) c_int {
+    const tag = table.rowSlice()[0].tag.slice() orelse "";
+    @memcpy(seen_root_tag[0..tag.len], tag);
+    seen_root_tag_len = tag.len;
+    return inner_print.?(ctx, dialect, table, options, out, err);
+}
+
+test "printRuntime hands a runtime printer the tags its lossy strip rebuilt the tree with" {
+    const t = std.testing;
+    const R = fig.Runtime;
+    var alloc: R.test_language.Alloc = .{ .allocator = t.allocator };
+
+    var b = fig.AST.Builder.init(t.allocator);
+    defer b.deinit();
+    const k = try b.addString("a");
+    const v = try b.addString("b");
+    const root = try b.addMapping(&.{.{ .key = k, .value = v }});
+    try b.setTag(root, .{ .text = "!strings" });
+    var ast = try b.finish(root);
+    defer ast.deinit();
+
+    // Once through each strip `printRuntime` can take: the depth strip the
+    // test language's `max_mapping_depth` asks for, then the null strip a
+    // `lossless` declaration without `null` asks for.
+    const no_null: R.NativeKindsDesc = .{};
+    for ([_]bool{ false, true }) |declares_lossless| {
+        defer R.deinitAll();
+        var vt = R.test_language.vtable(&alloc);
+        inner_print = vt.print;
+        vt.print = recordRootTag;
+        if (declares_lossless) vt.lossless = &no_null;
+        const e = R.entryByAbi(try R.register(t.allocator, &vt)).?;
+
+        seen_root_tag_len = 0;
+        var arena = std.heap.ArenaAllocator.init(t.allocator);
+        defer arena.deinit();
+        var out: Io.Writer.Allocating = .init(t.allocator);
+        defer out.deinit();
+        try printRuntime(arena.allocator(), &out.writer, e, &ast, ast.root, .{}, false);
+        try t.expectEqualStrings("a=b\n", out.written());
+        try t.expectEqualStrings("!strings", seen_root_tag[0..seen_root_tag_len]);
+    }
+}

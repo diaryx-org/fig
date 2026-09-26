@@ -2,6 +2,7 @@
 name = "fig"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Parse, edit, and convert config files while preserving comments. Supports JSON, YAML, TOML, and more."
 repository = "https://github.com/diaryx-org/fig"

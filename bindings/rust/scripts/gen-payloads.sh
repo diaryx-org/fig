@@ -29,6 +29,7 @@ while IFS=$'\t' read -r rust_target zig_target key cfg; do
 name = "fig-sys-$key"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Prebuilt libfig.a (default features) for $rust_target. Support crate for fig-sys; not for direct use."
 repository = "https://github.com/diaryx-org/fig"

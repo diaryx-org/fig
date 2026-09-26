@@ -3,7 +3,7 @@ title = CHANGELOG
 description = Release history for `fig`
 author = adammharris
 created = 2026-08-17
-updated = 2026-08-20
+updated = 2026-09-26
 part_of = [docs](docs.md)
 ```
 
@@ -16,25 +16,34 @@ Release notes used to live only in the annotated tag message (`git tag -n20`).
 Those are kept, and they are still the record for everything released before
 this file existed; nothing has been backfilled here.
 
-## One entry per release, not per artifact
+## One entry per release, and one version
 
-fig ships four independently versioned artifacts off one tree — the core, the
-CLI, the Rust crate and the npm package — each with its own tag prefix (see
-[VERSIONING](VERSIONING.md)). A release pushes a tag for whichever of them
-actually moved, usually several at the same commit.
+From 5.0.0 every artifact fig ships — the core, the CLI, the Rust crates,
+`@diaryx/fig` and `@diaryx/fig-wasi` — carries one version and is released by
+one `v*` tag (see [VERSIONING](VERSIONING.md)). So each release has one section,
+headed by that version and the day it was cut:
 
-This file has one section per *release*, not per artifact, with a heading that
-names every version that went out together:
+```markdown
+## v<major>.<minor>.<patch> — <yyyy-mm-dd>
+```
+
+(Spelled out rather than shown with a real version, because `dx` reads every
+line that starts `## v<version>` as that release's section — a code sample
+included.)
+
+git-cliff groups a section's commits by what they changed, which is the
+question a reader actually has, and the scope on each bullet (`**toml**`,
+`**c-api**`, `**cli**`, `**ts**`) says which surface — and so which artifact —
+moved.
+
+Before 5.0.0 the four artifacts were versioned independently, each on its own
+tag prefix, and a release pushed a tag for whichever of them moved. Those
+sections are kept as they were written, with a heading naming every version
+that went out together:
 
 ```markdown
 ## core 2.6.0 · cli 3.5.3 · rust 3.2.0 · npm 2.6.0
 ```
-
-The heading is handwritten. git-cliff owns only the bytes between the markers
-inside a section, and it groups commits by what they changed, which is the
-question a reader actually has — the scope on each bullet (`**toml**`,
-`**c-api**`, `**ts**`) says which surface moved far more usefully than four
-parallel lists would.
 
 ## Behavioural changes are their own section
 
@@ -92,12 +101,14 @@ reconstructed.
 
 ## How the Unreleased section is written
 
-`zig build changelog` regenerates the marked region below from the commits since
-the most recent tag on any track, using `.config/cliff.toml`: one bullet per
-commit, grouped Breaking / Added / Fixed / Changed, then the **Behavioural
-changes** section gathered from the trailers. Edits inside the markers are
-overwritten on the next run. `zig build changelog-check` fails if the region is
-stale, without writing.
+`dx changelog --write` regenerates the marked region below from the commits
+since the last release tag, using `.config/cliff.toml`: one bullet per commit,
+grouped Breaking / Added / Fixed / Changed, then the **Behavioural changes**
+section gathered from the trailers. Edits inside the markers are overwritten on
+the next run. `dx changelog --check` fails if the region is stale, without
+writing, and `dx changelog` prints it. "The last release tag" is the newest
+`v*` from 5.0.0 on, and the newest of the old prefixed tags before the first of
+those — see `tag_pattern` in `.config/cliff.toml`.
 
 Commits whose subject does not parse land in an **Uncategorised — triage before
 release** bucket rather than being dropped, so they get a decision instead of
@@ -106,15 +117,14 @@ disappearing.
 What is left to write by hand is a release **intro** — a paragraph or two for a
 release that wants a narrative rather than a list. Most releases want none, and
 an intro that only restates the bullets below it should be cut. It goes below
-the end marker, where regeneration cannot reach it, and it rides down with its
-section when the release is cut.
+the end marker, where regeneration cannot reach it, under a `###` heading of its
+own, and it rides down with its section when the release is cut.
 
-Cutting a release renames `## Unreleased` to the versions that went out, strips
-the two markers from the section that just became history, and opens a fresh
-empty `## Unreleased` above it. `zig build release` does that (see
-[VERSIONING](VERSIONING.md)); the markers come out because exactly one pair
-should ever be in this file — a second pair left behind in a released section is
-one that the next `zig build changelog` would overwrite with unreleased work.
+Cutting a release — `dx release` (see [VERSIONING](VERSIONING.md)) — renders the
+region once more, writes it as a new `## v<version> — <date>` section directly
+below the end marker, and resets the region to empty. `## Unreleased` and the
+one marker pair stay where they are, so exactly one pair is ever in this file
+and no regeneration can reach a released section.
 
 ## Unreleased
 
@@ -123,6 +133,36 @@ one that the next `zig build changelog` would overwrite with unreleased work.
 _No commits since the last release tag._
 
 <!-- git-cliff:end -->
+
+### Since cli 4.0.1
+
+_A draft intro for 5.0.0 — rewrite or cut it when the release is cut._
+
+5.0.0 is the first release in which every artifact carries one version and one
+`v*` tag, so it is the first CLI release since `cli/v4.0.1` and the first core,
+crate and npm release since `core/v3.1.0`, `rust/v4.1.0` and `npm/v3.1.0`. (The
+binary built from the `cli/v4.0.1` tag reported itself as 4.0.0: the tag was
+cut without the CLI's version being bumped.)
+
+The lists above start at `rust/v4.1.0`, the newest of the old tags. The CLI
+fixes that landed between `cli/v4.0.1` and that tag went out in the crate and
+the core but never in a CLI release, and are listed only under
+`## rust 4.1.0` and `## core 3.1.0 · npm 3.1.0` below: a path key can be
+quoted or escaped to hold a `.` or `[`, `delete` removes a whole section, an
+edit on a file that does not parse prints the located report `fig check`
+would, log lines read `error:`/`warning:`, and a YAML tag a conversion refuses
+is pointed at with `--lax-tags` named. They reach `fig` users with 5.0.0.
+
+The command line itself changes in the ways `docs/proposals/cli-5.md` argues:
+a value argument is a fig value, written in the file's own syntax, with
+`--raw` for the old verbatim splice; `fig get` on a scalar prints its text;
+arguments are parsed strictly, so an unknown flag or a surplus positional is a
+usage error; `fig comment --get` on a path with no comment exits 1; the exit
+codes are written down — 1 for the document, 2 for the command line; and
+`edit` is split into `replace` and `rename`. For a runtime language, every
+renderer now takes one request that names the container its fragment goes
+into (3ed9e7c), and a renderer written against 4.x has to be rebuilt against
+it.
 
 ## rust 4.1.0
 

@@ -42,6 +42,11 @@ part_of = [proposals](proposals.md)
 > `semicolons`, `plus` and `fenced-fig`; and `patch` and `check` take the
 > warning flags (`--strict`, `--no-warnings`, and for `patch`
 > `--strip-comments`, as `--comments none`) the other actions do.
+>
+> §6 (one version, one tag) has landed too: every artifact is at 5.0.0,
+> set by hand so that the first `dx release` finds `v5.0.0` as the latest
+> tag, and fig releases through `dx release` with a `.config/release.toml`.
+> See the note at the top of §6.
 
 The CLI's compatibility contract is its own — flags, defaults, exit codes
 ([VERSIONING](/docs/VERSIONING.md)) — and it has drifted in ways no single
@@ -160,6 +165,20 @@ from 2 to 1. `fig --help` carries the table, and the CLI tests hold each row to
 at least one case per action.
 
 ## 6. One version, one tag
+
+> **Implemented.** Every artifact carries 5.0.0 — `build.zig.zon`, the Rust
+> workspace and its payload crates, both npm packages, `fig.h`'s
+> `FIG_VERSION_*`, README's frontmatter — and `fig version` prints `fig 5.0.0
+> "Texas Everbearing"`. `build.zig.zon` decides the version and `zig build
+> version-sync` copies it everywhere else (`version-check`, in `zig build
+> check`, fails on drift). `tools/release.zig`, `version-floor`, `version-set`
+> and `tools/changelog.sh` are gone; fig releases with `dx release`, and
+> `.config/release.toml` says what makes it itself. Every release workflow
+> triggers on `v*.*.*`. The baselines match `v[5-9].*` or `v[1-9][0-9]*` — the
+> three bare tags `v1.0.0`, `v2.0.0` and `v2.5.1` are ancestors of `main`, so a
+> plain `v*` would find `v2.5.1` — and fall back to `core/v*` / `rust/v*` until
+> the first `v5.0.0` exists; `.config/cliff.toml`'s `tag_pattern` makes the
+> same cut. [VERSIONING](/docs/VERSIONING.md) is the one-track description.
 
 fig releases four artifacts — core, CLI, Rust crate, npm package — each with
 its own version and tag prefix, and a changelog cursor at "the newest tag on

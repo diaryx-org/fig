@@ -420,8 +420,8 @@ impl Document {
                 &mut err,
             )
         };
-        if status != ffi::FigStatus(ffi::FigStatus::OK) {
-            if status == ffi::FigStatus(ffi::FigStatus::PARSE_ERROR) {
+        if status != ffi::FigStatus::OK {
+            if status == ffi::FigStatus::PARSE_ERROR {
                 return Err(Error::Parse(crate::error::ParseError::from_ffi(&err)));
             }
             Error::from_status(status)?;

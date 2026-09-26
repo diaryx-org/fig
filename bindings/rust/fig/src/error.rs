@@ -182,7 +182,7 @@ impl Error {
     }
 
     pub(crate) fn from_status(status: ffi::FigStatus) -> Result<(), Self> {
-        match status.0 {
+        match status {
             ffi::FigStatus::OK => Ok(()),
             ffi::FigStatus::INVALID_ARGUMENT => Err(Self::InvalidArgument),
             ffi::FigStatus::PARSE_ERROR => Err(Self::Parse(ParseError::generic())),

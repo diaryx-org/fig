@@ -495,9 +495,8 @@ pub fn nativeForFormat(to: Format) ?fig.Lossless.NativeKinds {
 /// `get`, `fmt` and `convert` for a target that is not a `SerializeFormat`:
 /// the same lossy strips a compiled target gets, read off the entry's own
 /// declarations (`caps.lossless` for the null strip, `max_mapping_depth` for
-/// the flat strip), then the vtable's `print`. What is not here is the
-/// loss diagnostics: `Diagnostics.analyze` is a table over the compiled
-/// formats, and a runtime target has no row in it yet.
+/// the flat strip — both, when it declares both), then the vtable's `print`.
+/// `reportLoss` warns about what the strips drop, from the same declarations.
 pub fn printRuntime(allocator: std.mem.Allocator, writer: *Io.Writer, e: *const fig.Runtime.Entry, ast: *const fig.AST, node_id: fig.AST.Node.Id, serialize: fig.AST.SerializeOptions, lossless: bool) !void {
     if (!e.language.caps.serialize) return error.FormatNotSerializable;
     const caps = e.language.caps;
@@ -506,14 +505,73 @@ pub fn printRuntime(allocator: std.mem.Allocator, writer: *Io.Writer, e: *const 
         break :blk if (native.null) null else native;
     } else null;
     const depth: ?usize = if (!lossless) (if (caps.max_mapping_depth) |d| @as(usize, d) else null) else null;
+
+    var tree: *const fig.AST = ast;
+    var root = node_id;
+    var after_nulls: fig.AST = undefined;
+    var after_depth: fig.AST = undefined;
     if (null_strip) |native| {
-        const result = try fig.Lossless.lossyStrip(allocator, ast, node_id, native);
-        if (result.ast) |stripped| try fig.Runtime.printWith(e, writer, &stripped, serialize);
-    } else if (depth) |d| {
-        const result = try fig.FlatStrip.lossyStrip(allocator, ast, node_id, d);
-        if (result.ast) |stripped| try fig.Runtime.printWith(e, writer, &stripped, serialize);
-    } else {
-        try fig.Runtime.printNodeWith(e, writer, ast, node_id, serialize);
+        after_nulls = (try fig.Lossless.lossyStrip(allocator, tree, root, native)).ast orelse return;
+        tree = &after_nulls;
+        root = tree.root;
+    }
+    if (depth) |d| {
+        after_depth = (try fig.FlatStrip.lossyStrip(allocator, tree, root, d)).ast orelse return;
+        tree = &after_depth;
+        root = tree.root;
+    }
+    // A strip re-roots the tree at `node_id`, so what it returns prints whole.
+    if (tree == ast)
+        try fig.Runtime.printNodeWith(e, writer, ast, node_id, serialize)
+    else
+        try fig.Runtime.printWith(e, writer, tree, serialize);
+}
+
+/// Warn on stderr about everything printing `ast` from `node_id` to `target`
+/// would lose — comments dropped or degraded, values dropped or degraded —
+/// unless `quiet`; with `strict`, any such loss exits 1. Run on the AST as it
+/// will be printed: under `lossless` the lossy nodes are already enveloped,
+/// so no value warnings fire. The shared tail of `get`, `convert` and `fmt`,
+/// for a compiled target and a runtime one alike.
+pub fn reportLoss(
+    allocator: std.mem.Allocator,
+    term: *Io.Terminal,
+    ast: *const fig.AST,
+    node_id: fig.AST.Node.Id,
+    target: fig.Runtime.Target,
+    serialize: fig.AST.SerializeOptions,
+    lossless: bool,
+    quiet: bool,
+    strict: bool,
+) !void {
+    if (quiet and !strict) return;
+    const warnings = try fig.Diagnostics.analyzeFor(allocator, ast, node_id, target, .{
+        .pretty = serialize.pretty,
+        .strip_comments = serialize.strip_comments,
+        .lossless = lossless,
+    });
+    // The CLI only surfaces losses the FORMAT forced. A loss the user
+    // explicitly asked for (e.g. `--strip-comments`) carries
+    // `explicit_option` and is not surprising, so it neither warns nor
+    // trips `--strict` — it just rides through on the warning layer for a
+    // library consumer that wants it.
+    var surfaced: usize = 0;
+    for (warnings) |w| {
+        if (w.cause != .format_limitation) continue;
+        surfaced += 1;
+        if (!quiet) {
+            try term.setColor(.yellow);
+            try term.writer.writeAll("warning: ");
+            try term.setColor(.reset);
+            try w.renderNamed(term.writer, target.name());
+            try term.writer.writeByte('\n');
+        }
+    }
+    if (!quiet) try term.writer.flush();
+    if (strict and surfaced > 0) {
+        try term.writer.print("error: {d} lossy conversion warning(s); --strict aborts.\n", .{surfaced});
+        try term.writer.flush();
+        std.process.exit(1);
     }
 }
 

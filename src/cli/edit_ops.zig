@@ -168,6 +168,14 @@ pub fn applyValueEdit(
     dialect: Lang.Type,
 ) ![]u8 {
     refused_rendering = null;
+    // How deep the value lands: at `path` for a replacement or an upsert,
+    // one level below it for a new key or a sequence item.
+    const depth = path.len + @as(usize, switch (op) {
+        .insert_key, .append_seq, .prepend_seq, .set_sequence => 1,
+        else => 0,
+    });
+    if (value.one) |v| try value_arg.refuseDropped(allocator, v, format, depth);
+    for (value.items) |v| try value_arg.refuseDropped(allocator, v, format, depth);
     var r = try renderEdit(allocator, text, value, op, format, .natural);
     const first = applyEdit(Lang, allocator, content, path, r.text, r.op, dialect);
     if (first) |edited| return edited else |err| switch (err) {

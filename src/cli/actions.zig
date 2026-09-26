@@ -352,66 +352,41 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
         return;
     }
 
-    // A runtime target prints through its vtable, with the same lossy
-    // strips a compiled one gets; it has no loss diagnostics yet. A scalar
-    // comes back as the fragment the editor would splice — the value as it
-    // stands alone, no newline — where a compiled printer ends the line
-    // itself, so `get` ends it here to print the same as one.
-    if (types.runtimeEntry(to)) |e| {
-        var out: std.Io.Writer.Allocating = .init(a);
-        defer out.deinit();
-        parse_dispatch.printRuntime(a, &out.writer, e, ast, node_id, opts.serialize, opts.lossless) catch |err| switch (err) {
-            error.OutOfMemory => return err,
-            else => |x| diag_report.reportRuntimePrintError(stderr_term, x),
-        };
-        const text = out.written();
-        try stdout_term.writer.writeAll(text);
-        const is_container = switch (ast.nodes[node_id].kind) {
-            .mapping, .sequence => true,
-            else => false,
-        };
-        if (!is_container and text.len > 0 and text[text.len - 1] != '\n') try stdout_term.writer.writeByte('\n');
-        try stdout_term.writer.flush();
-        return;
-    }
-
-    const target: fig.AST.SerializeFormat = types.toSerializeFormat(to) orelse unreachable; // handled by the early returns above
-
     // Surface everything the conversion would silently lose (comments
-    // dropped/degraded, values dropped/degraded) — unless `--quiet`. The
-    // pass is read-only and runs on the AST as it will be printed: under
-    // `--lossless` the lossy nodes are already enveloped, so no value
-    // warnings fire. `--strict` turns any warning into a hard failure.
-    if (!opts.quiet or opts.strict) {
-        const warnings = try fig.Diagnostics.analyze(a, ast, node_id, target, .{
-            .pretty = opts.serialize.pretty,
-            .strip_comments = opts.serialize.strip_comments,
-            .lossless = opts.lossless,
-        });
-        // The CLI only surfaces losses the FORMAT forced. A loss the user
-        // explicitly asked for (e.g. `--strip-comments`) carries
-        // `explicit_option` and is not surprising, so it neither warns nor
-        // trips `--strict` — it just rides through on the warning layer for
-        // a library consumer that wants it.
-        var surfaced: usize = 0;
-        for (warnings) |w| {
-            if (w.cause != .format_limitation) continue;
-            surfaced += 1;
-            if (!opts.quiet) {
-                try stderr_term.setColor(.yellow);
-                try stderr_term.writer.writeAll("warning: ");
-                try stderr_term.setColor(.reset);
-                try w.render(stderr_term.writer, target);
-                try stderr_term.writer.writeByte('\n');
-            }
-        }
-        if (!opts.quiet) try stderr_term.writer.flush();
-        if (opts.strict and surfaced > 0) {
-            try stderr_term.writer.print("error: {d} lossy conversion warning(s); --strict aborts.\n", .{surfaced});
-            try stderr_term.writer.flush();
-            std.process.exit(1);
-        }
-    }
+    // dropped/degraded, values dropped/degraded) — unless `--quiet`;
+    // `--strict` turns any warning into a hard failure. A runtime target is
+    // held to what its declaration says it holds.
+    const diag_target: fig.Runtime.Target = if (types.runtimeEntry(to)) |e|
+        .{ .runtime = e }
+    else
+        .{ .compiled = types.toSerializeFormat(to) orelse unreachable }; // gron returned above
+    try parse_dispatch.reportLoss(a, stderr_term, ast, node_id, diag_target, opts.serialize, opts.lossless, opts.quiet, opts.strict);
+
+    // A runtime target prints through its vtable, with the same lossy
+    // strips a compiled one gets. A scalar comes back as the fragment the
+    // editor would splice — the value as it stands alone, no newline —
+    // where a compiled printer ends the line itself, so `get` ends it here
+    // to print the same as one.
+    const target: fig.AST.SerializeFormat = switch (diag_target) {
+        .compiled => |f| f,
+        .runtime => |e| {
+            var out: std.Io.Writer.Allocating = .init(a);
+            defer out.deinit();
+            parse_dispatch.printRuntime(a, &out.writer, e, ast, node_id, opts.serialize, opts.lossless) catch |err| switch (err) {
+                error.OutOfMemory => return err,
+                else => |x| diag_report.reportRuntimePrintError(stderr_term, x),
+            };
+            const text = out.written();
+            try stdout_term.writer.writeAll(text);
+            const is_container = switch (ast.nodes[node_id].kind) {
+                .mapping, .sequence => true,
+                else => false,
+            };
+            if (!is_container and text.len > 0 and text[text.len - 1] != '\n') try stdout_term.writer.writeByte('\n');
+            try stdout_term.writer.flush();
+            return;
+        },
+    };
 
     // `!opts.lossless` only: under `--lossless` these formats fall through to
     // the plain print below and, having no envelope of their own (see

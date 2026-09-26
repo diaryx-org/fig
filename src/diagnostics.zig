@@ -25,10 +25,15 @@ const Allocator = std.mem.Allocator;
 const AST = @import("ast/ast.zig");
 const Lossless = @import("lossless.zig");
 const Language = @import("languages/language.zig");
+const Runtime = @import("languages/runtime.zig");
 const Writer = std.Io.Writer;
 
 const ExtKind = AST.Node.Kind.Extended.ExtKind;
 const Format = AST.SerializeFormat;
+
+/// What the tree is analyzed as being printed to: a compiled format, or a
+/// runtime language, whose losses are read off its declaration.
+pub const Target = Runtime.Target;
 
 /// One thing a conversion to a given format would lose.
 pub const Warning = struct {
@@ -67,7 +72,12 @@ pub const Warning = struct {
     /// Write the default human-readable message (no trailing newline). Bindings
     /// may instead render their own text from the structured fields.
     pub fn render(self: Warning, writer: *Writer, format: Format) Writer.Error!void {
-        const fmt = @tagName(format);
+        return self.renderNamed(writer, @tagName(format));
+    }
+
+    /// `render` for a target named `fmt` — `Target.name`, which covers a
+    /// runtime language too.
+    pub fn renderNamed(self: Warning, writer: *Writer, fmt: []const u8) Writer.Error!void {
         switch (self.code) {
             .value_dropped => {
                 try writer.print("dropped {s} value at ", .{self.note});
@@ -124,21 +134,52 @@ pub const Options = struct {
     /// through a `$fig` envelope, so value losses are suppressed. (Comment
     /// losses still apply — the envelope path still prints comments normally.)
     lossless: bool = false,
+    /// How deep `root_id` will sit in the document it is printed into: 0 for
+    /// a whole document, the path's length for a value spliced at a path. A
+    /// format's depth limit counts from the document's root, not the
+    /// value's, so a mapping that is fine as a dotenv document is dropped as
+    /// a dotenv value.
+    depth: usize = 0,
 };
 
 /// Walk the subtree rooted at `root_id` as it would be serialized to `format`
 /// and collect every lossy event. Warnings (and their `path` strings) are
 /// allocated in `arena`; the returned slice is owned by the caller's arena.
 pub fn analyze(arena: Allocator, ast: *const AST, root_id: AST.Node.Id, format: Format, options: Options) Allocator.Error![]Warning {
-    var c = Collector{ .ast = ast, .arena = arena, .format = format, .options = options };
-    try c.walk(root_id, "", 0);
+    return analyzeFor(arena, ast, root_id, .{ .compiled = format }, options);
+}
+
+/// `analyze` for any `Target`. A runtime language is held to what it
+/// declares, which is what the CLI strips before printing to it: a
+/// `lossless` declaration's missing kinds (a `null` dropped, an extended
+/// scalar degraded), a `max_mapping_depth`'s flat-format drops, and its
+/// `syntax`'s comment delimiters. What its printer does with a value, or a
+/// comment, it declared nothing about is its own, and not reported.
+pub fn analyzeFor(arena: Allocator, ast: *const AST, root_id: AST.Node.Id, target: Target, options: Options) Allocator.Error![]Warning {
+    var c = Collector{ .ast = ast, .arena = arena, .target = target, .options = options };
+    try c.walk(root_id, "", options.depth);
     return c.warnings.toOwnedSlice(arena);
+}
+
+/// What `firstDropped` found: a `null` the target has no spelling for, or a
+/// container it cannot hold at that depth (a sequence, a table too deep).
+pub const Dropped = enum { null_, container };
+
+/// The first value in the subtree that `target` cannot hold at all once
+/// spliced `depth` levels down — what an edit refuses rather than writing
+/// text that reparses as something else (a mapping into dotenv as
+/// `key=a=1`). Null when every value has a spelling there, degraded or not.
+pub fn firstDropped(arena: Allocator, ast: *const AST, root_id: AST.Node.Id, target: Target, depth: usize) Allocator.Error!?Dropped {
+    const warnings = try analyzeFor(arena, ast, root_id, target, .{ .depth = depth, .strip_comments = true });
+    for (warnings) |w| if (w.code == .value_dropped)
+        return if (std.mem.eql(u8, w.note, "null")) .null_ else .container;
+    return null;
 }
 
 const Collector = struct {
     ast: *const AST,
     arena: Allocator,
-    format: Format,
+    target: Target,
     options: Options,
     warnings: std.ArrayList(Warning) = .empty,
 
@@ -147,8 +188,9 @@ const Collector = struct {
     }
 
     /// Visit one node: check its own value + comments, then recurse into a
-    /// container's children (building each child's path). `depth` is 0 for the
-    /// node `analyze` was called with, incrementing by one per container level
+    /// container's children (building each child's path). `depth` is the
+    /// node's depth in the printed document (`Options.depth` for the node
+    /// `analyze` was called with), incrementing by one per container level
     /// — used by `valueLoss`'s INI arm, whose capability depends on nesting
     /// depth (root + one level of `[section]`s are fine; deeper is not) and
     /// not just root-vs-not like every other format needs.
@@ -181,7 +223,11 @@ const Collector = struct {
     }
 
     fn checkValue(self: *Collector, id: AST.Node.Id, path: []const u8, depth: usize) Allocator.Error!void {
-        const loss = valueLoss(self.format, self.ast.nodes[id].kind, depth) orelse return;
+        const kind = self.ast.nodes[id].kind;
+        const loss = switch (self.target) {
+            .compiled => |f| valueLoss(f, kind, depth),
+            .runtime => |e| runtimeValueLoss(e, kind, depth),
+        } orelse return;
         // Under lossless, unrepresentable values are enveloped, not lost.
         if (self.options.lossless) return;
         try self.add(.{ .code = loss.code, .cause = .format_limitation, .path = path, .note = loss.note });
@@ -199,11 +245,18 @@ const Collector = struct {
             return;
         }
         // Otherwise, a format with no comment syntax here drops it outright.
-        if (!commentsEmitted(self.format, self.options.pretty)) {
+        const emitted, const block = switch (self.target) {
+            .compiled => |f| .{ commentsEmitted(f, self.options.pretty), blockComments(f) },
+            // A runtime language that declares no `syntax` has said nothing
+            // about comments, and its printer receives every comment row, so
+            // there is no loss to claim.
+            .runtime => |e| runtimeComments(e) orelse return,
+        };
+        if (!emitted) {
             try self.add(.{ .code = .comment_dropped, .cause = .format_limitation, .path = path });
             return;
         }
-        if (!blockComments(self.format) and hasBlock(nc)) {
+        if (!block and hasBlock(nc)) {
             try self.add(.{ .code = .comment_style_degraded, .cause = .format_limitation, .path = path });
         }
     }
@@ -343,6 +396,43 @@ fn valueLoss(format: Format, kind: AST.Node.Kind, depth: usize) ?Loss {
             else => return null,
         },
     }
+}
+
+/// `valueLoss` for a runtime language, from its declaration alone — the
+/// same two declarations `printRuntime` strips by, so the warning and the
+/// strip cannot disagree. `lossless` names the kinds it holds: a `null` it
+/// lacks is dropped, an extended scalar it lacks reaches its printer as
+/// text. `max_mapping_depth` makes it a flat format: no `null`, no sequence,
+/// no mapping past the depth. Typed scalars are not reported degraded, as a
+/// compiled flat format's are, because nothing in the declaration says so.
+fn runtimeValueLoss(e: *const Runtime.Entry, kind: AST.Node.Kind, depth: usize) ?Loss {
+    const caps = e.language.caps;
+    if (caps.lossless) |native| {
+        if (Lossless.isUnrepresentable(native, kind)) return .{ .code = .value_dropped, .note = dropNote(kind) };
+        if (Lossless.needsEnvelope(native, kind)) switch (kind) {
+            .extended => return .{ .code = .type_degraded, .note = "string" },
+            else => {},
+        };
+    }
+    if (caps.max_mapping_depth) |max| switch (kind) {
+        .null_ => return .{ .code = .value_dropped, .note = "null" },
+        .sequence => return .{ .code = .value_dropped, .note = "array" },
+        .mapping => if (depth > max) return .{ .code = .value_dropped, .note = "table" },
+        else => {},
+    };
+    return null;
+}
+
+/// Whether a runtime language writes comments at all, and whether it has a
+/// spelling for a block one: its `syntax`'s own-line delimiter, and whether
+/// that delimiter is a pair (`<!-- -->`) that can hold several lines. Null
+/// when it declares no `syntax`, which is only required of an editable
+/// language: a read-and-serialize one may print every
+/// comment it is handed, and fig cannot know that it does not.
+fn runtimeComments(e: *const Runtime.Entry) ?struct { bool, bool } {
+    const syntax = e.syntax orelse return null;
+    const line = syntax.comments.line orelse return .{ false, false };
+    return .{ true, line.close.len > 0 };
 }
 
 /// The type an `extended` value collapses to in `format` — matches what each
@@ -641,6 +731,37 @@ test "comment dropped, style-degraded, and explicitly stripped" {
     try testing.expectEqual(Warning.Cause.explicit_option, stripped_json[0].cause);
 }
 
+test "a runtime target is warned about comments only by what its syntax declares" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var b = AST.Builder.init(arena);
+    const k = try b.addString("a");
+    const v = try b.addNumberRaw("1", false);
+    const m = try b.addMapping(&.{.{ .key = k, .value = v }});
+    try b.setComments(k, .{ .leading = &.{.{ .text = "note", .style = .line }} });
+    var ast = try b.finish(m);
+
+    const manifest = @import("languages/manifest.zig");
+    var reg: Runtime.Registered = .{ .vt = undefined, .name = "t", .caps = .{ .serialize = true }, .syntax = null, .samples = &.{}, .entries = &.{} };
+    var entry: Runtime.Entry = .{ .index = 0, .abi = 0, .language = &reg, .name = "t", .extensions = &.{}, .splice = .literal, .empty_doc_seed = null, .syntax = null };
+
+    // No `syntax`: nothing said about comments, and the printer is handed
+    // every one — so no loss is claimed.
+    try testing.expectEqual(@as(usize, 0), (try analyzeFor(arena, &ast, ast.root, .{ .runtime = &entry }, .{})).len);
+
+    // A `syntax` with no comment delimiter declares there are none: dropped.
+    entry.syntax = .{ .comments = .{ .style = .hash, .line = null, .trailing = null }, .kv_sep = null, .empty_map_literal = null };
+    const dropped = try analyzeFor(arena, &ast, ast.root, .{ .runtime = &entry }, .{});
+    try testing.expectEqual(@as(usize, 1), dropped.len);
+    try testing.expectEqual(Warning.Code.comment_dropped, dropped[0].code);
+
+    // One with a delimiter writes them: no warning.
+    entry.syntax = .{ .comments = manifest.Comments.hash, .kv_sep = null, .empty_map_literal = null };
+    try testing.expectEqual(@as(usize, 0), (try analyzeFor(arena, &ast, ast.root, .{ .runtime = &entry }, .{})).len);
+}
+
 test "path shapes match lossyStrip (dotted keys, bracket indices)" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
@@ -676,3 +797,44 @@ test "path shapes match lossyStrip (dotted keys, bracket indices)" {
     try testing.expectEqualStrings("c[1]", w[1].path);
     try testing.expectEqualStrings("d.e", w[2].path);
 }
+
+test "a depth limit counts from the document's root, not the analyzed value's" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var b = AST.Builder.init(arena);
+    const k = try b.addString("x");
+    const v = try b.addString("1");
+    const map = try b.addMapping(&.{.{ .key = k, .value = v }});
+    var ast = try b.finish(map);
+
+    // As a whole dotenv document the mapping is the root, and fine; as a
+    // value one level down it is a table dotenv cannot hold.
+    try testing.expectEqual(@as(usize, 0), (try analyze(arena, &ast, ast.root, .dotenv, .{})).len);
+    const nested = try analyze(arena, &ast, ast.root, .dotenv, .{ .depth = 1 });
+    try testing.expectEqual(@as(usize, 1), nested.len);
+    try testing.expectEqual(Warning.Code.value_dropped, nested[0].code);
+
+    // INI holds one level of `[section]`s, so the same value is fine one
+    // level down and dropped two.
+    try testing.expectEqual(@as(?Dropped, null), try firstDropped(arena, &ast, ast.root, .{ .compiled = .ini }, 1));
+    try testing.expectEqual(@as(?Dropped, .container), try firstDropped(arena, &ast, ast.root, .{ .compiled = .ini }, 2));
+    // A degraded value is not a dropped one: dotenv writes the number as text.
+    var num_ast = ast;
+    num_ast.root = v;
+    try testing.expectEqual(@as(?Dropped, null), try firstDropped(arena, &num_ast, num_ast.root, .{ .compiled = .dotenv }, 1));
+}
+
+test "firstDropped tells a null from a container" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var b = AST.Builder.init(arena);
+    const n = try b.addNull();
+    var ast = try b.finish(n);
+    try testing.expectEqual(@as(?Dropped, .null_), try firstDropped(arena, &ast, ast.root, .{ .compiled = .toml }, 1));
+    try testing.expectEqual(@as(?Dropped, null), try firstDropped(arena, &ast, ast.root, .{ .compiled = .yaml }, 1));
+}
+

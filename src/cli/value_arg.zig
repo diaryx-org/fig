@@ -162,6 +162,31 @@ pub fn render(allocator: std.mem.Allocator, value: Value, format: Format, layout
     return allocator.dupe(u8, std.mem.trimEnd(u8, w.written(), "\n"));
 }
 
+/// Refuse a value `format` cannot hold once it lands `depth` levels below the
+/// document root — a mapping into dotenv, a table under an INI section —
+/// with the error `render` gives one the printer refuses outright. The
+/// printer cannot tell on its own: a mapping is a fine dotenv DOCUMENT, and
+/// prints as `x=1`, which spliced after `n=` reads back as the string `x=1`.
+/// Text with no value behind it (`--raw`) is the user's own spelling and is
+/// not second-guessed.
+pub fn refuseDropped(allocator: std.mem.Allocator, value: Value, format: Format, depth: usize) !void {
+    const ast = switch (value) {
+        .raw => return,
+        .tree => |*t| t,
+    };
+    const target: fig.Runtime.Target = if (types.runtimeEntry(format)) |e|
+        .{ .runtime = e }
+    else
+        .{ .compiled = types.toSerializeFormat(format) orelse return };
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const dropped = try fig.Diagnostics.firstDropped(arena.allocator(), ast, ast.root, target, depth) orelse return;
+    return switch (dropped) {
+        .null_ => error.UnwritableNull,
+        .container => error.UnwritableNested,
+    };
+}
+
 test "a fig reading types what fig types and keeps the rest a string" {
     if (comptime !build_options.lang_fig or !build_options.lang_json) return error.SkipZigTest;
     const t = std.testing;

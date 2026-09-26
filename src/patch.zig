@@ -61,6 +61,7 @@ const AST = @import("ast/ast.zig");
 const Document = @import("document.zig");
 const editor_mod = @import("editor.zig");
 const Runtime = @import("languages/runtime.zig");
+const Diagnostics = @import("diagnostics.zig");
 
 const Id = AST.Node.Id;
 
@@ -163,10 +164,7 @@ pub fn apply(
 
 /// What patch subtrees are rendered as: a compiled `SerializeFormat`, or a
 /// runtime language's entry, whose printer is reached through its vtable.
-pub const Target = union(enum) {
-    compiled: AST.SerializeFormat,
-    runtime: *const Runtime.Entry,
-};
+pub const Target = Runtime.Target;
 
 /// `apply` for any `Target` — the one a runtime language's
 /// `Editor(Runtime.Language)` needs, since its printer is not a
@@ -284,7 +282,7 @@ fn Walker(comptime Language: type) type {
                     self.stats.unchanged += 1;
                     continue;
                 }
-                const text = try self.render(patch, item_id);
+                const text = try self.render(patch, item_id, self.path.items.len + 1);
                 defer self.allocator.free(text);
                 try self.editor.appendToSeq(self.path.items, text);
                 self.stats.appended += 1;
@@ -319,7 +317,7 @@ fn Walker(comptime Language: type) type {
             }
             if (self.path.items.len == 0) return error.PatchRootNotMergeable;
 
-            const text = try self.render(patch, id);
+            const text = try self.render(patch, id, self.path.items.len);
             defer self.allocator.free(text);
 
             // `set` upserts and vivifies missing ancestors, but it addresses a
@@ -334,10 +332,25 @@ fn Walker(comptime Language: type) type {
         }
 
         /// Render the patch subtree at `id` as a value fragment in the target's
-        /// format. The AST is shallow-copied and re-rooted rather than rebuilt:
-        /// node ids are self-referential, so a copy pointing at a different
-        /// root IS the subtree, at no allocation.
-        fn render(self: *Self, patch: *const AST, id: Id) ![]u8 {
+        /// format, to land `depth` levels below the document root. The AST is
+        /// shallow-copied and re-rooted rather than rebuilt: node ids are
+        /// self-referential, so a copy pointing at a different root IS the
+        /// subtree, at no allocation.
+        ///
+        /// A value the target cannot hold THERE is refused before it is
+        /// rendered, with the error its printer raises for one it cannot hold
+        /// anywhere. The printer cannot tell: a mapping is a fine dotenv
+        /// document and prints as one, `x=1`, which spliced after `n=` reads
+        /// back as the string `x=1`.
+        fn render(self: *Self, patch: *const AST, id: Id, depth: usize) ![]u8 {
+            {
+                var arena = std.heap.ArenaAllocator.init(self.allocator);
+                defer arena.deinit();
+                if (try Diagnostics.firstDropped(arena.allocator(), patch, id, self.target, depth)) |dropped| return switch (dropped) {
+                    .null_ => error.NullUnsupported,
+                    .container => error.UnsupportedValue,
+                };
+            }
             var view = patch.*;
             view.root = id;
 
@@ -769,3 +782,27 @@ test "nodesEqual compares structure, not spelling or trivia" {
     defer jdoc2.deinit(t.allocator);
     try t.expect(!nodesEqual(&ydoc.ast, ydoc.ast.root, &jdoc2.ast, jdoc2.ast.root));
 }
+
+test "a patch value the target cannot hold where it lands is refused, not spliced as text" {
+    if (comptime !(build_options.lang_yaml and build_options.lang_dotenv and build_options.lang_ini)) return error.SkipZigTest;
+    const t = std.testing;
+    const Y = @import("languages/yaml/yaml.zig").Language;
+    const D = @import("languages/dotenv/dotenv.zig").Language;
+    const I = @import("languages/ini/ini.zig").Language;
+
+    // A mapping is a fine dotenv document and prints as `x=1`, which spliced
+    // after `n=` would read back as the string `x=1`.
+    try t.expectError(error.UnsupportedValue, patchForTest(D, Y, t.allocator, .dotenv, "a=1\n", "n:\n  x: 1\n", .{}));
+    try t.expectError(error.UnsupportedValue, patchForTest(D, Y, t.allocator, .dotenv, "a=1\n", "s: [1]\n", .{}));
+    try t.expectError(error.NullUnsupported, patchForTest(D, Y, t.allocator, .dotenv, "a=1\n", "n: null\n", .{}));
+    // INI holds a section, but a value splice cannot write one: a table
+    // below a section is too deep, and a new one at the root has no
+    // spelling after `key = `.
+    try t.expectError(error.UnsupportedValue, patchForTest(I, Y, t.allocator, .ini, "[s]\na=1\n", "s:\n  b:\n    c: 1\n", .{}));
+    try t.expectError(error.UnsupportedValue, patchForTest(I, Y, t.allocator, .ini, "[s]\na=1\n", "u:\n  c: 1\n", .{}));
+    // What it can hold still lands.
+    const out = try patchForTest(D, Y, t.allocator, .dotenv, "a=1\n", "b: 2\n", .{});
+    defer t.allocator.free(out);
+    try t.expectEqualStrings("a=1\nb=2\n", out);
+}
+

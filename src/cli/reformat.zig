@@ -42,43 +42,24 @@ pub fn reformatSlice(
     };
     try reports.reportWarnings(term, content, file_path, quiet, strict);
 
-    if (types.runtimeEntry(format)) |e| {
-        var out: std.Io.Writer.Allocating = .init(allocator);
-        defer out.deinit();
-        parse_dispatch.printRuntime(allocator, &out.writer, e, &doc.ast, doc.ast.root, serialize, false) catch |err| switch (err) {
-            error.OutOfMemory => return err,
-            else => |x| diag_report.reportRuntimePrintError(term, x),
-        };
-        return out.toOwnedSlice();
-    }
+    const diag_target: fig.Runtime.Target = if (types.runtimeEntry(format)) |e|
+        .{ .runtime = e }
+    else
+        .{ .compiled = types.toSerializeFormat(format) orelse unreachable }; // gron rejected up front above
+    try parse_dispatch.reportLoss(allocator, term, &doc.ast, doc.ast.root, diag_target, serialize, false, quiet, strict);
 
-    const target: fig.AST.SerializeFormat = types.toSerializeFormat(format) orelse unreachable; // rejected up front above
-
-    if (!quiet or strict) {
-        const warnings = try fig.Diagnostics.analyze(allocator, &doc.ast, doc.ast.root, target, .{
-            .pretty = serialize.pretty,
-            .strip_comments = serialize.strip_comments,
-            .lossless = false,
-        });
-        var surfaced: usize = 0;
-        for (warnings) |w| {
-            if (w.cause != .format_limitation) continue;
-            surfaced += 1;
-            if (!quiet) {
-                try term.setColor(.yellow);
-                try term.writer.writeAll("warning: ");
-                try term.setColor(.reset);
-                try w.render(term.writer, target);
-                try term.writer.writeByte('\n');
-            }
-        }
-        if (!quiet) try term.writer.flush();
-        if (strict and surfaced > 0) {
-            try term.writer.print("error: {d} lossy conversion warning(s); --strict aborts.\n", .{surfaced});
-            try term.writer.flush();
-            std.process.exit(1);
-        }
-    }
+    const target: fig.AST.SerializeFormat = switch (diag_target) {
+        .compiled => |f| f,
+        .runtime => |e| {
+            var out: std.Io.Writer.Allocating = .init(allocator);
+            defer out.deinit();
+            parse_dispatch.printRuntime(allocator, &out.writer, e, &doc.ast, doc.ast.root, serialize, false) catch |err| switch (err) {
+                error.OutOfMemory => return err,
+                else => |x| diag_report.reportRuntimePrintError(term, x),
+            };
+            return out.toOwnedSlice();
+        },
+    };
 
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
@@ -166,43 +147,24 @@ pub fn convertSlice(
         break :blk encoded;
     } else base_ast;
 
-    if (types.runtimeEntry(to)) |e| {
-        var out: std.Io.Writer.Allocating = .init(allocator);
-        defer out.deinit();
-        parse_dispatch.printRuntime(allocator, &out.writer, e, ast, ast.root, serialize, lossless) catch |err| switch (err) {
-            error.OutOfMemory => return err,
-            else => |x| diag_report.reportRuntimePrintError(term, x),
-        };
-        return out.toOwnedSlice();
-    }
+    const diag_target: fig.Runtime.Target = if (types.runtimeEntry(to)) |e|
+        .{ .runtime = e }
+    else
+        .{ .compiled = types.toSerializeFormat(to) orelse unreachable }; // gron rejected up front above
+    try parse_dispatch.reportLoss(allocator, term, ast, ast.root, diag_target, serialize, lossless, quiet, strict);
 
-    const target: fig.AST.SerializeFormat = types.toSerializeFormat(to) orelse unreachable; // rejected up front above
-
-    if (!quiet or strict) {
-        const warnings = try fig.Diagnostics.analyze(allocator, ast, ast.root, target, .{
-            .pretty = serialize.pretty,
-            .strip_comments = serialize.strip_comments,
-            .lossless = lossless,
-        });
-        var surfaced: usize = 0;
-        for (warnings) |w| {
-            if (w.cause != .format_limitation) continue;
-            surfaced += 1;
-            if (!quiet) {
-                try term.setColor(.yellow);
-                try term.writer.writeAll("warning: ");
-                try term.setColor(.reset);
-                try w.render(term.writer, target);
-                try term.writer.writeByte('\n');
-            }
-        }
-        if (!quiet) try term.writer.flush();
-        if (strict and surfaced > 0) {
-            try term.writer.print("error: {d} lossy conversion warning(s); --strict aborts.\n", .{surfaced});
-            try term.writer.flush();
-            std.process.exit(1);
-        }
-    }
+    const target: fig.AST.SerializeFormat = switch (diag_target) {
+        .compiled => |f| f,
+        .runtime => |e| {
+            var out: std.Io.Writer.Allocating = .init(allocator);
+            defer out.deinit();
+            parse_dispatch.printRuntime(allocator, &out.writer, e, ast, ast.root, serialize, lossless) catch |err| switch (err) {
+                error.OutOfMemory => return err,
+                else => |x| diag_report.reportRuntimePrintError(term, x),
+            };
+            return out.toOwnedSlice();
+        },
+    };
 
     const flat_strip_depth: ?usize = if (!lossless) parse_dispatch.flatStripDepth(target) else null;
 

@@ -476,6 +476,24 @@ pub const cap_references: u32 = 1 << 3;
 
 /// One registered dialect: `Language.Type`'s value `index` names it, and
 /// `abi` is the integer a C caller holds. Immutable once appended.
+/// What a tree is printed as: a compiled `SerializeFormat`, or a runtime
+/// language's entry, whose printer is reached through its vtable. The one
+/// type for every pass that has to handle both — rendering a patch, reporting
+/// what a print loses, the C API's serialize.
+pub const Target = union(enum) {
+    compiled: AST.SerializeFormat,
+    runtime: *const Entry,
+
+    /// What the target is called in a message: the compiled format's member
+    /// name, the runtime entry's registered one.
+    pub fn name(self: Target) []const u8 {
+        return switch (self) {
+            .compiled => |f| @tagName(f),
+            .runtime => |e| e.name,
+        };
+    }
+};
+
 pub const Entry = struct {
     index: u16,
     abi: c_int,

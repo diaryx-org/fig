@@ -1000,8 +1000,11 @@ typedef struct FigWarning {
 // Two things stay closed. A runtime format never joins content sniffing —
 // it is selected by name or by extension, never guessed — and its integer is
 // per process: persist the NAME and resolve it with fig_format_by_name.
-// fig_document_diagnose / fig_value_diagnose against a runtime target return
-// FIG_STATUS_UNSUPPORTED_OPERATION in this release.
+// fig_document_diagnose / fig_value_diagnose against a runtime target report
+// what its record declares it cannot hold: a kind missing from `lossless` (a
+// null dropped, an extended scalar degraded), what `max_mapping_depth`
+// forbids (a null, a sequence, a mapping past the depth), and a comment its
+// `syntax` has no delimiter for.
 // ============================================================================
 
 // The version of FigLanguageVTable this header describes; set vtable.version

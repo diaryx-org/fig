@@ -66,12 +66,12 @@ test("Document low-level traversal", () => {
 });
 
 test("extended scalars (TOML datetime, ZON enum/char) read faithfully", () => {
-  // TOML datetimes report as String at the `kind` ABI but recover via asExtended.
+  // TOML datetimes report as Extended at the `kind` ABI; asExtended says which.
   {
     using doc = Document.parse("d = 2026-06-18\nt = 07:32:00\n", Format.Toml);
     const root = doc.root()!;
     const dVal = doc.valueOf(doc.firstChild(root)!)!;
-    assert.equal(doc.kind(dVal), NodeKind.String);
+    assert.equal(doc.kind(dVal), NodeKind.Extended);
     assert.deepEqual(doc.asExtended(dVal), { ext: ExtKind.LocalDate, text: "2026-06-18" });
 
     assert.deepEqual(doc.toValue(), V.map([
@@ -82,7 +82,7 @@ test("extended scalars (TOML datetime, ZON enum/char) read faithfully", () => {
     assert.equal(serialize(doc.toValue(), Format.Toml), "d = 2026-06-18\nt = 07:32:00\n");
   }
 
-  // ZON char literals report as Int; enum literals as String. Both recover.
+  // ZON char and enum literals report as Extended, and read back as such.
   // (Only when the module under test was built with ZON support — see the
   // `zonBuiltIn` comment above.)
   if (zonBuiltIn) {

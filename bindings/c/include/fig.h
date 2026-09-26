@@ -38,7 +38,12 @@ extern "C" {
 //
 // History: 1 — core 2.0 through 2.9. 2 — core 3.0: FigEmbedType folded into
 // (FigEmbedContainer, FigFormat) pairs on every fig_embed_* selector, and
-// FIG_FORMAT_XML retired.
+// FIG_FORMAT_XML retired. 3 — 5.0: every render_* slot takes one
+// FigRenderRequest; the records a language writes (FigLanguageVTable,
+// FigSyntax, FigDialectDesc rows, FigNodeRow rows) and the ones fig hands a
+// language (FigNodeTable, FigPrintOptions, FigRenderRequest) carry their
+// size; FigLanguageVTable.lossless is a bitmask; fig_node_kind returns int
+// and reports FIG_NODE_EXTENDED.
 #define FIG_ABI_VERSION 3
 
 // Linked-library version, packed as (major << 16) | (minor << 8) | patch.
@@ -98,13 +103,25 @@ uint8_t *fig_alloc(size_t len);
 // fig_alloc. A null pointer or zero length is a no-op.
 void fig_free(uint8_t *ptr, size_t len);
 
-// Forward compatibility: later fig releases may add enumerators to the enums
-// below (status codes, node kinds, extended-scalar kinds, formats). Treat any
-// value you do not recognize as opaque — for FigStatus, as a generic failure;
-// for the kind enums, as "unknown" — rather than asserting the set is closed.
-// Language bindings must not decode a returned value into a fixed enum type
-// without a fallback, since an out-of-range discriminant is undefined behavior
-// in some languages.
+// Forward compatibility: later fig releases may add values to every enum and
+// bit set this header defines — FigStatus, FigNodeKind, FigExtKind, FigFormat,
+// FigEmbedContainer, the FigWarning codes and causes, FIG_CAP_* bits, the
+// FIG_COMMENT_* slots and styles and the FIG_MENTION_* kinds. Treat a value
+// you do not recognize as opaque rather than asserting the set is closed:
+// FigStatus as a generic failure; a kind, code, cause or container as
+// "unknown", compared as the int it is; a capability bit as absent. A
+// printer handed a comment row whose slot it does not know leaves that
+// comment out; one whose style it does not know writes it as a line
+// comment. Language bindings must not decode a returned value into a fixed
+// enum type without a fallback, since an out-of-range discriminant is
+// undefined behavior in some languages — which is why the functions that
+// return a kind return `int`.
+//
+// Several calls come in a simple and an extended form (fig_parse and
+// fig_parse_ex, fig_value_serialize and fig_value_serialize_opts). Both forms
+// are permanent: the simple one is the extended one with every option at its
+// default. fig_*_insert_key and fig_*_insert_named_key are not such a pair —
+// one takes key syntax, the other a key's name.
 typedef enum FigStatus {
     FIG_STATUS_OK = 0,
     FIG_STATUS_INVALID_ARGUMENT = 1,
@@ -164,8 +181,8 @@ typedef enum FigFormat {
 // runtime rather than compiled in. They are assigned per process, in
 // registration order, and are never pinned here: a caller that persists a
 // format persists its name. Every compiled-in FIG_FORMAT_* enumerator is below
-// it, and always will be. Reserved in core 3.0 (ABI 2) ahead of the
-// registration entry points, which are a later minor.
+// it, and always will be. Reserved in core 3.0 (ABI 2); fig_language_register
+// hands them out.
 #define FIG_FORMAT_RUNTIME_BASE 4096
 
 // Capability bits, OR-combined in the return of fig_format_capabilities.
@@ -268,12 +285,14 @@ typedef enum FigNodeKind {
     FIG_NODE_MAPPING  = 6,
     FIG_NODE_KEYVALUE = 7,
     FIG_NODE_ALIAS    = 8, // a YAML `*name` alias node (unresolved reference)
+    FIG_NODE_EXTENDED = 9, // a format-specific scalar; see fig_node_extended
 } FigNodeKind;
 
 // The node that contains all others. FIG_NODE_NONE for an empty document.
 FigNodeId fig_document_root(const FigDocument *doc);
 
-FigNodeKind fig_node_kind(const FigDocument *doc, FigNodeId node);
+// A FigNodeKind value, returned as int: a later fig may add kinds.
+int fig_node_kind(const FigDocument *doc, FigNodeId node);
 
 // Sequence: first element. Mapping: first keyvalue. Otherwise FIG_NODE_NONE.
 FigNodeId fig_node_first_child(const FigDocument *doc, FigNodeId node);
@@ -300,10 +319,9 @@ bool fig_node_string(const FigDocument *doc, FigNodeId node,
 
 // Format-specific extended scalar (TOML datetime, ZON enum/char literal).
 // Returns true and writes its FigExtKind to *out_kind and source text to
-// *out_ptr/*out_len when node is extended; otherwise returns false. Note that
-// fig_node_kind still reports such nodes as STRING (datetime / enum literal) or
-// INT (char literal), and fig_node_string/fig_node_number still yield the text;
-// use this accessor to tell a true string/int apart from an extended scalar.
+// *out_ptr/*out_len when node is extended; otherwise returns false.
+// fig_node_kind reports such a node as FIG_NODE_EXTENDED; fig_node_string (and,
+// for a char literal, fig_node_number) still yield its text.
 bool fig_node_extended(const FigDocument *doc, FigNodeId node, int *out_kind,
                        const uint8_t **out_ptr, size_t *out_len);
 
@@ -318,8 +336,11 @@ bool fig_node_extended(const FigDocument *doc, FigNodeId node, int *out_kind,
 // re-frames indentation and flow/block context at the splice site.
 // ============================================================================
 
+#define FIG_SEGMENT_KEY   0
+#define FIG_SEGMENT_INDEX 1
+
 typedef struct FigPathSegment {
-    int32_t kind;          // 0 = mapping key, 1 = sequence index
+    int kind;              // FIG_SEGMENT_KEY or FIG_SEGMENT_INDEX
     const uint8_t *key_ptr; // key bytes when kind == 0
     size_t key_len;
     size_t index;          // element index when kind == 1
@@ -1009,7 +1030,27 @@ typedef struct FigWarning {
 
 // The version of FigLanguageVTable this header describes; set vtable.version
 // to it. Bumped only when a field of the vtable or of a struct it reaches
-// changes meaning — an appended field is not a bump.
+// changes meaning. An appended field is not a bump, in either direction,
+// because every struct that can grow says how much of itself it carries:
+//
+//   * A record a LANGUAGE writes (FigLanguageVTable, FigSyntax, and the
+//     FigDialectDesc and FigNodeRow arrays through `dialect_size` and
+//     `row_size`) carries the language's sizeof. fig reads the prefix it
+//     covers and takes the default of every field past it (zero, NULL, or
+//     the default a field's comment names), so a language built against an
+//     older header registers on a newer fig, and one built against a newer
+//     header on an older fig is read as far as that fig knows. Set each to
+//     sizeof as this header declares it.
+//   * A record FIG writes (FigNodeTable, FigPrintOptions, FigRenderRequest)
+//     carries fig's sizeof in `size`: read a field only when `size` covers
+//     it, as FigError has always been read, and write a FigNodeTable only as
+//     far as the `size` fig set on it. Read FigNodeRow rows fig hands `print`
+//     at the table's `row_size`.
+//
+// A struct embedded by value (FigComments and its delimiters, FigSectionHeader
+// and FigClosedContainers inside FigSyntax) and the side-table rows
+// (FigRegionRow, FigMentionRow, FigCommentRow, FigDirectiveRow) are frozen:
+// what they would gain is appended to the record that holds them.
 #define FIG_LANGUAGE_VTABLE_VERSION 2
 
 // A `size_t` that says "no offset": FigSpan { FIG_OFFSET_NONE, FIG_OFFSET_NONE }
@@ -1025,8 +1066,9 @@ typedef struct FigWarning {
 // a limit — a flat format (dotenv, INI) holds no mapping inside its root.
 #define FIG_DEPTH_NONE (-1)
 
-// One node. `kind` is a FigNodeKind (for an extended scalar, the kind
-// fig_node_kind would report; `ext_kind` decides). `text` is a scalar's decoded
+// One node. `kind` is a FigNodeKind; an extended scalar's row says STRING (INT
+// for a char literal) and `ext_kind` decides — the row convention, which
+// FIG_NODE_EXTENDED does not change. `text` is a scalar's decoded
 // bytes; an int or float's lexeme; `true`/`false` for a bool; an alias's target
 // anchor name; an extended kind's payload; FIG_LEN_NONE for a container or
 // null. `span` is required of every row a parse returns and is
@@ -1086,7 +1128,13 @@ typedef struct FigDirectiveRow { FigStr handle; FigStr prefix; } FigDirectiveRow
 // spelling is the text itself.
 // `owner` is the helper's own handle on the memory behind a table its parse
 // returned — set there, read back in free_table, never touched by fig.
+// `size` is fig's sizeof(FigNodeTable), set on the table it hands parse to
+// fill and on the one it hands print. `row_size` is the stride of `rows`:
+// set it to sizeof(FigNodeRow) in a table parse returns, and read the rows
+// print is handed at the stride it says.
 typedef struct FigNodeTable {
+    uint32_t               size;
+    uint32_t               row_size;
     const FigNodeRow      *rows;       size_t row_count;
     const FigRegionRow    *regions;    size_t region_count;
     const FigMentionRow   *mentions;   size_t mention_count;
@@ -1095,12 +1143,11 @@ typedef struct FigNodeTable {
     void                  *owner;
 } FigNodeTable;
 
-// The subset of FigSerializeOptions a printer outside fig is told.
-// fig-abi: host-written — fig allocates this and a language only reads it
-// through the pointer it is handed, so a field may be appended (a language
-// built against an older header never reads past what it knows); no field
-// is ever reordered, retyped or removed.
+// The subset of FigSerializeOptions a printer outside fig is told. fig writes
+// it; `size` is fig's sizeof, and a printer reads a field only when `size`
+// covers it.
 typedef struct FigPrintOptions {
+    uint32_t size;
     bool     pretty;
     bool     strip_comments;
     uint8_t  indent;
@@ -1109,8 +1156,7 @@ typedef struct FigPrintOptions {
     // a document of its own: a root the document wraps (plist's <plist>) or
     // a scalar root spelled differently from a scalar in place (NestedText's
     // `>` block) is written bare. Every other language prints the same
-    // either way. Appended; fig writes this struct and a language only reads
-    // it, so an older language never reads it — not a vtable version bump.
+    // either way.
     bool     splice;
 } FigPrintOptions;
 
@@ -1163,8 +1209,10 @@ typedef struct FigClosedContainers {
 // verbatim, 1 json_quoted, 2 zon_field, 3 bare_or_quoted. `key_sigil`: a
 // byte every key starts with, or 0. `section_noun`: -1 none, 0 table, 1
 // section, 2 container. `kv_sep` NULL means the engine never writes
-// `key<sep>value` for this format, which requires a render_entry.
+// `key<sep>value` for this format, which requires a render_entry. `size` is
+// sizeof(FigSyntax) as the language was built against it.
 typedef struct FigSyntax {
+    uint32_t            size;
     FigComments         comments;
     const char         *kv_sep;
     bool                flow_kv_sep_from_siblings;
@@ -1187,20 +1235,14 @@ typedef struct FigSyntax {
     const char         *merge_key;
 } FigSyntax;
 
-// Which kinds this format holds natively — what the `$fig` lossless envelope
-// need not wrap. One field per FigExtKind, in that order, plus null.
-typedef struct FigNativeKinds {
-    bool null_;
-    bool offset_datetime;
-    bool local_datetime;
-    bool local_date;
-    bool local_time;
-    bool enum_literal;
-    bool char_literal;
-    bool number_special;
-    bool plist_date;
-    bool plist_data;
-} FigNativeKinds;
+// FigLanguageVTable.lossless: whether the language takes the `$fig` lossless
+// envelope, and which kinds it holds natively — what the envelope need not
+// wrap. 0 is no envelope. FIG_LOSSLESS_ENVELOPE declares it; with it,
+// FIG_NATIVE_NULL is a null held natively and FIG_NATIVE_EXT(k) the
+// FigExtKind k. A bit this fig does not know is refused at registration.
+#define FIG_LOSSLESS_ENVELOPE (1u << 0)
+#define FIG_NATIVE_NULL       (1u << 1)
+#define FIG_NATIVE_EXT(k)     (1u << (2 + (k)))
 
 // One dialect of a language. The first row's `name` must be the language's,
 // and is what fig_format_by_name resolves. `extensions` is a NULL-terminated
@@ -1234,9 +1276,10 @@ typedef struct FigDialectDesc {
 // "!!map"; empty for none). An XML list spells an item by its item element's
 // name, which is exactly those two.
 //
-// fig writes this struct and a renderer only reads it, so a field appended to
-// it is not a FIG_LANGUAGE_VTABLE_VERSION bump, as FigPrintOptions is not.
+// fig writes this struct: `size` is fig's sizeof, and a renderer reads a field
+// only when `size` covers it.
 typedef struct FigRenderRequest {
+    uint32_t    size;
     const char *dialect;
     FigStr      indent;
     FigStr      key;
@@ -1249,24 +1292,30 @@ typedef struct FigRenderRequest {
 
 typedef int (*FigRenderFn)(void *ctx, const FigRenderRequest *request, FigStr *out, FigError *err);
 
-// The vtable. `caps` is FIG_CAP_* bits; `max_mapping_depth` is
-// FIG_DEPTH_NONE when unbounded, else the mapping nesting the format holds;
-// `lossless` NULL means no envelope; `syntax` is required iff FIG_CAP_EDIT;
-// `print` iff FIG_CAP_SERIALIZE; `samples` is required and non-empty. The
+// The vtable. `size` is sizeof(FigLanguageVTable) and `dialect_size`
+// sizeof(FigDialectDesc), as the language was built against them; every field
+// after free_bytes may fall past `size`, and reads as NULL there. `caps` is
+// FIG_CAP_* bits, and a bit this fig does not know is refused;
+// `max_mapping_depth` is FIG_DEPTH_NONE when unbounded, else the mapping
+// nesting the format holds; `lossless` is FIG_LOSSLESS_ENVELOPE and FIG_NATIVE_*
+// bits, 0 for no envelope; `syntax` is required iff FIG_CAP_EDIT; `print` iff
+// FIG_CAP_SERIALIZE; `samples` is required and non-empty. The
 // five render_* slots are optional and NULL where the format declares none:
 // each spells one fragment for the editor from the FigRenderRequest it is
 // handed and returns the text through `out`, which fig frees with
 // free_bytes.
 typedef struct FigLanguageVTable {
     uint32_t              version;
+    uint32_t              size;
     void                 *ctx;
     const char           *name;
     uint32_t              caps;
     int                   max_mapping_depth;
-    const FigNativeKinds *lossless;
+    uint32_t              lossless;
     const FigSyntax      *syntax;
     const FigDialectDesc *dialects;
     size_t                dialect_count;
+    size_t                dialect_size;
     const FigStr         *samples;
     size_t                sample_count;
 

@@ -276,7 +276,6 @@ pub const FigComments = Runtime.CommentsDesc;
 pub const FigCommentDelimiter = Runtime.CommentDelimiterDesc;
 pub const FigSectionHeader = Runtime.SectionHeaderDesc;
 pub const FigClosedContainers = Runtime.ClosedContainersDesc;
-pub const FigNativeKinds = Runtime.NativeKindsDesc;
 pub const FigDialectDesc = Runtime.DialectDesc;
 pub const FigPrintOptions = Runtime.PrintOptions;
 
@@ -630,6 +629,10 @@ pub const FigNodeKind = enum(c_int) {
     mapping = 6,
     keyvalue = 7,
     alias = 8,
+    /// A format-specific scalar with no C type of its own (a TOML datetime,
+    /// a ZON enum or char literal, a plist date): `fig_node_extended` says
+    /// which, and gives its text.
+    extended = 9,
 };
 
 fn handleFrom(doc: ?*const FigDocument) ?*const DocumentHandle {
@@ -652,7 +655,13 @@ pub export fn fig_document_root(doc: ?*const FigDocument) FigNodeId {
     return ast.root;
 }
 
-pub export fn fig_node_kind(doc: ?*const FigDocument, node: FigNodeId) FigNodeKind {
+/// A `FigNodeKind` value, as the `int` fig.h returns so that a binding
+/// never decodes a kind a later fig adds into a closed enum.
+pub export fn fig_node_kind(doc: ?*const FigDocument, node: FigNodeId) c_int {
+    return @intFromEnum(nodeKind(doc, node));
+}
+
+fn nodeKind(doc: ?*const FigDocument, node: FigNodeId) FigNodeKind {
     const n = nodeAt(doc, node) orelse return .invalid;
     return switch (n.kind) {
         .null_ => .null_,
@@ -662,14 +671,7 @@ pub export fn fig_node_kind(doc: ?*const FigDocument, node: FigNodeId) FigNodeKi
             .integer => .int,
             .float => .float,
         },
-        // C has no type for these. Datetimes and enum literals surface as string
-        // scalars (fig_node_string returns the text); a char literal surfaces as
-        // an int (fig_node_number returns its codepoint). Dedicated ABI kinds are
-        // deferred until these formats reach the bindings.
-        .extended => |ext| switch (ext.kind) {
-            .char_literal => .int,
-            else => .string,
-        },
+        .extended => .extended,
         .sequence => .sequence,
         .mapping => .mapping,
         .keyvalue => .keyvalue,
@@ -798,10 +800,9 @@ pub export fn fig_node_string(
 /// `out_kind` and source text to `out_ptr`/`out_len` when `node` is extended;
 /// otherwise returns false, leaving the out-params untouched.
 ///
-/// `fig_node_kind` still reports these nodes as STRING (datetime / enum literal)
-/// or INT (char literal) for ABI compatibility, and `fig_node_string` /
-/// `fig_node_number` still yield their text; this accessor is the opt-in way to
-/// distinguish a true string/int from an extended scalar.
+/// `fig_node_kind` reports these nodes as `FIG_NODE_EXTENDED`; this accessor
+/// says which kind and gives the text. `fig_node_string` (and, for a char
+/// literal, `fig_node_number`) still yield it too.
 pub export fn fig_node_extended(
     doc: ?*const FigDocument,
     node: FigNodeId,
@@ -3580,12 +3581,12 @@ test "traversal over a parsed mapping" {
     const doc: ?*const FigDocument = out_doc;
     const root = fig_document_root(doc);
     try std.testing.expect(root != fig_node_none);
-    try std.testing.expectEqual(FigNodeKind.mapping, fig_node_kind(doc, root));
+    try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.mapping)), fig_node_kind(doc, root));
     try std.testing.expectEqual(@as(usize, 3), fig_node_child_count(doc, root));
 
     // First entry: title -> "Hello"
     const first = fig_node_first_child(doc, root);
-    try std.testing.expectEqual(FigNodeKind.keyvalue, fig_node_kind(doc, first));
+    try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.keyvalue)), fig_node_kind(doc, first));
     const key = fig_keyvalue_key(doc, first);
     const val = fig_keyvalue_value(doc, first);
 
@@ -3599,14 +3600,14 @@ test "traversal over a parsed mapping" {
     // Second entry: count -> 42 (integer)
     const second = fig_node_next_sibling(doc, first);
     const count_val = fig_keyvalue_value(doc, second);
-    try std.testing.expectEqual(FigNodeKind.int, fig_node_kind(doc, count_val));
+    try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.int)), fig_node_kind(doc, count_val));
     try std.testing.expect(fig_node_number(doc, count_val, &ptr, &len));
     try std.testing.expectEqualStrings("42", ptr[0..len]);
 
     // Third entry: tags -> [a, b]
     const third = fig_node_next_sibling(doc, second);
     const tags_val = fig_keyvalue_value(doc, third);
-    try std.testing.expectEqual(FigNodeKind.sequence, fig_node_kind(doc, tags_val));
+    try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.sequence)), fig_node_kind(doc, tags_val));
     try std.testing.expectEqual(@as(usize, 2), fig_node_child_count(doc, tags_val));
 }
 
@@ -3802,7 +3803,7 @@ test "parse c abi reads toml and zon" {
         try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.toml), &out_doc));
         defer fig_document_destroy(out_doc);
         const root = fig_document_root(out_doc);
-        try std.testing.expectEqual(FigNodeKind.mapping, fig_node_kind(out_doc, root));
+        try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.mapping)), fig_node_kind(out_doc, root));
         try std.testing.expectEqual(@as(usize, 2), fig_node_child_count(out_doc, root));
     }
     // ZON
@@ -3812,7 +3813,7 @@ test "parse c abi reads toml and zon" {
         try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.zon), &out_doc));
         defer fig_document_destroy(out_doc);
         const root = fig_document_root(out_doc);
-        try std.testing.expectEqual(FigNodeKind.mapping, fig_node_kind(out_doc, root));
+        try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.mapping)), fig_node_kind(out_doc, root));
     }
 }
 
@@ -3828,7 +3829,7 @@ test "parse c abi reads json5 and rejects it under strict json" {
     try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.json5), &out_doc));
     defer fig_document_destroy(out_doc);
     const root = fig_document_root(out_doc);
-    try std.testing.expectEqual(FigNodeKind.mapping, fig_node_kind(out_doc, root));
+    try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.mapping)), fig_node_kind(out_doc, root));
     try std.testing.expectEqual(@as(usize, 2), fig_node_child_count(out_doc, root));
 
     var strict_doc: ?*FigDocument = null;
@@ -3842,27 +3843,27 @@ test "fig_node_extended recovers datetime and char-literal scalars" {
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
 
-    // TOML local date: kind still reports STRING; fig_node_extended recovers it.
+    // TOML local date: kind reports EXTENDED; fig_node_extended says which.
     {
         var out_doc: ?*FigDocument = null;
         const src = "d = 2026-06-18\n";
         try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.toml), &out_doc));
         defer fig_document_destroy(out_doc);
         const val = fig_keyvalue_value(out_doc, fig_node_first_child(out_doc, fig_document_root(out_doc)));
-        try std.testing.expectEqual(FigNodeKind.string, fig_node_kind(out_doc, val));
+        try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.extended)), fig_node_kind(out_doc, val));
         try std.testing.expect(fig_node_extended(out_doc, val, &kind, &ptr, &len));
         try std.testing.expectEqual(@intFromEnum(FigExtKind.local_date), kind);
         try std.testing.expectEqualStrings("2026-06-18", ptr[0..len]);
     }
 
-    // ZON char literal: kind reports INT; fig_node_extended recovers the codepoint.
+    // ZON char literal: kind reports EXTENDED; fig_node_extended gives the codepoint.
     {
         var out_doc: ?*FigDocument = null;
         const src = ".{ .c = 'a' }";
         try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.zon), &out_doc));
         defer fig_document_destroy(out_doc);
         const val = fig_keyvalue_value(out_doc, fig_node_first_child(out_doc, fig_document_root(out_doc)));
-        try std.testing.expectEqual(FigNodeKind.int, fig_node_kind(out_doc, val));
+        try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.extended)), fig_node_kind(out_doc, val));
         try std.testing.expect(fig_node_extended(out_doc, val, &kind, &ptr, &len));
         try std.testing.expectEqual(@intFromEnum(FigExtKind.char_literal), kind);
         try std.testing.expectEqualStrings("97", ptr[0..len]);
@@ -4637,13 +4638,13 @@ test "fig_parse empty input is judged per format" {
         var out_doc: ?*FigDocument = null;
         try std.testing.expectEqual(FigStatus.ok, fig_parse(null, 0, @intFromEnum(FigFormat.yaml), &out_doc));
         defer fig_document_destroy(out_doc);
-        try std.testing.expectEqual(FigNodeKind.null_, fig_node_kind(out_doc, fig_document_root(out_doc)));
+        try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.null_)), fig_node_kind(out_doc, fig_document_root(out_doc)));
     }
     if (comptime build_options.lang_toml) {
         var out_doc: ?*FigDocument = null;
         try std.testing.expectEqual(FigStatus.ok, fig_parse(null, 0, @intFromEnum(FigFormat.toml), &out_doc));
         defer fig_document_destroy(out_doc);
-        try std.testing.expectEqual(FigNodeKind.mapping, fig_node_kind(out_doc, fig_document_root(out_doc)));
+        try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.mapping)), fig_node_kind(out_doc, fig_document_root(out_doc)));
         try std.testing.expectEqual(@as(usize, 0), fig_node_child_count(out_doc, fig_document_root(out_doc)));
     }
 }
@@ -5008,7 +5009,7 @@ test "a runtime language registers through the C ABI and is a peer at every entr
     try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, format, &doc));
     defer fig_document_destroy(doc.?);
     const root = fig_document_root(doc);
-    try std.testing.expectEqual(FigNodeKind.mapping, fig_node_kind(doc, root));
+    try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.mapping)), fig_node_kind(doc, root));
     try std.testing.expectEqual(@as(usize, 2), fig_node_child_count(doc, root));
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;

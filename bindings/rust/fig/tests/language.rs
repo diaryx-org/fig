@@ -367,7 +367,10 @@ fn the_helper_wire_round_trips_describe_parse_print_and_render() {
         &TaggedKv,
         r#"{"op":"render","which":"item","dialect":"taggedkv","value":"v","parent_key":"deps","parent_tag":"!dep"}"#,
     );
-    assert_eq!(resp.get("output").and_then(Value::as_str), Some("!dep|deps|v"));
+    assert_eq!(
+        resp.get("output").and_then(Value::as_str),
+        Some("!dep|deps|v")
+    );
     let resp = helper::handle(&lang, r#"{"op":"parse","dialect":"tinykv","input":"nope"}"#);
     assert_eq!(resp.get("ok").and_then(Value::as_bool), Some(false));
     assert_eq!(
@@ -384,4 +387,70 @@ fn the_helper_wire_round_trips_describe_parse_print_and_render() {
     assert_eq!(lines.len(), 2);
     assert!(lines[0].starts_with("{\"ok\":true,\"description\":"));
     assert!(lines[1].contains("\"rows\":["));
+}
+
+// `tinykv` taking the `$fig` envelope with a local date held natively and
+// a null not: the bits the crate builds from `NativeKinds` are the kinds
+// the core reads back.
+struct DatedKv;
+
+impl Language for DatedKv {
+    fn describe(&self) -> Description {
+        let mut d = TinyKv.describe();
+        d.name = "datedkv".into();
+        d.max_mapping_depth = None;
+        d.lossless = Some(fig::language::NativeKinds {
+            local_date: true,
+            ..Default::default()
+        });
+        d.dialects = vec![Dialect {
+            extensions: vec!["dkv".into()],
+            splice: Splice::Raw,
+            empty_doc_seed: Some(String::new()),
+            ..Dialect::new("datedkv")
+        }];
+        d
+    }
+
+    fn parse(&self, dialect: &str, input: &[u8]) -> Result<NodeTable, LanguageError> {
+        TinyKv.parse(dialect, input)
+    }
+
+    fn print(
+        &self,
+        dialect: &str,
+        table: &NodeTable,
+        options: &PrintOptions,
+    ) -> Result<Vec<u8>, LanguageError> {
+        TinyKv.print(dialect, table, options)
+    }
+}
+
+#[test]
+fn the_lossless_kinds_a_language_declares_are_the_ones_the_core_reads() {
+    let dkv = fig::language::register(DatedKv).expect("registers")[0];
+    let value = Value::Map(vec![
+        ("a".into(), Value::Null),
+        (
+            "d".into(),
+            Value::Extended {
+                kind: fig::ExtKind::LocalDate,
+                text: "2026-09-26".into(),
+            },
+        ),
+        (
+            "t".into(),
+            Value::Extended {
+                kind: fig::ExtKind::LocalTime,
+                text: "12:30:00".into(),
+            },
+        ),
+    ]);
+    let warnings = value
+        .diagnose(dkv, fig::SerializeOptions::default())
+        .unwrap();
+    let paths: Vec<&str> = warnings.iter().map(|w| w.path.as_str()).collect();
+    // The null is dropped and the local time degraded; the local date,
+    // declared native, is neither.
+    assert_eq!(paths, ["a", "t"], "{warnings:?}");
 }

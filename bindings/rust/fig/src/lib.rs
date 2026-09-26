@@ -446,8 +446,8 @@ impl Document {
     }
 
     fn node_to_value(&self, id: FigNodeId) -> Result<Value, Error> {
-        // A format-specific scalar masquerades as a string/int at the `kind`
-        // ABI; recover it faithfully here (the serde path keeps the string/int).
+        // A format-specific scalar keeps its kind here; `kind` reads it as
+        // the string or int it is written as, for the serde path.
         if let Some((kind, text)) = self.extended(id) {
             return Ok(Value::Extended { kind, text });
         }
@@ -487,9 +487,10 @@ impl Document {
             }
             // A bare keyvalue, an invalid id, or an unresolved alias can't stand
             // alone as a value.
-            FigNodeKind::Keyvalue | FigNodeKind::Invalid | FigNodeKind::Alias => {
-                Err(Error::Internal)
-            }
+            FigNodeKind::Keyvalue
+            | FigNodeKind::Invalid
+            | FigNodeKind::Alias
+            | FigNodeKind::Extended => Err(Error::Internal),
         }
     }
 
@@ -502,10 +503,20 @@ impl Document {
         normalize(unsafe { ffi::fig_document_root(self.ptr()) })
     }
 
+    /// The node's kind as the serde path reads it: an extended scalar is
+    /// the string it is written as, or the int a char literal's codepoint
+    /// is, so a struct field of either type takes one. `node_to_value`
+    /// asks `extended` first and keeps the kind.
     pub(crate) fn kind(&self, node: FigNodeId) -> FigNodeKind {
         // `from_c` is the sole gate that turns the raw ABI int into the enum,
         // mapping any unknown/future kind to `Invalid` instead of risking UB.
-        FigNodeKind::from_c(unsafe { ffi::fig_node_kind(self.ptr(), node) })
+        match FigNodeKind::from_c(unsafe { ffi::fig_node_kind(self.ptr(), node) }) {
+            FigNodeKind::Extended => match self.extended(node) {
+                Some((ExtKind::CharLiteral, _)) => FigNodeKind::Int,
+                _ => FigNodeKind::String,
+            },
+            k => k,
+        }
     }
 
     pub(crate) fn first_child(&self, node: FigNodeId) -> Option<FigNodeId> {

@@ -9,7 +9,7 @@
 //!     language — its declarations as fields, its `parse` and `print` as
 //!     function pointers, its renderers as pointers that may be null — and
 //!     `NodeTable` is what `parse` returns and `print` receives: one `NodeRow`
-//!     per node in pre-order plus three side tables, which is `Document`
+//!     per node in pre-order plus four side tables, which is `Document`
 //!     restated as values (proposal §4.1). They are `extern struct`s because
 //!     they ARE the C ABI: `c_api.zig` re-exports them under their `Fig*`
 //!     names, fig.h states them, and `zig build abi-check` holds the two
@@ -40,6 +40,7 @@
 //! naming one that does not exist is refused at conversion.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const AST = @import("../ast/ast.zig");
 const Document = @import("../document.zig");
@@ -58,9 +59,25 @@ const ExtKind = Node.Kind.Extended.ExtKind;
 // Every struct below is `extern`, and every one is stated in fig.h under the
 // `Fig` prefix. A field is added at the END of a struct only, and a field
 // never changes meaning. Changing a field's meaning is a bump of
-// `vtable_version`; appending one is not, where only fig writes the struct
-// and a language only reads it (`PrintOptions`) — an older language never
-// reads past what it knows. `Str` and `CSpan`
+// `vtable_version`; appending one is not, because every struct that can
+// grow says how much of itself it carries:
+//
+//   * A record a LANGUAGE writes and fig reads (`VTable`, `SyntaxDesc`,
+//     `DialectDesc` through `VTable.dialect_size`, `NodeRow` through
+//     `NodeTable.row_size`) carries its writer's `sizeof`. fig reads the
+//     prefix it covers and takes the declared default for every field past
+//     it (`gated`), so a language built against an older header registers
+//     on a newer fig unchanged, and one built against a newer header on an
+//     older fig is read as far as that fig knows.
+//   * A record FIG writes and a language reads (`PrintOptions`,
+//     `RenderRequest`, `NodeTable` on both sides) carries fig's `sizeof`,
+//     and a language reads a field only when `size` covers it — the rule
+//     `FigError` has always had.
+//
+// A struct embedded by value in one that can grow (`CommentsDesc` inside
+// `SyntaxDesc`) and the rows of the side tables (`CommentRow`, `RegionRow`,
+// `MentionRow`, `DirectiveRow`) are frozen: what they would gain goes at
+// the end of the record that holds them instead. `Str` and `CSpan`
 // are the same two-word records fig.h has carried as `FigStr` and `FigSpan`
 // since 2.x, restated here so this file is a leaf.
 
@@ -137,8 +154,8 @@ pub const no_depth_limit: c_int = -1;
 /// precedes its children and a keyvalue is followed by its key row and then
 /// its value row.
 pub const NodeRow = extern struct {
-    /// `RowKind`. For an extended scalar, the kind `fig_node_kind` would
-    /// report (`string`, or `int` for a char literal); `ext_kind` decides.
+    /// `RowKind`. For an extended scalar, `string` (`int` for a char
+    /// literal), and `ext_kind` decides.
     kind: c_int,
     /// `FigExtKind`, or `no_ext_kind`.
     ext_kind: c_int = no_ext_kind,
@@ -198,10 +215,17 @@ pub const comment_dangling: c_int = 2;
 /// Empty for every format without directives.
 pub const DirectiveRow = extern struct { handle: Str, prefix: Str };
 
-/// What `parse` returns and `print` receives. Zero rows is the empty
-/// document — a format whose empty input is a null document returns one
-/// `null` row instead.
+/// What `parse` returns and `print` receives. At least one row: an empty
+/// document is one `null` row, and a table with none is refused.
 pub const NodeTable = extern struct {
+    /// fig's `sizeof(NodeTable)`, set by fig on the table it hands `parse`
+    /// to fill and on the one it hands `print`: a language writes and reads
+    /// only the fields it covers.
+    size: u32 = @sizeOf(NodeTable),
+    /// The stride of `rows`: the `sizeof(NodeRow)` of whoever wrote them —
+    /// the language on the parse side, fig on the print side. A reader
+    /// takes each row's prefix it covers and defaults for the rest.
+    row_size: u32 = @sizeOf(NodeRow),
     rows: ?[*]const NodeRow = null,
     row_count: usize = 0,
     regions: ?[*]const RegionRow = null,
@@ -218,9 +242,26 @@ pub const NodeTable = extern struct {
     /// from `rows` may leave it null.
     owner: ?*anyopaque = null,
 
+    /// The rows, when they were written at this fig's own stride — every
+    /// table fig builds, and every table a language built against this
+    /// header returns. `normalizedRows` reads any stride.
     pub fn rowSlice(self: *const NodeTable) []const NodeRow {
+        std.debug.assert(self.row_size == @sizeOf(NodeRow));
         const p = self.rows orelse return &.{};
         return p[0..self.row_count];
+    }
+
+    /// The rows at whatever stride they were written, as this fig's
+    /// `NodeRow`s: borrowed when the stride is this fig's own, else copied
+    /// into `allocator` with the prefix each row covers and defaults past
+    /// it. Null for a stride too short to hold a row's required fields.
+    pub fn normalizedRows(self: *const NodeTable, allocator: Allocator) Allocator.Error!?[]const NodeRow {
+        if (self.row_size == @sizeOf(NodeRow)) return self.rowSlice();
+        if (self.row_size < requiredSize(NodeRow)) return null;
+        const base: [*]const u8 = @ptrCast(self.rows orelse return &.{});
+        const out = try allocator.alloc(NodeRow, self.row_count);
+        for (out, 0..) |*r, i| r.* = gated(NodeRow, base[i * self.row_size ..][0..self.row_size]);
+        return out;
     }
     pub fn regionSlice(self: *const NodeTable) []const RegionRow {
         const p = self.regions orelse return &.{};
@@ -277,10 +318,11 @@ pub const ErrorInfo = extern struct {
 };
 
 /// The subset of `AST.SerializeOptions` a printer outside core is told. fig
-/// writes it and a language reads it, so a field appended here reaches a
-/// language that knows it and is never read by one that does not — not a
-/// `vtable_version` bump.
+/// writes it and a language reads it: `size` is fig's `sizeof`, and a
+/// language reads a field only when `size` covers it, so a field appended
+/// here is not a `vtable_version` bump in either direction.
 pub const PrintOptions = extern struct {
+    size: u32 = @sizeOf(PrintOptions),
     pretty: bool = true,
     strip_comments: bool = false,
     indent: u8 = 2,
@@ -328,8 +370,10 @@ pub const ClosedContainersDesc = extern struct {
 
 /// `manifest.Syntax`, field for field, with each `?[]const u8` a nullable C
 /// string and each enum its ordinal. A `null` string where the Zig field is
-/// non-optional takes that field's default.
+/// non-optional takes that field's default. `size` is the writer's
+/// `sizeof`; a field past it takes its default here.
 pub const SyntaxDesc = extern struct {
+    size: u32 = @sizeOf(SyntaxDesc),
     /// `comments.style` is required; `line`/`trailing` may be null.
     comments: CommentsDesc,
     kv_sep: ?[*:0]const u8 = null,
@@ -356,32 +400,29 @@ pub const SyntaxDesc = extern struct {
     merge_key: ?[*:0]const u8 = null,
 };
 
-/// `manifest.NativeKinds`: the ten booleans, one per `ExtKind` plus `null`,
-/// in `NativeKinds`' field order. Pinned below.
-pub const NativeKindsDesc = extern struct {
-    null: bool = false,
-    offset_datetime: bool = false,
-    local_datetime: bool = false,
-    local_date: bool = false,
-    local_time: bool = false,
-    enum_literal: bool = false,
-    char_literal: bool = false,
-    number_special: bool = false,
-    plist_date: bool = false,
-    plist_data: bool = false,
-};
+/// `VTable.lossless`: `manifest.NativeKinds` as bits. `lossless_envelope`
+/// says the language takes the `$fig` envelope at all (zero is "no
+/// envelope", `Caps.lossless == null`); `native_null` is a null the format
+/// holds natively; `nativeExt(k)` is `ExtKind` `k`. A bitmask rather than
+/// a struct of booleans because an `ExtKind` added later is a bit a language
+/// that predates it leaves clear, not a field that grows a struct it wrote.
+pub const lossless_envelope: u32 = 1 << 0;
+pub const native_null: u32 = 1 << 1;
+pub fn nativeExt(k: ExtKind) u32 {
+    return @as(u32, 1) << @intCast(2 + @intFromEnum(k));
+}
 
 comptime {
-    // `NativeKindsDesc` is `manifest.NativeKinds` by another name: same
-    // fields, same order, so the conversion below is a field-by-field copy
-    // and a kind added to one without the other fails here.
-    const a = @typeInfo(NativeKindsDesc).@"struct".fields;
-    const b = @typeInfo(manifest.NativeKinds).@"struct".fields;
-    if (a.len != b.len) @compileError("runtime.NativeKindsDesc and manifest.NativeKinds differ in field count");
-    for (a, b) |x, y| {
-        if (!std.mem.eql(u8, x.name, y.name))
-            @compileError("runtime.NativeKindsDesc field '" ++ x.name ++ "' sits where manifest.NativeKinds has '" ++ y.name ++ "'");
-    }
+    // `manifest.NativeKinds` is `null` and then one field per `ExtKind`, in
+    // `ExtKind`'s order; the bits above assume it, and the bits run out at
+    // 30 kinds.
+    const fields = @typeInfo(manifest.NativeKinds).@"struct".fields;
+    const kinds = @typeInfo(ExtKind).@"enum".fields;
+    if (fields.len != kinds.len + 1 or !std.mem.eql(u8, fields[0].name, "null"))
+        @compileError("manifest.NativeKinds is not `null` followed by one field per ExtKind");
+    for (kinds, fields[1..]) |k, f| if (!std.mem.eql(u8, k.name, f.name))
+        @compileError("manifest.NativeKinds field '" ++ f.name ++ "' sits where ExtKind has '" ++ k.name ++ "'");
+    if (kinds.len > 30) @compileError("VTable.lossless has no bit left for another ExtKind");
 }
 
 /// `manifest.Dialect`'s runtime half: what a dialect row of a runtime
@@ -413,11 +454,13 @@ pub const FreeTableFn = *const fn (ctx: ?*anyopaque, table: *NodeTable) callconv
 pub const FreeBytesFn = *const fn (ctx: ?*anyopaque, bytes: Str) callconv(.c) void;
 /// Everything a renderer is told — `manifest.RenderRequest` in the C
 /// shape, with the dialect riding along. fig writes it and a language
-/// reads it, so a field appended here reaches a language that knows it and
-/// is never read by one that does not: not a `vtable_version` bump, as
-/// `PrintOptions` is not. `literal` is a `manifest.Literal` tag name, and
+/// reads it, gated by `size` as `PrintOptions` is, so a field appended
+/// here is not a `vtable_version` bump. `literal` is a `manifest.Literal` tag name, and
 /// is filled for every renderer, though only the value's means anything.
 pub const RenderRequest = extern struct {
+    /// fig's `sizeof(RenderRequest)`: a renderer reads a field only when
+    /// `size` covers it.
+    size: u32 = @sizeOf(RenderRequest),
     dialect: [*:0]const u8,
     indent: Str = .{},
     key: Str = .{},
@@ -445,6 +488,10 @@ pub const RenderFn = *const fn (ctx: ?*anyopaque, request: *const RenderRequest,
 pub const VTable = extern struct {
     /// `vtable_version`. A record with any other value is refused.
     version: u32,
+    /// The writer's `sizeof(VTable)`. fig reads the prefix it covers and
+    /// takes each later field's default (every field after `free_bytes`
+    /// has one); a record too short to reach `free_bytes` is refused.
+    size: u32 = @sizeOf(VTable),
     /// Passed back to every function; opaque to core.
     ctx: ?*anyopaque = null,
 
@@ -454,12 +501,16 @@ pub const VTable = extern struct {
     /// `Caps.max_mapping_depth`; `no_depth_limit` for unbounded. 0 is a
     /// limit: a flat format holds no mapping inside its root.
     max_mapping_depth: c_int = no_depth_limit,
-    /// `Caps.lossless`, or null for no envelope.
-    lossless: ?*const NativeKindsDesc = null,
+    /// `Caps.lossless` as bits (`lossless_envelope`, `native_null`,
+    /// `nativeExt`); 0 for no envelope.
+    lossless: u32 = 0,
     /// Required iff `caps` has the edit bit.
     syntax: ?*const SyntaxDesc = null,
     dialects: [*]const DialectDesc,
     dialect_count: usize,
+    /// The stride of `dialects`: the writer's `sizeof(DialectDesc)`, read
+    /// as `size` is.
+    dialect_size: usize = @sizeOf(DialectDesc),
     /// Required, and at least one: registration runs the harness over
     /// them, and a language that offers none has not shown it parses.
     samples: [*]const Str,
@@ -483,6 +534,35 @@ pub const cap_read: u32 = 1 << 0;
 pub const cap_edit: u32 = 1 << 1;
 pub const cap_serialize: u32 = 1 << 2;
 pub const cap_references: u32 = 1 << 3;
+/// Every bit this fig knows; a record setting another is refused rather
+/// than quietly losing a capability it declares.
+pub const cap_known: u32 = cap_read | cap_edit | cap_serialize | cap_references;
+
+/// The bytes of `T` up to the end of its last field without a default —
+/// the least a writer's `size` must cover.
+pub fn requiredSize(comptime T: type) usize {
+    var end: usize = 0;
+    inline for (@typeInfo(T).@"struct".fields) |f| {
+        if (f.default_value_ptr == null) end = @max(end, @offsetOf(T, f.name) + @sizeOf(f.type));
+    }
+    return end;
+}
+
+/// A `T` read from `bytes`, the record as a writer with `sizeof(T) ==
+/// bytes.len` laid it out: the prefix this fig's `T` shares with it, and
+/// the declared default of every field past what `bytes` covers. The
+/// caller has checked `bytes.len >= requiredSize(T)`.
+pub fn gated(comptime T: type, bytes: []const u8) T {
+    var out: T = undefined;
+    const n = @min(bytes.len, @sizeOf(T));
+    @memcpy(std.mem.asBytes(&out)[0..n], bytes[0..n]);
+    inline for (@typeInfo(T).@"struct".fields) |f| {
+        if (@offsetOf(T, f.name) + @sizeOf(f.type) > n) {
+            if (f.defaultValue()) |d| @field(out, f.name) = d;
+        }
+    }
+    return out;
+}
 
 // ============================================================================
 // THE REGISTRY
@@ -587,8 +667,8 @@ pub const RegisterError = error{
 /// Why the most recent `register` on this thread was refused, for the C
 /// API to report. Thread-local so two hosts registering at once do not
 /// read each other's reason.
-pub threadlocal var last_refusal: [512]u8 = undefined;
-pub threadlocal var last_refusal_len: usize = 0;
+threadlocal var last_refusal: [512]u8 = undefined;
+threadlocal var last_refusal_len: usize = 0;
 
 /// Record why a registration is about to be refused. Public so a host
 /// that builds a vtable from something else (the CLI's helper runner) can
@@ -602,11 +682,25 @@ pub fn lastRefusal() []const u8 {
     return last_refusal[0..last_refusal_len];
 }
 
+/// Forget the last refusal, for a host about to ask something that may
+/// write one.
+pub fn clearRefusal() void {
+    last_refusal_len = 0;
+}
+
 /// Register `vt`. Returns the ABI integer of its first dialect row; the
 /// rest follow it consecutively. See the module doc for what happens in
 /// between.
-pub fn register(allocator: Allocator, vt: *const VTable) RegisterError!c_int {
+pub fn register(allocator: Allocator, raw: *const VTable) RegisterError!c_int {
     last_refusal_len = 0;
+
+    // Build the registration in an arena so a refusal below frees it whole.
+    // The record is read into it first, at this fig's own layout
+    // (`normalize`), and everything after reads that copy.
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    errdefer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const vt = (try normalize(arena, raw)) orelse return error.InvalidLanguage;
     if (!validateVTable(vt)) return error.InvalidLanguage;
 
     mutex.lock();
@@ -634,11 +728,6 @@ pub fn register(allocator: Allocator, vt: *const VTable) RegisterError!c_int {
     if (first_index + vt.dialect_count > max_entries) return error.RegistryFull;
     const first_abi: i64 = @as(i64, Languages.runtime_abi_base) + @as(i64, @intCast(first_index));
 
-    // Build the registration in an arena so a refusal below frees it whole.
-    var arena_state = std.heap.ArenaAllocator.init(allocator);
-    errdefer arena_state.deinit();
-    const arena = arena_state.allocator();
-
     const reg = try arena.create(Registered);
     reg.vt = vt.*;
     reg.name = try arena.dupeZ(u8, name);
@@ -649,7 +738,7 @@ pub fn register(allocator: Allocator, vt: *const VTable) RegisterError!c_int {
         .serialize = vt.caps & cap_serialize != 0,
         .references = vt.caps & cap_references != 0,
         .max_mapping_depth = if (vt.max_mapping_depth < 0) null else @intCast(vt.max_mapping_depth),
-        .lossless = if (vt.lossless) |l| nativeKindsOf(l) else null,
+        .lossless = nativeKindsOf(vt.lossless),
     };
     reg.syntax = if (vt.syntax) |s| try syntaxOf(arena, s) else null;
     const samples = try arena.alloc([]const u8, vt.sample_count);
@@ -710,10 +799,14 @@ pub fn register(allocator: Allocator, vt: *const VTable) RegisterError!c_int {
 /// `entryAt` on that thread only.
 threadlocal var checking: ?struct { from: usize, to: usize } = null;
 
-/// TESTS ONLY. Drop every registration. A registered integer is otherwise
-/// valid for the life of the process, and a host that called this while
-/// another thread held a `Language.Type` would be reading freed memory.
-pub fn deinitAll() void {
+/// Drop every registration — in a test build only, where it is how one
+/// test's languages leave the registry before the next. A registered
+/// integer is otherwise valid for the life of the process, and a host that
+/// called this while another thread held a `Language.Type` would be
+/// reading freed memory, so outside a test the name is `void`.
+pub const deinitAll = if (builtin.is_test) deinitAllImpl else void;
+
+fn deinitAllImpl() void {
     mutex.lock();
     defer mutex.unlock();
     const allocator = registry_allocator orelse return;
@@ -768,6 +861,61 @@ pub fn count() usize {
 
 // ── validation ─────────────────────────────────────────────────────────────
 
+/// `raw` read at this fig's own layout, into `arena`: the vtable, its
+/// dialect rows and every `SyntaxDesc` they reach, each through `gated` at
+/// the size its writer declared, and each re-pointed at the copy, so that
+/// `validateVTable` and `register` read full records whatever header the
+/// language was built against. Null, with `last_refusal` filled, for a
+/// record whose version this fig does not speak or whose sizes are too
+/// short to hold its required fields.
+fn normalize(arena: Allocator, raw: *const VTable) Allocator.Error!?*VTable {
+    // `version` and `size` lead every layout this fig reads.
+    const head: [*]const u8 = @ptrCast(raw);
+    const version = std.mem.bytesToValue(u32, head[0..4]);
+    if (version != vtable_version) {
+        refuse("vtable version {d} is not the {d} this fig speaks", .{ version, vtable_version });
+        return null;
+    }
+    const size = std.mem.bytesToValue(u32, head[4..8]);
+    if (size < requiredSize(VTable)) {
+        refuse("the vtable's size {d} is too short to hold its required fields ({d})", .{ size, requiredSize(VTable) });
+        return null;
+    }
+    const vt = try arena.create(VTable);
+    vt.* = gated(VTable, head[0..size]);
+    vt.size = @sizeOf(VTable);
+
+    if (vt.dialect_count > 0) {
+        if (vt.dialect_size < requiredSize(DialectDesc)) {
+            refuse("the vtable's dialect_size {d} is too short to hold a dialect row ({d})", .{ vt.dialect_size, requiredSize(DialectDesc) });
+            return null;
+        }
+        const rows = try arena.alloc(DialectDesc, vt.dialect_count);
+        const base: [*]const u8 = @ptrCast(vt.dialects);
+        for (rows, 0..) |*d, i| {
+            d.* = gated(DialectDesc, base[i * vt.dialect_size ..][0..vt.dialect_size]);
+            if (d.syntax) |sd| d.syntax = (try normalizeSyntax(arena, sd)) orelse return null;
+        }
+        vt.dialects = rows.ptr;
+    }
+    vt.dialect_size = @sizeOf(DialectDesc);
+    if (vt.syntax) |sd| vt.syntax = (try normalizeSyntax(arena, sd)) orelse return null;
+    return vt;
+}
+
+fn normalizeSyntax(arena: Allocator, raw: *const SyntaxDesc) Allocator.Error!?*const SyntaxDesc {
+    const head: [*]const u8 = @ptrCast(raw);
+    const size = std.mem.bytesToValue(u32, head[0..4]);
+    if (size < requiredSize(SyntaxDesc)) {
+        refuse("a syntax record's size {d} is too short to hold its required fields ({d})", .{ size, requiredSize(SyntaxDesc) });
+        return null;
+    }
+    const out = try arena.create(SyntaxDesc);
+    out.* = gated(SyntaxDesc, head[0..size]);
+    out.size = @sizeOf(SyntaxDesc);
+    return out;
+}
+
 /// `Language.validate`, at runtime, over a record rather than a type. The
 /// rules are the same rules; where the comptime check reads `@hasDecl`
 /// this reads a pointer for null. Fills `last_refusal` and returns false
@@ -784,6 +932,18 @@ pub fn validateVTable(vt: *const VTable) bool {
     }
     if (vt.caps & cap_read == 0) {
         refuse("'{s}' declares no read capability; a language must at least parse", .{name});
+        return false;
+    }
+    if (vt.caps & ~cap_known != 0) {
+        refuse("'{s}' declares capability bits 0x{x} this fig does not know", .{ name, vt.caps & ~cap_known });
+        return false;
+    }
+    if (vt.lossless & ~knownLosslessBits() != 0) {
+        refuse("'{s}' declares lossless bits 0x{x} this fig does not know", .{ name, vt.lossless & ~knownLosslessBits() });
+        return false;
+    }
+    if (vt.lossless != 0 and vt.lossless & lossless_envelope == 0) {
+        refuse("'{s}' declares native kinds in lossless without the envelope bit", .{name});
         return false;
     }
     if (vt.max_mapping_depth > std.math.maxInt(u8)) {
@@ -823,7 +983,7 @@ pub fn validateVTable(vt: *const VTable) bool {
         refuse("'{s}' declares the serialize capability but no print function", .{name});
         return false;
     }
-    if (vt.caps & cap_serialize == 0 and vt.lossless != null) {
+    if (vt.caps & cap_serialize == 0 and vt.lossless != 0) {
         refuse("'{s}' declares lossless (an envelope target for serialized output) but no serialize capability", .{name});
         return false;
     }
@@ -949,12 +1109,31 @@ fn syntaxOf(arena: Allocator, s: *const SyntaxDesc) Allocator.Error!manifest.Syn
     return out;
 }
 
-fn nativeKindsOf(d: *const NativeKindsDesc) manifest.NativeKinds {
-    var out: manifest.NativeKinds = .{};
-    inline for (@typeInfo(NativeKindsDesc).@"struct".fields) |f| {
-        @field(out, f.name) = @field(d, f.name);
+fn nativeKindsOf(bits: u32) ?manifest.NativeKinds {
+    if (bits & lossless_envelope == 0) return null;
+    var out: manifest.NativeKinds = .{ .null = bits & native_null != 0 };
+    inline for (@typeInfo(ExtKind).@"enum".fields) |k| {
+        @field(out, k.name) = bits & nativeExt(@field(ExtKind, k.name)) != 0;
     }
     return out;
+}
+
+/// `nativeKindsOf`'s inverse, for a host that holds a `manifest.NativeKinds`
+/// and fills a vtable from it.
+pub fn losslessBits(kinds: ?manifest.NativeKinds) u32 {
+    const k = kinds orelse return 0;
+    var bits: u32 = lossless_envelope;
+    if (k.null) bits |= native_null;
+    inline for (@typeInfo(ExtKind).@"enum".fields) |f| {
+        if (@field(k, f.name)) bits |= nativeExt(@field(ExtKind, f.name));
+    }
+    return bits;
+}
+
+fn knownLosslessBits() u32 {
+    var bits: u32 = lossless_envelope | native_null;
+    inline for (@typeInfo(ExtKind).@"enum".fields) |f| bits |= nativeExt(@field(ExtKind, f.name));
+    return bits;
 }
 
 // ── the load-time harness ──────────────────────────────────────────────────
@@ -1056,7 +1235,9 @@ pub const TableError = error{
 /// A `Document` over `source` from a parse's table. Every string is copied
 /// into the AST; the table is not retained.
 pub fn tableToDocument(allocator: Allocator, source: []const u8, table: *const NodeTable) TableError!Document {
-    const rows = table.rowSlice();
+    var stride_arena = std.heap.ArenaAllocator.init(allocator);
+    defer stride_arena.deinit();
+    const rows = (try table.normalizedRows(stride_arena.allocator())) orelse return error.MalformedTable;
     var ast: AST = .{ .allocator = allocator, .root = 0, .nodes = &.{} };
     var owned: std.ArrayList([]const u8) = .empty;
     errdefer {
@@ -1881,7 +2062,9 @@ test "a malformed table is refused, not read" {
 
 /// TESTS ONLY: `tinykv`, for `c_api.zig`'s tests to register through the
 /// exports. Nothing outside a `test` block references it.
-pub const test_language = TinyKv;
+/// `tinykv`, for the tests of other files that register a language. `void`
+/// outside a test build.
+pub const test_language = if (builtin.is_test) TinyKv else void;
 
 const TinyKv = struct {
     pub const Alloc = struct { allocator: Allocator };
@@ -2324,4 +2507,85 @@ test "registration refuses a record that fails validation or the harness" {
     vt2.name = "yaml";
     vt2.dialects = &taken;
     try testing.expectError(error.NameTaken, register(testing.allocator, &vt2));
+}
+
+test "a record from an older or a newer header is read as far as its size says" {
+    defer deinitAll();
+    var alloc: TinyKv.Alloc = .{ .allocator = testing.allocator };
+
+    // An OLDER header: a vtable that ends at `free_bytes` — no render
+    // slots — with garbage where this fig's render slots sit. They must
+    // read as absent, not as the garbage.
+    const Older = extern struct { vt: VTable, pad: [8]u8 };
+    var older: Older = .{ .vt = TinyKv.vtable(&alloc), .pad = undefined };
+    older.vt.size = @offsetOf(VTable, "render_value");
+    @memset(std.mem.asBytes(&older.vt)[older.vt.size..@sizeOf(VTable)], 0xAB);
+    const e = entryByAbi(try register(testing.allocator, &older.vt)).?;
+    try testing.expect(e.language.vt.render_value == null);
+    try testing.expect(e.language.vt.render_key == null);
+    deinitAll();
+
+    // A NEWER header: a vtable, a dialect row and a syntax record each
+    // longer than this fig's, their tails what a later fig would read.
+    const NewerDialect = extern struct { d: DialectDesc, later: u64 };
+    const newer_dialects = [_]NewerDialect{.{ .d = .{ .name = "tinykv", .extensions = &TinyKv.extensions, .splice = 2, .empty_doc_seed = "" }, .later = 0xFFFF }};
+    const NewerSyntax = extern struct { s: SyntaxDesc, later: u64 };
+    var newer_syntax: NewerSyntax = .{ .s = TinyKv.syntax, .later = 0xFFFF };
+    newer_syntax.s.size = @sizeOf(NewerSyntax);
+    const Newer = extern struct { vt: VTable, later: u64 };
+    var newer: Newer = .{ .vt = TinyKv.vtable(&alloc), .later = 0xFFFF };
+    newer.vt.size = @sizeOf(Newer);
+    newer.vt.dialects = @ptrCast(&newer_dialects);
+    newer.vt.dialect_size = @sizeOf(NewerDialect);
+    newer.vt.syntax = &newer_syntax.s;
+    const n = entryByAbi(try register(testing.allocator, &newer.vt)).?;
+    try testing.expectEqualStrings("tkv", n.extensions[0]);
+    try testing.expectEqualStrings("=", n.language.syntax.?.kv_sep.?);
+    deinitAll();
+
+    // Too short to hold what is required: refused, by name.
+    var short = TinyKv.vtable(&alloc);
+    short.size = @offsetOf(VTable, "free_bytes");
+    try testing.expectError(error.InvalidLanguage, register(testing.allocator, &short));
+    try testing.expect(std.mem.indexOf(u8, lastRefusal(), "too short") != null);
+    short = TinyKv.vtable(&alloc);
+    short.dialect_size = 4;
+    try testing.expectError(error.InvalidLanguage, register(testing.allocator, &short));
+    try testing.expect(std.mem.indexOf(u8, lastRefusal(), "dialect_size") != null);
+}
+
+test "a capability or lossless bit this fig does not know is refused" {
+    defer deinitAll();
+    var alloc: TinyKv.Alloc = .{ .allocator = testing.allocator };
+    var vt = TinyKv.vtable(&alloc);
+    vt.caps |= 1 << 20;
+    try testing.expectError(error.InvalidLanguage, register(testing.allocator, &vt));
+    try testing.expect(std.mem.indexOf(u8, lastRefusal(), "capability bits 0x100000") != null);
+    vt = TinyKv.vtable(&alloc);
+    vt.lossless = native_null;
+    try testing.expectError(error.InvalidLanguage, register(testing.allocator, &vt));
+    try testing.expect(std.mem.indexOf(u8, lastRefusal(), "without the envelope bit") != null);
+    vt.lossless = 1 << 31;
+    try testing.expectError(error.InvalidLanguage, register(testing.allocator, &vt));
+    // The envelope with a native null reads back as the manifest says.
+    vt.lossless = lossless_envelope | native_null | nativeExt(.local_date);
+    const e = entryByAbi(try register(testing.allocator, &vt)).?;
+    const kinds = e.language.caps.lossless.?;
+    try testing.expect(kinds.null and kinds.local_date and !kinds.offset_datetime);
+    try testing.expectEqual(vt.lossless, losslessBits(kinds));
+}
+
+test "rows written at another stride are read as far as the stride says" {
+    const Wide = extern struct { row: NodeRow, later: u64 };
+    const rows = [_]Wide{
+        .{ .row = .{ .kind = @intFromEnum(RowKind.string), .parent = no_node, .span = .{ .start = 0, .end = 1 }, .text = Str.of("x") }, .later = 7 },
+    };
+    const wide: NodeTable = .{ .row_size = @sizeOf(Wide), .rows = @ptrCast(&rows), .row_count = 1 };
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const got = (try wide.normalizedRows(arena.allocator())).?;
+    try testing.expectEqualStrings("x", got[0].text.slice().?);
+    // A stride that stops before `span` holds no row.
+    const narrow: NodeTable = .{ .row_size = @offsetOf(NodeRow, "span"), .rows = @ptrCast(&rows), .row_count = 1 };
+    try testing.expect((try narrow.normalizedRows(arena.allocator())) == null);
 }

@@ -295,7 +295,7 @@ pub fn resolveExtension(ext: []const u8) ?Format {
 pub fn ensure(c: *Configured) ?Format {
     if (c.entry) |e| return types.runtimeFormat(e);
     if (c.failure != null) return null;
-    Runtime.last_refusal_len = 0;
+    Runtime.clearRefusal();
     const e = register(c) catch |err| {
         // Whatever refused it wrote the reason, on either side of the
         // registry; an error that reached here without one is its own name.

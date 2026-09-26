@@ -18,6 +18,11 @@
 //!                                     internal `{ path, version }` pin
 //!   * `bindings/typescript/package.json` and `bindings/wasi/package.json`
 //!   * both `package-lock.json` files — the root `version` and `packages[""]`
+//!   * `bindings/nushell/Cargo.toml`  the `fig = { path, version }` pin: the
+//!                                     plugin is its own workspace on its own
+//!                                     version, and depends on fig by path
+//!   * `bindings/nushell/Cargo.lock`  the locked version of each fig crate it
+//!                                     reaches by path, so `--locked` still builds
 //!
 //! `FIG_ABI_VERSION` / `abi_version` is deliberately not here: it is the C ABI's
 //! own contract integer, bumped only on a breaking ABI change, and it has no tag.
@@ -47,6 +52,8 @@ const targets = [_][]const u8{
     "bindings/typescript/package-lock.json",
     "bindings/wasi/package.json",
     "bindings/wasi/package-lock.json",
+    "bindings/nushell/Cargo.toml",
+    "bindings/nushell/Cargo.lock",
 };
 
 /// A half-open `[start, end)` byte range into the text a locator was given.
@@ -147,6 +154,12 @@ pub fn plan(
         }
     } else if (std.mem.endsWith(u8, rel, "README.md")) {
         try out.append(arena, .{ .range = frontmatterVersionRange(text) orelse return error.FieldNotFound, .value = version_str, .what = "frontmatter version" });
+    } else if (std.mem.eql(u8, rel, "bindings/nushell/Cargo.toml")) {
+        try out.append(arena, .{ .range = cargoPathPinRange(text, "fig") orelse return error.FieldNotFound, .value = version_str, .what = "the fig dependency pin" });
+    } else if (std.mem.endsWith(u8, rel, "Cargo.lock")) {
+        var locked: std.ArrayList(Range) = .empty;
+        if (try cargoLockFigRanges(text, arena, &locked) == 0) return error.FieldNotFound;
+        for (locked.items) |r| try out.append(arena, .{ .range = r, .value = version_str, .what = "a fig crate's locked version" });
     } else if (std.mem.endsWith(u8, rel, "Cargo.toml")) {
         try out.append(arena, .{ .range = cargoWorkspaceVersionRange(text) orelse return error.FieldNotFound, .value = version_str, .what = "[workspace.package] version" });
         var pins: std.ArrayList(Range) = .empty;
@@ -295,6 +308,51 @@ pub fn cargoInternalPinRanges(text: []const u8, arena: std.mem.Allocator, out: *
     return count;
 }
 
+/// The `version = "…"` of the `name = { path = "…", version = "…" }` line: a
+/// dependency on one of this repository's crates from outside its workspace.
+/// A line naming a crate whose name only starts with `name` does not match.
+pub fn cargoPathPinRange(text: []const u8, name: []const u8) ?Range {
+    var i: usize = 0;
+    while (i < text.len) {
+        const nl = std.mem.indexOfScalarPos(u8, text, i, '\n') orelse text.len;
+        const line = text[i..nl];
+        const trimmed = std.mem.trimStart(u8, line, " \t");
+        if (std.mem.startsWith(u8, trimmed, name)) {
+            const rest = std.mem.trimStart(u8, trimmed[name.len..], " \t");
+            if (std.mem.startsWith(u8, rest, "=") and std.mem.indexOf(u8, line, "path = \"") != null) {
+                const ver = std.mem.indexOfPos(u8, text[0..nl], i, "version") orelse return null;
+                const veq = std.mem.indexOfScalarPos(u8, text[0..nl], ver, '=') orelse return null;
+                return quotedRangeAfter(text[0..nl], veq + 1);
+            }
+        }
+        i = nl + 1;
+    }
+    return null;
+}
+
+/// The `version = "…"` of every `[[package]]` in a Cargo.lock that is one of
+/// fig's crates (`fig`, `fig-*`) reached by path — a package with no `source`
+/// line. A fig crate from a registry carries a `source`, and is left alone.
+pub fn cargoLockFigRanges(text: []const u8, arena: std.mem.Allocator, out: *std.ArrayList(Range)) !usize {
+    var count: usize = 0;
+    var at: usize = 0;
+    while (std.mem.indexOfPos(u8, text, at, "[[package]]")) |start| {
+        const end = std.mem.indexOfPos(u8, text, start + 1, "[[package]]") orelse text.len;
+        const block = text[start..end];
+        at = end;
+        if (std.mem.indexOf(u8, block, "\nsource = ") != null) continue;
+        const name_at = std.mem.indexOf(u8, block, "\nname = ") orelse continue;
+        const name = quotedRangeAfter(block, name_at + 1) orelse continue;
+        const n = block[name.start..name.end];
+        if (!std.mem.eql(u8, n, "fig") and !std.mem.startsWith(u8, n, "fig-")) continue;
+        const ver_at = std.mem.indexOf(u8, block, "\nversion = ") orelse continue;
+        const ver = quotedRangeAfter(block, ver_at + 1) orelse continue;
+        try out.append(arena, .{ .start = start + ver.start, .end = start + ver.end });
+        count += 1;
+    }
+    return count;
+}
+
 /// The string after the first `"version"` key at or after `from` in a JSON file.
 pub fn jsonVersionRange(text: []const u8, from: usize) ?Range {
     const at = std.mem.indexOfPos(u8, text, from, "\"version\"") orelse return null;
@@ -425,4 +483,52 @@ test "package-lock.json: both copies of the package's own version" {
     defer std.testing.allocator.free(got);
     try std.testing.expect(std.mem.count(u8, got, "\"version\": \"5.0.0\"") == 2);
     try std.testing.expect(std.mem.indexOf(u8, got, "\"version\": \"5.9.0\"") != null);
+}
+
+test "nushell Cargo.toml: the fig pin, not a crate whose name starts with fig" {
+    const src =
+        \\[package]
+        \\name = "nu_plugin_fig"
+        \\version = "0.1.0"
+        \\
+        \\[dependencies]
+        \\figment = { path = "../figment", version = "1.0.0" }
+        \\fig = { path = "../rust/fig", version = "5.0.0" }
+        \\
+    ;
+    const got = try applied("bindings/nushell/Cargo.toml", src, "5.1.0");
+    defer std.testing.allocator.free(got);
+    try std.testing.expect(std.mem.indexOf(u8, got, "fig = { path = \"../rust/fig\", version = \"5.1.0\" }") != null);
+    try std.testing.expect(std.mem.indexOf(u8, got, "version = \"0.1.0\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, got, "version = \"1.0.0\"") != null);
+}
+
+test "Cargo.lock: fig's path crates, not the root or a registry package" {
+    const src =
+        \\[[package]]
+        \\name = "fig"
+        \\version = "5.0.0"
+        \\dependencies = [
+        \\ "fig-sys",
+        \\]
+        \\
+        \\[[package]]
+        \\name = "fig-sys-wasm32"
+        \\version = "5.0.0"
+        \\
+        \\[[package]]
+        \\name = "figment"
+        \\version = "5.0.0"
+        \\source = "registry+https://github.com/rust-lang/crates.io-index"
+        \\
+        \\[[package]]
+        \\name = "nu_plugin_fig"
+        \\version = "0.1.0"
+        \\
+    ;
+    const got = try applied("bindings/nushell/Cargo.lock", src, "5.1.0");
+    defer std.testing.allocator.free(got);
+    try std.testing.expectEqual(@as(usize, 2), std.mem.count(u8, got, "version = \"5.1.0\""));
+    try std.testing.expect(std.mem.indexOf(u8, got, "name = \"figment\"\nversion = \"5.0.0\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, got, "version = \"0.1.0\"") != null);
 }

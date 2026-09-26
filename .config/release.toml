@@ -24,7 +24,9 @@ mirrors = ["bindings/rust/Cargo.toml"]
 
 # Everything else the version reaches, which no Cargo-manifest rewrite finds:
 # the figl source build.zig.zon is generated from, fig.h's FIG_VERSION_*
-# macros, README.md's frontmatter, both package.json files and their lockfiles.
+# macros, README.md's frontmatter, both package.json files and their lockfiles,
+# and the nushell plugin's path pin on fig and its lockfile's fig crates (the
+# plugin is a workspace of its own, on its own version).
 # `zig build version-sync` copies the zon's version into each of them
 # (tools/version-sync.zig), and `zig build version-check` — part of `zig build
 # check` — fails on any that disagrees. It writes bindings/rust/Cargo.toml too,
@@ -39,6 +41,8 @@ extra_version_files = [
   "bindings/typescript/package-lock.json",
   "bindings/wasi/package.json",
   "bindings/wasi/package-lock.json",
+  "bindings/nushell/Cargo.toml",
+  "bindings/nushell/Cargo.lock",
 ]
 
 # fig keeps its own copy of the cliff config, differing from the shared one in

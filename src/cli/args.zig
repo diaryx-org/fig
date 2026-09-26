@@ -632,9 +632,20 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
     if (std.mem.eql(u8, action_str, "help") or std.mem.eql(u8, action_str, "--help") or std.mem.eql(u8, action_str, "-h")) {
         config.action = .help;
         config.options = .{ .help = .{ .requested_help = true } };
+        // Nothing follows but a repeated `--help` (`fig help --help`): strict
+        // like every other action, so `fig help --bogus` is not a silent 0.
+        while (args.next()) |arg| {
+            if (isHelp(arg)) continue;
+            log.err("{s} takes no arguments; unexpected argument: {s}\n", .{ action_str, arg });
+            return ArgError.SurplusArgument;
+        }
     } else if (std.mem.eql(u8, action_str, "version") or std.mem.eql(u8, action_str, "--version") or std.mem.eql(u8, action_str, "-v")) {
         config.action = .version;
         config.options = .{ .version = .{} };
+        if (args.next()) |arg| {
+            log.err("{s} takes no arguments; unexpected argument: {s}\n", .{ action_str, arg });
+            return ArgError.SurplusArgument;
+        }
     } else if (std.mem.eql(u8, action_str, "replace") or std.mem.eql(u8, action_str, "rename")) {
         // `replace` swaps the value at a path; `rename` renames the key there.
         // One operation each — no flag turns one into the other (cli-5 §7).

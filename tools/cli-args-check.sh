@@ -52,6 +52,9 @@ exits "fmt --bogus" 2 fmt --bogus f.yaml
 exits "convert --bogus" 2 convert --bogus -o json f.yaml
 exits "patch --bogus" 2 patch --bogus f.yaml orig.yaml
 exits "lang --bogus" 2 lang --bogus
+exits "help --bogus" 2 help --bogus
+exits "--help --bogus" 2 --help --bogus
+exits "version --bogus" 2 version --bogus
 
 # One positional past the action's last is a usage error.
 exits "get surplus" 2 get f.yaml a b
@@ -64,6 +67,10 @@ exits "comment surplus" 2 comment f.yaml a hi there
 exits "comment --get surplus" 2 comment --get f.yaml a b
 exits "lang table surplus" 2 lang table f.yaml g.yaml
 exits "lang verb" 2 lang bogus
+exits "help surplus" 2 help set
+exits "version surplus" 2 version extra
+exits "--version surplus" 2 --version extra
+exits "help --help" 0 help --help
 cmp -s f.yaml orig.yaml || fail "a refused command line changed f.yaml"
 
 # `--` ends the flags; `-` is stdin; a negative number is a value.

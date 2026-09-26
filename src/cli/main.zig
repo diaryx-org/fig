@@ -218,6 +218,12 @@ pub fn main(init: std.process.Init) !void {
         },
         // Said what was wrong with it already (`args.pathArg`).
         ArgError.InvalidPath => std.process.exit(2),
+        // `help`/`version` with an argument after them: said which already.
+        ArgError.SurplusArgument => {
+            try stderr_terminal.writer.writeAll("See `fig --help`.\n");
+            try stderr_terminal.writer.flush();
+            std.process.exit(2);
+        },
         else => return err,
     };
 

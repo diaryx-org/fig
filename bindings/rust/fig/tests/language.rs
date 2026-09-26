@@ -215,10 +215,9 @@ fn a_rust_language_is_a_peer_at_every_entry_point() {
 
     // Registering the name again is refused with the reason.
     match fig::language::register(TinyKv) {
-        Err(Error::Language(failure)) => assert!(
-            failure.message.contains("already registered"),
-            "{failure}"
-        ),
+        Err(Error::Language(failure)) => {
+            assert!(failure.message.contains("already registered"), "{failure}")
+        }
         other => panic!("expected a refusal, got {other:?}"),
     }
 }

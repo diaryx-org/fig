@@ -14,7 +14,7 @@
 // forbids synchronous compilation of modules >4 KB, so there a caller must
 // `await init()` once before any other call — see `init`.
 import { WASM_BASE64 } from "./wasm-bytes.ts";
-import type { SerializeOptions } from "./types.ts";
+import type { ParseDetail, SerializeOptions } from "./types.ts";
 
 /** A fig C ABI status code. `Ok` is 0; everything else is a failure — an
  *  unnamed value included (see the unknown-values rule atop types.ts). */
@@ -438,8 +438,11 @@ export function allocFigError(frame: Frame): number {
   dv().setUint32(ptr, FIG_ERROR_SIZE, true);
   return ptr;
 }
-/** Decode a filled FigError. `byte_offset`/`line`/`column` of 0 mean "unknown"
- *  and surface as `undefined`. */
+/** Decode a filled FigError. The C struct spells "unknown" as 0 in
+ *  `byte_offset`/`line`/`column` (fig.h), so each surfaces as `undefined`
+ *  when 0. For the 1-based line and column that is exact; for the offset it
+ *  folds a real offset 0 into "unknown", which the struct gives no way to
+ *  tell apart (see `ParseDetail`). */
 export function readFigError(ptr: number): {
   code: number;
   message: string;
@@ -461,6 +464,34 @@ export function readFigError(ptr: number): {
     line: line !== 0 ? line : undefined,
     column: column !== 0 ? column : undefined,
   };
+}
+
+/** Why `input` fails to parse as `format`, as `fig_parse_ex` reports it, or
+ *  `null` when it parses (or fails with nothing to say).
+ *
+ *  The editor and embed constructors (`fig_editor_create`, `fig_embed_open`,
+ *  `fig_embed_open_or_init`) return a bare status: the C ABI has no `_ex`
+ *  twin for them. Their parse is the one `fig_parse_ex` runs, so on a
+ *  `ParseError` the binding asks it again for the message and location
+ *  rather than throw a bare "parse error". Only on the failure path. */
+export function probeParse(input: Uint8Array, format: number): ParseDetail | null {
+  const frame = new Frame();
+  try {
+    const ptr = frame.bytes(input);
+    const outDoc = frame.alloc(4);
+    const err = allocFigError(frame);
+    const status = ensure().fig_parse_ex(ptr, input.length, format, outDoc, err);
+    if (status === Status.Ok) {
+      const doc = readU32(outDoc);
+      if (doc !== 0) ensure().fig_document_destroy(doc);
+      return null;
+    }
+    const e = readFigError(err);
+    if (e.message === "" && e.byteOffset === undefined) return null;
+    return { message: e.message, byteOffset: e.byteOffset, line: e.line, column: e.column };
+  } finally {
+    frame.dispose();
+  }
 }
 
 // FigWarning on wasm32: u32 size; i32 code; i32 cause; ptr path; usize path_len;

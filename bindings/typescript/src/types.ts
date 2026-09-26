@@ -181,9 +181,19 @@ const STATUS_MESSAGE: Record<number, string> = {
   [Status.InternalError]: "internal error",
 };
 
-/** Extra detail from a parse failure (`fig_parse_ex` / `FigError`). `byteOffset`/
- *  `line`/`column` are present only when the core reports them (not yet — offset
- *  plumbing is a planned core follow-up). */
+/** Extra detail from a failure, as the core reports it in a `FigError` struct.
+ *
+ *  `message` is the core's one-line diagnostic. `byteOffset` locates the
+ *  failure in the input, and is reported today by a runtime language's
+ *  refusal (a `LanguageError`'s offset) — the compiled parsers report a
+ *  message and no location yet. `line`/`column` (1-based) are present only
+ *  when the core reports them.
+ *
+ *  An absent field is `undefined`, never 0. The C struct itself spells
+ *  "unknown" as 0 in all three fields, which is unambiguous for the 1-based
+ *  `line`/`column` but not for `byteOffset`: a refusal at the very first byte
+ *  reaches this binding exactly as "no offset" does, and so surfaces as
+ *  `undefined`. */
 export interface ParseDetail {
   message?: string | undefined;
   byteOffset?: number | undefined;
@@ -191,14 +201,20 @@ export interface ParseDetail {
   column?: number | undefined;
 }
 
-/** An error carrying the originating fig {@link Status} code, plus (for parse
- *  failures) the core's message and source location when available. */
+/** An error carrying the originating fig {@link Status} code and the
+ *  operation that failed, plus — for parse failures — the core's message and
+ *  source location when available. `message` reads `<op>: <what>` with the
+ *  location appended; the parts are also fields, so nothing has to be parsed
+ *  back out of it. */
 export class FigError extends Error {
   readonly status: Status;
+  /** The operation that failed — a C ABI entry point (`fig_parse`,
+   *  `fig_editor_create`) or a method name (`replaceKey`, `moveContainer`). */
+  readonly op: string;
   readonly byteOffset?: number | undefined;
   readonly line?: number | undefined;
   readonly column?: number | undefined;
-  constructor(status: Status, op?: string, detail?: ParseDetail) {
+  constructor(status: Status, op: string, detail?: ParseDetail) {
     const base = detail?.message && detail.message.length > 0
       ? detail.message
       : (STATUS_MESSAGE[status] ?? `status ${status}`);
@@ -210,6 +226,7 @@ export class FigError extends Error {
     super((op ? `${op}: ${base}` : base) + loc);
     this.name = "FigError";
     this.status = status;
+    this.op = op;
     this.byteOffset = detail?.byteOffset;
     this.line = detail?.line;
     this.column = detail?.column;
@@ -217,6 +234,13 @@ export class FigError extends Error {
 }
 
 /** Throw a {@link FigError} unless `status` is `Ok`. */
-export function check(status: number, op?: string): void {
+export function check(status: number, op: string): void {
   if (status !== Status.Ok) throw new FigError(status, op);
 }
+
+/** The {@link FigError} a handle throws when used after `dispose()`: a
+ *  malformed call, so `InvalidArgument`. */
+export function disposedError(what: string): FigError {
+  return new FigError(Status.InvalidArgument, what, { message: "already disposed" });
+}
+

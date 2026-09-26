@@ -10,8 +10,8 @@
 // `Embed.extract` (the byte spans), `Embed.split` (the text) and
 // `Embed.detect` (which archetype) — and so is `Embed.retype`. Release with
 // `dispose`.
-import { check, FigError, Format, Status } from "./types.ts";
-import { fig, Frame, handleRegistry, readOutSlice, readU32, writeU32 } from "./ffi.ts";
+import { check, FigError, Format, Status, type ParseDetail } from "./types.ts";
+import { fig, Frame, handleRegistry, probeParse, readOutSlice, readU32, writeU32 } from "./ffi.ts";
 import { Editable, type EditFns } from "./edit-ops.ts";
 
 const encoder = new TextEncoder();
@@ -187,7 +187,9 @@ export class Embed extends Editable {
     const out = frame.alloc(4);
     try {
       const ptr = frame.bytes(bytes);
-      check(fn(ptr, bytes.length, container, format, out), name);
+      const status = fn(ptr, bytes.length, container, format, out);
+      if (status === Status.ParseError) throw new FigError(status, name, Embed.parseDetail(bytes, kind));
+      check(status, name);
       const handle = new DataView(fig.memory.buffer).getUint32(out, true);
       if (handle === 0) throw new FigError(Status.InternalError, name);
       return new Embed(handle, kind);
@@ -196,8 +198,37 @@ export class Embed extends Editable {
     }
   }
 
+  /** Why opening `kind` in `host` failed with `ParseError`, in the core's
+   *  words where it has some (the open calls report a bare status; see
+   *  `probeParse`). A block that never closes is said so. Otherwise its
+   *  content is parsed again through `fig_parse_ex`, and the offset it
+   *  reports is moved from the content into the host. The `HtmlCode*`
+   *  archetypes are parsed after entity-decoding, which the binding does not
+   *  repeat, so for those the status stands alone. */
+  private static parseDetail(host: Uint8Array, kind: EmbedType): ParseDetail | undefined {
+    let region: Region;
+    try {
+      region = Embed.extract(host, kind);
+    } catch (err) {
+      if (err instanceof FigError && err.status === Status.ParseError) {
+        return { message: `the ${kind} block's opening delimiter has no matching close` };
+      }
+      return undefined;
+    }
+    if (partsOf(kind)[0] === Container.HtmlCode) return undefined;
+    const detail = probeParse(host.subarray(region.content.start, region.content.end), partsOf(kind)[1]);
+    if (detail === null) return undefined;
+    // `line`/`column` would be content-relative; the host-relative offset is
+    // the location that means something to the caller.
+    return {
+      message: detail.message,
+      byteOffset: detail.byteOffset === undefined ? undefined : region.content.start + detail.byteOffset,
+    };
+  }
+
   /** Open the embed of `kind` in `host`. Throws {@link FigError} `NotFound` if
-   *  no such region exists. */
+   *  no such region exists, and `ParseError` — with the core's message where
+   *  it has one — if the block never closes or its content does not parse. */
   static open(host: string | Uint8Array, kind: EmbedType): Embed {
     return Embed.openWith(host, kind, fig.fig_embed_open, "fig_embed_open");
   }

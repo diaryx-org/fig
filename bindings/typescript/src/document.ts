@@ -6,6 +6,7 @@
 // one call for the common case.
 import {
   check,
+  disposedError,
   ExtKind,
   FigError,
   Format,
@@ -85,7 +86,7 @@ export class Document {
   }
 
   private live(): number {
-    if (this.disposed) throw new Error("Document already disposed");
+    if (this.disposed) throw disposedError("Document");
     return this.handle;
   }
 
@@ -287,7 +288,7 @@ export class Document {
       }
       default:
         // A bare keyvalue, an invalid id, or an unresolved alias is not a value.
-        throw new FigError(Status.InternalError, `node kind ${kind}`);
+        throw new FigError(Status.InternalError, "fig_node_kind", { message: `node kind ${kind} is not a value` });
     }
   }
 

@@ -413,8 +413,8 @@ original encoding and canonically encodes only what changed.
 Everything that takes an archetype is a static on `Embed`:
 
 - `Embed.open(host, kind)` opens the block, throwing `NotFound` when there is
-  none and `ParseError` when its content does not
-  parse.
+  none and `ParseError` — with the core's message — when the block never
+  closes or its content does not parse.
 - `Embed.openOrInit(host, kind)` creates the block if none exists, so the first
   `set` lands cleanly. A block that goes at the top is refused
   (`UnsupportedOperation`) when the host already opens with frontmatter of
@@ -616,8 +616,9 @@ for.
 
 ## Errors
 
-Failures throw a `FigError` carrying a `status` (`Status` enum) and, for parse
-failures, the core's diagnostic message and source location when available:
+Failures throw a `FigError` carrying a `status` (`Status` enum), the `op` that
+failed, and, for parse failures, the core's diagnostic message and source
+location when available:
 
 ```ts
 import { Document, Format, FigError, Status } from "@diaryx/fig";
@@ -626,11 +627,23 @@ try {
   Document.parse("{ not valid", Format.Json);
 } catch (err) {
   if (err instanceof FigError && err.status === Status.ParseError) {
+    console.error(err.op);               // "fig_parse"
     console.error(err.message);          // "fig_parse: ..."
-    console.error(err.line, err.column); // when the core reports them
+    console.error(err.byteOffset);       // when the core reports one
+    console.error(err.line, err.column); // likewise
   }
 }
 ```
+
+`Editor.open`, `Embed.open` and `Embed.openOrInit` report a parse failure the
+same way `Document.parse` does, with the core's message; an embed's offset is
+into the host file, not the block. A location the core does not report is
+`undefined`. Today that is every location from a compiled parser, which
+reports a message only; a runtime language's refusal carries its byte offset
+— except an offset of 0, which the C ABI cannot tell apart from "none".
+
+Calling a method on a `Document`, `Editor` or `Embed` after `dispose()` throws
+a `FigError` with `Status.InvalidArgument`.
 
 ## Managing resources
 

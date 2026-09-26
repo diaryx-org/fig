@@ -596,6 +596,35 @@ test("parse error carries the core's message", () => {
   // and is more than the bare status text.
   assert.match(caught!.message, /fig_parse: .+/);
   assert.notEqual(caught!.message, "fig_parse: parse error");
+  assert.equal(caught!.op, "fig_parse");
+});
+
+test("Editor.open and Embed.open carry the parse message Document.parse does", () => {
+  const thrown = (fn: () => unknown): FigError => {
+    try {
+      fn();
+    } catch (e) {
+      assert.ok(e instanceof FigError, String(e));
+      return e;
+    }
+    assert.fail("expected a throw");
+  };
+  const parsed = thrown(() => Document.parse('{"a":', Format.Json));
+  const opened = thrown(() => Editor.open('{"a":', Format.Json));
+  assert.equal(opened.status, Status.ParseError);
+  assert.equal(opened.op, "fig_editor_create");
+  assert.equal(opened.message, parsed.message.replace(/^fig_parse:/, "fig_editor_create:"));
+  assert.notEqual(opened.message, "fig_editor_create: parse error");
+
+  // The content of a block, parsed in the block's own format.
+  const embedded = thrown(() => Embed.open(';;;\n{"a":\n;;;\nbody\n', EmbedType.Semicolons));
+  assert.equal(embedded.status, Status.ParseError);
+  assert.equal(embedded.op, "fig_embed_open");
+  assert.notEqual(embedded.message, "fig_embed_open: parse error");
+  // A block that never closes says so.
+  const unclosed = thrown(() => Embed.openOrInit("---\nk: v\nno close\n", EmbedType.Frontmatter));
+  assert.equal(unclosed.status, Status.ParseError);
+  assert.match(unclosed.message, /no matching close/);
 });
 
 test("version and capabilities", () => {
@@ -764,16 +793,20 @@ test("using a disposed Document throws, and dispose is idempotent", () => {
   const doc = Document.parse("a: 1\n", Format.Yaml);
   doc.dispose();
   doc.dispose(); // idempotent — no throw
-  assert.throws(() => doc.root(), /already disposed/);
-  assert.throws(() => doc.get(["a"]), /already disposed/);
+  const disposed = (err: unknown) =>
+    err instanceof FigError && err.status === Status.InvalidArgument && /already disposed/.test(err.message);
+  assert.throws(() => doc.root(), disposed);
+  assert.throws(() => doc.get(["a"]), disposed);
 });
 
 test("using a disposed Editor throws", () => {
   const ed = Editor.open("a: 1\n", Format.Yaml);
   ed.dispose();
   ed.dispose(); // idempotent
-  assert.throws(() => ed.source(), /already disposed/);
-  assert.throws(() => ed.set(["a"], 2), /already disposed/);
+  const disposed = (err: unknown) =>
+    err instanceof FigError && err.status === Status.InvalidArgument && err.op === "Editor";
+  assert.throws(() => ed.source(), disposed);
+  assert.throws(() => ed.set(["a"], 2), disposed);
 });
 
 // ── whole-container ops ─────────────────────────────────────────────────────

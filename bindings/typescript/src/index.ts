@@ -1,5 +1,7 @@
-// fig — JSON / JSONC / YAML / TOML / ZON parsing, comment-preserving editing,
-// and serialization, backed by the fig core compiled to WebAssembly.
+// fig — parsing, comment-preserving editing, and cross-format serialization
+// of JSON, JSONC, JSON5, YAML, TOML, INI, dotenv, .properties, NestedText and
+// fig (ZON and plist in an opt-in build, and any format registered at
+// runtime), backed by the fig core compiled to WebAssembly.
 //
 // The module loads synchronously and imports nothing host-specific, so it works
 // identically in Node and the browser.

@@ -153,8 +153,9 @@ export class Document {
     return this.readSlice((scratch) => fig.fig_node_string(this.live(), id, scratch, scratch + 4));
   }
 
-  /** If `id` is a format-specific extended scalar (TOML datetime, ZON enum/char
-   *  literal), its {@link ExtKind} and source text; otherwise `null`.
+  /** If `id` is a format-specific extended scalar (TOML datetime, ZON enum or
+   *  char literal, JSON5 non-finite number, plist date or data), its
+   *  {@link ExtKind} and source text; otherwise `null`.
    *  {@link Document#kind} reports these as `NodeKind.Extended`. */
   asExtended(id: number): { ext: ExtKind; text: string } | null {
     const frame = new Frame();

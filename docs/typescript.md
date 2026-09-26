@@ -2,7 +2,7 @@
 title = Using fig in Typescript
 author = adammharris
 created = 2026-07-05T21:35:14-06:00
-updated = 2026-09-12T14:00:00-06:00
+updated = 2026-09-26T16:00:00-06:00
 part_of = [docs](docs.md)
 ```
 
@@ -137,9 +137,10 @@ the build at runtime, since a format can be compiled out:
 ```ts
 import { capabilities, Format } from "@diaryx/fig";
 
-capabilities(Format.Toml); // → { read: true, edit: true, serialize: true }
-capabilities(Format.Zon);  // → { read: false, edit: false, serialize: false } in the published module
-                           // → { read: true, edit: true, serialize: true } after a FIG_WASM_ZON=1 build
+capabilities(Format.Toml); // → { read: true, edit: true, serialize: true, references: false }
+capabilities(Format.Yaml); // → { read: true, edit: true, serialize: true, references: true }
+capabilities(Format.Zon);  // → { read: false, edit: false, serialize: false, references: false } in the published module
+                           // → { read: true, edit: true, serialize: true, references: false } after a FIG_WASM_ZON=1 build
 ```
 
 The four untyped formats — `Ini`, `Dotenv`, `Properties`, `Nestedtext` — parse
@@ -187,8 +188,12 @@ config value faithfully, note:
   "array index" string (e.g. `"0"`, `"10"`), in which case you get a `Map`
   instead, because JS objects would silently reorder those keys. Non-string keys
   always yield a `Map`.
-- **Format-specific scalars** (TOML datetimes, ZON enum/char literals) round-trip
-  as their source text.
+- **Format-specific scalars** — TOML datetimes, ZON enum and char literals,
+  JSON5's non-finite numbers (`Infinity`, `-Infinity`, `NaN`), and plist
+  `<date>` and `<data>` — come back from `toJS` as their source text (a
+  plist `<data>` as its base64 with whitespace stripped). The `Value` tree
+  keeps their kind as well (`{ kind: "extended", ext: ExtKind.…, text }`),
+  which is what lets them round-trip.
 
 When you need full fidelity — distinguishing `int` from `uint`, ordered non-string
 keys, or building datetimes — use the `Value` tree and its `V` constructors:
@@ -724,7 +729,8 @@ manage the handle for you, so no cleanup is needed.
 - `FigError` — the thrown error type. `LanguageError` — how a `Language`
   refuses its input, with a byte offset.
 - Types: `Value`, `JsValue` (read side), `JsInput` (write side), `Segment`,
-  `SerializeOptions`, `Warning`, `Region`, `Span`, `Version`, `Capabilities`.
+  `SerializeOptions`, `Warning`, `ParseDetail`, `Region`, `Span`, `Version`,
+  `Capabilities`.
 - Runtime-language types, the wire's shapes field for field: `Language`,
   `Dialect`, `Syntax`, `Comments`, `CommentDelimiter`, `SectionHeader`,
   `ClosedContainers`, `NativeKinds`, `Renderer`, `Literal`, `RenderArgs`,

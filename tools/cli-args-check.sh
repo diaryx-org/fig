@@ -155,6 +155,25 @@ set -e
 [ "$status" -eq 2 ] || fail "an unspellable key exited $status, want 2"
 case "$err" in *"not a valid key"*) ;; *) fail "an unspellable key was not reported as the key: $err" ;; esac
 
+# `check --strict` fails a file that parses with warnings; `patch` takes
+# --strict, --no-warnings and --strip-comments as `get`/`convert` do.
+printf 'a = 007\n' >w.figl
+exits "check lint" 0 check w.figl
+exits "check --strict lint" 1 check --strict w.figl
+exits "check --strict clean" 0 check --strict f.yaml
+printf '{"a": 1}\n' >t.json
+cp t.json orig.json
+printf '# c\nb: 2\n' >p.yaml
+exits "patch --strict, a dropped comment" 1 patch --strict t.json p.yaml
+exits "patch --strict, a patch-file lint" 1 patch --strict t.json w.figl
+cmp -s t.json orig.json || fail "patch --strict wrote despite a warning"
+case "$("$fig" patch --no-warnings t.json p.yaml 2>&1)" in *warning*) fail "patch --no-warnings still warned" ;; esac
+cp orig.json t.json
+exits "patch --strip-comments --strict" 0 patch --strip-comments --strict t.json p.yaml
+exits "patch --strip-comments --comments ours" 2 patch --strip-comments --comments ours t.json p.yaml
+printf 'x: 1 # keep\n' >y.yaml
+is "patch --strip-comments" "$(printf 'x: 1 # keep\nb: 2')" "$("$fig" patch --strip-comments --dry-run y.yaml p.yaml 2>/dev/null)"
+
 # `get` prints a scalar as its text and a newline, in every format; -o asks
 # for that format's spelling.
 printf '{"s": "hi", "n": 42, "z": null, "o": {"a": 1}}\n' >g.json

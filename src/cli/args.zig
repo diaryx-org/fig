@@ -1088,6 +1088,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         var input_override: ?Format = null;
         var spec: ?[]const u8 = null;
         var quiet = false;
+        var strict = false;
         var requested_help = false;
         var files: Positionals = .{};
         defer files.deinit(allocator);
@@ -1098,6 +1099,8 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 requested_help = true;
             } else if (std.mem.eql(u8, arg, "--quiet") or std.mem.eql(u8, arg, "-q") or std.mem.eql(u8, arg, "--no-warnings")) {
                 quiet = true;
+            } else if (std.mem.eql(u8, arg, "--strict")) {
+                strict = true;
             } else if (std.mem.eql(u8, arg, "--input") or std.mem.eql(u8, arg, "-i")) {
                 const fmt = args.next() orelse {
                     log.err("Missing format value after {s}\n", .{arg});
@@ -1129,6 +1132,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 .format = input_override,
                 .spec = spec,
                 .quiet = quiet,
+                .strict = strict,
                 .requested_help = requested_help,
             },
         };
@@ -1448,6 +1452,9 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         var dry_run = false;
         var diff_mode = false;
         var quiet = false;
+        var strict = false;
+        var strip_comments = false;
+        var comments_given = false;
         var requested_help = false;
         var positionals: Positionals = .{};
         defer positionals.deinit(allocator);
@@ -1460,8 +1467,12 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 dry_run = true;
             } else if (std.mem.eql(u8, arg, "--diff")) {
                 diff_mode = true;
-            } else if (std.mem.eql(u8, arg, "--quiet") or std.mem.eql(u8, arg, "-q")) {
+            } else if (std.mem.eql(u8, arg, "--quiet") or std.mem.eql(u8, arg, "-q") or std.mem.eql(u8, arg, "--no-warnings")) {
                 quiet = true;
+            } else if (std.mem.eql(u8, arg, "--strict")) {
+                strict = true;
+            } else if (std.mem.eql(u8, arg, "--strip-comments")) {
+                strip_comments = true;
             } else if (std.mem.eql(u8, arg, "--lossless")) {
                 lossless = true;
             } else if (std.mem.eql(u8, arg, "--lossy")) {
@@ -1516,6 +1527,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     log.err("Unknown --comments strategy: {s} (ours, theirs, none)\n", .{name});
                     return ArgError.MissingPatchArgument;
                 };
+                comments_given = true;
             } else if (std.mem.eql(u8, arg, "--indent")) {
                 const n = args.next() orelse {
                     log.err("Missing value after {s}\n", .{arg});
@@ -1574,6 +1586,16 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             } else if (!try positionals.add(allocator, "patch", arg)) return ArgError.MissingPatchArgument;
         }
 
+        // `--strip-comments` is `get`/`convert`'s word for what `patch` calls
+        // `--comments none`: no comment from the patch reaches the target.
+        // (The target's own are never stripped — they are what patch keeps.)
+        if (strip_comments) {
+            if (comments_given and patch_options.comments != .none) {
+                log.err("--strip-comments carries no comment from the patch; --comments {s} asks for some. Pass one.\n", .{@tagName(patch_options.comments)});
+                return ArgError.MissingPatchArgument;
+            }
+            patch_options.comments = .none;
+        }
         if (!requested_help and positionals.items.items.len < 2) {
             log.err("patch takes two files: the document to change, then the one supplying the change.\n", .{});
             return ArgError.MissingPatchArgument;
@@ -1615,6 +1637,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             .dry_run = dry_run,
             .diff = diff_mode,
             .quiet = quiet,
+            .strict = strict,
         } };
     } else if (std.mem.eql(u8, action_str, "lang")) {
         config.action = .lang;

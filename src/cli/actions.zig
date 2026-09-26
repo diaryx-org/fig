@@ -540,6 +540,19 @@ pub fn runCheck(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_
         var diag_errors: ?[]const fig.ParseDiagnostic.Rendered = null;
         var diag_warnings: ?[]const fig.ParseDiagnostic.Rendered = null;
         if (parse_dispatch.checkOne(a, io, file, opts.format, opts.spec, &diag_source, &diag_errors, &diag_warnings)) |fmt| {
+            const warned = if (diag_warnings) |ws| ws.len else 0;
+            if (opts.strict and warned > 0) {
+                // `--strict`: the file parses, but a lint fails it like an
+                // error would — each warning, then why the file is not `ok`.
+                any_failed = true;
+                if (!opts.quiet) for (diag_warnings.?) |w| try diag_report.printDiag(stderr_term, diag_source.?, file, w.offset, w.end, "warning", .yellow, w.message, w.short_label);
+                try stderr_term.setColor(.red);
+                try stderr_term.writer.writeAll("error");
+                try stderr_term.setColor(.reset);
+                try stderr_term.writer.print(": {s}: {d} warning(s); --strict fails it\n", .{ file, warned });
+                try stderr_term.writer.flush();
+                continue;
+            }
             if (!opts.quiet) {
                 try stdout_term.setColor(.green);
                 try stdout_term.writer.writeAll("ok");
@@ -642,6 +655,22 @@ pub fn runPatch(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_
     else
         try patch_ops.applyToSlice(a, content, target_format, req);
 
+    // The one thing a silent success would hide: trivia the patch carried that
+    // the target has nowhere to put (strict JSON has no comment syntax at all).
+    // Said before anything is written, so `--strict` can refuse the result.
+    if (patched.stats.comments_dropped > 0) {
+        if (!opts.quiet) try stderr_term.writer.print(
+            "warning: dropped {d} comment(s) the patch carried — {s} has no place for them here.\n",
+            .{ patched.stats.comments_dropped, opts.file },
+        );
+        if (opts.strict) {
+            try stderr_term.writer.print("error: {s} was not patched; --strict aborts on a warning.\n", .{opts.file});
+            try stderr_term.writer.flush();
+            std.process.exit(1);
+        }
+        try stderr_term.writer.flush();
+    }
+
     const changed = !std.mem.eql(u8, content, patched.content);
     if (opts.diff) {
         try diff.unifiedDiff(a, stdout_term.writer, opts.file, content, patched.content, 3);
@@ -654,16 +683,6 @@ pub fn runPatch(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_
         // this write, so there is no truncate-before-read race.
         try input.writePositionalAll(io, patched.content, 0);
         try input.setLength(io, patched.content.len);
-    }
-
-    // The one thing a silent success would hide: trivia the patch carried that
-    // the target has nowhere to put (strict JSON has no comment syntax at all).
-    if (patched.stats.comments_dropped > 0 and !opts.quiet) {
-        try stderr_term.writer.print(
-            "warning: dropped {d} comment(s) the patch carried — {s} has no place for them here.\n",
-            .{ patched.stats.comments_dropped, opts.file },
-        );
-        try stderr_term.writer.flush();
     }
 }
 
@@ -745,7 +764,7 @@ fn loadPatch(
         try reports.reportDiagnostics(stderr_term, source, opts.patch_file);
         return err;
     };
-    try reports.reportWarnings(stderr_term, source, opts.patch_file, opts.quiet, false);
+    try reports.reportWarnings(stderr_term, source, opts.patch_file, opts.quiet, opts.strict);
 
     var ast: *const fig.AST = &doc.ast;
     if (doc.ast.anchors.len > 0) {

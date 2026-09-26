@@ -361,6 +361,9 @@ pub const CheckOptions = struct {
     spec: ?[]const u8 = null,
     /// Suppress the per-file `ok` lines on success; errors still print.
     quiet: bool = false,
+    /// `--strict`: a file that parses with warnings fails (exit 1), as one
+    /// that does not parse does.
+    strict: bool = false,
     requested_help: bool = false,
 };
 
@@ -495,8 +498,11 @@ pub const PatchOptions = struct {
     /// Unlike `fmt`'s, neither preview mode sets a non-zero exit status: a
     /// patch is EXPECTED to change the file, so "it changed" is not a failure.
     diff: bool = false,
-    /// Suppress the summary line and the dropped-comment warning.
+    /// Suppress the patch file's warnings and the dropped-comment warning.
     quiet: bool = false,
+    /// `--strict`: any warning — the patch file's own lints, a comment the
+    /// target has nowhere to put — exits 1 with nothing written.
+    strict: bool = false,
 };
 
 /// A subcommand fig has no action of its own for, on its way to the

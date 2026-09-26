@@ -69,9 +69,12 @@ impl<'de, 'a> Deserializer<'de> for NodeDeserializer<'a> {
             // A bare keyvalue/invalid node, or an unresolved YAML alias (the
             // document was not materialized to expand `*name` references), cannot
             // be deserialized directly.
-            FigNodeKind::Keyvalue | FigNodeKind::Invalid | FigNodeKind::Alias => {
-                Err(Error::Message("malformed document".into()))
-            }
+            FigNodeKind::Keyvalue
+            | FigNodeKind::Invalid
+            | FigNodeKind::Alias
+            // `Document::kind` reads an extended scalar as the string or
+            // int it is written as, so this arm is never reached.
+            | FigNodeKind::Extended => Err(Error::Message("malformed document".into())),
         }
     }
 

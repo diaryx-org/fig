@@ -91,6 +91,8 @@ export enum NodeKind {
   Mapping = 6,
   KeyValue = 7,
   Alias = 8,
+  /** A format-specific scalar; `Document.asExtended` says which. */
+  Extended = 9,
 }
 
 /** A format-specific scalar kind (TOML datetimes, ZON enum/char literals, JSON5

@@ -82,6 +82,8 @@ pub enum FigNodeKind {
     Mapping = 6,
     Keyvalue = 7,
     Alias = 8,
+    /// A format-specific scalar; `fig_node_extended` says which.
+    Extended = 9,
 }
 
 impl FigNodeKind {
@@ -101,6 +103,7 @@ impl FigNodeKind {
             6 => FigNodeKind::Mapping,
             7 => FigNodeKind::Keyvalue,
             8 => FigNodeKind::Alias,
+            9 => FigNodeKind::Extended,
             _ => FigNodeKind::Invalid,
         }
     }
@@ -377,7 +380,7 @@ pub enum FigEmbed {}
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct FigPathSegment {
-    pub kind: i32,
+    pub kind: c_int,
     pub key_ptr: *const u8,
     pub key_len: usize,
     pub index: usize,
@@ -1026,6 +1029,12 @@ pub struct FigDirectiveRow {
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct FigNodeTable {
+    /// fig's `sizeof(FigNodeTable)` on a table fig hands over; write and
+    /// read only the fields it covers.
+    pub size: u32,
+    /// The stride of `rows`: `size_of::<FigNodeRow>()` in a table `parse`
+    /// returns; read the rows `print` is handed at the stride it says.
+    pub row_size: u32,
     pub rows: *const FigNodeRow,
     pub row_count: usize,
     pub regions: *const FigRegionRow,
@@ -1043,6 +1052,8 @@ pub struct FigNodeTable {
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct FigPrintOptions {
+    /// fig's `sizeof`: read a field only when it covers it.
+    pub size: u32,
     pub pretty: bool,
     pub strip_comments: bool,
     pub indent: u8,
@@ -1094,6 +1105,8 @@ pub struct FigClosedContainers {
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct FigSyntax {
+    /// `size_of::<FigSyntax>()`.
+    pub size: u32,
     pub comments: FigComments,
     pub kv_sep: *const c_char,
     pub flow_kv_sep_from_siblings: bool,
@@ -1116,20 +1129,13 @@ pub struct FigSyntax {
     pub merge_key: *const c_char,
 }
 
-/// Mirror of `FigNativeKinds`.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-pub struct FigNativeKinds {
-    pub null_: bool,
-    pub offset_datetime: bool,
-    pub local_datetime: bool,
-    pub local_date: bool,
-    pub local_time: bool,
-    pub enum_literal: bool,
-    pub char_literal: bool,
-    pub number_special: bool,
-    pub plist_date: bool,
-    pub plist_data: bool,
+/// `FigLanguageVTable::lossless`: the language takes the `$fig` envelope.
+pub const FIG_LOSSLESS_ENVELOPE: u32 = 1 << 0;
+/// With the envelope, a null the format holds natively.
+pub const FIG_NATIVE_NULL: u32 = 1 << 1;
+/// With the envelope, the `FigExtKind` `k` held natively.
+pub const fn fig_native_ext(k: u32) -> u32 {
+    1 << (2 + k)
 }
 
 /// Mirror of `FigDialectDesc`.
@@ -1161,10 +1167,12 @@ pub type FigPrintFn = unsafe extern "C" fn(
 pub type FigFreeTableFn = unsafe extern "C" fn(ctx: *mut c_void, table: *mut FigNodeTable);
 pub type FigFreeBytesFn = unsafe extern "C" fn(ctx: *mut c_void, bytes: FigStr);
 /// Mirror of `FigRenderRequest`: everything a renderer is told. fig writes
-/// it and a renderer only reads it.
+/// it, and a renderer reads a field only when `size` covers it.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct FigRenderRequest {
+    /// fig's `sizeof`: read a field only when it covers it.
+    pub size: u32,
     pub dialect: *const c_char,
     pub indent: FigStr,
     pub key: FigStr,
@@ -1189,14 +1197,19 @@ pub type FigRenderFn = unsafe extern "C" fn(
 #[derive(Clone, Copy)]
 pub struct FigLanguageVTable {
     pub version: u32,
+    /// `size_of::<FigLanguageVTable>()`.
+    pub size: u32,
     pub ctx: *mut c_void,
     pub name: *const c_char,
     pub caps: u32,
     pub max_mapping_depth: c_int,
-    pub lossless: *const FigNativeKinds,
+    /// `FIG_LOSSLESS_ENVELOPE` and `FIG_NATIVE_*` bits; 0 for no envelope.
+    pub lossless: u32,
     pub syntax: *const FigSyntax,
     pub dialects: *const FigDialectDesc,
     pub dialect_count: usize,
+    /// `size_of::<FigDialectDesc>()`.
+    pub dialect_size: usize,
     pub samples: *const FigStr,
     pub sample_count: usize,
     pub parse: FigParseFn,

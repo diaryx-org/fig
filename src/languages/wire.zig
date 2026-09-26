@@ -22,6 +22,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 const Runtime = @import("runtime.zig");
+const manifest = @import("manifest.zig");
 const Language = @import("language.zig");
 const AST = @import("../ast/ast.zig");
 const Span = @import("../util/span.zig");
@@ -266,14 +267,14 @@ fn vtableFromDescription(a: Allocator, t: *Transport, desc: std.json.Value) !Run
     // `null` (or absent) is unbounded; 0 is a flat format.
     const depth: c_int = if (o.get("max_mapping_depth")) |d| (if (d == .integer and d.integer >= 0 and d.integer < 256) @intCast(d.integer) else Runtime.no_depth_limit) else Runtime.no_depth_limit;
 
-    var lossless: ?*const Runtime.NativeKindsDesc = null;
+    // An object is the envelope, with the kinds it names held natively.
+    var lossless: u32 = 0;
     if (o.get("lossless")) |l| if (l == .object) {
-        const nk = try a.create(Runtime.NativeKindsDesc);
-        nk.* = .{};
-        inline for (@typeInfo(Runtime.NativeKindsDesc).@"struct".fields) |f| {
-            @field(nk, f.name) = boolOr(l.object, f.name, false);
+        var kinds: manifest.NativeKinds = .{};
+        inline for (@typeInfo(manifest.NativeKinds).@"struct".fields) |f| {
+            @field(kinds, f.name) = boolOr(l.object, f.name, false);
         }
-        lossless = nk;
+        lossless = Runtime.losslessBits(kinds);
     };
 
     var syntax: ?*const Runtime.SyntaxDesc = null;

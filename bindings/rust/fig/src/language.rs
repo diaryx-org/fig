@@ -360,8 +360,9 @@ impl NodeTable {
 #[non_exhaustive]
 pub struct NodeRow {
     pub kind: NodeKind,
-    /// A format-specific scalar's kind; the row's `kind` is then what
-    /// `fig_node_kind` would report (`String`, or `Int` for a char literal).
+    /// A format-specific scalar's kind; the row's `kind` is then the scalar
+    /// it is written as (`String`, or `Int` for a char literal), where
+    /// `fig_node_kind` reports the node as `FIG_NODE_EXTENDED`.
     pub ext_kind: Option<ExtKind>,
     /// `None` on the root only.
     pub parent: Option<u32>,
@@ -835,7 +836,7 @@ struct Registration {
     name: CString,
     caps: u32,
     max_mapping_depth: c_int,
-    lossless: Option<Box<ffi::FigNativeKinds>>,
+    lossless: u32,
     syntax: Option<Box<CSyntax>>,
     dialects: Vec<ffi::FigDialectDesc>,
     /// What each dialect's pointers reach.
@@ -899,6 +900,7 @@ impl CSyntax {
             })
         };
         let c = ffi::FigSyntax {
+            size: std::mem::size_of::<ffi::FigSyntax>() as u32,
             comments: ffi::FigComments {
                 style: match s.comments.style {
                     CommentStyle::Hash => 0,
@@ -992,19 +994,29 @@ impl Registration {
         if desc.caps.references {
             caps |= 1 << 3;
         }
-        let lossless = desc.lossless.map(|l| {
-            Box::new(ffi::FigNativeKinds {
-                null_: l.null,
-                offset_datetime: l.offset_datetime,
-                local_datetime: l.local_datetime,
-                local_date: l.local_date,
-                local_time: l.local_time,
-                enum_literal: l.enum_literal,
-                char_literal: l.char_literal,
-                number_special: l.number_special,
-                plist_date: l.plist_date,
-                plist_data: l.plist_data,
-            })
+        // The envelope bit, then one bit per kind held natively.
+        let lossless = desc.lossless.map_or(0, |l| {
+            let ext = [
+                (l.offset_datetime, ExtKind::OffsetDateTime),
+                (l.local_datetime, ExtKind::LocalDateTime),
+                (l.local_date, ExtKind::LocalDate),
+                (l.local_time, ExtKind::LocalTime),
+                (l.enum_literal, ExtKind::EnumLiteral),
+                (l.char_literal, ExtKind::CharLiteral),
+                (l.number_special, ExtKind::NumberSpecial),
+                (l.plist_date, ExtKind::PlistDate),
+                (l.plist_data, ExtKind::PlistData),
+            ];
+            let mut bits = ffi::FIG_LOSSLESS_ENVELOPE;
+            if l.null {
+                bits |= ffi::FIG_NATIVE_NULL;
+            }
+            for (held, kind) in ext {
+                if held {
+                    bits |= ffi::fig_native_ext(kind.to_c() as u32);
+                }
+            }
+            bits
         });
         let syntax = match &desc.syntax {
             Some(s) => Some(CSyntax::new(s)?),
@@ -1083,16 +1095,15 @@ impl Registration {
             name: self.name.as_ptr(),
             caps: self.caps,
             max_mapping_depth: self.max_mapping_depth,
-            lossless: self
-                .lossless
-                .as_ref()
-                .map_or(std::ptr::null(), |l| &**l as *const _),
+            size: std::mem::size_of::<ffi::FigLanguageVTable>() as u32,
+            lossless: self.lossless,
             syntax: self
                 .syntax
                 .as_ref()
                 .map_or(std::ptr::null(), |s| &s.c as *const _),
             dialects: self.dialects.as_ptr(),
             dialect_count: self.dialects.len(),
+            dialect_size: std::mem::size_of::<ffi::FigDialectDesc>(),
             samples: self.sample_strs.as_ptr(),
             sample_count: self.samples.len(),
             parse: parse_thunk,
@@ -1159,6 +1170,79 @@ fn panic_message(p: Box<dyn std::any::Any + Send>) -> LanguageError {
         .unwrap_or_else(|| "panic".to_owned());
     LanguageError::new(format!("the language panicked: {msg}"))
 }
+
+/// The `T` fig wrote at `p`, which leads with its `size` as a `u32`: the
+/// prefix this crate's `T` shares with fig's, and `fill` past it. A fig
+/// built against another header than this crate's writes a shorter or a
+/// longer record, and neither is read past what both know.
+unsafe fn read_gated<T: Copy>(p: *const T, fill: T) -> T {
+    let size = unsafe { (p as *const u32).read_unaligned() } as usize;
+    unsafe { read_prefix(p, size, fill) }
+}
+
+/// The first `size` bytes at `p` over `fill`, as far as a `T` reaches.
+unsafe fn read_prefix<T: Copy>(p: *const T, size: usize, fill: T) -> T {
+    let mut out = fill;
+    let n = size.min(std::mem::size_of::<T>());
+    unsafe { std::ptr::copy_nonoverlapping(p as *const u8, &mut out as *mut T as *mut u8, n) };
+    out
+}
+
+/// `value` into the `T` fig handed over at `p`, as far as the `size` fig
+/// set on it (its leading `u32`) reaches, and not past it.
+unsafe fn write_gated<T: Copy>(p: *mut T, value: &T) {
+    let size = unsafe { (p as *const u32).read_unaligned() } as usize;
+    let n = size.min(std::mem::size_of::<T>());
+    // The first field is fig's `size`, which stays fig's.
+    let skip = std::mem::size_of::<u32>().min(n);
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            (value as *const T as *const u8).add(skip),
+            (p as *mut u8).add(skip),
+            n - skip,
+        )
+    };
+}
+
+const DEFAULT_PRINT_OPTIONS: ffi::FigPrintOptions = ffi::FigPrintOptions {
+    size: 0,
+    pretty: true,
+    strip_comments: false,
+    indent: 2,
+    width: 80,
+    splice: false,
+};
+
+const EMPTY_STR: ffi::FigStr = ffi::FigStr {
+    ptr: std::ptr::null(),
+    len: 0,
+};
+
+const EMPTY_REQUEST: ffi::FigRenderRequest = ffi::FigRenderRequest {
+    size: 0,
+    dialect: c"".as_ptr(),
+    indent: EMPTY_STR,
+    key: EMPTY_STR,
+    value: EMPTY_STR,
+    literal: c"string".as_ptr(),
+    old_key: EMPTY_STR,
+    parent_key: EMPTY_STR,
+    parent_tag: EMPTY_STR,
+};
+
+const EMPTY_ROW: ffi::FigNodeRow = ffi::FigNodeRow {
+    kind: 0,
+    ext_kind: ffi::FIG_EXT_NONE,
+    parent: ffi::FIG_ROW_NONE,
+    span: ffi::FigSpan::NONE,
+    text: ffi::FigStr::NONE,
+    anchor: ffi::FigStr::NONE,
+    anchor_span: ffi::FigSpan::NONE,
+    tag: ffi::FigStr::NONE,
+    tag_span: ffi::FigSpan::NONE,
+    marker: ffi::FigSpan::NONE,
+    sep: ffi::FigSpan::NONE,
+};
 
 unsafe fn reg_of<'a>(ctx: *mut c_void) -> &'a Registration {
     unsafe { &*(ctx as *const Registration) }
@@ -1297,6 +1381,8 @@ fn table_to_c(table: NodeTable) -> Box<TableHolder> {
 impl TableHolder {
     fn c_table(&self, owner: *mut c_void) -> ffi::FigNodeTable {
         ffi::FigNodeTable {
+            size: std::mem::size_of::<ffi::FigNodeTable>() as u32,
+            row_size: std::mem::size_of::<ffi::FigNodeRow>() as u32,
             rows: self.rows.as_ptr(),
             row_count: self.rows.len(),
             regions: self.regions.as_ptr(),
@@ -1332,10 +1418,20 @@ pub(crate) fn table_from_c(t: &ffi::FigNodeTable) -> Result<NodeTable, LanguageE
             })
         }
     };
-    let rows = if t.rows.is_null() {
-        &[][..]
+    // At the stride fig wrote them, each row's prefix this crate shares.
+    let rows: Vec<ffi::FigNodeRow> = if t.rows.is_null() {
+        Vec::new()
     } else {
-        unsafe { std::slice::from_raw_parts(t.rows, t.row_count) }
+        let stride = t.row_size as usize;
+        (0..t.row_count)
+            .map(|i| unsafe {
+                read_prefix(
+                    (t.rows as *const u8).add(i * stride) as *const ffi::FigNodeRow,
+                    stride,
+                    EMPTY_ROW,
+                )
+            })
+            .collect()
     };
     let regions = if t.regions.is_null() {
         &[][..]
@@ -1442,7 +1538,10 @@ unsafe extern "C" fn parse_thunk(
         Ok(Ok(table)) => {
             let holder = table_to_c(table);
             let owner = Box::into_raw(holder);
-            unsafe { *out = (*owner).c_table(owner as *mut c_void) };
+            let c = unsafe { (*owner).c_table(owner as *mut c_void) };
+            // As far as the `size` fig set on the table, and no further: a
+            // fig built against an older header has a shorter one.
+            unsafe { write_gated(out, &c) };
             0
         }
         Ok(Err(e)) => {
@@ -1491,7 +1590,7 @@ unsafe extern "C" fn print_thunk(
 ) -> c_int {
     let reg = unsafe { reg_of(ctx) };
     let dialect = unsafe { dialect_of(dialect) };
-    let opts = unsafe { &*options };
+    let opts = unsafe { read_gated(options, DEFAULT_PRINT_OPTIONS) };
     let options = PrintOptions {
         pretty: opts.pretty,
         strip_comments: opts.strip_comments,
@@ -1527,7 +1626,7 @@ fn render_thunk_body(
     err: *mut ffi::FigError,
 ) -> c_int {
     let reg = unsafe { reg_of(ctx) };
-    let r = unsafe { &*request };
+    let r = unsafe { read_gated(request, EMPTY_REQUEST) };
     let args = RenderArgs {
         dialect: unsafe { dialect_of(r.dialect) },
         indent: bytes_of(r.indent),

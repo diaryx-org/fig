@@ -110,6 +110,7 @@ static int parse(void *ctx, const char *dialect, FigStr input, FigNodeTable *out
         npending = 0;
         at = end + 1;
     }
+    out->row_size = sizeof(FigNodeRow);
     out->rows = rows;
     out->row_count = nrows;
     out->regions = NULL;
@@ -131,6 +132,12 @@ static void free_table(void *ctx, FigNodeTable *table) {
     free((void *)table->comments);
 }
 
+/* Row `i` of a table fig hands print, read at the stride the table says —
+   the rule for a language built against another header than fig's. */
+static const FigNodeRow *row_at(const FigNodeTable *t, size_t i) {
+    return (const FigNodeRow *)((const char *)t->rows + i * t->row_size);
+}
+
 static int print(void *ctx, const char *dialect, const FigNodeTable *table, const FigPrintOptions *options, FigStr *out, FigError *err) {
     (void)ctx;
     (void)dialect;
@@ -138,16 +145,16 @@ static int print(void *ctx, const char *dialect, const FigNodeTable *table, cons
     size_t cap = 256, len = 0;
     char *buf = malloc(cap);
     for (size_t i = 1; i < table->row_count; i += 3) {
-        if (i + 2 >= table->row_count || table->rows[i].kind != FIG_NODE_KEYVALUE ||
-            table->rows[i + 1].kind != FIG_NODE_STRING || table->rows[i + 2].kind != FIG_NODE_STRING) {
+        if (i + 2 >= table->row_count || row_at(table, i)->kind != FIG_NODE_KEYVALUE ||
+            row_at(table, i + 1)->kind != FIG_NODE_STRING || row_at(table, i + 2)->kind != FIG_NODE_STRING) {
             const char *m = "tinykv holds a flat string map";
             snprintf((char *)err->message, sizeof err->message, "%s", m);
             err->message_len = strlen(m);
             free(buf);
             return FIG_STATUS_UNSUPPORTED_FORMAT;
         }
-        const FigNodeRow *key = &table->rows[i + 1];
-        const FigNodeRow *val = &table->rows[i + 2];
+        const FigNodeRow *key = row_at(table, i + 1);
+        const FigNodeRow *val = row_at(table, i + 2);
         for (size_t c = 0; c < table->comment_count; c++) {
             const FigCommentRow *cr = &table->comments[c];
             if (cr->node == i + 1 && cr->slot == FIG_COMMENT_LEADING) {
@@ -173,6 +180,7 @@ static void free_bytes(void *ctx, FigStr bytes) {
 
 int main(void) {
     static const FigSyntax syntax = {
+        /* size */ sizeof(FigSyntax),
         /* comments */ { 0, { "#", NULL, NULL }, { NULL, NULL, NULL } },
         /* kv_sep */ "=",
         /* flow_kv_sep_from_siblings */ false,
@@ -205,12 +213,14 @@ int main(void) {
     FigLanguageVTable vt;
     memset(&vt, 0, sizeof vt);
     vt.version = FIG_LANGUAGE_VTABLE_VERSION;
+    vt.size = sizeof vt;
     vt.name = "tinykv";
     vt.caps = FIG_CAP_READ | FIG_CAP_EDIT | FIG_CAP_SERIALIZE;
     vt.max_mapping_depth = 0; /* flat: no mapping inside the root (FIG_DEPTH_NONE would be unbounded) */
     vt.syntax = &syntax;
     vt.dialects = dialects;
     vt.dialect_count = 1;
+    vt.dialect_size = sizeof(FigDialectDesc);
     vt.samples = samples;
     vt.sample_count = 2;
     vt.parse = parse;
@@ -253,7 +263,7 @@ int main(void) {
 
     FigEditor *ed = NULL;
     CHECK(fig_editor_create((const uint8_t *)src, sizeof src - 1, format, &ed) == FIG_STATUS_OK);
-    FigPathSegment seg = { 0, (const uint8_t *)"x", 1, 0 };
+    FigPathSegment seg = { FIG_SEGMENT_KEY, (const uint8_t *)"x", 1, 0 };
     CHECK(fig_editor_replace_val(ed, &seg, 1, (const uint8_t *)"10", 2) == FIG_STATUS_OK);
     CHECK(fig_editor_insert_key(ed, NULL, 0, (const uint8_t *)"z", 1, (const uint8_t *)"3", 1) == FIG_STATUS_OK);
     static const char edited[] = "# note\nx=10\ny=two\nz=3\n";

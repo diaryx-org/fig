@@ -153,9 +153,8 @@ export class Document {
   }
 
   /** If `id` is a format-specific extended scalar (TOML datetime, ZON enum/char
-   *  literal), its {@link ExtKind} and source text; otherwise `null`. The plain
-   *  {@link Document#kind} still reports these as `String`/`Int`, so traversal
-   *  checks this first to recover them faithfully. */
+   *  literal), its {@link ExtKind} and source text; otherwise `null`.
+   *  {@link Document#kind} reports these as `NodeKind.Extended`. */
   asExtended(id: number): { ext: ExtKind; text: string } | null {
     const frame = new Frame();
     try {
@@ -250,12 +249,10 @@ export class Document {
 
   private nodeToValue(id: number): Value {
     const kind = this.kind(id);
-    // A format-specific scalar reports as String/Int at the `kind` ABI; recover
-    // it faithfully here (mirrors the Rust binding's `to_value`). Only scalars
-    // can be extended, so skip the extra FFI call for containers.
-    if (kind === NodeKind.String || kind === NodeKind.Int) {
+    if (kind === NodeKind.Extended) {
       const ext = this.asExtended(id);
-      if (ext !== null) return V.extended(ext.ext, ext.text);
+      if (ext === null) throw new FigError(Status.InternalError, "fig_node_extended");
+      return V.extended(ext.ext, ext.text);
     }
     switch (kind) {
       case NodeKind.Null:

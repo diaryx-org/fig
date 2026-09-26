@@ -725,13 +725,12 @@ test "printRuntime hands a runtime printer the tags its lossy strip rebuilt the 
     // Once through each strip `printRuntime` can take: the depth strip the
     // test language's `max_mapping_depth` asks for, then the null strip a
     // `lossless` declaration without `null` asks for.
-    const no_null: R.NativeKindsDesc = .{};
     for ([_]bool{ false, true }) |declares_lossless| {
         defer R.deinitAll();
         var vt = R.test_language.vtable(&alloc);
         inner_print = vt.print;
         vt.print = recordRootTag;
-        if (declares_lossless) vt.lossless = &no_null;
+        if (declares_lossless) vt.lossless = R.lossless_envelope;
         const e = R.entryByAbi(try R.register(t.allocator, &vt)).?;
 
         seen_root_tag_len = 0;

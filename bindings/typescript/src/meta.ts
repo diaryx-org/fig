@@ -22,9 +22,12 @@ export function versionString(): string {
   return readCString(fig.fig_version_string());
 }
 
-/** What this build can do with a format. Reflects inherent support (XML is
- *  reader-only; TOML/ZON parse and serialize but are not editable) and build-time
- *  gating (a format compiled out reports all-`false`). */
+/** What this build can do with a format. Every compiled format reads, edits
+ *  and serializes; what varies is build-time gating — a format compiled out
+ *  (ZON and plist, in the published module) reports all-`false` — and, for a
+ *  runtime language, the `caps` it registered with. `references` is a
+ *  property of the format rather than of the build: YAML alone has it among
+ *  the compiled ones. */
 export interface Capabilities {
   /** `Document.parse` accepts this format. */
   read: boolean;

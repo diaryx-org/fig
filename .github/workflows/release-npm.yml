@@ -30,9 +30,9 @@ jobs:
       with: { version: 0.16.0 }
     - uses: actions/setup-node@v7
       with:
-        # Node 24+: the test suite uses `using` (explicit resource management),
-        # which only parses under `--experimental-transform-types` type
-        # stripping on Node 24 and later.
+        # Node 24+ for the tests, not for the package (engines is >=22): the
+        # suite runs its .ts files under Node's built-in type stripping and
+        # uses `using` (explicit resource management), which Node has from 24.
         node-version: 24
         registry-url: https://registry.npmjs.org
         cache: npm

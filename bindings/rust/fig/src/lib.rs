@@ -108,12 +108,25 @@ pub enum Format {
 pub struct RuntimeFormat(c_int);
 
 impl Format {
-    /// The C ABI integer.
+    /// The C ABI integer: a compiled format's `FigFormat` enumerator, or the
+    /// per-process integer a runtime language was handed.
     pub(crate) fn to_c(self) -> c_int {
-        match self {
-            Format::Runtime(r) => r.0,
-            other => ffi::FigFormat::from(other) as c_int,
-        }
+        let compiled = match self {
+            Format::Json => ffi::FigFormat::Json,
+            Format::Jsonc => ffi::FigFormat::Jsonc,
+            Format::Json5 => ffi::FigFormat::Json5,
+            Format::Yaml => ffi::FigFormat::Yaml,
+            Format::Toml => ffi::FigFormat::Toml,
+            Format::Zon => ffi::FigFormat::Zon,
+            Format::Fig => ffi::FigFormat::Fig,
+            Format::Ini => ffi::FigFormat::Ini,
+            Format::Dotenv => ffi::FigFormat::Dotenv,
+            Format::Properties => ffi::FigFormat::Properties,
+            Format::Plist => ffi::FigFormat::Plist,
+            Format::Nestedtext => ffi::FigFormat::Nestedtext,
+            Format::Runtime(r) => return r.0,
+        };
+        compiled as c_int
     }
 
     /// The `Format` an ABI integer names, or `None` for one this crate
@@ -154,35 +167,6 @@ impl Format {
             return None;
         }
         Format::from_c(value)
-    }
-}
-
-impl From<Format> for ffi::FigFormat {
-    /// The compiled format's ABI enumerator.
-    ///
-    /// # Panics
-    ///
-    /// On [`Format::Runtime`], which has no `FigFormat` enumerator — its
-    /// integer is per process and lives above every variant of that enum.
-    /// This crate never calls it for one; a caller reaching `fig_sys`
-    /// directly should take [`Format`]'s integer from the entry points that
-    /// accept it instead.
-    fn from(format: Format) -> Self {
-        match format {
-            Format::Json => ffi::FigFormat::Json,
-            Format::Jsonc => ffi::FigFormat::Jsonc,
-            Format::Json5 => ffi::FigFormat::Json5,
-            Format::Yaml => ffi::FigFormat::Yaml,
-            Format::Toml => ffi::FigFormat::Toml,
-            Format::Zon => ffi::FigFormat::Zon,
-            Format::Fig => ffi::FigFormat::Fig,
-            Format::Ini => ffi::FigFormat::Ini,
-            Format::Dotenv => ffi::FigFormat::Dotenv,
-            Format::Properties => ffi::FigFormat::Properties,
-            Format::Plist => ffi::FigFormat::Plist,
-            Format::Nestedtext => ffi::FigFormat::Nestedtext,
-            Format::Runtime(_) => panic!("a runtime Format has no FigFormat enumerator"),
-        }
     }
 }
 

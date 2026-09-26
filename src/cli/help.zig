@@ -178,6 +178,19 @@ pub const Help = struct {
         try term.writer.flush();
     }
 
+    pub fn version(term: *Io.Terminal, binary_name: []const u8) !void {
+        try term.writer.print(
+            \\Usage: {s} version
+            \\  Prints fig's version and its epoch, a name with no compatibility
+            \\    meaning: `fig 5.0.0 "Texas Everbearing"`. Every artifact — the
+            \\    CLI, the core, the Rust crates, the npm packages — carries the
+            \\    one version. `--version` and `-v` are the same action. It takes
+            \\    no arguments.
+            \\
+        , .{binary_name});
+        try term.writer.flush();
+    }
+
     pub fn rename(term: *Io.Terminal, binary_name: []const u8) !void {
         try term.writer.print(
             \\Usage: {s} rename <file> <path> <name>

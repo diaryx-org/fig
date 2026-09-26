@@ -44,7 +44,11 @@ pub fn runExternal(io: Io, stdout_term: *Io.Terminal, stderr_term: *Io.Terminal,
 /// Print fig's one version — every artifact ships under it (see
 /// docs/VERSIONING.md) — and its marketing epoch, a purely cosmetic label with
 /// no compatibility meaning: `fig 5.0.0 "Texas Everbearing"`.
-pub fn runVersion(stdout_term: *Io.Terminal, version: []const u8, epoch: []const u8) !void {
+pub fn runVersion(stdout_term: *Io.Terminal, binary_name: []const u8, version: []const u8, epoch: []const u8, opts: types.VersionOptions) !void {
+    if (opts.requested_help) {
+        try Help.version(stdout_term, binary_name);
+        return;
+    }
     try stdout_term.writer.print("fig {s} \"{s}\"\n", .{ version, epoch });
     try stdout_term.writer.flush();
 }

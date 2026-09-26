@@ -637,13 +637,23 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         // like every other action, so `fig help --bogus` is not a silent 0.
         while (args.next()) |arg| {
             if (isHelp(arg)) continue;
+            // `fig help set` reads as asking for `set`'s help: say where it is.
+            if (std.meta.stringToEnum(CliAction, arg)) |named| if (named != .external) {
+                log.err("{s} takes no arguments; for {s}'s help, run `fig {s} --help`\n", .{ action_str, arg, arg });
+                return ArgError.HelpNamesAction;
+            };
             log.err("{s} takes no arguments; unexpected argument: {s}\n", .{ action_str, arg });
             return ArgError.SurplusArgument;
         }
     } else if (std.mem.eql(u8, action_str, "version") or std.mem.eql(u8, action_str, "--version") or std.mem.eql(u8, action_str, "-v")) {
         config.action = .version;
         config.options = .{ .version = .{} };
-        if (args.next()) |arg| {
+        // `--help` is the one thing that may follow, as for every action.
+        while (args.next()) |arg| {
+            if (isHelp(arg)) {
+                config.options.version.requested_help = true;
+                continue;
+            }
             log.err("{s} takes no arguments; unexpected argument: {s}\n", .{ action_str, arg });
             return ArgError.SurplusArgument;
         }

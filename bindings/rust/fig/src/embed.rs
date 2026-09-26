@@ -202,25 +202,19 @@ impl From<ffi::FigSpan> for Span {
 ///
 /// Every byte is in exactly one span (a leading UTF-8 BOM heads `body_before`),
 /// so a caller can rebuild the host without losing one.
-///
-/// `body` is the historical one-sided view of the same thing: the suffix after
-/// the close fence for frontmatter, the prefix before the open fence for
-/// endmatter. For a mid-document block (an HTML `<script>` data island) that is
-/// only ever half the host — prefer the two sides when reassembling.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct Region {
     pub open_fence: Span,
     pub content: Span,
     pub close_fence: Span,
-    pub body: Span,
     pub body_before: Span,
     pub body_after: Span,
 }
 
 /// The result of [`Embed::extract`]: a located [`Region`] plus the borrowed host
-/// text, with helpers to slice out the embedded content and body without parsing
-/// or copying.
+/// text, with helpers to slice out the embedded content and the host text on
+/// either side of it without parsing or copying.
 #[derive(Clone, Copy, Debug)]
 pub struct Extracted<'a> {
     source: &'a str,
@@ -238,12 +232,6 @@ impl<'a> Extracted<'a> {
         &self.source[self.region.content.start..self.region.content.end]
     }
 
-    /// The host body outside the fences (the markdown prose) — the one-sided
-    /// [`Region::body`] view. See [`host_before`](Self::host_before) /
-    /// [`host_after`](Self::host_after) for both sides of a mid-document block.
-    pub fn body(&self) -> &'a str {
-        &self.source[self.region.body.start..self.region.body.end]
-    }
 
     /// The host text before the block — `[0, open_fence.start)`, a leading
     /// UTF-8 BOM included. Empty for frontmatter; the prose for endmatter; the
@@ -260,14 +248,19 @@ impl<'a> Extracted<'a> {
     }
 }
 
-/// Split an embedded region of `kind` from its host body without parsing or
-/// copying — the read-only `(content, body)` twin of opening an [`Embed`].
-/// `None` when `content` has no such region (or its opening fence has no close).
-/// Both slices borrow `content`: the first is the text between the fences (no
-/// fences), the second is the host prose outside them.
-pub fn split(content: &str, kind: EmbedType) -> Option<(&str, &str)> {
-    let e = Embed::extract(content, kind).ok()?;
-    Some((e.content(), e.body()))
+/// Split `source` around its embedded region of `kind` without parsing or
+/// copying: `(before, content, after)`, the host text before the open fence,
+/// the text between the fences, and the host text after the close fence. All
+/// three borrow `source`. For frontmatter `before` is empty (or a UTF-8 BOM)
+/// and `after` is the prose; for endmatter the other way round; for an HTML
+/// data island both sides are host.
+///
+/// `None` when `source` has no such region, or its opening fence has no
+/// close; [`Embed::extract`] is the same lookup with the error kept, and the
+/// fences as spans.
+pub fn split(source: &str, kind: EmbedType) -> Option<(&str, &str, &str)> {
+    let e = Embed::extract(source, kind).ok()?;
+    Some((e.host_before(), e.content(), e.host_after()))
 }
 
 /// Best-effort sniff of which embed archetype `source` uses: try each known
@@ -349,9 +342,6 @@ impl Embed {
         })
     }
 
-    /// Locate `kind`'s region in `content` and borrow its content/body slices
-    /// without parsing or copying — the read-only counterpart to [`Embed::open`].
-    /// [`Error::NotFound`] when no such region exists (or its fence is unterminated).
     /// Re-house `host`'s embedded region under a different archetype's fences:
     /// keep every host byte outside the block, and wrap `content` — the already
     /// re-serialized inner document, in `to`'s inner format — in `to`'s
@@ -422,6 +412,10 @@ impl Embed {
         String::from_utf8(owned).map_err(|_| Error::Utf8)
     }
 
+    /// Locate `kind`'s region in `content` and borrow its slices without
+    /// parsing or copying — the read-only counterpart to [`Embed::open`].
+    /// [`Error::NotFound`] when no such region exists; [`Error::Parse`] when
+    /// its fence is unterminated.
     pub fn extract(content: &str, kind: EmbedType) -> Result<Extracted<'_>, Error> {
         let mut region = ffi::FigRegion {
             size: core::mem::size_of::<ffi::FigRegion>() as u32,
@@ -444,7 +438,6 @@ impl Embed {
                 open_fence: region.open_fence.into(),
                 content: region.content.into(),
                 close_fence: region.close_fence.into(),
-                body: region.body.into(),
                 body_before: region.body_before.into(),
                 body_after: region.body_after.into(),
             },

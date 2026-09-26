@@ -636,9 +636,15 @@ println!("{}", fm.render()?);
   ([`Error::UnsupportedOperation`]) when the host already opens with
   frontmatter of another archetype, rather than pushing it off the first line;
   `retype` changes a region's archetype.
-- `Embed::extract(host, kind)` / `split(content, kind)` locate the region
-  *without* parsing — handy for reading the raw frontmatter and body apart.
-  [`Extracted`] gives you `region()`, `content()` and `body()`.
+- `Embed::extract(host, kind)` / `split(host, kind)` locate the region
+  *without* parsing — handy for reading the raw frontmatter and the prose apart.
+  `split` returns `(before, content, after)`: the host text before the block,
+  the text between the fences, and the host text after it, which concatenated
+  with the fences reproduce the host. [`Extracted`] gives you `region()`,
+  `content()`, `host_before()` and `host_after()`, and its [`Region`] the byte
+  spans of all five pieces. (4.x's one-sided `body` — the prose after
+  frontmatter but before endmatter, and only half the host around an HTML data
+  island — is gone; take the side you mean.)
 - `detect(source)` sniffs which [`EmbedType`] a host opens with, or `None`;
   `EmbedType::inner_format()` then reports the [`Format`] that archetype's
   content is written in, so a detected embed resolves to a parser without
@@ -774,7 +780,7 @@ text to outlive the next edit — the borrow checker enforces this for you.
 
 - `capabilities(format) -> Capabilities` — what this build can read/edit/serialize.
 - `version() -> Version` / `version_string() -> &'static str` — linked core version.
-- `split(content, kind) -> Option<(&str, &str)>` — read-only `(content, body)` of an embed.
+- `split(host, kind) -> Option<(&str, &str, &str)>` — read-only `(before, content, after)` of an embed.
 - `detect(source) -> Option<EmbedType>` — which embed archetype a host opens with.
 - *(serde)* `from_str<T>(s) -> Result<T>` — deserialize a YAML string.
 - *(serde)* `from_slice<T>(bytes, format) -> Result<T>` — deserialize any format.
@@ -786,7 +792,7 @@ text to outlive the next edit — the borrow checker enforces this for you.
 - [`Document`] — read path: `parse`, `to_value`, `serialize`/`serialize_with`, `diagnose`.
 - [`Editor`] — comment-preserving editor: `open`, `source`, and the edit/comment methods.
 - [`Embed`] — frontmatter/embed editor: `open`, `open_or_init`, `extract`, `render`, `replace_body`, `inner_format`, `region`, and the edit methods.
-- [`Extracted`] — a located-but-unparsed region: `region()`, `content()`, `body()`.
+- [`Extracted`] — a located-but-unparsed region: `region()`, `content()`, `host_before()`, `host_after()`.
 - [`Value`] — the owned value tree; `serialize`/`serialize_with`/`diagnose`, plus `From` impls.
 - `Segment<'a>` — path step (`Key(&str)` / `Index(usize)`), with `From<&str>`/`From<usize>`.
 - `SerializeOptions` — output style (`compact()`, `pretty(n)`, `.indent(n)`, `.width(n)`, `.strip_comments()`, `.lossless()`).

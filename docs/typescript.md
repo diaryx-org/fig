@@ -694,7 +694,12 @@ manage the handle for you, so no cleanup is needed.
 - `V` — `Value` constructors (`V.null()`, `V.int()`, `V.uint()`, `V.float()`,
   `V.string()`, `V.bool()`, `V.extended()`, `V.seq()`, `V.map()`).
 - `Format`, `NodeKind`, `ExtKind`, `EmbedType`, `Status`, `WarningCode`,
-  `WarningCause` — enums.
+  `WarningCause` — enums, each an `as const` object with a type of the same
+  name (`Format.Json` is a value, `Format` a type), not a TypeScript `enum`.
+  A number the core reports that has no name here — a format registered at
+  runtime, a node kind or warning code from a newer core — passes through
+  unchanged and compares numerically, so each type is its named members or
+  any number; there is no reverse lookup from a value to its name.
 - `FigError` — the thrown error type. `LanguageError` — how a `Language`
   refuses its input, with a byte offset.
 - Types: `Value`, `JsValue` (read side), `JsInput` (write side), `Segment`,
@@ -708,10 +713,13 @@ manage the handle for you, so no cleanup is needed.
 ## Developing the binding
 
 Consumers need Node 20+; working on `bindings/typescript` from a checkout needs
-**Node 24+**. The floor is higher because `npm test` runs the `.ts` test sources
-directly through Node's type-stripping, which erases type annotations but cannot
-downlevel the `using` declarations the tests use. On older Node the suite dies
-with a `SyntaxError` before a single test runs.
+**Node 24+**. `npm test` type-checks the sources and tests with `tsc`, then runs
+the `.ts` files directly under Node's strip-only TypeScript support. That works
+because the package is written in erasable syntax only — its enums are
+`as const` objects, and `erasableSyntaxOnly` in `tsconfig.json` refuses a
+TypeScript `enum`, a `namespace` or a parameter property — but stripping
+leaves the tests' `using` declarations as they are, and Node runs `using`
+natively only from 24.
 
 ```sh
 cd bindings/typescript

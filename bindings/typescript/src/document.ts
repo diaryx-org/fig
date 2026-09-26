@@ -287,7 +287,7 @@ export class Document {
       }
       default:
         // A bare keyvalue, an invalid id, or an unresolved alias is not a value.
-        throw new FigError(Status.InternalError, `node kind ${NodeKind[kind] ?? kind}`);
+        throw new FigError(Status.InternalError, `node kind ${kind}`);
     }
   }
 

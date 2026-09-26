@@ -29,9 +29,11 @@
 //!
 //! The same diff runs over the three hand-written mirrors of that enum in the
 //! bindings: `fig-sys`'s `FigFormat` (name and value), the TypeScript
-//! `Format` (name and value), and the Rust wrapper's `Format` (name only — its
-//! values are the `From` impl's business). Each used to drift on its own; the
-//! Rust wrapper went five formats behind before this check existed.
+//! `Format` (name and value, spelled `Name: value` since it is an `as const`
+//! object rather than a TypeScript `enum`), and the Rust wrapper's `Format`
+//! (name only — its values are the `From` impl's business). Each used to
+//! drift on its own; the Rust wrapper went five formats behind before this
+//! check existed.
 //!
 //! `FigExtKind` is held the same way: fig.h's `FIG_EXT_*` (name and value),
 //! the TypeScript `ExtKind` (name and value) and the Rust `ExtKind` (name
@@ -177,7 +179,7 @@ pub fn main(init: std.process.Init) !void {
     try checkFormats(arena, "fig.h", formats, .c_macro, &.{}, &fail);
     const sys_formats = try parseEnumerators(arena, sys_src, "pub enum FigFormat", .values_required);
     try checkFormats(arena, "fig-sys FigFormat", sys_formats, .pascal_valued, &.{}, &fail);
-    const ts_formats = try parseEnumerators(arena, ts_src, "export enum Format", .values_required);
+    const ts_formats = try parseEnumerators(arena, ts_src, "export const Format = {", .values_required);
     try checkFormats(arena, "TypeScript Format", ts_formats, .pascal_valued, &.{}, &fail);
     const rust_formats = try parseEnumerators(arena, rust_src, "pub enum Format", .names_only);
     // `Format::Runtime(RuntimeFormat)` is the one member no registry entry
@@ -189,7 +191,7 @@ pub fn main(init: std.process.Init) !void {
     // value-for-value where the surface states one.
     const ext_kinds = try parseEnumerators(arena, header, "typedef enum FigExtKind", .values_required);
     try checkExtKinds(arena, "fig.h", ext_kinds, .c_macro, &fail);
-    const ts_ext_kinds = try parseEnumerators(arena, ts_src, "export enum ExtKind", .values_required);
+    const ts_ext_kinds = try parseEnumerators(arena, ts_src, "export const ExtKind = {", .values_required);
     try checkExtKinds(arena, "TypeScript ExtKind", ts_ext_kinds, .pascal_valued, &fail);
     const rust_ext_kinds = try parseEnumerators(arena, rust_value_src, "pub enum ExtKind", .names_only);
     try checkExtKinds(arena, "Rust ExtKind", rust_ext_kinds, .pascal_named, &fail);
@@ -388,8 +390,12 @@ fn findFormat(formats: []const FormatEnumerator, name: []const u8) ?FormatEnumer
 const ValueRule = enum { values_required, names_only };
 
 /// The enumerators of the enum whose declaration starts with `decl` in `text`,
-/// in declaration order — `Name = value,` or, under `.names_only`, bare
-/// `Name,`.
+/// in declaration order — `Name = value,` (a C or Rust enum), `Name: value,`
+/// (a TypeScript `export const X = { … } as const` object, which is how the
+/// binding spells an enum so that it stays erasable syntax) or, under
+/// `.names_only`, bare `Name,`. `decl` names the declaration up to its `{`;
+/// the body ends at the first `}` outside a comment, so the object's trailing
+/// `as const` is never read.
 ///
 /// Adapted from `parseEnumerators` in tools/semver-check.zig, minus the parts
 /// this doesn't need: a valued surface gives every member an explicit decimal
@@ -413,7 +419,7 @@ fn parseEnumerators(arena: std.mem.Allocator, text: []const u8, decl: []const u8
     while (it.next()) |raw| {
         const item = std.mem.trim(u8, raw, " \t");
         if (item.len == 0) continue;
-        if (std.mem.indexOfScalar(u8, item, '=')) |eq| {
+        if (std.mem.indexOfAny(u8, item, "=:")) |eq| {
             const name = std.mem.trim(u8, item[0..eq], " \t");
             const value = std.fmt.parseInt(i64, std.mem.trim(u8, item[eq + 1 ..], " \t"), 10) catch
                 return error.MalformedFormatEnum;

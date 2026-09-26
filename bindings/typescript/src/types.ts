@@ -1,4 +1,20 @@
 // Public enums and the error type, shared across the binding.
+//
+// ENUMS. Every enum in this binding is a frozen-shape object literal
+// (`as const`) paired with a type of the same name — `Format.Json` is a value,
+// `Format` a type — rather than a TypeScript `enum`. The pair is erasable
+// syntax: Node's strip-only TypeScript and `erasableSyntaxOnly` accept it, and
+// the compiled JavaScript is the object literal itself.
+//
+// UNKNOWN VALUES — the one rule, which every enum mirroring a C enum follows
+// (`Format`, `NodeKind`, `ExtKind`, `WarningCode`, `WarningCause`, `Status`):
+// a number the core reports that has no name here passes through unchanged
+// and compares numerically. Nothing maps it to a name, throws on it, or clamps
+// it. That is what a format registered at runtime is (its integer is assigned
+// per process), and what a node kind, extended kind, warning or status added
+// by a newer core looks like to an older binding. So each such type is its
+// named members *or any number*, and code that switches on one keeps a
+// `default` arm. The member names are for writing; the number is the value.
 import { Status } from "./ffi.ts";
 
 export { Status };
@@ -12,34 +28,37 @@ export { Status };
  *  with ZON support, and call {@link capabilities} at runtime rather than
  *  assuming which module you're running. Values match the C ABI (`Json5 = 7`
  *  is appended, leaving a gap at 6, which was generic XML until core 3.0
- *  retired it; `Fig` is appended after it for the same reason). */
-export enum Format {
-  Json = 1,
-  Jsonc = 2,
-  Yaml = 3,
-  Toml = 4,
-  Zon = 5,
-  Json5 = 7,
+ *  retired it; `Fig` is appended after it for the same reason). A format
+ *  registered at runtime ({@link registerLanguage}) is a `Format` too: an
+ *  unnamed number, per the unknown-values rule at the top of this file. */
+export const Format = {
+  Json: 1,
+  Jsonc: 2,
+  Yaml: 3,
+  Toml: 4,
+  Zon: 5,
+  Json5: 7,
   /** The native `fig` authoring dialect (see `src/languages/fig/DESIGN.md` in
    *  the core repo) — a memorable, typeable surface over the same AST. */
-  Fig = 8,
+  Fig: 8,
   /** INI (`[section]` + `key = value`). Read/edit/serialize. Untyped-string
    *  scalars: `port = 8080` reads back as the string "8080". */
-  Ini = 9,
+  Ini: 9,
   /** dotenv / `.env` (flat `KEY=value`). Read/edit/serialize. Flat string map
    *  only — no nesting, untyped scalars (serialize surfaces a diagnostic when
    *  a nested value cannot be represented). */
-  Dotenv = 10,
+  Dotenv: 10,
   /** Java `.properties` (flat `key=value`). Read/edit/serialize. Same flat,
    *  untyped limits as {@link Format.Dotenv}. */
-  Properties = 11,
+  Properties: 11,
   /** Apple XML property list. Read/edit/serialize. Typed and nested
    *  (dict/array/string/integer/real/bool, date/data via the extended scalar). */
-  Plist = 12,
+  Plist: 12,
   /** NestedText (https://nestedtext.org). Read/edit/serialize. Nested
    *  (dict/list) but deliberately untyped — every leaf is a string. */
-  Nestedtext = 13,
-}
+  Nestedtext: 13,
+} as const;
+export type Format = (typeof Format)[keyof typeof Format] | (number & {});
 
 /** Controls how {@link serialize} renders output. Omitted fields fall back to
  *  fig's historical style (pretty-printed, two-space indent), so passing no
@@ -79,58 +98,65 @@ export interface SerializeOptions {
   width?: number;
 }
 
-/** The kind of an AST node reached during read-path traversal. */
-export enum NodeKind {
-  Invalid = -1,
-  Null = 0,
-  Bool = 1,
-  Int = 2,
-  Float = 3,
-  String = 4,
-  Sequence = 5,
-  Mapping = 6,
-  KeyValue = 7,
-  Alias = 8,
+/** The kind of an AST node reached during read-path traversal. Mirrors
+ *  `FigNodeKind`; an unnamed value is a kind from a newer core (see the
+ *  unknown-values rule at the top of this file). */
+export const NodeKind = {
+  Invalid: -1,
+  Null: 0,
+  Bool: 1,
+  Int: 2,
+  Float: 3,
+  String: 4,
+  Sequence: 5,
+  Mapping: 6,
+  KeyValue: 7,
+  Alias: 8,
   /** A format-specific scalar; `Document.asExtended` says which. */
-  Extended = 9,
-}
+  Extended: 9,
+} as const;
+export type NodeKind = (typeof NodeKind)[keyof typeof NodeKind] | (number & {});
 
 /** A format-specific scalar kind (TOML datetimes, ZON enum/char literals, JSON5
- *  non-finite numbers, plist dates and data). Mirrors `FigExtKind`. */
-export enum ExtKind {
-  OffsetDateTime = 0,
-  LocalDateTime = 1,
-  LocalDate = 2,
-  LocalTime = 3,
-  EnumLiteral = 4,
-  CharLiteral = 5,
+ *  non-finite numbers, plist dates and data). Mirrors `FigExtKind`; unknown
+ *  values follow the rule at the top of this file. */
+export const ExtKind = {
+  OffsetDateTime: 0,
+  LocalDateTime: 1,
+  LocalDate: 2,
+  LocalTime: 3,
+  EnumLiteral: 4,
+  CharLiteral: 5,
   /** A non-finite JSON5 number (`Infinity`/`-Infinity`/`NaN`). */
-  NumberSpecial = 6,
+  NumberSpecial: 6,
   /** A plist `<date>`: the raw ISO-8601 timestamp, verbatim. */
-  PlistDate = 7,
+  PlistDate: 7,
   /** A plist `<data>`: the base64 payload with all whitespace stripped. */
-  PlistData = 8,
-}
+  PlistData: 8,
+} as const;
+export type ExtKind = (typeof ExtKind)[keyof typeof ExtKind] | (number & {});
 
 /** What kind of loss a {@link Warning} describes. Mirrors `FigWarningCode`. */
-export enum WarningCode {
+export const WarningCode = {
   /** A carried comment is not emitted at all. */
-  CommentDropped = 0,
+  CommentDropped: 0,
   /** A block comment is rendered as a run of line comments. */
-  CommentStyleDegraded = 1,
+  CommentStyleDegraded: 1,
   /** A node is removed entirely (the target cannot represent it even degraded). */
-  ValueDropped = 2,
+  ValueDropped: 2,
   /** An extended/non-finite value is rendered as a poorer type. */
-  TypeDegraded = 3,
-}
+  TypeDegraded: 3,
+} as const;
+export type WarningCode = (typeof WarningCode)[keyof typeof WarningCode] | (number & {});
 
 /** Why a {@link Warning}'s loss happens. Mirrors `FigWarningCause`. */
-export enum WarningCause {
+export const WarningCause = {
   /** The target format inherently cannot represent it. */
-  FormatLimitation = 0,
+  FormatLimitation: 0,
   /** A caller option forced it (e.g. `stripComments`). */
-  ExplicitOption = 1,
-}
+  ExplicitOption: 1,
+} as const;
+export type WarningCause = (typeof WarningCause)[keyof typeof WarningCause] | (number & {});
 
 /** One lossy event reported by `Document.diagnose` / value `diagnose`. `code`
  *  and `cause` carry the raw ABI value; a value not listed in the enums above is
@@ -150,47 +176,49 @@ export interface Warning {
  *  an embedded spelling; the three presets pin their own format. {@link EmbedType}
  *  names each (container, format) pair once, and is what the API takes; this
  *  enum is exported so a caller can decompose one (`embedParts`). */
-export enum EmbedContainer {
-  MdFrontmatter = 0, // ---<lang> (bare --- is YAML)
-  Fenced = 1, //        ```<lang>
-  HtmlScript = 2, //    <script type="application/<lang>">
-  HtmlCode = 3, //      <pre><code class="language-<lang>"> (entity-encoded)
-  SemicolonsJson = 4, // ;;; preset, JSON
-  PlusToml = 5, //      +++ preset, TOML
-  EndmatterYaml = 6, // ```endmatter preset, YAML
-}
+export const EmbedContainer = {
+  MdFrontmatter: 0, // ---<lang> (bare --- is YAML)
+  Fenced: 1, //        ```<lang>
+  HtmlScript: 2, //    <script type="application/<lang>">
+  HtmlCode: 3, //      <pre><code class="language-<lang>"> (entity-encoded)
+  SemicolonsJson: 4, // ;;; preset, JSON
+  PlusToml: 5, //      +++ preset, TOML
+  EndmatterYaml: 6, // ```endmatter preset, YAML
+} as const;
+export type EmbedContainer = (typeof EmbedContainer)[keyof typeof EmbedContainer];
 
 /** One name per embed archetype: a (container, inner format) pair. The values
  *  are this binding's own (they were the C ABI's through core 2.x, and are kept
  *  so a stored number still means what it did); the C ABI now takes the pair,
  *  which `embedParts` produces. Historical names kept: FrontmatterJson is
  *  `;;;`, FrontmatterFig is the ```fig fenced block. */
-export enum EmbedType {
-  FrontmatterYaml = 0, // ---            markdown frontmatter, YAML
-  FrontmatterJson = 1, // ;;;            JSON frontmatter
-  EndmatterYaml = 2, //   ```endmatter   trailing YAML block
-  FrontmatterFig = 3, //  ```fig         fenced fig block
-  PlusToml = 4, //        +++            TOML frontmatter (Hugo/Zola)
+export const EmbedType = {
+  FrontmatterYaml: 0, // ---            markdown frontmatter, YAML
+  FrontmatterJson: 1, // ;;;            JSON frontmatter
+  EndmatterYaml: 2, //   ```endmatter   trailing YAML block
+  FrontmatterFig: 3, //  ```fig         fenced fig block
+  PlusToml: 4, //        +++            TOML frontmatter (Hugo/Zola)
   // Fenced ```<lang> code blocks.
-  FencedYaml = 5,
-  FencedJson = 6,
-  FencedToml = 7,
+  FencedYaml: 5,
+  FencedJson: 6,
+  FencedToml: 7,
   // Markdown ---<lang> frontmatter (bare --- is FrontmatterYaml above).
-  MdFrontmatterJson = 8,
-  MdFrontmatterToml = 9,
-  MdFrontmatterFig = 10,
+  MdFrontmatterJson: 8,
+  MdFrontmatterToml: 9,
+  MdFrontmatterFig: 10,
   // HTML <script type="application/<lang>"> data islands.
-  HtmlScriptFig = 11,
-  HtmlScriptYaml = 12,
-  HtmlScriptJson = 13,
-  HtmlScriptToml = 14,
+  HtmlScriptFig: 11,
+  HtmlScriptYaml: 12,
+  HtmlScriptJson: 13,
+  HtmlScriptToml: 14,
   // HTML <pre><code class="language-<lang>"> visible code blocks (entity-encoded;
   // editing re-encodes span-aware, preserving untouched bytes' original encoding).
-  HtmlCodeFig = 15,
-  HtmlCodeYaml = 16,
-  HtmlCodeJson = 17,
-  HtmlCodeToml = 18,
-}
+  HtmlCodeFig: 15,
+  HtmlCodeYaml: 16,
+  HtmlCodeJson: 17,
+  HtmlCodeToml: 18,
+} as const;
+export type EmbedType = (typeof EmbedType)[keyof typeof EmbedType];
 
 const EMBED_PARTS: Record<EmbedType, [EmbedContainer, Format]> = {
   [EmbedType.FrontmatterYaml]: [EmbedContainer.MdFrontmatter, Format.Yaml],

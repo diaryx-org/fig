@@ -238,13 +238,12 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     // partial checkout; CI pins Node 24 and runs `npm ci` first.
     //
     // The Node floor is a test-time requirement only, not a consumer one — shipped
-    // output is downlevelled by tsc, so `engines` in package.json stays at >=20. It
-    // is CI parity (the workflow pins 24) plus `node --test`'s glob argument, and
-    // nothing more: `npm test` compiles the suite with tsc and runs the JS, so
-    // Node's own TypeScript support is not on the path at all. It used to be, via
-    // `--experimental-transform-types`, and that is exactly what broke — Node 26
-    // removed the flag, leaving strip-only mode, which rejects this package's
-    // numeric enums. See `bindings/typescript/tsconfig.test.json`.
+    // output is downlevelled by tsc, so `engines` in package.json is the lower
+    // consumer floor. `npm test` type-checks with tsc and then runs the `.ts`
+    // sources directly under Node's strip-only TypeScript (the package is
+    // written in erasable syntax only — no `enum`, no parameter properties), and
+    // the tests' `using` declarations pass through stripping untouched, so the
+    // Node running them must support `using` natively: 24 and later.
     const ts_test_script =
         \\set -eu
         \\if ! command -v npm >/dev/null 2>&1; then

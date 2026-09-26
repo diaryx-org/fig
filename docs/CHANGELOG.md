@@ -130,7 +130,181 @@ and no regeneration can reach a released section.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
-_No commits since the last release tag._
+### Breaking
+
+- **cli** — arguments are parsed strictly, and a missing comment exits 1 ([`be6bb06`](https://github.com/diaryx-org/fig/commit/be6bb062d045a0a52dd0fdcd0a6646436757c192))
+- **cli** — a value argument is a fig value, and get prints a scalar as its text ([`0885a42`](https://github.com/diaryx-org/fig/commit/0885a42a315039c785c5d1748a5cd40d3a5dff8c))
+- **cli** — exit codes are written down — 1 for the document, 2 for the command line ([`d3dbbef`](https://github.com/diaryx-org/fig/commit/d3dbbefcddacf6ba806b285d31cda616265ec9fc))
+- every renderer takes one request, which names the container its fragment goes into ([`3ed9e7c`](https://github.com/diaryx-org/fig/commit/3ed9e7ced655d5273691fba5658b598552568064))
+- every language record carries its size, lossless is a bitmask, and extended scalars have a node kind ([`b700651`](https://github.com/diaryx-org/fig/commit/b7006510b02e6a8d1397df4a06efd0f4743feaf5))
+- **cli** — split `edit` into `replace` and `rename` ([`d9314d0`](https://github.com/diaryx-org/fig/commit/d9314d06285ade3131b7880fa283688027d06047))
+- **cli** — drop the frontmatter-fig/-json/-toml archetype names ([`6f1fdc5`](https://github.com/diaryx-org/fig/commit/6f1fdc5e7c04887fa2ea7299d7d3f7399c792b96))
+- **cli** — `help` and `version` refuse arguments after them ([`42fe791`](https://github.com/diaryx-org/fig/commit/42fe791083d656c114bda47834eefe76ca8d1bb8))
+- **cli** — a mid-sequence `insert` is a refused edit, exit 1 ([`aed4d31`](https://github.com/diaryx-org/fig/commit/aed4d31f5f9e07ea03110bbb0e45f5e8edfdee57))
+- `.figl` is fig's only extension; `.fig` is no longer the format's ([`d0a7ee6`](https://github.com/diaryx-org/fig/commit/d0a7ee67f364986eef1d1e1204353ab623cf6cc8))
+- one version and one v* tag for every artifact, at 5.0.0 ([`c6a1686`](https://github.com/diaryx-org/fig/commit/c6a1686d994036505de736f70011efe70d54fd08))
+
+### Added
+
+- **cli** — patch into a runtime language ([`abbeba4`](https://github.com/diaryx-org/fig/commit/abbeba43aa4de8b985318fcb6deb094547dc27fc))
+- loss diagnostics for a runtime target, and a value refused where the target cannot hold it ([`be3f4df`](https://github.com/diaryx-org/fig/commit/be3f4df49d7e72c6ac8c5a1283ac8dc462cb9719))
+- **cli** — `patch` takes --strict, --no-warnings and --strip-comments; `check` takes --strict ([`048c74f`](https://github.com/diaryx-org/fig/commit/048c74f0ffc905d7cbec756da4a258f00811bf46))
+
+### Fixed
+
+- **toml** — a table spliced as a value prints as an inline table ([`edf838b`](https://github.com/diaryx-org/fig/commit/edf838bf14ba4da7f27c1c806867ffbaff427d42))
+- **cli** — review of CLI 5 — parse errors not taken for values, spaces kept, the key blamed ([`4dfe30f`](https://github.com/diaryx-org/fig/commit/4dfe30fe03c3f2bd7aa0a7d012ff104e38e2b196))
+- **fig-sys** — build for aarch64 and x86_64 Android ([`c1dc0c2`](https://github.com/diaryx-org/fig/commit/c1dc0c225773d2f772d9bf45a01dedecbdac6c55))
+- the lossy strips and the $fig envelope keep tags, anchors and %TAG directives ([`6e2f182`](https://github.com/diaryx-org/fig/commit/6e2f1825917c4bc51277c7a8678a56ceb9a463c0))
+- **cli** — an unknown embed archetype is not followed by the list of formats ([`76404b1`](https://github.com/diaryx-org/fig/commit/76404b1cc92079e375cd3cab6cc10cfed01c148b))
+
+### Behavioural changes
+
+- an argument beginning with `-` that is not a flag of
+  the action (other than `-` and a negative number) exits 2 with a usage
+  error naming it, where it was read as a file, path or value; a file or
+  value that begins with `-` goes after `--`.
+
+- a positional past an action's last (`fig get f a b`,
+  `fig set f a 1 2`, `fig delete f a b`) exits 2, where it was ignored.
+
+- `fig lang` with an unknown verb, or `lang check` /
+  `lang table` without its name, exits 2, where it printed help and
+  exited 0.
+
+- `fig comment --get` on a path with no such comment
+  prints nothing and exits 1, where it printed a blank line and exited 0.
+
+- `fig_value_serialize_opts` (and the bindings'
+  `value_text`/`valueText`) with `splice` set render a TOML mapping as an
+  inline table, where they rendered `[header]` sections; `fig patch` of a
+  new table into TOML writes `k = { … }` where it was refused.
+
+- a value argument to `set`/`insert`/`edit` in a JSON,
+  JSONC or JSON5 file that is a number, boolean, null or bracketed
+  structure is written as that value, where it was written as a string.
+
+- in YAML, TOML, ZON, fig and the flat formats, a value
+  argument is read as a fig value and written in the file's syntax, where
+  it was spliced verbatim: `a: b`, `Yes`, `007`, `'q'` are strings, and
+  `[1, 2]` / `{a = 1}` are rendered as the format writes a sequence or a
+  mapping. `--raw` restores the verbatim splice.
+
+- a bare word into TOML is written as a string, where it
+  was refused.
+
+- a value argument that is not a fig value (`[1, 2`)
+  exits 2 with a diagnostic on the argument before the file is opened; a
+  value the format cannot hold (`null` into TOML, a sequence into dotenv)
+  exits 1 with a sentence, where both were a reparse failure of the spliced
+  text.
+
+- `fig get <file> <path>` on a scalar, without `-o`,
+  prints its text and one newline in every format — a string unquoted, a
+  number/boolean/null as fig spells it — where it printed the format's own
+  spelling (and, from JSON, no newline).
+
+- `edit --key` with `--string` or `--raw` is a usage
+  error (exit 2).
+
+- `fig get`, `fmt`, `convert`, and `patch` (on its patch
+  document) on a file that does not parse exit 1, where they exited 2.
+
+- `--strict` aborting on a parse-time warning exits 1,
+  where it exited 2.
+
+- `fig comment` on a strict JSON file, `fig convert
+  --to-embed` on a host with no detectable region or a mid-document one,
+  and `fig lang check` on a file it cannot read exit 1, where they
+  exited 2.
+
+- an edit whose value, read as a fig value, the
+  document will not take exits 1, where it exited 2; `--raw` text, a key
+  or a comment that does not parse still exits 2.
+
+- a path argument that does not parse exits 2 with a
+  message, where it exited 1 with an error trace.
+
+- a value argument to `set`/`insert`/`edit` with a
+  space or tab at either end is written as that string, spaces kept.
+
+- `insert`/`set` of a key the format cannot spell
+  (`'bad key'` in dotenv) report the key and exit 2.
+
+- `fig patch <target> <overlay>` where the target is in a runtime language (one named in `languages.figl`) now merges the overlay, where it used to exit with `error: UnsupportedRuntimePatch`.
+
+- `fig get`/`convert` into a format without null (TOML, or a runtime language declaring `lossless` without `null`), and anything else that goes through the `$fig` envelope or the flat-format strip (dotenv, INI, `.properties`, a runtime language with `max_mapping_depth`), now hand the printer the source's type tags, anchors and `%TAG` directives. A YAML target writes `!!str 1`, `!custom x` and the `%TAG` line where it used to drop them, and a runtime printer receives the `tag` it recorded on each row.
+
+- `fig get`/`convert`/`fmt` to a runtime language print warnings on stderr for what its declaration says it drops or degrades, and `--strict` now exits 1 on them.
+
+- `fig_document_diagnose` and `fig_value_diagnose` answer `FIG_STATUS_OK` with warnings for a runtime format, where they returned `FIG_STATUS_UNSUPPORTED_OPERATION`.
+
+- `fig set`/`insert`/`patch` of a mapping into dotenv, `.properties`, INI (below a section, or a new section by value) or a runtime language with `max_mapping_depth` now exit 1 with "the value cannot be written", where they wrote the mapping's own document text as the value (`n=x=1`).
+
+- `fig patch` refusing a null or a sequence the target has no spelling for reports "the value cannot be written to <file>: …" instead of `error: NullUnsupported` / `error: UnsupportedValue`.
+
+- `fig.Patch.apply`/`applyTo` return `error.UnsupportedValue` for a mapping the target cannot hold at its depth, before splicing anything.
+
+- a language registered with `version = 1` is refused ("vtable version 1 is not the 2 this fig speaks"); rebuild it against the new header.
+
+- `fig_abi_version()` returns 3.
+
+- a helper's `render` request line carries `"parent_key"` and `"parent_tag"` for every renderer; a helper that rejects unknown fields must accept them.
+
+- `fig_node_kind` (and `Document.kind` in TypeScript) reports FIG_NODE_EXTENDED for a TOML datetime, a ZON enum or char literal, a JSON5 non-finite number or a plist date or data, where it reported STRING or INT.
+
+- a language declaring a FIG_CAP_* bit or a lossless bit fig does not know, or native kinds without FIG_LOSSLESS_ENVELOPE, is refused at registration.
+
+- a table with a `row_size` shorter than a row's required fields is refused as malformed.
+
+- `fig edit …` and `fig e …` exit 2 with "`edit` is not
+  a fig command" (or run a `fig-edit` found on PATH); they used to replace
+  the value at the path. `fig replace` does exactly what `fig edit` did.
+
+- `fig edit --key <file> <path> <name>` is now
+  `fig rename <file> <path> <name>`; `--key` is not a flag of any action
+  and exits 2.
+
+- `--embed frontmatter-json`, `frontmatter-toml` and
+  `frontmatter-fig` (and the same names after `--to-embed` and
+  `--patch-embed`) exit 2 as an unknown archetype. They used to select
+  the `;;;` JSON block, the `+++` TOML block and the fenced fig block.
+
+- an unknown `--to-embed` archetype lists every
+  archetype `--embed` takes, where it used to list four names.
+
+- `fig version <arg>` (and `--version`/`-v` with an
+  argument) exits 2 with "version takes no arguments; unexpected
+  argument: `<arg>`". It used to print the version and exit 0.
+
+- `fig help <arg>` (and `--help`/`-h` with an argument
+  other than another `--help`/`-h`) exits 2. It used to print the general
+  help and exit 0; `fig help set` never showed `set`'s help, and
+  `fig set --help` still does.
+
+- `fig patch` prints its "dropped N comment(s)" warning
+  before the patched document or diff reaches stdout, rather than after.
+
+- `fig insert <file> 'list[N]' <value>` with N neither
+  0 nor the append index exits 1 (it exited 2), with a message naming
+  [N]. The file is still left as it was.
+
+- `fig get x.fig` (and every command given a `.fig` path) no longer infers the fig format from the extension; it falls back to sniffing the contents, as for any unknown extension.
+
+- an unknown embed archetype prints only the archetype error, without the "Try using `--input <format>`" hint and format list; the exit status is still 2.
+
+- `fig version` prints `fig 5.0.0 "Texas Everbearing"`.
+  It printed two numbers, `fig 4.0.0 (core 3.1.0 "Texas Everbearing")`; a
+  script that parsed the `(core …)` part will find it gone.
+
+- `fig_version()`, `fig_version_string()` and fig.h's
+  FIG_VERSION_* report 5.0.0, where they reported 3.1.0. FIG_ABI_VERSION
+  is unchanged.
+
+- every crate in the Rust workspace — fig, fig-macros,
+  fig-sys and the fig-sys-`<target>` payload crates — is 5.0.0, where it was
+  4.1.0; `@diaryx/fig` is 5.0.0, where it was 3.1.0; `@diaryx/fig-wasi` is
+  5.0.0, where it was 4.0.0. Each is a major to a caller pinning `^`.
 
 <!-- git-cliff:end -->
 

@@ -7,6 +7,7 @@ contents
 > * [CONTRIBUTING](CONTRIBUTING.md)
 > * [Testing](testing.md)
 > * [VERSIONING](VERSIONING.md)
+> * [Migrating to 5.0](migrating-to-5.md)
 > * [CHANGELOG](CHANGELOG.md)
 > * [Proposals](proposals/proposals.md)
 > * [Tasks](tasks/tasks.md)

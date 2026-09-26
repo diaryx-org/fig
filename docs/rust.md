@@ -2,7 +2,7 @@
 title = Using fig in Rust
 author = adammharris
 created = 2026-07-05T21:35:14-06:00
-updated = 2026-09-26T12:00:00-06:00
+updated = 2026-09-26T18:00:00-06:00
 part_of = [docs](docs.md)
 ```
 
@@ -37,7 +37,6 @@ production as a `serde` replacement.
 - [Managing resources](#managing-resources)
 - [API reference](#api-reference)
 - [Forward compatibility (`#[non_exhaustive]`)](#forward-compatibility-non_exhaustive)
-- [Migrating from 4.x](#migrating-from-4x)
 
 ## Install
 
@@ -384,10 +383,9 @@ let yaml = fig::to_yaml_string(&cfg)?;                     // to YAML (`yaml` fe
 and a registered runtime language — and `to_value(&x)?.serialize(format)`
 writes any of them. `from_yaml_str` and `to_yaml_string` are the YAML
 shorthands, and exist only with the `yaml` feature, so a build without YAML
-cannot call them and fail at runtime. (4.x called them `from_str` and
-`to_string`, which read as format-neutral and were not.) `Value` itself
-implements `Serialize`/`Deserialize`, so `from_slice::<Value>` gives you a
-dynamic tree the way `serde_json::Value` does.
+cannot call them and fail at runtime. `Value` itself implements
+`Serialize`/`Deserialize`, so `from_slice::<Value>` gives you a dynamic tree
+the way `serde_json::Value` does.
 
 **Without serde** — enable `derive` instead and map straight onto the concrete
 `Value` tree. The generated code is straight-line field extraction with no
@@ -588,10 +586,6 @@ ed.set_value(&["server".into()], server.to_value())?;         // server: #[deriv
 ed.set_value(&["server".into()], fig::to_value(&server)?)?;   // server: #[derive(Serialize)]
 ```
 
-The serde-typed twins 4.x carried (`replace`, `insert`, `set`, `append`,
-`prepend`, each taking `&T: Serialize`) are gone in 5.0: they added no
-capability, and `fig::to_value` is the whole of what they did.
-
 ## Markdown frontmatter & embeds
 
 [`Embed`] edits a config block embedded in a host file — YAML/JSON/`fig`
@@ -649,9 +643,7 @@ println!("{}", fm.render()?);
   the text between the fences, and the host text after it, which concatenated
   with the fences reproduce the host. [`Extracted`] gives you `region()`,
   `content()`, `host_before()` and `host_after()`, and its [`Region`] the byte
-  spans of all five pieces. (4.x's one-sided `body` — the prose after
-  frontmatter but before endmatter, and only half the host around an HTML data
-  island — is gone; take the side you mean.)
+  spans of all five pieces.
 - `detect(source)` sniffs which [`EmbedType`] a host opens with, or `None`;
   `EmbedType::inner_format()` then reports the [`Format`] that archetype's
   content is written in, so a detected embed resolves to a parser without
@@ -823,15 +815,15 @@ text to outlive the next edit — the borrow checker enforces this for you.
 The public types that grow with the core are `#[non_exhaustive]`: fig adds
 formats, statuses, diagnostics and runtime-language declarations regularly, and
 marking these means such an addition is a **minor** release instead of a major
-one. Since **3.0.0**: `Format`, `EmbedType`, `ExtKind`, `Error`, `WarningCode`,
-`WarningCause`, `SerializeOptions`, `Version`, `Capabilities`, `Warning`,
-`ParseError`, `Region`. Since **5.0.0**, as well: `Error`'s struct variants,
-`LanguageFailure`, and in `fig::language` `Description`, `Dialect`, `Syntax`,
-`Comments`, `CommentDelimiter`, `SectionHeader`, `ClosedContainers`,
-`NativeKinds`, `Renderers`, `PrintOptions`, `LanguageError`, `RenderArgs`,
-`NodeTable`, `NodeRow`, `RegionRow`, `MentionRow`, `CommentRow`, `DirectiveRow`,
-and the enums `NodeKind`, `Renderer`, `Literal`, `CommentStyle`, `CommentForm`,
-`KeyStyle`, `SectionNoun`, `Splice`, `MentionKind`.
+one. They are `Format`, `EmbedType`, `ExtKind`, `Error` and its struct variants,
+`WarningCode`, `WarningCause`, `SerializeOptions`, `Version`, `Capabilities`,
+`Warning`, `ParseError`, `Region`, `LanguageFailure`, and in `fig::language`
+`Description`, `Dialect`, `Syntax`, `Comments`, `CommentDelimiter`,
+`SectionHeader`, `ClosedContainers`, `NativeKinds`, `Renderers`, `PrintOptions`,
+`LanguageError`, `RenderArgs`, `NodeTable`, `NodeRow`, `RegionRow`,
+`MentionRow`, `CommentRow`, `DirectiveRow`, and the enums `NodeKind`, `Renderer`,
+`Literal`, `CommentStyle`, `CommentForm`, `KeyStyle`, `SectionNoun`, `Splice`,
+`MentionKind`.
 
 What it asks of you:
 
@@ -856,31 +848,3 @@ by literal everywhere; and a printer that met an unknown `CommentSlot` through a
 wildcard could only drop the comment. Adding to any of them would be a real
 breaking change, and is treated as one.
 
-## Migrating from 4.x
-
-5.0 is the release these breaks were saved for. Each is a compile error, not a
-change in behaviour, except the `rust-version` floor.
-
-| 4.x | 5.0 |
-| --- | --- |
-| `fig::from_str(s)` / `fig::to_string(&x)` | `fig::from_yaml_str(s)` / `fig::to_yaml_string(&x)`, which need the `yaml` feature; `from_slice(bytes, format)` / `to_value(&x)?.serialize(format)` for any format |
-| `ed.replace(p, &x)`, `insert`, `set`, `append`, `prepend` (serde) | `ed.replace_value(p, x)` &c., with `fig::to_value(&x)?` for a `Serialize` value |
-| `ed.delete(p)` / `ed.remove_item(p, i)` | `ed.delete_key(p)` / `ed.delete_item(p, i)` |
-| `ed.replace_key(p, k)` | `ed.rename_key(p, k)` |
-| `EmbedType::FrontmatterYaml` / `FrontmatterJson` / `EndmatterYaml` / `FrontmatterFig` / `PlusToml` | `EmbedType::Frontmatter` / `Semicolons` / `Endmatter` / `FencedFig` / `Plus` |
-| `EmbedType::MdFrontmatterJson` / `…Toml` / `…Fig` | `EmbedType::MdJson` / `MdToml` / `MdFig` |
-| `delete_leading_comments` / `delete_dangling_comments` | `delete_leading_comment` / `delete_dangling_comment` |
-| `set_sequence(p, &[Value])` | `set_sequence(p, items)` over any `impl Into<Value>` items |
-| `fig::split(s, k) -> (content, body)` | `fig::split(s, k) -> (before, content, after)` |
-| `Region::body`, `Extracted::body()` | `body_before`/`body_after`, `host_before()`/`host_after()` |
-| `Error::Language(String)` | `Error::Language(LanguageFailure)` — `.message`, `.byte_offset` |
-| `Error::Static(&str)` | `Error::Message(String)`, same text |
-| `Error::MissingField { field, ty }` patterns | add `..`; build with `Error::missing_field` |
-| `Syntax { .., ..Default::default() }`, `Dialect { .., ..Dialect::new(n) }` | `Syntax::default()` / `Dialect::new(n)`, then assign fields |
-| `SectionHeader { .. }`, `ClosedContainers { .. }`, `Comments { .. }` | `SectionHeader::new(open, close, sep)`, `ClosedContainers::new(..)`, `Comments::new(..)` |
-| `RegionRow { node, start, end }` | `RegionRow::new(node, span)`; `.span.start`/`.span.end` |
-| `MentionRow { .. }`, `CommentRow { .. }`, `DirectiveRow { .. }` | `MentionRow::new(..)`, `CommentRow::new(..)`, `DirectiveRow::new(..)` |
-| `match` on `NodeKind`, `Renderer`, `Literal`, `CommentStyle`, … | add a `_` arm |
-| `fig_sys::FigFormat::from(format)` | gone — a runtime `Format` has no `FigFormat` |
-| `fig_sys::FigStatus::OK` as a `c_int` | a `FigStatus`: `status == FigStatus::OK` |
-| any rustc | rustc 1.88 or newer (`rust-version`) |

@@ -433,7 +433,9 @@ Everything that takes an archetype is a static on `Embed`:
   body is the host with the whole block cut out, or `null` when there is no
   such region.
 - `Embed.detect(host)` sniffs which `EmbedType` a host opens with, or `null`.
-- `replaceBody(text)` swaps the prose while keeping the (possibly edited) config.
+- `replaceBody(text)` swaps the prose while keeping the (possibly edited) config:
+  the text after frontmatter, or before endmatter. An HTML data island has host
+  text on both sides and no one body, so it is refused (`UnsupportedOperation`).
 - `Embed.retype(host, from, to, content)` re-houses the block under a *different*
   archetype's fences — the splice half of "convert this file's embed style", with
   `content` the already re-serialized inner document. Every host byte outside the

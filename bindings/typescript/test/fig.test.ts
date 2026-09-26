@@ -486,6 +486,16 @@ test("Embed.replaceBody swaps the body, composing with edits", () => {
   assert.equal(fm.render(), "---\ntitle: Hello\n---\nnew body\n");
 });
 
+test("Embed.replaceBody refuses a data island, which has host text on both sides", () => {
+  const html = '<head>\n<script type="application/yaml">\nk: v\n</script>\n</head>\n';
+  using em = Embed.open(html, EmbedType.HtmlScriptYaml);
+  assert.throws(
+    () => em.replaceBody("NEW\n"),
+    (err: unknown) => err instanceof FigError && err.status === Status.UnsupportedOperation,
+  );
+  assert.equal(em.render(), html);
+});
+
 test("editor comment ops add, set, and delete", () => {
   using ed = Editor.open("a: 1\nb: 2\n", Format.Yaml);
   ed.addLeadingComment(["b"], "why");

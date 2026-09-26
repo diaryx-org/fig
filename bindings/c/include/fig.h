@@ -772,6 +772,8 @@ FigStatus fig_embed_set_sequence(FigEmbed *embed, const FigPathSegment *path, si
 // verbatim (not parsed) and copied; an empty `body` clears it. Composes with the
 // value edits — edit keys, replace the body, then render once. Takes effect at
 // the next fig_embed_render.
+// A mid-document block (an HTML data island) has host text on both sides and no
+// one body: FIG_STATUS_UNSUPPORTED_OPERATION, and nothing changes.
 FigStatus fig_embed_replace_body(FigEmbed *embed, const uint8_t *body, size_t body_len);
 
 // Render the full host file with the edited embed. Borrowed bytes, valid

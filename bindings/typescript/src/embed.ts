@@ -391,7 +391,10 @@ export class Embed extends Editable {
    *  The body is the suffix after the close fence (frontmatter) or the prefix
    *  before the open fence (endmatter); only that side is swapped. `body` is
    *  taken verbatim (not parsed); an empty string clears it. Composes with the
-   *  value edits — change keys, replace the body, then `render` once. */
+   *  value edits — change keys, replace the body, then `render` once. A
+   *  mid-document block (an HTML data island) has host text on both sides and
+   *  no one body, so it throws `FigError` with `Status.UnsupportedOperation`,
+   *  and nothing changes. */
   replaceBody(body: string): void {
     const frame = new Frame();
     try {

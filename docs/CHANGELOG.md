@@ -167,6 +167,7 @@ and no regeneration can reach a released section.
 - **cli** — `patch` takes --strict, --no-warnings and --strip-comments; `check` takes --strict ([`1d77f6e`](https://github.com/diaryx-org/fig/commit/1d77f6e7f4dc334f3ca2c9245173e71e8425f984))
 - **rust** — Span is Hash and converts to and from Range`<usize>` ([`44ee39d`](https://github.com/diaryx-org/fig/commit/44ee39d8bd6c43e7e4992ec8e05508d8b5d879ac))
 - **cli** — `version` takes `--help`, and `help <action>` names that action's help ([`5fede28`](https://github.com/diaryx-org/fig/commit/5fede286b2c350a363cc7a497369caed1ae8cded))
+- **core** — a runtime language named after a compiled-out format stands in for it ([`d360e7b`](https://github.com/diaryx-org/fig/commit/d360e7bb572f6cd2189424c65d67e0a5f5614202))
 
 ### Fixed
 
@@ -391,6 +392,12 @@ and no regeneration can reach a released section.
 
 - `fig help <action>` exits 2 with "for <action>'s help,
   run `fig <action> --help`" and no "See `fig --help`" line after it.
+
+- fig_language_register (and registerLanguage, fig::language::register) accepts a language or dialect named after a format compiled out of the linked library, where it refused the name before; the row takes that format's FIG_FORMAT_* value, not one at or above FIG_FORMAT_RUNTIME_BASE.
+
+- the rows of one registration no longer always take consecutive integers; a caller that computed a later dialect's format as the first plus its index must look it up with fig_format_by_name.
+
+- fig::language::register returns a stand-in dialect as the compiled format's own variant (Format::Plist), not Format::Runtime.
 
 <!-- git-cliff:end -->
 

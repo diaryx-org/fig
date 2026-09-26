@@ -925,6 +925,8 @@ fn editStatus(err: anyerror) FigStatus {
         error.OutOfMemory => .out_of_memory,
         error.NotFound => .not_found,
         error.NotAMapping, error.NotASequence, error.NotAContainer, error.InvalidDocument => .invalid_argument,
+        // A key rename at a path that names no key: a sequence item, or the root.
+        error.NotAKey => .invalid_argument,
         // `setSequence` declines a shape it can't safely diff (empty target,
         // empty/non-scalar list, a format whose scalars can't stand alone).
         error.UnsupportedShape => .invalid_argument,
@@ -4788,6 +4790,26 @@ test "fig_editor_replace_named_key spells the new name as the format does" {
     }
 }
 
+test "fig_editor_replace_key refuses a path with no key and a name already held" {
+    if (comptime !build_options.lang_json) return error.SkipZigTest;
+    const src = "{\"l\": [1, 2], \"a\": 1, \"b\": 2}";
+    var ed: ?*FigEditor = null;
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.json), &ed));
+    defer fig_editor_destroy(ed);
+    // A sequence item has no key: the old splice overwrote the item's value.
+    const item = [_]FigPathSegment{ keySeg("l"), .{ .kind = 1, .key_ptr = null, .key_len = 0, .index = 0 } };
+    const z = "\"z\"";
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_editor_replace_key(ed, &item, item.len, z.ptr, z.len));
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_editor_replace_key(ed, null, 0, z.ptr, z.len));
+    // JSON's parser accepts a repeated key, so the engine refuses it.
+    const a = [_]FigPathSegment{keySeg("a")};
+    const b = "b";
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_editor_replace_named_key(ed, &a, 1, b.ptr, b.len));
+    const b_syntax = "\"b\"";
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_editor_replace_key(ed, &a, 1, b_syntax.ptr, b_syntax.len));
+    try expectEditorSource(ed, src);
+}
+
 /// Read back an editor's source, for the whole-container tests below.
 fn expectEditorSource(ed: ?*FigEditor, expected: []const u8) !void {
     var ptr: [*c]const u8 = undefined;
@@ -5355,6 +5377,7 @@ test "editStatus: every editor refusal is a caller error, not parse_error" {
         error.MultilineComment,         error.InvalidComment,
         error.CommentsUnanchored,       error.RendererRefused,
         error.ImplicitSection,          error.ContainerClosesOnItsLine,
+        error.NotAKey,
     };
     for (refusals) |err| {
         const status = editStatus(err);

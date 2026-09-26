@@ -140,6 +140,10 @@ impl Editor {
 
     /// Rename the key at `path` to `key`, a name the format spells as it
     /// spells a key (`.k` in ZON, `"k"` in JSON, `<key>k</key>` in plist).
+    ///
+    /// A path that names no key (one ending in an index, or the empty path)
+    /// and a `key` another entry of the mapping already holds are
+    /// [`Error::InvalidArgument`], and nothing is written.
     pub fn rename_key(&mut self, path: &[Segment], key: &str) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe {

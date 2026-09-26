@@ -206,9 +206,10 @@ pub fn main(init: std.process.Init) !void {
             std.process.exit(2);
         },
         // Each has said what was wrong already (`args.pathArg`, the archetype
-        // error), and nothing more is worth adding: the format list would
-        // only mislead after a bad archetype name.
-        ArgError.InvalidPath, ArgError.UnknownArchetype => std.process.exit(2),
+        // error, the action `help` was given), and nothing more is worth
+        // adding: the format list would only mislead after a bad archetype
+        // name, and `fig --help` after being told `fig <action> --help`.
+        ArgError.InvalidPath, ArgError.UnknownArchetype, ArgError.HelpNamesAction => std.process.exit(2),
         // `help`/`version` with an argument after them: said which already.
         ArgError.SurplusArgument => {
             try stderr_terminal.writer.writeAll("See `fig --help`.\n");
@@ -285,7 +286,7 @@ fn reportParseFailure(a: std.mem.Allocator, io: std.Io, term: *std.Io.Terminal, 
 fn dispatch(a: std.mem.Allocator, io: Io, stdout_terminal: *Io.Terminal, stderr_terminal: *Io.Terminal, config: types.CliConfig) !void {
     return switch (config.action) {
         .help => actions.runHelp(stderr_terminal, config.binary_name),
-        .version => actions.runVersion(stdout_terminal, version, epoch),
+        .version => actions.runVersion(stdout_terminal, config.binary_name, version, epoch, config.options.version),
         .replace => actions.runEdit(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.replace),
         .rename => actions.runEdit(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.rename),
         .set => actions.runSet(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.set),

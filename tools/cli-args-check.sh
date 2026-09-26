@@ -71,6 +71,16 @@ exits "help surplus" 2 help set
 exits "version surplus" 2 version extra
 exits "--version surplus" 2 --version extra
 exits "help --help" 0 help --help
+# `version` takes `--help` like every other action.
+exits "version --help" 0 version --help
+exits "-v -h" 0 -v -h
+[ "$("$fig" version --help 2>/dev/null | head -1)" = "Usage: $fig version" ] || fail "version --help printed no usage"
+# `help <action>` says where that action's help is.
+err="$("$fig" help set 2>&1 >/dev/null || true)"
+case "$err" in
+*"fig set --help"*) ;;
+*) fail "help set: $err" ;;
+esac
 cmp -s f.yaml orig.yaml || fail "a refused command line changed f.yaml"
 
 # `--` ends the flags; `-` is stdin; a negative number is a value.

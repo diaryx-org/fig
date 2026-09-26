@@ -178,7 +178,9 @@ pub const HelpOptions = struct {
     requested_help: bool = false,
 };
 
-pub const VersionOptions = struct {};
+pub const VersionOptions = struct {
+    requested_help: bool = false,
+};
 
 /// How a value argument (`set`/`insert`/`replace`) is read — see `value_arg.zig`.
 pub const ValueMode = enum {
@@ -723,7 +725,7 @@ pub fn parseTarget(config: CliConfig) ?ParseTarget {
     return t;
 }
 
-pub const ArgError = error{ UnsupportedFileFormat, MissingReplaceArgument, MissingRenameArgument, MissingSetArgument, MissingInsertArgument, MissingDeleteArgument, MissingGetArgument, MissingCommentArgument, MissingCheckArgument, MissingFmtArgument, MissingConvertArgument, MissingPatchArgument, MissingLangArgument, SurplusArgument, UnknownArchetype, OutOfMemory, Overflow, InvalidCharacter, InvalidPath };
+pub const ArgError = error{ UnsupportedFileFormat, MissingReplaceArgument, MissingRenameArgument, MissingSetArgument, MissingInsertArgument, MissingDeleteArgument, MissingGetArgument, MissingCommentArgument, MissingCheckArgument, MissingFmtArgument, MissingConvertArgument, MissingPatchArgument, MissingLangArgument, SurplusArgument, UnknownArchetype, HelpNamesAction, OutOfMemory, Overflow, InvalidCharacter, InvalidPath };
 
 /// Result of mapping a file extension to a parse strategy. `embed_detect` is
 /// set when the file is a host document whose config lives in an embedded

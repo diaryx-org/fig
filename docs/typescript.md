@@ -42,7 +42,7 @@ serve** — it runs in Node, Bun, Deno, and the browser.
 npm install @diaryx/fig
 ```
 
-Requires Node 20+ (or any runtime with `Symbol.dispose`). The package is ESM-only
+Requires Node 22+, or a current Bun, Deno or browser. The package is ESM-only
 and ships its own TypeScript types. Working on the binding itself needs a newer
 Node — see [Developing the binding](#developing-the-binding).
 
@@ -733,7 +733,7 @@ manage the handle for you, so no cleanup is needed.
 
 ## Developing the binding
 
-Consumers need Node 20+; working on `bindings/typescript` from a checkout needs
+Consumers need Node 22+; working on `bindings/typescript` from a checkout needs
 **Node 24+**. `npm test` type-checks the sources and tests with `tsc`, then runs
 the `.ts` files directly under Node's strip-only TypeScript support. That works
 because the package is written in erasable syntax only — its enums are
@@ -750,7 +750,7 @@ npm test
 ```
 
 This is a test-time requirement only. The published package stays at
-`"engines": { "node": ">=20" }`, because `tsc` downlevels `using` in the shipped
+`"engines": { "node": ">=22" }`, because `tsc` downlevels `using` in the shipped
 `dist/` output. Don't raise `engines` to match the dev floor.
 
 `zig build check` runs this suite as part of the pre-release gate and skips it

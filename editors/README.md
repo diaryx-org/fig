@@ -1,7 +1,6 @@
 # Editor support for fig
 
-Two artifacts that give the `.figl` authoring dialect syntax highlighting
-(`.fig` is also accepted for back-compat):
+Two artifacts that give the `.figl` authoring dialect syntax highlighting:
 
 | Dir | What it is |
 |---|---|
@@ -138,7 +137,7 @@ source = { path = "/absolute/path/to/fig/editors/tree-sitter-fig" }
 [[language]]
 name = "fig"
 scope = "source.fig"
-file-types = ["figl", "fig"]
+file-types = ["figl"]
 comment-token = "#"
 indent = { tab-width = 2, unit = "  " }
 language-servers = ["fig-lsp"]

@@ -31,10 +31,9 @@ pub const Language = struct {
     pub const printNode = fig.Printer.printNode;
 
     pub const name = "fig";
-    /// `.figl` is the authoring dialect's canonical extension; `.fig` is still
-    /// accepted for back-compat. (The canonical form deliberately owns no
-    /// extension — select it with `--input canonical`.)
-    pub const extensions: []const []const u8 = &.{ "figl", "fig" };
+    /// `.figl` is the authoring dialect's extension. (The canonical form
+    /// deliberately owns no extension — select it with `--input canonical`.)
+    pub const extensions: []const []const u8 = &.{"figl"};
     pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
 
     /// What `languages/harness.zig` round-trips and edits: a root key, a

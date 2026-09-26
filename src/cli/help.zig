@@ -200,7 +200,7 @@ pub const Help = struct {
             \\  When <file> itself does not exist, it is CREATED and seeded with
             \\    <path>: <value>; `fig get <file>` then prints what was written.
             \\    The format comes from the extension, so a new file needs a known
-            \\    one — .figl (.fig also accepted)/.json/.jsonc/.yaml/.yml/.toml (or a .md host, via
+            \\    one — .figl/.json/.jsonc/.yaml/.yml/.toml (or a .md host, via
             \\    --embed). .zon/.json5 have no from-scratch seed and must already
             \\    exist.
             \\  --seq: reconcile the sequence at <path> to exactly <item>..., keeping
@@ -321,8 +321,8 @@ pub const Help = struct {
             \\    extension — select it explicitly.) Compiled in only with
             \\    `-Dcanonical=true` (opt-in, off by default — it is a
             \\    test/debugging oracle, not exposed through the C ABI or bindings).
-            \\  fig: the human-facing authoring dialect (`.figl`; `.fig` still
-            \\    accepted); lossy at the edges (non-string keys, YAML refs) —
+            \\  fig: the human-facing authoring dialect (`.figl`); lossy at the
+            \\    edges (non-string keys, YAML refs) —
             \\    use `canonical`/`--lossless` for those. `-o fig` prints in
             \\    house style; use `fig fmt` to
             \\    rewrite a file in place instead of printing to stdout.

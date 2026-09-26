@@ -3,7 +3,7 @@
     {
       "name": "fig",
       "scope": "source.fig",
-      "file-types": ["figl", "fig"],
+      "file-types": ["figl"],
       "highlights": ["queries/highlights.scm"]
     }
   ],

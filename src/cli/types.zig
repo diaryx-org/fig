@@ -18,8 +18,7 @@ const L = fig.Language;
 // counterpart; the `get` handler intercepts it before the serializer dispatch.
 // `canonical` (formerly `native`) is the AST's 1:1 oracle encoding, selectable
 // only via `--input/--output canonical` — it owns no file extension. `fig` is
-// the human-facing authoring dialect: it owns `.figl` (with `.fig` still
-// accepted for back-compat), has a reader + `fig fmt`
+// the human-facing authoring dialect: it owns `.figl`, has a reader + `fig fmt`
 // printer (see `get`), and `Editor(fig.Language.FIG)` wires `replace`/`rename`/`set`/
 // `insert`/`delete`/`comment` through the same span-splice engine as
 // TOML/YAML/ZON (see `fig/editor_helper.zig`, which also carries the

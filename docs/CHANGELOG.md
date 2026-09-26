@@ -143,12 +143,28 @@ and no regeneration can reach a released section.
 - **cli** — a mid-sequence `insert` is a refused edit, exit 1 ([`aed4d31`](https://github.com/diaryx-org/fig/commit/aed4d31f5f9e07ea03110bbb0e45f5e8edfdee57))
 - `.figl` is fig's only extension; `.fig` is no longer the format's ([`d0a7ee6`](https://github.com/diaryx-org/fig/commit/d0a7ee67f364986eef1d1e1204353ab623cf6cc8))
 - one version and one v* tag for every artifact, at 5.0.0 ([`c6a1686`](https://github.com/diaryx-org/fig/commit/c6a1686d994036505de736f70011efe70d54fd08))
+- **ts** — enums are erasable `as const` objects, not TypeScript enums ([`46790c8`](https://github.com/diaryx-org/fig/commit/46790c8575a577736e108fe42bd2a13be49647a2))
+- **ts** — `EmbedType` names the CLI's archetypes; embed locators are statics ([`79a781c`](https://github.com/diaryx-org/fig/commit/79a781c9797f861b259e70b8b540f9c5b2eaa673))
+- **ts** — `stringify` is the one value serializer; export `DirectiveRow` ([`b85a9b2`](https://github.com/diaryx-org/fig/commit/b85a9b21093b7f3a610fbb51dabdafe4cd91ceb5))
+- **ts** — every open reports the core's parse message; `FigError` gains `op` ([`0490b99`](https://github.com/diaryx-org/fig/commit/0490b99d033ddf11633de674095671f8ecfc41eb))
+- **ts** — Node 22 floor, `./package.json` export, one copy of the wasm payload ([`26ccd01`](https://github.com/diaryx-org/fig/commit/26ccd010d63aa7d886705551774a0fee6e4ab3eb))
+- **wasi** — @diaryx/fig-wasi requires Node 22, as @diaryx/fig does ([`e7a3878`](https://github.com/diaryx-org/fig/commit/e7a3878f5cb088e04c188e6c2c6c2546637ff9f8))
+- **rust** — FigStatus constants are FigStatus, not c_int ([`dae958a`](https://github.com/diaryx-org/fig/commit/dae958ab53c471c893cff7385b6253a371d044ff))
+- **rust** — the runtime-language contract types are non_exhaustive ([`f31bc53`](https://github.com/diaryx-org/fig/commit/f31bc5393b13ab02406db6a6a657879b5ad3fbc3))
+- **rust** — Error::Language carries a LanguageFailure, Error::Static folds into Message ([`af04b13`](https://github.com/diaryx-org/fig/commit/af04b13ceb5b3604da27971917ba79931ef758cd))
+- **rust** — Format no longer converts to fig_sys::FigFormat ([`6fcdb6b`](https://github.com/diaryx-org/fig/commit/6fcdb6bad0aeaa44befb35121fc12e5ac9e13389))
+- **rust** — one set of editor method names, on Editor and Embed alike ([`6c66d2c`](https://github.com/diaryx-org/fig/commit/6c66d2cfa61bb9cd5ee4f2e1814fd7644c84cfa8))
+- **rust** — embeds split into before, content and after; the one-sided body is gone ([`abe3832`](https://github.com/diaryx-org/fig/commit/abe3832f057e6c7c8cf8936d60d4b2ba201a3863))
+- **rust** — from_str and to_string become from_yaml_str and to_yaml_string ([`b2c012c`](https://github.com/diaryx-org/fig/commit/b2c012c384920b77381b4324e17317b3e24601a4))
+- **rust** — EmbedType variants are the CLI's archetype names ([`bbe7514`](https://github.com/diaryx-org/fig/commit/bbe75144c92066f0e9a03a276550b7c08a03ae75))
+- **ts** — editor method names match the Rust binding's ([`71536b4`](https://github.com/diaryx-org/fig/commit/71536b499c77e61c6d08bc41e395d97ea01766b9))
 
 ### Added
 
 - **cli** — patch into a runtime language ([`abbeba4`](https://github.com/diaryx-org/fig/commit/abbeba43aa4de8b985318fcb6deb094547dc27fc))
 - loss diagnostics for a runtime target, and a value refused where the target cannot hold it ([`be3f4df`](https://github.com/diaryx-org/fig/commit/be3f4df49d7e72c6ac8c5a1283ac8dc462cb9719))
 - **cli** — `patch` takes --strict, --no-warnings and --strip-comments; `check` takes --strict ([`048c74f`](https://github.com/diaryx-org/fig/commit/048c74f0ffc905d7cbec756da4a258f00811bf46))
+- **rust** — Span is Hash and converts to and from Range`<usize>` ([`e72fea1`](https://github.com/diaryx-org/fig/commit/e72fea161f999316369ee658cbd390b13bb0ca58))
 
 ### Fixed
 
@@ -305,6 +321,23 @@ and no regeneration can reach a released section.
   fig-sys and the fig-sys-`<target>` payload crates — is 5.0.0, where it was
   4.1.0; `@diaryx/fig` is 5.0.0, where it was 3.1.0; `@diaryx/fig-wasi` is
   5.0.0, where it was 4.0.0. Each is a major to a caller pinning `^`.
+
+- `Embed.split` on a mid-document HTML island returns
+  the host on both sides of the block as its body (it returned only the
+  text after it), and on endmatter it includes any host text after the
+  closing fence. A failure other than a missing or unterminated region —
+  an invalid archetype, say — now throws instead of returning `null`.
+
+- `Editor.open`, `Embed.open` and `Embed.openOrInit` on
+  unparseable input throw a `FigError` whose message is the core's
+  diagnostic (`fig_editor_create: <reason>`) where it was the bare
+  `fig_editor_create: parse error`; the status is unchanged.
+
+- a `Document`, `Editor` or `Embed` used after
+  `dispose()` throws `FigError` with `status` `InvalidArgument`, not a
+  plain `Error`.
+
+- a FigError thrown by one of the renamed methods carries the new name in `op` and its message.
 
 <!-- git-cliff:end -->
 

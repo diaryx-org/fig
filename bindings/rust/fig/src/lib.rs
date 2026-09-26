@@ -47,9 +47,13 @@ pub use convert::{field, field_or_default, map_get};
 pub use fig_macros::{FromValue, ToValue};
 
 #[cfg(feature = "serde")]
-pub use de::{from_slice, from_str};
+pub use de::from_slice;
+#[cfg(all(feature = "serde", feature = "yaml"))]
+pub use de::from_yaml_str;
 #[cfg(feature = "serde")]
-pub use ser::{to_string, to_value};
+pub use ser::to_value;
+#[cfg(all(feature = "serde", feature = "yaml"))]
+pub use ser::to_yaml_string;
 
 use ffi::{FIG_NODE_NONE, FigNodeId, FigNodeKind};
 

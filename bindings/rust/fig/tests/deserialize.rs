@@ -1,5 +1,5 @@
 //! Serde deserialization tests. Run with `cargo test -p fig --features serde`.
-#![cfg(feature = "serde")]
+#![cfg(all(feature = "serde", feature = "yaml"))]
 
 use fig::Value;
 use serde::Deserialize;
@@ -59,7 +59,7 @@ fn frontmatter_into_struct() {
     }
 
     let src = "title: Hello\ncount: 42\ntags:\n- a\n- b\n";
-    let fm: Frontmatter = fig::from_str(src).unwrap();
+    let fm: Frontmatter = fig::from_yaml_str(src).unwrap();
     assert_eq!(
         fm,
         Frontmatter {
@@ -89,7 +89,7 @@ fn typed_config_with_enum() {
     }
 
     let src = "namespace_id: ns-1\nstate: access_control\n";
-    let cfg: Config = fig::from_str(src).unwrap();
+    let cfg: Config = fig::from_yaml_str(src).unwrap();
     assert_eq!(
         cfg,
         Config {
@@ -109,7 +109,7 @@ a:
     - 2
   c: hello
 ";
-    let value: Value = fig::from_str(src).unwrap();
+    let value: Value = fig::from_yaml_str(src).unwrap();
     assert_eq!(
         value,
         map(vec![(
@@ -126,7 +126,7 @@ a:
 /// mapping key — is the key's value, and a following sibling key ends it.
 #[test]
 fn indentless_block_sequence() {
-    let nested: Value = fig::from_str("a:\n  b:\n  - 1\n  - 2\n  c: hello\n").unwrap();
+    let nested: Value = fig::from_yaml_str("a:\n  b:\n  - 1\n  - 2\n  c: hello\n").unwrap();
     assert_eq!(
         nested,
         map(vec![(
@@ -138,7 +138,7 @@ fn indentless_block_sequence() {
         )]),
     );
 
-    let root: Value = fig::from_str("one:\n- 2\nfour: 5\n").unwrap();
+    let root: Value = fig::from_yaml_str("one:\n- 2\nfour: 5\n").unwrap();
     assert_eq!(
         root,
         map(vec![
@@ -157,14 +157,14 @@ fn null_becomes_option_none() {
     }
 
     let src = "a: ~\nb: present\n";
-    let s: S = fig::from_str(src).unwrap();
+    let s: S = fig::from_yaml_str(src).unwrap();
     assert_eq!(s.a, None);
     assert_eq!(s.b, Some("present".to_string()));
 }
 
 #[test]
 fn empty_document_is_null() {
-    let v: Option<String> = fig::from_str("").unwrap();
+    let v: Option<String> = fig::from_yaml_str("").unwrap();
     assert_eq!(v, None);
 }
 
@@ -176,26 +176,26 @@ fn int_vs_float_classification() {
         f: f64,
     }
 
-    let nums: Nums = fig::from_str("i: 7\nf: 1.5\n").unwrap();
+    let nums: Nums = fig::from_yaml_str("i: 7\nf: 1.5\n").unwrap();
     assert_eq!(nums.i, 7);
     assert_eq!(nums.f, 1.5);
 }
 
 #[test]
 fn yaml_special_floats() {
-    let inf: f64 = fig::from_str(".inf").unwrap();
+    let inf: f64 = fig::from_yaml_str(".inf").unwrap();
     assert!(inf.is_infinite() && inf.is_sign_positive());
 
-    let ninf: f64 = fig::from_str("-.inf").unwrap();
+    let ninf: f64 = fig::from_yaml_str("-.inf").unwrap();
     assert!(ninf.is_infinite() && ninf.is_sign_negative());
 
-    let nan: f64 = fig::from_str(".nan").unwrap();
+    let nan: f64 = fig::from_yaml_str(".nan").unwrap();
     assert!(nan.is_nan());
 }
 
 #[test]
 fn bool_scalars() {
-    let v: Vec<bool> = fig::from_str("[true, false]").unwrap();
+    let v: Vec<bool> = fig::from_yaml_str("[true, false]").unwrap();
     assert_eq!(v, vec![true, false]);
 }
 
@@ -251,7 +251,7 @@ fn parses_frontmatter_shapes() {
     ];
 
     for (src, want) in cases {
-        let ours: Value = fig::from_str(src).unwrap();
+        let ours: Value = fig::from_yaml_str(src).unwrap();
         assert_eq!(ours, want, "mismatch for source:\n{src}");
     }
 }

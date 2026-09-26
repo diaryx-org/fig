@@ -44,10 +44,11 @@ enum_discriminants_undefined_non_unit_variant = "warn"
 # no serde at all.
 [features]
 default = ["json", "yaml", "toml", "fig", "ini", "dotenv", "properties", "nestedtext"]
-# Typed (de)serialization: `to_string`/`from_str`, the editor's `T: Serialize`
-# value methods, and serde impls for `Value`. Opt-in (not in `default`); without
-# it, the binding still parses, edits, and serializes via the `Value` tree
-# directly, and `#[derive(ToValue, FromValue)]` covers typed struct mapping.
+# Typed (de)serialization: `from_slice`/`to_value` (and, with `yaml`,
+# `from_yaml_str`/`to_yaml_string`), and serde impls for `Value`. Opt-in (not in
+# `default`); without it, the binding still parses, edits, and serializes via the
+# `Value` tree directly, and `#[derive(ToValue, FromValue)]` covers typed struct
+# mapping.
 serde = ["dep:serde"]
 # Ergonomic typed mapping without serde: `#[derive(fig::ToValue, fig::FromValue)]`
 # generates straight-line conversions to/from the concrete `Value` tree (no

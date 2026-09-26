@@ -1,10 +1,10 @@
 //! Comment-preserving write-path tests: edits must change only the targeted
 //! node's bytes and leave comments, key order, fences, and the markdown body
 //! intact. The edits are the `*_value` methods, which need no serde; the file
-//! is serde-gated because it reads results back with `from_str` and builds a
+//! is serde-gated because it reads results back with `from_yaml_str` and builds a
 //! typed struct's value with `fig::to_value`. Run with
 //! `cargo test -p fig --features serde`.
-#![cfg(feature = "serde")]
+#![cfg(all(feature = "serde", feature = "yaml"))]
 
 use fig::{Editor, Embed, EmbedType, Format, Segment};
 
@@ -71,7 +71,7 @@ fn editor_replace_quotes_when_needed() {
         .unwrap();
     // Reads back as the same logical value.
     let value: std::collections::BTreeMap<String, String> =
-        fig::from_str(ed.source().unwrap()).unwrap();
+        fig::from_yaml_str(ed.source().unwrap()).unwrap();
     assert_eq!(value["title"], "has: colon");
 }
 

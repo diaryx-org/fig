@@ -210,12 +210,12 @@ test("Editor.insertValue takes the key's name and spells it as the format does",
   assert.equal(toml.source(), 'a = 1\n"has space" = 2\n');
 });
 
-test("Editor.replaceKey takes the key's name and spells it as the format does", () => {
+test("Editor.renameKey takes the key's name and spells it as the format does", () => {
   using json = Editor.open('{"a": 1}', Format.Json);
-  json.replaceKey(["a"], 'k"q');
+  json.renameKey(["a"], 'k"q');
   assert.equal(json.source(), '{"k\\"q": 1}');
   using toml = Editor.open("a = 1\n", Format.Toml);
-  toml.replaceKey(["a"], "has space");
+  toml.renameKey(["a"], "has space");
   assert.equal(toml.source(), '"has space" = 1\n');
 });
 
@@ -239,8 +239,8 @@ test("stringify stays a whole document where splice text does not", () => {
 
 test("Editor.set replaces an existing key or inserts a missing one", () => {
   using ed = Editor.open("a: 1\nb: 2\n", Format.Yaml);
-  ed.set(["a"], 9); // existing → replace
-  ed.set(["c"], 3); // absent → insert
+  ed.setValue(["a"], 9); // existing → replace
+  ed.setValue(["c"], 3); // absent → insert
   assert.equal(ed.source(), "a: 9\nb: 2\nc: 3\n");
 });
 
@@ -295,7 +295,7 @@ test("Editor deletes a JSON5 key, carrying its owned // comment", () => {
     "{\n  host: 'localhost',\n  // the listening port\n  port: 8080,\n}\n",
     Format.Json5,
   );
-  ed.delete(["port"]);
+  ed.deleteKey(["port"]);
   assert.equal(ed.source(), "{\n  host: 'localhost',\n}\n");
 });
 
@@ -314,17 +314,17 @@ test("Editor edits the fig authoring dialect", () => {
 
 test("Embed edits a ```fig fenced frontmatter block, fences and body intact", () => {
   using fm = Embed.open("```fig\ntitle = Hi\n```\nbody\n", EmbedType.FencedFig);
-  fm.set(["title"], "Yo");
+  fm.setValue(["title"], "Yo");
   assert.equal(fm.render(), "```fig\ntitle = Yo\n```\nbody\n");
 });
 
-test("Embed setWith splices a block map into a ```fig fence (width knob)", () => {
+test("Embed setValueWith splices a block map into a ```fig fence (width knob)", () => {
   using fm = Embed.open("```fig\ntitle = hi\n```\nbody\n", EmbedType.FencedFig);
-  fm.setWith(["registry"], { a: 1, b: 2 }, { width: 1 });
+  fm.setValueWith(["registry"], { a: 1, b: 2 }, { width: 1 });
   assert.equal(fm.render(), "```fig\ntitle = hi\nregistry\n> a = 1\n> b = 2\n```\nbody\n");
   // Plain set still freezes a container inline as flow.
   using flow = Embed.open("```fig\ntitle = hi\n```\nbody\n", EmbedType.FencedFig);
-  flow.set(["registry"], { a: 1, b: 2 });
+  flow.setValue(["registry"], { a: 1, b: 2 });
   assert.equal(flow.render(), "```fig\ntitle = hi\nregistry = { a = 1, b = 2 }\n```\nbody\n");
 });
 
@@ -342,13 +342,13 @@ test("Embed.openOrInit creates a block when none exists, else opens it", () => {
   // No frontmatter: a block is synthesized and the first set lands the key.
   {
     using fm = Embed.openOrInit("# Just a body\n\nprose\n", EmbedType.Frontmatter);
-    fm.set(["title"], "Hi");
+    fm.setValue(["title"], "Hi");
     assert.equal(fm.render(), "---\ntitle: Hi\n---\n# Just a body\n\nprose\n");
   }
   // Existing frontmatter: behaves like open, comment + body preserved.
   {
     using fm = Embed.openOrInit("---\ntitle: Old # c\n---\nbody\n", EmbedType.Frontmatter);
-    fm.set(["title"], "New");
+    fm.setValue(["title"], "New");
     assert.equal(fm.render(), "---\ntitle: New # c\n---\nbody\n");
   }
 });
@@ -465,8 +465,8 @@ test("detect sniffs the embed archetype by its open delimiter", () => {
 
 test("fig-dialect container splices render flow and round-trip", () => {
   using em = Embed.open("```fig\nt = x\n```\nbody\n", EmbedType.FencedFig);
-  em.set(["contents"], ["a.md", "b.md"]);
-  em.set(["meta"], { k: 1 });
+  em.setValue(["contents"], ["a.md", "b.md"]);
+  em.setValue(["meta"], { k: 1 });
   const rendered = em.render();
   assert.ok(rendered.includes("contents = [a.md, b.md]"), rendered);
   assert.ok(rendered.includes("meta = { k = 1 }"), rendered);
@@ -492,7 +492,7 @@ test("editor comment ops add, set, and delete", () => {
   ed.setTrailingComment(["b"], "two");
   assert.equal(ed.source(), "a: 1\n# why\nb: 2 # two\n");
   ed.deleteTrailingComment(["b"]);
-  ed.deleteLeadingComments(["b"]);
+  ed.deleteLeadingComment(["b"]);
   assert.equal(ed.source(), "a: 1\nb: 2\n");
 });
 
@@ -530,7 +530,7 @@ test("editor dangling comment round-trips at a container's end", () => {
   ed.addDanglingComment(["server"], "was: here");
   assert.equal(ed.source(), "server:\n  port: 8080\n  # was: here\nclient: 1\n");
   assert.equal(ed.getDanglingComment(["server"]), "was: here");
-  ed.deleteDanglingComments(["server"]);
+  ed.deleteDanglingComment(["server"]);
   assert.equal(ed.source(), "server:\n  port: 8080\nclient: 1\n");
 });
 
@@ -667,7 +667,7 @@ test("2.4 config formats: capabilities, parse/convert, and edit", () => {
   // dotenv edits in place, splicing source (comments/layout preserved).
   {
     using ed = Editor.open("# app\nHOST=localhost\n", Format.Dotenv);
-    ed.set(["PORT"], 8080);
+    ed.setValue(["PORT"], 8080);
     assert.equal(ed.source(), "# app\nHOST=localhost\nPORT=8080\n");
   }
 });
@@ -806,7 +806,7 @@ test("using a disposed Editor throws", () => {
   const disposed = (err: unknown) =>
     err instanceof FigError && err.status === Status.InvalidArgument && err.op === "Editor";
   assert.throws(() => ed.source(), disposed);
-  assert.throws(() => ed.set(["a"], 2), disposed);
+  assert.throws(() => ed.setValue(["a"], 2), disposed);
 });
 
 // ── whole-container ops ─────────────────────────────────────────────────────
@@ -820,7 +820,7 @@ test("Editor container ops reach a TOML table the key ops refuse", () => {
   const src = "[a]\nx = 1\n[b]\ny = 2\n";
 
   using del = Editor.open(src, Format.Toml);
-  assert.throws(() => del.delete(["a"]), /invalid argument/);
+  assert.throws(() => del.deleteKey(["a"]), /invalid argument/);
   del.deleteContainer(["a"]);
   assert.equal(del.source(), "[b]\ny = 2\n");
 
@@ -869,6 +869,13 @@ test("Editor container ops are unsupported where the key ops already suffice", (
   // six — and `delete` handles the same shape directly.
   using ed = Editor.open("a:\n  x: 1\nb:\n  y: 2\n", Format.Yaml);
   assert.throws(() => ed.deleteContainer(["a"]), /unsupported format/);
-  ed.delete(["a"]);
+  ed.deleteKey(["a"]);
   assert.equal(ed.source(), "b:\n  y: 2\n");
+});
+
+test("appendValueWith and prependValueWith render the item with the options given", () => {
+  using ed = Editor.open("xs:\n  - b\n", Format.Yaml);
+  ed.appendValueWith(["xs"], V.map([[V.string("k"), V.int(1)]]), { width: 1 });
+  ed.prependValueWith(["xs"], "a");
+  assert.equal(ed.source(), "xs:\n  - a\n  - b\n  - k: 1\n");
 });

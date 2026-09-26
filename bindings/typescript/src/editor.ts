@@ -100,7 +100,7 @@ export class Editor extends Editable {
   // scalar: by the one range of source it occupies. A TOML `[header]` table
   // occupies no such range — its body is the lines after the header, and an
   // `[a.b]` header further down the file extends it — and neither does an INI
-  // `[section]` or a `fig` block container. At a path naming one, `delete`,
+  // `[section]` or a `fig` block container. At a path naming one, `deleteKey`,
   // `replaceValue`, `moveKey` and `reorderKeys` all fail with
   // `Status.InvalidArgument` rather than rewrite the header and leave its
   // entries behind. These six are the route for those shapes.

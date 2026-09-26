@@ -57,16 +57,17 @@ pub use ser::to_yaml_string;
 
 use ffi::{FIG_NODE_NONE, FigNodeId, FigNodeKind};
 
-/// A config format. Every variant parses, edits, and serializes.
+/// A config format: every format the core registers, plus
+/// [`Format::Runtime`] for a language registered while the program runs.
+/// Every compiled variant parses, edits, and serializes.
 ///
-/// Every variant is always present in the enum, but each format is gated by a
-/// crate feature of the same name (`json`, `yaml`, `toml`, `zon`, `fig`).
-/// Every format the core registers. `json`, `yaml`, `toml`, `fig`, `ini`,
-/// `dotenv`, `properties` and `nestedtext` are on by default; `zon` and
-/// `plist` are opt-in features. Disabling a feature compiles that format out
-/// of the bundled native library, so selecting it then fails with
-/// [`Error::UnsupportedFormat`] at runtime. `Json`/`Jsonc`/`Json5` share one
-/// core behind the `json` feature.
+/// Every variant is always present in the enum, but each compiled format is
+/// gated by a crate feature of the same name: `json`, `yaml`, `toml`, `fig`,
+/// `ini`, `dotenv`, `properties` and `nestedtext` are on by default; `zon` and
+/// `plist` are opt-in. Disabling a feature compiles that format out of the
+/// bundled native library, so selecting it then fails with
+/// [`Error::UnsupportedFormat`] at runtime — [`capabilities`] says so up
+/// front. `Json`/`Jsonc`/`Json5` share one core behind the `json` feature.
 ///
 /// `#[non_exhaustive]`: the core gains formats over time, so a `match` needs a
 /// `_` arm. Constructing a variant is unaffected.

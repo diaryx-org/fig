@@ -51,7 +51,7 @@ pub const Result = struct {
 /// three JSON dialects share a language but not a spelling.
 ///
 /// Unlike `edit_ops`, there is no `splice`-style requoting step. That exists
-/// because `edit`/`set` splice a user's raw argument, which strict JSON needs
+/// because `replace`/`set` splice a user's raw argument, which strict JSON needs
 /// wrapped as a string; a patch splices a *rendered* subtree, which the
 /// target's own printer already spelled correctly.
 pub fn applyToSlice(

@@ -3,7 +3,7 @@ title = CLI 5
 description = One reading of a value argument, a scalar printed as its text, strict arguments, one version and one tag — the command-line changes a fig 5.0 would carry
 created = 2026-09-22
 status = draft
-updated = 2026-09-24
+updated = 2026-09-26
 part_of = [proposals](proposals.md)
 ```
 
@@ -19,7 +19,8 @@ part_of = [proposals](proposals.md)
 >
 > **Progress.** §1 (a value argument is a fig value), §2 (`get` prints a
 > scalar as its text), §3 (strict arguments), §4 (a missing comment exits
-> 1) and §5 (exit codes written down) have landed, with
+> 1), §5 (exit codes written down) and §7 (`edit` split into `replace`
+> and `rename`) have landed, with
 > `Behavioural-change:` trailers; `tools/cli-args-check.sh` holds them to
 > the built binary, §5 as one case per action per row. The line §5 draws:
 > 2 is what the command line alone gets wrong, before the file is read; 1
@@ -190,6 +191,14 @@ fixes the cursor and keeps the versions independent, but the tag's number then
 means nothing for three of four artifacts, and most of the tooling stays.
 
 ## 7. Optional: `edit` becomes `replace` and `rename`
+
+> **Implemented, without the alias.** `replace <file> <path> <value>` takes
+> `--string`/`--raw` and nothing else; `rename <file> <path> <name>` takes
+> no flags. `edit`, its `e` shorthand and `--key` are gone in 5.0 rather
+> than warning until 6.0: a word fig has no verb for is handed to a
+> `fig-edit` on PATH, and when there is none the error says which of the
+> two verbs to use. Neither new verb has a one-letter shorthand, since
+> `r` would not say which.
 
 `edit` replaces a value and `edit --key` renames a key; beside `set`, `insert`
 and `delete` it is the one verb that does not say what it does, and the one

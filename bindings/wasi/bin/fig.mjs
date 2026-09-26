@@ -198,7 +198,7 @@ const imports = wasi.getImportObject();
 // it. Node's `node:wasi` is the outlier that still checks it faithfully —
 // more spec-correct, but it surfaces this gap. Confirmed empirically against
 // `zig build wasi`'s output (Zig 0.16.0): every action that touches a file
-// (`get`, `set`, `edit`, `insert`, `delete`, `comment`, `check`, `fmt`,
+// (`get`, `set`, `replace`, `rename`, `insert`, `delete`, `comment`, `check`, `fmt`,
 // `convert`) fails without this patch and succeeds with it. It's a userspace
 // workaround, not a fig code change — the proper fix belongs in Zig's wasi
 // posix layer, which this package doesn't vendor.

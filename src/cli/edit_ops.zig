@@ -1,4 +1,4 @@
-//! In-place editing plumbing shared by `edit`/`set`/`insert`/`delete`/
+//! In-place editing plumbing shared by `replace`/`rename`/`set`/`insert`/`delete`/
 //! `comment`: the single span-splice path (`applyEdit`) behind every
 //! structural op, its embed-aware twin (`applyToEmbed`), and the small
 //! helpers (value rendering, empty-document seeds) those two lean on.
@@ -24,7 +24,7 @@ pub fn parseEmbeddedFromFile(allocator: std.mem.Allocator, io: Io, file: Io.File
 
 /// Apply one in-place edit to `content` (a complete document parsed under
 /// `dialect`) and return the new bytes. The single span-splice path behind both
-/// the `edit` and `comment` actions.
+/// the `replace`/`rename` and `comment` actions.
 pub fn applyEdit(
     comptime Lang: type,
     allocator: std.mem.Allocator,
@@ -357,7 +357,7 @@ pub fn opSeedsEmptyRegion(op: EditOp) bool {
 
 /// The value an op carries, read (`value_arg.read`) but not yet rendered:
 /// `renderEdit` spells it once the target format is known. `one` is the
-/// value of `set`/`insert`/`edit`; `items` are `set --seq`'s. Empty for an op
+/// value of `set`/`insert`/`replace`; `items` are `set --seq`'s. Empty for an op
 /// with no value (a comment, a delete, a key rename), whose text is spliced
 /// as it stands.
 pub const OpValue = struct {
@@ -427,7 +427,7 @@ pub const EditRequest = union(enum) {
 
 /// THE editor dispatch: the one place a CLI `Format` becomes "which language
 /// module, which dialect, and is this format editable at all". Every editing
-/// entry point in the CLI goes through it — `edit`'s value/key replacement,
+/// entry point in the CLI goes through it — `replace`'s value and `rename`'s key,
 /// `set`/`insert`/`delete`'s structural ops (via `applyStructuralEdit`), and
 /// both halves of `comment` — so the per-format knowledge below is stated once
 /// rather than in four parallel switches that could disagree.
@@ -959,7 +959,7 @@ test "applyEdit performs the structural ops on JSON5 via the CLI's render+dialec
         const out = try applyEdit(J, a, "{ host: 'localhost' }", &.{}, j.text, j.op, dia);
         try t.expectEqualStrings("{ host: 'localhost', \"port\": 8080 }", out);
     }
-    // replace_value (the `edit` action, without --key): a string stays one.
+    // replace_value (the `replace` action): a string stays one.
     {
         var p = [_]fig.AST.PathSegment{.{ .key = "host" }};
         const j = try renderEdit(a, "example.org", try figValue(a, "example.org"), .replace_value, .json5, .natural);

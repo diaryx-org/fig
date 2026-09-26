@@ -54,7 +54,7 @@ pub fn runVersion(stdout_term: *Io.Terminal, cli_version: []const u8, core_versi
 
 pub fn runEdit(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_term: *Io.Terminal, binary_name: []const u8, opts: types.EditOptions) !void {
     if (opts.requested_help) {
-        try Help.edit(stdout_term, binary_name);
+        try if (opts.key) Help.rename(stdout_term, binary_name) else Help.replace(stdout_term, binary_name);
         return;
     }
     // A replacement VALUE is read before the file is touched, so one that is
@@ -794,7 +794,7 @@ pub fn runFmt(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
 
     // Read-only when only previewing (`--dry-run`/`--diff`): no need to
     // open for writing what will never be written. Otherwise read_write,
-    // like `edit`/`set`/`insert`/`delete` — read the whole file first,
+    // like `replace`/`set`/`insert`/`delete` — read the whole file first,
     // then splice the same handle in place (never via shell redirection,
     // which truncates a `> file` target before this process ever runs).
     const input = try fileio.getInput(io, opts.file, if (preview_only) .read_only else .read_write);

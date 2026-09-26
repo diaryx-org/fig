@@ -77,7 +77,7 @@ pub const embed_archetypes =
     \\
 ;
 
-/// How `edit`/`set`/`insert` read a value argument (`value_arg.zig`).
+/// How `replace`/`set`/`insert` read a value argument (`value_arg.zig`).
 pub const value_reading =
     \\  <value> is read as a fig value and written in the file's own syntax,
     \\    so it means the same thing in every format: 5, 2.5, true, null and
@@ -93,6 +93,19 @@ pub const value_reading =
     \\
 ;
 
+/// The <path> syntax and the Markdown-host note `replace` and `rename` share.
+const path_and_markdown =
+    \\  path format: dot syntax for keys, bracket syntax for indices
+    \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',
+    \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
+    \\    example: school.class[0].student[3]
+    \\  .md/.markdown files: edits the frontmatter/endmatter in place —
+    \\    its archetype (YAML/JSON/TOML/fig frontmatter, fenced ```lang
+    \\    frontmatter, YAML endmatter) is sniffed from the file,
+    \\    defaulting to YAML when none is found
+    \\
+;
+
 pub const title_string = "\n=========\n   FIG\n=========\n\n";
 
 pub const Help = struct {
@@ -103,7 +116,8 @@ pub const Help = struct {
             \\Possible actions:
             \\  help: prints this text (default action)
             \\  version: prints version number
-            \\  edit: edits part of file
+            \\  replace: replace the value at a path
+            \\  rename: rename the key at a path
             \\  set: upsert a value (create the key, embed block, or file, if absent)
             \\  insert: add a new key or list item to a file
             \\  delete: remove a key or list item from a file
@@ -154,24 +168,25 @@ pub const Help = struct {
         try term.writer.flush();
     }
 
-    pub fn edit(term: *Io.Terminal, binary_name: []const u8) !void {
+    pub fn replace(term: *Io.Terminal, binary_name: []const u8) !void {
         try term.writer.print(
-            \\Usage: {s} edit [--string | --raw] <file> <path> <value>
-            \\       {s} edit --key <file> <path> <name>
-            \\  Replaces the value at <path>.
-            \\  --key: rename the key at <path> to <name> instead
+            \\Usage: {s} replace [--string | --raw] <file> <path> <value>
+            \\  Replaces the value at <path>, which must already exist (`set`
+            \\    creates it when absent). To rename the key there, use
+            \\    `{s} rename`.
             \\
-        ++ value_reading ++
-            \\  path format: dot syntax for keys, bracket syntax for indices
-            \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',
-            \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
-            \\    example: school.class[0].student[3]
-            \\  .md/.markdown files: edits the frontmatter/endmatter in place —
-            \\    its archetype (YAML/JSON/TOML/fig frontmatter, fenced ```lang
-            \\    frontmatter, YAML endmatter) is sniffed from the file,
-            \\    defaulting to YAML when none is found
+        ++ value_reading ++ path_and_markdown, .{ binary_name, binary_name });
+        try term.writer.flush();
+    }
+
+    pub fn rename(term: *Io.Terminal, binary_name: []const u8) !void {
+        try term.writer.print(
+            \\Usage: {s} rename <file> <path> <name>
+            \\  Renames the key at <path> to <name>, keeping its value and
+            \\    comments. <name> is a key, spelled as the file's format spells
+            \\    one. To replace the value there, use `{s} replace`.
             \\
-        , .{ binary_name, binary_name });
+        ++ path_and_markdown, .{ binary_name, binary_name });
         try term.writer.flush();
     }
 
@@ -180,7 +195,7 @@ pub const Help = struct {
             \\Usage: {s} set [--embed <archetype>] [--string | --raw] <file> <path> <value>
             \\       {s} set [--embed <archetype>] [--string | --raw] --seq <file> <path> <item>...
             \\  Upsert: replace the value at <path>, or create it when absent —
-            \\    one verb for `edit`+`insert`. Missing parent maps along <path>
+            \\    one verb for `replace`+`insert`. Missing parent maps along <path>
             \\    are auto-created (`mkdir -p`); a segment that is an existing
             \\    non-map scalar is a type error and left untouched.
             \\  When <file> itself does not exist, it is CREATED and seeded with
@@ -316,7 +331,7 @@ pub const Help = struct {
             \\    root mapping and one level of section nesting only — a value
             \\    nested any deeper, or an array anywhere, has no INI spelling.
             \\    Editable in place, except that a `[section]` is a name rather
-            \\    than a value — `edit`/`delete` at a section's own path refuse,
+            \\    than a value — `replace`/`delete` at a section's own path refuse,
             \\    since a section owns no contiguous text but its header and may
             \\    be reopened further down the file. Edit the keys inside it.
             \\  dotenv (.env): flat `KEY=value` only, no sections/nesting; keys

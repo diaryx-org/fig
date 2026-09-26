@@ -113,7 +113,12 @@ fn reportImpl(
             try writeError(term, "`{s}` is not a fig command, and no `{s}` was found on your PATH.\n", .{ opts.name, program });
             // The rule itself is stated in the action list below (see
             // `Help.general`); this says only what to do about it.
-            try writeNote(term, "install the tool that provides it, or pick one of the actions below.\n");
+            // A verb fig had and no longer does — said only once the PATH
+            // lookup found nothing, so a real `fig-edit` still runs.
+            if (std.mem.eql(u8, opts.name, "edit") or std.mem.eql(u8, opts.name, "e"))
+                try writeNote(term, "fig 5 split `edit` in two: `fig replace <file> <path> <value>` replaces a value, `fig rename <file> <path> <name>` renames a key.\n")
+            else
+                try writeNote(term, "install the tool that provides it, or pick one of the actions below.\n");
         } else {
             try writeError(term, "`{s}` is not a fig command.\n", .{opts.name});
         }

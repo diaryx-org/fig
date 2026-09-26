@@ -1359,7 +1359,7 @@ pieces: block insert/append/prepend copy an existing sibling's marker-prefix
 text verbatim (depth + spaced-vs-glued style, no separate bookkeeping — fig's
 self-describing lines make this safe to splice after any existing child,
 scattered re-entered headers included); flow-object insert matches the
-object's own fig-inline (`=`) vs JSON (`:`) pair mode. `edit`/`set`/`insert`/
+object's own fig-inline (`=`) vs JSON (`:`) pair mode. `replace`/`rename`/`set`/`insert`/
 `delete`/`comment` all work on `.figl` now.
 
 **Landed: whole-container structural ops.** `deleteContainer`/`moveContainer`/

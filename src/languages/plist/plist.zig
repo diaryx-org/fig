@@ -23,7 +23,7 @@ pub const Type = enum {
 /// a real sequence, `date`/`data` ride the `extended` scalar). It IS an
 /// `AST.SerializeFormat` member (`.plist`), so `ast.serialize` routes here like
 /// every other format. It also HAS an in-place (span-splicing) editor —
-/// `Editor(Plist)` via `editor_helper.zig` — so `fig edit`/`set`/`insert`/
+/// `Editor(Plist)` via `editor_helper.zig` — so `fig replace`/`rename`/`set`/`insert`/
 /// `delete`/`comment` work on a `.plist`; unlike the line-oriented formats it
 /// renders typed value elements (fig `sniffBare` typing) and uses `<!-- -->`
 /// comments. The generic XML format (`.xml`) still has none — a document syntax

@@ -29,7 +29,7 @@
 //!
 //! Every built node also carries a source `Span` (see "AST assembly" below) —
 //! the foundation `Editor(fig.Language.FIG)` needs to splice edits in place
-//! (`edit`/`set`/`insert`/`delete`/`comment`; see `editor_helper.zig`).
+//! (`replace`/`rename`/`set`/`insert`/`delete`/`comment`; see `editor_helper.zig`).
 //! Whole-container structural ops — the generic `deleteContainer`/
 //! `moveContainer`/`reorderContainers` in `editor.zig` — are built on those
 //! spans plus `Document.node_regions`, which this parser fills with every

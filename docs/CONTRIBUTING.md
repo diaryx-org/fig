@@ -36,7 +36,7 @@ fix(editor): refuse value-replace on a TOML table header
 
 <the body: why, and how it works>
 
-Behavioural-change: `fig edit` at a TOML `[table]` path now refuses with
+Behavioural-change: `fig replace` at a TOML `[table]` path now refuses with
   `CannotReplaceTable`. It used to report success, having rewritten the
   header's NAME and left the table's entries where they were.
 ```

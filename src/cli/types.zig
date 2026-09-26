@@ -20,7 +20,7 @@ const L = fig.Language;
 // only via `--input/--output canonical` — it owns no file extension. `fig` is
 // the human-facing authoring dialect: it owns `.figl` (with `.fig` still
 // accepted for back-compat), has a reader + `fig fmt`
-// printer (see `get`), and `Editor(fig.Language.FIG)` wires `edit`/`set`/
+// printer (see `get`), and `Editor(fig.Language.FIG)` wires `replace`/`rename`/`set`/
 // `insert`/`delete`/`comment` through the same span-splice engine as
 // TOML/YAML/ZON (see `fig/editor_helper.zig`, which also carries the
 // whole-container structural ops — `deleteContainer`/`moveContainer`/
@@ -136,7 +136,10 @@ pub fn toSerializeFormat(f: Format) ?fig.AST.SerializeFormat {
 pub const CliAction = enum {
     help,
     version,
-    edit,
+    /// `fig replace`: the value at a path.
+    replace,
+    /// `fig rename`: the key at a path.
+    rename,
     set,
     insert,
     delete,
@@ -178,7 +181,7 @@ pub const HelpOptions = struct {
 
 pub const VersionOptions = struct {};
 
-/// How a value argument (`set`/`insert`/`edit`) is read — see `value_arg.zig`.
+/// How a value argument (`set`/`insert`/`replace`) is read — see `value_arg.zig`.
 pub const ValueMode = enum {
     /// As a fig value: `5` a number, `hello` a string, `[1, 2]` a sequence.
     fig,
@@ -188,10 +191,13 @@ pub const ValueMode = enum {
     raw,
 };
 
+/// `replace` and `rename`: one splice at a path, of a value or of a key.
 pub const EditOptions = struct {
     file: []const u8,
     path: []fig.AST.PathSegment,
+    /// The new value (`replace`) or the new key name (`rename`).
     replacement: []const u8,
+    /// Set for `rename`: `replacement` is a key name, not a value.
     key: bool = false,
     value_mode: ValueMode = .fig,
     requested_help: bool = false,
@@ -228,7 +234,7 @@ pub const SetOptions = struct {
     /// embedded config of this archetype — creating the block (open-or-init)
     /// when the host has none.
     embed: ?fig.Embed.Type = null,
-    /// As in `edit`: set when `embed` needs a runtime content sniff
+    /// As in `EditOptions`: set when `embed` needs a runtime content sniff
     /// (`resolveEmbedType`) rather than being pinned by `--embed`.
     detect_embed: bool = false,
 };
@@ -249,9 +255,9 @@ pub const InsertOptions = struct {
     /// Set when the format could not be inferred from the extension; the
     /// handler then sniffs the contents with `Language.detect`.
     detect: bool = false,
-    /// As in `edit`: when set, edit the embedded config of this archetype.
+    /// As in `EditOptions`: when set, edit the embedded config of this archetype.
     embed: ?fig.Embed.Type = null,
-    /// As in `edit`: set when `embed` needs a runtime content sniff.
+    /// As in `EditOptions`: set when `embed` needs a runtime content sniff.
     detect_embed: bool = false,
 };
 
@@ -265,7 +271,7 @@ pub const DeleteOptions = struct {
     format: Format,
     detect: bool = false,
     embed: ?fig.Embed.Type = null,
-    /// As in `edit`: set when `embed` needs a runtime content sniff.
+    /// As in `EditOptions`: set when `embed` needs a runtime content sniff.
     detect_embed: bool = false,
 };
 
@@ -294,7 +300,7 @@ pub const GetOptions = struct {
     /// When set, the input is extracted from a host document of this
     /// archetype (e.g. YAML frontmatter inside markdown) before parsing.
     embed: ?fig.Embed.Type = null,
-    /// As in `edit`: set when `embed` needs a runtime content sniff
+    /// As in `EditOptions`: set when `embed` needs a runtime content sniff
     /// (`resolveEmbedType`) rather than being pinned by `--embed`.
     detect_embed: bool = false,
     /// When set, print the host *body* (the prose outside the fences) of the
@@ -335,10 +341,10 @@ pub const CommentOptions = struct {
     /// Set when the format could not be inferred from the file extension:
     /// the handler then sniffs the file's contents with `Language.detect`.
     detect: bool = false,
-    /// As in `edit`: when set, `file` is a host document and the comment is
+    /// As in `EditOptions`: when set, `file` is a host document and the comment is
     /// applied to the embedded config of this archetype, spliced back.
     embed: ?fig.Embed.Type = null,
-    /// As in `edit`: set when `embed` needs a runtime content sniff.
+    /// As in `EditOptions`: set when `embed` needs a runtime content sniff.
     detect_embed: bool = false,
 };
 
@@ -473,7 +479,7 @@ pub const PatchOptions = struct {
     /// When set, the target is a host document and the merge applies to its
     /// embedded config of this archetype, spliced back in place.
     embed: ?fig.Embed.Type = null,
-    /// As in `edit`: set when `embed` needs a runtime content sniff.
+    /// As in `EditOptions`: set when `embed` needs a runtime content sniff.
     detect_embed: bool = false,
     /// The same pair for the PATCH document, so one post's frontmatter can be
     /// merged into another's.
@@ -522,7 +528,8 @@ pub const ExternalOptions = struct {
 pub const CliActionOptions = union(CliAction) {
     help: HelpOptions,
     version: VersionOptions,
-    edit: EditOptions,
+    replace: EditOptions,
+    rename: EditOptions,
     set: SetOptions,
     insert: InsertOptions,
     delete: DeleteOptions,
@@ -537,7 +544,7 @@ pub const CliActionOptions = union(CliAction) {
 };
 
 /// The in-place editing operation `applyEdit` performs. Generalizes the editor's
-/// span-splice surface so `edit` and `comment` share one code path.
+/// span-splice surface so `replace`, `rename` and `comment` share one code path.
 pub const EditOp = union(enum) {
     replace_value,
     replace_key,
@@ -614,10 +621,10 @@ pub const EditTextKind = enum {
 /// `InvalidEditText` in the first place.
 pub fn splicedText(config: CliConfig) ?SplicedText {
     return switch (config.options) {
-        .edit => |o| .{
+        .replace, .rename => |o| .{
             .file = o.file,
             .format = if (o.detect) null else o.format,
-            // `--key` makes the argument a replacement KEY, not a value.
+            // `rename`'s argument is a replacement KEY, not a value.
             .kind = if (o.key) .key else valueKind(o.value_mode),
             .text = o.replacement,
         },
@@ -669,7 +676,7 @@ fn valueKind(mode: ValueMode) EditTextKind {
 /// reports per file itself, and for the file-less actions.
 pub fn targetFile(config: CliConfig) ?[]const u8 {
     return switch (config.options) {
-        .edit => |o| o.file,
+        .replace, .rename => |o| o.file,
         .set => |o| o.file,
         .insert => |o| o.file,
         .delete => |o| o.file,
@@ -697,7 +704,7 @@ pub const ParseTarget = struct { file: []const u8, format: ?Format };
 
 pub fn parseTarget(config: CliConfig) ?ParseTarget {
     const t: ParseTarget = switch (config.options) {
-        inline .edit, .set, .insert, .delete, .comment, .patch => |o| .{
+        inline .replace, .rename, .set, .insert, .delete, .comment, .patch => |o| .{
             .file = o.file,
             .format = if (o.detect or o.embed != null or o.detect_embed) null else o.format,
         },
@@ -711,7 +718,7 @@ pub fn parseTarget(config: CliConfig) ?ParseTarget {
     return t;
 }
 
-pub const ArgError = error{ UnsupportedFileFormat, MissingEditArgument, MissingSetArgument, MissingInsertArgument, MissingDeleteArgument, MissingGetArgument, MissingCommentArgument, MissingCheckArgument, MissingFmtArgument, MissingConvertArgument, MissingPatchArgument, MissingLangArgument, OutOfMemory, Overflow, InvalidCharacter, InvalidPath };
+pub const ArgError = error{ UnsupportedFileFormat, MissingReplaceArgument, MissingRenameArgument, MissingSetArgument, MissingInsertArgument, MissingDeleteArgument, MissingGetArgument, MissingCommentArgument, MissingCheckArgument, MissingFmtArgument, MissingConvertArgument, MissingPatchArgument, MissingLangArgument, OutOfMemory, Overflow, InvalidCharacter, InvalidPath };
 
 /// Result of mapping a file extension to a parse strategy. `embed_detect` is
 /// set when the file is a host document whose config lives in an embedded

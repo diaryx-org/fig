@@ -636,10 +636,13 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
     } else if (std.mem.eql(u8, action_str, "version") or std.mem.eql(u8, action_str, "--version") or std.mem.eql(u8, action_str, "-v")) {
         config.action = .version;
         config.options = .{ .version = .{} };
-    } else if (std.mem.eql(u8, action_str, "edit") or std.mem.eql(u8, action_str, "e")) {
-        config.action = .edit;
+    } else if (std.mem.eql(u8, action_str, "replace") or std.mem.eql(u8, action_str, "rename")) {
+        // `replace` swaps the value at a path; `rename` renames the key there.
+        // One operation each — no flag turns one into the other (cli-5 §7).
+        const rename = std.mem.eql(u8, action_str, "rename");
+        const usage = if (rename) ArgError.MissingRenameArgument else ArgError.MissingReplaceArgument;
+        config.action = if (rename) .rename else .replace;
 
-        var edit_key = false;
         var value_mode: ?types.ValueMode = null;
         var requested_help = false;
         var positionals: Positionals = .{};
@@ -648,15 +651,9 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             if (try positionals.rest(allocator, arg)) continue;
             if (isHelp(arg)) {
                 requested_help = true;
-            } else if (std.mem.eql(u8, arg, "--key")) {
-                edit_key = true;
-            } else if (try valueModeFlag("edit", arg, &value_mode, ArgError.MissingEditArgument)) {
+            } else if (!rename and try valueModeFlag(action_str, arg, &value_mode, usage)) {
                 // taken
-            } else if (!try positionals.add(allocator, "edit", arg)) return ArgError.MissingEditArgument;
-        }
-        if (edit_key and value_mode != null and !requested_help) {
-            log.err("edit --key renames a key; --string and --raw read a value.\n", .{});
-            return ArgError.MissingEditArgument;
+            } else if (!try positionals.add(allocator, action_str, arg)) return usage;
         }
         const pos = positionals.items.items;
 
@@ -668,11 +665,11 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 log.err("{s}\n", .{switch (pos.len) {
                     0 => "No file provided.",
                     1 => "No path provided.",
-                    else => "No replacement provided.",
+                    else => if (rename) "No new key name provided." else "No value provided.",
                 }});
-                return ArgError.MissingEditArgument;
+                return usage;
             }
-            if (!positionals.atMost("edit", 3, "a file, a path and a value")) return ArgError.MissingEditArgument;
+            if (!positionals.atMost(action_str, 3, if (rename) "a file, a path and a new name" else "a file, a path and a value")) return usage;
             file_path = pos[0];
             path = try pathArg(allocator, pos[1]);
             replacement = pos[2];
@@ -682,18 +679,19 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         // unrecognized extension is not an error here: `detect = true`
         // defers to content sniffing in the handler.
         const ext = if (requested_help) null else detectLanguageFromFileEnding(file_path);
-        config.options = .{ .edit = .{
+        const opts: types.EditOptions = .{
             .file = file_path,
             .path = path,
             .replacement = replacement,
-            .key = edit_key,
+            .key = rename,
             .value_mode = value_mode orelse .fig,
             .requested_help = requested_help,
             .format = if (ext) |d| d.format else .json,
             .detect = !requested_help and ext == null,
             .embed = null,
             .detect_embed = if (ext) |d| d.embed_detect else false,
-        } };
+        };
+        config.options = if (rename) .{ .rename = opts } else .{ .replace = opts };
     } else if (std.mem.eql(u8, action_str, "set") or std.mem.eql(u8, action_str, "s")) {
         config.action = .set;
 
@@ -1202,7 +1200,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             return ArgError.MissingFmtArgument;
         }
         // `fmt` reformats a whole file (or a whole embedded region) — there is no
-        // sub-document path argument the way `get`/`edit`/etc. take one.
+        // sub-document path argument the way `get`/`replace`/etc. take one.
         if (!requested_help and positionals.items.items.len > 1) {
             log.err("fmt takes a single file, not a path within it: {s}\n", .{positionals.items.items[1]});
             return ArgError.MissingFmtArgument;
@@ -2265,10 +2263,10 @@ test "parseConfig: `--` ends the flags, a negative number is a value, and flags 
     try t.expectEqualStrings("-5", (try parseConfig(a, &neg)).options.set.value);
     var frac = TestArgs{ .items = &.{ "fig", "insert", "f.yaml", "n", "-.5" } };
     try t.expectEqualStrings("-.5", (try parseConfig(a, &frac)).options.insert.value);
-    var word = TestArgs{ .items = &.{ "fig", "edit", "f.yaml", "n", "--", "--help" } };
+    var word = TestArgs{ .items = &.{ "fig", "replace", "f.yaml", "n", "--", "--help" } };
     const wc = try parseConfig(a, &word);
-    try t.expect(!wc.options.edit.requested_help);
-    try t.expectEqualStrings("--help", wc.options.edit.replacement);
+    try t.expect(!wc.options.replace.requested_help);
+    try t.expectEqualStrings("--help", wc.options.replace.replacement);
 
     // `-` alone is stdin, not a flag.
     var stdin = TestArgs{ .items = &.{ "fig", "delete", "-", "a" } };
@@ -2278,8 +2276,15 @@ test "parseConfig: `--` ends the flags, a negative number is a value, and flags 
     var late = TestArgs{ .items = &.{ "fig", "comment", "f.yaml", "a", "--get", "--inline" } };
     const lc = try parseConfig(a, &late);
     try t.expect(lc.options.comment.get and lc.options.comment.inline_comment);
-    var key = TestArgs{ .items = &.{ "fig", "edit", "f.yaml", "a", "b", "--key" } };
-    try t.expect((try parseConfig(a, &key)).options.edit.key);
+    var key = TestArgs{ .items = &.{ "fig", "rename", "f.yaml", "a", "b" } };
+    const kc = try parseConfig(a, &key);
+    try t.expectEqual(CliAction.rename, kc.action);
+    try t.expect(kc.options.rename.key);
+    try t.expectEqualStrings("b", kc.options.rename.replacement);
+    var value = TestArgs{ .items = &.{ "fig", "replace", "f.yaml", "a", "b", "--string" } };
+    const vc = try parseConfig(a, &value);
+    try t.expect(!vc.options.replace.key);
+    try t.expectEqual(types.ValueMode.string, vc.options.replace.value_mode);
 
     // `--lang` after `--` is a positional, not the global flag.
     var lang = TestArgs{ .items = &.{ "fig", "check", "--", "--lang" } };

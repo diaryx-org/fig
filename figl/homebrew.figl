@@ -12,9 +12,9 @@ name = Homebrew
 # crates.io crate is release.yml; the two npm packages are release-npm.yml and
 # release-npm-wasi.yml.
 #
-# Runs on the `cli/v*.*.*` tag — see "Release tagging" in docs/VERSIONING.md
-# for the full per-artifact tag scheme (this workflow only cares about the
-# CLI's own line, since it ships the CLI binary), hence `tag-prefix: cli/v`.
+# Runs on the `v*.*.*` tag — one tag releases every artifact (see "Release
+# tagging" in docs/VERSIONING.md), so this is the reusable workflow's default
+# `v` prefix and needs no `tag-prefix`.
 #
 # Prerequisites before the first tagged release succeeds:
 # 1. Create the tap repo `diaryx-org/homebrew-tap` (already done).
@@ -22,7 +22,7 @@ name = Homebrew
 # App ID + private key as the TAP_APP_ID / TAP_APP_KEY secrets on this repo
 # (already done). The bump-formula job mints a short-lived token from these.
 on
-> push.tags = [cli/v*.*.*]
+> push.tags = [v*.*.*]
 > workflow_dispatch = null
 
 permissions.contents = write # caps what the called workflow may request
@@ -34,7 +34,6 @@ jobs.homebrew
 > > desc = Parse, edit, and convert config files while preserving comments. Supports JSON, YAML, TOML, and more.
 > > language = zig
 > > zig-flags = -Doptimize=ReleaseFast -Dstrip=true
-> > tag-prefix = cli/v
 > secrets
 > > TAP_APP_ID = ${{ secrets.TAP_APP_ID }}
 > > TAP_APP_KEY = ${{ secrets.TAP_APP_KEY }}

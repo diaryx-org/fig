@@ -4,7 +4,7 @@ engine: microvm
 # "spindle"; see https://docs.tangled.org/spindles).
 #
 # It runs the same one pre-release gate — `zig build check` (test +
-# conformance + abi-check + semver-check + version-floor) — and nothing else:
+# conformance + abi-check + semver-check + version-check) — and nothing else:
 # a tangled workflow file has no `jobs:`, one file *is* one job, so the
 # `rust` / `rust-semver` / `typescript` jobs that run in parallel on GitHub
 # would each need their own file here. They stay GitHub-only for now; `check`
@@ -28,9 +28,10 @@ when:
 # the install step).
 dependencies: [git, curl, gnutar, xz]
 steps:
-# `semver-check` diffs the C ABI against the most recent `core/v*` tag and
-# `cargo-semver-checks` against `rust/v*`, both discovered with `git
-# describe` — the GitHub job gets them via `fetch-depth: 0`. Spindle's clone
+# `semver-check` and `cargo-semver-checks` diff against the most recent
+# release tag (`v*`, or `core/v*` / `rust/v*` before the first one-version
+# tag), both discovered with `git describe` — the GitHub job gets them via
+# `fetch-depth: 0`. Spindle's clone
 # depth isn't ours to set portably (`clone.depth` takes a positive count),
 # so ask for the tags directly and shrug if the clone can't be deepened:
 # both checks degrade to "no release tag found — skipping diff" rather than
@@ -43,7 +44,7 @@ steps:
 # the manifest advertises is the one number this workflow can take from the
 # repo instead of duplicating, and it makes that floor a claim CI tests
 # rather than one nothing checks. Same trick `flake.nix` uses to read
-# `cli_version` out of `build.zig`.
+# `.version` out of `build.zig.zon`.
 #
 # Zig's Linux tarballs are statically linked, so the binary runs as-is on
 # NixOS (no interpreter to patchelf). It lands in ./.zig, which later steps
@@ -60,7 +61,7 @@ steps:
       | tar -xJ --strip-components=1 -C .zig
     .zig/zig version
 # The one pre-release gate, same as the GitHub `zig` job: zig test +
-# conformance + abi-check + semver-check + version-floor. The Rust/TS halves
+# conformance + abi-check + semver-check + version-check. The Rust/TS halves
 # of `check` degrade gracefully — no cargo or npm in this image, so they
 # skip with a note (see figl/ci.figl for the jobs that run them for real).
 #

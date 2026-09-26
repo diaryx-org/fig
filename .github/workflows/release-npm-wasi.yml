@@ -4,22 +4,13 @@ name: Release (npm-wasi)
 # command module (`zig build wasi`) run under Node's built-in (also
 # experimental) WASI support. See docs/npm-wasi.md. Split out from
 # release.figl (crates.io: fig + fig-macros) and release-npm.figl (the
-# @diaryx/fig library) so each publish, on its own tag line and with its
-# own version-pin checks, can run (and be re-triggered) independently of the
-# others.
+# @diaryx/fig library) so each publish, with its own required secret, can
+# run (and be re-triggered) independently of the others.
 #
-# This job LIVEs on its own tag line (also runnable by hand via
-# `workflow_dispatch`, which runs it unconditionally): `cli/v*.*.*` — the
-# same tag release-binaries.yml (Windows/WASI CLI binaries) and homebrew.yml
-# (macOS/Linux CLI binaries) listen for, since fig-wasi repackages that same
-# CLI release. See "Release tagging" in docs/VERSIONING.md for the full
-# per-artifact tag scheme.
-#
-# fig-wasi is the odd one out among the three release jobs — it's a
-# repackaging of the CLI itself, so unlike the crate/npm-library jobs it has
-# no independent version track: it stays pinned exactly to `cli_version`,
-# enforced both by the version-floor tool's exact-equality check and by the
-# tag-vs-package-version check below.
+# Runs on the `v*.*.*` tag, like every release workflow here — one tag
+# releases every artifact at fig's one version (see "Release tagging" in
+# docs/VERSIONING.md) — and by hand via `workflow_dispatch`, which runs it
+# unconditionally. The package's version is that one version, checked below.
 #
 # Required repository secret:
 # NPM_TOKEN  — npm automation token with publish rights (not yet set — this
@@ -27,7 +18,7 @@ name: Release (npm-wasi)
 # set NPM_TOKEN`); needs publish rights to @diaryx/fig-wasi.
 on:
   workflow_dispatch: {}
-  push: { tags: [cli/v*.*.*] }
+  push: { tags: [v*.*.*] }
 permissions: { id-token: write, contents: read }
 jobs:
   npm-wasi:
@@ -43,17 +34,15 @@ jobs:
         registry-url: https://registry.npmjs.org
         cache: npm
         cache-dependency-path: bindings/wasi/package-lock.json
-    # fig-wasi repackages the CLI itself, so — unlike the crate/npm jobs — it
-    # stays pinned exactly to the CLI's version, checked two ways: the floor
-    # tool's exact-equality pin (cli_version), and this tag check (the tag IS
-    # cli_version by convention — see the header comment above).
-    - name: Verify the cross-artifact version floor
-      run: zig build version-floor
+    # Every file carrying fig's one version agrees with build.zig.zon, and the
+    # tag names that version.
+    - name: Verify every file carries the one version
+      run: zig build version-check
     - name: Verify tag matches the package version
       if: github.ref_type == 'tag'
       run: |
         pkg=$(node -p "require('./bindings/wasi/package.json').version")
-        tag="${GITHUB_REF_NAME#cli/v}"
+        tag="${GITHUB_REF_NAME#v}"
         if [ "$pkg" != "$tag" ]; then
           echo "::error::tag $GITHUB_REF_NAME ($tag) != package.json version ($pkg)"
           exit 1

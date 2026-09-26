@@ -27,7 +27,7 @@ use std::os::raw::{c_char, c_int};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::ffi;
-use crate::{Capabilities, Error, ExtKind, Format, LanguageFailure, RuntimeFormat, Span};
+use crate::{Capabilities, Error, ExtKind, Format, LanguageFailure, Span};
 
 // ── the description ────────────────────────────────────────────────────────
 
@@ -935,13 +935,16 @@ pub trait Language: Send + Sync + 'static {
 
 /// Register `lang` with the core. Returns one [`Format`] per dialect the
 /// description declares, in declaration order — the first is the language's
-/// own. Refused, with the reason in [`Error::Language`], when the
+/// own. A dialect named after a format compiled out of the linked library
+/// stands in for it: it comes back as that format's own variant
+/// ([`Format::Yaml`] for a dialect named `yaml`), and every API taking that
+/// variant reaches it. Refused, with the reason in [`Error::Language`], when the
 /// description breaks a rule the core holds its own formats to, when a
 /// sample fails to parse, print, reparse to the same tree or take a no-op
 /// edit, or when the name is taken.
 pub fn register(lang: impl Language) -> Result<Vec<Format>, Error> {
     let desc = lang.describe();
-    let dialect_count = desc.dialects.len();
+    let dialect_names: Vec<String> = desc.dialects.iter().map(|d| d.name.clone()).collect();
     let reg = Registration::new(Box::new(lang), desc)?;
     // The registration lives for the process: the core keeps `ctx` and the
     // function pointers, and the strings the vtable points to are copied
@@ -963,9 +966,13 @@ pub fn register(lang: impl Language) -> Result<Vec<Format>, Error> {
             byte_offset: (err.byte_offset != 0).then_some(err.byte_offset),
         }));
     }
-    Ok((0..dialect_count as c_int)
-        .map(|i| Format::Runtime(RuntimeFormat(format + i)))
-        .collect())
+    // By name, not by counting up from `format`: a dialect named after a
+    // format compiled out of the linked library stands in for it and takes
+    // that format's integer, so the rows' integers need not be consecutive.
+    dialect_names
+        .iter()
+        .map(|name| Format::by_name(name).ok_or(Error::Internal))
+        .collect()
 }
 
 /// Everything the vtable points at, owned for the life of the process, plus

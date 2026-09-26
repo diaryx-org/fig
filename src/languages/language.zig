@@ -609,13 +609,26 @@ comptime {
         @compileError("`canonical` is not a registry entry and cannot be sniffed");
 }
 
-/// Whether `name` is a compiled-in format's dialect name — what a runtime
-/// registration may not reuse (`languages/runtime.zig`).
+/// Whether `name` is the dialect name of a format compiled into this build —
+/// what a runtime registration may not reuse (`languages/runtime.zig`).
 pub fn isCompiledName(name: []const u8) bool {
     inline for (dialects) |d| {
-        if (std.mem.eql(u8, d.name, name)) return true;
+        if (d.Lang != void and std.mem.eql(u8, d.name, name)) return true;
     }
     return false;
+}
+
+/// The ABI value of the registry entry named `name` when its format is
+/// compiled OUT of this build, or null. A runtime registration of a dialect
+/// by that name takes the value, so it stands in for the format everywhere
+/// a format integer or name reaches — `FIG_FORMAT_YAML`, the embedded
+/// spellings, `fig_format_by_name` — rather than being a new format beside
+/// an empty slot (`languages/runtime.zig`'s `register`).
+pub fn standInAbi(name: []const u8) ?c_int {
+    inline for (dialects) |d| {
+        if (d.Lang == void and std.mem.eql(u8, d.name, name)) return d.abi_value;
+    }
+    return null;
 }
 
 /// A format `detect` can recognize: the registry entries with a

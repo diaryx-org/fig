@@ -286,10 +286,13 @@ pub export fn fig_language_vtable_version() u32 {
 }
 
 /// Register a language. On `.ok`, `*out_format` is the format integer of
-/// its first dialect row — at or above `FIG_FORMAT_RUNTIME_BASE`, assigned
-/// per process — and the rows after it take the integers after it. Every
-/// entry point taking a format accepts it from then on, at the tier the
-/// record's `caps` declare.
+/// its first dialect row. A row takes an integer at or above
+/// `FIG_FORMAT_RUNTIME_BASE`, assigned per process — except a row named
+/// after a format compiled out of this build, which takes that format's own
+/// integer and stands in for it (`FIG_FORMAT_YAML` for a row named "yaml").
+/// So the rows' integers are not consecutive in general; `fig_format_by_name`
+/// finds each. Every entry point taking a format accepts them from then on,
+/// at the tier the record's `caps` declare.
 ///
 /// The record is validated by the rules a compiled format is held to, and
 /// its `samples` are parsed, printed, reparsed and edited before anything is
@@ -298,8 +301,8 @@ pub export fn fig_language_vtable_version() u32 {
 /// `vt` points to; `vt->ctx` and the function pointers must stay valid for
 /// the life of the process, since a format cannot be unregistered.
 ///
-/// A name already registered — or a compiled-in format's — is refused as
-/// `invalid_argument`. Registration takes a lock; every other call on a
+/// A name already registered — or the name of a format compiled into this
+/// build — is refused as `invalid_argument`. Registration takes a lock; every other call on a
 /// registered format is lock-free and reads only settled values, so the
 /// threading note at the top of fig.h holds.
 pub export fn fig_language_register(vt: ?*const FigLanguageVTable, out_format: ?*c_int, out_err: ?*FigError) FigStatus {
@@ -2145,9 +2148,10 @@ fn embedFrom(em: ?*FigEmbed) ?*EmbedHandle {
 }
 
 /// Whether this build can edit `t`'s inner format (YAML frontmatter needs YAML,
-/// JSON needs JSON, …). Gated formats are compiled out: `fig_embed_open`/
-/// `fig_embed_open_or_init` report `unsupported_format` for one, while
-/// `fig_embed_extract`/`fig_embed_detect` (locate-only, no editor) work
+/// JSON needs JSON, …) — compiled in, or stood in for by a registered runtime
+/// language that edits (`Runtime.register`). Otherwise
+/// `fig_embed_open`/`fig_embed_open_or_init` report `unsupported_format`,
+/// while `fig_embed_extract`/`fig_embed_detect` (locate-only, no editor) work
 /// regardless. The entity-encoded `<code>` archetype is fully editable — the
 /// handle decodes on open and re-encodes span-aware on render (see
 /// `embedHandleFromHost`/`fig_embed_render`).
@@ -2156,7 +2160,12 @@ fn embedInnerSupported(t: Embed.Type) bool {
         // `InnerFormat` is itself reified from the registry, so its members are
         // registry entries by name and "compiled into this build" is the same
         // `Lang == void` test every other dispatch here opens with.
-        inline else => |f| comptime Languages.entryFor(@tagName(f)).Lang != void,
+        inline else => |f| blk: {
+            const d = comptime Languages.entryFor(@tagName(f));
+            if (comptime d.Lang != void) break :blk true;
+            const e = runtimeOf(d.abi_value) orelse break :blk false;
+            break :blk e.language.caps.edit;
+        },
     };
 }
 
@@ -2165,7 +2174,8 @@ fn embedInnerSupported(t: Embed.Type) bool {
 /// `host` (frees it on any failure). Shared by `fig_embed_open` and
 /// `fig_embed_open_or_init`; the caller has already validated the format —
 /// specifically, both callers check `embedInnerSupported(t)` first, so a
-/// gated-out inner format never reaches the switch below.
+/// gated-out inner format reaches the switch below only when a runtime
+/// language stands in for it.
 fn embedHandleFromHost(
     allocator: std.mem.Allocator,
     host: []u8,
@@ -2187,8 +2197,12 @@ fn embedHandleFromHost(
             inline else => |f| blk: {
                 const d = comptime Languages.entryFor(@tagName(f));
                 // `embedInnerSupported` is the caller's precondition, so a
-                // gated-out inner format never reaches here.
-                if (comptime d.Lang == void) unreachable;
+                // gated-out inner format reaches here only with a runtime
+                // language standing in for it.
+                if (comptime d.Lang == void) {
+                    const e = runtimeOf(d.abi_value).?;
+                    break :blk @unionInit(EditorUnion, "runtime", .{ .allocator = allocator, .format = e.typeOf() });
+                }
                 break :blk @unionInit(EditorUnion, d.Lang.name, .{ .allocator = allocator, .format = d.dialect });
             },
         },

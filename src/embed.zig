@@ -4,6 +4,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const Language = @import("languages/language.zig");
+const Runtime = @import("languages/runtime.zig");
 const Document = @import("document.zig");
 const Span = @import("util/span.zig");
 const build_options = @import("build_options");
@@ -1014,17 +1015,27 @@ pub fn parseSpan(allocator: Allocator, source: []const u8, content: Span, t: Typ
 /// `extract`/`parseSpan`, dispatched through the format registry. A format
 /// compiled out of this build is still an `InnerFormat` member (registry
 /// entries are build-invariant, so an embed region is still *located* and
-/// *retyped* in a build that cannot parse it); the void guard is what turns
-/// reaching its parser into `error.FormatDisabled`.
+/// *retyped* in a build that cannot parse it); reaching its parser parses
+/// through the runtime language standing in for it, and is
+/// `error.FormatDisabled` when none does.
 fn parseSlice(allocator: Allocator, slice: []const u8, inner: InnerFormat) !Document {
     return switch (inner) {
         inline else => |f| {
             const d = comptime Language.entryFor(@tagName(f));
-            if (comptime d.Lang == void) return error.FormatDisabled;
+            if (comptime d.Lang == void) return parseStandIn(allocator, slice, d.abi_value);
             var parser = d.Lang.Parser{ .allocator = allocator };
             return d.Lang.parse(&parser, slice, d.dialect);
         },
     };
+}
+
+/// Parse `slice` through the runtime language standing in for the
+/// compiled-out format whose ABI value is `abi`
+/// (`Language.standInAbi`), or refuse as `error.FormatDisabled` when none
+/// is registered.
+fn parseStandIn(allocator: Allocator, slice: []const u8, abi: c_int) !Document {
+    const e = Runtime.entryByAbi(abi) orelse return error.FormatDisabled;
+    return Runtime.Language.Parser.parse(allocator, slice, e.typeOf());
 }
 
 // --- multi-document YAML stream splitter ---------------------------------
@@ -1121,10 +1132,11 @@ fn pushSegment(
 
 /// Parse one segment as the stream's language. The `---`/`...` stream is
 /// YAML's, so the entry is looked up by name; the gate is the registry's
-/// (`Lang == void` when YAML is compiled out) rather than a build flag.
+/// (`Lang == void` when YAML is compiled out, when the runtime language
+/// standing in for YAML parses it) rather than a build flag.
 fn parseYamlSlice(allocator: Allocator, slice: []const u8) !Document {
     const d = comptime Language.entryFor("yaml");
-    if (comptime d.Lang == void) return error.FormatDisabled;
+    if (comptime d.Lang == void) return parseStandIn(allocator, slice, d.abi_value);
     var parser = d.Lang.Parser{ .allocator = allocator };
     return d.Lang.parse(&parser, slice, d.dialect);
 }

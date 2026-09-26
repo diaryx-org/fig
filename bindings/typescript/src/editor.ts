@@ -1,5 +1,5 @@
-// Comment-preserving, in-place editing of a whole JSON/JSONC/JSON5/YAML/TOML
-// document.
+// Comment-preserving, in-place editing of a whole document in any editable
+// format — every compiled format, and a runtime language whose caps say edit.
 //
 // Unlike `stringify`, which re-renders a whole value, `Editor` splices only the
 // bytes of the node you change — comments, key order, blank lines, and quoting
@@ -7,7 +7,7 @@
 // serializer (see `Editable`) and re-framed at the splice site. Release with
 // `dispose` (or a `using` declaration).
 import { check, FigError, Format, Status } from "./types.ts";
-import { encodeKeyList, encodePath, fig, Frame, handleRegistry, readOutSlice } from "./ffi.ts";
+import { encodeKeyList, encodePath, fig, Frame, handleRegistry, probeParse, readOutSlice } from "./ffi.ts";
 import { Editable, type EditFns, type Segment } from "./edit-ops.ts";
 
 const encoder = new TextEncoder();
@@ -58,15 +58,22 @@ export class Editor extends Editable {
     REGISTRY?.register(this, handle, this);
   }
 
-  /** Open an editor over a copy of `input` in `format`
-   *  (Json/Jsonc/Json5/Yaml/Toml). Empty input is a valid empty document. */
+  /** Open an editor over a copy of `input` in `format` — any format whose
+   *  {@link capabilities} report `edit`, a registered runtime language
+   *  included; otherwise `UnsupportedFormat`. Empty input is a valid empty
+   *  document. A parse failure throws `ParseError` carrying the core's
+   *  message and location, as {@link Document.parse} does. */
   static open(input: string | Uint8Array, format: Format): Editor {
     const bytes = typeof input === "string" ? encoder.encode(input) : input;
     const frame = new Frame();
     const out = frame.alloc(4);
     try {
       const ptr = frame.bytes(bytes);
-      check(fig.fig_editor_create(ptr, bytes.length, format, out), "fig_editor_create");
+      const status = fig.fig_editor_create(ptr, bytes.length, format, out);
+      if (status === Status.ParseError) {
+        throw new FigError(status, "fig_editor_create", probeParse(bytes, format) ?? undefined);
+      }
+      check(status, "fig_editor_create");
       const handle = new DataView(fig.memory.buffer).getUint32(out, true);
       if (handle === 0) throw new FigError(Status.InternalError, "fig_editor_create");
       return new Editor(handle, format);
@@ -158,7 +165,7 @@ export class Editor extends Editable {
     // not a container and cannot be a destination, so reject it outright
     // instead of quietly meaning something else.
     if (dest !== null && dest.length === 0) {
-      throw new FigError(Status.InvalidArgument, "moveContainer: the root is not a valid destination — pass null to move to the end of the document");
+      throw new FigError(Status.InvalidArgument, "moveContainer", { message: "the root is not a valid destination — pass null to move to the end of the document" });
     }
     const frame = new Frame();
     try {

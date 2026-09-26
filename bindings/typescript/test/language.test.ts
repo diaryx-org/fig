@@ -142,6 +142,12 @@ test("a refusal by the language surfaces as a FigError with its message and offs
   assert.ok(mine);
   assert.match(mine.message, /unclosed quoted value/);
   assert.equal(mine.byteOffset, 2);
+  // Opening an editor over the same text reports the same refusal.
+  assert.throws(
+    () => Editor.open("A=\"open\n", jsDotenv),
+    (err: unknown) =>
+      err instanceof FigError && err.op === "fig_editor_create" && /unclosed quoted value/.test(err.message) && err.byteOffset === 2,
+  );
 });
 
 test("a language whose description fails validation registers nothing", () => {

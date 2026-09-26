@@ -65,7 +65,7 @@ export function registerLanguage(lang: Language): Format {
     if (status !== Status.Ok) {
       languages.delete(id);
       const detail = readFigError(err);
-      throw new FigError(status, `registerLanguage(${lang.name})`, { message: detail.message });
+      throw new FigError(status, `registerLanguage(${lang.name})`, { message: detail.message, byteOffset: detail.byteOffset });
     }
     return readU32(outFormat) as Format;
   } finally {

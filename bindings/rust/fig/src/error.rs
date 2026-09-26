@@ -8,10 +8,18 @@ use crate::ffi;
 /// [`serde::de::Error`]/[`serde::ser::Error`] so it can flow through serde.
 ///
 /// `#[non_exhaustive]`: new failure modes get their own variant as the core grows
-/// them, so a `match` needs a `_` arm (or an `Err(e) => …` catch-all). Building a
-/// variant — as the derive macros do — is unaffected.
+/// them, so a `match` needs a `_` arm (or an `Err(e) => …` catch-all). The struct
+/// variants are non-exhaustive too, so a pattern on one takes `..`; the derive
+/// macros build them through the constructors below ([`Error::missing_field`]
+/// and the rest), which is also how a hand-written `FromValue` impl does.
+///
+/// `NotFound` carries no path. The core's status says only that something on
+/// the way was missing, not which segment, so the one path the binding could
+/// attach is the one the caller just passed — and `NotFound` also comes from
+/// calls with no path at all ([`Embed::open`](crate::Embed::open) on a host
+/// with no region).
 #[derive(Debug)]
-// `Number`/`Message` are only constructed on the serde paths.
+// `Number` is only constructed on the serde paths.
 #[cfg_attr(not(feature = "serde"), allow(dead_code))]
 #[non_exhaustive]
 pub enum Error {
@@ -37,37 +45,40 @@ pub enum Error {
     Utf8,
     /// A numeric scalar could not be parsed (message holds the raw text).
     Number(String),
-    /// A serde-level error, e.g. a type mismatch or a missing field.
+    /// A serde-level or derive-level error with no structure of its own, e.g.
+    /// a type mismatch reported by a `Deserialize` impl, or a derived enum's
+    /// fixed "expected a string or a mapping".
     Message(String),
     /// A required field was absent while building a derived `FromValue` type.
     ///
     /// Both parts are compile-time `&'static str`s, so constructing this is
     /// allocation-free and the message text is assembled lazily in `Display`
     /// rather than `format!`-ed at every derived call site.
+    #[non_exhaustive]
     MissingField {
         field: &'static str,
         ty: &'static str,
     },
     /// A derived `FromValue` impl expected a mapping but found another kind.
+    #[non_exhaustive]
     ExpectedMapping { ty: &'static str },
     /// A derived enum `FromValue` impl saw a variant/tag it doesn't recognize.
     /// `got` is the (runtime) text that didn't match any known variant.
+    #[non_exhaustive]
     UnknownVariant {
         enum_name: &'static str,
         got: String,
     },
     /// A derived tuple-variant `FromValue` impl got the wrong element count.
+    #[non_exhaustive]
     WrongSeqLen {
         label: &'static str,
         expected: usize,
         got: usize,
     },
-    /// A static, fully compile-time-known message (no runtime interpolation).
-    /// Used by derived code in place of `Message(String::from("..."))` so the
-    /// `String` allocation is dropped from every call site.
-    Static(&'static str),
     /// A primitive conversion expected one kind of value but found another.
     /// `found` is one of the `&'static str` kind names from `kind_of`.
+    #[non_exhaustive]
     TypeMismatch {
         expected: &'static str,
         found: &'static str,
@@ -76,23 +87,51 @@ pub enum Error {
     /// target type name is kept (a `&'static str`) — deliberately *not* the
     /// offending value, since an `i128` payload would force 16-byte alignment
     /// on the whole `Error` enum and bloat every `Result<_, Error>` site.
+    #[non_exhaustive]
     IntOutOfRange { ty: &'static str },
-    /// A runtime language was refused by [`language::register`](crate::language::register),
-    /// or a call into one failed: the reason, as the core or the language
-    /// gave it.
-    Language(String),
+    /// A runtime language was refused by [`language::register`](crate::language::register):
+    /// the reason, as the core gave it, and where when it names a place.
+    Language(LanguageFailure),
 }
+
+/// Why a runtime language was refused, from [`Error::Language`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct LanguageFailure {
+    /// The core's reason — the rule the description broke, the sample that
+    /// failed and how, or the name already taken.
+    pub message: String,
+    /// A byte offset into the text the failure is about, when the failure
+    /// names one: the position of the NUL in a declared string that has
+    /// one. `None` otherwise, including every refusal the core reports
+    /// today, which says which sample failed but not where in it.
+    pub byte_offset: Option<usize>,
+}
+
+impl fmt::Display for LanguageFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.byte_offset {
+            Some(off) => write!(f, "{} (byte offset {off})", self.message),
+            None => f.write_str(&self.message),
+        }
+    }
+}
+
+impl std::error::Error for LanguageFailure {}
 
 /// Details of a parse failure, projected from the C ABI's `FigError`.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct ParseError {
-    /// A human-readable message. Currently the core's error name (e.g.
-    /// `"UnclosedObject"`); a richer message may follow in a later release.
+    /// A human-readable message: for a compiled format, the core's error name
+    /// (e.g. `"UnclosedObject"`); for a runtime language, the message its
+    /// parser gave.
     pub message: String,
-    /// Byte offset of the failure within the input, when known. `None` means
-    /// unknown — the core does not yet surface offsets, so this is `None` in the
-    /// current release (the field is wired for when it does).
+    /// Byte offset of the failure within the input, when known. A runtime
+    /// language's parse failure carries the offset its parser reported; the
+    /// compiled formats do not surface one yet, so for them this is `None`.
+    /// An offset of 0 is indistinguishable from "unknown" at the C ABI and
+    /// also reads as `None`.
     pub byte_offset: Option<usize>,
     /// 1-based line of the failure, when known (see `byte_offset`).
     pub line: Option<u32>,
@@ -163,10 +202,13 @@ impl Error {
         }
     }
 
+    /// A [`Error::Message`] from a compile-time string — the derive macros'
+    /// constructor for their fixed messages. Cold and out of line, so the
+    /// allocation is compiled once here rather than at every derived site.
     #[cold]
     #[inline(never)]
     pub fn msg_static(msg: &'static str) -> Self {
-        Error::Static(msg)
+        Error::Message(msg.to_owned())
     }
 
     #[cold]
@@ -216,7 +258,7 @@ impl fmt::Display for Error {
             Error::UnsupportedOperation => f.write_str("unsupported operation"),
             Error::NotFound => f.write_str("path or region not found"),
             Error::Internal => f.write_str("internal error"),
-            Error::Language(msg) => write!(f, "runtime language: {msg}"),
+            Error::Language(failure) => write!(f, "runtime language: {failure}"),
             Error::Utf8 => f.write_str("scalar was not valid UTF-8"),
             Error::Number(raw) => write!(f, "invalid number: {raw}"),
             Error::Message(msg) => f.write_str(msg),
@@ -237,7 +279,6 @@ impl fmt::Display for Error {
                     "expected {expected} element(s) for `{label}`, found {got}"
                 )
             }
-            Error::Static(msg) => f.write_str(msg),
             Error::TypeMismatch { expected, found } => {
                 write!(f, "expected {expected}, found {found}")
             }

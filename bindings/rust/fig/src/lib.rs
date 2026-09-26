@@ -31,7 +31,7 @@ pub use editor::{Editor, Segment};
 pub mod helper;
 pub mod language;
 pub use embed::{Embed, EmbedType, Extracted, Region, Span, detect, split};
-pub use error::{Error, ParseError};
+pub use error::{Error, LanguageFailure, ParseError};
 pub use value::{ExtKind, Value};
 
 #[cfg(feature = "derive")]
@@ -706,8 +706,8 @@ mod tests {
         let Error::Parse(detail) = &err else {
             panic!("expected Error::Parse, got {err:?}");
         };
-        // The core surfaces a non-empty message (its error name). Offsets are not
-        // yet plumbed, so the location fields are None for now.
+        // The core surfaces a non-empty message (its error name). A compiled
+        // format reports no offset yet, so the location fields are None.
         assert!(!detail.message.is_empty());
         assert_eq!(detail.byte_offset, None);
     }

@@ -112,9 +112,10 @@ impl FigNodeKind {
 /// A caller-allocated parse diagnostic. Mirrors `FigError` in `fig.h`. Lead with
 /// `size = size_of::<FigError>()`: the library writes only the fields `size`
 /// covers, so it can gain fields in a later release without breaking this layout.
-/// `byte_offset`/`line`/`column` are 0 when unknown (always 0 in this release —
-/// offset plumbing is a planned core follow-up). `message` is NUL-terminated and
-/// truncated to fit; `message_len` excludes the NUL.
+/// `byte_offset`/`line`/`column` are 0 when unknown. A runtime language's parse
+/// failure fills `byte_offset` with the offset its parser reported; the compiled
+/// formats leave all three 0 for now. `message` is NUL-terminated and truncated
+/// to fit; `message_len` excludes the NUL.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct FigError {

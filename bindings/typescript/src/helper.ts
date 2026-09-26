@@ -59,6 +59,7 @@ export {
   type RegionRow,
   type MentionRow,
   type CommentRow,
+  type DirectiveRow,
 } from "./wire.ts";
 
 /** Where `serve` reads requests and writes responses. */

@@ -3,7 +3,7 @@
 // `Value` mirrors fig's AST scalar kinds with full fidelity (i64 vs u64 vs
 // float, ordered map entries, non-string keys, format-specific `extended`
 // scalars). For everyday use, `fromJS`/`toJS` bridge to plain JavaScript values,
-// and `serialize` accepts either form. Like the Rust binding, the tree is built
+// and `stringify` accepts either form. Like the Rust binding, the tree is built
 // through the C value API and rendered by fig's own serializer — this file
 // emits no JSON/YAML/TOML/ZON text itself.
 import {
@@ -68,7 +68,7 @@ export type JsValue =
   | Map<JsValue, JsValue>
   | { [key: string]: JsValue };
 
-/** A plain JavaScript value {@link fromJS} / {@link serialize} accept (the write
+/** A plain JavaScript value {@link fromJS} / {@link stringify} accept (the write
  *  side). Like {@link JsValue} but also allows `undefined` (treated as `null`),
  *  so ordinary objects with optional fields pass through without a cast. */
 export type JsInput =
@@ -223,10 +223,20 @@ function emitNumber(handle: number, text: string, isFloat: boolean, frame: Frame
   return emit(fig.fig_value_number(handle, t.ptr, t.len, isFloat ? 1 : 0, scratch));
 }
 
-/** Render a value to `format` via fig's serializer. Accepts a {@link Value} tree
- *  or any plain JS value (converted with {@link fromJS}). `options` controls
- *  output style such as compact vs. pretty-printed JSON. */
-export function serialize(value: Value | JsInput, format: Format, options?: SerializeOptions, flow = false, splice = false): string {
+/** Render a value to `format` via fig's serializer — the one public value
+ *  serializer. Accepts a {@link Value} tree or any plain JS value (converted
+ *  with {@link fromJS}). `options` controls output style such as compact vs.
+ *  pretty-printed JSON; `options.lossless` is ignored, since a built value has
+ *  no source envelopes. */
+export function stringify(value: Value | JsInput, format: Format, options?: SerializeOptions): string {
+  return render(value, format, options, false, false);
+}
+
+/** {@link stringify} with the two splice-only layout flags the editors set:
+ *  `flow` (fig fragments render containers inline) and `splice` (the value as
+ *  the editor takes it — plist's bare element, a NestedText scalar's plain
+ *  text). Neither is a style option, so neither is public. */
+function render(value: Value | JsInput, format: Format, options: SerializeOptions | undefined, flow: boolean, splice: boolean): string {
   const node: Value = isValue(value) ? value : fromJS(value as JsInput);
   const frame = new Frame();
   const outValue = frame.alloc(4); // *FigValue out-pointer
@@ -249,12 +259,13 @@ export function serialize(value: Value | JsInput, format: Format, options?: Seri
 
 /** Serialize a value for splicing into an editor: the rendered form with a
  *  single trailing newline stripped (the editor re-frames context at the site).
- *  Mirrors the Rust binding's `value_text`. */
+ *  Mirrors the Rust binding's crate-private `value_text`; module-internal
+ *  here too (the package root does not export it), shared with edit-ops.ts. */
 export function valueText(value: Value | JsInput, format: Format, options?: SerializeOptions): string {
   // Spliced text lands inline (`key = <text>`): fig-dialect containers must
   // render as flow, since their block spellings only parse as standalone
   // lines and would re-read as a bare string after the splice.
-  const s = serialize(value, format, options, format === Format.Fig, true);
+  const s = render(value, format, options, format === Format.Fig, true);
   return s.endsWith("\n") ? s.slice(0, -1) : s;
 }
 
@@ -266,14 +277,14 @@ export function valueText(value: Value | JsInput, format: Format, options?: Seri
  *  under the target key. `options.width` tunes how eagerly nested containers
  *  break to block. */
 export function valueTextWith(value: Value | JsInput, format: Format, options?: SerializeOptions): string {
-  const s = serialize(value, format, options, false, true);
+  const s = render(value, format, options, false, true);
   return s.endsWith("\n") ? s.slice(0, -1) : s;
 }
 
 /** Report what serializing `value` to `format` would silently lose (values/
  *  comments dropped or degraded). The built value has no source envelopes, so
  *  `options.lossless` is ignored. Returns one {@link Warning} per lossy event
- *  (empty if nothing is lost). The build/serialize mirror of {@link serialize}. */
+ *  (empty if nothing is lost). The mirror of {@link stringify}. */
 export function diagnose(value: Value | JsInput, format: Format, options?: SerializeOptions): Warning[] {
   const node: Value = isValue(value) ? value : fromJS(value as JsInput);
   const frame = new Frame();

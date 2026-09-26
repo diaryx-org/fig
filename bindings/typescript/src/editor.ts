@@ -1,7 +1,7 @@
 // Comment-preserving, in-place editing of a whole JSON/JSONC/JSON5/YAML/TOML
 // document.
 //
-// Unlike `serialize`, which re-renders a whole value, `Editor` splices only the
+// Unlike `stringify`, which re-renders a whole value, `Editor` splices only the
 // bytes of the node you change — comments, key order, blank lines, and quoting
 // everywhere else stay byte-identical. Inserted values are rendered by fig's
 // serializer (see `Editable`) and re-framed at the splice site. Release with

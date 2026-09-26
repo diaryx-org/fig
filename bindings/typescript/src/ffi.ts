@@ -4,7 +4,7 @@
 // JavaScript values and fig's C ABI: allocating in linear memory, encoding the
 // path / key / id arrays the editor takes, and reading back the borrowed
 // `(ptr, len)` slices the read and serialize paths return. Everything above it
-// (Document, Editor, Embed, serialize) speaks in JS types and never touches a
+// (Document, Editor, Embed, stringify) speaks in JS types and never touches a
 // pointer.
 //
 // The module imports one host function — `fig_host.call`, through which a

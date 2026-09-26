@@ -194,14 +194,14 @@ When you need full fidelity — distinguishing `int` from `uint`, ordered non-st
 keys, or building datetimes — use the `Value` tree and its `V` constructors:
 
 ```ts
-import { V, serialize, Format } from "@diaryx/fig";
+import { V, stringify, Format } from "@diaryx/fig";
 
 const value = V.map([
   [V.string("name"), V.string("fig")],
   [V.string("nums"), V.seq([V.int(1), V.int(2)])],
 ]);
 
-serialize(value, Format.Json); // '{\n  "name": "fig",\n  "nums": [\n    1,\n    2\n  ]\n}\n'
+stringify(value, Format.Json); // '{\n  "name": "fig",\n  "nums": [\n    1,\n    2\n  ]\n}\n'
 ```
 
 `fromJS(jsValue)` lifts plain JS into a `Value`; `toJS(value)` lowers it back.
@@ -440,7 +440,7 @@ Everything that takes an archetype is a static on `Embed`:
 
 ## Serialization options
 
-`stringify`, `serialize`, `convert`, and `Document.serialize` all take an optional
+`stringify`, `convert`, and `Document.serialize` all take an optional
 `SerializeOptions`:
 
 ```ts
@@ -662,7 +662,7 @@ handle you forget to dispose is still freed when the object is garbage-collected
 **Don't rely on this** — GC timing is unspecified, and holding many live handles
 wastes memory. `using`/`dispose()` is the deterministic path.
 
-The one-shot helpers — `parse`, `stringify`, `convert`, `serialize`, `diagnose` —
+The one-shot helpers — `parse`, `stringify`, `convert`, `diagnose` —
 manage the handle for you, so no cleanup is needed.
 
 ## API reference
@@ -673,11 +673,9 @@ manage the handle for you, so no cleanup is needed.
 - `isReady(): boolean` — whether the module is loaded.
 - `parse<T>(input, format): T` — parse to plain JS.
 - `stringify(value, format, options?)` — serialize plain JS / `Value` to text.
-- `serialize(value, format, options?)` — alias of `stringify`.
 - `convert(input, from, to, options?)` — parse `from` and serialize to `to`.
 - `fromJS(input)` / `toJS(value)` — bridge plain JS ↔ `Value`.
 - `diagnose(value, format, options?)` — lossy-conversion warnings for a `Value`.
-- `valueText(value, format, options?)` — serialized form for splicing into edits.
 - `version()` / `versionString()` / `capabilities(format)` — introspection.
 - `registerLanguage(lang)` — register a format written in JavaScript; returns
   its `Format`. `formatByName(name)` — the `Format` of a compiled or
@@ -718,7 +716,7 @@ manage the handle for you, so no cleanup is needed.
   `Dialect`, `Syntax`, `Comments`, `CommentDelimiter`, `SectionHeader`,
   `ClosedContainers`, `NativeKinds`, `Renderer`, `Literal`, `RenderArgs`,
   `PrintOptions`, `NodeTable`, `NodeRow`, `RowKind`, `RowExtKind`, `RowSpan`,
-  `RegionRow`, `MentionRow`, `CommentRow`, `HelperIo`.
+  `RegionRow`, `MentionRow`, `CommentRow`, `DirectiveRow`, `HelperIo`.
 
 ## Developing the binding
 

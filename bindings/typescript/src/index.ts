@@ -19,7 +19,7 @@ export { Document } from "./document.ts";
 export { Editor } from "./editor.ts";
 export { Embed, EmbedType, type Region, type Span } from "./embed.ts";
 export { type Segment } from "./edit-ops.ts";
-export { V, fromJS, toJS, serialize, valueText, diagnose, type Value, type JsValue, type JsInput } from "./value.ts";
+export { V, fromJS, toJS, stringify, diagnose, type Value, type JsValue, type JsInput } from "./value.ts";
 export { version, versionString, capabilities, type Version, type Capabilities } from "./meta.ts";
 export { init, isReady } from "./ffi.ts";
 export { registerLanguage, formatByName } from "./language.ts";
@@ -47,13 +47,13 @@ export {
   type RegionRow,
   type MentionRow,
   type CommentRow,
+  type DirectiveRow,
 } from "./wire.ts";
 export { serve, type HelperIo } from "./helper.ts";
 
 import { Document } from "./document.ts";
-import { serialize as serializeValue } from "./value.ts";
-import { Format, type SerializeOptions } from "./types.ts";
-import type { JsValue, JsInput, Value } from "./value.ts";
+import type { Format, SerializeOptions } from "./types.ts";
+import type { JsValue } from "./value.ts";
 
 /** Parse `input` in `format` directly to plain JavaScript values. Convenience
  *  over `Document.parse(...).toJS()` that releases the handle for you. The
@@ -85,10 +85,4 @@ export function convert(
   } finally {
     doc.dispose();
   }
-}
-
-/** Render a plain JS value (or `Value` tree) to `format`. Alias of `serialize`;
- *  `options` controls output style such as compact vs. pretty-printed JSON. */
-export function stringify(value: Value | JsInput, format: Format, options?: SerializeOptions): string {
-  return serializeValue(value, format, options);
 }

@@ -30,7 +30,7 @@ esac
 # them is staged. Cheap and tag-independent, unlike semver-check (a release gate
 # that needs git tags), which stays CI-only.
 case "$staged" in
-    *build.zig.zon* | *build.zig.figl* | *bindings/c/include/fig.h* | *README.md* | *bindings/rust/Cargo.toml* | *package.json* | *package-lock.json*)
+    *build.zig.zon* | *build.zig.figl* | *bindings/c/include/fig.h* | *README.md* | *bindings/rust/Cargo.toml* | *package.json* | *package-lock.json* | *bindings/nushell/Cargo.toml* | *bindings/nushell/Cargo.lock*)
         printf 'pre-commit: version-bearing file staged — running version-check\n'
         ( cd "$root" && zig build version-check ) || {
             printf 'pre-commit: version-check failed; run `zig build version-sync` and stage the result (use --no-verify to bypass)\n' >&2

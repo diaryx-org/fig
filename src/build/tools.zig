@@ -136,7 +136,8 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     // `.version` (see docs/VERSIONING.md). `version-sync` copies it into every
     // other file that carries it — the figl source, fig.h's FIG_VERSION_*
     // macros, README.md's frontmatter, the Rust workspace and its internal
-    // pins, both package.json files and their lockfiles — and is what
+    // pins, both package.json files and their lockfiles, the nushell
+    // plugin's pin on fig and its lockfile — and is what
     // `dx release` runs as its `post_bump` (.config/release.toml).
     // `version-check` is the read-only half, and `zig build check` runs it.
     // Both read and write the real tree, which is not a declared input, so

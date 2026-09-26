@@ -5,6 +5,11 @@ members = ["fig", "fig-macros", "fig-sys", "fig-sys-*"]
 [workspace.package]
 version = "5.0.0"
 edition = "2024"
+# The oldest toolchain the workspace builds on. Edition 2024 alone needs 1.85;
+# fig-macros writes let chains (`if a && let Some(x) = …`), stable since 1.88.
+# Checked with `cargo +1.88 test --workspace --all-features`; 1.85 refuses the
+# let chains.
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 
 # Shared across the workspace so every crate pins one set of versions. The

@@ -2,6 +2,7 @@
 name = "fig-macros"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Derive macros (ToValue/FromValue) for the `fig` crate."
 repository = "https://github.com/diaryx-org/fig"

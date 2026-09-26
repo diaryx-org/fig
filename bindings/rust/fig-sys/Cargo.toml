@@ -2,6 +2,7 @@
 name = "fig-sys"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "FFI bindings and native library for fig (the comment-preserving JSON/YAML/TOML/… config engine). Used by the `fig` crate."
 repository = "https://github.com/diaryx-org/fig"

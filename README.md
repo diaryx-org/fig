@@ -85,7 +85,7 @@ $ fig get config.yaml service -o json5
 
 ```bash
 $ fig set post.md tags --seq notes zig
-$ fig convert post.md --to-embed frontmatter-toml --diff
+$ fig convert post.md --to-embed plus --diff
 --- post.md
 +++ post.md
 @@ -1,7 +1,7 @@

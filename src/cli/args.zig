@@ -345,19 +345,18 @@ pub fn embedTypeFromName(name: []const u8) ?fig.Embed.Type {
         if (eql(u8, name, "html-code-" ++ field.name)) return .{ .html_code = f };
     }
 
-    // The rest are not `<container>-<format>` pairs and do not derive: legacy
-    // spellings that predate the parametric families, and the blessed presets
-    // whose delimiter is its own distinct token rather than a language tag.
+    // The rest are not `<container>-<format>` pairs and do not derive: the
+    // blessed presets whose delimiter is its own distinct token rather than a
+    // language tag, and the bare container names.
     //
     // Markdown `---` frontmatter (bare ⇒ yaml; see the `md-yaml` note above).
     if (eql(u8, name, "frontmatter") or eql(u8, name, "frontmatter-yaml")) return .{ .frontmatter = .yaml };
-    // `frontmatter-fig` is the legacy alias of `fenced-fig` — it names a FENCED
-    // block, not `---fig` frontmatter, which is why it cannot ride the loop.
-    if (eql(u8, name, "frontmatter-fig")) return .{ .fenced = .fig };
-    // Blessed distinct-delimiter presets (`frontmatter-json/-toml` are the
-    // historical names for the `;;;`/`+++` blocks).
-    if (eql(u8, name, "semicolons") or eql(u8, name, "frontmatter-json")) return .semicolons_json;
-    if (eql(u8, name, "plus") or eql(u8, name, "frontmatter-toml")) return .plus_toml;
+    // Blessed distinct-delimiter presets: the `;;;` and `+++` blocks. (fig 5
+    // dropped their older names `frontmatter-json`/`frontmatter-toml`, and
+    // `frontmatter-fig` for `fenced-fig`: each read as the `md-<lang>` block
+    // it was not.)
+    if (eql(u8, name, "semicolons")) return .semicolons_json;
+    if (eql(u8, name, "plus")) return .plus_toml;
     if (eql(u8, name, "endmatter") or eql(u8, name, "endmatter-yaml")) return .endmatter_yaml;
     // The bare container names, whose default format is fig rather than the
     // registry's first entry — a deliberate choice this project made, not a
@@ -371,7 +370,7 @@ pub fn embedTypeFromName(name: []const u8) ?fig.Embed.Type {
 /// `embedTypeFromName`, for diagnostics that have a `Type` in hand and need to
 /// name it back to the user in the vocabulary they typed. Canonical means: the
 /// derived `<container>-<format>` name for the parametric families, and the
-/// primary (not legacy-alias) name for the presets, so round-tripping the
+/// primary (not alias) name for the presets, so round-tripping the
 /// result back through `embedTypeFromName` returns the same `Type`.
 pub fn embedTypeName(t: fig.Embed.Type) []const u8 {
     return switch (t) {
@@ -419,7 +418,7 @@ pub const embed_archetype_names = blk: {
     var langs: []const u8 = "";
     for (@typeInfo(fig.Embed.InnerFormat).@"enum".fields, 0..) |f, i|
         langs = langs ++ (if (i == 0) "" else ", ") ++ f.name;
-    break :blk "frontmatter, frontmatter-json (;;;), frontmatter-toml (+++), endmatter, " ++
+    break :blk "frontmatter, semicolons (;;;), plus (+++), endmatter, " ++
         "md-<lang>, fenced-<lang>, html-script[-<lang>], html-code[-<lang>]; " ++
         "<lang> is one of " ++ langs ++ " (there is no md-yaml: that is `frontmatter`)";
 };
@@ -429,7 +428,7 @@ pub const embed_archetype_names = blk: {
 /// `--embed <archetype>` pick the right parser/printer on its own, without
 /// also requiring a redundant `--input`/`--output` (or, worse, silently
 /// keeping a same-named-extension guess that doesn't match the archetype —
-/// e.g. `--embed frontmatter-fig` on a `.md` file, whose extension alone
+/// e.g. `--embed fenced-fig` on a `.md` file, whose extension alone
 /// says nothing about which archetype it actually is).
 ///
 /// A name identity, not a mapping: both enums draw their members from the same
@@ -1041,7 +1040,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         // handler. `.json` here is a placeholder `from`/`to`, overwritten once the
         // real format is known. An explicit `--embed` is never sniffed: its
         // archetype fixes the inner format outright (`embedFormat`), and that
-        // wins over a same-named extension guess — e.g. `--embed frontmatter-fig`
+        // wins over a same-named extension guess — e.g. `--embed md-fig`
         // on a `.md` file (whose extension alone says nothing about which
         // archetype it actually is) must read/render the embed as fig, not YAML.
         const needs_detect = !requested_help and input_override == null and embed_override == null and detected_input == null;
@@ -1298,7 +1297,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     return ArgError.MissingConvertArgument;
                 };
                 to_embed_override = embedTypeFromName(name) orelse {
-                    log.err("Unknown --to-embed archetype: {s} (frontmatter, frontmatter-json, frontmatter-fig, endmatter)\n", .{name});
+                    log.err("Unknown --to-embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
                     return ArgError.UnsupportedFileFormat;
                 };
             } else if (std.mem.eql(u8, arg, "--indent")) {
@@ -1888,11 +1887,11 @@ test "embedTypeFromName maps archetype names" {
     const t = std.testing;
     try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = .yaml }), embedTypeFromName("frontmatter"));
     try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = .yaml }), embedTypeFromName("frontmatter-yaml"));
-    try t.expectEqual(@as(?fig.Embed.Type, .semicolons_json), embedTypeFromName("frontmatter-json"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = .fig }), embedTypeFromName("frontmatter-fig"));
+    try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("frontmatter-json"));
+    try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("frontmatter-fig"));
     try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = .toml }), embedTypeFromName("md-toml"));
     try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = .yaml }), embedTypeFromName("fenced-yaml"));
-    try t.expectEqual(@as(?fig.Embed.Type, .plus_toml), embedTypeFromName("frontmatter-toml"));
+    try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("frontmatter-toml"));
     try t.expectEqual(@as(?fig.Embed.Type, .endmatter_yaml), embedTypeFromName("endmatter"));
     try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("bogus"));
 
@@ -2109,8 +2108,8 @@ test "parseConfig routes set, --seq, and --embed" {
     const emc = try parseConfig(a, &em);
     try t.expectEqual(@as(?fig.Embed.Type, .endmatter_yaml), emc.options.set.embed);
 
-    // --embed frontmatter-fig routes to the fig-fenced archetype.
-    var fm = TestArgs{ .items = &.{ "fig", "set", "--embed", "frontmatter-fig", "post.md", "k", "v" } };
+    // --embed fenced-fig routes to the fig-fenced archetype.
+    var fm = TestArgs{ .items = &.{ "fig", "set", "--embed", "fenced-fig", "post.md", "k", "v" } };
     const fmc = try parseConfig(a, &fm);
     try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = .fig }), fmc.options.set.embed);
 
@@ -2148,7 +2147,7 @@ test "parseConfig routes convert: whole-file mode, embed mode, and their guards"
     // Embed mode: --to-embed alone (no --embed) defers source detection to
     // the handler (`detect_embed`); the file extension doesn't imply an
     // archetype here (not .md), so `embed` stays null.
-    var em = TestArgs{ .items = &.{ "fig", "convert", "--to-embed", "frontmatter-json", "f.txt" } };
+    var em = TestArgs{ .items = &.{ "fig", "convert", "--to-embed", "semicolons", "f.txt" } };
     const emc = try parseConfig(a, &em);
     try t.expectEqual(@as(?fig.Embed.Type, .semicolons_json), emc.options.convert.to_embed);
     try t.expectEqual(@as(?fig.Embed.Type, null), emc.options.convert.embed);
@@ -2158,13 +2157,13 @@ test "parseConfig routes convert: whole-file mode, embed mode, and their guards"
     // embedded region, never which archetype — `embed` stays null and
     // `detect_embed` fires so the handler sniffs the actual fences at
     // runtime instead of assuming YAML frontmatter outright.
-    var md = TestArgs{ .items = &.{ "fig", "convert", "--to-embed", "frontmatter-json", "post.md" } };
+    var md = TestArgs{ .items = &.{ "fig", "convert", "--to-embed", "semicolons", "post.md" } };
     const mdc = try parseConfig(a, &md);
     try t.expectEqual(@as(?fig.Embed.Type, null), mdc.options.convert.embed);
     try t.expect(mdc.options.convert.detect_embed);
 
     // Embed mode: explicit --embed overrides the extension default.
-    var ov = TestArgs{ .items = &.{ "fig", "convert", "--embed", "endmatter", "--to-embed", "frontmatter-fig", "post.md" } };
+    var ov = TestArgs{ .items = &.{ "fig", "convert", "--embed", "endmatter", "--to-embed", "fenced-fig", "post.md" } };
     const ovc = try parseConfig(a, &ov);
     try t.expectEqual(@as(?fig.Embed.Type, .endmatter_yaml), ovc.options.convert.embed);
     try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = .fig }), ovc.options.convert.to_embed);

@@ -90,7 +90,7 @@ const inner_format_names = Language.namesOf(.embeddable);
 comptime {
     if (inner_format_names.len != 4)
         @compileError("the set of formats with an embedded spelling changed — `cli/args.zig`'s" ++
-            " `embedTypeFromName` legacy aliases, `embed_archetype_names`, and `c_api.zig`'s" ++
+            " `embedTypeFromName` presets, `embed_archetype_names`, and `c_api.zig`'s" ++
             " `FigEmbedType` all enumerate them by hand and must grow (or shrink) with it");
     for ([_][]const u8{ "json", "yaml", "toml", "fig" }) |want| {
         if (!@hasField(InnerFormat, want))

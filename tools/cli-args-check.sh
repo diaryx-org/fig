@@ -199,6 +199,10 @@ row 2 rename ok.yaml a
 # an action, and neither is `--key`.
 row 2 edit ok.yaml a 2
 row 2 replace --key ok.yaml a c
+# The embed archetypes answer to their canonical names only.
+row 2 get --embed frontmatter-fig ok.yaml
+row 2 set --embed frontmatter-json ok.yaml a 1
+row 2 convert --to-embed frontmatter-toml ok.yaml
 row 0 delete ok.yaml a
 row 1 delete ok.yaml zz
 row 2 delete ok.yaml a b

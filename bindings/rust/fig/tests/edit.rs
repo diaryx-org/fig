@@ -650,6 +650,18 @@ fn embed_region_spans_tile_the_host_exactly() {
 }
 
 #[test]
+fn replace_body_refuses_a_block_with_host_text_on_both_sides() {
+    // A data island has no one body: swapping the side after it lost `</head>`.
+    let html = "<head>\n<script type=\"application/yaml\">\nk: v\n</script>\n</head>\n";
+    let mut em = Embed::open(html.as_bytes(), EmbedType::HtmlScriptYaml).unwrap();
+    assert!(matches!(
+        em.replace_body("NEW\n"),
+        Err(fig::Error::UnsupportedOperation)
+    ));
+    assert_eq!(em.render().unwrap(), html);
+}
+
+#[test]
 fn frontmatter_replace_body_keeps_frontmatter_byte_identical() {
     let mut fm = Embed::open(NOTE.as_bytes(), EmbedType::Frontmatter).unwrap();
     fm.replace_body("# New Body\n").unwrap();

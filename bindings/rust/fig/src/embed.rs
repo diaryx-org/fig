@@ -949,6 +949,10 @@ impl Embed {
     /// taken verbatim (not parsed); an empty `body` clears it. Composes with the
     /// value edits — change keys, replace the body, then [`render`](Self::render)
     /// once. Takes effect at the next render.
+    ///
+    /// A mid-document block (an HTML data island) has host text on both sides
+    /// and no one body, so it is [`Error::UnsupportedOperation`], and nothing
+    /// changes; rebuild the host from [`Extracted`](crate::Extracted)'s two sides.
     pub fn replace_body(&mut self, body: &str) -> Result<(), Error> {
         let status = unsafe { ffi::fig_embed_replace_body(self.ptr(), body.as_ptr(), body.len()) };
         Error::from_status(status)

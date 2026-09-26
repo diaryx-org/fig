@@ -2107,6 +2107,9 @@ const EmbedHandle = struct {
     /// True when the body is the PREFIX before the open fence (endmatter); false
     /// when it is the suffix after the close fence (frontmatter).
     body_before: bool,
+    /// False for a mid-document block (an HTML data island), whose host text
+    /// is on both sides: `fig_embed_replace_body` has no one side to swap.
+    one_body: bool,
     /// A replacement body installed by `fig_embed_replace_body`, owned. When set,
     /// `render` emits it in place of the original host body slice; the fences and
     /// (edited) content are untouched. Null means "keep the original body".
@@ -2179,6 +2182,7 @@ fn embedHandleFromHost(
         .host = host,
         .region = region,
         .body_before = Embed.bodyIsBefore(t),
+        .one_body = Embed.hasOneBody(t),
         .editor = switch (Embed.innerFormat(t)) {
             inline else => |f| blk: {
                 const d = comptime Languages.entryFor(@tagName(f));
@@ -2806,12 +2810,15 @@ pub export fn fig_embed_render(
 /// new body is taken verbatim — fig does not parse it. Composes with the value
 /// edits: edit keys, replace the body, then `render` once. An empty `body`
 /// clears it. Takes effect at the next `render`.
+/// A mid-document block (an HTML data island) has host text on both sides
+/// and no one body, so it is `unsupported_operation`, and nothing changes.
 pub export fn fig_embed_replace_body(
     em: ?*FigEmbed,
     body_ptr: ?[*]const u8,
     body_len: usize,
 ) FigStatus {
     const handle = embedFrom(em) orelse return .invalid_argument;
+    if (!handle.one_body) return .unsupported_operation;
     const body = if (body_len == 0) "" else (body_ptr orelse return .invalid_argument)[0..body_len];
     const owned = handle.allocator.dupe(u8, body) catch return .out_of_memory;
     if (handle.body_override) |old| handle.allocator.free(old);
@@ -4351,6 +4358,21 @@ test "fig_embed_replace_body swaps the body, keeps fences + edited content" {
     try std.testing.expectEqual(FigStatus.ok, fig_embed_replace_val(out_fm, &title, 1, hello.ptr, hello.len));
     try std.testing.expectEqual(FigStatus.ok, fig_embed_render(out_fm, &ptr, &len));
     try std.testing.expectEqualStrings("---\ntitle: Hello\n---\nnew body\n", ptr[0..len]);
+}
+
+test "fig_embed_replace_body refuses a mid-document block, which has no one body" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    // Host text on both sides: swapping the side after the block lost `</head>`.
+    const html = "<head>\n<script type=\"application/yaml\">\nk: v\n</script>\n</head>\n";
+    var em: ?*FigEmbed = null;
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(html.ptr, html.len, @intFromEnum(FigEmbedContainer.html_script), @intFromEnum(FigFormat.yaml), &em));
+    defer fig_embed_destroy(em);
+    const body = "NEW\n";
+    try std.testing.expectEqual(FigStatus.unsupported_operation, fig_embed_replace_body(em, body.ptr, body.len));
+    var ptr: [*c]const u8 = undefined;
+    var len: usize = undefined;
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_render(em, &ptr, &len));
+    try std.testing.expectEqualStrings(html, ptr[0..len]);
 }
 
 test "fig_embed_open_or_init creates a frontmatter block where none exists" {

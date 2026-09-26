@@ -777,6 +777,13 @@ pub fn bodyIsBefore(t: Type) bool {
     return archetypeOf(t).location == .end;
 }
 
+/// Whether `t` has ONE body, on one side of the block: frontmatter's after it,
+/// endmatter's before it. An HTML data island sits mid-document, with host
+/// text on both sides, so there is no one side for a body replacement to swap.
+pub fn hasOneBody(t: Type) bool {
+    return archetypeOf(t).location != .middle;
+}
+
 /// The format `t`'s content is written in. Lets a caller resolve the parser/
 /// printer to use for an embed's content — e.g. a `get`-style command that
 /// picked an archetype via `--embed` and needs to know what format that

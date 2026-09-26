@@ -648,7 +648,9 @@ println!("{}", fm.render()?);
   `EmbedType::inner_format()` then reports the [`Format`] that archetype's
   content is written in, so a detected embed resolves to a parser without
   duplicating the mapping.
-- `replace_body(text)` swaps the prose while keeping the (possibly edited) config.
+- `replace_body(text)` swaps the prose while keeping the (possibly edited) config:
+  the text after frontmatter, or before endmatter. An HTML data island has host
+  text on both sides and no one body, so it is refused (`UnsupportedOperation`).
 - `Embed::retype(host, from, to, content)` re-houses the block under a
   *different* archetype's fences — the splice half of "convert this file's embed
   style", with `content` the already re-serialized inner document. Every host

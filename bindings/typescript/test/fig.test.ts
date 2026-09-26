@@ -593,7 +593,7 @@ test("Document.serialize converts cross-format", () => {
 // FIG_WASM_PLIST=1), so it is absent from the module this suite tests.
 test("2.4 config formats: capabilities, parse/convert, and edit", () => {
   for (const f of [Format.Ini, Format.Dotenv, Format.Properties, Format.Nestedtext]) {
-    assert.deepEqual(capabilities(f), { read: true, edit: true, serialize: true, references: false }, `capabilities(${Format[f]})`);
+    assert.deepEqual(capabilities(f), { read: true, edit: true, serialize: true, references: false }, `capabilities(${f})`);
   }
   // plist is opt-in and not in the default payload — capabilities report it off,
   // so a consumer can detect it at runtime instead of hitting an unsupported error.

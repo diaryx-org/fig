@@ -16,20 +16,22 @@
 import { WASM_BASE64 } from "./wasm-bytes.ts";
 import type { SerializeOptions } from "./types.ts";
 
-/** A fig C ABI status code. `Ok` is 0; everything else is a failure. */
-export enum Status {
-  Ok = 0,
-  InvalidArgument = 1,
-  ParseError = 2,
-  OutOfMemory = 3,
-  UnsupportedFormat = 4,
-  NotFound = 5,
+/** A fig C ABI status code. `Ok` is 0; everything else is a failure — an
+ *  unnamed value included (see the unknown-values rule atop types.ts). */
+export const Status = {
+  Ok: 0,
+  InvalidArgument: 1,
+  ParseError: 2,
+  OutOfMemory: 3,
+  UnsupportedFormat: 4,
+  NotFound: 5,
   /** The operation is not defined for these arguments, though each argument is
    *  individually valid — distinct from `InvalidArgument` (a malformed call).
    *  Added in core 2.7.0; see `Embed.retype`. */
-  UnsupportedOperation = 6,
-  InternalError = 255,
-}
+  UnsupportedOperation: 6,
+  InternalError: 255,
+} as const;
+export type Status = (typeof Status)[keyof typeof Status] | (number & {});
 
 /** The exported fig symbols. All pointers and lengths are wasm32 `i32`; the two
  *  `fig_value_int`/`fig_value_uint` amounts cross as `i64` and so are `bigint`. */

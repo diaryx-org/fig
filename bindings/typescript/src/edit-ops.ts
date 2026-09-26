@@ -48,7 +48,16 @@ export { type Segment };
 
 export abstract class Editable {
   protected disposed = false;
-  protected constructor(protected handle: number, private fns: EditFns, private textFormat: Format) {}
+  protected handle: number;
+  private fns: EditFns;
+  private textFormat: Format;
+  // Fields assigned by hand rather than as parameter properties, which are
+  // not erasable syntax (see the ENUMS note atop types.ts).
+  protected constructor(handle: number, fns: EditFns, textFormat: Format) {
+    this.handle = handle;
+    this.fns = fns;
+    this.textFormat = textFormat;
+  }
 
   protected live(): number {
     if (this.disposed) throw new Error(`${this.constructor.name} already disposed`);

@@ -59,8 +59,7 @@
     "build": "npm run build:wasm && tsc -p tsconfig.json",
     "prepack": "node scripts/vendor-publish-files.mjs",
     "prepublishOnly": "npm run build && npm test",
-    "build:test": "tsc -p tsconfig.test.json",
-    "test": "npm run build:test && node --test 'test-dist/test/**/*.test.js'",
+    "test": "tsc -p tsconfig.test.json && node --test 'test/**/*.test.ts'",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

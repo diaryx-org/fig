@@ -20,8 +20,8 @@ Subjects follow Conventional Commits — `type(scope): subject`. `fig` accepts
 `add` and `feat` for additions, `change` and `refactor` for revisions, plus the
 usual `fix`, `docs`, `test`, `ci`, `build`, `chore`. The scope is the surface
 that moved (`toml`, `editor`, `c-api`, `cli`, `ts`, `rust`), and it is worth
-setting: in a repo shipping four artifacts off one tree, it is the fastest
-answer to "does this affect me". `.config/cliff.toml` groups
+setting: in a repo shipping five artifacts off one tree under one version, it
+is the fastest answer to "does this affect me". `.config/cliff.toml` groups
 [CHANGELOG](CHANGELOG.md) by these, and anything it cannot parse lands in a
 visible "triage before release" bucket rather than being dropped.
 

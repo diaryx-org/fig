@@ -3,7 +3,7 @@ title = VERSIONING
 description = Versioning policy for `fig`
 author = adammharris
 created = 2026-06-27
-updated = 2026-08-20
+updated = 2026-09-26
 part_of = [docs](docs.md)
 ```
 
@@ -11,123 +11,88 @@ part_of = [docs](docs.md)
 
 `fig` follows SemVer strictly. This means, in practice, that **major releases are not sacred** and will be bumped even on small-size releases if it is functionally a major breaking change according to SemVer.
 
-Therefore, starting with version v2.0.0, the `fig` project now has what some call an "epoch"—a "marketing" version that changes less often than major releases. Each is a fig cultivar: v2.0.0 is "Sierra," and v3.0.0 is "Texas Everbearing" — a core that bears languages without limit, through the runtime carrier and its Lua sister crate. The name lives in `build.zig` (`epoch`) and is surfaced only by `fig version`.
+Therefore, starting with version v2.0.0, the `fig` project now has what some call an "epoch"—a "marketing" version that changes less often than major releases. Each is a fig cultivar: v2.0.0 is "Sierra," and v3.0.0 is "Texas Everbearing" — a core that bears languages without limit, through the runtime carrier and its Lua sister crate. The name lives in `build.zig` (`epoch`) and is surfaced only by `fig version`; it has carried on through 5.0.0.
 
 
-## Independent versioning
+## One version, one tag
 
-`fig`'s artifacts are versioned independently, each on its own [SemVer](https://semver.org/) track, but **an artifact's version must be ≥ the core version it embeds.** The tracked artifacts:
+fig ships five artifacts off one tree, and from 5.0.0 **every one of them carries the same version**:
 
-- the Zig core + C ABI — `.version` in `build.zig.zon`
-- the CLI binary — `cli_version` in `build.zig`
-- the Rust crate — `[workspace.package] version` in `bindings/rust/Cargo.toml`
-- the npm package — `"version"` in `bindings/typescript/package.json`
-- the `fig-wasi` npm package — `"version"` in `bindings/wasi/package.json` (a special case: see below)
+- the Zig core + C ABI — `.version` in `build.zig.zon`, where the version is decided
+- the `fig` CLI binary
+- the Rust crates — `fig`, `fig-macros`, `fig-sys` and the five `fig-sys-<target>` payload crates (`bindings/rust/Cargo.toml`)
+- `@diaryx/fig`, the npm library (`bindings/typescript/package.json`)
+- `@diaryx/fig-wasi`, the npx-able CLI over WASI (`bindings/wasi/package.json`)
 
-This guarantees:
-- an artifact can never keep an older-looking number while shipping a newer, possibly-incompatible core;
-- reading an artifact's version is never an underestimate of the core inside it.
+`fig version` prints that one number and the epoch: `fig 5.0.0 "Texas Everbearing"`.
 
-Equality is **not** required — an artifact may run ahead of the core for artifact-only releases. Enforced by `zig build version-floor` (`tools/version-floor.zig`) in CI (via `zig build check`).
+A breaking change to any artifact is a major for all of them — a CLI flag's new default moves the crate's major, and an ABI break moves the npm package's. That is the cost, and it is paid knowingly: the Rust crate is the expensive case, since `dx deps fig --all` reaches most of the org and every major is a pin to propagate. The other side of it is that npm and crates.io will sometimes publish a version with nothing new in it, which is harmless. What it buys is that a version number means the same thing wherever it is read, and a release is one tag and one changelog section rather than four tracks whose cursors could strand an artifact that was left out.
 
-The CLI is on this list because its compatibility contract is its own — flags, defaults, exit codes — and is orthogonal to the library API and the C ABI. A CLI-only breaking change (e.g. flipping a flag's default, removing a flag) bumps `cli_version`'s major without forcing a core/ABI release; a core-only change doesn't force a CLI bump either. `fig version` prints both numbers, e.g. `fig 4.0.0 (core 3.0.0 "Texas Everbearing")`.
+The version is copied, never retyped. `build.zig.zon` decides it; `zig build version-sync` (`tools/version-sync.zig`) copies it into `figl/build.zig.figl` (the source `build.zig.zon` is generated from), `fig.h`'s `FIG_VERSION_MAJOR`/`_MINOR`/`_PATCH`, `README.md`'s frontmatter, the Rust workspace and its internal pins, and both `package.json` files and their lockfiles. `zig build version-check`, part of `zig build check`, fails on any file that disagrees.
 
-`fig-wasi` (`bindings/wasi/package.json`, the npx-able CLI-over-WASI package) is the one exception to "independent": it's a repackaging of the CLI binary itself — same actions, same compatibility contract — not a separate binding, so its version must equal `cli_version` **exactly** (a pin, not a floor), checked by `version-floor` alongside the `fig-macros` pin (see below).
+Before 5.0.0 the artifacts were versioned independently, each on its own track and tag prefix (`core/v…`, `cli/v…`, `rust/v…`, `npm/v…`), held together by a floor — no artifact below the core it embedded — and a release tool of fig's own. 5.0.0 sits above every one of those tracks (cli 4.0.1, rust 4.1.0, core 3.1.0, npm 3.1.0), so no artifact's version goes backwards. The prefixed tags stay as history; [CHANGELOG](CHANGELOG.md) keeps their sections, headed by the artifacts that moved. The reasoning is `docs/proposals/cli-5.md` §6.
 
 ## The C ABI contract version
 
 `bindings/c/include/fig.h` also defines `FIG_ABI_VERSION` — a monotonic integer, distinct from the marketing version, that identifies the *binary shape* of the C ABI the way an ELF SONAME does. It is bumped **only on a breaking ABI change**. fig's forward-compat design (size-gated structs, decode-unknown enums, add-never-remove functions) makes additions non-breaking, so this number stays put across feature releases and moves only on a true break. The library reports it at runtime via `fig_abi_version()`, so a host that dynamically loads `libfig` can compare it against the `FIG_ABI_VERSION` it compiled with.
 
-Source of truth: `abi_version` in `build.zig`. `zig build abi-check` pins the `fig.h` macro to it; `zig build semver-check` requires it to increment whenever the C ABI diff against the last release tag is breaking. (`semver-check` uses the most recent `core/v*` tag — the core's own release line, see "Release tagging" below — purely as a git revision to diff *against* via `git show <tag>:...`, so it doesn't care what the tag's number itself represents; only `abi_version`/`.version` in the current tree matter to it.)
+Source of truth: `abi_version` in `build.zig`. `zig build abi-check` pins the `fig.h` macro to it; `zig build semver-check` requires it to increment whenever the C ABI diff against the last release tag is breaking. It is a contract of its own and has no tag; neither `version-sync` nor `dx release` touches it. (`semver-check` uses the most recent release tag — see "Release tagging" below — purely as a git revision to diff *against* via `git show <tag>:...`, so it doesn't care what the tag's number itself represents; only `abi_version`/`.version` in the current tree matter to it.)
 
 ## Release tagging
 
-Since each artifact versions independently, no single tag number could honestly describe all of them. Instead, each track gets its **own** tag prefix, and a release pushes only the tags for whichever artifact(s) actually moved:
+One annotated tag, `v<version>`, releases everything. Pushing it sets off:
 
-| Tag | Drives | Why it exists |
-|---|---|---|
-| `cli/v<cli-version>` | `release-binaries.yml` + `homebrew.yml` (build/attach the CLI binaries, create the GitHub Release), `release-npm-wasi.yml`, and `.tangled/workflows/release.yml` (the same binaries, published as artifacts on the tangled.org mirror) | the CLI's own compatibility contract; this is the tag end users actually see and fetch (Homebrew, npx, direct download) |
-| `core/v<core-version>` | nothing — no workflow triggers on it | the core has no package registry of its own — `zig fetch`'s "pushing the tag *is* the Zig release" needs a tag that means *core*, and `zig build semver-check`'s ABI diff needs a baseline on the core's own line, so it gets a plain (no CI, no GitHub Release) tag purely as that anchor |
-| `rust/v<rust-version>` | `release.yml`'s `crate` job (crates.io: `fig` + `fig-macros`) | also the `cargo-semver-checks` baseline, so the Rust API diff compares against the Rust crate's own release history, not core's or the CLI's |
-| `npm/v<npm-version>` | `release-npm.yml` (`@diaryx/fig`, the TS library) | independent track, same reasoning |
+| Workflow | What it does |
+|---|---|
+| `release.yml` | publishes the Rust crates to crates.io, bottom-up |
+| `release-npm.yml` | publishes `@diaryx/fig` |
+| `release-npm-wasi.yml` | publishes `@diaryx/fig-wasi` |
+| `homebrew.yml` | builds the macOS and Linux CLI binaries, attaches them to the GitHub release, and writes the Homebrew tap |
+| `release-binaries.yml` | attaches the Windows and WASI CLI binaries (and `build_options.zig`) to the GitHub release |
+| `.tangled/workflows/release.yml` | the same binaries, published as artifacts against the tag on the tangled.org mirror |
 
-`fig-wasi` doesn't get its own prefix — it's pinned exactly to `cli_version` (see above), so it rides the `cli/` tag; its job keeps an explicit "tag matches package version" check (in addition to the floor) to enforce that pin.
+The tag is also what Zig consumers `zig fetch`: Zig has no registry, so pushing the tag *is* the Zig release. Each publishing workflow checks that every file carries the one version (`zig build version-check`) and that the tag names it, and no-ops where the registry already has that version.
 
-Only `cli/*` tags get prebuilt binaries — a GitHub Release object (via `softprops/action-gh-release`) and, on the tangled.org mirror, one `sh.tangled.repo.artifact` record per binary against the same tag — attached. That's the human-facing release. `core/*`, `rust/*`, and `npm/*` are plain git tags (visible under the repo's Tags list, not the Releases page): real, `git describe`-able and `zig fetch`-able anchors for their own consumers, without cluttering the Releases page with entries nobody downloads binaries from.
+**Finding the last release.** `semver-check` and both `cargo-semver-checks` runs (in `zig build check`, in `ci.yml`, and in `release.yml` before publishing) diff against the most recent release tag reachable from HEAD. Three bare tags from before the per-artifact scheme — `v1.0.0`, `v2.0.0`, `v2.5.1` — are ancestors of every commit since, so a bare `--match 'v*'` would take `v2.5.1` for the latest release. The baseline is found instead with
 
-A release that bumps several artifacts at once just pushes several tags at the same commit — e.g. a release that bumps both the CLI and the core pushes `cli/v3.1.0` and `core/v2.1.0` together; a Rust-only bump pushes only `rust/v1.5.0` and needs no CLI or core tag at all.
+```
+git describe --tags --abbrev=0 --match 'v[5-9].*' --match 'v[1-9][0-9]*'
+```
+
+which admits v5 through v9 and every two-or-more-digit major, and leaves those three out. Until the first one-version tag exists, each falls back to its old prefixed line: `core/v*` for `semver-check`, `rust/v*` for `cargo-semver-checks`. `.config/cliff.toml`'s `tag_pattern` makes the same cut for the changelog, keeping the prefixed tags as history.
 
 ## Releasing
 
-One command, which stops before the push:
+fig releases through the org's shared tooling, `dx release`, configured by `.config/release.toml`. **Which version a release is, is Adam's to name**; `dx release` with no spec proposes and writes nothing:
 
 ```
-zig build release -- <artifact> <version|major|minor|patch|as-is> [...] [--push] [--no-verify]
+dx release
 ```
 
-`zig build release -- rust minor` for a Rust-only release; `zig build release --
-core minor cli patch` when several artifacts move together. It runs steps 1–6
-below in order, and a run without `--push` ends by printing the two commands it
-did not run, along with what each tag will set off and the one-line undo (`git
-tag -d <tags> && git reset --hard HEAD~1`). The push is asked for explicitly
-every time because it is the step that spends a version number: crates.io and
-npm can yank a version, never reuse it.
-
-The **release set is every artifact you name, at whatever version the manifests
-then hold, plus every artifact the bump moved without being named** — so one
-that `version-set` raised to satisfy the `>= core` floor is tagged and named in
-the changelog heading along with the one you asked for.
-
-**`as-is` releases a version that is already in the tree**, bumping nothing:
+It prints what `patch`, `minor`, `major` and `as-is` would each move to, and what the commits since the last tag say about the promise — the `!` subjects, `BREAKING CHANGE:` footers, and every `Behavioural-change:` trailer in full. Then, once the number has been said:
 
 ```
-zig build release -- rust as-is npm as-is
+dx release <patch|minor|major|x.y.z|as-is>
 ```
 
-A version bumped in an earlier commit and then never released is a normal state
-here — the bump and the release are separate acts, and only the tag ships. What
-that version is missing is the tag, the changelog section and the publish, not a
-new number; bumping again to release it would spend a version number on a
-bookkeeping gap and leave a hole in the published history where the unreleased
-one used to be. The tag-collision check is what keeps `as-is` honest: a version
-that *was* released has a tag, and the release refuses.
+It stops before the push. The steps, which are also how to do it by hand:
 
-The steps, which are also how to do it by hand:
+1. **Preflight.** Refuse a release that is already doomed, before anything is written: a dirty tree, a branch that isn't `main`, a `main` behind `origin/main`, a tag that already exists, a crate version crates.io already has, no `git-cliff` on PATH.
+2. **Bump.** `build.zig.zon`'s `.version`, then `bindings/rust/Cargo.toml` and its internal pins, then `zig build version-sync` (the `post_bump`) for every other file that carries the version, then the Rust lockfile. `as-is` skips this and releases the version already in the tree — the way to release a version bumped in an earlier commit without spending a second number on it.
+3. **Verify** with `zig build check` (test + conformance + abi-check + semver-check + version-check + check-figl + cargo-semver-checks + the binding suites) — all green. This runs *after* the bump: `semver-check` and `version-check` judge the versions in the tree, so running them first would judge the versions the release is replacing. A failure restores the tree.
+4. **Cut the changelog entry.** The generated region under [CHANGELOG](CHANGELOG.md)'s `## Unreleased` is rendered once more through `.config/cliff.toml` and written as a new `## v<version> — <date>` section directly below the end marker; the region is reset to empty. Check the **Behavioural changes** section covers what an unedited caller will notice — it is gathered from `Behavioural-change:` trailers, so a missing one means a commit didn't carry it — and triage anything in **Uncategorised**. `dx changelog` prints the region, `dx changelog --write` regenerates it, `dx changelog --check` fails if it is stale.
+5. **Commit** the version files and the changelog, and nothing else, as `chore: bump to <version>` (or `chore: release <version>` for `as-is`) — subjects `.config/cliff.toml` skips.
+6. **Tag** `v<version>`, annotated.
+7. **Push** the branch, then the tag, and write the GitHub release body from the changelog section with `dx github-release v<version>` — the three commands `dx release` prints. `--push` runs them, and is Adam's to give.
 
-1. **Preflight.** Refuse a release that is already doomed, before anything is
-   written: a dirty tree (the release commit must hold only the bump and the
-   changelog), a branch that isn't `main`, a `main` behind `origin/main` (a
-   release cut on a stale main is a release missing commits; advisory if origin
-   is unreachable), no `git-cliff` on PATH, or a [CHANGELOG](CHANGELOG.md) whose
-   generated region isn't inside a `## Unreleased` section — which is what a
-   previous release cut by hand leaves behind — or is empty, meaning there is
-   nothing to release.
-2. **Bump** only the artifact(s) whose surface changed — or `as-is` to skip the bump and release the version already there, by the amount its SemVer tool demands, with `zig build version-set -- <artifact> <version|major|minor|patch>` (`artifact` = `core`|`cli`|`rust`|`npm`). It edits the right manifest(s) and keeps the coupled fields consistent for you: the `fig-wasi` == `cli_version` pin (so a `cli` bump carries `fig-wasi`), the `fig-macros` pin == the Rust workspace version, and the `artifact >= core` floor (a `core` bump auto-raises any lagging cli/rust/npm), then refreshes the lockfiles. A `core` bump also syncs `README.md`'s frontmatter `version` field (the number shown at the top of the README) to match, by shelling out to `fig set` itself rather than hand-editing the markdown. Add `--dry-run` to preview the edits without writing — the way to see what a bump would do without cutting anything. (`version-set` is the writer counterpart of the read-only `version-floor` checker; it does **not** touch `abi_version` — see below.)
-3. **Verify** with `zig build check` (test + abi-check + semver-check + version-floor + cargo-semver-checks) — all green. This runs *after* the bump, not before: `semver-check` and `version-floor` judge the versions in the tree, so running them first would be judging the versions the release is replacing. `zig build release --no-verify` skips it, for a re-run of a release whose check already passed.
-4. **Cut the changelog entry.** `zig build changelog` regenerates [CHANGELOG](CHANGELOG.md)'s `## Unreleased` region from the commits since the newest tag on any track; the cut then renames that heading to name every version going out (`## core 2.6.0 · cli 3.5.3 · rust 3.2.0 · npm 2.6.0`), strips the two markers from the section that just became history — so exactly one marker pair is ever in the file and a later regeneration cannot rewrite a released section — and opens a fresh empty `## Unreleased` above it. A handwritten release intro below the end marker rides down with its section. Anything that landed in the **Uncategorised** bucket is a commit whose subject git-conventional could not read; the tool warns rather than refusing, since the region is generated and the fix is an amended subject, not an edit there. Check the **Behavioural changes** section actually covers what an unedited caller will notice — it is gathered from `Behavioural-change:` commit trailers, so a missing one means a commit didn't carry it. `zig build changelog-check` verifies the region is current without writing; it is deliberately not part of `zig build check` (see the comment in `src/build/tools.zig`).
-5. **Commit** the bump and the changelog, and nothing else. `release` stages the release files by name and refuses if anything else in the tree changed, then commits as `chore: release <heading>` — a subject `.config/cliff.toml` skips, so the release commit never appears in the next release's changelog.
-6. **Tag** one annotated tag per artifact that changed this release (see "Release tagging" above): `cli/v<cli-version>` if the CLI (or `fig-wasi`) moved, `core/v<core-version>` if the core moved, `rust/v<rust-version>` / `npm/v<npm-version>` for those tracks. The SemVer tools each baseline against their own track's most recent tag (`core/v*` for `semver-check`, `rust/v*` for `cargo-semver-checks`).
-7. **Push** the branch and the tags — `--push`, or the two commands the tool prints.
-
-If the core had a **breaking** ABI change, bump `FIG_ABI_VERSION` (`abi_version`
-in `build.zig`) by hand before releasing — it's a deliberate ABI-contract
-decision `semver-check` guards, not a marketing version, so neither
-`version-set` nor `release` touches it — and pull every other artifact's major
-up to satisfy the floor (`zig build version-set -- core <major>.0.0` does the
-pull for you).
-
-Everything `release` does before the push is local and reversible, and any
-failure after the bump restores the tree — the preflight proved it was clean, so
-`git checkout -- .` puts back exactly what the tool wrote and nothing else. The
-one exception is a failure *between* the commit and the last tag: the commit is
-left in place and the tool says so, rather than guessing which half to unwind.
+If the core had a **breaking** ABI change, bump `FIG_ABI_VERSION` (`abi_version` in `build.zig`) by hand before releasing — it's a deliberate ABI-contract decision `semver-check` guards, not a marketing version.
 
 ## Known gaps
 
-- **No automated TypeScript API guard.** There is no turnkey `cargo-semver-checks` equivalent for the TS public surface, and the C-ABI integer has no TS analog (npm exposes no C ABI). The TS package is on the independent track + floor; an automated TS API-diff (e.g. an `api-extractor` report committed to git) is an optional follow-up.
+- **No automated TypeScript API guard.** There is no turnkey `cargo-semver-checks` equivalent for the TS public surface, and the C-ABI integer has no TS analog (npm exposes no C ABI). An automated TS API diff (e.g. an `api-extractor` report committed to git) is an optional follow-up; once it lands, it should baseline against the last release tag the same way the other two do.
 - **No `publish` command.** `release.yml`'s crate job inlines its own bottom-up
   `cargo publish` loop over the workspace, so the workflow knows the crate list
   rather than asking the repo for it, and a run that dies halfway is finished by
   re-running the workflow rather than a local command. prov's `cargo xtask
   publish` is the shape to copy if that ever needs a manual recovery path.
-- **No `npm/*` tag baseline guard yet.** Unlike the C ABI (`semver-check` vs `core/v*`) and the Rust crate (`cargo-semver-checks` vs `rust/v*`), the TS package has no equivalent baseline diff to run against `npm/v*` — see the TypeScript API guard gap above; once that lands, it should baseline the same way.
+- **`dx` reads the three bare tags.** `dx release` finds the last release with `git tag --list 'v[0-9]*'`, which takes in `v1.0.0`, `v2.0.0` and `v2.5.1`. Until `v5.0.0` is tagged, its proposal therefore says the version sits "above v2.5.1" and lists every commit since that tag; its candidates are still right, and `as-is` releases 5.0.0. Once `v5.0.0` exists it is the highest tag and the proposal reads correctly.

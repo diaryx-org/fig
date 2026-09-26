@@ -225,7 +225,7 @@ using ed = Editor.open(
 );
 
 ed.replaceValue(["port"], 9090);
-ed.set(["debug"], true); // replace if present, else insert
+ed.setValue(["debug"], true); // replace if present, else insert
 
 console.log(ed.source());
 // # app config
@@ -245,12 +245,12 @@ Common operations (available on both `Editor` and `Embed`):
 ```ts
 ed.insertValue([], "key", value);      // add a mapping entry
 ed.replaceValue(path, value);          // change a value
-ed.replaceKey(path, "newKey");         // rename a key (a name, spelled as the format spells a key)
-ed.set(path, value);                   // upsert (replace or insert)
-ed.delete(path);                       // remove a mapping entry
+ed.renameKey(path, "newKey");         // rename a key (a name, spelled as the format spells a key)
+ed.setValue(path, value);                   // upsert (replace or insert)
+ed.deleteKey(path);                       // remove a mapping entry
 ed.appendValue(["list"], value);       // push onto a sequence
 ed.prependValue(["list"], value);
-ed.removeItem(["list"], 0);            // remove sequence item by index
+ed.deleteItem(["list"], 0);            // remove sequence item by index
 ed.moveKey(["a"], ["b"]);              // reorder mapping entries
 ed.reorderKeys([], ["title", "body"]); // named keys first, rest follow
 ed.moveItem(["list"], 2, 0);           // reorder sequence items
@@ -258,9 +258,9 @@ ed.reorderItems(["list"], [2, 0]);     // bring these indices to the front
 ed.setSequence(["tags"], ["c", "a"]);  // reconcile a list, keeping survivors' comments
 ```
 
-`replaceValue`, `insertValue` and `set` each have a `*With` twin taking a
+`replaceValue`, `insertValue` and `setValue` each have a `*With` twin taking a
 `SerializeOptions`, for when the spliced value's own rendering needs
-controlling — `replaceValueWith`, `insertValueWith`, `setWith`.
+controlling — `replaceValueWith`, `insertValueWith`, `setValueWith`.
 
 ### Whole containers (`Editor` only)
 
@@ -317,7 +317,7 @@ ed.setTrailingComment(["port"], "default 8080");      // same-line comment
 ed.getLeadingComment(["port"]);   // read it back ("" = bare marker, null = none)
 ed.getTrailingComment(["port"]);  // same convention
 ed.deleteTrailingComment(["port"]);
-ed.deleteLeadingComments(["port"]); // drops the whole owned block
+ed.deleteLeadingComment(["port"]); // drops the whole owned block
 ```
 
 The comment marker (`#`, `//`, `;`) is chosen for the format; strict `Json` has
@@ -333,7 +333,7 @@ addressed by the container's own path (`[]` = the document root):
 ```ts
 ed.addDanglingComment(["server"], "was: here"); // at the body's child depth
 ed.getDanglingComment(["server"]);   // "" = bare marker, null = none
-ed.deleteDanglingComments([]);       // the run at the end of the document
+ed.deleteDanglingComment([]);       // the run at the end of the document
 ```
 
 A scalar has no body to end, and neither has a flow container written on one
@@ -365,7 +365,7 @@ byte-for-byte as it was.
 
 Need to insert already-serialized text verbatim (e.g. preserving exact quoting)?
 Every value method has a `*Raw` twin — `replaceValueRaw`, `insertValueRaw`,
-`appendValueRaw`, `prependValueRaw`, `setRaw` — that takes a string instead of a
+`appendValueRaw`, `prependValueRaw`, `setValueRaw` — that takes a string instead of a
 `Value`.
 
 ## Markdown frontmatter & embeds
@@ -380,7 +380,7 @@ import { Embed, EmbedType } from "@diaryx/fig";
 const md = "---\ntitle: Hello\ntags:\n- draft\n---\n# Body\n\ntext\n";
 
 using fm = Embed.open(md, EmbedType.Frontmatter);
-fm.set(["title"], "Hello, world");
+fm.setValue(["title"], "Hello, world");
 fm.appendValue(["tags"], "published");
 
 console.log(fm.render());
@@ -421,7 +421,7 @@ Everything that takes an archetype is a static on `Embed`:
   none and `ParseError` — with the core's message — when the block never
   closes or its content does not parse.
 - `Embed.openOrInit(host, kind)` creates the block if none exists, so the first
-  `set` lands cleanly. A block that goes at the top is refused
+  `setValue` lands cleanly. A block that goes at the top is refused
   (`UnsupportedOperation`) when the host already opens with frontmatter of
   another archetype, rather than pushing it off the first line; `retype`
   changes a region's archetype.
@@ -538,7 +538,7 @@ const fmt = registerLanguage(tinykv);
 parse("a=1\n", fmt);                        // → { a: "1" }
 convert("a=1\n", fmt, Format.Json);         // → '{\n  "a": "1"\n}\n'
 using ed = Editor.open("a=1\n", fmt);
-ed.set(["b"], "2");                          // the splice engine writes `b=2` from `syntax`
+ed.setValue(["b"], "2");                          // the splice engine writes `b=2` from `syntax`
 ed.source();                                 // → "a=1\nb=2\n"
 ```
 

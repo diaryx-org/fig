@@ -73,12 +73,12 @@ export abstract class Editable {
 
   /** Rename the key at `path` to `key`, a name the format spells as it
    *  spells a key (`.k` in ZON, `"k"` in JSON, `<key>k</key>` in plist). */
-  replaceKey(path: readonly Segment[], key: string): void {
+  renameKey(path: readonly Segment[], key: string): void {
     const frame = new Frame();
     try {
       const p = encodePath(frame, path);
       const t = frame.str(key);
-      check(this.fns.replaceNamedKey(this.live(), p.ptr, p.len, t.ptr, t.len), "replaceKey");
+      check(this.fns.replaceNamedKey(this.live(), p.ptr, p.len, t.ptr, t.len), "renameKey");
     } finally {
       frame.dispose();
     }
@@ -93,8 +93,8 @@ export abstract class Editable {
    *  the trailing key is absent. Folds the `replaceValue` → (on `NotFound`)
    *  `insertValue` two-step into one call. `path` must end in a key; a missing
    *  intermediate container throws `NotFound`. */
-  set(path: readonly Segment[], value: Value | JsInput): void {
-    this.setRaw(path, valueText(value, this.textFormat));
+  setValue(path: readonly Segment[], value: Value | JsInput): void {
+    this.setValueRaw(path, valueText(value, this.textFormat));
   }
 
   // ── value edits with a layout knob (block-vs-inline containers) ─────────
@@ -119,9 +119,9 @@ export abstract class Editable {
   }
 
   /** Upsert the value at `path`, rendering `value` with `options` (a block
-   *  map/sequence lands as a nested section). The width-aware twin of `set`. */
-  setWith(path: readonly Segment[], value: Value | JsInput, options?: SerializeOptions): void {
-    this.setRaw(path, valueTextWith(value, this.textFormat, options));
+   *  map/sequence lands as a nested section). The width-aware twin of `setValue`. */
+  setValueWith(path: readonly Segment[], value: Value | JsInput, options?: SerializeOptions): void {
+    this.setValueRaw(path, valueTextWith(value, this.textFormat, options));
   }
 
   /** Append `value` to the sequence at `path`. */
@@ -132,6 +132,16 @@ export abstract class Editable {
   /** Prepend `value` to the sequence at `path`. */
   prependValue(path: readonly Segment[], value: Value | JsInput): void {
     this.prependValueRaw(path, valueText(value, this.textFormat));
+  }
+
+  /** Append `value` to the sequence at `path`, rendering it with `options`. */
+  appendValueWith(path: readonly Segment[], value: Value | JsInput, options?: SerializeOptions): void {
+    this.appendValueRaw(path, valueTextWith(value, this.textFormat, options));
+  }
+
+  /** Prepend `value` to the sequence at `path`, rendering it with `options`. */
+  prependValueWith(path: readonly Segment[], value: Value | JsInput, options?: SerializeOptions): void {
+    this.prependValueRaw(path, valueTextWith(value, this.textFormat, options));
   }
 
   // ── raw edits (caller supplies serialized text) ─────────────────────────
@@ -149,13 +159,13 @@ export abstract class Editable {
   }
 
   /** Upsert `path` to already-serialized `text` (replace, else insert the
-   *  trailing key). See `set`. */
-  setRaw(path: readonly Segment[], text: string): void {
+   *  trailing key). See `setValue`. */
+  setValueRaw(path: readonly Segment[], text: string): void {
     const frame = new Frame();
     try {
       const p = encodePath(frame, path);
       const t = frame.str(text);
-      check(this.fns.set(this.live(), p.ptr, p.len, t.ptr, t.len), "set");
+      check(this.fns.set(this.live(), p.ptr, p.len, t.ptr, t.len), "setValue");
     } finally {
       frame.dispose();
     }
@@ -200,22 +210,22 @@ export abstract class Editable {
   // ── structural edits ────────────────────────────────────────────────────
 
   /** Delete the mapping entry named by `path`. */
-  delete(path: readonly Segment[]): void {
+  deleteKey(path: readonly Segment[]): void {
     const frame = new Frame();
     try {
       const p = encodePath(frame, path);
-      check(this.fns.deleteKey(this.live(), p.ptr, p.len), "delete");
+      check(this.fns.deleteKey(this.live(), p.ptr, p.len), "deleteKey");
     } finally {
       frame.dispose();
     }
   }
 
   /** Remove the item at `index` from the sequence at `path`. */
-  removeItem(path: readonly Segment[], index: number): void {
+  deleteItem(path: readonly Segment[], index: number): void {
     const frame = new Frame();
     try {
       const p = encodePath(frame, path);
-      check(this.fns.removeSeqItem(this.live(), p.ptr, p.len, index), "removeItem");
+      check(this.fns.removeSeqItem(this.live(), p.ptr, p.len, index), "deleteItem");
     } finally {
       frame.dispose();
     }
@@ -315,11 +325,11 @@ export abstract class Editable {
   /** Remove the own-line comment block above the node at `path` (no-op if none,
    *  including an element of a one-line flow collection, whose block above
    *  belongs to its parent). */
-  deleteLeadingComments(path: readonly Segment[]): void {
+  deleteLeadingComment(path: readonly Segment[]): void {
     const frame = new Frame();
     try {
       const p = encodePath(frame, path);
-      check(this.fns.deleteLeadingComments(this.live(), p.ptr, p.len), "deleteLeadingComments");
+      check(this.fns.deleteLeadingComments(this.live(), p.ptr, p.len), "deleteLeadingComment");
     } finally {
       frame.dispose();
     }
@@ -383,11 +393,11 @@ export abstract class Editable {
 
   /** Remove the whole dangling run at the end of the container at `path`'s body
    *  (no-op if none). */
-  deleteDanglingComments(path: readonly Segment[]): void {
+  deleteDanglingComment(path: readonly Segment[]): void {
     const frame = new Frame();
     try {
       const p = encodePath(frame, path);
-      check(this.fns.deleteDanglingComments(this.live(), p.ptr, p.len), "deleteDanglingComments");
+      check(this.fns.deleteDanglingComments(this.live(), p.ptr, p.len), "deleteDanglingComment");
     } finally {
       frame.dispose();
     }

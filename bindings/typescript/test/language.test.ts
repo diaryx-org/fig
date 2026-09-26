@@ -86,14 +86,14 @@ test("the twin's printer writes what the compiled printer writes", () => {
 test("edits through the twin leave the same file the compiled format leaves", () => {
   const source = fixtures.find((f) => f.name === "secrets.env")!.source;
   const script = (ed: Editor) => {
-    ed.set(["API_KEY"], "rotated");
-    ed.set(["NEW_KEY"], "two words");
+    ed.setValue(["API_KEY"], "rotated");
+    ed.setValue(["NEW_KEY"], "two words");
     ed.insertValue([], "AFTER", "x");
-    ed.delete(["RAW"]);
+    ed.deleteKey(["RAW"]);
     ed.addLeadingComment(["EMPTY"], "was empty");
     ed.setTrailingComment(["NEW_KEY"], "added");
     ed.deleteTrailingComment(["DB_URL"]);
-    ed.replaceKey(["DB_URL"], "DATABASE_URL");
+    ed.renameKey(["DB_URL"], "DATABASE_URL");
     return ed.source();
   };
   using mine = Editor.open(source, jsDotenv);
@@ -107,7 +107,7 @@ test("edits through the twin leave the same file the compiled format leaves", ()
 
 test("editing an empty document seeds it from the dialect's empty_doc_seed", () => {
   using ed = Editor.open("", jsDotenv);
-  ed.set(["A"], "1");
+  ed.setValue(["A"], "1");
   assert.equal(ed.source(), "A=1\n");
 });
 
@@ -228,7 +228,7 @@ test("a renderer is told the container its fragment goes into", () => {
   };
   const f = registerLanguage(tagged);
   using ed = Editor.open("A=1\n", f);
-  ed.set(["A"], "ten");
+  ed.setValue(["A"], "ten");
   ed.insertValue([], "B", "two");
   assert.equal(ed.source(), "A=!env||ten\nB=!env||two\n");
 

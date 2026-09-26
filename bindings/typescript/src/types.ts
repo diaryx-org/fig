@@ -209,7 +209,7 @@ export interface ParseDetail {
 export class FigError extends Error {
   readonly status: Status;
   /** The operation that failed — a C ABI entry point (`fig_parse`,
-   *  `fig_editor_create`) or a method name (`replaceKey`, `moveContainer`). */
+   *  `fig_editor_create`) or a method name (`renameKey`, `moveContainer`). */
   readonly op: string;
   readonly byteOffset?: number | undefined;
   readonly line?: number | undefined;

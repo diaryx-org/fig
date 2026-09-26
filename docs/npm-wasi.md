@@ -46,7 +46,7 @@ npm install -g @diaryx/fig-wasi
 fig get config.yaml
 ```
 
-Requires Node 20+.
+Requires Node 22+.
 
 ## Usage
 

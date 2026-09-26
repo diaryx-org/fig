@@ -167,7 +167,7 @@ brew tap diaryx-org/tap
 brew install diaryx-org/tap/fig
 ```
 
-Or run it with no install at all (needs Node 20+)—see
+Or run it with no install at all (needs Node 22+)—see
 [docs/npm-wasi.md](docs/npm-wasi.md)):
 
 ```bash

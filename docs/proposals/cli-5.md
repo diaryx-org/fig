@@ -34,6 +34,14 @@ part_of = [proposals](proposals.md)
 > block inside a flow mapping) is written on one line instead. A TOML
 > table given as a value is written as an inline table, which also fixed
 > `fig patch` of a new table into TOML.
+>
+> Smaller breaks that no section argues landed beside them, on the same
+> reasoning: `help` and `version` are strict like every other action (§3);
+> a mid-sequence `insert` is a refused edit and exits 1, not 2 (§5); the
+> `frontmatter-json`/`-toml`/`-fig` archetype names are gone in favour of
+> `semicolons`, `plus` and `fenced-fig`; and `patch` and `check` take the
+> warning flags (`--strict`, `--no-warnings`, and for `patch`
+> `--strip-comments`, as `--comments none`) the other actions do.
 
 The CLI's compatibility contract is its own — flags, defaults, exit codes
 ([VERSIONING](/docs/VERSIONING.md)) — and it has drifted in ways no single

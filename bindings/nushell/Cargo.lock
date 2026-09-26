@@ -642,14 +642,14 @@ dependencies = [
 
 [[package]]
 name = "fig"
-version = "3.3.0"
+version = "5.0.0"
 dependencies = [
  "fig-sys",
 ]
 
 [[package]]
 name = "fig-sys"
-version = "3.3.0"
+version = "5.0.0"
 dependencies = [
  "fig-sys-linux-arm64-gnu",
  "fig-sys-linux-x64-gnu",
@@ -660,23 +660,23 @@ dependencies = [
 
 [[package]]
 name = "fig-sys-linux-arm64-gnu"
-version = "3.3.0"
+version = "5.0.0"
 
 [[package]]
 name = "fig-sys-linux-x64-gnu"
-version = "3.3.0"
+version = "5.0.0"
 
 [[package]]
 name = "fig-sys-macos-arm64"
-version = "3.3.0"
+version = "5.0.0"
 
 [[package]]
 name = "fig-sys-wasm32"
-version = "3.3.0"
+version = "5.0.0"
 
 [[package]]
 name = "fig-sys-windows-x64-msvc"
-version = "3.3.0"
+version = "5.0.0"
 
 [[package]]
 name = "find-msvc-tools"
@@ -2670,15 +2670,3 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[patch.unused]]
-name = "historica"
-version = "1.0.0-rc.3"
-
-[[patch.unused]]
-name = "historica-minisign"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "historica-remark"
-version = "0.1.1"

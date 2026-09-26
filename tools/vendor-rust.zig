@@ -141,7 +141,7 @@ fn report(io: std.Io, src_root: Dir, name: []const u8, what: []const u8) usize {
 }
 
 /// The quoted strings inside `build.zig.zon`'s `.paths = .{ … }`. A scanner
-/// rather than a ZON parse for the same reason `tools/version_fields.zig` scans
+/// rather than a ZON parse for the same reason `tools/version-sync.zig` scans
 /// rather than parses: fig cannot bootstrap-parse its own build manifest.
 fn zonPaths(zon: []const u8) PathIter {
     const key = std.mem.indexOf(u8, zon, ".paths");

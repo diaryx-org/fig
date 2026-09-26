@@ -1,11 +1,10 @@
 //! Build-time configuration: the `-D` feature knobs that get baked into the
 //! `build_options` module every artifact imports.
 //!
-//! The package-identity constants (`version`, `abi_version`, `cli_version`,
-//! `epoch`) deliberately live in `build.zig`, NOT here — external tooling
-//! treats `build.zig` as their canonical home (e.g. `tools/version-floor.zig`
-//! parses `cli_version` out of it), so they are passed in via `Versions` rather
-//! than owned here.
+//! The package-identity constants (`version`, `abi_version`, `epoch`)
+//! deliberately live in `build.zig`, NOT here — they are facts about the
+//! package rather than knobs, so they are passed in via `Versions` rather than
+//! owned here.
 //!
 //! The per-format knobs are not written here either. `src/languages/list.zig`
 //! is the one list of formats and conformance suites, and this file declares
@@ -21,13 +20,11 @@ const list = @import("../languages/list.zig");
 /// Passed in from `build.zig` (their canonical home) so this module owns only
 /// the knob machinery, not the identity.
 pub const Versions = struct {
-    /// The canonical package version (`build.zig.zon`'s `.version`, parsed in
-    /// build.zig where that import path is shallow).
-    core: std.SemanticVersion,
+    /// The one version every artifact ships under (`build.zig.zon`'s
+    /// `.version`, parsed in build.zig where that import path is shallow).
+    version: std.SemanticVersion,
     /// The binary C ABI contract version.
     abi: u8,
-    /// The `fig` CLI binary's own SemVer track.
-    cli: std.SemanticVersion,
     /// The current marketing epoch.
     epoch: []const u8,
 };
@@ -116,22 +113,18 @@ pub fn addFigOptions(b: *std.Build, cfg: BuildOptions, ver: Versions) *std.Build
         options.addOption(bool, "lang_" ++ row.name, cfg.langs[i]);
     }
     options.addOption(bool, "lang_canonical", cfg.lang_canonical);
-    // Library version surfaced through the C ABI (`fig_version` /
-    // `fig_version_string`). Parsed from `.version` in `build.zig.zon` — the one
-    // canonical package version — and split into the components the ABI's
+    // The package version, surfaced through the C ABI (`fig_version` /
+    // `fig_version_string`) and by the CLI's `fig version`. Parsed from
+    // `.version` in `build.zig.zon` — the one version every artifact ships
+    // under — and split into the components the ABI's
     // packed-integer/string accessors need. `zig build abi-check` separately
     // asserts that bindings/c/include/fig.h's FIG_VERSION_* macros match this same source.
-    options.addOption(u8, "version_major", @intCast(ver.core.major));
-    options.addOption(u8, "version_minor", @intCast(ver.core.minor));
-    options.addOption(u8, "version_patch", @intCast(ver.core.patch));
+    options.addOption(u8, "version_major", @intCast(ver.version.major));
+    options.addOption(u8, "version_minor", @intCast(ver.version.minor));
+    options.addOption(u8, "version_patch", @intCast(ver.version.patch));
     // The binary C ABI contract version, surfaced through `fig_abi_version()`.
     // `zig build abi-check` asserts bindings/c/include/fig.h's FIG_ABI_VERSION matches this.
     options.addOption(u8, "abi_version", ver.abi);
-    // The CLI's own version (see `cli_version`'s doc comment in build.zig),
-    // surfaced by `fig version` alongside the embedded core version.
-    options.addOption(u8, "cli_version_major", @intCast(ver.cli.major));
-    options.addOption(u8, "cli_version_minor", @intCast(ver.cli.minor));
-    options.addOption(u8, "cli_version_patch", @intCast(ver.cli.patch));
     // The current marketing epoch (see `epoch`'s doc comment in build.zig),
     // surfaced only by the CLI's `fig version` — no ABI/library counterpart.
     options.addOption([]const u8, "epoch", ver.epoch);

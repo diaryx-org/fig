@@ -2,7 +2,7 @@
 //! verdict. Where `abi-check.zig` proves the header and implementation agree at a
 //! single point in time, this tool compares the *current* header (passed as this
 //! tool's first argument) against the header as it existed at the most recent
-//! `core/v*` git tag and classifies the delta:
+//! release tag and classifies the delta:
 //!
 //!   * a removed function, or a changed signature (return type / parameter list)
 //!     -> MAJOR (breaking)
@@ -22,19 +22,21 @@
 //! predates the macro carries no number to compare against, so the requirement is
 //! waived for it.)
 //!
-//! Baseline discovery is automatic: `git describe --tags --abbrev=0 --match
-//! 'core/v*'` finds the most recent release reachable from HEAD on the *core's*
-//! own tag line (see "Release tagging" in docs/VERSIONING.md — the core, CLI,
-//! Rust crate, and npm package each get their own `<track>/vX.Y.Z` tags, since
-//! they version independently), and `git show <tag>:<path>` reads that
+//! Baseline discovery is automatic: `git describe --tags --abbrev=0` finds the
+//! most recent release reachable from HEAD. fig releases every artifact under
+//! one version and one `vX.Y.Z` tag from 5.0.0 on (see docs/VERSIONING.md), so
+//! that tag is matched first — as `v[5-9].*` or `v[1-9][0-9]*`, which admits
+//! v10 and later and leaves out the three bare tags that predate the per-track
+//! scheme (`v1.0.0`, `v2.0.0`, `v2.5.1`, all ancestors of HEAD). Until the first
+//! one-version tag exists it falls back to the core's old `core/v*` line. `git
+//! show <tag>:<path>` then reads that
 //! release's header — trying the header's current repo path first, then its
 //! pre-move path (`include/fig.h`, moved to `bindings/c/include/fig.h`), since
 //! older tags predating a header relocation only have it at the old path.
-//! `core/v*` is also the tag Zig consumers `zig fetch` against to pin a core
-//! version, so this baseline is always a real, fetchable release. With no git
-//! / no matching tags (e.g. a source tarball, or a repo that hasn't cut a core
-//! release yet), the tool prints a note and exits 0 rather than breaking the
-//! build.
+//! Either kind is a tag Zig consumers can `zig fetch` against, so this
+//! baseline is always a real, fetchable release. With no git / no matching tags
+//! (e.g. a source tarball), the tool prints a note and exits 0 rather than
+//! breaking the build.
 //!
 //! Coverage: the exported function surface (names + normalized signatures) AND
 //! the `typedef struct/enum` surface — struct field layout (order, type, array
@@ -143,10 +145,12 @@ pub fn main(init: std.process.Init) !void {
 
     // --- Discover the baseline release via git (best-effort). ---
     const tag = runGit(arena, io, init.gpa, repo_root, &.{
+        "describe", "--tags", "--abbrev=0", "--match", "v[5-9].*", "--match", "v[1-9][0-9]*",
+    }) orelse runGit(arena, io, init.gpa, repo_root, &.{
         "describe", "--tags", "--abbrev=0", "--match", "core/v*",
     }) orelse {
         std.debug.print(
-            "semver-check: no release tag found (no git history or no core/v* tags) — skipping diff.\n",
+            "semver-check: no release tag found (no git history, and no v* or core/v* tags) — skipping diff.\n",
             .{},
         );
         return;

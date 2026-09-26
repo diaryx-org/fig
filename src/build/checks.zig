@@ -1,8 +1,8 @@
 //! The correctness/release guards and the one-stop `check` gate that folds them
-//! all together: the C ABI surface check, the SemVer diff, the cross-artifact
-//! version floor, the cargo-semver-checks pass, and the Rust/TypeScript binding
-//! test suites. `check` additionally depends on the `check-figl` step (from
-//! `tools`) and the `test`/`conformance` steps (from `tests`), passed in via
+//! all together: the C ABI surface check, the SemVer diff, the cargo-semver-checks
+//! pass, and the Rust/TypeScript binding test suites. `check` additionally
+//! depends on the `check-figl` and `version-check` steps (from `tools`) and the
+//! `test`/`conformance` steps (from `tests`), passed in via
 //! `Deps` so this module doesn't reach back into the others.
 
 const std = @import("std");
@@ -17,6 +17,8 @@ pub const Deps = struct {
     validate_check_step: *std.Build.Step,
     /// `vendor-rust --check`: every path the published crate needs is present.
     vendor_check_step: *std.Build.Step,
+    /// From `tools`: every file carrying fig's one version agrees with build.zig.zon.
+    version_check_step: *std.Build.Step,
     /// From `tests`: the unit-test suite.
     test_step: *std.Build.Step,
     /// From `tests`: the conformance run.
@@ -64,7 +66,7 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     abi_check_run.addFileArg(b.path("src/c_api.zig"));
     // The canonical version (from build.zig.zon) so the tool can assert that
     // fig.h's FIG_VERSION_* macros have not drifted from it.
-    abi_check_run.addArg(b.fmt("{d}.{d}.{d}", .{ ver.core.major, ver.core.minor, ver.core.patch }));
+    abi_check_run.addArg(b.fmt("{d}.{d}.{d}", .{ ver.version.major, ver.version.minor, ver.version.patch }));
     // The canonical ABI version so the tool can assert fig.h's FIG_ABI_VERSION
     // macro matches the value compiled into `fig_abi_version()`.
     abi_check_run.addArg(b.fmt("{d}", .{ver.abi}));
@@ -111,8 +113,9 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     abi_check_step.dependOn(&abi_probe_cpp.step);
     abi_check_step.dependOn(&abi_runtime_probe_run.step);
 
-    // SemVer gate: diff the current C ABI against the most recent `v*` git tag
-    // and turn the delta into a version verdict (removed/changed symbol -> major,
+    // SemVer gate: diff the current C ABI against the most recent release tag
+    // (`v*`, or the old `core/v*` line before the first one-version tag) and
+    // turn the delta into a version verdict (removed/changed symbol -> major,
     // added-only -> minor, none -> patch), then assert build.zig.zon's version is
     // high enough to cover it. Discovers the baseline itself via `git describe` +
     // `git show`, so it needs the repo root and the canonical version. With no git
@@ -128,55 +131,24 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     const semver_check_run = b.addRunArtifact(semver_check);
     // Cache-key on the header it inspects; the baseline comes from git at run time.
     semver_check_run.addFileArg(b.path("bindings/c/include/fig.h"));
-    semver_check_run.addArg(b.fmt("{d}.{d}.{d}", .{ ver.core.major, ver.core.minor, ver.core.patch }));
+    semver_check_run.addArg(b.fmt("{d}.{d}.{d}", .{ ver.version.major, ver.version.minor, ver.version.patch }));
     semver_check_run.addArg(b.pathFromRoot("."));
     // git state isn't a declared input, so never serve this from cache.
     semver_check_run.has_side_effects = true;
     const semver_check_step = b.step("semver-check", "Diff the C ABI vs the last release tag and verify the version bump");
     semver_check_step.dependOn(&semver_check_run.step);
 
-    // Cross-artifact version floor. fig versions each artifact independently —
-    // the Zig core (build.zig.zon), the CLI binary (`cli_version` in build.zig),
-    // the Rust crate (bindings/rust/Cargo.toml), the npm package
-    // (bindings/typescript/package.json), and the fig-wasi npm package
-    // (bindings/wasi/package.json) move on their own SemVer tracks so a
-    // binding-only (or CLI-only) change need not bump the core. The one
-    // invariant: every artifact's version must be >= the core version it
-    // embeds, so a breaking core bump always pulls the others' major up and
-    // none can silently ship a newer core behind an older-looking number
-    // (fig-wasi additionally must equal `cli_version` exactly, since it's a
-    // repackaging of the CLI, not an independent binding). This tool
-    // enforces both. Run: zig build version-floor.
-    const version_floor = b.addExecutable(.{
-        .name = "version_floor",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/version-floor.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    const version_floor_run = b.addRunArtifact(version_floor);
-    // Cache-keyed on the five manifests it compares (build.zig carries the
-    // CLI's own version — see `cli_version` in build.zig).
-    version_floor_run.addFileArg(b.path("build.zig.zon"));
-    version_floor_run.addFileArg(b.path("build.zig"));
-    version_floor_run.addFileArg(b.path("bindings/rust/Cargo.toml"));
-    version_floor_run.addFileArg(b.path("bindings/typescript/package.json"));
-    version_floor_run.addFileArg(b.path("bindings/wasi/package.json"));
-    const version_floor_step = b.step("version-floor", "Check each binding's version is >= the core version it embeds");
-    version_floor_step.dependOn(&version_floor_run.step);
-
     // One-stop release gate: every version/ABI guard behind a single command, so
     // "did I bump correctly?" is `zig build check` instead of remembering four
-    // separate invocations across two build systems. It depends on the three Zig
-    // guards above and additionally shells out to cargo-semver-checks — the only
+    // separate invocations across two build systems. It depends on the Zig
+    // guards above and the version sync's `--check`, and additionally shells out to cargo-semver-checks — the only
     // guard that lives in cargo's world rather than zig's (it diffs the native
     // Rust API, which never crosses the C ABI the Zig tools inspect). A
     // TypeScript API guard can hang off this same step later the same way.
-    const check_step = b.step("check", "Pre-release gate: zig test + conformance suites + abi/semver/floor/figl guards + cargo-semver-checks + rust & typescript tests (binding suites skip with a note if their toolchain is missing)");
+    const check_step = b.step("check", "Pre-release gate: zig test + conformance suites + abi/semver/version/figl guards + cargo-semver-checks + rust & typescript tests (binding suites skip with a note if their toolchain is missing)");
     check_step.dependOn(abi_check_step);
     check_step.dependOn(semver_check_step);
-    check_step.dependOn(version_floor_step);
+    check_step.dependOn(deps.version_check_step);
     check_step.dependOn(deps.check_figl_step);
     check_step.dependOn(deps.vendor_check_step);
     // The negative half of the `Language` contract. `test`/`conformance` cover
@@ -184,13 +156,13 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     // which nothing inside a test binary can reach — see tools/validate-check.zig.
     check_step.dependOn(deps.validate_check_step);
 
-    // cargo-semver-checks guards the native Rust public surface. Mirror CI: pick
-    // the most recent `rust/v*` tag as the baseline — the Rust crate's own
-    // release line, distinct from `semver-check`'s `core/v*` baseline, since the
-    // crate versions independently of the core (see "Independent versioning" in
-    // docs/VERSIONING.md) — and skip cleanly when there is none yet (a fresh
-    // repo, or one that hasn't cut a Rust release yet, has nothing to diff
-    // against). Runs in bindings/rust; requires a nightly toolchain
+    // cargo-semver-checks guards the native Rust public surface. Mirror CI: the
+    // baseline is the most recent release tag — `v5.0.0` and later, matched as
+    // `v[5-9].*` or `v[1-9][0-9]*` so neither the three bare pre-scheme tags
+    // (`v1.0.0`, `v2.0.0`, `v2.5.1`) nor a two-digit major is misread — falling
+    // back to the crate's old `rust/v*` line until the first one-version tag
+    // exists (see docs/VERSIONING.md), and skipping cleanly when there is none
+    // at all. Runs in bindings/rust; requires a nightly toolchain
     // (cargo-semver-checks reads rustdoc JSON) and the cargo-semver-checks
     // subcommand installed. git state is not a declared input, so it must never
     // be served from cache.
@@ -200,9 +172,10 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
         \\  echo "cargo-semver-checks: not installed — skipping (install: cargo install cargo-semver-checks)."
         \\  exit 0
         \\fi
-        \\tag="$(git describe --tags --abbrev=0 --match 'rust/v*' 2>/dev/null || true)"
+        \\tag="$(git describe --tags --abbrev=0 --match 'v[5-9].*' --match 'v[1-9][0-9]*' 2>/dev/null \
+        \\  || git describe --tags --abbrev=0 --match 'rust/v*' 2>/dev/null || true)"
         \\if [ -z "$tag" ]; then
-        \\  echo "cargo-semver-checks: no rust/v* tag found — skipping (nothing to diff against)."
+        \\  echo "cargo-semver-checks: no release tag found — skipping (nothing to diff against)."
         \\  exit 0
         \\fi
         \\echo "cargo-semver-checks: baseline $tag"

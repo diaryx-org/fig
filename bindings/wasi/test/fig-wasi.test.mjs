@@ -30,13 +30,14 @@ function withTempDir(fn) {
   }
 }
 
-// Format is `fig <cli-version> (core <core-version> "<epoch>")` — see
-// src/cli/actions.zig's runVersion and docs/VERSIONING.md. The CLI and core
-// versions move independently, so this doesn't pin either number, just the
-// shape.
-const VERSION_RE = /^fig \d+\.\d+\.\d+ \(core \d+\.\d+\.\d+ "[^"]+"\)$/;
+// Format is `fig <version> "<epoch>"` — see src/cli/actions.zig's runVersion
+// and docs/VERSIONING.md. Every artifact ships under fig's one version, so the
+// module this package carries has to report the package's own: a wasm left
+// over from another release fails here rather than on someone's machine.
+const pkgVersion = JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8")).version;
+const VERSION_RE = new RegExp(`^fig ${pkgVersion.replaceAll(".", "\\.")} "[^"]+"$`);
 
-test("version prints the CLI and core version", () => {
+test("version prints the package's version and the epoch", () => {
   const out = run(["version"]);
   assert.match(out.trim(), VERSION_RE);
 });

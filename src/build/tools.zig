@@ -1,6 +1,6 @@
 //! Developer/maintenance tooling: vendoring the Zig source into the Rust crate,
 //! regenerating the conformance corpora, the figl → generated-file sync, and the
-//! version bumper. None of these run on a normal build; they are explicit steps
+//! version sync. None of these run on a normal build; they are explicit steps
 //! a maintainer invokes (a few are wired into the `check` gate via the handles
 //! returned in `Result`).
 
@@ -22,6 +22,9 @@ pub const Result = struct {
     /// `zig build check` runs. The copy it guards only happens at release time,
     /// so nothing else would notice a renamed source until a release died.
     vendor_check_step: *std.Build.Step,
+    /// The one-version guard (`version-sync --check`): every file that carries
+    /// fig's version agrees with build.zig.zon. `zig build check` runs it.
+    version_check_step: *std.Build.Step,
 };
 
 pub fn add(ctx: Context, arts: artifacts.Result) Result {
@@ -129,31 +132,35 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     const gen_json5_step = b.step("gen-json5-conformance", "Vendor the json5-tests corpus");
     gen_json5_step.dependOn(&gen_json5_run.step);
 
-    // The writer counterpart of version-floor: set/bump one artifact's version
-    // and keep every coupled field valid in one shot (the fig-wasi==cli pin, the
-    // fig-macros pin, the artifact>=core floor, and README.md's frontmatter version
-    // — see docs/VERSIONING.md). It rewrites the real manifests (not addFileArg
-    // cache copies), so it takes the repo root like sync-figl and is marked
-    // has_side_effects. Not part of `check` — it mutates the tree rather than
-    // guarding it. The `--` args (<artifact> <version|major|minor|patch>
-    // [--dry-run]) are forwarded through. It also takes the just-built `fig`
-    // binary itself (same self-hosting pattern as sync-figl below) so it can
-    // sync README.md's frontmatter with `fig set` instead of hand-parsing markdown.
-    const version_set = b.addExecutable(.{
-        .name = "version_set",
+    // fig ships every artifact under one version, decided in build.zig.zon's
+    // `.version` (see docs/VERSIONING.md). `version-sync` copies it into every
+    // other file that carries it — the figl source, fig.h's FIG_VERSION_*
+    // macros, README.md's frontmatter, the Rust workspace and its internal
+    // pins, both package.json files and their lockfiles — and is what
+    // `dx release` runs as its `post_bump` (.config/release.toml).
+    // `version-check` is the read-only half, and `zig build check` runs it.
+    // Both read and write the real tree, which is not a declared input, so
+    // neither may be served from cache.
+    const version_sync = b.addExecutable(.{
+        .name = "version_sync",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/version-set.zig"),
+            .root_source_file = b.path("tools/version-sync.zig"),
             .target = target,
             .optimize = optimize,
         }),
     });
-    const version_set_run = b.addRunArtifact(version_set);
-    version_set_run.addArtifactArg(exe);
-    version_set_run.addArg(b.pathFromRoot("."));
-    if (b.args) |args| version_set_run.addArgs(args);
-    version_set_run.has_side_effects = true;
-    const version_set_step = b.step("version-set", "Set/bump an artifact's version (core|cli|rust|npm) and keep the pins/floor valid");
-    version_set_step.dependOn(&version_set_run.step);
+    const version_sync_run = b.addRunArtifact(version_sync);
+    version_sync_run.addArg(b.pathFromRoot("."));
+    version_sync_run.has_side_effects = true;
+    const version_sync_step = b.step("version-sync", "Copy build.zig.zon's version into every file that carries it");
+    version_sync_step.dependOn(&version_sync_run.step);
+
+    const version_check_run = b.addRunArtifact(version_sync);
+    version_check_run.addArg(b.pathFromRoot("."));
+    version_check_run.addArg("--check");
+    version_check_run.has_side_effects = true;
+    const version_check_step = b.step("version-check", "Fail if a file that carries fig's version disagrees with build.zig.zon");
+    version_check_step.dependOn(&version_check_run.step);
 
     // The `.figl` files under figl/ (build.zig.figl, ci.figl, fuzz.figl,
     // homebrew.figl, release-binaries.figl, release.figl, release-npm.figl,
@@ -190,61 +197,6 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     check_figl_run.has_side_effects = true;
     const check_figl_step = b.step("check-figl", "Fail if build.zig.zon / the .github/ and .tangled/ workflow files are stale relative to their .figl sources");
     check_figl_step.dependOn(&check_figl_run.step);
-
-    // docs/CHANGELOG.md's `## Unreleased` region, regenerated from the commits
-    // since the newest release tag on any of the four tracks. Same write/check
-    // split as sync-figl above, and for the same reason: `changelog` writes,
-    // `changelog-check` fails on a stale region without writing.
-    //
-    // A shell script rather than a Zig tool because the work is entirely
-    // git-cliff's — a tool here would only shell out to the same binary and
-    // splice the same two markers. It is NOT wired into `zig build check`:
-    // git-cliff is an external dependency (the nix dev shell has it, a bare
-    // checkout may not), and gating every check run on a regenerated changelog
-    // would mean re-running it on every commit of a series rather than once at
-    // release time, which is when it is actually read. See docs/CHANGELOG.md
-    // and docs/VERSIONING.md's release steps.
-    //
-    // Git state isn't a declared input, so neither run may be cached.
-    const changelog_run = b.addSystemCommand(&.{ "sh", b.pathFromRoot("tools/changelog.sh") });
-    if (b.args) |args| changelog_run.addArgs(args);
-    changelog_run.has_side_effects = true;
-    const changelog_step = b.step("changelog", "Regenerate docs/CHANGELOG.md's Unreleased region from the commits since the last release tag");
-    changelog_step.dependOn(&changelog_run.step);
-
-    const changelog_check_run = b.addSystemCommand(&.{ "sh", b.pathFromRoot("tools/changelog.sh"), "--check" });
-    changelog_check_run.has_side_effects = true;
-    const changelog_check_step = b.step("changelog-check", "Fail if docs/CHANGELOG.md's Unreleased region is stale");
-    changelog_check_step.dependOn(&changelog_check_run.step);
-
-    // The whole release, as one command: preflight, bump (via the version_set
-    // binary above — the same program `zig build version-set` runs, handed over
-    // as an artifact arg rather than re-implemented), `zig build check`, the
-    // changelog regen + cut, the release commit, one annotated tag per track
-    // that moved, and a stop before the push. See docs/VERSIONING.md.
-    //
-    // Not part of `check`, and side-effecting for the same reason version-set
-    // is: it rewrites the real tree and talks to git, so it must never be
-    // served from cache. The nested `zig build check` it runs is a separate
-    // top-level build against the same cache — which is exactly what a
-    // maintainer would type — and it has to run AFTER the bump, so it cannot be
-    // a build-graph dependency here.
-    const release = b.addExecutable(.{
-        .name = "release",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/release.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    const release_run = b.addRunArtifact(release);
-    release_run.addArtifactArg(version_set);
-    release_run.addArtifactArg(exe);
-    release_run.addArg(b.pathFromRoot("."));
-    if (b.args) |args| release_run.addArgs(args);
-    release_run.has_side_effects = true;
-    const release_step = b.step("release", "Cut a release: bump, verify, cut the changelog, commit, tag (push only with --push)");
-    release_step.dependOn(&release_run.step);
 
     // The `Language` contract's negative tests. `language.validate` is a wall
     // of `@compileError`, and Zig cannot assert that one fires from inside
@@ -286,5 +238,6 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
         .check_figl_step = check_figl_step,
         .validate_check_step = validate_check_step,
         .vendor_check_step = vendor_check_step,
+        .version_check_step = version_check_step,
     };
 }

@@ -28,7 +28,7 @@ cfg: Options.BuildOptions,
 /// once because `addOptions` per-module would generate a fresh module from the
 /// same generated file, which Zig rejects ("file belongs to two modules").
 options_mod: *std.Build.Module,
-/// The package-identity numbers (core/abi/cli versions + epoch), sourced from
+/// The package-identity numbers (the version, the ABI version, the epoch), sourced from
 /// `build.zig`. Carried here because more than one stage needs them: `tests`
 /// rebuilds a second `build_options` for the conformance run, and `checks`
 /// embeds the version into the abi/semver tool args.

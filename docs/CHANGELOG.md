@@ -135,37 +135,38 @@ and no regeneration can reach a released section.
 - **cli** — arguments are parsed strictly, and a missing comment exits 1 ([`be6bb06`](https://github.com/diaryx-org/fig/commit/be6bb062d045a0a52dd0fdcd0a6646436757c192))
 - **cli** — a value argument is a fig value, and get prints a scalar as its text ([`0885a42`](https://github.com/diaryx-org/fig/commit/0885a42a315039c785c5d1748a5cd40d3a5dff8c))
 - **cli** — exit codes are written down — 1 for the document, 2 for the command line ([`d3dbbef`](https://github.com/diaryx-org/fig/commit/d3dbbefcddacf6ba806b285d31cda616265ec9fc))
-- every renderer takes one request, which names the container its fragment goes into ([`107c8f2`](https://github.com/diaryx-org/fig/commit/107c8f2a0609a1a5a313f404b9689b182d7f5e90))
-- every language record carries its size, lossless is a bitmask, and extended scalars have a node kind ([`cdd9e97`](https://github.com/diaryx-org/fig/commit/cdd9e974c1aca9b86b2622296e4cf8e3528772ea))
-- **cli** — split `edit` into `replace` and `rename` ([`3834804`](https://github.com/diaryx-org/fig/commit/3834804bc77bdeccf58864bf74f7e6ba109f1c03))
-- **cli** — drop the frontmatter-fig/-json/-toml archetype names ([`5bab4cb`](https://github.com/diaryx-org/fig/commit/5bab4cb2a0f5f0393f234dc25c264beb10170330))
-- **cli** — `help` and `version` refuse arguments after them ([`731d069`](https://github.com/diaryx-org/fig/commit/731d069df2d64b8b53826bf4707ae8c36db223c7))
-- **cli** — a mid-sequence `insert` is a refused edit, exit 1 ([`ddf28c2`](https://github.com/diaryx-org/fig/commit/ddf28c20e2d52aad2b0ca5c3d53fa6d704cd8f03))
-- `.figl` is fig's only extension; `.fig` is no longer the format's ([`57839a2`](https://github.com/diaryx-org/fig/commit/57839a2462da81f9c3916e65ad7aa0726472ee07))
-- one version and one v* tag for every artifact, at 5.0.0 ([`9925d36`](https://github.com/diaryx-org/fig/commit/9925d361a5ace88337b01e58bb42d25893bdc3b6))
-- **ts** — enums are erasable `as const` objects, not TypeScript enums ([`fac5ec9`](https://github.com/diaryx-org/fig/commit/fac5ec9b6f26ddd5c02ba5d8f2adbb202c566ac7))
-- **ts** — `EmbedType` names the CLI's archetypes; embed locators are statics ([`b31baf3`](https://github.com/diaryx-org/fig/commit/b31baf3a0ffee0ef3e9a4178473cfbeb49365305))
-- **ts** — `stringify` is the one value serializer; export `DirectiveRow` ([`6d97253`](https://github.com/diaryx-org/fig/commit/6d9725340cad214c4a5bb2047bdfcb3415913c98))
-- **ts** — every open reports the core's parse message; `FigError` gains `op` ([`637b295`](https://github.com/diaryx-org/fig/commit/637b29529d51daf4b70832729d755a2f12110586))
-- **ts** — Node 22 floor, `./package.json` export, one copy of the wasm payload ([`7fe1e98`](https://github.com/diaryx-org/fig/commit/7fe1e98147e216de3862a9e2a8145cfde6e9c4b5))
-- **wasi** — @diaryx/fig-wasi requires Node 22, as @diaryx/fig does ([`8919197`](https://github.com/diaryx-org/fig/commit/8919197206cc9cadfd4e3a90ff95bb0f78b06305))
-- **rust** — FigStatus constants are FigStatus, not c_int ([`676784a`](https://github.com/diaryx-org/fig/commit/676784ae8bb17664d6f9a5cae4b8cdedf9958400))
-- **rust** — the runtime-language contract types are non_exhaustive ([`754db06`](https://github.com/diaryx-org/fig/commit/754db060de0f4759792c25d6772f78f852b67372))
-- **rust** — Error::Language carries a LanguageFailure, Error::Static folds into Message ([`cd97b04`](https://github.com/diaryx-org/fig/commit/cd97b047144b71f309238cfbcecff20d2697ef43))
-- **rust** — Format no longer converts to fig_sys::FigFormat ([`222a6b3`](https://github.com/diaryx-org/fig/commit/222a6b316690acf7bbdaa4638eda69fa3217d924))
-- **rust** — one set of editor method names, on Editor and Embed alike ([`2352b58`](https://github.com/diaryx-org/fig/commit/2352b5855b37dc49236f42dd791348685a19852b))
-- **rust** — embeds split into before, content and after; the one-sided body is gone ([`bd7f84e`](https://github.com/diaryx-org/fig/commit/bd7f84ed1e6b60ce18a90b59cf3f5c318ef18022))
-- **rust** — from_str and to_string become from_yaml_str and to_yaml_string ([`d842541`](https://github.com/diaryx-org/fig/commit/d84254135f73399910c7a4321a0ef0c12fa3241d))
-- **rust** — declare rust-version 1.88 for every crate in the workspace ([`154092d`](https://github.com/diaryx-org/fig/commit/154092d2f76826633540e8311488c3c7b8354a73))
-- **rust** — EmbedType variants are the CLI's archetype names ([`508e842`](https://github.com/diaryx-org/fig/commit/508e8424c4499332ad9b18a07e503832f4b5473a))
-- **ts** — editor method names match the Rust binding's ([`24e5e2d`](https://github.com/diaryx-org/fig/commit/24e5e2d1ec736368bc17a5226c871e287caf8561))
+- every renderer takes one request, which names the container its fragment goes into ([`c17a0ab`](https://github.com/diaryx-org/fig/commit/c17a0abfff7c5082c91fd96a752522c43f1644e8))
+- every language record carries its size, lossless is a bitmask, and extended scalars have a node kind ([`37ed739`](https://github.com/diaryx-org/fig/commit/37ed739ca2e9c06dbd93814e4d32659e6299845b))
+- **cli** — split `edit` into `replace` and `rename` ([`f25cf60`](https://github.com/diaryx-org/fig/commit/f25cf60891258a9ead8200a0236cf34b762d3494))
+- **cli** — drop the frontmatter-fig/-json/-toml archetype names ([`2fbe776`](https://github.com/diaryx-org/fig/commit/2fbe77665f9320eb9a1b74f66f4417c14a5366ba))
+- **cli** — `help` and `version` refuse arguments after them ([`727de4a`](https://github.com/diaryx-org/fig/commit/727de4adf9510f4ffb36908c7b88af201cd2bfe3))
+- **cli** — a mid-sequence `insert` is a refused edit, exit 1 ([`a6d409e`](https://github.com/diaryx-org/fig/commit/a6d409e80e7eb67aceaf2556a9edff74e01a82f4))
+- `.figl` is fig's only extension; `.fig` is no longer the format's ([`83ee085`](https://github.com/diaryx-org/fig/commit/83ee085f809aeea8fbe8ed24726b4569301a1e29))
+- one version and one v* tag for every artifact, at 5.0.0 ([`94b2eab`](https://github.com/diaryx-org/fig/commit/94b2eab3fe4291097b07453362b83557cf2b2e92))
+- **ts** — enums are erasable `as const` objects, not TypeScript enums ([`bf61d06`](https://github.com/diaryx-org/fig/commit/bf61d06a6ed38841bd28a90ed14a8f863fbe5cb8))
+- **ts** — `EmbedType` names the CLI's archetypes; embed locators are statics ([`d471dcf`](https://github.com/diaryx-org/fig/commit/d471dcf1c74df341678d7fcfd4d57d1a8939404d))
+- **ts** — `stringify` is the one value serializer; export `DirectiveRow` ([`e8575cf`](https://github.com/diaryx-org/fig/commit/e8575cf1b0f9da37d7960a5a97fa4e23e0601196))
+- **ts** — every open reports the core's parse message; `FigError` gains `op` ([`1da833e`](https://github.com/diaryx-org/fig/commit/1da833e17bac402af574c472705d1381bd61a125))
+- **ts** — Node 22 floor, `./package.json` export, one copy of the wasm payload ([`a2d3a26`](https://github.com/diaryx-org/fig/commit/a2d3a26e543a58188c4f767692b14011b99e7a59))
+- **wasi** — @diaryx/fig-wasi requires Node 22, as @diaryx/fig does ([`6163156`](https://github.com/diaryx-org/fig/commit/616315668c55823d88062fb8aa63349d581fa46f))
+- **rust** — FigStatus constants are FigStatus, not c_int ([`e875311`](https://github.com/diaryx-org/fig/commit/e8753114fd007dac5703e8d847d94e282977c6e7))
+- **rust** — the runtime-language contract types are non_exhaustive ([`cec616a`](https://github.com/diaryx-org/fig/commit/cec616abf33ee70ae0cc21b58ae112e032d41563))
+- **rust** — Error::Language carries a LanguageFailure, Error::Static folds into Message ([`3d3fa8a`](https://github.com/diaryx-org/fig/commit/3d3fa8a40b9a98be6e2219579fa9f318c3980a09))
+- **rust** — Format no longer converts to fig_sys::FigFormat ([`39c4e5a`](https://github.com/diaryx-org/fig/commit/39c4e5a8c5e0b8318ee8e61f44324d5a0bfba1c7))
+- **rust** — one set of editor method names, on Editor and Embed alike ([`677767c`](https://github.com/diaryx-org/fig/commit/677767ca6dd8168b3db352eb2adfcc5e7dcf0415))
+- **rust** — embeds split into before, content and after; the one-sided body is gone ([`df73366`](https://github.com/diaryx-org/fig/commit/df73366e77d3a13b5cab6a87e7bd61376275bca8))
+- **rust** — from_str and to_string become from_yaml_str and to_yaml_string ([`aedaf7a`](https://github.com/diaryx-org/fig/commit/aedaf7aa40603bf4d5680ff3ca947172c54aa0ac))
+- **rust** — declare rust-version 1.88 for every crate in the workspace ([`ac8aec6`](https://github.com/diaryx-org/fig/commit/ac8aec683937fbb47a44d427b443e33dab74c182))
+- **rust** — EmbedType variants are the CLI's archetype names ([`d76a81b`](https://github.com/diaryx-org/fig/commit/d76a81b54c59bf437c401e30ca34fb76f2847083))
+- **ts** — editor method names match the Rust binding's ([`40275c5`](https://github.com/diaryx-org/fig/commit/40275c5170421f1b80510c0987f71e36af46a14a))
 
 ### Added
 
 - **cli** — patch into a runtime language ([`78bc944`](https://github.com/diaryx-org/fig/commit/78bc944328fda6a92a0a851baa205a7bb98eb744))
-- loss diagnostics for a runtime target, and a value refused where the target cannot hold it ([`092e816`](https://github.com/diaryx-org/fig/commit/092e8167ab613e89e677eda1369a67206190904b))
-- **cli** — `patch` takes --strict, --no-warnings and --strip-comments; `check` takes --strict ([`f39ee85`](https://github.com/diaryx-org/fig/commit/f39ee8504463c097dc1d2ce2f5f65a8db8d3cba7))
-- **rust** — Span is Hash and converts to and from Range`<usize>` ([`cec3399`](https://github.com/diaryx-org/fig/commit/cec3399d87cf5f299a13d7dea894e181c48f6e0d))
+- loss diagnostics for a runtime target, and a value refused where the target cannot hold it ([`3693431`](https://github.com/diaryx-org/fig/commit/3693431206fb1cfe8a9f948f6e10fdedf1edf172))
+- **cli** — `patch` takes --strict, --no-warnings and --strip-comments; `check` takes --strict ([`1d77f6e`](https://github.com/diaryx-org/fig/commit/1d77f6e7f4dc334f3ca2c9245173e71e8425f984))
+- **rust** — Span is Hash and converts to and from Range`<usize>` ([`44ee39d`](https://github.com/diaryx-org/fig/commit/44ee39d8bd6c43e7e4992ec8e05508d8b5d879ac))
+- **cli** — `version` takes `--help`, and `help <action>` names that action's help ([`5fede28`](https://github.com/diaryx-org/fig/commit/5fede286b2c350a363cc7a497369caed1ae8cded))
 
 ### Fixed
 
@@ -173,8 +174,9 @@ and no regeneration can reach a released section.
 - **cli** — review of CLI 5 — parse errors not taken for values, spaces kept, the key blamed ([`4dfe30f`](https://github.com/diaryx-org/fig/commit/4dfe30fe03c3f2bd7aa0a7d012ff104e38e2b196))
 - **fig-sys** — build for aarch64 and x86_64 Android ([`d75bd67`](https://github.com/diaryx-org/fig/commit/d75bd677febc666b164704128bbd330bac992c7e))
 - the lossy strips and the $fig envelope keep tags, anchors and %TAG directives ([`b26ce0b`](https://github.com/diaryx-org/fig/commit/b26ce0bafbc2c40cc2470c2c6e7c3f2df3e52e7e))
-- **cli** — an unknown embed archetype is not followed by the list of formats ([`b3358c4`](https://github.com/diaryx-org/fig/commit/b3358c4b65afcd357be031f8279f7a312ae3e9d9))
-- a rename refuses a path with no key, and a name the mapping already holds ([`1146a42`](https://github.com/diaryx-org/fig/commit/1146a42c6e3615416183bffcc1074edeec1e3489))
+- **cli** — an unknown embed archetype is not followed by the list of formats ([`2b144c9`](https://github.com/diaryx-org/fig/commit/2b144c9957bafe11ef5802627599d9444e682290))
+- a rename refuses a path with no key, and a name the mapping already holds ([`fe4d471`](https://github.com/diaryx-org/fig/commit/fe4d4714371de6fa6fe211d0c8dc9e1f14f36859))
+- **embed** — replace_body refuses a mid-document block, which has no one body ([`5bfc1de`](https://github.com/diaryx-org/fig/commit/5bfc1de58648e030f5693191e4e7018a3e5e3d1c))
 
 ### Behavioural changes
 
@@ -376,6 +378,19 @@ and no regeneration can reach a released section.
   node; and for a name another entry of the mapping holds, where they
   returned FIG_STATUS_OK having written a duplicate key (or, for fig by
   name, FIG_STATUS_PARSE_ERROR).
+
+- `fig_embed_replace_body` (Rust `Embed::replace_body`,
+  TypeScript `Embed.replaceBody`) on an HTML `<script>` or `<code>` data
+  island returns FIG_STATUS_UNSUPPORTED_OPERATION and leaves the render
+  unchanged, where it returned FIG_STATUS_OK and the next render replaced
+  the host text after the block with the new body.
+
+- `fig version --help` (and `-h`, and after `--version`
+  or `-v`) prints `version`'s usage and exits 0; before 5.0 it printed the
+  version and exited 0.
+
+- `fig help <action>` exits 2 with "for <action>'s help,
+  run `fig <action> --help`" and no "See `fig --help`" line after it.
 
 <!-- git-cliff:end -->
 

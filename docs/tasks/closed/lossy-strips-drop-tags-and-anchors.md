@@ -1,13 +1,28 @@
 ```fig
 title = The lossy strips and the `$fig` envelope rebuild the AST without its tags, anchors and directives
 description = `Lossless.lossyStrip`, `Lossless.encode`/`decode` and `FlatStrip.lossyStrip` copy nodes and comments into a fresh AST and leave `node_tags`, `node_anchors` and `tag_directives` behind, so a runtime printer reached through the CLI's lossy path never sees a tag it recorded
-status = open
+status = done
 created = 2026-09-14
-updated = 2026-09-14
-part_of = [tasks](tasks.md)
+updated = 2026-09-26
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # The lossy strips and the `$fig` envelope rebuild the AST without its tags, anchors and directives
+
+**Status.** Done, in `fix: the lossy strips and the $fig envelope keep
+tags, anchors and %TAG directives`. The shared `Lossless.emit`/`carry`
+now carry each node's tag and anchor alongside its comments and rebuild
+the anchor definitions against the new ids. `Lossless.finish` writes those
+tables onto the result and copies the document's `tag_directives` whole.
+`encode`, `decode`, `Lossless.lossyStrip` and `FlatStrip.lossyStrip` all
+go through them. An envelope wrapper is deliberately left untagged,
+because its `t` already records the kind. The marker and separator spans
+are `Document`'s, not the AST's, so a rebuilt tree has none to carry. The
+tests are in `lossless.zig` (a YAML custom tag and `%TAG` through
+encode/decode and through the strip) and `cli/parse_dispatch.zig`
+(`printRuntime` hands a tagged root to a runtime printer down both strip
+paths). fig-quickjs's `openstep.mjs` can declare `lossless` again once
+it builds against a core that has this.
 
 **Repro.** A runtime language that records a tag and declares `lossless`
 (so the CLI's `printRuntime` runs the null strip) — fig-quickjs's

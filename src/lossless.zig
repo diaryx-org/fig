@@ -135,7 +135,7 @@ pub fn encode(arena: Allocator, ast: *const AST, native: NativeKinds) Error!AST 
     var e = Encoder{ .src = ast, .arena = arena, .native = native };
     const root = try e.copy(ast.nodes[ast.root]);
     var result: AST = .{ .allocator = arena, .root = root, .nodes = try e.out.toOwnedSlice(arena) };
-    if (e.any_comments) result.node_comments = try e.out_comments.toOwnedSlice(arena);
+    try finish(&e, &result);
     return result;
 }
 
@@ -146,7 +146,7 @@ pub fn decode(arena: Allocator, ast: *const AST) Error!AST {
     var d = Decoder{ .src = ast, .arena = arena };
     const root = try d.copy(ast.nodes[ast.root]);
     var result: AST = .{ .allocator = arena, .root = root, .nodes = try d.out.toOwnedSlice(arena) };
-    if (d.any_comments) result.node_comments = try d.out_comments.toOwnedSlice(arena);
+    try finish(&d, &result);
     return result;
 }
 
@@ -172,7 +172,7 @@ pub fn lossyStrip(arena: Allocator, ast: *const AST, root_id: Id, native: Native
     }
     const root = try s.copy(ast.nodes[root_id], "");
     var stripped: AST = .{ .allocator = arena, .root = root, .nodes = try s.out.toOwnedSlice(arena) };
-    if (s.any_comments) stripped.node_comments = try s.out_comments.toOwnedSlice(arena);
+    try finish(&s, &stripped);
     return .{
         .ast = stripped,
         .dropped = try s.dropped.toOwnedSlice(arena),
@@ -188,6 +188,7 @@ const Encoder = struct {
     out: std.ArrayList(AST.Node) = .empty,
     out_comments: std.ArrayList(AST.NodeComments) = .empty,
     any_comments: bool = false,
+    side: SideTables = .{},
 
     fn copy(self: *Encoder, node: AST.Node) Error!Id {
         switch (node.kind) {
@@ -198,11 +199,14 @@ const Encoder = struct {
         }
         // A leaf scalar. If it needs enveloping, the value's comments ride on the
         // wrapping mapping; otherwise they ride on the copied scalar.
-        const id = if ((node.kind == .null_ or node.kind == .extended) and needsEnvelope(self.native, node.kind))
-            try self.envelope(node.kind)
-        else
-            try emit(self, node.kind);
+        const enveloped = (node.kind == .null_ or node.kind == .extended) and needsEnvelope(self.native, node.kind);
+        const id = if (enveloped) try self.envelope(node.kind) else try emit(self, node.kind);
         try carry(self, node.id, id);
+        // The envelope records the scalar's kind in its `t`; a tag carried
+        // onto the wrapper would assert a type on the MAPPING, which is a
+        // different claim, and a custom tag has nowhere in the envelope to
+        // go. Leave the wrapper untagged.
+        if (enveloped) self.side.tags.items[id] = null;
         return id;
     }
 
@@ -243,6 +247,7 @@ const Decoder = struct {
     out: std.ArrayList(AST.Node) = .empty,
     out_comments: std.ArrayList(AST.NodeComments) = .empty,
     any_comments: bool = false,
+    side: SideTables = .{},
 
     fn copy(self: *Decoder, node: AST.Node) Error!Id {
         switch (node.kind) {
@@ -315,6 +320,7 @@ const Stripper = struct {
     out: std.ArrayList(AST.Node) = .empty,
     out_comments: std.ArrayList(AST.NodeComments) = .empty,
     any_comments: bool = false,
+    side: SideTables = .{},
     dropped: std.ArrayList([]const u8) = .empty,
 
     fn copy(self: *Stripper, node: AST.Node, path: []const u8) Error!Id {
@@ -391,20 +397,50 @@ fn indexPath(arena: Allocator, parent: []const u8, i: usize) Error![]const u8 {
 // see that file's module doc) can reuse this tree-copying plumbing instead of
 // a third copy of it.
 
+/// The node-indexed tables a rebuild carries besides comments: the type tag
+/// and anchor name on each node, and the anchor definitions rebuilt against
+/// the new ids. A printer that spells tags (YAML's `!!str`, a runtime
+/// language's own) reads them off the AST it is handed, so a pass that
+/// rebuilds the tree without them prints a different document.
+///
+/// Not carried because they are not on the AST: the marker and separator
+/// spans, which are `Document`'s and describe the SOURCE text — a rebuilt
+/// tree has no source.
+pub const SideTables = struct {
+    tags: std.ArrayList(?AST.Tag) = .empty,
+    anchors: std.ArrayList(?[]const u8) = .empty,
+    anchor_defs: std.ArrayList(AST.Anchor) = .empty,
+    any_tags: bool = false,
+    any_anchors: bool = false,
+};
+
 pub fn emit(self: anytype, kind: AST.Node.Kind) Error!Id {
     const id: Id = @intCast(self.out.items.len);
     try self.out.append(self.arena, .{ .id = id, .kind = kind, .next_sibling = null });
-    // Keep the comment table parallel to `out`; synthetic nodes (envelope
+    // Keep the side tables parallel to `out`; synthetic nodes (envelope
     // wrappers, decoded scalars) get the empty default and may be filled by a
     // later `carry`.
     try self.out_comments.append(self.arena, .{});
+    try self.side.tags.append(self.arena, null);
+    try self.side.anchors.append(self.arena, null);
     return id;
 }
 
-/// Copy the comments bound to source node `src_id` onto the freshly emitted node
-/// `new_id`. The `leading` slice is re-duped into the arena; comment text borrows
-/// the source AST (which the arena outlives). Duck-typed over the three passes.
+/// Copy the comments, type tag and anchor bound to source node `src_id` onto
+/// the freshly emitted node `new_id`. The `leading` slice is re-duped into the
+/// arena; comment text, tag text and anchor names borrow the source AST (which
+/// the arena outlives). Duck-typed over the passes. Nodes are emitted in
+/// document order, so the anchor definitions it appends keep theirs.
 pub fn carry(self: anytype, src_id: Id, new_id: Id) Error!void {
+    if (self.src.tagOf(src_id)) |tag| {
+        self.side.tags.items[new_id] = tag;
+        self.side.any_tags = true;
+    }
+    if (src_id < self.src.node_anchors.len) if (self.src.node_anchors[src_id]) |name| {
+        self.side.anchors.items[new_id] = name;
+        try self.side.anchor_defs.append(self.arena, .{ .name = name, .node = new_id });
+        self.side.any_anchors = true;
+    };
     const c = self.src.comments(src_id);
     if (c.isEmpty()) return;
     self.out_comments.items[new_id] = .{
@@ -413,6 +449,21 @@ pub fn carry(self: anytype, src_id: Id, new_id: Id) Error!void {
         .dangling = try self.arena.dupe(AST.Comment, c.dangling),
     };
     self.any_comments = true;
+}
+
+/// Write the tables a pass collected onto `result`, each only when some node
+/// uses it (an empty table is the AST's "none"). The `%TAG` directives are
+/// the document's, not a node's, and are copied whole: a tag spelled with a
+/// named handle is only printable beside its declaration.
+pub fn finish(self: anytype, result: *AST) Error!void {
+    if (self.any_comments) result.node_comments = try self.out_comments.toOwnedSlice(self.arena);
+    if (self.side.any_tags) result.node_tags = try self.side.tags.toOwnedSlice(self.arena);
+    if (self.side.any_anchors) {
+        result.node_anchors = try self.side.anchors.toOwnedSlice(self.arena);
+        result.anchors = try self.side.anchor_defs.toOwnedSlice(self.arena);
+    }
+    if (self.src.tag_directives.len > 0)
+        result.tag_directives = try self.arena.dupe(AST.TagDirective, self.src.tag_directives);
 }
 
 fn copySeq(self: anytype, src_node: AST.Node) Error!Id {
@@ -604,6 +655,47 @@ test "lossyStrip on a nested null reports a dotted path" {
     try testing.expect(result.ast != null);
     try testing.expectEqual(@as(usize, 1), result.dropped.len);
     try testing.expectEqualStrings("outer.inner", result.dropped[0]);
+}
+
+test "encode, decode and lossyStrip keep a document's tags and %TAG directives" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    const YamlParser = @import("languages/yaml/parser.zig");
+    const YamlPrinter = @import("languages/yaml/printer.zig");
+
+    // `!e!foo` prints only beside the `%TAG` line declaring `!e!`, and
+    // `!!str` is a kind tag: all three rebuilds must hand both on, or the
+    // printer writes a different document (`1` an integer, `bar` untagged).
+    const src = "%TAG !e! tag:x/\n---\nk: !e!foo bar\nt: !!str 1\nn: null\n";
+    var ast = try YamlParser.parseAbstract(arena, src, .v1_2_2);
+
+    const encoded = try encode(arena, &ast, toml_native);
+    try testing.expect(encoded.tag_directives.len == 1);
+    const decoded = try decode(arena, &encoded);
+    var out: std.Io.Writer.Allocating = .init(arena);
+    try YamlPrinter.print(&out.writer, &decoded);
+    try testing.expectEqualStrings("%TAG !e! tag:x/\n---\nk: !e!foo bar\nt: !!str 1\nn: null\n", out.written());
+
+    const stripped = (try lossyStrip(arena, &ast, ast.root, toml_native)).ast.?;
+    var out2: std.Io.Writer.Allocating = .init(arena);
+    try YamlPrinter.print(&out2.writer, &stripped);
+    try testing.expectEqualStrings("%TAG !e! tag:x/\n---\nk: !e!foo bar\nt: !!str 1\n", out2.written());
+}
+
+test "an envelope carries no tag of the scalar it wraps" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    const YamlParser = @import("languages/yaml/parser.zig");
+
+    // A tag on the wrapper would assert a type on a mapping. The envelope
+    // already records the kind in its `t`.
+    var ast = try YamlParser.parseAbstract(arena, "k: !!null null\n", .v1_2_2);
+    const encoded = try encode(arena, &ast, toml_native);
+    const kv = encoded.nodes[encoded.nodes[encoded.root].kind.mapping.?].kind.keyvalue;
+    try testing.expect(encoded.nodes[kv.value].kind == .mapping);
+    try testing.expect(encoded.tagOf(kv.value) == null);
 }
 
 test "decode leaves a non-envelope $fig mapping untouched" {

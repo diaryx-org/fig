@@ -22,8 +22,13 @@
 //! {"op":"describe"}
 //! {"op":"parse","dialect":"hcl","input":"…"}
 //! {"op":"print","dialect":"hcl","table":{…},"options":{"pretty":true,"strip_comments":false,"indent":2,"width":80,"splice":false}}
-//! {"op":"render","which":"value","dialect":"hcl","indent":"","key":"","value":"…","literal":"string","old_key":""}
+//! {"op":"render","which":"item","dialect":"hcl","indent":"  ","key":"","value":"…","old_key":"","parent_key":"deps","parent_tag":"!dep"}
 //! ```
+//!
+//! A render request carries the fields of [`RenderArgs`] by name, every
+//! one a string; `literal` only for `"which":"value"`, and absent means a
+//! string. `parent_key` and `parent_tag` are the container the fragment
+//! is written into, and fig sends them to every renderer.
 //!
 //! Responses:
 //!
@@ -161,6 +166,8 @@ fn handle_inner(lang: &dyn Language, request: &str) -> Result<Value, LanguageErr
                 // with any text it cannot type.
                 literal: Literal::from_name(field("literal")).unwrap_or_default(),
                 old_key: field("old_key").as_bytes(),
+                parent_key: field("parent_key").as_bytes(),
+                parent_tag: field("parent_tag").as_bytes(),
             };
             let out = lang.render(which, args)?;
             let out = String::from_utf8(out)

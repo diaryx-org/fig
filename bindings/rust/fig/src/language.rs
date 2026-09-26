@@ -683,12 +683,22 @@ impl Literal {
 /// `indent` for all but `Value`; `key` for `Entry`, `Tail` and `Key`;
 /// `old_key` for `Key`.
 ///
-/// Constructible, like the description structs, so a test of a
-/// [`Language`] can call its `render` directly; `Default` is every field
-/// empty and `literal` a string, so `RenderArgs { value: b"42", literal:
-/// Literal::Int, ..Default::default() }` is the idiom for one renderer's
-/// arguments.
+/// `parent_key` and `parent_tag`, for every renderer, are the container
+/// the fragment is written into — the mapping an entry joins, the
+/// sequence an item joins, the container holding a value replaced or a
+/// key renamed: the name of the key it stands under (decoded; empty at
+/// the root and for a container that is itself a sequence item) and its
+/// tag as a node row spells one (`!dependency`, `!!map`; empty for
+/// none). An XML list spells an item by its item element's name, which
+/// is exactly those two.
+///
+/// Non-exhaustive, since the request grows — a field appended to it is
+/// what fig tells a renderer next, and not a major release — so a test of
+/// a [`Language`] that calls its `render` directly builds one from
+/// `Default` (every field empty, `literal` a string) with one setter per
+/// field: `RenderArgs::default().value(b"42").literal(Literal::Int)`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RenderArgs<'a> {
     pub dialect: &'a str,
     pub indent: &'a [u8],
@@ -696,6 +706,58 @@ pub struct RenderArgs<'a> {
     pub value: &'a [u8],
     pub literal: Literal,
     pub old_key: &'a [u8],
+    pub parent_key: &'a [u8],
+    pub parent_tag: &'a [u8],
+}
+
+impl<'a> RenderArgs<'a> {
+    /// Set `dialect`.
+    pub fn dialect(mut self, dialect: &'a str) -> Self {
+        self.dialect = dialect;
+        self
+    }
+
+    /// Set `indent`.
+    pub fn indent(mut self, indent: &'a [u8]) -> Self {
+        self.indent = indent;
+        self
+    }
+
+    /// Set `key`.
+    pub fn key(mut self, key: &'a [u8]) -> Self {
+        self.key = key;
+        self
+    }
+
+    /// Set `value`.
+    pub fn value(mut self, value: &'a [u8]) -> Self {
+        self.value = value;
+        self
+    }
+
+    /// Set `literal`.
+    pub fn literal(mut self, literal: Literal) -> Self {
+        self.literal = literal;
+        self
+    }
+
+    /// Set `old_key`.
+    pub fn old_key(mut self, old_key: &'a [u8]) -> Self {
+        self.old_key = old_key;
+        self
+    }
+
+    /// Set `parent_key`.
+    pub fn parent_key(mut self, parent_key: &'a [u8]) -> Self {
+        self.parent_key = parent_key;
+        self
+    }
+
+    /// Set `parent_tag`.
+    pub fn parent_tag(mut self, parent_tag: &'a [u8]) -> Self {
+        self.parent_tag = parent_tag;
+        self
+    }
 }
 
 /// A format implemented in Rust, or in anything Rust can call.
@@ -1460,15 +1522,23 @@ unsafe extern "C" fn print_thunk(
 fn render_thunk_body(
     ctx: *mut c_void,
     which: Renderer,
-    dialect: *const c_char,
-    args: RenderArgs<'_>,
+    request: *const ffi::FigRenderRequest,
     out: *mut ffi::FigStr,
     err: *mut ffi::FigError,
 ) -> c_int {
     let reg = unsafe { reg_of(ctx) };
+    let r = unsafe { &*request };
     let args = RenderArgs {
-        dialect: unsafe { dialect_of(dialect) },
-        ..args
+        dialect: unsafe { dialect_of(r.dialect) },
+        indent: bytes_of(r.indent),
+        key: bytes_of(r.key),
+        value: bytes_of(r.value),
+        // A name this crate does not know is a core newer than it; the
+        // fallback is what a renderer does with any text it cannot type.
+        literal: Literal::from_name(unsafe { dialect_of(r.literal) }).unwrap_or_default(),
+        old_key: bytes_of(r.old_key),
+        parent_key: bytes_of(r.parent_key),
+        parent_tag: bytes_of(r.parent_tag),
     };
     match catch_unwind(AssertUnwindSafe(|| reg.lang.render(which, args))) {
         Ok(Ok(bytes)) => {
@@ -1486,121 +1556,21 @@ fn render_thunk_body(
     }
 }
 
-unsafe extern "C" fn render_value_thunk(
-    ctx: *mut c_void,
-    dialect: *const c_char,
-    value: ffi::FigStr,
-    literal: *const c_char,
-    out: *mut ffi::FigStr,
-    err: *mut ffi::FigError,
-) -> c_int {
-    // A name this crate does not know is a core newer than it; the
-    // fallback is what a renderer does with any text it cannot type.
-    let literal = Literal::from_name(unsafe { dialect_of(literal) }).unwrap_or_default();
-    render_thunk_body(
-        ctx,
-        Renderer::Value,
-        dialect,
-        RenderArgs {
-            value: bytes_of(value),
-            literal,
-            ..Default::default()
-        },
-        out,
-        err,
-    )
+macro_rules! render_thunk {
+    ($name:ident, $which:expr) => {
+        unsafe extern "C" fn $name(
+            ctx: *mut c_void,
+            request: *const ffi::FigRenderRequest,
+            out: *mut ffi::FigStr,
+            err: *mut ffi::FigError,
+        ) -> c_int {
+            render_thunk_body(ctx, $which, request, out, err)
+        }
+    };
 }
 
-unsafe extern "C" fn render_entry_thunk(
-    ctx: *mut c_void,
-    dialect: *const c_char,
-    indent: ffi::FigStr,
-    key: ffi::FigStr,
-    value: ffi::FigStr,
-    out: *mut ffi::FigStr,
-    err: *mut ffi::FigError,
-) -> c_int {
-    render_thunk_body(
-        ctx,
-        Renderer::Entry,
-        dialect,
-        RenderArgs {
-            indent: bytes_of(indent),
-            key: bytes_of(key),
-            value: bytes_of(value),
-            ..Default::default()
-        },
-        out,
-        err,
-    )
-}
-
-unsafe extern "C" fn render_item_thunk(
-    ctx: *mut c_void,
-    dialect: *const c_char,
-    indent: ffi::FigStr,
-    value: ffi::FigStr,
-    out: *mut ffi::FigStr,
-    err: *mut ffi::FigError,
-) -> c_int {
-    render_thunk_body(
-        ctx,
-        Renderer::Item,
-        dialect,
-        RenderArgs {
-            indent: bytes_of(indent),
-            value: bytes_of(value),
-            ..Default::default()
-        },
-        out,
-        err,
-    )
-}
-
-unsafe extern "C" fn render_tail_thunk(
-    ctx: *mut c_void,
-    dialect: *const c_char,
-    indent: ffi::FigStr,
-    key: ffi::FigStr,
-    value: ffi::FigStr,
-    out: *mut ffi::FigStr,
-    err: *mut ffi::FigError,
-) -> c_int {
-    render_thunk_body(
-        ctx,
-        Renderer::Tail,
-        dialect,
-        RenderArgs {
-            indent: bytes_of(indent),
-            key: bytes_of(key),
-            value: bytes_of(value),
-            ..Default::default()
-        },
-        out,
-        err,
-    )
-}
-
-unsafe extern "C" fn render_key_thunk(
-    ctx: *mut c_void,
-    dialect: *const c_char,
-    indent: ffi::FigStr,
-    key: ffi::FigStr,
-    old_key: ffi::FigStr,
-    out: *mut ffi::FigStr,
-    err: *mut ffi::FigError,
-) -> c_int {
-    render_thunk_body(
-        ctx,
-        Renderer::Key,
-        dialect,
-        RenderArgs {
-            indent: bytes_of(indent),
-            key: bytes_of(key),
-            old_key: bytes_of(old_key),
-            ..Default::default()
-        },
-        out,
-        err,
-    )
-}
+render_thunk!(render_value_thunk, Renderer::Value);
+render_thunk!(render_entry_thunk, Renderer::Entry);
+render_thunk!(render_item_thunk, Renderer::Item);
+render_thunk!(render_tail_thunk, Renderer::Tail);
+render_thunk!(render_key_thunk, Renderer::Key);

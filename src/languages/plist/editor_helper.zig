@@ -62,7 +62,9 @@ const PlistEditor = editor.Editor(Plist);
 
 /// Render a CLI value string into a plist typed element, appended to `out`.
 /// See the module header for the typing rules and the `<`-prefix escape hatch.
-pub fn renderValue(_: Plist.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), value_text: []const u8, literal: lang.Literal) !void {
+pub fn renderValue(_: Plist.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), r: lang.RenderRequest) !void {
+    const value_text = r.value;
+    const literal = r.literal;
     const t = std.mem.trim(u8, value_text, " \t\r\n");
     if (t.len > 0 and t[0] == '<') {
         // Explicit element (or element tree): the caller has spelled the plist
@@ -111,7 +113,10 @@ fn appendEscaped(allocator: std.mem.Allocator, out: *std.ArrayList(u8), s: []con
 /// `renderValue`, and a container's further lines (a `<dict>` fragment's
 /// entries and close tag) are moved under `indent` as well. See
 /// `editor.Editor.writeEntry`.
-pub fn renderEntry(_: Plist.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, key: []const u8, rendered_value: []const u8) !void {
+pub fn renderEntry(_: Plist.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), r: lang.RenderRequest) !void {
+    const indent = r.indent;
+    const key = r.key;
+    const rendered_value = r.value;
     try out.appendSlice(allocator, "<key>");
     try appendEscaped(allocator, out, key);
     try out.appendSlice(allocator, "</key>\n");
@@ -128,9 +133,8 @@ pub fn renderEntry(_: Plist.Type, allocator: std.mem.Allocator, out: *std.ArrayL
 /// A renamed key: `<key>new_key</key>`, escaped. A key's span is the whole
 /// element, so a bare name spliced over it would drop the tags. See
 /// `editor.Editor.replaceKeyAtPath`.
-pub fn renderKey(_: Plist.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, new_key: []const u8, old_key: []const u8) !void {
-    _ = indent;
-    _ = old_key;
+pub fn renderKey(_: Plist.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), r: lang.RenderRequest) !void {
+    const new_key = r.key;
     try out.appendSlice(allocator, "<key>");
     try appendEscaped(allocator, out, new_key);
     try out.appendSlice(allocator, "</key>");
@@ -170,7 +174,7 @@ test "renderValue: the engine's literal picks the typed element" {
     for (cases) |c| {
         var out: std.ArrayList(u8) = .empty;
         defer out.deinit(testing.allocator);
-        try renderValue(.XML, testing.allocator, &out, c.in, editor.literalOf(c.in));
+        try renderValue(.XML, testing.allocator, &out, .{ .value = c.in, .literal = editor.literalOf(c.in) });
         try testing.expectEqualStrings(c.out, out.items);
     }
 }
@@ -178,7 +182,7 @@ test "renderValue: the engine's literal picks the typed element" {
 test "renderValue: null has no plist type" {
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(testing.allocator);
-    try testing.expectError(error.NullUnsupported, renderValue(.XML, testing.allocator, &out, "null", .null));
+    try testing.expectError(error.NullUnsupported, renderValue(.XML, testing.allocator, &out, .{ .value = "null", .literal = .null }));
 }
 
 test "replaceKeyAtPath renames a key inside its element, escaped" {

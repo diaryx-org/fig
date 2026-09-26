@@ -56,6 +56,7 @@ const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
 const Span = @import("../../util/span.zig");
 const editor = @import("../../editor.zig");
+const lang = @import("../manifest.zig");
 const splice = @import("../../editor/splice.zig");
 const Fig = @import("fig.zig").Language;
 const Printer = @import("printer.zig");
@@ -116,7 +117,10 @@ fn blockBody(allocator: std.mem.Allocator, depth: usize, value_text: []const u8)
 /// copied from the key's line. An empty `key_text` is the document root,
 /// whose value is a whole document already and is taken as written. No
 /// trailing newline. See `editor.Editor.writeTail`.
-pub fn renderTail(_: Fig.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, key_text: []const u8, value_text: []const u8) !void {
+pub fn renderTail(_: Fig.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), r: lang.RenderRequest) !void {
+    const indent = r.indent;
+    const key_text = r.key;
+    const value_text = r.value;
     if (key_text.len == 0) return out.appendSlice(allocator, value_text);
     const depth = std.mem.count(u8, indent, ">");
     if (blockBody(allocator, depth + 1, value_text)) |body| {

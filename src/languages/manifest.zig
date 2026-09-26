@@ -738,6 +738,33 @@ pub const Renderer = enum {
     }
 };
 
+/// Everything a renderer is told, as one record: every renderer takes it,
+/// and reads the fields its fragment needs. `indent` is the line prefix
+/// the fragment's first line sits after, which a continuation line copies;
+/// `key` the key as written (entry, tail, key); `value` the value text,
+/// already through `renderValue` for every renderer but the value's own;
+/// `literal` what fig's bare-literal rules make of it (value); `old_key`
+/// the key being renamed, as the source spells it (key).
+///
+/// `parent_key` and `parent_tag` say where the fragment goes: the
+/// CONTAINER it is written into — the mapping an entry joins, the sequence
+/// an item joins, the container holding a value replaced or a key renamed
+/// — by the NAME of the key it stands under (decoded, not spelled; empty
+/// at the root and for a container that is itself a sequence item) and by
+/// its tag as the node table spells one (`!dependency`, `!!map`; empty
+/// for none). An XML list spells an item by the list's item element name,
+/// which is exactly those two. Empty where the engine has no container in
+/// hand; nothing is filled for one renderer and not another.
+pub const RenderRequest = struct {
+    indent: []const u8 = "",
+    key: []const u8 = "",
+    value: []const u8 = "",
+    literal: Literal = .string,
+    old_key: []const u8 = "",
+    parent_key: []const u8 = "",
+    parent_tag: []const u8 = "",
+};
+
 /// What fig's bare-literal rules make of the text a value renderer is
 /// handed: `null`, `true`/`false`, a number (integer or float), a datetime
 /// shape, or a string — the classification the `.fig` dialect gives a bare

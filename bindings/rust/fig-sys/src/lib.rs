@@ -933,7 +933,7 @@ unsafe extern "C" {
 // a Rust-hosted one through these.
 
 /// Mirror of `FIG_LANGUAGE_VTABLE_VERSION`.
-pub const FIG_LANGUAGE_VTABLE_VERSION: u32 = 1;
+pub const FIG_LANGUAGE_VTABLE_VERSION: u32 = 2;
 /// Mirror of `FIG_OFFSET_NONE` / `FIG_LEN_NONE`: an absent optional span or
 /// string.
 pub const FIG_OFFSET_NONE: usize = usize::MAX;
@@ -1160,33 +1160,28 @@ pub type FigPrintFn = unsafe extern "C" fn(
 ) -> c_int;
 pub type FigFreeTableFn = unsafe extern "C" fn(ctx: *mut c_void, table: *mut FigNodeTable);
 pub type FigFreeBytesFn = unsafe extern "C" fn(ctx: *mut c_void, bytes: FigStr);
-pub type FigRenderValueFn = unsafe extern "C" fn(
+/// Mirror of `FigRenderRequest`: everything a renderer is told. fig writes
+/// it and a renderer only reads it.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigRenderRequest {
+    pub dialect: *const c_char,
+    pub indent: FigStr,
+    pub key: FigStr,
+    pub value: FigStr,
+    pub literal: *const c_char,
+    pub old_key: FigStr,
+    pub parent_key: FigStr,
+    pub parent_tag: FigStr,
+}
+
+/// Every `render_*` slot's shape.
+pub type FigRenderFn = unsafe extern "C" fn(
     ctx: *mut c_void,
-    dialect: *const c_char,
-    value: FigStr,
-    literal: *const c_char,
+    request: *const FigRenderRequest,
     out: *mut FigStr,
     err: *mut FigError,
 ) -> c_int;
-pub type FigRenderEntryFn = unsafe extern "C" fn(
-    ctx: *mut c_void,
-    dialect: *const c_char,
-    indent: FigStr,
-    key: FigStr,
-    value: FigStr,
-    out: *mut FigStr,
-    err: *mut FigError,
-) -> c_int;
-pub type FigRenderItemFn = unsafe extern "C" fn(
-    ctx: *mut c_void,
-    dialect: *const c_char,
-    indent: FigStr,
-    value: FigStr,
-    out: *mut FigStr,
-    err: *mut FigError,
-) -> c_int;
-pub type FigRenderTailFn = FigRenderEntryFn;
-pub type FigRenderKeyFn = FigRenderEntryFn;
 
 /// Mirror of `FigLanguageVTable`. The five `render_*` slots and `print` are
 /// `Option`, which is the null pointer on the C side.
@@ -1208,11 +1203,11 @@ pub struct FigLanguageVTable {
     pub print: Option<FigPrintFn>,
     pub free_table: FigFreeTableFn,
     pub free_bytes: FigFreeBytesFn,
-    pub render_value: Option<FigRenderValueFn>,
-    pub render_entry: Option<FigRenderEntryFn>,
-    pub render_item: Option<FigRenderItemFn>,
-    pub render_tail: Option<FigRenderTailFn>,
-    pub render_key: Option<FigRenderKeyFn>,
+    pub render_value: Option<FigRenderFn>,
+    pub render_entry: Option<FigRenderFn>,
+    pub render_item: Option<FigRenderFn>,
+    pub render_tail: Option<FigRenderFn>,
+    pub render_key: Option<FigRenderFn>,
 }
 
 unsafe extern "C" {

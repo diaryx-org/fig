@@ -39,7 +39,7 @@ extern "C" {
 // History: 1 — core 2.0 through 2.9. 2 — core 3.0: FigEmbedType folded into
 // (FigEmbedContainer, FigFormat) pairs on every fig_embed_* selector, and
 // FIG_FORMAT_XML retired.
-#define FIG_ABI_VERSION 2
+#define FIG_ABI_VERSION 3
 
 // Linked-library version, packed as (major << 16) | (minor << 8) | patch.
 uint32_t fig_version(void);
@@ -1010,7 +1010,7 @@ typedef struct FigWarning {
 // The version of FigLanguageVTable this header describes; set vtable.version
 // to it. Bumped only when a field of the vtable or of a struct it reaches
 // changes meaning — an appended field is not a bump.
-#define FIG_LANGUAGE_VTABLE_VERSION 1
+#define FIG_LANGUAGE_VTABLE_VERSION 2
 
 // A `size_t` that says "no offset": FigSpan { FIG_OFFSET_NONE, FIG_OFFSET_NONE }
 // is an absent optional span, and a FigStr with len == FIG_LEN_NONE is an
@@ -1216,18 +1216,47 @@ typedef struct FigDialectDesc {
     const FigSyntax   *syntax;
 } FigDialectDesc;
 
+// Everything a renderer is told, whichever it is; each reads the fields its
+// fragment needs. `indent` is the line prefix the fragment's first line sits
+// after, which a continuation line copies; `key` the key as written (entry,
+// tail, key); `value` the value text, already through render_value for every
+// renderer but the value's own; `literal` what fig's bare-literal rules make
+// of `value` trimmed — "null", "bool", "int", "float", "datetime" or
+// "string" — classified once by fig so that every format means the same
+// thing by `42` (a renderer spells the kind it is told); `old_key` the key
+// being renamed, as the source spells it (key).
+//
+// `parent_key` and `parent_tag` are the CONTAINER the fragment is written
+// into — the mapping an entry joins, the sequence an item joins, the
+// container holding a value replaced or a key renamed: the NAME of the key it
+// stands under (decoded; empty at the root and for a container that is itself
+// a sequence item) and its tag as a node row spells one ("!dependency",
+// "!!map"; empty for none). An XML list spells an item by its item element's
+// name, which is exactly those two.
+//
+// fig writes this struct and a renderer only reads it, so a field appended to
+// it is not a FIG_LANGUAGE_VTABLE_VERSION bump, as FigPrintOptions is not.
+typedef struct FigRenderRequest {
+    const char *dialect;
+    FigStr      indent;
+    FigStr      key;
+    FigStr      value;
+    const char *literal;
+    FigStr      old_key;
+    FigStr      parent_key;
+    FigStr      parent_tag;
+} FigRenderRequest;
+
+typedef int (*FigRenderFn)(void *ctx, const FigRenderRequest *request, FigStr *out, FigError *err);
+
 // The vtable. `caps` is FIG_CAP_* bits; `max_mapping_depth` is
 // FIG_DEPTH_NONE when unbounded, else the mapping nesting the format holds;
 // `lossless` NULL means no envelope; `syntax` is required iff FIG_CAP_EDIT;
 // `print` iff FIG_CAP_SERIALIZE; `samples` is required and non-empty. The
 // five render_* slots are optional and NULL where the format declares none:
-// each spells one fragment for the editor (`indent` is the target line's
-// indentation, `key`/`value`/`old_key` are as written) and returns the text
-// through `out`, which fig frees with free_bytes. `literal` is what fig's
-// bare-literal rules make of `value` trimmed — "null", "bool", "int",
-// "float", "datetime" or "string" — classified once by fig so that every
-// format means the same thing by `42`; a renderer spells the kind it is
-// told.
+// each spells one fragment for the editor from the FigRenderRequest it is
+// handed and returns the text through `out`, which fig frees with
+// free_bytes.
 typedef struct FigLanguageVTable {
     uint32_t              version;
     void                 *ctx;
@@ -1246,11 +1275,11 @@ typedef struct FigLanguageVTable {
     void (*free_table)(void *ctx, FigNodeTable *table);
     void (*free_bytes)(void *ctx, FigStr bytes);
 
-    int (*render_value)(void *ctx, const char *dialect, FigStr value, const char *literal, FigStr *out, FigError *err);
-    int (*render_entry)(void *ctx, const char *dialect, FigStr indent, FigStr key, FigStr value, FigStr *out, FigError *err);
-    int (*render_item)(void *ctx, const char *dialect, FigStr indent, FigStr value, FigStr *out, FigError *err);
-    int (*render_tail)(void *ctx, const char *dialect, FigStr indent, FigStr key, FigStr value, FigStr *out, FigError *err);
-    int (*render_key)(void *ctx, const char *dialect, FigStr indent, FigStr key, FigStr old_key, FigStr *out, FigError *err);
+    FigRenderFn render_value;
+    FigRenderFn render_entry;
+    FigRenderFn render_item;
+    FigRenderFn render_tail;
+    FigRenderFn render_key;
 } FigLanguageVTable;
 
 // The FIG_LANGUAGE_VTABLE_VERSION of the linked library.

@@ -58,6 +58,7 @@ const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
 const Span = @import("../../util/span.zig");
 const editor = @import("../../editor.zig");
+const lang = @import("../manifest.zig");
 const splice = @import("../../editor/splice.zig");
 const NestedText = @import("nestedtext.zig").Language;
 const Parser = @import("parser.zig");
@@ -208,7 +209,10 @@ fn isMultilineKeyText(key: []const u8) bool {
 /// tail, or the `: key` multiline form (per `needsMultilineKey`) over a value
 /// that is then always nested. Continuation lines sit at `indent` plus one
 /// `indent_unit`. No trailing newline. See `editor.Editor.writeEntry`.
-pub fn renderEntry(_: NestedText.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, key_text: []const u8, value_text: []const u8) !void {
+pub fn renderEntry(_: NestedText.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), r: lang.RenderRequest) !void {
+    const indent = r.indent;
+    const key_text = r.key;
+    const value_text = r.value;
     var child: std.ArrayList(u8) = .empty;
     defer child.deinit(allocator);
     try child.appendSlice(allocator, indent);
@@ -227,7 +231,9 @@ pub fn renderEntry(_: NestedText.Type, allocator: std.mem.Allocator, out: *std.A
 /// One block-sequence item after its line's `indent`: `-` plus the value
 /// tail (same-line, or a nested `>`-block one `indent_unit` deeper). No
 /// trailing newline. See `editor.Editor.writeItem`.
-pub fn renderItem(_: NestedText.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, value_text: []const u8) !void {
+pub fn renderItem(_: NestedText.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), r: lang.RenderRequest) !void {
+    const indent = r.indent;
+    const value_text = r.value;
     var child: std.ArrayList(u8) = .empty;
     defer child.deinit(allocator);
     try child.appendSlice(allocator, indent);
@@ -245,7 +251,10 @@ pub fn renderItem(_: NestedText.Type, allocator: std.mem.Allocator, out: *std.Ar
 /// top-level scalar line has no grammar at all (see `parser.zig`: an
 /// unrecognized `.other` line at the top level is a parse error). No
 /// trailing newline. See `editor.Editor.writeTail`.
-pub fn renderTail(_: NestedText.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, key_text: []const u8, value_text: []const u8) !void {
+pub fn renderTail(_: NestedText.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), r: lang.RenderRequest) !void {
+    const indent = r.indent;
+    const key_text = r.key;
+    const value_text = r.value;
     if (key_text.len == 0) return appendRootBlock(allocator, out, value_text);
     var child: std.ArrayList(u8) = .empty;
     defer child.deinit(allocator);
@@ -268,7 +277,10 @@ pub fn renderTail(_: NestedText.Type, allocator: std.mem.Allocator, out: *std.Ar
 /// never have a same-line value), which is a value reframe this op doesn't
 /// attempt — delete and re-insert the entry instead. See
 /// `editor.Editor.replaceKeyAtPath`.
-pub fn renderKey(_: NestedText.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), indent: []const u8, new_key: []const u8, old_key: []const u8) !void {
+pub fn renderKey(_: NestedText.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), r: lang.RenderRequest) !void {
+    const indent = r.indent;
+    const new_key = r.key;
+    const old_key = r.old_key;
     const was_multiline = isMultilineKeyText(old_key);
     const wants_multiline = needsMultilineKey(new_key);
     if (wants_multiline and !was_multiline) return error.KeyRequiresMultilineForm;

@@ -6,7 +6,6 @@ created = 2026-09-04
 updated = 2026-09-22
 part_of = [docs](/docs/docs.md)
 contents
-> * [The item and value renderers are not told the key they are rendering under](renderers-are-not-told-the-parent-key.md)
 > * [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 

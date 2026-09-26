@@ -366,6 +366,9 @@ void fig_editor_destroy(FigEditor *editor);
 // delete it names the key; for sequence ops it names the sequence.
 FigStatus fig_editor_replace_val(FigEditor *editor, const FigPathSegment *path,
                                  size_t path_len, const uint8_t *repl, size_t repl_len);
+// Rename the key at `path`, keeping its value. A path that names no key (one
+// ending in an index, or the empty path) and a new name another entry of the
+// mapping already holds are FIG_STATUS_INVALID_ARGUMENT, and nothing is written.
 FigStatus fig_editor_replace_key(FigEditor *editor, const FigPathSegment *path,
                                  size_t path_len, const uint8_t *repl, size_t repl_len);
 // The same with the new key's NAME, spelled as the format spells a key, as

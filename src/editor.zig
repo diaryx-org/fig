@@ -875,7 +875,32 @@ pub fn Editor(comptime Language: type) type {
         /// is key SYNTAX, spliced as given; a section's name is rewritten
         /// wherever the format spells it, and a format whose key syntax has
         /// more than one form spells the new key through `renderKey`.
+        ///
+        /// A path that names no key — a sequence item, or the root — is
+        /// refused with `NotAKey`: `getKeyByPath` hands back the node itself
+        /// there, and the splice would overwrite its VALUE. A rename that
+        /// gives the mapping a second entry of one name is rolled back with
+        /// `DuplicateKey`, counted as `insertKey` counts, because most
+        /// parsers here accept the repeat and the reparse cannot be the net.
         pub fn replaceKeyAtPath(self: *Self, path: []const AST.PathSegment, replacement: []const u8) !void {
+            if (path.len == 0 or path[path.len - 1] == .index) return error.NotAKey;
+            const parent_path = path[0 .. path.len - 1];
+            const before = try self.getParsed();
+            const repeated_before = if (before.ast.getValByPath(parent_path)) |parent| try self.repeatedKeyCount(before.ast, parent) else |_| 0;
+            const backup = try self.allocator.dupe(u8, self.source.items);
+            defer self.allocator.free(backup);
+            try self.spliceKeyAtPath(path, replacement);
+            const after = try self.getParsed();
+            const parent_after = after.ast.getValByPath(parent_path) catch return;
+            if (try self.repeatedKeyCount(after.ast, parent_after) > repeated_before) {
+                try self.restoreSource(backup);
+                return error.DuplicateKey;
+            }
+        }
+
+        /// The splice behind `replaceKeyAtPath`, once the path is known to
+        /// name a key.
+        fn spliceKeyAtPath(self: *Self, path: []const AST.PathSegment, replacement: []const u8) !void {
             const parsed = try self.getParsed();
             // A section node's name is written wherever the format spells
             // it — every `[a.b]` sharing the prefix, every dotted line, every
@@ -917,7 +942,20 @@ pub fn Editor(comptime Language: type) type {
         /// spelled by `formatInsertKey` and the rename goes on as before. A
         /// ZON key's span is the field name after its `.`, so the dot that
         /// spelling leads with is left where it already stands.
+        ///
+        /// A name another entry of the mapping already holds is refused with
+        /// `DuplicateKey` before anything is spliced, as `insertNamedKey`
+        /// refuses one — a TOML or fig reparse would otherwise report the
+        /// repeat as a key that does not parse. Renaming a key to its own
+        /// name is not a repeat.
         pub fn replaceNamedKey(self: *Self, path: []const AST.PathSegment, name: []const u8) !void {
+            if (path.len == 0 or path[path.len - 1] == .index) return error.NotAKey;
+            const parsed = try self.getParsed();
+            if (parsed.ast.getValByPath(path[0 .. path.len - 1])) |parent| {
+                if (parsed.ast.getNodeByPath(path)) |own| {
+                    if (holdsName(parsed.ast, parent, name, own.id)) return error.DuplicateKey;
+                } else |_| {} // `replaceKeyAtPath` reports a missing key in its own terms
+            } else |_| {}
             const rendered = try self.formatInsertKey(name);
             defer self.allocator.free(rendered);
             const text = if (self.syntax().key_style == .zon_field) rendered[1..] else rendered;
@@ -1746,6 +1784,27 @@ pub fn Editor(comptime Language: type) type {
             return repeated;
         }
 
+        /// Whether `mapping` has a direct entry whose key is `name`, other
+        /// than the entry `except` — false for a node that is not a mapping.
+        fn holdsName(ast: AST, mapping: AST.Node, name: []const u8, except: ?AST.Node.Id) bool {
+            var entry = switch (mapping.kind) {
+                .mapping => |first| first,
+                else => return false,
+            };
+            while (entry) |id| : (entry = ast.nodes[id].next_sibling) {
+                if (except) |e| if (id == e) continue;
+                const kv = switch (ast.nodes[id].kind) {
+                    .keyvalue => |kv| kv,
+                    else => continue,
+                };
+                switch (ast.nodes[kv.key].kind) {
+                    .string => |s| if (std.mem.eql(u8, s, name)) return true,
+                    else => {},
+                }
+            }
+            return false;
+        }
+
         /// `insertKey` for a caller that has the key's NAME rather than its
         /// syntax: the name is spelled as this format spells a key
         /// (`formatInsertKey` — `.name` in ZON, quoted in strict JSON, quoted
@@ -1761,19 +1820,7 @@ pub fn Editor(comptime Language: type) type {
         pub fn insertNamedKey(self: *Self, path: []const AST.PathSegment, name: []const u8, value_text: []const u8) !void {
             const parsed = try self.getParsed();
             if (parsed.ast.getValByPath(path)) |parent| {
-                if (parent.kind == .mapping) {
-                    var entry = parent.kind.mapping;
-                    while (entry) |id| : (entry = parsed.ast.nodes[id].next_sibling) {
-                        const kv = switch (parsed.ast.nodes[id].kind) {
-                            .keyvalue => |kv| kv,
-                            else => continue,
-                        };
-                        switch (parsed.ast.nodes[kv.key].kind) {
-                            .string => |s| if (std.mem.eql(u8, s, name)) return error.DuplicateKey,
-                            else => {},
-                        }
-                    }
-                }
+                if (holdsName(parsed.ast, parent, name, null)) return error.DuplicateKey;
             } else |_| {} // `insertKey` reports a bad parent path in its own terms
             const rendered = try self.formatInsertKey(name);
             defer self.allocator.free(rendered);
@@ -4789,6 +4836,37 @@ test "insertNamedKey refuses a key the mapping already holds, in every format" {
         defer ed.deinit();
         try testing.expectError(error.DuplicateKey, ed.insertNamedKey(&.{}, "a", "3"));
         try testing.expect(!ed.splice_rejected);
+    }
+}
+
+test "a rename refuses a path with no key, and a name the mapping already holds" {
+    if (comptime build_options.lang_yaml) {
+        var ed: Editor(Yaml) = .{ .allocator = testing.allocator, .format = .v1_2_2 };
+        try ed.init("l:\n  - 1\na: 1\nb: 2\n");
+        defer ed.deinit();
+        // An item's "key" is the item itself; the splice overwrote its value.
+        try testing.expectError(error.NotAKey, ed.replaceNamedKey(&.{ .{ .key = "l" }, .{ .index = 0 } }, "z"));
+        try testing.expectError(error.NotAKey, ed.replaceKeyAtPath(&.{}, "z"));
+        // YAML's parser accepts the repeat, so the engine is the net: by name
+        // up front, and by count from key syntax.
+        try testing.expectError(error.DuplicateKey, ed.replaceNamedKey(&.{.{ .key = "a" }}, "b"));
+        try testing.expectError(error.DuplicateKey, ed.replaceKeyAtPath(&.{.{ .key = "a" }}, "b"));
+        try testing.expect(!ed.splice_rejected);
+        try testing.expectEqualStrings("l:\n  - 1\na: 1\nb: 2\n", ed.source.items);
+        // Its own name is not a repeat, and a new one lands.
+        try ed.replaceNamedKey(&.{.{ .key = "a" }}, "a");
+        try ed.replaceNamedKey(&.{.{ .key = "a" }}, "c");
+        try testing.expectEqualStrings("l:\n  - 1\nc: 1\nb: 2\n", ed.source.items);
+    }
+    if (comptime build_options.lang_toml) {
+        // TOML's parser refuses the repeat itself, which read as a key that
+        // does not parse; the name check answers first.
+        var ed: Editor(Toml) = .{ .allocator = testing.allocator, .format = .TOML_1_1 };
+        try ed.init("a = 1\nb = 2\n");
+        defer ed.deinit();
+        try testing.expectError(error.DuplicateKey, ed.replaceNamedKey(&.{.{ .key = "a" }}, "b"));
+        try testing.expect(!ed.splice_rejected);
+        try testing.expectEqualStrings("a = 1\nb = 2\n", ed.source.items);
     }
 }
 

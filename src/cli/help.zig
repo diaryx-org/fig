@@ -182,8 +182,11 @@ pub const Help = struct {
         try term.writer.print(
             \\Usage: {s} rename <file> <path> <name>
             \\  Renames the key at <path> to <name>, keeping its value and
-            \\    comments. <name> is a key, spelled as the file's format spells
-            \\    one. To replace the value there, use `{s} replace`.
+            \\    comments. <name> is the new key's name, which fig spells as the
+            \\    file's format spells a key, quoting it where it must. A <path>
+            \\    that ends in an index has no key, and a <name> the mapping
+            \\    already holds would be a second key of that name: both are
+            \\    refused, exit 1. To replace the value there, use `{s} replace`.
             \\
         ++ path_and_markdown, .{ binary_name, binary_name });
         try term.writer.flush();

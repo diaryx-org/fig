@@ -72,7 +72,10 @@ export abstract class Editable {
   }
 
   /** Rename the key at `path` to `key`, a name the format spells as it
-   *  spells a key (`.k` in ZON, `"k"` in JSON, `<key>k</key>` in plist). */
+   *  spells a key (`.k` in ZON, `"k"` in JSON, `<key>k</key>` in plist). A
+   *  path that names no key (one ending in an index, or the empty path) and a
+   *  `key` another entry of the mapping already holds throw `FigError` with
+   *  `Status.InvalidArgument`, and nothing is written. */
   renameKey(path: readonly Segment[], key: string): void {
     const frame = new Frame();
     try {

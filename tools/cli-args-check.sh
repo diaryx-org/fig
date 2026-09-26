@@ -226,6 +226,29 @@ row 2 replace ok.yaml a
 row 0 rename ok.yaml a c
 row 1 rename ok.yaml zz c
 row 2 rename ok.yaml a
+# A rename needs a key, and a name the mapping does not already hold: a
+# sequence item's "key" was the item, whose value the splice overwrote, and
+# a taken name wrote the key twice. Both are the document refusing the edit.
+printf '{"l": [1, 2], "a": 1, "b": 2}\n' >fixtures/r.json
+printf 'a = 1\nb = 2\n' >fixtures/r.toml
+row 1 rename r.json 'l[0]' z
+row 1 rename r.json a b
+cmp -s run/r.json fixtures/r.json || fail "a refused rename changed the file"
+row 1 rename r.toml a b
+cmp -s run/r.toml fixtures/r.toml || fail "a refused rename changed the file"
+row 0 rename r.json a a
+err="$(cd fixtures && "$fig" rename r.toml a b 2>&1 >/dev/null || true)"
+case "$err" in
+*"already has a key of that name"*) ;;
+*) fail "a rename onto a taken name: $err" ;;
+esac
+# `insert` onto an existing key points at `set` and `replace`, not at the
+# `edit` that is gone.
+err="$(cd fixtures && "$fig" insert ok.yaml a 3 2>&1 >/dev/null || true)"
+case "$err" in
+*"fig replace"*) ;;
+*) fail "insert onto an existing key: $err" ;;
+esac
 # `edit` was split into `replace` and `rename` (cli-5 §7): it is no longer
 # an action, and neither is `--key`.
 row 2 edit ok.yaml a 2

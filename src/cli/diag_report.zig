@@ -197,6 +197,17 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
             try term.setColor(.reset);
             try term.writer.print(": to change its value — `{s} set <file> <path> <value>` (or `{s} replace`, which only replaces).\n", .{ binary_name, binary_name });
         },
+        // `rename` onto a name another entry of the mapping holds: the
+        // engine refuses it rather than write a second entry of that name.
+        error.RenameTargetExists => {
+            try term.writer.writeAll(": the mapping already has a key of that name, and a rename would give it two\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("help");
+            try term.setColor(.reset);
+            try term.writer.print(": `{s} delete <file> <path>` the other one first, or pick another name.\n", .{binary_name});
+        },
+        // `rename` at a path that ends in an index, or the empty path.
+        error.NotAKey => try term.writer.writeAll(": that path names a sequence item or the root, which has no key to rename\n"),
         // `set --embed <archetype>` creating a block at the top of a host
         // whose first line already opens frontmatter of another archetype.
         error.FrontmatterExists => {

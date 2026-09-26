@@ -60,8 +60,10 @@ fn applyOp(
 ) !void {
     switch (op) {
         .replace_value => try editor.replaceValAtPath(path, text),
-        // The new key is a NAME too, spelled the same way.
-        .replace_key => try editor.replaceNamedKey(path, text),
+        // The new key is a NAME too, spelled the same way. A name the
+        // mapping already holds is reported as `rename`'s refusal, not as
+        // `insert`'s, whose help would send the user to `set`.
+        .replace_key => editor.replaceNamedKey(path, text) catch |err| return if (err == error.DuplicateKey) error.RenameTargetExists else err,
         .add_leading_comment => try editor.addLeadingComment(path, text),
         .set_trailing_comment => try editor.setTrailingComment(path, text),
         .delete_leading_comments => try editor.deleteLeadingComments(path),

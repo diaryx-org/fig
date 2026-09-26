@@ -60,7 +60,8 @@ export const Format = {
 } as const;
 export type Format = (typeof Format)[keyof typeof Format] | (number & {});
 
-/** Controls how {@link serialize} renders output. Omitted fields fall back to
+/** Controls how {@link stringify}, `convert` and `Document.serialize` render
+ *  output. Omitted fields fall back to
  *  fig's historical style (pretty-printed, two-space indent), so passing no
  *  options renders exactly as before. `pretty` is honored by `Format.Json`
  *  (multi-line vs. minified), `Format.Zon` (`zig fmt` multi-line vs. inline
@@ -82,7 +83,7 @@ export interface SerializeOptions {
    *  natively (a null in TOML, a TOML datetime in JSON, …) through a `$fig`
    *  envelope, and decode any such envelope in the source. Defaults to `false`
    *  (lossy — an unrepresentable value throws `UnsupportedFormat`). Ignored by
-   *  the value `serialize` (a built value has no source envelopes). */
+   *  `stringify` (a built value has no source envelopes). */
   lossless?: boolean;
   /** The column budget for the inline-vs-expanded layout of `Format.Toml`,
    *  `Format.Yaml`, and `Format.Fig`. A mapping/array that renders within

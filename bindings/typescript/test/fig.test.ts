@@ -23,7 +23,6 @@ import {
   WarningCode,
   fromJS,
   parse,
-  serialize,
   stringify,
   toJS,
 } from "../src/index.ts";
@@ -76,8 +75,8 @@ test("extended scalars (TOML datetime, ZON enum/char) read faithfully", () => {
       [V.string("d"), V.extended(ExtKind.LocalDate, "2026-06-18")],
       [V.string("t"), V.extended(ExtKind.LocalTime, "07:32:00")],
     ]));
-    // Round-trips back out through serialize.
-    assert.equal(serialize(doc.toValue(), Format.Toml), "d = 2026-06-18\nt = 07:32:00\n");
+    // Round-trips back out through stringify.
+    assert.equal(stringify(doc.toValue(), Format.Toml), "d = 2026-06-18\nt = 07:32:00\n");
   }
 
   // ZON char and enum literals report as Extended, and read back as such.
@@ -98,45 +97,45 @@ test("extended scalars (TOML datetime, ZON enum/char) read faithfully", () => {
   }
 });
 
-test("serialize a Value to multiple formats", () => {
+test("stringify a Value to multiple formats", () => {
   const value = V.map([
     [V.string("name"), V.string("fig")],
     [V.string("nums"), V.seq([V.int(1), V.int(2)])],
   ]);
-  assert.equal(serialize(value, Format.Json), '{\n  "name": "fig",\n  "nums": [\n    1,\n    2\n  ]\n}\n');
-  assert.equal(serialize(value, Format.Yaml), "name: fig\nnums: [1, 2]\n");
-  assert.equal(serialize(value, Format.Fig), "name = fig\nnums = [1, 2]\n");
+  assert.equal(stringify(value, Format.Json), '{\n  "name": "fig",\n  "nums": [\n    1,\n    2\n  ]\n}\n');
+  assert.equal(stringify(value, Format.Yaml), "name: fig\nnums: [1, 2]\n");
+  assert.equal(stringify(value, Format.Fig), "name = fig\nnums = [1, 2]\n");
 });
 
-test("serialize honors JSON pretty/compact options", () => {
+test("stringify honors JSON pretty/compact options", () => {
   const value = V.map([
     [V.string("name"), V.string("fig")],
     [V.string("nums"), V.seq([V.int(1), V.int(2)])],
   ]);
   // No options == pretty default.
-  assert.equal(serialize(value, Format.Json, {}), serialize(value, Format.Json));
+  assert.equal(stringify(value, Format.Json, {}), stringify(value, Format.Json));
   // Compact: no insignificant whitespace.
-  assert.equal(serialize(value, Format.Json, { pretty: false }), '{"name":"fig","nums":[1,2]}\n');
+  assert.equal(stringify(value, Format.Json, { pretty: false }), '{"name":"fig","nums":[1,2]}\n');
   // Custom indent width.
   assert.equal(
-    serialize(value, Format.Json, { indent: 4 }),
+    stringify(value, Format.Json, { indent: 4 }),
     '{\n    "name": "fig",\n    "nums": [\n        1,\n        2\n    ]\n}\n',
   );
   // ZON honors pretty/compact too (keeping its idiomatic four-space indent),
   // when the module under test was built with ZON support.
   if (zonBuiltIn) {
-    assert.equal(serialize(value, Format.Zon, { pretty: false }), ".{ .name = \"fig\", .nums = .{ 1, 2 } }\n");
+    assert.equal(stringify(value, Format.Zon, { pretty: false }), ".{ .name = \"fig\", .nums = .{ 1, 2 } }\n");
   }
 });
 
-test("serialize honors the TOML width option (inline vs. section)", () => {
+test("stringify honors the TOML width option (inline vs. section)", () => {
   const value = V.map([
     [V.string("point"), V.map([[V.string("x"), V.int(1)], [V.string("y"), V.int(2)]])],
   ]);
   // Default budget (80): the small mapping stays an inline table.
-  assert.equal(serialize(value, Format.Toml), "point = { x = 1, y = 2 }\n");
+  assert.equal(stringify(value, Format.Toml), "point = { x = 1, y = 2 }\n");
   // A tight budget forces it to expand to a [section].
-  assert.equal(serialize(value, Format.Toml, { width: 8 }), "[point]\nx = 1\ny = 2\n");
+  assert.equal(stringify(value, Format.Toml, { width: 8 }), "[point]\nx = 1\ny = 2\n");
 });
 
 test("fromJS / toJS round-trip", () => {
@@ -144,18 +143,18 @@ test("fromJS / toJS round-trip", () => {
   assert.deepEqual(toJS(fromJS(js)), js);
 });
 
-test("serialize rejects an unrepresentable value cleanly", () => {
+test("stringify rejects an unrepresentable value cleanly", () => {
   const value = V.map([[V.string("k"), V.null()]]);
-  assert.equal(serialize(value, Format.Json), '{\n  "k": null\n}\n');
+  assert.equal(stringify(value, Format.Json), '{\n  "k": null\n}\n');
   assert.throws(
-    () => serialize(value, Format.Toml),
+    () => stringify(value, Format.Toml),
     (err: unknown) => err instanceof FigError && err.status === Status.UnsupportedFormat,
   );
 });
 
 test("large integers survive as bigint", () => {
   const big = 9999999999999999999n; // > Number.MAX_SAFE_INTEGER and > i64
-  assert.equal(serialize(V.uint(big), Format.Json), `${big}\n`);
+  assert.equal(stringify(V.uint(big), Format.Json), `${big}\n`);
   const round = toJS(fromJS(big));
   assert.equal(typeof round, "bigint");
   assert.equal(round, big);
@@ -187,11 +186,11 @@ test("radix-prefixed and separated integer lexemes read exactly", () => {
 test("float text stays a float in scientific notation", () => {
   // A bare-integer mantissa (`1e+300`) would read back as an int, the same way
   // `1` does — so it gets the `.0` too.
-  assert.equal(serialize(V.float(1e300), Format.Json), "1.0e+300\n");
-  assert.equal(serialize(V.float(1e-7), Format.Json), "1.0e-7\n");
-  assert.equal(serialize(V.float(1.5e-7), Format.Json), "1.5e-7\n");
-  assert.equal(serialize(V.float(1), Format.Json), "1.0\n");
-  assert.equal(serialize(V.float(0.1), Format.Json), "0.1\n");
+  assert.equal(stringify(V.float(1e300), Format.Json), "1.0e+300\n");
+  assert.equal(stringify(V.float(1e-7), Format.Json), "1.0e-7\n");
+  assert.equal(stringify(V.float(1.5e-7), Format.Json), "1.5e-7\n");
+  assert.equal(stringify(V.float(1), Format.Json), "1.0\n");
+  assert.equal(stringify(V.float(0.1), Format.Json), "0.1\n");
 });
 
 test("Editor inserts while preserving the rest", () => {
@@ -234,8 +233,8 @@ test("Editor takes a container into NestedText as nested entries", () => {
   assert.equal(ed.source(), "name: fig\nm:\n    x: 1\n    l:\n        - a\n        - b\n");
 });
 
-test("serialize stays a whole document where splice text does not", () => {
-  assert.equal(serialize("h2", Format.Nestedtext), "> h2\n");
+test("stringify stays a whole document where splice text does not", () => {
+  assert.equal(stringify("h2", Format.Nestedtext), "> h2\n");
 });
 
 test("Editor.set replaces an existing key or inserts a missing one", () => {
@@ -477,7 +476,7 @@ test("fig-dialect container splices render flow and round-trip", () => {
   assert.deepEqual(v["contents"], ["a.md", "b.md"]);
   assert.deepEqual(v["meta"], { k: 1 });
   // Whole-document Map serialization is unchanged (block sections).
-  assert.equal(serialize({ title: "T" }, Format.Fig), "title = T\n");
+  assert.equal(stringify({ title: "T" }, Format.Fig), "title = T\n");
 });
 
 test("Embed.replaceBody swaps the body, composing with edits", () => {
@@ -755,7 +754,7 @@ test("toJS does not pollute the prototype via a __proto__ key", () => {
 // ── new: undefined is accepted on the write side (JsInput) ───────────────────
 
 test("undefined serializes as null", () => {
-  assert.equal(serialize(undefined, Format.Json), "null\n");
+  assert.equal(stringify(undefined, Format.Json), "null\n");
   assert.equal(stringify({ a: undefined, b: 1 }, Format.Json, { pretty: false }), '{"a":null,"b":1}\n');
 });
 

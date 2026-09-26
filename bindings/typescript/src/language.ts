@@ -44,7 +44,7 @@ setHostCall(hostCall);
 
 /** Register `lang`. The returned `Format` is a peer of the compiled ones at
  *  the tier `lang.caps` declares: `Document.parse`, `Editor.open`,
- *  `serialize`, `capabilities` and every other call that takes a format
+ *  `stringify`, `capabilities` and every other call that takes a format
  *  accept it from then on. Registration validates the description by the
  *  rules a compiled format is held to and runs fig's harness over
  *  `samples` — each parsed, printed, reparsed and edited — and throws a

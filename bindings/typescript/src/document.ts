@@ -292,7 +292,7 @@ export class Document {
   }
 
   /** Render the whole document to `format` — the cross-format conversion
-   *  primitive (e.g. parse YAML, emit JSON). Unlike `toValue()` + `serialize`,
+   *  primitive (e.g. parse YAML, emit JSON). Unlike `toValue()` + `stringify`,
    *  this preserves source comments where the target allows and collapses YAML's
    *  reference layer when leaving YAML. A value the target cannot represent
    *  throws `UnsupportedFormat` unless `options.lossless` is set. */

@@ -19,8 +19,8 @@ import {
   handle,
   parse,
   registerLanguage,
-  serialize,
   serve,
+  stringify,
   type Language,
   type NodeTable,
 } from "../src/index.ts";
@@ -281,6 +281,6 @@ test("a runtime printer is told when it prints splice text", () => {
   assert.equal(ed.source(), "A=1\nB=two\n");
   assert.deepEqual(seen, [true]);
   seen.length = 0;
-  serialize({ C: "3" }, spy);
+  stringify({ C: "3" }, spy);
   assert.deepEqual(seen, [false]);
 });

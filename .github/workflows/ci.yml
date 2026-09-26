@@ -2,7 +2,7 @@ name: CI
 # Build + test everything on every push/PR, as parallel jobs of one workflow:
 #
 # * zig         — the core: zig build check (test + conformance + abi-check +
-# semver-check + version-floor). The one pre-release gate.
+# semver-check + version-check). The one pre-release gate.
 # * rust        — cargo test for the Rust binding (bindings/rust).
 # * rust-semver — cargo-semver-checks over the native Rust public surface.
 # * typescript  — build + test the TypeScript/npm binding (bindings/typescript).
@@ -23,19 +23,19 @@ on:
 concurrency: { group: 'ci-${{ github.ref }}', cancel-in-progress: true }
 jobs:
   zig:
-    name: Zig — check (test + abi/semver/floor guards)
+    name: Zig — check (test + abi/semver/version guards)
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
       with:
-        # semver-check diffs the C ABI against the most recent `v*` tag via
-        # `git describe`/`git show`, so it needs full history + tags, not the
-        # default shallow checkout.
+        # semver-check diffs the C ABI against the most recent release tag (`v*`,
+        # or `core/v*` before the first one-version tag) via `git describe`/`git
+        # show`, so it needs full history + tags, not the default shallow checkout.
         fetch-depth: 0
     - uses: mlugg/setup-zig@v2
       with: { version: 0.16.0 }
     # The one pre-release gate: zig test + conformance + abi-check + semver-check
-    # + version-floor. `check` also folds in cargo-semver-checks and the Rust/TS
+    # + version-check. `check` also folds in cargo-semver-checks and the Rust/TS
     # test suites, but those degrade gracefully — with no cargo/npm toolchain in
     # this job they skip with a note, and the `rust` / `typescript` jobs below run
     # them for real (in parallel, with their pinned toolchains). See VERSIONING.md.
@@ -70,9 +70,12 @@ jobs:
   # the Zig `semver-check` cannot see, since none of it crosses the C ABI. Like
   # semver-check it is version-aware: it only fails if the API delta exceeds what
   # the crate's current version bump allows. It diffs against the most recent
-  # `rust/v*` tag (not crates.io) — the Rust crate's own release line, distinct
-  # from `semver-check`'s `core/v*` baseline, since the crate and the core move
-  # independently (see "Independent versioning" in docs/VERSIONING.md).
+  # release tag (not crates.io). fig releases every artifact under one version and
+  # one `vX.Y.Z` tag from 5.0.0 on (see docs/VERSIONING.md), so that tag is
+  # matched first — as `v[5-9].*` or `v[1-9][0-9]*`, which admits v10 and later
+  # and leaves out the three bare tags that predate the per-track scheme (`v1.0.0`,
+  # `v2.0.0`, `v2.5.1`, all ancestors of main) — and the crate's old `rust/v*`
+  # line is the fallback until the first one-version tag exists.
   #
   # The Rust crate release workflow (release.figl's `crate` job) re-runs this
   # same check right before publishing, as a release-time gate — see that job's
@@ -84,7 +87,7 @@ jobs:
     steps:
     - uses: actions/checkout@v7
       with:
-        # Needs full history + tags: the baseline is the most recent `rust/v*`
+        # Needs full history + tags: the baseline is the most recent release
         # tag, discovered the same way semver-check discovers its own baseline.
         fetch-depth: 0
     # build.rs compiles the fig core with `zig build`, so building the crate's
@@ -117,9 +120,10 @@ jobs:
       working-directory: bindings/rust
       run: |
         set -euo pipefail
-        tag="$(git describe --tags --abbrev=0 --match 'rust/v*' 2>/dev/null || true)"
+        tag="$(git describe --tags --abbrev=0 --match 'v[5-9].*' --match 'v[1-9][0-9]*' 2>/dev/null \
+          || git describe --tags --abbrev=0 --match 'rust/v*' 2>/dev/null || true)"
         if [ -z "$tag" ]; then
-          echo "cargo-semver-checks: no rust/v* tag found — skipping (nothing to diff against)."
+          echo "cargo-semver-checks: no release tag found — skipping (nothing to diff against)."
           exit 0
         fi
         echo "cargo-semver-checks: baseline $tag"

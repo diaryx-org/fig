@@ -8,22 +8,18 @@ name: Release (crate)
 # The two npm packages (bindings/typescript's @diaryx/fig and
 # bindings/wasi's @diaryx/fig-wasi) live in their own files —
 # release-npm.figl and release-npm-wasi.figl — split out from this one so
-# each publish, on its own tag line and with its own required secret, can run
-# (and be re-triggered) independently of the others.
+# each publish, with its own required secret, can run (and be re-triggered)
+# independently of the others.
 #
-# This job LIVEs on its own tag line (also runnable by hand via
-# `workflow_dispatch`, which runs it unconditionally): `rust/v*.*.*`. See
-# "Release tagging" in docs/VERSIONING.md for the full per-artifact tag
-# scheme (there's also a `core/v*.*.*` line that nothing here listens for —
-# it exists for `zig fetch` + the ABI semver baseline, not npm/crates.io).
-# The crate carries the `license`, `description`, and `readme` crates.io
+# Runs on the `v*.*.*` tag, like every release workflow here — one tag
+# releases every artifact at fig's one version, and is also the tag Zig
+# consumers `zig fetch` (see "Release tagging" in docs/VERSIONING.md) — and by
+# hand via `workflow_dispatch`, which runs it unconditionally. The crate carries the `license`, `description`, and `readme` crates.io
 # needs (the README and license text are vendored in from the repo root by
 # the `vendor-rust` step that runs before `cargo publish`).
 #
-# `rust/*` is an independent track with no required relation to its tag's
-# version beyond the cross-artifact floor (`zig build version-floor`, checked
-# below): it publishes whatever Cargo.toml says and no-ops if that exact
-# version is already out.
+# It publishes the version Cargo.toml carries, which the checks below hold to
+# the tag, and no-ops if that exact version is already out.
 #
 # Authentication: crates.io Trusted Publishing (OIDC) is preferred — the job
 # trades its `id-token` identity for a short-lived registry token, so nothing
@@ -34,7 +30,7 @@ name: Release (crate)
 # CARGO_REGISTRY_TOKEN  — crates.io API token with publish rights (already set)
 on:
   workflow_dispatch: {}
-  push: { tags: [rust/v*.*.*] }
+  push: { tags: [v*.*.*] }
 permissions: { id-token: write, contents: read }
 jobs:
   crate:
@@ -44,8 +40,8 @@ jobs:
     - uses: actions/checkout@v7
       with:
         # cargo-semver-checks (below) needs full history + tags: its baseline is the
-        # most recent `rust/v*` tag, discovered the same way ci.figl's
-        # `rust-semver` job discovers its own baseline.
+        # most recent release tag, discovered the same way ci.figl's `rust-semver`
+        # job discovers its own baseline.
         fetch-depth: 0
     # build.rs compiles the core, and `vendor-rust` bundles the Zig source into
     # the published crate.
@@ -69,18 +65,29 @@ jobs:
       working-directory: bindings/rust
       run: |
         set -euo pipefail
-        tag="$(git describe --tags --abbrev=0 --match 'rust/v*' --exclude "$GITHUB_REF_NAME" 2>/dev/null || true)"
+        tag="$(git describe --tags --abbrev=0 --match 'v[5-9].*' --match 'v[1-9][0-9]*' --exclude "$GITHUB_REF_NAME" 2>/dev/null \
+          || git describe --tags --abbrev=0 --match 'rust/v*' 2>/dev/null || true)"
         if [ -z "$tag" ]; then
-          echo "cargo-semver-checks: no prior rust/v* tag found — skipping (nothing to diff against)."
+          echo "cargo-semver-checks: no prior release tag found — skipping (nothing to diff against)."
           exit 0
         fi
         echo "cargo-semver-checks: baseline $tag"
         cargo semver-checks --package fig --baseline-rev "$tag"
-    # The crate is an independent track (see the header comment above) — this
-    # only checks it (and everything else) stays >= the core it embeds, not
-    # that it equals the tag.
-    - name: Verify the cross-artifact version floor
-      run: zig build version-floor
+    # Every file carrying fig's one version agrees with build.zig.zon, and the
+    # tag names that version: a tag that does not would publish a package under
+    # a number the release did not cut.
+    - name: Verify every file carries the one version
+      run: zig build version-check
+    - name: Verify tag matches the version
+      if: github.ref_type == 'tag'
+      run: |
+        want=$(sed -n 's/^    \.version = "\([^"]*\)",$/\1/p' build.zig.zon)
+        tag="${GITHUB_REF_NAME#v}"
+        if [ "$want" != "$tag" ]; then
+          echo "::error::tag $GITHUB_REF_NAME ($tag) != build.zig.zon version ($want)"
+          exit 1
+        fi
+        echo "version $want matches tag $GITHUB_REF_NAME"
     # --all-features so the serde- and derive-gated integration tests also run
     # (they are not in the default feature set).
     - run: cargo test --workspace --all-features --locked

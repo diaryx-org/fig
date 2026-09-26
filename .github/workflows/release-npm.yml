@@ -2,20 +2,15 @@ name: Release (npm)
 # Publish @diaryx/fig (bindings/typescript), a JS *library* (parse/edit/
 # serialize as an API) backed by a freestanding wasm reactor module. Split out
 # from release.figl (crates.io: fig + fig-macros) and release-npm-wasi.figl
-# (the npx-able fig-wasi CLI package) so each publish, on its own tag line
-# and with its own required secret, can run (and be re-triggered)
-# independently of the others.
+# (the npx-able fig-wasi CLI package) so each publish, with its own required
+# secret, can run (and be re-triggered) independently of the others.
 #
-# This job LIVEs on its own tag line (also runnable by hand via
-# `workflow_dispatch`, which runs it unconditionally): `npm/v*.*.*`. See
-# "Release tagging" in docs/VERSIONING.md for the full per-artifact tag
-# scheme (there's also a `core/v*.*.*` line that nothing here listens for —
-# it exists for `zig fetch` + the ABI semver baseline, not npm/crates.io).
-#
-# `npm/*` is an independent track with no required relation to its tag's
-# version beyond the cross-artifact floor (`zig build version-floor`, checked
-# below): it publishes whatever package.json says and no-ops if that exact
-# version is already out.
+# Runs on the `v*.*.*` tag, like every release workflow here — one tag
+# releases every artifact at fig's one version (see "Release tagging" in
+# docs/VERSIONING.md) — and by hand via `workflow_dispatch`, which runs it
+# unconditionally. It publishes the version package.json carries, which the
+# checks below hold to the tag, and no-ops if that exact version is already
+# out.
 #
 # Required repository secret:
 # NPM_TOKEN  — npm automation token with publish rights (not yet set — this
@@ -23,7 +18,7 @@ name: Release (npm)
 # set NPM_TOKEN`); needs publish rights to @diaryx/fig.
 on:
   workflow_dispatch: {}
-  push: { tags: [npm/v*.*.*] }
+  push: { tags: [v*.*.*] }
 permissions: { id-token: write, contents: read }
 jobs:
   npm:
@@ -42,11 +37,21 @@ jobs:
         registry-url: https://registry.npmjs.org
         cache: npm
         cache-dependency-path: bindings/typescript/package-lock.json
-    # The npm package is an independent track (see the header comment above) —
-    # this only checks it (and everything else) stays >= the core it embeds,
-    # not that it equals the tag.
-    - name: Verify the cross-artifact version floor
-      run: zig build version-floor
+    # Every file carrying fig's one version agrees with build.zig.zon, and the
+    # tag names that version: a tag that does not would publish a package under
+    # a number the release did not cut.
+    - name: Verify every file carries the one version
+      run: zig build version-check
+    - name: Verify tag matches the version
+      if: github.ref_type == 'tag'
+      run: |
+        want=$(sed -n 's/^    \.version = "\([^"]*\)",$/\1/p' build.zig.zon)
+        tag="${GITHUB_REF_NAME#v}"
+        if [ "$want" != "$tag" ]; then
+          echo "::error::tag $GITHUB_REF_NAME ($tag) != build.zig.zon version ($want)"
+          exit 1
+        fi
+        echo "version $want matches tag $GITHUB_REF_NAME"
     - run: npm ci
       working-directory: bindings/typescript
     - run: npm run build

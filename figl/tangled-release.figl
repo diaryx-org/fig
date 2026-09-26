@@ -7,9 +7,8 @@ engine = microvm
 # repo owner's PDS whose blob is the file and whose `tag` field is the
 # annotated tag's object hash, so tangled shows it on that tag's page.
 #
-# Fires on the same `cli/v*.*.*` tag as the two GitHub workflows above — see
-# "Release tagging" in docs/VERSIONING.md for the whole per-artifact tag
-# scheme; this one ships CLI binaries, so it watches the CLI's own line. Every
+# Fires on the same `v*.*.*` tag as the two GitHub workflows above — one tag
+# releases every artifact (see "Release tagging" in docs/VERSIONING.md). Every
 # target is cross-compiled from this one x86_64 NixOS microVM: Zig's
 # self-contained cross-compilation needs no per-target runner, no Docker, no
 # QEMU.
@@ -28,7 +27,7 @@ image = nixos
 
 when[]
 > event = [push]
-> tag = [cli/v*.*.*]
+> tag = [v*.*.*]
 
 # `git` for the tag object, `curl`/`gnutar`/`xz` for the toolchain tarball and
 # the XRPC calls, `gzip`/`zip` to pack the binaries, `jq` to build the record

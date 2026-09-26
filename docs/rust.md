@@ -444,22 +444,32 @@ Common operations (identical on [`Editor`] and [`Embed`]):
 ```rust
 ed.insert_value(&[], "key", &value)?;                 // add a mapping entry
 ed.replace_value(path, &value)?;                      // change a value
-ed.replace_key(path, "new_key")?;                     // rename a key (a name, spelled as the format spells a key)
 ed.set_value(path, &value)?;                          // upsert (replace or insert)
-ed.delete(path)?;                                     // remove a mapping entry
 ed.append_value(&[Segment::Key("list")], &value)?;    // push onto a sequence
 ed.prepend_value(&[Segment::Key("list")], &value)?;
-ed.remove_item(&[Segment::Key("list")], 0)?;          // remove sequence item by index
+ed.rename_key(path, "new_key")?;                      // rename a key (a name, spelled as the format spells a key)
+ed.delete_key(path)?;                                 // remove a mapping entry
+ed.delete_item(&[Segment::Key("list")], 0)?;          // remove a sequence item by index
 ed.move_key(&["a".into()], &["b".into()])?;           // reorder mapping entries
 ed.reorder_keys(&[], &["title", "body"])?;            // named keys first, rest follow
 ed.move_item(&[Segment::Key("list")], 2, 0)?;         // reorder sequence items
 ed.reorder_items(&[Segment::Key("list")], &[2, 0])?;  // bring these indices to the front
-ed.set_sequence(&[Segment::Key("tags")], &tags)?;     // reconcile a list, keeping survivors' comments
+ed.set_sequence(&[Segment::Key("tags")], ["a", "b"])?; // reconcile a list, keeping survivors' comments
 ```
 
-`replace_value`, `insert_value` and `set_value` each have a `*_with` twin
-taking a [`SerializeOptions`], for when the spliced value's own rendering needs
-controlling (`replace_value_with`, `insert_value_with`, `set_value_with`).
+Every value edit has a `*_with` twin taking a [`SerializeOptions`], for when
+the spliced value's own rendering needs controlling: `replace_value_with`,
+`insert_value_with`, `set_value_with`, `append_value_with`,
+`prepend_value_with`. `set_sequence` takes anything iterable over
+`impl Into<Value>` — a `&[Value]`, a `Vec<String>`, an array of `&str`.
+
+The names follow one scheme, on [`Editor`] and [`Embed`] alike. Value edits
+are `<verb>_value`. Structural edits are `<verb>_<noun>`, the noun being what
+the path names — a `key`, an `item` (by index), or a `container` (below) — so
+`delete_key`/`delete_item`/`delete_container`, `move_key`/`move_item`/
+`move_container`, `reorder_keys`/`reorder_items`/`reorder_containers`, and
+`rename_key`/`rename_container`. Comments are named by their anchor, and each
+`delete_<anchor>_comment` removes exactly what the matching read returns.
 
 ### Whole containers
 
@@ -467,7 +477,7 @@ The operations above address a container the same way they address a scalar:
 by the one range of source it occupies. A TOML `[header]` table occupies no
 such range — its body is the lines after the header, and `[a.b]` further down
 the file extends it — and neither does an INI `[section]` or a `fig` block
-container. At a path naming one, `delete`, `replace_value`, `move_key` and
+container. At a path naming one, `delete_key`, `replace_value`, `move_key` and
 `reorder_keys` all answer `Error::InvalidArgument` rather than rewrite the
 header and leave the entries behind. These six are the route for those shapes:
 
@@ -476,7 +486,7 @@ ed.delete_container(&[Segment::Key("a")])?;                    // header + body,
 ed.insert_container(&[Segment::Key("c")], "z = 3\n")?;         // a new [c] with these entries
 ed.rename_container(&[Segment::Key("a")], "q")?;               // [a], [a.b] and [[a.c]] alike
 ed.move_container(&[Segment::Key("a")], None)?;                // None = to EOF; Some(&[]) = the root
-ed.reorder_containers(&["b", "a"])?;                           // top-level containers
+ed.reorder_containers(&["b", "a"])?;                           // top-level containers only, so no path
 ed.append_container_to_seq(&[Segment::Key("bin")], "name = \"b\"\n")?;  // a new [[bin]]
 ```
 
@@ -492,7 +502,7 @@ Support varies by format, and a format that lacks an operation answers
 | `insert_container`, `rename_container`, `append_container_to_seq` | ✓ | — | — | — |
 
 "Others" is not a gap: YAML, JSON and the rest nest a container in one
-contiguous region, so `delete` and `replace_value` already handle it — which is
+contiguous region, so `delete_key` and `replace_value` already handle it — which is
 why they succeed on a YAML block mapping where TOML's refuse.
 
 `set_sequence` has a narrower domain than the rest: it matches new items to old
@@ -512,8 +522,12 @@ ed.set_trailing_comment(&["port".into()], "default 8080")?;      // same-line co
 ed.leading_comment(&["port".into()])?;   // read it back (Some("") = bare marker, None = none)
 ed.trailing_comment(&["port".into()])?;  // same convention
 ed.delete_trailing_comment(&["port".into()])?;
-ed.delete_leading_comments(&["port".into()])?;   // drops the whole owned block
+ed.delete_leading_comment(&["port".into()])?;    // drops the whole owned block, as read
 ```
+
+The write verb says what the anchor holds: the leading block is a run of
+lines, so `add_leading_comment` appends one to it; the trailing comment is a
+single line, so `set_trailing_comment` replaces it.
 
 The comment marker (`#`, `//`) is chosen for the format; strict `Json` has no
 comments and returns [`Error::UnsupportedFormat`] if you try.
@@ -525,7 +539,7 @@ addressed by the container's own path (an empty path = the document root):
 ```rust
 ed.add_dangling_comment(&["server".into()], "was: here")?; // at the body's child depth
 ed.dangling_comment(&["server".into()])?;   // Some("") = bare marker, None = none
-ed.delete_dangling_comments(&[])?;          // the run at the end of the document
+ed.delete_dangling_comment(&[])?;           // the run at the end of the document
 ```
 
 A scalar has no body to end, and neither has a flow container written on one
@@ -556,22 +570,20 @@ call returns [`Error::Parse`] or [`Error::UnsupportedOperation`] with the
 document byte-for-byte as it was.
 
 Everything above uses the `*_value` methods, which take `impl Into<Value>` and
-need no serde — they are the full API, not a subset. **With the `serde` feature**,
-each gains a twin that takes any `T: Serialize` instead: `replace`, `insert`,
-`set`, `append`, `prepend`. These add no capability — anything they do, `*_value`
-does too (scalars go in directly; the `derive` feature's `to_value()` bridges a
-typed struct into a `Value`):
+need no serde. Scalars, strings and bools pass straight through; a typed
+struct goes in as a `Value`, through the `derive` feature's `to_value()` or,
+**with the `serde` feature**, through `fig::to_value(&x)?`:
 
 ```rust
-// serde feature: pass any Serialize value
-ed.set(&["debug".into()], &true)?;
-ed.append(&["tags".into()], &"published")?;
-
-// no serde: scalars/strings/bools pass straight through (impl Into<Value>)
 ed.set_value(&["debug".into()], true)?;
 ed.append_value(&["tags".into()], "published")?;
-ed.set_value(&["server".into()], server.to_value())?; // server: #[derive(ToValue)]
+ed.set_value(&["server".into()], server.to_value())?;         // server: #[derive(ToValue)]
+ed.set_value(&["server".into()], fig::to_value(&server)?)?;   // server: #[derive(Serialize)]
 ```
+
+The serde-typed twins 4.x carried (`replace`, `insert`, `set`, `append`,
+`prepend`, each taking `&T: Serialize`) are gone in 5.0: they added no
+capability, and `fig::to_value` is the whole of what they did.
 
 ## Markdown frontmatter & embeds
 
@@ -620,7 +632,7 @@ println!("{}", fm.render()?);
   and re-encodes span-aware on `render`, so an edit preserves every untouched
   byte's original encoding and canonically encodes only what changed.
 - `Embed::open_or_init(host, kind)` creates the block if none exists, so the
-  first `set` lands cleanly. A block that goes at the top is refused
+  first `set_value` lands cleanly. A block that goes at the top is refused
   ([`Error::UnsupportedOperation`]) when the host already opens with
   frontmatter of another archetype, rather than pushing it off the first line;
   `retype` changes a region's archetype.

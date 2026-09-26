@@ -1,4 +1,4 @@
-//! Comment-preserving, in-place editing of a YAML/JSON document.
+//! Comment-preserving, in-place editing of a document in any editable format.
 //!
 //! Unlike [`crate::Value::serialize`], which reserializes a whole value,
 //! [`Editor`] splices only the bytes of the node you change — comments, key
@@ -7,9 +7,31 @@
 //! then spliced in; the Zig editor re-frames indentation and flow/block context
 //! at the site.
 //!
-//! The value-taking methods come in two forms: [`Editor::replace_value`] &c.
-//! take a [`Value`] directly and are always available; the `serde`-gated
-//! [`Editor::replace`] &c. accept any `Serialize` type for convenience.
+//! # Naming
+//!
+//! [`Editor`] and [`Embed`](crate::Embed) carry the same edit methods under the
+//! same names, which follow one scheme. The `*_container` ops are the one
+//! exception, and are `Editor`'s alone: the C ABI has no embed form of them.
+//!
+//! * **Value edits** are `<verb>_value` — `replace_value`, `insert_value`,
+//!   `set_value`, `append_value`, `prepend_value` — each taking any
+//!   `impl Into<Value>`, and each with a `<verb>_value_with` twin taking a
+//!   [`SerializeOptions`] for the spliced value's own rendering. A typed
+//!   struct goes in through `to_value()` (the `derive` feature) or
+//!   `fig::to_value(&x)?` (the `serde` feature).
+//! * **Structural edits** are `<verb>_<noun>`, where the noun is what the path
+//!   names: a `key` (a mapping entry), an `item` (a sequence element, by
+//!   index), or a `container` (a scattered TOML/INI/fig section). The verbs
+//!   are `delete`, `move`, `reorder` and `rename`: `delete_key`,
+//!   `delete_item`, `delete_container`; `move_key`, `move_item`,
+//!   `move_container`; `reorder_keys`, `reorder_items`, `reorder_containers`;
+//!   `rename_key`, `rename_container`.
+//! * **Comments** are named by their anchor — `leading`, `trailing`,
+//!   `dangling` — and a read (`leading_comment`) returns the whole comment at
+//!   that anchor, which `delete_<anchor>_comment` removes. The write verb says
+//!   what the anchor holds: `add_` for the two that hold a run of lines
+//!   (`add_leading_comment`, `add_dangling_comment` append to it), `set_` for
+//!   the one that holds a single line (`set_trailing_comment` replaces it).
 
 use std::ptr::NonNull;
 
@@ -118,10 +140,16 @@ impl Editor {
 
     /// Rename the key at `path` to `key`, a name the format spells as it
     /// spells a key (`.k` in ZON, `"k"` in JSON, `<key>k</key>` in plist).
-    pub fn replace_key(&mut self, path: &[Segment], key: &str) -> Result<(), Error> {
+    pub fn rename_key(&mut self, path: &[Segment], key: &str) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe {
-            ffi::fig_editor_replace_named_key(self.ptr(), p.as_ptr(), p.len(), key.as_ptr(), key.len())
+            ffi::fig_editor_replace_named_key(
+                self.ptr(),
+                p.as_ptr(),
+                p.len(),
+                key.as_ptr(),
+                key.len(),
+            )
         };
         Error::from_status(status)
     }
@@ -262,6 +290,22 @@ impl Editor {
     /// Append `value` (any `impl Into<Value>`) to the sequence at `path`.
     pub fn append_value(&mut self, path: &[Segment], value: impl Into<Value>) -> Result<(), Error> {
         let val = value_text(&value.into(), self.format)?;
+        self.append_text(path, &val)
+    }
+
+    /// Append `value` to the sequence at `path`, rendering it with `options`.
+    /// The width-aware twin of [`append_value`](Self::append_value).
+    pub fn append_value_with(
+        &mut self,
+        path: &[Segment],
+        value: impl Into<Value>,
+        options: SerializeOptions,
+    ) -> Result<(), Error> {
+        let val = value_text_with(&value.into(), self.format, options)?;
+        self.append_text(path, &val)
+    }
+
+    fn append_text(&mut self, path: &[Segment], val: &str) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe {
             ffi::fig_editor_append_seq(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
@@ -276,65 +320,27 @@ impl Editor {
         value: impl Into<Value>,
     ) -> Result<(), Error> {
         let val = value_text(&value.into(), self.format)?;
+        self.prepend_text(path, &val)
+    }
+
+    /// Prepend `value` to the sequence at `path`, rendering it with `options`.
+    /// The width-aware twin of [`prepend_value`](Self::prepend_value).
+    pub fn prepend_value_with(
+        &mut self,
+        path: &[Segment],
+        value: impl Into<Value>,
+        options: SerializeOptions,
+    ) -> Result<(), Error> {
+        let val = value_text_with(&value.into(), self.format, options)?;
+        self.prepend_text(path, &val)
+    }
+
+    fn prepend_text(&mut self, path: &[Segment], val: &str) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe {
             ffi::fig_editor_prepend_seq(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
         };
         Error::from_status(status)
-    }
-
-    // ── value edits (serde convenience) ─────────────────────────────────────
-
-    /// Replace the value at `path` with the serialized form of `value`.
-    #[cfg(feature = "serde")]
-    pub fn replace<T: serde::Serialize + ?Sized>(
-        &mut self,
-        path: &[Segment],
-        value: &T,
-    ) -> Result<(), Error> {
-        self.replace_value(path, crate::ser::to_value(value)?)
-    }
-
-    /// Insert `key: value` into the mapping at `path` (empty path = root).
-    #[cfg(feature = "serde")]
-    pub fn insert<T: serde::Serialize + ?Sized>(
-        &mut self,
-        path: &[Segment],
-        key: &str,
-        value: &T,
-    ) -> Result<(), Error> {
-        self.insert_value(path, key, crate::ser::to_value(value)?)
-    }
-
-    /// Upsert: replace the value at `path`, or insert it when only the trailing
-    /// key is absent (see [`set_value`](Self::set_value)).
-    #[cfg(feature = "serde")]
-    pub fn set<T: serde::Serialize + ?Sized>(
-        &mut self,
-        path: &[Segment],
-        value: &T,
-    ) -> Result<(), Error> {
-        self.set_value(path, crate::ser::to_value(value)?)
-    }
-
-    /// Append the serialized form of `value` to the sequence at `path`.
-    #[cfg(feature = "serde")]
-    pub fn append<T: serde::Serialize + ?Sized>(
-        &mut self,
-        path: &[Segment],
-        value: &T,
-    ) -> Result<(), Error> {
-        self.append_value(path, crate::ser::to_value(value)?)
-    }
-
-    /// Prepend the serialized form of `value` to the sequence at `path`.
-    #[cfg(feature = "serde")]
-    pub fn prepend<T: serde::Serialize + ?Sized>(
-        &mut self,
-        path: &[Segment],
-        value: &T,
-    ) -> Result<(), Error> {
-        self.prepend_value(path, crate::ser::to_value(value)?)
     }
 
     // ── comment editing ─────────────────────────────────────────────────────
@@ -383,10 +389,12 @@ impl Editor {
         Error::from_status(status)
     }
 
-    /// Remove the own-line comment block immediately above the node at `path`.
-    /// A no-op (still `Ok`) when there is none — including an element or entry
-    /// of a one-line flow collection, whose block above is its parent's.
-    pub fn delete_leading_comments(&mut self, path: &[Segment]) -> Result<(), Error> {
+    /// Remove the own-line comment block immediately above the node at `path`
+    /// — every line of it, which is what [`leading_comment`](Self::leading_comment)
+    /// reads. A no-op (still `Ok`) when there is none — including an element
+    /// or entry of a one-line flow collection, whose block above is its
+    /// parent's.
+    pub fn delete_leading_comment(&mut self, path: &[Segment]) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status =
             unsafe { ffi::fig_editor_delete_leading_comments(self.ptr(), p.as_ptr(), p.len()) };
@@ -485,8 +493,9 @@ impl Editor {
     }
 
     /// Remove the whole dangling run at the end of the container at `path`'s
-    /// body. A no-op (still `Ok`) when there is none.
-    pub fn delete_dangling_comments(&mut self, path: &[Segment]) -> Result<(), Error> {
+    /// body — what [`dangling_comment`](Self::dangling_comment) reads. A no-op
+    /// (still `Ok`) when there is none.
+    pub fn delete_dangling_comment(&mut self, path: &[Segment]) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status =
             unsafe { ffi::fig_editor_delete_dangling_comments(self.ptr(), p.as_ptr(), p.len()) };
@@ -590,14 +599,14 @@ impl Editor {
     // ── structural edits (no value) ─────────────────────────────────────────
 
     /// Delete the mapping entry named by `path`.
-    pub fn delete(&mut self, path: &[Segment]) -> Result<(), Error> {
+    pub fn delete_key(&mut self, path: &[Segment]) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe { ffi::fig_editor_delete_key(self.ptr(), p.as_ptr(), p.len()) };
         Error::from_status(status)
     }
 
-    /// Remove the item at `index` from the sequence at `path`.
-    pub fn remove_item(&mut self, path: &[Segment], index: usize) -> Result<(), Error> {
+    /// Delete the item at `index` from the sequence at `path`.
+    pub fn delete_item(&mut self, path: &[Segment], index: usize) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status =
             unsafe { ffi::fig_editor_remove_seq_item(self.ptr(), p.as_ptr(), p.len(), index) };
@@ -669,14 +678,21 @@ impl Editor {
     /// genuinely dropped values are deleted. The result order matches `items`.
     /// This is the comment-preserving alternative to replacing the whole list.
     ///
+    /// `items` is anything iterable over `impl Into<Value>` — a `&[Value]`, a
+    /// `Vec<&str>`, an array of scalars.
+    ///
     /// Declines with [`Error::InvalidArgument`] (the caller should fall back to
     /// replacing the whole value) when the shape can't be safely diffed: an
     /// empty `items`, an empty current list, a non-scalar item on either side, a
     /// non-sequence target, or a format whose scalars can't stand alone (TOML).
-    pub fn set_sequence(&mut self, path: &[Segment], items: &[Value]) -> Result<(), Error> {
+    pub fn set_sequence<I>(&mut self, path: &[Segment], items: I) -> Result<(), Error>
+    where
+        I: IntoIterator,
+        I::Item: Into<Value>,
+    {
         let texts: Vec<String> = items
-            .iter()
-            .map(|v| value_text(v, self.format))
+            .into_iter()
+            .map(|v| value_text(&v.into(), self.format))
             .collect::<Result<_, _>>()?;
         let strs = to_ffi_keys(&texts);
         let p = to_ffi_path(path);
@@ -772,6 +788,10 @@ impl Editor {
     /// Reorder top-level containers so those named in `order` come first, in
     /// that order, each re-emitted contiguously at the position the earliest of
     /// them currently occupies. Containers not named keep their places.
+    ///
+    /// Unlike [`reorder_keys`](Self::reorder_keys) this takes no path: the
+    /// core reorders the document's top-level containers only, and a path that
+    /// could only ever be empty would be a parameter that means nothing.
     pub fn reorder_containers<S: AsRef<str>>(&mut self, order: &[S]) -> Result<(), Error> {
         let o = to_ffi_keys(order);
         let status = unsafe { ffi::fig_editor_reorder_containers(self.ptr(), o.as_ptr(), o.len()) };

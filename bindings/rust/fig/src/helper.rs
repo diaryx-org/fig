@@ -62,9 +62,8 @@ use std::io::{BufRead, Write};
 use crate::language::{
     ClosedContainers, CommentDelimiter, CommentForm, CommentRow, CommentSlot, CommentStyle,
     Comments, Description, Dialect, DirectiveRow, KeyStyle, Language, LanguageError, Literal,
-    MentionKind,
-    MentionRow, NativeKinds, NodeKind, NodeRow, NodeTable, PrintOptions, RegionRow, RenderArgs,
-    Renderer, Renderers, SectionHeader, SectionNoun, Splice, Syntax,
+    MentionKind, MentionRow, NativeKinds, NodeKind, NodeRow, NodeTable, PrintOptions, RegionRow,
+    RenderArgs, Renderer, Renderers, SectionHeader, SectionNoun, Splice, Syntax,
 };
 use crate::{Capabilities, Document, ExtKind, Format, SerializeOptions, Span, Value};
 

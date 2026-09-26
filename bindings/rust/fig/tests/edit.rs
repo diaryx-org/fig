@@ -1,8 +1,8 @@
 //! Comment-preserving write-path tests: edits must change only the targeted
 //! node's bytes and leave comments, key order, fences, and the markdown body
-//! intact. These use the serde-sugar edit methods (`set`/`replace`/…) and
-//! `from_str`, so the file is serde-gated; the serde-free `*_value` editing path
-//! is covered by the in-crate unit tests in `src/`. Run with
+//! intact. The edits are the `*_value` methods, which need no serde; the file
+//! is serde-gated because it reads results back with `from_str` and builds a
+//! typed struct's value with `fig::to_value`. Run with
 //! `cargo test -p fig --features serde`.
 #![cfg(feature = "serde")]
 
@@ -11,7 +11,7 @@ use fig::{Editor, Embed, EmbedType, Format, Segment};
 #[test]
 fn editor_insert_appends_after_last_entry() {
     let mut ed = Editor::open(b"a: 1\nb: 2\n", Format::Yaml).unwrap();
-    ed.insert(&[], "c", &3).unwrap();
+    ed.insert_value(&[], "c", 3).unwrap();
     assert_eq!(ed.source().unwrap(), "a: 1\nb: 2\nc: 3\n");
 }
 
@@ -19,9 +19,9 @@ fn editor_insert_appends_after_last_entry() {
 fn editor_set_replaces_or_inserts() {
     let mut ed = Editor::open(b"a: 1\nb: 2\n", Format::Yaml).unwrap();
     // Existing key → replace in place.
-    ed.set(&[Segment::Key("a")], &9).unwrap();
+    ed.set_value(&[Segment::Key("a")], 9).unwrap();
     // Absent key → insert at the end.
-    ed.set(&[Segment::Key("c")], &3).unwrap();
+    ed.set_value(&[Segment::Key("c")], 3).unwrap();
     assert_eq!(ed.source().unwrap(), "a: 9\nb: 2\nc: 3\n");
 }
 
@@ -30,7 +30,7 @@ fn embed_open_or_init_creates_block_then_sets_first_key() {
     // No frontmatter: open_or_init synthesizes an empty block; set lands the key.
     let mut fm =
         Embed::open_or_init(b"# Just a body\n\nprose\n", EmbedType::FrontmatterYaml).unwrap();
-    fm.set(&[Segment::Key("title")], "Hi").unwrap();
+    fm.set_value(&[Segment::Key("title")], "Hi").unwrap();
     assert_eq!(
         fm.render().unwrap(),
         "---\ntitle: Hi\n---\n# Just a body\n\nprose\n"
@@ -45,7 +45,7 @@ fn embed_open_or_init_opens_existing_region_unchanged() {
         EmbedType::FrontmatterYaml,
     )
     .unwrap();
-    fm.set(&[Segment::Key("title")], "New").unwrap();
+    fm.set_value(&[Segment::Key("title")], "New").unwrap();
     assert_eq!(fm.render().unwrap(), "---\ntitle: New # c\n---\nbody\n");
 }
 
@@ -54,8 +54,8 @@ fn frontmatter_set_upserts_preserving_comments_and_body() {
     const NOTE: &str = "---\ntitle: Hi # greeting\ntags:\n- x\n---\nbody\n";
     let mut fm = Embed::open(NOTE.as_bytes(), EmbedType::FrontmatterYaml).unwrap();
     // Replace an existing scalar (comment on the line survives) and insert a new key.
-    fm.set(&[Segment::Key("title")], "Yo").unwrap();
-    fm.set(&[Segment::Key("author")], "me").unwrap();
+    fm.set_value(&[Segment::Key("title")], "Yo").unwrap();
+    fm.set_value(&[Segment::Key("author")], "me").unwrap();
     assert_eq!(
         fm.render().unwrap(),
         "---\ntitle: Yo # greeting\ntags:\n- x\nauthor: me\n---\nbody\n",
@@ -65,7 +65,10 @@ fn frontmatter_set_upserts_preserving_comments_and_body() {
 #[test]
 fn editor_replace_quotes_when_needed() {
     let mut ed = Editor::open(b"title: Hello\n", Format::Yaml).unwrap();
-    ed.replace(&[Segment::Key("title")], &"has: colon").unwrap();
+    // A `Serialize` value goes in through `fig::to_value`, which is what the
+    // removed serde-sugar methods did for you.
+    ed.replace_value(&[Segment::Key("title")], fig::to_value("has: colon").unwrap())
+        .unwrap();
     // Reads back as the same logical value.
     let value: std::collections::BTreeMap<String, String> =
         fig::from_str(ed.source().unwrap()).unwrap();
@@ -75,7 +78,7 @@ fn editor_replace_quotes_when_needed() {
 #[test]
 fn editor_delete_keeps_owned_comment_with_key() {
     let mut ed = Editor::open(b"a: 1\n# note for b\nb: 2\nc: 3\n", Format::Yaml).unwrap();
-    ed.delete(&[Segment::Key("b")]).unwrap();
+    ed.delete_key(&[Segment::Key("b")]).unwrap();
     assert_eq!(ed.source().unwrap(), "a: 1\nc: 3\n");
 }
 
@@ -140,7 +143,7 @@ fn editor_flow_item_owns_no_comment_of_its_parents() {
     );
 
     let mut ed = Editor::open(src.as_bytes(), Format::Toml).unwrap();
-    ed.delete_leading_comments(&item0).unwrap();
+    ed.delete_leading_comment(&item0).unwrap();
     assert_eq!(ed.source().unwrap(), src);
 
     // Adding one is refused rather than landing on the parent's line.
@@ -194,7 +197,7 @@ fn editor_dangling_comment_round_trips() {
         Some("was: here")
     );
 
-    ed.delete_dangling_comments(&[Segment::Key("server")])
+    ed.delete_dangling_comment(&[Segment::Key("server")])
         .unwrap();
     assert_eq!(ed.source().unwrap(), "server:\n  port: 8080\nclient: 1\n");
 }
@@ -246,11 +249,30 @@ fn editor_uncomment_refuses_lines_that_are_not_an_entry() {
 }
 
 #[test]
+fn append_and_prepend_take_serialize_options_like_the_other_value_edits() {
+    use fig::{SerializeOptions, Value};
+    let item = Value::Map(vec![("k".into(), "v".into())]);
+    let mut ed = Editor::open(b"items:\n- a\n", Format::Yaml).unwrap();
+    ed.append_value_with(&[Segment::Key("items")], &item, SerializeOptions::default())
+        .unwrap();
+    ed.prepend_value_with(&[Segment::Key("items")], "z", SerializeOptions::default())
+        .unwrap();
+    assert_eq!(ed.source().unwrap(), "items:\n- z\n- a\n- k: v\n");
+
+    let mut fm = Embed::open(b"---\nitems:\n- a\n---\n", EmbedType::FrontmatterYaml).unwrap();
+    fm.append_value_with(&[Segment::Key("items")], "b", SerializeOptions::default())
+        .unwrap();
+    fm.prepend_value_with(&[Segment::Key("items")], "z", SerializeOptions::default())
+        .unwrap();
+    assert_eq!(fm.render().unwrap(), "---\nitems:\n- z\n- a\n- b\n---\n");
+}
+
+#[test]
 fn editor_sequence_ops() {
     let mut ed = Editor::open(b"items:\n- a\n- b\n", Format::Yaml).unwrap();
-    ed.append(&[Segment::Key("items")], &"c").unwrap();
-    ed.prepend(&[Segment::Key("items")], &"z").unwrap();
-    ed.remove_item(&[Segment::Key("items")], 2).unwrap();
+    ed.append_value(&[Segment::Key("items")], "c").unwrap();
+    ed.prepend_value(&[Segment::Key("items")], "z").unwrap();
+    ed.delete_item(&[Segment::Key("items")], 2).unwrap();
     // z, a, c  (original b at index 2 after prepend was removed)
     assert_eq!(ed.source().unwrap(), "items:\n- z\n- a\n- c\n");
 }
@@ -279,7 +301,9 @@ fn editor_set_sequence_reconciles_preserving_comments() {
 #[test]
 fn editor_set_sequence_declines_empty_target() {
     let mut ed = Editor::open(b"tags:\n- a\n- b\n", Format::Yaml).unwrap();
-    let err = ed.set_sequence(&[Segment::Key("tags")], &[]).unwrap_err();
+    let err = ed
+        .set_sequence(&[Segment::Key("tags")], Vec::<fig::Value>::new())
+        .unwrap_err();
     assert!(matches!(err, fig::Error::InvalidArgument));
     // Document untouched on a declined reconcile.
     assert_eq!(ed.source().unwrap(), "tags:\n- a\n- b\n");
@@ -287,7 +311,6 @@ fn editor_set_sequence_declines_empty_target() {
 
 #[test]
 fn frontmatter_set_sequence_preserves_item_comments_and_body() {
-    use fig::Value;
     const DOC: &str = "\
 ---
 title: Hello
@@ -301,12 +324,9 @@ tags:
 prose goes here
 ";
     let mut fm = Embed::open(DOC.as_bytes(), EmbedType::FrontmatterYaml).unwrap();
-    let target = [
-        Value::Str("c".into()),
-        Value::Str("a".into()),
-        Value::Str("d".into()),
-    ];
-    fm.set_sequence(&[Segment::Key("tags")], &target).unwrap();
+    // Any `impl Into<Value>` items: here plain `&str`s.
+    fm.set_sequence(&[Segment::Key("tags")], ["c", "a", "d"])
+        .unwrap();
     let expected = "\
 ---
 title: Hello
@@ -338,9 +358,9 @@ prose goes here
 #[test]
 fn frontmatter_preserves_comments_fences_and_body() {
     let mut fm = Embed::open(NOTE.as_bytes(), EmbedType::FrontmatterYaml).unwrap();
-    fm.replace(&[Segment::Key("title")], &"Hi there").unwrap();
-    fm.append(&[Segment::Key("tags")], &"c").unwrap();
-    fm.insert(&[], "author", &"me").unwrap();
+    fm.replace_value(&[Segment::Key("title")], "Hi there").unwrap();
+    fm.append_value(&[Segment::Key("tags")], "c").unwrap();
+    fm.insert_value(&[], "author", "me").unwrap();
 
     let expected = "\
 ---
@@ -362,7 +382,7 @@ prose goes here
 #[test]
 fn frontmatter_edit_touches_only_target_bytes() {
     let mut fm = Embed::open(NOTE.as_bytes(), EmbedType::FrontmatterYaml).unwrap();
-    fm.replace(&[Segment::Key("title")], &"Hello world")
+    fm.replace_value(&[Segment::Key("title")], "Hello world")
         .unwrap();
     let rendered = fm.render().unwrap();
     // Everything except the title line is byte-identical to the original.
@@ -633,7 +653,7 @@ fn frontmatter_replace_body_keeps_frontmatter_byte_identical() {
 #[test]
 fn frontmatter_replace_body_composes_with_edits() {
     let mut fm = Embed::open(NOTE.as_bytes(), EmbedType::FrontmatterYaml).unwrap();
-    fm.replace(&[Segment::Key("title")], &"Hi there").unwrap();
+    fm.replace_value(&[Segment::Key("title")], "Hi there").unwrap();
     fm.replace_body("# New Body\n").unwrap();
     let rendered = fm.render().unwrap();
     let (new_fm, new_body) = fig::split(rendered, EmbedType::FrontmatterYaml).unwrap();
@@ -651,7 +671,7 @@ fn frontmatter_open_without_frontmatter_is_not_found() {
 #[test]
 fn frontmatter_delete_then_read_back() {
     let mut fm = Embed::open(NOTE.as_bytes(), EmbedType::FrontmatterYaml).unwrap();
-    fm.delete(&[Segment::Key("title")]).unwrap();
+    fm.delete_key(&[Segment::Key("title")]).unwrap();
     let rendered = fm.render().unwrap().to_string();
     assert!(!rendered.contains("title:"));
     assert!(rendered.contains("# keep this comment"));
@@ -680,7 +700,7 @@ fn json5_editor_replaces_value_preserving_comments_and_unquoted_keys() {
     // and the trailing comma all stay byte-identical.
     let src = "{\n  // server config\n  host: 'localhost',\n  port: 8080, // default\n}\n";
     let mut ed = Editor::open(src.as_bytes(), Format::Json5).unwrap();
-    ed.replace(&[Segment::Key("port")], &9090).unwrap();
+    ed.replace_value(&[Segment::Key("port")], 9090).unwrap();
     assert_eq!(
         ed.source().unwrap(),
         "{\n  // server config\n  host: 'localhost',\n  port: 9090, // default\n}\n",
@@ -691,7 +711,7 @@ fn json5_editor_replaces_value_preserving_comments_and_unquoted_keys() {
 fn json5_editor_delete_keeps_owned_line_comment_with_key() {
     let src = "{\n  host: 'localhost',\n  // the listening port\n  port: 8080,\n}\n";
     let mut ed = Editor::open(src.as_bytes(), Format::Json5).unwrap();
-    ed.delete(&[Segment::Key("port")]).unwrap();
+    ed.delete_key(&[Segment::Key("port")]).unwrap();
     assert_eq!(ed.source().unwrap(), "{\n  host: 'localhost',\n}\n");
 }
 
@@ -702,9 +722,9 @@ fn toml_editor_renders_value_splice_as_toml_not_yaml() {
     // path emitted a bare `b`, which is not a valid TOML value and failed the
     // reparse. Integers are format-invariant, so `port` exercises the plain path.
     let mut ed = Editor::open(b"[server]\nhost = \"a\"\nport = 1\n", Format::Toml).unwrap();
-    ed.replace(&[Segment::Key("server"), Segment::Key("host")], "b")
+    ed.replace_value(&[Segment::Key("server"), Segment::Key("host")], "b")
         .unwrap();
-    ed.replace(&[Segment::Key("server"), Segment::Key("port")], &9090)
+    ed.replace_value(&[Segment::Key("server"), Segment::Key("port")], 9090)
         .unwrap();
     assert_eq!(
         ed.source().unwrap(),
@@ -725,7 +745,7 @@ fn json_frontmatter_edits_in_json() {
     // The same selector opens `;;;` JSON frontmatter; values serialize as JSON.
     let md = ";;;\n{\"title\": \"Hi\", \"draft\": true}\n;;;\n# Body\n";
     let mut em = fig::Embed::open(md.as_bytes(), fig::EmbedType::FrontmatterJson).unwrap();
-    em.replace(&[Segment::Key("title")], &"Hello").unwrap();
+    em.replace_value(&[Segment::Key("title")], "Hello").unwrap();
     assert_eq!(
         em.render().unwrap(),
         ";;;\n{\"title\": \"Hello\", \"draft\": true}\n;;;\n# Body\n",
@@ -736,7 +756,7 @@ fn json_frontmatter_edits_in_json() {
 #[cfg(feature = "fig")]
 fn fig_dialect_editor_edits_in_place() {
     let mut ed = Editor::open(b"title = old\nport = 8080\n", Format::Fig).unwrap();
-    ed.replace(&[Segment::Key("port")], &9090).unwrap();
+    ed.replace_value(&[Segment::Key("port")], 9090).unwrap();
     assert_eq!(ed.source().unwrap(), "title = old\nport = 9090\n");
 }
 
@@ -746,7 +766,7 @@ fn fig_dialect_frontmatter_embed_round_trips() {
     // ```fig fenced frontmatter, in the native fig authoring dialect.
     let md = "```fig\ntitle = Hi\n```\nbody\n";
     let mut fm = Embed::open(md.as_bytes(), EmbedType::FrontmatterFig).unwrap();
-    fm.set(&[Segment::Key("title")], "Yo").unwrap();
+    fm.set_value(&[Segment::Key("title")], "Yo").unwrap();
     assert_eq!(fm.render().unwrap(), "```fig\ntitle = Yo\n```\nbody\n");
 }
 
@@ -896,7 +916,7 @@ fn toml_container_ops_reach_a_table_the_key_ops_refuse() {
     // delete: the key op refuses, the container op takes the body with it.
     let mut ed = Editor::open(src, Format::Toml).unwrap();
     assert!(matches!(
-        ed.delete(&[Segment::Key("a")]),
+        ed.delete_key(&[Segment::Key("a")]),
         Err(fig::Error::InvalidArgument)
     ));
     ed.delete_container(&[Segment::Key("a")]).unwrap();
@@ -968,7 +988,7 @@ fn container_ops_are_unsupported_where_the_key_ops_already_suffice() {
         ed.delete_container(&[Segment::Key("a")]),
         Err(fig::Error::UnsupportedFormat)
     ));
-    ed.delete(&[Segment::Key("a")]).unwrap();
+    ed.delete_key(&[Segment::Key("a")]).unwrap();
     assert_eq!(ed.source().unwrap(), "b:\n  y: 2\n");
 }
 
@@ -978,23 +998,23 @@ fn editor_insert_takes_the_keys_name_and_spells_it_as_the_format_does() {
     // a string value is not a key at all, is off in the default feature
     // set; the runtime twins hold it to `.name` there.)
     let mut json = Editor::open(b"{\"a\": 1}", Format::Json).unwrap();
-    json.insert(&[], "k\"q", &2).unwrap();
+    json.insert_value(&[], "k\"q", 2).unwrap();
     assert_eq!(json.source().unwrap(), "{\"a\": 1, \"k\\\"q\": 2}");
     let mut toml = Editor::open(b"a = 1\n", Format::Toml).unwrap();
-    toml.insert(&[], "has space", &2).unwrap();
+    toml.insert_value(&[], "has space", 2).unwrap();
     assert_eq!(toml.source().unwrap(), "a = 1\n\"has space\" = 2\n");
 }
 
 #[test]
 fn editor_replace_key_takes_the_keys_name_and_spells_it_as_the_format_does() {
     let mut json = Editor::open(b"{\"a\": 1}", Format::Json).unwrap();
-    json.replace_key(&[Segment::Key("a")], "k\"q").unwrap();
+    json.rename_key(&[Segment::Key("a")], "k\"q").unwrap();
     assert_eq!(json.source().unwrap(), "{\"k\\\"q\": 1}");
     let mut toml = Editor::open(b"a = 1\n", Format::Toml).unwrap();
-    toml.replace_key(&[Segment::Key("a")], "has space").unwrap();
+    toml.rename_key(&[Segment::Key("a")], "has space").unwrap();
     assert_eq!(toml.source().unwrap(), "\"has space\" = 1\n");
     let mut nt = Editor::open(b"a: 1\n", Format::Nestedtext).unwrap();
-    nt.replace_key(&[Segment::Key("a")], "k").unwrap();
+    nt.rename_key(&[Segment::Key("a")], "k").unwrap();
     assert_eq!(nt.source().unwrap(), "k: 1\n");
 }
 
@@ -1002,7 +1022,7 @@ fn editor_replace_key_takes_the_keys_name_and_spells_it_as_the_format_does() {
 #[test]
 fn editor_replace_key_spells_a_zon_field() {
     let mut ed = Editor::open(b".{ .a = 1 }", Format::Zon).unwrap();
-    ed.replace_key(&[Segment::Key("a")], "k").unwrap();
+    ed.rename_key(&[Segment::Key("a")], "k").unwrap();
     assert_eq!(ed.source().unwrap(), ".{ .k = 1 }");
 }
 
@@ -1016,7 +1036,7 @@ fn editor_plist_keys_are_names_on_insert_and_replace() {
         ed.source().unwrap(),
         "<dict>\n  <key>a</key>\n  <string>x</string>\n  <key>n</key>\n  <integer>42</integer>\n</dict>\n"
     );
-    ed.replace_key(&[Segment::Key("a")], "b&c").unwrap();
+    ed.rename_key(&[Segment::Key("a")], "b&c").unwrap();
     assert_eq!(
         ed.source().unwrap(),
         "<dict>\n  <key>b&amp;c</key>\n  <string>x</string>\n  <key>n</key>\n  <integer>42</integer>\n</dict>\n"

@@ -756,7 +756,7 @@ mod tests {
             .unwrap();
         assert_eq!(ed.source().unwrap(), "a: 1\n# why\nb: 2 # two\n");
         ed.delete_trailing_comment(&[Segment::Key("b")]).unwrap();
-        ed.delete_leading_comments(&[Segment::Key("b")]).unwrap();
+        ed.delete_leading_comment(&[Segment::Key("b")]).unwrap();
         assert_eq!(ed.source().unwrap(), "a: 1\nb: 2\n");
     }
 

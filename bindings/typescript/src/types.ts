@@ -159,8 +159,8 @@ export const WarningCause = {
 export type WarningCause = (typeof WarningCause)[keyof typeof WarningCause] | (number & {});
 
 /** One lossy event reported by `Document.diagnose` / value `diagnose`. `code`
- *  and `cause` carry the raw ABI value; a value not listed in the enums above is
- *  a forward-compatible addition from a newer core (compare numerically). */
+ *  and `cause` carry the raw ABI value; one with no name above follows the
+ *  unknown-values rule at the top of this file. */
 export interface Warning {
   code: WarningCode;
   cause: WarningCause;
@@ -168,95 +168,6 @@ export interface Warning {
   path: string;
   /** Degraded-to type for {@link WarningCode.TypeDegraded}, else empty. */
   note: string;
-}
-
-/** An embedded region within a host file (e.g. markdown frontmatter). */
-/** The container half of an embed selector — what the C ABI (ABI 2) takes
- *  beside a {@link Format}. The four parametric containers hold any format with
- *  an embedded spelling; the three presets pin their own format. {@link EmbedType}
- *  names each (container, format) pair once, and is what the API takes; this
- *  enum is exported so a caller can decompose one (`embedParts`). */
-export const EmbedContainer = {
-  MdFrontmatter: 0, // ---<lang> (bare --- is YAML)
-  Fenced: 1, //        ```<lang>
-  HtmlScript: 2, //    <script type="application/<lang>">
-  HtmlCode: 3, //      <pre><code class="language-<lang>"> (entity-encoded)
-  SemicolonsJson: 4, // ;;; preset, JSON
-  PlusToml: 5, //      +++ preset, TOML
-  EndmatterYaml: 6, // ```endmatter preset, YAML
-} as const;
-export type EmbedContainer = (typeof EmbedContainer)[keyof typeof EmbedContainer];
-
-/** One name per embed archetype: a (container, inner format) pair. The values
- *  are this binding's own (they were the C ABI's through core 2.x, and are kept
- *  so a stored number still means what it did); the C ABI now takes the pair,
- *  which `embedParts` produces. Historical names kept: FrontmatterJson is
- *  `;;;`, FrontmatterFig is the ```fig fenced block. */
-export const EmbedType = {
-  FrontmatterYaml: 0, // ---            markdown frontmatter, YAML
-  FrontmatterJson: 1, // ;;;            JSON frontmatter
-  EndmatterYaml: 2, //   ```endmatter   trailing YAML block
-  FrontmatterFig: 3, //  ```fig         fenced fig block
-  PlusToml: 4, //        +++            TOML frontmatter (Hugo/Zola)
-  // Fenced ```<lang> code blocks.
-  FencedYaml: 5,
-  FencedJson: 6,
-  FencedToml: 7,
-  // Markdown ---<lang> frontmatter (bare --- is FrontmatterYaml above).
-  MdFrontmatterJson: 8,
-  MdFrontmatterToml: 9,
-  MdFrontmatterFig: 10,
-  // HTML <script type="application/<lang>"> data islands.
-  HtmlScriptFig: 11,
-  HtmlScriptYaml: 12,
-  HtmlScriptJson: 13,
-  HtmlScriptToml: 14,
-  // HTML <pre><code class="language-<lang>"> visible code blocks (entity-encoded;
-  // editing re-encodes span-aware, preserving untouched bytes' original encoding).
-  HtmlCodeFig: 15,
-  HtmlCodeYaml: 16,
-  HtmlCodeJson: 17,
-  HtmlCodeToml: 18,
-} as const;
-export type EmbedType = (typeof EmbedType)[keyof typeof EmbedType];
-
-const EMBED_PARTS: Record<EmbedType, [EmbedContainer, Format]> = {
-  [EmbedType.FrontmatterYaml]: [EmbedContainer.MdFrontmatter, Format.Yaml],
-  [EmbedType.FrontmatterJson]: [EmbedContainer.SemicolonsJson, Format.Json],
-  [EmbedType.EndmatterYaml]: [EmbedContainer.EndmatterYaml, Format.Yaml],
-  [EmbedType.FrontmatterFig]: [EmbedContainer.Fenced, Format.Fig],
-  [EmbedType.PlusToml]: [EmbedContainer.PlusToml, Format.Toml],
-  [EmbedType.FencedYaml]: [EmbedContainer.Fenced, Format.Yaml],
-  [EmbedType.FencedJson]: [EmbedContainer.Fenced, Format.Json],
-  [EmbedType.FencedToml]: [EmbedContainer.Fenced, Format.Toml],
-  [EmbedType.MdFrontmatterJson]: [EmbedContainer.MdFrontmatter, Format.Json],
-  [EmbedType.MdFrontmatterToml]: [EmbedContainer.MdFrontmatter, Format.Toml],
-  [EmbedType.MdFrontmatterFig]: [EmbedContainer.MdFrontmatter, Format.Fig],
-  [EmbedType.HtmlScriptFig]: [EmbedContainer.HtmlScript, Format.Fig],
-  [EmbedType.HtmlScriptYaml]: [EmbedContainer.HtmlScript, Format.Yaml],
-  [EmbedType.HtmlScriptJson]: [EmbedContainer.HtmlScript, Format.Json],
-  [EmbedType.HtmlScriptToml]: [EmbedContainer.HtmlScript, Format.Toml],
-  [EmbedType.HtmlCodeFig]: [EmbedContainer.HtmlCode, Format.Fig],
-  [EmbedType.HtmlCodeYaml]: [EmbedContainer.HtmlCode, Format.Yaml],
-  [EmbedType.HtmlCodeJson]: [EmbedContainer.HtmlCode, Format.Json],
-  [EmbedType.HtmlCodeToml]: [EmbedContainer.HtmlCode, Format.Toml],
-};
-
-/** The (container, inner format) pair an {@link EmbedType} names — the shape
- *  the C ABI takes, and the inner format the embed's content is edited in. */
-export function embedParts(kind: EmbedType): [EmbedContainer, Format] {
-  return EMBED_PARTS[kind];
-}
-
-/** `embedParts`' inverse: the {@link EmbedType} for a pair the core reports, or
- *  `null` for one this binding has no name for (a newer core may know more). */
-export function embedTypeOf(container: number, format: number): EmbedType | null {
-  for (const key of Object.keys(EMBED_PARTS)) {
-    const kind = Number(key) as EmbedType;
-    const [c, f] = EMBED_PARTS[kind];
-    if (c === container && (f === format || c >= EmbedContainer.SemicolonsJson)) return kind;
-  }
-  return null;
 }
 
 const STATUS_MESSAGE: Record<number, string> = {

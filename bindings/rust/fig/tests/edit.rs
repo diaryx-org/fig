@@ -391,15 +391,20 @@ fn frontmatter_edit_touches_only_target_bytes() {
 }
 
 #[test]
-fn split_borrows_content_and_body() {
-    let (fm, body) = fig::split(NOTE, EmbedType::FrontmatterYaml).unwrap();
+fn split_borrows_both_sides_and_the_content() {
+    let (before, fm, after) = fig::split(NOTE, EmbedType::FrontmatterYaml).unwrap();
+    assert_eq!(before, "");
     assert_eq!(fm, "title: Hello\n# keep this comment\ntags:\n- a\n- b\n");
-    assert_eq!(body, "# Body\n\nprose goes here\n");
+    assert_eq!(after, "# Body\n\nprose goes here\n");
     // CRLF fences are handled (Diaryx's hand-rolled split special-cased these).
     let crlf = "---\r\nk: v\r\n---\r\nbody\r\n";
-    let (fm, body) = fig::split(crlf, EmbedType::FrontmatterYaml).unwrap();
+    let (_, fm, after) = fig::split(crlf, EmbedType::FrontmatterYaml).unwrap();
     assert_eq!(fm, "k: v\r\n");
-    assert_eq!(body, "body\r\n");
+    assert_eq!(after, "body\r\n");
+    // Endmatter: the prose is before the block.
+    let end = "# Title\n\n```endmatter\nk: v\n```\n";
+    let (before, fm, after) = fig::split(end, EmbedType::EndmatterYaml).unwrap();
+    assert_eq!((before, fm, after), ("# Title\n\n", "k: v\n", ""));
     // No frontmatter -> None.
     assert_eq!(
         fig::split("# just markdown\n", EmbedType::FrontmatterYaml),
@@ -459,7 +464,7 @@ fn fig_dialect_container_splices_render_flow_and_round_trip() {
     assert!(rendered.contains("meta = { k = 1 }"), "{rendered}");
 
     // And the result re-parses as the containers, not strings.
-    let (content, _) = fig::split(&rendered, EmbedType::FrontmatterFig).unwrap();
+    let (_, content, _) = fig::split(&rendered, EmbedType::FrontmatterFig).unwrap();
     let doc = fig::Document::parse(content.as_bytes(), Format::Fig).unwrap();
     let v = doc.to_value().unwrap();
     let fig::Value::Map(entries) = &v else {
@@ -508,7 +513,7 @@ fn fig_dialect_block_map_splices_into_a_fence_with_the_width_knob() {
     );
 
     // It re-parses as the nested map, not a string.
-    let (content, _) = fig::split(&rendered, EmbedType::FrontmatterFig).unwrap();
+    let (_, content, _) = fig::split(&rendered, EmbedType::FrontmatterFig).unwrap();
     let doc = fig::Document::parse(content.as_bytes(), Format::Fig).unwrap();
     let v = doc.to_value().unwrap();
     let fig::Value::Map(entries) = &v else {
@@ -540,10 +545,12 @@ fn extract_exposes_region_spans_and_slices() {
         e.content(),
         "title: Hello\n# keep this comment\ntags:\n- a\n- b\n"
     );
-    assert_eq!(e.body(), "# Body\n\nprose goes here\n");
+    assert_eq!(e.host_before(), "");
+    assert_eq!(e.host_after(), "# Body\n\nprose goes here\n");
     let r = e.region();
-    // The body span starts at the close fence's end.
-    assert_eq!(r.body.start, r.close_fence.end);
+    // The spans tile the source: the host after starts at the close fence's end.
+    assert_eq!(r.body_after.start, r.close_fence.end);
+    assert_eq!(r.body_before.end, r.open_fence.start);
 }
 
 #[test]
@@ -615,7 +622,7 @@ fn embed_retype_reports_a_missing_region() {
 fn embed_region_spans_tile_the_host_exactly() {
     // Both sides of the block are reported, so a caller can rebuild the host
     // without losing a byte — including for a mid-document `<script>` island,
-    // where `body` alone names only the half after the block.
+    // which has host text on both sides.
     let html = "<head>\n<script type=\"application/yaml\">\nk: v\n</script>\n</head>\n";
     let e = Embed::extract(html, EmbedType::HtmlScriptYaml).unwrap();
     assert_eq!(e.host_before(), "<head>\n");
@@ -644,8 +651,8 @@ fn frontmatter_replace_body_keeps_frontmatter_byte_identical() {
     fm.replace_body("# New Body\n").unwrap();
     let rendered = fm.render().unwrap();
     // Frontmatter block (fences + content + comments) is verbatim; only body swapped.
-    let (orig_fm, _) = fig::split(NOTE, EmbedType::FrontmatterYaml).unwrap();
-    let (new_fm, new_body) = fig::split(rendered, EmbedType::FrontmatterYaml).unwrap();
+    let (_, orig_fm, _) = fig::split(NOTE, EmbedType::FrontmatterYaml).unwrap();
+    let (_, new_fm, new_body) = fig::split(rendered, EmbedType::FrontmatterYaml).unwrap();
     assert_eq!(new_fm, orig_fm);
     assert_eq!(new_body, "# New Body\n");
 }
@@ -656,7 +663,7 @@ fn frontmatter_replace_body_composes_with_edits() {
     fm.replace_value(&[Segment::Key("title")], "Hi there").unwrap();
     fm.replace_body("# New Body\n").unwrap();
     let rendered = fm.render().unwrap();
-    let (new_fm, new_body) = fig::split(rendered, EmbedType::FrontmatterYaml).unwrap();
+    let (_, new_fm, new_body) = fig::split(rendered, EmbedType::FrontmatterYaml).unwrap();
     assert!(new_fm.starts_with("title: Hi there\n"));
     assert!(new_fm.contains("# keep this comment")); // comment preserved
     assert_eq!(new_body, "# New Body\n");

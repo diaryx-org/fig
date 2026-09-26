@@ -18,7 +18,9 @@
 //!     `Language.validate` applies at comptime, runs the harness of
 //!     `harness.zig` over the samples it declares, and — only then — appends
 //!     one `Entry` per dialect row and returns the first's ABI integer, at or
-//!     above `Language.runtime_abi_base`. Append-only under a mutex; an entry
+//!     above `Language.runtime_abi_base` — or, for a row named after a
+//!     format compiled out of this build, that format's own integer, so the
+//!     registration stands in for it. Append-only under a mutex; an entry
 //!     is immutable once its integer is out, so every read is of a settled
 //!     value and the threading promise in fig.h holds. There is no
 //!     unregistration: an integer is valid for the life of the process.
@@ -688,9 +690,12 @@ pub fn clearRefusal() void {
     last_refusal_len = 0;
 }
 
-/// Register `vt`. Returns the ABI integer of its first dialect row; the
-/// rest follow it consecutively. See the module doc for what happens in
-/// between.
+/// Register `vt`. Returns the ABI integer of its first dialect row. A row
+/// named after a format compiled out of this build takes that format's
+/// integer; every other row takes the next one at or above
+/// `runtime_abi_base`, so the rows' integers are not consecutive in
+/// general — `entryByName` finds each. See the module doc for what happens
+/// in between.
 pub fn register(allocator: Allocator, raw: *const VTable) RegisterError!c_int {
     last_refusal_len = 0;
 
@@ -712,6 +717,10 @@ pub fn register(allocator: Allocator, raw: *const VTable) RegisterError!c_int {
         if (a.vtable != allocator.vtable) return error.AllocatorMismatch;
     } else registry_allocator = allocator;
 
+    // A name is taken by a registration or by a format compiled in. The name
+    // of a format compiled OUT is free, and a dialect by that name stands in
+    // for it: it takes that format's ABI value rather than one from
+    // `runtime_abi_base` (`Languages.standInAbi`).
     const name = std.mem.span(vt.name);
     if (findByNameLocked(name) != null or Languages.isCompiledName(name)) {
         refuse("a format named '{s}' is already registered", .{name});
@@ -726,7 +735,6 @@ pub fn register(allocator: Allocator, raw: *const VTable) RegisterError!c_int {
     }
     const first_index: usize = published.load(.acquire);
     if (first_index + vt.dialect_count > max_entries) return error.RegistryFull;
-    const first_abi: i64 = @as(i64, Languages.runtime_abi_base) + @as(i64, @intCast(first_index));
 
     const reg = try arena.create(Registered);
     reg.vt = vt.*;
@@ -755,9 +763,11 @@ pub fn register(allocator: Allocator, raw: *const VTable) RegisterError!c_int {
             var k: usize = 0;
             while (arr[k]) |x| : (k += 1) try exts.append(arena, try arena.dupeZ(u8, std.mem.span(x)));
         }
+        const index = first_index + i;
         e.* = .{
-            .index = @intCast(first_index + i),
-            .abi = @intCast(first_abi + @as(i64, @intCast(i))),
+            .index = @intCast(index),
+            .abi = Languages.standInAbi(std.mem.span(d.name)) orelse
+                @intCast(@as(i64, Languages.runtime_abi_base) + @as(i64, @intCast(index))),
             .language = reg,
             .name = try arena.dupeZ(u8, std.mem.span(d.name)),
             .extensions = try exts.toOwnedSlice(arena),
@@ -840,11 +850,17 @@ pub fn entryAt(index: usize) ?*const Entry {
     return null;
 }
 
-/// The entry an ABI integer names, or null for one below the runtime base
-/// or never handed out.
+/// The entry an ABI integer names, or null for one never handed out. At or
+/// above the runtime base the integer is the slot; below it, it is a
+/// compiled-out format's, and names the registration standing in for that
+/// format when there is one. Null for a compiled-in format's integer, which
+/// no registration can take.
 pub fn entryByAbi(abi: c_int) ?*const Entry {
-    if (abi < Languages.runtime_abi_base) return null;
-    return entryAt(@intCast(abi - Languages.runtime_abi_base));
+    if (abi >= Languages.runtime_abi_base) return entryAt(@intCast(abi - Languages.runtime_abi_base));
+    const n = published.load(.acquire);
+    for (slots[0..n]) |e| if (e.abi == abi) return e;
+    if (checking) |c| for (slots[c.from..c.to]) |e| if (e.abi == abi) return e;
+    return null;
 }
 
 /// The entry named `name` — a dialect row's name — or null.
@@ -2502,11 +2518,48 @@ test "registration refuses a record that fails validation or the harness" {
     _ = try register(testing.allocator, &vt);
     try testing.expectError(error.NameTaken, register(testing.allocator, &vt));
 
-    const taken = [_]DialectDesc{.{ .name = "yaml" }};
-    var vt2 = TinyKv.vtable(&alloc);
-    vt2.name = "yaml";
-    vt2.dialects = &taken;
-    try testing.expectError(error.NameTaken, register(testing.allocator, &vt2));
+    if (Languages.isCompiledName("yaml")) {
+        const taken = [_]DialectDesc{.{ .name = "yaml" }};
+        var vt2 = TinyKv.vtable(&alloc);
+        vt2.name = "yaml";
+        vt2.dialects = &taken;
+        try testing.expectError(error.NameTaken, register(testing.allocator, &vt2));
+    }
+}
+
+test "a language named after a compiled-out format stands in for it, at that format's integer" {
+    // plist is off in the default build; a build that compiles it in has no
+    // slot to stand in for.
+    const plist_abi = Languages.standInAbi("plist") orelse return error.SkipZigTest;
+    defer deinitAll();
+    var alloc: TinyKv.Alloc = .{ .allocator = testing.allocator };
+    const exts = [_]?[*:0]const u8{ "plist", null };
+    const rows = [_]DialectDesc{
+        .{ .name = "plist", .extensions = &exts, .splice = 2, .empty_doc_seed = "" },
+        .{ .name = "plist-strict", .splice = 2, .empty_doc_seed = "" },
+    };
+    var vt = TinyKv.vtable(&alloc);
+    vt.name = "plist";
+    vt.dialects = &rows;
+    vt.dialect_count = rows.len;
+
+    // The row named after the format takes its integer; the other row takes
+    // the next runtime one, as any registration's would.
+    try testing.expectEqual(plist_abi, try register(testing.allocator, &vt));
+    const e = entryByAbi(plist_abi).?;
+    try testing.expectEqualStrings("plist", e.name);
+    try testing.expect(entryByName("plist") == e);
+    const strict = entryByName("plist-strict").?;
+    try testing.expectEqual(@as(c_int, Languages.runtime_abi_base) + @as(c_int, strict.index), strict.abi);
+    try testing.expect(entryByAbi(strict.abi) == strict);
+
+    const doc = try Language.Parser.parse(testing.allocator, "a=1\n", e.typeOf());
+    defer doc.deinit(testing.allocator);
+
+    // Taken now, like any registered name; and a compiled-in format's
+    // integer names no runtime entry.
+    try testing.expectError(error.NameTaken, register(testing.allocator, &vt));
+    try testing.expect(entryByAbi(Languages.entryFor("json").abi_value) == null);
 }
 
 test "a record from an older or a newer header is read as far as its size says" {

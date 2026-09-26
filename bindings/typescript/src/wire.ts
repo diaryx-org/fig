@@ -259,8 +259,10 @@ export interface NodeTable {
  *  format declares — with the functions the format is. Hand one to
  *  {@link registerLanguage}, or {@link serve} it to a `fig` command line. */
 export interface Language {
-  /** Must differ from every compiled format's name and every language
-   *  already registered; `dialects[0].name` must equal it. */
+  /** Must differ from the name of every format compiled into the module
+   *  and every language already registered; `dialects[0].name` must equal
+   *  it. The name of a format compiled out of the module is free, and
+   *  the language stands in for that format ({@link registerLanguage}). */
   name: string;
   /** `references`: the format has a reference layer — anchors, aliases,
    *  `<<` merges, tags — so its parse may return those columns and its print

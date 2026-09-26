@@ -473,3 +473,50 @@ fn the_lossless_kinds_a_language_declares_are_the_ones_the_core_reads() {
     // declared native, is neither.
     assert_eq!(paths, ["a", "t"], "{warnings:?}");
 }
+
+/// `tinykv` under the name of a format the prebuilt library leaves out,
+/// with a second dialect of its own.
+struct PlistKv;
+
+impl Language for PlistKv {
+    fn describe(&self) -> Description {
+        let mut d = TinyKv.describe();
+        d.name = "plist".into();
+        d.dialects = vec![
+            raw_dialect("plist", "plist"),
+            raw_dialect("plist-kv", "pkv"),
+        ];
+        d
+    }
+    fn parse(&self, dialect: &str, input: &[u8]) -> Result<NodeTable, LanguageError> {
+        TinyKv.parse(dialect, input)
+    }
+    fn print(
+        &self,
+        dialect: &str,
+        table: &NodeTable,
+        options: &PrintOptions,
+    ) -> Result<Vec<u8>, LanguageError> {
+        TinyKv.print(dialect, table, options)
+    }
+}
+
+#[test]
+fn a_language_named_after_a_format_left_out_stands_in_for_it() {
+    // A library that compiles plist in has no slot to stand in for.
+    if fig::capabilities(Format::Plist).read {
+        return;
+    }
+    let formats = fig::language::register(PlistKv).expect("registers");
+    // The row named after the format is that format; the other row is a
+    // runtime format of its own.
+    assert_eq!(formats[0], Format::Plist);
+    assert!(matches!(formats[1], Format::Runtime(_)));
+    assert_eq!(Format::by_name("plist"), Some(Format::Plist));
+    assert_eq!(Format::by_name("plist-kv"), Some(formats[1]));
+    let doc = Document::parse(b"a=1\n", Format::Plist).expect("parses");
+    assert_eq!(
+        doc.serialize(Format::Json).unwrap(),
+        "{\n  \"a\": \"1\"\n}\n"
+    );
+}

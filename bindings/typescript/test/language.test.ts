@@ -290,3 +290,16 @@ test("a runtime printer is told when it prints splice text", () => {
   stringify({ C: "3" }, spy);
   assert.deepEqual(seen, [false]);
 });
+
+test("a language named after a format the module leaves out stands in for it", (t) => {
+  // The published module leaves plist out; a module that compiles it in
+  // has no slot to stand in for.
+  if (capabilities(Format.Plist).read) return t.skip("this module compiles plist in");
+  const exts = ["plist"];
+  const format = registerLanguage({ ...dotenv, name: "plist", dialects: [{ ...dotenv.dialects[0]!, name: "plist", extensions: exts }] });
+  assert.equal(format, Format.Plist);
+  assert.equal(formatByName("plist"), Format.Plist);
+  assert.equal(capabilities(Format.Plist).edit, true);
+  assert.deepEqual(parse("A=1\n", Format.Plist), { A: "1" });
+  assert.equal(convert("A=1\n", Format.Plist, Format.Json), '{\n  "A": "1"\n}\n');
+});

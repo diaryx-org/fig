@@ -1340,13 +1340,17 @@ typedef struct FigLanguageVTable {
 uint32_t fig_language_vtable_version(void);
 
 // Register a language. On FIG_STATUS_OK writes the format integer of its
-// first dialect row to *out_format (the rows after it take the integers after
-// it). The record is validated by the rules a compiled format is held to, and
+// first dialect row to *out_format. A row takes an integer at or above
+// FIG_FORMAT_RUNTIME_BASE, except a row named after a format compiled out of
+// this build, which takes that format's own FIG_FORMAT_* value and stands in
+// for it — frontmatter, fig_format_by_name and every entry point taking that
+// value reach it. The rows' integers are therefore not consecutive in
+// general; fig_format_by_name finds each. The record is validated by the rules a compiled format is held to, and
 // every sample is parsed, printed, reparsed and edited before anything is
 // registered; a record that fails either is refused as
 // FIG_STATUS_INVALID_ARGUMENT with the reason in `out_err` (nullable), and
-// registers nothing. A name already registered, or a compiled-in format's, is
-// refused the same way.
+// registers nothing. A name already registered, or the name of a format
+// compiled into this build, is refused the same way.
 FigStatus fig_language_register(const FigLanguageVTable *vt, int *out_format, FigError *out_err);
 
 // The format integer of the dialect named `name` — a compiled format's

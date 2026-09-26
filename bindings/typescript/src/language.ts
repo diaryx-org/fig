@@ -52,8 +52,13 @@ setHostCall(hostCall);
  *  registered then. A name already taken, compiled or registered, is
  *  refused the same way.
  *
- *  The format integer is assigned per process; persist the NAME and
- *  resolve it with {@link formatByName}. */
+ *  A language named after a format compiled out of the module stands in
+ *  for it: registering a `yaml` language where the module has no YAML
+ *  returns `Format.Yaml`, and `Format.Yaml`, `formatByName("yaml")` and
+ *  YAML frontmatter reach it from then on. Any other format integer is
+ *  assigned per process; persist the NAME and resolve it with
+ *  {@link formatByName}, which is also how to find a dialect row after
+ *  the first. */
 export function registerLanguage(lang: Language): Format {
   const id = nextId++;
   languages.set(id, lang);

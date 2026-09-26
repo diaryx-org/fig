@@ -238,7 +238,9 @@ wildcard, so a fourth anchor is a major release and a compile error.
 The core validates the description by the rules it holds its own formats to
 and runs its harness over the samples — each is parsed, printed, reparsed
 and edited — before anything is registered; a description that fails is
-refused as [`Error::Language`] with the reason. A registered language lives
+refused as [`Error::Language`], whose [`LanguageFailure`] carries the
+core's reason as `message` (and a `byte_offset` where the failure names a
+place — the NUL in a declared string that has one). A registered language lives
 for the rest of the process, and its `Format` is per process: persist the
 name and resolve it with `Format::by_name`.
 
@@ -716,10 +718,22 @@ match Document::parse(b"{ not valid", Format::Json) {
 
 Notable variants: `Parse(ParseError)`, `UnsupportedFormat`, `NotFound` (a path,
 key, or region), `InvalidArgument`, `UnsupportedOperation` (every argument valid,
-but the operation is not defined for them), `Utf8`, plus serde/derive mapping errors
-(`Message`, `MissingField`, `UnknownVariant`, `TypeMismatch`, …).
-[`ParseError`] currently carries the core's message; byte offset / line / column
-are wired but `None` until the core surfaces them.
+but the operation is not defined for them), `Utf8`, `Language(LanguageFailure)`
+(a runtime language refused at registration), plus serde/derive mapping errors
+(`Message`, `MissingField`, `UnknownVariant`, `TypeMismatch`, …). The struct
+variants are `#[non_exhaustive]`, so a pattern on one ends in `..`
+(`Error::MissingField { field, .. }`), and each is built through its
+constructor (`Error::missing_field(field, ty)`), as the derive macros do.
+
+`NotFound` carries no path: the core reports that something on the way was
+missing but not which segment, so the only path the binding could attach is the
+one you just passed.
+
+[`ParseError`] carries the core's message: for a compiled format its error name,
+for a runtime language the message its parser gave. A runtime language's parse
+failure also carries the `byte_offset` its parser reported; the compiled formats
+do not surface offsets yet, so for them `byte_offset`, `line` and `column` are
+`None`.
 
 ## Managing resources
 

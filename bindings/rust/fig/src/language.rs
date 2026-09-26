@@ -27,7 +27,7 @@ use std::os::raw::{c_char, c_int};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::ffi;
-use crate::{Capabilities, Error, ExtKind, Format, RuntimeFormat, Span};
+use crate::{Capabilities, Error, ExtKind, Format, LanguageFailure, RuntimeFormat, Span};
 
 // ── the description ────────────────────────────────────────────────────────
 
@@ -958,7 +958,10 @@ pub fn register(lang: impl Language) -> Result<Vec<Format>, Error> {
             Error::from_status(status)?;
             return Err(Error::Internal);
         }
-        return Err(Error::Language(message));
+        return Err(Error::Language(LanguageFailure {
+            message,
+            byte_offset: (err.byte_offset != 0).then_some(err.byte_offset),
+        }));
     }
     Ok((0..dialect_count as c_int)
         .map(|i| Format::Runtime(RuntimeFormat(format + i)))
@@ -1000,8 +1003,12 @@ unsafe impl Send for Registration {}
 unsafe impl Sync for Registration {}
 
 fn cstr(s: &str) -> Result<CString, Error> {
-    CString::new(s)
-        .map_err(|_| Error::Language(format!("a declared string contains a NUL byte: {s:?}")))
+    CString::new(s).map_err(|e| {
+        Error::Language(LanguageFailure {
+            message: format!("a declared string contains a NUL byte: {s:?}"),
+            byte_offset: Some(e.nul_position()),
+        })
+    })
 }
 
 fn opt_ptr(strings: &mut Vec<CString>, s: Option<&str>) -> Result<*const c_char, Error> {

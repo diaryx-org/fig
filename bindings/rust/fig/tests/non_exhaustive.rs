@@ -232,3 +232,32 @@ fn language_enums_take_a_wildcard_except_comment_slot() {
     };
     assert_eq!(slot, 1);
 }
+
+#[test]
+fn error_struct_variants_are_built_by_constructor_and_read_with_dotdot() {
+    // Each struct variant is non-exhaustive: built through its constructor,
+    // matched with `..`, its fields still readable.
+    match fig::Error::missing_field("port", "Config") {
+        fig::Error::MissingField { field, ty, .. } => assert_eq!((field, ty), ("port", "Config")),
+        other => panic!("{other:?}"),
+    }
+    match fig::Error::type_mismatch("int", "string") {
+        fig::Error::TypeMismatch { expected, .. } => assert_eq!(expected, "int"),
+        other => panic!("{other:?}"),
+    }
+    // A fixed derive message is an ordinary `Message`.
+    assert!(matches!(fig::Error::msg_static("x"), fig::Error::Message(ref m) if m == "x"));
+}
+
+#[test]
+fn a_language_failure_is_readable() {
+    // `LanguageFailure` comes back from `register`; nothing outside the crate
+    // builds one, but both fields are read.
+    fn read(e: &fig::Error) -> Option<(&str, Option<usize>)> {
+        match e {
+            fig::Error::Language(f) => Some((f.message.as_str(), f.byte_offset)),
+            _ => None,
+        }
+    }
+    assert_eq!(read(&fig::Error::NotFound), None);
+}

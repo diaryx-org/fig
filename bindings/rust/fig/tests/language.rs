@@ -215,7 +215,10 @@ fn a_rust_language_is_a_peer_at_every_entry_point() {
 
     // Registering the name again is refused with the reason.
     match fig::language::register(TinyKv) {
-        Err(Error::Language(msg)) => assert!(msg.contains("already registered"), "{msg}"),
+        Err(Error::Language(failure)) => assert!(
+            failure.message.contains("already registered"),
+            "{failure}"
+        ),
         other => panic!("expected a refusal, got {other:?}"),
     }
 }
@@ -283,10 +286,38 @@ impl Language for Broken {
 #[test]
 fn a_language_whose_sample_fails_is_refused() {
     match fig::language::register(Broken) {
-        Err(Error::Language(msg)) => assert!(msg.contains("sample does not parse"), "{msg}"),
+        Err(Error::Language(failure)) => assert!(
+            failure.message.contains("sample does not parse"),
+            "{failure}"
+        ),
         other => panic!("expected a refusal, got {other:?}"),
     }
     assert_eq!(Format::by_name("broken"), None);
+}
+
+struct NulName;
+
+impl Language for NulName {
+    fn describe(&self) -> Description {
+        let mut d = Description::new("nul");
+        d.dialects[0].extensions = vec!["n\0l".into()];
+        d.samples = vec!["a=1\n".into()];
+        d
+    }
+    fn parse(&self, dialect: &str, input: &[u8]) -> Result<NodeTable, LanguageError> {
+        TinyKv.parse(dialect, input)
+    }
+}
+
+#[test]
+fn a_declared_string_with_a_nul_is_refused_at_the_nul() {
+    match fig::language::register(NulName) {
+        Err(Error::Language(failure)) => {
+            assert!(failure.message.contains("NUL"), "{failure}");
+            assert_eq!(failure.byte_offset, Some(1));
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
 }
 
 // ── the helper wire ────────────────────────────────────────────────────────

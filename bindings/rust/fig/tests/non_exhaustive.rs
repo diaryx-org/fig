@@ -234,6 +234,15 @@ fn language_enums_take_a_wildcard_except_comment_slot() {
 }
 
 #[test]
+fn span_converts_to_and_from_a_range_and_hashes() {
+    let span = fig::Span::from(2..5);
+    assert_eq!(span, fig::Span { start: 2, end: 5 });
+    assert_eq!(&"abcdefg"[std::ops::Range::from(span)], "cde");
+    let set: std::collections::HashSet<fig::Span> = [span, span].into_iter().collect();
+    assert_eq!(set.len(), 1);
+}
+
+#[test]
 fn error_struct_variants_are_built_by_constructor_and_read_with_dotdot() {
     // Each struct variant is non-exhaustive: built through its constructor,
     // matched with `..`, its fields still readable.

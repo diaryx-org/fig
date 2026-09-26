@@ -174,11 +174,29 @@ impl EmbedType {
     }
 }
 
-/// A half-open `[start, end)` byte range within the host file.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// A half-open `[start, end)` byte range: within the host file for an
+/// embed's [`Region`], within the input for a runtime language's node table.
+/// Converts to and from a `Range<usize>`, so `Span::from(0..5)` builds one
+/// and `&source[Range::from(span)]` slices by one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
+}
+
+impl From<std::ops::Range<usize>> for Span {
+    fn from(r: std::ops::Range<usize>) -> Self {
+        Span {
+            start: r.start,
+            end: r.end,
+        }
+    }
+}
+
+impl From<Span> for std::ops::Range<usize> {
+    fn from(s: Span) -> Self {
+        s.start..s.end
+    }
 }
 
 impl From<ffi::FigSpan> for Span {

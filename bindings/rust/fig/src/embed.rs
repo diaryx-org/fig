@@ -7,8 +7,10 @@
 //! (comments, key order, and formatting are preserved). This generalizes the
 //! former YAML-frontmatter-only `Frontmatter`.
 //!
-//! Value-taking methods mirror [`crate::Editor`]: `*_value` take a [`Value`] and
-//! are always available; the `serde`-gated forms accept any `Serialize`.
+//! The edit methods are [`crate::Editor`]'s, under the same names (see the
+//! naming scheme on the `editor` module): `*_value` and `*_value_with` take any
+//! `impl Into<Value>`, and the structural and comment edits are the same verbs
+//! over the same nouns.
 
 use std::ptr::NonNull;
 
@@ -301,7 +303,13 @@ impl Embed {
         let mut raw = std::ptr::null_mut();
         let (container, format) = kind.parts();
         let status = unsafe {
-            ffi::fig_embed_open(host.as_ptr(), host.len(), container as i32, format as i32, &mut raw)
+            ffi::fig_embed_open(
+                host.as_ptr(),
+                host.len(),
+                container as i32,
+                format as i32,
+                &mut raw,
+            )
         };
         Error::from_status(status)?;
         let raw = NonNull::new(raw).ok_or(Error::Internal)?;
@@ -314,7 +322,8 @@ impl Embed {
     /// Open the embed of `kind` in `host`, creating an empty region when none
     /// exists (placed per the archetype — frontmatter at the top, endmatter at
     /// the bottom) instead of failing with [`Error::NotFound`]. A subsequent
-    /// [`set`](Self::set)/[`insert`](Self::insert) lands the first entry. An
+    /// [`set_value`](Self::set_value)/[`insert_value`](Self::insert_value)
+    /// lands the first entry. An
     /// existing region is opened unchanged; a malformed one still errors. A
     /// block that goes at the top is refused with
     /// [`Error::UnsupportedOperation`] when `host` already opens with
@@ -463,11 +472,18 @@ impl Embed {
         Error::from_status(status)
     }
 
-    /// Replace the key at `path` with `key`.
-    pub fn replace_key(&mut self, path: &[Segment], key: &str) -> Result<(), Error> {
+    /// Rename the key at `path` to `key`. Mirrors
+    /// [`crate::Editor::rename_key`].
+    pub fn rename_key(&mut self, path: &[Segment], key: &str) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe {
-            ffi::fig_embed_replace_named_key(self.ptr(), p.as_ptr(), p.len(), key.as_ptr(), key.len())
+            ffi::fig_embed_replace_named_key(
+                self.ptr(),
+                p.as_ptr(),
+                p.len(),
+                key.as_ptr(),
+                key.len(),
+            )
         };
         Error::from_status(status)
     }
@@ -576,6 +592,22 @@ impl Embed {
     /// Append `value` (any `impl Into<Value>`) to the sequence at `path`.
     pub fn append_value(&mut self, path: &[Segment], value: impl Into<Value>) -> Result<(), Error> {
         let val = value_text(&value.into(), self.inner)?;
+        self.append_text(path, &val)
+    }
+
+    /// Append `value` to the sequence at `path`, rendering it with `options`.
+    /// Mirrors [`crate::Editor::append_value_with`].
+    pub fn append_value_with(
+        &mut self,
+        path: &[Segment],
+        value: impl Into<Value>,
+        options: SerializeOptions,
+    ) -> Result<(), Error> {
+        let val = value_text_with(&value.into(), self.inner, options)?;
+        self.append_text(path, &val)
+    }
+
+    fn append_text(&mut self, path: &[Segment], val: &str) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe {
             ffi::fig_embed_append_seq(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
@@ -590,65 +622,27 @@ impl Embed {
         value: impl Into<Value>,
     ) -> Result<(), Error> {
         let val = value_text(&value.into(), self.inner)?;
+        self.prepend_text(path, &val)
+    }
+
+    /// Prepend `value` to the sequence at `path`, rendering it with `options`.
+    /// Mirrors [`crate::Editor::prepend_value_with`].
+    pub fn prepend_value_with(
+        &mut self,
+        path: &[Segment],
+        value: impl Into<Value>,
+        options: SerializeOptions,
+    ) -> Result<(), Error> {
+        let val = value_text_with(&value.into(), self.inner, options)?;
+        self.prepend_text(path, &val)
+    }
+
+    fn prepend_text(&mut self, path: &[Segment], val: &str) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe {
             ffi::fig_embed_prepend_seq(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
         };
         Error::from_status(status)
-    }
-
-    // ── value edits (serde convenience) ─────────────────────────────────────
-
-    /// Replace the value at `path` with the serialized form of `value`.
-    #[cfg(feature = "serde")]
-    pub fn replace<T: serde::Serialize + ?Sized>(
-        &mut self,
-        path: &[Segment],
-        value: &T,
-    ) -> Result<(), Error> {
-        self.replace_value(path, crate::ser::to_value(value)?)
-    }
-
-    /// Insert `key: value` into the mapping at `path` (empty path = root).
-    #[cfg(feature = "serde")]
-    pub fn insert<T: serde::Serialize + ?Sized>(
-        &mut self,
-        path: &[Segment],
-        key: &str,
-        value: &T,
-    ) -> Result<(), Error> {
-        self.insert_value(path, key, crate::ser::to_value(value)?)
-    }
-
-    /// Upsert: replace the value at `path`, or insert it when only the trailing
-    /// key is absent (see [`set_value`](Self::set_value)).
-    #[cfg(feature = "serde")]
-    pub fn set<T: serde::Serialize + ?Sized>(
-        &mut self,
-        path: &[Segment],
-        value: &T,
-    ) -> Result<(), Error> {
-        self.set_value(path, crate::ser::to_value(value)?)
-    }
-
-    /// Append the serialized form of `value` to the sequence at `path`.
-    #[cfg(feature = "serde")]
-    pub fn append<T: serde::Serialize + ?Sized>(
-        &mut self,
-        path: &[Segment],
-        value: &T,
-    ) -> Result<(), Error> {
-        self.append_value(path, crate::ser::to_value(value)?)
-    }
-
-    /// Prepend the serialized form of `value` to the sequence at `path`.
-    #[cfg(feature = "serde")]
-    pub fn prepend<T: serde::Serialize + ?Sized>(
-        &mut self,
-        path: &[Segment],
-        value: &T,
-    ) -> Result<(), Error> {
-        self.prepend_value(path, crate::ser::to_value(value)?)
     }
 
     // ── comment editing ─────────────────────────────────────────────────────
@@ -686,8 +680,9 @@ impl Embed {
         Error::from_status(status)
     }
 
-    /// Remove the own-line comment block above the node at `path` (no-op if none).
-    pub fn delete_leading_comments(&mut self, path: &[Segment]) -> Result<(), Error> {
+    /// Remove the own-line comment block above the node at `path` (no-op if
+    /// none). Mirrors [`crate::Editor::delete_leading_comment`].
+    pub fn delete_leading_comment(&mut self, path: &[Segment]) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status =
             unsafe { ffi::fig_embed_delete_leading_comments(self.ptr(), p.as_ptr(), p.len()) };
@@ -766,8 +761,8 @@ impl Embed {
     }
 
     /// Remove the dangling run at the end of the container at `path`'s body
-    /// (no-op if none). Mirrors [`crate::Editor::delete_dangling_comments`].
-    pub fn delete_dangling_comments(&mut self, path: &[Segment]) -> Result<(), Error> {
+    /// (no-op if none). Mirrors [`crate::Editor::delete_dangling_comment`].
+    pub fn delete_dangling_comment(&mut self, path: &[Segment]) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status =
             unsafe { ffi::fig_embed_delete_dangling_comments(self.ptr(), p.as_ptr(), p.len()) };
@@ -845,14 +840,14 @@ impl Embed {
     // ── structural edits (no value) ─────────────────────────────────────────
 
     /// Delete the mapping entry named by `path`.
-    pub fn delete(&mut self, path: &[Segment]) -> Result<(), Error> {
+    pub fn delete_key(&mut self, path: &[Segment]) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe { ffi::fig_embed_delete_key(self.ptr(), p.as_ptr(), p.len()) };
         Error::from_status(status)
     }
 
-    /// Remove the item at `index` from the sequence at `path`.
-    pub fn remove_item(&mut self, path: &[Segment], index: usize) -> Result<(), Error> {
+    /// Delete the item at `index` from the sequence at `path`.
+    pub fn delete_item(&mut self, path: &[Segment], index: usize) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status =
             unsafe { ffi::fig_embed_remove_seq_item(self.ptr(), p.as_ptr(), p.len(), index) };
@@ -920,10 +915,14 @@ impl Embed {
     /// [`Editor::set_sequence`](crate::Editor::set_sequence) for the full
     /// semantics). Declines with [`Error::InvalidArgument`] when the shape can't
     /// be safely diffed.
-    pub fn set_sequence(&mut self, path: &[Segment], items: &[Value]) -> Result<(), Error> {
+    pub fn set_sequence<I>(&mut self, path: &[Segment], items: I) -> Result<(), Error>
+    where
+        I: IntoIterator,
+        I::Item: Into<Value>,
+    {
         let texts: Vec<String> = items
-            .iter()
-            .map(|v| value_text(v, self.inner))
+            .into_iter()
+            .map(|v| value_text(&v.into(), self.inner))
             .collect::<Result<_, _>>()?;
         let strs = to_ffi_keys(&texts);
         let p = to_ffi_path(path);
@@ -948,6 +947,11 @@ impl Embed {
     /// Render the full host file with the edited embed spliced back between the
     /// (untouched) fences. Borrows handle memory; invalidated by the next call
     /// or edit. Takes `&mut self` because the render buffer is rebuilt in place.
+    ///
+    /// This is [`Editor::source`](crate::Editor::source)'s counterpart, under
+    /// another name because it does another thing: an editor's source is the
+    /// buffer it edits, while an embed's host file is rebuilt around the edited
+    /// block on each call.
     pub fn render(&mut self) -> Result<&str, Error> {
         let mut ptr: *const u8 = std::ptr::null();
         let mut len: usize = 0;

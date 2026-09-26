@@ -778,7 +778,7 @@ mod tests {
     #[test]
     fn frontmatter_reorder_keys_preserves_comments_and_body() {
         let md = "---\ntitle: Hi\n# a comment\ntags:\n- x\nauthor: me\n---\n# Body\n";
-        let mut fm = Embed::open(md.as_bytes(), EmbedType::FrontmatterYaml).unwrap();
+        let mut fm = Embed::open(md.as_bytes(), EmbedType::Frontmatter).unwrap();
         // String keys (the diaryx call site passes `Vec<String>`).
         let order = vec![String::from("author"), String::from("title")];
         fm.reorder_keys(&[], &order).unwrap();
@@ -791,7 +791,7 @@ mod tests {
     #[test]
     fn frontmatter_move_key_preserves_comments_and_body() {
         let md = "---\na: 1\n# note for c\nc: 3\nb: 2\n---\nbody\n";
-        let mut fm = Embed::open(md.as_bytes(), EmbedType::FrontmatterYaml).unwrap();
+        let mut fm = Embed::open(md.as_bytes(), EmbedType::Frontmatter).unwrap();
         fm.move_key(&[Segment::Key("c")], &[Segment::Key("a")])
             .unwrap();
         assert_eq!(
@@ -803,7 +803,7 @@ mod tests {
     #[test]
     fn frontmatter_reorder_items_in_block_sequence() {
         let md = "---\ntags:\n- x\n- y\n- z\n---\nbody\n";
-        let mut fm = Embed::open(md.as_bytes(), EmbedType::FrontmatterYaml).unwrap();
+        let mut fm = Embed::open(md.as_bytes(), EmbedType::Frontmatter).unwrap();
         fm.reorder_items(&[Segment::Key("tags")], &[2, 0]).unwrap();
         assert_eq!(
             fm.render().unwrap(),
@@ -814,7 +814,7 @@ mod tests {
     #[test]
     fn frontmatter_move_item_in_flow_sequence_keeps_separators() {
         let md = "---\ntags: [x, y, z]\n---\nbody\n";
-        let mut fm = Embed::open(md.as_bytes(), EmbedType::FrontmatterYaml).unwrap();
+        let mut fm = Embed::open(md.as_bytes(), EmbedType::Frontmatter).unwrap();
         fm.move_item(&[Segment::Key("tags")], 2, 0).unwrap();
         assert_eq!(fm.render().unwrap(), "---\ntags: [z, x, y]\n---\nbody\n");
     }

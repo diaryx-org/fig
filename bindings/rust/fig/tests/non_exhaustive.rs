@@ -121,3 +121,114 @@ fn every_render_args_field_is_reachable_without_a_struct_literal() {
     assert_eq!(args.old_key, b"o");
     assert_eq!((args.parent_key, args.parent_tag), (&b"deps"[..], &b"!dep"[..]));
 }
+
+#[test]
+fn every_description_type_is_buildable_without_a_struct_literal() {
+    use fig::language::{
+        ClosedContainers, CommentDelimiter, CommentStyle, Comments, Description, Dialect,
+        KeyStyle, LanguageError, NativeKinds, PrintOptions, Renderers, SectionHeader, SectionNoun,
+        Splice, Syntax,
+    };
+    // A constructor or `Default`, then plain field assignment: the fields
+    // stay public, only the literal is the crate's.
+    let mut d = Description::new("kv");
+    d.caps = fig::Capabilities::new(true, true, false);
+    d.max_mapping_depth = Some(1);
+    d.samples = vec!["a=1\n".into()];
+
+    let mut syntax = Syntax::default();
+    syntax.kv_sep = Some("=".into());
+    syntax.key_style = KeyStyle::BareOrQuoted;
+    let mut delimiter = CommentDelimiter::pair("/*", "*/");
+    delimiter.forbidden = Some("*/".into());
+    syntax.comments = Comments::new(
+        CommentStyle::Slashes,
+        Some(CommentDelimiter::open("//")),
+        Some(delimiter),
+    );
+    let mut header = SectionHeader::new("[", "]", ".");
+    header.seq_open = Some("[[".into());
+    header.seq_close = Some("]]".into());
+    syntax.section_header = Some(header);
+    syntax.section_noun = Some(SectionNoun::Table);
+    syntax.closed_containers = Some(ClosedContainers::new("{", "}", "[", "]"));
+    d.syntax = Some(syntax);
+
+    let mut dialect = Dialect::new("kv5");
+    dialect.extensions = vec!["kv5".into()];
+    dialect.splice = Splice::JsonString;
+    d.dialects.push(dialect);
+
+    let mut native = NativeKinds::default();
+    native.null = true;
+    d.lossless = Some(native);
+    let mut renderers = Renderers::default();
+    renderers.entry = true;
+    d.renderers = renderers;
+
+    assert_eq!(d.dialects.len(), 2);
+    let header = d.syntax.as_ref().unwrap().section_header.as_ref().unwrap();
+    assert_eq!((header.open.as_str(), header.sep.as_str()), ("[", "."));
+    assert!(header.skip_index);
+
+    let mut options = PrintOptions::default();
+    options.strip_comments = true;
+    assert!(options.pretty && options.strip_comments);
+
+    let e = LanguageError::at("expected `=`", 3);
+    assert_eq!((e.message.as_str(), e.byte_offset), ("expected `=`", Some(3)));
+}
+
+#[test]
+fn every_row_is_buildable_without_a_struct_literal() {
+    use fig::language::{
+        CommentForm, CommentRow, CommentSlot, DirectiveRow, MentionKind, MentionRow, NodeKind,
+        NodeRow, NodeTable, RegionRow,
+    };
+    let span = fig::Span { start: 0, end: 5 };
+    let mut t = NodeTable::new();
+    let root = t.push(NodeRow::new(NodeKind::Mapping, None, span));
+    t.regions.push(RegionRow::new(root, span));
+    t.mentions
+        .push(MentionRow::new(root, span, MentionKind::Header));
+    t.comments.push(CommentRow::new(
+        root,
+        CommentSlot::Dangling,
+        CommentForm::Block,
+        "note",
+    ));
+    t.directives.push(DirectiveRow::new("!e!", "tag:x/"));
+    assert_eq!(t.regions[0].span, span);
+    assert_eq!(t.mentions[0].kind, MentionKind::Header);
+    assert_eq!(t.comments[0].text, "note");
+    assert_eq!(t.directives[0].prefix, "tag:x/");
+}
+
+#[test]
+fn language_enums_take_a_wildcard_except_comment_slot() {
+    use fig::language::{CommentForm, CommentSlot, Literal, NodeKind, Renderer};
+    let kind = match NodeKind::Mapping {
+        NodeKind::Mapping | NodeKind::Sequence => "container",
+        _ => "scalar",
+    };
+    assert_eq!(kind, "container");
+    let spelled = match Literal::Int {
+        Literal::Int | Literal::Float => "number",
+        _ => "string",
+    };
+    assert_eq!(spelled, "number");
+    assert_eq!(Renderer::Tail.name(), "tail");
+    let form = match CommentForm::Line {
+        CommentForm::Line => "line",
+        _ => "other",
+    };
+    assert_eq!(form, "line");
+    // `CommentSlot` is exhaustive on purpose: no wildcard, and a fourth slot
+    // would fail to compile here.
+    let slot = match CommentSlot::Trailing {
+        CommentSlot::Leading => 0,
+        CommentSlot::Trailing => 1,
+        CommentSlot::Dangling => 2,
+    };
+    assert_eq!(slot, 1);
+}

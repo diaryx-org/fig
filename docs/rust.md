@@ -168,13 +168,16 @@ it has there, and `zig build abi-check` refuses a core whose registry this enum
 ### Runtime languages
 
 One variant is not in the core's registry: `Format::Runtime`, a language
-registered while the program runs. Implement [`language::Language`] — a
-[`Description`](language::Description) of what the format declares (the same
-declarations a compiled format makes: capabilities, dialects, the `Syntax`
-the splice engine writes it with, and a few sample documents), a `parse`
-that returns a [`NodeTable`](language::NodeTable), a `print` where the
-format serializes, and any fragment renderers the editor needs — and hand
-it to [`language::register`]:
+registered while the program runs. Implement
+[`language::Language`](https://docs.rs/fig/latest/fig/language/trait.Language.html)
+— a [`Description`](https://docs.rs/fig/latest/fig/language/struct.Description.html)
+of what the format declares (the same declarations a compiled format makes:
+capabilities, dialects, the `Syntax` the splice engine writes it with, and a
+few sample documents), a `parse` that returns a
+[`NodeTable`](https://docs.rs/fig/latest/fig/language/struct.NodeTable.html),
+a `print` where the format serializes, and any fragment renderers the editor
+needs — and hand it to
+[`language::register`](https://docs.rs/fig/latest/fig/language/fn.register.html):
 
 ```rust
 use fig::language::{Description, Language, LanguageError, NodeKind, NodeRow, NodeTable};
@@ -199,6 +202,38 @@ let hcl = fig::language::register(Hcl)?[0];
 let doc = Document::parse(b"a = 1\n", hcl)?;   // a peer of Format::Toml at every call
 assert_eq!(Format::by_name("hcl"), Some(hcl));
 ```
+
+Every type in `fig::language` that grows with the core's contract is
+`#[non_exhaustive]` — `Description`, `Dialect`, `Syntax`, `Comments`,
+`CommentDelimiter`, `SectionHeader`, `ClosedContainers`, `NativeKinds`,
+`Renderers`, `PrintOptions`, `LanguageError`, `RenderArgs`, the node table
+and each of its rows — so a field the contract gains is a minor release.
+Their fields stay public: build one from its constructor or `Default` and
+assign what differs, rather than with a struct literal.
+
+```rust
+use fig::language::{Dialect, SectionHeader, Splice, Syntax};
+
+let mut syntax = Syntax::default();
+syntax.kv_sep = Some(" = ".into());
+syntax.section_header = Some(SectionHeader::new("[", "]", "."));
+
+let mut dialect = Dialect::new("hcl");
+dialect.extensions = vec!["hcl".into(), "tf".into()];
+dialect.splice = Splice::Raw;
+
+// Rows: `NodeRow::new` and its `with_*` setters, and a `new` for each
+// side-table row — `RegionRow::new(node, span)`, `MentionRow::new(node,
+// span, kind)`, `CommentRow::new(node, slot, style, text)`,
+// `DirectiveRow::new(handle, prefix)`.
+```
+
+The enums a language matches on — `NodeKind`, `Renderer`, `Literal`,
+`CommentStyle`, `CommentForm`, `KeyStyle`, `SectionNoun`, `Splice`,
+`MentionKind` — are non-exhaustive too, so a `match` on one takes a `_` arm.
+`CommentSlot` is the exception, on purpose: a printer must put every comment
+somewhere, and a slot it had never heard of could only be dropped by a
+wildcard, so a fourth anchor is a major release and a compile error.
 
 The core validates the description by the rules it holds its own formats to
 and runs its harness over the samples — each is parsed, printed, reparsed

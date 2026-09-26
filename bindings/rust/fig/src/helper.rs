@@ -798,8 +798,8 @@ pub fn table_to_value(t: &NodeTable) -> Value {
         .map(|r| {
             map(vec![
                 ("node", Value::Uint(r.node as u64)),
-                ("start", Value::Uint(r.start as u64)),
-                ("end", Value::Uint(r.end as u64)),
+                ("start", Value::Uint(r.span.start as u64)),
+                ("end", Value::Uint(r.span.end as u64)),
             ])
         })
         .collect();
@@ -909,8 +909,11 @@ pub fn table_from_value(v: &Value) -> Result<NodeTable, LanguageError> {
     for r in v.get("regions").and_then(Value::as_seq).unwrap_or(&[]) {
         t.regions.push(RegionRow {
             node: n(r, "node")? as u32,
-            start: n(r, "start")? as usize,
-            end: n(r, "end")? as usize,
+            // The wire keeps a region's offsets flat, as it always has.
+            span: Span {
+                start: n(r, "start")? as usize,
+                end: n(r, "end")? as usize,
+            },
         });
     }
     for m in v.get("mentions").and_then(Value::as_seq).unwrap_or(&[]) {

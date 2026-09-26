@@ -129,7 +129,12 @@ export type Literal = "null" | "bool" | "int" | "float" | "datetime" | "string";
 
 /** The arguments to a renderer. `indent` is the target line's indentation;
  *  `key`, `value` and `old_key` are as written; `literal` is set for the
- *  value renderer alone. */
+ *  value renderer alone. `parent_key` and `parent_tag`, for every
+ *  renderer, are the container the fragment is written into — the mapping
+ *  an entry joins, the sequence an item joins, the container holding a
+ *  value replaced or a key renamed: the name of the key it stands under
+ *  (empty at the root and for a container that is itself a sequence item)
+ *  and its tag as a node row spells one (`!dependency`; empty for none). */
 export interface RenderArgs {
   dialect: string;
   indent: string;
@@ -137,6 +142,8 @@ export interface RenderArgs {
   value: string;
   literal: Literal;
   old_key: string;
+  parent_key: string;
+  parent_tag: string;
 }
 
 /** The subset of the serialize options a printer outside fig is told. */
@@ -313,6 +320,8 @@ type Request =
       value?: string;
       literal?: string;
       old_key?: string;
+      parent_key?: string;
+      parent_tag?: string;
     };
 
 /** The wire's `description` of `lang`: every declared field, spelled as the
@@ -405,6 +414,8 @@ function handleInner(lang: Language, requestLine: string): Record<string, unknow
         value: req.value ?? "",
         literal,
         old_key: req.old_key ?? "",
+        parent_key: req.parent_key ?? "",
+        parent_tag: req.parent_tag ?? "",
       });
       return { ok: true, output };
     }

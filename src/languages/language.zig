@@ -16,6 +16,7 @@ pub const Caps = manifest.Caps;
 pub const NativeKinds = manifest.NativeKinds;
 pub const Syntax = manifest.Syntax;
 pub const Literal = manifest.Literal;
+pub const RenderRequest = manifest.RenderRequest;
 pub const SectionNoun = manifest.SectionNoun;
 
 /// The one list of formats — `src/languages/list.zig` — re-exported so a
@@ -761,20 +762,19 @@ const Decls = struct {
     /// `docs/proposals/derived-regions.md`.
     const hooks = [_][]const u8{};
 
-    /// Fragment renderers. Each is a pure function from the dialect and
-    /// strings to a string the engine splices under the reparse net:
-    /// `renderValue(t, allocator, out, value_text, literal)` spells a value
-    /// (plist's typed element) given what fig's bare-literal rules make of
-    /// the text (`Literal`, classified once by the engine — the one rule
-    /// every format's `set` shares), `renderEntry(t, allocator, out, indent, key_text,
-    /// value_text)` spells a block-mapping entry past its line's indent
+    /// Fragment renderers. Each is a pure function from the dialect and a
+    /// `manifest.RenderRequest` to a string the engine splices under the
+    /// reparse net, `renderX(t, allocator, out, request) !void`:
+    /// `renderValue` spells a value (plist's typed element) given what
+    /// fig's bare-literal rules make of the text (`Literal`, classified
+    /// once by the engine — the one rule every format's `set` shares),
+    /// `renderEntry` spells a block-mapping entry past its line's indent
     /// (plist's two-line pair, NestedText's `key:` and `>`-block),
-    /// `renderItem(t, allocator, out, indent, value_text)` a block-sequence
-    /// item, `renderTail(t, allocator, out, indent, key_text, value_text)`
-    /// what follows a key — the separator and the value inline, or the
-    /// value re-framed as a block on the following lines — and
-    /// `renderKey(t, allocator, out, indent, key_text, old_key)` a renamed
-    /// key in the form the old one allows. `t` is the editor's dialect; no
+    /// `renderItem` a block-sequence item, `renderTail` what follows a key
+    /// — the separator and the value inline, or the value re-framed as a
+    /// block on the following lines — and `renderKey` a renamed key in the
+    /// form the old one allows. Every one is told the container its
+    /// fragment goes into (`parent_key`, `parent_tag`). `t` is the editor's dialect; no
     /// compiled renderer varies by it, and a runtime language's must
     /// (`docs/proposals/runtime-languages.md` §8.4). None receives the
     /// editor or performs a splice; the engine calls one at most once per

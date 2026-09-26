@@ -454,42 +454,44 @@ fn outputCall(t: *Transport, request: []const u8, out: *Runtime.Str, err: *Runti
     return 0;
 }
 
-fn renderCall(ctx: ?*anyopaque, which: []const u8, dialect: [*:0]const u8, indent: Runtime.Str, key: Runtime.Str, value: Runtime.Str, literal: ?[*:0]const u8, old_key: Runtime.Str, out: *Runtime.Str, err: *Runtime.ErrorInfo) c_int {
+fn renderCall(ctx: ?*anyopaque, which: []const u8, r: *const Runtime.RenderRequest, out: *Runtime.Str, err: *Runtime.ErrorInfo) c_int {
     const t = transportOf(ctx);
     var req: Io.Writer.Allocating = .init(t.allocator);
     defer req.deinit();
     const w = &req.writer;
     w.print("{{\"op\":\"render\",\"which\":\"{s}\",\"dialect\":", .{which}) catch return 3;
-    jsonString(w, std.mem.span(dialect)) catch return 3;
-    inline for (.{ .{ "indent", indent }, .{ "key", key }, .{ "value", value } }) |pair| {
-        w.print(",\"{s}\":", .{pair[0]}) catch return 3;
-        jsonString(w, pair[1].slice() orelse "") catch return 3;
+    jsonString(w, std.mem.span(r.dialect)) catch return 3;
+    inline for (.{ "indent", "key", "value" }) |name| {
+        w.print(",\"{s}\":", .{name}) catch return 3;
+        jsonString(w, @field(r, name).slice() orelse "") catch return 3;
     }
     // What fig made of the value, for the value renderer alone.
-    if (literal) |l| {
+    if (std.mem.eql(u8, which, "value")) {
         w.writeAll(",\"literal\":") catch return 3;
-        jsonString(w, std.mem.span(l)) catch return 3;
+        jsonString(w, std.mem.span(r.literal)) catch return 3;
     }
-    w.writeAll(",\"old_key\":") catch return 3;
-    jsonString(w, old_key.slice() orelse "") catch return 3;
+    inline for (.{ "old_key", "parent_key", "parent_tag" }) |name| {
+        w.print(",\"{s}\":", .{name}) catch return 3;
+        jsonString(w, @field(r, name).slice() orelse "") catch return 3;
+    }
     w.writeAll("}") catch return 3;
     return outputCall(t, req.written(), out, err);
 }
 
-fn renderValueThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, value: Runtime.Str, literal: [*:0]const u8, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
-    return renderCall(ctx, "value", dialect, .{}, .{}, value, literal, .{}, out, err);
+fn renderValueThunk(ctx: ?*anyopaque, r: *const Runtime.RenderRequest, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
+    return renderCall(ctx, "value", r, out, err);
 }
-fn renderEntryThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, indent: Runtime.Str, key: Runtime.Str, value: Runtime.Str, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
-    return renderCall(ctx, "entry", dialect, indent, key, value, null, .{}, out, err);
+fn renderEntryThunk(ctx: ?*anyopaque, r: *const Runtime.RenderRequest, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
+    return renderCall(ctx, "entry", r, out, err);
 }
-fn renderItemThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, indent: Runtime.Str, value: Runtime.Str, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
-    return renderCall(ctx, "item", dialect, indent, .{}, value, null, .{}, out, err);
+fn renderItemThunk(ctx: ?*anyopaque, r: *const Runtime.RenderRequest, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
+    return renderCall(ctx, "item", r, out, err);
 }
-fn renderTailThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, indent: Runtime.Str, key: Runtime.Str, value: Runtime.Str, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
-    return renderCall(ctx, "tail", dialect, indent, key, value, null, .{}, out, err);
+fn renderTailThunk(ctx: ?*anyopaque, r: *const Runtime.RenderRequest, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
+    return renderCall(ctx, "tail", r, out, err);
 }
-fn renderKeyThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, indent: Runtime.Str, key: Runtime.Str, old_key: Runtime.Str, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
-    return renderCall(ctx, "key", dialect, indent, key, .{}, null, old_key, out, err);
+fn renderKeyThunk(ctx: ?*anyopaque, r: *const Runtime.RenderRequest, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
+    return renderCall(ctx, "key", r, out, err);
 }
 
 // ── the table on the wire ──────────────────────────────────────────────────
@@ -786,6 +788,33 @@ test "describe builds a vtable the registry would accept" {
     try t.expect(vt.render_entry == null);
     try t.expect(vt.print != null);
     try t.expectEqual(@as(*anyopaque, @ptrCast(&s.transport)), vt.ctx.?);
+}
+
+test "a render request carries the container the fragment goes into" {
+    const t = std.testing;
+    var s: Scripted = .{
+        .transport = .{ .allocator = t.allocator, .callFn = Scripted.call },
+        .describe_response = "",
+        .parse_response = "",
+        .print_response = "{\"ok\":true,\"output\":\"<dependency>x</dependency>\"}",
+    };
+    defer s.last_request.deinit(t.allocator);
+    const request: Runtime.RenderRequest = .{
+        .dialect = "wire-kv",
+        .indent = Runtime.Str.of("  "),
+        .value = Runtime.Str.of("x"),
+        .literal = "string",
+        .parent_key = Runtime.Str.of("dependencies"),
+        .parent_tag = Runtime.Str.of("!dependency"),
+    };
+    var out: Runtime.Str = .{};
+    var err: Runtime.ErrorInfo = .empty;
+    try t.expectEqual(@as(c_int, 0), renderItemThunk(@ptrCast(&s.transport), &request, &out, &err));
+    defer freeBytesThunk(@ptrCast(&s.transport), out);
+    try t.expectEqualStrings("<dependency>x</dependency>", out.slice().?);
+    try t.expectEqualStrings(
+        \\{"op":"render","which":"item","dialect":"wire-kv","indent":"  ","key":"","value":"x","old_key":"","parent_key":"dependencies","parent_tag":"!dependency"}
+    , s.last_request.items);
 }
 
 test "a refusal to describe is reported through Runtime.refuse" {

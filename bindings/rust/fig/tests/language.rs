@@ -218,6 +218,58 @@ fn a_rust_language_is_a_peer_at_every_entry_point() {
     }
 }
 
+// `tinykv` with its root tagged `!kv`, and a value renderer that spells
+// the container it is told about — so that the request's `parent_key` and
+// `parent_tag` are seen to cross the C boundary intact.
+struct TaggedKv;
+
+impl Language for TaggedKv {
+    fn describe(&self) -> Description {
+        let mut d = TinyKv.describe();
+        d.name = "taggedkv".into();
+        d.dialects = vec![Dialect {
+            extensions: vec!["tgkv".into()],
+            splice: Splice::Raw,
+            empty_doc_seed: Some(String::new()),
+            ..Dialect::new("taggedkv")
+        }];
+        d
+    }
+
+    fn parse(&self, dialect: &str, input: &[u8]) -> Result<NodeTable, LanguageError> {
+        let mut t = TinyKv.parse(dialect, input)?;
+        t.rows[0].tag = Some("!kv".into());
+        Ok(t)
+    }
+
+    fn print(
+        &self,
+        dialect: &str,
+        table: &NodeTable,
+        options: &PrintOptions,
+    ) -> Result<Vec<u8>, LanguageError> {
+        TinyKv.print(dialect, table, options)
+    }
+
+    fn render(&self, _which: Renderer, args: RenderArgs<'_>) -> Result<Vec<u8>, LanguageError> {
+        let mut out = args.parent_tag.to_vec();
+        out.push(b'|');
+        out.extend(args.parent_key);
+        out.push(b'|');
+        out.extend(args.value);
+        Ok(out)
+    }
+}
+
+#[test]
+fn a_renderer_is_told_the_container_its_fragment_goes_into() {
+    let tgkv = fig::language::register(TaggedKv).expect("registers")[0];
+    let mut ed = Editor::open(b"x=1\n", tgkv).expect("editor");
+    ed.replace_value(&[Segment::Key("x")], "ten").unwrap();
+    ed.insert_value(&[], "y", "two").unwrap();
+    assert_eq!(ed.source().unwrap(), "x=!kv||ten\ny=!kv||two\n");
+}
+
 struct Broken;
 
 impl Language for Broken {
@@ -310,6 +362,12 @@ fn the_helper_wire_round_trips_describe_parse_print_and_render() {
         r#"{"op":"render","which":"value","dialect":"tinykv","value":"42","literal":"int"}"#,
     );
     assert_eq!(resp.get("output").and_then(Value::as_str), Some("#42"));
+    // The container rides it too.
+    let resp = helper::handle(
+        &TaggedKv,
+        r#"{"op":"render","which":"item","dialect":"taggedkv","value":"v","parent_key":"deps","parent_tag":"!dep"}"#,
+    );
+    assert_eq!(resp.get("output").and_then(Value::as_str), Some("!dep|deps|v"));
     let resp = helper::handle(&lang, r#"{"op":"parse","dialect":"tinykv","input":"nope"}"#);
     assert_eq!(resp.get("ok").and_then(Value::as_bool), Some(false));
     assert_eq!(

@@ -205,6 +205,33 @@ test("handle: the wire, one line to one line", () => {
   assert.deepEqual(JSON.parse(handle(dotenv, JSON.stringify({ op: "render", which: "value", dialect: "js-dotenv", value: "x" }))).ok, false);
 });
 
+test("a renderer is told the container its fragment goes into", () => {
+  // The root tagged `!env`, and a value renderer that spells what it is
+  // told: the request's container crosses wasm and the wire intact.
+  const tagged: Language = {
+    ...dotenv,
+    name: "js-tagged-env",
+    dialects: [{ name: "js-tagged-env", extensions: ["tgenv"], splice: "raw", empty_doc_seed: "" }],
+    renderers: ["value"],
+    parse: (dialect, input) => {
+      const t = dotenv.parse(dialect, input);
+      t.rows[0]!.tag = "!env";
+      return t;
+    },
+    render: (_which, a) => `${a.parent_tag}|${a.parent_key}|${a.value}`,
+  };
+  const f = registerLanguage(tagged);
+  using ed = Editor.open("A=1\n", f);
+  ed.set(["A"], "ten");
+  ed.insertValue([], "B", "two");
+  assert.equal(ed.source(), "A=!env||ten\nB=!env||two\n");
+
+  const wire = JSON.parse(
+    handle(tagged, JSON.stringify({ op: "render", which: "item", dialect: "js-tagged-env", value: "v", parent_key: "deps", parent_tag: "!dep" })),
+  ) as Record<string, unknown>;
+  assert.deepEqual(wire, { ok: true, output: "!dep|deps|v" });
+});
+
 test("serve: the same wire over any line source", async () => {
   async function* lines() {
     yield '{"op":"describe"}\n';

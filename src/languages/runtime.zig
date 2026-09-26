@@ -405,17 +405,31 @@ pub const DialectDesc = extern struct {
 
 /// The fifth versioned surface: bumped when a field of this struct or of
 /// any struct it reaches changes meaning, never for an appended field.
-pub const vtable_version: u32 = 1;
+pub const vtable_version: u32 = 2;
 
 pub const ParseFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, input: Str, out: *NodeTable, err: *ErrorInfo) callconv(.c) c_int;
 pub const PrintFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, table: *const NodeTable, options: *const PrintOptions, out: *Str, err: *ErrorInfo) callconv(.c) c_int;
 pub const FreeTableFn = *const fn (ctx: ?*anyopaque, table: *NodeTable) callconv(.c) void;
 pub const FreeBytesFn = *const fn (ctx: ?*anyopaque, bytes: Str) callconv(.c) void;
-pub const RenderValueFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, value: Str, literal: [*:0]const u8, out: *Str, err: *ErrorInfo) callconv(.c) c_int;
-pub const RenderEntryFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, indent: Str, key: Str, value: Str, out: *Str, err: *ErrorInfo) callconv(.c) c_int;
-pub const RenderItemFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, indent: Str, value: Str, out: *Str, err: *ErrorInfo) callconv(.c) c_int;
-pub const RenderTailFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, indent: Str, key: Str, value: Str, out: *Str, err: *ErrorInfo) callconv(.c) c_int;
-pub const RenderKeyFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, indent: Str, key: Str, old_key: Str, out: *Str, err: *ErrorInfo) callconv(.c) c_int;
+/// Everything a renderer is told — `manifest.RenderRequest` in the C
+/// shape, with the dialect riding along. fig writes it and a language
+/// reads it, so a field appended here reaches a language that knows it and
+/// is never read by one that does not: not a `vtable_version` bump, as
+/// `PrintOptions` is not. `literal` is a `manifest.Literal` tag name, and
+/// is filled for every renderer, though only the value's means anything.
+pub const RenderRequest = extern struct {
+    dialect: [*:0]const u8,
+    indent: Str = .{},
+    key: Str = .{},
+    value: Str = .{},
+    literal: [*:0]const u8,
+    old_key: Str = .{},
+    parent_key: Str = .{},
+    parent_tag: Str = .{},
+};
+
+/// Every renderer slot's shape: the request in, the fragment out.
+pub const RenderFn = *const fn (ctx: ?*anyopaque, request: *const RenderRequest, out: *Str, err: *ErrorInfo) callconv(.c) c_int;
 
 /// The contract, as a record. `register` copies every string and array it
 /// reaches, so the struct and what it points to may be freed after the
@@ -457,11 +471,11 @@ pub const VTable = extern struct {
     free_table: FreeTableFn,
     free_bytes: FreeBytesFn,
 
-    render_value: ?RenderValueFn = null,
-    render_entry: ?RenderEntryFn = null,
-    render_item: ?RenderItemFn = null,
-    render_tail: ?RenderTailFn = null,
-    render_key: ?RenderKeyFn = null,
+    render_value: ?RenderFn = null,
+    render_entry: ?RenderFn = null,
+    render_item: ?RenderFn = null,
+    render_tail: ?RenderFn = null,
+    render_key: ?RenderFn = null,
 };
 
 /// `FigCapability` bits, restated so this file is a leaf.
@@ -1471,16 +1485,8 @@ fn appendRows(arena: Allocator, ast: *const AST, id: Node.Id, parent: u32, rows:
             // A cross-format kind tag spelled as YAML's core schema spells
             // it: the one spelling every format that has tags at all can
             // read, and what YAML's own printer writes.
-            .kind => |k| blk: {
-                const spelled = try arena.dupe(u8, switch (k) {
-                    .null_ => "!!null",
-                    .boolean => "!!bool",
-                    .string => "!!str",
-                    .integer => "!!int",
-                    .float => "!!float",
-                    .sequence => "!!seq",
-                    .mapping => "!!map",
-                });
+            .kind => blk: {
+                const spelled = try arena.dupe(u8, t.spelling());
                 try strings.append(arena, spelled);
                 break :blk Str.of(spelled);
             },
@@ -1654,52 +1660,47 @@ pub const Language = struct {
         };
     }
 
-    pub fn renderValue(t: Type, allocator: Allocator, out: *std.ArrayList(u8), value_text: []const u8, literal: manifest.Literal) !void {
-        const e = entryOf(t);
-        const vt = &e.language.vt;
-        var s: Str = .{};
-        var err: ErrorInfo = .empty;
-        if ((vt.render_value orelse return error.UnsupportedShape)(vt.ctx, e.dialectZ(), Str.of(value_text), @tagName(literal).ptr, &s, &err) != 0) return rendererError(&err);
-        defer vt.free_bytes(vt.ctx, s);
-        try out.appendSlice(allocator, s.slice() orelse "");
+    pub fn renderValue(t: Type, allocator: Allocator, out: *std.ArrayList(u8), r: manifest.RenderRequest) !void {
+        return render(t, allocator, out, .value, r);
+    }
+    pub fn renderEntry(t: Type, allocator: Allocator, out: *std.ArrayList(u8), r: manifest.RenderRequest) !void {
+        return render(t, allocator, out, .entry, r);
+    }
+    pub fn renderItem(t: Type, allocator: Allocator, out: *std.ArrayList(u8), r: manifest.RenderRequest) !void {
+        return render(t, allocator, out, .item, r);
+    }
+    pub fn renderTail(t: Type, allocator: Allocator, out: *std.ArrayList(u8), r: manifest.RenderRequest) !void {
+        return render(t, allocator, out, .tail, r);
+    }
+    pub fn renderKey(t: Type, allocator: Allocator, out: *std.ArrayList(u8), r: manifest.RenderRequest) !void {
+        return render(t, allocator, out, .key, r);
     }
 
-    pub fn renderEntry(t: Type, allocator: Allocator, out: *std.ArrayList(u8), indent: []const u8, key_text: []const u8, value_text: []const u8) !void {
+    /// One renderer call: the request in the C shape, the slot `which`
+    /// names, and the fragment appended to `out`.
+    fn render(t: Type, allocator: Allocator, out: *std.ArrayList(u8), comptime which: manifest.Renderer, r: manifest.RenderRequest) !void {
         const e = entryOf(t);
         const vt = &e.language.vt;
+        const f = switch (which) {
+            .value => vt.render_value,
+            .entry => vt.render_entry,
+            .item => vt.render_item,
+            .tail => vt.render_tail,
+            .key => vt.render_key,
+        } orelse return error.UnsupportedShape;
+        const request: RenderRequest = .{
+            .dialect = e.dialectZ(),
+            .indent = Str.of(r.indent),
+            .key = Str.of(r.key),
+            .value = Str.of(r.value),
+            .literal = @tagName(r.literal).ptr,
+            .old_key = Str.of(r.old_key),
+            .parent_key = Str.of(r.parent_key),
+            .parent_tag = Str.of(r.parent_tag),
+        };
         var s: Str = .{};
         var err: ErrorInfo = .empty;
-        if ((vt.render_entry orelse return error.UnsupportedShape)(vt.ctx, e.dialectZ(), Str.of(indent), Str.of(key_text), Str.of(value_text), &s, &err) != 0) return rendererError(&err);
-        defer vt.free_bytes(vt.ctx, s);
-        try out.appendSlice(allocator, s.slice() orelse "");
-    }
-
-    pub fn renderItem(t: Type, allocator: Allocator, out: *std.ArrayList(u8), indent: []const u8, value_text: []const u8) !void {
-        const e = entryOf(t);
-        const vt = &e.language.vt;
-        var s: Str = .{};
-        var err: ErrorInfo = .empty;
-        if ((vt.render_item orelse return error.UnsupportedShape)(vt.ctx, e.dialectZ(), Str.of(indent), Str.of(value_text), &s, &err) != 0) return rendererError(&err);
-        defer vt.free_bytes(vt.ctx, s);
-        try out.appendSlice(allocator, s.slice() orelse "");
-    }
-
-    pub fn renderTail(t: Type, allocator: Allocator, out: *std.ArrayList(u8), indent: []const u8, key_text: []const u8, value_text: []const u8) !void {
-        const e = entryOf(t);
-        const vt = &e.language.vt;
-        var s: Str = .{};
-        var err: ErrorInfo = .empty;
-        if ((vt.render_tail orelse return error.UnsupportedShape)(vt.ctx, e.dialectZ(), Str.of(indent), Str.of(key_text), Str.of(value_text), &s, &err) != 0) return rendererError(&err);
-        defer vt.free_bytes(vt.ctx, s);
-        try out.appendSlice(allocator, s.slice() orelse "");
-    }
-
-    pub fn renderKey(t: Type, allocator: Allocator, out: *std.ArrayList(u8), indent: []const u8, key_text: []const u8, old_key: []const u8) !void {
-        const e = entryOf(t);
-        const vt = &e.language.vt;
-        var s: Str = .{};
-        var err: ErrorInfo = .empty;
-        if ((vt.render_key orelse return error.UnsupportedShape)(vt.ctx, e.dialectZ(), Str.of(indent), Str.of(key_text), Str.of(old_key), &s, &err) != 0) return rendererError(&err);
+        if (f(vt.ctx, &request, &s, &err) != 0) return rendererError(&err);
         defer vt.free_bytes(vt.ctx, s);
         try out.appendSlice(allocator, s.slice() orelse "");
     }
@@ -2163,6 +2164,132 @@ test "a runtime language's flow root is edited by comma-aware splice, not as a s
     try testing.expectEqualStrings("[a]\n", ed.source.items);
     try ed.appendToSeq(&.{}, "d");
     try testing.expectEqualStrings("[a, d]\n", ed.source.items);
+}
+
+// `tinydeps`: a header line `name !tag` opens a block list under `name`,
+// and each `- word` line below it is an item. The item and value renderers
+// spell what they are told about the container — the list's key and its
+// tag — so that what the engine tells them is what the edit shows.
+const TinyDeps = struct {
+    pub const Alloc = TinyKv.Alloc;
+
+    fn parse(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Str, out: *NodeTable, err: *ErrorInfo) callconv(.c) c_int {
+        _ = dialect;
+        const a: *Alloc = @ptrCast(@alignCast(ctx.?));
+        const src = input.slice() orelse "";
+        var rows: std.ArrayList(NodeRow) = .empty;
+        rows.append(a.allocator, .{ .kind = @intFromEnum(RowKind.mapping), .parent = no_node, .span = .{ .start = 0, .end = src.len } }) catch return 255;
+        var kv: ?u32 = null;
+        var seq: ?u32 = null;
+        var at: usize = 0;
+        while (at < src.len) {
+            const nl = std.mem.indexOfScalarPos(u8, src, at, '\n') orelse src.len;
+            const line = src[at..nl];
+            defer at = nl + 1;
+            if (line.len == 0) continue;
+            if (std.mem.startsWith(u8, line, "- ")) {
+                const q = seq orelse {
+                    err.set("an item needs a list header above it");
+                    rows.deinit(a.allocator);
+                    return 2;
+                };
+                const item = CSpan{ .start = at + 2, .end = nl };
+                rows.append(a.allocator, .{ .kind = @intFromEnum(RowKind.string), .parent = q, .span = item, .text = Str.of(line[2..]), .marker = .{ .start = at, .end = at + 2 } }) catch return 255;
+                if (rows.items[q].span.start == rows.items[q].span.end) rows.items[q].span.start = at;
+                rows.items[q].span.end = nl;
+                rows.items[kv.?].span.end = nl;
+                continue;
+            }
+            const sp = std.mem.indexOfScalar(u8, line, ' ') orelse line.len;
+            kv = @intCast(rows.items.len);
+            rows.append(a.allocator, .{ .kind = @intFromEnum(RowKind.keyvalue), .parent = 0, .span = .{ .start = at, .end = nl } }) catch return 255;
+            rows.append(a.allocator, .{ .kind = @intFromEnum(RowKind.string), .parent = kv.?, .span = .{ .start = at, .end = at + sp }, .text = Str.of(line[0..sp]) }) catch return 255;
+            seq = @intCast(rows.items.len);
+            const tag = std.mem.trim(u8, line[sp..], " ");
+            rows.append(a.allocator, .{
+                .kind = @intFromEnum(RowKind.sequence),
+                .parent = kv.?,
+                .span = .{ .start = nl, .end = nl },
+                .tag = if (tag.len > 0) Str.of(tag) else .none,
+                .tag_span = if (tag.len > 0) .{ .start = nl - tag.len, .end = nl } else .none,
+            }) catch return 255;
+        }
+        const r = rows.toOwnedSlice(a.allocator) catch return 255;
+        out.* = .{ .rows = r.ptr, .row_count = r.len };
+        return 0;
+    }
+
+    fn freeTable(ctx: ?*anyopaque, table: *NodeTable) callconv(.c) void {
+        const a: *Alloc = @ptrCast(@alignCast(ctx.?));
+        a.allocator.free(table.rowSlice());
+    }
+
+    fn spell(ctx: ?*anyopaque, out: *Str, comptime fmt: []const u8, args: anytype) c_int {
+        const a: *Alloc = @ptrCast(@alignCast(ctx.?));
+        const s = std.fmt.allocPrint(a.allocator, fmt, args) catch return 255;
+        out.* = Str.of(s);
+        return 0;
+    }
+
+    /// `- <item name>:<list key>:<value>`, the item name read off the tag.
+    fn renderItem(ctx: ?*anyopaque, r: *const RenderRequest, out: *Str, err: *ErrorInfo) callconv(.c) c_int {
+        _ = err;
+        const tag = r.parent_tag.slice() orelse "";
+        return spell(ctx, out, "- {s}:{s}:{s}", .{ if (tag.len > 0) tag[1..] else "?", r.parent_key.slice() orelse "", r.value.slice() orelse "" });
+    }
+
+    /// `<value>@<list key>`.
+    fn renderValue(ctx: ?*anyopaque, r: *const RenderRequest, out: *Str, err: *ErrorInfo) callconv(.c) c_int {
+        _ = err;
+        return spell(ctx, out, "{s}@{s}", .{ r.value.slice() orelse "", r.parent_key.slice() orelse "" });
+    }
+
+    const syntax: SyntaxDesc = .{
+        .comments = .{ .style = @intFromEnum(manifest.CommentStyle.hash), .line = .{}, .trailing = .{} },
+        .kv_sep = " ",
+        .empty_map_literal = null,
+        .flow_containers = false,
+    };
+    const extensions = [_]?[*:0]const u8{ "tdeps", null };
+    const dialects = [_]DialectDesc{.{ .name = "tinydeps", .extensions = &extensions, .splice = 2, .empty_doc_seed = "" }};
+    const samples = [_]Str{Str.of("deps !dep\n- a\n- b\n")};
+
+    pub fn vtable(alloc: *Alloc) VTable {
+        return .{
+            .version = vtable_version,
+            .ctx = alloc,
+            .name = "tinydeps",
+            .caps = cap_read | cap_edit,
+            .syntax = &syntax,
+            .dialects = &dialects,
+            .dialect_count = dialects.len,
+            .samples = &samples,
+            .sample_count = samples.len,
+            .parse = parse,
+            .free_table = freeTable,
+            .free_bytes = TinyKv.freeBytes,
+            .render_value = renderValue,
+            .render_item = renderItem,
+        };
+    }
+};
+
+test "a runtime renderer is told the container its fragment goes into: the list's key and tag" {
+    defer deinitAll();
+    var alloc: TinyDeps.Alloc = .{ .allocator = testing.allocator };
+    const vt = TinyDeps.vtable(&alloc);
+    const abi = try register(testing.allocator, &vt);
+    const e = entryByAbi(abi).?;
+    var ed: editor.Editor(Language) = .{ .allocator = testing.allocator, .format = e.typeOf() };
+    defer ed.deinit();
+    try ed.init("deps !dep\n- a\n- b\n");
+    // An appended item: the value renderer, then the item renderer, each
+    // told the list is `deps`, tagged `!dep`.
+    try ed.appendToSeq(&.{.{ .key = "deps" }}, "c");
+    try testing.expectEqualStrings("deps !dep\n- a\n- b\n- dep:deps:c@deps\n", ed.source.items);
+    // An item replaced in place reframes through the same two.
+    try ed.replaceValAtPath(&.{ .{ .key = "deps" }, .{ .index = 0 } }, "z");
+    try testing.expectEqualStrings("deps !dep\n- dep:deps:z@deps\n- b\n- dep:deps:c@deps\n", ed.source.items);
 }
 
 test "registration refuses a record that fails validation or the harness" {

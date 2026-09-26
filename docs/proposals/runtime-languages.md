@@ -384,6 +384,13 @@ the draft above in the details that only doing it could settle:
   follows a key, separator included, inline or re-framed — because fig's
   block form drops the separator and YAML's keeps it, which no engine rule
   could know. An empty `key_text` to `renderTail` is the document root.
+- Every renderer takes one request record rather than positional
+  strings (`vtable_version` 2): the indent, key, value, literal and old
+  key, and the container the fragment is written into — the name of the
+  key it stands under and its tag — without which an XML list's item
+  renderer cannot name the element a new item needs. fig writes the
+  record and a renderer reads it, so a field appended later is not a
+  version bump.
 - `replaceValAtPathFollowing` needed nothing: the alias kind, its
   resolution and the anchor and tag span tables are all core.
 

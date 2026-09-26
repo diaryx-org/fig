@@ -102,3 +102,22 @@ fn value_stays_exhaustively_matchable_on_purpose() {
     };
     assert_eq!(name, "seq");
 }
+
+#[test]
+fn every_render_args_field_is_reachable_without_a_struct_literal() {
+    use fig::language::{Literal, RenderArgs};
+    let args = RenderArgs::default()
+        .dialect("d")
+        .indent(b"  ")
+        .key(b"k")
+        .value(b"42")
+        .literal(Literal::Int)
+        .old_key(b"o")
+        .parent_key(b"deps")
+        .parent_tag(b"!dep");
+    assert_eq!(args.dialect, "d");
+    assert_eq!((args.indent, args.key, args.value), (&b"  "[..], &b"k"[..], &b"42"[..]));
+    assert_eq!(args.literal, Literal::Int);
+    assert_eq!(args.old_key, b"o");
+    assert_eq!((args.parent_key, args.parent_tag), (&b"deps"[..], &b"!dep"[..]));
+}

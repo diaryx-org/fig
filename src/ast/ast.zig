@@ -160,6 +160,24 @@ pub const Tag = union(enum) {
 
     pub const KindTag = enum { null_, boolean, string, integer, float, sequence, mapping };
 
+    /// The tag as a node table spells it: a text tag verbatim, a kind tag
+    /// as YAML's core schema spells it (`!!int`, `!!str`) — the one
+    /// spelling every format that has tags at all can read.
+    pub fn spelling(self: Tag) []const u8 {
+        return switch (self) {
+            .text => |t| t,
+            .kind => |k| switch (k) {
+                .null_ => "!!null",
+                .boolean => "!!bool",
+                .string => "!!str",
+                .integer => "!!int",
+                .float => "!!float",
+                .sequence => "!!seq",
+                .mapping => "!!map",
+            },
+        };
+    }
+
     pub fn eql(self: Tag, other: Tag) bool {
         if (activeTag(self) != activeTag(other)) return false;
         return switch (self) {

@@ -29,18 +29,16 @@ impl Language for TinyKv {
         let mut d = Description::new("tinykv");
         d.caps = Capabilities::new(true, true, true);
         d.max_mapping_depth = Some(0);
-        d.syntax = Some(Syntax {
-            kv_sep: Some("=".into()),
-            empty_map_literal: Some("{}".into()),
-            flow_containers: false,
-            ..Default::default()
-        });
-        d.dialects = vec![Dialect {
-            extensions: vec!["tkv".into()],
-            splice: Splice::Raw,
-            empty_doc_seed: Some(String::new()),
-            ..Dialect::new("tinykv")
-        }];
+        let mut syntax = Syntax::default();
+        syntax.kv_sep = Some("=".into());
+        syntax.empty_map_literal = Some("{}".into());
+        syntax.flow_containers = false;
+        d.syntax = Some(syntax);
+        let mut dialect = Dialect::new("tinykv");
+        dialect.extensions = vec!["tkv".into()];
+        dialect.splice = Splice::Raw;
+        dialect.empty_doc_seed = Some(String::new());
+        d.dialects = vec![dialect];
         d.samples = vec!["a=1\nb=two\n".into(), "# top\nk=v\n".into()];
         d
     }
@@ -104,12 +102,12 @@ impl Language for TinyKv {
                 .with_text(&line[eq + 1..]),
             );
             for text in pending.drain(..) {
-                t.comments.push(CommentRow {
-                    node: key,
-                    slot: CommentSlot::Leading,
-                    style: CommentForm::Line,
+                t.comments.push(CommentRow::new(
+                    key,
+                    CommentSlot::Leading,
+                    CommentForm::Line,
                     text,
-                });
+                ));
             }
             at = end + 1;
         }

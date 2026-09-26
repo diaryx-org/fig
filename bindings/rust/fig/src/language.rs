@@ -35,10 +35,14 @@ use crate::{Capabilities, Error, ExtKind, Format, RuntimeFormat, Span};
 /// format, as data. See the core's `manifest.zig` for what each field means
 /// to the editor; the doc on each here says what it is, not why.
 ///
-/// This and the structs it holds are plain, constructible records — build
-/// them with `..Default::default()` (or [`Description::new`]), since the
-/// contract gains fields as the core's does.
+/// This and the structs it holds are `#[non_exhaustive]`, since the
+/// contract gains fields as the core's does: a field appended here is a
+/// minor release. Their fields stay public, so build one with its `new`
+/// constructor (or `Default`) and assign the fields you need —
+/// `let mut d = Description::new("hcl"); d.samples = vec![…];` — rather than
+/// with a struct literal, which only this crate can write.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Description {
     /// The language's name; also its first dialect's.
     pub name: String,
@@ -67,8 +71,8 @@ pub struct Description {
 }
 
 impl Description {
-    /// A description with `name` and one dialect of the same name; fill the
-    /// rest with the builder-style methods or directly.
+    /// A description with `name`, one dialect of the same name, and the
+    /// default (read-only) capabilities; assign the rest of the fields.
     pub fn new(name: &str) -> Self {
         Description {
             name: name.to_owned(),
@@ -85,8 +89,10 @@ impl Default for Capabilities {
     }
 }
 
-/// One dialect of a language.
+/// One dialect of a language. Built with [`Dialect::new`], since a dialect
+/// without a name is not one; the rest of the fields are assigned.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Dialect {
     /// The name every entry point resolves it by.
     pub name: String,
@@ -102,6 +108,8 @@ pub struct Dialect {
 }
 
 impl Dialect {
+    /// A dialect named `name`, with no extensions, literal splicing, no
+    /// empty-document seed and the language's own syntax.
     pub fn new(name: &str) -> Self {
         Dialect {
             name: name.to_owned(),
@@ -115,6 +123,7 @@ impl Dialect {
 
 /// How a dialect takes spliced edit text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum Splice {
     /// As written.
     #[default]
@@ -126,7 +135,9 @@ pub enum Splice {
 }
 
 /// Which kinds a format holds natively. One field per [`ExtKind`], plus null.
+/// Start from `Default` (nothing native) and set the kinds the format holds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct NativeKinds {
     pub null: bool,
     pub offset_datetime: bool,
@@ -140,8 +151,10 @@ pub struct NativeKinds {
     pub plist_data: bool,
 }
 
-/// Which renderers a language answers.
+/// Which renderers a language answers. Start from `Default` (none) and set
+/// the ones the language answers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Renderers {
     pub value: bool,
     pub entry: bool,
@@ -151,8 +164,10 @@ pub struct Renderers {
 }
 
 /// The surface syntax the splice engine writes a format with. Every field
-/// is the core's `manifest.Syntax` field of the same name.
+/// is the core's `manifest.Syntax` field of the same name. Start from
+/// `Default` and assign what differs.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Syntax {
     pub comments: Comments,
     /// The key/value separator the engine writes, or `None` when it never
@@ -209,8 +224,11 @@ impl Default for Syntax {
     }
 }
 
-/// A format's comment surface.
+/// A format's comment surface: [`Comments::new`], or one of the shorthands
+/// [`hash`](Comments::hash), [`slashes`](Comments::slashes) and
+/// [`none`](Comments::none).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Comments {
     pub style: CommentStyle,
     /// The own-line delimiter, or `None` for a format with no comments.
@@ -221,6 +239,20 @@ pub struct Comments {
 }
 
 impl Comments {
+    /// A comment surface scanned as `style`, with `line` as its own-line
+    /// delimiter and `trailing` as its same-line one.
+    pub fn new(
+        style: CommentStyle,
+        line: Option<CommentDelimiter>,
+        trailing: Option<CommentDelimiter>,
+    ) -> Self {
+        Comments {
+            style,
+            line,
+            trailing,
+        }
+    }
+
     /// `#` throughout.
     pub fn hash() -> Self {
         Comments {
@@ -249,6 +281,7 @@ impl Comments {
 
 /// Which owned-comment-block scanner walks the format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum CommentStyle {
     #[default]
     Hash,
@@ -257,8 +290,11 @@ pub enum CommentStyle {
     XmlComment,
 }
 
-/// How one comment is delimited.
+/// How one comment is delimited: [`CommentDelimiter::open`] for an
+/// unpaired marker, [`CommentDelimiter::pair`] for a paired one, and
+/// `forbidden` assigned where the body has text it may not contain.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CommentDelimiter {
     pub open: String,
     /// Empty for an unpaired delimiter.
@@ -268,6 +304,7 @@ pub struct CommentDelimiter {
 }
 
 impl CommentDelimiter {
+    /// An unpaired delimiter: `open` to the end of the line.
     pub fn open(open: &str) -> Self {
         CommentDelimiter {
             open: open.to_owned(),
@@ -275,6 +312,7 @@ impl CommentDelimiter {
             forbidden: None,
         }
     }
+    /// A paired delimiter, `open` … `close`.
     pub fn pair(open: &str, close: &str) -> Self {
         CommentDelimiter {
             open: open.to_owned(),
@@ -286,6 +324,7 @@ impl CommentDelimiter {
 
 /// How a logical key renders into the format's key syntax on insert.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum KeyStyle {
     #[default]
     Verbatim,
@@ -296,6 +335,7 @@ pub enum KeyStyle {
 
 /// What a section format calls its scattered container.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SectionNoun {
     Table,
     Section,
@@ -304,22 +344,56 @@ pub enum SectionNoun {
 
 /// How a section format spells a header line.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SectionHeader {
     pub open: String,
     pub close: String,
+    /// The array-of-sections spelling (TOML's `[[`/`]]`), or `None` where
+    /// the format has none.
     pub seq_open: Option<String>,
     pub seq_close: Option<String>,
     pub sep: String,
     pub skip_index: bool,
 }
 
+impl SectionHeader {
+    /// A header spelled `open` name `close`, its path segments joined by
+    /// `sep` — `SectionHeader::new("[", "]", ".")` — with no
+    /// array-of-sections spelling and `skip_index` set, which is also what
+    /// the wire takes an absent `skip_index` to mean.
+    pub fn new(open: &str, close: &str, sep: &str) -> Self {
+        SectionHeader {
+            open: open.to_owned(),
+            close: close.to_owned(),
+            seq_open: None,
+            seq_close: None,
+            sep: sep.to_owned(),
+            skip_index: true,
+        }
+    }
+}
+
 /// The self-closing spellings of an empty block container.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ClosedContainers {
     pub map_open: String,
     pub map_close: String,
     pub seq_open: String,
     pub seq_close: String,
+}
+
+impl ClosedContainers {
+    /// An empty mapping spelled `map_open` `map_close`, an empty sequence
+    /// `seq_open` `seq_close`.
+    pub fn new(map_open: &str, map_close: &str, seq_open: &str, seq_close: &str) -> Self {
+        ClosedContainers {
+            map_open: map_open.to_owned(),
+            map_close: map_close.to_owned(),
+            seq_open: seq_open.to_owned(),
+            seq_close: seq_close.to_owned(),
+        }
+    }
 }
 
 // ── the node table ─────────────────────────────────────────────────────────
@@ -439,6 +513,7 @@ impl NodeRow {
 
 /// A row's kind: what `fig_node_kind` reports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum NodeKind {
     Null,
     Bool,
@@ -484,22 +559,38 @@ impl NodeKind {
 
 /// One whole header line of a section node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RegionRow {
     pub node: u32,
-    pub start: usize,
-    pub end: usize,
+    pub span: Span,
+}
+
+impl RegionRow {
+    /// The header line of row `node`, at `span`.
+    pub fn new(node: u32, span: Span) -> Self {
+        RegionRow { node, span }
+    }
 }
 
 /// One place a section node's name is written.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct MentionRow {
     pub node: u32,
     pub span: Span,
     pub kind: MentionKind,
 }
 
+impl MentionRow {
+    /// Row `node`'s name, written at `span` and sitting as `kind` says.
+    pub fn new(node: u32, span: Span, kind: MentionKind) -> Self {
+        MentionRow { node, span, kind }
+    }
+}
+
 /// How a mention sits relative to the node's parent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MentionKind {
     /// A header line of the node's own.
     Header,
@@ -509,6 +600,7 @@ pub enum MentionKind {
 
 /// One comment bound to a row.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CommentRow {
     pub node: u32,
     pub slot: CommentSlot,
@@ -516,16 +608,45 @@ pub struct CommentRow {
     pub text: String,
 }
 
+impl CommentRow {
+    /// A `style` comment reading `text`, in `slot` on row `node`.
+    pub fn new(node: u32, slot: CommentSlot, style: CommentForm, text: impl Into<String>) -> Self {
+        CommentRow {
+            node,
+            slot,
+            style,
+            text: text.into(),
+        }
+    }
+}
+
 /// One tag-handle declaration — a YAML `%TAG` directive's handle (`!e!`,
 /// or a redefined `!`/`!!`) and the prefix it expands to. A tag spelled
 /// with a named handle is legal only in a document that declares it.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct DirectiveRow {
     pub handle: String,
     pub prefix: String,
 }
 
-/// Where a comment sits on its node.
+impl DirectiveRow {
+    /// `handle` declared as expanding to `prefix`.
+    pub fn new(handle: impl Into<String>, prefix: impl Into<String>) -> Self {
+        DirectiveRow {
+            handle: handle.into(),
+            prefix: prefix.into(),
+        }
+    }
+}
+
+/// Where a comment sits on its node: the core's three comment anchors.
+///
+/// Deliberately exhaustive, unlike the enums around it. A printer has to
+/// put every comment somewhere, and one that met a slot it had never heard
+/// of through a `_` arm could only drop it; a fourth anchor is a major
+/// release, and a compile error in each printer is the right way to hear
+/// about it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommentSlot {
     Leading,
@@ -535,12 +656,15 @@ pub enum CommentSlot {
 
 /// A comment's written form.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CommentForm {
     Line,
     Block,
 }
 
-/// What a printer outside the core is told of the serialize options.
+/// What a printer outside the core is told of the serialize options. A test
+/// of a [`Language`] that calls its `print` directly starts from `Default`
+/// and assigns what differs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct PrintOptions {
@@ -571,20 +695,23 @@ impl Default for PrintOptions {
 // ── the trait ──────────────────────────────────────────────────────────────
 
 /// A failure a language reports: a message, and where in the input for a
-/// parse.
+/// parse. Built with [`LanguageError::new`] or [`LanguageError::at`].
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LanguageError {
     pub message: String,
     pub byte_offset: Option<usize>,
 }
 
 impl LanguageError {
+    /// A failure with no location.
     pub fn new(message: impl Into<String>) -> Self {
         LanguageError {
             message: message.into(),
             byte_offset: None,
         }
     }
+    /// A failure at `byte_offset` in the input.
     pub fn at(message: impl Into<String>, byte_offset: usize) -> Self {
         LanguageError {
             message: message.into(),
@@ -604,8 +731,12 @@ impl std::fmt::Display for LanguageError {
 
 impl std::error::Error for LanguageError {}
 
-/// The five fragment renderers.
+/// The fragment renderers. Non-exhaustive: a renderer the core gains is
+/// only ever called on a language whose description declares it, so the
+/// `_` arm [`Language::render`] needs is never reached by one it does not
+/// know.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Renderer {
     /// Spell a value in place (plist's typed element).
     Value,
@@ -639,7 +770,12 @@ impl Renderer {
 /// and every format's `set` means the same thing by `42`; a renderer
 /// spells the kind it is told. A datetime is a string in the node table
 /// and its own answer here, since a renderer spells it differently.
+///
+/// Non-exhaustive: a kind fig's literal rules learn later is a minor
+/// release, and a renderer's `_` arm spells it as the string every
+/// untyped text falls back to anyway.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Literal {
     Null,
     Bool,
@@ -1318,8 +1454,8 @@ fn table_to_c(table: NodeTable) -> Box<TableHolder> {
         .iter()
         .map(|r| ffi::FigRegionRow {
             node: r.node,
-            start: r.start,
-            end: r.end,
+            start: r.span.start,
+            end: r.span.end,
         })
         .collect();
     let mentions = table
@@ -1481,8 +1617,10 @@ pub(crate) fn table_from_c(t: &ffi::FigNodeTable) -> Result<NodeTable, LanguageE
     for r in regions {
         out.regions.push(RegionRow {
             node: r.node,
-            start: r.start,
-            end: r.end,
+            span: Span {
+                start: r.start,
+                end: r.end,
+            },
         });
     }
     for m in mentions {

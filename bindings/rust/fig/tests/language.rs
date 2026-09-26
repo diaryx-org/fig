@@ -11,28 +11,30 @@ use fig::{Capabilities, Document, Editor, Error, Format, Segment, Span, Value};
 
 struct TinyKv;
 
+/// A tinykv dialect named `name`: raw splicing, an empty file already a
+/// document, and the one extension.
+fn raw_dialect(name: &str, extension: &str) -> Dialect {
+    let mut d = Dialect::new(name);
+    d.extensions = vec![extension.into()];
+    d.splice = Splice::Raw;
+    d.empty_doc_seed = Some(String::new());
+    d
+}
+
 impl Language for TinyKv {
     fn describe(&self) -> Description {
         let mut d = Description::new("tinykv");
         d.caps = Capabilities::new(true, true, true);
         d.max_mapping_depth = Some(0);
-        d.syntax = Some(Syntax {
-            kv_sep: Some("=".into()),
-            empty_map_literal: Some("{}".into()),
-            flow_containers: false,
-            ..Default::default()
-        });
-        d.dialects = vec![Dialect {
-            extensions: vec!["tkv".into()],
-            splice: Splice::Raw,
-            empty_doc_seed: Some(String::new()),
-            ..Dialect::new("tinykv")
-        }];
+        let mut syntax = Syntax::default();
+        syntax.kv_sep = Some("=".into());
+        syntax.empty_map_literal = Some("{}".into());
+        syntax.flow_containers = false;
+        d.syntax = Some(syntax);
+        d.dialects = vec![raw_dialect("tinykv", "tkv")];
         d.samples = vec!["a=1\nb=two\n".into(), "# top\nk=v\n".into()];
-        d.renderers = Renderers {
-            value: true,
-            ..Default::default()
-        };
+        d.renderers = Renderers::default();
+        d.renderers.value = true;
         d
     }
 
@@ -95,12 +97,12 @@ impl Language for TinyKv {
                 .with_text(&line[eq + 1..]),
             );
             for text in pending.drain(..) {
-                t.comments.push(CommentRow {
-                    node: key,
-                    slot: CommentSlot::Leading,
-                    style: CommentForm::Line,
+                t.comments.push(CommentRow::new(
+                    key,
+                    CommentSlot::Leading,
+                    CommentForm::Line,
                     text,
-                });
+                ));
             }
             at = end + 1;
         }
@@ -227,12 +229,7 @@ impl Language for TaggedKv {
     fn describe(&self) -> Description {
         let mut d = TinyKv.describe();
         d.name = "taggedkv".into();
-        d.dialects = vec![Dialect {
-            extensions: vec!["tgkv".into()],
-            splice: Splice::Raw,
-            empty_doc_seed: Some(String::new()),
-            ..Dialect::new("taggedkv")
-        }];
+        d.dialects = vec![raw_dialect("taggedkv", "tgkv")];
         d
     }
 
@@ -326,10 +323,8 @@ fn the_helper_wire_round_trips_describe_parse_print_and_render() {
     // are none — which is every table a format without them answers with.
     assert!(!helper::encode(&helper::table_to_value(&table)).contains("directives"));
     let mut with = table.clone();
-    with.directives.push(fig::language::DirectiveRow {
-        handle: "!e!".into(),
-        prefix: "tag:x/".into(),
-    });
+    with.directives
+        .push(fig::language::DirectiveRow::new("!e!", "tag:x/"));
     let encoded = helper::encode(&helper::table_to_value(&with));
     assert!(encoded.contains(r#""directives":[{"handle":"!e!","prefix":"tag:x/"}]"#));
     let decoded = fig::Document::parse(encoded.as_bytes(), Format::Json)
@@ -399,16 +394,10 @@ impl Language for DatedKv {
         let mut d = TinyKv.describe();
         d.name = "datedkv".into();
         d.max_mapping_depth = None;
-        d.lossless = Some(fig::language::NativeKinds {
-            local_date: true,
-            ..Default::default()
-        });
-        d.dialects = vec![Dialect {
-            extensions: vec!["dkv".into()],
-            splice: Splice::Raw,
-            empty_doc_seed: Some(String::new()),
-            ..Dialect::new("datedkv")
-        }];
+        let mut native = fig::language::NativeKinds::default();
+        native.local_date = true;
+        d.lossless = Some(native);
+        d.dialects = vec![raw_dialect("datedkv", "dkv")];
         d
     }
 

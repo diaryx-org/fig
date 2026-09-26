@@ -67,8 +67,11 @@ fn editor_replace_quotes_when_needed() {
     let mut ed = Editor::open(b"title: Hello\n", Format::Yaml).unwrap();
     // A `Serialize` value goes in through `fig::to_value`, which is what the
     // removed serde-sugar methods did for you.
-    ed.replace_value(&[Segment::Key("title")], fig::to_value("has: colon").unwrap())
-        .unwrap();
+    ed.replace_value(
+        &[Segment::Key("title")],
+        fig::to_value("has: colon").unwrap(),
+    )
+    .unwrap();
     // Reads back as the same logical value.
     let value: std::collections::BTreeMap<String, String> =
         fig::from_yaml_str(ed.source().unwrap()).unwrap();
@@ -358,7 +361,8 @@ prose goes here
 #[test]
 fn frontmatter_preserves_comments_fences_and_body() {
     let mut fm = Embed::open(NOTE.as_bytes(), EmbedType::FrontmatterYaml).unwrap();
-    fm.replace_value(&[Segment::Key("title")], "Hi there").unwrap();
+    fm.replace_value(&[Segment::Key("title")], "Hi there")
+        .unwrap();
     fm.append_value(&[Segment::Key("tags")], "c").unwrap();
     fm.insert_value(&[], "author", "me").unwrap();
 
@@ -660,7 +664,8 @@ fn frontmatter_replace_body_keeps_frontmatter_byte_identical() {
 #[test]
 fn frontmatter_replace_body_composes_with_edits() {
     let mut fm = Embed::open(NOTE.as_bytes(), EmbedType::FrontmatterYaml).unwrap();
-    fm.replace_value(&[Segment::Key("title")], "Hi there").unwrap();
+    fm.replace_value(&[Segment::Key("title")], "Hi there")
+        .unwrap();
     fm.replace_body("# New Body\n").unwrap();
     let rendered = fm.render().unwrap();
     let (_, new_fm, new_body) = fig::split(rendered, EmbedType::FrontmatterYaml).unwrap();
@@ -1056,7 +1061,10 @@ fn editor_nestedtext_value_is_spliced_as_plain_text_and_blocked_once() {
     ed.replace_value(&[Segment::Key("name")], "h2").unwrap();
     assert_eq!(ed.source().unwrap(), "name: h2\n");
     ed.insert_value(&[], "new", "two\nlines").unwrap();
-    assert_eq!(ed.source().unwrap(), "name: h2\nnew:\n    > two\n    > lines\n");
+    assert_eq!(
+        ed.source().unwrap(),
+        "name: h2\nnew:\n    > two\n    > lines\n"
+    );
 }
 
 #[test]
@@ -1081,8 +1089,14 @@ fn editor_nestedtext_takes_a_container_as_nested_entries() {
     let mut ed = Editor::open(b"name: fig\n", Format::Nestedtext).unwrap();
     let m = Value::Map(vec![
         (Value::Str("x".into()), Value::Str("1".into())),
-        (Value::Str("l".into()), Value::Seq(vec![Value::Str("a".into()), Value::Str("b".into())])),
+        (
+            Value::Str("l".into()),
+            Value::Seq(vec![Value::Str("a".into()), Value::Str("b".into())]),
+        ),
     ]);
     ed.insert_value(&[], "m", m).unwrap();
-    assert_eq!(ed.source().unwrap(), "name: fig\nm:\n    x: 1\n    l:\n        - a\n        - b\n");
+    assert_eq!(
+        ed.source().unwrap(),
+        "name: fig\nm:\n    x: 1\n    l:\n        - a\n        - b\n"
+    );
 }

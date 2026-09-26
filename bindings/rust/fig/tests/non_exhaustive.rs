@@ -116,18 +116,24 @@ fn every_render_args_field_is_reachable_without_a_struct_literal() {
         .parent_key(b"deps")
         .parent_tag(b"!dep");
     assert_eq!(args.dialect, "d");
-    assert_eq!((args.indent, args.key, args.value), (&b"  "[..], &b"k"[..], &b"42"[..]));
+    assert_eq!(
+        (args.indent, args.key, args.value),
+        (&b"  "[..], &b"k"[..], &b"42"[..])
+    );
     assert_eq!(args.literal, Literal::Int);
     assert_eq!(args.old_key, b"o");
-    assert_eq!((args.parent_key, args.parent_tag), (&b"deps"[..], &b"!dep"[..]));
+    assert_eq!(
+        (args.parent_key, args.parent_tag),
+        (&b"deps"[..], &b"!dep"[..])
+    );
 }
 
 #[test]
 fn every_description_type_is_buildable_without_a_struct_literal() {
     use fig::language::{
-        ClosedContainers, CommentDelimiter, CommentStyle, Comments, Description, Dialect,
-        KeyStyle, LanguageError, NativeKinds, PrintOptions, Renderers, SectionHeader, SectionNoun,
-        Splice, Syntax,
+        ClosedContainers, CommentDelimiter, CommentStyle, Comments, Description, Dialect, KeyStyle,
+        LanguageError, NativeKinds, PrintOptions, Renderers, SectionHeader, SectionNoun, Splice,
+        Syntax,
     };
     // A constructor or `Default`, then plain field assignment: the fields
     // stay public, only the literal is the crate's.
@@ -176,7 +182,10 @@ fn every_description_type_is_buildable_without_a_struct_literal() {
     assert!(options.pretty && options.strip_comments);
 
     let e = LanguageError::at("expected `=`", 3);
-    assert_eq!((e.message.as_str(), e.byte_offset), ("expected `=`", Some(3)));
+    assert_eq!(
+        (e.message.as_str(), e.byte_offset),
+        ("expected `=`", Some(3))
+    );
 }
 
 #[test]

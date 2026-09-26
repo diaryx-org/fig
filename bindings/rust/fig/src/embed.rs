@@ -250,7 +250,6 @@ impl<'a> Extracted<'a> {
         &self.source[self.region.content.start..self.region.content.end]
     }
 
-
     /// The host text before the block — `[0, open_fence.start)`, a leading
     /// UTF-8 BOM included. Empty for frontmatter; the prose for endmatter; the
     /// `<head>` above an HTML `<script>` data island.

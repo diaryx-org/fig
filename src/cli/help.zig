@@ -396,7 +396,7 @@ pub const Help = struct {
 
     pub fn check(term: *Io.Terminal, binary_name: []const u8) !void {
         try term.writer.print(
-            \\Usage: {s} check [--input <format>] [-q|--quiet] <file>...
+            \\Usage: {s} check [--input <format>] [-q|--quiet] [--strict] <file>...
             \\  Validate that each file parses cleanly as its format. Prints an
             \\  `ok` line per file and exits 0 when all parse; prints an error
             \\  line to stderr for each failing file and exits 1 if any fail.
@@ -412,6 +412,7 @@ pub const Help = struct {
             \\    JSON strictness is the format itself (json vs jsonc vs json5).
             \\  -q, --quiet, --no-warnings: suppress the per-file `ok` lines and
             \\    fig authoring warnings; errors still print.
+            \\  --strict: a file that parses with warnings fails too (exit 1).
             \\  reads stdin when <file> is `-`.
             \\  .md/.markdown files: validates the frontmatter/endmatter,
             \\    whichever archetype it turns out to be (YAML by default).
@@ -555,6 +556,7 @@ pub const Help = struct {
             \\    the patch overwrite; `none` carries no comment from the patch at
             \\    all. Comments nested inside a subtree the patch contributes whole
             \\    always ride along with it unless `none`.
+            \\  --strip-comments: the same as `--comments none`, in `get`'s word.
             \\  -i, --input <format>: the format of <file> (else its extension, else
             \\    sniffed). --patch-input does the same for <patch-file>.
             \\  --embed <archetype>: patch the embedded region of a host <file>
@@ -570,7 +572,9 @@ pub const Help = struct {
             \\  --diff: print a unified diff of the change; write nothing. Neither
             \\    preview mode sets a non-zero exit status — a patch is expected to
             \\    change the file.
-            \\  -q, --quiet: suppress the summary line and the dropped-comment note.
+            \\  -q, --quiet, --no-warnings: suppress the patch file's warnings and
+            \\    the dropped-comment note.
+            \\  --strict: treat any warning as an error (exit 1, no write).
             \\
             \\  Refused rather than guessed at: merging into a YAML `*alias` (the
             \\  reference belongs to whatever defined the anchor), and replacing the

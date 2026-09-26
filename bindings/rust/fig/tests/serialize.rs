@@ -1,5 +1,5 @@
 //! Serde serialization tests. Run with `cargo test -p fig --features serde`.
-#![cfg(feature = "serde")]
+#![cfg(all(feature = "serde", feature = "yaml"))]
 
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +14,7 @@ fn map(pairs: Vec<(&str, Value)>) -> Value {
 /// parity with serde_yaml_ng is no longer the contract (core uses `|` block
 /// scalars and its own nested-sequence layout). The contract is round-trip
 /// fidelity, exercised here against fig's own dynamic `Value`:
-/// `from_str(value.serialize()) == value`.
+/// `from_yaml_str(value.serialize()) == value`.
 #[test]
 fn generic_values_round_trip() {
     let cases = [
@@ -74,7 +74,7 @@ fn generic_values_round_trip() {
     ];
     for case in cases {
         let yaml = case.serialize(Format::Yaml).unwrap();
-        let back: Value = fig::from_str(&yaml).unwrap();
+        let back: Value = fig::from_yaml_str(&yaml).unwrap();
         assert_eq!(back, case, "round-trip mismatch (yaml:\n{yaml})");
     }
 }
@@ -118,12 +118,12 @@ fn typed_config_round_trips() {
         audiences: vec!["friends".to_string(), "family".to_string()],
         subdomain: None,
     };
-    let yaml = fig::to_string(&cfg).unwrap();
-    let back: Config = fig::from_str(&yaml).unwrap();
+    let yaml = fig::to_yaml_string(&cfg).unwrap();
+    let back: Config = fig::from_yaml_str(&yaml).unwrap();
     assert_eq!(cfg, back);
 }
 
-/// The whole point: `from_str(to_string(x)) == x`. Exercises both halves of the
+/// The whole point: `from_yaml_str(to_yaml_string(x)) == x`. Exercises both halves of the
 /// bookmatter::yaml seam together.
 #[test]
 fn round_trips_through_fig() {
@@ -156,8 +156,8 @@ fn round_trips_through_fig() {
         },
     };
 
-    let yaml = fig::to_string(&fm).unwrap();
-    let back: Frontmatter = fig::from_str(&yaml).unwrap();
+    let yaml = fig::to_yaml_string(&fm).unwrap();
+    let back: Frontmatter = fig::from_yaml_str(&yaml).unwrap();
     assert_eq!(fm, back);
 }
 
@@ -178,8 +178,8 @@ fn round_trips_tricky_strings() {
         "tab\there",
     ];
     for s in inputs {
-        let yaml = fig::to_string(&s).unwrap();
-        let back: String = fig::from_str(&yaml).unwrap();
+        let yaml = fig::to_yaml_string(&s).unwrap();
+        let back: String = fig::from_yaml_str(&yaml).unwrap();
         assert_eq!(back, s, "round-trip failed for {s:?} (yaml: {yaml:?})");
     }
 }
@@ -187,13 +187,13 @@ fn round_trips_tricky_strings() {
 #[test]
 fn special_floats_round_trip() {
     for f in [f64::INFINITY, f64::NEG_INFINITY, 0.0, -2.5, 1000.0] {
-        let yaml = fig::to_string(&f).unwrap();
-        let back: f64 = fig::from_str(&yaml).unwrap();
+        let yaml = fig::to_yaml_string(&f).unwrap();
+        let back: f64 = fig::from_yaml_str(&yaml).unwrap();
         assert_eq!(back, f, "round-trip failed for {f} (yaml: {yaml:?})");
     }
     // NaN is not equal to itself; check the classification survives.
-    let yaml = fig::to_string(&f64::NAN).unwrap();
-    let back: f64 = fig::from_str(&yaml).unwrap();
+    let yaml = fig::to_yaml_string(&f64::NAN).unwrap();
+    let back: f64 = fig::from_yaml_str(&yaml).unwrap();
     assert!(back.is_nan());
 }
 
@@ -405,8 +405,8 @@ fn unsigned_fields_serialize_to_the_canonical_integer_variant() {
 
     // The read side agrees with the parser, so a struct round-trips to a value
     // equal to the one parsed from its own output.
-    let text = fig::to_string(&ports).unwrap();
-    let parsed: Value = fig::from_str(&text).unwrap();
+    let text = fig::to_yaml_string(&ports).unwrap();
+    let parsed: Value = fig::from_yaml_str(&text).unwrap();
     assert_eq!(parsed, fig::to_value(&ports).unwrap());
-    assert_eq!(fig::from_str::<Ports>(&text).unwrap(), ports);
+    assert_eq!(fig::from_yaml_str::<Ports>(&text).unwrap(), ports);
 }

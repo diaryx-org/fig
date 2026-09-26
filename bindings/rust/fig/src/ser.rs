@@ -6,19 +6,22 @@
 
 use serde::{Serialize, Serializer, ser};
 
-use crate::Format;
 use crate::error::Error;
 use crate::value::Value;
 
-/// Build a [`Value`] from any `Serialize` type.
+/// Build a [`Value`] from any `Serialize` type — which then serializes to any
+/// format with [`Value::serialize`], or goes into an editor's `*_value`
+/// methods.
 pub fn to_value<T: Serialize + ?Sized>(value: &T) -> Result<Value, Error> {
     value.serialize(ValueSerializer)
 }
 
-/// Serialize a value to a YAML string (the default format the bindings emit;
-/// other formats go through [`crate::Value::serialize`]).
-pub fn to_string<T: Serialize + ?Sized>(value: &T) -> Result<String, Error> {
-    to_value(value)?.serialize(Format::Yaml)
+/// Serialize a value to a YAML string: `to_value(value)?.serialize(Format::Yaml)`.
+/// Needs the `yaml` feature, since it names the format; any other format goes
+/// through [`to_value`] and [`Value::serialize`].
+#[cfg(feature = "yaml")]
+pub fn to_yaml_string<T: Serialize + ?Sized>(value: &T) -> Result<String, Error> {
+    to_value(value)?.serialize(crate::Format::Yaml)
 }
 
 struct ValueSerializer;

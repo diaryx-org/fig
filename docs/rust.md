@@ -84,13 +84,15 @@ get `serde_json`-style helpers:
 ```rust
 use fig::Format;
 
-// Parse straight into a typed value…
+// Parse straight into a typed value, in any format…
 let cfg: MyConfig = fig::from_slice(input, Format::Toml)?;
-// …or a YAML string with the format defaulted.
-let cfg: MyConfig = fig::from_str(yaml)?;
+// …or YAML text, with the `yaml` feature.
+let cfg: MyConfig = fig::from_yaml_str(yaml)?;
 
-// Serialize any `Serialize` type to YAML.
-let yaml = fig::to_string(&cfg)?;
+// Serialize any `Serialize` type: to any format through a `Value`…
+let json = fig::to_value(&cfg)?.serialize(Format::Json)?;
+// …or straight to YAML.
+let yaml = fig::to_yaml_string(&cfg)?;
 ```
 
 ## Cargo features
@@ -102,7 +104,7 @@ change to the language set means the library has to be rebuilt from Zig source.
 
 | Feature    | Default | What it adds                                                              |
 | ---------- | :-----: | ------------------------------------------------------------------------- |
-| `serde`    |         | `from_str`/`from_slice`/`to_string`/`to_value` and `serde` impls on `Value`. |
+| `serde`    |         | `from_slice`/`to_value` (and `from_yaml_str`/`to_yaml_string` with `yaml`) and `serde` impls on `Value`. |
 | `derive`   |         | `#[derive(fig::ToValue, fig::FromValue)]` — typed mapping without serde.   |
 | `indexmap` |         | `ToValue`/`FromValue` for `IndexMap<String, T>` (insertion order kept).    |
 | `json`     |   ✅    | The shared JSON/JSONC/JSON5 core.                                         |
@@ -373,14 +375,18 @@ use fig::Format;
 struct Config { name: String, port: u16 }
 
 let cfg: Config = fig::from_slice(b"name = \"fig\"\nport = 8080\n", Format::Toml)?;
-let yaml = fig::to_string(&cfg)?;          // to YAML (the default emit format)
 let json = fig::to_value(&cfg)?.serialize(Format::Json)?; // to any format
+let yaml = fig::to_yaml_string(&cfg)?;                     // to YAML (`yaml` feature)
 ```
 
-`from_str` defaults to YAML; `from_slice` takes any parsing format
-(`Json`/`Jsonc`/`Json5`/`Yaml`/`Toml`/`Zon`). `Value` itself implements
-`Serialize`/`Deserialize`, so `from_slice::<Value>` gives you a dynamic tree the
-way `serde_json::Value` does.
+`from_slice` takes any [`Format`] — every compiled format whose feature is on,
+and a registered runtime language — and `to_value(&x)?.serialize(format)`
+writes any of them. `from_yaml_str` and `to_yaml_string` are the YAML
+shorthands, and exist only with the `yaml` feature, so a build without YAML
+cannot call them and fail at runtime. (4.x called them `from_str` and
+`to_string`, which read as format-neutral and were not.) `Value` itself
+implements `Serialize`/`Deserialize`, so `from_slice::<Value>` gives you a
+dynamic tree the way `serde_json::Value` does.
 
 **Without serde** — enable `derive` instead and map straight onto the concrete
 `Value` tree. The generated code is straight-line field extraction with no
@@ -782,10 +788,10 @@ text to outlive the next edit — the borrow checker enforces this for you.
 - `version() -> Version` / `version_string() -> &'static str` — linked core version.
 - `split(host, kind) -> Option<(&str, &str, &str)>` — read-only `(before, content, after)` of an embed.
 - `detect(source) -> Option<EmbedType>` — which embed archetype a host opens with.
-- *(serde)* `from_str<T>(s) -> Result<T>` — deserialize a YAML string.
 - *(serde)* `from_slice<T>(bytes, format) -> Result<T>` — deserialize any format.
-- *(serde)* `to_string<T>(&value) -> Result<String>` — serialize to YAML.
 - *(serde)* `to_value<T>(&value) -> Result<Value>` — build a `Value` from any `Serialize`.
+- *(serde + yaml)* `from_yaml_str<T>(s) -> Result<T>` — deserialize a YAML string.
+- *(serde + yaml)* `to_yaml_string<T>(&value) -> Result<String>` — serialize to YAML.
 
 **Types**
 

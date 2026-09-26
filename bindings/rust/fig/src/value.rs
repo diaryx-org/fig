@@ -3,9 +3,9 @@
 //! [`Value`] is an owned, format-independent tree mirroring fig's AST node
 //! kinds. [`Value::serialize`] builds it through the C value API
 //! (`fig_value_*`) and renders it with fig's core serializer — so the binding
-//! carries no emitter of its own. With the `serde` feature, [`crate::to_string`]
-//! and the editor's typed methods build a `Value` from any `Serialize` type
-//! (see [`crate::ser`]); without it, callers construct `Value` directly.
+//! carries no emitter of its own. With the `serde` feature, `fig::to_value`
+//! builds a `Value` from any `Serialize` type; without it, callers construct
+//! `Value` directly or through `#[derive(ToValue)]`.
 
 use std::borrow::Cow;
 use std::os::raw::c_int;

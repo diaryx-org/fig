@@ -70,10 +70,9 @@ pub const embed_archetypes =
     \\    `html-script[-<lang>]` (<script type="application/<lang>"> data
     \\    island) and `html-code[-<lang>]` (<pre><code class="language-<lang>">
     \\    visible block); a bare html-script/html-code is fig. Plus the fixed
-    \\    presets `frontmatter-json` (;;;), `frontmatter-toml` (+++), and
+    \\    presets `semicolons` (;;; JSON), `plus` (+++ TOML), and
     \\    `endmatter` (trailing ```endmatter block). Also accepted:
-    \\    `frontmatter-yaml`, `semicolons`, `plus`, `endmatter-yaml`, and
-    \\    `frontmatter-fig` (the older name of `fenced-fig`).
+    \\    `frontmatter-yaml` and `endmatter-yaml`.
     \\
 ;
 
@@ -653,8 +652,7 @@ test "every --embed archetype the help names is one the argument parser accepts"
         }
     }
     for ([_][]const u8{
-        "frontmatter",      "frontmatter-json", "frontmatter-toml", "endmatter",
-        "html-script",      "html-code",        "frontmatter-yaml", "semicolons",
-        "plus",             "endmatter-yaml",   "frontmatter-fig",
+        "frontmatter", "semicolons", "plus",             "endmatter",
+        "html-script", "html-code",  "frontmatter-yaml", "endmatter-yaml",
     }) |name| try std.testing.expect(args.embedTypeFromName(name) != null);
 }

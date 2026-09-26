@@ -862,7 +862,7 @@ test "applyToEmbed refuses a new leading block in front of another archetype's f
     var tmp = t.tmpDir(.{});
     defer tmp.cleanup();
 
-    // `fig set --embed frontmatter-json p.md k 1` on YAML frontmatter used to
+    // `fig set --embed semicolons p.md k 1` on YAML frontmatter used to
     // prepend a `;;;` block, leaving the `---` one under it — two metadata
     // blocks, the original no longer on the first line.
     const md = "---\ntitle: x\n---\nbody\n";

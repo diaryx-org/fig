@@ -2,14 +2,15 @@
 title = CLI 5
 description = One reading of a value argument, a scalar printed as its text, strict arguments, one version and one tag — the command-line changes a fig 5.0 would carry
 created = 2026-09-22
-status = draft
+status = implemented
 updated = 2026-09-26
 part_of = [proposals](proposals.md)
 ```
 
 # CLI 5
 
-> **Status: DRAFT.** Written against `main` at 45b6b10 (core 3.1.0 · npm
+> **Status: IMPLEMENTED,** every section, for 5.0.0 (see Progress below).
+> Written against `main` at 45b6b10 (core 3.1.0 · npm
 > 3.1.0), after a pass over every action's help and behaviour. The bugs that
 > pass found — `insert` writing a duplicate key, `set --embed` adding a second
 > frontmatter block, YAML errors with no location, log prefixes in user

@@ -2,7 +2,7 @@
 title = Using fig in Rust
 author = adammharris
 created = 2026-07-05T21:35:14-06:00
-updated = 2026-08-20T10:00:00-06:00
+updated = 2026-09-26T12:00:00-06:00
 part_of = [docs](docs.md)
 ```
 
@@ -37,12 +37,13 @@ production as a `serde` replacement.
 - [Managing resources](#managing-resources)
 - [API reference](#api-reference)
 - [Forward compatibility (`#[non_exhaustive]`)](#forward-compatibility-non_exhaustive)
+- [Migrating from 4.x](#migrating-from-4x)
 
 ## Install
 
 ```toml
 [dependencies]
-fig = "3"
+fig = "5"
 ```
 
 For the **default feature set** on a tier-1 target, `fig-sys` links a prebuilt
@@ -797,42 +798,87 @@ text to outlive the next edit — the borrow checker enforces this for you.
 
 - [`Document`] — read path: `parse`, `to_value`, `serialize`/`serialize_with`, `diagnose`.
 - [`Editor`] — comment-preserving editor: `open`, `source`, and the edit/comment methods.
-- [`Embed`] — frontmatter/embed editor: `open`, `open_or_init`, `extract`, `render`, `replace_body`, `inner_format`, `region`, and the edit methods.
-- [`Extracted`] — a located-but-unparsed region: `region()`, `content()`, `host_before()`, `host_after()`.
+- [`Embed`] — frontmatter/embed editor: `open`, `open_or_init`, `extract`, `retype`, `render`, `replace_body`, and the edit methods.
+- [`Extracted`] — a located-but-unparsed region, from `Embed::extract`: `region()`, `content()`, `host_before()`, `host_after()`.
 - [`Value`] — the owned value tree; `serialize`/`serialize_with`/`diagnose`, plus `From` impls.
 - `Segment<'a>` — path step (`Key(&str)` / `Index(usize)`), with `From<&str>`/`From<usize>`.
 - `SerializeOptions` — output style (`compact()`, `pretty(n)`, `.indent(n)`, `.width(n)`, `.strip_comments()`, `.lossless()`).
-- `Warning` / `Region` / `Span` / `Version` / `Capabilities` / `ParseError`.
+- `Span` — a `[start, end)` byte range; `Hash`, and `From`/`Into` `Range<usize>`.
+- `Warning` / `Region` / `Version` / `Capabilities` / `ParseError` / `LanguageFailure`.
+- `fig::language` — `Language`, `register`, `Description` and its parts, `NodeTable` and its rows, `RenderArgs`, `PrintOptions`, `LanguageError`; see [Runtime languages](#runtime-languages).
 
 **Enums**
 
-- `Format`, `ExtKind`, `EmbedType`, `WarningCode`, `WarningCause` — plain data enums.
+- `Format` (with `Format::by_name`), `ExtKind`, `WarningCode`, `WarningCause` — plain data enums.
+- `EmbedType` — with `inner_format()`, the `Format` its content is written in.
 - `Error` — the returned error type.
-
-## Forward compatibility (`#[non_exhaustive]`)
-
-Since **3.0.0**, the public types that grow with the core are `#[non_exhaustive]`:
-`Format`, `EmbedType`, `ExtKind`, `Error`, `WarningCode`, `WarningCause`,
-`SerializeOptions`, `Version`, `Capabilities`, `Warning`, `ParseError`, `Region`.
-fig adds formats, statuses, and diagnostics regularly; marking these means such an
-addition is a **minor** release instead of a major one.
-
-What it asks of you:
-
-- **Match with a wildcard.** `match format { Format::Yaml => …, _ => … }`.
-  Constructing a variant is unaffected — only exhaustive matching needs the `_`.
-- **Build `SerializeOptions` from a constructor plus setters**, not a struct
-  literal: `SerializeOptions::default().width(1).strip_comments()`. Every field has
-  a setter, and reading fields (`opts.width`) is unchanged.
-- **Returned structs are read-only to you.** `Version`, `Capabilities`, `Warning`,
-  `ParseError`, and `Region` come from the library; their fields stay public and
-  readable, you just can't build one yourself.
-
-[`Value`] and `Segment` are deliberately **exhaustive**: they are the data model,
-and matching a `Value` without a wildcard is the normal way to consume it. Adding
-a variant to either would be a real breaking change, and is treated as one.
 
 **Traits** *(the `derive` feature)*
 
 - `ToValue` / `FromValue` — typed mapping to/from `Value`, with
   `#[derive(fig::ToValue, fig::FromValue)]` and `#[fig(...)]` attributes.
+
+## Forward compatibility (`#[non_exhaustive]`)
+
+The public types that grow with the core are `#[non_exhaustive]`: fig adds
+formats, statuses, diagnostics and runtime-language declarations regularly, and
+marking these means such an addition is a **minor** release instead of a major
+one. Since **3.0.0**: `Format`, `EmbedType`, `ExtKind`, `Error`, `WarningCode`,
+`WarningCause`, `SerializeOptions`, `Version`, `Capabilities`, `Warning`,
+`ParseError`, `Region`. Since **5.0.0**, as well: `Error`'s struct variants,
+`LanguageFailure`, and in `fig::language` `Description`, `Dialect`, `Syntax`,
+`Comments`, `CommentDelimiter`, `SectionHeader`, `ClosedContainers`,
+`NativeKinds`, `Renderers`, `PrintOptions`, `LanguageError`, `RenderArgs`,
+`NodeTable`, `NodeRow`, `RegionRow`, `MentionRow`, `CommentRow`, `DirectiveRow`,
+and the enums `NodeKind`, `Renderer`, `Literal`, `CommentStyle`, `CommentForm`,
+`KeyStyle`, `SectionNoun`, `Splice`, `MentionKind`.
+
+What it asks of you:
+
+- **Match with a wildcard.** `match format { Format::Yaml => …, _ => … }`.
+  Constructing a variant is unaffected — only exhaustive matching needs the `_`.
+- **Match a struct variant with `..`**: `Error::MissingField { field, .. }`.
+- **Build from a constructor, then set or assign**, not a struct literal:
+  `SerializeOptions::default().width(1).strip_comments()` (a chainable setter
+  per field); `Capabilities::new(true, true, false).with_references(true)`;
+  `RenderArgs::default().value(b"42")`; and for the rest of `fig::language`, a
+  `new` or `Default` followed by plain field assignment
+  (`let mut s = Syntax::default(); s.kv_sep = Some("=".into());`). Reading
+  fields is unchanged everywhere.
+- **Returned structs are read-only to you.** `Version`, `Warning`, `ParseError`,
+  `LanguageFailure` and `Region` come from the library; their fields stay public
+  and readable, but there is no constructor, because nothing takes one back.
+
+[`Value`], `Segment`, `Span` and `language::CommentSlot` are deliberately
+**exhaustive**. `Value` and `Segment` are the data model, and matching a `Value`
+without a wildcard is the normal way to consume it; `Span` is a plain pair built
+by literal everywhere; and a printer that met an unknown `CommentSlot` through a
+wildcard could only drop the comment. Adding to any of them would be a real
+breaking change, and is treated as one.
+
+## Migrating from 4.x
+
+5.0 is the release these breaks were saved for. Each is a compile error, not a
+change in behaviour, except the `rust-version` floor.
+
+| 4.x | 5.0 |
+| --- | --- |
+| `fig::from_str(s)` / `fig::to_string(&x)` | `fig::from_yaml_str(s)` / `fig::to_yaml_string(&x)`, which need the `yaml` feature; `from_slice(bytes, format)` / `to_value(&x)?.serialize(format)` for any format |
+| `ed.replace(p, &x)`, `insert`, `set`, `append`, `prepend` (serde) | `ed.replace_value(p, x)` &c., with `fig::to_value(&x)?` for a `Serialize` value |
+| `ed.delete(p)` / `ed.remove_item(p, i)` | `ed.delete_key(p)` / `ed.delete_item(p, i)` |
+| `ed.replace_key(p, k)` | `ed.rename_key(p, k)` |
+| `delete_leading_comments` / `delete_dangling_comments` | `delete_leading_comment` / `delete_dangling_comment` |
+| `set_sequence(p, &[Value])` | `set_sequence(p, items)` over any `impl Into<Value>` items |
+| `fig::split(s, k) -> (content, body)` | `fig::split(s, k) -> (before, content, after)` |
+| `Region::body`, `Extracted::body()` | `body_before`/`body_after`, `host_before()`/`host_after()` |
+| `Error::Language(String)` | `Error::Language(LanguageFailure)` — `.message`, `.byte_offset` |
+| `Error::Static(&str)` | `Error::Message(String)`, same text |
+| `Error::MissingField { field, ty }` patterns | add `..`; build with `Error::missing_field` |
+| `Syntax { .., ..Default::default() }`, `Dialect { .., ..Dialect::new(n) }` | `Syntax::default()` / `Dialect::new(n)`, then assign fields |
+| `SectionHeader { .. }`, `ClosedContainers { .. }`, `Comments { .. }` | `SectionHeader::new(open, close, sep)`, `ClosedContainers::new(..)`, `Comments::new(..)` |
+| `RegionRow { node, start, end }` | `RegionRow::new(node, span)`; `.span.start`/`.span.end` |
+| `MentionRow { .. }`, `CommentRow { .. }`, `DirectiveRow { .. }` | `MentionRow::new(..)`, `CommentRow::new(..)`, `DirectiveRow::new(..)` |
+| `match` on `NodeKind`, `Renderer`, `Literal`, `CommentStyle`, … | add a `_` arm |
+| `fig_sys::FigFormat::from(format)` | gone — a runtime `Format` has no `FigFormat` |
+| `fig_sys::FigStatus::OK` as a `c_int` | a `FigStatus`: `status == FigStatus::OK` |
+| any rustc | rustc 1.88 or newer (`rust-version`) |

@@ -20,6 +20,8 @@ import { handle, type Language } from "./wire.ts";
  *  from here except an entry whose registration the core refused. */
 const languages = new Map<number, Language>();
 let nextId = 1;
+/** Each language registered, and the format it was given. */
+const registered = new Map<Language, Format>();
 
 /** The `fig_host.call` import: read the request line out of linear memory,
  *  answer it with {@link handle}, and hand the response back in memory the
@@ -42,8 +44,13 @@ function hostCall(lang: number, requestPtr: number, requestLen: number, outPtr: 
 }
 setHostCall(hostCall);
 
-/** Register `lang`. The returned `Format` is a peer of the compiled ones at
- *  the tier `lang.caps` declares: `Document.parse`, `Editor.open`,
+/** Register `lang`, the way a caller brings a format into the module: the
+ *  package compiles none in, so `@diaryx/fig/languages/yaml` and its peers
+ *  are registered here, each the caller imports, and the rest cost nothing.
+ *  Registering the same object again returns the format it already has, so
+ *  a library and the application using it may each register what they
+ *  use. The returned `Format` is a peer of the compiled ones at the tier
+ *  `lang.caps` declares: `Document.parse`, `Editor.open`,
  *  `stringify`, `capabilities` and every other call that takes a format
  *  accept it from then on. Registration validates the description by the
  *  rules a compiled format is held to and runs fig's harness over
@@ -60,6 +67,10 @@ setHostCall(hostCall);
  *  {@link formatByName}, which is also how to find a dialect row after
  *  the first. */
 export function registerLanguage(lang: Language): Format {
+  // The same language again — a library and the application using it each
+  // registering the YAML they import — is the format it already is.
+  const known = registered.get(lang);
+  if (known !== undefined) return known;
   const id = nextId++;
   languages.set(id, lang);
   const frame = new Frame();
@@ -72,7 +83,9 @@ export function registerLanguage(lang: Language): Format {
       const detail = readFigError(err);
       throw new FigError(status, `registerLanguage(${lang.name})`, { message: detail.message, byteOffset: detail.byteOffset });
     }
-    return readU32(outFormat) as Format;
+    const format = readU32(outFormat) as Format;
+    registered.set(lang, format);
+    return format;
   } finally {
     frame.dispose();
   }

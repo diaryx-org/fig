@@ -1,0 +1,29 @@
+{
+  "jobs": {
+    "test": {
+      "steps": [
+        {
+          "uses": "x"
+        },
+        {
+          "run": "y"
+        },
+        {
+          "run": "z"
+        }
+      ]
+    }
+  },
+  "spec": {
+    "containers": [
+      {
+        "name": "app",
+        "ports": [
+          {
+            "containerPort": 80
+          }
+        ]
+      }
+    ]
+  }
+}

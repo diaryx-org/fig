@@ -2017,6 +2017,13 @@ function print(_dialect, t, options) {
   fig.index(t);
   const root = t.byid(0);
   const p = new Printer(options);
+  // A container the editor splices after `key = ` is spelled inline: a
+  // block section there would re-read as a string.
+  if (options?.flow === true && (root.kind === "mapping" || root.kind === "sequence")) {
+    p.flowValue(root);
+    p.put("\n");
+    return p.w.string();
+  }
   p.leadingComments(root, 0);
   if (root.kind === "mapping") {
     for (const e of root.items) p.emitSection(e);

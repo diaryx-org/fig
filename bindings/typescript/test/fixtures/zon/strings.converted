@@ -1,0 +1,12 @@
+{
+  "s": "esc\t\"q\"Aé\\'",
+  "empty": "",
+  "uni": "é中🙂",
+  "ml": "line one\nline two",
+  "c": 65,
+  "nl": 10,
+  "q": 39,
+  "emoji": 128512,
+  "esc": 128512,
+  "hex": 65
+}

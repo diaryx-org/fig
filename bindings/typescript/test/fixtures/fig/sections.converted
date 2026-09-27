@@ -1,0 +1,13 @@
+{
+  "title": "My server",
+  "port": 5432,
+  "database": {
+    "host": "localhost",
+    "pool": {
+      "size": 10
+    }
+  },
+  "logging": {
+    "level": "info"
+  }
+}

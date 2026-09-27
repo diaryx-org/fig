@@ -1,0 +1,24 @@
+{
+  "aString": "hello & <world> \"quoted\" 日本語",
+  "anInt": -42,
+  "aBigInt": 9223372036854775807,
+  "aReal": 3.14159,
+  "aTrue": true,
+  "aFalse": false,
+  "aDate": "2011-11-01T12:00:00Z",
+  "aData": "SGVsbG8sIFdvcmxkIQ==",
+  "emptyDict": {},
+  "emptyArray": [],
+  "nestedArray": [
+    "one",
+    2,
+    {
+      "k": "v"
+    },
+    [
+      true,
+      false
+    ]
+  ],
+  "emptyString": ""
+}

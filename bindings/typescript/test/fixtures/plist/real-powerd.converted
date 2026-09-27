@@ -1,0 +1,24 @@
+{
+  "BuildMachineOSBuild": "23A344017",
+  "CFBundleDevelopmentRegion": "English",
+  "CFBundleExecutable": "PowerManagement",
+  "CFBundleIdentifier": "com.apple.powerd",
+  "CFBundleInfoDictionaryVersion": "6.0",
+  "CFBundleName": "PowerManagement configd plugin",
+  "CFBundlePackageType": "BNDL",
+  "CFBundleShortVersionString": "161.0.0",
+  "CFBundleSignature": "????",
+  "CFBundleSupportedPlatforms": [
+    "MacOSX"
+  ],
+  "CFBundleVersion": "161.0.0",
+  "DTCompiler": "com.apple.compilers.llvm.clang.1_0",
+  "DTPlatformBuild": "",
+  "DTPlatformName": "macosx",
+  "DTPlatformVersion": "26.5",
+  "DTSDKBuild": "25F63",
+  "DTSDKName": "macosx26.5.internal",
+  "DTXcode": "2630",
+  "DTXcodeBuild": "17E6107",
+  "LSMinimumSystemVersion": "26.5"
+}

@@ -1,0 +1,29 @@
+a:
+- 1
+- 2
+- 3
+- b: c
+-
+  - d
+m:
+  k: v
+  q: 1
+  e: null
+  null: f
+  g: null
+  h: null
+  ? [i]
+  : j
+  ? {}
+  : k
+  "\n": l
+n:
+- a: b
+- c: null
+- null: d
+- e: f
+o: # c
+  a: 1
+  b: 2
+p: []
+q: {}

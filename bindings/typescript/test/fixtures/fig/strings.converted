@@ -1,0 +1,11 @@
+{
+  "ml": "line one\n  line two",
+  "esc": "hi\nthere",
+  "q": "a\tb☃",
+  "r": "raw\\n",
+  "link": "[Blog](/x)",
+  "glob": "[a-z]*.md x",
+  "url": "https://x.com/#frag",
+  "num": "007",
+  "yes": "Yes"
+}

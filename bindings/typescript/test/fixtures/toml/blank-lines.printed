@@ -1,0 +1,9 @@
+x = 1
+
+[s]
+# header comment
+# above y
+y = 2 # after y
+
+[s.t]
+# ht

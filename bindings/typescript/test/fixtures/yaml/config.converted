@@ -1,0 +1,23 @@
+{
+  "name": "fig",
+  "server": {
+    "host": "localhost",
+    "ports": [
+      80,
+      443
+    ],
+    "empty": null,
+    "text": "line one\nline two\n",
+    "flow": {
+      "a": 1,
+      "b": [
+        "x",
+        "y"
+      ]
+    }
+  },
+  "list": [
+    "a",
+    "b"
+  ]
+}

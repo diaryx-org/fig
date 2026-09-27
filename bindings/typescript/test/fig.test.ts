@@ -1,3 +1,7 @@
+// The module under test compiles no format in, as the published one does
+// not: every format here is a language of `@diaryx/fig/languages`,
+// registered first, standing in for the format at its own number.
+import "./register-all.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -27,11 +31,8 @@ import {
   toJS,
 } from "../src/index.ts";
 
-// ZON is opt-in in the wasm module under test: the default build (what's
-// published to npm) excludes it to keep the inlined payload small, and only a
-// `FIG_WASM_ZON=1 npm run build:wasm` module has it compiled in. Gate every
-// ZON assertion on the loaded module's actual capabilities rather than
-// assuming either way, so `npm test` passes against both builds.
+// ZON's assertions ask the module rather than assume, from when ZON was
+// compiled into some modules and not others; it is registered here.
 const zonBuiltIn = capabilities(Format.Zon).read;
 
 test("parse to plain JS across formats", () => {
@@ -663,9 +664,8 @@ test("2.4 config formats: capabilities, parse/convert, and edit", () => {
   for (const f of [Format.Ini, Format.Dotenv, Format.Properties, Format.Nestedtext]) {
     assert.deepEqual(capabilities(f), { read: true, edit: true, serialize: true, references: false }, `capabilities(${f})`);
   }
-  // plist is opt-in and not in the default payload — capabilities report it off,
-  // so a consumer can detect it at runtime instead of hitting an unsupported error.
-  assert.deepEqual(capabilities(Format.Plist), { read: false, edit: false, serialize: false, references: false });
+  // plist too, registered like every other format.
+  assert.deepEqual(capabilities(Format.Plist), { read: true, edit: true, serialize: true, references: false });
 
   // INI: read into the tree and convert out to JSON. Scalars are untyped
   // strings (INI carries no type info), so `8080` round-trips as "8080".

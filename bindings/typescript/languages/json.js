@@ -251,6 +251,19 @@ function quote(s) {
   );
 }
 
+// A key from another format's tree need not be a string: a scalar key is
+// spelled as the JSON string of its source text — `"null"`, `"23"`,
+// `"true"`, a `0x1F` key as `"0x1F"` — as the compiled printer spells it,
+// and a container key has no spelling at all.
+function keyText(row) {
+  const k = row.kind;
+  if (k === "string") return quote(row.text ?? "");
+  if (k === "null") return quote("null");
+  if (k === "bool" || k === "int" || k === "float") return quote(row.text ?? "");
+  if (k === "alias") throw new Error("an alias must be resolved before it is written as JSON");
+  throw new Error("a JSON key must be a string or another scalar");
+}
+
 function writeNode(w, row, depth) {
   const k = row.kind;
   if (k === "null") {
@@ -270,8 +283,7 @@ function writeNode(w, row, depth) {
     row.items.forEach((child, i) => {
       w.indent(depth + 1);
       if (k === "mapping") {
-        if (child.key.kind !== "string") throw new Error("a JSON key must be a string");
-        w.put(quote(child.key.text ?? ""), w.pretty ? ": " : ":");
+        w.put(keyText(child.key), w.pretty ? ": " : ":");
         writeNode(w, child.value, depth + 1);
       } else {
         writeNode(w, child, depth + 1);

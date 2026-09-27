@@ -1,0 +1,31 @@
+// top
+{ // head
+  a: 1, // t
+  // lead
+  "b c": [ // tb
+    1,
+    /* c */
+    2
+  ],
+  n: NaN,
+  i: -Infinity,
+  h: 0xC8,
+  f: .5,
+  g: 5.,
+  p: +1,
+  e: 1E-2,
+  s: "x'yz",
+  while: true,
+  $_: null,
+  "q\"": "😀é",
+  esc: "A\u000b\u0000q",
+  nested: {
+    x: [
+      {} // e,
+      [] /* b */
+    ]
+    // orphan
+  }
+  // dangle
+  // end
+}

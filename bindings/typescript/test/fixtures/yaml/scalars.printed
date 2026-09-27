@@ -1,0 +1,20 @@
+nums:
+- 0
+- -1
+- +2
+- 0x1F
+- 0o17
+- 1e3
+- 1.5
+- .5
+- 5.
+- -.inf
+- .NaN
+- '1_000'
+- 007
+- 0b11
+- 12:30:00
+- 2001-12-14
+bools: [true, true, true, false, yes, on, y]
+nulls: [null, null, null, null]
+strs: [a b, '1', 'true', 1e, .inf.x, 0x, -x, '1__0', '1_0.5']

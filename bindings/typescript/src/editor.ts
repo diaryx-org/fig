@@ -9,6 +9,7 @@
 import { check, FigError, Format, Status } from "./types.ts";
 import { encodeKeyList, encodePath, fig, Frame, handleRegistry, probeParse, readOutSlice } from "./ffi.ts";
 import { Editable, type EditFns, type Segment } from "./edit-ops.ts";
+import { checkFormat } from "./meta.ts";
 
 const encoder = new TextEncoder();
 
@@ -73,7 +74,7 @@ export class Editor extends Editable {
       if (status === Status.ParseError) {
         throw new FigError(status, "fig_editor_create", probeParse(bytes, format) ?? undefined);
       }
-      check(status, "fig_editor_create");
+      checkFormat(status, "fig_editor_create", format);
       const handle = new DataView(fig.memory.buffer).getUint32(out, true);
       if (handle === 0) throw new FigError(Status.InternalError, "fig_editor_create");
       return new Editor(handle, format);

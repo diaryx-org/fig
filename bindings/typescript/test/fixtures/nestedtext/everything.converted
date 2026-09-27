@@ -1,0 +1,18 @@
+{
+  "name": "fig",
+  "server": {
+    "host": "localhost",
+    "ports": [
+      "80",
+      {
+        "nested": "1"
+      },
+      ""
+    ],
+    "empty": "",
+    "text": "line one\n\nline three"
+  },
+  "multi\nkey": "v",
+  "regex": "[+-]?x",
+  "padded": " spaced value  "
+}

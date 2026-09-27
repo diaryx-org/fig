@@ -1,0 +1,10 @@
+? [a, b]
+: c
+? [x, y]
+: z
+k: null
+null: v
+"blk\n": w
+? { a: b }
+: d
+null: empty key

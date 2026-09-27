@@ -260,7 +260,9 @@ The CLI spawns it from a `languages.figl` — `name`, the `extensions` it
 owns, and the `command` to run — and it is then a format every action
 accepts, by extension or by `--lang <name>`; `fig lang list` shows what
 loaded and `fig lang check <name> --against <format>` holds it to a
-compiled twin. `examples/tinykv_helper.rs` is a complete helper, and
+compiled twin. A helper named after a format the build compiled out
+stands in for it, reached by that format's name, extension and embedded
+spellings. `examples/tinykv_helper.rs` is a complete helper, and
 `tools/cli-lang-check.sh` in the core drives the CLI through it. The wire
 is documented on the `helper` module; see
 `docs/proposals/runtime-languages.md` in the core for the design.

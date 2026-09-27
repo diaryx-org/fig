@@ -74,7 +74,7 @@ pub const embed_archetypes =
     \\    `endmatter` (trailing ```endmatter block). Also accepted:
     \\    `frontmatter-yaml` and `endmatter-yaml`.
     \\
-;
+    ;
 
 /// How `replace`/`set`/`insert` read a value argument (`value_arg.zig`).
 pub const value_reading =
@@ -620,6 +620,9 @@ pub const Help = struct {
             \\  `name` is what --input, --output and --lang accept; `extensions`
             \\  resolves a file to it, but a compiled format's extension always
             \\  wins, so a twin of a compiled language is reached with --lang.
+            \\  A language named after a format this build left out (`list` says
+            \\  "compiled out") stands in for it: the format's name, extension and
+            \\  embedded spellings (markdown frontmatter, fenced blocks) reach it.
             \\
             \\  Nothing is spawned until a name or extension the CLI cannot resolve
             \\  itself is asked for; the helper is then started once and asked to

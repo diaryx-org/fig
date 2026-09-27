@@ -157,4 +157,22 @@ set -e
 [ "$status" -eq 1 ] || fail "lang check of a broken helper exited $status"
 case "$out" in "broken: refused: could not start \`/nonexistent/helper\`: "*) ;; *) fail "broken helper not reported: $out" ;; esac
 
+# A helper named after a format this build compiled out stands in for it:
+# the format's own name and extension reach it, as input and as output.
+# plist is off in a default build; a build with it on has nothing to show.
+if "$fig" lang list 2>/dev/null | grep -q '^  plist  *compiled out'; then
+    printf 'language[]\n> name = plist\n> command = [%s, plist]\n' "$helper" > standin.figl
+    printf 'A=1\nB=two\n' > s.plist
+    expect "stand-in by extension" "1" "$(FIG_LANGUAGES="$tmp/standin.figl" "$fig" get s.plist A 2>/dev/null)"
+    expect "stand-in by --input" "two" "$(FIG_LANGUAGES="$tmp/standin.figl" "$fig" get -i plist - B < s.plist 2>/dev/null)"
+    expect "stand-in as --output" "k=v" "$(FIG_LANGUAGES="$tmp/standin.figl" "$fig" convert j.json -o plist 2>/dev/null)"
+    FIG_LANGUAGES="$tmp/standin.figl" "$fig" set s.plist A 3 2>/dev/null
+    expect "stand-in edit" "$(printf 'A=3\nB=two')" "$(cat s.plist)"
+    set +e
+    FIG_LANGUAGES="$tmp/languages.figl" "$fig" get s.plist A >/dev/null 2>&1
+    status=$?
+    set -e
+    [ "$status" -ne 0 ] || fail "a compiled-out format read with nothing standing in for it succeeded"
+fi
+
 echo "cli-lang-check: the CLI reads, edits, converts and checks through a configured helper"

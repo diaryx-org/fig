@@ -27,8 +27,8 @@ pub fn parseFormatName(name: []const u8) ?Format {
     // to be a `Format` member, which bought a second `@tagName` echo and a
     // duplicated arm in every switch over the enum, and nothing else. It
     // collapses here instead, so downstream code only ever sees `.yaml`.
-    if (std.mem.eql(u8, name, "yml")) return .yaml;
-    if (std.meta.stringToEnum(Format, name)) |f| return f;
+    if (std.mem.eql(u8, name, "yml")) return languages.standIn(.yaml);
+    if (std.meta.stringToEnum(Format, name)) |f| return languages.standIn(f);
     // A language the CLI did not compile in: configured in `languages.figl`
     // (spawned and registered on this first ask) or already registered.
     return languages.resolveName(name);
@@ -229,7 +229,9 @@ pub fn detectLanguageFromFileEnding(file_path: []const u8) ?Detected {
     // owns it and resolves it to `.yaml` — the same parse it always got.
     // The one exception is `fig`: its extension is `.figl`, and `.fig`,
     // accepted until 5.0, is no longer the format's.
-    if (std.meta.stringToEnum(Format, ext)) |format| if (format != .fig) return .{ .format = format };
+    // A format this build compiled out is the configured language standing
+    // in for it, where there is one (`languages.standIn`).
+    if (std.meta.stringToEnum(Format, ext)) |format| if (format != .fig) return .{ .format = languages.standIn(format) };
 
     // Otherwise ask the languages. Each declares the extensions it owns
     // (`Language.extensions`), which is where the ones that DON'T match an enum
@@ -436,11 +438,13 @@ pub const embed_archetype_names = blk: {
 /// format registry, so an `InnerFormat` member and the `Format` member it means
 /// are the same string by construction. (`Format` is the larger of the two —
 /// every embeddable format is a CLI format, but not every CLI format has an
-/// embedded spelling — so `@field` is total in this direction only.)
+/// embedded spelling — so `@field` is total in this direction only.) A
+/// format this build compiled out is the configured language standing in
+/// for it, registered on this ask (`languages.standIn`).
 pub fn embedFormat(t: fig.Embed.Type) Format {
-    return switch (fig.Embed.innerFormat(t)) {
+    return languages.standIn(switch (fig.Embed.innerFormat(t)) {
         inline else => |f| @field(Format, @tagName(f)),
-    };
+    });
 }
 
 /// Resolve the embed archetype an action should operate on, given
@@ -457,9 +461,19 @@ pub fn embedFormat(t: fig.Embed.Type) Format {
 /// when this isn't an embed operation at all (no override, and the extension
 /// implies no embed).
 pub fn resolveEmbedTypeFromContent(content: []const u8, embed: ?fig.Embed.Type, detect_embed: bool) ?fig.Embed.Type {
-    if (embed) |e| return e;
+    if (embed) |e| return registerInner(e);
     if (!detect_embed) return null;
-    return fig.Embed.detect(content) orelse .{ .frontmatter = .yaml };
+    return registerInner(fig.Embed.detect(content) orelse .{ .frontmatter = .yaml });
+}
+
+/// `t`, once whatever stands in for its inner format is registered. The
+/// core parses an embedded region itself, and reaches a compiled-out inner
+/// format through the language registered at its integer; the CLI
+/// registers a configured language only when asked for one, so this is the
+/// asking (`languages.standIn`).
+fn registerInner(t: fig.Embed.Type) fig.Embed.Type {
+    _ = embedFormat(t);
+    return t;
 }
 
 /// Same as `resolveEmbedTypeFromContent`, but reads `input` itself first, for
@@ -470,11 +484,11 @@ pub fn resolveEmbedTypeFromContent(content: []const u8, embed: ?fig.Embed.Type, 
 /// positional read is always safe: it's a second read of a regular, seekable
 /// file, not a second (and empty) read of a pipe.
 pub fn resolveEmbedType(io: Io, allocator: std.mem.Allocator, input: Io.File, embed: ?fig.Embed.Type, detect_embed: bool) !?fig.Embed.Type {
-    if (embed) |e| return e;
+    if (embed) |e| return registerInner(e);
     if (!detect_embed) return null;
     const content = try fileio.readAll(allocator, io, input);
     defer allocator.free(content);
-    return fig.Embed.detect(content) orelse .{ .frontmatter = .yaml };
+    return registerInner(fig.Embed.detect(content) orelse .{ .frontmatter = .yaml });
 }
 
 /// The argument list with `--lang <name>` taken out: the one flag every

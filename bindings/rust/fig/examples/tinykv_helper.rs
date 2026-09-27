@@ -15,6 +15,9 @@
 //! ```
 //!
 //! `zig build check` builds and runs it that way (`tools/cli-lang-check.sh`).
+//! An argument renames it — `tinykv_helper plist` serves the same language
+//! as `plist`, which is how that script stands one in for a format the CLI
+//! compiled out.
 
 use fig::language::{
     CommentForm, CommentRow, CommentSlot, Description, Dialect, Language, LanguageError, NodeKind,
@@ -22,11 +25,13 @@ use fig::language::{
 };
 use fig::{Capabilities, Span};
 
-struct TinyKv;
+struct TinyKv {
+    name: String,
+}
 
 impl Language for TinyKv {
     fn describe(&self) -> Description {
-        let mut d = Description::new("tinykv");
+        let mut d = Description::new(&self.name);
         d.caps = Capabilities::new(true, true, true);
         d.max_mapping_depth = Some(0);
         let mut syntax = Syntax::default();
@@ -34,7 +39,7 @@ impl Language for TinyKv {
         syntax.empty_map_literal = Some("{}".into());
         syntax.flow_containers = false;
         d.syntax = Some(syntax);
-        let mut dialect = Dialect::new("tinykv");
+        let mut dialect = Dialect::new(&self.name);
         dialect.extensions = vec!["tkv".into()];
         dialect.splice = Splice::Raw;
         dialect.empty_doc_seed = Some(String::new());
@@ -165,5 +170,6 @@ fn is_scalar(kind: NodeKind) -> bool {
 }
 
 fn main() -> std::io::Result<()> {
-    fig::helper::serve(TinyKv)
+    let name = std::env::args().nth(1).unwrap_or_else(|| "tinykv".into());
+    fig::helper::serve(TinyKv { name })
 }

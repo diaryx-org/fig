@@ -130,6 +130,12 @@ and no regeneration can reach a released section.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
+_No commits since the last tag._
+
+<!-- git-cliff:end -->
+
+## v5.0.0 — 2026-09-27
+
 ### Breaking
 
 - **cli** — arguments are parsed strictly, and a missing comment exits 1 ([`be6bb06`](https://github.com/diaryx-org/fig/commit/be6bb062d045a0a52dd0fdcd0a6646436757c192))
@@ -437,7 +443,6 @@ and no regeneration can reach a released section.
 
 - fig-wasi does not read `languages.figl`.
 
-<!-- git-cliff:end -->
 
 ### Since cli 4.0.1
 

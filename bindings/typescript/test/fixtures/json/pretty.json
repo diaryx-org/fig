@@ -1,0 +1,10 @@
+{
+  "name": "fig",
+  "version": "3.0.0",
+  "formats": ["json", "yaml", "toml"],
+  "runtime": {
+    "lua": true,
+    "js": true,
+    "count": 2
+  }
+}

@@ -1,0 +1,8 @@
+a.b.c = 1
+a.b.d = 2
+list.of.servers
+> host = a.com
+list.of.servers
+> port = 1
+"my.key" = x
+'q k'.sub = 1

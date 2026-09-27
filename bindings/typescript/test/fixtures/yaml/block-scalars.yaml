@@ -1,0 +1,25 @@
+lit: |
+  one
+  two
+
+keep: |+
+  x
+
+strip: |-
+  y
+fold: >
+  a
+  b
+
+  c
+   more
+  d
+ind: |2
+   two spaces
+empty: |
+seq:
+- >-
+  folded
+  item
+- |
+  lit

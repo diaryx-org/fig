@@ -1,0 +1,11 @@
+servers
+> *
+>> host = a.com
+> * # note
+>> host = b.com
+> * 5
+> *: int = 09
+> * "q"
+> * [1, 2]
+tags = [a, b c, "d"]
+point = { x = 1, y = 2 }

@@ -1,0 +1,1 @@
+{"rows":[{"kind":"sequence","parent":null,"span":[0,9]},{"kind":"int","parent":0,"span":[1,2],"text":"1"},{"kind":"int","parent":0,"span":[4,5],"text":"2"},{"kind":"int","parent":0,"span":[7,8],"text":"3"}],"regions":[],"mentions":[],"comments":[]}

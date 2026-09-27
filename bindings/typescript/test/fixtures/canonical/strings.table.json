@@ -1,0 +1,1 @@
+{"rows":[{"kind":"sequence","parent":null,"span":[0,52]},{"kind":"string","parent":0,"span":[1,29],"text":"/Aé퟿\b\f\t"},{"kind":"string","parent":0,"span":[31,33],"text":""},{"kind":"string","parent":0,"span":[35,45],"text":"tab\there"},{"kind":"string","parent":0,"span":[47,51],"text":"\u0001\u001f"}],"regions":[],"mentions":[],"comments":[]}

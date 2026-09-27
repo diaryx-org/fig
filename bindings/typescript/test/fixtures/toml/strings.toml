@@ -1,0 +1,15 @@
+s = "a\u00e9\U0001F600\t\"q\" \\ \b\f\r"
+m = """\
+   cont\
+   inued"""
+q = """"five"""""
+emp = """
+"""
+lit = 'C:\raw'
+lm = '''
+l
+'''
+esc = "\e[0m \x41"
+ml = """
+first
+second"""

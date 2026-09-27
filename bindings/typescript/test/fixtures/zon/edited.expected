@@ -1,0 +1,11 @@
+// top
+.{
+    .root = 2, // t
+    .server = .{ // head
+        .host = "h2",
+        .new = true,
+    },
+    // the list
+    .list = .{ 1, 9, 3 },
+    .flat = .{ .b = 2 },
+}

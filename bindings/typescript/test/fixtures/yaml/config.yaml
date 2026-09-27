@@ -1,0 +1,17 @@
+# top
+name: fig
+server:
+  host: localhost
+  # about port
+  ports:
+    - 80
+    - 443 # https
+  empty:
+  text: |
+    line one
+    line two
+  flow: {a: 1, b: [x, y]}
+list:
+- a
+- b
+# dangle

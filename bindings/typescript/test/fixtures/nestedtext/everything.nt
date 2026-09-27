@@ -1,0 +1,21 @@
+# top
+name: fig
+server:
+    host: localhost
+    # about port
+    ports:
+        - 80
+        -
+            nested: 1
+        - 
+    empty:
+    text:
+        > line one
+        >
+        > line three
+: multi
+: key
+    > v
+regex: [+-]?x
+padded  :  spaced value  
+# dangle

@@ -1,0 +1,6 @@
+deep
+> a
+>> b
+>>> c = 1
+>>> d = [1, 2, 3, 4, 5, 6, 7]
+> e = long list of things here, with commas, that should stack as block lines instead of flow because of the commas, yes

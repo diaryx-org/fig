@@ -1,0 +1,8 @@
+a.b.c = 1
+a.c = 2
+"quoted".k = 3
+[t]
+d.e = 3
+d.f = 4
+[t.u]
+v.w = 5

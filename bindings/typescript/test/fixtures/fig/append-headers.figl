@@ -1,0 +1,10 @@
+jobs.test.steps[]
+> uses = x
+jobs.test.steps[]
+> run = y
++
+> run = z
+spec.containers[]
+> name = app
+spec.containers[].ports[]
+> containerPort = 80

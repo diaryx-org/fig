@@ -1,0 +1,8 @@
+a: 1
+b:
+  - x
+  - |
+    blk
+    more
+c: "fo
+  ld"

@@ -1,0 +1,1 @@
+{"rows":[{"kind":"mapping","parent":null,"span":[0,5]},{"kind":"keyvalue","parent":0,"span":[0,5]},{"kind":"string","parent":1,"span":[0,1],"text":"x"},{"kind":"string","parent":1,"span":[4,5],"text":"1"}],"regions":[],"mentions":[],"comments":[]}

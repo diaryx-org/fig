@@ -1,0 +1,10 @@
+.{
+    .s = "esc\t\"q\"\x41\u{e9}\\\'",
+    .empty = "",
+    .uni = "é中🙂",
+    .ml =
+        \\line one
+        \\line two
+    ,
+    .c = 'A', .nl = '\n', .q = '\'', .emoji = '😀', .esc = '\u{1F600}', .hex = '\x41',
+}

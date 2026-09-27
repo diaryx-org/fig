@@ -1,0 +1,1 @@
+[! "bang", !foo &a "x", &b !bar "y", !!int 3, &z [], &w {}]

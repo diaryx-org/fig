@@ -1,0 +1,23 @@
+// The declarations for the JavaScript the package ships as it is written:
+// the kit (`kit/`, `@diaryx/fig/kit`) and the languages written with it
+// (`languages/`, `@diaryx/fig/languages/*`). Their types are read off the
+// JavaScript — each language's default export is annotated as a
+// `Language` — and emitted beside the compiled sources' in `dist/`. Run
+// after tsconfig.json, whose `dist/helper.d.ts` the kit's import of
+// `@diaryx/fig/helper` resolves to.
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023", "DOM"],
+    "allowJs": true,
+    "checkJs": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "rootDir": ".",
+    "outDir": "dist",
+    "skipLibCheck": true
+  },
+  "include": ["kit/*.js", "languages/*.js"]
+}

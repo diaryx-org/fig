@@ -1,0 +1,6 @@
+﻿bom = true
+[s]
+k = "crlf"
+ml = """
+x
+y"""

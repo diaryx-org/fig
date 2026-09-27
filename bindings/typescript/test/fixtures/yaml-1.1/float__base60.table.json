@@ -1,0 +1,1 @@
+{"rows":[{"kind":"mapping","parent":null,"span":[0,25]},{"kind":"keyvalue","parent":0,"span":[0,25],"sep":[11,12]},{"kind":"string","parent":1,"span":[0,11],"text":"sexagesimal"},{"kind":"float","parent":1,"span":[13,25],"text":"190:20:30.15"}],"regions":[],"mentions":[],"comments":[]}

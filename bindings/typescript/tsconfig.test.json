@@ -10,7 +10,14 @@
     "noEmit": true,
     "rootDir": ".",
     "declaration": false,
-    "declarationMap": false
+    "declarationMap": false,
+    // `@diaryx/fig/helper`, `/kit` and `/languages/*` resolve to the
+    // sources rather than `dist/` (the `fig-source` rows of package.json's
+    // exports, which `npm test` passes to Node as well), and the kit and
+    // the languages are JavaScript, typed as written.
+    "customConditions": ["fig-source"],
+    "allowJs": true,
+    "checkJs": false
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]
 }

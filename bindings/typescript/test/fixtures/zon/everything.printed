@@ -1,0 +1,30 @@
+.{ // head
+    // c
+    .a = 1, // t
+    // lead b
+    .b = .{ // tb
+        1,
+        2,
+    },
+    .s = "ml\ntwo",
+    .c = .@"quoted key",
+    .d = .@"e f",
+    .e = .fast,
+    .f = '\u{1f600}',
+    .g = -0x1.5p3,
+    .h = -inf,
+    .i = nan,
+    .j = null,
+    .k = true,
+    .l = 'a',
+    .m = "esc\t\"q\"Aé",
+    .n = 1_000,
+    .o = 0o17,
+    .p = 0b101,
+    .q = 1e10,
+    .r = 0xFFe,
+    .t = .{},
+    .u = -5,
+    // dangle
+    // after
+}

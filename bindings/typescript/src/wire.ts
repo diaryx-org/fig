@@ -157,6 +157,11 @@ export interface PrintOptions {
    *  a scalar root spelled differently from a scalar in place (NestedText's
    *  `>` block) is written bare. Every other print leaves it `false`. */
   splice: boolean;
+  /** Print a container root inline — fig's `{ a = 1 }` / `[a, b]` — as a
+   *  value spliced after `key = ` must be, since a block spelling re-reads
+   *  there as a string. The editors set it for fig alone, so a language
+   *  standing in for fig answers it; any other ignores it. */
+  flow: boolean;
 }
 
 // ── the node table ─────────────────────────────────────────────────────────
@@ -288,8 +293,10 @@ export interface Language {
    *  `byteOffset` is where; any other throw is reported without one. */
   parse(dialect: string, input: string): NodeTable;
   /** Required where `caps.serialize` is set. A table whose root is a scalar
-   *  is a fragment the editor will splice: spell it as the scalar stands
-   *  alone in the format. */
+   *  is a value on its own: spell it as a document holding just that value
+   *  where the format has one (plist's `<plist>` around it), and as the
+   *  scalar alone where it has none (fig). `options.splice` asks for the
+   *  bare value either way. */
   print?(dialect: string, table: NodeTable, options: PrintOptions): string;
   /** Answer one of the renderers `renderers` declares. */
   render?(which: Renderer, args: RenderArgs): string;
@@ -399,6 +406,7 @@ function handleInner(lang: Language, requestLine: string): Record<string, unknow
         indent: o.indent ?? 2,
         width: o.width ?? 80,
         splice: o.splice ?? false,
+        flow: o.flow ?? false,
       };
       return { ok: true, output: lang.print(req.dialect, req.table, options) };
     }

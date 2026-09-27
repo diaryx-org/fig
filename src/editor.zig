@@ -2983,6 +2983,23 @@ pub fn Editor(comptime Language: type) type {
             return is_section_format;
         }
 
+        /// `hasContainerOp` for this editor's own dialect, asked at the
+        /// call: the same answer for a compiled format, and for a runtime
+        /// language — which `hasContainerOp` can only answer "may be" —
+        /// whether the dialect it registered declares sections (and, for
+        /// the two ops that write a header, a header to write).
+        pub fn dialectHasContainerOp(self: *const Self, comptime op: []const u8) bool {
+            if (comptime !hasContainerOp(op)) return false;
+            const syn = self.syntax();
+            if (syn.section_noun == null) return false;
+            if (comptime std.mem.eql(u8, op, "insertContainer")) return syn.section_header != null;
+            if (comptime std.mem.eql(u8, op, "appendContainerToSeq")) {
+                const h = syn.section_header orelse return false;
+                return h.seq_open != null;
+            }
+            return true;
+        }
+
         /// The comptime refusal shared by the three generic ops: a format with
         /// no section nodes has nothing for them to address.
         fn requireSectionFormat(comptime op: []const u8) void {

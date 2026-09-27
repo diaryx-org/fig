@@ -1702,7 +1702,7 @@ pub export fn fig_editor_delete_container(
     const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
     return switch (handle.inner) {
         inline else => |*e| if (comptime @TypeOf(e.*).hasContainerOp("deleteContainer"))
-            (if (e.deleteContainer(path)) .ok else |err| editStatus(err))
+            if (!e.dialectHasContainerOp("deleteContainer")) .unsupported_format else (if (e.deleteContainer(path)) .ok else |err| editStatus(err))
         else
             .unsupported_format,
     };
@@ -1723,7 +1723,7 @@ pub export fn fig_editor_insert_container(
     const body = sliceOf(body_ptr, body_len) orelse return .invalid_argument;
     return switch (handle.inner) {
         inline else => |*e| if (comptime @TypeOf(e.*).hasContainerOp("insertContainer"))
-            (if (e.insertContainer(path, body)) .ok else |err| editStatus(err))
+            if (!e.dialectHasContainerOp("insertContainer")) .unsupported_format else (if (e.insertContainer(path, body)) .ok else |err| editStatus(err))
         else
             .unsupported_format,
     };
@@ -1748,7 +1748,7 @@ pub export fn fig_editor_rename_container(
     const leaf = sliceOf(leaf_ptr, leaf_len) orelse return .invalid_argument;
     return switch (handle.inner) {
         inline else => |*e| if (comptime @TypeOf(e.*).hasContainerOp("renameContainer"))
-            (if (e.renameContainer(path, leaf)) .ok else |err| editStatus(err))
+            if (!e.dialectHasContainerOp("renameContainer")) .unsupported_format else (if (e.renameContainer(path, leaf)) .ok else |err| editStatus(err))
         else
             .unsupported_format,
     };
@@ -1777,7 +1777,7 @@ pub export fn fig_editor_move_container(
         (decodePath(dest_ptr, dest_len, &dest_buf) orelse return .invalid_argument);
     return switch (handle.inner) {
         inline else => |*e| if (comptime @TypeOf(e.*).hasContainerOp("moveContainer"))
-            (if (e.moveContainer(src, dest)) .ok else |err| editStatus(err))
+            if (!e.dialectHasContainerOp("moveContainer")) .unsupported_format else (if (e.moveContainer(src, dest)) .ok else |err| editStatus(err))
         else
             .unsupported_format,
     };
@@ -1797,7 +1797,7 @@ pub export fn fig_editor_reorder_containers(
     const order = decodeKeys(order_ptr, order_len, &buf) orelse return .invalid_argument;
     return switch (handle.inner) {
         inline else => |*e| if (comptime @TypeOf(e.*).hasContainerOp("reorderContainers"))
-            (if (e.reorderContainers(order)) .ok else |err| editStatus(err))
+            if (!e.dialectHasContainerOp("reorderContainers")) .unsupported_format else (if (e.reorderContainers(order)) .ok else |err| editStatus(err))
         else
             .unsupported_format,
     };
@@ -1819,7 +1819,7 @@ pub export fn fig_editor_append_container_to_seq(
     const body = sliceOf(body_ptr, body_len) orelse return .invalid_argument;
     return switch (handle.inner) {
         inline else => |*e| if (comptime @TypeOf(e.*).hasContainerOp("appendContainerToSeq"))
-            (if (e.appendContainerToSeq(path, body)) .ok else |err| editStatus(err))
+            if (!e.dialectHasContainerOp("appendContainerToSeq")) .unsupported_format else (if (e.appendContainerToSeq(path, body)) .ok else |err| editStatus(err))
         else
             .unsupported_format,
     };
@@ -5119,6 +5119,12 @@ test "a runtime language registers through the C ABI and is a peer at every entr
     const z = "z";
     const three = "3";
     try std.testing.expectEqual(FigStatus.ok, fig_editor_insert_key(ed, null, 0, z.ptr, z.len, three.ptr, three.len));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_source(ed, &ptr, &len));
+    try std.testing.expectEqualStrings("# note\nx=10\ny=two\nz=3\n", ptr[0..len]);
+    // tinykv declares no sections, so the whole-container ops are not its,
+    // as they are not YAML's: `unsupported_format`, and nothing changed.
+    try std.testing.expectEqual(FigStatus.unsupported_format, fig_editor_delete_container(ed, &seg, 1));
+    try std.testing.expectEqual(FigStatus.unsupported_format, fig_editor_insert_container(ed, &seg, 1, three.ptr, three.len));
     try std.testing.expectEqual(FigStatus.ok, fig_editor_source(ed, &ptr, &len));
     try std.testing.expectEqualStrings("# note\nx=10\ny=two\nz=3\n", ptr[0..len]);
 

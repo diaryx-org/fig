@@ -678,6 +678,11 @@ pub struct PrintOptions {
     /// place (NestedText's `>` block) is written bare. The bindings' editor
     /// text and `fig patch` set it; every other print leaves it `false`.
     pub splice: bool,
+    /// Print a container root inline — fig's `{ a = 1 }` / `[a, b]` — as a
+    /// value spliced after `key = ` must be, since a block spelling re-reads
+    /// there as a string. The bindings' editor text sets it for fig alone,
+    /// so a language standing in for fig answers it; any other ignores it.
+    pub flow: bool,
 }
 
 impl Default for PrintOptions {
@@ -688,6 +693,7 @@ impl Default for PrintOptions {
             indent: 2,
             width: 80,
             splice: false,
+            flow: false,
         }
     }
 }
@@ -1361,6 +1367,7 @@ const DEFAULT_PRINT_OPTIONS: ffi::FigPrintOptions = ffi::FigPrintOptions {
     indent: 2,
     width: 80,
     splice: false,
+    flow: false,
 };
 
 const EMPTY_STR: ffi::FigStr = ffi::FigStr {
@@ -1749,6 +1756,7 @@ unsafe extern "C" fn print_thunk(
         indent: opts.indent,
         width: opts.width,
         splice: opts.splice,
+        flow: opts.flow,
     };
     let result = catch_unwind(AssertUnwindSafe(|| {
         let table = table_from_c(unsafe { &*table })?;

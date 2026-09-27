@@ -335,6 +335,12 @@ pub const PrintOptions = extern struct {
     /// differently from a scalar in place (NestedText's `>` block) answers
     /// it; every other prints the same either way.
     splice: bool = false,
+    /// Print a container root inline — fig's `{ a = 1 }` / `[a, b]` — as a
+    /// value the editor splices after `key = ` must be, since a block
+    /// spelling re-reads there as a string: `AST.SerializeOptions.flow`,
+    /// which the bindings set for fig alone. A language with no such
+    /// distinction ignores it.
+    flow: bool = false,
 };
 
 /// `manifest.CommentDelimiter`.
@@ -1735,6 +1741,7 @@ pub fn printNodeWith(e: *const Entry, writer: *std.Io.Writer, ast: *const AST, r
         .indent = options.indent,
         .width = options.width,
         .splice = options.splice,
+        .flow = options.flow,
     };
     var out: Str = .{};
     var err: ErrorInfo = .empty;

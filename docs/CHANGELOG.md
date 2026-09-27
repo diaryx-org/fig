@@ -160,6 +160,7 @@ and no regeneration can reach a released section.
 - **rust** — EmbedType variants are the CLI's archetype names ([`d76a81b`](https://github.com/diaryx-org/fig/commit/d76a81b54c59bf437c401e30ca34fb76f2847083))
 - **ts** — editor method names match the Rust binding's ([`40275c5`](https://github.com/diaryx-org/fig/commit/40275c5170421f1b80510c0987f71e36af46a14a))
 - **typescript** — the published module compiles no format in; a caller imports and registers the formats it uses ([`eb8e7d6`](https://github.com/diaryx-org/fig/commit/eb8e7d63ffe2968146fe2ace6491f4cffc5aa306))
+- **wasi** — fig-wasi runs @diaryx/fig's JavaScript languages in-process instead of compiled formats ([`842dfda`](https://github.com/diaryx-org/fig/commit/842dfda20191f843b4f8e68e93a5a8039e4ef3b2))
 
 ### Added
 
@@ -172,6 +173,8 @@ and no regeneration can reach a released section.
 - **cli** — a format compiled out of the build reaches the configured language standing in for it ([`f12b961`](https://github.com/diaryx-org/fig/commit/f12b961bb6c5157f5d350e5503d55d13a2d6228e))
 - **typescript** — ship a JavaScript language for each compiled format, and the kit they are written with ([`35edfe3`](https://github.com/diaryx-org/fig/commit/35edfe33de8a1c617f2aef9bdc8f20d1874b8ea4))
 - **core** — a runtime printer is told `flow`, and a runtime language without sections has no container ops ([`e9b3cdf`](https://github.com/diaryx-org/fig/commit/e9b3cdf565cde5435128029c71d82ec27bc3b18e))
+- **core** — content sniffing tries the language standing in for a compiled-out format ([`edc8c20`](https://github.com/diaryx-org/fig/commit/edc8c20a6dd9c9643e67fbdc754e65709a6a4090))
+- **cli** — a WASI build made for a host asks it for the formats it did not compile in ([`3728b60`](https://github.com/diaryx-org/fig/commit/3728b60adc242955a672be18e8c6ee8f1a175759))
 
 ### Fixed
 
@@ -182,6 +185,7 @@ and no regeneration can reach a released section.
 - **cli** — an unknown embed archetype is not followed by the list of formats ([`2b144c9`](https://github.com/diaryx-org/fig/commit/2b144c9957bafe11ef5802627599d9444e682290))
 - a rename refuses a path with no key, and a name the mapping already holds ([`fe4d471`](https://github.com/diaryx-org/fig/commit/fe4d4714371de6fa6fe211d0c8dc9e1f14f36859))
 - **embed** — replace_body refuses a mid-document block, which has no one body ([`5bfc1de`](https://github.com/diaryx-org/fig/commit/5bfc1de58648e030f5693191e4e7018a3e5e3d1c))
+- **typescript** — the TOML and INI languages write splice text as their compiled printers do ([`a6c6c87`](https://github.com/diaryx-org/fig/commit/a6c6c87fb9a460c8258ca326dc2685491db8b87e))
 
 ### Behavioural changes
 
@@ -416,6 +420,22 @@ and no regeneration can reach a released section.
 - a parse error is the registered language's message, with a byte offset, not the compiled parser's words.
 
 - registering the same `Language` object twice returns its format instead of throwing.
+
+- in a build with formats compiled out, a file whose format is sniffed from its contents can resolve to a registered or configured stand-in, where the sniff skipped those formats before.
+
+- `@diaryx/fig/languages/toml` prints splice text for a table or array of tables inline, where it printed `[section]` lines, so an editor's `setValue` of a mapping into TOML lands as an inline table.
+
+- `@diaryx/fig/languages/ini` refuses a mapping as splice text.
+
+- a WASI build of the CLI no longer reads `languages.figl`, and `lang list` there has no `configured:` section.
+
+- in a build without fig compiled in, a value argument is read by the language standing in for fig where there is one, instead of always as a string, and `get <file> <path>` prints a scalar through it.
+
+- fig-wasi's formats are JavaScript languages: a parse error is the language's message, and `check --strict` fails a file for an error only, since the compiled parsers' lints are not there.
+
+- fig-wasi reads ZON and plist.
+
+- fig-wasi does not read `languages.figl`.
 
 <!-- git-cliff:end -->
 

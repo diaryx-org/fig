@@ -886,6 +886,10 @@ function print(_dialect, t, options) {
   const w = fig.writer(options);
   const ctx = { width: options.width ?? 80, pretty: options.pretty !== false, unit: " ".repeat(options.indent ?? 2), wrote: false };
   const root = t.byid(0);
+  // Splice text is what follows `key = `, which holds only an inline value:
+  // a table is an inline table there, never the `[header]` sections a
+  // document gives it — the compiled `printSplice`.
+  if (options.splice === true) return inlineValue(root);
   if (root.kind === "mapping") body(ctx, w, root, []);
   // A non-table root has no TOML document form; the inline value is a
   // best-effort fragment.

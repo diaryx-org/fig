@@ -151,10 +151,15 @@ function keyText(row) {
   return row.text ?? "";
 }
 
-function print(_dialect, t, _options) {
+function print(_dialect, t, options) {
   fig.index(t);
   const w = fig.writer();
   const root = t.byid(0);
+  // Splice text is what follows `key = ` on one line, where a mapping has
+  // no spelling — a section is a header of its own — so it is refused
+  // rather than printed as the document (`c = 1`) that would read back as
+  // a string there: the compiled `printSplice`.
+  if (options?.splice === true && root.kind === "mapping") throw new Error("a section cannot be written as a value");
   if (root.kind !== "mapping") {
     writeValue(w, root);
     w.put("\n");

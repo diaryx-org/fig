@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const build_options = @import("build_options");
 const manifest = @import("manifest.zig");
+const Runtime = @import("runtime.zig");
 
 pub const Language = @This();
 
@@ -683,11 +684,17 @@ pub const sniff_order: []const [:0]const u8 = blk: {
 /// `sniff_rank` says where it sits and why. This is a heuristic, not a
 /// proof: input valid as more than one format resolves to the earliest
 /// candidate in the order.
+///
+/// A format compiled out is tried through the runtime language standing in
+/// for it, where one is registered (`runtime.zig`'s `register`), at the
+/// same place in the order.
 pub fn detect(allocator: Allocator, input: []const u8) ?Detected {
     inline for (sniff_order) |name| {
         const d = comptime entryFor(name);
         if (comptime d.Lang != void) {
             if (tryParse(d.Lang, allocator, input, d.dialect)) return @field(Detected, name);
+        } else if (Runtime.entryByAbi(d.abi_value)) |e| {
+            if (e.language.caps.read and tryParse(Runtime.Language, allocator, input, e.typeOf())) return @field(Detected, name);
         }
     }
     return null;

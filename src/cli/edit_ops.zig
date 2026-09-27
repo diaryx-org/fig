@@ -7,6 +7,7 @@ const fig = @import("fig");
 const build_options = @import("build_options");
 
 const types = @import("types.zig");
+const languages = @import("languages.zig");
 const fileio = @import("fileio.zig");
 const value_arg = @import("value_arg.zig");
 
@@ -266,12 +267,24 @@ pub fn getCommentFromEmbed(
     return switch (fig.Embed.innerFormat(embed_type)) {
         inline else => |f| {
             const d = comptime fig.Language.entryFor(@tagName(f));
-            if (comptime d.Lang == void) return error.FormatDisabled;
+            if (comptime d.Lang == void) {
+                const e = try standInEditor(@field(Format, @tagName(f)));
+                return getComment(fig.Runtime.Language, allocator, inner, path, inline_comment, e.typeOf());
+            }
             // Strict JSON frontmatter has no comment syntax, so a read here
             // finds nothing — the editor's own answer, not a special case.
             return getComment(d.Lang, allocator, inner, path, inline_comment, d.dialect);
         },
     };
+}
+
+/// The registered language standing in for `f`, a format this build
+/// compiled out, when it can edit: an embedded region in a compiled-out
+/// format is edited through it (`languages.standIn`).
+fn standInEditor(f: Format) !*const fig.Runtime.Entry {
+    const e = types.runtimeEntry(languages.standIn(f)) orelse return error.FormatDisabled;
+    if (!e.language.caps.edit) return error.FormatNotEditable;
+    return e;
 }
 
 /// Apply an edit to the embedded config of a host file in place: extract the
@@ -329,7 +342,11 @@ pub fn applyToEmbed(
     const edited_decoded = switch (fig.Embed.innerFormat(embed_type)) {
         inline else => |f| blk: {
             const d = comptime fig.Language.entryFor(@tagName(f));
-            if (comptime d.Lang == void) return error.FormatDisabled;
+            if (comptime d.Lang == void) {
+                const format = languages.standIn(@field(Format, @tagName(f)));
+                const e = try standInEditor(format);
+                break :blk try applyValueEdit(fig.Runtime.Language, allocator, decoded.text, path, text, value, op, format, e.typeOf());
+            }
             break :blk try applyValueEdit(d.Lang, allocator, decoded.text, path, text, value, op, @field(Format, @tagName(f)), d.dialect);
         },
     };

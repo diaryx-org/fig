@@ -9,7 +9,9 @@
 //! (in `args.zig`) fall through to `resolveName` and `resolveExtension` here,
 //! which read the configuration once and spawn only the helper that answers.
 //! `fig lang list` and `fig lang check` are the two actions that spawn on
-//! purpose.
+//! purpose. A format this build compiled out is not something the CLI can
+//! resolve itself either: its name, extension and embedded spellings reach
+//! the configured language standing in for it (`standIn`).
 //!
 //! The helper runner is a `fig.Wire.Transport` — the wire
 //! `bindings/rust/fig/src/helper.rs` documents, newline-delimited JSON, one
@@ -288,6 +290,20 @@ pub fn resolveExtension(ext: []const u8) ?Format {
     return null;
 }
 
+/// `f`, or the configured language standing in for it when `f` is a format
+/// this build compiled out: `--input yaml` in a build without YAML reaches
+/// a `languages.figl` block that serves a `yaml` dialect, which registers
+/// at YAML's own integer (`fig.Runtime.register`), so an embedded region
+/// the core parses reaches it too. Any other `f`, and a compiled-out one
+/// nothing configured answers to, is handed back as it is, and reading it
+/// is the `FormatDisabled` it always was.
+pub fn standIn(f: Format) Format {
+    if (types.runtimeEntry(f) != null) return f;
+    const tag = @tagName(f);
+    if (fig.Language.standInAbi(tag) == null) return f;
+    return resolveName(tag) orelse f;
+}
+
 /// Spawn and register `c` if it has not been, and hand back its `Format`.
 /// A failure is remembered in `c.failure` and not retried; it is not
 /// reported here — `fig lang list` prints it as a line of its own, and
@@ -504,13 +520,14 @@ pub fn check(io: Io, a: Allocator, out: *Io.Terminal, err_term: *Io.Terminal, na
             try out.writer.flush();
             std.process.exit(1);
         }
-    else resolveName(name) orelse {
-        // Not a block's name, and not a further dialect of any language
-        // that could be spawned.
-        try err_term.writer.print("error: no language named `{s}` is configured (see `fig lang --help`)\n", .{name});
-        try err_term.writer.flush();
-        std.process.exit(2);
-    };
+    else
+        resolveName(name) orelse {
+            // Not a block's name, and not a further dialect of any language
+            // that could be spawned.
+            try err_term.writer.print("error: no language named `{s}` is configured (see `fig lang --help`)\n", .{name});
+            try err_term.writer.flush();
+            std.process.exit(2);
+        };
     const e = types.runtimeEntry(format).?;
     try out.writer.print("{s}: registered ({s}); every sample parsed", .{ e.name, capsWord(e.language.caps) });
     if (e.language.caps.serialize) try out.writer.writeAll(", printed and reparsed to the same tree");

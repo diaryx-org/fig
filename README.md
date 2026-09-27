@@ -200,6 +200,10 @@ $ fig lang list
 $ fig lang check lua-dotenv --against dotenv secrets.env
 ```
 
+A helper named after a format your build left out (`fig lang list` says
+"compiled out") stands in for it: `.plist` files, `-i plist` and, for the
+formats that have one, markdown frontmatter all reach the helper.
+
 `fig lang list` shows every compiled and configured language; `fig lang check`
 holds a configured one to a compiled twin, table for table; `fig lang table`
 prints the table a file parses to, which is what a twin has to produce.

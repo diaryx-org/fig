@@ -71,6 +71,63 @@ test("relative paths resolve from a subdirectory (the '.' preopen)", () => {
   });
 });
 
+// The module compiles no format in: every one is a language of
+// `@diaryx/fig`, which bin/fig.mjs serves when the CLI asks for it by name
+// or by extension (src/cli/host_languages.zig).
+test("every format is served, by its extension", () => {
+  const files = {
+    "a.json": '{"k": 1}',
+    "a.jsonc": '// c\n{"k": 1}',
+    "a.json5": "{k: 1}",
+    "a.yaml": "k: 1\n",
+    "a.yml": "k: 1\n",
+    "a.toml": "k = 1\n",
+    "a.zon": ".{ .k = 1 }\n",
+    "a.figl": "k = 1\n",
+    "a.ini": "k = 1\n",
+    "a.env": "k=1\n",
+    "a.properties": "k=1\n",
+    "a.nt": "k: 1\n",
+    "a.plist": '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<dict>\n  <key>k</key>\n  <integer>1</integer>\n</dict>\n</plist>\n',
+  };
+  withTempDir((dir) => {
+    for (const [name, text] of Object.entries(files)) {
+      writeFileSync(join(dir, name), text);
+      assert.equal(run(["get", name, "k"], { cwd: dir }), "1\n", name);
+    }
+  });
+});
+
+test("a value argument is read as fig reads it, and frontmatter is edited in place", () => {
+  withTempDir((dir) => {
+    writeFileSync(join(dir, "c.yaml"), "a: 1\n");
+    run(["set", "c.yaml", "a", "2"], { cwd: dir });
+    run(["set", "c.yaml", "b", "[x, y]"], { cwd: dir });
+    assert.equal(readFileSync(join(dir, "c.yaml"), "utf8"), "a: 2\nb:\n- x\n- y\n");
+    writeFileSync(join(dir, "n.md"), "---\ntitle: Hi\n---\nbody\n");
+    run(["set", "n.md", "title", "Bye"], { cwd: dir });
+    assert.equal(readFileSync(join(dir, "n.md"), "utf8"), "---\ntitle: Bye\n---\nbody\n");
+  });
+});
+
+test("a file with no extension it knows is sniffed through the languages", () => {
+  withTempDir((dir) => {
+    writeFileSync(join(dir, "config"), "[server]\nport = 8080\n");
+    assert.deepEqual(JSON.parse(run(["get", "config", "-o", "json"], { cwd: dir })), { server: { port: 8080 } });
+  });
+});
+
+test("stdin is read in the format named, and a parse error names where", () => {
+  assert.equal(run(["get", "-i", "yaml", "-", "-o", "toml"], { input: "a: 1\n" }), "a = 1\n");
+  withTempDir((dir) => {
+    writeFileSync(join(dir, "bad.json"), '{"a": }');
+    assert.throws(
+      () => run(["get", "bad.json"], { cwd: dir, stdio: "pipe" }),
+      (err) => err.status === 1 && /bad\.json:1:/.test(err.stderr),
+    );
+  });
+});
+
 test("check validates a file and exits 0", () => {
   withTempDir((dir) => {
     writeFileSync(join(dir, "ok.json"), "{}");

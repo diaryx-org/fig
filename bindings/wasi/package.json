@@ -1,7 +1,7 @@
 {
   "name": "@diaryx/fig-wasi",
   "version": "5.0.0",
-  "description": "EXPERIMENTAL: the fig CLI (parse/edit/convert JSON, JSONC, JSON5, YAML, TOML — while preserving comments) as an npx-able command, running the real fig CLI's WASI build under Node's built-in (experimental) WASI support. No install, no per-platform binary, no native build step.",
+  "description": "EXPERIMENTAL: the fig CLI (parse/edit/convert JSON, JSONC, JSON5, YAML, TOML, INI, dotenv, .properties, NestedText, ZON, plist and fig — while preserving comments) as an npx-able command: the real fig CLI's WASI build under Node's built-in WASI support, with each format one of @diaryx/fig's JavaScript languages. No install, no per-platform binary, no native build step.",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -12,6 +12,7 @@
   "files": [
     "bin",
     "wasm",
+    "lib",
     "README.md",
     "LICENSE-MIT",
     "LICENSE-APACHE"

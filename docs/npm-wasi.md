@@ -2,7 +2,7 @@
 title = fig CLI via npm/npx
 author = adammharris
 created = 2026-07-06
-updated = 2026-08-20
+updated = 2026-09-27
 part_of = [docs](docs.md)
 ```
 
@@ -21,7 +21,8 @@ part_of = [docs](docs.md)
 the native binary has — with **no install step, no per-platform binary, and no
 native build**. It ships a single WASI (WebAssembly System Interface) module
 and runs it under Node's built-in WASI support, so `npx` works anywhere Node
-20+ does: Linux, macOS, Windows, CI containers, wherever.
+22+ does: Linux, macOS, Windows, CI containers, wherever. Every format the
+native binary reads is here, ZON and plist included.
 
 If you already have `fig` installed natively (Homebrew, a downloaded release
 binary, `cargo install`, ...), you don't need this package — use the real
@@ -68,12 +69,22 @@ your machine than expected; see
 
 ## How it works
 
-`zig build wasi` compiles the exact same `fig` CLI source to a WASI preview1
-module (a real `_start` command, not a library) — the same artifact
-attached to GitHub Releases for use with `wasmtime`/`wasmer`. This package
-vendors that module and runs it with Node's built-in `node:wasi`, wiring
-`argv`, `env`, and stdio straight through so piping and redirection behave
-exactly like the native binary.
+`zig build wasi` compiles the same `fig` CLI source to a WASI preview1 module
+(a real `_start` command, not a library). The module this package ships is
+built with no format compiled in (`-Dwasi-host=true`, every language off),
+and `bin/fig.mjs` runs it under Node's built-in `node:wasi`, wiring `argv`,
+`env` and stdio straight through so piping and redirection behave like the
+native binary.
+
+The formats are `@diaryx/fig`'s JavaScript languages, the ones the library
+package's callers import, copied into this package's `lib/` at build time.
+The first time the CLI meets a format, by name (`-i yaml`), by extension or
+by sniffing a file's contents, it asks `bin/fig.mjs` for the language, which
+answers in-process through the same wire a helper process speaks. That is
+also what keeps the module small: the whole CLI with no format in it, and
+the languages as JavaScript Node already runs. The standalone `fig-wasi.wasm`
+on GitHub Releases, for `wasmtime` and `wasmer`, is built the ordinary way,
+with every format compiled in.
 
 ## Known limitations
 
@@ -110,6 +121,15 @@ real debugging to find:
   has neither `exec` nor `fork`, so this build has nowhere to send one and
   reports that instead of running it. Every action `fig` implements itself is
   unaffected.
+- **Formats are JavaScript, so their words are their own.** A parse error
+  names the same place with the language's own message, which can be worded
+  differently from the native binary's. The compiled parsers' lints are not
+  here either: `fig check --strict` fails a file only for an error, not for a
+  warning such as fig's leading-zero `007`. The file each reads, and what each
+  writes, is the same.
+- **No `languages.figl`.** A configured language is a helper program the CLI
+  starts, and a WASI module cannot start one, so this build does not read the
+  file.
 - **Slower cold start than the native binary.** Every invocation compiles the
   WASI module fresh (no persistent process) — fine for occasional/CI use,
   not a reason to replace a natively-installed `fig` for heavy scripting.

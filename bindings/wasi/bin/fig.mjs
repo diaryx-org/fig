@@ -11,13 +11,12 @@
 // lives there, identical to the native binaries Homebrew ships.
 
 import { readFileSync, writeFileSync, openSync, closeSync, fstatSync, mkdtempSync, rmSync } from "node:fs";
-import { WASI } from "node:wasi";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 
-// `node:wasi` prints a one-time `ExperimentalWarning` the moment the class is
-// constructed. That's noise for a CLI — the surface this file relies on
+// `node:wasi` prints a one-time `ExperimentalWarning` when it loads or the
+// class is constructed, depending on the Node version. That's noise for a CLI — the surface this file relies on
 // (preview1, preopens, returnOnExit) has been stable across many Node
 // majors — so swallow just that one warning and let everything else (e.g. a
 // deprecation warning from something else in the user's pipeline) through.
@@ -25,6 +24,9 @@ process.removeAllListeners("warning");
 process.on("warning", (w) => {
   if (w.name !== "ExperimentalWarning") console.error(w);
 });
+// Imported only now: a newer Node warns as `node:wasi` loads, which a
+// static import would do before the filter above is in place.
+const { WASI } = await import("node:wasi");
 
 // FIG_WASI_DEBUG=1: dump fd classifications, decisions, and the raw exit code
 // straight to the real stderr (`process.stderr.fd`, bypassing the proxy logic
@@ -182,6 +184,75 @@ const wasi = new WASI({
 
 const imports = wasi.getImportObject();
 
+// --- the languages -------------------------------------------------------
+// The module compiles no format in: each is one of `@diaryx/fig`'s
+// JavaScript languages, copied into ../lib by scripts/build-wasm.mjs, which
+// the CLI asks this host for by name or by extension the first time it
+// meets the format (src/cli/host_languages.zig) and then speaks the helper
+// wire to, in-process, through `handle` — synchronously, which is what lets
+// a call cross from the guest into JavaScript while `wasi.start()` blocks.
+// All are loaded up front, since nothing can be imported once the guest
+// runs.
+const LANGUAGE_NAMES = ["json", "json5", "yaml", "toml", "zon", "fig", "ini", "dotenv", "properties", "plist", "nestedtext"];
+let handle;
+const languages = []; // the host's id for a language is its index + 1
+try {
+  ({ handle } = await import("../lib/wire.js"));
+  for (const name of LANGUAGE_NAMES) languages.push((await import(`../lib/languages/${name}.js`)).default);
+} catch (err) {
+  if (err.code === "ERR_MODULE_NOT_FOUND") {
+    // As with the wasm above: only a checkout that has not been built.
+    console.error(`fig: ${join(here, "..", "lib")} is incomplete — run \`npm run build\` first.`);
+    process.exit(1);
+  }
+  throw err;
+}
+const byName = new Map();
+const byExtension = new Map();
+languages.forEach((lang, i) => {
+  for (const d of lang.dialects) {
+    byName.set(d.name, i + 1);
+    for (const ext of d.extensions ?? []) if (!byExtension.has(ext)) byExtension.set(ext, i + 1);
+  }
+});
+
+let guest = null; // the instance's exports, once it exists
+const utf8 = new TextDecoder("utf-8", { ignoreBOM: true });
+const encoder = new TextEncoder();
+const text = (ptr, len) => utf8.decode(new Uint8Array(guest.memory.buffer, ptr, len));
+imports.fig_host = {
+  resolve(ptr, len) {
+    const name = text(ptr, len);
+    debug("fig_host.resolve", name, byName.get(name) ?? 0);
+    return byName.get(name) ?? 0;
+  },
+  resolve_extension(ptr, len) {
+    const ext = text(ptr, len);
+    debug("fig_host.resolve_extension", ext, byExtension.get(ext) ?? 0);
+    return byExtension.get(ext) ?? 0;
+  },
+  // One wire request to one response, written into guest memory the guest
+  // allocated (`fig_alloc`) and frees.
+  call(id, reqPtr, reqLen, outPtr, outLen) {
+    const lang = languages[id - 1];
+    if (!lang) return 1;
+    try {
+      const bytes = encoder.encode(handle(lang, text(reqPtr, reqLen)));
+      const ptr = guest.fig_alloc(bytes.length);
+      if (!ptr) return 1;
+      new Uint8Array(guest.memory.buffer, ptr, bytes.length).set(bytes);
+      const view = new DataView(guest.memory.buffer);
+      view.setUint32(outPtr, ptr, true);
+      view.setUint32(outLen, bytes.length, true);
+      return 0;
+    } catch (err) {
+      debug("fig_host.call threw", err);
+      return 1;
+    }
+  },
+};
+// -------------------------------------------------------------------------
+
 // --- WASI rights compatibility shim -------------------------------------
 // Zig's wasm32-wasi std lib, when it opens a directory handle to resolve a
 // relative path, requests `fs_rights_inheriting` bits that cover directory
@@ -249,6 +320,7 @@ try {
   const module = await WebAssembly.compile(wasmBytes);
   debug("wasm compiled");
   const instance = await WebAssembly.instantiate(module, imports);
+  guest = instance.exports;
   debug("wasm instantiated, calling wasi.start()");
   exitCode = wasi.start(instance);
   debug("wasi.start() returned", exitCode);

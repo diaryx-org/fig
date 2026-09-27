@@ -1127,10 +1127,11 @@ typedef struct FigDirectiveRow { FigStr handle; FigStr prefix; } FigDirectiveRow
 
 // What parse returns and print receives. Zero rows is refused: a format whose
 // empty input is the empty document returns one FIG_NODE_NULL row. A print
-// may be handed a table whose root is a scalar — a fragment, the text an
-// editor will splice (fig_value_serialize of a scalar): a printer spells it
-// as the scalar stands alone in the format, which for a format with no such
-// spelling is the text itself.
+// may be handed a table whose root is a scalar — a value on its own
+// (fig_value_serialize of a scalar, `fig get <file> <path>`): a printer
+// spells it as a document holding just that value where the format has one
+// (plist's <plist> around it), and as the scalar alone where it has none
+// (fig). FigPrintOptions.splice asks for the bare value either way.
 // `owner` is the helper's own handle on the memory behind a table its parse
 // returned — set there, read back in free_table, never touched by fig.
 // `size` is fig's sizeof(FigNodeTable), set on the table it hands parse to
@@ -1163,6 +1164,11 @@ typedef struct FigPrintOptions {
     // `>` block) is written bare. Every other language prints the same
     // either way.
     bool     splice;
+    // Print a container root inline — fig's `{ a = 1 }` / `[a, b]` — as a
+    // value spliced after `key = ` must be; a block spelling re-reads there
+    // as a string. Set for fig alone; a language with no such distinction
+    // ignores it.
+    bool     flow;
 } FigPrintOptions;
 
 // How one comment is delimited: `open` alone (`#`, `//`), or a pair

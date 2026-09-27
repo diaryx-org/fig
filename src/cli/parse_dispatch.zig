@@ -10,6 +10,7 @@ const types = @import("types.zig");
 const fileio = @import("fileio.zig");
 const diag_report = @import("diag_report.zig");
 const args_mod = @import("args.zig");
+const languages = @import("languages.zig");
 
 const Format = types.Format;
 const Io = std.Io;
@@ -585,11 +586,14 @@ pub fn reportLoss(
 /// resolved it. The guess matters only when it is wrong, and then the parse
 /// fails and says so.
 pub fn resolveFormatFromContent(allocator: std.mem.Allocator, content: []const u8, file_path: []const u8) !Format {
+    // A format this build compiled out is sniffed through the language
+    // standing in for it, which is registered only when asked for.
+    languages.registerStandIns();
     const detected = fig.Language.detect(allocator, content) orelse {
         std.log.scoped(.detect).err("could not infer the format of `{s}` from its contents; pass an explicit format", .{file_path});
         return error.UnsupportedFileFormat;
     };
-    const format = mapDetected(detected);
+    const format = languages.standIn(mapDetected(detected));
     std.log.scoped(.detect).debug("inferred format `{s}` for `{s}` from its contents", .{ types.name(format), file_path });
     return format;
 }

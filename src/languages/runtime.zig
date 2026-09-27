@@ -2563,6 +2563,11 @@ test "a language named after a compiled-out format stands in for it, at that for
     const doc = try Language.Parser.parse(testing.allocator, "a=1\n", e.typeOf());
     defer doc.deinit(testing.allocator);
 
+    // Content sniffing tries it at plist's place in the order: after JSON,
+    // JSON5 and ZON, which all refuse `a=1`, and ahead of the formats
+    // that would take it.
+    try testing.expectEqual(Languages.Detected.plist, Languages.detect(testing.allocator, "a=1\n").?);
+
     // Taken now, like any registered name; and a compiled-in format's
     // integer names no runtime entry.
     try testing.expectError(error.NameTaken, register(testing.allocator, &vt));

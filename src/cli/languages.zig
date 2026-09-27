@@ -304,6 +304,15 @@ pub fn standIn(f: Format) Format {
     return resolveName(tag) orelse f;
 }
 
+/// Ask for the language standing in for every format this build compiled
+/// out that content sniffing tries (`fig.Language.detect`), so it is
+/// registered to be tried. Nothing, in a build that compiles them all in.
+pub fn registerStandIns() void {
+    inline for (@typeInfo(fig.Language.Detected).@"enum".fields) |f| {
+        if (comptime fig.Language.entryFor(f.name).Lang == void) _ = standIn(@field(Format, f.name));
+    }
+}
+
 /// Spawn and register `c` if it has not been, and hand back its `Format`.
 /// A failure is remembered in `c.failure` and not retried; it is not
 /// reported here — `fig lang list` prints it as a line of its own, and

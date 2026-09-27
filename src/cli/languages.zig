@@ -9,7 +9,9 @@
 //! (in `args.zig`) fall through to `resolveName` and `resolveExtension` here,
 //! which read the configuration once and spawn only the helper that answers.
 //! `fig lang list` and `fig lang check` are the two actions that spawn on
-//! purpose. A format this build compiled out is not something the CLI can
+//! purpose. The WASI build, which cannot spawn, asks its host first
+//! (`host_languages.zig`): `@diaryx/fig-wasi` serves `@diaryx/fig`'s
+//! JavaScript languages in-process. A format this build compiled out is not something the CLI can
 //! resolve itself either: its name, extension and embedded spellings reach
 //! the configured language standing in for it (`standIn`).
 //!
@@ -43,12 +45,14 @@
 //! argv, with a leading `~` in any argument expanded to `$HOME`.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const fig = @import("fig");
 const build_options = @import("build_options");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 const types = @import("types.zig");
+const host_languages = @import("host_languages.zig");
 const Format = types.Format;
 const Runtime = fig.Runtime;
 const Wire = fig.Wire;
@@ -97,6 +101,9 @@ pub fn init(io: Io, allocator: Allocator, environ: *const std.process.Environ.Ma
 pub fn load() void {
     if (state.loaded) return;
     state.loaded = true;
+    // A WASI module cannot spawn the helper a block names, so there is
+    // nothing to read the configuration for.
+    if (comptime builtin.os.tag == .wasi) return;
     const io = state.io orelse return;
     const a = state.allocator;
     const env = state.environ orelse return;
@@ -269,6 +276,8 @@ pub fn isConfigured(name: []const u8) bool {
 pub fn resolveName(name: []const u8) ?Format {
     // Already in the registry — a name registered by whatever means.
     if (Runtime.entryByName(name)) |e| return types.runtimeFormat(e);
+    // The WASI build's host, which serves languages in-process.
+    if (host_languages.byName(name)) |e| return types.runtimeFormat(e);
     load();
     if (findConfigured(name)) |c| return ensureLogged(c);
     for (state.configured.items) |*c| {
@@ -281,6 +290,7 @@ pub fn resolveName(name: []const u8) ?Format {
 
 /// The `Format` of the configured language owning `ext`, or null.
 pub fn resolveExtension(ext: []const u8) ?Format {
+    if (host_languages.byExtension(ext)) |e| return types.runtimeFormat(e);
     load();
     for (state.configured.items) |*c| {
         for (c.extensions) |x| {
@@ -474,11 +484,17 @@ fn expandArgv(a: Allocator, command: []const []const u8) ![]const []const u8 {
 pub fn list(io: Io, a: Allocator, out: *Io.Terminal) !void {
     _ = io;
     _ = a;
-    try out.writer.writeAll("compiled:\n");
+    try out.writer.writeAll(if (host_languages.enabled) "formats:\n" else "compiled:\n");
     inline for (fig.Language.dialects) |d| {
-        const caps = if (comptime d.Lang == void) "compiled out" else capsWord(d.Lang.caps);
-        try out.writer.print("  {s:<14} {s}\n", .{ d.name, caps });
+        if (comptime d.Lang == void) {
+            // The WASI build's host serves what it did not compile in.
+            if (host_languages.byName(d.name)) |e| {
+                try out.writer.print("  {s:<14} {s}  (a JavaScript language, served by the host)\n", .{ d.name, capsWord(e.language.caps) });
+            } else try out.writer.print("  {s:<14} compiled out\n", .{d.name});
+        } else try out.writer.print("  {s:<14} {s}\n", .{ d.name, capsWord(d.Lang.caps) });
     }
+    // A WASI build spawns nothing (`load`).
+    if (comptime builtin.os.tag == .wasi) return out.writer.flush();
     const langs = configured();
     if (langs.len == 0) {
         try out.writer.writeAll("configured: none (no languages.figl found)\n");

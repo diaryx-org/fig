@@ -152,6 +152,10 @@ pub fn add(ctx: Context) Result {
         }),
     });
     wasi_cli.root_module.addImport("build_options", options_mod);
+    // The host a `-Dwasi-host=true` build asks for languages writes each
+    // response through the module's `fig_alloc` (src/cli/host_languages.zig),
+    // which a command module exports only when told to.
+    if (ctx.cfg.wasi_host) wasi_cli.rdynamic = true;
     const install_wasi = b.addInstallArtifact(wasi_cli, .{});
     const wasi_step = b.step("wasi", "Build the fig CLI as a WASI module (fig-wasi.wasm)");
     wasi_step.dependOn(&install_wasi.step);

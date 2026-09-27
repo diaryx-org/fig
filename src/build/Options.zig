@@ -51,6 +51,12 @@ pub const BuildOptions = struct {
     /// compiles for ANY test build regardless, gated as
     /// `lang_canonical or @import("builtin").is_test`.
     lang_canonical: bool,
+    /// The WASI CLI asks its host for a format it did not compile in
+    /// (`src/cli/host_languages.zig`), which imports `fig_host` — so only
+    /// a host that provides it, `@diaryx/fig-wasi`'s, can run that build.
+    /// Off by default, which keeps `zig build wasi` a module any WASI
+    /// runtime runs (`-Dwasi-host=true`).
+    wasi_host: bool = false,
 
     /// Whether the format named `name` (a `list.Row.name`) is compiled in.
     pub fn lang(self: BuildOptions, comptime name: []const u8) bool {
@@ -96,6 +102,7 @@ pub fn resolve(b: *std.Build) BuildOptions {
     }
 
     cfg.lang_canonical = b.option(bool, "canonical", "Include the canonical oracle format (opt-in; default off — used mainly by the test suite)") orelse false;
+    cfg.wasi_host = b.option(bool, "wasi-host", "WASI CLI: ask the host (@diaryx/fig-wasi) for formats not compiled in; needs the fig_host imports") orelse false;
     return cfg;
 }
 
@@ -113,6 +120,7 @@ pub fn addFigOptions(b: *std.Build, cfg: BuildOptions, ver: Versions) *std.Build
         options.addOption(bool, "lang_" ++ row.name, cfg.langs[i]);
     }
     options.addOption(bool, "lang_canonical", cfg.lang_canonical);
+    options.addOption(bool, "wasi_host", cfg.wasi_host);
     // The package version, surfaced through the C ABI (`fig_version` /
     // `fig_version_string`) and by the CLI's `fig version`. Parsed from
     // `.version` in `build.zig.zon` — the one version every artifact ships

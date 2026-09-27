@@ -32,6 +32,7 @@ const build_options = @import("build_options");
 const types = @import("types.zig");
 const diag_report = @import("diag_report.zig");
 const parse_dispatch = @import("parse_dispatch.zig");
+const languages = @import("languages.zig");
 
 const Format = types.Format;
 const Io = std.Io;
@@ -59,17 +60,16 @@ pub fn read(allocator: std.mem.Allocator, term: *Io.Terminal, text: []const u8, 
 }
 
 fn readFig(allocator: std.mem.Allocator, term: *Io.Terminal, text: []const u8) !Value {
-    // Without the fig dialect compiled in there is nothing to read a value
-    // with; every argument is then a string, which is the one reading that
-    // needs no parser.
-    if (comptime !build_options.lang_fig) return .{ .tree = try stringTree(allocator, text) };
-
     // Empty, blank, with a line break, or with space at either end: fig's
     // reading would drop or split what the user typed, so it is a string as
     // typed (`' x'` stays ` x`, where `v =  x` would trim it).
     const trimmed = std.mem.trim(u8, text, " \t");
     if (trimmed.len == 0 or trimmed.len != text.len or std.mem.indexOfAny(u8, text, "\r\n") != null)
         return .{ .tree = try stringTree(allocator, text) };
+
+    // Without the fig dialect compiled in, the language standing in for it
+    // reads the value, where there is one.
+    if (comptime !build_options.lang_fig) return readFigStandIn(allocator, term, text);
 
     const source = try std.mem.concat(allocator, u8, &.{ prefix, text, "\n" });
     var reports: parse_dispatch.Reports = .{};
@@ -90,6 +90,29 @@ fn readFig(allocator: std.mem.Allocator, term: *Io.Terminal, text: []const u8) !
         try diag_report.printDiag(term, text, "<value>", shift(w.offset, text), if (w.end) |e| shift(e, text) else null, "warning", .yellow, W.describeWarning(w.code), W.shortLabel(w.code));
     try term.writer.flush();
 
+    var ast = doc.ast;
+    ast.root = (try ast.getValByPath(&.{.{ .key = "v" }})).id;
+    return .{ .tree = ast };
+}
+
+/// `readFig` through the language standing in for fig (`languages.standIn`)
+/// in a build without fig: its refusal is reported against the argument
+/// as the compiled dialect's is, and with no language for fig at all every
+/// argument is a string, the one reading that needs no parser.
+fn readFigStandIn(allocator: std.mem.Allocator, term: *Io.Terminal, text: []const u8) !Value {
+    const format = languages.standIn(.fig);
+    if (types.runtimeEntry(format) == null) return .{ .tree = try stringTree(allocator, text) };
+    const source = try std.mem.concat(allocator, u8, &.{ prefix, text, "\n" });
+    var reports: parse_dispatch.Reports = .{};
+    const doc = parse_dispatch.parseSliceAs(format, .{}, allocator, source, false, &reports) catch |err| {
+        if (std.mem.indexOfScalar(u8, text, '#') != null) return .{ .tree = try stringTree(allocator, text) };
+        const d = reports.runtime orelse return err;
+        try diag_report.printDiag(term, text, "<value>", shift(d.offset, text), if (d.end) |e| shift(e, text) else null, "error", .red, d.message, d.short_label);
+        try term.writer.print("help: this argument is read as a fig value; pass --string to take it as a string, or --raw to splice it as the file's own syntax\n", .{});
+        try term.writer.flush();
+        std.process.exit(2);
+    };
+    if (doc.ast.node_comments.len > 0) return .{ .tree = try stringTree(allocator, text) };
     var ast = doc.ast;
     ast.root = (try ast.getValByPath(&.{.{ .key = "v" }})).id;
     return .{ .tree = ast };

@@ -7,6 +7,8 @@ pub const Runtime = @import("languages/runtime.zig");
 /// The helper wire — the contract as newline-delimited JSON — as a vtable
 /// over any transport: the CLI's child process, the wasm module's host call.
 pub const Wire = @import("languages/wire.zig");
+/// A runtime language served by the wasm module's host (`fig_host.call`).
+pub const Host = @import("languages/host.zig");
 // TODO: Language.detect(file: []const u8);
 
 pub const Editor = @import("editor.zig").Editor;

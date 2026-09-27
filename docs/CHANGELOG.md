@@ -159,6 +159,7 @@ and no regeneration can reach a released section.
 - **rust** — declare rust-version 1.88 for every crate in the workspace ([`ac8aec6`](https://github.com/diaryx-org/fig/commit/ac8aec683937fbb47a44d427b443e33dab74c182))
 - **rust** — EmbedType variants are the CLI's archetype names ([`d76a81b`](https://github.com/diaryx-org/fig/commit/d76a81b54c59bf437c401e30ca34fb76f2847083))
 - **ts** — editor method names match the Rust binding's ([`40275c5`](https://github.com/diaryx-org/fig/commit/40275c5170421f1b80510c0987f71e36af46a14a))
+- **typescript** — the published module compiles no format in; a caller imports and registers the formats it uses ([`eb8e7d6`](https://github.com/diaryx-org/fig/commit/eb8e7d63ffe2968146fe2ace6491f4cffc5aa306))
 
 ### Added
 
@@ -170,6 +171,7 @@ and no regeneration can reach a released section.
 - **core** — a runtime language named after a compiled-out format stands in for it ([`d360e7b`](https://github.com/diaryx-org/fig/commit/d360e7bb572f6cd2189424c65d67e0a5f5614202))
 - **cli** — a format compiled out of the build reaches the configured language standing in for it ([`f12b961`](https://github.com/diaryx-org/fig/commit/f12b961bb6c5157f5d350e5503d55d13a2d6228e))
 - **typescript** — ship a JavaScript language for each compiled format, and the kit they are written with ([`35edfe3`](https://github.com/diaryx-org/fig/commit/35edfe33de8a1c617f2aef9bdc8f20d1874b8ea4))
+- **core** — a runtime printer is told `flow`, and a runtime language without sections has no container ops ([`e9b3cdf`](https://github.com/diaryx-org/fig/commit/e9b3cdf565cde5435128029c71d82ec27bc3b18e))
 
 ### Fixed
 
@@ -402,6 +404,18 @@ and no regeneration can reach a released section.
 - fig::language::register returns a stand-in dialect as the compiled format's own variant (Format::Plist), not Format::Runtime.
 
 - in a build with a format compiled out, a languages.figl language named after that format is reached by the format's name (`-i`/`-o`), extension and embed archetypes, where those were FormatDisabled before.
+
+- a runtime language's print is handed `flow` (true when the bindings' editors spell a fig value), in the C struct, the helper wire's options and the Rust and TypeScript `PrintOptions`.
+
+- fig_editor_{delete,insert,rename,move,reorder}_container and fig_editor_append_container_to_seq on a runtime language that declares no `section_noun` return `unsupported_format`, not `invalid_argument`.
+
+- the published module compiles no format in; every format throws `UnsupportedFormat` until its language from `@diaryx/fig/languages/*` is passed to `registerLanguage` (docs/migrating-to-5.md).
+
+- ZON and plist, left out of the 4.x module, are available as `@diaryx/fig/languages/zon` and `/plist`.
+
+- a parse error is the registered language's message, with a byte offset, not the compiled parser's words.
+
+- registering the same `Language` object twice returns its format instead of throwing.
 
 <!-- git-cliff:end -->
 

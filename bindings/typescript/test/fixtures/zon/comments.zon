@@ -1,0 +1,19 @@
+// top
+.{ // head
+    // the name
+    .name = "Ada", // a person
+    .nums = .{
+        1, // first
+        2,
+        // tail
+    },
+    .inner = .{
+        .x = .{
+            1,
+        }, // after inner
+        // orphan
+    },
+    .empty = .{}, // e
+    .b = .{ 1 }, // inline
+    // dangle
+} // end

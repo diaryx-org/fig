@@ -1,0 +1,11 @@
+a: &x 1
+b: *x
+base: &b
+  x: 1
+d:
+  <<: *b
+  y: 2
+seq: &s
+  - *x
+  - &i [1, 2]
+*x : alias key

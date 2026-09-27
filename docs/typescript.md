@@ -581,6 +581,49 @@ the value renderer is told what fig's own literal rules made of the text
 (`args.literal`: `"int"`, `"bool"`, `"string"`, …), so every format means the
 same thing by `42` and a renderer spells a kind rather than deciding one.
 
+**The package's own languages.** `@diaryx/fig/languages/<name>` is a
+`Language` for each format fig compiles:
+
+- `json`;
+- `json5`, which also serves the `jsonc` dialect;
+- `yaml`, which also serves `yaml-1.1`;
+- `toml`, `ini`, `fig`, `dotenv`, `properties`, `nestedtext`, `zon` and `plist`;
+- `canonical`.
+
+The test suite holds each one to its compiled format on every fixture: the
+same node table, the same values and the same printed bytes. Registered in a
+module that leaves its format out, a language stands in for that format. It
+takes the format's own number (`Format.Zon`), name and extensions, and
+reaches markdown frontmatter and fenced blocks too. The published module
+leaves ZON and plist out:
+
+```ts
+import { registerLanguage, convert, Format } from "@diaryx/fig";
+import zon from "@diaryx/fig/languages/zon";
+
+registerLanguage(zon);                             // → Format.Zon
+convert(".{ .a = 1 }\n", Format.Zon, Format.Json); // → '{\n  "a": 1\n}\n'
+```
+
+A format the module compiles in keeps its name, so registering
+`@diaryx/fig/languages/yaml` into a module with YAML is refused as a name
+already taken.
+
+The languages are written with `@diaryx/fig/kit`, which the package ships
+for your own formats too:
+
+- `@diaryx/fig/kit`: the node table, a tree that lays itself out as one, and
+  a byte-offset scanner;
+- `@diaryx/fig/kit/grammar`: combinators, so a format is a description and
+  its spans, comment binding and duplicate-key policy follow from it;
+- `@diaryx/fig/kit/xml`: the XML tokenizer;
+- `@diaryx/fig/kit/number` and `@diaryx/fig/kit/datetime`: how a number is
+  spelled for a format, and which datetime a bare token is.
+
+All of it is plain JavaScript that runs unchanged in Node, the browser, and
+the QuickJS that `fig-quickjs` embeds. `languages/json.js` in the package is
+the one to read first.
+
 **The same object is a CLI helper.** `serve(lang)` runs the wire over a
 process's stdin and stdout, which is what the `fig` command line speaks to a
 helper it spawns — so the language you wrote for the browser is a format the

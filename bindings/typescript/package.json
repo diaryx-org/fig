@@ -14,13 +14,31 @@
       "default": "./dist/index.js"
     },
     "./helper": {
+      "fig-source": "./src/helper.ts",
       "types": "./dist/helper.d.ts",
       "default": "./dist/helper.js"
+    },
+    "./kit": {
+      "fig-source": "./kit/index.js",
+      "types": "./dist/kit/index.d.ts",
+      "default": "./kit/index.js"
+    },
+    "./kit/*": {
+      "fig-source": "./kit/*.js",
+      "types": "./dist/kit/*.d.ts",
+      "default": "./kit/*.js"
+    },
+    "./languages/*": {
+      "fig-source": "./languages/*.js",
+      "types": "./dist/languages/*.d.ts",
+      "default": "./languages/*.js"
     },
     "./package.json": "./package.json"
   },
   "files": [
     "dist",
+    "kit",
+    "languages",
     "src",
     "!src/wasm-bytes.ts",
     "!dist/wasm-bytes.js.map",
@@ -60,10 +78,10 @@
   },
   "scripts": {
     "build:wasm": "node scripts/build-wasm.mjs",
-    "build": "npm run build:wasm && tsc -p tsconfig.json && node scripts/drop-wasm-bytes-maps.mjs",
+    "build": "npm run build:wasm && tsc -p tsconfig.json && tsc -p tsconfig.languages.json && node scripts/drop-wasm-bytes-maps.mjs",
     "prepack": "node scripts/vendor-publish-files.mjs",
     "prepublishOnly": "npm run build && npm test",
-    "test": "tsc -p tsconfig.test.json && node --test 'test/**/*.test.ts'",
+    "test": "tsc -p tsconfig.test.json && node --conditions=fig-source --test 'test/**/*.test.ts'",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

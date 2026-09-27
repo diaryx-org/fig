@@ -1,0 +1,12 @@
+# top
+a
+> x = 1
+> # inside a, depth 1
+>> # deeper
+# root-level between
+b = 2
+c
+> * 1
+> # dangling in c
+# eof one
+# eof two

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- the name -->
+  <key>name</key>
+  <string>fig &amp; co</string>
+  <key>count</key>
+  <integer> 42 </integer>
+  <key>ratio</key>
+  <real>3.5e1</real>
+  <key>on</key>
+  <true/>
+  <key>off</key>
+  <false></false>
+  <key>when</key>
+  <date>2026-09-10T12:00:00Z</date>
+  <key>blob</key>
+  <data>
+    aGVs
+    bG8=
+  </data>
+  <key>list</key>
+  <array>
+    <string><![CDATA[a<b]]></string>
+    <dict/>
+    <array/>
+  </array>
+  <key>name</key>
+  <string>dup wins</string>
+</dict>
+</plist>

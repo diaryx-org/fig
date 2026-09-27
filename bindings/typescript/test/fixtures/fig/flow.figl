@@ -1,0 +1,11 @@
+v = [ # head
+  1,
+  { "a": [2, 3] },
+  [Blog](/x), # inner ignored
+]
+w = {
+  x = 1,
+} # tail
+list = [[Blog](/b), [R](/r)]
+empty = []
+none = {}

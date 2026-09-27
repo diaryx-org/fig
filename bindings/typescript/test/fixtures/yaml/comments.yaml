@@ -1,0 +1,18 @@
+# lead root
+
+# second
+a: 1 # trail
+b: # entry
+  c: 2
+  # own line
+  d: 3
+list: # list
+- x # xt
+# above y
+- y
+-
+  # inside
+  k: v
+# tail
+
+# more tail

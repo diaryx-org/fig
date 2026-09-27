@@ -1,0 +1,37 @@
+# top comment
+title = "TOML" # trailing
+n = 42
+f = -1.5e3
+hex = 0xDEAD_beef
+inf = -inf
+b = true
+d = 1979-05-27T07:32:00Z
+ld = 1979-05-27
+lt = 07:32:00
+ldt = 1979-05-27T07:32:00
+lit = 'C:\path'
+ml = """
+two
+lines"""
+mll = '''raw
+lines'''
+arr = [1, 2, # inner
+  3]
+it = { x = 1, y = "s" }
+a.b.c = 1
+"quoted key".sub = 2
+
+[server]  # section trailing
+host = "localhost"
+ports = [80, 443]
+
+[server.tls]
+enabled = false
+
+[[products]]
+name = "a"
+
+[[products]]
+name = "b"
+[products.dims]
+w = 1

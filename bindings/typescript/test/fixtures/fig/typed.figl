@@ -1,0 +1,11 @@
+i: int = 5
+f: float = 1.
+s: string = "raw" # c
+b: bool = true
+e: enum = creative
+c: char = 'A'
+d: date = 2024-01-02
+t: time = 07:30:00
+dt: datetime = 2024-01-02T03:04:05Z
+n: float = inf
+z: int = 09

@@ -1,0 +1,10 @@
+# top
+title = My server # tc
+port: int = 5432
+database
+> host = localhost
+> pool
+>> size = 10
+# between
+logging
+> level = info

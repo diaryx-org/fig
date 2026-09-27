@@ -1,0 +1,16 @@
+// top
+{ // head
+  "a": 1, // t
+  // lead
+  "b c": [1, /*c*/ 2], // tb
+  "s": "é\n\t\"",
+  "nested": {
+    "x": [
+      {}, // e
+      [] /* b */
+    ]
+    // orphan
+  },
+  "n": -1.5e10
+  // dangle
+} // end

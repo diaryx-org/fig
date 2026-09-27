@@ -1,0 +1,20 @@
+// doc leading
+/* block leading */
+{ // head
+  // lead a
+  "a": [ // seq head
+    1, // one
+    ~f2, ~i3.0, -0x1F, +1e3, .5,
+    "esc\"aped\né",
+    @offset_datetime "2024-01-01T00:00:00Z",
+    !!str &anc "tagged",
+    *anc
+    // before close
+  ], // after seq
+  "b": {}, // empty
+  "c": { "x": null }, // inline
+  "d": [
+  ]
+  /* bottom */
+}
+// eof orphan

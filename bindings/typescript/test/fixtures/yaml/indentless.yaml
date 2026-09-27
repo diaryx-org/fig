@@ -1,0 +1,8 @@
+one:
+- 2
+- 3
+four: 5
+six:
+  seven:
+  - 8
+  nine: 10

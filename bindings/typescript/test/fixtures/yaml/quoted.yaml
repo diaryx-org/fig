@@ -1,0 +1,16 @@
+dq: "a\tb\n\u00e9\x41\U0001F600 \"q\" \\ \/ \N\_\L\P\e\0\ x"
+sq: 'it''s'
+fold: "line one
+  line two
+
+  para"
+sqf: 'a
+  b'
+plain: this is
+  folded plain
+
+  with blank
+esc: "a\
+  b"
+empty: ""
+sp: " lead"

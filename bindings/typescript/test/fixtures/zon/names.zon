@@ -1,0 +1,1 @@
+.{ .mode = .fast, .@"weird key" = .@"weird val", .@"error" = .null, .true = .false, .@"" = .@"" }

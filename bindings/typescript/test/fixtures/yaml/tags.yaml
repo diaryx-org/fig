@@ -1,0 +1,13 @@
+%TAG !e! tag:x/
+---
+k: !e!foo bar
+n: !!int "5"
+s: !!str 5
+l: !local x
+v: !<tag:y,2000:z> w
+m: !!map
+  a: 1
+q: !!seq
+- 1
+t: !!str
+u: ! bare

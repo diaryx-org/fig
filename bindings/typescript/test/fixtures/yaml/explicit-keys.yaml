@@ -1,0 +1,15 @@
+? [a, b]
+: c
+? - x
+  - y
+: z
+? k
+:
+?
+: v
+? |
+  blk
+: w
+? a: b
+: d
+: empty key

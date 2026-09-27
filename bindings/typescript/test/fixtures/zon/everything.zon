@@ -1,0 +1,13 @@
+// c
+.{ // head
+  .a = 1, // t
+  // lead b
+  .b = .{ 1, 2, }, // tb
+  .s =
+  \\ml
+  \\two
+  ,
+  .c = .@"quoted key", .d = .@"e f", .e = .fast, .f = '\u{1F600}', .g = -0x1.5p3, .h = -inf, .i = nan, .j = null, .k = true,
+  .l = 'a', .m = "esc\t\"q\"\x41\u{e9}", .n = 1_000, .o = 0o17, .p = 0b101, .q = 1e10, .r = 0xFFe, .t = .{}, .u = -5,
+  // dangle
+} // after

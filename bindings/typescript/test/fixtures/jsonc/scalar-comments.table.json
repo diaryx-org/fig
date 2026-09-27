@@ -1,0 +1,1 @@
+{"rows":[{"kind":"int","parent":null,"span":[23,25],"text":"42"}],"regions":[],"mentions":[],"comments":[{"node":0,"slot":"leading","style":"block","text":"leading\n   block"},{"node":0,"slot":"trailing","style":"line","text":"t"}]}

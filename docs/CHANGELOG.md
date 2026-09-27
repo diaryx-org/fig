@@ -168,6 +168,8 @@ and no regeneration can reach a released section.
 - **rust** — Span is Hash and converts to and from Range`<usize>` ([`5636a1f`](https://github.com/diaryx-org/fig/commit/5636a1fa90bca5b5935e90c589024acd618c9fcb))
 - **cli** — `version` takes `--help`, and `help <action>` names that action's help ([`023d6e9`](https://github.com/diaryx-org/fig/commit/023d6e9adaa8bf99d50fb4d0142813d5c159d6c6))
 - **core** — a runtime language named after a compiled-out format stands in for it ([`6b330b2`](https://github.com/diaryx-org/fig/commit/6b330b28d126447f87c59f526d29b12eae5834c6))
+- **cli** — a format compiled out of the build reaches the configured language standing in for it ([`a8a1c06`](https://github.com/diaryx-org/fig/commit/a8a1c06ef4154b495e6319ba4689f7385fb79d08))
+- **typescript** — ship a JavaScript language for each compiled format, and the kit they are written with ([`a4ea472`](https://github.com/diaryx-org/fig/commit/a4ea472592c98b57a2a5288678a611e909388e66))
 
 ### Fixed
 
@@ -398,6 +400,8 @@ and no regeneration can reach a released section.
 - the rows of one registration no longer always take consecutive integers; a caller that computed a later dialect's format as the first plus its index must look it up with fig_format_by_name.
 
 - fig::language::register returns a stand-in dialect as the compiled format's own variant (Format::Plist), not Format::Runtime.
+
+- in a build with a format compiled out, a languages.figl language named after that format is reached by the format's name (`-i`/`-o`), extension and embed archetypes, where those were FormatDisabled before.
 
 <!-- git-cliff:end -->
 

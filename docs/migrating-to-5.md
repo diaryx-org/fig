@@ -156,6 +156,13 @@ a missing or unterminated region throws instead of returning `null`.
 
 Node 22 or later. Its commands are the CLI's, above.
 
+Its formats are `@diaryx/fig`'s JavaScript languages, run in-process, rather
+than parsers compiled into the module, so ZON and plist are there now too. A
+parse error can be worded differently from the native binary's; `check
+--strict` no longer fails a file for a lint (fig's leading-zero `007`, and the
+like), only for an error; and `languages.figl` is not read, since its helpers
+could never be started under WASI.
+
 ## The C ABI and runtime languages
 
 `FIG_ABI_VERSION` is 3 and `FIG_LANGUAGE_VTABLE_VERSION` is 2. A language

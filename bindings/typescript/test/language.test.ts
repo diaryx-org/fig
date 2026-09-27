@@ -1,6 +1,8 @@
-// Runtime languages: a format written in JavaScript, held to the compiled
-// format it twins — table for table before registration, and read, print
-// and edit for edit after it.
+// Runtime languages: a format written in JavaScript, held to the format it
+// twins — table for table against the compiled parser's recorded tables
+// before registration, and read, print and edit for edit after it against
+// `Format.Dotenv`, which here is the package's dotenv language
+// (twins.test.ts holds that one to the compiled format).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
@@ -25,6 +27,14 @@ import {
   type NodeTable,
 } from "../src/index.ts";
 import { dotenv } from "./languages/dotenv.ts";
+import dotenvLanguage from "@diaryx/fig/languages/dotenv";
+import json from "@diaryx/fig/languages/json";
+import json5 from "@diaryx/fig/languages/json5";
+
+// The module compiles no format in. The formats these tests hold the test
+// twin to are the package's own languages, registered as a caller would;
+// plist is left out, for the test that stands a language in for it.
+for (const lang of [json, json5, dotenvLanguage]) registerLanguage(lang);
 
 // The compiled parser's tables, one per fixture: what `fig lang table -i
 // dotenv <file>` prints. `npm test` runs from the package directory.
@@ -125,10 +135,8 @@ test("a refusal by the language surfaces as a FigError with its message and offs
     () => Document.parse("A=1\n=2\n", jsDotenv),
     (err: unknown) => err instanceof FigError && /expected `KEY=value`/.test(err.message),
   );
-  // The refusal the compiled parser makes too, in its words, at the offset
-  // the language names: the opening quote. (The compiled format's own error
-  // reaches this binding as a bare error name and no offset; a language
-  // says more.)
+  // The refusal `Format.Dotenv` makes too, in this language's words, at the
+  // offset it names: the opening quote.
   const caught = (format: Format) => {
     try {
       Document.parse("A=\"open\n", format);

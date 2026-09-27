@@ -1,0 +1,4 @@
+seq: &a
+- 1
+map: !!map
+  k: v

@@ -1,0 +1,10 @@
+{
+  "dq": "a\tb\néA😀 \"q\" \\ /    \u001b\u0000 x",
+  "sq": "it's",
+  "fold": "line one line two\npara",
+  "sqf": "a b",
+  "plain": "this is folded plain\nwith blank",
+  "esc": "ab",
+  "empty": "",
+  "sp": " lead"
+}

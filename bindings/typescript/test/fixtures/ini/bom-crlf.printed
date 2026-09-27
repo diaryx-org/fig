@@ -1,0 +1,5 @@
+bom = yes
+
+[s]
+k = crlf
+; c

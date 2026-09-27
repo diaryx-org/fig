@@ -1,0 +1,16 @@
+lit: |
+  one
+  two
+keep: "x\n\n"
+strip: y
+fold: |
+  a b
+  c
+   more
+  d
+ind: " two spaces\n"
+empty: ''
+seq:
+- folded item
+- |
+  lit

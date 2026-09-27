@@ -1,0 +1,12 @@
+dq: "a\tb\néA😀 \"q\" \\ /    \x1b\x00 x"
+sq: it's
+fold: |-
+  line one line two
+  para
+sqf: a b
+plain: |-
+  this is folded plain
+  with blank
+esc: ab
+empty: ''
+sp: ' lead'

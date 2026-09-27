@@ -1,0 +1,15 @@
+ml = '''
+line one
+  line two
+''' # opener
+esc = '''
+hi
+there
+'''
+q = 'a	b☃'
+r = raw\n
+link = [Blog](/x)
+glob = [a-z]*.md x
+url = https://x.com/#frag # c
+num = 007
+yes = Yes

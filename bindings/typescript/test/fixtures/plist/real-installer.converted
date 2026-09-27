@@ -1,0 +1,85 @@
+{
+  "BuildMachineOSBuild": "23A344017",
+  "CFAppleHelpAnchor": "instX001",
+  "CFBundleDevelopmentRegion": "English",
+  "CFBundleDocumentTypes": [
+    {
+      "CFBundleTypeIconFile": "package.icns",
+      "CFBundleTypeName": "INSTALLER_PACKAGE",
+      "CFBundleTypeRole": "Viewer",
+      "LSHandlerRank": "Owner",
+      "LSIsAppleDefaultNoOverrideForType": true,
+      "LSItemContentTypes": [
+        "com.apple.installer-package"
+      ],
+      "LSTypeIsPackage": true
+    },
+    {
+      "CFBundleTypeIconFile": "package.icns",
+      "CFBundleTypeName": "INSTALLER_PACKAGE",
+      "CFBundleTypeRole": "Viewer",
+      "LSHandlerRank": "Owner",
+      "LSIsAppleDefaultNoOverrideForType": true,
+      "LSItemContentTypes": [
+        "com.apple.installer-meta-package"
+      ],
+      "LSTypeIsPackage": true
+    },
+    {
+      "CFBundleTypeIconFile": "package.icns",
+      "CFBundleTypeName": "INSTALLER_FLAT_PACKAGE",
+      "CFBundleTypeRole": "Viewer",
+      "LSHandlerRank": "Owner",
+      "LSIsAppleDefaultNoOverrideForType": true,
+      "LSItemContentTypes": [
+        "com.apple.installer-package-archive"
+      ],
+      "LSTypeIsPackage": false,
+      "NSPersistentStoreTypeKey": "Binary"
+    }
+  ],
+  "CFBundleExecutable": "Installer",
+  "CFBundleIconFile": "AppIcon",
+  "CFBundleIconName": "AppIcon",
+  "CFBundleIdentifier": "com.apple.installer",
+  "CFBundleInfoDictionaryVersion": "6.0",
+  "CFBundleName": "Installer",
+  "CFBundlePackageType": "APPL",
+  "CFBundleShortVersionString": "6.2.0",
+  "CFBundleSignature": "xins",
+  "CFBundleSupportedPlatforms": [
+    "MacOSX"
+  ],
+  "CFBundleVersion": "1359.120.1",
+  "DTCompiler": "com.apple.compilers.llvm.clang.1_0",
+  "DTPlatformBuild": "",
+  "DTPlatformName": "macosx",
+  "DTPlatformVersion": "26.5",
+  "DTSDKBuild": "25F63",
+  "DTSDKName": "macosx26.5.internal",
+  "DTXcode": "2630",
+  "DTXcodeBuild": "17E6107",
+  "IFLanguageNamesOrder": [
+    "en",
+    "ja",
+    "fr",
+    "de",
+    "es",
+    "it",
+    "pt",
+    "nl",
+    "sv",
+    "no",
+    "da",
+    "fi",
+    "zh-Hans",
+    "zh-Hant",
+    "ko"
+  ],
+  "IFLanguageShortNumber": 7,
+  "LSHasLocalizedDisplayName": true,
+  "LSMinimumSystemVersion": "26.5",
+  "LSRequiresNativeExecution": true,
+  "NSMainNibFile": "MainMenu",
+  "NSPrincipalClass": "NSApplication"
+}

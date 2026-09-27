@@ -15,28 +15,23 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..");
 const srcDir = resolve(here, "..", "src");
 
-// ZON is left out of the default published module. It's the newest editable
-// format and the one least likely to be needed by a typical JSON/YAML/TOML/Fig
-// consumer, so it's excluded to keep the inlined base64 payload smaller for
-// everyone else. Set FIG_WASM_ZON=1 to build a module with it included — that
-// module supports ZON editing at full parity with the other formats (see
-// docs/typescript.md's Formats section). Either way, check `capabilities()` at
-// runtime rather than assuming — don't hard-code which module you're running.
-const includeZon = process.env.FIG_WASM_ZON === "1";
-// INI/dotenv/.properties/NestedText are `-D<lang>` default-on in build.zig, so
-// `zig build wasm` already links them into the published module. plist is
-// default-off and left out here too — its XML parser is the heaviest of the
-// group and the least likely to be needed by a typical consumer, so (like ZON)
-// it's opt-in to keep the inlined base64 payload smaller for everyone else. Set
-// FIG_WASM_PLIST=1 to build a module with it included. Either way, check
-// `capabilities()` at runtime rather than assuming which module you're running.
-const includePlist = process.env.FIG_WASM_PLIST === "1";
-const zigArgs = [
-  "build",
-  "wasm",
-  includeZon ? "-Dzon=true" : "-Dzon=false",
-  includePlist ? "-Dplist=true" : "-Dplist=false",
-];
+// No format is compiled into the published module. Each is a JavaScript
+// language the caller imports and registers (`@diaryx/fig/languages/<name>`),
+// standing in for the compiled format at its own `Format` number — so a page
+// pays for the formats it uses and no others, and the module itself is the
+// core alone: the tree, the editor's splice engine, serialization, embeds.
+//
+// FIG_WASM_LANGUAGES names formats to compile in anyway, comma-separated, or
+// `all` for every one: a reference module whose compiled formats the
+// languages are held to (`scripts/record-printed.mjs`). A language registered
+// into such a module under a compiled format's name is refused as taken.
+const LANGUAGES = ["json", "yaml", "toml", "zon", "fig", "ini", "dotenv", "properties", "plist", "nestedtext"];
+const wanted = (process.env.FIG_WASM_LANGUAGES ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+for (const w of wanted) {
+  if (w !== "all" && !LANGUAGES.includes(w)) throw new Error(`FIG_WASM_LANGUAGES: no format named \`${w}\` (one of ${LANGUAGES.join(", ")}, or all)`);
+}
+const on = (name) => wanted.includes("all") || wanted.includes(name);
+const zigArgs = ["build", "wasm", ...LANGUAGES.map((name) => `-D${name}=${on(name)}`)];
 
 console.error(`· zig ${zigArgs.join(" ")}`);
 execFileSync("zig", zigArgs, { cwd: repoRoot, stdio: "inherit" });

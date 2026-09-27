@@ -1,0 +1,14 @@
+{
+  "name": "dup wins",
+  "count": 42,
+  "ratio": 3.5e1,
+  "on": true,
+  "off": false,
+  "when": "2026-09-10T12:00:00Z",
+  "blob": "aGVsbG8=",
+  "list": [
+    "a<b",
+    {},
+    []
+  ]
+}

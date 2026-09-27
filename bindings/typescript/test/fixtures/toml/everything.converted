@@ -1,0 +1,53 @@
+{
+  "title": "TOML",
+  "n": 42,
+  "f": -1.5e3,
+  "hex": 3735928559,
+  "inf": -inf,
+  "b": true,
+  "d": "1979-05-27T07:32:00Z",
+  "ld": "1979-05-27",
+  "lt": "07:32:00",
+  "ldt": "1979-05-27T07:32:00",
+  "lit": "C:\\path",
+  "ml": "two\nlines",
+  "mll": "raw\nlines",
+  "arr": [
+    1,
+    2,
+    3
+  ],
+  "it": {
+    "x": 1,
+    "y": "s"
+  },
+  "a": {
+    "b": {
+      "c": 1
+    }
+  },
+  "quoted key": {
+    "sub": 2
+  },
+  "server": {
+    "host": "localhost",
+    "ports": [
+      80,
+      443
+    ],
+    "tls": {
+      "enabled": false
+    }
+  },
+  "products": [
+    {
+      "name": "a"
+    },
+    {
+      "name": "b",
+      "dims": {
+        "w": 1
+      }
+    }
+  ]
+}

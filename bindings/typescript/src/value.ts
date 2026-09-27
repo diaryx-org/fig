@@ -26,6 +26,7 @@ import {
   readOutSlice,
   writeWarningSize,
 } from "./ffi.ts";
+import { checkFormat } from "./meta.ts";
 
 const I64_MIN = -(2n ** 63n);
 const I64_MAX = 2n ** 63n - 1n;
@@ -247,7 +248,7 @@ function render(value: Value | JsInput, format: Format, options: SerializeOption
       const scratch = frame.alloc(8); // out_id / out_ptr+out_len
       const root = build(handle, node, frame, scratch);
       const optsPtr = encodeOptions(frame, options, flow, splice);
-      check(fig.fig_value_serialize_opts(handle, root, format, optsPtr, scratch, scratch + 4), "fig_value_serialize_opts");
+      checkFormat(fig.fig_value_serialize_opts(handle, root, format, optsPtr, scratch, scratch + 4), "fig_value_serialize_opts", format);
       return readOutSlice(scratch);
     } finally {
       fig.fig_value_destroy(handle);
@@ -297,7 +298,7 @@ export function diagnose(value: Value | JsInput, format: Format, options?: Seria
       const root = build(handle, node, frame, scratch);
       const optsPtr = encodeOptions(frame, options);
       const countPtr = frame.alloc(4);
-      check(fig.fig_value_diagnose(handle, root, format, optsPtr, countPtr), "fig_value_diagnose");
+      checkFormat(fig.fig_value_diagnose(handle, root, format, optsPtr, countPtr), "fig_value_diagnose", format);
       const count = readU32(countPtr);
       const warnPtr = frame.alloc(FIG_WARNING_SIZE);
       const out: Warning[] = [];

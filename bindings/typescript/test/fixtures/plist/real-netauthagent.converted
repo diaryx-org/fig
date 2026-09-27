@@ -1,0 +1,34 @@
+{
+  "Application-Group": [
+    "NetAuth",
+    "dot-mac",
+    "AirPortDisk",
+    "com.apple.sharing.appleidauthentication",
+    "com.apple.coreservices.appleidauthentication",
+    "com.apple.coreservices.appleidauthentication.keychainaccessgroup"
+  ],
+  "BuildMachineOSBuild": "23A344017",
+  "CFBundleDevelopmentRegion": "English",
+  "CFBundleExecutable": "NetAuthAgent",
+  "CFBundleIdentifier": "com.apple.NetAuthAgent",
+  "CFBundleInfoDictionaryVersion": "6.0",
+  "CFBundleName": "NetAuthAgent",
+  "CFBundlePackageType": "APPL",
+  "CFBundleShortVersionString": "6.2",
+  "CFBundleSignature": "????",
+  "CFBundleSupportedPlatforms": [
+    "MacOSX"
+  ],
+  "CFBundleVersion": "6.2",
+  "DTCompiler": "com.apple.compilers.llvm.clang.1_0",
+  "DTPlatformBuild": "",
+  "DTPlatformName": "macosx",
+  "DTPlatformVersion": "26.5",
+  "DTSDKBuild": "25F63",
+  "DTSDKName": "macosx26.5.internal",
+  "DTXcode": "2630",
+  "DTXcodeBuild": "17E6107",
+  "LSMinimumSystemVersion": "26.5",
+  "LSUIElement": "1",
+  "NSPrincipalClass": "NSApplication"
+}

@@ -1,0 +1,214 @@
+{
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "pool": {
+      "size": 10,
+      "timeout": 30
+    }
+  },
+  "cache": {
+    "redis": {
+      "host": "127.0.0.1",
+      "port": 6379
+    }
+  },
+  "deep": {
+    "nested": {
+      "single": {
+        "value": 42
+      }
+    }
+  },
+  "version": 2,
+  "title": "My Application",
+  "server": {
+    "port": 8080,
+    "name": "My Server",
+    "mode": "creative",
+    "debug": false
+  },
+  "values": {
+    "answer": 42,
+    "ratio": 3.14,
+    "mask": 255,
+    "big": 1.5e3,
+    "sigfig": 1.10,
+    "exp": 1e2,
+    "enabled": true,
+    "missing": null,
+    "flag": "true",
+    "movie": "12 monkeys",
+    "semver": "1.2.3",
+    "norway": "Yes",
+    "zip": "007",
+    "team": "99",
+    "class": "minecraft",
+    "when": "2026-07-01T12:00:00Z",
+    "day": "2026-07-01",
+    "clock": "07:30:00",
+    "huge": "inf",
+    "nope": "nan"
+  },
+  "strings": {
+    "raw": "C:\\Users\\me\\no-escapes",
+    "esc": "line1\nline2\ttabbed",
+    "snowman": "frozen ☃",
+    "my.key": "present"
+  },
+  "links": {
+    "home": "https://example.com",
+    "docs": "https://example.com/docs",
+    "api": "https://example.com/v1#stable"
+  },
+  "servers": [
+    {
+      "host": "a.com",
+      "port": 25565,
+      "backends": [
+        {
+          "url": "x",
+          "weight": 1
+        },
+        {
+          "url": "y"
+        }
+      ]
+    },
+    {
+      "host": "b.com"
+    }
+  ],
+  "ports": [
+    25565,
+    25566,
+    25567
+  ],
+  "weights": [
+    1,
+    2
+  ],
+  "services": {
+    "web": {
+      "frontend": {
+        "replicas": 3,
+        "image": "nginx:latest"
+      }
+    }
+  },
+  "jobs": {
+    "test": {
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "uses": "actions/setup-node@v4",
+          "with": {
+            "node-version": 20
+          }
+        },
+        {
+          "run": "npm test"
+        }
+      ]
+    }
+  },
+  "spec": {
+    "containers": [
+      {
+        "name": "app",
+        "ports": [
+          {
+            "containerPort": 80
+          },
+          {
+            "containerPort": 443
+          }
+        ]
+      },
+      {
+        "name": "sidecar"
+      }
+    ]
+  },
+  "clusters": [
+    {
+      "name": "alpha",
+      "size": 3
+    },
+    {
+      "name": "beta",
+      "size": 5
+    }
+  ],
+  "flow": {
+    "tags": [
+      "a",
+      "b",
+      "c"
+    ],
+    "audience": [
+      "friends",
+      "Adam Harris",
+      "Makena Harris"
+    ],
+    "point": {
+      "x": 1,
+      "y": 2
+    },
+    "pasted": {
+      "x": 1,
+      "y": [
+        2,
+        3
+      ]
+    },
+    "jsonc": [
+      1,
+      2,
+      3
+    ],
+    "matrix": [
+      [
+        1,
+        2
+      ],
+      [
+        3,
+        4
+      ]
+    ],
+    "records": [
+      {
+        "id": 1
+      },
+      {
+        "id": 2
+      }
+    ],
+    "empty_list": [],
+    "empty_map": {}
+  },
+  "frontmatter": {
+    "tags": [
+      "rust",
+      "zig",
+      "parsing",
+      "config",
+      "yaml",
+      "toml",
+      "json"
+    ]
+  },
+  "random": [
+    "test of very long things in a list to see if it works",
+    "hello there, this is also a long test; hopefully it works"
+  ],
+  "docs": {
+    "license": "Copyright (c) 2026\nAll rights reserved. \\n is literal here.",
+    "banner": "Welcome!\nEnjoy your ☃ stay."
+  },
+  "logging": {
+    "level": "info",
+    "format": "json"
+  }
+}

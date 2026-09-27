@@ -13,6 +13,7 @@
 import { check, FigError, Format, Status, type ParseDetail } from "./types.ts";
 import { fig, Frame, handleRegistry, probeParse, readOutSlice, readU32, writeU32 } from "./ffi.ts";
 import { Editable, type EditFns } from "./edit-ops.ts";
+import { checkFormat } from "./meta.ts";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -189,7 +190,7 @@ export class Embed extends Editable {
       const ptr = frame.bytes(bytes);
       const status = fn(ptr, bytes.length, container, format, out);
       if (status === Status.ParseError) throw new FigError(status, name, Embed.parseDetail(bytes, kind));
-      check(status, name);
+      checkFormat(status, name, format);
       const handle = new DataView(fig.memory.buffer).getUint32(out, true);
       if (handle === 0) throw new FigError(Status.InternalError, name);
       return new Embed(handle, kind);

@@ -1,0 +1,12 @@
+{
+  "lit": "one\ntwo\n",
+  "keep": "x\n\n",
+  "strip": "y",
+  "fold": "a b\nc\n more\nd\n",
+  "ind": " two spaces\n",
+  "empty": "",
+  "seq": [
+    "folded item",
+    "lit\n"
+  ]
+}

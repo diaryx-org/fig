@@ -32,6 +32,7 @@ import {
   type Segment,
 } from "./ffi.ts";
 import { numberFromRaw, toJS, V, type JsValue, type Value } from "./value.ts";
+import { checkFormat } from "./meta.ts";
 
 const NODE_NONE = 0xffffffff;
 const encoder = new TextEncoder();
@@ -66,6 +67,7 @@ export class Document {
     try {
       const ptr = frame.bytes(bytes);
       const status = fig.fig_parse_ex(ptr, bytes.length, format, outDoc, errPtr);
+      if (status === Status.UnsupportedFormat) checkFormat(status, "fig_parse", format);
       if (status !== Status.Ok) {
         // Read the diagnostic AFTER the call (an internal alloc may have grown —
         // and detached — the buffer the views are derived from).
@@ -303,9 +305,10 @@ export class Document {
     try {
       const optsPtr = encodeOptions(frame, options);
       const scratch = frame.alloc(8); // out_ptr + out_len
-      check(
+      checkFormat(
         fig.fig_document_serialize(this.live(), format, optsPtr, scratch, scratch + 4),
         "fig_document_serialize",
+        format,
       );
       return readOutSlice(scratch);
     } finally {
@@ -322,7 +325,7 @@ export class Document {
     try {
       const optsPtr = encodeOptions(frame, options);
       const countPtr = frame.alloc(4);
-      check(fig.fig_document_diagnose(this.live(), format, optsPtr, countPtr), "fig_document_diagnose");
+      checkFormat(fig.fig_document_diagnose(this.live(), format, optsPtr, countPtr), "fig_document_diagnose", format);
       const count = readU32(countPtr);
       const warnPtr = frame.alloc(FIG_WARNING_SIZE);
       const out: Warning[] = [];

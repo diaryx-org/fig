@@ -1,0 +1,10 @@
+{
+  "s": "aé😀\t\"q\" \\ \b\f\r",
+  "m": "continued",
+  "q": "\"five\"\"",
+  "emp": "",
+  "lit": "C:\\raw",
+  "lm": "l\n",
+  "esc": "\u001b[0m A",
+  "ml": "first\nsecond"
+}

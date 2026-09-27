@@ -1,0 +1,7 @@
+{
+  "bom": true,
+  "s": {
+    "k": "crlf",
+    "ml": "x\r\ny"
+  }
+}

@@ -2,16 +2,16 @@
 title = Using fig in Typescript
 author = adammharris
 created = 2026-07-05T21:35:14-06:00
-updated = 2026-09-26T16:00:00-06:00
+updated = 2026-09-27T12:00:00-06:00
 part_of = [docs](docs.md)
 ```
 
 # fig for TypeScript & JavaScript
 
 `fig` parses, **edits**, and serializes configuration files — JSON, JSONC, JSON5,
-YAML, TOML, INI, dotenv, Java `.properties`, NestedText, and the native `fig`
-dialect — from one small package (ZON and Apple property lists too, if you
-build your own module — see [Formats](#formats)). Its
+YAML, TOML, INI, dotenv, Java `.properties`, NestedText, ZON, Apple property
+lists and the native `fig` dialect — from one package, in which you import
+only the formats you use (see [Formats](#formats)). Its
 distinguishing feature is *comment-preserving editing*: you can change one value
 deep in a YAML or TOML file and every comment, blank line, key order, and quoting
 style elsewhere stays byte-for-byte identical. It also converts losslessly
@@ -19,7 +19,9 @@ between formats and edits config embedded in markdown frontmatter.
 
 The core is a Zig library compiled to WebAssembly and embedded directly in the
 package, so there is **no native build step and no separate `.wasm` file to
-serve** — it runs in Node, Bun, Deno, and the browser.
+serve** — it runs in Node, Bun, Deno, and the browser. Each format is a
+JavaScript module beside it that you import and register, so a page that
+reads YAML carries YAML and no TOML.
 
 - [Install](#install)
 - [Loading the module](#loading-the-module)
@@ -53,8 +55,10 @@ compiles it. Under Node, Bun, Deno, and Web Workers that "just works" and you ca
 call any API directly:
 
 ```ts
-import { parse, Format } from "@diaryx/fig";
+import { parse, registerLanguage, Format } from "@diaryx/fig";
+import json from "@diaryx/fig/languages/json";
 
+registerLanguage(json);
 parse('{"ok":true}', Format.Json); // → { ok: true }
 ```
 
@@ -63,9 +67,11 @@ In the **browser main thread**, synchronous compilation of a module larger than
 other fig API:
 
 ```ts
-import { init, parse, Format } from "@diaryx/fig";
+import { init, parse, registerLanguage, Format } from "@diaryx/fig";
+import json from "@diaryx/fig/languages/json";
 
 await init();                       // do this once, e.g. during app bootstrap
+registerLanguage(json);
 parse('{"ok":true}', Format.Json);  // now synchronous everywhere
 ```
 
@@ -76,7 +82,15 @@ call throws a clear error telling you to `await init()`.
 ## Quick start
 
 ```ts
-import { parse, stringify, convert, Format } from "@diaryx/fig";
+import { parse, stringify, convert, registerLanguage, Format } from "@diaryx/fig";
+import json from "@diaryx/fig/languages/json";
+import toml from "@diaryx/fig/languages/toml";
+import yaml from "@diaryx/fig/languages/yaml";
+
+// Bring in the formats you use, once, at startup.
+registerLanguage(json);
+registerLanguage(toml);
+registerLanguage(yaml);
 
 // Parse any format straight to plain JS values.
 const cfg = parse('name = "fig"\nport = 8080\n', Format.Toml);
@@ -92,6 +106,9 @@ convert("name: fig\nport: 8080\n", Format.Yaml, Format.Json);
 // → '{\n  "name": "fig",\n  "port": 8080\n}\n'
 ```
 
+The examples in the rest of this guide assume the formats they use are
+registered this way.
+
 `parse` takes an optional type parameter to assert the shape you expect (no
 runtime check is performed):
 
@@ -103,44 +120,51 @@ cfg.port; // typed as number
 
 ## Formats
 
-| `Format` | Parse | Edit | Serialize | Notes                                |
-| -------- | :---: | :--: | :-------: | ------------------------------------ |
-| `Json`   |  ✅   |  ✅  |    ✅     | Strict JSON (no comments).           |
-| `Jsonc`  |  ✅   |  ✅  |    ✅     | JSON with `//` and `/* */` comments. |
-| `Json5`  |  ✅   |  ✅  |    ✅     | Unquoted keys, trailing commas, etc. |
-| `Yaml`   |  ✅   |  ✅  |    ✅     | YAML 1.2.2 / 1.1.                    |
-| `Toml`   |  ✅   |  ✅  |    ✅     | TOML 1.0 / 1.1, incl. datetimes.     |
-| `Fig`    |  ✅   |  ✅  |    ✅     | The native `fig` authoring dialect.  |
-| `Ini`    |  ✅   |  ✅  |    ✅     | `[section]` + `key = value`. Untyped scalars — `port = 8080` reads back as the string `"8080"`. |
-| `Dotenv` |  ✅   |  ✅  |    ✅     | Flat `KEY=value`: no nesting, untyped scalars. |
-| `Properties` | ✅ |  ✅  |    ✅     | Java `.properties`; same flat, untyped limits as `Dotenv`. |
-| `Nestedtext` | ✅ |  ✅  |    ✅     | [NestedText](https://nestedtext.org) — nested (dict/list) but deliberately untyped. |
-| `Zon`    |  ⚠️   |  ⚠️  |    ⚠️     | Zig Object Notation — opt-in build, see below. |
-| `Plist`  |  ⚠️   |  ⚠️  |    ⚠️     | Apple XML property list; typed and nested — opt-in build, see below. |
+Every format is a language you import from `@diaryx/fig/languages/<name>` and
+pass to `registerLanguage`. It then takes the format's own number, so
+`Format.Yaml` reaches it everywhere: `parse`, `Editor`, `convert`, markdown
+frontmatter and fenced blocks. A format you don't import costs nothing.
 
-`Zon` and `Plist` are fully editable — full parity with every other format —
-but they are **not compiled into the wasm module published to npm**. ZON is the
-newest editable format and the least likely to be needed by a typical
-JSON/YAML/TOML/Fig consumer; plist's XML parser is the heaviest of the group.
-Both are left out to keep the inlined base64 payload smaller for everyone else.
-To get a module with either, build your own from a checkout:
+| `Format`     | Import                          | Notes |
+| ------------ | ------------------------------- | ----- |
+| `Json`       | `@diaryx/fig/languages/json`    | Strict JSON (no comments). |
+| `Jsonc`      | `@diaryx/fig/languages/json5`   | JSON with `//` and `/* */` comments; a dialect of the JSON5 language. |
+| `Json5`      | `@diaryx/fig/languages/json5`   | Unquoted keys, trailing commas, etc. |
+| `Yaml`       | `@diaryx/fig/languages/yaml`    | YAML 1.2.2; its `yaml-1.1` dialect resolves scalars as 1.1 (`formatByName("yaml-1.1")`). |
+| `Toml`       | `@diaryx/fig/languages/toml`    | TOML 1.0 / 1.1, incl. datetimes. |
+| `Fig`        | `@diaryx/fig/languages/fig`     | The native `fig` authoring dialect. |
+| `Ini`        | `@diaryx/fig/languages/ini`     | `[section]` + `key = value`. Untyped scalars — `port = 8080` reads back as the string `"8080"`. |
+| `Dotenv`     | `@diaryx/fig/languages/dotenv`  | Flat `KEY=value`: no nesting, untyped scalars. |
+| `Properties` | `@diaryx/fig/languages/properties` | Java `.properties`; same flat, untyped limits as `Dotenv`. |
+| `Nestedtext` | `@diaryx/fig/languages/nestedtext` | [NestedText](https://nestedtext.org) — nested (dict/list) but deliberately untyped. |
+| `Zon`        | `@diaryx/fig/languages/zon`     | Zig Object Notation. |
+| `Plist`      | `@diaryx/fig/languages/plist`   | Apple XML property list; typed and nested. |
 
-```sh
-FIG_WASM_ZON=1 npm run build:wasm     # add ZON
-FIG_WASM_PLIST=1 npm run build:wasm   # add plist
-```
+Every language reads, edits and serializes. Each is held by the package's
+tests to fig's compiled format of the same name: the same tree for every
+fixture, and the same bytes printed.
 
-That module parses, edits, and serializes the added format exactly like any
-other. Whichever module you're running, don't hard-code the table above — ask
-the build at runtime, since a format can be compiled out:
+Register at startup, before the first call that uses the format. Registering
+the same language again returns the format it already has, so a library and
+the application using it may each register what they import. A call on a
+format nobody registered throws a `FigError` naming the module to import:
 
 ```ts
-import { capabilities, Format } from "@diaryx/fig";
+parse("a = 1\n", Format.Toml);
+// FigError: fig_parse: no language is registered for this format — import toml
+// from "@diaryx/fig/languages/toml" and pass it to registerLanguage()
+```
 
-capabilities(Format.Toml); // → { read: true, edit: true, serialize: true, references: false }
+`capabilities(format)` reports what a format can do right now, all `false`
+until its language is registered:
+
+```ts
+import { capabilities, registerLanguage, Format } from "@diaryx/fig";
+import yaml from "@diaryx/fig/languages/yaml";
+
+capabilities(Format.Yaml); // → { read: false, edit: false, serialize: false, references: false }
+registerLanguage(yaml);
 capabilities(Format.Yaml); // → { read: true, edit: true, serialize: true, references: true }
-capabilities(Format.Zon);  // → { read: false, edit: false, serialize: false, references: false } in the published module
-                           // → { read: true, edit: true, serialize: true, references: false } after a FIG_WASM_ZON=1 build
 ```
 
 The four untyped formats — `Ini`, `Dotenv`, `Properties`, `Nestedtext` — parse
@@ -561,15 +585,17 @@ in the core is the design.
 compiled format is held to, and every sample is parsed, printed, reparsed and
 edited before anything is registered — so a language whose `syntax` cannot
 splice its own samples, or whose `print` does not round-trip its `parse`, is
-refused with the reason as a `FigError`, and nothing is registered. A name
-already taken — a compiled format's, or a language registered earlier — is
-refused the same way; twin a compiled format under a name of your own
-(`js-dotenv`, not `dotenv`). Refuse input from `parse` by throwing a
+refused with the reason as a `FigError`, and nothing is registered. A name a
+language registered earlier already has is refused the same way, unless it is
+the same object again, which returns the format it has. A format's own name —
+`yaml` — is free until a language takes it, and that language stands in for
+the format; to set your own beside it, name it apart (`js-yaml`). Refuse
+input from `parse` by throwing a
 `LanguageError` with a message and byte offset; anything else you throw is
 reported as a parse error without one. A registered language lives for the
 rest of the process, and its `Format` integer is assigned per process — persist
 the **name** and resolve it with `formatByName(name)`, which also answers for
-compiled formats (`formatByName("yaml")` is `Format.Yaml`).
+the package's formats (`formatByName("yaml")` is `Format.Yaml`).
 
 **Editing needs no code.** fig's splice engine writes an edit from `syntax`
 alone — what a comment looks like, what separates a key from its value, how
@@ -581,33 +607,11 @@ the value renderer is told what fig's own literal rules made of the text
 (`args.literal`: `"int"`, `"bool"`, `"string"`, …), so every format means the
 same thing by `42` and a renderer spells a kind rather than deciding one.
 
-**The package's own languages.** `@diaryx/fig/languages/<name>` is a
-`Language` for each format fig compiles:
-
-- `json`;
-- `json5`, which also serves the `jsonc` dialect;
-- `yaml`, which also serves `yaml-1.1`;
-- `toml`, `ini`, `fig`, `dotenv`, `properties`, `nestedtext`, `zon` and `plist`;
-- `canonical`.
-
-The test suite holds each one to its compiled format on every fixture: the
-same node table, the same values and the same printed bytes. Registered in a
-module that leaves its format out, a language stands in for that format. It
-takes the format's own number (`Format.Zon`), name and extensions, and
-reaches markdown frontmatter and fenced blocks too. The published module
-leaves ZON and plist out:
-
-```ts
-import { registerLanguage, convert, Format } from "@diaryx/fig";
-import zon from "@diaryx/fig/languages/zon";
-
-registerLanguage(zon);                             // → Format.Zon
-convert(".{ .a = 1 }\n", Format.Zon, Format.Json); // → '{\n  "a": 1\n}\n'
-```
-
-A format the module compiles in keeps its name, so registering
-`@diaryx/fig/languages/yaml` into a module with YAML is refused as a name
-already taken.
+**The package's own languages** are written this way: every format in
+[Formats](#formats) is a `Language` at `@diaryx/fig/languages/<name>`, named
+after the format it serves. A language named after a format with no language
+yet stands in for it, at the format's own number. `canonical`, fig's canonical
+form, is one more, which registers as a new format.
 
 The languages are written with `@diaryx/fig/kit`, which the package ships
 for your own formats too:
@@ -688,9 +692,8 @@ try {
 `Editor.open`, `Embed.open` and `Embed.openOrInit` report a parse failure the
 same way `Document.parse` does, with the core's message; an embed's offset is
 into the host file, not the block. A location the core does not report is
-`undefined`. Today that is every location from a compiled parser, which
-reports a message only; a runtime language's refusal carries its byte offset
-— except an offset of 0, which the C ABI cannot tell apart from "none".
+`undefined`. A language's refusal carries its byte offset — except an offset
+of 0, which the C ABI cannot tell apart from "none".
 
 Calling a method on a `Document`, `Editor` or `Embed` after `dispose()` throws
 a `FigError` with `Status.InvalidArgument`.
@@ -740,9 +743,10 @@ manage the handle for you, so no cleanup is needed.
 - `fromJS(input)` / `toJS(value)` — bridge plain JS ↔ `Value`.
 - `diagnose(value, format, options?)` — lossy-conversion warnings for a `Value`.
 - `version()` / `versionString()` / `capabilities(format)` — introspection.
-- `registerLanguage(lang)` — register a format written in JavaScript; returns
-  its `Format`. `formatByName(name)` — the `Format` of a compiled or
-  registered name, or `null`.
+- `registerLanguage(lang)` — register a format written in JavaScript, one of
+  `@diaryx/fig/languages/*` or your own; returns its `Format`, and the same
+  `Format` again for the same object. `formatByName(name)` — the `Format` of
+  a registered name, or `null`.
 - `serve(lang, io?)` — run `lang` as a `fig` CLI helper over stdin/stdout.
   `handle(lang, line)` — the wire, one request line to one response line.
   `describe(lang)` — the wire's `description` of `lang`. All three, the
@@ -799,6 +803,14 @@ npm ci
 npm run build   # builds the wasm module, then compiles with tsc
 npm test
 ```
+
+The module the package ships, and the one `npm run build` builds, compiles no
+format in. The tests register the package's languages, and `test/twins.test.ts`
+holds them to fig's compiled formats through what those formats recorded for
+every fixture: the tables `fig lang table` prints, and the `.printed` and
+`.converted` files `scripts/record-compiled.mjs` writes from a module with
+every format compiled in (`FIG_WASM_LANGUAGES=all npm run build:wasm`). Rerun
+it when a compiled printer changes.
 
 This is a test-time requirement only. The published package stays at
 `"engines": { "node": ">=22" }`, because `tsc` downlevels `using` in the shipped

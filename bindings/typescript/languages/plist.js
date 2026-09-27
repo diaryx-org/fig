@@ -234,11 +234,12 @@ function print(_dialect, t, options) {
   fig.index(t);
   const rootRow = t.byid(0);
   const w = fig.writer(options);
-  if (options?.splice || fig.isScalar(rootRow.kind)) {
-    // Splice text, or a scalar fragment: the bare element with no
-    // declaration, DOCTYPE or `<plist>` wrapper, a container's lines at the
-    // top level — the compiled `printSplice`. What the editor splices, and
-    // what `renderValue` takes as an element already spelled.
+  if (options?.splice) {
+    // Splice text: the bare element with no declaration, DOCTYPE or
+    // `<plist>` wrapper, a container's lines at the top level — the
+    // compiled `printSplice`. What the editor splices, and what
+    // `renderValue` takes as an element already spelled. A lone scalar
+    // otherwise is a document like any other, wrapper and all.
     writeValue(w, rootRow, 1);
     return w.string();
   }

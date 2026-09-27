@@ -92,6 +92,30 @@ derived `FromValue` impl's fixed messages, and anything built by
 
 Node 22 or later (`engines.node` was `>=20`).
 
+**Formats are imported.** The module compiles no format in; each is a
+JavaScript language at `@diaryx/fig/languages/<name>`, registered once at
+startup, after which `Format.Yaml` and the rest work as before, frontmatter
+included:
+
+```ts
+import { registerLanguage } from "@diaryx/fig";
+import json from "@diaryx/fig/languages/json";
+import yaml from "@diaryx/fig/languages/yaml";
+
+registerLanguage(json);
+registerLanguage(yaml);
+```
+
+Register what you use: `json`, `json5` (which serves `Format.Jsonc` too),
+`yaml`, `toml`, `fig`, `ini`, `dotenv`, `properties`, `nestedtext`, and now
+`zon` and `plist`, which 4.x left out. A format nobody registered throws
+`UnsupportedFormat`, naming the module to import; registering the same
+language twice is harmless. `FIG_WASM_ZON` and `FIG_WASM_PLIST` are gone: a
+module with compiled formats is `FIG_WASM_LANGUAGES=<names>|all npm run
+build:wasm`, and a language named after a format compiled into it is refused
+as taken. A parse error is the language's own message, with a byte offset, and
+not the compiled parser's words.
+
 | 3.x | 5.0 |
 | --- | --- |
 | `ed.delete(p)`, `removeItem`, `replaceKey` | `ed.deleteKey(p)`, `deleteItem`, `renameKey` |

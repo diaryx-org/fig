@@ -1,7 +1,7 @@
 // Library introspection: version and per-format capabilities of the linked
 // (here, bundled-wasm) fig core.
 import { fig, readCString } from "./ffi.ts";
-import { Format } from "./types.ts";
+import { FigError, Format, Status } from "./types.ts";
 
 /** The bundled fig core's version. */
 export interface Version {
@@ -22,12 +22,10 @@ export function versionString(): string {
   return readCString(fig.fig_version_string());
 }
 
-/** What this build can do with a format. Every compiled format reads, edits
- *  and serializes; what varies is build-time gating — a format compiled out
- *  (ZON and plist, in the published module) reports all-`false` — and, for a
- *  runtime language, the `caps` it registered with. `references` is a
- *  property of the format rather than of the build: YAML alone has it among
- *  the compiled ones. */
+/** What the module can do with a format. The published module compiles no
+ *  format in, so a format reports all-`false` until a language for it is
+ *  registered ({@link registerLanguage}), and then the `caps` that language
+ *  declared. `references` is a property of the format: YAML has it. */
 export interface Capabilities {
   /** `Document.parse` accepts this format. */
   read: boolean;
@@ -52,4 +50,35 @@ export function capabilities(format: Format): Capabilities {
     serialize: (bits & 4) !== 0,
     references: (bits & 8) !== 0,
   };
+}
+
+/** The module of `@diaryx/fig/languages` that serves each format the
+ *  package names: JSONC is a dialect of the JSON5 language. */
+const LANGUAGE_MODULE: Record<number, string> = {
+  [Format.Json]: "json",
+  [Format.Jsonc]: "json5",
+  [Format.Json5]: "json5",
+  [Format.Yaml]: "yaml",
+  [Format.Toml]: "toml",
+  [Format.Zon]: "zon",
+  [Format.Fig]: "fig",
+  [Format.Ini]: "ini",
+  [Format.Dotenv]: "dotenv",
+  [Format.Properties]: "properties",
+  [Format.Plist]: "plist",
+  [Format.Nestedtext]: "nestedtext",
+};
+
+/** Throw for a failed call's `status`, saying which language to register
+ *  when the failure is `format` having none: the module compiles no format
+ *  in, and a caller that has not registered one meets this first. */
+export function checkFormat(status: number, op: string, format: Format): void {
+  if (status === Status.Ok) return;
+  const module = LANGUAGE_MODULE[format];
+  if (status === Status.UnsupportedFormat && module !== undefined && !capabilities(format).read) {
+    throw new FigError(status, op, {
+      message: `no language is registered for this format — import ${module} from "@diaryx/fig/languages/${module}" and pass it to registerLanguage()`,
+    });
+  }
+  throw new FigError(status, op);
 }

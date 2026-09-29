@@ -10,7 +10,6 @@ references:
   target: path
   label: false
 id_storage: both
-updated: ''
 identity: lazy
 fixity: on
 recycle_bin: false
@@ -44,5 +43,4 @@ relations:
     cardinality: many
     inverse: transcription
     means: the record this document is a transcription of
-created: ''
 record_deletions: false

@@ -3,10 +3,11 @@ title = Tasks
 description = Deferred work with a done state — a bug is a task with a repro
 author = adammharris
 created = 2026-09-04
-updated = 2026-09-27
+updated = 2026-09-30
 part_of = [docs](/docs/docs.md)
 contents
 > * [A YAML alias cannot be read into a value by the Rust or TypeScript binding](/docs/tasks/values-through-an-alias.md)
+> * [A source build of fig-sys on a Mac targets the build machine's macOS](/docs/tasks/source-build-deployment-target.md)
 > * [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 

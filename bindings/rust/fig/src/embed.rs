@@ -15,7 +15,7 @@
 use std::ptr::NonNull;
 
 use crate::editor::{Segment, borrow_str, to_ffi_keys, to_ffi_path};
-use crate::error::Error;
+use crate::error::{EditTarget, Error, edit_status};
 use crate::value::{Value, value_text, value_text_with};
 use crate::{Format, SerializeOptions, ffi};
 
@@ -479,7 +479,7 @@ impl Embed {
         let status = unsafe {
             ffi::fig_embed_replace_val(self.ptr(), p.as_ptr(), p.len(), repl.as_ptr(), repl.len())
         };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Value)
     }
 
     /// Rename the key at `path` to `key`. Mirrors
@@ -495,7 +495,7 @@ impl Embed {
                 key.len(),
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Key)
     }
 
     /// Insert `key: value` into the mapping at `path` (empty path = root).
@@ -519,7 +519,7 @@ impl Embed {
                 val.len(),
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Value)
     }
 
     /// Upsert a mapping value: replace the value at `path`, or insert it when
@@ -532,7 +532,7 @@ impl Embed {
         let p = to_ffi_path(path);
         let status =
             unsafe { ffi::fig_embed_set(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len()) };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Value)
     }
 
     // ── value edits with a layout knob (block-vs-inline containers) ─────────
@@ -555,7 +555,7 @@ impl Embed {
         let status = unsafe {
             ffi::fig_embed_replace_val(self.ptr(), p.as_ptr(), p.len(), repl.as_ptr(), repl.len())
         };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Value)
     }
 
     /// Insert `key: value` into the mapping at `path`, rendering `value` with
@@ -580,7 +580,7 @@ impl Embed {
                 val.len(),
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Value)
     }
 
     /// Upsert the value at `path`, rendering `value` with `options` (a block
@@ -596,7 +596,7 @@ impl Embed {
         let p = to_ffi_path(path);
         let status =
             unsafe { ffi::fig_embed_set(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len()) };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Value)
     }
 
     /// Append `value` (any `impl Into<Value>`) to the sequence at `path`.
@@ -622,7 +622,7 @@ impl Embed {
         let status = unsafe {
             ffi::fig_embed_append_seq(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
         };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Value)
     }
 
     /// Prepend `value` (any `impl Into<Value>`) to the sequence at `path`.
@@ -652,7 +652,7 @@ impl Embed {
         let status = unsafe {
             ffi::fig_embed_prepend_seq(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
         };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Value)
     }
 
     // ── comment editing ─────────────────────────────────────────────────────
@@ -671,7 +671,7 @@ impl Embed {
                 text.len(),
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Comment)
     }
 
     /// Set the same-line trailing comment on the value at `path`. Mirrors
@@ -687,7 +687,7 @@ impl Embed {
                 text.len(),
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Comment)
     }
 
     /// Remove the own-line comment block above the node at `path` (no-op if
@@ -696,7 +696,7 @@ impl Embed {
         let p = to_ffi_path(path);
         let status =
             unsafe { ffi::fig_embed_delete_leading_comments(self.ptr(), p.as_ptr(), p.len()) };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Document)
     }
 
     /// Remove the same-line trailing comment on the value at `path` (no-op if none).
@@ -704,7 +704,7 @@ impl Embed {
         let p = to_ffi_path(path);
         let status =
             unsafe { ffi::fig_embed_delete_trailing_comment(self.ptr(), p.as_ptr(), p.len()) };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Document)
     }
 
     /// Read the own-line comment block above the node at `path` in the embedded
@@ -767,7 +767,7 @@ impl Embed {
                 text.len(),
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Comment)
     }
 
     /// Remove the dangling run at the end of the container at `path`'s body
@@ -776,7 +776,7 @@ impl Embed {
         let p = to_ffi_path(path);
         let status =
             unsafe { ffi::fig_embed_delete_dangling_comments(self.ptr(), p.as_ptr(), p.len()) };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Document)
     }
 
     /// Read the dangling run at the end of the container at `path`'s body.
@@ -800,7 +800,7 @@ impl Embed {
     pub fn comment_out(&mut self, path: &[Segment]) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe { ffi::fig_embed_comment_out(self.ptr(), p.as_ptr(), p.len()) };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Document)
     }
 
     /// Bring `line_count` lines of the leading comment block above the node at
@@ -822,7 +822,7 @@ impl Embed {
                 line_count,
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Document)
     }
 
     /// Bring `line_count` lines of the dangling run at the end of the container
@@ -844,7 +844,7 @@ impl Embed {
                 line_count,
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Document)
     }
 
     // ── structural edits (no value) ─────────────────────────────────────────
@@ -853,7 +853,7 @@ impl Embed {
     pub fn delete_key(&mut self, path: &[Segment]) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe { ffi::fig_embed_delete_key(self.ptr(), p.as_ptr(), p.len()) };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Document)
     }
 
     /// Delete the item at `index` from the sequence at `path`.
@@ -861,7 +861,7 @@ impl Embed {
         let p = to_ffi_path(path);
         let status =
             unsafe { ffi::fig_embed_remove_seq_item(self.ptr(), p.as_ptr(), p.len(), index) };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Document)
     }
 
     /// Move the mapping entry at `src_path` to immediately before the entry at
@@ -873,7 +873,7 @@ impl Embed {
         let status = unsafe {
             ffi::fig_embed_move_key(self.ptr(), s.as_ptr(), s.len(), d.as_ptr(), d.len())
         };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Document)
     }
 
     /// Reorder the entries of the mapping at `path` (empty path = root) so
@@ -890,7 +890,7 @@ impl Embed {
         let status = unsafe {
             ffi::fig_embed_reorder_keys(self.ptr(), p.as_ptr(), p.len(), k.as_ptr(), k.len())
         };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Document)
     }
 
     /// Move the sequence item at index `from` to index `to` (array-move
@@ -899,7 +899,7 @@ impl Embed {
     pub fn move_item(&mut self, path: &[Segment], from: usize, to: usize) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe { ffi::fig_embed_move_item(self.ptr(), p.as_ptr(), p.len(), from, to) };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Document)
     }
 
     /// Reorder the items of the sequence at `path` so the items at `indices`
@@ -917,7 +917,7 @@ impl Embed {
                 indices.len(),
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Document)
     }
 
     /// Reconcile the sequence at `path` so its items are exactly `items`, while
@@ -939,7 +939,7 @@ impl Embed {
         let status = unsafe {
             ffi::fig_embed_set_sequence(self.ptr(), p.as_ptr(), p.len(), strs.as_ptr(), strs.len())
         };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Value)
     }
 
     /// Replace the host body — the prose the config is embedded in — with `body`,
@@ -955,7 +955,7 @@ impl Embed {
     /// changes; rebuild the host from [`Extracted`](crate::Extracted)'s two sides.
     pub fn replace_body(&mut self, body: &str) -> Result<(), Error> {
         let status = unsafe { ffi::fig_embed_replace_body(self.ptr(), body.as_ptr(), body.len()) };
-        Error::from_status(status)
+        edit_status(status, self.inner, EditTarget::Document)
     }
 
     /// Render the full host file with the edited embed spliced back between the

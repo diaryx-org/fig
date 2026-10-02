@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::ffi;
+use crate::{Format, ffi};
 
 /// Errors produced while parsing, serializing, or deserializing.
 ///
@@ -45,9 +45,10 @@ pub enum Error {
     Utf8,
     /// A numeric scalar could not be parsed (message holds the raw text).
     Number(String),
-    /// A serde-level or derive-level error with no structure of its own, e.g.
-    /// a type mismatch reported by a `Deserialize` impl, or a derived enum's
-    /// fixed "expected a string or a mapping".
+    /// An error with no structure of its own: a serde-level or derive-level
+    /// one, e.g. a type mismatch reported by a `Deserialize` impl, or a
+    /// derived enum's fixed "expected a string or a mapping"; or a value the
+    /// target format has no way to write, e.g. an infinite float into JSON.
     Message(String),
     /// A required field was absent while building a derived `FromValue` type.
     ///
@@ -120,6 +121,11 @@ impl fmt::Display for LanguageFailure {
 impl std::error::Error for LanguageFailure {}
 
 /// Details of a parse failure, projected from the C ABI's `FigError`.
+///
+/// Its `Display` is the error's whole sentence, which [`Error::Parse`] prints
+/// as is: `failed to parse input: <message>` for the core's diagnostic, or
+/// the message alone when it is already a sentence of its own (an edit the
+/// document refused, a parse failure the core gave no detail for).
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct ParseError {
@@ -137,6 +143,9 @@ pub struct ParseError {
     pub line: Option<u32>,
     /// 1-based column of the failure, when known (see `byte_offset`).
     pub column: Option<u32>,
+    /// `message` is the whole sentence, not a detail to follow
+    /// `failed to parse input: `.
+    sentence: bool,
 }
 
 impl ParseError {
@@ -151,20 +160,88 @@ impl ParseError {
             byte_offset: (e.byte_offset != 0).then_some(e.byte_offset),
             line: (e.line != 0).then_some(e.line),
             column: (e.column != 0).then_some(e.column),
+            sentence: false,
         }
     }
 
-    /// A detail-free parse error for paths that have no `FigError` (e.g. the
-    /// editor's internal parse, which does not use the `_ex` entry point).
+    /// A detail-free parse error for paths that have no `FigError` (a bare
+    /// `PARSE_ERROR` status). Its message is the whole sentence, so it prints
+    /// once: it used to be the same words `Display` puts in front of a
+    /// message, and read `failed to parse input: failed to parse input`.
     pub(crate) fn generic() -> Self {
+        Self::sentence(String::from("failed to parse input"))
+    }
+
+    /// An edit the editor refused because the document would no longer parse
+    /// as `format` with it applied. fig knows no more than that — the core
+    /// reports a bare status — so this says which part of the request did it.
+    pub(crate) fn refused_edit(format: Format, what: EditTarget) -> Self {
+        let name = format.display_name();
+        Self::sentence(match what {
+            EditTarget::Value => format!("the new value would not parse as {name}"),
+            EditTarget::Key => format!("the new key would not parse as {name}"),
+            EditTarget::Comment => format!("the new comment would not parse as {name}"),
+            EditTarget::Document => format!("the edited document would not parse as {name}"),
+        })
+    }
+
+    fn sentence(message: String) -> Self {
         ParseError {
-            message: String::from("failed to parse input"),
+            message,
             byte_offset: None,
             line: None,
             column: None,
+            sentence: true,
         }
     }
 }
+
+/// What part of an edit request was new text, for the sentence a refused
+/// edit reads as (see [`ParseError::refused_edit`]).
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum EditTarget {
+    /// A value, item list or container body the caller supplied.
+    Value,
+    /// A renamed key or container.
+    Key,
+    /// A comment's text.
+    Comment,
+    /// A structural edit (delete, move, reorder) that supplied no text.
+    Document,
+}
+
+/// An editor call's status as a `Result`: a `PARSE_ERROR` is the edit's own
+/// refusal, said in a sentence (see [`ParseError::refused_edit`]), and every
+/// other status folds as [`Error::from_status`] folds it.
+pub(crate) fn edit_status(
+    status: ffi::FigStatus,
+    format: Format,
+    what: EditTarget,
+) -> Result<(), Error> {
+    if status == ffi::FigStatus::PARSE_ERROR {
+        return Err(Error::Parse(ParseError::refused_edit(format, what)));
+    }
+    Error::from_status(status)
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.sentence {
+            f.write_str(&self.message)?;
+        } else {
+            write!(f, "failed to parse input: {}", self.message)?;
+        }
+        match (self.line, self.column) {
+            (Some(l), Some(c)) => write!(f, " (line {l}, column {c})"),
+            _ => match self.byte_offset {
+                Some(off) => write!(f, " (byte offset {off})"),
+                None => Ok(()),
+            },
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
 
 impl Error {
     /// `#[cold]`/`#[inline(never)]` constructors keep derived `from_value`
@@ -243,16 +320,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::InvalidArgument => f.write_str("invalid argument"),
-            Error::Parse(e) => {
-                write!(f, "failed to parse input: {}", e.message)?;
-                match (e.line, e.column) {
-                    (Some(l), Some(c)) => write!(f, " (line {l}, column {c})"),
-                    _ => match e.byte_offset {
-                        Some(off) => write!(f, " (byte offset {off})"),
-                        None => Ok(()),
-                    },
-                }
-            }
+            Error::Parse(e) => write!(f, "{e}"),
             Error::OutOfMemory => f.write_str("out of memory"),
             Error::UnsupportedFormat => f.write_str("unsupported format"),
             Error::UnsupportedOperation => f.write_str("unsupported operation"),

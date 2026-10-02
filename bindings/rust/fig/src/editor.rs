@@ -35,7 +35,7 @@
 
 use std::ptr::NonNull;
 
-use crate::error::Error;
+use crate::error::{EditTarget, Error, edit_status};
 use crate::value::{Value, value_text, value_text_with};
 use crate::{Format, SerializeOptions, ffi};
 
@@ -112,6 +112,15 @@ impl Editor {
         let mut raw = std::ptr::null_mut();
         let status =
             unsafe { ffi::fig_editor_create(input.as_ptr(), input.len(), format.to_c(), &mut raw) };
+        if status == ffi::FigStatus::PARSE_ERROR {
+            // `fig_editor_create` has no `_ex` twin, and its parse is the one
+            // `fig_parse_ex` runs: ask that for the core's diagnostic, so the
+            // error names what failed rather than only that something did.
+            return Err(match crate::Document::parse(input, format) {
+                Err(e @ Error::Parse(_)) => e,
+                _ => Error::Parse(crate::error::ParseError::generic()),
+            });
+        }
         Error::from_status(status)?;
         let raw = NonNull::new(raw).ok_or(Error::Internal)?;
         Ok(Self { raw, format })
@@ -135,7 +144,7 @@ impl Editor {
         let status = unsafe {
             ffi::fig_editor_replace_val(self.ptr(), p.as_ptr(), p.len(), repl.as_ptr(), repl.len())
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Value)
     }
 
     /// Rename the key at `path` to `key`, a name the format spells as it
@@ -155,7 +164,7 @@ impl Editor {
                 key.len(),
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Key)
     }
 
     /// Insert `key: value` into the mapping at `path` (empty path = root).
@@ -182,7 +191,7 @@ impl Editor {
                 val.len(),
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Value)
     }
 
     /// Upsert a mapping value: replace the value at `path`, or insert it when
@@ -219,7 +228,7 @@ impl Editor {
         let status = unsafe {
             ffi::fig_editor_set(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Value)
     }
 
     // ── value edits with a layout knob (block-vs-inline containers) ─────────
@@ -246,7 +255,7 @@ impl Editor {
         let status = unsafe {
             ffi::fig_editor_replace_val(self.ptr(), p.as_ptr(), p.len(), repl.as_ptr(), repl.len())
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Value)
     }
 
     /// Insert `key: value` into the mapping at `path`, rendering `value` with
@@ -271,7 +280,7 @@ impl Editor {
                 val.len(),
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Value)
     }
 
     /// Upsert the value at `path`, rendering `value` with `options` (a block
@@ -288,7 +297,7 @@ impl Editor {
         let status = unsafe {
             ffi::fig_editor_set(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Value)
     }
 
     /// Append `value` (any `impl Into<Value>`) to the sequence at `path`.
@@ -314,7 +323,7 @@ impl Editor {
         let status = unsafe {
             ffi::fig_editor_append_seq(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Value)
     }
 
     /// Prepend `value` (any `impl Into<Value>`) to the sequence at `path`.
@@ -344,7 +353,7 @@ impl Editor {
         let status = unsafe {
             ffi::fig_editor_prepend_seq(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Value)
     }
 
     // ── comment editing ─────────────────────────────────────────────────────
@@ -370,7 +379,7 @@ impl Editor {
                 text.len(),
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Comment)
     }
 
     /// Set the same-line trailing comment on the value at `path`, replacing an
@@ -390,7 +399,7 @@ impl Editor {
                 text.len(),
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Comment)
     }
 
     /// Remove the own-line comment block immediately above the node at `path`
@@ -402,7 +411,7 @@ impl Editor {
         let p = to_ffi_path(path);
         let status =
             unsafe { ffi::fig_editor_delete_leading_comments(self.ptr(), p.as_ptr(), p.len()) };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Document)
     }
 
     /// Remove the same-line trailing comment on the value at `path`. A no-op
@@ -412,7 +421,7 @@ impl Editor {
         let p = to_ffi_path(path);
         let status =
             unsafe { ffi::fig_editor_delete_trailing_comment(self.ptr(), p.as_ptr(), p.len()) };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Document)
     }
 
     /// Read the own-line comment block immediately above the node at `path`
@@ -493,7 +502,7 @@ impl Editor {
                 text.len(),
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Comment)
     }
 
     /// Remove the whole dangling run at the end of the container at `path`'s
@@ -503,7 +512,7 @@ impl Editor {
         let p = to_ffi_path(path);
         let status =
             unsafe { ffi::fig_editor_delete_dangling_comments(self.ptr(), p.as_ptr(), p.len()) };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Document)
     }
 
     /// Read the dangling run at the end of the container at `path`'s body
@@ -544,7 +553,7 @@ impl Editor {
     pub fn comment_out(&mut self, path: &[Segment]) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe { ffi::fig_editor_comment_out(self.ptr(), p.as_ptr(), p.len()) };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Document)
     }
 
     /// Bring `line_count` lines of the LEADING comment block above the node at
@@ -575,7 +584,7 @@ impl Editor {
                 line_count,
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Document)
     }
 
     /// The dangling twin of [`uncomment_leading`](Self::uncomment_leading):
@@ -597,7 +606,7 @@ impl Editor {
                 line_count,
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Document)
     }
 
     // ── structural edits (no value) ─────────────────────────────────────────
@@ -606,7 +615,7 @@ impl Editor {
     pub fn delete_key(&mut self, path: &[Segment]) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe { ffi::fig_editor_delete_key(self.ptr(), p.as_ptr(), p.len()) };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Document)
     }
 
     /// Delete the item at `index` from the sequence at `path`.
@@ -614,7 +623,7 @@ impl Editor {
         let p = to_ffi_path(path);
         let status =
             unsafe { ffi::fig_editor_remove_seq_item(self.ptr(), p.as_ptr(), p.len(), index) };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Document)
     }
 
     /// Move the mapping entry at `src_path` to immediately before the entry at
@@ -626,7 +635,7 @@ impl Editor {
         let status = unsafe {
             ffi::fig_editor_move_key(self.ptr(), s.as_ptr(), s.len(), d.as_ptr(), d.len())
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Document)
     }
 
     /// Reorder the entries of the mapping at `path` (empty path = root) so
@@ -643,7 +652,7 @@ impl Editor {
         let status = unsafe {
             ffi::fig_editor_reorder_keys(self.ptr(), p.as_ptr(), p.len(), k.as_ptr(), k.len())
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Document)
     }
 
     /// Move the sequence item at index `from` to index `to` (array-move
@@ -653,7 +662,7 @@ impl Editor {
         let p = to_ffi_path(path);
         let status =
             unsafe { ffi::fig_editor_move_item(self.ptr(), p.as_ptr(), p.len(), from, to) };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Document)
     }
 
     /// Reorder the items of the sequence at `path` so the items at `indices`
@@ -671,7 +680,7 @@ impl Editor {
                 indices.len(),
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Document)
     }
 
     /// Reconcile the sequence at `path` so its items are exactly `items`, while
@@ -703,7 +712,7 @@ impl Editor {
         let status = unsafe {
             ffi::fig_editor_set_sequence(self.ptr(), p.as_ptr(), p.len(), strs.as_ptr(), strs.len())
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Value)
     }
 
     // ---- whole-container ops ----
@@ -731,7 +740,7 @@ impl Editor {
     pub fn delete_container(&mut self, path: &[Segment]) -> Result<(), Error> {
         let p = to_ffi_path(path);
         let status = unsafe { ffi::fig_editor_delete_container(self.ptr(), p.as_ptr(), p.len()) };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Document)
     }
 
     /// Create a container at `path` with `body` as its entries, spliced past
@@ -747,7 +756,7 @@ impl Editor {
                 body.len(),
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Value)
     }
 
     /// Rename the container at `path` to `new_leaf`, rewriting every line that
@@ -763,7 +772,7 @@ impl Editor {
                 new_leaf.len(),
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Key)
     }
 
     /// Move the container at `src_path` before the one at `dest_path`,
@@ -786,7 +795,7 @@ impl Editor {
         let status = unsafe {
             ffi::fig_editor_move_container(self.ptr(), s.as_ptr(), s.len(), d_ptr, d_len)
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Document)
     }
 
     /// Reorder top-level containers so those named in `order` come first, in
@@ -799,7 +808,7 @@ impl Editor {
     pub fn reorder_containers<S: AsRef<str>>(&mut self, order: &[S]) -> Result<(), Error> {
         let o = to_ffi_keys(order);
         let status = unsafe { ffi::fig_editor_reorder_containers(self.ptr(), o.as_ptr(), o.len()) };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Document)
     }
 
     /// Append an element with body `body` to the container sequence at `path` —
@@ -815,7 +824,7 @@ impl Editor {
                 body.len(),
             )
         };
-        Error::from_status(status)
+        edit_status(status, self.format, EditTarget::Value)
     }
 
     /// The current source. Borrows editor memory; invalidated by the next edit.

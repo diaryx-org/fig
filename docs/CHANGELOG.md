@@ -134,6 +134,26 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v5.1.1 — 2026-10-01
+
+### Fixed
+
+- **editor** — reorder and move the members of a flow mapping, so JSON objects reorder ([`7950608`](https://github.com/diaryx-org/fig/commit/79506084f9ea7f676239e03a112e97d4014ef7d7))
+
+### Behavioural changes
+
+- `reorderKeys` / `fig_editor_reorder_keys` /
+  `Editor::reorder_keys` on a flow mapping — any JSON, JSONC or JSON5
+  object, a YAML `{…}` mapping, a TOML inline table — now reorders it. It
+  used to fail with `NotAMapping` (`invalid argument`).
+
+- `moveKey` / `fig_editor_move_key` / `Editor::move_key`
+  between two members of a flow mapping now moves the member and keeps the
+  separators valid. It used to fail on a reparse error when the last member
+  of a multi-line JSON object was involved, and to succeed without changing
+  anything on a packed one-line mapping.
+
+
 ## v5.1.0 — 2026-10-01
 
 ### Added

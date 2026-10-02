@@ -1,6 +1,6 @@
 {
   "name": "@diaryx/fig",
-  "version": "5.1.0",
+  "version": "5.1.1",
   "description": "JSON, JSONC, JSON5, YAML, TOML, INI, dotenv, .properties, NestedText, ZON, plist and fig parsing, comment-preserving editing, and cross-format serialization: a Zig core compiled to WebAssembly, with each format a JavaScript language you import only if you use it.",
   "type": "module",
   "publishConfig": {

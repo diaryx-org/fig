@@ -642,14 +642,14 @@ dependencies = [
 
 [[package]]
 name = "fig"
-version = "5.1.1"
+version = "5.1.2"
 dependencies = [
  "fig-sys",
 ]
 
 [[package]]
 name = "fig-sys"
-version = "5.1.1"
+version = "5.1.2"
 dependencies = [
  "fig-sys-linux-arm64-gnu",
  "fig-sys-linux-x64-gnu",
@@ -660,23 +660,23 @@ dependencies = [
 
 [[package]]
 name = "fig-sys-linux-arm64-gnu"
-version = "5.1.1"
+version = "5.1.2"
 
 [[package]]
 name = "fig-sys-linux-x64-gnu"
-version = "5.1.1"
+version = "5.1.2"
 
 [[package]]
 name = "fig-sys-macos-arm64"
-version = "5.1.1"
+version = "5.1.2"
 
 [[package]]
 name = "fig-sys-wasm32"
-version = "5.1.1"
+version = "5.1.2"
 
 [[package]]
 name = "fig-sys-windows-x64-msvc"
-version = "5.1.1"
+version = "5.1.2"
 
 [[package]]
 name = "find-msvc-tools"

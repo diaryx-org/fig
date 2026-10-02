@@ -134,6 +134,54 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v5.1.2 — 2026-10-01
+
+### Fixed
+
+- **core** — spell an infinite or NaN float in each format's own words ([`8e9f561`](https://github.com/diaryx-org/fig/commit/8e9f5610beacea40d350ab3c9ec79aeabbf723fe))
+- **rust** — say a refused edit once, and name what it refused ([`53fb5ec`](https://github.com/diaryx-org/fig/commit/53fb5ec37e5a6883b4ece69a714c09df4da6bacb))
+
+### Behavioural changes
+
+- an infinite or NaN float serialized or converted to
+  TOML is written `inf`, `-inf` or `nan`. It used to be written in its
+  source's spelling, e.g. `.inf` from YAML or from the Rust and TypeScript
+  bindings, which TOML cannot parse; an editor replace with one used to
+  fail with a parse error, and now succeeds.
+
+- the same float to ZON is written `inf`, `-inf` or
+  `nan`; to YAML `.inf`, `-.inf` or `.nan`; to JSON5 `Infinity`,
+  `-Infinity` or `NaN`. A TOML or ZON `inf` used to reach YAML as `inf`,
+  which YAML reads as a string, and a YAML `.inf` used to reach JSON5 as
+  `.inf`, which JSON5 cannot parse.
+
+- the same float to JSON or JSONC is refused:
+  `fig_value_serialize`/`fig_document_serialize` return
+  `unsupported_format`, `fig convert` exits 1 with "this output format has
+  no way to write infinity or NaN", and `gron` refuses too. They used to
+  write `0.inf` or `0.nan`, which no JSON reader accepts.
+
+- `Editor`/`Embed` value, key, comment and structural
+  edits the document would not parse with still return `Error::Parse`,
+  but it displays as one sentence: "the new value would not parse as
+  TOML" (or "the new key …", "the new comment …", "the edited document
+  …"), and `ParseError::message` holds that sentence. It used to display
+  as `failed to parse input: failed to parse input`.
+
+- `Editor::open` on input that does not parse displays
+  the core's diagnostic, e.g. `failed to parse input: UnexpectedToken`,
+  and `ParseError::message` holds it. `Embed::open` and the other bare
+  `PARSE_ERROR` paths display `failed to parse input` once. Both used to
+  display `failed to parse input: failed to parse input`.
+
+- `Value::serialize`, and every editor or embed value
+  edit, given an infinite or NaN `Value::Float` for JSON or JSONC returns
+  `Error::Message` reading "JSON has no way to write an infinite number"
+  (or "… NaN", or "JSONC …"). It used to succeed with `0.inf` from
+  `serialize`, and fail an edit with `Error::Parse`. TOML, YAML, JSON5 and
+  ZON now accept such a float (the previous commit).
+
+
 ## v5.1.1 — 2026-10-01
 
 ### Fixed

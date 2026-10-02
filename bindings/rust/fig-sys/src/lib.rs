@@ -1129,6 +1129,10 @@ pub struct FigSyntax {
     pub section_noun: c_int,
     pub section_header: FigSectionHeader,
     pub merge_key: *const c_char,
+    /// Null for `,`.
+    pub flow_entry_sep: *const c_char,
+    pub flow_root: bool,
+    pub flow_maps_only: bool,
 }
 
 /// `FigLanguageVTable::lossless`: the language takes the `$fig` envelope.

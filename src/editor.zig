@@ -155,7 +155,21 @@ pub fn Editor(comptime Language: type) type {
             // dialect's own `section_noun` settles it at the call: a runtime
             // JSON's `[1, 2]` root is a flow sequence, not a section root.
             if (is_section_format and self.syntax().section_noun != null and (node.id == parsed.ast.root or parsed.isSection(node))) return false;
-            return isFlow(self.source.items, parsed.span(node));
+            if (self.isOpenRoot(parsed, node)) return true;
+            const source = self.source.items;
+            if (!isFlow(source, parsed.span(node))) return false;
+            // `flow_maps_only`: a `[` is not an opener, so what it begins
+            // (a CSS attribute selector) is read as block.
+            return !(self.syntax().flow_maps_only and source[firstNonSpace(source, parsed.span(node).start)] == '[');
+        }
+
+        /// Whether `node` is the root of a `flow_root` format: a flow mapping
+        /// with no delimiters, whose members run from the source's first
+        /// byte to its last (a CSS `style` attribute). The flow helpers ask
+        /// it where they would otherwise step past an opener or look for a
+        /// closer.
+        fn isOpenRoot(self: *const Self, parsed: Document, node: AST.Node) bool {
+            return self.syntax().flow_root and node.id == parsed.ast.root and node.kind == .mapping;
         }
 
         /// Where `node` BEGINS on its own line: its item marker's start when
@@ -1502,16 +1516,21 @@ pub fn Editor(comptime Language: type) type {
                 else => return false,
             };
             const line_end = lineEndAfter(source, span.end -| 1);
+            const sep = self.syntax().flow_entry_sep;
             var i = span.end;
             var comma = false;
             while (i < line_end) : (i += 1) {
                 switch (source[i]) {
                     ' ', '\t', '\r', '\n' => {},
-                    ',' => {
-                        if (comma) return false;
-                        comma = true;
+                    else => {
+                        if (std.mem.startsWith(u8, source[i..line_end], sep)) {
+                            if (comma) return false;
+                            comma = true;
+                            i += sep.len - 1;
+                            continue;
+                        }
+                        return std.mem.startsWith(u8, source[i..line_end], marker);
                     },
-                    else => return std.mem.startsWith(u8, source[i..line_end], marker),
                 }
             }
             return true;
@@ -1913,6 +1932,34 @@ pub fn Editor(comptime Language: type) type {
                 return self.removeFlowItem(Span.init(del_start, span.end), prev == null);
             }
             const line_start = lineStartBefore(source, span.start);
+            // A block entry's lines are its own in every compiled format, but
+            // a runtime one may put two on a line (a minified stylesheet's
+            // `a{} b{}`). Deleting the lines then would take the sibling with
+            // them, and the reparse would not notice: one entry fewer still
+            // parses. Such an entry is deleted by its span, with the spaces
+            // that part it from whichever neighbour stays on its line.
+            var prev_end: ?usize = null;
+            var next_start: ?usize = null;
+            var sib = try parsed.ast.child(&parent);
+            while (sib) |c| : (sib = parsed.ast.next(&c)) {
+                if (c.id == node.id) {
+                    if (parsed.ast.next(&c)) |n| next_start = markerStart(parsed, n);
+                    break;
+                }
+                prev_end = parsed.span(c).end;
+            }
+            const shares_start = if (prev_end) |e| lineStartBefore(source, e -| 1) == line_start else false;
+            const shares_end = if (next_start) |s| lineStartBefore(source, s) == lineStartBefore(source, span.end -| 1) else false;
+            if (shares_start or shares_end) {
+                var s = span.start;
+                var e = span.end;
+                if (shares_end) {
+                    while (e < source.len and (source[e] == ' ' or source[e] == '\t')) e += 1;
+                } else {
+                    while (s > 0 and (source[s - 1] == ' ' or source[s - 1] == '\t')) s -= 1;
+                }
+                return self.replaceAtSpan(Span.init(s, e), "");
+            }
             const del_start = commentBlockStart(source, line_start, self.syntax().comments.style);
             const del_end = lineEndAfter(source, span.end -| 1);
             try self.replaceAtSpan(Span.init(del_start, del_end), "");
@@ -3206,6 +3253,20 @@ pub fn Editor(comptime Language: type) type {
             if (self.valueShape(value_text) != .inline_) return error.BlockValueIntoFlow;
         }
 
+        /// Whether the flow container `node` is laid out one member per line:
+        /// its closer is separated from the last member (ending at `last_end`)
+        /// by a newline — or, for an open root, which has no closer, its first
+        /// and last members are on different lines.
+        fn flowIsMultiLine(self: *const Self, parsed: Document, node: AST.Node, span: Span, last_end: usize) !bool {
+            const source = self.source.items;
+            if (self.isOpenRoot(parsed, node)) {
+                const first = (try parsed.ast.child(&node)).?;
+                return std.mem.indexOfScalar(u8, source[parsed.span(first).start..last_end], '\n') != null;
+            }
+            const close = span.end - 1; // the '}' or ']'
+            return std.mem.indexOfScalar(u8, source[last_end..close], '\n') != null;
+        }
+
         /// Insert a `key: value` entry into a brace-delimited (flow) mapping,
         /// matching its layout. A pretty-printed mapping — one whose closing `}`
         /// sits on its own line below the members — gets the new entry on its own
@@ -3218,7 +3279,6 @@ pub fn Editor(comptime Language: type) type {
             if (non_empty) {
                 const last = (try parsed.ast.lastChild(&node)).?;
                 const last_end = parsed.span(last).end;
-                const close = span.end - 1; // the '}'
                 // The separator: `kv_sep`, or the bytes the first entry
                 // writes between its key and value for a format whose flow
                 // objects fix their own mode. See
@@ -3230,9 +3290,11 @@ pub fn Editor(comptime Language: type) type {
                     break :blk source[key_end..value_start];
                 } else try self.kvSep();
                 // Multi-line layout: the closing brace is separated from the last
-                // member by a newline. Splice after the last member's value so the
-                // new entry lands on its own line, not jammed before the brace.
-                if (std.mem.indexOfScalar(u8, source[last_end..close], '\n') != null) {
+                // member by a newline (an open root, which has no brace: its
+                // first and last members are on different lines). Splice after
+                // the last member's value so the new entry lands on its own
+                // line, not jammed before the brace.
+                if (try self.flowIsMultiLine(parsed, node, span, last_end)) {
                     // Column of the key's line, not the key node's own span start:
                     // for ZON the key span covers only the bare identifier after
                     // its leading `.` (the dot is a separate token), so anchoring
@@ -3243,7 +3305,8 @@ pub fn Editor(comptime Language: type) type {
                     const col = columnOf(source, firstNonSpace(source, lineStartBefore(source, parsed.span(key_node).start)));
                     var out: std.ArrayList(u8) = .empty;
                     defer out.deinit(self.allocator);
-                    try out.appendSlice(self.allocator, ",\n");
+                    try out.appendSlice(self.allocator, self.syntax().flow_entry_sep);
+                    try out.append(self.allocator, '\n');
                     try out.appendNTimes(self.allocator, ' ', col);
                     try out.appendSlice(self.allocator, key_text);
                     try out.appendSlice(self.allocator, sep);
@@ -3259,14 +3322,15 @@ pub fn Editor(comptime Language: type) type {
                 // padding after the new entry instead.
                 var out: std.ArrayList(u8) = .empty;
                 defer out.deinit(self.allocator);
-                try out.appendSlice(self.allocator, ", ");
+                try out.appendSlice(self.allocator, self.syntax().flow_entry_sep);
+                try out.append(self.allocator, ' ');
                 try out.appendSlice(self.allocator, key_text);
                 try out.appendSlice(self.allocator, sep);
                 try out.appendSlice(self.allocator, value_text);
                 try self.replaceAtSpan(Span.init(last_end, last_end), out.items);
                 return;
             }
-            return self.insertFlowEntry(span, key_text, value_text);
+            return self.insertFlowEntry(parsed, node, span, key_text, value_text);
         }
 
         /// Insert the first entry into an EMPTY flow mapping (`{}` / ZON's
@@ -3274,17 +3338,21 @@ pub fn Editor(comptime Language: type) type {
         /// `insertFlowItem`'s empty-array case and the pre-existing JSON/YAML
         /// empty-flow-map tests already splice (no space added around a
         /// freshly-created single member).
-        fn insertFlowEntry(self: *Self, span: Span, key_text: []const u8, value_text: []const u8) !void {
+        fn insertFlowEntry(self: *Self, parsed: Document, node: AST.Node, span: Span, key_text: []const u8, value_text: []const u8) !void {
             try self.requireFlowValue(value_text);
             var out: std.ArrayList(u8) = .empty;
             defer out.deinit(self.allocator);
-            const pad = self.syntax().flow_map_pad;
+            // An open root has no braces for the pad to stand inside.
+            const open_root = self.isOpenRoot(parsed, node);
+            const pad = if (open_root) "" else self.syntax().flow_map_pad;
             try out.appendSlice(self.allocator, pad);
             try out.appendSlice(self.allocator, key_text);
             try out.appendSlice(self.allocator, try self.kvSep());
             try out.appendSlice(self.allocator, value_text);
             try out.appendSlice(self.allocator, pad);
-            const at = flowOpenEnd(self.source.items, span); // just after '{' (or ZON's '.{')
+            // Just after '{' (or ZON's '.{'); an open root has no opener, and
+            // its first member starts the source.
+            const at = if (open_root) firstNonSpace(self.source.items, span.start) else flowOpenEnd(self.source.items, span);
             try self.replaceAtSpan(Span.init(at, at), out.items);
         }
 
@@ -3304,14 +3372,14 @@ pub fn Editor(comptime Language: type) type {
             if (non_empty) {
                 const last = (try parsed.ast.lastChild(&node)).?;
                 const last_end = parsed.span(last).end;
-                const close = span.end - 1; // the ']'
-                if (std.mem.indexOfScalar(u8, source[last_end..close], '\n') != null) {
+                try out.appendSlice(self.allocator, self.syntax().flow_entry_sep);
+                if (try self.flowIsMultiLine(parsed, node, span, last_end)) {
                     const first_item = (try parsed.ast.child(&node)).?;
                     const col = columnOf(source, parsed.span(first_item).start);
-                    try out.appendSlice(self.allocator, ",\n");
+                    try out.append(self.allocator, '\n');
                     try out.appendNTimes(self.allocator, ' ', col);
                 } else {
-                    try out.appendSlice(self.allocator, ", ");
+                    try out.append(self.allocator, ' ');
                 }
                 try out.appendSlice(self.allocator, value_text);
                 try self.replaceAtSpan(Span.init(last_end, last_end), out.items);
@@ -3334,7 +3402,8 @@ pub fn Editor(comptime Language: type) type {
             // b]`, an extra space where the old padding and the new separator
             // collided).
             const at = if (non_empty) blk: {
-                try out.appendSlice(self.allocator, ", ");
+                try out.appendSlice(self.allocator, self.syntax().flow_entry_sep);
+                try out.append(self.allocator, ' ');
                 const first = (try parsed.ast.child(&node)).?;
                 break :blk parsed.span(first).start;
             } else flowOpenEnd(self.source.items, span); // just after '[' (or ZON's '.{')
@@ -3351,6 +3420,7 @@ pub fn Editor(comptime Language: type) type {
 
         fn removeFlowItem(self: *Self, item_span: Span, is_first: bool) !void {
             const source = self.source.items;
+            const sep = self.syntax().flow_entry_sep;
             if (is_first) {
                 // Drop the item and a following ", " if present. Consuming
                 // forward through trailing whitespace *including newlines*
@@ -3360,8 +3430,8 @@ pub fn Editor(comptime Language: type) type {
                 // blank line.
                 var e = item_span.end;
                 while (e < source.len and isFlowItemWs(source[e])) e += 1;
-                if (e < source.len and source[e] == ',') {
-                    e += 1;
+                if (std.mem.startsWith(u8, source[e..], sep)) {
+                    e += sep.len;
                     while (e < source.len and isFlowItemWs(source[e])) e += 1;
                 }
                 try self.replaceAtSpan(Span.init(item_span.start, e), "");
@@ -3376,8 +3446,8 @@ pub fn Editor(comptime Language: type) type {
                 // reparse as an empty element.
                 var s = item_span.start;
                 while (s > 0 and isFlowItemWs(source[s - 1])) s -= 1;
-                if (s > 0 and source[s - 1] == ',') {
-                    s -= 1;
+                if (std.mem.endsWith(u8, source[0..s], sep)) {
+                    s -= sep.len;
                     while (s > 0 and isFlowItemWs(source[s - 1])) s -= 1;
                 }
                 try self.replaceAtSpan(Span.init(s, item_span.end), "");

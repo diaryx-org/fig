@@ -1220,8 +1220,12 @@ typedef struct FigClosedContainers {
 // verbatim, 1 json_quoted, 2 zon_field, 3 bare_or_quoted. `key_sigil`: a
 // byte every key starts with, or 0. `section_noun`: -1 none, 0 table, 1
 // section, 2 container. `kv_sep` NULL means the engine never writes
-// `key<sep>value` for this format, which requires a render_entry. `size` is
-// sizeof(FigSyntax) as the language was built against it.
+// `key<sep>value` for this format, which requires a render_entry.
+// `flow_entry_sep` joins a flow container's members (NULL is ","; never
+// empty); `flow_root` makes the root a flow mapping with no delimiters (a CSS
+// `style` attribute), and needs `flow_containers`; `flow_maps_only` stops a
+// `[` from opening a flow sequence. `size` is sizeof(FigSyntax) as the
+// language was built against it; a field past it takes its default.
 typedef struct FigSyntax {
     uint32_t            size;
     FigComments         comments;
@@ -1244,6 +1248,9 @@ typedef struct FigSyntax {
     int                 section_noun;
     FigSectionHeader    section_header;
     const char         *merge_key;
+    const char         *flow_entry_sep;
+    bool                flow_root;
+    bool                flow_maps_only;
 } FigSyntax;
 
 // FigLanguageVTable.lossless: whether the language takes the `$fig` lossless

@@ -89,6 +89,12 @@ export interface Syntax {
   section_noun?: "table" | "section" | "container" | null;
   section_header?: SectionHeader | null;
   merge_key?: string | null;
+  /** The bytes between two members of a flow container; absent is `,`. */
+  flow_entry_sep?: string | null;
+  /** The root is a flow mapping with no delimiters (a CSS `style` attribute). */
+  flow_root?: boolean;
+  /** A `[` does not open a flow sequence. */
+  flow_maps_only?: boolean;
 }
 
 /** Which kinds the format holds natively — what the `$fig` lossless

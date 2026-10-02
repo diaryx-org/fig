@@ -219,7 +219,7 @@ impl Value {
 
         let mut ptr_out: *const u8 = ptr::null();
         let mut len: usize = 0;
-        Error::from_status(unsafe {
+        let status = unsafe {
             ffi::fig_value_serialize_opts(
                 guard.0,
                 root,
@@ -228,7 +228,13 @@ impl Value {
                 &mut ptr_out,
                 &mut len,
             )
-        })?;
+        };
+        if status == ffi::FigStatus::UNSUPPORTED_FORMAT
+            && let Some(message) = non_finite_refusal(self, format)
+        {
+            return Err(Error::Message(message));
+        }
+        Error::from_status(status)?;
 
         // Safety: on success the ABI guarantees `len` bytes at `ptr_out`, owned
         // by the handle and valid until the next call / destroy. We copy out now.
@@ -658,6 +664,35 @@ impl<I: Index> std::ops::Index<I> for Value {
     fn index(&self, index: I) -> &Value {
         static NULL: Value = Value::Null;
         self.get(index).unwrap_or(&NULL)
+    }
+}
+
+/// Why `format` refused `value`, when the reason is a float it has no way to
+/// write: JSON and JSONC have no infinity or NaN. The core's status says only
+/// that the format cannot hold the value, which for these two formats and a
+/// value holding such a float can only be this.
+fn non_finite_refusal(value: &Value, format: Format) -> Option<String> {
+    if !matches!(format, Format::Json | Format::Jsonc) {
+        return None;
+    }
+    let f = first_non_finite(value)?;
+    let name = format.display_name();
+    Some(if f.is_nan() {
+        format!("{name} has no way to write NaN")
+    } else {
+        format!("{name} has no way to write an infinite number")
+    })
+}
+
+/// The first infinite or NaN float in `value`, depth first.
+fn first_non_finite(value: &Value) -> Option<f64> {
+    match value {
+        Value::Float(f) if !f.is_finite() => Some(*f),
+        Value::Seq(items) => items.iter().find_map(first_non_finite),
+        Value::Map(entries) => entries
+            .iter()
+            .find_map(|(k, v)| first_non_finite(k).or_else(|| first_non_finite(v))),
+        _ => None,
     }
 }
 

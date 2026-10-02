@@ -162,6 +162,27 @@ impl Format {
         })
     }
 
+    /// The format's name as a sentence spells it (`TOML`, `JSON5`), for error
+    /// text. A runtime language is "its format": its registry name is the
+    /// caller's own, and may not read as a name at all.
+    pub(crate) fn display_name(self) -> &'static str {
+        match self {
+            Format::Json => "JSON",
+            Format::Jsonc => "JSONC",
+            Format::Json5 => "JSON5",
+            Format::Yaml => "YAML",
+            Format::Toml => "TOML",
+            Format::Zon => "ZON",
+            Format::Fig => "fig",
+            Format::Ini => "INI",
+            Format::Dotenv => "dotenv",
+            Format::Properties => "properties",
+            Format::Plist => "a property list",
+            Format::Nestedtext => "NestedText",
+            Format::Runtime(_) => "its format",
+        }
+    }
+
     /// The format named `name`: a compiled format's registry name (`"json5"`,
     /// `"yaml"`, …) or a language registered at runtime. `None` when nothing
     /// answers to it in this process.

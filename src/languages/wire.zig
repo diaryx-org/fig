@@ -247,6 +247,9 @@ fn syntaxOf(a: Allocator, v: std.json.Value) !*const Runtime.SyntaxDesc {
         .section_noun = enumOrdinal(Language.SectionNoun, o, "section_noun", -1),
         .section_header = header,
         .merge_key = try optString(a, o, "merge_key"),
+        .flow_entry_sep = try optString(a, o, "flow_entry_sep"),
+        .flow_root = boolOr(o, "flow_root", false),
+        .flow_maps_only = boolOr(o, "flow_maps_only", false),
     };
     return s;
 }

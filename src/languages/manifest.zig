@@ -712,6 +712,33 @@ pub const Syntax = struct {
     /// there is no syntax to un-inherit one. The merge's resolution is core
     /// (`AST.mergedChild`); this field says whether the format has it.
     merge_key: ?[]const u8 = null,
+
+    // ==================
+    // SEPARATED ENTRIES
+    // ==================
+
+    /// The bytes between two members of a flow container: `,` for every
+    /// format with commas, `;` for a CSS declaration block. The flow inserts
+    /// write it (followed by a space on one line, or by a newline and the
+    /// members' indent on several), the flow delete drops exactly one
+    /// adjoining copy, and `ownsItsLines` reads it as the one separator a
+    /// line a node owns may carry. See `docs/proposals/separated-entries.md`.
+    flow_entry_sep: []const u8 = ",",
+
+    /// Whether the document ROOT is a flow mapping spelled with no
+    /// delimiters — members joined by `flow_entry_sep` from the source's
+    /// first byte to its last, as a CSS `style` attribute is. With it the
+    /// root is flow without the first-byte sniff, the first member of an
+    /// empty root splices at the root's start rather than past an opener,
+    /// and the root is multi-line when its first and last members are on
+    /// different lines, there being no closer to ask.
+    flow_root: bool = false,
+
+    /// Whether only a mapping opener (`{`, or ZON's `.{`) opens a flow
+    /// container — a `[` not opening a flow sequence. A CSS stylesheet's
+    /// root is a block of rules, and one opening with an attribute selector
+    /// (`[data-x] { … }`) would otherwise sniff as a flow sequence.
+    flow_maps_only: bool = false,
 };
 
 /// The five fragment renderers a format may declare — `Decls.renderers` in

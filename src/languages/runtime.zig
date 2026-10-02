@@ -406,6 +406,10 @@ pub const SyntaxDesc = extern struct {
     section_noun: c_int = -1,
     section_header: SectionHeaderDesc = .{},
     merge_key: ?[*:0]const u8 = null,
+    /// Null for `,`; never empty.
+    flow_entry_sep: ?[*:0]const u8 = null,
+    flow_root: bool = false,
+    flow_maps_only: bool = false,
 };
 
 /// `VTable.lossless`: `manifest.NativeKinds` as bits. `lossless_envelope`
@@ -1063,6 +1067,14 @@ fn validateSyntax(name: []const u8, vt: *const VTable, s: *const SyntaxDesc) boo
         refuse("'{s}': section_header needs a close token", .{name});
         return false;
     }
+    if (s.flow_entry_sep) |sep| if (sep[0] == 0) {
+        refuse("'{s}': flow_entry_sep is empty; null means `,`", .{name});
+        return false;
+    };
+    if (s.flow_root and !s.flow_containers) {
+        refuse("'{s}' declares flow_root but flow_containers = false", .{name});
+        return false;
+    }
     return true;
 }
 
@@ -1110,6 +1122,9 @@ fn syntaxOf(arena: Allocator, s: *const SyntaxDesc) Allocator.Error!manifest.Syn
         .structural_indent = s.structural_indent,
         .section_noun = if (s.section_noun == -1) null else @enumFromInt(s.section_noun),
         .merge_key = try dupeZstr(arena, s.merge_key),
+        .flow_entry_sep = try dupeZstr(arena, s.flow_entry_sep) orelse defaults.flow_entry_sep,
+        .flow_root = s.flow_root,
+        .flow_maps_only = s.flow_maps_only,
     };
     if (s.closed_containers.map_open != null) {
         out.closed_containers = .{

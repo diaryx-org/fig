@@ -193,6 +193,16 @@ pub struct Syntax {
     pub section_noun: Option<SectionNoun>,
     pub section_header: Option<SectionHeader>,
     pub merge_key: Option<String>,
+    /// The bytes between two members of a flow container: `,` by default,
+    /// `;` for a CSS declaration block. Never empty.
+    pub flow_entry_sep: String,
+    /// The document root is a flow mapping spelled with no delimiters —
+    /// members joined by `flow_entry_sep` from the first byte to the last,
+    /// as a CSS `style` attribute is. Requires `flow_containers`.
+    pub flow_root: bool,
+    /// Only a mapping opener opens a flow container; a `[` does not open a
+    /// flow sequence (a CSS attribute selector begins with one).
+    pub flow_maps_only: bool,
 }
 
 impl Default for Syntax {
@@ -220,6 +230,9 @@ impl Default for Syntax {
             section_noun: None,
             section_header: None,
             merge_key: None,
+            flow_entry_sep: ",".to_owned(),
+            flow_root: false,
+            flow_maps_only: false,
         }
     }
 }
@@ -1126,6 +1139,9 @@ impl CSyntax {
                 },
             },
             merge_key: opt_ptr(&mut strings, s.merge_key.as_deref())?,
+            flow_entry_sep: opt_ptr(&mut strings, Some(&s.flow_entry_sep))?,
+            flow_root: s.flow_root,
+            flow_maps_only: s.flow_maps_only,
         };
         Ok(Box::new(CSyntax {
             c,

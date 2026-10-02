@@ -946,6 +946,13 @@ pub fn validate(comptime Lang: type) void {
                 if (s.kv_sep == null and !@hasDecl(Lang, "insertKey") and !@hasDecl(Lang, "renderEntry"))
                     @compileError("Language declares kv_sep = null but neither hooks insertKey nor" ++
                         " declares renderEntry, so the generic entry-insert paths have no separator to write");
+
+                // A flow member separator of no bytes would make every
+                // flow insert weld two members together.
+                if (s.flow_entry_sep.len == 0)
+                    @compileError("Language declares an empty flow_entry_sep");
+                if (s.flow_root and !s.flow_containers)
+                    @compileError("Language declares flow_root but flow_containers = false");
             }
         }
 

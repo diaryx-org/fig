@@ -28,6 +28,10 @@ pub fn parseFormatName(name: []const u8) ?Format {
     // duplicated arm in every switch over the enum, and nothing else. It
     // collapses here instead, so downstream code only ever sees `.yaml`.
     if (std.mem.eql(u8, name, "yml")) return languages.standIn(.yaml);
+    // `figl` is fig's authoring dialect by its extension, as `yml` is
+    // YAML's: a spelling of `fig`, so `--input figl` reads what a `.figl`
+    // file does.
+    if (std.mem.eql(u8, name, "figl")) return languages.standIn(.fig);
     if (std.meta.stringToEnum(Format, name)) |f| return languages.standIn(f);
     // A language the CLI did not compile in: configured in `languages.figl`
     // (spawned and registered on this first ask) or already registered.
@@ -2008,6 +2012,15 @@ test "detectLanguageFromFileEnding: .md/.markdown defer the archetype to a runti
 
     // `.fig` is not an extension of the format any more (5.0).
     try t.expect(detectLanguageFromFileEnding("f.fig") == null);
+}
+
+test "figl is an accepted spelling of fig, as a --input value and as an extension" {
+    const t = std.testing;
+    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+
+    try t.expectEqual(@as(?Format, .fig), parseFormatName("figl"));
+    try t.expectEqual(@as(?Format, .fig), parseFormatName("fig"));
+    try t.expectEqual(Format.fig, detectLanguageFromFileEnding("f.figl").?.format);
 }
 
 test "yml is an accepted spelling of yaml, as a --input value and as an extension" {

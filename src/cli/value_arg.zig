@@ -177,6 +177,7 @@ pub fn render(allocator: std.mem.Allocator, value: Value, format: Format, layout
             error.NullUnsupported => error.UnwritableNull,
             error.UnsupportedValue => error.UnwritableNested,
             error.NonStringKey, error.InvalidKey => error.UnwritableKey,
+            error.NonFiniteNumber => error.UnwritableNonFinite,
             else => err,
         };
     }

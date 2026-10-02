@@ -80,7 +80,9 @@ pub const Projection = struct {
 /// an unmaterialized YAML alias, and `NonStringKey` for a collection used as an
 /// object key *inside* a bracketed key segment (a mapping key of a mapping key),
 /// which JSON has no spelling for. `main` reports both rather than escaping.
-pub const Error = Writer.Error || error{ UnresolvedAlias, NonStringKey };
+/// `NonFiniteNumber` is a third: an infinite or NaN float, which JSON cannot
+/// write either.
+pub const Error = Writer.Error || error{ UnresolvedAlias, NonStringKey, NonFiniteNumber };
 
 /// A path segment, built one link per nesting level on the call stack — the same
 /// linked-list-on-the-stack the TOML printer uses for its `[header.path]`s. The

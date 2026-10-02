@@ -134,6 +134,21 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v5.1.0 — 2026-10-01
+
+### Added
+
+- **editor** — flow members joined by a separator the format names, and a root with no braces ([`3fd209e`](https://github.com/diaryx-org/fig/commit/3fd209eda9a5576f4d57cdd57be53f05d09cdd90))
+- **cli** — accept figl as a spelling of fig, as yml is of yaml ([`b0125cf`](https://github.com/diaryx-org/fig/commit/b0125cfd99b316e19f467aeac014394ebd2f0ebf))
+
+### Behavioural changes
+
+- deleting a block-mapping entry that shares its line
+  with a sibling — which a runtime language's table can describe and no
+  compiled format produces — now removes that entry alone. It used to
+  delete the whole line, sibling included, and report success.
+
+
 ## v5.0.0 — 2026-09-27
 
 ### Breaking

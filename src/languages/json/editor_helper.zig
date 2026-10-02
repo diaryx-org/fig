@@ -260,3 +260,155 @@ test "json5 remove last item of a multi-line trailing-comma array (regression)" 
         \\}
     );
 }
+
+// --- reordering an object's members ---
+//
+// Every JSON object is a flow mapping, so `reorderKeys` (and `moveKey`) take
+// the comma-aware path: the members move, each slot keeps the separator it
+// had, so the last member never gains a comma and a moved one never loses
+// its own. An owned comment — the block above a member on its own line, or
+// the comment closing its line — moves with it.
+
+fn expectReorder(format: json.Language.Type, input: []const u8, path: []const AST.PathSegment, keys: []const []const u8, expected: []const u8) !void {
+    var ed: editor.Editor(json.Language) = .{ .allocator = std.testing.allocator, .format = format };
+    try ed.init(input);
+    defer ed.deinit();
+    try ed.reorderKeys(path, keys);
+    errdefer log.err("actual:   \"{s}\"", .{ed.source.items});
+    errdefer log.err("expected: \"{s}\"", .{expected});
+    try std.testing.expectEqualStrings(expected, ed.source.items);
+}
+
+test "json reorderKeys reorders the root object" {
+    try expectReorder(.JSON,
+        \\{
+        \\  "name": "music",
+        \\  "private": true,
+        \\  "type": "module"
+        \\}
+    , &.{}, &.{ "private", "name", "type" },
+        \\{
+        \\  "private": true,
+        \\  "name": "music",
+        \\  "type": "module"
+        \\}
+    );
+}
+
+test "json reorderKeys moves the last member, which has no comma" {
+    try expectReorder(.JSON,
+        \\{
+        \\  "name": "music",
+        \\  "private": true,
+        \\  "type": "module"
+        \\}
+    , &.{}, &.{"type"},
+        \\{
+        \\  "type": "module",
+        \\  "name": "music",
+        \\  "private": true
+        \\}
+    );
+}
+
+test "json reorderKeys reorders a nested object and leaves its siblings" {
+    try expectReorder(.JSON,
+        \\{
+        \\  "name": "music",
+        \\  "scripts": {
+        \\    "dev": "vite",
+        \\    "build": "vite build"
+        \\  },
+        \\  "type": "module"
+        \\}
+    , &.{.{ .key = "scripts" }}, &.{ "build", "dev" },
+        \\{
+        \\  "name": "music",
+        \\  "scripts": {
+        \\    "build": "vite build",
+        \\    "dev": "vite"
+        \\  },
+        \\  "type": "module"
+        \\}
+    );
+}
+
+test "json reorderKeys moves a container member, and keeps a packed object packed" {
+    try expectReorder(.JSON,
+        \\{
+        \\  "a": 1,
+        \\  "b": {
+        \\    "x": [1, 2]
+        \\  }
+        \\}
+    , &.{}, &.{"b"},
+        \\{
+        \\  "b": {
+        \\    "x": [1, 2]
+        \\  },
+        \\  "a": 1
+        \\}
+    );
+    try expectReorder(.JSON, "{\"a\": 1, \"b\": 2, \"c\": 3}", &.{}, &.{ "c", "a" }, "{\"c\": 3, \"a\": 1, \"b\": 2}");
+    try expectReorder(.JSON, "{\"a\":1,\"b\":2}", &.{}, &.{"b"}, "{\"b\":2,\"a\":1}");
+    try expectReorder(.JSON, "[{\"a\": 1, \"b\": 2}]", &.{.{ .index = 0 }}, &.{"b"}, "[{\"b\": 2, \"a\": 1}]");
+}
+
+test "jsonc reorderKeys carries each member's own comments" {
+    try expectReorder(.JSONC,
+        \\{
+        \\  // the package
+        \\  "name": "music",
+        \\  "private": true, // never published
+        \\
+        \\  /* how it loads */
+        \\  "type": "module" // ESM
+        \\}
+    , &.{}, &.{ "type", "private", "name" },
+        \\{
+        \\  /* how it loads */
+        \\  "type": "module", // ESM
+        \\  "private": true, // never published
+        \\
+        \\  // the package
+        \\  "name": "music"
+        \\}
+    );
+}
+
+test "json5 reorderKeys keeps unquoted keys, the trailing comma, and comments" {
+    try expectReorder(.JSON5,
+        \\{
+        \\  host: 'localhost', // dev only
+        \\  // the listening port
+        \\  port: 8080,
+        \\}
+    , &.{}, &.{"port"},
+        \\{
+        \\  // the listening port
+        \\  port: 8080,
+        \\  host: 'localhost', // dev only
+        \\}
+    );
+    try expectReorder(.JSON5,
+        \\{
+        \\  a: 1,
+        \\  b: 2, // last
+        \\}
+    , &.{}, &.{"b"},
+        \\{
+        \\  b: 2, // last
+        \\  a: 1,
+        \\}
+    );
+}
+
+test "json moveKey moves the last member before the first" {
+    var ed: editor.Editor(json.Language) = .{ .allocator = std.testing.allocator, .format = .JSON };
+    try ed.init("{\n  \"a\": 1,\n  \"b\": 2,\n  \"c\": 3\n}");
+    defer ed.deinit();
+    try ed.moveKey(&.{.{ .key = "c" }}, &.{.{ .key = "a" }});
+    try std.testing.expectEqualStrings("{\n  \"c\": 3,\n  \"a\": 1,\n  \"b\": 2\n}", ed.source.items);
+    try ed.moveKey(&.{.{ .key = "c" }}, &.{.{ .key = "b" }});
+    try std.testing.expectEqualStrings("{\n  \"a\": 1,\n  \"c\": 3,\n  \"b\": 2\n}", ed.source.items);
+}

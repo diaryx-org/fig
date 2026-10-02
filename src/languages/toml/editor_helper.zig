@@ -865,6 +865,13 @@ test "toml moveContainer accepts a dotted table as the destination" {
     try expectTomlSource(&ed, "[b]\ny = 2\nd.k = 0\n[a]\nx = 1\n");
 }
 
+test "toml reorderKeys reorders an inline table" {
+    var ed = try newTomlEditor("t = { a = 1, b = 2 }\n");
+    defer ed.deinit();
+    try ed.reorderKeys(&.{.{ .key = "t" }}, &.{"b"});
+    try expectTomlSource(&ed, "t = { b = 2, a = 1 }\n");
+}
+
 test "toml reorderKeys still reorders a document of plain root keys" {
     var ed = try newTomlEditor("a = 1\nb = 2\nc = 3\n");
     defer ed.deinit();

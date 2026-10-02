@@ -16,6 +16,7 @@
 const Printer = @This();
 const std = @import("std");
 const AST = @import("../../ast/ast.zig");
+const num = @import("../../util/number.zig");
 const Writer = std.Io.Writer;
 
 /// ZON cannot represent a YAML alias (materialize expands them first) nor a
@@ -53,7 +54,8 @@ fn node(self: *Printer, id: AST.Node.Id, depth: usize) Error!void {
     switch (n.kind) {
         .null_ => try self.writer.writeAll("null"),
         .boolean => |value| try self.writer.writeAll(if (value) "true" else "false"),
-        .number => |value| try self.writer.writeAll(value.raw),
+        // ZON spells a non-finite float `inf`/`-inf`/`nan`, whatever its source did.
+        .number => |value| try self.writer.writeAll(if (num.nonFinite(value.raw)) |v| num.plain_non_finite.of(v) else value.raw),
         .string => |value| try writeString(self.writer, value),
         .extended => |ext| try writeExtended(self.writer, ext),
         .sequence => |first_child| try self.container(id, first_child, depth),

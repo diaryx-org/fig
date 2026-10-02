@@ -12,7 +12,12 @@ const Writer = std.Io.Writer;
 ///
 /// `NonStringKey`: a sequence or mapping was used as an object key. See `key`
 /// for what the printer does with the other key kinds and why.
-pub const Error = Writer.Error || error{ UnresolvedAlias, NonStringKey };
+///
+/// `NonFiniteNumber`: a number whose value is infinity or NaN (`.inf` from
+/// YAML, `inf` from TOML), which JSON and JSONC have no way to write. JSON5
+/// writes it as `Infinity`/`NaN`. A JSON5 `number_special` scalar is not this
+/// case: it degrades to a quoted string, as it always has.
+pub const Error = Writer.Error || error{ UnresolvedAlias, NonStringKey, NonFiniteNumber };
 
 writer: *Writer,
 ast: *const AST,
@@ -180,10 +185,14 @@ fn isBareIdentifier(name: []const u8) bool {
 /// Render a number. JSON5 keeps the source lexeme where it can read it back —
 /// hex, leading/trailing `.`, and leading `+` are all valid JSON5 — but NOT
 /// `0o`/`0b`, `_`, or a leading zero, which its own tokenizer rejects; those
-/// canonicalize, as does every non-decimal lexeme under plain JSON.
+/// canonicalize, as does every non-decimal lexeme under plain JSON. A
+/// non-finite number is JSON5's `Infinity`/`NaN`, and `NonFiniteNumber` under
+/// JSON and JSONC.
 fn number(self: *Printer, raw: []const u8) Error!void {
-    const spelling = if (self.dialect == .json5) num.json5 else num.json;
-    try num.write(self.writer, raw, spelling);
+    switch (self.dialect) {
+        .json5 => try num.write(self.writer, raw, num.json5),
+        .json, .jsonc => try num.write(self.writer, raw, num.json),
+    }
 }
 
 fn sequence(self: *Printer, node_id: AST.Node.Id, first_child: ?AST.Node.Id, depth: usize) Error!void {

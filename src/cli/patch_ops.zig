@@ -119,6 +119,7 @@ fn patchAs(
         return switch (err) {
             error.NullUnsupported => error.UnwritableNull,
             error.UnsupportedValue => error.UnwritableNested,
+            error.NonFiniteNumber => error.UnwritableNonFinite,
             else => err,
         };
     };

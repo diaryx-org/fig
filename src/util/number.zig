@@ -10,6 +10,13 @@
 //! So a printer asks `spellable(raw, <target>)` first, and falls back to
 //! `writeCanonical` — decimal, the one spelling every format shares. This is a
 //! *spelling* degrade: the value is unchanged, only its notation.
+//!
+//! The non-finite floats are the exception: every format that has them spells
+//! them its own way (`inf` in TOML and ZON, `.inf` in YAML, `Infinity` in
+//! JSON5), a `raw` carries whichever spelling its source used, and decimal has
+//! none. So `nonFinite` reads any of them, and `write` respells one in the
+//! target's own words — or refuses with `error.NonFiniteNumber` when the target
+//! has no words for it (strict JSON).
 
 const std = @import("std");
 
@@ -30,7 +37,30 @@ pub const Spelling = struct {
     bare_dot: bool = false,
     /// a leading `+`
     plus: bool = false,
+    /// How the format spells infinity and NaN, or null when it cannot.
+    non_finite: ?NonFiniteNames = null,
 };
+
+/// A non-finite float, whatever its source spelling.
+pub const NonFinite = enum { inf, neg_inf, nan };
+
+/// A format's own spelling of each `NonFinite`.
+pub const NonFiniteNames = struct {
+    inf: []const u8,
+    neg_inf: []const u8,
+    nan: []const u8,
+
+    pub fn of(self: NonFiniteNames, v: NonFinite) []const u8 {
+        return switch (v) {
+            .inf => self.inf,
+            .neg_inf => self.neg_inf,
+            .nan => self.nan,
+        };
+    }
+};
+
+/// TOML 1.0 and ZON: `inf`, `-inf`, `nan`.
+pub const plain_non_finite: NonFiniteNames = .{ .inf = "inf", .neg_inf = "-inf", .nan = "nan" };
 
 /// Strict JSON: none of it. Every non-decimal spelling canonicalizes.
 pub const json: Spelling = .{};
@@ -38,7 +68,12 @@ pub const json: Spelling = .{};
 /// JSON5 numbers are ES5.1 `NumericLiteral`: hex, leading `+`, and bare dots —
 /// but NOT `0o`/`0b` (ES6), `_` (ES2021), or a leading zero. Verified against
 /// this repo's own JSON5 tokenizer, which rejects all four.
-pub const json5: Spelling = .{ .hex = true, .bare_dot = true, .plus = true };
+pub const json5: Spelling = .{
+    .hex = true,
+    .bare_dot = true,
+    .plus = true,
+    .non_finite = .{ .inf = "Infinity", .neg_inf = "-Infinity", .nan = "NaN" },
+};
 
 /// YAML 1.2 core: int is `[-+]?[0-9]+ | 0o[0-7]+ | 0x[0-9a-fA-F]+`, float takes
 /// a bare dot. No `0b` and no `_` — 1.2 resolves both to a *string*.
@@ -55,7 +90,26 @@ pub const yaml_1_2: Spelling = .{
     .leading_zero = true,
     .bare_dot = true,
     .plus = true,
+    .non_finite = .{ .inf = ".inf", .neg_inf = "-.inf", .nan = ".nan" },
 };
+
+/// Which non-finite float `raw` spells, if it spells one, in any of the ways a
+/// parser or a caller stores it: `inf`/`nan` (TOML, ZON), `.inf`/`.nan` in
+/// YAML's three cases, and `Infinity`/`NaN` (JSON5) — each with an optional
+/// sign, which a NaN ignores.
+pub fn nonFinite(raw: []const u8) ?NonFinite {
+    var body = raw;
+    var negative = false;
+    if (body.len > 0 and (body[0] == '+' or body[0] == '-')) {
+        negative = body[0] == '-';
+        body = body[1..];
+    }
+    if (body.len > 0 and body[0] == '.') body = body[1..];
+    const eq = std.ascii.eqlIgnoreCase;
+    if (eq(body, "inf") or eq(body, "infinity")) return if (negative) .neg_inf else .inf;
+    if (eq(body, "nan")) return .nan;
+    return null;
+}
 
 /// Whether a format that can spell `s` reads `raw` back as the same number.
 pub fn spellable(raw: []const u8, s: Spelling) bool {
@@ -84,8 +138,12 @@ pub fn spellable(raw: []const u8, s: Spelling) bool {
 }
 
 /// Write `raw` verbatim when a format spelling `s` reads it back unchanged,
-/// else canonicalized to decimal.
-pub fn write(writer: anytype, raw: []const u8, s: Spelling) !void {
+/// else canonicalized to decimal. A non-finite `raw` is respelled in `s`'s own
+/// words, and is `error.NonFiniteNumber` when `s` has none.
+pub fn write(writer: anytype, raw: []const u8, comptime s: Spelling) !void {
+    if (nonFinite(raw)) |v| {
+        if (s.non_finite) |names| return writer.writeAll(names.of(v)) else return error.NonFiniteNumber;
+    }
     if (spellable(raw, s)) return writer.writeAll(raw);
     return writeCanonical(writer, raw);
 }
@@ -206,6 +264,35 @@ test "spellable: YAML 1.2 takes hex and 0o but not 0b/_" {
     try t.expect(!spellable("0b1010", yaml_1_2)); // resolves to a string
     try t.expect(!spellable("1_000", yaml_1_2)); // resolves to a string
     try t.expect(!spellable("0xdead_beef", yaml_1_2));
+}
+
+test "nonFinite reads every source spelling, and nothing else" {
+    const t = std.testing;
+    inline for (.{ "inf", "+inf", ".inf", ".Inf", ".INF", "+.inf", "Infinity", "+Infinity" }) |raw|
+        try t.expectEqual(@as(?NonFinite, .inf), nonFinite(raw));
+    inline for (.{ "-inf", "-.inf", "-.INF", "-Infinity" }) |raw|
+        try t.expectEqual(@as(?NonFinite, .neg_inf), nonFinite(raw));
+    inline for (.{ "nan", "+nan", "-nan", ".nan", ".NaN", ".NAN", "NaN" }) |raw|
+        try t.expectEqual(@as(?NonFinite, .nan), nonFinite(raw));
+    inline for (.{ "1", "1e999999", "0x1f", ".5", "info", "-", "", "." }) |raw|
+        try t.expectEqual(@as(?NonFinite, null), nonFinite(raw));
+}
+
+test "write respells a non-finite float, or refuses where the format has none" {
+    const t = std.testing;
+    var buf: [32]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try write(&w, "inf", yaml_1_2);
+    try t.expectEqualStrings(".inf", w.buffered());
+    w = std.Io.Writer.fixed(&buf);
+    try write(&w, "-.inf", json5);
+    try t.expectEqualStrings("-Infinity", w.buffered());
+    w = std.Io.Writer.fixed(&buf);
+    try write(&w, ".nan", json5);
+    try t.expectEqualStrings("NaN", w.buffered());
+    w = std.Io.Writer.fixed(&buf);
+    try t.expectError(error.NonFiniteNumber, write(&w, ".inf", json));
+    try t.expectError(error.NonFiniteNumber, write(&w, "nan", json));
 }
 
 test "writeCanonical" {

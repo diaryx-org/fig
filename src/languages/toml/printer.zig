@@ -33,6 +33,7 @@ const Printer = @This();
 const std = @import("std");
 const AST = @import("../../ast/ast.zig");
 const width = @import("../../util/util.zig").width;
+const num = @import("../../util/number.zig");
 const Writer = std.Io.Writer;
 
 /// TOML cannot represent a YAML alias (materialize expands them first), a null,
@@ -385,7 +386,9 @@ fn writeInline(w: *Writer, ast: *const AST, id: AST.Node.Id) Error!void {
     switch (ast.nodes[id].kind) {
         .null_ => return error.NullUnsupported,
         .boolean => |b| try w.writeAll(if (b) "true" else "false"),
-        .number => |n| try w.writeAll(n.raw),
+        // A non-finite float arrives in its source's spelling (YAML's `.inf`,
+        // JSON5's `Infinity`); TOML's own is `inf`/`-inf`/`nan`.
+        .number => |n| try w.writeAll(if (num.nonFinite(n.raw)) |v| num.plain_non_finite.of(v) else n.raw),
         .string => |s| try writeBasicString(w, s),
         .extended => |ext| try writeExtended(w, ext),
         .sequence => |first| try writeInlineArray(w, ast, first),

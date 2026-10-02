@@ -165,6 +165,7 @@ pub const SerializeError = Writer.Error || error{
     FigUnrepresentableRoot, // fig: a scalar/null value has no authoring spelling as a document root
     UnsupportedValue, // INI/dotenv: a sequence/mapping value has no spelling there
     InvalidKey, // dotenv: a mapping key is not a valid bash identifier
+    NonFiniteNumber, // JSON/JSONC: an infinite or NaN float has no spelling there
 };
 
 /// Render the whole AST to `writer` in the given format, using default options.

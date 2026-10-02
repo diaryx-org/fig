@@ -516,6 +516,7 @@ pub fn reportUnwritableValue(term: *Io.Terminal, file: []const u8, err: anyerror
         error.UnwritableNull => "this format has no null; to leave the key without a value, `delete` it",
         error.UnwritableNested => "this format holds only flat values there, so a sequence or a table cannot be written",
         error.UnwritableKey => "the value has a key this format cannot spell",
+        error.UnwritableNonFinite => "this format has no way to write infinity or NaN",
         else => @errorName(err),
     };
     term.setColor(.red) catch {};
@@ -569,6 +570,7 @@ pub fn reportSerializeError(term: *Io.Terminal, err: fig.AST.SerializeError) nor
         error.FigUnrepresentableRoot => "a scalar value cannot be the root of a .fig/.figl document; use canonical form or another output format instead (see docs/spec.md § 2)",
         error.UnsupportedValue => "this document contains an array, or a table nested deeper than this format allows (INI: one level of `[section]`; dotenv/`.properties`: none)",
         error.InvalidKey => "a mapping key is not valid in this output format (a dotenv key must be a bash identifier: `[A-Za-z_][A-Za-z0-9_]*`)",
+        error.NonFiniteNumber => "this output format has no way to write infinity or NaN",
     };
     term.writer.print("error: {s}\n", .{message}) catch {};
     term.writer.flush() catch {};

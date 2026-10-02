@@ -986,8 +986,9 @@ fn editStatus(err: anyerror) FigStatus {
         error.CommentNotAnEntry => .unsupported_operation,
         // A value the format cannot represent at all — plist has no null. Same
         // answer `serializeStatus` gives it, since it is the same fact about the
-        // format either way.
-        error.NullUnsupported => .unsupported_format,
+        // format either way. Infinity or NaN into strict JSON is the same kind
+        // of fact.
+        error.NullUnsupported, error.NonFiniteNumber => .unsupported_format,
         // A trailing comment was given multi-line text, or (plist) comment text
         // carrying `--`, which cannot go inside `<!-- … -->`.
         error.MultilineComment, error.InvalidComment => .invalid_argument,
@@ -2960,6 +2961,7 @@ fn serializeStatus(err: AST.SerializeError) FigStatus {
         error.FigUnrepresentableRoot,
         error.UnsupportedValue,
         error.InvalidKey,
+        error.NonFiniteNumber,
         => .unsupported_format,
         error.WriteFailed => .out_of_memory,
     };
@@ -4544,6 +4546,81 @@ test "value c abi maps an unrepresentable value to unsupported_format" {
     try std.testing.expectEqualStrings("{\n  \"k\": null\n}\n", ptr[0..len]);
 }
 
+test "value c abi spells a non-finite float in each format's own words, and JSON refuses it" {
+    if (comptime !build_options.lang_json or !build_options.lang_toml or !build_options.lang_yaml) return error.SkipZigTest;
+    // A binding hands a float's text to `fig_value_number` in YAML's spelling
+    // (`.inf`). Each printer used to write that verbatim: TOML got `.inf` and
+    // JSON `0.inf`, neither of which the format reads back.
+    const cases = [_]struct { raw: []const u8, toml: []const u8, yaml: []const u8, json5: []const u8 }{
+        .{ .raw = ".inf", .toml = "v = inf\n", .yaml = "v: .inf\n", .json5 = "{\n  v: Infinity\n}\n" },
+        .{ .raw = "-.inf", .toml = "v = -inf\n", .yaml = "v: -.inf\n", .json5 = "{\n  v: -Infinity\n}\n" },
+        .{ .raw = ".nan", .toml = "v = nan\n", .yaml = "v: .nan\n", .json5 = "{\n  v: NaN\n}\n" },
+        // TOML's own spelling, as a TOML document's parse stores it.
+        .{ .raw = "inf", .toml = "v = inf\n", .yaml = "v: .inf\n", .json5 = "{\n  v: Infinity\n}\n" },
+    };
+    for (cases) |c| {
+        var out_value: ?*FigValue = null;
+        try std.testing.expectEqual(FigStatus.ok, fig_value_create(&out_value));
+        defer fig_value_destroy(out_value);
+        var id: FigNodeId = undefined;
+        try std.testing.expectEqual(FigStatus.ok, fig_value_number(out_value, c.raw.ptr, c.raw.len, true, &id));
+        const v = id;
+        try std.testing.expectEqual(FigStatus.ok, fig_value_string(out_value, "v", 1, &id));
+        const entries = [_]FigKeyValue{.{ .key = id, .value = v }};
+        try std.testing.expectEqual(FigStatus.ok, fig_value_map(out_value, &entries, entries.len, &id));
+        const root = id;
+
+        var ptr: [*c]const u8 = undefined;
+        var len: usize = undefined;
+        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @intFromEnum(FigFormat.toml), &ptr, &len));
+        try std.testing.expectEqualStrings(c.toml, ptr[0..len]);
+        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @intFromEnum(FigFormat.yaml), &ptr, &len));
+        try std.testing.expectEqualStrings(c.yaml, ptr[0..len]);
+        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @intFromEnum(FigFormat.json5), &ptr, &len));
+        try std.testing.expectEqualStrings(c.json5, ptr[0..len]);
+        // JSON and JSONC have no infinity or NaN: refused, as TOML refuses a null.
+        try std.testing.expectEqual(FigStatus.unsupported_format, fig_value_serialize(out_value, root, @intFromEnum(FigFormat.json), &ptr, &len));
+        try std.testing.expectEqual(FigStatus.unsupported_format, fig_value_serialize(out_value, root, @intFromEnum(FigFormat.jsonc), &ptr, &len));
+    }
+}
+
+test "document c abi converts a non-finite float into the target's spelling" {
+    if (comptime !build_options.lang_json or !build_options.lang_toml or !build_options.lang_yaml) return error.SkipZigTest;
+    const cases = [_]struct { src: []const u8, from: FigFormat, to: FigFormat, want: ?[]const u8 }{
+        .{ .src = "a: .inf\nb: -.inf\nc: .nan\n", .from = .yaml, .to = .toml, .want = "a = inf\nb = -inf\nc = nan\n" },
+        .{ .src = "a = inf\nb = -inf\nc = nan\n", .from = .toml, .to = .yaml, .want = "a: .inf\nb: -.inf\nc: .nan\n" },
+        .{ .src = "a: .inf\n", .from = .yaml, .to = .json, .want = null },
+    };
+    for (cases) |c| {
+        var doc: ?*FigDocument = null;
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(c.src.ptr, c.src.len, @intFromEnum(c.from), &doc));
+        defer fig_document_destroy(doc);
+        var ptr: [*c]const u8 = undefined;
+        var len: usize = undefined;
+        const status = fig_document_serialize(doc, @intFromEnum(c.to), null, &ptr, &len);
+        if (c.want) |want| {
+            try std.testing.expectEqual(FigStatus.ok, status);
+            try std.testing.expectEqualStrings(want, ptr[0..len]);
+        } else try std.testing.expectEqual(FigStatus.unsupported_format, status);
+    }
+}
+
+test "toml editor c abi takes inf and nan as a replacement value" {
+    if (comptime !build_options.lang_toml) return error.SkipZigTest;
+    const src = "name = \"music\"\nversion = 1\n";
+    var ed: ?*FigEditor = null;
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+    defer fig_editor_destroy(ed);
+    const path = [_]FigPathSegment{keySeg("version")};
+    var ptr: [*c]const u8 = undefined;
+    var len: usize = undefined;
+    inline for (.{ "inf", "-inf", "nan" }) |repl| {
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_replace_val(ed, &path, 1, repl.ptr, repl.len));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_source(ed, &ptr, &len));
+        try std.testing.expectEqualStrings("name = \"music\"\nversion = " ++ repl ++ "\n", ptr[0..len]);
+    }
+}
+
 test "value c abi serialize options honor the size/version field" {
     if (comptime !build_options.lang_json) return error.SkipZigTest;
     var out_value: ?*FigValue = null;
@@ -5419,7 +5496,7 @@ test "editStatus: every editor refusal is a caller error, not parse_error" {
         error.MultilineComment,         error.InvalidComment,
         error.CommentsUnanchored,       error.RendererRefused,
         error.ImplicitSection,          error.ContainerClosesOnItsLine,
-        error.NotAKey,
+        error.NotAKey,                  error.NonFiniteNumber,
     };
     for (refusals) |err| {
         const status = editStatus(err);

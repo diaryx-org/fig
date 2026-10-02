@@ -242,7 +242,7 @@ pub fn main(init: std.process.Init) !void {
         // A value argument the file's format cannot hold, from rendering it
         // (`value_arg.render`, which names these so a parse error the file
         // raises never lands here); nothing was written.
-        error.UnwritableNull, error.UnwritableNested, error.UnwritableKey => diag_report.reportUnwritableValue(&stderr_terminal, types.targetFile(config) orelse "the file", err),
+        error.UnwritableNull, error.UnwritableNested, error.UnwritableKey, error.UnwritableNonFinite => diag_report.reportUnwritableValue(&stderr_terminal, types.targetFile(config) orelse "the file", err),
         // Everything an action didn't report itself stops HERE with a plain
         // line, instead of escaping to the Zig runtime's default handler.
         // Letting it escape printed a bare `error: <ErrorName>` plus an

@@ -562,6 +562,15 @@ test "yaml reorder keys full order" {
     try expectSource(&ed, "c: 3\na: 1\nb: 2\n");
 }
 
+test "yaml reorder keys of a flow mapping keeps its commas" {
+    var ed = try newYamlEditor("m: {a: 1, b: 2, c: 3}\n");
+    defer ed.deinit();
+    try ed.reorderKeys(&.{.{ .key = "m" }}, &.{ "c", "a" });
+    try expectSource(&ed, "m: {c: 3, a: 1, b: 2}\n");
+    try ed.moveKey(&.{ .{ .key = "m" }, .{ .key = "b" } }, &.{ .{ .key = "m" }, .{ .key = "c" } });
+    try expectSource(&ed, "m: {b: 2, c: 3, a: 1}\n");
+}
+
 test "yaml reorder keys partial appends rest in original order" {
     var ed = try newYamlEditor("a: 1\nb: 2\nc: 3\nd: 4\n");
     defer ed.deinit();

@@ -1112,3 +1112,36 @@ fn editor_nestedtext_takes_a_container_as_nested_entries() {
         "name: fig\nm:\n    x: 1\n    l:\n        - a\n        - b\n"
     );
 }
+
+#[test]
+fn json_reorder_keys_keeps_the_object_valid() {
+    // Every JSON object is a flow mapping, which `reorder_keys` used to refuse
+    // with `InvalidArgument`. It now moves the members and leaves each slot's
+    // comma where it was, so the member moved off the end gains one.
+    let src = "{\n  \"name\": \"music\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n";
+    let mut ed = Editor::open(src.as_bytes(), Format::Json).unwrap();
+    ed.reorder_keys(&[], &["type", "private", "name"]).unwrap();
+    assert_eq!(
+        ed.source().unwrap(),
+        "{\n  \"type\": \"module\",\n  \"private\": true,\n  \"name\": \"music\"\n}\n",
+    );
+
+    let src =
+        "{\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\"\n  }\n}\n";
+    let mut ed = Editor::open(src.as_bytes(), Format::Json).unwrap();
+    ed.reorder_keys(&[Segment::Key("scripts")], &["build"])
+        .unwrap();
+    assert_eq!(
+        ed.source().unwrap(),
+        "{\n  \"scripts\": {\n    \"build\": \"vite build\",\n    \"dev\": \"vite\"\n  }\n}\n",
+    );
+
+    // JSONC: a member's comments move with it.
+    let src = "{\n  // pkg\n  \"name\": \"music\",\n  \"type\": \"module\" // esm\n}\n";
+    let mut ed = Editor::open(src.as_bytes(), Format::Jsonc).unwrap();
+    ed.reorder_keys(&[], &["type"]).unwrap();
+    assert_eq!(
+        ed.source().unwrap(),
+        "{\n  \"type\": \"module\", // esm\n  // pkg\n  \"name\": \"music\"\n}\n",
+    );
+}

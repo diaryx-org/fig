@@ -2303,6 +2303,37 @@ pub fn Editor(comptime Language: type) type {
             if (parsed.isSection(parsed.ast.nodes[src.kind.keyvalue.value]) or
                 parsed.isSection(parsed.ast.nodes[dest.kind.keyvalue.value]))
                 return self.refuse(.move);
+            // A flow mapping's members are not one per line and are joined by
+            // separators, the last having none: moving lines would strand a
+            // comma or drop one. Move by member instead, as `reorderKeys` does.
+            if (src_path.len > 0) {
+                const parent = try parsed.ast.getValByPath(src_path[0 .. src_path.len - 1]);
+                if (parent.kind == .mapping and self.isFlowNode(parsed, parent)) {
+                    var entries: std.ArrayList(AST.Node) = .empty;
+                    defer entries.deinit(self.allocator);
+                    var src_idx: ?usize = null;
+                    var dest_idx: ?usize = null;
+                    var maybe = try parsed.ast.child(&parent);
+                    while (maybe) |entry| : (maybe = parsed.ast.next(&entry)) {
+                        if (entry.id == src.id) src_idx = entries.items.len;
+                        if (entry.id == dest.id) dest_idx = entries.items.len;
+                        try entries.append(self.allocator, entry);
+                    }
+                    const from = src_idx orelse return error.NotFound;
+                    const before = dest_idx orelse return error.NotFound;
+                    if (from == before) return;
+                    // Every member in its place, with `from` lifted out and
+                    // set down just before `before`.
+                    var order: std.ArrayList(usize) = .empty;
+                    defer order.deinit(self.allocator);
+                    for (0..entries.items.len) |i| {
+                        if (i == from) continue;
+                        if (i == before) try order.append(self.allocator, from);
+                        try order.append(self.allocator, i);
+                    }
+                    return self.reorderFlowEntries(parsed, entries.items, order.items);
+                }
+            }
             const source = self.source.items;
             try self.moveBlock(
                 entryBlockStart(source, parsed.span(src), self.syntax().comments.style),
@@ -2344,7 +2375,10 @@ pub fn Editor(comptime Language: type) type {
         /// Keys in `keys` that the mapping does not contain are ignored. Each
         /// entry's owned comments — and any interleaved blank lines / orphan
         /// comments, which ride with the entry that precedes them — are
-        /// preserved, so no bytes are dropped. Errors on a flow mapping (`{…}`).
+        /// preserved, so no bytes are dropped. A flow mapping (`{…}`, every
+        /// JSON object) takes `reorderFlowEntries` instead: its members move
+        /// and each slot keeps its separator, so the last member never gains
+        /// a comma it cannot have.
         ///
         /// **Engine rule**: once the new order is known and before any splice,
         /// an entry whose position actually changes and whose value is a
@@ -2362,16 +2396,14 @@ pub fn Editor(comptime Language: type) type {
             if (node.kind != .mapping) return error.NotAMapping;
             const first_id = node.kind.mapping orelse return; // empty mapping
             const source = self.source.items;
-            if (self.isFlowNode(parsed, node)) return error.NotAMapping;
 
-            // Gather each entry's key (for matching) and block, in document order.
+            // Gather each entry and its key (for matching), in document order.
             var entry_keys: std.ArrayList([]const u8) = .empty;
             defer entry_keys.deinit(self.allocator);
-            var blocks: std.ArrayList(Block) = .empty;
-            defer blocks.deinit(self.allocator);
+            var entries: std.ArrayList(AST.Node) = .empty;
+            defer entries.deinit(self.allocator);
 
             var cur = parsed.ast.nodes[first_id];
-            var last_end: usize = 0;
             while (true) {
                 if (cur.kind != .keyvalue) return error.InvalidDocument;
                 const key_node = parsed.ast.nodes[cur.kind.keyvalue.key];
@@ -2380,17 +2412,15 @@ pub fn Editor(comptime Language: type) type {
                     else => return error.InvalidDocument,
                 };
                 try entry_keys.append(self.allocator, key);
-                try blocks.append(self.allocator, .{ .start = entryBlockStart(source, parsed.span(cur), self.syntax().comments.style), .end = 0 });
-                last_end = entryBlockEnd(source, parsed.span(cur));
+                try entries.append(self.allocator, cur);
                 cur = parsed.ast.next(&cur) orelse break;
             }
-            tileBlocks(blocks.items, last_end);
 
             // Translate the requested keys into entry indices (first unused match
             // wins), then reorder the blocks by that index list.
             var order: std.ArrayList(usize) = .empty;
             defer order.deinit(self.allocator);
-            const chosen = try self.allocator.alloc(bool, blocks.items.len);
+            const chosen = try self.allocator.alloc(bool, entries.items.len);
             defer self.allocator.free(chosen);
             @memset(chosen, false);
             for (keys) |k| {
@@ -2402,6 +2432,9 @@ pub fn Editor(comptime Language: type) type {
                     }
                 }
             }
+            // A flow mapping holds no section, so the veto below has nothing
+            // to refuse there; its members are spliced comma-aware.
+            if (self.isFlowNode(parsed, node)) return self.reorderFlowEntries(parsed, entries.items, order.items);
             // The engine's veto, before anything is spliced — over exactly the
             // entries whose position this reorder changes, since an entry left
             // where it was is never at risk. See the rule note above. Skipped
@@ -2410,7 +2443,7 @@ pub fn Editor(comptime Language: type) type {
             if (comptime is_section_format) {
                 // Where each entry ends up: the listed keys first, in `order`,
                 // then the unlisted ones in their original relative order.
-                const final_pos = try self.allocator.alloc(usize, blocks.items.len);
+                const final_pos = try self.allocator.alloc(usize, entries.items.len);
                 defer self.allocator.free(final_pos);
                 var pos: usize = 0;
                 for (order.items) |i| {
@@ -2429,6 +2462,13 @@ pub fn Editor(comptime Language: type) type {
                     entry = parsed.ast.next(&entry) orelse break;
                 }
             }
+            var blocks: std.ArrayList(Block) = .empty;
+            defer blocks.deinit(self.allocator);
+            for (entries.items) |entry| {
+                try blocks.append(self.allocator, .{ .start = entryBlockStart(source, parsed.span(entry), self.syntax().comments.style), .end = 0 });
+            }
+            const last_end = entryBlockEnd(source, parsed.span(entries.items[entries.items.len - 1]));
+            tileBlocks(blocks.items, last_end);
             try self.reorderBlocks(blocks.items[0].start, last_end, blocks.items, order.items);
         }
 
@@ -2509,6 +2549,124 @@ pub fn Editor(comptime Language: type) type {
                 }
             }
             try self.replaceAtSpan(Span.init(items[0].start, items[items.len - 1].end), out.items);
+        }
+
+        /// Splice a flow mapping's members (`entries`, in document order) so
+        /// they follow `order` (bring-to-front indices, as `reorderBlocks`).
+        ///
+        /// Each slot keeps the separator bytes that followed it, as a flow
+        /// sequence's do in `reorderFlowItems`, so the comma count and the
+        /// layout stay where they were: a member moved off the end gains the
+        /// comma of the slot it lands in, and the one moved to the end has
+        /// none. A member's own comments travel with it: the comment block on
+        /// the lines above it, when it begins its line (the block `deleteKey`
+        /// carries), and the comment that closes its line after its comma.
+        /// The second only when every member starts a line of its own — in a
+        /// packed `{ a: 1, b: 2 }` a moved line comment would swallow what
+        /// follows it, so there each slot keeps whatever trivia it holds.
+        fn reorderFlowEntries(self: *Self, parsed: Document, entries: []const AST.Node, order: []const usize) !void {
+            const n = entries.len;
+            const perm = try fullOrder(self.allocator, order, n);
+            defer self.allocator.free(perm);
+            const source = self.source.items;
+            const sep = self.syntax().flow_entry_sep;
+            const has_comments = self.lineCommentMarker() != null;
+            const trailing = self.trailingCommentMarker();
+
+            // `body` is the member with its leading comment block; `trail` the
+            // comment closing its line, with the spaces before it (empty when
+            // it has none).
+            const Member = struct { body: Span, trail: Span };
+            const members = try self.allocator.alloc(Member, n);
+            defer self.allocator.free(members);
+            var prev_end: usize = 0;
+            for (entries, members) |entry, *m| {
+                const span = parsed.span(entry);
+                // Back over a key sigil the span leaves out (ZON's `.`), as
+                // `deleteKey` does, so `.name` moves as a unit.
+                var start = if (self.syntax().key_sigil) |sigil|
+                    if (span.start > 0 and source[span.start - 1] == sigil) span.start - 1 else span.start
+                else
+                    span.start;
+                if (has_comments) {
+                    const line_start = lineStartBefore(source, start);
+                    if (firstNonSpace(source, line_start) == start) {
+                        const cbs = commentBlockStart(source, line_start, self.syntax().comments.style);
+                        const lead = firstNonSpace(source, cbs);
+                        if (cbs < line_start and lead >= prev_end) start = lead;
+                    }
+                }
+                m.* = .{ .body = Span.init(start, span.end), .trail = Span.init(span.end, span.end) };
+                if (trailing) |marker| trail: {
+                    var i = firstNonSpace(source, span.end);
+                    if (std.mem.startsWith(u8, source[i..], sep)) i = firstNonSpace(source, i + sep.len);
+                    if (!std.mem.startsWith(u8, source[i..], marker.open)) break :trail;
+                    var line_end = std.mem.indexOfScalarPos(u8, source, i, '\n') orelse source.len;
+                    if (line_end > i and source[line_end - 1] == '\r') line_end -= 1;
+                    // A paired comment must be the last thing on its line, or
+                    // the trail would take what follows it (`/* x */ }`).
+                    if (marker.close.len > 0) {
+                        const close = std.mem.indexOfPos(u8, source[0..line_end], i + marker.open.len, marker.close) orelse break :trail;
+                        const after = close + marker.close.len;
+                        if (firstNonSpace(source, after) != line_end) break :trail;
+                        line_end = after;
+                    }
+                    var ts = i;
+                    while (ts > span.end and (source[ts - 1] == ' ' or source[ts - 1] == '\t')) ts -= 1;
+                    m.trail = Span.init(ts, line_end);
+                }
+                prev_end = @max(m.body.end, m.trail.end);
+            }
+            // Trails ride only when every gap between members crosses a line.
+            for (members[0 .. n - 1], members[1..]) |m, next| {
+                const gap_from = @max(m.body.end, m.trail.end);
+                if (std.mem.indexOfScalar(u8, source[gap_from..next.body.start], '\n') == null) {
+                    for (members) |*each| each.trail = Span.init(each.body.end, each.body.end);
+                    break;
+                }
+            }
+
+            // The region runs from the first member to the end of the last
+            // member's trail, or else of the trailing separator a JSON5 or
+            // TOML 1.1 member may carry, so the slot keeps it and a trail
+            // landing there goes after it. Past that (the closer) is untouched.
+            const last = members[n - 1];
+            const region_end = if (last.trail.len() > 0) last.trail.end else blk: {
+                const i = firstNonSpace(source, last.body.end);
+                break :blk if (std.mem.startsWith(u8, source[i..], sep)) i + sep.len else last.body.end;
+            };
+            const region = Span.init(members[0].body.start, region_end);
+            var out: std.ArrayList(u8) = .empty;
+            defer out.deinit(self.allocator);
+            for (perm, 0..) |src_idx, slot| {
+                const at = members[slot];
+                const moved = members[src_idx];
+                const gap_end = if (slot + 1 < n) members[slot + 1].body.start else region.end;
+                // Split the slot's own gap where its trail sat, or else at the
+                // end of its line: before the split is the separator, after it
+                // the line break and the next member's indent.
+                var pre: []const u8 = undefined;
+                var post: []const u8 = undefined;
+                if (at.trail.len() > 0) {
+                    pre = source[at.body.end..at.trail.start];
+                    post = source[at.trail.end..gap_end];
+                } else {
+                    const gap = source[at.body.end..gap_end];
+                    var split = std.mem.indexOfScalar(u8, gap, '\n') orelse gap.len;
+                    if (split > 0 and gap[split - 1] == '\r') split -= 1;
+                    pre = gap[0..split];
+                    post = gap[split..];
+                }
+                try out.appendSlice(self.allocator, source[moved.body.start..moved.body.end]);
+                if (moved.trail.len() > 0) {
+                    try out.appendSlice(self.allocator, std.mem.trimEnd(u8, pre, " \t"));
+                    try out.appendSlice(self.allocator, source[moved.trail.start..moved.trail.end]);
+                } else {
+                    try out.appendSlice(self.allocator, pre);
+                }
+                try out.appendSlice(self.allocator, post);
+            }
+            try self.replaceAtSpan(region, out.items);
         }
 
         /// Move the block `[src_start, src_end)` so it begins at `dest_start`,

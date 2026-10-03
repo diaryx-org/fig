@@ -10,7 +10,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "fig"
-version = "5.1.3"
+version = "5.2.0"
 dependencies = [
  "fig-macros",
  "fig-sys",
@@ -20,7 +20,7 @@ dependencies = [
 
 [[package]]
 name = "fig-macros"
-version = "5.1.3"
+version = "5.2.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -29,7 +29,7 @@ dependencies = [
 
 [[package]]
 name = "fig-sys"
-version = "5.1.3"
+version = "5.2.0"
 dependencies = [
  "fig-sys-ios-arm64",
  "fig-sys-ios-arm64-sim",
@@ -42,31 +42,31 @@ dependencies = [
 
 [[package]]
 name = "fig-sys-ios-arm64"
-version = "5.1.3"
+version = "5.2.0"
 
 [[package]]
 name = "fig-sys-ios-arm64-sim"
-version = "5.1.3"
+version = "5.2.0"
 
 [[package]]
 name = "fig-sys-linux-arm64-gnu"
-version = "5.1.3"
+version = "5.2.0"
 
 [[package]]
 name = "fig-sys-linux-x64-gnu"
-version = "5.1.3"
+version = "5.2.0"
 
 [[package]]
 name = "fig-sys-macos-arm64"
-version = "5.1.3"
+version = "5.2.0"
 
 [[package]]
 name = "fig-sys-wasm32"
-version = "5.1.3"
+version = "5.2.0"
 
 [[package]]
 name = "fig-sys-windows-x64-msvc"
-version = "5.1.3"
+version = "5.2.0"
 
 [[package]]
 name = "hashbrown"

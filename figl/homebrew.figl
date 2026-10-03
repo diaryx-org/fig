@@ -33,6 +33,7 @@ jobs.homebrew
 > > name = fig
 > > desc = Parse, edit, and convert config files while preserving comments. Supports JSON, YAML, TOML, and more.
 > > language = zig
+> > zig-version = 0.17.0 # the reusable workflow's default trails the pin in build.zig.zon
 > > zig-flags = -Doptimize=ReleaseFast -Dstrip=true
 > secrets
 > > TAP_APP_ID = ${{ secrets.TAP_APP_ID }}

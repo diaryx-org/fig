@@ -166,6 +166,9 @@ echo "version $want matches tag $GITHUB_REF_NAME"
 > name = Publish to crates.io (bottom-up)
 > working-directory = bindings/rust
 > env.CARGO_REGISTRY_TOKEN = ${{ steps.auth.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
+> # crates.io refuses to create a crate with a Trusted Publishing token, so a
+> # payload crate's first upload falls back to the repository secret.
+> env.FALLBACK_REGISTRY_TOKEN = ${{ secrets.CARGO_REGISTRY_TOKEN }}
 > run = '''
 set -uo pipefail
 publish() {
@@ -175,6 +178,13 @@ publish() {
       echo "$out"; return 0
     fi
     echo "$out"
+    if echo "$out" | grep -qi 'do not support creating new crates'; then
+      echo "::notice::$crate is new to crates.io — publishing it with CARGO_REGISTRY_TOKEN"
+      if out=$(CARGO_REGISTRY_TOKEN="$FALLBACK_REGISTRY_TOKEN" cargo publish -p "$crate" --allow-dirty 2>&1); then
+        echo "$out"; return 0
+      fi
+      echo "$out"
+    fi
     if echo "$out" | grep -qiE 'already (uploaded|exists)'; then
       echo "::notice::$crate already on crates.io — skipping"; return 0
     fi

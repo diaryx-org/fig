@@ -61,6 +61,8 @@ git describe --tags --abbrev=0 --match 'v[5-9].*' --match 'v[1-9][0-9]*'
 
 which admits v5 through v9 and every two-or-more-digit major, and leaves those three out. Until the first one-version tag exists, each falls back to its old prefixed line: `core/v*` for `semver-check`, `rust/v*` for `cargo-semver-checks`. `.config/cliff.toml`'s `tag_pattern` makes the same cut for the changelog, keeping the prefixed tags as history.
 
+**After a Zig bump.** A release tag's Zig source builds only with the Zig it was pinned to, and `cargo semver-checks --baseline-rev` builds the baseline crate from that source. So on the first release after `minimum_zig_version` moves, every `cargo-semver-checks` run compares the tag's `build.zig.zon` pin with the tree's and, where they differ, takes the baseline from crates.io instead (`--baseline-version`, the version the tag names) with `--default-features`: the default language set links the prebuilt payload crate and needs no Zig. That run says so in its output. What it leaves unchecked until the next release is the opt-in surface — `serde`, `derive`, `indexmap`, and the `zon`/`plist` languages — so a change behind those features in that window gets its SemVer judgement from review rather than the tool.
+
 ## Releasing
 
 fig releases through the org's shared tooling, `dx release`, configured by `.config/release.toml`. **Which version a release is, is Adam's to name**; `dx release` with no spec proposes and writes nothing:

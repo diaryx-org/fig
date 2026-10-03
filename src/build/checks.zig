@@ -178,8 +178,22 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
         \\  echo "cargo-semver-checks: no release tag found — skipping (nothing to diff against)."
         \\  exit 0
         \\fi
-        \\echo "cargo-semver-checks: baseline $tag"
-        \\cargo semver-checks --package fig --baseline-rev "$tag"
+        \\zon_zig() { sed -n 's/^    \.minimum_zig_version = "\([^"]*\)",$/\1/p'; }
+        \\want="$(zon_zig < ../../build.zig.zon)"
+        \\had="$(git show "$tag:build.zig.zon" | zon_zig)"
+        \\if [ "$had" = "$want" ]; then
+        \\  echo "cargo-semver-checks: baseline $tag"
+        \\  cargo semver-checks --package fig --baseline-rev "$tag"
+        \\else
+        \\  # The tag's Zig source needs a toolchain this job does not have, so the
+        \\  # baseline is the crate crates.io has for it, with default features: that
+        \\  # set links the prebuilt core and needs no Zig. The opt-in surfaces (serde,
+        \\  # derive, indexmap, zon, plist) go unchecked until the next release is cut
+        \\  # with this Zig. See "After a Zig bump" in docs/VERSIONING.md.
+        \\  ver="${tag##*/}"; ver="${ver#v}"
+        \\  echo "cargo-semver-checks: $tag was built with Zig $had, this tree needs $want — baseline is the published fig $ver, default features"
+        \\  cargo semver-checks --package fig --baseline-version "$ver" --default-features
+        \\fi
     ;
     const cargo_semver = b.addSystemCommand(&.{ "sh", "-c", cargo_semver_script });
     cargo_semver.setCwd(b.path("bindings/rust"));

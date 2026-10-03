@@ -18,7 +18,7 @@ version_prefix = '    .version = "'
 cargo_workspace = false
 
 # The Cargo workspace that follows that version — `[workspace.package]`, the
-# internal `[workspace.dependencies]` pins (fig-sys, fig-macros and the five
+# internal `[workspace.dependencies]` pins (fig-sys, fig-macros and the seven
 # fig-sys-<target> payload crates), and its lockfile beside it.
 mirrors = ["bindings/rust/Cargo.toml"]
 
@@ -71,7 +71,7 @@ verify_after_bump = true
 # before the push is handed back to you is composed from these.
 [[tag_starts]]
 workflow = "release.yml"
-does = "uploads fig, fig-macros, fig-sys and the five fig-sys-<target> payload crates to crates.io"
+does = "uploads fig, fig-macros, fig-sys and the seven fig-sys-<target> payload crates to crates.io"
 
 [[tag_starts]]
 workflow = "release-npm.yml"

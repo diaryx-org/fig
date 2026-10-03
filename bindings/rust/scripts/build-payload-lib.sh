@@ -52,7 +52,7 @@ build_one() {
     # Zig 0.16's archiver can emit an unaligned member. Repack apple archives
     # with `ar` (writes aligned members) at build time so the shipped archive
     # links cleanly with no repack on the consumer side. `ar` (unlike macOS-only
-    # `libtool`) is available on the Linux CI runner that cross-builds these.
+    # `libtool`) is available on any host that cross-builds these.
     if [[ "$rust_target" == *apple* ]]; then
         local work; work="$(mktemp -d)"
         ( cd "$work" && ar x "$archive" && chmod u+rw ./*.o \

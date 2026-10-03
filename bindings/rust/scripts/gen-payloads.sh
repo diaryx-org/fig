@@ -45,6 +45,9 @@ name = "$libname"
 path = "src/lib.rs"
 EOF
 
+    # lib/ holds the archive build-payload-lib.sh drops in; it is never committed.
+    printf 'lib\n' >"$dir/.gitignore"
+
     cat >"$dir/build.rs" <<'EOF'
 // Hand the prebuilt archive's directory to `fig-sys`'s build script. Because
 // this crate sets `links`, the `cargo:libdir=…` line below reaches dependents

@@ -35,7 +35,10 @@ permissions: { id-token: write, contents: read }
 jobs:
   crate:
     name: Publish crate (crates.io)
-    runs-on: ubuntu-latest
+    # macOS, because the iOS payload libraries need Apple's iOS SDK, which Zig
+    # does not bundle. Zig cross-compiles the Linux, Windows and wasm payloads
+    # from here as it would from Linux.
+    runs-on: macos-latest
     steps:
     - uses: actions/checkout@v7
       with:
@@ -108,8 +111,8 @@ jobs:
       working-directory: bindings/rust
     # Cross-compile each tier-1 target's libfig.a (default language set) into its
     # fig-sys-<target> payload crate's git-ignored lib/. Zig cross-compiles every
-    # target from this one runner. Must precede packaging: the payload crates ship
-    # lib/<archive> via their `include` list.
+    # target from this one runner, the iOS ones against Xcode's SDK. Must precede
+    # packaging: the payload crates ship lib/<archive> via their `include` list.
     - name: Build prebuilt payload libraries
       working-directory: bindings/rust
       run: bash scripts/build-payload-lib.sh all
@@ -138,7 +141,8 @@ jobs:
     # * crates.io throttles *new-crate* creation to a small burst (~5) then a slow
     # refill; publishing >5 first-time crates (6 new here: fig-sys + 5 payloads)
     # trips a 429, so we wait out one refill window (~11 min) and retry. Later
-    # releases publish new *versions* (far higher limit), so this matters once.
+    # releases publish new *versions* (far higher limit), so this matters once
+    # per new crate.
     # * idempotent: an "already uploaded/exists" response counts as success, so a
     # re-run after a partial publish skips the crates that already landed.
     - name: Publish to crates.io (bottom-up)
@@ -168,7 +172,7 @@ jobs:
         }
         for crate in \
           fig-sys-macos-arm64 fig-sys-linux-x64-gnu fig-sys-linux-arm64-gnu \
-          fig-sys-windows-x64-msvc fig-sys-wasm32; do
+          fig-sys-windows-x64-msvc fig-sys-wasm32 fig-sys-ios-arm64 fig-sys-ios-arm64-sim; do
           publish "$crate"
         done
         publish fig-sys

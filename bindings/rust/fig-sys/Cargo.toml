@@ -74,3 +74,9 @@ fig-sys-windows-x64-msvc = { workspace = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 fig-sys-wasm32 = { workspace = true }
+
+[target.'cfg(all(target_os = "ios", target_arch = "aarch64", not(any(target_abi = "sim", target_abi = "macabi"))))'.dependencies]
+fig-sys-ios-arm64 = { workspace = true }
+
+[target.'cfg(all(target_os = "ios", target_arch = "aarch64", target_abi = "sim"))'.dependencies]
+fig-sys-ios-arm64-sim = { workspace = true }

@@ -80,6 +80,8 @@ fn payload_env_key(target: &str) -> Option<&'static str> {
         "aarch64-unknown-linux-gnu" => "LINUX_ARM64_GNU",
         "x86_64-pc-windows-msvc" => "WINDOWS_X64_MSVC",
         "wasm32-unknown-unknown" => "WASM32",
+        "aarch64-apple-ios" => "IOS_ARM64",
+        "aarch64-apple-ios-sim" => "IOS_ARM64_SIM",
         _ => return None,
     })
 }
@@ -150,7 +152,8 @@ fn build_from_source(cargo_target: &str, cargo_host: &str) {
                  Default-feature builds for these targets need no Zig: \
                  aarch64-apple-darwin, x86_64-unknown-linux-gnu, \
                  aarch64-unknown-linux-gnu, x86_64-pc-windows-msvc, \
-                 wasm32-unknown-unknown.\n\
+                 wasm32-unknown-unknown, aarch64-apple-ios, \
+                 aarch64-apple-ios-sim.\n\
                  Otherwise install Zig 0.17+ (https://ziglang.org/download/)."
             )
         });

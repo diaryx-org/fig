@@ -1,0 +1,18 @@
+[package]
+name = "fig-sys-ios-arm64"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Prebuilt libfig.a (default features) for aarch64-apple-ios. Support crate for fig-sys; not for direct use."
+repository = "https://github.com/diaryx-org/fig"
+# The build script hands `lib/libfig.a`'s location to `fig-sys` via this
+# `links` key (as `DEP_FIG_PREBUILT_IOS_ARM64_LIBDIR`). Unique per payload crate.
+links = "fig_prebuilt_ios_arm64"
+# Allowlist: the prebuilt archive plus the trivial crate skeleton. `lib/` is
+# git-ignored and populated by scripts/build-payload-lib.sh (or CI) before publish.
+include = ["build.rs", "src/lib.rs", "lib/libfig.a", "README.md"]
+
+[lib]
+name = "fig_sys_ios_arm64"
+path = "src/lib.rs"

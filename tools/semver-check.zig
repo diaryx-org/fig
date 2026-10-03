@@ -76,7 +76,7 @@ const Verdict = enum { major, minor, patch };
 
 /// More-severe wins: a single major delta anywhere forces a major bump.
 fn worse(a: Verdict, b: Verdict) Verdict {
-    return if (@intFromEnum(a) < @intFromEnum(b)) a else b;
+    return if (@backingInt(a) < @backingInt(b)) a else b;
 }
 
 /// A parsed enumerator. `value` is the effective integer where we can evaluate
@@ -201,9 +201,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var verdict: Verdict =
-        if (removed.items.len > 0 or changed.items.len > 0) .major
-        else if (added.items.len > 0) .minor
-        else .patch;
+        if (removed.items.len > 0 or changed.items.len > 0) .major else if (added.items.len > 0) .minor else .patch;
 
     // --- Diff the struct/enum surfaces (layout + enumerator values). ---
     const base_aggs = try collectAggregates(arena, baseline_header);

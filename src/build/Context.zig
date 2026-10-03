@@ -16,7 +16,7 @@ b: *std.Build,
 /// the resolved `std.Target` for `.cpu.arch`/`.abi` queries.
 target: std.Build.ResolvedTarget,
 /// The optimize mode from `-Doptimize` (or the default).
-optimize: std.builtin.OptimizeMode,
+optimize: std.lang.Optimize,
 /// Whether to strip debug info (`-Dstrip`, defaulting to on for ReleaseSmall).
 strip: bool,
 /// The resolved `-D` configuration behind `options_mod`. The module is what

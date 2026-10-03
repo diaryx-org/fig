@@ -129,8 +129,8 @@ fn spellings(comptime f: InnerFormat) @TypeOf(Language.entryFor(@tagName(f)).emb
 /// order this walks them in is not observable.
 fn formatFromLangTag(tag: []const u8) ?InnerFormat {
     const eq = std.ascii.eqlIgnoreCase;
-    inline for (@typeInfo(InnerFormat).@"enum".fields) |field| {
-        const f: InnerFormat = @enumFromInt(field.value);
+    inline for (@typeInfo(InnerFormat).@"enum".field_names, @typeInfo(InnerFormat).@"enum".field_values) |_, field_value| {
+        const f: InnerFormat = @fromBackingInt(@intCast(field_value));
         const s = comptime spellings(f);
         if (eq(tag, s.fence_tag)) return f;
         inline for (s.fence_aliases) |alias| {
@@ -147,8 +147,8 @@ fn formatFromLangTag(tag: []const u8) ?InnerFormat {
 /// registry's `script_mime` plus its `script_mime_aliases`, per entry.
 fn formatFromScriptMime(mime: []const u8) ?InnerFormat {
     const eq = std.ascii.eqlIgnoreCase;
-    inline for (@typeInfo(InnerFormat).@"enum".fields) |field| {
-        const f: InnerFormat = @enumFromInt(field.value);
+    inline for (@typeInfo(InnerFormat).@"enum".field_names, @typeInfo(InnerFormat).@"enum".field_values) |_, field_value| {
+        const f: InnerFormat = @fromBackingInt(@intCast(field_value));
         const s = comptime spellings(f);
         if (eq(mime, s.script_mime)) return f;
         inline for (s.script_mime_aliases) |alias| {

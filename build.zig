@@ -48,7 +48,7 @@ const epoch = "Texas Everbearing";
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const strip = b.option(bool, "strip", "Strip debug information") orelse (optimize == .ReleaseSmall);
+    const strip = b.option(bool, "strip", "Strip debug information") orelse (optimize == .small);
 
     const ver: Options.Versions = .{
         .version = version,

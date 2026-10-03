@@ -36,7 +36,7 @@ jobs.zig.steps[]
 > with.fetch-depth = 0
 +
 > uses = mlugg/setup-zig@v2
-> with.version = 0.16.0
+> with.version = 0.17.0
 +
 > # The one pre-release gate: zig test + conformance + abi-check + semver-check
 > # + version-check. `check` also folds in cargo-semver-checks and the Rust/TS
@@ -63,7 +63,7 @@ jobs.rust.steps[]
 > # build.rs compiles the fig core with `zig build`, so Zig is required here
 > # even though this is a Rust job.
 > uses = mlugg/setup-zig@v2
-> with.version = 0.16.0
+> with.version = 0.17.0
 +
 > uses = dtolnay/rust-toolchain@stable
 +
@@ -105,7 +105,7 @@ jobs.rust-semver
 > > > # build.rs compiles the fig core with `zig build`, so building the crate's
 > > > # rustdoc (current AND the baseline rev) needs Zig.
 > > > uses = mlugg/setup-zig@v2
-> > > with.version = 0.16.0
+> > > with.version = 0.17.0
 > > *
 > > > # STABLE, deliberately — cargo-semver-checks reads rustdoc JSON, and its
 > > > # README is explicit that the formats it supports are the ones emitted by
@@ -156,7 +156,7 @@ jobs.typescript.steps[]
 +
 > # `npm run build` runs `zig build wasm` to (re)generate the embedded module.
 > uses = mlugg/setup-zig@v2
-> with.version = 0.16.0
+> with.version = 0.17.0
 +
 > uses = actions/setup-node@v7
 > with
@@ -198,7 +198,7 @@ jobs.wasi.steps[]
 +
 > # `npm run build` runs `zig build wasi` to (re)generate wasm/fig-wasi.wasm.
 > uses = mlugg/setup-zig@v2
-> with.version = 0.16.0
+> with.version = 0.17.0
 +
 > uses = actions/setup-node@v7
 > with

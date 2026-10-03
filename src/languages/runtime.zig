@@ -303,7 +303,7 @@ pub const ErrorInfo = extern struct {
         .line = 0,
         .column = 0,
         .message_len = 0,
-        .message = [_]u8{0} ** 256,
+        .message = @splat(0),
     };
 
     pub fn text(self: *const ErrorInfo) []const u8 {
@@ -421,19 +421,19 @@ pub const SyntaxDesc = extern struct {
 pub const lossless_envelope: u32 = 1 << 0;
 pub const native_null: u32 = 1 << 1;
 pub fn nativeExt(k: ExtKind) u32 {
-    return @as(u32, 1) << @intCast(2 + @intFromEnum(k));
+    return @as(u32, 1) << @intCast(2 + @backingInt(k));
 }
 
 comptime {
     // `manifest.NativeKinds` is `null` and then one field per `ExtKind`, in
     // `ExtKind`'s order; the bits above assume it, and the bits run out at
     // 30 kinds.
-    const fields = @typeInfo(manifest.NativeKinds).@"struct".fields;
-    const kinds = @typeInfo(ExtKind).@"enum".fields;
-    if (fields.len != kinds.len + 1 or !std.mem.eql(u8, fields[0].name, "null"))
+    const fields = @typeInfo(manifest.NativeKinds).@"struct".field_names;
+    const kinds = @typeInfo(ExtKind).@"enum".field_names;
+    if (fields.len != kinds.len + 1 or !std.mem.eql(u8, fields[0], "null"))
         @compileError("manifest.NativeKinds is not `null` followed by one field per ExtKind");
-    for (kinds, fields[1..]) |k, f| if (!std.mem.eql(u8, k.name, f.name))
-        @compileError("manifest.NativeKinds field '" ++ f.name ++ "' sits where ExtKind has '" ++ k.name ++ "'");
+    for (kinds, fields[1..]) |k, f| if (!std.mem.eql(u8, k, f))
+        @compileError("manifest.NativeKinds field '" ++ f ++ "' sits where ExtKind has '" ++ k ++ "'");
     if (kinds.len > 30) @compileError("VTable.lossless has no bit left for another ExtKind");
 }
 
@@ -554,8 +554,9 @@ pub const cap_known: u32 = cap_read | cap_edit | cap_serialize | cap_references;
 /// the least a writer's `size` must cover.
 pub fn requiredSize(comptime T: type) usize {
     var end: usize = 0;
-    inline for (@typeInfo(T).@"struct".fields) |f| {
-        if (f.default_value_ptr == null) end = @max(end, @offsetOf(T, f.name) + @sizeOf(f.type));
+    const info = @typeInfo(T).@"struct";
+    inline for (info.field_names, info.field_types, info.field_attrs) |name, FieldT, attrs| {
+        if (attrs.default_value_ptr == null) end = @max(end, @offsetOf(T, name) + @sizeOf(FieldT));
     }
     return end;
 }
@@ -568,9 +569,10 @@ pub fn gated(comptime T: type, bytes: []const u8) T {
     var out: T = undefined;
     const n = @min(bytes.len, @sizeOf(T));
     @memcpy(std.mem.asBytes(&out)[0..n], bytes[0..n]);
-    inline for (@typeInfo(T).@"struct".fields) |f| {
-        if (@offsetOf(T, f.name) + @sizeOf(f.type) > n) {
-            if (f.defaultValue()) |d| @field(out, f.name) = d;
+    const info = @typeInfo(T).@"struct";
+    inline for (info.field_names, info.field_types, info.field_attrs) |name, FieldT, attrs| {
+        if (@offsetOf(T, name) + @sizeOf(FieldT) > n) {
+            if (attrs.defaultValue(FieldT)) |d| @field(out, name) = d;
         }
     }
     return out;
@@ -617,7 +619,7 @@ pub const Entry = struct {
         return self.name.ptr;
     }
     pub fn typeOf(self: *const Entry) Language.Type {
-        return @enumFromInt(self.index);
+        return @fromBackingInt(@intCast(self.index));
     }
 };
 
@@ -748,7 +750,7 @@ pub fn register(allocator: Allocator, raw: *const VTable) RegisterError!c_int {
 
     const reg = try arena.create(Registered);
     reg.vt = vt.*;
-    reg.name = try arena.dupeZ(u8, name);
+    reg.name = try arena.dupeSentinel(u8, name, 0);
     reg.vt.name = reg.name.ptr;
     reg.caps = .{
         .read = vt.caps & cap_read != 0,
@@ -771,7 +773,7 @@ pub fn register(allocator: Allocator, raw: *const VTable) RegisterError!c_int {
         var exts: std.ArrayList([:0]const u8) = .empty;
         if (d.extensions) |arr| {
             var k: usize = 0;
-            while (arr[k]) |x| : (k += 1) try exts.append(arena, try arena.dupeZ(u8, std.mem.span(x)));
+            while (arr[k]) |x| : (k += 1) try exts.append(arena, try arena.dupeSentinel(u8, std.mem.span(x), 0));
         }
         const index = first_index + i;
         e.* = .{
@@ -779,9 +781,9 @@ pub fn register(allocator: Allocator, raw: *const VTable) RegisterError!c_int {
             .abi = Languages.standInAbi(std.mem.span(d.name)) orelse
                 @intCast(@as(i64, Languages.runtime_abi_base) + @as(i64, @intCast(index))),
             .language = reg,
-            .name = try arena.dupeZ(u8, std.mem.span(d.name)),
+            .name = try arena.dupeSentinel(u8, std.mem.span(d.name), 0),
             .extensions = try exts.toOwnedSlice(arena),
-            .splice = @enumFromInt(d.splice),
+            .splice = @fromBackingInt(@intCast(d.splice)),
             .empty_doc_seed = if (d.empty_doc_seed) |s| try arena.dupe(u8, std.mem.span(s)) else null,
             .syntax = if (d.syntax) |s| try syntaxOf(arena, s) else null,
         };
@@ -851,7 +853,7 @@ fn findByNameLocked(name: []const u8) ?*const Entry {
 /// The entry a `Language.Type` names. Panics on a value never handed out:
 /// a `Type` is only ever minted by this registry.
 pub fn entryOf(t: Language.Type) *const Entry {
-    return entryAt(@intFromEnum(t)) orelse @panic("runtime language index was never registered");
+    return entryAt(@backingInt(t)) orelse @panic("runtime language index was never registered");
 }
 
 pub fn entryAt(index: usize) ?*const Entry {
@@ -996,7 +998,7 @@ pub fn validateVTable(vt: *const VTable) bool {
                 return false;
             }
         }
-        if (d.splice < 0 or d.splice >= @typeInfo(manifest.SpliceStyle).@"enum".fields.len) {
+        if (d.splice < 0 or d.splice >= @typeInfo(manifest.SpliceStyle).@"enum".field_names.len) {
             refuse("'{s}': dialect '{s}' has an unknown splice style {d}", .{ name, dn, d.splice });
             return false;
         }
@@ -1035,15 +1037,15 @@ pub fn validateVTable(vt: *const VTable) bool {
 }
 
 fn validateSyntax(name: []const u8, vt: *const VTable, s: *const SyntaxDesc) bool {
-    if (s.comments.style < 0 or s.comments.style >= @typeInfo(manifest.CommentStyle).@"enum".fields.len) {
+    if (s.comments.style < 0 or s.comments.style >= @typeInfo(manifest.CommentStyle).@"enum".field_names.len) {
         refuse("'{s}': unknown comment style {d}", .{ name, s.comments.style });
         return false;
     }
-    if (s.key_style < 0 or s.key_style >= @typeInfo(manifest.KeyStyle).@"enum".fields.len) {
+    if (s.key_style < 0 or s.key_style >= @typeInfo(manifest.KeyStyle).@"enum".field_names.len) {
         refuse("'{s}': unknown key style {d}", .{ name, s.key_style });
         return false;
     }
-    if (s.section_noun != -1 and (s.section_noun < 0 or s.section_noun >= @typeInfo(manifest.SectionNoun).@"enum".fields.len)) {
+    if (s.section_noun != -1 and (s.section_noun < 0 or s.section_noun >= @typeInfo(manifest.SectionNoun).@"enum".field_names.len)) {
         refuse("'{s}': unknown section noun {d}", .{ name, s.section_noun });
         return false;
     }
@@ -1101,14 +1103,14 @@ fn syntaxOf(arena: Allocator, s: *const SyntaxDesc) Allocator.Error!manifest.Syn
     const defaults: manifest.Syntax = .{ .comments = undefined, .kv_sep = null, .empty_map_literal = null };
     var out: manifest.Syntax = .{
         .comments = .{
-            .style = @enumFromInt(s.comments.style),
+            .style = @fromBackingInt(@intCast(s.comments.style)),
             .line = try delimiterOf(arena, s.comments.line),
             .trailing = try delimiterOf(arena, s.comments.trailing),
         },
         .kv_sep = try dupeZstr(arena, s.kv_sep),
         .flow_kv_sep_from_siblings = s.flow_kv_sep_from_siblings,
         .flow_map_pad = try dupeZstr(arena, s.flow_map_pad) orelse defaults.flow_map_pad,
-        .key_style = @enumFromInt(s.key_style),
+        .key_style = @fromBackingInt(@intCast(s.key_style)),
         .key_sigil = if (s.key_sigil == 0) null else s.key_sigil,
         .empty_map_literal = try dupeZstr(arena, s.empty_map_literal),
         .block_seq_editable = s.block_seq_editable,
@@ -1120,7 +1122,7 @@ fn syntaxOf(arena: Allocator, s: *const SyntaxDesc) Allocator.Error!manifest.Syn
         .flow_map_open = try dupeZstr(arena, s.flow_map_open) orelse defaults.flow_map_open,
         .flow_map_close = try dupeZstr(arena, s.flow_map_close) orelse defaults.flow_map_close,
         .structural_indent = s.structural_indent,
-        .section_noun = if (s.section_noun == -1) null else @enumFromInt(s.section_noun),
+        .section_noun = if (s.section_noun == -1) null else @fromBackingInt(@intCast(s.section_noun)),
         .merge_key = try dupeZstr(arena, s.merge_key),
         .flow_entry_sep = try dupeZstr(arena, s.flow_entry_sep) orelse defaults.flow_entry_sep,
         .flow_root = s.flow_root,
@@ -1149,8 +1151,8 @@ fn syntaxOf(arena: Allocator, s: *const SyntaxDesc) Allocator.Error!manifest.Syn
 fn nativeKindsOf(bits: u32) ?manifest.NativeKinds {
     if (bits & lossless_envelope == 0) return null;
     var out: manifest.NativeKinds = .{ .null = bits & native_null != 0 };
-    inline for (@typeInfo(ExtKind).@"enum".fields) |k| {
-        @field(out, k.name) = bits & nativeExt(@field(ExtKind, k.name)) != 0;
+    inline for (@typeInfo(ExtKind).@"enum".field_names) |k_name| {
+        @field(out, k_name) = bits & nativeExt(@field(ExtKind, k_name)) != 0;
     }
     return out;
 }
@@ -1161,15 +1163,15 @@ pub fn losslessBits(kinds: ?manifest.NativeKinds) u32 {
     const k = kinds orelse return 0;
     var bits: u32 = lossless_envelope;
     if (k.null) bits |= native_null;
-    inline for (@typeInfo(ExtKind).@"enum".fields) |f| {
-        if (@field(k, f.name)) bits |= nativeExt(@field(ExtKind, f.name));
+    inline for (@typeInfo(ExtKind).@"enum".field_names) |f_name| {
+        if (@field(k, f_name)) bits |= nativeExt(@field(ExtKind, f_name));
     }
     return bits;
 }
 
 fn knownLosslessBits() u32 {
     var bits: u32 = lossless_envelope | native_null;
-    inline for (@typeInfo(ExtKind).@"enum".fields) |f| bits |= nativeExt(@field(ExtKind, f.name));
+    inline for (@typeInfo(ExtKind).@"enum".field_names) |f_name| bits |= nativeExt(@field(ExtKind, f_name));
     return bits;
 }
 
@@ -1335,11 +1337,11 @@ pub fn tableToDocument(allocator: Allocator, source: []const u8, table: *const N
 
         const kind: Node.Kind = blk: {
             if (r.ext_kind != no_ext_kind) {
-                if (r.ext_kind < 0 or r.ext_kind >= @typeInfo(ExtKind).@"enum".fields.len) return error.UnknownKind;
-                const ek: ExtKind = @enumFromInt(r.ext_kind);
+                if (r.ext_kind < 0 or r.ext_kind >= @typeInfo(ExtKind).@"enum".field_names.len) return error.UnknownKind;
+                const ek: ExtKind = @fromBackingInt(@intCast(r.ext_kind));
                 break :blk .{ .extended = .{ .kind = ek, .text = try own(allocator, &owned, r.text.slice() orelse "") } };
             }
-            const rk: RowKind = @enumFromInt(r.kind);
+            const rk: RowKind = @fromBackingInt(@intCast(r.kind));
             break :blk switch (rk) {
                 .null => .null_,
                 .bool => b: {
@@ -1668,29 +1670,29 @@ fn appendRows(arena: Allocator, ast: *const AST, id: Node.Id, parent: u32, rows:
     const row_index: u32 = @intCast(rows.items.len);
     var row: NodeRow = .{ .kind = 0, .parent = parent, .span = .none };
     switch (node.kind) {
-        .null_ => row.kind = @intFromEnum(RowKind.null),
+        .null_ => row.kind = @backingInt(RowKind.null),
         .boolean => |b| {
-            row.kind = @intFromEnum(RowKind.bool);
+            row.kind = @backingInt(RowKind.bool);
             row.text = Str.of(if (b) "true" else "false");
         },
         .string => |s| {
-            row.kind = @intFromEnum(RowKind.string);
+            row.kind = @backingInt(RowKind.string);
             row.text = Str.of(s);
         },
         .number => |n| {
-            row.kind = @intFromEnum(if (n.kind == .float) RowKind.float else RowKind.int);
+            row.kind = @backingInt(if (n.kind == .float) RowKind.float else RowKind.int);
             row.text = Str.of(n.raw);
         },
         .extended => |e| {
-            row.kind = @intFromEnum(if (e.kind == .char_literal) RowKind.int else RowKind.string);
-            row.ext_kind = @intFromEnum(e.kind);
+            row.kind = @backingInt(if (e.kind == .char_literal) RowKind.int else RowKind.string);
+            row.ext_kind = @backingInt(e.kind);
             row.text = Str.of(e.text);
         },
-        .sequence => row.kind = @intFromEnum(RowKind.sequence),
-        .mapping => row.kind = @intFromEnum(RowKind.mapping),
-        .keyvalue => row.kind = @intFromEnum(RowKind.keyvalue),
+        .sequence => row.kind = @backingInt(RowKind.sequence),
+        .mapping => row.kind = @backingInt(RowKind.mapping),
+        .keyvalue => row.kind = @backingInt(RowKind.keyvalue),
         .alias => |a| {
-            row.kind = @intFromEnum(RowKind.alias);
+            row.kind = @backingInt(RowKind.alias);
             row.text = Str.of(a);
         },
     }
@@ -1712,9 +1714,9 @@ fn appendRows(arena: Allocator, ast: *const AST, id: Node.Id, parent: u32, rows:
     }
     try rows.append(arena, row);
     const nc = ast.comments(id);
-    for (nc.leading) |c| try comments.append(arena, .{ .node = row_index, .slot = comment_leading, .style = @intFromEnum(c.style), .text = Str.of(c.text) });
-    if (nc.trailing) |c| try comments.append(arena, .{ .node = row_index, .slot = comment_trailing, .style = @intFromEnum(c.style), .text = Str.of(c.text) });
-    for (nc.dangling) |c| try comments.append(arena, .{ .node = row_index, .slot = comment_dangling, .style = @intFromEnum(c.style), .text = Str.of(c.text) });
+    for (nc.leading) |c| try comments.append(arena, .{ .node = row_index, .slot = comment_leading, .style = @backingInt(c.style), .text = Str.of(c.text) });
+    if (nc.trailing) |c| try comments.append(arena, .{ .node = row_index, .slot = comment_trailing, .style = @backingInt(c.style), .text = Str.of(c.text) });
+    for (nc.dangling) |c| try comments.append(arena, .{ .node = row_index, .slot = comment_dangling, .style = @backingInt(c.style), .text = Str.of(c.text) });
 
     switch (node.kind) {
         .sequence, .mapping => |first| {
@@ -1816,7 +1818,7 @@ pub const Language = struct {
         }
     };
 
-    pub const default_type: Type = @enumFromInt(0);
+    pub const default_type: Type = @fromBackingInt(@intCast(0));
 
     pub fn parse(parser: *Parser, input: []const u8, t: Type) !Document {
         const e = entryOf(t);
@@ -1944,7 +1946,7 @@ const testing = std.testing;
 test "a null-row table is the empty document and an empty one is refused" {
     var table: NodeTable = .{};
     try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, "", &table));
-    const rows = [_]NodeRow{.{ .kind = @intFromEnum(RowKind.null), .parent = no_node, .span = .{ .start = 0, .end = 0 } }};
+    const rows = [_]NodeRow{.{ .kind = @backingInt(RowKind.null), .parent = no_node, .span = .{ .start = 0, .end = 0 } }};
     table = .{ .rows = &rows, .row_count = rows.len };
     const doc = try tableToDocument(testing.allocator, "", &table);
     defer doc.deinit(testing.allocator);
@@ -1955,15 +1957,15 @@ test "a mapping table round-trips through Document and back" {
     // { a: 1, b: [true, "x"] } as `a: 1\nb: [true, x]\n`
     const src = "a: 1\nb: [true, x]\n";
     const rows = [_]NodeRow{
-        .{ .kind = @intFromEnum(RowKind.mapping), .parent = no_node, .span = .{ .start = 0, .end = src.len } },
-        .{ .kind = @intFromEnum(RowKind.keyvalue), .parent = 0, .span = .{ .start = 0, .end = 4 }, .sep = .{ .start = 1, .end = 2 } },
-        .{ .kind = @intFromEnum(RowKind.string), .parent = 1, .span = .{ .start = 0, .end = 1 }, .text = Str.of("a") },
-        .{ .kind = @intFromEnum(RowKind.int), .parent = 1, .span = .{ .start = 3, .end = 4 }, .text = Str.of("1") },
-        .{ .kind = @intFromEnum(RowKind.keyvalue), .parent = 0, .span = .{ .start = 5, .end = 17 }, .sep = .{ .start = 6, .end = 7 } },
-        .{ .kind = @intFromEnum(RowKind.string), .parent = 4, .span = .{ .start = 5, .end = 6 }, .text = Str.of("b") },
-        .{ .kind = @intFromEnum(RowKind.sequence), .parent = 4, .span = .{ .start = 8, .end = 17 } },
-        .{ .kind = @intFromEnum(RowKind.bool), .parent = 6, .span = .{ .start = 9, .end = 13 }, .text = Str.of("true") },
-        .{ .kind = @intFromEnum(RowKind.string), .parent = 6, .span = .{ .start = 15, .end = 16 }, .text = Str.of("x") },
+        .{ .kind = @backingInt(RowKind.mapping), .parent = no_node, .span = .{ .start = 0, .end = src.len } },
+        .{ .kind = @backingInt(RowKind.keyvalue), .parent = 0, .span = .{ .start = 0, .end = 4 }, .sep = .{ .start = 1, .end = 2 } },
+        .{ .kind = @backingInt(RowKind.string), .parent = 1, .span = .{ .start = 0, .end = 1 }, .text = Str.of("a") },
+        .{ .kind = @backingInt(RowKind.int), .parent = 1, .span = .{ .start = 3, .end = 4 }, .text = Str.of("1") },
+        .{ .kind = @backingInt(RowKind.keyvalue), .parent = 0, .span = .{ .start = 5, .end = 17 }, .sep = .{ .start = 6, .end = 7 } },
+        .{ .kind = @backingInt(RowKind.string), .parent = 4, .span = .{ .start = 5, .end = 6 }, .text = Str.of("b") },
+        .{ .kind = @backingInt(RowKind.sequence), .parent = 4, .span = .{ .start = 8, .end = 17 } },
+        .{ .kind = @backingInt(RowKind.bool), .parent = 6, .span = .{ .start = 9, .end = 13 }, .text = Str.of("true") },
+        .{ .kind = @backingInt(RowKind.string), .parent = 6, .span = .{ .start = 15, .end = 16 }, .text = Str.of("x") },
     };
     const comments = [_]CommentRow{.{ .node = 2, .slot = comment_leading, .style = 0, .text = Str.of("hello") }};
     const table: NodeTable = .{ .rows = &rows, .row_count = rows.len, .comments = &comments, .comment_count = 1 };
@@ -2016,13 +2018,13 @@ test "a core-schema tag on the wire is a kind tag, and any other a text tag" {
     // runtime fig's `port: int = 5432` reached the printers untagged.
     const src = "a: 1\nb: 2\n";
     const rows = [_]NodeRow{
-        .{ .kind = @intFromEnum(RowKind.mapping), .parent = no_node, .span = .{ .start = 0, .end = src.len } },
-        .{ .kind = @intFromEnum(RowKind.keyvalue), .parent = 0, .span = .{ .start = 0, .end = 4 } },
-        .{ .kind = @intFromEnum(RowKind.string), .parent = 1, .span = .{ .start = 0, .end = 1 }, .text = Str.of("a") },
-        .{ .kind = @intFromEnum(RowKind.int), .parent = 1, .span = .{ .start = 3, .end = 4 }, .text = Str.of("1"), .tag = Str.of("!!int") },
-        .{ .kind = @intFromEnum(RowKind.keyvalue), .parent = 0, .span = .{ .start = 5, .end = 9 } },
-        .{ .kind = @intFromEnum(RowKind.string), .parent = 4, .span = .{ .start = 5, .end = 6 }, .text = Str.of("b") },
-        .{ .kind = @intFromEnum(RowKind.int), .parent = 4, .span = .{ .start = 8, .end = 9 }, .text = Str.of("2"), .tag = Str.of("!custom") },
+        .{ .kind = @backingInt(RowKind.mapping), .parent = no_node, .span = .{ .start = 0, .end = src.len } },
+        .{ .kind = @backingInt(RowKind.keyvalue), .parent = 0, .span = .{ .start = 0, .end = 4 } },
+        .{ .kind = @backingInt(RowKind.string), .parent = 1, .span = .{ .start = 0, .end = 1 }, .text = Str.of("a") },
+        .{ .kind = @backingInt(RowKind.int), .parent = 1, .span = .{ .start = 3, .end = 4 }, .text = Str.of("1"), .tag = Str.of("!!int") },
+        .{ .kind = @backingInt(RowKind.keyvalue), .parent = 0, .span = .{ .start = 5, .end = 9 } },
+        .{ .kind = @backingInt(RowKind.string), .parent = 4, .span = .{ .start = 5, .end = 6 }, .text = Str.of("b") },
+        .{ .kind = @backingInt(RowKind.int), .parent = 4, .span = .{ .start = 8, .end = 9 }, .text = Str.of("2"), .tag = Str.of("!custom") },
     };
     const table: NodeTable = .{ .rows = &rows, .row_count = rows.len };
     const doc = try tableToDocument(testing.allocator, src, &table);
@@ -2045,7 +2047,7 @@ test "a tag directive travels with the rows, and only a whole document's print g
     // to write back; a fragment (a splice's text) has no directives prefix.
     const src = "%TAG !e! tag:x/\n---\n!e!foo bar\n";
     const rows = [_]NodeRow{
-        .{ .kind = @intFromEnum(RowKind.string), .parent = no_node, .span = .{ .start = 20, .end = 29 }, .text = Str.of("bar"), .tag = Str.of("!e!foo") },
+        .{ .kind = @backingInt(RowKind.string), .parent = no_node, .span = .{ .start = 20, .end = 29 }, .text = Str.of("bar"), .tag = Str.of("!e!foo") },
     };
     const directives = [_]DirectiveRow{.{ .handle = Str.of("!e!"), .prefix = Str.of("tag:x/") }};
     const table: NodeTable = .{ .rows = &rows, .row_count = rows.len, .directives = &directives, .directive_count = 1 };
@@ -2071,21 +2073,21 @@ test "a malformed table is refused, not read" {
     const src = "x";
     // A child before its parent.
     var rows = [_]NodeRow{
-        .{ .kind = @intFromEnum(RowKind.sequence), .parent = no_node, .span = .{ .start = 0, .end = 1 } },
-        .{ .kind = @intFromEnum(RowKind.string), .parent = 2, .span = .{ .start = 0, .end = 1 }, .text = Str.of("x") },
-        .{ .kind = @intFromEnum(RowKind.string), .parent = 0, .span = .{ .start = 0, .end = 1 }, .text = Str.of("x") },
+        .{ .kind = @backingInt(RowKind.sequence), .parent = no_node, .span = .{ .start = 0, .end = 1 } },
+        .{ .kind = @backingInt(RowKind.string), .parent = 2, .span = .{ .start = 0, .end = 1 }, .text = Str.of("x") },
+        .{ .kind = @backingInt(RowKind.string), .parent = 0, .span = .{ .start = 0, .end = 1 }, .text = Str.of("x") },
     };
     var table: NodeTable = .{ .rows = &rows, .row_count = rows.len };
     try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &table));
     // A mapping child that is not a keyvalue.
-    rows[0].kind = @intFromEnum(RowKind.mapping);
+    rows[0].kind = @backingInt(RowKind.mapping);
     rows[1].parent = 0;
     try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &table));
     // An unknown kind.
     rows[0].kind = 99;
     try testing.expectError(error.UnknownKind, tableToDocument(testing.allocator, src, &table));
     // A row with no span.
-    rows[0].kind = @intFromEnum(RowKind.sequence);
+    rows[0].kind = @backingInt(RowKind.sequence);
     rows[1].span = .none;
     try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &table));
 }
@@ -2113,7 +2115,7 @@ const TinyKv = struct {
         const src = input.slice() orelse "";
         var rows: std.ArrayList(NodeRow) = .empty;
         var comments: std.ArrayList(CommentRow) = .empty;
-        rows.append(a.allocator, .{ .kind = @intFromEnum(RowKind.mapping), .parent = no_node, .span = .{ .start = 0, .end = src.len } }) catch return 255;
+        rows.append(a.allocator, .{ .kind = @backingInt(RowKind.mapping), .parent = no_node, .span = .{ .start = 0, .end = src.len } }) catch return 255;
         var pending: std.ArrayList(Str) = .empty;
         defer pending.deinit(a.allocator);
         var at: usize = 0;
@@ -2137,10 +2139,10 @@ const TinyKv = struct {
                 return 2;
             };
             const kv: u32 = @intCast(rows.items.len);
-            rows.append(a.allocator, .{ .kind = @intFromEnum(RowKind.keyvalue), .parent = 0, .span = .{ .start = at, .end = nl }, .sep = .{ .start = at + eq, .end = at + eq + 1 } }) catch return 255;
+            rows.append(a.allocator, .{ .kind = @backingInt(RowKind.keyvalue), .parent = 0, .span = .{ .start = at, .end = nl }, .sep = .{ .start = at + eq, .end = at + eq + 1 } }) catch return 255;
             const key: u32 = @intCast(rows.items.len);
-            rows.append(a.allocator, .{ .kind = @intFromEnum(RowKind.string), .parent = kv, .span = .{ .start = at, .end = at + eq }, .text = Str.of(line[0..eq]) }) catch return 255;
-            rows.append(a.allocator, .{ .kind = @intFromEnum(RowKind.string), .parent = kv, .span = .{ .start = at + eq + 1, .end = nl }, .text = Str.of(line[eq + 1 ..]) }) catch return 255;
+            rows.append(a.allocator, .{ .kind = @backingInt(RowKind.string), .parent = kv, .span = .{ .start = at, .end = at + eq }, .text = Str.of(line[0..eq]) }) catch return 255;
+            rows.append(a.allocator, .{ .kind = @backingInt(RowKind.string), .parent = kv, .span = .{ .start = at + eq + 1, .end = nl }, .text = Str.of(line[eq + 1 ..]) }) catch return 255;
             for (pending.items) |c| comments.append(a.allocator, .{ .node = key, .slot = comment_leading, .style = 0, .text = c }) catch return 255;
             pending.clearRetainingCapacity();
             at = nl + 1;
@@ -2166,14 +2168,14 @@ const TinyKv = struct {
         var i: usize = 1;
         while (i < rows.len) {
             // A mapping is three rows per entry: keyvalue, key, value.
-            if (rows[i].kind != @intFromEnum(RowKind.keyvalue) or i + 2 >= rows.len) {
+            if (rows[i].kind != @backingInt(RowKind.keyvalue) or i + 2 >= rows.len) {
                 err.set("tinykv holds a flat string map");
                 buf.deinit(a.allocator);
                 return 4;
             }
             const key = rows[i + 1];
             const val = rows[i + 2];
-            if (key.kind != @intFromEnum(RowKind.string) or val.kind != @intFromEnum(RowKind.string)) {
+            if (key.kind != @backingInt(RowKind.string) or val.kind != @backingInt(RowKind.string)) {
                 err.set("tinykv holds a flat string map");
                 buf.deinit(a.allocator);
                 return 4;
@@ -2202,7 +2204,7 @@ const TinyKv = struct {
     }
 
     const syntax: SyntaxDesc = .{
-        .comments = .{ .style = @intFromEnum(manifest.CommentStyle.hash), .line = .{ .open = "#" }, .trailing = .{} },
+        .comments = .{ .style = @backingInt(manifest.CommentStyle.hash), .line = .{ .open = "#" }, .trailing = .{} },
         .kv_sep = "=",
         .empty_map_literal = "{}",
         .flow_containers = false,
@@ -2290,7 +2292,7 @@ const TinyList = struct {
             return 2;
         }
         var rows: std.ArrayList(NodeRow) = .empty;
-        rows.append(a.allocator, .{ .kind = @intFromEnum(RowKind.sequence), .parent = no_node, .span = .{ .start = 0, .end = body.len } }) catch return 255;
+        rows.append(a.allocator, .{ .kind = @backingInt(RowKind.sequence), .parent = no_node, .span = .{ .start = 0, .end = body.len } }) catch return 255;
         var at: usize = 1;
         while (at < body.len - 1) {
             if (body[at] == ' ' or body[at] == ',') {
@@ -2299,7 +2301,7 @@ const TinyList = struct {
             }
             var end = at;
             while (end < body.len - 1 and body[end] != ',' and body[end] != ' ') end += 1;
-            rows.append(a.allocator, .{ .kind = @intFromEnum(RowKind.string), .parent = 0, .span = .{ .start = at, .end = end }, .text = Str.of(body[at..end]) }) catch return 255;
+            rows.append(a.allocator, .{ .kind = @backingInt(RowKind.string), .parent = 0, .span = .{ .start = at, .end = end }, .text = Str.of(body[at..end]) }) catch return 255;
             at = end;
         }
         const r = rows.toOwnedSlice(a.allocator) catch return 255;
@@ -2320,7 +2322,7 @@ const TinyList = struct {
         var buf: std.ArrayList(u8) = .empty;
         buf.append(a.allocator, '[') catch return 255;
         for (rows[1..], 0..) |row, i| {
-            if (row.kind != @intFromEnum(RowKind.string)) {
+            if (row.kind != @backingInt(RowKind.string)) {
                 err.set("tinylist holds a flat list of words");
                 buf.deinit(a.allocator);
                 return 4;
@@ -2335,7 +2337,7 @@ const TinyList = struct {
     }
 
     const syntax: SyntaxDesc = .{
-        .comments = .{ .style = @intFromEnum(manifest.CommentStyle.hash), .line = .{}, .trailing = .{} },
+        .comments = .{ .style = @backingInt(manifest.CommentStyle.hash), .line = .{}, .trailing = .{} },
         // Never written — the format has no mapping — but a null needs a
         // `render_entry` beside it, and the list is what is under test.
         .kv_sep = ": ",
@@ -2399,7 +2401,7 @@ const TinyDeps = struct {
         const a: *Alloc = @ptrCast(@alignCast(ctx.?));
         const src = input.slice() orelse "";
         var rows: std.ArrayList(NodeRow) = .empty;
-        rows.append(a.allocator, .{ .kind = @intFromEnum(RowKind.mapping), .parent = no_node, .span = .{ .start = 0, .end = src.len } }) catch return 255;
+        rows.append(a.allocator, .{ .kind = @backingInt(RowKind.mapping), .parent = no_node, .span = .{ .start = 0, .end = src.len } }) catch return 255;
         var kv: ?u32 = null;
         var seq: ?u32 = null;
         var at: usize = 0;
@@ -2415,7 +2417,7 @@ const TinyDeps = struct {
                     return 2;
                 };
                 const item = CSpan{ .start = at + 2, .end = nl };
-                rows.append(a.allocator, .{ .kind = @intFromEnum(RowKind.string), .parent = q, .span = item, .text = Str.of(line[2..]), .marker = .{ .start = at, .end = at + 2 } }) catch return 255;
+                rows.append(a.allocator, .{ .kind = @backingInt(RowKind.string), .parent = q, .span = item, .text = Str.of(line[2..]), .marker = .{ .start = at, .end = at + 2 } }) catch return 255;
                 if (rows.items[q].span.start == rows.items[q].span.end) rows.items[q].span.start = at;
                 rows.items[q].span.end = nl;
                 rows.items[kv.?].span.end = nl;
@@ -2423,12 +2425,12 @@ const TinyDeps = struct {
             }
             const sp = std.mem.indexOfScalar(u8, line, ' ') orelse line.len;
             kv = @intCast(rows.items.len);
-            rows.append(a.allocator, .{ .kind = @intFromEnum(RowKind.keyvalue), .parent = 0, .span = .{ .start = at, .end = nl } }) catch return 255;
-            rows.append(a.allocator, .{ .kind = @intFromEnum(RowKind.string), .parent = kv.?, .span = .{ .start = at, .end = at + sp }, .text = Str.of(line[0..sp]) }) catch return 255;
+            rows.append(a.allocator, .{ .kind = @backingInt(RowKind.keyvalue), .parent = 0, .span = .{ .start = at, .end = nl } }) catch return 255;
+            rows.append(a.allocator, .{ .kind = @backingInt(RowKind.string), .parent = kv.?, .span = .{ .start = at, .end = at + sp }, .text = Str.of(line[0..sp]) }) catch return 255;
             seq = @intCast(rows.items.len);
             const tag = std.mem.trim(u8, line[sp..], " ");
             rows.append(a.allocator, .{
-                .kind = @intFromEnum(RowKind.sequence),
+                .kind = @backingInt(RowKind.sequence),
                 .parent = kv.?,
                 .span = .{ .start = nl, .end = nl },
                 .tag = if (tag.len > 0) Str.of(tag) else .none,
@@ -2466,7 +2468,7 @@ const TinyDeps = struct {
     }
 
     const syntax: SyntaxDesc = .{
-        .comments = .{ .style = @intFromEnum(manifest.CommentStyle.hash), .line = .{}, .trailing = .{} },
+        .comments = .{ .style = @backingInt(manifest.CommentStyle.hash), .line = .{}, .trailing = .{} },
         .kv_sep = " ",
         .empty_map_literal = null,
         .flow_containers = false,
@@ -2658,7 +2660,7 @@ test "a capability or lossless bit this fig does not know is refused" {
 test "rows written at another stride are read as far as the stride says" {
     const Wide = extern struct { row: NodeRow, later: u64 };
     const rows = [_]Wide{
-        .{ .row = .{ .kind = @intFromEnum(RowKind.string), .parent = no_node, .span = .{ .start = 0, .end = 1 }, .text = Str.of("x") }, .later = 7 },
+        .{ .row = .{ .kind = @backingInt(RowKind.string), .parent = no_node, .span = .{ .start = 0, .end = 1 }, .text = Str.of("x") }, .later = 7 },
     };
     const wide: NodeTable = .{ .row_size = @sizeOf(Wide), .rows = @ptrCast(&rows), .row_count = 1 };
     var arena = std.heap.ArenaAllocator.init(testing.allocator);

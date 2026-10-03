@@ -70,7 +70,7 @@ pub fn run(
             // Synthesize the one every shell reports for it, so `fig schema`
             // and `fig-schema` are still indistinguishable to a caller
             // checking `$?`.
-            .signal, .stopped => |sig| process.exit(128 +| @as(u8, @truncate(@intFromEnum(sig)))),
+            .signal, .stopped => |sig| process.exit(128 +| @as(u8, @truncate(@backingInt(sig)))),
             .unknown => process.exit(1),
         }
     } else {

@@ -183,10 +183,10 @@ fn parseStruct(comptime T: type, allocator: std.mem.Allocator, ast: *const AST, 
         .mapping => |m| m,
         else => return error.UnexpectedType,
     };
-    const fields = @typeInfo(T).@"struct".fields;
+    const info = @typeInfo(T).@"struct";
 
     var result: T = undefined;
-    var seen = [_]bool{false} ** fields.len;
+    var seen: [info.field_names.len]bool = @splat(false);
 
     var cur = first;
     while (cur) |kvid| : (cur = ast.nodes[kvid].next_sibling) {
@@ -196,9 +196,9 @@ fn parseStruct(comptime T: type, allocator: std.mem.Allocator, ast: *const AST, 
             else => continue, // non-string keys can't name a Zig field
         };
         var matched = false;
-        inline for (fields, 0..) |field, i| {
-            if (!matched and std.mem.eql(u8, field.name, key)) {
-                @field(result, field.name) = try parseValue(field.type, allocator, ast, kv.value, options);
+        inline for (info.field_names, info.field_types, 0..) |field_name, FieldT, i| {
+            if (!matched and std.mem.eql(u8, field_name, key)) {
+                @field(result, field_name) = try parseValue(FieldT, allocator, ast, kv.value, options);
                 seen[i] = true;
                 matched = true;
             }
@@ -208,12 +208,12 @@ fn parseStruct(comptime T: type, allocator: std.mem.Allocator, ast: *const AST, 
 
     // Fill fields the mapping didn't provide: a default, else null for an
     // optional, else it's missing.
-    inline for (fields, 0..) |field, i| {
+    inline for (info.field_names, info.field_types, info.field_attrs, 0..) |field_name, FieldT, attrs, i| {
         if (!seen[i]) {
-            if (field.default_value_ptr) |ptr| {
-                @field(result, field.name) = @as(*const field.type, @ptrCast(@alignCast(ptr))).*;
-            } else if (@typeInfo(field.type) == .optional) {
-                @field(result, field.name) = null;
+            if (attrs.defaultValue(FieldT)) |default| {
+                @field(result, field_name) = default;
+            } else if (@typeInfo(FieldT) == .optional) {
+                @field(result, field_name) = null;
             } else {
                 return error.MissingField;
             }
@@ -232,7 +232,7 @@ fn parseSlice(comptime T: type, allocator: std.mem.Allocator, ast: *const AST, n
             .string => |str| str,
             else => return error.UnexpectedType,
         };
-        if (comptime ptr.sentinel_ptr != null) return allocator.dupeZ(u8, s);
+        if (comptime ptr.sentinel_ptr != null) return allocator.dupeSentinel(u8, s, 0);
         return allocator.dupe(u8, s);
     }
 

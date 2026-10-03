@@ -97,9 +97,9 @@ comptime {
             @compileError("`Spec." ++ d.name ++ "` is not the dialect type the format registry's" ++
                 " versions for '" ++ d.name ++ "' select");
     }
-    for (@typeInfo(Spec).@"struct".fields) |f| {
-        if (fig.Language.entryFor(f.name).specs.len == 0)
-            @compileError("`Spec` has the field '" ++ f.name ++ "', but the format registry lists no" ++
+    for (@typeInfo(Spec).@"struct".field_names) |f_name| {
+        if (fig.Language.entryFor(f_name).specs.len == 0)
+            @compileError("`Spec` has the field '" ++ f_name ++ "', but the format registry lists no" ++
                 " `--spec` versions for it — nothing would ever fill it");
     }
 }

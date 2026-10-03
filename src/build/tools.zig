@@ -47,8 +47,8 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
         }),
     });
     const vendor_rust_run = b.addRunArtifact(vendor_rust);
-    vendor_rust_run.addArg(b.pathFromRoot("."));
-    vendor_rust_run.addArg(b.pathFromRoot("bindings/rust/fig-sys/zig"));
+    vendor_rust_run.addDirectoryArg(b.path("."));
+    vendor_rust_run.addDirectoryArg(b.path("bindings/rust/fig-sys/zig"));
     const vendor_rust_step = b.step("vendor-rust", "Vendor the Zig source into the Rust crate for publishing");
     vendor_rust_step.dependOn(&vendor_rust_run.step);
 
@@ -59,8 +59,8 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     // far as a tagged release. Git state isn't a declared input, so it must not
     // be cached.
     const vendor_check_run = b.addRunArtifact(vendor_rust);
-    vendor_check_run.addArg(b.pathFromRoot("."));
-    vendor_check_run.addArg(b.pathFromRoot("bindings/rust/fig-sys/zig"));
+    vendor_check_run.addDirectoryArg(b.path("."));
+    vendor_check_run.addDirectoryArg(b.path("bindings/rust/fig-sys/zig"));
     vendor_check_run.addArg("--check");
     vendor_check_run.has_side_effects = true;
     const vendor_check_step = b.step("vendor-check", "Fail if a path the published crate needs (or build.zig.zon's .paths promises) is missing");
@@ -79,7 +79,7 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
         }),
     });
     const gen_yaml_run = b.addRunArtifact(gen_yaml);
-    if (b.args) |args| gen_yaml_run.addArgs(args);
+    gen_yaml_run.addPassthruArgs();
     const gen_yaml_step = b.step("gen-yaml-conformance", "Regenerate the YAML conformance corpus");
     gen_yaml_step.dependOn(&gen_yaml_run.step);
 
@@ -96,7 +96,7 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
         }),
     });
     const check_trees_run = b.addRunArtifact(check_trees);
-    if (b.args) |args| check_trees_run.addArgs(args);
+    check_trees_run.addPassthruArgs();
     const check_trees_step = b.step("check-yaml-trees", "Structural-diff fig's parse vs the suite tree");
     check_trees_step.dependOn(&check_trees_run.step);
 
@@ -112,7 +112,7 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
         }),
     });
     const gen_toml_run = b.addRunArtifact(gen_toml);
-    if (b.args) |args| gen_toml_run.addArgs(args);
+    gen_toml_run.addPassthruArgs();
     const gen_toml_step = b.step("gen-toml-conformance", "Vendor the toml-test corpus");
     gen_toml_step.dependOn(&gen_toml_run.step);
 
@@ -128,7 +128,7 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
         }),
     });
     const gen_json5_run = b.addRunArtifact(gen_json5);
-    if (b.args) |args| gen_json5_run.addArgs(args);
+    gen_json5_run.addPassthruArgs();
     const gen_json5_step = b.step("gen-json5-conformance", "Vendor the json5-tests corpus");
     gen_json5_step.dependOn(&gen_json5_run.step);
 
@@ -151,13 +151,13 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
         }),
     });
     const version_sync_run = b.addRunArtifact(version_sync);
-    version_sync_run.addArg(b.pathFromRoot("."));
+    version_sync_run.addDirectoryArg(b.path("."));
     version_sync_run.has_side_effects = true;
     const version_sync_step = b.step("version-sync", "Copy build.zig.zon's version into every file that carries it");
     version_sync_step.dependOn(&version_sync_run.step);
 
     const version_check_run = b.addRunArtifact(version_sync);
-    version_check_run.addArg(b.pathFromRoot("."));
+    version_check_run.addDirectoryArg(b.path("."));
     version_check_run.addArg("--check");
     version_check_run.has_side_effects = true;
     const version_check_step = b.step("version-check", "Fail if a file that carries fig's version disagrees with build.zig.zon");
@@ -186,14 +186,14 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     });
     const sync_figl_run = b.addRunArtifact(sync_figl);
     sync_figl_run.addArtifactArg(exe);
-    sync_figl_run.addArg(b.pathFromRoot("."));
+    sync_figl_run.addDirectoryArg(b.path("."));
     sync_figl_run.has_side_effects = true;
     const sync_figl_step = b.step("sync-figl", "Regenerate build.zig.zon + the .github/ and .tangled/ workflow files from their .figl sources");
     sync_figl_step.dependOn(&sync_figl_run.step);
 
     const check_figl_run = b.addRunArtifact(sync_figl);
     check_figl_run.addArtifactArg(exe);
-    check_figl_run.addArg(b.pathFromRoot("."));
+    check_figl_run.addDirectoryArg(b.path("."));
     check_figl_run.addArg("--check");
     check_figl_run.has_side_effects = true;
     const check_figl_step = b.step("check-figl", "Fail if build.zig.zon / the .github/ and .tangled/ workflow files are stale relative to their .figl sources");
@@ -229,8 +229,8 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     });
     const validate_check_run = b.addRunArtifact(validate_check);
     validate_check_run.addArg(b.graph.zig_exe);
-    validate_check_run.addArg(b.pathFromRoot("."));
-    validate_check_run.addArg(b.pathFromRoot(".zig-cache/validate-check"));
+    validate_check_run.addDirectoryArg(b.path("."));
+    validate_check_run.addDirectoryArg(b.path(".zig-cache/validate-check"));
     validate_check_run.has_side_effects = true;
     const validate_check_step = b.step("validate-check", "Assert language.validate REJECTS malformed Language manifests (compile-failure cases)");
     validate_check_step.dependOn(&validate_check_run.step);

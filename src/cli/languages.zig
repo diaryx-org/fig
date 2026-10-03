@@ -318,8 +318,8 @@ pub fn standIn(f: Format) Format {
 /// out that content sniffing tries (`fig.Language.detect`), so it is
 /// registered to be tried. Nothing, in a build that compiles them all in.
 pub fn registerStandIns() void {
-    inline for (@typeInfo(fig.Language.Detected).@"enum".fields) |f| {
-        if (comptime fig.Language.entryFor(f.name).Lang == void) _ = standIn(@field(Format, f.name));
+    inline for (@typeInfo(fig.Language.Detected).@"enum".field_names) |f_name| {
+        if (comptime fig.Language.entryFor(f_name).Lang == void) _ = standIn(@field(Format, f_name));
     }
 }
 

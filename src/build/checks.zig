@@ -132,7 +132,7 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     // Cache-key on the header it inspects; the baseline comes from git at run time.
     semver_check_run.addFileArg(b.path("bindings/c/include/fig.h"));
     semver_check_run.addArg(b.fmt("{d}.{d}.{d}", .{ ver.version.major, ver.version.minor, ver.version.patch }));
-    semver_check_run.addArg(b.pathFromRoot("."));
+    semver_check_run.addDirectoryArg(b.path("."));
     // git state isn't a declared input, so never serve this from cache.
     semver_check_run.has_side_effects = true;
     const semver_check_step = b.step("semver-check", "Diff the C ABI vs the last release tag and verify the version bump");

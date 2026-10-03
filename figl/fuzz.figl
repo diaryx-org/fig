@@ -58,7 +58,7 @@ jobs.fuzz.steps[]
 > uses = actions/checkout@v7
 +
 > uses = mlugg/setup-zig@v2
-> with.version = 0.16.0
+> with.version = 0.17.0
 +
 > # Wall clock is the budget, so `timeout(1)` is what enforces it — NOT `--fuzz`.
 > # That needs explaining, because it looks like the long way round:

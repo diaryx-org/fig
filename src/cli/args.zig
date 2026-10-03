@@ -338,18 +338,18 @@ pub fn embedTypeFromName(name: []const u8) ?fig.Embed.Type {
     // registry entry's name, which is also the `InnerFormat` member name, so a
     // format that grows an embedded spelling arrives here with all of its
     // archetype names at once.
-    inline for (@typeInfo(fig.Embed.InnerFormat).@"enum".fields) |field| {
-        const f: fig.Embed.InnerFormat = @enumFromInt(field.value);
+    inline for (@typeInfo(fig.Embed.InnerFormat).@"enum".field_names, @typeInfo(fig.Embed.InnerFormat).@"enum".field_values) |field_name, field_value| {
+        const f: fig.Embed.InnerFormat = @fromBackingInt(@intCast(field_value));
         // `md-yaml` is deliberately not a spelling: a bare `---` block IS YAML
         // frontmatter, so it answers to `frontmatter`/`frontmatter-yaml` below
         // — which is what the `--help` prose documents and what `set`'s
         // open-or-init default resolves to.
-        if (comptime !eql(u8, field.name, "yaml")) {
-            if (eql(u8, name, "md-" ++ field.name)) return .{ .frontmatter = f };
+        if (comptime !eql(u8, field_name, "yaml")) {
+            if (eql(u8, name, "md-" ++ field_name)) return .{ .frontmatter = f };
         }
-        if (eql(u8, name, "fenced-" ++ field.name)) return .{ .fenced = f };
-        if (eql(u8, name, "html-script-" ++ field.name)) return .{ .html_script = f };
-        if (eql(u8, name, "html-code-" ++ field.name)) return .{ .html_code = f };
+        if (eql(u8, name, "fenced-" ++ field_name)) return .{ .fenced = f };
+        if (eql(u8, name, "html-script-" ++ field_name)) return .{ .html_script = f };
+        if (eql(u8, name, "html-code-" ++ field_name)) return .{ .html_code = f };
     }
 
     // The rest are not `<container>-<format>` pairs and do not derive: the
@@ -423,8 +423,8 @@ test "embedTypeName round-trips through embedTypeFromName" {
 /// parametric loop in `embedTypeFromName` spells, so it cannot fall behind it.
 pub const embed_archetype_names = blk: {
     var langs: []const u8 = "";
-    for (@typeInfo(fig.Embed.InnerFormat).@"enum".fields, 0..) |f, i|
-        langs = langs ++ (if (i == 0) "" else ", ") ++ f.name;
+    for (@typeInfo(fig.Embed.InnerFormat).@"enum".field_names, 0..) |f_name, i|
+        langs = langs ++ (if (i == 0) "" else ", ") ++ f_name;
     break :blk "frontmatter, semicolons (;;;), plus (+++), endmatter, " ++
         "md-<lang>, fenced-<lang>, html-script[-<lang>], html-code[-<lang>]; " ++
         "<lang> is one of " ++ langs ++ " (there is no md-yaml: that is `frontmatter`)";

@@ -160,7 +160,7 @@ fn failureOffset(resp: std.json.Value) usize {
 // ── description → vtable ───────────────────────────────────────────────────
 
 fn zstr(a: Allocator, s: []const u8) ![*:0]const u8 {
-    return (try a.dupeZ(u8, s)).ptr;
+    return (try a.dupeSentinel(u8, s, 0)).ptr;
 }
 
 fn optString(a: Allocator, obj: std.json.ObjectMap, key: []const u8) !?[*:0]const u8 {
@@ -179,8 +179,8 @@ fn boolOr(obj: std.json.ObjectMap, key: []const u8, default: bool) bool {
 fn enumOrdinal(comptime E: type, obj: std.json.ObjectMap, key: []const u8, default: c_int) c_int {
     const v = obj.get(key) orelse return default;
     if (v != .string) return default;
-    inline for (@typeInfo(E).@"enum".fields) |f| {
-        if (std.mem.eql(u8, f.name, v.string)) return @intCast(f.value);
+    inline for (@typeInfo(E).@"enum".field_names, @typeInfo(E).@"enum".field_values) |f_name, f_value| {
+        if (std.mem.eql(u8, f_name, v.string)) return @intCast(f_value);
     }
     return default;
 }
@@ -274,8 +274,8 @@ fn vtableFromDescription(a: Allocator, t: *Transport, desc: std.json.Value) !Run
     var lossless: u32 = 0;
     if (o.get("lossless")) |l| if (l == .object) {
         var kinds: manifest.NativeKinds = .{};
-        inline for (@typeInfo(manifest.NativeKinds).@"struct".fields) |f| {
-            @field(kinds, f.name) = boolOr(l.object, f.name, false);
+        inline for (@typeInfo(manifest.NativeKinds).@"struct".field_names) |f_name| {
+            @field(kinds, f_name) = boolOr(l.object, f_name, false);
         }
         lossless = Runtime.losslessBits(kinds);
     };
@@ -510,8 +510,8 @@ fn kindOf(name: []const u8) ?c_int {
 const ExtKind = AST.Node.Kind.Extended.ExtKind;
 
 fn extKindOf(name: []const u8) ?c_int {
-    inline for (@typeInfo(ExtKind).@"enum".fields) |f| {
-        if (std.mem.eql(u8, f.name, name)) return @intCast(f.value);
+    inline for (@typeInfo(ExtKind).@"enum".field_names, @typeInfo(ExtKind).@"enum".field_values) |f_name, f_value| {
+        if (std.mem.eql(u8, f_name, name)) return @intCast(f_value);
     }
     return null;
 }
@@ -660,7 +660,7 @@ pub fn tableToJson(w: *Io.Writer, t: *const Runtime.NodeTable) !void {
         const kind: usize = @intCast(r.kind);
         try w.print("{{\"kind\":\"{s}\"", .{if (kind < kind_names.len) kind_names[kind] else "null"});
         if (r.ext_kind != Runtime.no_ext_kind) {
-            const ek: ExtKind = @enumFromInt(r.ext_kind);
+            const ek: ExtKind = @fromBackingInt(@intCast(r.ext_kind));
             try w.print(",\"ext_kind\":\"{s}\"", .{@tagName(ek)});
         }
         if (r.parent == Runtime.no_node) try w.writeAll(",\"parent\":null") else try w.print(",\"parent\":{d}", .{r.parent});

@@ -219,12 +219,18 @@ pub const Diagnostic = struct {
 /// is a real (empty) type rather than omitted, so `Report`'s shape matches
 /// every other language's and the CLI's report-rendering glue
 /// (`main.zig`'s `renderAll`) needs no per-language special case.
+///
+/// `Code` names no member, but it is a non-exhaustive `enum(u0)` rather than
+/// the empty `enum {}`: Zig 0.17 treats a struct holding an uninhabited field
+/// as uninstantiable, and refuses to size the `ArrayList(Warning)` that
+/// `Parser.warnings` is. A `u0` has exactly one value, and nothing ever
+/// constructs it.
 pub const Warning = struct {
     code: Code,
     offset: usize,
     end: ?usize = null,
 
-    pub const Code = enum {};
+    pub const Code = enum(u0) { _ };
 
     pub fn describeWarning(code: Code) []const u8 {
         // `Code` is uninhabited (see its doc comment) — no value can ever

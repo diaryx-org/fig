@@ -803,7 +803,7 @@ pub const RenderRequest = struct {
 /// renderer spells it differently (plist's `<date>`). The tag names are the
 /// spelling on the runtime vtable and the helper wire.
 pub const Literal = enum {
-    @"null",
+    null,
     bool,
     int,
     float,
@@ -812,8 +812,8 @@ pub const Literal = enum {
 
     /// The literal named `name`, or null.
     pub fn parse(name: []const u8) ?Literal {
-        inline for (@typeInfo(Literal).@"enum".fields) |f| {
-            if (eql(f.name, name)) return @field(Literal, f.name);
+        inline for (@typeInfo(Literal).@"enum".field_names) |f_name| {
+            if (eql(f_name, name)) return @field(Literal, f_name);
         }
         return null;
     }

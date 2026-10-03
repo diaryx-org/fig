@@ -151,7 +151,7 @@ fn build_from_source(cargo_target: &str, cargo_host: &str) {
                  aarch64-apple-darwin, x86_64-unknown-linux-gnu, \
                  aarch64-unknown-linux-gnu, x86_64-pc-windows-msvc, \
                  wasm32-unknown-unknown.\n\
-                 Otherwise install Zig 0.16+ (https://ziglang.org/download/)."
+                 Otherwise install Zig 0.17+ (https://ziglang.org/download/)."
             )
         });
 

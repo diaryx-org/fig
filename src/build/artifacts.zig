@@ -118,7 +118,7 @@ pub fn add(ctx: Context) Result {
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/c_api.zig"),
             .target = wasm_target,
-            .optimize = .ReleaseSmall,
+            .optimize = .small,
             .strip = true,
         }),
     });
@@ -144,7 +144,7 @@ pub fn add(ctx: Context) Result {
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/cli/main.zig"),
             .target = wasi_target,
-            .optimize = .ReleaseSmall,
+            .optimize = .small,
             .strip = true,
             .imports = &.{
                 .{ .name = "fig", .module = wasi_mod },
@@ -167,9 +167,7 @@ pub fn add(ctx: Context) Result {
 
     run_cmd.step.dependOn(b.getInstallStep());
 
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    run_cmd.addPassthruArgs();
 
     return .{ .fig_mod = mod, .exe = exe, .c_lib = c_lib };
 }
@@ -186,9 +184,9 @@ pub fn add(ctx: Context) Result {
 /// two from drifting as `c_api.zig`'s build config changes.
 fn addCApiLibrary(
     b: *std.Build,
-    linkage: std.builtin.LinkMode,
+    linkage: std.lang.LinkMode,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     strip: bool,
     options_mod: *std.Build.Module,
 ) *std.Build.Step.Compile {

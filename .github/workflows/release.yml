@@ -46,7 +46,7 @@ jobs:
     # build.rs compiles the core, and `vendor-rust` bundles the Zig source into
     # the published crate.
     - uses: mlugg/setup-zig@v2
-      with: { version: 0.16.0 }
+      with: { version: 0.17.0 }
     # Stable, which is the toolchain cargo-semver-checks actually supports — see
     # ci.figl's `rust-semver` job for why this is no longer a dated nightly pin.
     # It is also the toolchain the rest of this job (test/vendor/publish) wants,

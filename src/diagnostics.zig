@@ -837,4 +837,3 @@ test "firstDropped tells a null from a container" {
     try testing.expectEqual(@as(?Dropped, .null_), try firstDropped(arena, &ast, ast.root, .{ .compiled = .toml }, 1));
     try testing.expectEqual(@as(?Dropped, null), try firstDropped(arena, &ast, ast.root, .{ .compiled = .yaml }, 1));
 }
-

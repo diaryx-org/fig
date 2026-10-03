@@ -34,7 +34,7 @@ jobs:
     steps:
     - uses: actions/checkout@v7
     - uses: mlugg/setup-zig@v2
-      with: { version: 0.16.0 }
+      with: { version: 0.17.0 }
     - name: Build Windows x86_64
       run: |
         zig build -Doptimize=ReleaseFast -Dstrip=true -Dtarget=x86_64-windows --prefix zig-out/windows-x64

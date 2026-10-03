@@ -69,10 +69,10 @@ pub fn parse(allocator: std.mem.Allocator, input: []const u8, format: Type) Erro
 
     // `std.zig.Ast.parse` requires a null-terminated source. The dup is byte
     // identical to `input`, so all token offsets line up with `input`.
-    const sentinel = try allocator.dupeZ(u8, input);
+    const sentinel = try allocator.dupeSentinel(u8, input, 0);
     defer allocator.free(sentinel);
 
-    var tree = try Ast.parse(allocator, sentinel, .zon);
+    var tree = try Ast.parse(allocator, sentinel, .{ .mode = .zon });
     defer tree.deinit(allocator);
     if (tree.errors.len > 0) return error.InvalidZon;
 
@@ -316,7 +316,7 @@ fn stringLiteral(self: *Parser, node: Ast.Node.Index) Error!AST.Node.Id {
     // Let stdlib decode escapes and join multiline `\\` lines for us.
     var aw: std.Io.Writer.Allocating = .init(self.allocator);
     errdefer aw.deinit();
-    const result = std.zig.ZonGen.parseStrLit(self.tree.*, node, &aw.writer) catch
+    const result = std.zig.ZonGen.parseStrLit(self.tree, node, &aw.writer) catch
         return error.OutOfMemory;
     switch (result) {
         .success => {},

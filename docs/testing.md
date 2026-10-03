@@ -231,20 +231,6 @@ indistinguishable from a clean run, since both end at the budget. Zig 0.16's
 fuzzer has no per-input timeout. Crashes, leaks and broken invariants are
 caught; hangs are not.
 
-## The vendored test runner
-
-`tools/fuzz_test_runner.zig` is a copy of Zig 0.16.0's own test runner with a
-one-line fix. It exists because **`zig build test --fuzz` does not compile on
-Zig 0.16.0** — the stock runner's fuzz path calls `std.debug.writeStackTrace`
-with the result of `@errorReturnTrace()`, and those are different types. It is
-upstream's bug and it hits every 0.16.0 project that tries to fuzz; it survived
-upstream CI because that path is only analyzed under `-ffuzz`.
-
-It is scoped to the `fuzz` step alone. `test`, `conformance` and `check` all use
-the stock runner, so a stale copy can never compromise the release gate — the
-worst it can do is break `zig build fuzz`. **Delete it** once a Zig release
-fixes this; the file's header says how to check and what else to remove.
-
 ## Adding a target
 
 Add it to `src/fuzz.zig` next to the two there; `root.zig` already imports the

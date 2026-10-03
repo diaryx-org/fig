@@ -109,20 +109,20 @@ pub fn isUnrepresentable(native: NativeKinds, kind: AST.Node.Kind) bool {
 // extended scalar cannot be added without every format being asked whether it
 // holds it, and a stale field cannot outlive the kind it described.
 comptime {
-    const fields = @typeInfo(NativeKinds).@"struct".fields;
-    const ext = @typeInfo(ExtKind).@"enum".fields;
+    const fields = @typeInfo(NativeKinds).@"struct".field_names;
+    const ext = @typeInfo(ExtKind).@"enum".field_names;
     if (fields.len != ext.len + 1)
         @compileError("manifest.NativeKinds must have exactly one field per ExtKind member plus `null`");
     if (!@hasField(NativeKinds, "null"))
         @compileError("manifest.NativeKinds must have a `null` field");
     for (ext) |e| {
-        if (!@hasField(NativeKinds, e.name))
-            @compileError("ExtKind." ++ e.name ++ " has no `manifest.NativeKinds` field — every format" ++
+        if (!@hasField(NativeKinds, e))
+            @compileError("ExtKind." ++ e ++ " has no `manifest.NativeKinds` field — every format" ++
                 " must be able to say whether it holds the new scalar natively");
     }
-    for (fields) |f| {
-        if (f.type != bool)
-            @compileError("manifest.NativeKinds." ++ f.name ++ " must be a bool");
+    for (fields, @typeInfo(NativeKinds).@"struct".field_types) |name, T| {
+        if (T != bool)
+            @compileError("manifest.NativeKinds." ++ name ++ " must be a bool");
     }
 }
 
@@ -760,8 +760,8 @@ test "declared native kinds reproduce the pre-declaration envelope table" {
         try testing.expectEqual(r.unrepresentable, isUnrepresentable(r.native, r.kind));
     }
     // JSON and YAML: every extended kind is enveloped, none is dropped.
-    inline for (@typeInfo(ExtKind).@"enum".fields) |f| {
-        const k = ext.of(@field(ExtKind, f.name));
+    inline for (@typeInfo(ExtKind).@"enum".field_names) |f_name| {
+        const k = ext.of(@field(ExtKind, f_name));
         try testing.expect(needsEnvelope(json_native, k));
         try testing.expect(needsEnvelope(yaml_native, k));
         try testing.expect(!isUnrepresentable(json_native, k));
@@ -792,7 +792,7 @@ test "nativeFor reproduces the pre-declaration targetFor table" {
         .{ .fmt = .nestedtext, .native = null },
     };
     // Every member is listed, so a new format has to say what it wants here.
-    try testing.expectEqual(@typeInfo(AST.SerializeFormat).@"enum".fields.len, table.len);
+    try testing.expectEqual(@typeInfo(AST.SerializeFormat).@"enum".field_names.len, table.len);
     for (table) |e| {
         try testing.expectEqual(e.native, nativeFor(e.fmt));
     }

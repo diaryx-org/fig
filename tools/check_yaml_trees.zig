@@ -168,13 +168,7 @@ fn normalizeSuiteTree(arena: std.mem.Allocator, tree: []const u8) ![]const u8 {
         const line = std.mem.trim(u8, raw, " ");
         if (line.len == 0) continue;
         const tok: ?[]const u8 =
-            if (std.mem.startsWith(u8, line, "+SEQ")) "["
-            else if (std.mem.startsWith(u8, line, "-SEQ")) "]"
-            else if (std.mem.startsWith(u8, line, "+MAP")) "{"
-            else if (std.mem.startsWith(u8, line, "-MAP")) "}"
-            else if (std.mem.startsWith(u8, line, "=VAL")) "S"
-            else if (std.mem.startsWith(u8, line, "=ALI")) "S"
-            else null; // +STR/-STR/+DOC/-DOC and anything else: dropped
+            if (std.mem.startsWith(u8, line, "+SEQ")) "[" else if (std.mem.startsWith(u8, line, "-SEQ")) "]" else if (std.mem.startsWith(u8, line, "+MAP")) "{" else if (std.mem.startsWith(u8, line, "-MAP")) "}" else if (std.mem.startsWith(u8, line, "=VAL")) "S" else if (std.mem.startsWith(u8, line, "=ALI")) "S" else null; // +STR/-STR/+DOC/-DOC and anything else: dropped
         if (tok) |t| {
             if (out.items.len > 0) try out.append(arena, ' ');
             try out.appendSlice(arena, t);

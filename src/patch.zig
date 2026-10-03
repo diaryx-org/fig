@@ -805,4 +805,3 @@ test "a patch value the target cannot hold where it lands is refused, not splice
     defer t.allocator.free(out);
     try t.expectEqualStrings("a=1\nb=2\n", out);
 }
-

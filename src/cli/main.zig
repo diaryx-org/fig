@@ -143,8 +143,8 @@ pub fn main(init: std.process.Init) !void {
         ArgError.UnsupportedFileFormat => {
             try stderr_terminal.writer.print("Try using `--input <format>` to manually specify a format.\n", .{});
             comptime var supported_formats: []const u8 = "";
-            inline for (@typeInfo(types.Format).@"enum".fields) |field|
-                supported_formats = supported_formats ++ std.fmt.comptimePrint("\n- {s}", .{field.name});
+            inline for (@typeInfo(types.Format).@"enum".field_names) |field_name|
+                supported_formats = supported_formats ++ std.fmt.comptimePrint("\n- {s}", .{field_name});
             try stderr_terminal.writer.print("Supported formats:{s}\n", .{supported_formats});
             // And the languages a `languages.figl` configures, by name only —
             // listing is not the moment to spawn each one.

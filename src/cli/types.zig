@@ -51,12 +51,12 @@ pub const runtime_base: u16 = @intCast(fig.Language.runtime_abi_base);
 
 /// The `Format` naming the registry entry `e`.
 pub fn runtimeFormat(e: *const fig.Runtime.Entry) Format {
-    return @enumFromInt(runtime_base + e.index);
+    return @fromBackingInt(@intCast(runtime_base + e.index));
 }
 
 /// The registry entry `f` names, or null for a compiled format.
 pub fn runtimeEntry(f: Format) ?*const fig.Runtime.Entry {
-    const v = @intFromEnum(f);
+    const v = @backingInt(f);
     if (v < runtime_base) return null;
     return fig.Runtime.entryAt(v - runtime_base);
 }
@@ -95,9 +95,9 @@ const format_names = blk: {
 // `canonical` belongs beside `zon` and `gron` beside `fig` rather than merely
 // somewhere — so that is what is left to check, plus the removal of `yml`.
 comptime {
-    if (@intFromEnum(Format.canonical) != @intFromEnum(Format.zon) + 1)
+    if (@backingInt(Format.canonical) != @backingInt(Format.zon) + 1)
         @compileError("cli.Format's `canonical` no longer sits directly after `zon`");
-    if (@intFromEnum(Format.gron) != @intFromEnum(Format.fig) + 1)
+    if (@backingInt(Format.gron) != @backingInt(Format.fig) + 1)
         @compileError("cli.Format's `gron` no longer sits directly after `fig`");
     if (@hasField(Format, "yml"))
         @compileError("`yml` is an accepted SPELLING of `yaml` (see `args.parseFormatName`)," ++

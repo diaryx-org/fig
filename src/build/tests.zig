@@ -140,14 +140,9 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     //      lovely locally (live coverage view) and a hang in CI, which is why
     //      .github/workflows/fuzz.yml always passes an explicit `=<n>`.
     //
-    // The vendored `.test_runner` is a temporary workaround for an upstream Zig
-    // 0.16.0 bug that makes `--fuzz` fail to compile; tools/fuzz_test_runner.zig
-    // explains it in full and says how to delete it. Scoping it to this one
-    // artifact is deliberate: `test`, `conformance` and `check` all keep the
-    // stock runner, so a stale vendored copy can never silently compromise the
-    // release gate — the worst it can do is break `zig build fuzz`.
-    // `.mode` must be `.server`: the build system drives fuzzing over
-    // `std.zig.Server`, and a `.simple` runner reports "no fuzz tests found".
+    // This uses the stock test runner. Zig 0.16.0 needed a vendored, patched
+    // copy here because its runner's fuzz path did not compile; 0.17.0 fixed
+    // that upstream, and the copy went with the move to 0.17.
     const fuzz_tests = b.addTest(.{
         .root_module = mod,
         // Default to the src/fuzz.zig targets rather than the whole suite — under
@@ -155,7 +150,6 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
         // instrumentation for nothing. An explicit `-Dtest-filter` still wins, so
         // a single target can be driven on its own while working on a parser.
         .filters = if (test_filters.len > 0) test_filters else &.{"fuzz"},
-        .test_runner = .{ .path = b.path("tools/fuzz_test_runner.zig"), .mode = .server },
     });
     const run_fuzz_tests = b.addRunArtifact(fuzz_tests);
 

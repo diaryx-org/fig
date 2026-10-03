@@ -379,7 +379,7 @@ are missing.
 
 Zig has no conditional container-level declarations. `usingnamespace` was the
 only mechanism that ever provided them, and it was removed in 0.15;
-[build.zig.zon][zon_manifest] pins `minimum_zig_version = "0.16.0"`, where the
+[build.zig.zon][zon_manifest] pins `minimum_zig_version = "0.17.0"`, where the
 keyword no longer parses. The nearest workaround is a namespace field —
 
 ```zig

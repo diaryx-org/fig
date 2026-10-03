@@ -195,12 +195,12 @@ fn Entry(comptime L: type) type {
 fn lift(comptime d: anytype, comptime G: type) Entry(G) {
     comptime {
         var out: Entry(G) = undefined;
-        for (@typeInfo(Entry(G)).@"struct".fields) |f| {
-            if (std.mem.eql(u8, f.name, "Lang")) {
+        for (@typeInfo(Entry(G)).@"struct".field_names) |f_name| {
+            if (std.mem.eql(u8, f_name, "Lang")) {
                 out.Lang = G;
-            } else if (std.mem.eql(u8, f.name, "dialect")) {
+            } else if (std.mem.eql(u8, f_name, "dialect")) {
                 out.dialect = if (G == void) {} else d.dialect;
-            } else if (std.mem.eql(u8, f.name, "specs")) {
+            } else if (std.mem.eql(u8, f_name, "specs")) {
                 var specs: []const SpecName(G) = &.{};
                 for (d.specs) |sp| {
                     specs = specs ++ [_]SpecName(G){.{
@@ -210,7 +210,7 @@ fn lift(comptime d: anytype, comptime G: type) Entry(G) {
                 }
                 out.specs = specs;
             } else {
-                @field(out, f.name) = @field(d, f.name);
+                @field(out, f_name) = @field(d, f_name);
             }
         }
         return out;
@@ -261,9 +261,9 @@ const entry_types: []const type = blk: {
 /// gron is a CLI-only projection of JSON. Both stay explicit named arms at
 /// every switch, which is also what keeps an exhaustive switch honest — a new
 /// member has to be either a registry entry or one of those two.
-pub const dialects: std.meta.Tuple(entry_types) = blk: {
+pub const dialects: @Tuple(entry_types) = blk: {
     @setEvalBranchQuota(20_000);
-    var out: std.meta.Tuple(entry_types) = undefined;
+    var out: @Tuple(entry_types) = undefined;
     var i: usize = 0;
     for (slots) |slot| {
         for (slot.mod.Language.dialects) |d| {
@@ -360,7 +360,7 @@ pub fn namesWith(comptime sel: Selector, comptime extras: []const Extra) []const
     comptime {
         @setEvalBranchQuota(20_000);
         var out: []const [:0]const u8 = &.{};
-        var placed = [_]bool{false} ** extras.len;
+        var placed: [extras.len]bool = @splat(false);
         for (namesOf(sel)) |n| {
             out = out ++ [_][:0]const u8{n};
             for (extras, 0..) |x, xi| {
@@ -439,23 +439,23 @@ pub fn assertDerivedEnum(
 ) void {
     comptime {
         @setEvalBranchQuota(20_000);
-        var seen_extra = [_]bool{false} ** extra.len;
+        var seen_extra: [extra.len]bool = @splat(false);
         var i: usize = 0;
-        for (@typeInfo(E).@"enum".fields) |f| {
+        for (@typeInfo(E).@"enum".field_names) |f_name| {
             var is_extra = false;
             for (extra, 0..) |x, xi| {
-                if (std.mem.eql(u8, x, f.name)) {
+                if (std.mem.eql(u8, x, f_name)) {
                     seen_extra[xi] = true;
                     is_extra = true;
                 }
             }
             if (is_extra) continue;
             if (i == want.len)
-                @compileError(what ++ " has the member '" ++ f.name ++ "' after the last" ++
+                @compileError(what ++ " has the member '" ++ f_name ++ "' after the last" ++
                     " registry entry — add it to `language.zig`'s `dialects`, or declare it" ++
                     " a deliberate non-registry member at this assert");
-            if (!std.mem.eql(u8, want[i], f.name))
-                @compileError(what ++ " member '" ++ f.name ++ "' sits where registry entry '" ++
+            if (!std.mem.eql(u8, want[i], f_name))
+                @compileError(what ++ " member '" ++ f_name ++ "' sits where registry entry '" ++
                     want[i] ++ "' does — the registry's ORDER is the member order every" ++
                     " derived enum inherits, so the two cannot diverge");
             i += 1;
@@ -960,10 +960,10 @@ pub fn validate(comptime Lang: type) void {
         // declarations, so a format's private helpers — the
         // `const edit = @import("editor_helper.zig")` a renderers block opens
         // with — are invisible here and need no exemption.
-        for (@typeInfo(Lang).@"struct".decls) |d| {
-            if (Decls.known(d.name)) continue;
-            @compileError("Language '" ++ Lang.name ++ "' declares unknown '" ++ d.name ++ "'" ++
-                if (Decls.nearest(d.name)) |near|
+        for (@typeInfo(Lang).@"struct".decl_names) |d_name| {
+            if (Decls.known(d_name)) continue;
+            @compileError("Language '" ++ Lang.name ++ "' declares unknown '" ++ d_name ++ "'" ++
+                if (Decls.nearest(d_name)) |near|
                     " — did you mean '" ++ near ++ "'?"
                 else
                     ". A fragment renderer must be one of `Decls.renderers` in language.zig;" ++

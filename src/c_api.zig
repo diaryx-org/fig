@@ -147,7 +147,7 @@ comptime {
             @compileError("ABI value " ++ std.fmt.comptimePrint("{d}", .{r[1]}) ++
                 " is retired (it was '" ++ r[0] ++ "') and cannot be given to '" ++ p[0] ++ "'");
     }
-    if (@typeInfo(FigFormat).@"enum".fields.len != pinned.len)
+    if (@typeInfo(FigFormat).@"enum".field_names.len != pinned.len)
         @compileError("`FigFormat` no longer has exactly " ++
             std.fmt.comptimePrint("{d}", .{pinned.len}) ++ " members — a format added to the" ++
             " registry is a new C ABI value, so it must be added to this pin (and to fig.h) too");
@@ -167,7 +167,7 @@ comptime {
         if (!@hasField(FigFormat, p[0]))
             @compileError("`FigFormat` has no member '" ++ p[0] ++
                 "' — a released ABI member cannot be renamed or dropped");
-        const got = @intFromEnum(@field(FigFormat, p[0]));
+        const got = @backingInt(@field(FigFormat, p[0]));
         if (got != p[1])
             @compileError("`FigFormat." ++ p[0] ++ "` is " ++
                 std.fmt.comptimePrint("{d}", .{got}) ++ " but the released C ABI says " ++
@@ -333,10 +333,10 @@ pub export fn fig_format_by_name(name: ?[*:0]const u8) c_int {
 
 fn capsBits(caps: Languages.Caps) u32 {
     var bits: u32 = 0;
-    if (caps.read) bits |= @intFromEnum(FigCapability.read);
-    if (caps.edit) bits |= @intFromEnum(FigCapability.edit);
-    if (caps.serialize) bits |= @intFromEnum(FigCapability.serialize);
-    if (caps.references) bits |= @intFromEnum(FigCapability.references);
+    if (caps.read) bits |= @backingInt(FigCapability.read);
+    if (caps.edit) bits |= @backingInt(FigCapability.edit);
+    if (caps.serialize) bits |= @backingInt(FigCapability.serialize);
+    if (caps.references) bits |= @backingInt(FigCapability.references);
     return bits;
 }
 
@@ -362,10 +362,10 @@ fn capsBits(caps: Languages.Caps) u32 {
 fn capsOf(comptime Lang: type) u32 {
     if (Lang == void) return 0;
     var bits: u32 = 0;
-    if (Lang.caps.read) bits |= @intFromEnum(FigCapability.read);
-    if (Lang.caps.edit) bits |= @intFromEnum(FigCapability.edit);
-    if (Lang.caps.serialize) bits |= @intFromEnum(FigCapability.serialize);
-    if (Lang.caps.references) bits |= @intFromEnum(FigCapability.references);
+    if (Lang.caps.read) bits |= @backingInt(FigCapability.read);
+    if (Lang.caps.edit) bits |= @backingInt(FigCapability.edit);
+    if (Lang.caps.serialize) bits |= @backingInt(FigCapability.serialize);
+    if (Lang.caps.references) bits |= @backingInt(FigCapability.references);
     return bits;
 }
 
@@ -469,7 +469,7 @@ fn errCovers(size: u32, comptime field: []const u8) bool {
 pub fn fillError(out_err: ?*FigError, status: FigStatus, message: []const u8) FigStatus {
     const e = out_err orelse return status;
     const size = e.size;
-    if (errCovers(size, "code")) e.code = @intFromEnum(status);
+    if (errCovers(size, "code")) e.code = @backingInt(status);
     if (errCovers(size, "byte_offset")) e.byte_offset = 0;
     if (errCovers(size, "line")) e.line = 0;
     if (errCovers(size, "column")) e.column = 0;
@@ -518,7 +518,7 @@ pub export fn fig_parse_ex(
     const runtime_entry = runtimeOf(format);
     const fig_format = if (runtime_entry != null)
         // Any member: `handle.format` is not read for a runtime document.
-        @as(FigFormat, @enumFromInt(format_abi_values[0]))
+        @as(FigFormat, @fromBackingInt(@intCast(format_abi_values[0])))
     else
         std.enums.fromInt(FigFormat, format) orelse
             return fillError(out_err, .unsupported_format, "unsupported or unknown format");
@@ -661,7 +661,7 @@ pub export fn fig_document_root(doc: ?*const FigDocument) FigNodeId {
 /// A `FigNodeKind` value, as the `int` fig.h returns so that a binding
 /// never decodes a kind a later fig adds into a closed enum.
 pub export fn fig_node_kind(doc: ?*const FigDocument, node: FigNodeId) c_int {
-    return @intFromEnum(nodeKind(doc, node));
+    return @backingInt(nodeKind(doc, node));
 }
 
 fn nodeKind(doc: ?*const FigDocument, node: FigNodeId) FigNodeKind {
@@ -819,7 +819,7 @@ pub export fn fig_node_extended(
     const n = nodeAt(doc, node) orelse return false;
     switch (n.kind) {
         .extended => |ext| {
-            k.* = @intFromEnum(figExtKindOf(ext.kind));
+            k.* = @backingInt(figExtKindOf(ext.kind));
             p.* = ext.text.ptr;
             l.* = ext.text.len;
             return true;
@@ -1044,7 +1044,7 @@ const EditorUnion = blk: {
     var names: [n][:0]const u8 = undefined;
     var types: [n]type = undefined;
     var values: [n]IntTag = undefined;
-    var attrs: [n]std.builtin.Type.UnionField.Attributes = undefined;
+    var attrs: [n]std.lang.Type.Union.FieldAttributes = undefined;
     for (editor_variants, 0..) |v, i| {
         names[i] = v.name;
         types[i] = Editor(v.Lang);
@@ -2025,8 +2025,8 @@ pub export fn fig_embed_detect(
     const input = sliceOf(input_ptr, input_len) orelse return .invalid_argument;
     const t = Embed.detect(input) orelse return .not_found;
     const pair = figEmbedPairOf(t);
-    out_c.* = @intFromEnum(pair.container);
-    out_f.* = @intFromEnum(pair.format);
+    out_c.* = @backingInt(pair.container);
+    out_f.* = @backingInt(pair.format);
     return .ok;
 }
 
@@ -2897,15 +2897,15 @@ fn valueFrom(value: ?*FigValue) ?*ValueHandle {
 
 fn extKindOf(kind: c_int) ?AST.Node.Kind.Extended.ExtKind {
     return switch (kind) {
-        @intFromEnum(FigExtKind.offset_datetime) => .offset_datetime,
-        @intFromEnum(FigExtKind.local_datetime) => .local_datetime,
-        @intFromEnum(FigExtKind.local_date) => .local_date,
-        @intFromEnum(FigExtKind.local_time) => .local_time,
-        @intFromEnum(FigExtKind.enum_literal) => .enum_literal,
-        @intFromEnum(FigExtKind.char_literal) => .char_literal,
-        @intFromEnum(FigExtKind.number_special) => .number_special,
-        @intFromEnum(FigExtKind.plist_date) => .plist_date,
-        @intFromEnum(FigExtKind.plist_data) => .plist_data,
+        @backingInt(FigExtKind.offset_datetime) => .offset_datetime,
+        @backingInt(FigExtKind.local_datetime) => .local_datetime,
+        @backingInt(FigExtKind.local_date) => .local_date,
+        @backingInt(FigExtKind.local_time) => .local_time,
+        @backingInt(FigExtKind.enum_literal) => .enum_literal,
+        @backingInt(FigExtKind.char_literal) => .char_literal,
+        @backingInt(FigExtKind.number_special) => .number_special,
+        @backingInt(FigExtKind.plist_date) => .plist_date,
+        @backingInt(FigExtKind.plist_data) => .plist_data,
         else => null,
     };
 }
@@ -3483,7 +3483,7 @@ fn writeWarning(out: *FigWarning, w: Diagnostics.Warning) void {
 }
 
 fn warningCodeInt(code: Diagnostics.Warning.Code) c_int {
-    return @intFromEnum(@as(FigWarningCode, switch (code) {
+    return @backingInt(@as(FigWarningCode, switch (code) {
         .comment_dropped => .comment_dropped,
         .comment_style_degraded => .comment_style_degraded,
         .value_dropped => .value_dropped,
@@ -3492,7 +3492,7 @@ fn warningCodeInt(code: Diagnostics.Warning.Code) c_int {
 }
 
 fn warningCauseInt(cause: Diagnostics.Warning.Cause) c_int {
-    return @intFromEnum(@as(FigWarningCause, switch (cause) {
+    return @backingInt(@as(FigWarningCause, switch (cause) {
         .format_limitation => .format_limitation,
         .explicit_option => .explicit_option,
     }));
@@ -3600,18 +3600,18 @@ test "traversal over a parsed mapping" {
     const src = "title: Hello\ncount: 42\ntags:\n- a\n- b\n";
 
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.yaml), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.yaml), &out_doc));
     defer fig_document_destroy(out_doc);
 
     const doc: ?*const FigDocument = out_doc;
     const root = fig_document_root(doc);
     try std.testing.expect(root != fig_node_none);
-    try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.mapping)), fig_node_kind(doc, root));
+    try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.mapping)), fig_node_kind(doc, root));
     try std.testing.expectEqual(@as(usize, 3), fig_node_child_count(doc, root));
 
     // First entry: title -> "Hello"
     const first = fig_node_first_child(doc, root);
-    try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.keyvalue)), fig_node_kind(doc, first));
+    try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.keyvalue)), fig_node_kind(doc, first));
     const key = fig_keyvalue_key(doc, first);
     const val = fig_keyvalue_value(doc, first);
 
@@ -3625,14 +3625,14 @@ test "traversal over a parsed mapping" {
     // Second entry: count -> 42 (integer)
     const second = fig_node_next_sibling(doc, first);
     const count_val = fig_keyvalue_value(doc, second);
-    try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.int)), fig_node_kind(doc, count_val));
+    try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.int)), fig_node_kind(doc, count_val));
     try std.testing.expect(fig_node_number(doc, count_val, &ptr, &len));
     try std.testing.expectEqualStrings("42", ptr[0..len]);
 
     // Third entry: tags -> [a, b]
     const third = fig_node_next_sibling(doc, second);
     const tags_val = fig_keyvalue_value(doc, third);
-    try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.sequence)), fig_node_kind(doc, tags_val));
+    try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.sequence)), fig_node_kind(doc, tags_val));
     try std.testing.expectEqual(@as(usize, 2), fig_node_child_count(doc, tags_val));
 }
 
@@ -3642,30 +3642,30 @@ test "fig_document_diagnose reports a dropped null for TOML" {
     const src = "a: null\nb: 1\n";
 
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.yaml), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.yaml), &out_doc));
     defer fig_document_destroy(out_doc);
 
     var count: usize = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_document_diagnose(out_doc, @intFromEnum(FigFormat.toml), null, &count));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_diagnose(out_doc, @backingInt(FigFormat.toml), null, &count));
     try std.testing.expectEqual(@as(usize, 1), count);
     var w: FigWarning = undefined;
     w.size = @sizeOf(FigWarning);
     try std.testing.expectEqual(FigStatus.ok, fig_document_warning(out_doc, 0, &w));
-    try std.testing.expectEqual(@intFromEnum(FigWarningCode.value_dropped), w.code);
-    try std.testing.expectEqual(@intFromEnum(FigWarningCause.format_limitation), w.cause);
+    try std.testing.expectEqual(@backingInt(FigWarningCode.value_dropped), w.code);
+    try std.testing.expectEqual(@backingInt(FigWarningCause.format_limitation), w.cause);
     try std.testing.expectEqualStrings("a", w.path[0..w.path_len]);
     // An out-of-range index is rejected.
     try std.testing.expectEqual(FigStatus.invalid_argument, fig_document_warning(out_doc, 1, &w));
 
     // Lossless preserves the null → no warnings.
     var opts: FigSerializeOptions = .{ .lossless = 1 };
-    try std.testing.expectEqual(FigStatus.ok, fig_document_diagnose(out_doc, @intFromEnum(FigFormat.toml), &opts, &count));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_diagnose(out_doc, @backingInt(FigFormat.toml), &opts, &count));
     try std.testing.expectEqual(@as(usize, 0), count);
     // With nothing reported, even index 0 is out of range.
     try std.testing.expectEqual(FigStatus.invalid_argument, fig_document_warning(out_doc, 0, &w));
 
     // A representable target loses nothing.
-    try std.testing.expectEqual(FigStatus.ok, fig_document_diagnose(out_doc, @intFromEnum(FigFormat.json), null, &count));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_diagnose(out_doc, @backingInt(FigFormat.json), null, &count));
     try std.testing.expectEqual(@as(usize, 0), count);
 }
 
@@ -3677,20 +3677,20 @@ test "fig_value_diagnose reports a degraded datetime" {
 
     const ts = "1979-05-27T07:32:00Z";
     var dt: FigNodeId = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_value_extended(v, @intFromEnum(FigExtKind.offset_datetime), ts.ptr, ts.len, &dt));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_extended(v, @backingInt(FigExtKind.offset_datetime), ts.ptr, ts.len, &dt));
 
     var count: usize = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_value_diagnose(v, dt, @intFromEnum(FigFormat.json), null, &count));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_diagnose(v, dt, @backingInt(FigFormat.json), null, &count));
     try std.testing.expectEqual(@as(usize, 1), count);
     var w: FigWarning = undefined;
     w.size = @sizeOf(FigWarning);
     try std.testing.expectEqual(FigStatus.ok, fig_value_warning(v, 0, &w));
-    try std.testing.expectEqual(@intFromEnum(FigWarningCode.type_degraded), w.code);
+    try std.testing.expectEqual(@backingInt(FigWarningCode.type_degraded), w.code);
     try std.testing.expectEqualStrings("string", w.note[0..w.note_len]);
 
     // TOML holds datetimes natively → no warning.
     if (comptime build_options.lang_toml) {
-        try std.testing.expectEqual(FigStatus.ok, fig_value_diagnose(v, dt, @intFromEnum(FigFormat.toml), null, &count));
+        try std.testing.expectEqual(FigStatus.ok, fig_value_diagnose(v, dt, @backingInt(FigFormat.toml), null, &count));
         try std.testing.expectEqual(@as(usize, 0), count);
     }
 }
@@ -3703,10 +3703,10 @@ test "fig_value_warning honors a truncated (size-gated) FigWarning" {
 
     const ts = "1979-05-27T07:32:00Z";
     var dt: FigNodeId = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_value_extended(v, @intFromEnum(FigExtKind.offset_datetime), ts.ptr, ts.len, &dt));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_extended(v, @backingInt(FigExtKind.offset_datetime), ts.ptr, ts.len, &dt));
 
     var count: usize = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_value_diagnose(v, dt, @intFromEnum(FigFormat.json), null, &count));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_diagnose(v, dt, @backingInt(FigFormat.json), null, &count));
     try std.testing.expectEqual(@as(usize, 1), count);
 
     // A caller whose layout stops after `cause` (an older/smaller struct) gets
@@ -3716,7 +3716,7 @@ test "fig_value_warning honors a truncated (size-gated) FigWarning" {
     w.path = null;
     w.path_len = 12345;
     try std.testing.expectEqual(FigStatus.ok, fig_value_warning(v, 0, &w));
-    try std.testing.expectEqual(@intFromEnum(FigWarningCode.type_degraded), w.code);
+    try std.testing.expectEqual(@backingInt(FigWarningCode.type_degraded), w.code);
     try std.testing.expectEqual(@as(usize, 12345), w.path_len); // beyond `size`: untouched
 }
 
@@ -3728,7 +3728,7 @@ test "fig_parse_ex fills FigError on a parse failure" {
     var out_doc: ?*FigDocument = null;
     try std.testing.expectEqual(
         FigStatus.parse_error,
-        fig_parse_ex(bad.ptr, bad.len, @intFromEnum(FigFormat.json), &out_doc, null),
+        fig_parse_ex(bad.ptr, bad.len, @backingInt(FigFormat.json), &out_doc, null),
     );
     try std.testing.expectEqual(@as(?*FigDocument, null), out_doc);
 
@@ -3738,9 +3738,9 @@ test "fig_parse_ex fills FigError on a parse failure" {
     err.size = @sizeOf(FigError);
     try std.testing.expectEqual(
         FigStatus.parse_error,
-        fig_parse_ex(bad.ptr, bad.len, @intFromEnum(FigFormat.json), &out_doc, &err),
+        fig_parse_ex(bad.ptr, bad.len, @backingInt(FigFormat.json), &out_doc, &err),
     );
-    try std.testing.expectEqual(@intFromEnum(FigStatus.parse_error), err.code);
+    try std.testing.expectEqual(@backingInt(FigStatus.parse_error), err.code);
     try std.testing.expect(err.message_len > 0);
     try std.testing.expectEqual(@as(u8, 0), err.message[err.message_len]); // NUL-terminated
     try std.testing.expectEqual(@as(usize, 0), err.byte_offset);
@@ -3752,7 +3752,7 @@ test "fig_parse_ex fills FigError on a parse failure" {
         FigStatus.unsupported_format,
         fig_parse_ex(bad.ptr, bad.len, 0xBEEF, &out_doc, &err),
     );
-    try std.testing.expectEqual(@intFromEnum(FigStatus.unsupported_format), err.code);
+    try std.testing.expectEqual(@backingInt(FigStatus.unsupported_format), err.code);
 }
 
 test "fig_parse_ex honors a truncated (size-gated) FigError" {
@@ -3768,9 +3768,9 @@ test "fig_parse_ex honors a truncated (size-gated) FigError" {
     var out_doc: ?*FigDocument = null;
     try std.testing.expectEqual(
         FigStatus.parse_error,
-        fig_parse_ex(bad.ptr, bad.len, @intFromEnum(FigFormat.json), &out_doc, &err),
+        fig_parse_ex(bad.ptr, bad.len, @backingInt(FigFormat.json), &out_doc, &err),
     );
-    try std.testing.expectEqual(@intFromEnum(FigStatus.parse_error), err.code);
+    try std.testing.expectEqual(@backingInt(FigStatus.parse_error), err.code);
     try std.testing.expectEqual(@as(usize, 999), err.message_len); // beyond `size`: untouched
 }
 
@@ -3782,7 +3782,7 @@ test "fig_parse_ex leaves out_doc null and succeeds on a valid parse" {
     err.size = @sizeOf(FigError);
     try std.testing.expectEqual(
         FigStatus.ok,
-        fig_parse_ex(src.ptr, src.len, @intFromEnum(FigFormat.json), &out_doc, &err),
+        fig_parse_ex(src.ptr, src.len, @backingInt(FigFormat.json), &out_doc, &err),
     );
     defer fig_document_destroy(out_doc);
     try std.testing.expect(out_doc != null);
@@ -3795,7 +3795,7 @@ test "a compiled-out format is unsupported in serialize and diagnose alike" {
 
     const src = "{\"a\": 1}"; // JSON is always compiled in, so the parse succeeds.
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.json), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.json), &out_doc));
     defer fig_document_destroy(out_doc);
 
     // Serialize rejects the gated-out target...
@@ -3803,7 +3803,7 @@ test "a compiled-out format is unsupported in serialize and diagnose alike" {
     var len: usize = undefined;
     try std.testing.expectEqual(
         FigStatus.unsupported_format,
-        fig_document_serialize(out_doc, @intFromEnum(FigFormat.toml), null, &ptr, &len),
+        fig_document_serialize(out_doc, @backingInt(FigFormat.toml), null, &ptr, &len),
     );
 
     // ...and diagnose agrees, instead of silently accepting it. The count is
@@ -3811,12 +3811,12 @@ test "a compiled-out format is unsupported in serialize and diagnose alike" {
     var count: usize = 999;
     try std.testing.expectEqual(
         FigStatus.unsupported_format,
-        fig_document_diagnose(out_doc, @intFromEnum(FigFormat.toml), null, &count),
+        fig_document_diagnose(out_doc, @backingInt(FigFormat.toml), null, &count),
     );
     try std.testing.expectEqual(@as(usize, 0), count);
 
     // Capabilities report the same verdict: nothing for a compiled-out format.
-    try std.testing.expectEqual(@as(u32, 0), fig_format_capabilities(@intFromEnum(FigFormat.toml)));
+    try std.testing.expectEqual(@as(u32, 0), fig_format_capabilities(@backingInt(FigFormat.toml)));
 }
 
 test "parse c abi reads toml and zon" {
@@ -3825,20 +3825,20 @@ test "parse c abi reads toml and zon" {
     {
         var out_doc: ?*FigDocument = null;
         const src = "name = \"fig\"\ncount = 42\n";
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.toml), &out_doc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.toml), &out_doc));
         defer fig_document_destroy(out_doc);
         const root = fig_document_root(out_doc);
-        try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.mapping)), fig_node_kind(out_doc, root));
+        try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.mapping)), fig_node_kind(out_doc, root));
         try std.testing.expectEqual(@as(usize, 2), fig_node_child_count(out_doc, root));
     }
     // ZON
     {
         var out_doc: ?*FigDocument = null;
         const src = ".{ .name = \"fig\", .count = 42 }";
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.zon), &out_doc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.zon), &out_doc));
         defer fig_document_destroy(out_doc);
         const root = fig_document_root(out_doc);
-        try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.mapping)), fig_node_kind(out_doc, root));
+        try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.mapping)), fig_node_kind(out_doc, root));
     }
 }
 
@@ -3851,14 +3851,14 @@ test "parse c abi reads json5 and rejects it under strict json" {
     const src = "{\n  // c\n  host: 'localhost',\n  port: 8080,\n}\n";
 
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.json5), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.json5), &out_doc));
     defer fig_document_destroy(out_doc);
     const root = fig_document_root(out_doc);
-    try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.mapping)), fig_node_kind(out_doc, root));
+    try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.mapping)), fig_node_kind(out_doc, root));
     try std.testing.expectEqual(@as(usize, 2), fig_node_child_count(out_doc, root));
 
     var strict_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.parse_error, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.json), &strict_doc));
+    try std.testing.expectEqual(FigStatus.parse_error, fig_parse(src.ptr, src.len, @backingInt(FigFormat.json), &strict_doc));
 }
 
 test "fig_node_extended recovers datetime and char-literal scalars" {
@@ -3872,12 +3872,12 @@ test "fig_node_extended recovers datetime and char-literal scalars" {
     {
         var out_doc: ?*FigDocument = null;
         const src = "d = 2026-06-18\n";
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.toml), &out_doc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.toml), &out_doc));
         defer fig_document_destroy(out_doc);
         const val = fig_keyvalue_value(out_doc, fig_node_first_child(out_doc, fig_document_root(out_doc)));
-        try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.extended)), fig_node_kind(out_doc, val));
+        try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.extended)), fig_node_kind(out_doc, val));
         try std.testing.expect(fig_node_extended(out_doc, val, &kind, &ptr, &len));
-        try std.testing.expectEqual(@intFromEnum(FigExtKind.local_date), kind);
+        try std.testing.expectEqual(@backingInt(FigExtKind.local_date), kind);
         try std.testing.expectEqualStrings("2026-06-18", ptr[0..len]);
     }
 
@@ -3885,12 +3885,12 @@ test "fig_node_extended recovers datetime and char-literal scalars" {
     {
         var out_doc: ?*FigDocument = null;
         const src = ".{ .c = 'a' }";
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.zon), &out_doc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.zon), &out_doc));
         defer fig_document_destroy(out_doc);
         const val = fig_keyvalue_value(out_doc, fig_node_first_child(out_doc, fig_document_root(out_doc)));
-        try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.extended)), fig_node_kind(out_doc, val));
+        try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.extended)), fig_node_kind(out_doc, val));
         try std.testing.expect(fig_node_extended(out_doc, val, &kind, &ptr, &len));
-        try std.testing.expectEqual(@intFromEnum(FigExtKind.char_literal), kind);
+        try std.testing.expectEqual(@backingInt(FigExtKind.char_literal), kind);
         try std.testing.expectEqualStrings("97", ptr[0..len]);
     }
 
@@ -3898,7 +3898,7 @@ test "fig_node_extended recovers datetime and char-literal scalars" {
     {
         var out_doc: ?*FigDocument = null;
         const src = "s = \"hi\"\n";
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.toml), &out_doc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.toml), &out_doc));
         defer fig_document_destroy(out_doc);
         const val = fig_keyvalue_value(out_doc, fig_node_first_child(out_doc, fig_document_root(out_doc)));
         try std.testing.expect(!fig_node_extended(out_doc, val, &kind, &ptr, &len));
@@ -3913,7 +3913,7 @@ test "editor c abi insert + source round-trip" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const src = "a: 1\nb: 2\n";
     var out_ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.yaml), &out_ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.yaml), &out_ed));
     defer fig_editor_destroy(out_ed);
 
     const c = "c";
@@ -3930,7 +3930,7 @@ test "editor c abi accepts empty input as an empty document" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     var out_ed: ?*FigEditor = null;
     // Null pointer + zero length is a valid empty document.
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(null, 0, @intFromEnum(FigFormat.yaml), &out_ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(null, 0, @backingInt(FigFormat.yaml), &out_ed));
     defer fig_editor_destroy(out_ed);
 
     const k = "k";
@@ -3947,7 +3947,7 @@ test "toml editor c abi insert + replace + delete round-trip" {
     if (comptime !build_options.lang_toml) return error.SkipZigTest;
     const src = "[server]\nhost = \"a\"\nport = 1\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
     defer fig_editor_destroy(ed);
 
     // Insert a key into the [server] table (lands at the end of the table region).
@@ -3975,7 +3975,7 @@ test "toml editor c abi add leading comment uses the # marker" {
     if (comptime !build_options.lang_toml) return error.SkipZigTest;
     const src = "a = 1\nb = 2\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
     defer fig_editor_destroy(ed);
 
     const b = [_]FigPathSegment{keySeg("b")};
@@ -3992,7 +3992,7 @@ test "toml editor c abi maps a shape-mismatch edit to invalid_argument" {
     if (comptime !build_options.lang_toml) return error.SkipZigTest;
     const src = "a = 1\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
     defer fig_editor_destroy(ed);
 
     // Inserting a key that already exists rolls back with error.DuplicateKey,
@@ -4013,7 +4013,7 @@ test "yaml editor c abi refuses inserting a key that already exists" {
     // leave `a: 1\na: 2\n`; the engine refuses it now, by name or by syntax.
     const src = "a: 1\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.yaml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.yaml), &ed));
     defer fig_editor_destroy(ed);
     const a = "a";
     const two = "2";
@@ -4029,7 +4029,7 @@ test "frontmatter c abi preserves fences and body" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntitle: Hi\n# keep\ntags:\n- x\n---\n# Body\ntext\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const author = "author";
@@ -4057,7 +4057,7 @@ test "frontmatter c abi reorder keys preserves comments, fences, body" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntitle: Hi\n# keep\ntags:\n- x\nauthor: me\n---\n# Body\ntext\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const keys = [_]FigStr{ figStr("author"), figStr("title") };
@@ -4076,7 +4076,7 @@ test "frontmatter c abi move key preserves fences and body" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\na: 1\nb: 2\nc: 3\n---\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const src = [_]FigPathSegment{keySeg("c")};
@@ -4093,7 +4093,7 @@ test "frontmatter c abi reorder items in a block sequence value" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntags:\n- x\n- y\n- z\n---\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const path = [_]FigPathSegment{keySeg("tags")};
@@ -4110,7 +4110,7 @@ test "frontmatter c abi move item in a flow sequence value" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntags: [x, y, z]\n---\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const path = [_]FigPathSegment{keySeg("tags")};
@@ -4130,10 +4130,10 @@ test "fig_embed_retype re-houses a block, keeping every host byte" {
     try std.testing.expectEqual(FigStatus.ok, fig_embed_retype(
         md.ptr,
         md.len,
-        @intFromEnum(FigEmbedContainer.md_frontmatter),
-        @intFromEnum(FigFormat.yaml),
-        @intFromEnum(FigEmbedContainer.semicolons_json),
-        @intFromEnum(FigFormat.json),
+        @backingInt(FigEmbedContainer.md_frontmatter),
+        @backingInt(FigFormat.yaml),
+        @backingInt(FigEmbedContainer.semicolons_json),
+        @backingInt(FigFormat.json),
         content.ptr,
         content.len,
         &ptr,
@@ -4152,10 +4152,10 @@ test "fig_embed_retype refuses to move a mid-document block to an edge" {
     try std.testing.expectEqual(FigStatus.unsupported_operation, fig_embed_retype(
         html.ptr,
         html.len,
-        @intFromEnum(FigEmbedContainer.html_script),
-        @intFromEnum(FigFormat.yaml),
-        @intFromEnum(FigEmbedContainer.md_frontmatter),
-        @intFromEnum(FigFormat.yaml),
+        @backingInt(FigEmbedContainer.html_script),
+        @backingInt(FigFormat.yaml),
+        @backingInt(FigEmbedContainer.md_frontmatter),
+        @backingInt(FigFormat.yaml),
         content.ptr,
         content.len,
         &ptr,
@@ -4165,10 +4165,10 @@ test "fig_embed_retype refuses to move a mid-document block to an edge" {
     try std.testing.expectEqual(FigStatus.ok, fig_embed_retype(
         html.ptr,
         html.len,
-        @intFromEnum(FigEmbedContainer.html_script),
-        @intFromEnum(FigFormat.yaml),
-        @intFromEnum(FigEmbedContainer.html_code),
-        @intFromEnum(FigFormat.yaml),
+        @backingInt(FigEmbedContainer.html_script),
+        @backingInt(FigFormat.yaml),
+        @backingInt(FigEmbedContainer.html_code),
+        @backingInt(FigFormat.yaml),
         content.ptr,
         content.len,
         &ptr,
@@ -4185,9 +4185,9 @@ test "fig_embed_retype reports a missing or unterminated region" {
     var ptr: [*]u8 = undefined;
     var len: usize = undefined;
     const plain = "# just markdown\n";
-    try std.testing.expectEqual(FigStatus.not_found, fig_embed_retype(plain.ptr, plain.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), @intFromEnum(FigEmbedContainer.plus_toml), @intFromEnum(FigFormat.toml), "", 0, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.not_found, fig_embed_retype(plain.ptr, plain.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), @backingInt(FigEmbedContainer.plus_toml), @backingInt(FigFormat.toml), "", 0, &ptr, &len));
     const unterminated = "---\nk: v\nno close\n";
-    try std.testing.expectEqual(FigStatus.parse_error, fig_embed_retype(unterminated.ptr, unterminated.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), @intFromEnum(FigEmbedContainer.plus_toml), @intFromEnum(FigFormat.toml), "", 0, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.parse_error, fig_embed_retype(unterminated.ptr, unterminated.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), @backingInt(FigEmbedContainer.plus_toml), @backingInt(FigFormat.toml), "", 0, &ptr, &len));
     // Null out params are rejected, not crashed on.
     try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_retype(plain.ptr, plain.len, 0, 0, 0, 0, "", 0, null, &len));
 }
@@ -4195,7 +4195,7 @@ test "fig_embed_retype reports a missing or unterminated region" {
 test "embed c abi locates region with content and body spans" {
     const md = "---\nk: v\n---\nbody\n";
     var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined, .body_before = undefined, .body_after = undefined };
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &region));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &region));
     try std.testing.expectEqualStrings("k: v\n", md[region.content.start..region.content.end]);
     // The body is the suffix after the close fence.
     try std.testing.expectEqualStrings("body\n", md[region.body.start..region.body.end]);
@@ -4205,7 +4205,7 @@ test "embed c abi locates a ```fig fenced frontmatter block (extract-only)" {
     if (comptime !build_options.lang_fig) return error.SkipZigTest;
     const md = "```fig\nk = v\n```\nbody\n";
     var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined, .body_before = undefined, .body_after = undefined };
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @intFromEnum(FigEmbedContainer.fenced), @intFromEnum(FigFormat.fig), &region));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @backingInt(FigEmbedContainer.fenced), @backingInt(FigFormat.fig), &region));
     try std.testing.expectEqualStrings("k = v\n", md[region.content.start..region.content.end]);
     try std.testing.expectEqualStrings("body\n", md[region.body.start..region.body.end]);
 }
@@ -4230,8 +4230,8 @@ test "embed c abi detects each archetype by its open delimiter" {
         var out_c: c_int = -1;
         var out_f: c_int = -1;
         try std.testing.expectEqual(FigStatus.ok, fig_embed_detect(case.src.ptr, case.src.len, &out_c, &out_f));
-        try std.testing.expectEqual(@intFromEnum(case.container), out_c);
-        try std.testing.expectEqual(@intFromEnum(case.format), out_f);
+        try std.testing.expectEqual(@backingInt(case.container), out_c);
+        try std.testing.expectEqual(@backingInt(case.format), out_f);
     }
 }
 
@@ -4240,12 +4240,12 @@ test "embed c abi refuses a pair the model cannot spell" {
     var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined, .body_before = undefined, .body_after = undefined };
     // A format with no embedded spelling, an unknown format, an unknown
     // container: each is a malformed selector, not a missing region.
-    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_extract(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.ini), &region));
-    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_extract(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), 6, &region));
-    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_extract(md.ptr, md.len, 99, @intFromEnum(FigFormat.yaml), &region));
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_extract(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.ini), &region));
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_extract(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), 6, &region));
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_extract(md.ptr, md.len, 99, @backingInt(FigFormat.yaml), &region));
     // A preset ignores the format argument — even a nonsense one.
     const jf = ";;;\n{\"k\": 1}\n;;;\nbody\n";
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(jf.ptr, jf.len, @intFromEnum(FigEmbedContainer.semicolons_json), -1, &region));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(jf.ptr, jf.len, @backingInt(FigEmbedContainer.semicolons_json), -1, &region));
     try std.testing.expectEqualStrings("{\"k\": 1}\n", jf[region.content.start..region.content.end]);
 }
 
@@ -4261,8 +4261,8 @@ test "embed c abi detect: not_found leaves out untouched; unterminated still det
     // the follow-up extract reports the real error rather than not_found.
     const unterminated = "---\nk: v\nno close\n";
     try std.testing.expectEqual(FigStatus.ok, fig_embed_detect(unterminated.ptr, unterminated.len, &out_c, &out_f));
-    try std.testing.expectEqual(@intFromEnum(FigEmbedContainer.md_frontmatter), out_c);
-    try std.testing.expectEqual(@intFromEnum(FigFormat.yaml), out_f);
+    try std.testing.expectEqual(@backingInt(FigEmbedContainer.md_frontmatter), out_c);
+    try std.testing.expectEqual(@backingInt(FigFormat.yaml), out_f);
     var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined, .body_before = undefined, .body_after = undefined };
     try std.testing.expectEqual(FigStatus.parse_error, fig_embed_extract(unterminated.ptr, unterminated.len, out_c, out_f, &region));
     // A null out param is invalid, not a crash — either of them.
@@ -4274,7 +4274,7 @@ test "embed c abi fig_embed_open edits a ```fig fenced frontmatter block" {
     if (comptime !build_options.lang_fig) return error.SkipZigTest;
     const md = "```fig\nk = v\n```\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedContainer.fenced), @intFromEnum(FigFormat.fig), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.fenced), @backingInt(FigFormat.fig), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const path = [_]FigPathSegment{keySeg("k")};
@@ -4291,7 +4291,7 @@ test "embed c abi edits a <code> block span-aware (untouched entity encoding pre
     // Mixed original encodings: `expr` uses numeric &#60;, `note` uses named &lt;.
     const html = "<pre><code class=\"language-figl\">\nexpr = \"a &#60; b\"\nnote = \"x &lt; y\"\n</code></pre>\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(html.ptr, html.len, @intFromEnum(FigEmbedContainer.html_code), @intFromEnum(FigFormat.fig), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(html.ptr, html.len, @backingInt(FigEmbedContainer.html_code), @backingInt(FigFormat.fig), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     // Edit `expr` to a quoted value containing `>` — it must canonically re-encode.
@@ -4317,7 +4317,7 @@ test "embed c abi fig_embed_set splices a block map into a ```fig fence" {
     // per-key flow inserts).
     const md = "```fig\ntitle = hi\n```\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedContainer.fenced), @intFromEnum(FigFormat.fig), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.fenced), @backingInt(FigFormat.fig), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const path = [_]FigPathSegment{keySeg("registry")};
@@ -4343,7 +4343,7 @@ test "embed c abi region size-gate leaves uncovered fields untouched" {
         .body_before = .{ .start = 555, .end = 666 },
         .body_after = .{ .start = 777, .end = 888 },
     };
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &region));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &region));
     try std.testing.expectEqualStrings("k: v\n", md[region.content.start..region.content.end]);
     try std.testing.expectEqual(@as(usize, 111), region.close_fence.start);
     try std.testing.expectEqual(@as(usize, 333), region.body.start);
@@ -4356,7 +4356,7 @@ test "fig_embed_replace_body swaps the body, keeps fences + edited content" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntitle: Hi\n---\nold body\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     var ptr: [*c]const u8 = undefined;
@@ -4381,7 +4381,7 @@ test "fig_embed_replace_body refuses a mid-document block, which has no one body
     // Host text on both sides: swapping the side after the block lost `</head>`.
     const html = "<head>\n<script type=\"application/yaml\">\nk: v\n</script>\n</head>\n";
     var em: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(html.ptr, html.len, @intFromEnum(FigEmbedContainer.html_script), @intFromEnum(FigFormat.yaml), &em));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(html.ptr, html.len, @backingInt(FigEmbedContainer.html_script), @backingInt(FigFormat.yaml), &em));
     defer fig_embed_destroy(em);
     const body = "NEW\n";
     try std.testing.expectEqual(FigStatus.unsupported_operation, fig_embed_replace_body(em, body.ptr, body.len));
@@ -4395,7 +4395,7 @@ test "fig_embed_open_or_init creates a frontmatter block where none exists" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "# Just a body\n\nprose\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &out_fm));
     defer fig_embed_destroy(out_fm);
     // The synthesized block is empty; the first set lands the opening key.
     const title = [_]FigPathSegment{keySeg("title")};
@@ -4411,7 +4411,7 @@ test "fig_embed_open_or_init opens an existing region unchanged" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntitle: Old # c\n---\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @intFromEnum(FigEmbedContainer.md_frontmatter), @intFromEnum(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &out_fm));
     defer fig_embed_destroy(out_fm);
     // Behaves like open: edits the existing region, comment + body preserved.
     const title = [_]FigPathSegment{keySeg("title")};
@@ -4427,7 +4427,7 @@ test "fig_embed_open_or_init creates a JSON (;;;) frontmatter block" {
     if (comptime !build_options.lang_json) return error.SkipZigTest;
     const md = "# Doc\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @intFromEnum(FigEmbedContainer.semicolons_json), @intFromEnum(FigFormat.json), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @backingInt(FigEmbedContainer.semicolons_json), @backingInt(FigFormat.json), &out_fm));
     defer fig_embed_destroy(out_fm);
     const title = [_]FigPathSegment{keySeg("title")};
     const hi = "\"Hi\""; // strict JSON value: a quoted string
@@ -4443,7 +4443,7 @@ test "fig_embed_open_or_init appends an endmatter block at the bottom" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "# Title\n\nbody text\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @intFromEnum(FigEmbedContainer.endmatter_yaml), @intFromEnum(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @backingInt(FigEmbedContainer.endmatter_yaml), @backingInt(FigFormat.yaml), &out_fm));
     defer fig_embed_destroy(out_fm);
     const k = [_]FigPathSegment{keySeg("k")};
     const v = "v";
@@ -4460,10 +4460,10 @@ test "fig_embed_open_or_init refuses a leading block in front of frontmatter of 
     // the first line and so no longer frontmatter.
     const md = "---\ntitle: x\n---\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.unsupported_operation, fig_embed_open_or_init(md.ptr, md.len, @intFromEnum(FigEmbedContainer.semicolons_json), @intFromEnum(FigFormat.json), &out_fm));
+    try std.testing.expectEqual(FigStatus.unsupported_operation, fig_embed_open_or_init(md.ptr, md.len, @backingInt(FigEmbedContainer.semicolons_json), @backingInt(FigFormat.json), &out_fm));
     try std.testing.expect(out_fm == null);
     // Endmatter goes after everything and displaces nothing.
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @intFromEnum(FigEmbedContainer.endmatter_yaml), @intFromEnum(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @backingInt(FigEmbedContainer.endmatter_yaml), @backingInt(FigFormat.yaml), &out_fm));
     fig_embed_destroy(out_fm);
 }
 
@@ -4471,7 +4471,7 @@ test "embed c abi edits json frontmatter (`;;;` fences, JSON inner editor)" {
     if (comptime !build_options.lang_json) return error.SkipZigTest;
     const md = ";;;\n{\"title\": \"Hi\", \"draft\": true}\n;;;\n# Body\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @intFromEnum(FigEmbedContainer.semicolons_json), @intFromEnum(FigFormat.json), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.semicolons_json), @backingInt(FigFormat.json), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     // The replacement crosses the ABI already serialized — JSON value text here.
@@ -4512,12 +4512,12 @@ test "value c abi builds and serializes to multiple formats" {
 
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @intFromEnum(FigFormat.json), &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @backingInt(FigFormat.json), &ptr, &len));
     try std.testing.expectEqualStrings("{\n  \"name\": \"fig\",\n  \"nums\": [\n    1,\n    2\n  ]\n}\n", ptr[0..len]);
 
     // Same value, different format — the borrowed bytes are refreshed in place.
     if (comptime build_options.lang_yaml) {
-        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @intFromEnum(FigFormat.yaml), &ptr, &len));
+        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @backingInt(FigFormat.yaml), &ptr, &len));
         try std.testing.expectEqualStrings("name: fig\nnums: [1, 2]\n", ptr[0..len]);
     }
 }
@@ -4540,9 +4540,9 @@ test "value c abi maps an unrepresentable value to unsupported_format" {
 
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
-    try std.testing.expectEqual(FigStatus.unsupported_format, fig_value_serialize(out_value, root, @intFromEnum(FigFormat.toml), &ptr, &len));
+    try std.testing.expectEqual(FigStatus.unsupported_format, fig_value_serialize(out_value, root, @backingInt(FigFormat.toml), &ptr, &len));
     // The same value serializes fine to a format that has null.
-    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @intFromEnum(FigFormat.json), &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @backingInt(FigFormat.json), &ptr, &len));
     try std.testing.expectEqualStrings("{\n  \"k\": null\n}\n", ptr[0..len]);
 }
 
@@ -4572,15 +4572,15 @@ test "value c abi spells a non-finite float in each format's own words, and JSON
 
         var ptr: [*c]const u8 = undefined;
         var len: usize = undefined;
-        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @intFromEnum(FigFormat.toml), &ptr, &len));
+        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @backingInt(FigFormat.toml), &ptr, &len));
         try std.testing.expectEqualStrings(c.toml, ptr[0..len]);
-        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @intFromEnum(FigFormat.yaml), &ptr, &len));
+        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @backingInt(FigFormat.yaml), &ptr, &len));
         try std.testing.expectEqualStrings(c.yaml, ptr[0..len]);
-        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @intFromEnum(FigFormat.json5), &ptr, &len));
+        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @backingInt(FigFormat.json5), &ptr, &len));
         try std.testing.expectEqualStrings(c.json5, ptr[0..len]);
         // JSON and JSONC have no infinity or NaN: refused, as TOML refuses a null.
-        try std.testing.expectEqual(FigStatus.unsupported_format, fig_value_serialize(out_value, root, @intFromEnum(FigFormat.json), &ptr, &len));
-        try std.testing.expectEqual(FigStatus.unsupported_format, fig_value_serialize(out_value, root, @intFromEnum(FigFormat.jsonc), &ptr, &len));
+        try std.testing.expectEqual(FigStatus.unsupported_format, fig_value_serialize(out_value, root, @backingInt(FigFormat.json), &ptr, &len));
+        try std.testing.expectEqual(FigStatus.unsupported_format, fig_value_serialize(out_value, root, @backingInt(FigFormat.jsonc), &ptr, &len));
     }
 }
 
@@ -4593,11 +4593,11 @@ test "document c abi converts a non-finite float into the target's spelling" {
     };
     for (cases) |c| {
         var doc: ?*FigDocument = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(c.src.ptr, c.src.len, @intFromEnum(c.from), &doc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(c.src.ptr, c.src.len, @backingInt(c.from), &doc));
         defer fig_document_destroy(doc);
         var ptr: [*c]const u8 = undefined;
         var len: usize = undefined;
-        const status = fig_document_serialize(doc, @intFromEnum(c.to), null, &ptr, &len);
+        const status = fig_document_serialize(doc, @backingInt(c.to), null, &ptr, &len);
         if (c.want) |want| {
             try std.testing.expectEqual(FigStatus.ok, status);
             try std.testing.expectEqualStrings(want, ptr[0..len]);
@@ -4609,7 +4609,7 @@ test "toml editor c abi takes inf and nan as a replacement value" {
     if (comptime !build_options.lang_toml) return error.SkipZigTest;
     const src = "name = \"music\"\nversion = 1\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
     defer fig_editor_destroy(ed);
     const path = [_]FigPathSegment{keySeg("version")};
     var ptr: [*c]const u8 = undefined;
@@ -4642,14 +4642,14 @@ test "value c abi serialize options honor the size/version field" {
 
     // A fully-populated options struct: compact output.
     var opts: FigSerializeOptions = .{ .pretty = 0 };
-    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize_opts(out_value, root, @intFromEnum(FigFormat.json), &opts, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize_opts(out_value, root, @backingInt(FigFormat.json), &opts, &ptr, &len));
     try std.testing.expectEqualStrings("[1,2]\n", ptr[0..len]);
 
     // A `size` that does not reach `pretty` must leave it (and `indent`) at the
     // default — i.e. behave as if those fields were absent, not read as garbage.
     // This is the forward-compat contract: an older/under-sized layout defaults.
     opts.size = @offsetOf(FigSerializeOptions, "pretty"); // covers only `size`
-    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize_opts(out_value, root, @intFromEnum(FigFormat.json), &opts, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize_opts(out_value, root, @backingInt(FigFormat.json), &opts, &ptr, &len));
     try std.testing.expectEqualStrings("[\n  1,\n  2\n]\n", ptr[0..len]);
 }
 
@@ -4683,12 +4683,12 @@ test "value c abi serialize options carry TOML width through to the inline/secti
     var len: usize = undefined;
 
     // Default width (80): the mapping fits, so it stays an inline table.
-    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @intFromEnum(FigFormat.toml), &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @backingInt(FigFormat.toml), &ptr, &len));
     try std.testing.expectEqualStrings("point = { x = 1, y = 2 }\n", ptr[0..len]);
 
     // A tight width budget forces it to expand to a [section].
     const opts: FigSerializeOptions = .{ .width = 8 };
-    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize_opts(out_value, root, @intFromEnum(FigFormat.toml), &opts, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize_opts(out_value, root, @backingInt(FigFormat.toml), &opts, &ptr, &len));
     try std.testing.expectEqualStrings("[point]\nx = 1\ny = 2\n", ptr[0..len]);
 }
 
@@ -4713,11 +4713,11 @@ test "value c abi flow option renders fig-dialect container fragments inline" {
 
     // flow set: the inline spelling — the only one that survives a splice.
     const flow_opts: FigSerializeOptions = .{ .flow = 1 };
-    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize_opts(out_value, root, @intFromEnum(FigFormat.fig), &flow_opts, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize_opts(out_value, root, @backingInt(FigFormat.fig), &flow_opts, &ptr, &len));
     try std.testing.expectEqualStrings("[a.md, b.md]\n", ptr[0..len]);
 
     // flow unset (default): unchanged block rendering.
-    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @intFromEnum(FigFormat.fig), &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @backingInt(FigFormat.fig), &ptr, &len));
     try std.testing.expectEqualStrings("* a.md\n* b.md\n", ptr[0..len]);
 }
 
@@ -4741,25 +4741,25 @@ test "fig_parse empty input is judged per format" {
     // malformed argument regardless of format.
     {
         var out_doc: ?*FigDocument = null;
-        try std.testing.expectEqual(FigStatus.parse_error, fig_parse(null, 0, @intFromEnum(FigFormat.json), &out_doc));
+        try std.testing.expectEqual(FigStatus.parse_error, fig_parse(null, 0, @backingInt(FigFormat.json), &out_doc));
         try std.testing.expect(out_doc == null);
     }
     {
         var out_doc: ?*FigDocument = null;
-        try std.testing.expectEqual(FigStatus.invalid_argument, fig_parse(null, 5, @intFromEnum(FigFormat.json), &out_doc));
+        try std.testing.expectEqual(FigStatus.invalid_argument, fig_parse(null, 5, @backingInt(FigFormat.json), &out_doc));
         try std.testing.expect(out_doc == null);
     }
     if (comptime build_options.lang_yaml) {
         var out_doc: ?*FigDocument = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(null, 0, @intFromEnum(FigFormat.yaml), &out_doc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(null, 0, @backingInt(FigFormat.yaml), &out_doc));
         defer fig_document_destroy(out_doc);
-        try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.null_)), fig_node_kind(out_doc, fig_document_root(out_doc)));
+        try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.null_)), fig_node_kind(out_doc, fig_document_root(out_doc)));
     }
     if (comptime build_options.lang_toml) {
         var out_doc: ?*FigDocument = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(null, 0, @intFromEnum(FigFormat.toml), &out_doc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(null, 0, @backingInt(FigFormat.toml), &out_doc));
         defer fig_document_destroy(out_doc);
-        try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.mapping)), fig_node_kind(out_doc, fig_document_root(out_doc)));
+        try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.mapping)), fig_node_kind(out_doc, fig_document_root(out_doc)));
         try std.testing.expectEqual(@as(usize, 0), fig_node_child_count(out_doc, fig_document_root(out_doc)));
     }
 }
@@ -4769,17 +4769,17 @@ test "fig_document_serialize converts JSON to YAML" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const src = "{\"name\":\"fig\",\"nums\":[1,2]}";
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.json), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.json), &out_doc));
     defer fig_document_destroy(out_doc);
 
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @intFromEnum(FigFormat.yaml), null, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.yaml), null, &ptr, &len));
     try std.testing.expectEqualStrings("name: fig\nnums: [1, 2]\n", ptr[0..len]);
 
     // Same handle, re-serialize to TOML — the borrowed bytes refresh in place.
     if (comptime build_options.lang_toml) {
-        try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @intFromEnum(FigFormat.toml), null, &ptr, &len));
+        try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.toml), null, &ptr, &len));
         try std.testing.expectEqualStrings("name = \"fig\"\nnums = [1, 2]\n", ptr[0..len]);
     }
 }
@@ -4788,13 +4788,13 @@ test "fig_parse parses the fig authoring dialect" {
     if (comptime !build_options.lang_fig) return error.SkipZigTest;
     const src = "title = Hello\ncount = 42\n";
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.fig), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.fig), &out_doc));
     defer fig_document_destroy(out_doc);
 
     if (comptime build_options.lang_json) {
         var ptr: [*c]const u8 = undefined;
         var len: usize = undefined;
-        try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @intFromEnum(FigFormat.json), null, &ptr, &len));
+        try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.json), null, &ptr, &len));
         try std.testing.expectEqualStrings("{\n  \"title\": \"Hello\",\n  \"count\": 42\n}\n", ptr[0..len]);
     }
 }
@@ -4804,12 +4804,12 @@ test "fig_document_serialize converts JSON to the fig authoring dialect" {
     if (comptime !build_options.lang_fig) return error.SkipZigTest;
     const src = "{\"name\":\"fig\",\"nums\":[1,2]}";
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.json), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.json), &out_doc));
     defer fig_document_destroy(out_doc);
 
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @intFromEnum(FigFormat.fig), null, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.fig), null, &ptr, &len));
     try std.testing.expectEqualStrings("name = fig\nnums = [1, 2]\n", ptr[0..len]);
 }
 
@@ -4817,7 +4817,7 @@ test "fig_editor_create edits the fig authoring dialect" {
     if (comptime !build_options.lang_fig) return error.SkipZigTest;
     const src = "title = old\nport = 8080\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.fig), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.fig), &ed));
     defer fig_editor_destroy(ed);
 
     const path = [_]FigPathSegment{keySeg("port")};
@@ -4834,7 +4834,7 @@ test "fig_editor_create edits ZON through the C ABI" {
     if (comptime !build_options.lang_zon) return error.SkipZigTest;
     const src = ".{ .title = \"old\", .port = 8080 }";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.zon), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.zon), &ed));
     defer fig_editor_destroy(ed);
 
     const path = [_]FigPathSegment{keySeg("port")};
@@ -4854,7 +4854,7 @@ test "fig_editor_insert_named_key spells the name as the format does" {
     if (comptime build_options.lang_zon) {
         const src = ".{ .a = 1 }";
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.zon), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.zon), &ed));
         defer fig_editor_destroy(ed);
         const name = "new";
         const val = "true";
@@ -4866,7 +4866,7 @@ test "fig_editor_insert_named_key spells the name as the format does" {
     if (comptime build_options.lang_json) {
         const src = "{\"a\": 1}";
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.json), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.json), &ed));
         defer fig_editor_destroy(ed);
         const name = "k\"q";
         const val = "2";
@@ -4881,7 +4881,7 @@ test "fig_editor_replace_named_key spells the new name as the format does" {
     if (comptime build_options.lang_zon) {
         const src = ".{ .a = 1, .b = 2 }";
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.zon), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.zon), &ed));
         defer fig_editor_destroy(ed);
         const a = [_]FigPathSegment{keySeg("a")};
         const b = [_]FigPathSegment{keySeg("b")};
@@ -4894,7 +4894,7 @@ test "fig_editor_replace_named_key spells the new name as the format does" {
     if (comptime build_options.lang_plist) {
         const src = "<dict><key>a</key><string>x</string></dict>";
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.plist), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.plist), &ed));
         defer fig_editor_destroy(ed);
         const a = [_]FigPathSegment{keySeg("a")};
         const name = "b&c";
@@ -4907,7 +4907,7 @@ test "fig_editor_replace_key refuses a path with no key and a name already held"
     if (comptime !build_options.lang_json) return error.SkipZigTest;
     const src = "{\"l\": [1, 2], \"a\": 1, \"b\": 2}";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.json), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.json), &ed));
     defer fig_editor_destroy(ed);
     // A sequence item has no key: the old splice overwrote the item's value.
     const item = [_]FigPathSegment{ keySeg("l"), .{ .kind = 1, .key_ptr = null, .key_len = 0, .index = 0 } };
@@ -4941,7 +4941,7 @@ test "fig_editor whole-container ops reach a TOML table the key ops cannot" {
 
     {
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
         defer fig_editor_destroy(ed);
         // Refused by the key op…
         try std.testing.expectEqual(FigStatus.invalid_argument, fig_editor_delete_key(ed, &path_a, 1));
@@ -4951,7 +4951,7 @@ test "fig_editor whole-container ops reach a TOML table the key ops cannot" {
     }
     {
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
         defer fig_editor_destroy(ed);
         const leaf = "q";
         try std.testing.expectEqual(FigStatus.ok, fig_editor_rename_container(ed, &path_a, 1, leaf.ptr, leaf.len));
@@ -4959,7 +4959,7 @@ test "fig_editor whole-container ops reach a TOML table the key ops cannot" {
     }
     {
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
         defer fig_editor_destroy(ed);
         const body = "z = 3\n";
         const path_c = [_]FigPathSegment{keySeg("c")};
@@ -4968,7 +4968,7 @@ test "fig_editor whole-container ops reach a TOML table the key ops cannot" {
     }
     {
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
         defer fig_editor_destroy(ed);
         // The generic move is refused; the container move relocates the whole
         // table. A NULL destination is "to EOF", which is why it cannot be
@@ -4979,7 +4979,7 @@ test "fig_editor whole-container ops reach a TOML table the key ops cannot" {
     }
     {
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
         defer fig_editor_destroy(ed);
         const order = [_]FigStr{ figStr("b"), figStr("a") };
         // `fig_editor_reorder_keys` at the root would have moved the header
@@ -4994,7 +4994,7 @@ test "fig_editor_append_container_to_seq appends a TOML array-of-tables element"
     if (comptime !build_options.lang_toml) return error.SkipZigTest;
     const src = "[[bin]]\nname = \"a\"\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
     defer fig_editor_destroy(ed);
     const path = [_]FigPathSegment{keySeg("bin")};
     const body = "name = \"b\"\n";
@@ -5012,7 +5012,7 @@ test "fig_editor whole-container ops answer unsupported_format where the format 
     {
         const src = "a:\n  x: 1\nb:\n  y: 2\n";
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.yaml), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.yaml), &ed));
         defer fig_editor_destroy(ed);
         try std.testing.expectEqual(FigStatus.unsupported_format, fig_editor_delete_container(ed, &path, 1));
         try std.testing.expectEqual(FigStatus.ok, fig_editor_delete_key(ed, &path, 1));
@@ -5025,7 +5025,7 @@ test "fig_editor whole-container ops answer unsupported_format where the format 
     {
         const src = "[a]\nx = 1\n[b]\ny = 2\n[a]\nz = 3\n";
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.ini), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.ini), &ed));
         defer fig_editor_destroy(ed);
         const leaf = "q";
         const body = "";
@@ -5045,16 +5045,16 @@ test "fig_document_serialize materializes the YAML reference layer when leaving 
     // a copied value, not leak `*x` or fail with unsupported_format.
     const src = "a: &x 1\nb: *x\n";
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.yaml), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.yaml), &out_doc));
     defer fig_document_destroy(out_doc);
 
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @intFromEnum(FigFormat.json), null, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.json), null, &ptr, &len));
     try std.testing.expectEqualStrings("{\n  \"a\": 1,\n  \"b\": 1\n}\n", ptr[0..len]);
 
     // YAML→YAML keeps the reference layer intact (no materialize).
-    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @intFromEnum(FigFormat.yaml), null, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.yaml), null, &ptr, &len));
     try std.testing.expect(std.mem.indexOf(u8, ptr[0..len], "*x") != null);
 }
 
@@ -5065,15 +5065,15 @@ test "fig_document_serialize honors the lossless option for TOML null" {
     // wraps it in a `$fig` envelope so the document still serializes.
     const src = "{\"k\":null}";
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.json), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.json), &out_doc));
     defer fig_document_destroy(out_doc);
 
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
-    try std.testing.expectEqual(FigStatus.unsupported_format, fig_document_serialize(out_doc, @intFromEnum(FigFormat.toml), null, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.unsupported_format, fig_document_serialize(out_doc, @backingInt(FigFormat.toml), null, &ptr, &len));
 
     var opts: FigSerializeOptions = .{ .lossless = 1 };
-    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @intFromEnum(FigFormat.toml), &opts, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.toml), &opts, &ptr, &len));
     try std.testing.expect(std.mem.indexOf(u8, ptr[0..len], "$fig") != null);
 }
 
@@ -5084,18 +5084,18 @@ test "fig_document_serialize preserves comments across formats" {
     // serve: a comment captured from JSON5 re-emitted into YAML.
     const src = "{\n  // hello\n  a: 1,\n}\n";
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @intFromEnum(FigFormat.json5), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.json5), &out_doc));
     defer fig_document_destroy(out_doc);
 
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @intFromEnum(FigFormat.yaml), null, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.yaml), null, &ptr, &len));
     try std.testing.expect(std.mem.indexOf(u8, ptr[0..len], "# hello") != null);
     try std.testing.expect(std.mem.indexOf(u8, ptr[0..len], "a: 1") != null);
 
     // strip_comments drops it.
     var opts: FigSerializeOptions = .{ .strip_comments = 1 };
-    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @intFromEnum(FigFormat.yaml), &opts, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.yaml), &opts, &ptr, &len));
     try std.testing.expect(std.mem.indexOf(u8, ptr[0..len], "hello") == null);
 }
 
@@ -5128,7 +5128,7 @@ test "a runtime language registers through the C ABI and is a peer at every entr
     try std.testing.expectEqual(format, fig_format_by_name("tinykv"));
     try std.testing.expectEqual(@as(c_int, -1), fig_format_by_name("nosuch"));
     try std.testing.expectEqual(@as(c_int, 1), fig_format_by_name("json"));
-    const all = @intFromEnum(FigCapability.read) | @intFromEnum(FigCapability.edit) | @intFromEnum(FigCapability.serialize);
+    const all = @backingInt(FigCapability.read) | @backingInt(FigCapability.edit) | @backingInt(FigCapability.serialize);
     try std.testing.expectEqual(all, fig_format_capabilities(format));
     try std.testing.expectEqual(@as(u32, 0), fig_format_capabilities(format + 7));
 
@@ -5144,16 +5144,16 @@ test "a runtime language registers through the C ABI and is a peer at every entr
     try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, format, &doc));
     defer fig_document_destroy(doc.?);
     const root = fig_document_root(doc);
-    try std.testing.expectEqual(@as(c_int, @intFromEnum(FigNodeKind.mapping)), fig_node_kind(doc, root));
+    try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.mapping)), fig_node_kind(doc, root));
     try std.testing.expectEqual(@as(usize, 2), fig_node_child_count(doc, root));
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
     if (comptime build_options.lang_json) {
-        try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(doc, @intFromEnum(FigFormat.json), null, &ptr, &len));
+        try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(doc, @backingInt(FigFormat.json), null, &ptr, &len));
         try std.testing.expectEqualStrings("{\n  \"x\": \"1\",\n  \"y\": \"two\"\n}\n", ptr[0..len]);
         const json = "{\"k\": \"v\"}";
         var jdoc: ?*FigDocument = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(json.ptr, json.len, @intFromEnum(FigFormat.json), &jdoc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(json.ptr, json.len, @backingInt(FigFormat.json), &jdoc));
         defer fig_document_destroy(jdoc.?);
         try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(jdoc, format, null, &ptr, &len));
         try std.testing.expectEqualStrings("k=v\n", ptr[0..len]);
@@ -5165,7 +5165,7 @@ test "a runtime language registers through the C ABI and is a peer at every entr
         try std.testing.expectEqual(@as(usize, 0), n);
         const nested = "{\"a\": {\"b\": \"1\"}, \"c\": \"2\"}";
         var ndoc: ?*FigDocument = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(nested.ptr, nested.len, @intFromEnum(FigFormat.json), &ndoc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(nested.ptr, nested.len, @backingInt(FigFormat.json), &ndoc));
         defer fig_document_destroy(ndoc.?);
         try std.testing.expectEqual(FigStatus.ok, fig_document_diagnose(ndoc, format, null, &n));
         try std.testing.expectEqual(@as(usize, 1), n);
@@ -5222,33 +5222,33 @@ test "a runtime language registers through the C ABI and is a peer at every entr
 
 test "fig_format_capabilities reports the per-format matrix" {
     if (comptime !build_options.lang_json) return error.SkipZigTest;
-    const read = @intFromEnum(FigCapability.read);
-    const edit = @intFromEnum(FigCapability.edit);
-    const serialize = @intFromEnum(FigCapability.serialize);
-    const references = @intFromEnum(FigCapability.references);
+    const read = @backingInt(FigCapability.read);
+    const edit = @backingInt(FigCapability.edit);
+    const serialize = @backingInt(FigCapability.serialize);
+    const references = @backingInt(FigCapability.references);
 
     // JSON family: always fully supported, regardless of build options.
     for ([_]FigFormat{ .json, .jsonc, .json5 }) |f| {
-        try std.testing.expectEqual(read | edit | serialize, fig_format_capabilities(@intFromEnum(f)));
+        try std.testing.expectEqual(read | edit | serialize, fig_format_capabilities(@backingInt(f)));
     }
 
     // Gated formats: capabilities track both inherent support and the build gate.
     // YAML alone has a reference layer.
     try std.testing.expectEqual(
         if (build_options.lang_yaml) read | edit | serialize | references else 0,
-        fig_format_capabilities(@intFromEnum(FigFormat.yaml)),
+        fig_format_capabilities(@backingInt(FigFormat.yaml)),
     );
     try std.testing.expectEqual(
         if (build_options.lang_toml) read | edit | serialize else 0,
-        fig_format_capabilities(@intFromEnum(FigFormat.toml)),
+        fig_format_capabilities(@backingInt(FigFormat.toml)),
     );
     try std.testing.expectEqual(
         if (build_options.lang_zon) read | edit | serialize else 0,
-        fig_format_capabilities(@intFromEnum(FigFormat.zon)),
+        fig_format_capabilities(@backingInt(FigFormat.zon)),
     );
     try std.testing.expectEqual(
         if (build_options.lang_fig) read | edit | serialize else 0,
-        fig_format_capabilities(@intFromEnum(FigFormat.fig)),
+        fig_format_capabilities(@backingInt(FigFormat.fig)),
     );
 
     // Unknown / out-of-range format values report no capabilities.
@@ -5265,9 +5265,9 @@ test "fig_format_capabilities agrees with actual READ/EDIT/SERIALIZE behavior" {
     // corresponding entry point actually does on a valid input. This fails the
     // build the moment a format's real capability and its bit diverge — in either
     // direction, and under any build-flag combination.
-    const read = @intFromEnum(FigCapability.read);
-    const edit = @intFromEnum(FigCapability.edit);
-    const serialize = @intFromEnum(FigCapability.serialize);
+    const read = @backingInt(FigCapability.read);
+    const edit = @backingInt(FigCapability.edit);
+    const serialize = @backingInt(FigCapability.serialize);
 
     const Case = struct { fmt: FigFormat, sample: []const u8 };
     const cases = [_]Case{
@@ -5296,7 +5296,7 @@ test "fig_format_capabilities agrees with actual READ/EDIT/SERIALIZE behavior" {
     const root = id;
 
     for (cases) |c| {
-        const fmt = @intFromEnum(c.fmt);
+        const fmt = @backingInt(c.fmt);
         const caps = fig_format_capabilities(fmt);
 
         // READ: a valid sample parses iff the format is compiled in (which is
@@ -5327,7 +5327,7 @@ test "fig_editor comment ops add, set, and delete through the C ABI" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const src = "a: 1\nb: 2\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.yaml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.yaml), &ed));
     defer fig_editor_destroy(ed);
 
     // path = ["b"]
@@ -5355,7 +5355,7 @@ test "fig_editor_set_sequence reconciles a list, preserving survivors' comments"
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const src = "tags:\n- a # first\n- b # second\n- c # third\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.yaml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.yaml), &ed));
     defer fig_editor_destroy(ed);
 
     var key = [_]u8{ 't', 'a', 'g', 's' };
@@ -5382,7 +5382,7 @@ test "fig_editor comment ops reject strict JSON with unsupported_format" {
     if (comptime !build_options.lang_json) return error.SkipZigTest;
     const src = "{\"a\":1}";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.json), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.json), &ed));
     defer fig_editor_destroy(ed);
     var key = [_]u8{'a'};
     const path = [_]FigPathSegment{.{ .kind = 0, .key_ptr = &key, .key_len = 1, .index = 0 }};
@@ -5403,7 +5403,7 @@ test "fig_editor comment ops on a one-line flow item answer as if it had none" {
     // `not_found` (= absent) for the reads.
     const src = "# above members\nmembers = [\"a\", \"b\"] # note\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.toml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
     defer fig_editor_destroy(ed);
 
     var key = [_]u8{ 'm', 'e', 'm', 'b', 'e', 'r', 's' };
@@ -5438,7 +5438,7 @@ test "fig_editor comment reads return bytes, distinguishing absent from empty" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const src = "# why\na: 1 # two\nb: 2 #\nc: 3\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @intFromEnum(FigFormat.yaml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.yaml), &ed));
     defer fig_editor_destroy(ed);
 
     var ptr: [*c]const u8 = undefined;

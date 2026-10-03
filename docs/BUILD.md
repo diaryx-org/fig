@@ -10,7 +10,7 @@ part_of = [fig docs](/docs/docs.md)
 
 You will need:
 - [Access to a terminal](https://share.google/CzgpcLKGi8PKS4q7G)
-- [Zig toolchain version 0.16.0](https://ziglang.org/download/)
+- [Zig toolchain version 0.17.0](https://ziglang.org/download/)
 - [Git](https://git-scm.com/install)
 
 You will:

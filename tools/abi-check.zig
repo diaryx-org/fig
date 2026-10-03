@@ -284,22 +284,22 @@ const ExtKind = fig.AST.Node.Kind.Extended.ExtKind;
 /// declared on the surface, with its ordinal as the value where the surface
 /// carries one, and the surface may declare nothing the core does not have.
 fn checkExtKinds(arena: std.mem.Allocator, surface: []const u8, kinds: []const FormatEnumerator, style: NameStyle, fail: *bool) !void {
-    inline for (@typeInfo(ExtKind).@"enum".fields) |f| {
-        const want_name = try extKindName(arena, f.name, style);
+    inline for (@typeInfo(ExtKind).@"enum".field_names, @typeInfo(ExtKind).@"enum".field_values) |f_name, f_value| {
+        const want_name = try extKindName(arena, f_name, style);
         if (findFormat(kinds, want_name)) |e| {
             if (style != .pascal_named) {
                 if (e.value) |got| {
-                    if (got != @as(i64, f.value)) {
+                    if (got != @as(i64, f_value)) {
                         if (!fail.*) std.debug.print("abi-check: FAIL\n", .{});
                         std.debug.print(
                             "  {s}: ext-kind value drift: {s} = {d} but the core's ExtKind gives '{s}' the value {d}\n",
-                            .{ surface, want_name, got, f.name, f.value },
+                            .{ surface, want_name, got, f_name, f_value },
                         );
                         fail.* = true;
                     }
                 } else {
                     if (!fail.*) std.debug.print("abi-check: FAIL\n", .{});
-                    std.debug.print("  {s}: {s} states no value, but the core's ExtKind gives '{s}' the value {d}\n", .{ surface, want_name, f.name, f.value });
+                    std.debug.print("  {s}: {s} states no value, but the core's ExtKind gives '{s}' the value {d}\n", .{ surface, want_name, f_name, f_value });
                     fail.* = true;
                 }
             }
@@ -307,15 +307,15 @@ fn checkExtKinds(arena: std.mem.Allocator, surface: []const u8, kinds: []const F
             if (!fail.*) std.debug.print("abi-check: FAIL\n", .{});
             std.debug.print(
                 "  {s}: missing enumerator: the core's ExtKind has '{s}' (value {d}) but {s} is not declared\n",
-                .{ surface, f.name, f.value, want_name },
+                .{ surface, f_name, f_value, want_name },
             );
             fail.* = true;
         }
     }
     for (kinds) |e| {
         var found = false;
-        inline for (@typeInfo(ExtKind).@"enum".fields) |f| {
-            const want_name = try extKindName(arena, f.name, style);
+        inline for (@typeInfo(ExtKind).@"enum".field_names) |f_name| {
+            const want_name = try extKindName(arena, f_name, style);
             if (std.mem.eql(u8, want_name, e.name)) found = true;
         }
         if (!found) {

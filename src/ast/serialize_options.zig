@@ -60,7 +60,7 @@ const serialize_format_names = blk: {
 // is left to state is that `canonical` belongs beside `zon` specifically, not
 // merely somewhere in the list.
 comptime {
-    if (@intFromEnum(SerializeFormat.canonical) != @intFromEnum(SerializeFormat.zon) + 1)
+    if (@backingInt(SerializeFormat.canonical) != @backingInt(SerializeFormat.zon) + 1)
         @compileError("AST.SerializeFormat's `canonical` no longer sits directly after `zon`");
 }
 

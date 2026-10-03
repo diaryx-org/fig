@@ -997,7 +997,7 @@ test "yaml flow: a comment or overflow keeps a collection block" {
     // A comment anywhere in the subtree disqualifies flow (nowhere to put it).
     try expectRoundTrip("nums:\n# note\n- 1\n- 2\n", "nums:\n# note\n- 1\n- 2\n");
     // A value past the width budget stays block.
-    const long = "x" ** 90;
+    const long = &@as([90]u8, @splat('x'));
     try expectRoundTrip(
         "items:\n- " ++ long ++ "\n",
         "items:\n- " ++ long ++ "\n",

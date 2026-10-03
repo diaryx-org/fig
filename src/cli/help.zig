@@ -30,10 +30,10 @@ fn formatList(comptime indent: []const u8, comptime except: []const []const u8) 
         var out: []const u8 = indent;
         var col = indent.len;
         var first = true;
-        fields: for (@typeInfo(types.Format).@"enum".fields) |f| {
-            for (except) |e| if (std.mem.eql(u8, e, f.name)) continue :fields;
-            if (!compiledIn(f.name)) continue;
-            const word = f.name;
+        fields: for (@typeInfo(types.Format).@"enum".field_names) |f_name| {
+            for (except) |e| if (std.mem.eql(u8, e, f_name)) continue :fields;
+            if (!compiledIn(f_name)) continue;
+            const word = f_name;
             if (!first) {
                 if (col + 2 + word.len > 72) {
                     out = out ++ ",\n" ++ indent;
@@ -55,8 +55,8 @@ fn formatList(comptime indent: []const u8, comptime except: []const []const u8) 
 /// embeddable formats, the same set `args.embedTypeFromName` loops over.
 const embed_langs = blk: {
     var out: []const u8 = "";
-    for (@typeInfo(fig.Embed.InnerFormat).@"enum".fields, 0..) |f, i|
-        out = out ++ (if (i == 0) "" else ", ") ++ f.name;
+    for (@typeInfo(fig.Embed.InnerFormat).@"enum".field_names, 0..) |f_name, i|
+        out = out ++ (if (i == 0) "" else ", ") ++ f_name;
     break :blk out;
 };
 

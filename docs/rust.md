@@ -48,7 +48,7 @@ fig = "5"
 For the **default feature set** on a tier-1 target, `fig-sys` links a prebuilt
 `libfig.a` shipped by a per-target payload crate — Cargo downloads exactly the
 one matching your target, and **no Zig toolchain is required**. A source build
-(which does need Zig 0.16+) kicks in only when:
+(which does need Zig 0.17+) kicks in only when:
 
 - the target has no prebuilt payload crate,
 - a **non-default** language feature set is selected — adding or removing a

@@ -33,7 +33,7 @@ jobs:
         # show`, so it needs full history + tags, not the default shallow checkout.
         fetch-depth: 0
     - uses: mlugg/setup-zig@v2
-      with: { version: 0.16.0 }
+      with: { version: 0.17.0 }
     # The one pre-release gate: zig test + conformance + abi-check + semver-check
     # + version-check. `check` also folds in cargo-semver-checks and the Rust/TS
     # test suites, but those degrade gracefully — with no cargo/npm toolchain in
@@ -56,7 +56,7 @@ jobs:
     # build.rs compiles the fig core with `zig build`, so Zig is required here
     # even though this is a Rust job.
     - uses: mlugg/setup-zig@v2
-      with: { version: 0.16.0 }
+      with: { version: 0.17.0 }
     - uses: dtolnay/rust-toolchain@stable
     - uses: Swatinem/rust-cache@v2
       with: { workspaces: bindings/rust }
@@ -93,7 +93,7 @@ jobs:
     # build.rs compiles the fig core with `zig build`, so building the crate's
     # rustdoc (current AND the baseline rev) needs Zig.
     - uses: mlugg/setup-zig@v2
-      with: { version: 0.16.0 }
+      with: { version: 0.17.0 }
     # STABLE, deliberately — cargo-semver-checks reads rustdoc JSON, and its
     # README is explicit that the formats it supports are the ones emitted by
     # the then-current stable and beta Rust, with nightly supported only on a
@@ -135,7 +135,7 @@ jobs:
     - uses: actions/checkout@v7
     # `npm run build` runs `zig build wasm` to (re)generate the embedded module.
     - uses: mlugg/setup-zig@v2
-      with: { version: 0.16.0 }
+      with: { version: 0.17.0 }
     - uses: actions/setup-node@v7
       with:
         # Node 24+ for the tests, not for the package (engines is >=22): the
@@ -170,7 +170,7 @@ jobs:
     - uses: actions/checkout@v7
     # `npm run build` runs `zig build wasi` to (re)generate wasm/fig-wasi.wasm.
     - uses: mlugg/setup-zig@v2
-      with: { version: 0.16.0 }
+      with: { version: 0.17.0 }
     - uses: actions/setup-node@v7
       with:
         # The package itself declares `engines.node >= 20`, but the suite drives the

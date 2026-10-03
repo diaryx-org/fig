@@ -20,7 +20,7 @@ fig ships five artifacts off one tree, and from 5.0.0 **every one of them carrie
 
 - the Zig core + C ABI — `.version` in `build.zig.zon`, where the version is decided
 - the `fig` CLI binary
-- the Rust crates — `fig`, `fig-macros`, `fig-sys` and the five `fig-sys-<target>` payload crates (`bindings/rust/Cargo.toml`)
+- the Rust crates — `fig`, `fig-macros`, `fig-sys` and the seven `fig-sys-<target>` payload crates (`bindings/rust/Cargo.toml`)
 - `@diaryx/fig`, the npm library (`bindings/typescript/package.json`)
 - `@diaryx/fig-wasi`, the npx-able CLI over WASI (`bindings/wasi/package.json`)
 

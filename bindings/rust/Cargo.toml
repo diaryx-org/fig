@@ -26,6 +26,8 @@ fig-sys-linux-x64-gnu = { path = "fig-sys-linux-x64-gnu", version = "5.1.3" }
 fig-sys-linux-arm64-gnu = { path = "fig-sys-linux-arm64-gnu", version = "5.1.3" }
 fig-sys-windows-x64-msvc = { path = "fig-sys-windows-x64-msvc", version = "5.1.3" }
 fig-sys-wasm32 = { path = "fig-sys-wasm32", version = "5.1.3" }
+fig-sys-ios-arm64 = { path = "fig-sys-ios-arm64", version = "5.1.3" }
+fig-sys-ios-arm64-sim = { path = "fig-sys-ios-arm64-sim", version = "5.1.3" }
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }

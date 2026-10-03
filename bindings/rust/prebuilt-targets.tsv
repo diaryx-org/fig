@@ -8,9 +8,16 @@
 # toml, fig, ini, dotenv, properties, nestedtext on; zon, plist off);
 # non-default feature sets always build from source.
 #
+# The iOS rows name their minimum OS (14.0, the lowest the arm64 simulator
+# runs) because Zig otherwise stamps its own newer default into the archive.
+# They also need Apple's iOS SDK, which Zig does not bundle, so the payloads
+# are built on a macOS host.
+#
 # rust_target	zig_target	key	cfg
 aarch64-apple-darwin	aarch64-macos	macos-arm64	all(target_os = "macos", target_arch = "aarch64")
 x86_64-unknown-linux-gnu	x86_64-linux-gnu	linux-x64-gnu	all(target_os = "linux", target_arch = "x86_64", target_env = "gnu")
 aarch64-unknown-linux-gnu	aarch64-linux-gnu	linux-arm64-gnu	all(target_os = "linux", target_arch = "aarch64", target_env = "gnu")
 x86_64-pc-windows-msvc	x86_64-windows-msvc	windows-x64-msvc	all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
 wasm32-unknown-unknown	wasm32-freestanding	wasm32	all(target_arch = "wasm32", target_os = "unknown")
+aarch64-apple-ios	aarch64-ios.14.0	ios-arm64	all(target_os = "ios", target_arch = "aarch64", not(any(target_abi = "sim", target_abi = "macabi")))
+aarch64-apple-ios-sim	aarch64-ios.14.0-simulator	ios-arm64-sim	all(target_os = "ios", target_arch = "aarch64", target_abi = "sim")

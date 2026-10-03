@@ -9,11 +9,11 @@
         "zig-overlay": "zig-overlay"
       },
       "locked": {
-        "lastModified": 1787874584,
-        "narHash": "sha256-N8Iig6+qUiO6QMR7rK+skwEEI5BiY9B6rUJoufCePXE=",
+        "lastModified": 1790989797,
+        "narHash": "sha256-a24PecH0FGwyWc2TRRMZ2Ck73430pmk/oeCVWnkb21w=",
         "owner": "diaryx-org",
         "repo": "nix",
-        "rev": "6568e41bcefa8a8cb19ce96ed8af53c8b8a07682",
+        "rev": "83cc17f49c8ae24a0ea6de0dbe662f2d0c05372e",
         "type": "github"
       },
       "original": {
@@ -87,11 +87,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1787834454,
-        "narHash": "sha256-jXSvqn04IOecJCvSvl8+g3PsbDVNP6qKs6dKUs/b16k=",
+        "lastModified": 1789196581,
+        "narHash": "sha256-yJr1Bt4fKkKIpPYbsKGqJ0VFdoDnURgRwuffmBQ2WzY=",
         "owner": "oxalica",
         "repo": "rust-overlay",
-        "rev": "dc2fd1acc537f3583744e1373597a5731ff7a6e3",
+        "rev": "228ecefb6329d5a531b77b46b581a2f0c26ee056",
         "type": "github"
       },
       "original": {
@@ -141,11 +141,11 @@
         "systems": "systems"
       },
       "locked": {
-        "lastModified": 1787795687,
-        "narHash": "sha256-SWBrD89axYXkzAMNLKl5T+p2qO7db0TxjrGbjavVmfU=",
+        "lastModified": 1790988737,
+        "narHash": "sha256-b55etI4Uxu+WHhYZXym3HPIz63ipO9lqwJLAphjqtTc=",
         "owner": "mitchellh",
         "repo": "zig-overlay",
-        "rev": "375aed2dea234db12725e91fd2d1cc0c8741fb64",
+        "rev": "dcffc7a25ed2cbbc7c1c3c448c312abf46ae6cb8",
         "type": "github"
       },
       "original": {

@@ -134,6 +134,21 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v5.1.3 — 2026-10-03
+
+### Breaking
+
+- build with Zig 0.17.0 ([`8ca918d`](https://github.com/diaryx-org/fig/commit/8ca918d7d07ca34e2597c3501083e8dcfd1585fb))
+
+### Behavioural changes
+
+- building fig from source needs Zig 0.17.0 — `zig build`,
+  `zig fetch` consumers, and the fig-sys crate with any non-default language
+  feature set. Zig 0.16.0 refuses the tree at the first file. The fig-sys
+  crate with default features links the prebuilt payload and needs no Zig,
+  as before.
+
+
 ## v5.1.2 — 2026-10-01
 
 ### Fixed

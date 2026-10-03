@@ -134,6 +134,21 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v5.2.0 — 2026-10-03
+
+### Added
+
+- **rust** — ship prebuilt fig-sys payloads for iOS device and simulator ([`3fc63db`](https://github.com/diaryx-org/fig/commit/3fc63db80e5262c1f25d9ce6e705ee165e065d07))
+
+### Fixed
+
+- **c-api** — build for iOS under Zig 0.17.0 ([`a0df29e`](https://github.com/diaryx-org/fig/commit/a0df29e79e3c3df35795c082defd51fd99648412))
+
+### Behavioural changes
+
+- a default-feature build of fig for aarch64-apple-ios or aarch64-apple-ios-sim links a prebuilt archive with a minimum OS of iOS 14.0 and no longer needs a Zig toolchain, where it used to compile the core from source with Zig.
+
+
 ## v5.1.3 — 2026-10-03
 
 ### Breaking

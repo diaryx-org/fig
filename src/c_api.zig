@@ -10,6 +10,27 @@ const Span = @import("util/span.zig");
 const Embed = @import("embed.zig");
 const Editor = @import("editor.zig").Editor;
 const build_options = @import("build_options");
+
+/// Whether `std.Io.Threaded` fails to compile for this target. On iOS and its
+/// siblings Zig 0.17.0's `Threaded` reaches its process spawning, which reads a
+/// `NullFile.fd` those targets do not have, so anything that touches
+/// `std.Options.debug_io` (the default panic and log handlers) breaks the build.
+const threaded_io_broken = builtin.os.tag.isDarwin() and builtin.os.tag != .macos;
+
+/// The panic handler for the library: the default, except where
+/// `threaded_io_broken`, where a panic traps without printing.
+pub const panic = if (threaded_io_broken)
+    std.debug.FullPanic(trapPanic)
+else
+    std.debug.FullPanic(std.debug.defaultPanic);
+
+fn trapPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
+    @branchHint(.cold);
+    _ = msg;
+    _ = first_trace_addr;
+    @trap();
+}
+
 /// The language registry (`languages/language.zig`'s `dialects`): the table
 /// `FigFormat` is reified from, and the one every dispatch in this file reads.
 /// A gated-out format is `void` in it — that is the build gate, and it is why
@@ -46,8 +67,9 @@ comptime {
 /// Logging for the C ABI build (this file is the static-lib root, so its
 /// `std_options` wins). The default `std.log` handler writes to stderr via
 /// `std.Io.Threaded`, which does not exist on `wasm32-freestanding` (no posix
-/// I/O) — referencing it fails to compile. A library has no business writing to
-/// stderr regardless, so drop logs on wasm and defer to the default elsewhere.
+/// I/O) — referencing it fails to compile, and does not compile on iOS either
+/// (`threaded_io_broken`). A library has no business writing to stderr
+/// regardless, so drop logs on those targets and defer to the default elsewhere.
 pub const std_options: std.Options = .{ .logFn = figLogFn };
 
 fn figLogFn(
@@ -56,7 +78,7 @@ fn figLogFn(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    if (builtin.cpu.arch.isWasm()) return;
+    if (builtin.cpu.arch.isWasm() or threaded_io_broken) return;
     std.log.defaultLog(level, scope, format, args);
 }
 

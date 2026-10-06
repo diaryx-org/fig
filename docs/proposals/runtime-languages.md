@@ -2,14 +2,14 @@
 title = Runtime languages
 description = A format fig did not compile in — the Language contract carried as a vtable in-process and as a helper protocol out-of-process, with the compiled formats made to pass through the same contract first and fig-lua as the first outside implementor
 created = 2026-09-07
-status = draft
-updated = 2026-09-12
+status = implemented
+updated = 2026-10-06
 part_of = [proposals](proposals.md)
 ```
 
 # Runtime languages
 
-> **Status: DRAFT; §3.3, §9, the carrier (core, rust, cli, npm) and fig-lua implemented; every step of §10 is on `main`.**
+> **Status: IMPLEMENTED,** recorded 2026-10-06: §3.3, §9, the carrier (core, rust, cli, npm) and fig-lua, every step of §10, released from 3.0 on. It stayed marked a draft after it was built; nothing below changed.
 > Written against `main` at e56489d, with core 3.0.0 (ABI 2) built and
 > unreleased. §9's reserved range and §3.3's refactor — the compiled
 > formats editing through the contract, every hook deleted — both landed

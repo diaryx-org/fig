@@ -447,7 +447,7 @@ fn detect_sniffs_each_archetype() {
 #[test]
 fn fig_dialect_container_splices_render_flow_and_round_trip() {
     // A container value spliced into a fig-dialect embed must render as flow
-    // (`[a, b]` / `{ k = v }`): the block spellings only parse as standalone
+    // (`[a, b]` / `{k=v}`): the block spellings only parse as standalone
     // lines, so a block splice after `key = ` re-reads as a bare string.
     let mut em = Embed::open(b"```fig\nt = x\n```\nbody\n", EmbedType::FencedFig).unwrap();
     em.set_value(
@@ -465,7 +465,7 @@ fn fig_dialect_container_splices_render_flow_and_round_trip() {
     .unwrap();
     let rendered = em.render().unwrap().to_string();
     assert!(rendered.contains("contents = [a.md, b.md]"), "{rendered}");
-    assert!(rendered.contains("meta = { k = 1 }"), "{rendered}");
+    assert!(rendered.contains("meta = {k=1}"), "{rendered}");
 
     // And the result re-parses as the containers, not strings.
     let (_, content, _) = fig::split(&rendered, EmbedType::FencedFig).unwrap();

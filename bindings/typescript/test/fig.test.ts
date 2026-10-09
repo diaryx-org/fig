@@ -326,7 +326,7 @@ test("Embed setValueWith splices a block map into a ```fig fence (width knob)", 
   // Plain set still freezes a container inline as flow.
   using flow = Embed.open("```fig\ntitle = hi\n```\nbody\n", EmbedType.FencedFig);
   flow.setValue(["registry"], { a: 1, b: 2 });
-  assert.equal(flow.render(), "```fig\ntitle = hi\nregistry = { a = 1, b = 2 }\n```\nbody\n");
+  assert.equal(flow.render(), "```fig\ntitle = hi\nregistry = {a=1 b=2}\n```\nbody\n");
 });
 
 test("Embed edits YAML frontmatter, fences and body intact", () => {
@@ -470,7 +470,7 @@ test("fig-dialect container splices render flow and round-trip", () => {
   em.setValue(["meta"], { k: 1 });
   const rendered = em.render();
   assert.ok(rendered.includes("contents = [a.md, b.md]"), rendered);
-  assert.ok(rendered.includes("meta = { k = 1 }"), rendered);
+  assert.ok(rendered.includes("meta = {k=1}"), rendered);
   // Re-parses as containers, not bare strings.
   const [content] = Embed.split(rendered, EmbedType.FencedFig)!;
   const v = parse<Record<string, unknown>>(content, Format.Fig);

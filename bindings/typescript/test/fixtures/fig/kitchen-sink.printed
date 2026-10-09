@@ -88,9 +88,9 @@ servers
 > > host = a.com
 > > port = 25565
 > > backends # nested list field
-> > > * { url = x, weight = 1 } # spaced form (normalized)
-> > > * { url = y } # glued form — parses identically to `> > >  *`
-> * { host = b.com } # second element
+> > > * {url=x weight=1} # spaced form (normalized)
+> > > * {url=y} # glued form — parses identically to `> > >  *`
+> * {host=b.com} # second element
 
 ports = [25565, 25566, 25567] # scalar elements
 
@@ -113,7 +113,7 @@ jobs.test
 > > * # append a step, re-anchor here
 > > > uses = actions/setup-node@v4
 > > > with.node-version = 20
-> > * { run = npm test } # same as repeating `jobs.test.steps[]`
+> > * {run='npm test'} # same as repeating `jobs.test.steps[]`
 
 # Nested lists of lists: a non-final `[]` means "the last element" — only the
 # final `[]` in the path appends. So `spec.containers[].ports[]` appends a
@@ -121,8 +121,8 @@ jobs.test
 spec.containers[] # append a container
 > name = app
 > ports
-> > * { containerPort = 80 } # last container -> append a port
-> > * { containerPort = 443 } # same path again -> another port, same container
+> > * {containerPort=80} # last container -> append a port
+> > * {containerPort=443} # same path again -> another port, same container
 + # a second container
 > name = sidecar
 
@@ -138,11 +138,11 @@ clusters[]
 flow
 > tags = [a, b, c] # fig-inline: bare strings
 > audience = [friends, Adam Harris, Makena Harris] # bare values keep spaces
-> point = { x = 1, y = 2 } # fig-inline object: `=` pairs, bare keys
-> pasted = { x = 1, y = [2, 3] } # JSON object: `:` pairs, quoted keys
+> point = {x=1 y=2} # fig-inline object: `=` pairs, bare keys
+> pasted = {x=1 y=[2, 3]} # JSON object: `:` pairs, quoted keys
 > jsonc = [1, 2, 3] # JSONC: trailing comma (and `#` comments) OK
 > matrix = [[1, 2], [3, 4]] # nested
-> records = [{ id = 1 }, { id = 2 }]
+> records = [{id=1}, {id=2}]
 > empty_list = [] # required spelling for an empty sequence
 > empty_map = {} # required spelling for an empty map
 
@@ -151,7 +151,7 @@ flow
 # per line, trailing comma, when it overflows the width budget or exceeds the
 # item-count threshold (default 6) — the terse spelling for frontmatter-style
 # link/tag lists. Still one assignment, so it isn't blank-line separated.
-frontmatter = { tags = [rust, zig, parsing, config, yaml, toml, json] }
+frontmatter = {tags=[rust, zig, parsing, config, yaml, toml, json]}
 
 # === Quote-avoidance: bare beats quoted when a broken list would need quotes ===
 # Flow would force quotes here (each element has a top-level comma, which

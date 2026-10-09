@@ -8,4 +8,4 @@ database
 > pool.size = 10
 
 # between
-logging = { level = info }
+logging = {level=info}

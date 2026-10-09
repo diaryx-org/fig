@@ -170,15 +170,50 @@ pub fn classifyBracketCommit(source: []const u8, start: usize) BracketCommit {
 /// and handing a markdown link to the flow parser.
 ///
 /// `:`/`=` are honoured in sequence position too, where the flow grammar has no
-/// pair separator. Tracking which container is open would cost a stack for a
-/// shape (`[a: 'b]c']`) that is malformed under either reading, and admitting
-/// them keeps the pre-existing reading of it.
+/// pair separator, since admitting them keeps the pre-existing reading of a
+/// shape (`[a: 'b]c']`) that is malformed under either reading.
+///
+/// Inside a `{`, whitespace is an element start as well: a compact object's
+/// pairs are whitespace-separated, so a quoted key may follow a space
+/// (`{a=1 "k}"=2}`). `BracketWalk` tracks which bracket is innermost for that.
 fn quoteOpensSpan(prev: u8) bool {
     return switch (prev) {
         0, '[', '{', ',', ':', '=' => true,
         else => false,
     };
 }
+
+/// The bracket-matching scanners' state: nesting depth, which open brackets
+/// are `{` (one bit per depth; past 64 levels a bracket counts as `[`), the
+/// last non-whitespace byte, and whether whitespace came after it.
+const BracketWalk = struct {
+    depth: usize = 0,
+    braces: u64 = 0,
+    prev: u8 = 0,
+    prev_ws: bool = false,
+
+    fn inBrace(w: *const BracketWalk) bool {
+        if (w.depth == 0 or w.depth > 64) return false;
+        return (w.braces >> @intCast(w.depth - 1)) & 1 == 1;
+    }
+
+    fn quoteOpens(w: *const BracketWalk) bool {
+        return quoteOpensSpan(w.prev) or (w.prev_ws and w.inBrace());
+    }
+
+    fn open(w: *BracketWalk, c: u8) void {
+        if (w.depth < 64) {
+            const bit = @as(u64, 1) << @intCast(w.depth);
+            if (c == '{') w.braces |= bit else w.braces &= ~bit;
+        }
+        w.depth += 1;
+    }
+
+    fn byte(w: *BracketWalk, c: u8) void {
+        w.prev = c;
+        w.prev_ws = false;
+    }
+};
 
 /// Index of the matching close bracket for the `[`/`{` at `start`, scanning at
 /// most to the first newline and skipping quoted spans (`quoteOpensSpan` decides
@@ -187,33 +222,35 @@ fn quoteOpensSpan(prev: u8) bool {
 /// the line.
 pub fn bracketCloseIndex(source: []const u8, start: usize) ?usize {
     std.debug.assert(source[start] == '[' or source[start] == '{');
-    var depth: usize = 0;
+    var w: BracketWalk = .{};
     var i = start;
-    var prev: u8 = 0; // last non-whitespace byte scanned; 0 = none yet
     while (i < source.len and source[i] != '\n') {
         const c = source[i];
         switch (c) {
-            ' ', '\t', '\r' => i += 1, // whitespace never ends an element start
+            ' ', '\t', '\r' => {
+                w.prev_ws = true;
+                i += 1;
+            },
             '\'', '"' => {
-                const opens = quoteOpensSpan(prev);
-                prev = c;
+                const opens = w.quoteOpens();
+                w.byte(c);
                 if (opens) {
                     i = skipQuotedSpan(source, i) orelse return null;
                 } else i += 1;
             },
             '[', '{' => {
-                depth += 1;
-                prev = c;
+                w.open(c);
+                w.byte(c);
                 i += 1;
             },
             ']', '}' => {
-                depth -= 1;
-                prev = c;
+                w.depth -= 1;
+                w.byte(c);
                 i += 1;
-                if (depth == 0) return i - 1;
+                if (w.depth == 0) return i - 1;
             },
             else => {
-                prev = c;
+                w.byte(c);
                 i += 1;
             },
         }
@@ -261,36 +298,46 @@ fn restIsCommentOnly(source: []const u8, from: usize) bool {
 /// unterminated bracket is left to the flow parser (which raises
 /// FigUnclosedFlow), so this reports `.flow`. Quoted spans are skipped on the
 /// same element-start rule as the block-layer scanner (`quoteOpensSpan`).
-pub fn classifyFlowBracket(source: []const u8, start: usize) BracketCommit {
+///
+/// `ws_ends` is set for a compact object's value, which is one token: there,
+/// whitespace after the close also terminates (`{a=[1, 2] b=3}` is an array
+/// and the next pair), and only content glued to the close makes a bare string
+/// (`{href=[Blog](/x.md)}`).
+pub fn classifyFlowBracket(source: []const u8, start: usize, ws_ends: bool) BracketCommit {
     std.debug.assert(source[start] == '[' or source[start] == '{');
-    var depth: usize = 0;
+    var w: BracketWalk = .{};
     var i = start;
-    var prev: u8 = 0; // last non-whitespace byte scanned; 0 = none yet
     while (i < source.len) {
         const c = source[i];
         switch (c) {
-            ' ', '\t', '\r', '\n' => i += 1, // flow spans newlines; neither ends an element start
+            // flow spans newlines; neither ends an element start
+            ' ', '\t', '\r', '\n' => {
+                w.prev_ws = true;
+                i += 1;
+            },
             '\'', '"' => {
-                const opens = quoteOpensSpan(prev);
-                prev = c;
+                const opens = w.quoteOpens();
+                w.byte(c);
                 if (opens) {
                     i = skipQuotedSpan(source, i) orelse return .flow;
                 } else i += 1;
             },
             '[', '{' => {
-                depth += 1;
-                prev = c;
+                w.open(c);
+                w.byte(c);
                 i += 1;
             },
             ']', '}' => {
-                depth -= 1;
-                prev = c;
+                w.depth -= 1;
+                w.byte(c);
                 i += 1;
-                if (depth == 0)
-                    return if (flowRestIsTerminator(source, i)) .flow else .bare_trailing;
+                if (w.depth == 0) {
+                    const terminal = if (ws_ends) compactRestIsTerminator(source, i) else flowRestIsTerminator(source, i);
+                    return if (terminal) .flow else .bare_trailing;
+                }
             },
             else => {
-                prev = c;
+                w.byte(c);
                 i += 1;
             },
         }
@@ -308,6 +355,21 @@ fn flowRestIsTerminator(source: []const u8, from: usize) bool {
     if (i >= source.len) return true;
     return switch (source[i]) {
         ',', ']', '}', '\n', '#' => true,
+        else => false,
+    };
+}
+
+/// `flowRestIsTerminator` for a compact object's value: the byte right after the
+/// close must end the token — whitespace, `,`/`]`/`}`, or end of input.
+fn compactRestIsTerminator(source: []const u8, from: usize) bool {
+    if (from >= source.len) return true;
+    return isCompactStop(source[from]);
+}
+
+/// Where a compact object's unquoted value (one token) ends.
+pub fn isCompactStop(c: u8) bool {
+    return switch (c) {
+        ' ', '\t', '\r', '\n', ',', ']', '}' => true,
         else => false,
     };
 }
@@ -603,22 +665,42 @@ test "classifyBracketCommit: a mid-word quote is content, not a span opener" {
 }
 
 test "classifyFlowBracket: mid-word quote in an element" {
-    try std.testing.expect(classifyFlowBracket("[Blog](it's/x.md), b]", 0) == .bare_trailing);
-    try std.testing.expect(classifyFlowBracket("['a]b'], c]", 0) == .flow);
+    try std.testing.expect(classifyFlowBracket("[Blog](it's/x.md), b]", 0, false) == .bare_trailing);
+    try std.testing.expect(classifyFlowBracket("['a]b'], c]", 0, false) == .flow);
 }
 
 test "classifyFlowBracket: nested flow vs bare-trailing element" {
     // A balanced group followed by a flow terminator is a nested collection.
-    try std.testing.expect(classifyFlowBracket("[1, 2], 3]", 0) == .flow);
-    try std.testing.expect(classifyFlowBracket("[1, 2]]", 0) == .flow);
-    try std.testing.expect(classifyFlowBracket("{ x = 1 }, y]", 0) == .flow);
-    try std.testing.expect(classifyFlowBracket("[a, b]\n", 0) == .flow);
+    try std.testing.expect(classifyFlowBracket("[1, 2], 3]", 0, false) == .flow);
+    try std.testing.expect(classifyFlowBracket("[1, 2]]", 0, false) == .flow);
+    try std.testing.expect(classifyFlowBracket("{ x = 1 }, y]", 0, false) == .flow);
+    try std.testing.expect(classifyFlowBracket("[a, b]\n", 0, false) == .flow);
     // A balanced group with trailing content is a bare-string element (a
     // markdown link, glob, regex) — the flow twin of the block bare-trailing.
-    try std.testing.expect(classifyFlowBracket("[Blog](/x), [Resume](/y)]", 0) == .bare_trailing);
-    try std.testing.expect(classifyFlowBracket("[a-z]*.md, next]", 0) == .bare_trailing);
+    try std.testing.expect(classifyFlowBracket("[Blog](/x), [Resume](/y)]", 0, false) == .bare_trailing);
+    try std.testing.expect(classifyFlowBracket("[a-z]*.md, next]", 0, false) == .bare_trailing);
     // Unterminated → left to the flow parser (reported as flow).
-    try std.testing.expect(classifyFlowBracket("[1, 2", 0) == .flow);
+    try std.testing.expect(classifyFlowBracket("[1, 2", 0, false) == .flow);
+}
+
+test "classifyFlowBracket: a compact object's value ends at whitespace" {
+    // Whitespace after the close ends the token: the group is the value and the
+    // rest is the next pair.
+    try std.testing.expect(classifyFlowBracket("[1, 2] b=3}", 0, true) == .flow);
+    try std.testing.expect(classifyFlowBracket("{x=1}\n}", 0, true) == .flow);
+    try std.testing.expect(classifyFlowBracket("[1]}", 0, true) == .flow);
+    try std.testing.expect(classifyFlowBracket("[1]", 0, true) == .flow);
+    // Only glued content makes a bare string.
+    try std.testing.expect(classifyFlowBracket("[Blog](/x.md) b=3}", 0, true) == .bare_trailing);
+    try std.testing.expect(classifyFlowBracket("[1]#x}", 0, true) == .bare_trailing);
+}
+
+test "a quote after whitespace inside a brace opens a span" {
+    // A compact object's quoted key follows a space, so its brackets don't count.
+    try std.testing.expect(bracketCloseIndex("{a=1 \"k}\"=2}", 0) == 11);
+    try std.testing.expect(classifyBracketCommit("{a=1 'k]'=2}\n", 0) == .flow);
+    // In a `[`, the same quote is bare-value text, as before.
+    try std.testing.expect(classifyBracketCommit("[its 'odd] one\n", 0) == .bare_trailing);
 }
 
 test "scanTripleSingle is verbatim" {

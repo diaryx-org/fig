@@ -890,7 +890,7 @@ typedef struct FigSerializeOptions {
   // keep the 80-column default. uint16_t, so the struct pads to a 12-byte size.
   uint16_t width;
   // fig_value_serialize_opts + FIG_FORMAT_FIG only: nonzero renders a container
-  // root as inline *flow* ([a, b] / { k = v }) instead of the block spelling.
+  // root as inline *flow* ([a, b] / {k=v}) instead of the block spelling.
   // This is what the bindings' editor splice paths set: a fragment spliced
   // after `key = ` has no valid block spelling in the fig dialect (`* ` element
   // lines and section headers only parse as standalone lines), so flow is the
@@ -1164,7 +1164,7 @@ typedef struct FigPrintOptions {
     // `>` block) is written bare. Every other language prints the same
     // either way.
     bool     splice;
-    // Print a container root inline — fig's `{ a = 1 }` / `[a, b]` — as a
+    // Print a container root inline — fig's `{a=1}` / `[a, b]` — as a
     // value spliced after `key = ` must be; a block spelling re-reads there
     // as a string. Set for fig alone; a language with no such distinction
     // ignores it.

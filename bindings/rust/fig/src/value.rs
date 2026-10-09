@@ -778,7 +778,7 @@ pub(crate) fn value_text(value: &Value, format: Format) -> Result<String, Error>
 /// Unlike [`value_text`], the fig dialect's inline-flow override is NOT forced:
 /// a container renders in its natural, width-driven layout, so a block map or
 /// sequence spells as a section body (`a = 1` / `* x` lines) instead of freezing
-/// inline as flow (`{ a = 1 }`). The core editor re-frames such a block value
+/// inline as flow (`{a=1}`). The core editor re-frames such a block value
 /// under the target key (adding the marker run), which the plain inline splice
 /// cannot express. `options.width` then tunes how eagerly nested containers
 /// break to block. Non-fig formats are unaffected by the flow bit and simply

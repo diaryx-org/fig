@@ -163,7 +163,7 @@ export interface PrintOptions {
    *  a scalar root spelled differently from a scalar in place (NestedText's
    *  `>` block) is written bare. Every other print leaves it `false`. */
   splice: boolean;
-  /** Print a container root inline — fig's `{ a = 1 }` / `[a, b]` — as a
+  /** Print a container root inline — fig's `{a=1}` / `[a, b]` — as a
    *  value spliced after `key = ` must be, since a block spelling re-reads
    *  there as a string. The editors set it for fig alone, so a language
    *  standing in for fig answers it; any other ignores it. */

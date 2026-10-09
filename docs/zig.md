@@ -649,7 +649,7 @@ try ast.serializeWith(&out.writer, .yaml, .{ .strip_comments = true });
 | `width`         | TOML, YAML, fig   | Column budget for inline (flow) vs. expanded layout (default 80). `1` means "always block". |
 | `strip_comments`| all               | Drop carried comments instead of emitting them.  |
 | `fig_indent`    | fig               | Opt-in cosmetic `2 × depth` indentation (`fig fmt --indent`). |
-| `flow`          | fig, fragments    | Render a container root as inline flow (`[a, b]` / `{ k = v }`) rather than block. |
+| `flow`          | fig, fragments    | Render a container root as inline flow (`[a, b]` / `{k=v}`) rather than block. |
 
 `AST.SerializeFormat` is `json | jsonc | json5 | yaml | toml | zon |
 canonical | fig | ini | dotenv | properties | plist | nestedtext` — every

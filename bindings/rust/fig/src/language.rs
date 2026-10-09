@@ -691,7 +691,7 @@ pub struct PrintOptions {
     /// place (NestedText's `>` block) is written bare. The bindings' editor
     /// text and `fig patch` set it; every other print leaves it `false`.
     pub splice: bool,
-    /// Print a container root inline — fig's `{ a = 1 }` / `[a, b]` — as a
+    /// Print a container root inline — fig's `{a=1}` / `[a, b]` — as a
     /// value spliced after `key = ` must be, since a block spelling re-reads
     /// there as a string. The bindings' editor text sets it for fig alone,
     /// so a language standing in for fig answers it; any other ignores it.

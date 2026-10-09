@@ -1,6 +1,6 @@
 # fig authoring dialect — specification
 
-**Version: 1.1**
+**Version: 2.0**
 
 This document is normative: where the implementation and this document disagree, that is an implementation bug. The reference implementation is the reader at `src/languages/fig/parser.zig` (with `tokenizer.zig`) and the formatter at `src/languages/fig/printer.zig`.
 
@@ -9,6 +9,7 @@ Key words MUST, MUST NOT, SHOULD, and MAY are to be interpreted as in RFC 2119.
 **Changelog**
 - 1.0: Initial release
 - 1.1: added support for `_` separators in numbers
+- 2.0: fig-spelled flow objects are compact — whitespace-separated pairs, one-token values, key-path keys (§ 6.3); flow errors get their own codes
 
 ---
 
@@ -65,7 +66,7 @@ Foreign-syntax guardrails at line dispatch (all hard errors that name the fig fo
 
 ### 3.3 Whitespace and indentation
 
-Whitespace is insignificant except in three places: the marker↔body separator (§ 3.2), the whitespace that precedes an inline `#` (§ 3.4), and the interior of quoted/multi-line strings.
+Whitespace is insignificant except in four places: the marker↔body separator (§ 3.2), the whitespace that precedes an inline `#` (§ 3.4), the whitespace that separates a fig object's pairs (§ 6.3), and the interior of quoted/multi-line strings.
 
 Indentation, when present, is checked against the convention `2 × depth` spaces. A line whose indentation is present and disagrees with its marker count produces the `indent_marker_mismatch` warning; any tab in the indentation produces it regardless of width. Unindented lines are always clean. Comment lines participate in this check (their depth is load-bearing for attachment).
 
@@ -183,7 +184,7 @@ Commitment decides whether a malformed value is an error or a string, and it is 
 
   A balanced, *well-formed* bracket group separated from its trailing content by whitespace (`[80, 443] x`) still parses as a string but produces the `flow_like_string` warning; glued shapes (`[Blog](/x)`) never warn.
 
-  "Quoted spans skipped" means quoted *elements*: a `'`/`"` suspends the match only where a quoted value or key could begin — as the first non-whitespace character after `[`, `{`, `,`, or a `:`/`=` pair separator (§ 6.3). A quote anywhere else is ordinary text in a bare element, exactly as the flow grammar reads it, so `[its parent's comment](x.md)` still balances at its `]` and is a bare string.
+  "Quoted spans skipped" means quoted *elements*: a `'`/`"` suspends the match only where a quoted value or key could begin — as the first non-whitespace character after `[`, `{`, `,`, or a `:`/`=` pair separator, or, directly inside a `{`, after whitespace (a fig object's next key, § 6.3). A quote anywhere else is ordinary text in a bare element, exactly as the flow grammar reads it, so `[its parent's comment](x.md)` still balances at its `]` and is a bare string.
 
 ## 5. Keys and key-value pairs
 
@@ -281,27 +282,33 @@ At root, an element is a bare `*` (`* first` / `* second` build a root sequence)
 A value beginning `[` or `{` (when committed, § 4.7) enters an inline flow sublanguage that suspends the block layer until the matching close; interior newlines carry no markers, so flow values may span lines.
 
 ```
-tags = [a, b, c]                        # fig-inline: bare strings
-audience = [friends, Adam Harris]       # bare values run to the comma
-point = { x = 1, y = 2 }                # fig object: `=` pairs, bare keys
-pasted = { "x": 1, "y": [2, 3] }        # JSON object: `:` pairs, quoted keys
+tags = [a, b, c]                        # array: bare strings
+audience = [friends, Adam Harris]       # array values run to the comma
+point = {x=1 y=2}                       # fig object: `=` pairs, whitespace-separated
+attrs = {lang=en data.count=3}          # dotted keys nest: {lang: en, data: {count: 3}}
+title = {text="Hello world"}            # a fig object's value is one token; quote spaces
+pasted = { "x": 1, "y": [2, 3] }        # JSON object: `:` pairs, quoted keys, commas
 empty_list = []
 empty_map = {}
 ```
 
-- **Objects have two spellings, selected per object by the pair separator**: fig-inline (`=`, keys bare or quoted) or JSON (`:`, keys MUST be quoted). Mixing separators in one object is `FigMixedFlowSeparators`; a bare key before `:` is `FigFlowBareKeyColon`. Arrays have no separator and no mode; each element self-selects, so pasted JSON subtrees nest inside fig objects.
-- **Bare flow values run to the next `,` `]` `}` or newline**, spaces included then edge-trimmed — `[Adam Harris, Makena Harris]` is two two-word strings. They are sniffed by the same literal-else-string rule. A non-bracket-led bare value is terminated by *any* `]`/`}`; quote a value containing them. A newline ends a bare value but is **not** an element separator: the next non-blank, non-comment token must be `,` or the closer, so `[a` ⏎ `b]` is `FigUnclosedFlow` (a bare flow value cannot span lines; quote it instead).
-- **Bracket-led bare strings** (§ 4.7's flow twin): an element whose first char is `[`/`{` and whose balanced close is followed by more content is a bare string, scanned bracket-aware so interior `]` does not terminate it — `links = [[Blog](/Blog.md), [Resume](/Resume.md)]` is two unquoted strings.
-- **JSONC affordances**: trailing commas and `#` comments are accepted in both spellings; interior comments are discarded. JSON5 is otherwise dropped: `Infinity`/`NaN` are plain strings.
+- **Objects have two spellings, selected per object by the first pair's separator**: fig (`=`) or JSON (`:`, keys MUST be quoted). Mixing separators in one object is `FigMixedFlowSeparators`; a bare key before `:` is `FigFlowBareKeyColon`. Arrays have no separator and no mode; each element self-selects, so pasted JSON subtrees nest inside fig objects.
+- **A fig object is compact.** Its pairs are separated by whitespace (newlines included), a `,`, or both; spaces around `=` are optional, so `{x=1 y=2}`, `{ x = 1 y = 2 }` and `{ x = 1, y = 2 }` are one object. A value MUST be followed by a separator or the close: content glued to a quoted value is `FigQuotedTrailingContent` (`{a="x"b=2}`).
+- **A fig object's key is a key path** (§ 5.1): bare segments or quoted ones, joined by `.`; index steps are `FigBadKey`, as is any bare segment § 5.1 rejects (`{@x=1}`). A dotted key steps into a sub-object, created on first use and shared by the object's later pairs (`{a.b=1 a.c=2}` is `{a: {b: 1, c: 2}}`); `"a.b"` is one literal key. A sub-object written as a flow value is closed, even within the object (`{a={b=1} a.c=2}` is `FigClosedFlowValue`); re-defining a leaf is `FigDuplicateKey`; stepping into a scalar is `FigKeyNotContainer`.
+- **A fig object's bare value is one token**: it runs to the next whitespace, `,`, `]`, or `}`, and is sniffed by the literal-else-string rule. A `#` inside the token is content (`{tag=a#b}`). A value with spaces is quoted; a word with no `=` after it is `FigFlowMissingEquals` (`{name=Adam Harris}`). One join: a local date, one space, and a time are one datetime (`{at=2026-07-01 09:00}`) — unambiguous, since a time is never a key.
+- **Array elements and JSON object values run to the next `,` `]` `}` or newline**, spaces included then edge-trimmed — `[Adam Harris, Makena Harris]` is two two-word strings. They are sniffed by the same literal-else-string rule. A non-bracket-led bare value is terminated by *any* `]`/`}`; quote a value containing them. A newline ends a bare value but is **not** an element separator: the next non-blank, non-comment token must be `,` or the closer, so `[a` ⏎ `b]` is `FigFlowMissingComma` (a bare flow value cannot span lines; quote it instead), as is `["a" "b"]`. A member that is nothing (`[a,,b]`, `[,]`) is `FigFlowEmptyElement`.
+- **Bracket-led bare strings** (§ 4.7's flow twin): an element whose first char is `[`/`{` and whose balanced close is followed by more content is a bare string, scanned bracket-aware so interior `]` does not terminate it — `links = [[Blog](/Blog.md), [Resume](/Resume.md)]` is two unquoted strings. As a fig object's value the trailing content must be glued to the close (`{href=[Blog](/x.md)}`); after whitespace the bracket group is a flow value and the rest is the next pair (`{xs=[1, 2] n=3}`).
+- **JSONC affordances**: trailing commas and `#` comments are accepted in both object spellings and in arrays; interior comments are discarded. JSON5 is otherwise dropped: `Infinity`/`NaN` are plain strings. A comment that hides the closing bracket (`[see #3, y]`) is `FigFlowCommentedClose`.
+- **No multi-line strings**: a `'''`/`"""` string inside a flow value is `FigFlowMultilineString`.
 - A `# …` alone after the opening bracket on its line is the flow value's trailing comment (the multi-line-string opener rule's flow twin).
-- A bare flow value containing ` = ` produces the `flow_missing_comma` warning (`{ x = 1 y = 2 }` reads `x = "1 y = 2"`).
+- An array element or JSON object value containing ` = ` produces the `flow_missing_comma` warning (`[k = v]`).
 
 ### 6.4 Closed flow values
 
-A container written as a flow value is **closed**: extending it later by a dotted path, header, or index is `FigClosedFlowValue`.
+A container written as a flow value is **closed**: extending it later by a dotted path, header, or index is `FigClosedFlowValue`. That includes the sub-objects a fig object's dotted keys created (§ 6.3).
 
 ```
-a = { x = 1 }
+a = {x=1}
 a.y = 2            # error: FigClosedFlowValue
 ```
 
@@ -383,11 +390,13 @@ The dialect admits many spellings per document; `fig fmt` (the printer) defines 
 
 **Markers.** Spaced runs with zero leading indentation by default: `"> "` per level, so the final space doubles as the marker↔key separator (`> > key`). Element stars occupy their own cell (`> > *`); a root element is a bare `*`. An optional `fig fmt --indent` prefixes each marker/comment line with `2 × depth` literal spaces of cosmetic indentation on top of the marker run, purely visual — markers alone carry parse depth (§ 3.3), so canonical (default, unindented) and `--indent`-ed output re-parse to the same AST.
 
+**Flow spelling.** An array prints `[a, b]`; an object prints compact, `{x=1 y=2}` — no padding inside the braces, no spaces around `=`, one space between pairs. A JSON-spelled object is normalized to this form.
+
 **Fits-or-breaks.** A container value renders as inline flow iff every descendant is flow-representable, no comment would be dropped or re-anchored, no object directly contains another object, and the whole line fits the width budget (default 80 columns). All-or-nothing per node; each child of a broken node re-decides independently. Not flow-representable (each forces block position): multi-line strings, enum/char/non-finite atoms, and any tag-annotated scalar (the `: type =` spelling exists only in block position).
 
 **Multi-line flow.** A sequence that is fully flow-representable and holds no mapping element renders as stacked flow — `key = [`, one element per line with a two-space cosmetic indent and trailing comma, `]` at the opener's indent — when the inline form is rejected for width **or** for exceeding the item-count threshold (default 6). Nested sequences re-decide recursively. The value's trailing comment rides the opener line (`key = [  # note`). A stacked list is not blank-line separated from its neighbors. **Quote-avoidance:** when a list breaks, it takes `> *` block lines instead of stacked flow if flow would force quotes onto an element that block position renders bare (the common case: prose with a top-level comma).
 
-**Strings.** Values print bare wherever the literal-else-string sniff round-trips them unchanged (tightened in flow position: no top-level `,`/`]`/`}`, no committing lead character, no whitespace-preceded `#`); otherwise the minimal quoted form that round-trips it: raw `'…'` (§ 4.5) when the content contains neither `'` nor a newline (no escaping needed at all), else a double-quoted form with minimal escapes. A `: string`-tagged value re-emits bare (with its annotation) whenever the total-sink scan reproduces it verbatim; when it does not — the value is multiline, has leading/trailing whitespace, or contains a whitespace-preceded `#` — the printer **drops the tag** and emits the ordinary untagged quoted or multiline form, since quoting under the annotation would turn the quotes into content. A string containing newlines prints as a `'''` raw block (flush-left, closer at column 0), or as `"""` with `\`, `"`, and CR escaped when the content contains `'''` or a CR.
+**Strings.** Values print bare wherever the literal-else-string sniff round-trips them unchanged (tightened in flow position: no top-level `,`/`]`/`}`, no committing lead character, no whitespace-preceded `#`; and, as a fig object's value, no whitespace at all); otherwise the minimal quoted form that round-trips it: raw `'…'` (§ 4.5) when the content contains neither `'` nor a newline (no escaping needed at all), else a double-quoted form with minimal escapes. A `: string`-tagged value re-emits bare (with its annotation) whenever the total-sink scan reproduces it verbatim; when it does not — the value is multiline, has leading/trailing whitespace, or contains a whitespace-preceded `#` — the printer **drops the tag** and emits the ordinary untagged quoted or multiline form, since quoting under the annotation would turn the quotes into content. A string containing newlines prints as a `'''` raw block (flush-left, closer at column 0), or as `"""` with `\`, `"`, and CR escaped when the content contains `'''` or a CR.
 
 **Dotted collapse.** A chain of single-child maps collapses to one dotted key (`a.b.c = v`), blocked where a comment's anchor would not survive.
 
@@ -401,7 +410,7 @@ The dialect admits many spellings per document; `fig fmt` (the printer) defines 
 
 Sections are separated by one blank line when either side is multi-line or carries leading comments; single-line assignments pack tight.
 
-**Never emitted:** index addressing `[i]` (rewritten to append/block form), contiguous marker runs, JSON-spelled flow objects (normalized to fig-inline `=` pairs), and interior flow comments (not representable).
+**Never emitted:** index addressing `[i]` (rewritten to append/block form), contiguous marker runs, JSON-spelled flow objects (normalized to compact `=` pairs), commas between a fig object's pairs, and interior flow comments (not representable).
 
 Trailing comments normalize to ` # text` (one space each side of `#`); leading and dangling comments to `# text` lines at their anchor depth.
 
@@ -412,13 +421,13 @@ A conforming parser reports two severities:
 - **errors** — the document has no well-defined tree; parsing MUST fail. The error conditions are those named throughout this spec (`Fig*` codes).
 - **warnings** — the tree is well-defined but a line is a likely mistake; parsing MUST succeed. Consumers MAY promote warnings to failures (`--strict`) or silence them (`--quiet`).
 
-The normative warning set: `string_looks_like_literal` (§ 4.2), `string_leading_zero` and `string_looks_like_number` (§ 4.3), `ambiguous_datetime` (§ 4.4), `flow_like_string` (§ 4.7), `flow_missing_comma` (§ 6.3), and `indent_marker_mismatch` (§ 3.3). Every diagnostic message SHOULD name the valid fig spelling that fixes it.
+The normative warning set: `string_looks_like_literal` (§ 4.2), `string_leading_zero` and `string_looks_like_number` (§ 4.3), `ambiguous_datetime` (§ 4.4), `flow_like_string` (§ 4.7), `flow_missing_comma` (§ 6.3, arrays and JSON objects), and `indent_marker_mismatch` (§ 3.3). Every diagnostic message SHOULD name the valid fig spelling that fixes it.
 
 ## 11. Conformance
 
 - **Round-trip**: for any valid document, parse → AST → canonical-form emission MUST be byte-identical to the canonical emission of the same data authored in any other supported format (the canonical form is the comparison oracle). `fig fmt` MUST be idempotent (a second pass is byte-equal) and its output MUST re-parse to an equal AST, comments included.
 - **Reference corpus**: `src/languages/fig/testdata/kitchen_sink.figl` is a canonical valid document exercising every construct in this spec (it deliberately carries warning examples); the parser and printer test suites in `parser.zig` / `printer.zig` are the behavioral reference.
-- **Informative grammar**: `editors/tree-sitter-fig/grammar.js` is a shallow, lexical grammar for editor highlighting. It is informative only; where it and the reference parser disagree, the parser is authoritative. One accepted cosmetic gap remains: a double-quoted `: char` RHS (invalid — only a single-quoted `'A'` is a valid char literal, § 5.3) still highlights as an ordinary string, since distinguishing it from the valid single-quoted spelling isn't worth the added grammar complexity for a highlighting-only grammar.
+- **Informative grammar**: `editors/tree-sitter-fig/grammar.js` is a shallow, lexical grammar for editor highlighting. It is informative only; where it and the reference parser disagree, the parser is authoritative. It predates compact objects (§ 6.3) and still reads a fig object as comma-separated, so `{x=1 y=2}` highlights with an error node until it is updated. One further accepted cosmetic gap remains: a double-quoted `: char` RHS (invalid — only a single-quoted `'A'` is a valid char literal, § 5.3) still highlights as an ordinary string, since distinguishing it from the valid single-quoted spelling isn't worth the added grammar complexity for a highlighting-only grammar.
 
 ## 12. File extensions
 

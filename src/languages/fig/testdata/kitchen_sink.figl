@@ -151,11 +151,14 @@ clusters[1].size = 5
 flow
 > tags = [a, b, c]                                    # fig-inline: bare strings
 > audience = [friends, Adam Harris, Makena Harris]    # bare values keep spaces
-> point = { x = 1, y = 2 }                            # fig-inline object: `=` pairs, bare keys
+> point = {x=1 y=2}                                   # fig object: `=` pairs, whitespace-separated
+> spaced = { x = 1, y = 2 }                           # the same object; spaces and commas are optional
+> attrs = {lang=en data.count=3 title="Hello world"}  # a value is one token; dotted keys nest
 > pasted = { "x": 1, "y": [2, 3] }                    # JSON object: `:` pairs, quoted keys
+> prose = { "note": bare words run to the comma }     # JSON objects keep multi-word values
 > jsonc = [1, 2, 3,]                                  # JSONC: trailing comma (and `#` comments) OK
 > matrix = [[1, 2], [3, 4]]                           # nested
-> records = [{ id = 1 }, { id = 2 }]
+> records = [{id=1}, {id=2}]
 > empty_list = []                                     # required spelling for an empty sequence
 > empty_map = {}                                      # required spelling for an empty map
 

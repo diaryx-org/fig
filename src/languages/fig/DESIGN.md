@@ -756,14 +756,17 @@ fig has two layers:
   way — one concept, two uses.
 
 Flow objects come in **two spellings, and the pair separator selects between
-them** — fig-inline (`=`) or JSON (`:`). This is *not* a JSON5 superset (that was
+them** — fig (`=`) or JSON (`:`). This is *not* a JSON5 superset (that was
 tried and dropped): the point is only that **real pasted JSON parses verbatim**,
-not that fig embeds a second messy format.
+not that fig embeds a second messy format. A fig object is **compact** — an
+attribute list, `{a.b=1 a.c=2 title="Hello world"}`, read the same way twig reads
+its `{…}` attribute block (`docs/proposals/compact-objects.md`).
 
 ```
-tags   = [a, b, c]                 # fig-inline: bare strings
-names  = [Adam Harris, Makena Harris]   # bare values run to the comma — spaces OK
-point  = { x = 1, y = 2 }          # fig-inline object: `=` pairs, bare keys
+tags   = [a, b, c]                 # array: bare strings
+names  = [Adam Harris, Makena Harris]   # array values run to the comma — spaces OK
+point  = {x=1 y=2}                 # fig object: whitespace-separated `=` pairs
+attrs  = {lang=en data.count=3}    # one-token values; dotted keys nest
 pasted = { "x": 1, "y": [2, 3] }   # JSON object: `:` pairs, quoted keys
 empty  = []                        # required spelling for an empty sequence
 none   = {}                        # required spelling for an empty map
@@ -771,8 +774,8 @@ none   = {}                        # required spelling for an empty map
 
 | Object spelling | Separator | Keys | Source |
 |---|---|---|---|
-| **fig-inline** | `=` | bare or quoted | terse hand-authored |
-| **JSON** | `:` | **must** be quoted | pasted JSON verbatim |
+| **fig** (compact) | `=`, pairs separated by whitespace or `,` | key paths: bare or quoted segments, `.` nests | terse hand-authored, attribute lists |
+| **JSON** | `:`, members separated by `,` | **must** be quoted | pasted JSON verbatim |
 
 - **The separator is the discriminator, chosen per object, and it may not mix.**
   `{x = 1, "y": 2}` is a **hard error** (`FigMixedFlowSeparators`) — an object is
@@ -785,9 +788,19 @@ none   = {}                        # required spelling for an empty map
   neutral, `[{"x":1}]` holds a JSON object). Only *objects* fork. Selection is
   **per brace**, so a pasted JSON subtree drops straight into a fig object:
   `{ x = {"deep": [1, 2]} }`.
-- **Bare values run to the next `,`/`]`/`}`** (spaces included, then trimmed), so
-  `[Adam Harris, Makena Harris]` is two two-word strings — the exact ergonomic
-  win that makes flow the answer for hand-written scalar lists.
+- **In arrays and JSON objects, bare values run to the next `,`/`]`/`}`** (spaces
+  included, then trimmed), so `[Adam Harris, Makena Harris]` is two two-word
+  strings — the exact ergonomic win that makes flow the answer for hand-written
+  scalar lists.
+- **In a fig object, a bare value is one token** — it ends at whitespace too, which
+  is what lets pairs go without commas. A value with spaces is quoted
+  (`{name="Adam Harris"}`); a leftover word is `FigFlowMissingEquals`. A local
+  date, a space and a time join into one datetime, since a time is never a key.
+- **A fig object's key is a key path.** `{a.b=1 a.c=2}` builds `{a: {b: 1, c: 2}}`
+  (TOML's inline-table rule): sub-objects made by dotted keys are open to the
+  object's later pairs and close with it; a `{…}` written as a value is closed at
+  once. Before compact objects the key was scanned to the next separator and never checked,
+  so `{a.b = 1}` silently made the key `"a.b"`.
 - **Balanced-then-trailing is a bare string in flow too.** A flow element whose
   first char is `[`/`{` normally opens a nested collection — but the same
   whole-shape test the block layer uses (see "Committed values") applies: if the
@@ -1107,13 +1120,17 @@ value       ::= NULL | BOOL | NUMBER | DATETIME     (* sniffed bare tokens      
 flow        ::= array | object
 array       ::= "[" [ fvalue { "," fvalue } [ "," ] ] "]"
 object      ::= figobject | jsonobject          (* separator selects; may not mix *)
-figobject   ::= "{" [ figpair  { "," figpair  } [ "," ] ] "}"
+figobject   ::= "{" [ figpair  { figsep figpair } [ "," ] ] "}"
+figsep      ::= WS+ | "," (* whitespace, a comma, or both *)
 jsonobject  ::= "{" [ jsonpair { "," jsonpair } [ "," ] ] "}"
-figpair     ::= fkey                 "=" fvalue  (* bare or quoted key *)
+figpair     ::= fkeypath             "=" cvalue  (* compact: one-token value *)
 jsonpair    ::= ( STRING_SQ | STRING_DQ ) ":" fvalue   (* quoted key required *)
+fkeypath    ::= fkey { "." fkey }                (* dotted keys nest; no [i] *)
 fkey        ::= BAREKEY | STRING_SQ | STRING_DQ
 fvalue      ::= NULL | BOOL | NUMBER | DATETIME
              | STRING_SQ | STRING_DQ | flow | BAREVAL
+cvalue      ::= NULL | BOOL | NUMBER | DATETIME
+             | STRING_SQ | STRING_DQ | flow | CTOKEN
 (* NUMSPECIAL is NOT an fvalue — Infinity/NaN sniff to BAREVAL strings, like bare inf/nan. *)
 
 (* ─── Multiline strings (suspend the block layer) ─── *)
@@ -1139,6 +1156,8 @@ BAREVAL     ::= (* bare flow value: runs to the next "," "]" "}" NL (spaces
                    included, trimmed), or a " #" that opens a comment — so
                    [Adam Harris, ...] is two-word strings; sniffed like a block
                    bare token (Infinity/NaN → string) *)
+CTOKEN      ::= (* a fig object's bare value: runs to the next WS "," "]" "}"
+                   — one token, "#" included; "DATE TIME" with one space joins *)
 ```
 
 ### The context-sensitive layer (what EBNF can't carry)
@@ -1334,8 +1353,9 @@ All of the following is **done**; build, tests, and `zig build semver-check`
   stays silent), `flow_like_string` (balanced
   well-formed `[…]` + whitespace + trailing content only — glued links/globs
   never warn; well-formedness by speculative sub-parse of the prefix),
-  `flow_missing_comma` (a bare flow value swallowing ` = `, the
-  `{x = 1 y = 2}` case — an addition beyond the DESIGN warn list), and
+  `flow_missing_comma` (an array element or JSON object value swallowing ` = `,
+  the `[k = v]` case — an addition beyond the DESIGN warn list; a fig object's
+  `{x = 1 y = 2}` is two pairs since compact objects), and
   `indent_marker_mismatch` (the mitigation-#1 lint: fires only when indent is
   present and ≠ `2 × depth` spaces; comment lines included, since their depth
   drives attachment). CLI: `get` renders warns under the existing

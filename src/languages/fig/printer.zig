@@ -117,7 +117,7 @@ pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize
         // which this mirrors exactly (a non-zero depth never reaches this
         // switch arm: nested scalars go through `value`, not `printNode`).
         else => if (depth == 0) return error.FigUnrepresentableRoot else {
-            try p.value(id, false);
+            try p.value(id, .block);
             try p.writer.writeByte('\n');
         },
     }
@@ -160,7 +160,7 @@ fn root(self: *Printer, id: AST.Node.Id, mode: RootMode) Error!void {
         .sequence => try self.seqBody(id, 0), // prints its own dangling run
         else => switch (mode) {
             .fragment => {
-                try self.value(id, false);
+                try self.value(id, .block);
                 try self.writer.writeByte('\n');
             },
             .document => {
@@ -292,7 +292,7 @@ fn sectionAssign(self: *Printer, anchor_key: AST.Node.Id, v: AST.Node.Id) Error!
         else => {
             _ = try self.writeTypeAnnotation(v);
             try self.writer.writeAll(" = ");
-            try self.value(v, false);
+            try self.value(v, .block);
         },
     }
     try self.trailingComment(v);
@@ -440,7 +440,7 @@ fn multilineFlowEligible(self: *const Printer, seq_id: AST.Node.Id, policy: Comm
 /// here (excluded by `multilineFlowEligible`).
 fn flowQuotesWhatBlockLeavesBare(self: *const Printer, id: AST.Node.Id) bool {
     switch (self.ast.nodes[id].kind) {
-        .string => |s| return !isBareSafe(s, false, true) and isBareSafe(s, false, false),
+        .string => |s| return !isBareSafe(s, false, .list) and isBareSafe(s, false, .block),
         .sequence => |first_opt| {
             var cur = first_opt;
             while (cur) |el| : (cur = self.ast.nodes[el].next_sibling) {
@@ -477,7 +477,7 @@ fn multilineFlowSeq(self: *Printer, seq_id: AST.Node.Id, indent: usize, comment_
         {
             try self.multilineFlowSeq(el, inner, null);
         } else {
-            try self.value(el, true);
+            try self.value(el, .list);
         }
         try self.writer.writeAll(",\n");
     }
@@ -552,7 +552,7 @@ fn mapEntryLine(self: *Printer, kv_id: AST.Node.Id, depth: usize) Error!void {
         else => {
             _ = try self.writeTypeAnnotation(v);
             try self.writer.writeAll(" = ");
-            try self.value(v, false);
+            try self.value(v, .block);
             try self.trailingComment(v);
             try self.writer.writeByte('\n');
         },
@@ -600,7 +600,7 @@ fn seqBody(self: *Printer, seq_id: AST.Node.Id, depth: usize) Error!void {
             else => {
                 const annotated = try self.writeTypeAnnotation(el);
                 try self.writer.writeAll(if (annotated) " = " else " ");
-                try self.value(el, false);
+                try self.value(el, .block);
                 try self.trailingComment(el);
                 try self.writer.writeByte('\n');
             },
@@ -686,7 +686,7 @@ fn computeInlineWidth(self: *const Printer, id: AST.Node.Id) ?usize {
         .number => |n| return n.raw.len,
         // A multi-line string deserves a real `'''`/`"""` block, which only
         // exists in block position — so it forces its container out of flow.
-        .string => |s| return if (std.mem.indexOfScalar(u8, s, '\n') != null) null else scalarStringWidth(s, false, true),
+        .string => |s| return if (std.mem.indexOfScalar(u8, s, '\n') != null) null else scalarStringWidth(s, false, .list),
         .extended => |e| return switch (e.kind) {
             .offset_datetime, .local_datetime, .local_date, .local_time => e.text.len,
             // enum/char/non-finite need a `: type =` annotation, which exists
@@ -709,7 +709,7 @@ fn computeInlineWidth(self: *const Printer, id: AST.Node.Id) ?usize {
         },
         .mapping => |first_opt| {
             if (first_opt == null) return 2; // "{}"
-            var w: usize = 4; // "{ " + " }"
+            var w: usize = 2; // "{" + "}"
             var cur = first_opt;
             var i: usize = 0;
             while (cur) |kv_id| : ({
@@ -719,12 +719,22 @@ fn computeInlineWidth(self: *const Printer, id: AST.Node.Id) ?usize {
                 const kv = self.ast.nodes[kv_id].kind.keyvalue;
                 if (self.commentsOn() and self.ast.comments(kv.key).leading.len > 0) return null;
                 if (self.ast.nodes[kv.value].kind == .mapping) return null; // object-in-object
-                const vw = self.inlineWidth(kv.value, .strict) orelse return null;
-                w += self.keyWidth(kv.key) + 3 + vw + (if (i > 0) @as(usize, 2) else 0);
+                const vw = self.compactValueWidth(kv.value) orelse return null;
+                w += self.keyWidth(kv.key) + 1 + vw + (if (i > 0) @as(usize, 1) else 0); // "=", " "
             }
             return w;
         },
     }
+}
+
+/// `inlineWidth` for a `{…}` object's value: a string there is one token, so
+/// its bare-or-quoted width is the compact one (`isBareSafe(.compact)`).
+fn compactValueWidth(self: *const Printer, id: AST.Node.Id) ?usize {
+    const w = self.inlineWidth(id, .strict) orelse return null;
+    return switch (self.ast.nodes[id].kind) {
+        .string => |s| scalarStringWidth(s, false, .compact),
+        else => w,
+    };
 }
 
 /// Deepest `>` count `mapBody(map_id, depth)` would emit — used to decide
@@ -876,12 +886,12 @@ fn writeKey(self: *Printer, key_id: AST.Node.Id) Error!void {
         .string => |s| s,
         else => return error.NonStringKey,
     };
-    try self.writeBareOrQuoted(name, true, false);
+    try self.writeBareOrQuoted(name, true, .block);
 }
 
 fn keyWidth(self: *const Printer, key_id: AST.Node.Id) usize {
     return switch (self.ast.nodes[key_id].kind) {
-        .string => |s| scalarStringWidth(s, true, false),
+        .string => |s| scalarStringWidth(s, true, .block),
         else => 0, // fails with NonStringKey at write time regardless
     };
 }
@@ -964,9 +974,15 @@ fn writeTypeAnnotation(self: *Printer, id: AST.Node.Id) Error!bool {
     }
 }
 
-/// A scalar (or, in flow position, any) value. `in_flow` tightens the
-/// bare-string rules to what survives inside `[…]`/`{…}`.
-fn value(self: *Printer, id: AST.Node.Id, in_flow: bool) Error!void {
+/// Where a value is written, which decides what may go unquoted: `.list` (an
+/// array element) tightens the bare-string rules to what survives inside
+/// `[…]`, and `.compact` (a `{…}` object's value) further to one token
+/// (docs/proposals/compact-objects.md).
+const Pos = enum { block, list, compact };
+
+/// A scalar (or, in flow position, any) value.
+fn value(self: *Printer, id: AST.Node.Id, pos: Pos) Error!void {
+    const in_flow = pos != .block;
     switch (self.ast.nodes[id].kind) {
         .null_ => try self.writer.writeAll("null"),
         .boolean => |b| try self.writer.writeAll(if (b) "true" else "false"),
@@ -982,7 +998,7 @@ fn value(self: *Printer, id: AST.Node.Id, in_flow: bool) Error!void {
             // bare bytes re-parse to exactly this value.
             try self.writer.writeAll(s);
         } else {
-            try self.writeBareOrQuoted(s, false, in_flow);
+            try self.writeBareOrQuoted(s, false, pos);
         },
         .extended => |e| try self.writeExtended(e),
         .mapping, .sequence => try self.flowValue(id),
@@ -991,7 +1007,7 @@ fn value(self: *Printer, id: AST.Node.Id, in_flow: bool) Error!void {
     }
 }
 
-/// A container in flow spelling: `[a, b]` / `{ x = 1 }` (fig-inline pairs).
+/// A container in flow spelling: `[a, b]` / `{x=1 y=2}` (compact pairs).
 fn flowValue(self: *Printer, id: AST.Node.Id) Error!void {
     switch (self.ast.nodes[id].kind) {
         .sequence => |first_opt| {
@@ -1003,7 +1019,7 @@ fn flowValue(self: *Printer, id: AST.Node.Id) Error!void {
                 i += 1;
             }) {
                 if (i > 0) try self.writer.writeAll(", ");
-                try self.value(el, true);
+                try self.value(el, .list);
             }
             try self.writer.writeByte(']');
         },
@@ -1012,20 +1028,20 @@ fn flowValue(self: *Printer, id: AST.Node.Id) Error!void {
                 try self.writer.writeAll("{}");
                 return;
             }
-            try self.writer.writeAll("{ ");
+            try self.writer.writeByte('{');
             var cur = first_opt;
             var i: usize = 0;
             while (cur) |kv_id| : ({
                 cur = self.ast.nodes[kv_id].next_sibling;
                 i += 1;
             }) {
-                if (i > 0) try self.writer.writeAll(", ");
+                if (i > 0) try self.writer.writeByte(' ');
                 const kv = self.ast.nodes[kv_id].kind.keyvalue;
                 try self.writeKey(kv.key);
-                try self.writer.writeAll(" = ");
-                try self.value(kv.value, true);
+                try self.writer.writeByte('=');
+                try self.value(kv.value, .compact);
             }
-            try self.writer.writeAll(" }");
+            try self.writer.writeByte('}');
         },
         // Only containers have a flow spelling; a non-container reaching here
         // from a foreign AST is recoverable rather than undefined behavior.
@@ -1101,8 +1117,8 @@ fn writeMultilineString(self: *Printer, s: []const u8) Error!void {
 /// content holds neither `'` nor a newline (no escaping needed at all), else
 /// escaped `"…"`. Mirrors `languages/yaml/printer.zig`'s `printScalar`
 /// (bare → single-quote → double-quote as a last resort).
-fn writeBareOrQuoted(self: *Printer, s: []const u8, is_key: bool, in_flow: bool) Error!void {
-    if (isBareSafe(s, is_key, in_flow)) {
+fn writeBareOrQuoted(self: *Printer, s: []const u8, is_key: bool, pos: Pos) Error!void {
+    if (isBareSafe(s, is_key, pos)) {
         try self.writer.writeAll(s);
         return;
     }
@@ -1140,8 +1156,8 @@ fn quotedWidth(s: []const u8) usize {
     return w;
 }
 
-fn scalarStringWidth(s: []const u8, is_key: bool, in_flow: bool) usize {
-    return if (isBareSafe(s, is_key, in_flow)) s.len else quotedWidth(s);
+fn scalarStringWidth(s: []const u8, is_key: bool, pos: Pos) usize {
+    return if (isBareSafe(s, is_key, pos)) s.len else quotedWidth(s);
 }
 
 /// Whether `s` survives verbatim as the RHS of a `: string =` assignment — the
@@ -1163,7 +1179,8 @@ fn isTotalSinkSafe(s: []const u8) bool {
     return true;
 }
 
-fn isBareSafe(s: []const u8, is_key: bool, in_flow: bool) bool {
+fn isBareSafe(s: []const u8, is_key: bool, pos: Pos) bool {
+    const in_flow = pos != .block;
     if (s.len == 0) return false;
     if (s[0] == ' ' or s[s.len - 1] == ' ') return false;
     for (s) |c| {
@@ -1185,7 +1202,7 @@ fn isBareSafe(s: []const u8, is_key: bool, in_flow: bool) bool {
                 // the bracket-aware flow scanner, so it short-circuits here
                 // (skipping the blanket `,`/`]`/`}` rejection below, which those
                 // interior — balanced — brackets would otherwise trip).
-                if (in_flow) return flowLeadingBracketBare(s);
+                if (in_flow) return flowLeadingBracketBare(s, pos == .compact);
                 if (tok.classifyBracketCommit(s, 0) != .bare_trailing) return false;
             },
             else => {},
@@ -1194,6 +1211,8 @@ fn isBareSafe(s: []const u8, is_key: bool, in_flow: bool) bool {
             // A bare flow value runs to the next `,`/`]`/`}` — any of these
             // inside the string would truncate it.
             ',', ']', '}' => return false,
+            // A compact object's value is one token: whitespace ends it.
+            ' ' => if (pos == .compact) return false,
             else => {},
         };
         // A `#` at the start or after whitespace would re-parse as a comment and
@@ -1219,8 +1238,9 @@ fn isBareSafe(s: []const u8, is_key: bool, in_flow: bool) bool {
 /// which must be quoted to stay a string) and no depth-0 `,`/`]`/`}` or
 /// `#`-comment that would truncate the value. `\n`/`\r`/`\t` and edge spaces are
 /// already rejected by the caller.
-fn flowLeadingBracketBare(s: []const u8) bool {
-    if (tok.classifyFlowBracket(s, 0) != .bare_trailing) return false;
+fn flowLeadingBracketBare(s: []const u8, compact: bool) bool {
+    if (tok.classifyFlowBracket(s, 0, compact) != .bare_trailing) return false;
+    if (compact and std.mem.indexOfAny(u8, s, " \t") != null) return false;
     var depth: usize = 0;
     var prev_space = false;
     for (s) |c| {
@@ -1360,7 +1380,23 @@ test "a leaf map of scalars fits inline at section level" {
         \\> x = 1
         \\> y = 2
     ,
-        \\point = { x = 1, y = 2 }
+        \\point = {x=1 y=2}
+        \\
+    );
+}
+
+test "a compact object quotes any value that is not one token" {
+    try expectPrint(
+        \\a = { name = "Adam Harris", n = 1, lead = "#x", sp = "[a b](c)" }
+        \\b = { "x": hello world }
+    ,
+        \\a = {name='Adam Harris' n=1 lead='#x' sp='[a b](c)'}
+        \\b.x = hello world
+        \\
+    );
+    // Glued `#`, a glued bracket tail, and a date-space-time stay bare.
+    try expectRoundTrip(
+        \\c = {t=2026-07-01 09:00 tag=a#b href=[Blog](/x.md) 'a.b'=1}
         \\
     );
 }
@@ -1793,7 +1829,7 @@ test "round-trips through a second parse (and fmt is idempotent)" {
         \\>> version = 1.6.1
         \\>> license-file = LICENSE.md
         \\> dependencies
-        \\>> serde = { version = "1.0", features = [derive] }
+        \\>> serde = {version="1.0" features=[derive]}
         \\>> fig
         \\>>> version = 1.0.0
         \\>>> features-list = [serde, yaml, derive, indexmap, and, extra, entries, to, defeat, inlining, of, fig]
@@ -1806,7 +1842,7 @@ test "round-trips through a second parse (and fmt is idempotent)" {
         \\>>>> file = CHANGELOG.md
         \\>>>> search = another deliberately long pattern string keeping the sequence out of the inline budget
         \\profile
-        \\> release = { lto = fat, codegen-units = 1 }
+        \\> release = {lto=fat codegen-units=1}
     );
     try expectRoundTrip(
         \\values

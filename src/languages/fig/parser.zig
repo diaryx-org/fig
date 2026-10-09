@@ -114,6 +114,21 @@ pub const Error = error{
     /// A bare key before `:` in a flow object (`{x: 1}`) — JSON pairs require
     /// quoted keys; fig pairs use `=`.
     FigFlowBareKeyColon,
+    /// A key in a fig-spelled flow object with no `=` after it (`{ x }`) —
+    /// most often the second word of an unquoted multi-word value
+    /// (`{name=Adam Harris}`), since a compact object's value is one token.
+    FigFlowMissingEquals,
+    /// Two flow members with no `,` between them (`[a` ⏎ `b]`, `["a" "b"]`), in
+    /// a flow array or a JSON-spelled object.
+    FigFlowMissingComma,
+    /// A flow member that is nothing at all (`[a,,b]`, `[,]`).
+    FigFlowEmptyElement,
+    /// A triple-quoted string inside a flow value — multi-line strings exist
+    /// only in block position.
+    FigFlowMultilineString,
+    /// A flow value left unclosed because a whitespace-preceded `#` inside it
+    /// opened a comment that ran past the closing bracket (`[see #3, y]`).
+    FigFlowCommentedClose,
     /// The input bytes are not valid UTF-8 (checked once, up front, before any
     /// tokenizing/key parsing — mirrors TOML's `InvalidUtf8`).
     FigInvalidUtf8,
@@ -153,6 +168,11 @@ pub fn describe(code: Error) []const u8 {
         error.FigClosedFlowValue => "a value written inline as `[…]`/`{…}` is closed and cannot be extended later; write the block or header form if it needs to grow",
         error.FigUnclosedFlow => "this `[`/`{` value never finds its matching close; close it, or quote the whole value to make it a string",
         error.FigMixedFlowSeparators => "a flow object is fig (`=` pairs) or JSON (`:` pairs), never both in one object",
+        error.FigFlowMissingEquals => "every member of a `{…}` object is `key=value`, and an unquoted value is one word; quote a value with spaces: `{name=\"Adam Harris\"}`",
+        error.FigFlowMissingComma => "separate the members of a `[…]` list (or a JSON-style `{…}` object) with `,`; an unquoted value cannot span lines — quote it",
+        error.FigFlowEmptyElement => "empty member; remove the extra `,`",
+        error.FigFlowMultilineString => "a `'''`/`\"\"\"` multi-line string cannot appear inside `[…]`/`{…}`; write the container in block form, or use a single-line quoted string with `\\n`",
+        error.FigFlowCommentedClose => "inside `[…]`/`{…}`, a `#` after a space starts a comment, and this one hides the closing bracket; quote the value that contains the `#`",
         error.FigUnclosedString => "unclosed string; add the closing quote (a single-line quote cannot span lines — use `'''` for multi-line)",
         error.FigBadEscape => "invalid escape; double quotes support \\n \\t \\r \\\\ \\\" \\uXXXX — use single quotes ('…') for raw text with literal backslashes",
         error.FigInvalidUtf8 => "this file is not valid UTF-8; fig documents must be UTF-8 encoded",
@@ -194,6 +214,11 @@ pub fn shortLabel(code: Error) []const u8 {
         error.FigClosedFlowValue => "value is closed",
         error.FigUnclosedFlow => "unclosed flow",
         error.FigMixedFlowSeparators => "mixed `=`/`:` separators",
+        error.FigFlowMissingEquals => "missing `=`",
+        error.FigFlowMissingComma => "missing `,`",
+        error.FigFlowEmptyElement => "empty member",
+        error.FigFlowMultilineString => "multi-line string in flow",
+        error.FigFlowCommentedClose => "comment hides the close",
         error.FigUnclosedString => "unclosed string",
         error.FigBadEscape => "invalid escape",
         error.FigInvalidUtf8 => "invalid UTF-8",
@@ -379,6 +404,10 @@ fail_offset: ?usize = null,
 /// `failSpan`) — populates `Diagnostic.end` so an editor can squiggle exactly
 /// that token. Null for the point-only error sites (caret alone).
 fail_end: ?usize = null,
+/// The `#` of the most recent flow-interior comment whose text holds a `]`/`}`
+/// — the close it may have swallowed (`[see #3, y]`). Reported by
+/// `unclosedFlow` when that flow value then runs out of input.
+flow_comment_close: ?usize = null,
 /// Byte offset of the start of the line currently being processed (set once
 /// per iteration of the main loop in `run`). The fallback span anchor for a
 /// container whose opener carries no more precise position of its own (a
@@ -1858,10 +1887,34 @@ fn skipFlowWs(self: *Parser) void {
     while (self.pos < self.source.len) {
         switch (self.source[self.pos]) {
             ' ', '\t', '\r', '\n' => self.pos += 1,
-            '#' => while (self.pos < self.source.len and self.source[self.pos] != '\n') : (self.pos += 1) {},
+            '#' => {
+                const at = self.pos;
+                while (self.pos < self.source.len and self.source[self.pos] != '\n') : (self.pos += 1) {}
+                if (std.mem.indexOfAny(u8, self.source[at..self.pos], "]}") != null) self.flow_comment_close = at;
+            },
             else => return,
         }
     }
+}
+
+/// Input ran out inside a flow value. When a comment inside it held a closing
+/// bracket, that comment is the likelier culprit than a missing close, and the
+/// diagnostic points at its `#`.
+fn unclosedFlow(self: *Parser) Error {
+    if (self.flow_comment_close) |at| return self.failSpan(at, at + 1, error.FigFlowCommentedClose);
+    return error.FigUnclosedFlow;
+}
+
+/// Content where a flow member should have ended: right after a quoted string
+/// it is stray text glued to the quote; a stray close bracket is a mismatched
+/// close; anything else is a second member with no separator before it.
+fn flowStray(self: *Parser, prev: TNode, comma_mode: bool) Error {
+    const at = self.pos;
+    const quoted = prev.value == .string and prev.span.start < self.source.len and
+        (self.source[prev.span.start] == '"' or self.source[prev.span.start] == '\'');
+    if (quoted and at == prev.span.end) return self.failAt(at, error.FigQuotedTrailingContent);
+    if (self.source[at] == ']' or self.source[at] == '}') return self.failAt(at, error.FigUnclosedFlow);
+    return self.failAt(at, if (comma_mode) error.FigFlowMissingComma else error.FigFlowMissingEquals);
 }
 
 fn parseFlowArray(self: *Parser) Error!TNode {
@@ -1871,138 +1924,172 @@ fn parseFlowArray(self: *Parser) Error!TNode {
     seq.* = .{ .closed = true };
     const s = try seq.asSequence();
     self.skipFlowWs();
-    if (self.peek() == ']') {
-        self.advance();
-        return .{ .value = .{ .container = seq }, .span = Span.init(open, self.pos) };
-    }
+    // Each pass starts at a member or the close. A `,` there is a member that
+    // is nothing (`[a,,b]`); a trailing `,` before the close is allowed.
     while (true) {
-        const v = try self.parseFlowScalarOrNested();
-        try s.elements.append(self.allocator, try self.boxNode(v));
-        self.skipFlowWs();
-        const p = self.peek() orelse return error.FigUnclosedFlow;
-        if (p == ',') {
-            self.advance();
-            self.skipFlowWs();
-            if (self.peek() == ']') {
-                self.advance();
-                break;
-            }
-            continue;
-        }
-        if (p == ']') {
+        const c = self.peek() orelse return self.unclosedFlow();
+        if (c == ']') {
             self.advance();
             break;
         }
-        return error.FigUnclosedFlow;
+        if (c == ',') return self.failSpan(self.pos, self.pos + 1, error.FigFlowEmptyElement);
+        const v = try self.parseFlowScalarOrNested(.list);
+        try s.elements.append(self.allocator, try self.boxNode(v));
+        self.skipFlowWs();
+        const p = self.peek() orelse return self.unclosedFlow();
+        switch (p) {
+            ',' => {
+                self.advance();
+                self.skipFlowWs();
+            },
+            ']' => {},
+            else => return self.flowStray(v, true),
+        }
     }
     return .{ .value = .{ .container = seq }, .span = Span.init(open, self.pos) };
 }
 
+/// A flow object is EITHER fig-spelled (`=` pairs) OR JSON-spelled (`:` pairs,
+/// quoted keys) — the first pair's separator selects the spelling, and it may
+/// not change within one object. `:` with a bare key is the YAML/JSON5 habit;
+/// its own error code so the message can name both fixes.
+///
+/// A fig-spelled object is **compact** (docs/proposals/compact-objects.md):
+/// pairs are separated by whitespace (a `,` is accepted too), a value is one
+/// token, and a key is a key path — `{a.b=1 a.c=2}` builds `{a: {b: 1, c: 2}}`
+/// through implicit sub-objects, which stay open to this object's later pairs
+/// and close with it. A JSON-spelled object keeps commas and values that run to
+/// the next `,`/`}`.
 fn parseFlowObject(self: *Parser) Error!TNode {
     const open = self.pos;
     self.advance(); // '{'
     const map = try self.allocator.create(PendingContainer);
     map.* = .{ .closed = true };
     const m = try map.asMapping();
-    self.skipFlowWs();
-    if (self.peek() == '}') {
-        self.advance();
-        return .{ .value = .{ .container = map }, .span = Span.init(open, self.pos) };
-    }
-    // A flow object is EITHER fig-inline (`=` pairs, keys bare or quoted) OR
-    // JSON (`:` pairs, keys quoted) — the pair separator selects the spelling,
-    // and it may not change within one object. `:` with a bare key is the
-    // YAML/JSON5 habit; its own error code so the message can name both fixes
-    // (`key = 1` fig / `"key": 1` JSON).
+    var implicit: std.ArrayList(*PendingContainer) = .empty;
     var mode: ?enum { fig, json } = null;
+    self.skipFlowWs();
     while (true) {
-        const key = try self.parseFlowKey();
-        self.skipFlowWs();
-        const sep = self.peek() orelse return error.FigUnclosedFlow;
-        const this_mode: @TypeOf(mode) = switch (sep) {
-            '=' => .fig,
-            ':' => if (key.quoted) .json else return error.FigFlowBareKeyColon,
-            else => return error.FigUnclosedFlow,
-        };
-        if (mode) |mm| {
-            if (mm != this_mode) return error.FigMixedFlowSeparators;
-        } else mode = this_mode;
-        self.advance();
-        self.skipFlowWs();
-        const v = try self.parseFlowScalarOrNested();
-        if (self.findEntry(m, key.text) != null) return error.FigDuplicateKey;
-        const entry = try self.allocator.create(MEntry);
-        entry.* = .{ .key = key.text, .key_span = key.span, .value = v };
-        try m.addEntry(self.allocator, entry);
-        self.skipFlowWs();
-        const p = self.peek() orelse return error.FigUnclosedFlow;
-        if (p == ',') {
-            self.advance();
-            self.skipFlowWs();
-            if (self.peek() == '}') {
-                self.advance();
-                break;
-            }
-            continue;
-        }
-        if (p == '}') {
+        const c = self.peek() orelse return self.unclosedFlow();
+        if (c == '}') {
             self.advance();
             break;
         }
-        return error.FigUnclosedFlow;
+        if (c == ',') return self.failSpan(self.pos, self.pos + 1, error.FigFlowEmptyElement);
+        const path = try self.scanFlowKeyPath();
+        const last = path[path.len - 1];
+        self.skipFlowWs();
+        const sep_at = self.pos;
+        const sep = self.peek() orelse return self.unclosedFlow();
+        const this_mode: @TypeOf(mode) = switch (sep) {
+            '=' => .fig,
+            ':' => if (path.len == 1 and self.isQuotedSeg(last))
+                .json
+            else if (path.len == 1)
+                return self.failAt(sep_at, error.FigFlowBareKeyColon)
+            else
+                return self.failSpan(path[0].span.start, last.span.end, error.FigBadKey),
+            else => return self.failSpan(path[0].span.start, last.span.end, error.FigFlowMissingEquals),
+        };
+        if (mode) |mm| {
+            if (mm != this_mode) return self.failAt(sep_at, error.FigMixedFlowSeparators);
+        } else mode = this_mode;
+        self.advance();
+        self.skipFlowWs();
+        const v = try self.parseFlowScalarOrNested(if (this_mode == .fig) .compact else .list);
+
+        var target = m;
+        for (path[0 .. path.len - 1]) |seg| {
+            const fresh = self.findEntry(target, seg.name) == null;
+            const child = self.getOrCreateMapContainer(target, seg) catch |err|
+                return self.failSpan(seg.span.start, seg.span.end, err);
+            if (fresh) try implicit.append(self.allocator, child);
+            target = child.asMapping() catch |err| return self.failSpan(seg.span.start, seg.span.end, err);
+        }
+        if (self.findEntry(target, last.name) != null) return self.failSpan(last.span.start, last.span.end, error.FigDuplicateKey);
+        const entry = try self.allocator.create(MEntry);
+        entry.* = .{ .key = last.name, .key_span = last.span, .value = v };
+        try target.addEntry(self.allocator, entry);
+
+        if (this_mode == .fig) {
+            // Compact: the value must be followed by whitespace, `,`, or `}`.
+            const nb = self.peek() orelse return self.unclosedFlow();
+            if (!tok.isCompactStop(nb) or nb == ']') return self.flowStray(v, false);
+            self.skipFlowWs();
+            if (self.peek() == ',') {
+                self.advance();
+                self.skipFlowWs();
+            }
+        } else {
+            self.skipFlowWs();
+            const p = self.peek() orelse return self.unclosedFlow();
+            switch (p) {
+                ',' => {
+                    self.advance();
+                    self.skipFlowWs();
+                },
+                '}' => {},
+                else => return self.flowStray(v, true),
+            }
+        }
     }
+    for (implicit.items) |c| c.closed = true;
     return .{ .value = .{ .container = map }, .span = Span.init(open, self.pos) };
 }
 
-const FlowKey = struct { text: []const u8, quoted: bool, span: Span };
-
-fn parseFlowKey(self: *Parser) Error!FlowKey {
-    const c = self.peek() orelse return error.FigBadKey;
-    const start = self.pos;
-    if (c == '"') {
-        const r = try tok.scanDoubleQuoted(self.allocator, self.source, self.pos);
-        self.pos = r.end;
-        return .{ .text = r.text, .quoted = true, .span = Span.init(start, r.end) };
-    }
-    if (c == '\'') {
-        const r = try tok.scanSingleQuoted(self.allocator, self.source, self.pos);
-        self.pos = r.end;
-        return .{ .text = r.text, .quoted = true, .span = Span.init(start, r.end) };
-    }
-    while (self.pos < self.source.len and !isFlowKeyStop(self.source[self.pos])) self.pos += 1;
-    if (self.pos == start) return error.FigBadKey;
-    return .{ .text = self.source[start..self.pos], .quoted = false, .span = Span.init(start, self.pos) };
+fn isQuotedSeg(self: *const Parser, seg: KeySeg) bool {
+    const c = self.source[seg.span.start];
+    return c == '"' or c == '\'';
 }
 
-/// A bare flow KEY ends at the separator/space/close set (keys never contain
-/// whitespace). A bare flow VALUE is different — see `scanFlowBareValue`.
-fn isFlowKeyStop(c: u8) bool {
-    return switch (c) {
-        ',', ']', '}', ':', '=', ' ', '\t', '\n', '\r' => true,
-        else => false,
-    };
+/// A flow object's key: a § 5.1 key path — bare segments of key characters, or
+/// quoted segments, joined by `.` — the same grammar as a block assignment's,
+/// less the index steps.
+fn scanFlowKeyPath(self: *Parser) Error![]KeySeg {
+    var segs: std.ArrayList(KeySeg) = .empty;
+    while (true) {
+        const start = self.pos;
+        const seg = self.scanKeySeg() catch |err| switch (err) {
+            error.FigBadKey => return self.failAt(start, error.FigBadKey),
+            else => return err,
+        };
+        try segs.append(self.allocator, seg);
+        if (self.peek() != '.') break;
+        self.advance();
+    }
+    if (self.peek()) |c| if (c == '[') return self.failAt(self.pos, error.FigBadKey);
+    return segs.toOwnedSlice(self.allocator);
 }
 
-fn parseFlowScalarOrNested(self: *Parser) Error!TNode {
+/// Where a flow member sits, which decides where an unquoted one ends: a
+/// `.list` member (an array element, or a JSON-spelled object's value) runs to
+/// the next `,`/`]`/`}`, spaces included; a `.compact` one (a fig-spelled
+/// object's value) is one token, and whitespace ends it too.
+const FlowPos = enum { list, compact };
+
+fn parseFlowScalarOrNested(self: *Parser, pos: FlowPos) Error!TNode {
     self.skipFlowWs();
-    const c = self.peek() orelse return error.FigUnclosedFlow;
+    const c = self.peek() orelse return self.unclosedFlow();
     if (c == '[' or c == '{') {
         // A balanced bracket group with trailing content — a markdown link, a
         // glob, a regex — is a bare-string element, not a nested collection:
         // the flow twin of the block layer's balanced-then-trailing rule. This
         // is what lets `[Blog](/Blog.md)` sit unquoted in a flow list.
-        if (tok.classifyFlowBracket(self.source, self.pos) == .bare_trailing) {
+        if (tok.classifyFlowBracket(self.source, self.pos, pos == .compact) == .bare_trailing) {
             const vstart = self.pos;
-            if (try self.flowLikePrefix(vstart)) |close| {
+            if (pos == .list) if (try self.flowLikePrefix(vstart)) |close| {
                 try self.warnAt(.flow_like_string, vstart, close + 1);
-            }
-            const text = self.scanFlowBareBracket();
+            };
+            const text = self.scanFlowBareBracket(pos);
             if (text.len == 0) return error.FigInvalidValue;
             // Opened with a delimiter → sniffing is off; it is a string.
             return .{ .value = .{ .string = text }, .span = self.spanOf(text) };
         }
         return self.parseFlowValue();
     }
+    const rest = self.source[self.pos..];
+    if (std.mem.startsWith(u8, rest, "'''") or std.mem.startsWith(u8, rest, "\"\"\""))
+        return self.failSpan(self.pos, self.pos + 3, error.FigFlowMultilineString);
     if (c == '"') {
         const start = self.pos;
         const r = try tok.scanDoubleQuoted(self.allocator, self.source, self.pos);
@@ -2016,13 +2103,16 @@ fn parseFlowScalarOrNested(self: *Parser) Error!TNode {
         return .{ .value = .{ .string = r.text }, .span = Span.init(start, r.end) };
     }
     const vstart = self.pos;
-    const text = self.scanFlowBareValue();
+    const text = switch (pos) {
+        .list => self.scanFlowBareValue(),
+        .compact => self.scanCompactBare(),
+    };
     if (text.len == 0) return error.FigInvalidValue;
-    // The missing-comma smell: a bare flow value swallowing a ` = ` almost
-    // always means `{x = 1 y = 2}` — the pair separator of a *next* pair read
-    // as value text. The scariest silent behavior bare flow values allow, so
-    // it warns (quote the value to affirm genuine ` = ` text).
-    if (std.mem.indexOf(u8, text, " = ")) |i| try self.warnAt(.flow_missing_comma, vstart + i + 1, vstart + i + 2);
+    // The missing-comma smell: a bare list value swallowing a ` = ` almost
+    // always means a `key = value` written where an element belongs. It warns
+    // (quote the value to affirm genuine ` = ` text). A compact value cannot
+    // hold one: whitespace ended it.
+    if (pos == .list) if (std.mem.indexOf(u8, text, " = ")) |i| try self.warnAt(.flow_missing_comma, vstart + i + 1, vstart + i + 2);
     // `Infinity`/`NaN` are NOT recognized here (JSON5 is dropped): they sniff to
     // plain strings, exactly as bare `inf`/`nan` do in the block layer.
     return try self.sniffToNodeWarned(text, vstart);
@@ -2048,12 +2138,43 @@ fn scanFlowBareValue(self: *Parser) []const u8 {
     return std.mem.trim(u8, self.source[start..self.pos], " \t\r");
 }
 
+/// A compact object's bare value is one token: it ends at whitespace or a
+/// `,`/`]`/`}`. A `#` inside it is content — a comment needs whitespace before
+/// it, and whitespace has already ended the token.
+///
+/// One join: a local date, one space, and a time (`2026-07-01 09:00`) are one
+/// datetime. That is unambiguous, because a time can never be a key (`:` is not
+/// a key character).
+fn scanCompactBare(self: *Parser) []const u8 {
+    const start = self.pos;
+    self.pos = compactTokenEnd(self.source, self.pos);
+    if (self.pos < self.source.len and self.source[self.pos] == ' ') {
+        const first = tok.sniffBare(self.source[start..self.pos]);
+        if (first == .datetime and first.datetime.kind == .local_date) {
+            const end = compactTokenEnd(self.source, self.pos + 1);
+            if (end > self.pos + 1) {
+                const joined = tok.sniffBare(self.source[start..end]);
+                if (joined == .datetime and (joined.datetime.kind == .local_datetime or joined.datetime.kind == .offset_datetime))
+                    self.pos = end;
+            }
+        }
+    }
+    return self.source[start..self.pos];
+}
+
+fn compactTokenEnd(source: []const u8, from: usize) usize {
+    var i = from;
+    while (i < source.len and !tok.isCompactStop(source[i])) i += 1;
+    return i;
+}
+
 /// Bracket-aware bare flow value for a balanced-then-trailing element (one whose
 /// first char is `[`/`{`, e.g. a markdown link). `[`/`{` raise a nesting depth
 /// and `]`/`}` lower it, so an interior `]` (the `]` of `[text]`) does NOT
 /// terminate the value — only a `,`/`]`/`}` at depth 0, a newline, or a `#`
-/// after whitespace does. Trailing whitespace is trimmed.
-fn scanFlowBareBracket(self: *Parser) []const u8 {
+/// after whitespace does (and, in a compact object, any whitespace at depth
+/// 0). Trailing whitespace is trimmed.
+fn scanFlowBareBracket(self: *Parser, pos: FlowPos) []const u8 {
     const start = self.pos;
     var depth: usize = 0;
     var prev_space = false;
@@ -2066,6 +2187,7 @@ fn scanFlowBareBracket(self: *Parser) []const u8 {
                 depth -= 1;
             },
             ',', '\n' => if (depth == 0) break,
+            ' ', '\t', '\r' => if (depth == 0 and pos == .compact) break,
             '#' => if (prev_space and depth == 0) break,
             else => {},
         }
@@ -2857,15 +2979,83 @@ test "flow mode: fig-inline and pasted JSON" {
     try testing.expectEqualStrings("3", (try ast.getValByPath(&.{ .{ .key = "pasted" }, .{ .key = "y" }, .{ .index = 1 } })).kind.number.raw);
 }
 
-test "flow: bare values may contain spaces (up to the comma)" {
+test "flow: list values may contain spaces (up to the comma)" {
     var ast = try parseAbstract(testing.allocator,
         \\audience = [friends, Adam Harris, Makena Harris, public]
-        \\who = { name = Adam Harris }
+        \\who = { "name": Adam Harris }
     , .Fig);
     defer ast.deinit();
     try testing.expectEqualStrings("Adam Harris", (try ast.getValByPath(&.{ .{ .key = "audience" }, .{ .index = 1 } })).kind.string);
     try testing.expectEqualStrings("Makena Harris", (try ast.getValByPath(&.{ .{ .key = "audience" }, .{ .index = 2 } })).kind.string);
+    // A JSON-spelled object keeps multi-word values.
     try testing.expectEqualStrings("Adam Harris", (try ast.getValByPath(&.{ .{ .key = "who" }, .{ .key = "name" } })).kind.string);
+}
+
+test "compact objects: whitespace separates pairs, a value is one token" {
+    var ast = try parseAbstract(testing.allocator,
+        \\a = {x=1 y=two z="Hello world"}
+        \\b = { x = 1, y = 2, }
+        \\c = {lang = en  data.count = 3}
+        \\d = {xs=[1, 2] href=[Blog](/x.md) tag=a#b}
+        \\e = {
+        \\  p=1  # a comment
+        \\  q=2
+        \\}
+    , .Fig);
+    defer ast.deinit();
+    try testing.expectEqualStrings("two", (try ast.getValByPath(&.{ .{ .key = "a" }, .{ .key = "y" } })).kind.string);
+    try testing.expectEqualStrings("Hello world", (try ast.getValByPath(&.{ .{ .key = "a" }, .{ .key = "z" } })).kind.string);
+    try testing.expectEqualStrings("2", (try ast.getValByPath(&.{ .{ .key = "b" }, .{ .key = "y" } })).kind.number.raw);
+    try testing.expectEqualStrings("en", (try ast.getValByPath(&.{ .{ .key = "c" }, .{ .key = "lang" } })).kind.string);
+    try testing.expectEqualStrings("3", (try ast.getValByPath(&.{ .{ .key = "c" }, .{ .key = "data" }, .{ .key = "count" } })).kind.number.raw);
+    try testing.expectEqualStrings("2", (try ast.getValByPath(&.{ .{ .key = "d" }, .{ .key = "xs" }, .{ .index = 1 } })).kind.number.raw);
+    try testing.expectEqualStrings("[Blog](/x.md)", (try ast.getValByPath(&.{ .{ .key = "d" }, .{ .key = "href" } })).kind.string);
+    try testing.expectEqualStrings("a#b", (try ast.getValByPath(&.{ .{ .key = "d" }, .{ .key = "tag" } })).kind.string);
+    try testing.expectEqualStrings("2", (try ast.getValByPath(&.{ .{ .key = "e" }, .{ .key = "q" } })).kind.number.raw);
+}
+
+test "compact objects: a date, a space and a time are one datetime" {
+    var ast = try parseAbstract(testing.allocator, "t = {at=2026-07-01 09:00 on=2026-07-02 n=1}\n", .Fig);
+    defer ast.deinit();
+    try testing.expectEqualStrings("2026-07-01 09:00", (try ast.getValByPath(&.{ .{ .key = "t" }, .{ .key = "at" } })).kind.extended.text);
+    try testing.expectEqualStrings("2026-07-02", (try ast.getValByPath(&.{ .{ .key = "t" }, .{ .key = "on" } })).kind.extended.text);
+}
+
+test "compact objects: dotted keys nest, TOML's rules" {
+    var ast = try parseAbstract(testing.allocator, "p = {a.b=1 a.c=2 \"a.b\"=3 x.\"y z\".w=4}\n", .Fig);
+    defer ast.deinit();
+    try testing.expectEqualStrings("1", (try ast.getValByPath(&.{ .{ .key = "p" }, .{ .key = "a" }, .{ .key = "b" } })).kind.number.raw);
+    try testing.expectEqualStrings("2", (try ast.getValByPath(&.{ .{ .key = "p" }, .{ .key = "a" }, .{ .key = "c" } })).kind.number.raw);
+    try testing.expectEqualStrings("3", (try ast.getValByPath(&.{ .{ .key = "p" }, .{ .key = "a.b" } })).kind.number.raw);
+    try testing.expectEqualStrings("4", (try ast.getValByPath(&.{ .{ .key = "p" }, .{ .key = "x" }, .{ .key = "y z" }, .{ .key = "w" } })).kind.number.raw);
+    // An explicit `{…}` stays closed, inside the object and out of it.
+    try testing.expectError(error.FigClosedFlowValue, parseAbstract(testing.allocator, "p = {a={b=1} a.c=2}\n", .Fig));
+    try testing.expectError(error.FigClosedFlowValue, parseAbstract(testing.allocator, "p = {a.b=1}\np.a.c = 2\n", .Fig));
+    try testing.expectError(error.FigDuplicateKey, parseAbstract(testing.allocator, "p = {a.b=1 a=2}\n", .Fig));
+    try testing.expectError(error.FigKeyNotContainer, parseAbstract(testing.allocator, "p = {a=1 a.b=2}\n", .Fig));
+}
+
+test "compact objects: keys follow the bare-key rules" {
+    try testing.expectError(error.FigBadKey, parseAbstract(testing.allocator, "p = {@x=1}\n", .Fig));
+    try testing.expectError(error.FigBadKey, parseAbstract(testing.allocator, "p = {-x=1}\n", .Fig));
+    try testing.expectError(error.FigBadKey, parseAbstract(testing.allocator, "p = {[q=1}\n", .Fig));
+    try testing.expectError(error.FigBadKey, parseAbstract(testing.allocator, "p = {a.b[0]=1}\n", .Fig));
+    try testing.expectError(error.FigBadKey, parseAbstract(testing.allocator, "p = {a.b: 1}\n", .Fig));
+}
+
+test "flow: each malformed shape has its own code" {
+    try testing.expectError(error.FigFlowMissingEquals, parseAbstract(testing.allocator, "p = {name=Adam Harris}\n", .Fig));
+    try testing.expectError(error.FigFlowMissingEquals, parseAbstract(testing.allocator, "p = { x }\n", .Fig));
+    try testing.expectError(error.FigQuotedTrailingContent, parseAbstract(testing.allocator, "p = {a=\"x\"b=2}\n", .Fig));
+    try testing.expectError(error.FigQuotedTrailingContent, parseAbstract(testing.allocator, "p = [\"x\"y]\n", .Fig));
+    try testing.expectError(error.FigFlowMissingComma, parseAbstract(testing.allocator, "p = [\"a\" \"b\"]\n", .Fig));
+    try testing.expectError(error.FigFlowMissingComma, parseAbstract(testing.allocator, "p = [a\nb]\n", .Fig));
+    try testing.expectError(error.FigFlowEmptyElement, parseAbstract(testing.allocator, "p = [a,,b]\n", .Fig));
+    try testing.expectError(error.FigFlowEmptyElement, parseAbstract(testing.allocator, "p = [,]\n", .Fig));
+    try testing.expectError(error.FigFlowEmptyElement, parseAbstract(testing.allocator, "p = {a=1,,b=2}\n", .Fig));
+    try testing.expectError(error.FigFlowMultilineString, parseAbstract(testing.allocator, "p = {x = \"\"\"\nhi\n\"\"\"}\n", .Fig));
+    try testing.expectError(error.FigFlowCommentedClose, parseAbstract(testing.allocator, "p = [see #3, y]\n", .Fig));
+    try testing.expectError(error.FigUnclosedFlow, parseAbstract(testing.allocator, "p = [a, b\n", .Fig));
 }
 
 test "flow: JSON vs fig split — bare key + colon is the foreign-syntax error" {
@@ -3297,8 +3487,11 @@ test "flow-like string warns; markdown links and globs stay silent" {
     try expectWarnCodes("links = [[Blog](/Blog.md), [Resume](/Resume.md)]\n", &.{});
 }
 
-test "missing-comma flow object warns" {
-    try expectWarnCodes("p = { x = 1 y = 2 }\n", &.{.flow_missing_comma});
+test "missing-comma flow list warns" {
+    try expectWarnCodes("p = [k = v]\n", &.{.flow_missing_comma});
+    try expectWarnCodes("p = { \"k\": 1 y = 2 }\n", &.{.flow_missing_comma});
+    // A compact object's pairs need no comma.
+    try expectWarnCodes("p = { x = 1 y = 2 }\n", &.{});
     try expectWarnCodes("p = { x = 1, y = 2 }\n", &.{});
 }
 

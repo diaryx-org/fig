@@ -14,6 +14,7 @@ contents
 > * [CLI 5](cli-5.md)
 > * [Separated entries](separated-entries.md)
 > * [Core only](core-only.md)
+> * [Compact objects](compact-objects.md)
 ```
 
 # Proposals

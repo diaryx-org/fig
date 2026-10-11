@@ -1,7 +1,8 @@
 ```fig
 title = Core only
-description = Every format moves out of core, fig's own dialect included — core names no language in its source or its C ABI, and every consumer registers the languages it uses
+description = Every format moves out of core, figl included — core names no language in its source or its C ABI, every language reaches core only through the contract, and every consumer registers the languages it uses
 created = 2026-10-09
+updated = 2026-10-11
 status = draft
 part_of = [proposals](proposals.md)
 ```
@@ -11,6 +12,14 @@ part_of = [proposals](proposals.md)
 > **Status: DRAFT.** Written against `main` at f459cce (5.2.0, core ABI
 > 3). Nothing here is built. §7 lists what breaks; §8 orders the work so
 > that most of it lands in 5.x as additive changes and 6.0 only deletes.
+>
+> The second draft. The first let a Zig language import core's internals
+> and shipped the languages as a second prebuilt payload. A language built
+> into its own archive compiles its own copy of every core module it
+> imports, so the two could not both hold. This draft keeps the separate
+> payload and gives up the imports (§5.1). It also records how far the JS
+> twins match the compiled formats on the conformance corpora (§5.6),
+> since that is what the plan stands on.
 
 ## 1. The claim
 
@@ -22,15 +31,17 @@ complete. What still puts the formats there is packaging: `list.zig`'s
 rows, `language.zig`'s `slots`, and the `default_on` flags that decide
 what every Rust binary, static payload and C consumer links.
 
-This proposal moves all of them out, **fig's own dialect included**, and
-makes that a rule rather than a default:
+This proposal moves all of them out, **figl included**, and makes that a
+rule rather than a default:
 
 > **Core names no language.** No file under `src/` that core builds
 > imports a language, switches on one, or spells one's name, and neither
-> does `fig.h`. A language is something a consumer registers.
+> does `fig.h`. A language is something a consumer registers, and it
+> reaches core only through the contract.
 
-The test is mechanical: grep core and `fig.h` for any format name and
-find nothing outside the history notes. §6 makes that grep a check.
+The authoring dialect is named `figl` from 6.0, after its extension, so
+that the library and the language stop sharing a word. §6 depends on the
+difference.
 
 "Core" means what the library builds: the value model, `Document`, the
 editor engine, regions, patch, diagnostics, the contract (`language.zig`,
@@ -42,9 +53,10 @@ The CLI, the LSP and the formats themselves become consumers of it.
 The npm package already works this way: the wasm is language-free, and
 `registerLanguage(json)` is how a caller gets JSON. Rust has
 `fig::Language` and `fig::register`, and a registered row named after a
-compiled-out format stands in for it. Every other consumer (Rust by
-default, C, Zig, the prebuilt payloads, the CLI) links the eight
-`default_on` formats whether it uses them or not.
+compiled-out format stands in for it. Every other consumer links the
+compiled formats whether it uses them or not: nine are `default_on` in
+`list.zig` (plist is opt-in), and Rust's `default` features take eight
+of those, leaving out ZON.
 
 A survey of core outside tests found about forty-five couplings. They
 fall into nine groups, and §4 takes each in turn:
@@ -54,7 +66,7 @@ fall into nine groups, and §4 takes each in turn:
 | Identity | `list.zig`, `language.zig`, `c_api.zig`, `fig.h` | `FIG_FORMAT_YAML = 3`; `slots`; `standInAbi` |
 | Value model | `ast.zig`, `manifest.zig`, `fig.h` | `FIG_EXT_PLIST_DATE`; `NativeKinds` |
 | References | `materialize.zig`, `ast/reader.zig`, `c_api.zig` | imports `languages/yaml/parser.zig`; `"<<"`; `tag:yaml.org,2002:`; the pin that only YAML may declare `caps.references` |
-| Editor | `editor.zig`, `editor/splice.zig`, `manifest.zig` | `KeyStyle.zon_field`; `literalOf` through fig's tokenizer; hardcoded `.{`; closed `CommentStyle` |
+| Editor | `editor.zig`, `editor/splice.zig`, `manifest.zig` | `KeyStyle.zon_field`; `literalOf` through figl's tokenizer; hardcoded `.{`; closed `CommentStyle` |
 | Embed | `embed.zig`, `fig.h` | the comptime pin requiring exactly `json`, `yaml`, `toml` and `fig`; bare `---` means YAML; `+++`/`;;;`/endmatter presets; YAML stream splitting |
 | Serialization | `serialize_options.zig`, `patch.zig` | `fig_indent`; a `.fig` arm for fragments; `FigUnrepresentableRoot` |
 | Diagnostics | `diagnostics.zig` | `valueLoss`, `degradedNote` and `commentsEmitted` switch over every format |
@@ -64,6 +76,12 @@ fall into nine groups, and §4 takes each in turn:
 Most of these are pins and switches written before the contract could
 say the thing itself, so their fix is a declaration a language makes.
 Three groups are more than that: identity, the value model and embed.
+
+The coupling also runs the other way, from the languages into core and
+into each other. YAML imports `document`, `materialize` and `token`;
+TOML, figl, JSON and plist import `editor.zig`, and TOML and plist
+`editor/splice.zig`; YAML, TOML and plist import JSON's parser. §5.1
+removes all of it.
 
 ## 3. What a consumer sees
 
@@ -88,6 +106,12 @@ the only thing worth persisting, and `fig_format_by_name` already
 resolves one. Nothing is registered implicitly. The CLI and LSP register
 every language they ship at startup, so their behaviour is unchanged.
 
+A language with several dialects registers once and gets a handle per
+dialect: JSON's registration yields `json`, `jsonc` and `json5`, and
+YAML's yields `yaml` and `yaml-1.1`. The register call returns the
+language's primary dialect; the rest are found by name. That is how a
+registered JS language with dialect rows already behaves.
+
 ## 4. Each coupling, and what it becomes
 
 ### 4.1 Identity
@@ -104,8 +128,21 @@ TypeScript's `Format` keeps its members only if the languages module
 exports them, as `yaml.format` after registration. Core's `Format` export
 does not keep them.
 
-Detection by extension and by sniff already reads each language's
-`extensions` and `sniff_rank`, and stays as it is.
+Detection by extension already reads each language's `extensions`, and
+stays. Two registrations claiming one extension are refused, as a second
+registration of a name already is.
+
+Detection by content does not stay as it is. Today only compiled formats
+are sniffed, in the frozen `sniff_rank` order, and a runtime format never
+is ([runtime languages](runtime-languages.md) §8.1), because a helper that
+claimed too much would take files from the built-ins. Once every format
+is registered, that rule would end sniffing. What replaces it is that the
+order belongs to the consumer, not the language: a language may declare a
+`sniff` predicate, and a consumer opts in by passing the order it wants
+(`fig_detect_order`). A language never ranks itself against another. The
+CLI passes 5.x's order, so `fig get -` on stdin behaves as it does now. A
+consumer that passes no order gets no sniffing. The pin that `jsonc` is
+never sniffed becomes the CLI's order leaving it out.
 
 ### 4.2 The value model
 
@@ -122,9 +159,23 @@ they *are* rather than where they came from:
 | `plist_date` | `offset_datetime`, with the lexeme kept verbatim as now |
 | `plist_data` | `bytes` (base64 payload, whitespace stripped) |
 
-The plist mapping is the one real semantic change, because a plist date
-then converts to a TOML datetime instead of degrading to a string. §9
-leaves it open.
+Only the plist rows are required by §1's rule. The ZON renames are not;
+they ride on 6.0 because the ABI breaks there anyway.
+
+Merging plist dates is the one real semantic change: a plist date then
+converts to a TOML datetime instead of degrading to a string. It costs
+work in the other direction. Plist spells only `YYYY-MM-DDTHH:MM:SSZ`, so
+its printer has to normalise any offset or fractional second and report
+the loss as a diagnostic. `bytes` has a second user waiting: YAML's
+`!!binary`. §9 leaves the merge open.
+
+A row carries a scalar's lexeme, not its value, and today the value is
+decoded by whoever reads the row. The bindings decode with one family of
+spellings (`0x`/`0o`/`0b`, decimal), so a YAML 1.1 `0777` reads as 777
+rather than 511 and `190:20:30` as NaN. §5.6 found this; the Zig
+scoreboard never saw it because it decodes the raw text itself. A row
+whose lexeme is not in the canonical spelling carries its value as well,
+which the language computes. This belongs with `resolveScalar` in §4.3.
 
 ### 4.3 References
 
@@ -148,21 +199,25 @@ move into YAML through declarations:
 | `- * > +` in `ownsItsLines` | the declared `seq_item_marker` and related syntax |
 | closed `CommentStyle` scanners | scanning driven by the delimiters `syntax.comments` declares |
 | `SectionNoun` choosing `NotATable`/`NotASection`/`NotAContainer` | one neutral error carrying a noun the language declares |
-| `literalOf` classifying a caller's literal with fig's `sniffBare` | the caller supplies a typed `Literal` (the type `RenderArgs.literal` already carries); the CLI, which reads value arguments as fig (CLI 5 §1), parses them with the fig language |
+| `literalOf` classifying a caller's literal with figl's `sniffBare` | the caller supplies a typed `Literal` (the type `RenderArgs.literal` already carries); the CLI, which reads value arguments as figl (CLI 5 §1), parses them with the figl language |
 
-The last row is how fig's dialect leaves core without taking the CLI's
-value grammar with it: that grammar belongs to the CLI, which now
-depends on the fig language like any other consumer.
+The last row is how figl leaves core without taking the CLI's value
+grammar with it: that grammar belongs to the CLI, which now depends on
+the figl language like any other consumer. `literalOf` reaches only a
+language that declares a value renderer (plist today), but its removal
+changes the set-by-text entry points for those languages, and §7 lists
+it.
 
 ### 4.5 Embed
 
 The strict reading of the rule takes Markdown and HTML out as well, and
 this proposal takes the strict reading. Core keeps the region machinery:
 locating, the span model of `FigRegion`, editing through a region, and
-re-housing. Containers are registered, as languages are. A container
-declares its open and close delimiters, how an info string or attribute
-names the inner language, an optional codec (HTML entities), and an
-optional default for an untagged block.
+re-housing. Containers are registered, as languages are, through a
+vtable of the same kind and the same wire. A container declares its open
+and close delimiters, how an info string or attribute names the inner
+language, an optional codec (HTML entities), and an optional default for
+an untagged block.
 
 - Bare `---` meaning YAML becomes the frontmatter container's declared
   default, set by whoever registers that container.
@@ -172,12 +227,14 @@ optional default for an untagged block.
 - `fig_embed_detect` iterates the registered containers.
 - YAML's multi-document splitting and `%YAML` directive handling
   (`extractStream`, `segmentIsDirectives`) move into YAML as a
-  `splitStream` declaration.
+  `splitStream` declaration. The wire gains the operation. §5.6 shows the
+  JS twin cannot read a stream without it.
 - The comptime pin that the embeddable set is exactly four is deleted.
 
-The standard containers ship as a package of their own, `fig-embed`.
-That costs a step for frontmatter users and is the one part of this
-proposal that adds a dependency rather than removing one.
+The standard containers ship as a package of their own, `fig-embed`,
+built and versioned in this repository with the languages. For a
+frontmatter user that costs one registration call, not a new dependency
+to track.
 
 ### 4.6 Serialization
 
@@ -196,7 +253,7 @@ unrepresentable key, unrepresentable root, unresolved reference.
 declaration-driven path that `runtimeValueLoss` already takes for a
 registered format. Two new declarations cover what the switches knew and
 the contract cannot yet say: `caps.root_container` (the root must be a
-mapping or a sequence, which is fig's rule) and a per-kind `degrades_to`
+mapping or a sequence, which is figl's rule) and a per-kind `degrades_to`
 (TOML's `integer`, plist's `string`, JSON's `quoted string`).
 
 ### 4.8 Shared helpers and the wire
@@ -204,8 +261,11 @@ mapping or a sequence, which is fig's rule) and a per-kind `degrades_to`
 `util/number.zig`'s spelling presets, the leniency flags in
 `util/datetime.zig` and `util/json_string.zig` move to a Zig kit module
 that the languages import. It is the Zig counterpart of the npm package's
-`kit/`. The wire's splice style `"json_string"` becomes `"escaped"`, and
-its escape grammar is defined in the spec, not by reference to a format.
+`kit/`. The pieces of JSON that YAML, TOML and plist borrow (the string
+scanner and escaper) move there too. The kit is small and holds no state,
+so a copy of it in more than one archive costs bytes and nothing else.
+The wire's splice style `"json_string"` becomes `"escaped"`, and its
+escape grammar is defined in the spec, not by reference to a format.
 `lossless.zig`'s `nativeFor` reads the registry entry, not the module.
 
 `canonical` stays, because the harness checks every registration against
@@ -214,35 +274,53 @@ It is the harness's oracle, not a format.
 
 ## 5. Where the languages go
 
-### 5.1 Zig
+### 5.1 Zig: through the contract only
 
-The languages leave `src/` for `languages/<name>/`, each a module of its
-own that imports core and the kit, and none imported by core. Their
-corpora, conformance suites and the language-specific tests now in
+The languages leave `src/` for `languages/<name>/`. Each is a module that
+imports the kit and `fig.h`'s contract types, and nothing else of core's:
+no `document`, `ast`, `editor`, `splice` or `materialize`. It parses to a
+node table, prints from one, and edits through the contract, as the JS
+twins already do. Their corpora and the language-specific tests now in
 `patch.zig`, `materialize.zig` and `embed.zig` move with them. Core's own
 tests run against `canonical` and a small test language held in the test
 tree.
 
-A Zig language registers through the same vtable as any other. Today a
-compiled format avoids the `NodeTable` copy because `Editor(Lang)`
-instantiates over it directly. Whether that saving matters once every
-format pays the copy is the second measurement in §8. If it does, a Zig
-module linked into the same image can register a `Document`-returning
-`parse` through an internal slot that `fig.h` never states. That keeps
-the copy off the hot path without tying the C ABI to the AST layout.
+This is the rule that lets a language be built apart from core. Zig has
+no link-time module boundary: an archive compiles every module it
+imports. A language in its own archive that imported `document` would
+carry a second copy of it, with its own state and a layout only assumed
+to match the copy core uses. Through the contract, there is nothing of
+core's in the language's archive to duplicate.
+
+It is a port, not a recompile. YAML and TOML each have about 850 lines of
+`editor_helper.zig` written against `editor.zig`, and both reach into
+core for the value and reference layers. The JS twins are the evidence
+that the contract holds them (§5.6), and the conformance corpora are what
+a port is held to.
+
+Every format pays the `NodeTable` copy from the contract's table into
+`Document`, which a compiled format avoids today because `Editor(Lang)`
+instantiates over it directly. There is no fallback slot that skips it,
+since one would need the language and core in the same image at the same
+layout. The copy's cost on the YAML corpus is the second measurement in
+§8. If it is too high, the remedy is in the table's shape, not in a
+private path around it.
 
 ### 5.2 Rust and C: the payload question
 
-`fig-sys`'s seven payloads become language-free. Twelve languages times
-seven targets is eighty-four payload crates, which nobody should
-maintain, so the languages cannot each have their own.
+`fig-sys`'s seven payloads become language-free. There are ten Zig
+language modules, and ten modules times seven targets is seventy payload
+crates, which nobody should maintain, so the languages cannot each have
+their own.
 
 The proposed shape is **one more payload set**, `fig-languages-sys`. It
 holds every Zig language, and each exports a single
-`fig_lang_<name>_register` symbol and nothing that core references. Thin
-crates (`fig-yaml`, `fig-toml`, …) each call one symbol, and ship one
-header for C. A binary that never calls `fig_yaml::register` never
-references YAML, so the linker's dead-code pass drops it.
+`fig_lang_<name>_register` symbol and nothing that core references. §5.1
+is what makes a second archive safe: the languages hold no copy of core,
+so the two link side by side. Thin crates (`fig-yaml`, `fig-toml`, …)
+each call one symbol, and ship one header for C. A binary that never
+calls `fig_yaml::register` never references YAML, so the linker's
+dead-code pass drops it.
 
 That only holds if the dead-code pass can see the boundary inside a Zig
 static library, which compiles a module to few objects. It needs function
@@ -251,7 +329,8 @@ If it fails, the fallback is to build the languages payload from source
 for any subset and prebuild only the full set: the rule `fig-sys`
 already follows for non-default features.
 
-Per-language crates also let a language fix ship without a core release.
+Per-language crates also let a language fix ship without a core release,
+since a language depends on the contract's ABI, not on core's internals.
 They keep the single version of CLI 5 §6 unless that proves to be a cost.
 
 ### 5.3 TypeScript
@@ -273,13 +352,74 @@ or Rust. This is the only place copied code is the distribution. The
 canonical languages are packages: a vendored YAML parser is a fork that
 stops getting conformance fixes, and their value is that it does not.
 
+### 5.6 How far the twins hold today
+
+The JS twins are the closest thing to a contract-only YAML and TOML that
+exists, so they were run over the corpora the Zig scoreboards use, on
+2026-10-11 at acd8701. Each was registered in the language-free wasm and
+scored with the scoreboards' own checks. Then its node table was
+compared with `fig lang table` from the compiled format, row for row, on
+every file, and its printed output with `fig convert`.
+
+| Corpus | Compiled | YAML twin / TOML twin |
+|---|---|---|
+| yaml-test-suite accept: parses | 289/289 | 289/289; every table identical |
+| … prints and re-parses | 289 | 289; every printed byte identical |
+| … converts to JSON | 260 | 260; identical, refusing the same 29 |
+| yaml-test-suite reject | 93/93 | 93/93 |
+| multi-document streams | 19/19 | 0/19 |
+| YAML 1.1 resolution (tagged) | 14/14 | 11/14 |
+| toml-test 1.1 valid (tagged) | 218/218 | 218/218; every table identical |
+| toml-test 1.1 invalid | 488/488 | 488/488 |
+| toml-test 1.0 valid (tagged) | 209/209 | 209/209; every table identical |
+| toml-test 1.0 invalid | 495/495 | 486/495 |
+
+So on what the corpora test, the twins are the compiled formats. The
+differences are four, and none of them is a gap in the contract's power:
+
+- **Streams.** The compiled path splits a stream in core
+  (`Embed.extractStream`). The twin has no `splitStream` to declare, and
+  refuses at the second `---`. §4.5's declaration closes it.
+- **YAML 1.1 values.** The twin's tables are right (`0777` is an `int`
+  row). The three failures are the bindings decoding the lexeme, §4.2's
+  last paragraph. Whether the compiled path shares the fault is
+  unchecked: its scoreboard decodes the raw text itself, and no CLI
+  option selects compiled YAML 1.1.
+- **TOML 1.0.** The twin implements 1.1 only. The nine are 1.1 additions
+  (seconds-free times, newlines and a trailing comma in inline tables,
+  `\x` escapes). The twin needs a `toml-1.0` dialect.
+- **A printer refusal.** Converting TOML's `inf` and `nan` to JSON, the
+  compiled printer refuses. The JSON twin writes `inf`, which is not
+  JSON. The twins are held to the compiled formats' parse refusals and
+  not yet to their print refusals.
+
+Invalid UTF-8 reaches no language: the core rejects it before the
+contract is called, which is right, and a conformance runner over the
+wire cannot send it.
+
+What the corpora do not reach is editing. The twins are held to the
+compiled editor on a handful of fixtures (dotenv in full), not on a
+corpus. YAML and TOML editing parity is the open part of §8's gate, and
+the [conformance suite](conformance-suite.md) proposal is where its
+corpus comes from.
+
 ## 6. The check that holds the line
 
-`zig build check` gains a step that greps core's sources and `fig.h` for
-every registered language name, container name and dialect name, and
-fails on a match outside a history note. The pins this proposal deletes
-were the opposite kind of check, asserting that a specific language was
-present. Their replacement asserts that none is.
+`zig build check` gains a step that scans core's sources and `fig.h` for
+every registered language, dialect and container name, and fails on a
+match outside a history note. It matches identifiers and string literals
+as whole tokens, not substrings: `ini` must not match `initRegion`. Two
+names need the rename and an exception to be checkable at all:
+
+- `figl` makes the dialect distinct from the library. `fig` remains the
+  library's name everywhere in core, and the check never looks for it.
+- `json` is legitimately in core, because the wire is JSON lines
+  (`wire.zig` reads it with `std.json`). The exception is stated as "the
+  wire's encoding" and covers `wire.zig` and `std.json` alone.
+
+The pins this proposal deletes were the opposite kind of check,
+asserting that a specific language was present. Their replacement
+asserts that none is.
 
 ## 7. What breaks
 
@@ -290,8 +430,14 @@ Everything here is 6.0, ABI 4.
   handles are process-local.
 - A consumer that called `parse(…, Format::Yaml)` without registering
   gets `UnsupportedFormat` until it calls `fig_yaml::register()`.
+- The authoring dialect's name is `figl`. `-i fig` and
+  `format_by_name("fig")` stop resolving, unless figl registers `fig` as
+  an alias for 6.x.
 - `fig`'s Cargo features `json` … `nestedtext` are gone. The `default`
   feature set links no language.
+- Content sniffing happens only for a consumer that passes an order. The
+  CLI does; a library consumer that relied on `fig_detect` sniffing must
+  pass one.
 - `FIG_EXT_ENUM_LITERAL`, `FIG_EXT_CHAR_LITERAL`, `FIG_EXT_PLIST_DATE`
   and `FIG_EXT_PLIST_DATA` are renamed or merged (§4.2). A plist date now
   converts as a datetime.
@@ -300,36 +446,48 @@ Everything here is 6.0, ABI 4.
   container says so.
 - `FigComments.style`, `key_style` and `section_noun` change shape, and
   every registered language built against ABI 3 has to be rebuilt.
+- Setting a value by text on a language with a value renderer takes a
+  typed `Literal` (§4.4).
 - `fig_indent` and `flow` move out of `FigPrintOptions`, and
   `SerializeError` loses its format-named members.
 - `Fig` is no longer exported from the Zig root module.
 
 ## 8. Sequencing
 
-1. **Measure.** Build `libfig.a` with every language behind its own
-   register symbol, link a Rust binary that registers one, and compare
-   its size against 5.2. Measure the `NodeTable` copy on the YAML
-   corpus. These two numbers decide §5.2 and §5.1, and neither design
-   is settled until they exist.
+1. **Measure.** Build `libfig.a` language-free and `libfig_languages.a`
+   with every language behind its own register symbol, link a Rust binary
+   that registers one, and compare its size against 5.2. Measure the
+   `NodeTable` copy on the YAML corpus. These two numbers decide §5.2 and
+   §5.1, and neither design is settled until they exist.
 2. **Declarations, in 5.x.** Add `render_key`, `resolveScalar`,
    `splitStream`, `caps.root_container`, `degrades_to`, the declared
-   noun, delimiter-driven comment scanning and fragment printing. Have
-   every compiled language declare them, and switch core to read them.
-   Each pin and switch is deleted in the commit that makes it redundant.
-   All of this is additive at ABI 3.
-3. **The kit, in 5.x.** Move the shared helpers.
+   noun, delimiter-driven comment scanning, fragment printing, the
+   lexeme's value (§4.2) and the consumer's sniff order. Have every
+   compiled language declare them, and switch core to read them. Each pin
+   and switch is deleted in the commit that makes it redundant. All of
+   this is additive at ABI 3.
+3. **The kit, in 5.x.** Move the shared helpers, and the JSON pieces the
+   other languages borrow.
 4. **Registered containers, in 5.x,** beside the existing presets, which
    become thin wrappers.
-5. **Move the languages out of `src/`.** Core builds and tests with no
-   language. The CLI and LSP register theirs. Add the §6 check.
-6. **6.0, ABI 4.** Delete the identity enums, the stand-ins, the
+5. **The parity gate.** The [conformance suite](conformance-suite.md)
+   scores any language through the contract. The twins close §5.6's four
+   differences against it, and gain an editing corpus. This is the bar
+   for step 6.
+6. **Port the Zig languages to the contract.** Each moves to
+   `languages/<name>/`, drops its imports of core, and clears the same
+   suite at the compiled format's scores before the compiled one is
+   deleted. Core builds and tests with no language. The CLI and LSP
+   register theirs. Add the §6 check.
+7. **6.0, ABI 4.** Delete the identity enums, the stand-ins, the
    presets, the closed `KeyStyle` and `CommentStyle`, and the
-   one-language options. Rename `ExtKind`.
-7. **Bindings.** `fig-languages-sys` and the per-language crates, the
+   one-language options. Rename `ExtKind` and the dialect.
+8. **Bindings.** `fig-languages-sys` and the per-language crates, the
    C headers, and the npm wasm without stand-ins.
 
-Steps 2 to 4 are worth doing whether or not 6.0 happens, since each
-replaces a switch with a declaration a registered language can also make.
+Steps 2 to 5 are worth doing whether or not 6.0 happens, since each
+replaces a switch with a declaration a registered language can also make,
+or holds a registered language to the bar a compiled one meets.
 
 ## 9. Open questions
 
@@ -337,11 +495,19 @@ replaces a switch with a declaration a registered language can also make.
   stay a kind of their own under a neutral name (`timestamp`)? Merging is
   better for conversion. Keeping them separate is the smaller change.
 - **One repository or several.** This proposal keeps the languages in
-  this repository under one version. Splitting them out would follow the
-  twins' history but multiply release work.
+  this repository under one version. §5.1 makes splitting them out
+  possible, since a language no longer builds against core's internals.
+  Splitting would follow the twins' history but multiply release work.
 - **`fig-embed`'s scope.** Does it carry the Markdown and HTML
   containers together, or one package each?
-- **Default registration for the CLI's `--format` names.** Today the
-  names are fixed. When registration is open, the CLI's `fig lang`
-  helpers and its built-in languages share one namespace, so it needs a
-  rule for a helper named `yaml`.
+- **The CLI's `--format` names.** Today the names are fixed. When
+  registration is open, the CLI's `fig lang` helpers and its built-in
+  languages share one namespace, so it needs a rule for a helper named
+  `yaml`. §4.1's rule (refuse a second registration of a name or an
+  extension) is the default; the CLI may want "the configured helper
+  wins" instead.
+- **One implementation or two.** With a Zig and a JS implementation of
+  every language held to the same suite, is the Zig one still needed for
+  native consumers, or could they run the JS twin under fig-quickjs? The
+  measurements in §8 step 1 and the engine's size decide it. This draft
+  assumes both.

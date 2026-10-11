@@ -3,7 +3,7 @@ title = Proposals
 description = Design proposals, findings, and wishlists for `fig` — from inside and outside the project
 author = adammharris
 created = 2026-07-25
-updated = 2026-10-09
+updated = 2026-10-11
 part_of = [docs](/docs/docs.md)
 contents
 > * [Editor splice: findings and wishlist](editor-splice-wishlist.md)
@@ -15,6 +15,7 @@ contents
 > * [Separated entries](separated-entries.md)
 > * [Core only](core-only.md)
 > * [Compact objects](compact-objects.md)
+> * [Conformance suite](conformance-suite.md)
 ```
 
 # Proposals

@@ -184,8 +184,11 @@ const Server = struct {
             try s.beginObject();
             try s.endObject();
         } else if (std.mem.eql(u8, method, "tools/list")) {
+            // A list result says how long it may be cached and by whom: the
+            // tools are this binary's, the same for every caller, so for an
+            // hour and by anyone.
             try s.beginWriteRaw();
-            try s.writer.writeAll("{\"resultType\":\"complete\",\"tools\":" ++ tools_json ++ "}");
+            try s.writer.writeAll("{\"resultType\":\"complete\",\"ttlMs\":3600000,\"cacheScope\":\"public\",\"tools\":" ++ tools_json ++ "}");
             s.endWriteRaw();
         } else if (std.mem.eql(u8, method, "tools/call")) {
             const name = str(params, "name") orelse return self.fail(-32602, "tools/call needs a tool name");

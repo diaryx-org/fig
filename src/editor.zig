@@ -5318,6 +5318,21 @@ test "properties deleteKey removes the only entry, leaving an empty file" {
     try testing.expectEqualStrings("again=v2\n", ed.source.items);
 }
 
+test "properties comment ops: leading works with '#', trailing is unsupported" {
+    if (comptime !build_options.lang_properties) return error.SkipZigTest;
+    var ed: Editor(Properties) = .{ .allocator = testing.allocator, .format = .PROPERTIES };
+    try ed.init("flag\nk=v\n");
+    defer ed.deinit();
+    try ed.addLeadingComment(&.{.{ .key = "k" }}, "note");
+    try testing.expectEqualStrings("flag\n# note\nk=v\n", ed.source.items);
+
+    // A `#` after a value is value text, so `flag # note` would read back as
+    // `flag` = `# note`. Refused, and nothing is written.
+    try testing.expectError(error.CommentsUnsupported, ed.setTrailingComment(&.{.{ .key = "flag" }}, "note"));
+    try testing.expectError(error.CommentsUnsupported, ed.setTrailingComment(&.{.{ .key = "k" }}, "note"));
+    try testing.expectEqualStrings("flag\n# note\nk=v\n", ed.source.items);
+}
+
 // ── INI (`[section]` + flat `key = value`) ──────────────────────────────────
 //
 // Basic root-level/parameter sanity checks only — the same level of coverage

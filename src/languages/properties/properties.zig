@@ -56,7 +56,10 @@ pub const Language = struct {
         return .{
             // The grammar accepts `#` and `!` as comment leaders; the printer
             // writes `#`, so that is what the editor scans for and inserts.
-            .comments = .hash,
+            // As in INI, there is no trailing comment: a `#` after a value is
+            // value text (`parser.zig`), so a spliced one would change the
+            // value on reread, and trailing ops are refused.
+            .comments = .{ .style = .hash, .line = .{ .open = "#" }, .trailing = null },
             // Three separators are legal on read (`=`, `:`, space); the
             // printer always writes a bare `=`.
             .kv_sep = "=",

@@ -1725,6 +1725,19 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             return ArgError.MissingLangArgument;
         }
         config.options = .{ .lang = opts };
+    } else if (std.mem.eql(u8, action_str, "mcp")) {
+        config.action = .mcp;
+        var opts: types.McpOptions = .{};
+        // A server's arguments arrive on stdin; the command line takes none.
+        while (args.next()) |arg| {
+            if (isHelp(arg)) {
+                opts.requested_help = true;
+                continue;
+            }
+            log.err("mcp takes no arguments; unexpected argument: {s}\n", .{arg});
+            return ArgError.SurplusArgument;
+        }
+        config.options = .{ .mcp = opts };
     } else if (externalCommandName(action_str)) |name| {
         // Git's fallback, and the reason fig-schema can grow a CLI without
         // fig growing a `schema` action: a word fig has no verb for is handed
@@ -2312,6 +2325,23 @@ test "parseConfig routes lang: list by default, check with a name, --against and
     var helpful = TestArgs{ .items = &.{ "fig", "lang", "check", "--help" } };
     const c3 = try parseConfig(a, &helpful);
     try t.expect(c3.options.lang.requested_help);
+}
+
+test "parseConfig: mcp is fig's own verb, takes --help, and takes no arguments" {
+    const t = std.testing;
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var bare = TestArgs{ .items = &.{ "fig", "mcp" } };
+    const c1 = try parseConfig(a, &bare);
+    try t.expectEqual(types.CliAction.mcp, c1.action);
+    try t.expect(!c1.options.mcp.requested_help);
+
+    var helpful = TestArgs{ .items = &.{ "fig", "mcp", "--help" } };
+    try t.expect((try parseConfig(a, &helpful)).options.mcp.requested_help);
+    // An argument after it is refused (exit 2): `tools/cli-args-check.sh`,
+    // since the refusal logs an error, which fails a test.
 }
 
 test "parseConfig: `--` ends the flags, a negative number is a value, and flags stand anywhere" {

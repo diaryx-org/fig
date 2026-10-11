@@ -52,6 +52,7 @@ exits "fmt --bogus" 2 fmt --bogus f.yaml
 exits "convert --bogus" 2 convert --bogus -o json f.yaml
 exits "patch --bogus" 2 patch --bogus f.yaml orig.yaml
 exits "lang --bogus" 2 lang --bogus
+exits "mcp --bogus" 2 mcp --bogus
 exits "help --bogus" 2 help --bogus
 exits "--help --bogus" 2 --help --bogus
 exits "version --bogus" 2 version --bogus
@@ -67,12 +68,19 @@ exits "comment surplus" 2 comment f.yaml a hi there
 exits "comment --get surplus" 2 comment --get f.yaml a b
 exits "lang table surplus" 2 lang table f.yaml g.yaml
 exits "lang verb" 2 lang bogus
+exits "mcp surplus" 2 mcp f.yaml
 exits "help surplus" 2 help set
 exits "version surplus" 2 version extra
 exits "--version surplus" 2 --version extra
 exits "help --help" 0 help --help
 # `version` takes `--help` like every other action.
 exits "version --help" 0 version --help
+exits "mcp --help" 0 mcp --help
+
+# `mcp` answers on stdout, one line per request, and ends when stdin does.
+replies="$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' '{"jsonrpc":"2.0","id":2,"method":"ping"}' | "$fig" mcp 2>/dev/null)"
+[ "$(printf '%s\n' "$replies" | wc -l | tr -d ' ')" = 2 ] || fail "mcp: want two reply lines, got: $replies"
+case "$replies" in *'"name":"apply"'*) ;; *) fail "mcp: tools/list does not list apply: $replies" ;; esac
 exits "-v -h" 0 -v -h
 [ "$("$fig" version --help 2>/dev/null | head -1)" = "Usage: $fig version" ] || fail "version --help printed no usage"
 # `help <action>` says where that action's help is.

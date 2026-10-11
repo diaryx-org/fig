@@ -141,7 +141,7 @@ pub fn reportUnhandled(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
     std.process.exit(1);
 }
 
-fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, binary_name: []const u8) !void {
+pub fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, binary_name: []const u8) !void {
     try term.setColor(.red);
     try term.writer.writeAll("error");
     try term.setColor(.reset);

@@ -129,6 +129,7 @@ pub const Help = struct {
             \\    writes the file in place with --write
             \\  patch: merge one document into another, in place and losslessly
             \\  lang: list the languages fig knows, or check a configured one
+            \\  mcp: serve the editor to a language model over MCP (stdin/stdout)
             \\
             \\Every action takes --lang <name> to read and write a file through
             \\a language configured in languages.figl rather than by extension
@@ -648,6 +649,33 @@ pub const Help = struct {
             \\  written in, whatever its extension: `{s} get secrets.env --lang lua-dotenv`.
             \\
         , .{ binary_name, binary_name, binary_name, binary_name, binary_name });
+        try term.writer.flush();
+    }
+
+    pub fn mcp(term: *Io.Terminal, binary_name: []const u8) !void {
+        try term.writer.print(
+            \\Usage: {s} mcp
+            \\  Serve fig's editor to a language model over MCP: JSON-RPC on stdin
+            \\  and stdout, one message per line, logs on stderr. The protocol is
+            \\  MCP's stateless 2026-07-28 revision; an `initialize` from an older
+            \\  client is answered too. Every request reads its file afresh.
+            \\
+            \\  Tools:
+            \\    outline {{file, path?, depth?}}: the file's paths, one per line as
+            \\      `path = <JSON>`, with their comments, and the file's hash.
+            \\    get {{file, path}}: one value as the file spells it, with its line.
+            \\    apply {{file, edits, base?, dry_run?}}: edits by path — set, insert,
+            \\      delete, rename, comment, patch — made in memory and written
+            \\      once, or not at all if one is refused or the file's hash is no
+            \\      longer `base`. Values are JSON, rendered into the file's format;
+            \\      `raw` splices the file's own syntax instead. Returns the diff.
+            \\
+            \\  Relative paths resolve against the directory the server started in.
+            \\  A .md file's frontmatter is the document its tools see.
+            \\
+            \\  For Claude Code: `claude mcp add fig -- {s} mcp`.
+            \\
+        , .{ binary_name, binary_name });
         try term.writer.flush();
     }
 };

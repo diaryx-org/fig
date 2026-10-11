@@ -521,6 +521,37 @@ pub fn route(
     }
 }
 
+/// `route`'s `.apply` arm over bytes rather than a file: `content` (a whole
+/// document in `format`) with one edit made, as new bytes. For a caller that
+/// makes several edits before writing once — `fig mcp`'s `apply` — or edits
+/// an embedded region it has already cut out of its host.
+pub fn applyToSlice(
+    allocator: std.mem.Allocator,
+    content: []const u8,
+    format: Format,
+    path: []fig.AST.PathSegment,
+    text: []const u8,
+    value: OpValue,
+    op: EditOp,
+) ![]u8 {
+    @setEvalBranchQuota(30_000);
+    switch (format) {
+        .canonical => return error.UnsupportedCanonicalEdit,
+        .gron => return error.UnsupportedGronEdit,
+        _ => {
+            const e = types.runtimeEntry(format) orelse return error.FormatDisabled;
+            if (!e.language.caps.edit) return error.FormatNotEditable;
+            return applyValueEdit(fig.Runtime.Language, allocator, content, path, text, value, op, format, e.typeOf());
+        },
+        inline else => |f| {
+            const d = comptime fig.Language.entryFor(@tagName(f));
+            if (comptime d.Lang == void) return error.FormatDisabled;
+            if (comptime !d.Lang.caps.edit) return error.FormatNotEditable;
+            return applyValueEdit(d.Lang, allocator, content, path, text, value, op, format, d.dialect);
+        },
+    }
+}
+
 // `error.FormatNotEditable` is the refusal for a language whose `caps.edit`
 // is false. No language in tree declares that any more (generic XML was the
 // one, until core 3.0 removed it), so the arm above is unreachable in every

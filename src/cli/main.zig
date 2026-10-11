@@ -34,6 +34,7 @@ const edit_ops = @import("edit_ops.zig");
 const patch_ops = @import("patch_ops.zig");
 const reformat = @import("reformat.zig");
 const external = @import("external.zig");
+const mcp = @import("mcp.zig");
 
 const Help = help.Help;
 const ArgError = types.ArgError;
@@ -299,6 +300,7 @@ fn dispatch(a: std.mem.Allocator, io: Io, stdout_terminal: *Io.Terminal, stderr_
         .convert => actions.runConvert(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.convert),
         .patch => actions.runPatch(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.patch),
         .lang => actions.runLang(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.lang),
+        .mcp => mcp.run(io, stdout_terminal, stderr_terminal, config.binary_name, config.options.mcp),
         .external => actions.runExternal(io, stdout_terminal, stderr_terminal, config.binary_name, config.options.external),
     };
 }
@@ -341,4 +343,5 @@ test {
     _ = gron;
     _ = diff;
     _ = value_arg;
+    _ = mcp;
 }

@@ -208,15 +208,22 @@ pub const Reports = struct {
     /// a single parse diagnostic. At most one ever has: only the format that
     /// was actually parsed fills a report.
     pub fn reportDiagnostics(self: *const Reports, term: *Io.Terminal, source: []const u8, file: []const u8) !void {
-        if (self.runtime) |d|
+        if (self.diagnostic()) |d|
             try diag_report.reportParseError(term, source, file, d.offset, d.end, d.message, d.short_label);
+    }
+
+    /// The one parse diagnostic a language recorded, rendered, or null —
+    /// for a caller that reports it without exiting (`fig mcp`).
+    pub fn diagnostic(self: *const Reports) ?fig.ParseDiagnostic.Rendered {
+        if (self.runtime) |d| return d;
         inline for (reporting) |r| {
             if (comptime r[1] != void) {
                 const P = r[1].Parser;
                 if (@field(self, r[0]).diag) |d|
-                    try diag_report.reportParseError(term, source, file, d.offset, d.end, P.describe(d.code), P.shortLabel(d.code));
+                    return .{ .offset = d.offset, .end = d.end, .message = P.describe(d.code), .short_label = P.shortLabel(d.code) };
             }
         }
+        return null;
     }
 
     /// Announce authoring-time lints under each language's label. These ride

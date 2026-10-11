@@ -151,9 +151,16 @@ pub const CliAction = enum {
     /// `fig lang list` / `fig lang check`: the languages the CLI did not
     /// compile in. See `LangOptions` and `cli/languages.zig`.
     lang,
+    /// `fig mcp`: the editor, served to a language model over MCP on
+    /// stdin/stdout. See `McpOptions` and `cli/mcp.zig`.
+    mcp,
     /// Not one of fig's own verbs: a word handed off to a `fig-<word>`
     /// executable on PATH. See `ExternalOptions`.
     external,
+};
+
+pub const McpOptions = struct {
+    requested_help: bool = false,
 };
 
 pub const LangOptions = struct {
@@ -547,6 +554,7 @@ pub const CliActionOptions = union(CliAction) {
     convert: ConvertOptions,
     patch: PatchOptions,
     lang: LangOptions,
+    mcp: McpOptions,
     external: ExternalOptions,
 };
 
@@ -697,7 +705,7 @@ pub fn targetFile(config: CliConfig) ?[]const u8 {
         // `external` never touches a file itself — whatever it does with its
         // arguments is the other binary's business, and its failures are its
         // own to report.
-        .help, .version, .check, .lang, .external => null,
+        .help, .version, .check, .lang, .mcp, .external => null,
     };
 }
 
@@ -719,7 +727,7 @@ pub fn parseTarget(config: CliConfig) ?ParseTarget {
             .file = o.file,
             .format = if (o.detect or o.embed != null or o.detect_embed) null else o.from,
         },
-        .help, .version, .check, .lang, .external => return null,
+        .help, .version, .check, .lang, .mcp, .external => return null,
     };
     if (std.mem.eql(u8, t.file, "-")) return null;
     return t;

@@ -180,7 +180,13 @@ function multiline(sc) {
   for (;;) {
     const from = sc.pos + 2;
     let i = from;
-    while (byteAt(sc, i) >= 0 && byteAt(sc, i) !== 10) i += 1;
+    // A line holds no control byte, a tab included; a CR only as the
+    // first half of a CRLF.
+    for (let c = byteAt(sc, i); c >= 0 && c !== 10; c = byteAt(sc, ++i)) {
+      if (isControl(c) && !(c === 13 && byteAt(sc, i + 1) === 10)) {
+        sc.fail("a control byte is not a ZON multiline string character", i);
+      }
+    }
     end = byteAt(sc, i - 1) === 13 ? i - 1 : i;
     lines.push(sc.slice(from, end));
     sc.pos = i;

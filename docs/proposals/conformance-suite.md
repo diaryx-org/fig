@@ -2,16 +2,18 @@
 title = Conformance suite
 description = The conformance corpora and their runner leave the fig library for a repository of their own, and score any implementation of a language through the contract rather than by importing its parser
 created = 2026-10-11
+updated = 2026-10-11
 status = draft
 part_of = [proposals](proposals.md)
 ```
 
 # Conformance suite
 
-> **Status: DRAFT.** Written against `main` at acd8701 (5.2.0). Nothing
-> here is built. It is the gate that [core only](core-only.md) §8 step 5
-> refers to. A scratch runner of the kind §4 describes produced core only
-> §5.6's numbers, so the approach has been tried once.
+> **Status: DRAFT.** Written against `main` at acd8701 (5.2.0). It is the
+> gate that [core only](core-only.md) §8 step 5 refers to. The edit suites
+> of §4.1 are built, in a local `fig-conformance` repository with no
+> remote yet. The parse suites are not moved; a scratch runner of the
+> kind §4 describes produced core only §5.6's parse numbers.
 
 ## 1. The claim
 
@@ -140,10 +142,22 @@ lexeme makes unambiguous, and reports the rest as skipped, not passed.
 **Library checks** need fig, and take it as an ordinary dependency, the
 published `@diaryx/fig`. They are what a language has to do *with* fig:
 convert to JSON and back, keep comments through a conversion, and edit.
-Editing is where the suite has to grow. No corpus for it exists today,
-so the suite starts one: a source document, an operation (`set`,
-`delete`, `insert`, `move`), and the expected text, recorded from the
-compiled format and held as the bar its replacements meet.
+Editing had no corpus, so the suite started one, and it is built
+(fig-conformance 665c268, local). Each source document's cases are
+generated from its tree: every entry renamed, deleted, replaced by each
+kind of scalar and container, and given or relieved of each kind of
+comment; every mapping given new entries, reordered, and edited as a
+whole container; every sequence appended to, prepended to, cut,
+reordered. A case is one `Editor` method with its arguments as JSON. The
+expectation is the compiled format's answer: the edit as a byte splice of
+the source, or the status it refused with. Messages are not compared.
+The twelve suites hold 27,503 cases in 4.9 MB.
+
+Recording from the compiled formats makes the suite a parity check, and a
+fault both sides share passes it. So the recorder also checks an
+invariant that needs no reference: a comment edit changes no value. A
+recorded answer that breaks it is marked `suspect`, and the runner counts
+how many of its matches are to one. The first recording marked six.
 
 The tiers are separate so that the wire tier stays usable by someone
 who has no interest in fig. A YAML library in any language could score
@@ -192,8 +206,9 @@ fig-lua and fig-quickjs pin the same suite and keep their own
    new, so their first scores are new facts.
 4. **Switch fig over.** Add `conformance.figl` and the check, and delete
    what §5 lists.
-5. **The editing corpus**, recorded from the compiled formats, starting
-   with YAML and TOML for core only's gate.
+5. **The editing corpus.** Done for every language fig edits (§4.1).
+   More invariants belong beside the first: a value edit changes nothing
+   outside its path, and a reorder changes no value.
 
 ## 7. Open questions
 

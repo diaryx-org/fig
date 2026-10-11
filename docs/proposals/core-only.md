@@ -18,8 +18,8 @@ part_of = [proposals](proposals.md)
 > into its own archive compiles its own copy of every core module it
 > imports, so the two could not both hold. This draft keeps the separate
 > payload and gives up the imports (§5.1). It also records how far the JS
-> twins match the compiled formats on the conformance corpora (§5.6),
-> since that is what the plan stands on.
+> twins match the compiled formats on the conformance corpora and on an
+> edit corpus (§5.6), since that is what the plan stands on.
 
 ## 1. The claim
 
@@ -397,11 +397,26 @@ Invalid UTF-8 reaches no language: the core rejects it before the
 contract is called, which is right, and a conformance runner over the
 wire cannot send it.
 
-What the corpora do not reach is editing. The twins are held to the
-compiled editor on a handful of fixtures (dotenv in full), not on a
-corpus. YAML and TOML editing parity is the open part of §8's gate, and
-the [conformance suite](conformance-suite.md) proposal is where its
-corpus comes from.
+The parse corpora do not reach editing, so an edit corpus was built for
+it in fig-conformance ([conformance suite](conformance-suite.md) §4.1):
+27,503 cases generated from the twins' own fixtures, every entry, mapping
+and sequence put through each `Editor` operation, with the compiled
+formats' answers recorded as the expectation. On 2026-10-11 every twin
+matched every case, after two fixes the corpus forced. One was a twin bug:
+the ZON twin read a lone CR into a `\\` string (25ba6ae). The other was a
+compiled one: compiled `.properties` spliced a trailing `#` comment into
+the value, where the twin refused (a062c32).
+
+Parity cannot see a fault that both sides share, and three exist. The
+recorder checks that a comment edit changes no value, which needs no
+reference, and six recorded answers fail it. They come down to three
+faults in core's editor, filed as tasks:
+[CRLF](/docs/tasks/trailing-comment-splits-crlf.md),
+[ZON multiline strings](/docs/tasks/zon-trailing-comment-in-multiline-string.md)
+and [.properties continuations](/docs/tasks/properties-comment-after-continuation.md).
+
+So for the twins, §8's gate stands at: parse and print parity on the
+corpora, edit parity on the edit corpus, and the four differences above.
 
 ## 6. The check that holds the line
 

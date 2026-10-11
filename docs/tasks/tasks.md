@@ -3,7 +3,7 @@ title = Tasks
 description = Deferred work with a done state — a bug is a task with a repro
 author = adammharris
 created = 2026-09-04
-updated = 2026-10-09
+updated = 2026-10-11
 part_of = [docs](/docs/docs.md)
 contents
 > * [A YAML alias cannot be read into a value by the Rust or TypeScript binding](/docs/tasks/values-through-an-alias.md)
@@ -11,6 +11,9 @@ contents
 > * [An infinite or NaN float written to the fig dialect reads back as a string](/docs/tasks/fig-dialect-non-finite-floats.md)
 > * [An edit to a compact fig object writes commas and spaced `=`](/docs/tasks/compact-object-editor-separator.md)
 > * [The tree-sitter grammar reads a fig object as comma-separated](/docs/tasks/tree-sitter-compact-objects.md)
+> * [A trailing comment on a CRLF line is spliced between the CR and the LF](/docs/tasks/trailing-comment-splits-crlf.md)
+> * [A trailing comment on a ZON multiline string becomes part of the string](/docs/tasks/zon-trailing-comment-in-multiline-string.md)
+> * [A comment appended after a .properties continuation joins the value](/docs/tasks/properties-comment-after-continuation.md)
 > * [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 

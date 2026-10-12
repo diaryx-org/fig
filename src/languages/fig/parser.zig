@@ -1744,6 +1744,10 @@ fn applyKnownType(self: *Parser, type_name: []const u8, text: []const u8) Error!
             // `char_literal` invariant (see AST `ExtKind.char_literal`) — allocated
             // in the parse arena like `normalizeDecimal`, so the builder dupes it
             // into the AST's strings.
+            // Only `'…'` is a char literal (§ 5.3): `"A"` is not one, and
+            // `parseCharLiteral` asserts the single quotes rather than checking
+            // them, so anything else must be refused before it is called.
+            if (text.len < 2 or text[0] != '\'' or text[text.len - 1] != '\'') return error.FigTypeMismatch;
             const cp: u21 = switch (std.zig.string_literal.parseCharLiteral(text)) {
                 .success => |c| c,
                 .failure => return error.FigTypeMismatch,
@@ -2579,6 +2583,11 @@ test "char literal rejects a non-char lexeme" {
     try testing.expectError(error.FigTypeMismatch, parseAbstract(testing.allocator, "x: char = A\n", .Fig));
     // Two codepoints in one literal is not a char.
     try testing.expectError(error.FigTypeMismatch, parseAbstract(testing.allocator, "x: char = 'ab'\n", .Fig));
+    // Only single quotes make a char literal (§ 5.3), and a lexeme that is not
+    // `'…'` never reaches the Zig codec, which asserts that it is.
+    try testing.expectError(error.FigTypeMismatch, parseAbstract(testing.allocator, "x: char = \"A\"\n", .Fig));
+    try testing.expectError(error.FigTypeMismatch, parseAbstract(testing.allocator, "x: char = 'A\n", .Fig));
+    try testing.expectError(error.FigTypeMismatch, parseAbstract(testing.allocator, "x: char = A'\n", .Fig));
 }
 
 test "explicit typing coerces number lookalikes but keeps the verbatim lexeme + tag" {

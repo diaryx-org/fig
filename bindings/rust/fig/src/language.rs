@@ -599,31 +599,33 @@ pub enum NodeKind {
 }
 
 impl NodeKind {
-    pub(crate) fn to_c(self) -> c_int {
+    /// The `FIG_ROW_*` kind of a row of this kind; a bool's is decided by
+    /// its text.
+    pub(crate) fn to_row(self) -> u8 {
         match self {
-            NodeKind::Null => 0,
-            NodeKind::Bool => 1,
-            NodeKind::Int => 2,
-            NodeKind::Float => 3,
-            NodeKind::String => 4,
-            NodeKind::Sequence => 5,
-            NodeKind::Mapping => 6,
-            NodeKind::KeyValue => 7,
-            NodeKind::Alias => 8,
+            NodeKind::Null => ffi::FIG_ROW_NULL,
+            NodeKind::Bool => ffi::FIG_ROW_FALSE,
+            NodeKind::Int => ffi::FIG_ROW_INT,
+            NodeKind::Float => ffi::FIG_ROW_FLOAT,
+            NodeKind::String => ffi::FIG_ROW_STRING,
+            NodeKind::Sequence => ffi::FIG_ROW_SEQUENCE,
+            NodeKind::Mapping => ffi::FIG_ROW_MAPPING,
+            NodeKind::KeyValue => ffi::FIG_ROW_KEYVALUE,
+            NodeKind::Alias => ffi::FIG_ROW_ALIAS,
         }
     }
 
-    pub(crate) fn from_c(v: c_int) -> Option<Self> {
+    pub(crate) fn from_row(v: u8) -> Option<Self> {
         Some(match v {
-            0 => NodeKind::Null,
-            1 => NodeKind::Bool,
-            2 => NodeKind::Int,
-            3 => NodeKind::Float,
-            4 => NodeKind::String,
-            5 => NodeKind::Sequence,
-            6 => NodeKind::Mapping,
-            7 => NodeKind::KeyValue,
-            8 => NodeKind::Alias,
+            ffi::FIG_ROW_NULL => NodeKind::Null,
+            ffi::FIG_ROW_FALSE | ffi::FIG_ROW_TRUE => NodeKind::Bool,
+            ffi::FIG_ROW_INT => NodeKind::Int,
+            ffi::FIG_ROW_FLOAT => NodeKind::Float,
+            ffi::FIG_ROW_STRING => NodeKind::String,
+            ffi::FIG_ROW_SEQUENCE => NodeKind::Sequence,
+            ffi::FIG_ROW_MAPPING => NodeKind::Mapping,
+            ffi::FIG_ROW_KEYVALUE => NodeKind::KeyValue,
+            ffi::FIG_ROW_ALIAS => NodeKind::Alias,
             _ => return None,
         })
     }
@@ -1387,7 +1389,6 @@ impl Registration {
             } else {
                 None
             },
-            free_table: free_table_thunk,
             free_bytes: free_bytes_thunk,
             render_value: if self.renderers.value {
                 Some(render_value_thunk)
@@ -1473,22 +1474,6 @@ unsafe fn read_prefix<T: Copy>(p: *const T, size: usize, fill: T) -> T {
     out
 }
 
-/// `value` into the `T` fig handed over at `p`, as far as the `size` fig
-/// set on it (its leading `u32`) reaches, and not past it.
-unsafe fn write_gated<T: Copy>(p: *mut T, value: &T) {
-    let size = unsafe { (p as *const u32).read_unaligned() } as usize;
-    let n = size.min(std::mem::size_of::<T>());
-    // The first field is fig's `size`, which stays fig's.
-    let skip = std::mem::size_of::<u32>().min(n);
-    unsafe {
-        std::ptr::copy_nonoverlapping(
-            (value as *const T as *const u8).add(skip),
-            (p as *mut u8).add(skip),
-            n - skip,
-        )
-    };
-}
-
 const DEFAULT_PRINT_OPTIONS: ffi::FigPrintOptions = ffi::FigPrintOptions {
     size: 0,
     pretty: true,
@@ -1516,22 +1501,6 @@ const EMPTY_REQUEST: ffi::FigRenderRequest = ffi::FigRenderRequest {
     parent_tag: EMPTY_STR,
 };
 
-const EMPTY_ROW: ffi::FigNodeRow = ffi::FigNodeRow {
-    kind: 0,
-    ext_kind: ffi::FIG_EXT_NONE,
-    parent: ffi::FIG_ROW_NONE,
-    span: ffi::FigSpan::NONE,
-    text: ffi::FigStr::NONE,
-    anchor: ffi::FigStr::NONE,
-    anchor_span: ffi::FigSpan::NONE,
-    tag: ffi::FigStr::NONE,
-    tag_span: ffi::FigSpan::NONE,
-    marker: ffi::FigSpan::NONE,
-    sep: ffi::FigSpan::NONE,
-    item_sep: ffi::FigStr::NONE,
-    open: false,
-};
-
 unsafe fn reg_of<'a>(ctx: *mut c_void) -> &'a Registration {
     unsafe { &*(ctx as *const Registration) }
 }
@@ -1549,240 +1518,252 @@ fn bytes_of<'a>(s: ffi::FigStr) -> &'a [u8] {
     unsafe { std::slice::from_raw_parts(s.ptr, s.len) }
 }
 
-/// A parse result and the C rows built over it, boxed so `owner` can find
-/// it again in `free_table`.
-struct TableHolder {
-    _table: NodeTable,
-    rows: Vec<ffi::FigNodeRow>,
-    regions: Vec<ffi::FigRegionRow>,
-    mentions: Vec<ffi::FigMentionRow>,
-    comments: Vec<ffi::FigCommentRow>,
-    directives: Vec<ffi::FigDirectiveRow>,
-}
-
-fn str_of(s: &Option<String>) -> ffi::FigStr {
-    match s {
-        Some(s) => ffi::FigStr {
-            ptr: s.as_ptr(),
-            len: s.len(),
-        },
-        None => ffi::FigStr::NONE,
-    }
-}
-
-fn span_of(s: Option<Span>) -> ffi::FigSpan {
-    match s {
-        Some(s) => ffi::FigSpan {
-            start: s.start,
-            end: s.end,
-        },
-        None => ffi::FigSpan::NONE,
-    }
-}
-
-/// The C table over a Rust one. The C rows point into `table`'s strings,
-/// whose heap buffers do not move when the `NodeTable` is moved into the
-/// holder.
-fn table_to_c(table: NodeTable) -> Box<TableHolder> {
-    let rows = table
-        .rows
-        .iter()
-        .map(|r| ffi::FigNodeRow {
-            kind: r.kind.to_c(),
-            ext_kind: r.ext_kind.map_or(ffi::FIG_EXT_NONE, |k| k.to_c()),
+/// `table` written into fig's table `t` through the `fig_table_*` calls. Every
+/// text is copied into the table's buffer.
+fn fill_table(t: *mut ffi::FigTable, table: &NodeTable) -> Result<(), LanguageError> {
+    let oom = || LanguageError::new("out of memory filling the node table");
+    let check = |status: ffi::FigStatus| -> Result<(), LanguageError> {
+        if status == ffi::FigStatus::OK {
+            Ok(())
+        } else {
+            Err(LanguageError::new("fig refused a node table fact"))
+        }
+    };
+    let text = |s: &str| -> Result<ffi::FigText, LanguageError> {
+        let mut out = ffi::FigText::NONE;
+        let status = unsafe { ffi::fig_table_string(t, s.as_ptr(), s.len(), &mut out) };
+        if status == ffi::FigStatus::OK {
+            Ok(out)
+        } else {
+            Err(oom())
+        }
+    };
+    let opt_text = |s: &Option<String>| -> Result<ffi::FigText, LanguageError> {
+        match s {
+            Some(s) => text(s),
+            None => Ok(ffi::FigText::NONE),
+        }
+    };
+    let span = |s: Option<Span>| -> (u32, u32) {
+        match s {
+            Some(s) => (s.start as u32, s.end as u32),
+            None => (ffi::FIG_ROW_NONE, ffi::FIG_ROW_NONE),
+        }
+    };
+    // Every row's text first, then the rows in one call: a row pointer fig
+    // hands back is valid only until the next call on the table.
+    let mut rows = Vec::with_capacity(table.rows.len());
+    for r in &table.rows {
+        let (start, end) = span(r.span);
+        let (kind, row_text) = match (r.ext_kind, r.kind) {
+            (Some(k), _) => (ffi::FIG_ROW_EXT + k.to_c() as u8, opt_text(&r.text)?),
+            (None, NodeKind::Bool) => match r.text.as_deref() {
+                Some("true") => (ffi::FIG_ROW_TRUE, ffi::FigText::NONE),
+                Some("false") => (ffi::FIG_ROW_FALSE, ffi::FigText::NONE),
+                _ => return Err(LanguageError::new("a bool row's text is not true or false")),
+            },
+            (None, k) => (k.to_row(), opt_text(&r.text)?),
+        };
+        rows.push(ffi::FigRow {
+            kind,
+            flags: if r.open { ffi::FIG_ROW_OPEN } else { 0 },
+            reserved: 0,
             parent: r.parent.unwrap_or(ffi::FIG_ROW_NONE),
-            span: span_of(r.span),
-            text: str_of(&r.text),
-            anchor: str_of(&r.anchor),
-            anchor_span: span_of(r.anchor_span),
-            tag: str_of(&r.tag),
-            tag_span: span_of(r.tag_span),
-            marker: span_of(r.marker),
-            sep: span_of(r.sep),
-            item_sep: str_of(&r.item_sep),
-            open: r.open,
-        })
-        .collect();
-    let regions = table
-        .regions
-        .iter()
-        .map(|r| ffi::FigRegionRow {
-            node: r.node,
-            start: r.span.start,
-            end: r.span.end,
-        })
-        .collect();
-    let mentions = table
-        .mentions
-        .iter()
-        .map(|m| ffi::FigMentionRow {
-            node: m.node,
-            span: span_of(Some(m.span)),
-            kind: match m.kind {
-                MentionKind::Header => ffi::FIG_MENTION_HEADER,
-                MentionKind::Entry => ffi::FIG_MENTION_ENTRY,
-            },
-        })
-        .collect();
-    let comments = table
-        .comments
-        .iter()
-        .map(|c| ffi::FigCommentRow {
-            node: c.node,
-            slot: match c.slot {
-                CommentSlot::Leading => ffi::FIG_COMMENT_LEADING,
-                CommentSlot::Trailing => ffi::FIG_COMMENT_TRAILING,
-                CommentSlot::Dangling => ffi::FIG_COMMENT_DANGLING,
-            },
-            style: match c.style {
-                CommentForm::Line => ffi::FIG_COMMENT_LINE,
-                CommentForm::Block => ffi::FIG_COMMENT_BLOCK,
-            },
-            text: ffi::FigStr {
-                ptr: c.text.as_ptr(),
-                len: c.text.len(),
-            },
-        })
-        .collect();
-    let directives = table
-        .directives
-        .iter()
-        .map(|d| ffi::FigDirectiveRow {
-            handle: ffi::FigStr {
-                ptr: d.handle.as_ptr(),
-                len: d.handle.len(),
-            },
-            prefix: ffi::FigStr {
-                ptr: d.prefix.as_ptr(),
-                len: d.prefix.len(),
-            },
-        })
-        .collect();
-    Box::new(TableHolder {
-        _table: table,
-        rows,
-        regions,
-        mentions,
-        comments,
-        directives,
-    })
-}
-
-impl TableHolder {
-    fn c_table(&self, owner: *mut c_void) -> ffi::FigNodeTable {
-        ffi::FigNodeTable {
-            size: std::mem::size_of::<ffi::FigNodeTable>() as u32,
-            row_size: std::mem::size_of::<ffi::FigNodeRow>() as u32,
-            rows: self.rows.as_ptr(),
-            row_count: self.rows.len(),
-            regions: self.regions.as_ptr(),
-            region_count: self.regions.len(),
-            mentions: self.mentions.as_ptr(),
-            mention_count: self.mentions.len(),
-            comments: self.comments.as_ptr(),
-            comment_count: self.comments.len(),
-            directives: self.directives.as_ptr(),
-            directive_count: self.directives.len(),
-            owner,
+            start,
+            end,
+            text: row_text,
+            first_child: ffi::FIG_ROW_NONE,
+            next_sibling: ffi::FIG_ROW_NONE,
+        });
+    }
+    if !rows.is_empty() {
+        let dest = unsafe { ffi::fig_table_rows(t, rows.len()) };
+        if dest.is_null() {
+            return Err(oom());
+        }
+        unsafe { std::ptr::copy_nonoverlapping(rows.as_ptr(), dest, rows.len()) };
+    }
+    for (i, r) in table.rows.iter().enumerate() {
+        let node = i as u32;
+        if let Some(name) = &r.anchor {
+            let (s, e) = span(r.anchor_span);
+            let name = text(name)?;
+            check(unsafe { ffi::fig_table_anchor(t, node, s, e, name) })?;
+        }
+        if let Some(tag) = &r.tag {
+            let (s, e) = span(r.tag_span);
+            let tag = text(tag)?;
+            check(unsafe { ffi::fig_table_tag(t, node, s, e, tag, ffi::FIG_TAG_UNSTATED, true) })?;
+        }
+        if let Some(m) = r.marker {
+            check(unsafe { ffi::fig_table_marker(t, node, m.start as u32, m.end as u32) })?;
+        }
+        if let Some(m) = r.sep {
+            check(unsafe { ffi::fig_table_sep(t, node, m.start as u32, m.end as u32) })?;
+        }
+        if let Some(is) = &r.item_sep {
+            let is = text(is)?;
+            check(unsafe { ffi::fig_table_item_sep(t, node, is) })?;
         }
     }
+    for r in &table.regions {
+        check(unsafe { ffi::fig_table_region(t, r.node, r.span.start as u32, r.span.end as u32) })?;
+    }
+    for m in &table.mentions {
+        let kind = match m.kind {
+            MentionKind::Header => ffi::FIG_MENTION_HEADER,
+            MentionKind::Entry => ffi::FIG_MENTION_ENTRY,
+        };
+        check(unsafe {
+            ffi::fig_table_mention(t, m.node, m.span.start as u32, m.span.end as u32, kind)
+        })?;
+    }
+    for c in &table.comments {
+        let slot = match c.slot {
+            CommentSlot::Leading => ffi::FIG_COMMENT_LEADING,
+            CommentSlot::Trailing => ffi::FIG_COMMENT_TRAILING,
+            CommentSlot::Dangling => ffi::FIG_COMMENT_DANGLING,
+        };
+        let style = match c.style {
+            CommentForm::Line => ffi::FIG_COMMENT_LINE,
+            CommentForm::Block => ffi::FIG_COMMENT_BLOCK,
+        };
+        let body = text(&c.text)?;
+        check(unsafe { ffi::fig_table_comment(t, c.node, slot, style, body) })?;
+    }
+    for d in &table.directives {
+        let handle = text(&d.handle)?;
+        let prefix = text(&d.prefix)?;
+        check(unsafe { ffi::fig_table_directive(t, handle, prefix) })?;
+    }
+    Ok(())
 }
 
-/// A Rust table from a C one — what a `print` is handed.
-pub(crate) fn table_from_c(t: &ffi::FigNodeTable) -> Result<NodeTable, LanguageError> {
-    let text_of = |s: ffi::FigStr| -> Result<Option<String>, LanguageError> {
-        if s.len == ffi::FIG_LEN_NONE {
+/// A slice of a view's list.
+fn view_slice<'a, T>(ptr: *const T, count: usize) -> &'a [T] {
+    if ptr.is_null() || count == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(ptr, count) }
+    }
+}
+
+/// A Rust table from the view fig hands `print`.
+pub(crate) fn table_from_c(v: &ffi::FigTableView) -> Result<NodeTable, LanguageError> {
+    let source = view_slice(v.source, v.source_len);
+    let strings = view_slice(v.strings, v.strings_len);
+    let text_of = |t: ffi::FigText| -> Result<Option<String>, LanguageError> {
+        if t.len == ffi::FIG_ROW_NONE {
             return Ok(None);
         }
-        String::from_utf8(bytes_of(s).to_vec())
+        let (base, len) = if t.len & ffi::FIG_TEXT_BUFFER != 0 {
+            (strings, (t.len & !ffi::FIG_TEXT_BUFFER) as usize)
+        } else {
+            (source, t.len as usize)
+        };
+        let bytes = base
+            .get(t.off as usize..t.off as usize + len)
+            .ok_or_else(|| LanguageError::new("a table text is out of range"))?;
+        String::from_utf8(bytes.to_vec())
             .map(Some)
             .map_err(|_| LanguageError::new("a table string is not UTF-8"))
     };
-    let span_of = |s: ffi::FigSpan| -> Option<Span> {
-        if s.start == ffi::FIG_OFFSET_NONE {
+    let span_of = |start: u32, end: u32| -> Option<Span> {
+        if start == ffi::FIG_ROW_NONE {
             None
         } else {
             Some(Span {
-                start: s.start,
-                end: s.end,
+                start: start as usize,
+                end: end as usize,
             })
         }
     };
-    // At the stride fig wrote them, each row's prefix this crate shares.
-    let rows: Vec<ffi::FigNodeRow> = if t.rows.is_null() {
-        Vec::new()
-    } else {
-        let stride = t.row_size as usize;
-        (0..t.row_count)
-            .map(|i| unsafe {
-                read_prefix(
-                    (t.rows as *const u8).add(i * stride) as *const ffi::FigNodeRow,
-                    stride,
-                    EMPTY_ROW,
-                )
-            })
-            .collect()
-    };
-    let regions = if t.regions.is_null() {
-        &[][..]
-    } else {
-        unsafe { std::slice::from_raw_parts(t.regions, t.region_count) }
-    };
-    let mentions = if t.mentions.is_null() {
-        &[][..]
-    } else {
-        unsafe { std::slice::from_raw_parts(t.mentions, t.mention_count) }
-    };
-    let comments = if t.comments.is_null() {
-        &[][..]
-    } else {
-        unsafe { std::slice::from_raw_parts(t.comments, t.comment_count) }
-    };
-    let directives = if t.directives.is_null() {
-        &[][..]
-    } else {
-        unsafe { std::slice::from_raw_parts(t.directives, t.directive_count) }
-    };
     let mut out = NodeTable::new();
-    for r in rows {
-        out.rows.push(NodeRow {
-            kind: NodeKind::from_c(r.kind)
-                .ok_or_else(|| LanguageError::new("unknown node kind"))?,
-            ext_kind: if r.ext_kind == ffi::FIG_EXT_NONE {
-                None
+    for r in view_slice(v.rows, v.row_count) {
+        let (kind, ext_kind, text) = if r.kind >= ffi::FIG_ROW_EXT {
+            let k = ExtKind::from_c((r.kind - ffi::FIG_ROW_EXT) as c_int)
+                .ok_or_else(|| LanguageError::new("unknown extended kind"))?;
+            let kind = if k == ExtKind::CharLiteral {
+                NodeKind::Int
             } else {
-                ExtKind::from_c(r.ext_kind)
-            },
+                NodeKind::String
+            };
+            (kind, Some(k), text_of(r.text)?)
+        } else {
+            match r.kind {
+                ffi::FIG_ROW_FALSE => (NodeKind::Bool, None, Some("false".to_owned())),
+                ffi::FIG_ROW_TRUE => (NodeKind::Bool, None, Some("true".to_owned())),
+                k => (
+                    NodeKind::from_row(k).ok_or_else(|| LanguageError::new("unknown node kind"))?,
+                    None,
+                    text_of(r.text)?,
+                ),
+            }
+        };
+        out.rows.push(NodeRow {
+            kind,
+            ext_kind,
             parent: if r.parent == ffi::FIG_ROW_NONE {
                 None
             } else {
                 Some(r.parent)
             },
-            span: span_of(r.span),
-            text: text_of(r.text)?,
-            anchor: text_of(r.anchor)?,
-            anchor_span: span_of(r.anchor_span),
-            tag: text_of(r.tag)?,
-            tag_span: span_of(r.tag_span),
-            marker: span_of(r.marker),
-            sep: span_of(r.sep),
-            item_sep: text_of(r.item_sep)?,
-            open: r.open,
+            span: span_of(r.start, r.end),
+            text,
+            anchor: None,
+            anchor_span: None,
+            tag: None,
+            tag_span: None,
+            marker: None,
+            sep: None,
+            item_sep: None,
+            open: r.flags & ffi::FIG_ROW_OPEN != 0,
         });
     }
-    for r in regions {
+    let row = |out: &mut NodeTable, node: u32| -> Result<usize, LanguageError> {
+        let i = node as usize;
+        if i < out.rows.len() {
+            Ok(i)
+        } else {
+            Err(LanguageError::new("a side fact names no row"))
+        }
+    };
+    for a in view_slice(v.anchors, v.anchor_count) {
+        let i = row(&mut out, a.node)?;
+        out.rows[i].anchor = text_of(a.name)?;
+        out.rows[i].anchor_span = span_of(a.start, a.end);
+    }
+    for t in view_slice(v.tags, v.tag_count) {
+        let i = row(&mut out, t.node)?;
+        out.rows[i].tag = text_of(t.text)?;
+        out.rows[i].tag_span = span_of(t.start, t.end);
+    }
+    for m in view_slice(v.markers, v.marker_count) {
+        let i = row(&mut out, m.node)?;
+        out.rows[i].marker = span_of(m.start, m.end);
+    }
+    for m in view_slice(v.seps, v.sep_count) {
+        let i = row(&mut out, m.node)?;
+        out.rows[i].sep = span_of(m.start, m.end);
+    }
+    for m in view_slice(v.item_seps, v.item_sep_count) {
+        let i = row(&mut out, m.node)?;
+        out.rows[i].item_sep = text_of(m.text)?;
+    }
+    for r in view_slice(v.regions, v.region_count) {
         out.regions.push(RegionRow {
             node: r.node,
             span: Span {
-                start: r.start,
-                end: r.end,
+                start: r.start as usize,
+                end: r.end as usize,
             },
         });
     }
-    for m in mentions {
+    for m in view_slice(v.mentions, v.mention_count) {
         out.mentions.push(MentionRow {
             node: m.node,
-            span: span_of(m.span).ok_or_else(|| LanguageError::new("a mention has no span"))?,
+            span: span_of(m.start, m.end)
+                .ok_or_else(|| LanguageError::new("a mention has no span"))?,
             kind: if m.kind == ffi::FIG_MENTION_ENTRY {
                 MentionKind::Entry
             } else {
@@ -1790,7 +1771,7 @@ pub(crate) fn table_from_c(t: &ffi::FigNodeTable) -> Result<NodeTable, LanguageE
             },
         });
     }
-    for c in comments {
+    for c in view_slice(v.comments, v.comment_count) {
         out.comments.push(CommentRow {
             node: c.node,
             slot: match c.slot {
@@ -1806,7 +1787,7 @@ pub(crate) fn table_from_c(t: &ffi::FigNodeTable) -> Result<NodeTable, LanguageE
             text: text_of(c.text)?.unwrap_or_default(),
         });
     }
-    for d in directives {
+    for d in view_slice(v.directives, v.directive_count) {
         out.directives.push(DirectiveRow {
             handle: text_of(d.handle)?
                 .ok_or_else(|| LanguageError::new("a directive has no handle"))?,
@@ -1821,23 +1802,18 @@ unsafe extern "C" fn parse_thunk(
     ctx: *mut c_void,
     dialect: *const c_char,
     input: ffi::FigStr,
-    out: *mut ffi::FigNodeTable,
+    out: *mut ffi::FigTable,
     err: *mut ffi::FigError,
 ) -> c_int {
     let reg = unsafe { reg_of(ctx) };
     let dialect = unsafe { dialect_of(dialect) };
     let input = bytes_of(input);
-    let result = catch_unwind(AssertUnwindSafe(|| reg.lang.parse(dialect, input)));
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let table = reg.lang.parse(dialect, input)?;
+        fill_table(out, &table)
+    }));
     match result {
-        Ok(Ok(table)) => {
-            let holder = table_to_c(table);
-            let owner = Box::into_raw(holder);
-            let c = unsafe { (*owner).c_table(owner as *mut c_void) };
-            // As far as the `size` fig set on the table, and no further: a
-            // fig built against an older header has a shorter one.
-            unsafe { write_gated(out, &c) };
-            0
-        }
+        Ok(Ok(())) => 0,
         Ok(Err(e)) => {
             fill_err(err, &e);
             ffi::FigStatus::PARSE_ERROR.0
@@ -1846,13 +1822,6 @@ unsafe extern "C" fn parse_thunk(
             fill_err(err, &panic_message(p));
             ffi::FigStatus::INTERNAL_ERROR.0
         }
-    }
-}
-
-unsafe extern "C" fn free_table_thunk(_ctx: *mut c_void, table: *mut ffi::FigNodeTable) {
-    let owner = unsafe { (*table).owner } as *mut TableHolder;
-    if !owner.is_null() {
-        drop(unsafe { Box::from_raw(owner) });
     }
 }
 
@@ -1877,7 +1846,7 @@ unsafe extern "C" fn free_bytes_thunk(_ctx: *mut c_void, bytes: ffi::FigStr) {
 unsafe extern "C" fn print_thunk(
     ctx: *mut c_void,
     dialect: *const c_char,
-    table: *const ffi::FigNodeTable,
+    table: *const ffi::FigTableView,
     options: *const ffi::FigPrintOptions,
     out: *mut ffi::FigStr,
     err: *mut ffi::FigError,

@@ -713,15 +713,19 @@ var inner_print: ?fig.Runtime.PrintFn = null;
 fn recordRootTag(
     ctx: ?*anyopaque,
     dialect: [*:0]const u8,
-    table: *const fig.Runtime.NodeTable,
+    view: *const fig.Runtime.table.View,
     options: *const fig.Runtime.PrintOptions,
     out: *fig.Runtime.Str,
     err: *fig.Runtime.ErrorInfo,
 ) callconv(.c) c_int {
-    const tag = table.rowSlice()[0].tag.slice() orelse "";
+    const T = fig.Runtime.table;
+    var tag: []const u8 = "";
+    for (T.slice(T.Tag, view.tags, view.tag_count)) |tg| {
+        if (tg.node == 0) tag = view.textOf(tg.text) orelse "";
+    }
     @memcpy(seen_root_tag[0..tag.len], tag);
     seen_root_tag_len = tag.len;
-    return inner_print.?(ctx, dialect, table, options, out, err);
+    return inner_print.?(ctx, dialect, view, options, out, err);
 }
 
 test "printRuntime hands a runtime printer the tags its lossy strip rebuilt the tree with" {

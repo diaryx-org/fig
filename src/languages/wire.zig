@@ -372,7 +372,6 @@ fn vtableFromDescription(a: Allocator, t: *Transport, desc: std.json.Value) !Run
         .sample_count = sample_slice.len,
         .parse = parseThunk,
         .print = if (caps & Runtime.cap_serialize != 0) printThunk else null,
-        .free_table = freeTableThunk,
         .free_bytes = freeBytesThunk,
         .render_value = if (renderers[0]) renderValueThunk else null,
         .render_entry = if (renderers[1]) renderEntryThunk else null,
@@ -400,11 +399,7 @@ pub fn jsonString(w: *Io.Writer, s: []const u8) !void {
     try std.json.Stringify.encodeJsonString(s, .{}, w);
 }
 
-/// What a parse's memory is: the arena its rows and strings were decoded
-/// into. `NodeTable.owner`.
-const TableOwner = struct { arena: std.heap.ArenaAllocator };
-
-fn parseThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Runtime.Str, out: *Runtime.NodeTable, err: *Runtime.ErrorInfo) callconv(.c) c_int {
+fn parseThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Runtime.Str, out: *Runtime.Table, err: *Runtime.ErrorInfo) callconv(.c) c_int {
     const t = transportOf(ctx);
     const src = input.slice() orelse "";
     if (!std.unicode.utf8ValidateSlice(src)) {
@@ -420,40 +415,24 @@ fn parseThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Runtime.Str, out:
     jsonString(w, src) catch return 3;
     w.writeAll("}") catch return 3;
 
-    const owner = t.allocator.create(TableOwner) catch return 3;
-    owner.* = .{ .arena = std.heap.ArenaAllocator.init(t.allocator) };
-    const a = owner.arena.allocator();
-    const resp = t.call(a, req.written()) catch |e| {
-        owner.arena.deinit();
-        t.allocator.destroy(owner);
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const resp = t.call(arena.allocator(), req.written()) catch |e| {
         setErr(err, @errorName(e), 0);
         return 2;
     };
     const table_v = okField(resp, "table") orelse {
         setErr(err, failureMessage(resp), failureOffset(resp));
-        owner.arena.deinit();
-        t.allocator.destroy(owner);
         return 2;
     };
-    const table = tableFromJson(a, table_v) catch |e| {
+    tableFromJson(table_v, out) catch |e| {
         setErr(err, switch (e) {
             error.MalformedTable => "the helper returned a malformed table",
             else => @errorName(e),
         }, 0);
-        owner.arena.deinit();
-        t.allocator.destroy(owner);
         return 2;
     };
-    out.* = table;
-    out.owner = owner;
     return 0;
-}
-
-fn freeTableThunk(ctx: ?*anyopaque, table: *Runtime.NodeTable) callconv(.c) void {
-    const t = transportOf(ctx);
-    const owner: *TableOwner = @ptrCast(@alignCast(table.owner orelse return));
-    owner.arena.deinit();
-    t.allocator.destroy(owner);
 }
 
 fn freeBytesThunk(ctx: ?*anyopaque, bytes: Runtime.Str) callconv(.c) void {
@@ -461,7 +440,7 @@ fn freeBytesThunk(ctx: ?*anyopaque, bytes: Runtime.Str) callconv(.c) void {
     if (bytes.slice()) |s| if (s.len > 0) t.allocator.free(s);
 }
 
-fn printThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, table: *const Runtime.NodeTable, options: *const Runtime.PrintOptions, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
+fn printThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, view: *const Runtime.table.View, options: *const Runtime.PrintOptions, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
     const t = transportOf(ctx);
     var req: Io.Writer.Allocating = .init(t.allocator);
     defer req.deinit();
@@ -469,7 +448,7 @@ fn printThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, table: *const Runtime.No
     w.writeAll("{\"op\":\"print\",\"dialect\":") catch return 3;
     jsonString(w, std.mem.span(dialect)) catch return 3;
     w.writeAll(",\"table\":") catch return 3;
-    tableToJson(w, table) catch return 3;
+    tableToJson(w, view) catch return 3;
     w.print(",\"options\":{{\"pretty\":{},\"strip_comments\":{},\"indent\":{d},\"width\":{d},\"splice\":{},\"flow\":{}}}}}", .{ options.pretty, options.strip_comments, options.indent, options.width, options.splice, options.flow }) catch return 3;
     return outputCall(t, req.written(), out, err);
 }
@@ -606,202 +585,231 @@ fn extKindOf(name: []const u8) ?c_int {
     return null;
 }
 
-fn spanOf(v: ?std.json.Value) !Runtime.CSpan {
-    const s = v orelse return .none;
-    if (s == .null) return .none;
+const T = Runtime.table;
+
+/// A `[start, end]` span, or `none` for an absent one.
+fn spanOf(v: ?std.json.Value) !struct { start: u32, end: u32 } {
+    const s = v orelse return .{ .start = T.none, .end = T.none };
+    if (s == .null) return .{ .start = T.none, .end = T.none };
     if (s != .array or s.array.items.len != 2) return error.MalformedTable;
     const a = s.array.items[0];
     const b = s.array.items[1];
-    if (a != .integer or b != .integer or a.integer < 0 or b.integer < 0) return error.MalformedTable;
+    if (a != .integer or b != .integer or a.integer < 0 or b.integer < 0 or a.integer >= T.none or b.integer >= T.none) return error.MalformedTable;
     return .{ .start = @intCast(a.integer), .end = @intCast(b.integer) };
 }
 
-fn strOf(a: Allocator, v: ?std.json.Value) !Runtime.Str {
-    const s = v orelse return .none;
+/// A string as the table's text: in the source where it lies there, else
+/// copied into the buffer.
+fn textOf(t: *Runtime.Table, v: ?std.json.Value) !T.Text {
+    const s = v orelse return .absent;
     return switch (s) {
-        .null => .none,
-        .string => |x| Runtime.Str.of(try a.dupe(u8, x)),
+        .null => .absent,
+        .string => |x| try t.addString(x),
         else => error.MalformedTable,
     };
 }
 
 fn u32Of(v: ?std.json.Value) !u32 {
     const s = v orelse return error.MalformedTable;
-    if (s != .integer or s.integer < 0 or s.integer > std.math.maxInt(u32)) return error.MalformedTable;
+    if (s != .integer or s.integer < 0 or s.integer >= T.none) return error.MalformedTable;
     return @intCast(s.integer);
 }
 
-fn usizeOf(v: ?std.json.Value) !usize {
-    const s = v orelse return error.MalformedTable;
-    if (s != .integer or s.integer < 0) return error.MalformedTable;
-    return @intCast(s.integer);
-}
-
-/// A table from the JSON a helper answers `parse` with, its rows and
-/// strings in `a`. `error.MalformedTable` for a shape the wire does not
-/// document.
-pub fn tableFromJson(a: Allocator, v: std.json.Value) !Runtime.NodeTable {
+/// The table a helper answers `parse` with, decoded into `out` through
+/// fig's own calls. `error.MalformedTable` for a shape the wire does not
+/// document. The wire spells a row as it always has — a bool's text is
+/// `true`/`false`, an extended scalar's kind is `ext_kind` beside a
+/// `string` (or `int`) row, and each side fact rides on its row — so a
+/// helper written before the ABI 4 table needs no change.
+pub fn tableFromJson(v: std.json.Value, out: *Runtime.Table) !void {
     if (v != .object) return error.MalformedTable;
     const o = v.object;
-    var rows: std.ArrayList(Runtime.NodeRow) = .empty;
+    const a = out.allocator;
     if (o.get("rows")) |rv| {
         if (rv != .array) return error.MalformedTable;
-        for (rv.array.items) |r| {
+        for (rv.array.items, 0..) |r, i| {
             if (r != .object) return error.MalformedTable;
             const ro = r.object;
+            const node: u32 = @intCast(i);
             const kind_v = ro.get("kind") orelse return error.MalformedTable;
             if (kind_v != .string) return error.MalformedTable;
-            const kind = kindOf(kind_v.string) orelse return error.MalformedTable;
-            const ext: c_int = if (ro.get("ext_kind")) |e| (if (e == .string) (extKindOf(e.string) orelse return error.MalformedTable) else Runtime.no_ext_kind) else Runtime.no_ext_kind;
+            const wire_kind = kindOf(kind_v.string) orelse return error.MalformedTable;
             const parent: u32 = if (ro.get("parent")) |p| (if (p == .null) Runtime.no_node else try u32Of(p)) else Runtime.no_node;
-            try rows.append(a, .{
-                .kind = kind,
-                .ext_kind = ext,
-                .parent = parent,
-                .span = try spanOf(ro.get("span")),
-                .text = try strOf(a, ro.get("text")),
-                .anchor = try strOf(a, ro.get("anchor")),
-                .anchor_span = try spanOf(ro.get("anchor_span")),
-                .tag = try strOf(a, ro.get("tag")),
-                .tag_span = try spanOf(ro.get("tag_span")),
-                .marker = try spanOf(ro.get("marker")),
-                .sep = try spanOf(ro.get("sep")),
-                .item_sep = try strOf(a, ro.get("item_sep")),
-                .open = boolOr(ro, "open", false),
-            });
+            const span = try spanOf(ro.get("span"));
+            var row: T.Row = .{ .parent = parent, .start = span.start, .end = span.end };
+            if (ro.get("ext_kind")) |e| {
+                if (e != .string) return error.MalformedTable;
+                row.kind = T.Kind.ext + @as(u8, @intCast(extKindOf(e.string) orelse return error.MalformedTable));
+                row.text = try textOf(out, ro.get("text"));
+            } else switch (wire_kind) {
+                1 => { // bool
+                    const b = ro.get("text") orelse return error.MalformedTable;
+                    if (b != .string) return error.MalformedTable;
+                    if (std.mem.eql(u8, b.string, "true")) row.kind = T.Kind.true_ else if (std.mem.eql(u8, b.string, "false")) row.kind = T.Kind.false_ else return error.MalformedTable;
+                },
+                else => {
+                    row.kind = wire_row_kinds[@intCast(wire_kind)];
+                    row.text = try textOf(out, ro.get("text"));
+                },
+            }
+            if (boolOr(ro, "open", false)) row.flags |= T.row_open;
+            _ = try out.addRow(row);
+            if (ro.get("anchor")) |an| if (an != .null) {
+                const sp = try spanOf(ro.get("anchor_span"));
+                try out.anchors.append(a, .{ .node = node, .start = sp.start, .end = sp.end, .name = try textOf(out, an) });
+            };
+            if (ro.get("tag")) |tg| if (tg != .null) {
+                const sp = try spanOf(ro.get("tag_span"));
+                try out.tags.append(a, .{ .node = node, .start = sp.start, .end = sp.end, .text = try textOf(out, tg) });
+            };
+            if (ro.get("marker")) |m| if (m != .null) {
+                const sp = try spanOf(m);
+                try out.markers.append(a, .{ .node = node, .start = sp.start, .end = sp.end });
+            };
+            if (ro.get("sep")) |m| if (m != .null) {
+                const sp = try spanOf(m);
+                try out.seps.append(a, .{ .node = node, .start = sp.start, .end = sp.end });
+            };
+            if (ro.get("item_sep")) |is| if (is != .null) {
+                try out.item_seps.append(a, .{ .node = node, .text = try textOf(out, is) });
+            };
         }
     }
-    var regions: std.ArrayList(Runtime.RegionRow) = .empty;
     if (o.get("regions")) |rv| if (rv == .array) {
         for (rv.array.items) |r| {
             if (r != .object) return error.MalformedTable;
-            try regions.append(a, .{ .node = try u32Of(r.object.get("node")), .start = try usizeOf(r.object.get("start")), .end = try usizeOf(r.object.get("end")) });
+            try out.regions.append(a, .{ .node = try u32Of(r.object.get("node")), .start = try u32Of(r.object.get("start")), .end = try u32Of(r.object.get("end")) });
         }
     };
-    var mentions: std.ArrayList(Runtime.MentionRow) = .empty;
     if (o.get("mentions")) |mv| if (mv == .array) {
         for (mv.array.items) |m| {
             if (m != .object) return error.MalformedTable;
             const k = m.object.get("kind") orelse return error.MalformedTable;
-            try mentions.append(a, .{
+            const sp = try spanOf(m.object.get("span"));
+            try out.mentions.append(a, .{
                 .node = try u32Of(m.object.get("node")),
-                .span = try spanOf(m.object.get("span")),
-                .kind = if (k == .string and std.mem.eql(u8, k.string, "entry")) Runtime.mention_entry else Runtime.mention_header,
+                .start = sp.start,
+                .end = sp.end,
+                .kind = if (k == .string and std.mem.eql(u8, k.string, "entry")) T.mention_entry else T.mention_header,
             });
         }
     };
-    var comments: std.ArrayList(Runtime.CommentRow) = .empty;
     if (o.get("comments")) |cv| if (cv == .array) {
         for (cv.array.items) |c| {
             if (c != .object) return error.MalformedTable;
             const slot_v = c.object.get("slot") orelse return error.MalformedTable;
             const style_v = c.object.get("style") orelse return error.MalformedTable;
             if (slot_v != .string or style_v != .string) return error.MalformedTable;
-            const slot: c_int = if (std.mem.eql(u8, slot_v.string, "trailing")) Runtime.comment_trailing else if (std.mem.eql(u8, slot_v.string, "dangling")) Runtime.comment_dangling else Runtime.comment_leading;
-            const style: c_int = if (std.mem.eql(u8, style_v.string, "block")) 1 else 0;
-            const text = try strOf(a, c.object.get("text"));
-            try comments.append(a, .{ .node = try u32Of(c.object.get("node")), .slot = slot, .style = style, .text = if (text.slice() == null) Runtime.Str.of("") else text });
+            const slot: u8 = if (std.mem.eql(u8, slot_v.string, "trailing")) T.comment_trailing else if (std.mem.eql(u8, slot_v.string, "dangling")) T.comment_dangling else T.comment_leading;
+            const style: u8 = if (std.mem.eql(u8, style_v.string, "block")) T.comment_block else T.comment_line;
+            const text = try textOf(out, c.object.get("text"));
+            try out.comments.append(a, .{ .node = try u32Of(c.object.get("node")), .slot = slot, .style = style, .text = if (text.isAbsent()) try out.addString("") else text });
         }
     };
-    var directives: std.ArrayList(Runtime.DirectiveRow) = .empty;
     if (o.get("directives")) |dv| if (dv == .array) {
         for (dv.array.items) |d| {
             if (d != .object) return error.MalformedTable;
-            const handle = try strOf(a, d.object.get("handle"));
-            const prefix = try strOf(a, d.object.get("prefix"));
-            if (handle.slice() == null or prefix.slice() == null) return error.MalformedTable;
-            try directives.append(a, .{ .handle = handle, .prefix = prefix });
+            const handle = try textOf(out, d.object.get("handle"));
+            const prefix = try textOf(out, d.object.get("prefix"));
+            if (handle.isAbsent() or prefix.isAbsent()) return error.MalformedTable;
+            try out.directives.append(a, .{ .handle = handle, .prefix = prefix });
         }
     };
-    const row_slice = try rows.toOwnedSlice(a);
-    const region_slice = try regions.toOwnedSlice(a);
-    const mention_slice = try mentions.toOwnedSlice(a);
-    const comment_slice = try comments.toOwnedSlice(a);
-    const directive_slice = try directives.toOwnedSlice(a);
-    return .{
-        .rows = row_slice.ptr,
-        .row_count = row_slice.len,
-        .regions = region_slice.ptr,
-        .region_count = region_slice.len,
-        .mentions = mention_slice.ptr,
-        .mention_count = mention_slice.len,
-        .comments = comment_slice.ptr,
-        .comment_count = comment_slice.len,
-        .directives = directive_slice.ptr,
-        .directive_count = directive_slice.len,
-    };
 }
 
-fn writeSpan(w: *Io.Writer, key: []const u8, s: Runtime.CSpan) !void {
-    if (s.span()) |sp| try w.print(",\"{s}\":[{d},{d}]", .{ key, sp.start, sp.end });
+/// The table kind of each wire kind but `bool`, which is two.
+const wire_row_kinds = [_]u8{ T.Kind.null_, 0, T.Kind.int, T.Kind.float, T.Kind.string, T.Kind.sequence, T.Kind.mapping, T.Kind.keyvalue, T.Kind.alias };
+
+fn writeSpan(w: *Io.Writer, key: []const u8, start: u32, end: u32) !void {
+    if (start != T.none) try w.print(",\"{s}\":[{d},{d}]", .{ key, start, end });
 }
 
-fn writeStr(w: *Io.Writer, key: []const u8, s: Runtime.Str) !void {
-    if (s.slice()) |x| {
+fn writeText(w: *Io.Writer, v: *const T.View, key: []const u8, t: T.Text) !void {
+    if (v.textOf(t)) |x| {
         try w.print(",\"{s}\":", .{key});
         try jsonString(w, x);
     }
 }
 
 /// A table as the JSON a helper answers `parse` with and is handed for
-/// `print`: an absent optional is omitted, not `null`.
-pub fn tableToJson(w: *Io.Writer, t: *const Runtime.NodeTable) !void {
+/// `print`: an absent optional is omitted, not `null`. The rows' side facts
+/// ride on their rows, as the wire has always spelled them.
+pub fn tableToJson(w: *Io.Writer, v: *const T.View) !void {
     try w.writeAll("{\"rows\":[");
-    for (t.rowSlice(), 0..) |r, i| {
+    for (v.rowSlice(), 0..) |r, i| {
         if (i > 0) try w.writeByte(',');
-        const kind: usize = @intCast(r.kind);
-        try w.print("{{\"kind\":\"{s}\"", .{if (kind < kind_names.len) kind_names[kind] else "null"});
-        if (r.ext_kind != Runtime.no_ext_kind) {
-            const ek: ExtKind = @fromBackingInt(@intCast(r.ext_kind));
-            try w.print(",\"ext_kind\":\"{s}\"", .{@tagName(ek)});
+        const node: u32 = @intCast(i);
+        const K = T.Kind;
+        if (r.kind >= K.ext) {
+            const ek: ExtKind = @fromBackingInt(@intCast(r.kind - K.ext));
+            try w.print("{{\"kind\":\"{s}\",\"ext_kind\":\"{s}\"", .{ if (ek == .char_literal) "int" else "string", @tagName(ek) });
+        } else {
+            const name: []const u8 = switch (r.kind) {
+                K.null_ => "null",
+                K.false_, K.true_ => "bool",
+                K.string => "string",
+                K.int => "int",
+                K.float => "float",
+                K.sequence => "sequence",
+                K.mapping => "mapping",
+                K.keyvalue => "keyvalue",
+                K.alias => "alias",
+                else => "null",
+            };
+            try w.print("{{\"kind\":\"{s}\"", .{name});
         }
         if (r.parent == Runtime.no_node) try w.writeAll(",\"parent\":null") else try w.print(",\"parent\":{d}", .{r.parent});
-        try writeSpan(w, "span", r.span);
-        try writeStr(w, "text", r.text);
-        try writeStr(w, "anchor", r.anchor);
-        try writeSpan(w, "anchor_span", r.anchor_span);
-        try writeStr(w, "tag", r.tag);
-        try writeSpan(w, "tag_span", r.tag_span);
-        try writeSpan(w, "marker", r.marker);
-        try writeSpan(w, "sep", r.sep);
-        try writeStr(w, "item_sep", r.item_sep);
-        if (r.open) try w.writeAll(",\"open\":true");
+        try writeSpan(w, "span", r.start, r.end);
+        if (r.kind == K.false_) try w.writeAll(",\"text\":\"false\"") else if (r.kind == K.true_) try w.writeAll(",\"text\":\"true\"") else try writeText(w, v, "text", r.text);
+        const f = v.facts(node);
+        if (f.anchor) |a| {
+            try writeText(w, v, "anchor", a.name);
+            try writeSpan(w, "anchor_span", a.start, a.end);
+        }
+        if (f.tag) |t| {
+            try writeText(w, v, "tag", t.text);
+            try writeSpan(w, "tag_span", t.start, t.end);
+        }
+        if (f.marker) |m| try writeSpan(w, "marker", m.start, m.end);
+        if (f.sep) |m| try writeSpan(w, "sep", m.start, m.end);
+        if (f.item_sep) |is| try writeText(w, v, "item_sep", is.text);
+        if (r.flags & T.row_open != 0) try w.writeAll(",\"open\":true");
         try w.writeByte('}');
     }
     try w.writeAll("],\"regions\":[");
-    for (t.regionSlice(), 0..) |r, i| {
+    for (T.slice(T.SpanFact, v.regions, v.region_count), 0..) |r, i| {
         if (i > 0) try w.writeByte(',');
         try w.print("{{\"node\":{d},\"start\":{d},\"end\":{d}}}", .{ r.node, r.start, r.end });
     }
     try w.writeAll("],\"mentions\":[");
-    for (t.mentionSlice(), 0..) |m, i| {
+    for (T.slice(T.Mention, v.mentions, v.mention_count), 0..) |m, i| {
         if (i > 0) try w.writeByte(',');
-        const sp = m.span.span() orelse Span.init(0, 0);
-        try w.print("{{\"node\":{d},\"span\":[{d},{d}],\"kind\":\"{s}\"}}", .{ m.node, sp.start, sp.end, if (m.kind == Runtime.mention_entry) "entry" else "header" });
+        try w.print("{{\"node\":{d},\"span\":[{d},{d}],\"kind\":\"{s}\"}}", .{ m.node, m.start, m.end, if (m.kind == T.mention_entry) "entry" else "header" });
     }
     try w.writeAll("],\"comments\":[");
-    for (t.commentSlice(), 0..) |c, i| {
+    for (T.slice(T.Comment, v.comments, v.comment_count), 0..) |c, i| {
         if (i > 0) try w.writeByte(',');
         const slot: []const u8 = switch (c.slot) {
-            Runtime.comment_trailing => "trailing",
-            Runtime.comment_dangling => "dangling",
+            T.comment_trailing => "trailing",
+            T.comment_dangling => "dangling",
             else => "leading",
         };
-        try w.print("{{\"node\":{d},\"slot\":\"{s}\",\"style\":\"{s}\",\"text\":", .{ c.node, slot, if (c.style == 1) "block" else "line" });
-        try jsonString(w, c.text.slice() orelse "");
+        try w.print("{{\"node\":{d},\"slot\":\"{s}\",\"style\":\"{s}\",\"text\":", .{ c.node, slot, if (c.style == T.comment_block) "block" else "line" });
+        try jsonString(w, v.textOf(c.text) orelse "");
         try w.writeByte('}');
     }
     try w.writeAll("]");
     // Absent, not empty, for the formats that have none — which is every
     // helper written before the column existed.
-    if (t.directive_count > 0) {
+    const directives = T.slice(T.Directive, v.directives, v.directive_count);
+    if (directives.len > 0) {
         try w.writeAll(",\"directives\":[");
-        for (t.directiveSlice(), 0..) |d, i| {
+        for (directives, 0..) |d, i| {
             if (i > 0) try w.writeByte(',');
             try w.writeAll("{\"handle\":");
-            try jsonString(w, d.handle.slice() orelse "");
+            try jsonString(w, v.textOf(d.handle) orelse "");
             try w.writeAll(",\"prefix\":");
-            try jsonString(w, d.prefix.slice() orelse "");
+            try jsonString(w, v.textOf(d.prefix) orelse "");
             try w.writeByte('}');
         }
         try w.writeByte(']');
@@ -945,21 +953,24 @@ test "parse crosses as a request line and comes back as a table; print gets the 
         .print_response = "{\"ok\":true,\"output\":\"a=1\\n\"}",
     };
     defer s.last_request.deinit(t.allocator);
-    var table: Runtime.NodeTable = undefined;
+    var table = Runtime.Table.init(t.allocator, "a=1\n");
+    defer table.deinit();
     var err: Runtime.ErrorInfo = .empty;
     try t.expectEqual(@as(c_int, 0), parseThunk(&s.transport, "wire-kv", Runtime.Str.of("a=1\n"), &table, &err));
     try t.expectEqualStrings("{\"op\":\"parse\",\"dialect\":\"wire-kv\",\"input\":\"a=1\\n\"}", s.last_request.items);
-    try t.expectEqual(@as(usize, 4), table.row_count);
-    try t.expectEqual(@as(usize, 1), table.comment_count);
-    try t.expectEqual(@as(usize, 1), table.directive_count);
-    try t.expectEqualStrings("tag:x/", table.directiveSlice()[0].prefix.slice().?);
-    try t.expectEqualStrings("a", table.rowSlice()[2].text.slice().?);
-    try t.expectEqual(@as(usize, 1), table.rowSlice()[1].sep.span().?.start);
-    try t.expect(table.rowSlice()[0].sep.span() == null);
+    try t.expectEqual(@as(usize, 4), table.rows.items.len);
+    try t.expectEqual(@as(usize, 1), table.comments.items.len);
+    try t.expectEqual(@as(usize, 1), table.directives.items.len);
+    try t.expectEqualStrings("tag:x/", table.textOf(table.directives.items[0].prefix).?);
+    try t.expectEqualStrings("a", table.textOf(table.rows.items[2].text).?);
+    try t.expectEqual(@as(usize, 1), table.seps.items.len);
+    try t.expectEqual(@as(u32, 1), table.seps.items[0].node);
+    try t.expectEqual(@as(u32, 1), table.seps.items[0].start);
 
     var out: Runtime.Str = .none;
     const options: Runtime.PrintOptions = .{ .pretty = true, .strip_comments = false, .indent = 2, .width = 80 };
-    try t.expectEqual(@as(c_int, 0), printThunk(&s.transport, "wire-kv", &table, &options, &out, &err));
+    const view = table.view();
+    try t.expectEqual(@as(c_int, 0), printThunk(&s.transport, "wire-kv", &view, &options, &out, &err));
     try t.expectEqualStrings("a=1\n", out.slice().?);
     // The print request carries the table as `parse` answered it.
     try t.expect(std.mem.indexOf(u8, s.last_request.items, "\"sep\":[1,2]") != null);
@@ -967,7 +978,6 @@ test "parse crosses as a request line and comes back as a table; print gets the 
     try t.expect(std.mem.indexOf(u8, s.last_request.items, "\"directives\":[{\"handle\":\"!e!\",\"prefix\":\"tag:x/\"}]") != null);
     try t.expect(std.mem.indexOf(u8, s.last_request.items, "\"options\":{\"pretty\":true,\"strip_comments\":false,\"indent\":2,\"width\":80,\"splice\":false,\"flow\":false}") != null);
     freeBytesThunk(&s.transport, out);
-    freeTableThunk(&s.transport, &table);
 }
 
 test "a parse refusal carries the helper's message and offset" {
@@ -979,7 +989,8 @@ test "a parse refusal carries the helper's message and offset" {
         .print_response = "",
     };
     defer s.last_request.deinit(t.allocator);
-    var table: Runtime.NodeTable = undefined;
+    var table = Runtime.Table.init(t.allocator, "abc");
+    defer table.deinit();
     var err: Runtime.ErrorInfo = .empty;
     try t.expectEqual(@as(c_int, 2), parseThunk(&s.transport, "wire-kv", Runtime.Str.of("abc"), &table, &err));
     try t.expectEqualStrings("expected `=` here", err.text());

@@ -966,20 +966,37 @@ pub const FIG_LANGUAGE_VTABLE_VERSION: u32 = 3;
 /// string.
 pub const FIG_OFFSET_NONE: usize = usize::MAX;
 pub const FIG_LEN_NONE: usize = usize::MAX;
-/// Mirror of `FIG_ROW_NONE`: the root's `parent`.
+/// Mirror of `FIG_ROW_NONE`: the root's `parent`, and an absent span or text
+/// in the node table.
 pub const FIG_ROW_NONE: u32 = u32::MAX;
-/// Mirror of `FIG_EXT_NONE`.
-pub const FIG_EXT_NONE: c_int = -1;
 /// Mirror of `FIG_DEPTH_NONE`: a vtable's `max_mapping_depth` when unbounded.
 pub const FIG_DEPTH_NONE: c_int = -1;
 
-pub const FIG_MENTION_HEADER: c_int = 0;
-pub const FIG_MENTION_ENTRY: c_int = 1;
-pub const FIG_COMMENT_LEADING: c_int = 0;
-pub const FIG_COMMENT_TRAILING: c_int = 1;
-pub const FIG_COMMENT_DANGLING: c_int = 2;
-pub const FIG_COMMENT_LINE: c_int = 0;
-pub const FIG_COMMENT_BLOCK: c_int = 1;
+pub const FIG_MENTION_HEADER: u8 = 0;
+pub const FIG_MENTION_ENTRY: u8 = 1;
+pub const FIG_COMMENT_LEADING: u8 = 0;
+pub const FIG_COMMENT_TRAILING: u8 = 1;
+pub const FIG_COMMENT_DANGLING: u8 = 2;
+pub const FIG_COMMENT_LINE: u8 = 0;
+pub const FIG_COMMENT_BLOCK: u8 = 1;
+
+pub const FIG_TEXT_BUFFER: u32 = 1 << 31;
+pub const FIG_ROW_NULL: u8 = 0;
+pub const FIG_ROW_FALSE: u8 = 1;
+pub const FIG_ROW_TRUE: u8 = 2;
+pub const FIG_ROW_STRING: u8 = 3;
+pub const FIG_ROW_INT: u8 = 4;
+pub const FIG_ROW_FLOAT: u8 = 5;
+pub const FIG_ROW_SEQUENCE: u8 = 6;
+pub const FIG_ROW_MAPPING: u8 = 7;
+pub const FIG_ROW_KEYVALUE: u8 = 8;
+pub const FIG_ROW_ALIAS: u8 = 9;
+pub const FIG_ROW_EXT: u8 = 16;
+pub const FIG_ROW_OPEN: u8 = 1;
+pub const FIG_TAG_UNSTATED: u8 = 0;
+pub const FIG_TAG_CUSTOM: u8 = 1;
+pub const FIG_TAG_NON_SPECIFIC: u8 = 2;
+pub const FIG_TAG_KIND: u8 = 3;
 
 impl FigStr {
     /// The absent optional string.
@@ -997,85 +1014,145 @@ impl FigSpan {
     };
 }
 
-/// Mirror of `FigNodeRow`.
+/// Mirror of `FigText`: `len` bytes at `off` in the source, or — with
+/// [`FIG_TEXT_BUFFER`] set in `len` — in the table's string buffer.
+/// `len == FIG_ROW_NONE` is no text.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FigText {
+    pub off: u32,
+    pub len: u32,
+}
+
+impl FigText {
+    /// No text at all.
+    pub const NONE: FigText = FigText {
+        off: 0,
+        len: FIG_ROW_NONE,
+    };
+}
+
+/// Mirror of `FigRow`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
-pub struct FigNodeRow {
-    pub kind: c_int,
-    pub ext_kind: c_int,
+pub struct FigRow {
+    pub kind: u8,
+    pub flags: u8,
+    pub reserved: u16,
     pub parent: u32,
-    pub span: FigSpan,
-    pub text: FigStr,
-    pub anchor: FigStr,
-    pub anchor_span: FigSpan,
-    pub tag: FigStr,
-    pub tag_span: FigSpan,
-    pub marker: FigSpan,
-    pub sep: FigSpan,
-    /// For a sequence joined by a separator of its own: the bytes written
-    /// between two items on one line; [`FigStr::NONE`] otherwise.
-    pub item_sep: FigStr,
-    /// For a sequence: it has no delimiters.
-    pub open: bool,
+    pub start: u32,
+    pub end: u32,
+    pub text: FigText,
+    pub first_child: u32,
+    pub next_sibling: u32,
 }
 
-/// Mirror of `FigRegionRow`.
+/// Mirror of `FigTableAnchor`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
-pub struct FigRegionRow {
+pub struct FigTableAnchor {
     pub node: u32,
-    pub start: usize,
-    pub end: usize,
+    pub start: u32,
+    pub end: u32,
+    pub name: FigText,
 }
 
-/// Mirror of `FigMentionRow`.
+/// Mirror of `FigTableTag`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
-pub struct FigMentionRow {
+pub struct FigTableTag {
     pub node: u32,
-    pub span: FigSpan,
-    pub kind: c_int,
+    pub start: u32,
+    pub end: u32,
+    pub text: FigText,
+    pub resolved: u8,
+    pub agrees: u8,
+    pub reserved: u16,
 }
 
-/// Mirror of `FigCommentRow`.
+/// Mirror of `FigTableSpan`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
-pub struct FigCommentRow {
+pub struct FigTableSpan {
     pub node: u32,
-    pub slot: c_int,
-    pub style: c_int,
-    pub text: FigStr,
+    pub start: u32,
+    pub end: u32,
 }
 
-/// Mirror of `FigDirectiveRow`.
+/// Mirror of `FigTableItemSep`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
-pub struct FigDirectiveRow {
-    pub handle: FigStr,
-    pub prefix: FigStr,
+pub struct FigTableItemSep {
+    pub node: u32,
+    pub text: FigText,
 }
 
-/// Mirror of `FigNodeTable`.
+/// Mirror of `FigTableComment`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
-pub struct FigNodeTable {
-    /// fig's `sizeof(FigNodeTable)` on a table fig hands over; write and
-    /// read only the fields it covers.
+pub struct FigTableComment {
+    pub node: u32,
+    pub slot: u8,
+    pub style: u8,
+    pub reserved: u16,
+    pub text: FigText,
+}
+
+/// Mirror of `FigTableMention`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigTableMention {
+    pub node: u32,
+    pub start: u32,
+    pub end: u32,
+    pub kind: u8,
+    pub reserved: [u8; 3],
+}
+
+/// Mirror of `FigTableDirective`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigTableDirective {
+    pub handle: FigText,
+    pub prefix: FigText,
+}
+
+/// The node table a `parse` fills: fig's, opaque, written through the
+/// `fig_table_*` calls.
+#[repr(C)]
+pub struct FigTable {
+    _private: [u8; 0],
+}
+
+/// Mirror of `FigTableView`: what `print` is handed.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigTableView {
     pub size: u32,
-    /// The stride of `rows`: `size_of::<FigNodeRow>()` in a table `parse`
-    /// returns; read the rows `print` is handed at the stride it says.
-    pub row_size: u32,
-    pub rows: *const FigNodeRow,
+    pub source: *const u8,
+    pub source_len: usize,
+    pub strings: *const u8,
+    pub strings_len: usize,
+    pub rows: *const FigRow,
     pub row_count: usize,
-    pub regions: *const FigRegionRow,
-    pub region_count: usize,
-    pub mentions: *const FigMentionRow,
-    pub mention_count: usize,
-    pub comments: *const FigCommentRow,
+    pub anchors: *const FigTableAnchor,
+    pub anchor_count: usize,
+    pub tags: *const FigTableTag,
+    pub tag_count: usize,
+    pub markers: *const FigTableSpan,
+    pub marker_count: usize,
+    pub seps: *const FigTableSpan,
+    pub sep_count: usize,
+    pub item_seps: *const FigTableItemSep,
+    pub item_sep_count: usize,
+    pub comments: *const FigTableComment,
     pub comment_count: usize,
-    pub directives: *const FigDirectiveRow,
+    pub regions: *const FigTableSpan,
+    pub region_count: usize,
+    pub mentions: *const FigTableMention,
+    pub mention_count: usize,
+    pub directives: *const FigTableDirective,
     pub directive_count: usize,
-    pub owner: *mut c_void,
 }
 
 /// Mirror of `FigPrintOptions`.
@@ -1200,18 +1277,17 @@ pub type FigParseFn = unsafe extern "C" fn(
     ctx: *mut c_void,
     dialect: *const c_char,
     input: FigStr,
-    out: *mut FigNodeTable,
+    out: *mut FigTable,
     err: *mut FigError,
 ) -> c_int;
 pub type FigPrintFn = unsafe extern "C" fn(
     ctx: *mut c_void,
     dialect: *const c_char,
-    table: *const FigNodeTable,
+    table: *const FigTableView,
     options: *const FigPrintOptions,
     out: *mut FigStr,
     err: *mut FigError,
 ) -> c_int;
-pub type FigFreeTableFn = unsafe extern "C" fn(ctx: *mut c_void, table: *mut FigNodeTable);
 pub type FigFreeBytesFn = unsafe extern "C" fn(ctx: *mut c_void, bytes: FigStr);
 /// Mirror of `FigRenderRequest`: everything a renderer is told. fig writes
 /// it, and a renderer reads a field only when `size` covers it.
@@ -1278,7 +1354,6 @@ pub struct FigLanguageVTable {
     pub sample_count: usize,
     pub parse: FigParseFn,
     pub print: Option<FigPrintFn>,
-    pub free_table: FigFreeTableFn,
     pub free_bytes: FigFreeBytesFn,
     pub render_value: Option<FigRenderFn>,
     pub render_entry: Option<FigRenderFn>,
@@ -1297,6 +1372,48 @@ unsafe extern "C" {
         out_err: *mut FigError,
     ) -> FigStatus;
     pub fn fig_format_by_name(name: *const c_char) -> c_int;
+    pub fn fig_table_rows(t: *mut FigTable, n: usize) -> *mut FigRow;
+    pub fn fig_table_string(
+        t: *mut FigTable,
+        bytes: *const u8,
+        len: usize,
+        out: *mut FigText,
+    ) -> FigStatus;
+    pub fn fig_table_anchor(
+        t: *mut FigTable,
+        node: u32,
+        start: u32,
+        end: u32,
+        name: FigText,
+    ) -> FigStatus;
+    pub fn fig_table_tag(
+        t: *mut FigTable,
+        node: u32,
+        start: u32,
+        end: u32,
+        text: FigText,
+        resolved: u8,
+        agrees: bool,
+    ) -> FigStatus;
+    pub fn fig_table_marker(t: *mut FigTable, node: u32, start: u32, end: u32) -> FigStatus;
+    pub fn fig_table_sep(t: *mut FigTable, node: u32, start: u32, end: u32) -> FigStatus;
+    pub fn fig_table_item_sep(t: *mut FigTable, node: u32, text: FigText) -> FigStatus;
+    pub fn fig_table_comment(
+        t: *mut FigTable,
+        node: u32,
+        slot: u8,
+        style: u8,
+        text: FigText,
+    ) -> FigStatus;
+    pub fn fig_table_region(t: *mut FigTable, node: u32, start: u32, end: u32) -> FigStatus;
+    pub fn fig_table_mention(
+        t: *mut FigTable,
+        node: u32,
+        start: u32,
+        end: u32,
+        kind: u8,
+    ) -> FigStatus;
+    pub fn fig_table_directive(t: *mut FigTable, handle: FigText, prefix: FigText) -> FigStatus;
     pub fn fig_stream_split(
         input: *const u8,
         input_len: usize,

@@ -288,11 +288,10 @@ fn runtimeOf(format: c_int) ?*const Runtime.Entry {
 // points and the re-exports.
 
 pub const FigLanguageVTable = Runtime.VTable;
-pub const FigNodeTable = Runtime.NodeTable;
-pub const FigNodeRow = Runtime.NodeRow;
-pub const FigRegionRow = Runtime.RegionRow;
-pub const FigMentionRow = Runtime.MentionRow;
-pub const FigCommentRow = Runtime.CommentRow;
+pub const FigTable = Runtime.Table;
+pub const FigTableView = Runtime.table.View;
+pub const FigRow = Runtime.table.Row;
+pub const FigText = Runtime.table.Text;
 pub const FigSyntax = Runtime.SyntaxDesc;
 pub const FigComments = Runtime.CommentsDesc;
 pub const FigCommentDelimiter = Runtime.CommentDelimiterDesc;
@@ -365,6 +364,103 @@ pub export fn fig_detect_order(input: ?[*]const u8, input_len: usize, names: ?[*
     for (list) |n| order.appendAssumeCapacity(std.mem.span(n orelse return .invalid_argument));
     const name = Languages.detectAmong(allocator, bytes, order.items) orelse return .not_found;
     out.* = fig_format_by_name(@ptrCast(name.ptr));
+    return .ok;
+}
+
+// The node table a language's `parse` fills (`languages/table.zig`). Fig
+// allocated it; these are how a language writes into it, so no memory
+// crosses from a language's allocator to fig's. Every node index names a
+// row already added; every list is appended in node order.
+
+/// `n` new rows, each a null with no parent, span or text, to be filled in
+/// place; null when out of memory. Valid until the next call on `t`.
+pub export fn fig_table_rows(t: ?*FigTable, n: usize) ?[*]FigRow {
+    const tbl = t orelse return null;
+    const rows = tbl.addRows(n) catch return null;
+    return rows.ptr;
+}
+
+/// `bytes` copied into the table's string buffer, its `FigText` to `out`.
+pub export fn fig_table_string(t: ?*FigTable, bytes: ?[*]const u8, len: usize, out: ?*FigText) FigStatus {
+    const tbl = t orelse return .invalid_argument;
+    const o = out orelse return .invalid_argument;
+    const b: []const u8 = if (len == 0) "" else (bytes orelse return .invalid_argument)[0..len];
+    o.* = tbl.addString(b) catch return .out_of_memory;
+    return .ok;
+}
+
+fn tableNode(t: ?*FigTable, node: u32) ?*FigTable {
+    const tbl = t orelse return null;
+    return if (node < tbl.rows.items.len) tbl else null;
+}
+
+/// An anchor named `name` on `node`, its `&name` at `[start, end)`.
+pub export fn fig_table_anchor(t: ?*FigTable, node: u32, start: u32, end: u32, name: FigText) FigStatus {
+    const tbl = tableNode(t, node) orelse return .invalid_argument;
+    tbl.anchors.append(tbl.allocator, .{ .node = node, .start = start, .end = end, .name = name }) catch return .out_of_memory;
+    return .ok;
+}
+
+/// A tag on `node`, as written (`text`) and as the language resolved it:
+/// `resolved` is FIG_TAG_UNSTATED, _CUSTOM, _NON_SPECIFIC or FIG_TAG_KIND +
+/// a core type; `agrees` whether the node's text agrees with it.
+pub export fn fig_table_tag(t: ?*FigTable, node: u32, start: u32, end: u32, text: FigText, resolved: u8, agrees: bool) FigStatus {
+    const tbl = tableNode(t, node) orelse return .invalid_argument;
+    tbl.tags.append(tbl.allocator, .{ .node = node, .start = start, .end = end, .text = text, .resolved = resolved, .agrees = @intFromBool(agrees) }) catch return .out_of_memory;
+    return .ok;
+}
+
+/// A block-sequence item's marker (`- `) at `[start, end)`.
+pub export fn fig_table_marker(t: ?*FigTable, node: u32, start: u32, end: u32) FigStatus {
+    const tbl = tableNode(t, node) orelse return .invalid_argument;
+    tbl.markers.append(tbl.allocator, .{ .node = node, .start = start, .end = end }) catch return .out_of_memory;
+    return .ok;
+}
+
+/// A keyvalue's separator at `[start, end)`; zero-width for a value that
+/// hangs under a bare key.
+pub export fn fig_table_sep(t: ?*FigTable, node: u32, start: u32, end: u32) FigStatus {
+    const tbl = tableNode(t, node) orelse return .invalid_argument;
+    tbl.seps.append(tbl.allocator, .{ .node = node, .start = start, .end = end }) catch return .out_of_memory;
+    return .ok;
+}
+
+/// A separated sequence's item separator.
+pub export fn fig_table_item_sep(t: ?*FigTable, node: u32, text: FigText) FigStatus {
+    const tbl = tableNode(t, node) orelse return .invalid_argument;
+    tbl.item_seps.append(tbl.allocator, .{ .node = node, .text = text }) catch return .out_of_memory;
+    return .ok;
+}
+
+/// A comment on `node`: `slot` FIG_COMMENT_LEADING, _TRAILING or
+/// _DANGLING; `style` FIG_COMMENT_LINE or _BLOCK.
+pub export fn fig_table_comment(t: ?*FigTable, node: u32, slot: u8, style: u8, text: FigText) FigStatus {
+    const tbl = tableNode(t, node) orelse return .invalid_argument;
+    if (slot > Runtime.table.comment_dangling or style > Runtime.table.comment_block) return .invalid_argument;
+    tbl.comments.append(tbl.allocator, .{ .node = node, .slot = slot, .style = style, .text = text }) catch return .out_of_memory;
+    return .ok;
+}
+
+/// A whole header line of the section `node`, `end` just past its newline.
+pub export fn fig_table_region(t: ?*FigTable, node: u32, start: u32, end: u32) FigStatus {
+    const tbl = tableNode(t, node) orelse return .invalid_argument;
+    tbl.regions.append(tbl.allocator, .{ .node = node, .start = start, .end = end }) catch return .out_of_memory;
+    return .ok;
+}
+
+/// A place the section `node`'s name is written: FIG_MENTION_HEADER or
+/// FIG_MENTION_ENTRY.
+pub export fn fig_table_mention(t: ?*FigTable, node: u32, start: u32, end: u32, kind: u8) FigStatus {
+    const tbl = tableNode(t, node) orelse return .invalid_argument;
+    if (kind > Runtime.table.mention_entry) return .invalid_argument;
+    tbl.mentions.append(tbl.allocator, .{ .node = node, .start = start, .end = end, .kind = kind }) catch return .out_of_memory;
+    return .ok;
+}
+
+/// A tag-handle declaration of the document (YAML's `%TAG`).
+pub export fn fig_table_directive(t: ?*FigTable, handle: FigText, prefix: FigText) FigStatus {
+    const tbl = t orelse return .invalid_argument;
+    tbl.directives.append(tbl.allocator, .{ .handle = handle, .prefix = prefix }) catch return .out_of_memory;
     return .ok;
 }
 

@@ -206,13 +206,16 @@ const doc = try fig.Runtime.Language.Parser.parse(allocator, source, entry.typeO
 var ed: fig.Editor(fig.Runtime.Language) = .{ .allocator = allocator, .format = entry.typeOf() };
 ```
 
-`parse` returns, and `print` receives, a `Runtime.NodeTable`: one row per
-node in pre-order (row index is node id) with the columns `Document`
-carries — kind, parent, span, text, anchor, tag, item marker, entry
-separator — plus regions, mentions, comments and tag directives as side
-tables. The
-shapes are `extern struct`s, stated in `fig.h` under `FigLanguageVTable`
-and `FigNodeTable` and registered from C through `fig_language_register`;
+`parse` fills, and `print` reads, a node table (`Runtime.table`): fig
+owns it, and `parse` writes into one fig allocated — `addRows`,
+`addString`, and a list per side fact — while `print` is handed a `View`.
+A row is 32 bytes: kind, flags, parent, span and text, in pre-order (row
+index is node id), and anchors, tags, item markers, entry separators,
+item separators, regions, mentions, comments and tag directives are sparse
+side facts, each naming its row. The shapes are `extern struct`s, stated
+in `fig.h` as `FigLanguageVTable`, `FigRow`, `FigTableView` and the
+`fig_table_*` calls a C language fills its table through, and registered
+from C through `fig_language_register`;
 `tools/abi_runtime_probe.c` is the smallest complete host, written in C,
 and `zig build abi-check` runs it. What a runtime format cannot do is add a
 node kind, join content sniffing, or receive the editor: a renderer returns

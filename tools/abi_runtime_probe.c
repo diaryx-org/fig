@@ -28,40 +28,32 @@ static FigStr str(const char *p, size_t n) {
     return s;
 }
 
-static const FigStr STR_NONE = { NULL, FIG_LEN_NONE };
-static const FigSpan SPAN_NONE = { FIG_OFFSET_NONE, FIG_OFFSET_NONE };
-
-static FigNodeRow row(int kind, uint32_t parent, size_t start, size_t end) {
-    FigNodeRow r;
-    r.kind = kind;
-    r.ext_kind = FIG_EXT_NONE;
-    r.parent = parent;
-    r.span.start = start;
-    r.span.end = end;
-    r.text = STR_NONE;
-    r.anchor = STR_NONE;
-    r.anchor_span = SPAN_NONE;
-    r.tag = STR_NONE;
-    r.tag_span = SPAN_NONE;
-    r.marker = SPAN_NONE;
-    r.sep = SPAN_NONE;
-    r.item_sep = STR_NONE;
-    r.open = false;
+/* A row, as fig_table_rows hands it back (zeroed: a null, no parent). */
+static FigRow *add_row(FigTable *t, uint8_t kind, uint32_t parent, size_t start, size_t end) {
+    FigRow *r = fig_table_rows(t, 1);
+    if (!r) return NULL;
+    r->kind = kind;
+    r->parent = parent;
+    r->start = (uint32_t)start;
+    r->end = (uint32_t)end;
     return r;
 }
 
-static int parse(void *ctx, const char *dialect, FigStr input, FigNodeTable *out, FigError *err) {
+/* Text in the source, by offset: no copy. */
+static FigText in_source(size_t off, size_t len) {
+    FigText t = { (uint32_t)off, (uint32_t)len };
+    return t;
+}
+
+static int parse(void *ctx, const char *dialect, FigStr input, FigTable *out, FigError *err) {
     (void)ctx;
     (void)dialect;
     const char *src = (const char *)input.ptr;
     size_t n = input.len;
-    /* Three rows per line plus the root is an upper bound. */
-    FigNodeRow *rows = calloc(3 * (n + 1) + 1, sizeof *rows);
-    FigCommentRow *comments = calloc(n + 1, sizeof *comments);
-    size_t nrows = 0, ncomments = 0;
-    rows[nrows++] = row(FIG_NODE_MAPPING, FIG_ROW_NONE, 0, n);
+    if (!add_row(out, FIG_ROW_MAPPING, FIG_ROW_NONE, 0, n)) return FIG_STATUS_OUT_OF_MEMORY;
+    uint32_t nrows = 1;
 
-    const char *pending[64];
+    size_t pending_at[64];
     size_t pending_len[64];
     size_t npending = 0;
 
@@ -74,7 +66,7 @@ static int parse(void *ctx, const char *dialect, FigStr input, FigNodeTable *out
         if (src[at] == '#') {
             size_t s = at + 1;
             while (s < end && src[s] == ' ') s++;
-            pending[npending] = src + s;
+            pending_at[npending] = s;
             pending_len[npending] = end - s;
             npending++;
             at = end + 1;
@@ -85,90 +77,74 @@ static int parse(void *ctx, const char *dialect, FigStr input, FigNodeTable *out
             snprintf((char *)err->message, sizeof err->message, "expected key=value");
             err->message_len = strlen("expected key=value");
             err->byte_offset = at;
-            free(rows);
-            free(comments);
             return FIG_STATUS_PARSE_ERROR;
         }
         size_t eqi = (size_t)(eq - src);
-        uint32_t kv = (uint32_t)nrows;
-        rows[nrows] = row(FIG_NODE_KEYVALUE, 0, at, end);
-        rows[nrows].sep.start = eqi;
-        rows[nrows].sep.end = eqi + 1;
+        uint32_t kv = nrows++;
+        if (!add_row(out, FIG_ROW_KEYVALUE, 0, at, end)) return FIG_STATUS_OUT_OF_MEMORY;
+        if (fig_table_sep(out, kv, (uint32_t)eqi, (uint32_t)eqi + 1) != FIG_STATUS_OK) return FIG_STATUS_OUT_OF_MEMORY;
+        uint32_t key = nrows++;
+        FigRow *k = add_row(out, FIG_ROW_STRING, kv, at, eqi);
+        if (!k) return FIG_STATUS_OUT_OF_MEMORY;
+        k->text = in_source(at, eqi - at);
         nrows++;
-        uint32_t key = (uint32_t)nrows;
-        rows[nrows] = row(FIG_NODE_STRING, kv, at, eqi);
-        rows[nrows].text = str(src + at, eqi - at);
-        nrows++;
-        rows[nrows] = row(FIG_NODE_STRING, kv, eqi + 1, end);
-        rows[nrows].text = str(src + eqi + 1, end - eqi - 1);
-        nrows++;
+        FigRow *v = add_row(out, FIG_ROW_STRING, kv, eqi + 1, end);
+        if (!v) return FIG_STATUS_OUT_OF_MEMORY;
+        v->text = in_source(eqi + 1, end - eqi - 1);
         for (size_t i = 0; i < npending; i++) {
-            comments[ncomments].node = key;
-            comments[ncomments].slot = FIG_COMMENT_LEADING;
-            comments[ncomments].style = FIG_COMMENT_LINE;
-            comments[ncomments].text = str(pending[i], pending_len[i]);
-            ncomments++;
+            /* A comment's text decoded into the buffer, to cover the copying call. */
+            FigText text;
+            if (fig_table_string(out, (const uint8_t *)src + pending_at[i], pending_len[i], &text) != FIG_STATUS_OK) return FIG_STATUS_OUT_OF_MEMORY;
+            if (fig_table_comment(out, key, FIG_COMMENT_LEADING, FIG_COMMENT_LINE, text) != FIG_STATUS_OK) return FIG_STATUS_OUT_OF_MEMORY;
         }
         npending = 0;
         at = end + 1;
     }
-    out->row_size = sizeof(FigNodeRow);
-    out->rows = rows;
-    out->row_count = nrows;
-    out->regions = NULL;
-    out->region_count = 0;
-    out->mentions = NULL;
-    out->mention_count = 0;
-    out->comments = ncomments ? comments : NULL;
-    out->comment_count = ncomments;
-    out->directives = NULL;
-    out->directive_count = 0;
-    out->owner = NULL;
-    if (!ncomments) free(comments);
     return 0;
 }
 
-static void free_table(void *ctx, FigNodeTable *table) {
-    (void)ctx;
-    free((void *)table->rows);
-    free((void *)table->comments);
+/* The bytes a FigText names in a view. */
+static const char *text_of(const FigTableView *v, FigText t, size_t *len) {
+    if (t.len & FIG_TEXT_BUFFER) {
+        *len = t.len & ~FIG_TEXT_BUFFER;
+        return (const char *)v->strings + t.off;
+    }
+    *len = t.len;
+    return (const char *)v->source + t.off;
 }
 
-/* Row `i` of a table fig hands print, read at the stride the table says —
-   the rule for a language built against another header than fig's. */
-static const FigNodeRow *row_at(const FigNodeTable *t, size_t i) {
-    return (const FigNodeRow *)((const char *)t->rows + i * t->row_size);
-}
-
-static int print(void *ctx, const char *dialect, const FigNodeTable *table, const FigPrintOptions *options, FigStr *out, FigError *err) {
+static int print(void *ctx, const char *dialect, const FigTableView *table, const FigPrintOptions *options, FigStr *out, FigError *err) {
     (void)ctx;
     (void)dialect;
     (void)options;
+    CHECK(table->size >= sizeof(FigTableView));
     size_t cap = 256, len = 0;
     char *buf = malloc(cap);
     for (size_t i = 1; i < table->row_count; i += 3) {
-        if (i + 2 >= table->row_count || row_at(table, i)->kind != FIG_NODE_KEYVALUE ||
-            row_at(table, i + 1)->kind != FIG_NODE_STRING || row_at(table, i + 2)->kind != FIG_NODE_STRING) {
+        if (i + 2 >= table->row_count || table->rows[i].kind != FIG_ROW_KEYVALUE ||
+            table->rows[i + 1].kind != FIG_ROW_STRING || table->rows[i + 2].kind != FIG_ROW_STRING) {
             const char *m = "tinykv holds a flat string map";
             snprintf((char *)err->message, sizeof err->message, "%s", m);
             err->message_len = strlen(m);
             free(buf);
             return FIG_STATUS_UNSUPPORTED_FORMAT;
         }
-        const FigNodeRow *key = row_at(table, i + 1);
-        const FigNodeRow *val = row_at(table, i + 2);
         for (size_t c = 0; c < table->comment_count; c++) {
-            const FigCommentRow *cr = &table->comments[c];
+            const FigTableComment *cr = &table->comments[c];
             if (cr->node == i + 1 && cr->slot == FIG_COMMENT_LEADING) {
-                size_t need = len + cr->text.len + 3;
+                size_t tl;
+                const char *tp = text_of(table, cr->text, &tl);
+                size_t need = len + tl + 3;
                 if (need > cap) { cap = need * 2; buf = realloc(buf, cap); }
-                len += (size_t)snprintf(buf + len, cap - len, "# %.*s\n", (int)cr->text.len, (const char *)cr->text.ptr);
+                len += (size_t)snprintf(buf + len, cap - len, "# %.*s\n", (int)tl, tp);
             }
         }
-        size_t need = len + key->text.len + val->text.len + 3;
+        size_t kl, vl;
+        const char *kp = text_of(table, table->rows[i + 1].text, &kl);
+        const char *vp = text_of(table, table->rows[i + 2].text, &vl);
+        size_t need = len + kl + vl + 3;
         if (need > cap) { cap = need * 2; buf = realloc(buf, cap); }
-        len += (size_t)snprintf(buf + len, cap - len, "%.*s=%.*s\n", (int)key->text.len, (const char *)key->text.ptr,
-                                (int)val->text.len, (const char *)val->text.ptr);
+        len += (size_t)snprintf(buf + len, cap - len, "%.*s=%.*s\n", (int)kl, kp, (int)vl, vp);
     }
     out->ptr = (const uint8_t *)buf;
     out->len = len;
@@ -183,35 +159,30 @@ static void free_bytes(void *ctx, FigStr bytes) {
 /* `cbars`: one line of words joined by ` | `, a trailing `|` allowed — an
  * open sequence whose row names its separator, so the item edits work on it
  * through the C ABI, and `fig_editor_insert_seq_item` with them. */
-static int parse_bars(void *ctx, const char *dialect, FigStr input, FigNodeTable *out, FigError *err) {
+static int parse_bars(void *ctx, const char *dialect, FigStr input, FigTable *out, FigError *err) {
     (void)ctx;
     (void)dialect;
     (void)err;
     const char *src = (const char *)input.ptr;
     size_t n = input.len;
     while (n > 0 && (src[n - 1] == '\n' || src[n - 1] == ' ')) n--;
-    FigNodeRow *rows = calloc(n + 2, sizeof *rows);
-    size_t nrows = 0;
-    rows[nrows] = row(FIG_NODE_SEQUENCE, FIG_ROW_NONE, 0, n);
-    rows[nrows].item_sep = str(" | ", 3);
-    rows[nrows].open = true;
-    nrows++;
+    FigRow *root = add_row(out, FIG_ROW_SEQUENCE, FIG_ROW_NONE, 0, n);
+    if (!root) return FIG_STATUS_OUT_OF_MEMORY;
+    root->flags = FIG_ROW_OPEN;
+    FigText sep;
+    if (fig_table_string(out, (const uint8_t *)" | ", 3, &sep) != FIG_STATUS_OK) return FIG_STATUS_OUT_OF_MEMORY;
+    if (fig_table_item_sep(out, 0, sep) != FIG_STATUS_OK) return FIG_STATUS_OUT_OF_MEMORY;
     size_t at = 0;
     while (at < n) {
         while (at < n && (src[at] == ' ' || src[at] == '|')) at++;
         size_t end = at;
         while (end < n && src[end] != ' ' && src[end] != '|') end++;
         if (end == at) break;
-        rows[nrows] = row(FIG_NODE_STRING, 0, at, end);
-        rows[nrows].text = str(src + at, end - at);
-        nrows++;
+        FigRow *r = add_row(out, FIG_ROW_STRING, 0, at, end);
+        if (!r) return FIG_STATUS_OUT_OF_MEMORY;
+        r->text = in_source(at, end - at);
         at = end;
     }
-    memset(out, 0, sizeof *out);
-    out->size = sizeof *out;
-    out->row_size = sizeof(FigNodeRow);
-    out->rows = rows;
-    out->row_count = nrows;
     return 0;
 }
 
@@ -258,7 +229,6 @@ static int bars_probe(void) {
     vt.samples = samples;
     vt.sample_count = 1;
     vt.parse = parse_bars;
-    vt.free_table = free_table;
     vt.free_bytes = free_bytes;
     int format = 0;
     FigError err;
@@ -330,7 +300,6 @@ int main(void) {
     vt.sample_count = 2;
     vt.parse = parse;
     vt.print = print;
-    vt.free_table = free_table;
     vt.free_bytes = free_bytes;
 
     CHECK(fig_language_vtable_version() == FIG_LANGUAGE_VTABLE_VERSION);

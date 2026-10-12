@@ -8,9 +8,10 @@
 //!   * **The C shapes.** `VTable` is the record a host fills to register a
 //!     language — its declarations as fields, its `parse` and `print` as
 //!     function pointers, its renderers as pointers that may be null — and
-//!     `NodeTable` is what `parse` returns and `print` receives: one `NodeRow`
-//!     per node in pre-order plus four side tables, which is `Document`
-//!     restated as values (proposal §4.1). They are `extern struct`s because
+//!     the node table (`table.zig`) is what `parse` fills and `print` reads:
+//!     one row per node in pre-order plus sparse side facts, which is
+//!     `Document` restated as values (proposal §4.9). They are `extern
+//!     struct`s because
 //!     they ARE the C ABI: `c_api.zig` re-exports them under their `Fig*`
 //!     names, fig.h states them, and `zig build abi-check` holds the two
 //!     together. A Zig host fills the same structs.
@@ -33,11 +34,11 @@
 //!     rules and the comment ops are the compiled ones, unchanged. The
 //!     renderers answer `Editor.hasRenderer` with a null check.
 //!
-//! The conversions between `NodeTable` and `Document` are the boundary's
-//! cost. `tableToDocument` copies every string a table carries into the
-//! AST's `owned_strings` and calls the vtable's `free_table` once, so a
-//! helper's memory never outlives the call that produced it; `documentToTable`
-//! borrows the AST's strings for the duration of a `print`. What a runtime
+//! The conversions between the node table (`table.zig`) and `Document` are
+//! the boundary's cost. Fig owns the table a `parse` fills, so no memory a
+//! language allocated outlives the call; `tableToDocument` copies what the
+//! AST keeps out of it, and `documentToTable` builds the one a `print`
+//! reads. What a runtime
 //! format cannot do is add a node kind: `ExtKind` is closed, and a table row
 //! naming one that does not exist is refused at conversion.
 
@@ -65,21 +66,21 @@ const ExtKind = Node.Kind.Extended.ExtKind;
 // grow says how much of itself it carries:
 //
 //   * A record a LANGUAGE writes and fig reads (`VTable`, `SyntaxDesc`,
-//     `DialectDesc` through `VTable.dialect_size`, `NodeRow` through
-//     `NodeTable.row_size`) carries its writer's `sizeof`. fig reads the
+//     `DialectDesc` through `VTable.dialect_size`) carries its writer's
+//     `sizeof`. fig reads the
 //     prefix it covers and takes the declared default for every field past
 //     it (`gated`), so a language built against an older header registers
 //     on a newer fig unchanged, and one built against a newer header on an
 //     older fig is read as far as that fig knows.
 //   * A record FIG writes and a language reads (`PrintOptions`,
-//     `RenderRequest`, `NodeTable` on both sides) carries fig's `sizeof`,
+//     `RenderRequest`, the table's `View`) carries fig's `sizeof`,
 //     and a language reads a field only when `size` covers it — the rule
 //     `FigError` has always had.
 //
 // A struct embedded by value in one that can grow (`CommentsDesc` inside
-// `SyntaxDesc`) and the rows of the side tables (`CommentRow`, `RegionRow`,
-// `MentionRow`, `DirectiveRow`) are frozen: what they would gain goes at
-// the end of the record that holds them instead. `Str` and `CSpan`
+// `SyntaxDesc`) and the node table's rows and side facts (`table.zig`) are
+// frozen: what they would gain goes at the end of the record that holds
+// them instead. `Str` and `CSpan`
 // are the same two-word records fig.h has carried as `FigStr` and `FigSpan`
 // since 2.x, restated here so this file is a leaf.
 
@@ -127,180 +128,17 @@ pub const CSpan = extern struct {
     }
 };
 
-/// A row's `item_sep`, or null for none — and for the empty string, which is
-/// what a row zeroed by a writer that predates the field holds.
-fn itemSepOf(r: NodeRow) ?[]const u8 {
-    const t = r.item_sep.slice() orelse return null;
-    return if (t.len == 0) null else t;
-}
+/// The node table a `parse` fills and a `print` reads: `table.zig`, the
+/// ABI 4 shape.
+pub const table = @import("table.zig");
+pub const Table = table.Table;
 
 /// The row index that says "no row": the root's `parent`.
-pub const no_node: u32 = std.math.maxInt(u32);
+pub const no_node: u32 = table.none;
 
-/// `NodeRow.kind` — the values of fig.h's `FigNodeKind`, which
-/// `fig_node_kind` has reported since 1.0.
-pub const RowKind = enum(c_int) {
-    null = 0,
-    bool = 1,
-    int = 2,
-    float = 3,
-    string = 4,
-    sequence = 5,
-    mapping = 6,
-    keyvalue = 7,
-    alias = 8,
-    _,
-};
-
-/// `NodeRow.ext_kind`: a `FigExtKind` value (the ordinal of `ExtKind`), or
-/// `no_ext_kind`.
-pub const no_ext_kind: c_int = -1;
 /// `FIG_DEPTH_NONE`: a vtable's `max_mapping_depth` when the format holds
 /// mappings to any depth.
 pub const no_depth_limit: c_int = -1;
-
-/// One node. Row index is node id; rows are in pre-order, so a parent
-/// precedes its children and a keyvalue is followed by its key row and then
-/// its value row.
-pub const NodeRow = extern struct {
-    /// `RowKind`. For an extended scalar, `string` (`int` for a char
-    /// literal), and `ext_kind` decides.
-    kind: c_int,
-    /// `FigExtKind`, or `no_ext_kind`.
-    ext_kind: c_int = no_ext_kind,
-    /// Row index of the parent, or `no_node` for the root.
-    parent: u32,
-    /// Required of every row on the parse side; `CSpan.none` on the print
-    /// side, where there is no source.
-    span: CSpan,
-    /// A scalar's decoded bytes; an int or float's lexeme; `true`/`false`
-    /// for a bool; an alias's target anchor name; an extended kind's payload.
-    /// `Str.none` for a container or a null.
-    text: Str = .none,
-    /// The anchor name this row defines and where the `&name` token is, or
-    /// `none`.
-    anchor: Str = .none,
-    anchor_span: CSpan = .none,
-    /// The tag on this row, verbatim (`!foo`, `!!str`), and where it is
-    /// written, or `none`.
-    tag: Str = .none,
-    tag_span: CSpan = .none,
-    /// For a block-sequence item: the span of the `-`/`*` that introduces
-    /// it. `Document.node_marker_spans`.
-    marker: CSpan = .none,
-    /// For a keyvalue: the span of the token separating key from value; a
-    /// zero-width one marks a value hanging under a bare key.
-    /// `Document.node_sep_spans`.
-    sep: CSpan = .none,
-    /// For a sequence whose items are joined by a separator of its own
-    /// rather than by the dialect's (`flow_entry_sep`) or one per line: the
-    /// bytes written between two items on one line — `" | "`, `" "`, or
-    /// `"\n\n"` for items a blank line apart. `none` (or empty, which is
-    /// the same) for every other row; a non-sequence row with one is
-    /// malformed. `Document.node_item_seps`.
-    item_sep: Str = .none,
-    /// For a sequence: it has no delimiters, so its items run from its
-    /// span's start to its end (a voice's bars after `Name:`). Makes the
-    /// sequence a separated one, with the dialect's `flow_entry_sep` when
-    /// `item_sep` is none. False for every other row.
-    open: bool = false,
-};
-
-/// One header line of a section node. `Document.NodeRegion`.
-pub const RegionRow = extern struct { node: u32, start: usize, end: usize };
-
-/// One place a section node's name is written. `Document.NodeMention`;
-/// `kind` is 0 for a header line of the node's own, 1 for a mention on the
-/// parent's entry line.
-pub const MentionRow = extern struct { node: u32, span: CSpan, kind: c_int };
-
-pub const mention_header: c_int = 0;
-pub const mention_entry: c_int = 1;
-
-/// One comment bound to a row. `slot` is 0 leading, 1 trailing, 2 dangling
-/// (`AST.NodeComments`); `style` is 0 line, 1 block (`AST.Comment.Style`).
-/// Rows are grouped by node and in source order within a slot; at most one
-/// trailing per node.
-pub const CommentRow = extern struct { node: u32, slot: c_int, style: c_int, text: Str };
-
-pub const comment_leading: c_int = 0;
-pub const comment_trailing: c_int = 1;
-pub const comment_dangling: c_int = 2;
-
-/// One tag-handle declaration of the document — a YAML `%TAG` directive's
-/// handle (`!e!`, or a redefined `!`/`!!`) and the prefix it expands to.
-/// `AST.TagDirective`. A tag spelled with a named handle is legal only in a
-/// document that declares it, so the declarations travel with the rows: a
-/// parse returns those it read, in source order, and a print of a whole
-/// document receives them back to re-emit above any tag that uses one.
-/// Empty for every format without directives.
-pub const DirectiveRow = extern struct { handle: Str, prefix: Str };
-
-/// What `parse` returns and `print` receives. At least one row: an empty
-/// document is one `null` row, and a table with none is refused.
-pub const NodeTable = extern struct {
-    /// fig's `sizeof(NodeTable)`, set by fig on the table it hands `parse`
-    /// to fill and on the one it hands `print`: a language writes and reads
-    /// only the fields it covers.
-    size: u32 = @sizeOf(NodeTable),
-    /// The stride of `rows`: the `sizeof(NodeRow)` of whoever wrote them —
-    /// the language on the parse side, fig on the print side. A reader
-    /// takes each row's prefix it covers and defaults for the rest.
-    row_size: u32 = @sizeOf(NodeRow),
-    rows: ?[*]const NodeRow = null,
-    row_count: usize = 0,
-    regions: ?[*]const RegionRow = null,
-    region_count: usize = 0,
-    mentions: ?[*]const MentionRow = null,
-    mention_count: usize = 0,
-    comments: ?[*]const CommentRow = null,
-    comment_count: usize = 0,
-    directives: ?[*]const DirectiveRow = null,
-    directive_count: usize = 0,
-    /// The helper's own handle on the memory behind the table, set by
-    /// `parse` and read back by `free_table`; core never touches it. A
-    /// helper whose rows and strings live in one allocation it can find
-    /// from `rows` may leave it null.
-    owner: ?*anyopaque = null,
-
-    /// The rows, when they were written at this fig's own stride — every
-    /// table fig builds, and every table a language built against this
-    /// header returns. `normalizedRows` reads any stride.
-    pub fn rowSlice(self: *const NodeTable) []const NodeRow {
-        std.debug.assert(self.row_size == @sizeOf(NodeRow));
-        const p = self.rows orelse return &.{};
-        return p[0..self.row_count];
-    }
-
-    /// The rows at whatever stride they were written, as this fig's
-    /// `NodeRow`s: borrowed when the stride is this fig's own, else copied
-    /// into `allocator` with the prefix each row covers and defaults past
-    /// it. Null for a stride too short to hold a row's required fields.
-    pub fn normalizedRows(self: *const NodeTable, allocator: Allocator) Allocator.Error!?[]const NodeRow {
-        if (self.row_size == @sizeOf(NodeRow)) return self.rowSlice();
-        if (self.row_size < requiredSize(NodeRow)) return null;
-        const base: [*]const u8 = @ptrCast(self.rows orelse return &.{});
-        const out = try allocator.alloc(NodeRow, self.row_count);
-        for (out, 0..) |*r, i| r.* = gated(NodeRow, base[i * self.row_size ..][0..self.row_size]);
-        return out;
-    }
-    pub fn regionSlice(self: *const NodeTable) []const RegionRow {
-        const p = self.regions orelse return &.{};
-        return p[0..self.region_count];
-    }
-    pub fn mentionSlice(self: *const NodeTable) []const MentionRow {
-        const p = self.mentions orelse return &.{};
-        return p[0..self.mention_count];
-    }
-    pub fn commentSlice(self: *const NodeTable) []const CommentRow {
-        const p = self.comments orelse return &.{};
-        return p[0..self.comment_count];
-    }
-    pub fn directiveSlice(self: *const NodeTable) []const DirectiveRow {
-        const p = self.directives orelse return &.{};
-        return p[0..self.directive_count];
-    }
-};
 
 /// A diagnostic a vtable function fills on failure. Field for field the
 /// `FigError` of fig.h — `c_api.zig` aliases that name to this — so a helper
@@ -495,9 +333,10 @@ pub const prints_root_container: u32 = 1 << 2;
 /// any struct it reaches changes meaning, never for an appended field.
 pub const vtable_version: u32 = 3;
 
-pub const ParseFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, input: Str, out: *NodeTable, err: *ErrorInfo) callconv(.c) c_int;
-pub const PrintFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, table: *const NodeTable, options: *const PrintOptions, out: *Str, err: *ErrorInfo) callconv(.c) c_int;
-pub const FreeTableFn = *const fn (ctx: ?*anyopaque, table: *NodeTable) callconv(.c) void;
+/// Fill `out`, a table fig allocated, through its `fig_table_*` calls.
+pub const ParseFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, input: Str, out: *Table, err: *ErrorInfo) callconv(.c) c_int;
+/// Print the table `view` shows.
+pub const PrintFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, view: *const table.View, options: *const PrintOptions, out: *Str, err: *ErrorInfo) callconv(.c) c_int;
 pub const FreeBytesFn = *const fn (ctx: ?*anyopaque, bytes: Str) callconv(.c) void;
 /// Everything a renderer is told — `manifest.RenderRequest` in the C
 /// shape, with the dialect riding along. fig writes it and a language
@@ -539,10 +378,10 @@ pub const StreamDoc = extern struct {
 ///
 /// Every function returns 0 on success. On failure it returns a nonzero
 /// value — `FigStatus` values are the convention — and fills `err`, whose
-/// `message` is what a caller sees. Memory a function hands back (`out` of
-/// `parse`, `print` and each renderer) is the helper's, and core returns
-/// it through `free_table` or `free_bytes` once it has copied what it
-/// needs; a helper that allocates nothing may pass a no-op.
+/// `message` is what a caller sees. The table `parse` fills is fig's, filled
+/// through fig's calls, so a helper allocates nothing for it. The bytes
+/// `print`, a renderer or `split_stream` hand back are the helper's, and
+/// core returns them through `free_bytes` once it has copied what it needs.
 pub const VTable = extern struct {
     /// `vtable_version`. A record with any other value is refused.
     version: u32,
@@ -577,7 +416,6 @@ pub const VTable = extern struct {
     parse: ParseFn,
     /// Required iff `caps` has the serialize bit.
     print: ?PrintFn = null,
-    free_table: FreeTableFn,
     free_bytes: FreeBytesFn,
 
     render_value: ?RenderFn = null,
@@ -1331,25 +1169,23 @@ pub const TableError = error{
     OutOfMemory,
 };
 
-/// A `Document` over `source` from a parse's table. Every string is copied
-/// into the AST; the table is not retained.
-pub fn tableToDocument(allocator: Allocator, source: []const u8, table: *const NodeTable) TableError!Document {
-    var stride_arena = std.heap.ArenaAllocator.init(allocator);
-    defer stride_arena.deinit();
-    const rows = (try table.normalizedRows(stride_arena.allocator())) orelse return error.MalformedTable;
+/// A `Document` over `source` from a parse's table, which is checked as it
+/// is read: row 0 is the root and the only row without a parent, a parent
+/// precedes its children, a mapping's children are keyvalues, a keyvalue
+/// has exactly a key and a value, a scalar has no children, every span and
+/// text lies in range, and every side fact names a row. Every string the AST
+/// keeps is copied into it; the table is not retained.
+pub fn tableToDocument(allocator: Allocator, source: []const u8, t: *const Table) TableError!Document {
+    const rows = t.rows.items;
     var ast: AST = .{ .allocator = allocator, .root = 0, .nodes = &.{} };
     var owned: std.ArrayList([]const u8) = .empty;
     errdefer {
-        for (owned.items) |s| allocator.free(s);
+        for (owned.items) |x| allocator.free(x);
         owned.deinit(allocator);
     }
-    if (rows.len == 0) {
-        // The empty document: no root. `Document.ast.root` must name a node,
-        // so an empty table is spelled as one null row by the format; a
-        // table with no rows at all is refused as the ambiguity it is.
-        return error.MalformedTable;
-    }
-    if (rows.len > std.math.maxInt(u32) - 1) return error.MalformedTable;
+    // The empty document is spelled as one null row by the format; a table
+    // with no rows at all is refused as the ambiguity it is.
+    if (rows.len == 0) return error.MalformedTable;
 
     const nodes = try allocator.alloc(Node, rows.len);
     errdefer allocator.free(nodes);
@@ -1370,67 +1206,54 @@ pub fn tableToDocument(allocator: Allocator, source: []const u8, table: *const N
         allocator.free(ast.node_comments);
     }
 
+    // A required text, and an optional one: absent is allowed, but text
+    // that names bytes outside the source or the buffer is not.
+    const textOf = struct {
+        fn f(tt: *const Table, x: table.Text) TableError![]const u8 {
+            return tt.textOf(x) orelse error.MalformedTable;
+        }
+    }.f;
+    const optText = struct {
+        fn f(tt: *const Table, x: table.Text) TableError![]const u8 {
+            if (x.isAbsent()) return "";
+            return tt.textOf(x) orelse error.MalformedTable;
+        }
+    }.f;
+
     // Pass 1: kinds, text, spans, and the parent check — a parent precedes
     // its child (pre-order) and only row 0 has none.
-    var first_child = try allocator.alloc(?u32, rows.len);
+    const first_child = try allocator.alloc(?u32, rows.len);
     defer allocator.free(first_child);
-    var last_child = try allocator.alloc(?u32, rows.len);
+    const last_child = try allocator.alloc(?u32, rows.len);
     defer allocator.free(last_child);
     @memset(first_child, null);
     @memset(last_child, null);
-
-    var any_anchor = false;
-    var any_tag = false;
-    var any_marker = false;
-    var any_sep = false;
-    var any_item_sep = false;
     for (rows, 0..) |r, i| {
         if (i == 0) {
             if (r.parent != no_node) return error.MalformedTable;
         } else {
             if (r.parent == no_node or r.parent >= i) return error.MalformedTable;
         }
-        spans[i] = r.span.span() orelse return error.MalformedTable;
-        if (r.anchor.slice() != null) any_anchor = true;
-        if (r.tag.slice() != null) any_tag = true;
-        if (r.marker.span() != null) any_marker = true;
-        if (r.sep.span() != null) any_sep = true;
-        // A separator joins items, so only a sequence has one. An empty one
-        // is none: it is what a zeroed row from a writer that knows nothing
-        // of the field holds, and it would write two items as one.
-        if (itemSepOf(r) != null) {
-            if (r.kind != @backingInt(RowKind.sequence)) return error.MalformedTable;
-            any_item_sep = true;
-        }
-        if (r.open) {
-            if (r.kind != @backingInt(RowKind.sequence)) return error.MalformedTable;
-            any_item_sep = true;
-        }
-
-        const kind: Node.Kind = blk: {
-            if (r.ext_kind != no_ext_kind) {
-                if (r.ext_kind < 0 or r.ext_kind >= @typeInfo(ExtKind).@"enum".field_names.len) return error.UnknownKind;
-                const ek: ExtKind = @fromBackingInt(@intCast(r.ext_kind));
-                break :blk .{ .extended = .{ .kind = ek, .text = try own(allocator, &owned, r.text.slice() orelse "") } };
-            }
-            const rk: RowKind = @fromBackingInt(@intCast(r.kind));
-            break :blk switch (rk) {
-                .null => .null_,
-                .bool => b: {
-                    const t = r.text.slice() orelse return error.MalformedTable;
-                    if (std.mem.eql(u8, t, "true")) break :b .{ .boolean = true };
-                    if (std.mem.eql(u8, t, "false")) break :b .{ .boolean = false };
-                    return error.MalformedTable;
-                },
-                .int => .{ .number = .{ .raw = try own(allocator, &owned, r.text.slice() orelse return error.MalformedTable), .kind = .integer } },
-                .float => .{ .number = .{ .raw = try own(allocator, &owned, r.text.slice() orelse return error.MalformedTable), .kind = .float } },
-                .string => .{ .string = try own(allocator, &owned, r.text.slice() orelse "") },
-                .sequence => .{ .sequence = null },
-                .mapping => .{ .mapping = null },
-                .keyvalue => .{ .keyvalue = .{ .key = 0, .value = 0 } },
-                .alias => .{ .alias = try own(allocator, &owned, r.text.slice() orelse return error.MalformedTable) },
-                _ => return error.UnknownKind,
-            };
+        spans[i] = try spanIn(source, r.start, r.end);
+        if (r.flags & ~table.row_open != 0) return error.MalformedTable;
+        if (r.flags & table.row_open != 0 and r.kind != table.Kind.sequence) return error.MalformedTable;
+        const K = table.Kind;
+        const kind: Node.Kind = switch (r.kind) {
+            K.null_ => .null_,
+            K.false_ => .{ .boolean = false },
+            K.true_ => .{ .boolean = true },
+            K.int => .{ .number = .{ .raw = try own(allocator, &owned, try textOf(t, r.text)), .kind = .integer } },
+            K.float => .{ .number = .{ .raw = try own(allocator, &owned, try textOf(t, r.text)), .kind = .float } },
+            K.string => .{ .string = try own(allocator, &owned, try optText(t, r.text)) },
+            K.sequence => .{ .sequence = null },
+            K.mapping => .{ .mapping = null },
+            K.keyvalue => .{ .keyvalue = .{ .key = 0, .value = 0 } },
+            K.alias => .{ .alias = try own(allocator, &owned, try textOf(t, r.text)) },
+            else => blk: {
+                if (r.kind < K.ext or r.kind - K.ext >= @typeInfo(ExtKind).@"enum".field_names.len) return error.UnknownKind;
+                const ek: ExtKind = @fromBackingInt(@intCast(r.kind - K.ext));
+                break :blk .{ .extended = .{ .kind = ek, .text = try own(allocator, &owned, try optText(t, r.text)) } };
+            },
         };
         nodes[i] = .{ .id = @intCast(i), .kind = kind, .next_sibling = null };
     }
@@ -1479,84 +1302,104 @@ pub fn tableToDocument(allocator: Allocator, source: []const u8, table: *const N
         }
     }
 
-    // Side tables.
+    // Side facts, each naming a row.
     var anchor_spans: []const ?Span = &.{};
     errdefer allocator.free(anchor_spans);
     var tag_spans: []const ?Span = &.{};
     errdefer allocator.free(tag_spans);
-    if (any_anchor) {
+    if (t.anchors.items.len > 0) {
         const names = try allocator.alloc(?[]const u8, rows.len);
         ast.node_anchors = names;
-        var anchors: std.ArrayList(AST.Anchor) = .empty;
-        errdefer anchors.deinit(allocator);
+        @memset(names, null);
         const aspans = try allocator.alloc(?Span, rows.len);
         anchor_spans = aspans;
-        for (rows, 0..) |r, i| {
-            names[i] = null;
-            aspans[i] = r.anchor_span.span();
-            if (r.anchor.slice()) |a| {
-                const name = try own(allocator, &owned, a);
-                names[i] = name;
-                try anchors.append(allocator, .{ .name = name, .node = @intCast(i) });
-            }
+        @memset(aspans, null);
+        var anchors: std.ArrayList(AST.Anchor) = .empty;
+        errdefer anchors.deinit(allocator);
+        for (t.anchors.items) |a| {
+            if (a.node >= rows.len) return error.MalformedTable;
+            const name = try own(allocator, &owned, try textOf(t, a.name));
+            names[a.node] = name;
+            aspans[a.node] = try optSpanIn(source, a.start, a.end);
+            try anchors.append(allocator, .{ .name = name, .node = a.node });
         }
+        // Definition order is the AST's: by node, which is source order.
+        std.mem.sort(AST.Anchor, anchors.items, {}, struct {
+            fn lt(_: void, x: AST.Anchor, y: AST.Anchor) bool {
+                return x.node < y.node;
+            }
+        }.lt);
         ast.anchors = try anchors.toOwnedSlice(allocator);
     }
-    if (any_tag) {
+    if (t.tags.items.len > 0) {
         const tags = try allocator.alloc(?AST.Tag, rows.len);
         ast.node_tags = tags;
+        @memset(tags, null);
         const tspans = try allocator.alloc(?Span, rows.len);
         tag_spans = tspans;
-        for (rows, 0..) |r, i| {
-            tags[i] = if (r.tag.slice()) |t| try tagOfText(allocator, &owned, t) else null;
-            tspans[i] = r.tag_span.span();
+        @memset(tspans, null);
+        for (t.tags.items) |tg| {
+            if (tg.node >= rows.len) return error.MalformedTable;
+            tags[tg.node] = try tagOf(allocator, &owned, t, tg);
+            tspans[tg.node] = try optSpanIn(source, tg.start, tg.end);
         }
     }
     var markers: std.ArrayList(Document.SpanEntry) = .empty;
     defer markers.deinit(allocator);
+    for (t.markers.items) |m| {
+        if (m.node >= rows.len) return error.MalformedTable;
+        try markers.append(allocator, .{ .node_id = m.node, .span = try spanIn(source, m.start, m.end) });
+    }
     var seps: std.ArrayList(Document.SpanEntry) = .empty;
     defer seps.deinit(allocator);
-    if (any_marker or any_sep) {
-        for (rows, 0..) |r, i| {
-            if (r.marker.span()) |m| try markers.append(allocator, .{ .node_id = @intCast(i), .span = m });
-            if (r.sep.span()) |s| try seps.append(allocator, .{ .node_id = @intCast(i), .span = s });
-        }
+    for (t.seps.items) |m| {
+        if (m.node >= rows.len) return error.MalformedTable;
+        try seps.append(allocator, .{ .node_id = m.node, .span = try spanIn(source, m.start, m.end) });
     }
     const marker_spans = try Document.buildSpanTable(allocator, rows.len, markers.items);
     errdefer allocator.free(marker_spans);
     const sep_spans = try Document.buildSpanTable(allocator, rows.len, seps.items);
     errdefer allocator.free(sep_spans);
+
+    // A separated sequence: an item separator of its own, or the open flag,
+    // or both. Only a sequence has one; an empty separator is none.
     var item_seps: []const ?Document.ItemSep = &.{};
     errdefer allocator.free(item_seps);
-    if (any_item_sep) {
-        const table_seps = try allocator.alloc(?Document.ItemSep, rows.len);
-        item_seps = table_seps;
-        for (rows, table_seps) |r, *out| {
-            const text = itemSepOf(r);
-            out.* = if (text != null or r.open) .{
-                .text = if (text) |t| try own(allocator, &owned, t) else null,
-                .open = r.open,
-            } else null;
+    var any_open = false;
+    for (rows) |r| {
+        if (r.flags & table.row_open != 0) any_open = true;
+    }
+    if (t.item_seps.items.len > 0 or any_open) {
+        const out = try allocator.alloc(?Document.ItemSep, rows.len);
+        item_seps = out;
+        for (rows, out) |r, *o| o.* = if (r.flags & table.row_open != 0) .{ .text = null, .open = true } else null;
+        for (t.item_seps.items) |is| {
+            if (is.node >= rows.len or rows[is.node].kind != table.Kind.sequence) return error.MalformedTable;
+            const text = try optText(t, is.text);
+            const sep = if (text.len == 0) null else try own(allocator, &owned, text);
+            const open = rows[is.node].flags & table.row_open != 0;
+            out[is.node] = if (sep != null or open) .{ .text = sep, .open = open } else null;
         }
     }
 
-    const regions = try allocator.alloc(Document.NodeRegion, table.region_count);
+    const regions = try allocator.alloc(Document.NodeRegion, t.regions.items.len);
     errdefer allocator.free(regions);
-    for (table.regionSlice(), regions) |r, *out| {
+    for (t.regions.items, regions) |r, *o| {
         if (r.node >= rows.len) return error.MalformedTable;
-        out.* = .{ .node_id = r.node, .start = r.start, .end = r.end };
+        const sp = try spanIn(source, r.start, r.end);
+        o.* = .{ .node_id = r.node, .start = sp.start, .end = sp.end };
     }
     Document.sortRegions(regions);
-    const mentions = try allocator.alloc(Document.NodeMention, table.mention_count);
+    const mentions = try allocator.alloc(Document.NodeMention, t.mentions.items.len);
     errdefer allocator.free(mentions);
-    for (table.mentionSlice(), mentions) |m, *out| {
+    for (t.mentions.items, mentions) |m, *o| {
         if (m.node >= rows.len) return error.MalformedTable;
-        out.* = .{
+        o.* = .{
             .node_id = m.node,
-            .span = m.span.span() orelse return error.MalformedTable,
+            .span = try spanIn(source, m.start, m.end),
             .kind = switch (m.kind) {
-                mention_header => .header,
-                mention_entry => .entry,
+                table.mention_header => .header,
+                table.mention_entry => .entry,
                 else => return error.MalformedTable,
             },
         };
@@ -1564,37 +1407,37 @@ pub fn tableToDocument(allocator: Allocator, source: []const u8, table: *const N
     Document.sortMentions(mentions);
 
     // Comments: a per-node table only when any exist, grown from the flat
-    // rows. The runs are built in row order, which is the source order the
+    // list. The runs are built in list order, which is the source order the
     // AST asks for.
-    if (table.comment_count > 0) {
+    if (t.comments.items.len > 0) {
         const nc = try allocator.alloc(AST.NodeComments, rows.len);
         @memset(nc, .{});
         ast.node_comments = nc;
-        var leading = try allocator.alloc(std.ArrayList(AST.Comment), rows.len);
+        const leading = try allocator.alloc(std.ArrayList(AST.Comment), rows.len);
         defer allocator.free(leading);
-        var dangling = try allocator.alloc(std.ArrayList(AST.Comment), rows.len);
+        const dangling = try allocator.alloc(std.ArrayList(AST.Comment), rows.len);
         defer allocator.free(dangling);
         @memset(leading, .empty);
         @memset(dangling, .empty);
         defer for (leading) |*l| l.deinit(allocator);
         defer for (dangling) |*d| d.deinit(allocator);
-        for (table.commentSlice()) |c| {
+        for (t.comments.items) |c| {
             if (c.node >= rows.len) return error.MalformedTable;
             const comment: AST.Comment = .{
-                .text = try own(allocator, &owned, c.text.slice() orelse ""),
+                .text = try own(allocator, &owned, try optText(t, c.text)),
                 .style = switch (c.style) {
-                    0 => .line,
-                    1 => .block,
+                    table.comment_line => .line,
+                    table.comment_block => .block,
                     else => return error.MalformedTable,
                 },
             };
             switch (c.slot) {
-                comment_leading => try leading[c.node].append(allocator, comment),
-                comment_trailing => {
+                table.comment_leading => try leading[c.node].append(allocator, comment),
+                table.comment_trailing => {
                     if (nc[c.node].trailing != null) return error.MalformedTable;
                     nc[c.node].trailing = comment;
                 },
-                comment_dangling => try dangling[c.node].append(allocator, comment),
+                table.comment_dangling => try dangling[c.node].append(allocator, comment),
                 else => return error.MalformedTable,
             }
         }
@@ -1604,14 +1447,13 @@ pub fn tableToDocument(allocator: Allocator, source: []const u8, table: *const N
         }
     }
 
-    const directive_rows = table.directiveSlice();
-    if (directive_rows.len > 0) {
-        const directives = try allocator.alloc(AST.TagDirective, directive_rows.len);
+    if (t.directives.items.len > 0) {
+        const directives = try allocator.alloc(AST.TagDirective, t.directives.items.len);
         errdefer allocator.free(directives);
-        for (directive_rows, directives) |r, *d| {
+        for (t.directives.items, directives) |r, *d| {
             d.* = .{
-                .handle = try own(allocator, &owned, r.handle.slice() orelse return error.MalformedTable),
-                .prefix = try own(allocator, &owned, r.prefix.slice() orelse return error.MalformedTable),
+                .handle = try own(allocator, &owned, try textOf(t, r.handle)),
+                .prefix = try own(allocator, &owned, try textOf(t, r.prefix)),
             };
         }
         ast.tag_directives = directives;
@@ -1631,6 +1473,34 @@ pub fn tableToDocument(allocator: Allocator, source: []const u8, table: *const N
         .node_regions = regions,
         .node_mentions = mentions,
     };
+}
+
+/// `[start, end)` within `source`, required.
+fn spanIn(source: []const u8, start: u32, end: u32) TableError!Span {
+    if (start == table.none or end == table.none or start > end or end > source.len) return error.MalformedTable;
+    return Span.init(start, end);
+}
+
+/// `[start, end)` within `source`, or null when both are `none`.
+fn optSpanIn(source: []const u8, start: u32, end: u32) TableError!?Span {
+    if (start == table.none and end == table.none) return null;
+    return try spanIn(source, start, end);
+}
+
+/// A table tag as the AST holds one: a kind tag where the language resolved
+/// it to a core type, else the text as written. A tag the language left
+/// unstated is read by its text, as before the resolution was the
+/// language's: the seven core-schema spellings (`!!int`, `!!str`, …) are
+/// kind tags, and anything else a text tag.
+fn tagOf(allocator: Allocator, owned: *std.ArrayList([]const u8), t: *const Table, tg: table.Tag) TableError!AST.Tag {
+    const kinds = @typeInfo(AST.Tag.KindTag).@"enum".field_names.len;
+    if (tg.resolved >= table.tag_kind) {
+        if (tg.resolved - table.tag_kind >= kinds) return error.MalformedTable;
+        return .{ .kind = @enumFromInt(tg.resolved - table.tag_kind) };
+    }
+    const text = t.textOf(tg.text) orelse return error.MalformedTable;
+    if (tg.resolved == table.tag_unstated) return tagOfText(allocator, owned, text);
+    return .{ .text = try own(allocator, owned, text) };
 }
 
 /// A tag as the wire spells it, decoded to what `tableFromDocument` encoded:
@@ -1659,82 +1529,68 @@ fn own(allocator: Allocator, owned: *std.ArrayList([]const u8), s: []const u8) A
     return copy;
 }
 
-/// The table a `print` receives: `ast` from `root` in pre-order, strings
-/// borrowed from the AST, spans none. The document's tag directives ride
+/// The table a `print` receives: `ast` from `root` in pre-order, every text
+/// in the table's buffer, spans none. The document's tag directives ride
 /// along only when `root` is the document's own root: a fragment printed
 /// for a splice has no directives prefix, as a compiled printer's
 /// `printNode` writes none. Allocated in `arena`; nothing to free but the
 /// arena.
 pub fn documentToTable(arena: Allocator, ast: *const AST, root: Node.Id) Allocator.Error!Table {
-    var rows: std.ArrayList(NodeRow) = .empty;
-    var comments: std.ArrayList(CommentRow) = .empty;
-    var strings: std.ArrayList([]const u8) = .empty;
-    try appendRows(arena, ast, root, no_node, &rows, &comments, &strings);
-    const row_slice = try rows.toOwnedSlice(arena);
-    const comment_slice = try comments.toOwnedSlice(arena);
-    var directives: std.ArrayList(DirectiveRow) = .empty;
+    var t = Table.init(arena, "");
+    try appendRows(&t, ast, root, no_node);
     if (root == ast.root) {
-        for (ast.tag_directives) |d| try directives.append(arena, .{ .handle = Str.of(d.handle), .prefix = Str.of(d.prefix) });
+        for (ast.tag_directives) |d| try t.directives.append(arena, .{ .handle = try t.addString(d.handle), .prefix = try t.addString(d.prefix) });
     }
-    const directive_slice = try directives.toOwnedSlice(arena);
-    return .{
-        .table = .{
-            .rows = row_slice.ptr,
-            .row_count = row_slice.len,
-            .comments = if (comment_slice.len == 0) null else comment_slice.ptr,
-            .comment_count = comment_slice.len,
-            .directives = if (directive_slice.len == 0) null else directive_slice.ptr,
-            .directive_count = directive_slice.len,
-        },
-        .strings = try strings.toOwnedSlice(arena),
-    };
+    return t;
 }
 
-/// A built table and the strings minted for it (kind-tag spellings), which
-/// live in the arena `documentToTable` was given.
-pub const Table = struct { table: NodeTable, strings: []const []const u8 };
-
-/// The table a `parse` of `doc`'s source would have to answer with: rows
-/// as `documentToTable` builds them, plus every source-coupled column the
+/// The table a `parse` of `doc`'s source would have to fill: rows as
+/// `documentToTable` builds them, plus every source-coupled fact the
 /// document records — node spans, item markers, entry separators, item
-/// separators, anchor and tag spans, header regions and name mentions — and
-/// the document's tag directives. What a twin of a compiled format is held
-/// to, row for row.
+/// separators, anchor and tag spans, header regions and name mentions. What
+/// a twin of a compiled format is held to, row for row.
 pub fn fullTable(arena: Allocator, doc: *const Document) Allocator.Error!Table {
     const ast = &doc.ast;
-    var built = try documentToTable(arena, ast, ast.root);
-    const rows = @constCast(built.table.rows.?[0..built.table.row_count]);
+    var t = try documentToTable(arena, ast, ast.root);
     // Pre-order row i is node `ids[i]`; the walk is the one `appendRows`
     // makes.
     var ids: std.ArrayList(Node.Id) = .empty;
     try preorder(arena, ast, ast.root, &ids);
-    var regions: std.ArrayList(RegionRow) = .empty;
-    var mentions: std.ArrayList(MentionRow) = .empty;
-    for (ids.items, rows, 0..) |id, *row, i| {
+    const row_of = try arena.alloc(u32, ast.nodes.len);
+    for (ids.items, 0..) |id, i| row_of[id] = @intCast(i);
+    for (ids.items, t.rows.items, 0..) |id, *row, i| {
         const node = ast.nodes[id];
-        row.span = CSpan.of(doc.span(node));
-        if (doc.markerSpan(node)) |sp| row.marker = CSpan.of(sp);
-        if (doc.sepSpan(node)) |sp| row.sep = CSpan.of(sp);
+        const sp = doc.span(node);
+        row.start = @intCast(sp.start);
+        row.end = @intCast(sp.end);
+        const n: u32 = @intCast(i);
+        if (doc.markerSpan(node)) |m| try t.markers.append(arena, .{ .node = n, .start = @intCast(m.start), .end = @intCast(m.end) });
+        if (doc.sepSpan(node)) |m| try t.seps.append(arena, .{ .node = n, .start = @intCast(m.start), .end = @intCast(m.end) });
         if (doc.itemSep(node)) |is| {
-            if (is.text) |t| row.item_sep = Str.of(t);
-            row.open = is.open;
+            if (is.open) row.flags |= table.row_open;
+            if (is.text) |x| try t.item_seps.append(arena, .{ .node = n, .text = try t.addString(x) });
         }
-        if (doc.anchorSpan(node)) |sp| row.anchor_span = CSpan.of(sp);
-        if (doc.tagSpan(node)) |sp| row.tag_span = CSpan.of(sp);
-        for (doc.regionsOf(id)) |r| try regions.append(arena, .{ .node = @intCast(i), .start = r.start, .end = r.end });
-        for (doc.mentionsOf(id)) |m| try mentions.append(arena, .{
-            .node = @intCast(i),
-            .span = CSpan.of(m.span),
-            .kind = if (m.kind == .header) mention_header else mention_entry,
+        for (doc.regionsOf(id)) |r| try t.regions.append(arena, .{ .node = n, .start = @intCast(r.start), .end = @intCast(r.end) });
+        for (doc.mentionsOf(id)) |m| try t.mentions.append(arena, .{
+            .node = n,
+            .start = @intCast(m.span.start),
+            .end = @intCast(m.span.end),
+            .kind = if (m.kind == .header) table.mention_header else table.mention_entry,
         });
     }
-    const region_slice = try regions.toOwnedSlice(arena);
-    const mention_slice = try mentions.toOwnedSlice(arena);
-    built.table.regions = if (region_slice.len == 0) null else region_slice.ptr;
-    built.table.region_count = region_slice.len;
-    built.table.mentions = if (mention_slice.len == 0) null else mention_slice.ptr;
-    built.table.mention_count = mention_slice.len;
-    return built;
+    for (t.anchors.items) |*a| {
+        if (doc.anchorSpan(ast.nodes[ids.items[a.node]])) |m| {
+            a.start = @intCast(m.start);
+            a.end = @intCast(m.end);
+        }
+    }
+    for (t.tags.items) |*tg| {
+        if (doc.tagSpan(ast.nodes[ids.items[tg.node]])) |m| {
+            tg.start = @intCast(m.start);
+            tg.end = @intCast(m.end);
+        }
+    }
+    return t;
 }
 
 fn preorder(arena: Allocator, ast: *const AST, id: Node.Id, out: *std.ArrayList(Node.Id)) Allocator.Error!void {
@@ -1755,70 +1611,60 @@ fn preorder(arena: Allocator, ast: *const AST, id: Node.Id, out: *std.ArrayList(
     }
 }
 
-fn appendRows(arena: Allocator, ast: *const AST, id: Node.Id, parent: u32, rows: *std.ArrayList(NodeRow), comments: *std.ArrayList(CommentRow), strings: *std.ArrayList([]const u8)) Allocator.Error!void {
+fn appendRows(t: *Table, ast: *const AST, id: Node.Id, parent: u32) Allocator.Error!void {
     const node = ast.nodes[id];
-    const row_index: u32 = @intCast(rows.items.len);
-    var row: NodeRow = .{ .kind = 0, .parent = parent, .span = .none };
+    const K = table.Kind;
+    var row: table.Row = .{ .parent = parent };
     switch (node.kind) {
-        .null_ => row.kind = @backingInt(RowKind.null),
-        .boolean => |b| {
-            row.kind = @backingInt(RowKind.bool);
-            row.text = Str.of(if (b) "true" else "false");
-        },
-        .string => |s| {
-            row.kind = @backingInt(RowKind.string);
-            row.text = Str.of(s);
+        .null_ => row.kind = K.null_,
+        .boolean => |b| row.kind = if (b) K.true_ else K.false_,
+        .string => |x| {
+            row.kind = K.string;
+            row.text = try t.addString(x);
         },
         .number => |n| {
-            row.kind = @backingInt(if (n.kind == .float) RowKind.float else RowKind.int);
-            row.text = Str.of(n.raw);
+            row.kind = if (n.kind == .float) K.float else K.int;
+            row.text = try t.addString(n.raw);
         },
         .extended => |e| {
-            row.kind = @backingInt(if (e.kind == .char_literal) RowKind.int else RowKind.string);
-            row.ext_kind = @backingInt(e.kind);
-            row.text = Str.of(e.text);
+            row.kind = K.ext + @as(u8, @intCast(@backingInt(e.kind)));
+            row.text = try t.addString(e.text);
         },
-        .sequence => row.kind = @backingInt(RowKind.sequence),
-        .mapping => row.kind = @backingInt(RowKind.mapping),
-        .keyvalue => row.kind = @backingInt(RowKind.keyvalue),
+        .sequence => row.kind = K.sequence,
+        .mapping => row.kind = K.mapping,
+        .keyvalue => row.kind = K.keyvalue,
         .alias => |a| {
-            row.kind = @backingInt(RowKind.alias);
-            row.text = Str.of(a);
+            row.kind = K.alias;
+            row.text = try t.addString(a);
         },
     }
+    const index = try t.addRow(row);
+    const a = t.allocator;
     if (id < ast.node_anchors.len) {
-        if (ast.node_anchors[id]) |a| row.anchor = Str.of(a);
+        if (ast.node_anchors[id]) |name| try t.anchors.append(a, .{ .node = index, .name = try t.addString(name) });
     }
-    if (ast.tagOf(id)) |t| {
-        row.tag = switch (t) {
-            .text => |s| Str.of(s),
-            // A cross-format kind tag spelled as YAML's core schema spells
-            // it: the one spelling every format that has tags at all can
-            // read, and what YAML's own printer writes.
-            .kind => blk: {
-                const spelled = try arena.dupe(u8, t.spelling());
-                try strings.append(arena, spelled);
-                break :blk Str.of(spelled);
-            },
-        };
-    }
-    try rows.append(arena, row);
+    if (ast.tagOf(id)) |tag| try t.tags.append(a, switch (tag) {
+        .text => |x| .{ .node = index, .text = try t.addString(x) },
+        // A kind tag is resolved, and spelled as YAML's core schema spells
+        // it for a language that writes tags as text.
+        .kind => |k| .{ .node = index, .text = try t.addString(tag.spelling()), .resolved = table.tag_kind + @as(u8, @intCast(@backingInt(k))) },
+    });
     const nc = ast.comments(id);
-    for (nc.leading) |c| try comments.append(arena, .{ .node = row_index, .slot = comment_leading, .style = @backingInt(c.style), .text = Str.of(c.text) });
-    if (nc.trailing) |c| try comments.append(arena, .{ .node = row_index, .slot = comment_trailing, .style = @backingInt(c.style), .text = Str.of(c.text) });
-    for (nc.dangling) |c| try comments.append(arena, .{ .node = row_index, .slot = comment_dangling, .style = @backingInt(c.style), .text = Str.of(c.text) });
+    for (nc.leading) |c| try t.comments.append(a, .{ .node = index, .slot = table.comment_leading, .style = @intCast(@backingInt(c.style)), .text = try t.addString(c.text) });
+    if (nc.trailing) |c| try t.comments.append(a, .{ .node = index, .slot = table.comment_trailing, .style = @intCast(@backingInt(c.style)), .text = try t.addString(c.text) });
+    for (nc.dangling) |c| try t.comments.append(a, .{ .node = index, .slot = table.comment_dangling, .style = @intCast(@backingInt(c.style)), .text = try t.addString(c.text) });
 
     switch (node.kind) {
         .sequence, .mapping => |first| {
             var next = first;
             while (next) |child| {
-                try appendRows(arena, ast, child, row_index, rows, comments, strings);
+                try appendRows(t, ast, child, index);
                 next = ast.nodes[child].next_sibling;
             }
         },
         .keyvalue => |kv| {
-            try appendRows(arena, ast, kv.key, row_index, rows, comments, strings);
-            try appendRows(arena, ast, kv.value, row_index, rows, comments, strings);
+            try appendRows(t, ast, kv.key, index);
+            try appendRows(t, ast, kv.value, index);
         },
         else => {},
     }
@@ -1842,6 +1688,7 @@ pub fn printNodeWith(e: *const Entry, writer: *std.Io.Writer, ast: *const AST, r
     var arena_state = std.heap.ArenaAllocator.init(ast.allocator);
     defer arena_state.deinit();
     const built = try documentToTable(arena_state.allocator(), ast, root);
+    const view = built.view();
     const opts: PrintOptions = .{
         .pretty = options.pretty,
         .strip_comments = options.strip_comments,
@@ -1852,7 +1699,7 @@ pub fn printNodeWith(e: *const Entry, writer: *std.Io.Writer, ast: *const AST, r
     };
     var out: Str = .{};
     var err: ErrorInfo = .empty;
-    const rc = print(reg.vt.ctx, e.dialectZ(), &built.table, &opts, &out, &err);
+    const rc = print(reg.vt.ctx, e.dialectZ(), &view, &opts, &out, &err);
     if (rc != 0) return error.RuntimePrintFailed;
     defer reg.vt.free_bytes(reg.vt.ctx, out);
     try writer.writeAll(out.slice() orelse "");
@@ -1913,12 +1760,12 @@ pub const Language = struct {
     pub fn parse(parser: *Parser, input: []const u8, t: Type) !Document {
         const e = entryOf(t);
         const reg = e.language;
-        var table: NodeTable = .{};
+        var tbl = Table.init(parser.allocator, input);
+        defer tbl.deinit();
         parser.last_error = .empty;
-        const rc = reg.vt.parse(reg.vt.ctx, e.dialectZ(), Str.of(input), &table, &parser.last_error);
+        const rc = reg.vt.parse(reg.vt.ctx, e.dialectZ(), Str.of(input), &tbl, &parser.last_error);
         if (rc != 0) return error.RuntimeParseFailed;
-        defer reg.vt.free_table(reg.vt.ctx, &table);
-        var doc = tableToDocument(parser.allocator, input, &table) catch |err| {
+        var doc = tableToDocument(parser.allocator, input, &tbl) catch |err| {
             parser.last_error.set(switch (err) {
                 error.UnknownKind => "the parser returned a node kind this fig does not know",
                 error.MalformedTable => "the parser returned a malformed node table",
@@ -2064,12 +1911,33 @@ pub const Language = struct {
 
 const testing = std.testing;
 
+/// A row for a test table: its text, if any, goes into the buffer.
+const TestRow = struct { kind: u8, parent: u32 = no_node, start: u32, end: u32, text: ?[]const u8 = null, flags: u8 = 0 };
+
+/// A table over `src` with `rows`, in the testing allocator.
+fn testTable(src: []const u8, rows: []const TestRow) !Table {
+    var t = Table.init(testing.allocator, src);
+    errdefer t.deinit();
+    for (rows) |r| _ = try t.addRow(.{
+        .kind = r.kind,
+        .parent = r.parent,
+        .start = r.start,
+        .end = r.end,
+        .flags = r.flags,
+        .text = if (r.text) |x| try t.addString(x) else .absent,
+    });
+    return t;
+}
+
+const TK = table.Kind;
+
 test "a null-row table is the empty document and an empty one is refused" {
-    var table: NodeTable = .{};
-    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, "", &table));
-    const rows = [_]NodeRow{.{ .kind = @backingInt(RowKind.null), .parent = no_node, .span = .{ .start = 0, .end = 0 } }};
-    table = .{ .rows = &rows, .row_count = rows.len };
-    const doc = try tableToDocument(testing.allocator, "", &table);
+    var empty = Table.init(testing.allocator, "");
+    defer empty.deinit();
+    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, "", &empty));
+    var t = try testTable("", &.{.{ .kind = TK.null_, .start = 0, .end = 0 }});
+    defer t.deinit();
+    const doc = try tableToDocument(testing.allocator, "", &t);
     defer doc.deinit(testing.allocator);
     try testing.expect(doc.ast.nodes[doc.ast.root].kind == .null_);
 }
@@ -2079,20 +1947,22 @@ test "a mapping table round-trips through Document and back" {
     if (comptime !@import("build_options").lang_json) return error.SkipZigTest;
     // { a: 1, b: [true, "x"] } as `a: 1\nb: [true, x]\n`
     const src = "a: 1\nb: [true, x]\n";
-    const rows = [_]NodeRow{
-        .{ .kind = @backingInt(RowKind.mapping), .parent = no_node, .span = .{ .start = 0, .end = src.len } },
-        .{ .kind = @backingInt(RowKind.keyvalue), .parent = 0, .span = .{ .start = 0, .end = 4 }, .sep = .{ .start = 1, .end = 2 } },
-        .{ .kind = @backingInt(RowKind.string), .parent = 1, .span = .{ .start = 0, .end = 1 }, .text = Str.of("a") },
-        .{ .kind = @backingInt(RowKind.int), .parent = 1, .span = .{ .start = 3, .end = 4 }, .text = Str.of("1") },
-        .{ .kind = @backingInt(RowKind.keyvalue), .parent = 0, .span = .{ .start = 5, .end = 17 }, .sep = .{ .start = 6, .end = 7 } },
-        .{ .kind = @backingInt(RowKind.string), .parent = 4, .span = .{ .start = 5, .end = 6 }, .text = Str.of("b") },
-        .{ .kind = @backingInt(RowKind.sequence), .parent = 4, .span = .{ .start = 8, .end = 17 } },
-        .{ .kind = @backingInt(RowKind.bool), .parent = 6, .span = .{ .start = 9, .end = 13 }, .text = Str.of("true") },
-        .{ .kind = @backingInt(RowKind.string), .parent = 6, .span = .{ .start = 15, .end = 16 }, .text = Str.of("x") },
+    const rows = [_]TestRow{
+        .{ .kind = TK.mapping, .start = 0, .end = src.len },
+        .{ .kind = TK.keyvalue, .parent = 0, .start = 0, .end = 4 },
+        .{ .kind = TK.string, .parent = 1, .start = 0, .end = 1, .text = "a" },
+        .{ .kind = TK.int, .parent = 1, .start = 3, .end = 4, .text = "1" },
+        .{ .kind = TK.keyvalue, .parent = 0, .start = 5, .end = 17 },
+        .{ .kind = TK.string, .parent = 4, .start = 5, .end = 6, .text = "b" },
+        .{ .kind = TK.sequence, .parent = 4, .start = 8, .end = 17 },
+        .{ .kind = TK.true_, .parent = 6, .start = 9, .end = 13 },
+        .{ .kind = TK.string, .parent = 6, .start = 15, .end = 16, .text = "x" },
     };
-    const comments = [_]CommentRow{.{ .node = 2, .slot = comment_leading, .style = 0, .text = Str.of("hello") }};
-    const table: NodeTable = .{ .rows = &rows, .row_count = rows.len, .comments = &comments, .comment_count = 1 };
-    const doc = try tableToDocument(testing.allocator, src, &table);
+    var t = try testTable(src, &rows);
+    defer t.deinit();
+    try t.seps.appendSlice(testing.allocator, &.{ .{ .node = 1, .start = 1, .end = 2 }, .{ .node = 4, .start = 6, .end = 7 } });
+    try t.comments.append(testing.allocator, .{ .node = 2, .slot = table.comment_leading, .style = table.comment_line, .text = try t.addString("hello") });
+    const doc = try tableToDocument(testing.allocator, src, &t);
     defer doc.deinit(testing.allocator);
 
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
@@ -2107,61 +1977,67 @@ test "a mapping table round-trips through Document and back" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const built = try documentToTable(arena.allocator(), &doc.ast, doc.ast.root);
-    const back = built.table.rowSlice();
-    try testing.expectEqual(rows.len, back.len);
-    for (rows, back) |want, got| {
+    try testing.expectEqual(rows.len, built.rows.items.len);
+    for (rows, built.rows.items) |want, got| {
         try testing.expectEqual(want.kind, got.kind);
         try testing.expectEqual(want.parent, got.parent);
-        try testing.expectEqualStrings(want.text.slice() orelse "", got.text.slice() orelse "");
-        try testing.expect(got.span.span() == null);
+        try testing.expectEqualStrings(want.text orelse "", built.textOf(got.text) orelse "");
+        try testing.expectEqual(table.none, got.start);
     }
-    try testing.expectEqual(@as(usize, 1), built.table.comment_count);
+    try testing.expectEqual(@as(usize, 1), built.comments.items.len);
 
     // `fullTable` is the parse's own answer back: every span, the
     // separators, and the comment, as they were given.
     const full = try fullTable(arena.allocator(), &doc);
-    const full_rows = full.table.rowSlice();
-    try testing.expectEqual(rows.len, full_rows.len);
-    for (rows, full_rows) |want, got| {
-        try testing.expectEqual(want.span.start, got.span.start);
-        try testing.expectEqual(want.span.end, got.span.end);
-        try testing.expectEqual(want.sep.span() == null, got.sep.span() == null);
-        if (want.sep.span()) |sp| try testing.expectEqual(sp.start, got.sep.span().?.start);
-        try testing.expect(got.marker.span() == null);
+    try testing.expectEqual(rows.len, full.rows.items.len);
+    for (rows, full.rows.items) |want, got| {
+        try testing.expectEqual(want.start, got.start);
+        try testing.expectEqual(want.end, got.end);
     }
-    try testing.expectEqual(@as(usize, 0), full.table.region_count);
-    try testing.expectEqual(@as(usize, 0), full.table.mention_count);
-    try testing.expectEqual(@as(usize, 1), full.table.comment_count);
-    try testing.expectEqual(@as(u32, 2), full.table.commentSlice()[0].node);
+    try testing.expectEqual(@as(usize, 2), full.seps.items.len);
+    try testing.expectEqual(@as(u32, 6), full.seps.items[1].start);
+    try testing.expectEqual(@as(usize, 0), full.markers.items.len);
+    try testing.expectEqual(@as(usize, 0), full.regions.items.len);
+    try testing.expectEqual(@as(usize, 0), full.mentions.items.len);
+    try testing.expectEqual(@as(usize, 1), full.comments.items.len);
+    try testing.expectEqual(@as(u32, 2), full.comments.items[0].node);
 }
 
-test "a core-schema tag on the wire is a kind tag, and any other a text tag" {
+test "a tag is read by its resolution, or by its text when the language left it unstated" {
     // The encoder spells a `.kind` tag as YAML's core schema does
     // (`!!int`); reading it back as verbatim text lost the assertion — a
     // runtime fig's `port: int = 5432` reached the printers untagged.
-    const src = "a: 1\nb: 2\n";
-    const rows = [_]NodeRow{
-        .{ .kind = @backingInt(RowKind.mapping), .parent = no_node, .span = .{ .start = 0, .end = src.len } },
-        .{ .kind = @backingInt(RowKind.keyvalue), .parent = 0, .span = .{ .start = 0, .end = 4 } },
-        .{ .kind = @backingInt(RowKind.string), .parent = 1, .span = .{ .start = 0, .end = 1 }, .text = Str.of("a") },
-        .{ .kind = @backingInt(RowKind.int), .parent = 1, .span = .{ .start = 3, .end = 4 }, .text = Str.of("1"), .tag = Str.of("!!int") },
-        .{ .kind = @backingInt(RowKind.keyvalue), .parent = 0, .span = .{ .start = 5, .end = 9 } },
-        .{ .kind = @backingInt(RowKind.string), .parent = 4, .span = .{ .start = 5, .end = 6 }, .text = Str.of("b") },
-        .{ .kind = @backingInt(RowKind.int), .parent = 4, .span = .{ .start = 8, .end = 9 }, .text = Str.of("2"), .tag = Str.of("!custom") },
+    const src = "a: 1\nb: 2\nc: 3\n";
+    const rows = [_]TestRow{
+        .{ .kind = TK.mapping, .start = 0, .end = src.len },
+        .{ .kind = TK.keyvalue, .parent = 0, .start = 0, .end = 4 },
+        .{ .kind = TK.string, .parent = 1, .start = 0, .end = 1, .text = "a" },
+        .{ .kind = TK.int, .parent = 1, .start = 3, .end = 4, .text = "1" },
+        .{ .kind = TK.keyvalue, .parent = 0, .start = 5, .end = 9 },
+        .{ .kind = TK.string, .parent = 4, .start = 5, .end = 6, .text = "b" },
+        .{ .kind = TK.int, .parent = 4, .start = 8, .end = 9, .text = "2" },
+        .{ .kind = TK.keyvalue, .parent = 0, .start = 10, .end = 14 },
+        .{ .kind = TK.string, .parent = 7, .start = 10, .end = 11, .text = "c" },
+        .{ .kind = TK.int, .parent = 7, .start = 13, .end = 14, .text = "3" },
     };
-    const table: NodeTable = .{ .rows = &rows, .row_count = rows.len };
-    const doc = try tableToDocument(testing.allocator, src, &table);
+    var t = try testTable(src, &rows);
+    defer t.deinit();
+    try t.tags.append(testing.allocator, .{ .node = 3, .text = try t.addString("!!int") });
+    try t.tags.append(testing.allocator, .{ .node = 6, .text = try t.addString("!custom"), .resolved = table.tag_custom });
+    try t.tags.append(testing.allocator, .{ .node = 9, .text = try t.addString("tag:yaml.org,2002:int"), .resolved = table.tag_kind + 3 });
+    const doc = try tableToDocument(testing.allocator, src, &t);
     defer doc.deinit(testing.allocator);
     try testing.expectEqual(AST.Tag{ .kind = .integer }, doc.ast.tagOf(3).?);
     try testing.expectEqualStrings("!custom", doc.ast.tagOf(6).?.text);
+    try testing.expectEqual(AST.Tag{ .kind = .integer }, doc.ast.tagOf(9).?);
 
-    // And back out as it came in.
+    // And back out: a kind tag resolved and spelled as the core schema does.
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const built = try documentToTable(arena.allocator(), &doc.ast, doc.ast.root);
-    const back = built.table.rowSlice();
-    try testing.expectEqualStrings("!!int", back[3].tag.slice().?);
-    try testing.expectEqualStrings("!custom", back[6].tag.slice().?);
+    try testing.expectEqualStrings("!!int", built.textOf(built.tags.items[0].text).?);
+    try testing.expectEqual(table.tag_kind + 3, built.tags.items[0].resolved);
+    try testing.expectEqualStrings("!custom", built.textOf(built.tags.items[1].text).?);
 }
 
 test "a tag directive travels with the rows, and only a whole document's print gets it back" {
@@ -2169,12 +2045,11 @@ test "a tag directive travels with the rows, and only a whole document's print g
     // YAML that read the `%TAG` line has to hand it over for the printer
     // to write back; a fragment (a splice's text) has no directives prefix.
     const src = "%TAG !e! tag:x/\n---\n!e!foo bar\n";
-    const rows = [_]NodeRow{
-        .{ .kind = @backingInt(RowKind.string), .parent = no_node, .span = .{ .start = 20, .end = 29 }, .text = Str.of("bar"), .tag = Str.of("!e!foo") },
-    };
-    const directives = [_]DirectiveRow{.{ .handle = Str.of("!e!"), .prefix = Str.of("tag:x/") }};
-    const table: NodeTable = .{ .rows = &rows, .row_count = rows.len, .directives = &directives, .directive_count = 1 };
-    const doc = try tableToDocument(testing.allocator, src, &table);
+    var t = try testTable(src, &.{.{ .kind = TK.string, .start = 20, .end = 29, .text = "bar" }});
+    defer t.deinit();
+    try t.tags.append(testing.allocator, .{ .node = 0, .text = try t.addString("!e!foo") });
+    try t.directives.append(testing.allocator, .{ .handle = try t.addString("!e!"), .prefix = try t.addString("tag:x/") });
+    const doc = try tableToDocument(testing.allocator, src, &t);
     defer doc.deinit(testing.allocator);
     try testing.expectEqual(@as(usize, 1), doc.ast.tag_directives.len);
     try testing.expectEqualStrings("!e!", doc.ast.tag_directives[0].handle);
@@ -2183,36 +2058,47 @@ test "a tag directive travels with the rows, and only a whole document's print g
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const whole = try fullTable(arena.allocator(), &doc);
-    try testing.expectEqual(@as(usize, 1), whole.table.directiveSlice().len);
-    try testing.expectEqualStrings("tag:x/", whole.table.directiveSlice()[0].prefix.slice().?);
+    try testing.expectEqual(@as(usize, 1), whole.directives.items.len);
+    try testing.expectEqualStrings("tag:x/", whole.textOf(whole.directives.items[0].prefix).?);
 
     // A directive with no prefix is not one.
-    const bad = [_]DirectiveRow{.{ .handle = Str.of("!e!"), .prefix = .none }};
-    const bad_table: NodeTable = .{ .rows = &rows, .row_count = rows.len, .directives = &bad, .directive_count = 1 };
-    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &bad_table));
+    t.directives.items[0].prefix = .absent;
+    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &t));
 }
 
 test "a malformed table is refused, not read" {
     const src = "x";
     // A child before its parent.
-    var rows = [_]NodeRow{
-        .{ .kind = @backingInt(RowKind.sequence), .parent = no_node, .span = .{ .start = 0, .end = 1 } },
-        .{ .kind = @backingInt(RowKind.string), .parent = 2, .span = .{ .start = 0, .end = 1 }, .text = Str.of("x") },
-        .{ .kind = @backingInt(RowKind.string), .parent = 0, .span = .{ .start = 0, .end = 1 }, .text = Str.of("x") },
-    };
-    var table: NodeTable = .{ .rows = &rows, .row_count = rows.len };
-    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &table));
+    var t = try testTable(src, &.{
+        .{ .kind = TK.sequence, .start = 0, .end = 1 },
+        .{ .kind = TK.string, .parent = 2, .start = 0, .end = 1, .text = "x" },
+        .{ .kind = TK.string, .parent = 0, .start = 0, .end = 1, .text = "x" },
+    });
+    defer t.deinit();
+    const rows = t.rows.items;
+    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &t));
     // A mapping child that is not a keyvalue.
-    rows[0].kind = @backingInt(RowKind.mapping);
+    rows[0].kind = TK.mapping;
     rows[1].parent = 0;
-    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &table));
+    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &t));
     // An unknown kind.
     rows[0].kind = 99;
-    try testing.expectError(error.UnknownKind, tableToDocument(testing.allocator, src, &table));
-    // A row with no span.
-    rows[0].kind = @backingInt(RowKind.sequence);
-    rows[1].span = .none;
-    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &table));
+    try testing.expectError(error.UnknownKind, tableToDocument(testing.allocator, src, &t));
+    // A row with no span, and one past the source.
+    rows[0].kind = TK.sequence;
+    rows[1].start = table.none;
+    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &t));
+    rows[1].start = 0;
+    rows[1].end = 2;
+    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &t));
+    // A text past the buffer.
+    rows[1].end = 1;
+    rows[1].text = .{ .off = 0, .len = 99 | table.Text.buffer_bit };
+    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &t));
+    // The open flag on a row that is not a sequence.
+    rows[1].text = .absent;
+    rows[1].flags = table.row_open;
+    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &t));
 }
 
 // ── a format in Zig, through the vtable ─────────────────────────────────────
@@ -2232,15 +2118,16 @@ pub const test_language = if (builtin.is_test) TinyKv else void;
 const TinyKv = struct {
     pub const Alloc = struct { allocator: Allocator };
 
-    fn parse(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Str, out: *NodeTable, err: *ErrorInfo) callconv(.c) c_int {
+    fn parse(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Str, out: *Table, err: *ErrorInfo) callconv(.c) c_int {
         _ = dialect;
-        const a: *Alloc = @ptrCast(@alignCast(ctx.?));
-        const src = input.slice() orelse "";
-        var rows: std.ArrayList(NodeRow) = .empty;
-        var comments: std.ArrayList(CommentRow) = .empty;
-        rows.append(a.allocator, .{ .kind = @backingInt(RowKind.mapping), .parent = no_node, .span = .{ .start = 0, .end = src.len } }) catch return 255;
-        var pending: std.ArrayList(Str) = .empty;
-        defer pending.deinit(a.allocator);
+        _ = ctx;
+        return parseInto(input.slice() orelse "", out, err) catch 255;
+    }
+
+    fn parseInto(src: []const u8, out: *Table, err: *ErrorInfo) !c_int {
+        _ = try out.addRow(.{ .kind = TK.mapping, .start = 0, .end = @intCast(src.len) });
+        var pending: std.ArrayList([]const u8) = .empty;
+        defer pending.deinit(out.allocator);
         var at: usize = 0;
         while (at < src.len) {
             const nl = std.mem.indexOfScalarPos(u8, src, at, '\n') orelse src.len;
@@ -2250,74 +2137,65 @@ const TinyKv = struct {
                 continue;
             }
             if (line[0] == '#') {
-                pending.append(a.allocator, Str.of(std.mem.trim(u8, line[1..], " "))) catch return 255;
+                try pending.append(out.allocator, std.mem.trim(u8, line[1..], " "));
                 at = nl + 1;
                 continue;
             }
             const eq = std.mem.indexOfScalar(u8, line, '=') orelse {
                 err.set("expected key=value");
                 err.byte_offset = at;
-                rows.deinit(a.allocator);
-                comments.deinit(a.allocator);
                 return 2;
             };
-            const kv: u32 = @intCast(rows.items.len);
-            rows.append(a.allocator, .{ .kind = @backingInt(RowKind.keyvalue), .parent = 0, .span = .{ .start = at, .end = nl }, .sep = .{ .start = at + eq, .end = at + eq + 1 } }) catch return 255;
-            const key: u32 = @intCast(rows.items.len);
-            rows.append(a.allocator, .{ .kind = @backingInt(RowKind.string), .parent = kv, .span = .{ .start = at, .end = at + eq }, .text = Str.of(line[0..eq]) }) catch return 255;
-            rows.append(a.allocator, .{ .kind = @backingInt(RowKind.string), .parent = kv, .span = .{ .start = at + eq + 1, .end = nl }, .text = Str.of(line[eq + 1 ..]) }) catch return 255;
-            for (pending.items) |c| comments.append(a.allocator, .{ .node = key, .slot = comment_leading, .style = 0, .text = c }) catch return 255;
+            const kv = try out.addRow(.{ .kind = TK.keyvalue, .parent = 0, .start = @intCast(at), .end = @intCast(nl) });
+            try out.seps.append(out.allocator, .{ .node = kv, .start = @intCast(at + eq), .end = @intCast(at + eq + 1) });
+            const key = try out.addRow(.{ .kind = TK.string, .parent = kv, .start = @intCast(at), .end = @intCast(at + eq), .text = try out.text(line[0..eq]) });
+            _ = try out.addRow(.{ .kind = TK.string, .parent = kv, .start = @intCast(at + eq + 1), .end = @intCast(nl), .text = try out.text(line[eq + 1 ..]) });
+            for (pending.items) |c| try out.comments.append(out.allocator, .{ .node = key, .slot = table.comment_leading, .style = table.comment_line, .text = try out.text(c) });
             pending.clearRetainingCapacity();
             at = nl + 1;
         }
-        const r = rows.toOwnedSlice(a.allocator) catch return 255;
-        const c = comments.toOwnedSlice(a.allocator) catch return 255;
-        out.* = .{ .rows = r.ptr, .row_count = r.len, .comments = if (c.len == 0) null else c.ptr, .comment_count = c.len };
         return 0;
     }
 
-    fn freeTable(ctx: ?*anyopaque, table: *NodeTable) callconv(.c) void {
-        const a: *Alloc = @ptrCast(@alignCast(ctx.?));
-        a.allocator.free(table.rowSlice());
-        a.allocator.free(table.commentSlice());
-    }
-
-    fn print(ctx: ?*anyopaque, dialect: [*:0]const u8, table: *const NodeTable, options: *const PrintOptions, out: *Str, err: *ErrorInfo) callconv(.c) c_int {
+    fn print(ctx: ?*anyopaque, dialect: [*:0]const u8, view: *const table.View, options: *const PrintOptions, out: *Str, err: *ErrorInfo) callconv(.c) c_int {
         _ = dialect;
         _ = options;
         const a: *Alloc = @ptrCast(@alignCast(ctx.?));
-        const rows = table.rowSlice();
+        const rows = table.slice(table.Row, view.rows, view.row_count);
+        const comments = table.slice(table.Comment, view.comments, view.comment_count);
+        const source = if (view.source) |p| p[0..view.source_len] else "";
+        const strings = if (view.strings) |p| p[0..view.strings_len] else "";
         var buf: std.ArrayList(u8) = .empty;
         var i: usize = 1;
         while (i < rows.len) {
             // A mapping is three rows per entry: keyvalue, key, value.
-            if (rows[i].kind != @backingInt(RowKind.keyvalue) or i + 2 >= rows.len) {
+            if (rows[i].kind != TK.keyvalue or i + 2 >= rows.len) {
                 err.set("tinykv holds a flat string map");
                 buf.deinit(a.allocator);
                 return 4;
             }
             const key = rows[i + 1];
             const val = rows[i + 2];
-            if (key.kind != @backingInt(RowKind.string) or val.kind != @backingInt(RowKind.string)) {
+            if (key.kind != TK.string or val.kind != TK.string) {
                 err.set("tinykv holds a flat string map");
                 buf.deinit(a.allocator);
                 return 4;
             }
-            for (table.commentSlice()) |c| {
-                if (c.node == i + 1 and c.slot == comment_leading) {
+            for (comments) |c| {
+                if (c.node == i + 1 and c.slot == table.comment_leading) {
                     buf.appendSlice(a.allocator, "# ") catch return 255;
-                    buf.appendSlice(a.allocator, c.text.slice() orelse "") catch return 255;
+                    buf.appendSlice(a.allocator, table.viewText(source, strings, c.text) orelse "") catch return 255;
                     buf.append(a.allocator, '\n') catch return 255;
                 }
             }
-            buf.appendSlice(a.allocator, key.text.slice() orelse "") catch return 255;
+            buf.appendSlice(a.allocator, table.viewText(source, strings, key.text) orelse "") catch return 255;
             buf.append(a.allocator, '=') catch return 255;
-            buf.appendSlice(a.allocator, val.text.slice() orelse "") catch return 255;
+            buf.appendSlice(a.allocator, table.viewText(source, strings, val.text) orelse "") catch return 255;
             buf.append(a.allocator, '\n') catch return 255;
             i += 3;
         }
-        const s = buf.toOwnedSlice(a.allocator) catch return 255;
-        out.* = Str.of(s);
+        const out_bytes = buf.toOwnedSlice(a.allocator) catch return 255;
+        out.* = Str.of(out_bytes);
         return 0;
     }
 
@@ -2350,7 +2228,6 @@ const TinyKv = struct {
             .sample_count = samples.len,
             .parse = parse,
             .print = print,
-            .free_table = freeTable,
             .free_bytes = freeBytes,
         };
     }
@@ -2407,17 +2284,16 @@ test "a language registered from Zig parses, edits and prints through the contra
 const TinyList = struct {
     pub const Alloc = TinyKv.Alloc;
 
-    fn parse(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Str, out: *NodeTable, err: *ErrorInfo) callconv(.c) c_int {
+    fn parse(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Str, out: *Table, err: *ErrorInfo) callconv(.c) c_int {
         _ = dialect;
-        const a: *Alloc = @ptrCast(@alignCast(ctx.?));
+        _ = ctx;
         const src = input.slice() orelse "";
         const body = std.mem.trimEnd(u8, src, " \n");
         if (body.len < 2 or body[0] != '[' or body[body.len - 1] != ']') {
             err.set("expected [a, b]");
             return 2;
         }
-        var rows: std.ArrayList(NodeRow) = .empty;
-        rows.append(a.allocator, .{ .kind = @backingInt(RowKind.sequence), .parent = no_node, .span = .{ .start = 0, .end = body.len } }) catch return 255;
+        _ = out.addRow(.{ .kind = TK.sequence, .start = 0, .end = @intCast(body.len) }) catch return 255;
         var at: usize = 1;
         while (at < body.len - 1) {
             if (body[at] == ' ' or body[at] == ',') {
@@ -2426,34 +2302,27 @@ const TinyList = struct {
             }
             var end = at;
             while (end < body.len - 1 and body[end] != ',' and body[end] != ' ') end += 1;
-            rows.append(a.allocator, .{ .kind = @backingInt(RowKind.string), .parent = 0, .span = .{ .start = at, .end = end }, .text = Str.of(body[at..end]) }) catch return 255;
+            _ = out.addRow(.{ .kind = TK.string, .parent = 0, .start = @intCast(at), .end = @intCast(end), .text = out.text(body[at..end]) catch return 255 }) catch return 255;
             at = end;
         }
-        const r = rows.toOwnedSlice(a.allocator) catch return 255;
-        out.* = .{ .rows = r.ptr, .row_count = r.len };
         return 0;
     }
 
-    fn freeTable(ctx: ?*anyopaque, table: *NodeTable) callconv(.c) void {
-        const a: *Alloc = @ptrCast(@alignCast(ctx.?));
-        a.allocator.free(table.rowSlice());
-    }
-
-    fn print(ctx: ?*anyopaque, dialect: [*:0]const u8, table: *const NodeTable, options: *const PrintOptions, out: *Str, err: *ErrorInfo) callconv(.c) c_int {
+    fn print(ctx: ?*anyopaque, dialect: [*:0]const u8, view: *const table.View, options: *const PrintOptions, out: *Str, err: *ErrorInfo) callconv(.c) c_int {
         _ = dialect;
         _ = options;
         const a: *Alloc = @ptrCast(@alignCast(ctx.?));
-        const rows = table.rowSlice();
+        const rows = view.rowSlice();
         var buf: std.ArrayList(u8) = .empty;
         buf.append(a.allocator, '[') catch return 255;
         for (rows[1..], 0..) |row, i| {
-            if (row.kind != @backingInt(RowKind.string)) {
+            if (row.kind != TK.string) {
                 err.set("tinylist holds a flat list of words");
                 buf.deinit(a.allocator);
                 return 4;
             }
             if (i > 0) buf.appendSlice(a.allocator, ", ") catch return 255;
-            buf.appendSlice(a.allocator, row.text.slice() orelse "") catch return 255;
+            buf.appendSlice(a.allocator, view.textOf(row.text) orelse "") catch return 255;
         }
         buf.appendSlice(a.allocator, "]\n") catch return 255;
         const s = buf.toOwnedSlice(a.allocator) catch return 255;
@@ -2487,7 +2356,6 @@ const TinyList = struct {
             .sample_count = samples.len,
             .parse = parse,
             .print = print,
-            .free_table = freeTable,
             .free_bytes = TinyKv.freeBytes,
         };
     }
@@ -2521,12 +2389,14 @@ test "a runtime language's flow root is edited by comma-aware splice, not as a s
 const TinyDeps = struct {
     pub const Alloc = TinyKv.Alloc;
 
-    fn parse(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Str, out: *NodeTable, err: *ErrorInfo) callconv(.c) c_int {
+    fn parse(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Str, out: *Table, err: *ErrorInfo) callconv(.c) c_int {
         _ = dialect;
-        const a: *Alloc = @ptrCast(@alignCast(ctx.?));
-        const src = input.slice() orelse "";
-        var rows: std.ArrayList(NodeRow) = .empty;
-        rows.append(a.allocator, .{ .kind = @backingInt(RowKind.mapping), .parent = no_node, .span = .{ .start = 0, .end = src.len } }) catch return 255;
+        _ = ctx;
+        return parseInto(input.slice() orelse "", out, err) catch 255;
+    }
+
+    fn parseInto(src: []const u8, out: *Table, err: *ErrorInfo) !c_int {
+        _ = try out.addRow(.{ .kind = TK.mapping, .start = 0, .end = @intCast(src.len) });
         var kv: ?u32 = null;
         var seq: ?u32 = null;
         var at: usize = 0;
@@ -2538,38 +2408,24 @@ const TinyDeps = struct {
             if (std.mem.startsWith(u8, line, "- ")) {
                 const q = seq orelse {
                     err.set("an item needs a list header above it");
-                    rows.deinit(a.allocator);
                     return 2;
                 };
-                const item = CSpan{ .start = at + 2, .end = nl };
-                rows.append(a.allocator, .{ .kind = @backingInt(RowKind.string), .parent = q, .span = item, .text = Str.of(line[2..]), .marker = .{ .start = at, .end = at + 2 } }) catch return 255;
-                if (rows.items[q].span.start == rows.items[q].span.end) rows.items[q].span.start = at;
-                rows.items[q].span.end = nl;
-                rows.items[kv.?].span.end = nl;
+                const item = try out.addRow(.{ .kind = TK.string, .parent = q, .start = @intCast(at + 2), .end = @intCast(nl), .text = try out.text(line[2..]) });
+                try out.markers.append(out.allocator, .{ .node = item, .start = @intCast(at), .end = @intCast(at + 2) });
+                const rows = out.rows.items;
+                if (rows[q].start == rows[q].end) rows[q].start = @intCast(at);
+                rows[q].end = @intCast(nl);
+                rows[kv.?].end = @intCast(nl);
                 continue;
             }
             const sp = std.mem.indexOfScalar(u8, line, ' ') orelse line.len;
-            kv = @intCast(rows.items.len);
-            rows.append(a.allocator, .{ .kind = @backingInt(RowKind.keyvalue), .parent = 0, .span = .{ .start = at, .end = nl } }) catch return 255;
-            rows.append(a.allocator, .{ .kind = @backingInt(RowKind.string), .parent = kv.?, .span = .{ .start = at, .end = at + sp }, .text = Str.of(line[0..sp]) }) catch return 255;
-            seq = @intCast(rows.items.len);
+            kv = try out.addRow(.{ .kind = TK.keyvalue, .parent = 0, .start = @intCast(at), .end = @intCast(nl) });
+            _ = try out.addRow(.{ .kind = TK.string, .parent = kv.?, .start = @intCast(at), .end = @intCast(at + sp), .text = try out.text(line[0..sp]) });
+            seq = try out.addRow(.{ .kind = TK.sequence, .parent = kv.?, .start = @intCast(nl), .end = @intCast(nl) });
             const tag = std.mem.trim(u8, line[sp..], " ");
-            rows.append(a.allocator, .{
-                .kind = @backingInt(RowKind.sequence),
-                .parent = kv.?,
-                .span = .{ .start = nl, .end = nl },
-                .tag = if (tag.len > 0) Str.of(tag) else .none,
-                .tag_span = if (tag.len > 0) .{ .start = nl - tag.len, .end = nl } else .none,
-            }) catch return 255;
+            if (tag.len > 0) try out.tags.append(out.allocator, .{ .node = seq.?, .start = @intCast(nl - tag.len), .end = @intCast(nl), .text = try out.text(tag) });
         }
-        const r = rows.toOwnedSlice(a.allocator) catch return 255;
-        out.* = .{ .rows = r.ptr, .row_count = r.len };
         return 0;
-    }
-
-    fn freeTable(ctx: ?*anyopaque, table: *NodeTable) callconv(.c) void {
-        const a: *Alloc = @ptrCast(@alignCast(ctx.?));
-        a.allocator.free(table.rowSlice());
     }
 
     fn spell(ctx: ?*anyopaque, out: *Str, comptime fmt: []const u8, args: anytype) c_int {
@@ -2614,7 +2470,6 @@ const TinyDeps = struct {
             .samples = &samples,
             .sample_count = samples.len,
             .parse = parse,
-            .free_table = freeTable,
             .free_bytes = TinyKv.freeBytes,
             .render_value = renderValue,
             .render_item = renderItem,
@@ -2649,19 +2504,15 @@ test "a runtime renderer is told the container its fragment goes into: the list'
 // the engine's to roll back. `#` lines are comments, not rows.
 const TinyTune = struct {
     pub const Alloc = TinyKv.Alloc;
-    const Rows = std.ArrayList(NodeRow);
-
-    fn add(a: *Alloc, rows: *Rows, r: NodeRow) Allocator.Error!u32 {
-        try rows.append(a.allocator, r);
-        return @intCast(rows.items.len - 1);
-    }
-
-    fn seq(parent: u32, start: usize, end: usize, sep: []const u8, open: bool) NodeRow {
-        return .{ .kind = @backingInt(RowKind.sequence), .parent = parent, .span = .{ .start = start, .end = end }, .item_sep = Str.of(sep), .open = open };
+    /// A separated sequence: its row, its separator, and whether it is open.
+    fn seq(t: *Table, parent: u32, start: usize, end: usize, sep: []const u8, open: bool) !u32 {
+        const i = try t.addRow(.{ .kind = TK.sequence, .parent = parent, .start = @intCast(start), .end = @intCast(end), .flags = if (open) table.row_open else 0 });
+        try t.item_seps.append(t.allocator, .{ .node = i, .text = try t.addString(sep) });
+        return i;
     }
 
     /// A bar's tokens and groups, `src[start..end]`, under row `bar`.
-    fn tokens(a: *Alloc, rows: *Rows, src: []const u8, start: usize, end: usize, bar: u32, err: *ErrorInfo) !void {
+    fn tokens(t: *Table, src: []const u8, start: usize, end: usize, bar: u32, err: *ErrorInfo) !void {
         var stack: [8]u32 = undefined;
         stack[0] = bar;
         var depth: usize = 1;
@@ -2671,7 +2522,7 @@ const TinyTune = struct {
                 ' ' => i += 1,
                 '[' => {
                     if (depth == stack.len) return error.Refused;
-                    stack[depth] = try add(a, rows, seq(stack[depth - 1], i, i + 1, " ", false));
+                    stack[depth] = try seq(t, stack[depth - 1], i, i + 1, " ", false);
                     depth += 1;
                     i += 1;
                 },
@@ -2681,7 +2532,7 @@ const TinyTune = struct {
                         return error.Refused;
                     }
                     depth -= 1;
-                    rows.items[stack[depth]].span.end = i + 1;
+                    t.rows.items[stack[depth]].end = @intCast(i + 1);
                     i += 1;
                 },
                 else => {
@@ -2691,7 +2542,7 @@ const TinyTune = struct {
                         err.set("x is not a note");
                         return error.Refused;
                     }
-                    _ = try add(a, rows, .{ .kind = @backingInt(RowKind.string), .parent = stack[depth - 1], .span = .{ .start = i, .end = e }, .text = Str.of(src[i..e]) });
+                    _ = try t.addRow(.{ .kind = TK.string, .parent = stack[depth - 1], .start = @intCast(i), .end = @intCast(e), .text = try t.text(src[i..e]) });
                     i = e;
                 },
             }
@@ -2702,8 +2553,8 @@ const TinyTune = struct {
         }
     }
 
-    fn parseInto(a: *Alloc, rows: *Rows, src: []const u8, err: *ErrorInfo) !void {
-        const root = try add(a, rows, seq(no_node, 0, 0, "\n\n", true));
+    fn parseInto(t: *Table, src: []const u8, err: *ErrorInfo) !void {
+        const root = try seq(t, no_node, 0, 0, "\n\n", true);
         var block: ?u32 = null;
         var first = true;
         var at: usize = 0;
@@ -2722,25 +2573,26 @@ const TinyTune = struct {
                 return error.Refused;
             };
             const end = at + body.len;
-            if (first) rows.items[root].span.start = at;
+            if (first) t.rows.items[root].start = @intCast(at);
             first = false;
-            rows.items[root].span.end = end;
-            const b = block orelse try add(a, rows, .{ .kind = @backingInt(RowKind.mapping), .parent = root, .span = .{ .start = at, .end = end } });
+            t.rows.items[root].end = @intCast(end);
+            const b = block orelse try t.addRow(.{ .kind = TK.mapping, .parent = root, .start = @intCast(at), .end = @intCast(end) });
             block = b;
-            rows.items[b].span.end = end;
-            const kv = try add(a, rows, .{ .kind = @backingInt(RowKind.keyvalue), .parent = b, .span = .{ .start = at, .end = end }, .sep = .{ .start = at + colon, .end = at + colon + 1 } });
-            _ = try add(a, rows, .{ .kind = @backingInt(RowKind.string), .parent = kv, .span = .{ .start = at, .end = at + colon }, .text = Str.of(body[0..colon]) });
-            const bars = try add(a, rows, seq(kv, end, end, " | ", true));
+            t.rows.items[b].end = @intCast(end);
+            const kv = try t.addRow(.{ .kind = TK.keyvalue, .parent = b, .start = @intCast(at), .end = @intCast(end) });
+            try t.seps.append(t.allocator, .{ .node = kv, .start = @intCast(at + colon), .end = @intCast(at + colon + 1) });
+            _ = try t.addRow(.{ .kind = TK.string, .parent = kv, .start = @intCast(at), .end = @intCast(at + colon), .text = try t.text(body[0..colon]) });
+            const bars = try seq(t, kv, end, end, " | ", true);
             // The bars: `|`-separated segments after the colon, the last
             // dropped when it is empty — a trailing `|`.
             const music = body[colon + 1 ..];
             if (std.mem.trim(u8, music, " ").len == 0) continue;
             var segments: std.ArrayList(Span) = .empty;
-            defer segments.deinit(a.allocator);
+            defer segments.deinit(t.allocator);
             var s: usize = 0;
             while (true) {
                 const bar = std.mem.indexOfScalarPos(u8, music, s, '|') orelse music.len;
-                try segments.append(a.allocator, Span.init(s, bar));
+                try segments.append(t.allocator, Span.init(s, bar));
                 if (bar == music.len) break;
                 s = bar + 1;
             }
@@ -2751,29 +2603,18 @@ const TinyTune = struct {
                 const lead = text.len - std.mem.trimStart(u8, text, " ").len;
                 const start = at + colon + 1 + seg.start + lead;
                 const stop = at + colon + 1 + seg.start + std.mem.trimEnd(u8, text, " ").len;
-                const bar = try add(a, rows, seq(bars, start, @max(start, stop), " ", true));
-                if (i == 0) rows.items[bars].span.start = start;
-                try tokens(a, rows, src, start, @max(start, stop), bar, err);
+                const bar = try seq(t, bars, start, @max(start, stop), " ", true);
+                if (i == 0) t.rows.items[bars].start = @intCast(start);
+                try tokens(t, src, start, @max(start, stop), bar, err);
             }
         }
     }
 
-    fn parse(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Str, out: *NodeTable, err: *ErrorInfo) callconv(.c) c_int {
+    fn parse(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Str, out: *Table, err: *ErrorInfo) callconv(.c) c_int {
         _ = dialect;
-        const a: *Alloc = @ptrCast(@alignCast(ctx.?));
-        var rows: Rows = .empty;
-        parseInto(a, &rows, input.slice() orelse "", err) catch |e| {
-            rows.deinit(a.allocator);
-            return if (e == error.Refused) 2 else 255;
-        };
-        const r = rows.toOwnedSlice(a.allocator) catch return 255;
-        out.* = .{ .rows = r.ptr, .row_count = r.len };
+        _ = ctx;
+        parseInto(out, input.slice() orelse "", err) catch |e| return if (e == error.Refused) 2 else 255;
         return 0;
-    }
-
-    fn freeTable(ctx: ?*anyopaque, table: *NodeTable) callconv(.c) void {
-        const a: *Alloc = @ptrCast(@alignCast(ctx.?));
-        a.allocator.free(table.rowSlice());
     }
 
     const syntax: SyntaxDesc = .{
@@ -2798,7 +2639,6 @@ const TinyTune = struct {
             .samples = &samples,
             .sample_count = samples.len,
             .parse = parse,
-            .free_table = freeTable,
             .free_bytes = TinyKv.freeBytes,
         };
     }
@@ -2900,14 +2740,15 @@ test "an edit to a separated sequence the language rejects is rolled back" {
 
 test "an item separator is a sequence's, and an empty one is none" {
     const src = "a b";
-    var rows = [_]NodeRow{
-        .{ .kind = @backingInt(RowKind.sequence), .parent = no_node, .span = .{ .start = 0, .end = 3 }, .item_sep = Str.of(" "), .open = true },
-        .{ .kind = @backingInt(RowKind.string), .parent = 0, .span = .{ .start = 0, .end = 1 }, .text = Str.of("a") },
-        .{ .kind = @backingInt(RowKind.string), .parent = 0, .span = .{ .start = 2, .end = 3 }, .text = Str.of("b") },
-    };
-    const table: NodeTable = .{ .rows = &rows, .row_count = rows.len };
+    var t = try testTable(src, &.{
+        .{ .kind = TK.sequence, .start = 0, .end = 3, .flags = table.row_open },
+        .{ .kind = TK.string, .parent = 0, .start = 0, .end = 1, .text = "a" },
+        .{ .kind = TK.string, .parent = 0, .start = 2, .end = 3, .text = "b" },
+    });
+    defer t.deinit();
+    try t.item_seps.append(testing.allocator, .{ .node = 0, .text = try t.addString(" ") });
     {
-        const doc = try tableToDocument(testing.allocator, src, &table);
+        const doc = try tableToDocument(testing.allocator, src, &t);
         defer doc.deinit(testing.allocator);
         const is = doc.itemSep(doc.ast.nodes[0]).?;
         try testing.expectEqualStrings(" ", is.text.?);
@@ -2916,30 +2757,26 @@ test "an item separator is a sequence's, and an empty one is none" {
         // And back, as `fullTable` answers for the parse.
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
-        const full = (try fullTable(arena.allocator(), &doc)).table.rowSlice();
-        try testing.expectEqualStrings(" ", full[0].item_sep.slice().?);
-        try testing.expect(full[0].open and !full[1].open and full[1].item_sep.slice() == null);
+        const full = try fullTable(arena.allocator(), &doc);
+        try testing.expectEqual(@as(usize, 1), full.item_seps.items.len);
+        try testing.expectEqualStrings(" ", full.textOf(full.item_seps.items[0].text).?);
+        try testing.expect(full.rows.items[0].flags & table.row_open != 0 and full.rows.items[1].flags == 0);
     }
-    // Zeroed, as a row from a writer that predates the field is: none.
-    rows[0].item_sep = .{};
-    rows[0].open = false;
+    // An empty separator is none, and a sequence neither open nor
+    // separated is not a separated one.
+    t.item_seps.items[0].text = try t.addString("");
+    t.rows.items[0].flags = 0;
     {
-        const doc = try tableToDocument(testing.allocator, src, &table);
+        const doc = try tableToDocument(testing.allocator, src, &t);
         defer doc.deinit(testing.allocator);
         try testing.expect(doc.itemSep(doc.ast.nodes[0]) == null);
     }
-    // On a string row too: a zeroed field is no separator, not a misplaced one.
-    rows[1].item_sep = .{};
-    {
-        const doc = try tableToDocument(testing.allocator, src, &table);
-        doc.deinit(testing.allocator);
-    }
-    rows[1].item_sep = .none;
-    rows[1].open = true;
-    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &table));
-    rows[1].open = false;
-    rows[1].item_sep = Str.of(",");
-    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &table));
+    // A separator or the open flag on a row that is not a sequence.
+    t.item_seps.items[0] = .{ .node = 1, .text = try t.addString(",") };
+    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &t));
+    t.item_seps.clearRetainingCapacity();
+    t.rows.items[1].flags = table.row_open;
+    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &t));
 }
 
 test "registration refuses a record that fails validation or the harness" {
@@ -3084,30 +2921,3 @@ test "a capability or lossless bit this fig does not know is refused" {
     try testing.expectEqual(vt.lossless, losslessBits(kinds));
 }
 
-test "rows written at another stride are read as far as the stride says" {
-    const Wide = extern struct { row: NodeRow, later: u64 };
-    const rows = [_]Wide{
-        .{ .row = .{ .kind = @backingInt(RowKind.string), .parent = no_node, .span = .{ .start = 0, .end = 1 }, .text = Str.of("x") }, .later = 7 },
-    };
-    const wide: NodeTable = .{ .row_size = @sizeOf(Wide), .rows = @ptrCast(&rows), .row_count = 1 };
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const got = (try wide.normalizedRows(arena.allocator())).?;
-    try testing.expectEqualStrings("x", got[0].text.slice().?);
-    // A row from a header before the item separator: none, and not open,
-    // whatever lies past the stride.
-    const Older = extern struct { bytes: [@offsetOf(NodeRow, "item_sep")]u8 align(@alignOf(NodeRow)) };
-    var older = [_]Older{ undefined, undefined };
-    for (&older) |*o| {
-        const full: NodeRow = .{ .kind = @backingInt(RowKind.sequence), .parent = no_node, .span = .{ .start = 0, .end = 1 }, .item_sep = Str.of(","), .open = true };
-        @memcpy(&o.bytes, std.mem.asBytes(&full)[0..o.bytes.len]);
-    }
-    const old: NodeTable = .{ .row_size = @sizeOf(Older), .rows = @ptrCast(&older), .row_count = 2 };
-    for ((try old.normalizedRows(arena.allocator())).?) |r| {
-        try testing.expect(r.item_sep.slice() == null);
-        try testing.expect(!r.open);
-    }
-    // A stride that stops before `span` holds no row.
-    const narrow: NodeTable = .{ .row_size = @offsetOf(NodeRow, "span"), .rows = @ptrCast(&rows), .row_count = 1 };
-    try testing.expect((try narrow.normalizedRows(arena.allocator())) == null);
-}

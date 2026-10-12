@@ -46,7 +46,9 @@ extern "C" {
 // and reports FIG_NODE_EXTENDED. 4 — 6.0: core names no language;
 // FigSyntax loses key_style, and a language spells a key's name through
 // render_key_name; FigComments loses style for a declared block delimiter;
-// section_noun is a string.
+// section_noun is a string; the node table is fig's — parse fills a FigTable
+// through the fig_table_* calls and print reads a FigTableView of 32-byte
+// FigRows and sparse side facts — and free_table is gone.
 #define FIG_ABI_VERSION 4
 
 // Linked-library version, packed as (major << 16) | (minor << 8) | patch.
@@ -1041,20 +1043,21 @@ typedef struct FigWarning {
 // fig_value_serialize, fig_editor_create and fig_format_capabilities alike.
 // The format is a peer of a compiled one at the tier its `caps` declare.
 //
-// The vtable's parse returns, and its print receives, a FigNodeTable: one
-// FigNodeRow per node in pre-order (row index is node id; a parent precedes
-// its children; a keyvalue is followed by its key row then its value row)
-// plus four side tables. It is the shape fig_node_* walks, flattened. Every
-// string and array the vtable points to is COPIED by fig_language_register;
+// The vtable's parse fills, and its print reads, a node table: one FigRow per
+// node in pre-order (row index is node id; a parent precedes its children; a
+// keyvalue's two children are its key then its value) plus sparse side facts.
+// It is the shape fig_node_* walks, flattened. Fig owns the table: parse is
+// handed one fig allocated and fills it through the fig_table_* calls, and
+// print is handed a FigTableView of one fig filled. Every string and array
+// the vtable points to is COPIED by fig_language_register;
 // `ctx` and the function pointers must stay valid for the life of the
 // process, since a format is never unregistered.
 //
 // Every vtable function returns 0 on success. On failure it returns a nonzero
 // value — FIG_STATUS_* values are the convention — and fills the FigError it
-// was given; the message is what a caller sees. Memory a function hands back
-// (the table from parse, the bytes from print and each renderer) is the
-// helper's, and fig returns it through free_table / free_bytes once it has
-// copied what it needs.
+// was given; the message is what a caller sees. The bytes print, a renderer or
+// split_stream hand back are the helper's, and fig returns them through
+// free_bytes once it has copied what it needs.
 //
 // Two things stay closed. A runtime format never joins content sniffing —
 // it is selected by name or by extension, never guessed — and its integer is
@@ -1072,22 +1075,20 @@ typedef struct FigWarning {
 // because every struct that can grow says how much of itself it carries:
 //
 //   * A record a LANGUAGE writes (FigLanguageVTable, FigSyntax, and the
-//     FigDialectDesc and FigNodeRow arrays through `dialect_size` and
-//     `row_size`) carries the language's sizeof. fig reads the prefix it
+//     FigDialectDesc array through `dialect_size`) carries the language's
+//     sizeof. fig reads the prefix it
 //     covers and takes the default of every field past it (zero, NULL, or
 //     the default a field's comment names), so a language built against an
 //     older header registers on a newer fig, and one built against a newer
 //     header on an older fig is read as far as that fig knows. Set each to
 //     sizeof as this header declares it.
-//   * A record FIG writes (FigNodeTable, FigPrintOptions, FigRenderRequest)
+//   * A record FIG writes (FigTableView, FigPrintOptions, FigRenderRequest)
 //     carries fig's sizeof in `size`: read a field only when `size` covers
-//     it, as FigError has always been read, and write a FigNodeTable only as
-//     far as the `size` fig set on it. Read FigNodeRow rows fig hands `print`
-//     at the table's `row_size`.
+//     it, as FigError has always been read.
 //
 // A struct embedded by value (FigComments and its delimiters, FigSectionHeader
-// and FigClosedContainers inside FigSyntax) and the side-table rows
-// (FigRegionRow, FigMentionRow, FigCommentRow, FigDirectiveRow) are frozen:
+// and FigClosedContainers inside FigSyntax) and the table's rows and side
+// facts (FigRow, FigText and the FigTable* records) are frozen:
 // what they would gain is appended to the record that holds them.
 #define FIG_LANGUAGE_VTABLE_VERSION 3
 
@@ -1096,109 +1097,128 @@ typedef struct FigWarning {
 // absent optional string (distinct from the empty string, which is a value).
 #define FIG_OFFSET_NONE SIZE_MAX
 #define FIG_LEN_NONE SIZE_MAX
-// The row index that says "no row": the root's `parent`.
+// The row index that says "no row" (the root's `parent`), and the offset that
+// says "no span" in a FigRow or a side fact.
 #define FIG_ROW_NONE UINT32_MAX
-// FigNodeRow.ext_kind for a row that is not an extended scalar.
-#define FIG_EXT_NONE (-1)
 // FigLanguageVTable.max_mapping_depth for a format with no depth limit. 0 is
 // a limit — a flat format (dotenv, INI) holds no mapping inside its root.
 #define FIG_DEPTH_NONE (-1)
 
-// One node. `kind` is a FigNodeKind; an extended scalar's row says STRING (INT
-// for a char literal) and `ext_kind` decides — the row convention, which
-// FIG_NODE_EXTENDED does not change. `text` is a scalar's decoded
-// bytes; an int or float's lexeme; `true`/`false` for a bool; an alias's target
-// anchor name; an extended kind's payload; FIG_LEN_NONE for a container or
-// null. `span` is required of every row a parse returns and is
-// FIG_OFFSET_NONE in a table fig builds for print. `marker` is the `-`/`*`
-// that introduces a block-sequence item; `sep` the token separating a
-// keyvalue's key from its value (zero-width: the value hangs under a bare
-// key).
-//
-// `item_sep` and `open` make a SEQUENCE a separated one, edited item by item
-// with a separator of its own whatever its first byte: `item_sep` is the
-// bytes written between two of its items on one line (" | ", " ", "\n\n"
-// for items a blank line apart; FIG_LEN_NONE for the dialect's
-// `flow_entry_sep`), and `open` says it has no delimiters, so its items run
-// from its span's start to its end. A delete takes one item and the one
-// separator beside it (`item_sep` with its whitespace trimmed, or only
-// whitespace where nothing is left); an append splices after the last
-// item, so a trailing separator stays trailing. An empty `item_sep` is the
-// same as none, so a zeroed row means neither; either on a row that is not a
-// sequence is a malformed table.
-//
-// fig-abi: stride-gated — rows are read at FigNodeTable.row_size, so a field
-// appended here is read as its default from a language built against an
-// older header.
-typedef struct FigNodeRow {
-    int      kind;
-    int      ext_kind;
+// A row's text: `len` bytes at `off` in the source, or — FIG_TEXT_BUFFER set
+// in `len` — in the table's string buffer (fig_table_string puts it there).
+// `len == FIG_ROW_NONE` is no text at all, which is not the empty string.
+typedef struct FigText { uint32_t off; uint32_t len; } FigText;
+#define FIG_TEXT_BUFFER (1u << 31)
+
+// FigRow.kind: a scalar, a container, or FIG_ROW_EXT + a FigExtKind.
+#define FIG_ROW_NULL     0
+#define FIG_ROW_FALSE    1
+#define FIG_ROW_TRUE     2
+#define FIG_ROW_STRING   3
+#define FIG_ROW_INT      4
+#define FIG_ROW_FLOAT    5
+#define FIG_ROW_SEQUENCE 6
+#define FIG_ROW_MAPPING  7
+#define FIG_ROW_KEYVALUE 8
+#define FIG_ROW_ALIAS    9
+#define FIG_ROW_EXT      16
+// FigRow.flags: a sequence with no delimiters, whose items run from its
+// span's start to its end.
+#define FIG_ROW_OPEN (1u << 0)
+
+// One node, 32 bytes. `parent` is the parent's row, FIG_ROW_NONE for the root
+// (row 0). `start`/`end` is the span in the source, required of every row a
+// parse writes and FIG_ROW_NONE in a table fig builds for print. `text` is a
+// string's decoded bytes, a number's lexeme, an alias's anchor name, an
+// extended scalar's payload; absent for a null, a bool or a container. Fig
+// fills `first_child` and `next_sibling` while it checks the table; a
+// language leaves them.
+typedef struct FigRow {
+    uint8_t  kind;
+    uint8_t  flags;
+    uint16_t reserved;
     uint32_t parent;
-    FigSpan  span;
-    FigStr   text;
-    FigStr   anchor;
-    FigSpan  anchor_span;
-    FigStr   tag;
-    FigSpan  tag_span;
-    FigSpan  marker;
-    FigSpan  sep;
-    FigStr   item_sep;
-    bool     open;
-} FigNodeRow;
+    uint32_t start, end;
+    FigText  text;
+    uint32_t first_child;
+    uint32_t next_sibling;
+} FigRow;
 
-// One whole header line of a SECTION node (a TOML `[table]`, an INI
-// `[section]`): `[start, end)`, `end` just past the newline. A node with a
-// row here is a section, which the editor never line-splices.
-typedef struct FigRegionRow { uint32_t node; size_t start, end; } FigRegionRow;
+// The side facts, each naming a row and listed in node order.
+typedef struct FigTableAnchor { uint32_t node, start, end; FigText name; } FigTableAnchor;
+// `resolved`: what the language made of the tag (FIG_TAG_*), and `agrees`
+// whether the node's text agrees with it (`!!int` on `1 - 3` does not).
+typedef struct FigTableTag { uint32_t node, start, end; FigText text; uint8_t resolved, agrees; uint16_t reserved; } FigTableTag;
+// A block-sequence item's marker, a keyvalue's separator, a section's header
+// line (`end` just past its newline).
+typedef struct FigTableSpan { uint32_t node, start, end; } FigTableSpan;
+typedef struct FigTableItemSep { uint32_t node; FigText text; } FigTableItemSep;
+typedef struct FigTableComment { uint32_t node; uint8_t slot, style; uint16_t reserved; FigText text; } FigTableComment;
+typedef struct FigTableMention { uint32_t node, start, end; uint8_t kind, reserved[3]; } FigTableMention;
+// A tag-handle declaration of the document — a YAML `%TAG` directive's
+// handle (`!e!`) and the prefix it expands to. A tag spelled with a named
+// handle is legal only in a document that declares it, so a parse writes
+// those it read, in source order, and a print of a whole document (never of
+// a fragment) is handed them back.
+typedef struct FigTableDirective { FigText handle; FigText prefix; } FigTableDirective;
 
-// One place a section node's name is written. `kind` is FIG_MENTION_HEADER
-// for a header line of the node's own, FIG_MENTION_ENTRY for a mention on the
-// parent's entry line (a dotted key).
-typedef struct FigMentionRow { uint32_t node; FigSpan span; int kind; } FigMentionRow;
+#define FIG_TAG_UNSTATED     0
+#define FIG_TAG_CUSTOM       1
+#define FIG_TAG_NON_SPECIFIC 2
+// FIG_TAG_KIND + 0 null, 1 boolean, 2 string, 3 integer, 4 float, 5 sequence,
+// 6 mapping.
+#define FIG_TAG_KIND         3
+
 #define FIG_MENTION_HEADER 0
 #define FIG_MENTION_ENTRY  1
-
-// One comment bound to a row. Rows are grouped by node and in source order
-// within a slot; at most one trailing per node.
-typedef struct FigCommentRow { uint32_t node; int slot; int style; FigStr text; } FigCommentRow;
 #define FIG_COMMENT_LEADING  0
 #define FIG_COMMENT_TRAILING 1
 #define FIG_COMMENT_DANGLING 2
 #define FIG_COMMENT_LINE  0
 #define FIG_COMMENT_BLOCK 1
 
-// One tag-handle declaration of the document — a YAML `%TAG` directive's
-// handle (`!e!`, or a redefined `!`/`!!`) and the prefix it expands to. A
-// tag spelled with a named handle is legal only in a document that declares
-// it, so the declarations travel with the rows: a parse returns those it
-// read, in source order, and a print of a whole document (never of a
-// fragment) receives them back to re-emit above any tag that uses one. A
-// format without directives has none.
-typedef struct FigDirectiveRow { FigStr handle; FigStr prefix; } FigDirectiveRow;
+// The table a parse fills: fig's, opaque, written through the calls below.
+// Zero rows is refused: a format whose empty input is the empty document
+// writes one FIG_ROW_NULL row.
+typedef struct FigTable FigTable;
 
-// What parse returns and print receives. Zero rows is refused: a format whose
-// empty input is the empty document returns one FIG_NODE_NULL row. A print
-// may be handed a table whose root is a scalar — a value on its own
-// (fig_value_serialize of a scalar, `fig get <file> <path>`): a printer
-// spells it as a document holding just that value where the format has one
-// (plist's <plist> around it), and as the scalar alone where it has none
-// (fig). FigPrintOptions.splice asks for the bare value either way.
-// `owner` is the helper's own handle on the memory behind a table its parse
-// returned — set there, read back in free_table, never touched by fig.
-// `size` is fig's sizeof(FigNodeTable), set on the table it hands parse to
-// fill and on the one it hands print. `row_size` is the stride of `rows`:
-// set it to sizeof(FigNodeRow) in a table parse returns, and read the rows
-// print is handed at the stride it says.
-typedef struct FigNodeTable {
-    uint32_t               size;
-    uint32_t               row_size;
-    const FigNodeRow      *rows;       size_t row_count;
-    const FigRegionRow    *regions;    size_t region_count;
-    const FigMentionRow   *mentions;   size_t mention_count;
-    const FigCommentRow   *comments;   size_t comment_count;
-    const FigDirectiveRow *directives; size_t directive_count;
-    void                  *owner;
-} FigNodeTable;
+// `n` new rows, each a null with no parent, span or text, to fill in place;
+// NULL when out of memory. Valid until the next call on `t`.
+FigRow   *fig_table_rows(FigTable *t, size_t n);
+// `bytes` copied into the table's string buffer, its FigText to `*out`.
+FigStatus fig_table_string(FigTable *t, const uint8_t *bytes, size_t len, FigText *out);
+FigStatus fig_table_anchor(FigTable *t, uint32_t node, uint32_t start, uint32_t end, FigText name);
+FigStatus fig_table_tag(FigTable *t, uint32_t node, uint32_t start, uint32_t end, FigText text, uint8_t resolved, bool agrees);
+FigStatus fig_table_marker(FigTable *t, uint32_t node, uint32_t start, uint32_t end);
+FigStatus fig_table_sep(FigTable *t, uint32_t node, uint32_t start, uint32_t end);
+FigStatus fig_table_item_sep(FigTable *t, uint32_t node, FigText text);
+FigStatus fig_table_comment(FigTable *t, uint32_t node, uint8_t slot, uint8_t style, FigText text);
+FigStatus fig_table_region(FigTable *t, uint32_t node, uint32_t start, uint32_t end);
+FigStatus fig_table_mention(FigTable *t, uint32_t node, uint32_t start, uint32_t end, uint8_t kind);
+FigStatus fig_table_directive(FigTable *t, FigText handle, FigText prefix);
+
+// What print is handed: every list of a table fig filled. A text names
+// `source` (empty on the print side) or `strings`. A print may be handed a
+// table whose root is a scalar — a value on its own (fig_value_serialize of a
+// scalar, `fig get <file> <path>`): a printer spells it as a document holding
+// just that value where the format has one (plist's <plist> around it), and
+// as the scalar alone where it has none. FigPrintOptions.splice asks for the
+// bare value either way. `size` is fig's sizeof.
+typedef struct FigTableView {
+    uint32_t                 size;
+    const uint8_t           *source;     size_t source_len;
+    const uint8_t           *strings;    size_t strings_len;
+    const FigRow            *rows;       size_t row_count;
+    const FigTableAnchor    *anchors;    size_t anchor_count;
+    const FigTableTag       *tags;       size_t tag_count;
+    const FigTableSpan      *markers;    size_t marker_count;
+    const FigTableSpan      *seps;       size_t sep_count;
+    const FigTableItemSep   *item_seps;  size_t item_sep_count;
+    const FigTableComment   *comments;   size_t comment_count;
+    const FigTableSpan      *regions;    size_t region_count;
+    const FigTableMention   *mentions;   size_t mention_count;
+    const FigTableDirective *directives; size_t directive_count;
+} FigTableView;
 
 // The subset of FigSerializeOptions a printer outside fig is told. fig writes
 // it; `size` is fig's sizeof, and a printer reads a field only when `size`
@@ -1430,9 +1450,8 @@ typedef struct FigLanguageVTable {
     const FigStr         *samples;
     size_t                sample_count;
 
-    int  (*parse)(void *ctx, const char *dialect, FigStr input, FigNodeTable *out, FigError *err);
-    int  (*print)(void *ctx, const char *dialect, const FigNodeTable *table, const FigPrintOptions *options, FigStr *out, FigError *err);
-    void (*free_table)(void *ctx, FigNodeTable *table);
+    int  (*parse)(void *ctx, const char *dialect, FigStr input, FigTable *out, FigError *err);
+    int  (*print)(void *ctx, const char *dialect, const FigTableView *table, const FigPrintOptions *options, FigStr *out, FigError *err);
     void (*free_bytes)(void *ctx, FigStr bytes);
 
     FigRenderFn render_value;

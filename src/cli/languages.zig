@@ -629,7 +629,8 @@ pub fn printTable(io: Io, a: Allocator, out: *Io.Terminal, err_term: *Io.Termina
     var arena = std.heap.ArenaAllocator.init(a);
     defer arena.deinit();
     const t = try Runtime.fullTable(arena.allocator(), &doc);
-    try Wire.tableToJson(out.writer, &t.table);
+    const view = t.view();
+    try Wire.tableToJson(out.writer, &view);
     try out.writer.writeAll("\n");
     try out.writer.flush();
 }
@@ -641,10 +642,13 @@ pub fn printTable(io: Io, a: Allocator, out: *Io.Terminal, err_term: *Io.Termina
 /// and tag directives. Reports the first difference and returns true on
 /// one.
 fn diffDocuments(a: Allocator, term: *Io.Terminal, label: []const u8, mine_name: []const u8, theirs_name: []const u8, mine: fig.Document, theirs: fig.Document) !bool {
+    const T = Runtime.table;
     var arena = std.heap.ArenaAllocator.init(a);
     defer arena.deinit();
-    const x = (try Runtime.fullTable(arena.allocator(), &mine)).table;
-    const y = (try Runtime.fullTable(arena.allocator(), &theirs)).table;
+    const xt = try Runtime.fullTable(arena.allocator(), &mine);
+    const yt = try Runtime.fullTable(arena.allocator(), &theirs);
+    const x = xt.view();
+    const y = yt.view();
     const xr = x.rowSlice();
     const yr = y.rowSlice();
     if (xr.len != yr.len) {
@@ -652,37 +656,40 @@ fn diffDocuments(a: Allocator, term: *Io.Terminal, label: []const u8, mine_name:
         return true;
     }
     for (xr, yr, 0..) |p, q, i| {
-        if (p.kind != q.kind or p.ext_kind != q.ext_kind or p.parent != q.parent) {
+        if (p.kind != q.kind or p.parent != q.parent or p.flags != q.flags) {
             try term.writer.print("{s}: row {d} differs in kind or parent ({s}: kind {d} parent {d}; {s}: kind {d} parent {d})\n", .{ label, i, mine_name, p.kind, p.parent, theirs_name, q.kind, q.parent });
             return true;
         }
+        const pf = x.facts(@intCast(i));
+        const qf = y.facts(@intCast(i));
         const texts = .{
-            .{ "text", p.text, q.text },
-            .{ "anchor", p.anchor, q.anchor },
-            .{ "tag", p.tag, q.tag },
+            .{ "text", x.textOf(p.text), y.textOf(q.text) },
+            .{ "anchor", if (pf.anchor) |f| x.textOf(f.name) else null, if (qf.anchor) |f| y.textOf(f.name) else null },
+            .{ "tag", if (pf.tag) |f| x.textOf(f.text) else null, if (qf.tag) |f| y.textOf(f.text) else null },
+            .{ "item separator", if (pf.item_sep) |f| x.textOf(f.text) else null, if (qf.item_sep) |f| y.textOf(f.text) else null },
         };
         inline for (texts) |col| {
-            if (!optStrEql(col[1].slice(), col[2].slice())) {
-                try term.writer.print("{s}: row {d} {s} differs ({s}: {s}; {s}: {s})\n", .{ label, i, col[0], mine_name, col[1].slice() orelse "none", theirs_name, col[2].slice() orelse "none" });
+            if (!optStrEql(col[1], col[2])) {
+                try term.writer.print("{s}: row {d} {s} differs ({s}: {s}; {s}: {s})\n", .{ label, i, col[0], mine_name, col[1] orelse "none", theirs_name, col[2] orelse "none" });
                 return true;
             }
         }
         const spans = .{
-            .{ "span", p.span, q.span },
-            .{ "item marker", p.marker, q.marker },
-            .{ "separator", p.sep, q.sep },
-            .{ "anchor span", p.anchor_span, q.anchor_span },
-            .{ "tag span", p.tag_span, q.tag_span },
+            .{ "span", spanOf(p.start, p.end), spanOf(q.start, q.end) },
+            .{ "item marker", factSpan(pf.marker), factSpan(qf.marker) },
+            .{ "separator", factSpan(pf.sep), factSpan(qf.sep) },
+            .{ "anchor span", if (pf.anchor) |f| spanOf(f.start, f.end) else null, if (qf.anchor) |f| spanOf(f.start, f.end) else null },
+            .{ "tag span", if (pf.tag) |f| spanOf(f.start, f.end) else null, if (qf.tag) |f| spanOf(f.start, f.end) else null },
         };
         inline for (spans) |col| {
-            if (!optSpanEql(col[1].span(), col[2].span())) {
-                try term.writer.print("{s}: row {d} {s} differs ({s}: {f}; {s}: {f})\n", .{ label, i, col[0], mine_name, fmtSpan(col[1].span()), theirs_name, fmtSpan(col[2].span()) });
+            if (!optSpanEql(col[1], col[2])) {
+                try term.writer.print("{s}: row {d} {s} differs ({s}: {f}; {s}: {f})\n", .{ label, i, col[0], mine_name, fmtSpan(col[1]), theirs_name, fmtSpan(col[2]) });
                 return true;
             }
         }
     }
-    const xg = x.regionSlice();
-    const yg = y.regionSlice();
+    const xg = T.slice(T.SpanFact, x.regions, x.region_count);
+    const yg = T.slice(T.SpanFact, y.regions, y.region_count);
     if (xg.len != yg.len) {
         try term.writer.print("{s}: `{s}` records {d} header lines, `{s}` {d}\n", .{ label, mine_name, xg.len, theirs_name, yg.len });
         return true;
@@ -691,37 +698,48 @@ fn diffDocuments(a: Allocator, term: *Io.Terminal, label: []const u8, mine_name:
         try term.writer.print("{s}: header line {d} differs ({s}: row {d} [{d},{d}); {s}: row {d} [{d},{d}))\n", .{ label, i, mine_name, r1.node, r1.start, r1.end, theirs_name, r2.node, r2.start, r2.end });
         return true;
     };
-    const xm = x.mentionSlice();
-    const ym = y.mentionSlice();
+    const xm = T.slice(T.Mention, x.mentions, x.mention_count);
+    const ym = T.slice(T.Mention, y.mentions, y.mention_count);
     if (xm.len != ym.len) {
         try term.writer.print("{s}: `{s}` records {d} name mentions, `{s}` {d}\n", .{ label, mine_name, xm.len, theirs_name, ym.len });
         return true;
     }
-    for (xm, ym, 0..) |m1, m2, i| if (m1.node != m2.node or m1.kind != m2.kind or !optSpanEql(m1.span.span(), m2.span.span())) {
-        try term.writer.print("{s}: name mention {d} differs ({s}: row {d} {f}; {s}: row {d} {f})\n", .{ label, i, mine_name, m1.node, fmtSpan(m1.span.span()), theirs_name, m2.node, fmtSpan(m2.span.span()) });
+    for (xm, ym, 0..) |m1, m2, i| if (m1.node != m2.node or m1.kind != m2.kind or m1.start != m2.start or m1.end != m2.end) {
+        try term.writer.print("{s}: name mention {d} differs ({s}: row {d} {f}; {s}: row {d} {f})\n", .{ label, i, mine_name, m1.node, fmtSpan(spanOf(m1.start, m1.end)), theirs_name, m2.node, fmtSpan(spanOf(m2.start, m2.end)) });
         return true;
     };
-    const xc = x.commentSlice();
-    const yc = y.commentSlice();
+    const xc = T.slice(T.Comment, x.comments, x.comment_count);
+    const yc = T.slice(T.Comment, y.comments, y.comment_count);
     if (xc.len != yc.len) {
         try term.writer.print("{s}: `{s}` records {d} comments, `{s}` {d}\n", .{ label, mine_name, xc.len, theirs_name, yc.len });
         return true;
     }
-    for (xc, yc, 0..) |c1, c2, i| if (c1.node != c2.node or c1.slot != c2.slot or c1.style != c2.style or !optStrEql(c1.text.slice(), c2.text.slice())) {
-        try term.writer.print("{s}: comment {d} differs ({s}: row {d} slot {d} `{s}`; {s}: row {d} slot {d} `{s}`)\n", .{ label, i, mine_name, c1.node, c1.slot, c1.text.slice() orelse "", theirs_name, c2.node, c2.slot, c2.text.slice() orelse "" });
+    for (xc, yc, 0..) |c1, c2, i| if (c1.node != c2.node or c1.slot != c2.slot or c1.style != c2.style or !optStrEql(x.textOf(c1.text), y.textOf(c2.text))) {
+        try term.writer.print("{s}: comment {d} differs ({s}: row {d} slot {d} `{s}`; {s}: row {d} slot {d} `{s}`)\n", .{ label, i, mine_name, c1.node, c1.slot, x.textOf(c1.text) orelse "", theirs_name, c2.node, c2.slot, y.textOf(c2.text) orelse "" });
         return true;
     };
-    const xd = x.directiveSlice();
-    const yd = y.directiveSlice();
+    const xd = T.slice(T.Directive, x.directives, x.directive_count);
+    const yd = T.slice(T.Directive, y.directives, y.directive_count);
     if (xd.len != yd.len) {
         try term.writer.print("{s}: `{s}` records {d} tag directives, `{s}` {d}\n", .{ label, mine_name, xd.len, theirs_name, yd.len });
         return true;
     }
-    for (xd, yd, 0..) |d1, d2, i| if (!optStrEql(d1.handle.slice(), d2.handle.slice()) or !optStrEql(d1.prefix.slice(), d2.prefix.slice())) {
-        try term.writer.print("{s}: tag directive {d} differs ({s}: `{s}` → `{s}`; {s}: `{s}` → `{s}`)\n", .{ label, i, mine_name, d1.handle.slice() orelse "", d1.prefix.slice() orelse "", theirs_name, d2.handle.slice() orelse "", d2.prefix.slice() orelse "" });
+    for (xd, yd, 0..) |d1, d2, i| if (!optStrEql(x.textOf(d1.handle), y.textOf(d2.handle)) or !optStrEql(x.textOf(d1.prefix), y.textOf(d2.prefix))) {
+        try term.writer.print("{s}: tag directive {d} differs ({s}: `{s}` → `{s}`; {s}: `{s}` → `{s}`)\n", .{ label, i, mine_name, x.textOf(d1.handle) orelse "", x.textOf(d1.prefix) orelse "", theirs_name, y.textOf(d2.handle) orelse "", y.textOf(d2.prefix) orelse "" });
         return true;
     };
     return false;
+}
+
+/// A table span, or null for an absent one.
+fn spanOf(start: u32, end: u32) ?fig.Span {
+    if (start == Runtime.table.none) return null;
+    return fig.Span.init(start, end);
+}
+
+fn factSpan(f: ?Runtime.table.SpanFact) ?fig.Span {
+    const x = f orelse return null;
+    return spanOf(x.start, x.end);
 }
 
 /// An optional span as `[s,e)` or `none`, for a difference report.

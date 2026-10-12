@@ -98,6 +98,7 @@ const path_and_markdown =
     \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',
     \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
     \\    example: school.class[0].student[3]
+    \\    [-] or [$] in place of an index means "the last item"
     \\  .md/.markdown files: edits the frontmatter/endmatter in place —
     \\    its archetype (YAML/JSON/TOML/fig frontmatter, fenced ```lang
     \\    frontmatter, YAML endmatter) is sniffed from the file,
@@ -213,6 +214,9 @@ pub const Help = struct {
             \\    one verb for `replace`+`insert`. Missing parent maps along <path>
             \\    are auto-created (`mkdir -p`); a segment that is an existing
             \\    non-map scalar is a type error and left untouched.
+            \\  A path ending in an index sets a sequence item: list[2] replaces
+            \\    the item that is there, and list[-] (or list[$]) appends one.
+            \\    An index past the end is refused.
             \\  When <file> itself does not exist, it is CREATED and seeded with
             \\    <path>: <value>; `fig get <file>` then prints what was written.
             \\    The format comes from the extension, so a new file needs a known
@@ -238,6 +242,7 @@ pub const Help = struct {
             \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',
             \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
             \\    example: school.class[0].student[3]
+            \\    [-] or [$] before the end of the path means "the last item"
             \\  .md/.markdown files: upserts the frontmatter/endmatter, creating
             \\    it (as YAML) if absent — the archetype is otherwise sniffed
             \\    from the file, not assumed from the extension.
@@ -309,6 +314,7 @@ pub const Help = struct {
             \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',
             \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
             \\    example: school.class[0].student[3]
+            \\    [-] or [$] in place of an index means "the last item"
             \\  .md/.markdown files: comments the frontmatter/endmatter in
             \\    place — its archetype is sniffed from the file (YAML by
             \\    default).
@@ -404,6 +410,7 @@ pub const Help = struct {
             \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',
             \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
             \\    example: school.class[0].student[3]
+            \\    [-] or [$] in place of an index means "the last item"
             \\  .md/.markdown files: reads the frontmatter/endmatter, whichever
             \\    archetype it turns out to be
             \\

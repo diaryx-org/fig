@@ -230,6 +230,24 @@ row 0 insert seq.yaml 'l[0]' z
 row 0 insert seq.yaml 'l[-]' z
 row 1 insert seq.yaml 'l[1]' z
 cmp -s run/seq.yaml fixtures/seq.yaml || fail "a refused mid-sequence insert changed the file"
+# `set` upserts a sequence item: an index that is there is replaced, `[-]`
+# appends, and an index past the end is refused with the file untouched.
+row 1 set seq.yaml 'l[3]' z
+cmp -s run/seq.yaml fixtures/seq.yaml || fail "a refused set past the end changed the file"
+row 0 set seq.yaml 'l[1]' z
+[ "$(cat run/seq.yaml)" = "l: [a, z, c]" ] || fail "set l[1]: $(cat run/seq.yaml)"
+row 0 set seq.yaml 'l[-]' z
+[ "$(cat run/seq.yaml)" = "l: [a, b, c, z]" ] || fail "set l[-]: $(cat run/seq.yaml)"
+# Before the end of a path, and for every action that reads one, `[-]` is
+# the last item.
+printf 'o:\n  - n: a\n  - n: b\n' >fixtures/objs.yaml
+[ "$(cd fixtures && "$fig" get seq.yaml 'l[-]' 2>/dev/null)" = c ] || fail "get l[-] is not the last item"
+[ "$(cd fixtures && "$fig" get objs.yaml 'o[-].n' 2>/dev/null)" = b ] || fail "get o[-].n is not the last item's"
+row 0 replace seq.yaml 'l[-]' z
+[ "$(cat run/seq.yaml)" = "l: [a, b, z]" ] || fail "replace l[-]: $(cat run/seq.yaml)"
+row 0 set objs.yaml 'o[-].m' 1
+[ "$(cat run/objs.yaml)" = "$(printf 'o:\n  - n: a\n  - n: b\n    m: 1')" ] || fail "set o[-].m: $(cat run/objs.yaml)"
+row 1 get seq.yaml 'nosuch[-]'
 row 0 replace ok.yaml a 2
 row 1 replace ok.yaml zz 2
 row 2 replace ok.yaml a

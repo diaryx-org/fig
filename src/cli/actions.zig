@@ -135,7 +135,21 @@ pub fn runSet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     // `--seq` reconciles the sequence at `path`; otherwise upsert a scalar.
     // Both flow through the shared structural-edit router, so the embed
     // path (which open-or-inits a missing block) is reused for free.
-    const op: EditOp = if (opts.seq) .{ .set_sequence = opts.values } else .set;
+    // A path ending in an index upserts a sequence item: `[-]` appends, the
+    // way it does for `insert`, and an index that is there is replaced.
+    // An index past the end is refused below, since there is no item
+    // between the last and it to fill.
+    var path = opts.path;
+    const item: ?usize = if (opts.seq) null else switch (path[path.len - 1]) {
+        .index => |index| index,
+        .key => null,
+    };
+    const op: EditOp = if (opts.seq)
+        .{ .set_sequence = opts.values }
+    else if (item == append_index) blk: {
+        path = path[0 .. path.len - 1];
+        break :blk .append_seq;
+    } else if (item != null) .replace_value else .set;
     const text: []const u8 = if (opts.seq) "" else opts.value;
     // On a from-scratch create, roll the new file back if the edit fails
     // (e.g. a path whose parent segment resolves to a scalar, which `set`
@@ -144,8 +158,13 @@ pub fn runSet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     // failure. A merely-missing parent map is no longer a failure: `set`
     // auto-vivifies it (see `Editor.set`).
     const embed = try args_mod.resolveEmbedType(io, a, input, opts.embed, opts.detect_embed);
-    edit_ops.applyStructuralEdit(a, io, input, resolved, embed, opts.path, text, value, op) catch |err| {
+    edit_ops.applyStructuralEdit(a, io, input, resolved, embed, path, text, value, op) catch |err| {
         if (created) fileio.deleteCreatedFile(io, opts.file);
+        if (err == error.NotFound and op == .replace_value) {
+            try stderr_term.writer.print("error: there is no item [{d}] to set, so nothing was written; set replaces an item that is there, or appends one with [-].\n", .{item.?});
+            try stderr_term.writer.flush();
+            std.process.exit(1);
+        }
         return err;
     };
 }
@@ -328,7 +347,7 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
         break :blk encoded;
     } else base_ast;
 
-    const node_id = if (opts.path) |p| (try ast.getValByPath(p)).id else ast.root;
+    const node_id = if (opts.path) |p| (try ast.getValByPath(try edit_ops.resolveLast(a, ast, p))).id else ast.root;
 
     // A scalar at a path prints as its text and a newline, the way `jq -r`
     // does, whatever the file's format: a string unquoted, anything else as

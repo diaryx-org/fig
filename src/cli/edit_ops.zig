@@ -38,7 +38,13 @@ pub fn applyEdit(
     var editor: fig.Editor(Lang) = .{ .allocator = allocator, .format = dialect };
     try editor.init(content);
     defer editor.deinit();
-    applyOp(Lang, &editor, path, text, op) catch |err| {
+    // `[-]` anywhere in the path names the last item that is there. The op
+    // receives the parent of the slot it creates, so an append's own `[-]`
+    // never reaches here.
+    const parsed = try editor.getParsed();
+    const resolved = try resolveLast(allocator, &parsed.ast, path);
+    defer if (resolved.ptr != path.ptr) allocator.free(resolved);
+    applyOp(Lang, &editor, resolved, text, op) catch |err| {
         // `init` parsed `content`, so a parse failure from here on is about
         // the text the caller spliced in, not the file — and it arrives as a
         // plain `InvalidNumber`/`UnexpectedToken`/… that reads as if the FILE
@@ -109,14 +115,38 @@ fn deleteIfSection(comptime Lang: type, editor: *fig.Editor(Lang), path: []const
 /// last item of the sequence at `path`. Anything that is not a non-empty
 /// sequence is returned as given, for `removeSeqItem` to refuse.
 fn lastIndex(comptime Lang: type, editor: *fig.Editor(Lang), path: []const fig.AST.PathSegment, index: usize) usize {
-    if (index != std.math.maxInt(usize)) return index;
+    if (index != types.append_index) return index;
     const parsed = editor.getParsed() catch return index;
-    const seq = parsed.ast.getValByPath(path) catch return index;
-    if (seq.kind != .sequence) return index;
-    var item = (parsed.ast.child(&seq) catch return index) orelse return index;
+    return lastIndexIn(&parsed.ast, path) orelse index;
+}
+
+/// The index of the last item of the sequence at `path` in `ast`, or null
+/// when there is no non-empty sequence there.
+fn lastIndexIn(ast: *const fig.AST, path: []const fig.AST.PathSegment) ?usize {
+    const seq = ast.getValByPath(path) catch return null;
+    if (seq.kind != .sequence) return null;
+    var item = (ast.child(&seq) catch return null) orelse return null;
     var last: usize = 0;
-    while (parsed.ast.next(&item)) |nxt| : (last += 1) item = nxt;
+    while (ast.next(&item)) |nxt| : (last += 1) item = nxt;
     return last;
+}
+
+/// `path` with every `[-]`/`[$]` resolved, left to right, to the last item
+/// of the sequence it indexes — so `list[-].name` reads, replaces or
+/// comments the last item's `name`. A sentinel with no non-empty sequence
+/// under it stays as it is, and the lookup that follows reports the path
+/// missing. Returns `path` itself when it holds no sentinel, else an owned
+/// copy.
+pub fn resolveLast(allocator: std.mem.Allocator, ast: *const fig.AST, path: []fig.AST.PathSegment) ![]fig.AST.PathSegment {
+    const first = for (path, 0..) |seg, i| {
+        if (seg == .index and seg.index == types.append_index) break i;
+    } else return path;
+    const out = try allocator.dupe(fig.AST.PathSegment, path);
+    for (out[first..], first..) |*seg, i| {
+        if (seg.* != .index or seg.index != types.append_index) continue;
+        if (lastIndexIn(ast, out[0..i])) |last| seg.* = .{ .index = last };
+    }
+    return out;
 }
 
 pub fn applyToFile(
@@ -216,10 +246,13 @@ pub fn getComment(
     var editor: fig.Editor(Lang) = .{ .allocator = allocator, .format = dialect };
     try editor.init(content);
     defer editor.deinit();
+    const parsed = try editor.getParsed();
+    const resolved = try resolveLast(allocator, &parsed.ast, path);
+    defer if (resolved.ptr != path.ptr) allocator.free(resolved);
     return if (inline_comment)
-        editor.getTrailingComment(path)
+        editor.getTrailingComment(resolved)
     else
-        editor.getLeadingComment(path);
+        editor.getLeadingComment(resolved);
 }
 
 pub fn getCommentFromFile(
@@ -574,6 +607,30 @@ pub fn applyStructuralEdit(
 ) !void {
     if (embed) |embed_type| return applyToEmbed(allocator, io, input, embed_type, path, text, value, op);
     return applyToFileAs(allocator, io, input, resolved, path, text, value, op);
+}
+
+test "applyEdit reads [-] before the end of a path as the last item" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    const t = std.testing;
+    const Y = fig.Language.YAML;
+    const dia = Y.default_type;
+    const last = types.append_index;
+
+    var item = [_]fig.AST.PathSegment{ .{ .key = "l" }, .{ .index = last } };
+    const replaced = try applyEdit(Y, t.allocator, "l: [a, b]\n", &item, "z", .replace_value, dia);
+    defer t.allocator.free(replaced);
+    try t.expectEqualStrings("l: [a, z]\n", replaced);
+    // The caller's path is left as written, for the retries in
+    // `applyValueEdit` that resolve it again.
+    try t.expectEqual(last, item[1].index);
+
+    var nested = [_]fig.AST.PathSegment{ .{ .key = "o" }, .{ .index = last }, .{ .key = "n" } };
+    const renamed = try applyEdit(Y, t.allocator, "o:\n  - n: a\n  - n: b\n", &nested, "c", .replace_value, dia);
+    defer t.allocator.free(renamed);
+    try t.expectEqualStrings("o:\n  - n: a\n  - n: c\n", renamed);
+
+    // With no item to be the last, the path is missing.
+    try t.expectError(error.NotFound, applyEdit(Y, t.allocator, "l: []\n", &item, "z", .replace_value, dia));
 }
 
 test "applyEdit performs the structural ops on YAML" {

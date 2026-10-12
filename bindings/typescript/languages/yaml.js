@@ -2748,13 +2748,28 @@ const language = {
     empty_map_literal: "",
     single_line_block_mapping: true,
   },
-  // The compiled format's extensions: where the format is compiled out
-  // and this stands in for it, the extensions reach it. The 1.1
-  // dialect differs only in how a plain scalar resolves; the compiled
-  // format selects it with `--spec 1.1`, which a runtime dialect has no
-  // row for, so it is a second dialect, reached by name.
+  // The extensions the Zig language claims. The 1.1 dialect differs only
+  // in how a plain scalar resolves; the Zig language registers it as the
+  // `--spec` row `yaml-1.1`, and here it is a second dialect by that name,
+  // reached by name.
   dialects: [
-    { name: "yaml", extensions: ["yaml", "yml"], splice: "literal", empty_doc_seed: "", prints: YAML_PRINTS },
+    {
+      name: "yaml",
+      extensions: ["yaml", "yml"],
+      splice: "literal",
+      empty_doc_seed: "",
+      prints: YAML_PRINTS,
+      // How YAML is written embedded in a host file; a bare `---`, not
+      // `---yaml`, since untagged frontmatter is YAML.
+      embed: {
+        fence_tag: "yaml",
+        fence_aliases: ["yml"],
+        frontmatter: "---",
+        script_mime: "application/yaml",
+        script_mime_aliases: ["application/x-yaml", "text/yaml"],
+        code_class: "language-yaml",
+      },
+    },
     { name: "yaml-1.1", extensions: [], splice: "literal", empty_doc_seed: "", prints: YAML_PRINTS },
   ],
   samples: ["a: 1\nb:\n  - x\n  - y\nc:\n  d: true\n", "{a: 1, b: [2, 3]}\n"],

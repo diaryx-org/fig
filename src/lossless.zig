@@ -57,23 +57,13 @@ const sentinel = "$fig";
 pub const NativeKinds = Language.NativeKinds;
 
 /// The native-kinds declaration the envelope pass should encode for when the
-/// output is `fmt`, or null when that format takes no envelope at all (see
-/// `Caps.lossless` for which formats say null and why). Read off the format
-/// registry: `fmt`'s entry was declared by some language's module, and that
-/// language's `caps` carries the answer. Read through the ungated module
-/// (`Language.moduleFor`) rather than the entry's gated `Lang`, so the answer
-/// is the same in every build — a gated-out language still declares what it
-/// holds, just as it still has an ABI value; whether anything can be PRINTED
-/// in it is the serializer's refusal to make, not this table's. `canonical`
-/// is not a registry entry (it is the AST's own oracle grammar, not a
-/// `Language`) and takes its own arm, as it does at every registry-derived
-/// dispatch. A caller with a CLI-only format on top of `SerializeFormat`
-/// (gron) resolves its own arm before/via `toSerializeFormat` and consults
-/// this for the rest.
-pub fn nativeFor(fmt: Serialize.SerializeFormat) ?NativeKinds {
-    return switch (fmt) {
+/// output is `target`, or null when it takes no envelope at all (see
+/// `Caps.lossless` for which formats say null and why): what the language
+/// registered declares. `canonical`, the AST's own oracle grammar, takes none.
+pub fn nativeFor(target: Serialize.Target) ?NativeKinds {
+    return switch (target) {
         .canonical => null,
-        inline else => |f| comptime Language.moduleFor(@tagName(f)).Language.caps.lossless,
+        .language => |e| e.language.caps.lossless,
     };
 }
 
@@ -771,30 +761,29 @@ test "declared native kinds reproduce the pre-declaration envelope table" {
 }
 
 // `targetFor` used to answer `.json` for the three JSON dialects, `.yaml`,
-// `.toml`, `.zon` for their own, and null for the other eight `SerializeFormat`
-// members — in every build, gates notwithstanding. Pinned by name against what
-// the registry now answers: a format gaining or losing an envelope target is a
-// behaviour change to be made here on purpose.
+// `.toml`, `.zon` for their own, and null for the other formats. Pinned by
+// name against what each language registers: a format gaining or losing an
+// envelope target is a behaviour change to be made here on purpose.
 test "nativeFor reproduces the pre-declaration targetFor table" {
-    const Expect = struct { fmt: Serialize.SerializeFormat, native: ?NativeKinds };
+    const Expect = struct { fmt: []const u8, native: ?NativeKinds };
     const table = [_]Expect{
-        .{ .fmt = .json, .native = json_native },
-        .{ .fmt = .jsonc, .native = json_native },
-        .{ .fmt = .json5, .native = json_native },
-        .{ .fmt = .yaml, .native = yaml_native },
-        .{ .fmt = .toml, .native = toml_native },
-        .{ .fmt = .zon, .native = zon_native },
-        .{ .fmt = .canonical, .native = null },
-        .{ .fmt = .fig, .native = null },
-        .{ .fmt = .ini, .native = null },
-        .{ .fmt = .dotenv, .native = null },
-        .{ .fmt = .properties, .native = null },
-        .{ .fmt = .plist, .native = null },
-        .{ .fmt = .nestedtext, .native = null },
+        .{ .fmt = "json", .native = json_native },
+        .{ .fmt = "jsonc", .native = json_native },
+        .{ .fmt = "json5", .native = json_native },
+        .{ .fmt = "yaml", .native = yaml_native },
+        .{ .fmt = "toml", .native = toml_native },
+        .{ .fmt = "zon", .native = zon_native },
+        .{ .fmt = "canonical", .native = null },
+        .{ .fmt = "fig", .native = null },
+        .{ .fmt = "ini", .native = null },
+        .{ .fmt = "dotenv", .native = null },
+        .{ .fmt = "properties", .native = null },
+        .{ .fmt = "plist", .native = null },
+        .{ .fmt = "nestedtext", .native = null },
     };
-    // Every member is listed, so a new format has to say what it wants here.
-    try testing.expectEqual(@typeInfo(Serialize.SerializeFormat).@"enum".field_names.len, table.len);
     for (table) |e| {
-        try testing.expectEqual(e.native, nativeFor(e.fmt));
+        // A language this build does not bundle has nothing registered to ask.
+        const target = Serialize.Target.named(e.fmt) orelse continue;
+        try testing.expectEqual(e.native, nativeFor(target));
     }
 }

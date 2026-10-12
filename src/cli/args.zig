@@ -23,19 +23,23 @@ const Io = std.Io;
 /// one alias below. Returns null for an unknown name so callers can emit a
 /// tailored error.
 pub fn parseFormatName(name: []const u8) ?Format {
-    // `yml` is an accepted SPELLING of yaml, not a format of its own: it used
-    // to be a `Format` member, which bought a second `@tagName` echo and a
-    // duplicated arm in every switch over the enum, and nothing else. It
-    // collapses here instead, so downstream code only ever sees `.yaml`.
-    if (std.mem.eql(u8, name, "yml")) return languages.standIn(.yaml);
+    // `yml` is an accepted SPELLING of yaml, not a format of its own, and
+    // collapses here, so downstream code only ever sees `yaml`.
+    if (std.mem.eql(u8, name, "yml")) return parseFormatName("yaml");
     // `figl` is fig's authoring dialect by its extension, as `yml` is
     // YAML's: a spelling of `fig`, so `--input figl` reads what a `.figl`
     // file does.
-    if (std.mem.eql(u8, name, "figl")) return languages.standIn(.fig);
-    if (std.meta.stringToEnum(Format, name)) |f| return languages.standIn(f);
-    // A language the CLI did not compile in: configured in `languages.figl`
-    // (spawned and registered on this first ask) or already registered.
+    if (std.mem.eql(u8, name, "figl")) return parseFormatName("fig");
+    if (types.named(name)) |f| return f;
+    // A language configured in `languages.figl`, spawned and registered on
+    // this first ask.
     return languages.resolveName(name);
+}
+
+/// JSON: the format a command falls back to where none is named and none
+/// is detected, as `convert`'s output.
+fn jsonFormat() Format {
+    return parseFormatName("json") orelse .canonical;
 }
 
 /// Parse a command-line path — `a.b[2].c` — into segments. A `.` separates
@@ -221,107 +225,31 @@ pub fn detectLanguageFromFileEnding(file_path: []const u8) ?Detected {
     // YAML endmatter fence) must not be mistaken for `---` YAML frontmatter
     // just because the file ends in `.md`.
     if (std.mem.eql(u8, ext, "md") or std.mem.eql(u8, ext, "markdown")) {
-        return .{ .format = languages.standIn(.yaml), .embed_detect = true };
+        if (parseFormatName("yaml")) |f| return .{ .format = f, .embed_detect = true };
     }
 
-    // An extension that names a `Format` member IS that format. Tried first so
-    // every token the enum spells keeps its exact meaning — notably the
-    // dialect members (`jsonc`, `json5`) that share a language with the
-    // default spelling, and the format-only members (`canonical`, `gron`) that
-    // no `Language` declares. `yml` is NOT one of them any more: it falls
-    // through to `extensionFormat` below, where `Language.YAML.extensions`
-    // owns it and resolves it to `.yaml` — the same parse it always got.
+    // An extension that names a format IS that format. Tried first so every
+    // name keeps its exact meaning — notably the dialects (`jsonc`, `json5`)
+    // that share a language with the default spelling, and the CLI's own
+    // `gron`. `yml` is not a name: YAML declares it as an extension, below.
     // The one exception is `fig`: its extension is `.figl`, and `.fig`,
     // accepted until 5.0, is no longer the format's.
-    // A format this build compiled out is the configured language standing
-    // in for it, where there is one (`languages.standIn`).
-    if (std.meta.stringToEnum(Format, ext)) |format| if (format != .fig) return .{ .format = languages.standIn(format) };
+    // A configured language of that name answers to it too.
+    if (!std.mem.eql(u8, ext, "fig")) if (parseFormatName(ext)) |format| return .{ .format = format };
 
-    // Otherwise ask the languages. Each declares the extensions it owns
-    // (`Language.extensions`), which is where the ones that DON'T match an enum
-    // member name live: `.figl` (fig's extension), `.env` (dotenv files
-    // are conventionally named exactly `.env`, so the last-dot split gives a
-    // literal `env`), and `.nt` (NestedText's conventional extension). Those
-    // three used to be hand-written special cases here; they are now the
-    // formats' own declarations, so a new format's extension arrives with it.
-    //
-    // Not recognized here, before or now: multi-suffix variants like
-    // `.env.production`, whose last-dot extension is `production`. Pass
-    // `--input dotenv` for those. The canonical form deliberately owns no
-    // extension at all — select it with `--input canonical`.
-    if (extensionFormat(ext)) |format| return .{ .format = format };
+    // Otherwise ask the languages: each declares the extensions it owns —
+    // `.figl`, `.env` (dotenv files are conventionally named exactly `.env`,
+    // so the last-dot split gives a literal `env`), `.nt`, `.yml`. Not
+    // recognized here: multi-suffix variants like `.env.production`, whose
+    // last-dot extension is `production`; pass `--input dotenv` for those.
     if (languages.registeredExtension(ext)) |format| return .{ .format = format };
 
-    // Last, the languages `languages.figl` configures: a compiled format's
-    // extension always wins, so a configured language is only reached by an
-    // extension nothing compiled in owns (proposal §7.1).
+    // Last, the languages `languages.figl` configures: a registered
+    // language's extension always wins, so a configured language is only
+    // reached by an extension nothing registered owns (proposal §7.1).
     if (languages.resolveExtension(ext)) |format| return .{ .format = format };
 
     return null;
-}
-
-/// The `Format` owning file extension `ext`, per the languages' own
-/// `extensions` declarations, or null.
-///
-/// The `Language`→`Format` pairing this walks is per-LANGUAGE while `Format` is
-/// per-DIALECT (json/jsonc/json5 are three members over one `Language`), so
-/// a language resolves to whichever member is its DEFAULT spelling. That used
-/// to be a hand-written table; it is now derived from the format registry —
-/// see `ext_pairs`.
-fn extensionFormat(ext: []const u8) ?Format {
-    inline for (ext_pairs) |pair| {
-        if (pair[0] != void) {
-            for (pair[0].extensions) |owned| {
-                if (std.mem.eql(u8, owned, ext)) return pair[1];
-            }
-        }
-    }
-    return null;
-}
-
-/// Each `Language` and the `Format` member that is its default spelling,
-/// derived from the format registry: a language's default spelling IS its
-/// FIRST entry in `dialects` — `json`, ahead of the `jsonc`/`json5` dialects
-/// of the same module; every other language's single entry. That is exactly
-/// what the hand-written table this replaces spelled out row by row.
-///
-/// A gated-out language is `void` here — the registry keeps every entry in
-/// every build and collapses `Lang` instead — and `extensionFormat` skips it,
-/// exactly as it skipped the `void` rows of the old table.
-const ext_pairs = blk: {
-    const Pair = struct { type, Format };
-    var pairs: []const Pair = &.{};
-    outer: for (fig.Language.dialects) |d| {
-        // First entry per distinct language wins. A gated-out language is
-        // `void` in EVERY entry, so this test cannot tell JSON's three rows
-        // apart in a `-Djson=false` build (nor one gated language's row from
-        // another's) — and it does not need to: `extensionFormat` skips a
-        // `void` row, so a duplicate of one is a row that is skipped twice.
-        if (d.Lang != void) {
-            for (pairs) |p| {
-                if (p[0] == d.Lang) continue :outer;
-            }
-        }
-        pairs = pairs ++ [_]Pair{.{ d.Lang, @field(Format, d.name) }};
-    }
-    break :blk pairs;
-};
-
-// A language missing from `ext_pairs` would silently stop resolving by
-// extension — the failure would look like "that file just isn't detected",
-// which is exactly the kind of quiet gap this work exists to remove. The
-// derivation above makes that unreachable rather than merely detectable, so
-// this is now a check on the DERIVATION rather than on a hand-written table;
-// it costs one comptime loop and it is what would catch a first-entry-per-
-// language rule that silently skipped a row.
-comptime {
-    outer: for (fig.Language.compiled) |Lang| {
-        for (ext_pairs) |pair| {
-            if (pair[0] == Lang) continue :outer;
-        }
-        @compileError("cli/args.zig `ext_pairs` is missing the language '" ++ Lang.name ++
-            "', so its declared extensions would never resolve");
-    }
 }
 
 /// Map a `--embed <archetype>` flag value to its `Embed.Type`. Lets any
@@ -332,33 +260,39 @@ comptime {
 pub fn embedTypeFromName(name: []const u8) ?fig.Embed.Type {
     const eql = std.mem.eql;
 
-    // The four PARAMETRIC families, derived: every embeddable format is
-    // reachable in every parametric container as `<container>-<format>`. The
-    // container half is this file's own spelling (there is no container
-    // registry — `Embed.Type`'s union tags are it); the `<format>` half is the
-    // registry entry's name, which is also the `InnerFormat` member name, so a
-    // format that grows an embedded spelling arrives here with all of its
-    // archetype names at once.
-    inline for (@typeInfo(fig.Embed.InnerFormat).@"enum".field_names, @typeInfo(fig.Embed.InnerFormat).@"enum".field_values) |field_name, field_value| {
-        const f: fig.Embed.InnerFormat = @fromBackingInt(@intCast(field_value));
-        // `md-yaml` is deliberately not a spelling: a bare `---` block IS YAML
-        // frontmatter, so it answers to `frontmatter`/`frontmatter-yaml` below
-        // — which is what the `--help` prose documents and what `set`'s
-        // open-or-init default resolves to.
-        if (comptime !eql(u8, field_name, "yaml")) {
-            if (eql(u8, name, "md-" ++ field_name)) return .{ .frontmatter = f };
-        }
-        if (eql(u8, name, "fenced-" ++ field_name)) return .{ .fenced = f };
-        if (eql(u8, name, "html-script-" ++ field_name)) return .{ .html_script = f };
-        if (eql(u8, name, "html-code-" ++ field_name)) return .{ .html_code = f };
+    // The four PARAMETRIC families: every embeddable dialect is reachable in
+    // every parametric container as `<container>-<dialect>`. The container
+    // half is this file's own spelling (`Embed.Type`'s union tags); the
+    // `<dialect>` half is the registered name.
+    const families = [_]struct { prefix: []const u8, kind: std.meta.Tag(fig.Embed.Type) }{
+        .{ .prefix = "md-", .kind = .frontmatter },
+        .{ .prefix = "fenced-", .kind = .fenced },
+        .{ .prefix = "html-script-", .kind = .html_script },
+        .{ .prefix = "html-code-", .kind = .html_code },
+    };
+    for (families) |fam| {
+        if (!std.mem.startsWith(u8, name, fam.prefix)) continue;
+        const lang = name[fam.prefix.len..];
+        const f = innerNamed(lang) orelse return null;
+        // `md-yaml` is deliberately not a spelling: a bare `---` block IS
+        // frontmatter in the dialect that declares the bare opener, so it
+        // answers to `frontmatter` below.
+        if (fam.kind == .frontmatter and std.mem.eql(u8, f.embed.?.frontmatter, "---")) return null;
+        return switch (fam.kind) {
+            .frontmatter => .{ .frontmatter = f },
+            .fenced => .{ .fenced = f },
+            .html_script => .{ .html_script = f },
+            .html_code => .{ .html_code = f },
+            else => unreachable,
+        };
     }
 
-    // The rest are not `<container>-<format>` pairs and do not derive: the
-    // blessed presets whose delimiter is its own distinct token rather than a
-    // language tag, and the bare container names.
+    // The rest are not `<container>-<dialect>` pairs: the blessed presets
+    // whose delimiter is its own distinct token rather than a language tag,
+    // and the bare container names.
     //
     // Markdown `---` frontmatter (bare ⇒ yaml; see the `md-yaml` note above).
-    if (eql(u8, name, "frontmatter") or eql(u8, name, "frontmatter-yaml")) return .{ .frontmatter = .yaml };
+    if (eql(u8, name, "frontmatter") or eql(u8, name, "frontmatter-yaml")) return .{ .frontmatter = innerNamed("yaml") orelse return null };
     // Blessed distinct-delimiter presets: the `;;;` and `+++` blocks. (fig 5
     // dropped their older names `frontmatter-json`/`frontmatter-toml`, and
     // `frontmatter-fig` for `fenced-fig`: each read as the `md-<lang>` block
@@ -366,38 +300,37 @@ pub fn embedTypeFromName(name: []const u8) ?fig.Embed.Type {
     if (eql(u8, name, "semicolons")) return .semicolons_json;
     if (eql(u8, name, "plus")) return .plus_toml;
     if (eql(u8, name, "endmatter") or eql(u8, name, "endmatter-yaml")) return .endmatter_yaml;
-    // The bare container names, whose default format is fig rather than the
-    // registry's first entry — a deliberate choice this project made, not a
-    // fact the registry states.
-    if (eql(u8, name, "html-script")) return .{ .html_script = .fig };
-    if (eql(u8, name, "html-code")) return .{ .html_code = .fig };
+    // The bare container names, whose default language is fig — a choice
+    // this project made, not one a language states.
+    if (eql(u8, name, "html-script")) return .{ .html_script = innerNamed("fig") orelse return null };
+    if (eql(u8, name, "html-code")) return .{ .html_code = innerNamed("fig") orelse return null };
     return null;
 }
 
+/// The registered dialect `name` as an embed archetype's inner language,
+/// registering a configured language of that name on this ask.
+fn innerNamed(name: []const u8) ?fig.Embed.InnerFormat {
+    _ = parseFormatName(name);
+    return fig.Embed.innerNamed(name);
+}
+
 /// The canonical `--embed` spelling of an archetype — the inverse of
-/// `embedTypeFromName`, for diagnostics that have a `Type` in hand and need to
-/// name it back to the user in the vocabulary they typed. Canonical means: the
-/// derived `<container>-<format>` name for the parametric families, and the
-/// primary (not alias) name for the presets, so round-tripping the
-/// result back through `embedTypeFromName` returns the same `Type`.
-pub fn embedTypeName(t: fig.Embed.Type) []const u8 {
+/// `embedTypeFromName`, for diagnostics that have a `Type` in hand and need
+/// to name it back to the user in the vocabulary they typed: the
+/// `<container>-<dialect>` name for the parametric families, and the primary
+/// (not alias) name for the presets, so the result reads back through
+/// `embedTypeFromName` as the same `Type`. Written into `buf`.
+pub fn embedTypeName(buf: []u8, t: fig.Embed.Type) []const u8 {
+    const fmt = std.fmt.bufPrint;
     return switch (t) {
-        // `frontmatter = .yaml` is spelled `frontmatter`, not `md-yaml` — a bare
-        // `---` block IS YAML frontmatter, which is why `md-yaml` is not a
-        // spelling at all (see `embedTypeFromName`).
-        .frontmatter => |f| switch (f) {
-            .yaml => "frontmatter",
-            inline else => |g| "md-" ++ @tagName(g),
-        },
-        .fenced => |f| switch (f) {
-            inline else => |g| "fenced-" ++ @tagName(g),
-        },
-        .html_script => |f| switch (f) {
-            inline else => |g| "html-script-" ++ @tagName(g),
-        },
-        .html_code => |f| switch (f) {
-            inline else => |g| "html-code-" ++ @tagName(g),
-        },
+        // A bare `---` block is spelled `frontmatter`, not `md-yaml`.
+        .frontmatter => |f| if (std.mem.eql(u8, f.embed.?.frontmatter, "---"))
+            "frontmatter"
+        else
+            fmt(buf, "md-{s}", .{f.name}) catch "md-?",
+        .fenced => |f| fmt(buf, "fenced-{s}", .{f.name}) catch "fenced-?",
+        .html_script => |f| fmt(buf, "html-script-{s}", .{f.name}) catch "html-script-?",
+        .html_code => |f| fmt(buf, "html-code-{s}", .{f.name}) catch "html-code-?",
         .semicolons_json => "semicolons",
         .plus_toml => "plus",
         .endmatter_yaml => "endmatter",
@@ -407,49 +340,37 @@ pub fn embedTypeName(t: fig.Embed.Type) []const u8 {
 test "embedTypeName round-trips through embedTypeFromName" {
     // Every archetype the CLI can name must name itself back to the same Type,
     // so a diagnostic never prints a spelling the parser would reject.
-    for ([_]fig.Embed.Type{
-        .{ .frontmatter = .yaml }, .{ .frontmatter = .json }, .{ .frontmatter = .toml }, .{ .frontmatter = .fig },
-        .{ .fenced = .yaml },      .{ .fenced = .json },      .{ .fenced = .toml },      .{ .fenced = .fig },
-        .{ .html_script = .yaml }, .{ .html_script = .json }, .{ .html_script = .toml }, .{ .html_script = .fig },
-        .{ .html_code = .yaml },   .{ .html_code = .json },   .{ .html_code = .toml },   .{ .html_code = .fig },
-        .semicolons_json,          .plus_toml,                .endmatter_yaml,
-    }) |t| {
-        try std.testing.expectEqual(@as(?fig.Embed.Type, t), embedTypeFromName(embedTypeName(t)));
+    var buf: [64]u8 = undefined;
+    for (fig.bundle.embeddable) |n| {
+        const f = fig.Embed.innerNamed(n).?;
+        for ([_]fig.Embed.Type{ .{ .frontmatter = f }, .{ .fenced = f }, .{ .html_script = f }, .{ .html_code = f } }) |t| {
+            try std.testing.expectEqual(@as(?fig.Embed.Type, t), embedTypeFromName(embedTypeName(&buf, t)));
+        }
+    }
+    for ([_]fig.Embed.Type{ .semicolons_json, .plus_toml, .endmatter_yaml }) |t| {
+        try std.testing.expectEqual(@as(?fig.Embed.Type, t), embedTypeFromName(embedTypeName(&buf, t)));
     }
 }
 
 /// The `--embed <archetype>` names accepted by `embedTypeFromName`, for error
 /// messages — one source of truth so a new archetype is listed everywhere.
-/// The `<lang>` half is derived from `Embed.InnerFormat`, the set the
-/// parametric loop in `embedTypeFromName` spells, so it cannot fall behind it.
+/// The `<lang>` half is the bundled embeddable dialects (`fig.bundle`).
 pub const embed_archetype_names = blk: {
     var langs: []const u8 = "";
-    for (@typeInfo(fig.Embed.InnerFormat).@"enum".field_names, 0..) |f_name, i|
-        langs = langs ++ (if (i == 0) "" else ", ") ++ f_name;
+    for (fig.bundle.embeddable, 0..) |n, i| langs = langs ++ (if (i == 0) "" else ", ") ++ n;
     break :blk "frontmatter, semicolons (;;;), plus (+++), endmatter, " ++
         "md-<lang>, fenced-<lang>, html-script[-<lang>], html-code[-<lang>]; " ++
         "<lang> is one of " ++ langs ++ " (there is no md-yaml: that is `frontmatter`)";
 };
 
 /// The CLI `Format` an embed archetype's content is written in — the `get`
-/// action's `--input`/`--output` twin of `Embed.innerFormat`. Lets an explicit
-/// `--embed <archetype>` pick the right parser/printer on its own, without
-/// also requiring a redundant `--input`/`--output` (or, worse, silently
-/// keeping a same-named-extension guess that doesn't match the archetype —
-/// e.g. `--embed fenced-fig` on a `.md` file, whose extension alone
-/// says nothing about which archetype it actually is).
-///
-/// A name identity, not a mapping: both enums draw their members from the same
-/// format registry, so an `InnerFormat` member and the `Format` member it means
-/// are the same string by construction. (`Format` is the larger of the two —
-/// every embeddable format is a CLI format, but not every CLI format has an
-/// embedded spelling — so `@field` is total in this direction only.) A
-/// format this build compiled out is the configured language standing in
-/// for it, registered on this ask (`languages.standIn`).
+/// action's `--input`/`--output` twin of `Embed.innerFormat`. Lets an
+/// explicit `--embed <archetype>` pick the right parser/printer on its own,
+/// without also requiring a redundant `--input`/`--output`. `.canonical` for
+/// a preset whose language is not registered, which nothing parses.
 pub fn embedFormat(t: fig.Embed.Type) Format {
-    return languages.standIn(switch (fig.Embed.innerFormat(t)) {
-        inline else => |f| @field(Format, @tagName(f)),
-    });
+    const e = fig.Embed.innerFormat(t) orelse return .canonical;
+    return types.runtimeFormat(e);
 }
 
 /// Resolve the embed archetype an action should operate on, given
@@ -466,19 +387,15 @@ pub fn embedFormat(t: fig.Embed.Type) Format {
 /// when this isn't an embed operation at all (no override, and the extension
 /// implies no embed).
 pub fn resolveEmbedTypeFromContent(content: []const u8, embed: ?fig.Embed.Type, detect_embed: bool) ?fig.Embed.Type {
-    if (embed) |e| return registerInner(e);
+    if (embed) |e| return e;
     if (!detect_embed) return null;
-    return registerInner(fig.Embed.detect(content) orelse .{ .frontmatter = .yaml });
+    return fig.Embed.detect(content) orelse defaultEmbed();
 }
 
-/// `t`, once whatever stands in for its inner format is registered. The
-/// core parses an embedded region itself, and reaches a compiled-out inner
-/// format through the language registered at its integer; the CLI
-/// registers a configured language only when asked for one, so this is the
-/// asking (`languages.standIn`).
-fn registerInner(t: fig.Embed.Type) fig.Embed.Type {
-    _ = embedFormat(t);
-    return t;
+/// The archetype a host with no region gets: bare `---` frontmatter, in
+/// the dialect that declares the bare opener.
+pub fn defaultEmbed() ?fig.Embed.Type {
+    return .{ .frontmatter = innerNamed("yaml") orelse return null };
 }
 
 /// Same as `resolveEmbedTypeFromContent`, but reads `input` itself first, for
@@ -489,11 +406,11 @@ fn registerInner(t: fig.Embed.Type) fig.Embed.Type {
 /// positional read is always safe: it's a second read of a regular, seekable
 /// file, not a second (and empty) read of a pipe.
 pub fn resolveEmbedType(io: Io, allocator: std.mem.Allocator, input: Io.File, embed: ?fig.Embed.Type, detect_embed: bool) !?fig.Embed.Type {
-    if (embed) |e| return registerInner(e);
+    if (embed) |e| return e;
     if (!detect_embed) return null;
     const content = try fileio.readAll(allocator, io, input);
     defer allocator.free(content);
-    return registerInner(fig.Embed.detect(content) orelse .{ .frontmatter = .yaml });
+    return fig.Embed.detect(content) orelse defaultEmbed();
 }
 
 /// The argument list with `--lang <name>` taken out: the one flag every
@@ -730,7 +647,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             .key = rename,
             .value_mode = value_mode orelse .fig,
             .requested_help = requested_help,
-            .format = if (ext) |d| d.format else .json,
+            .format = if (ext) |d| d.format else .canonical,
             .detect = !requested_help and ext == null,
             .embed = null,
             .detect_embed = if (ext) |d| d.embed_detect else false,
@@ -771,7 +688,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         const pos = positionals.items.items;
 
         if (requested_help) {
-            config.options = .{ .set = .{ .file = "", .path = &.{}, .value = "", .requested_help = true, .format = .json } };
+            config.options = .{ .set = .{ .file = "", .path = &.{}, .value = "", .requested_help = true, .format = jsonFormat() } };
         } else {
             // Need file, path, and at least one value (a scalar, or one or more
             // sequence items with `--seq`).
@@ -793,7 +710,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     .values = if (seq) try allocator.dupe([]const u8, pos[2..]) else &.{},
                     .value_mode = value_mode orelse .fig,
                     .requested_help = false,
-                    .format = if (ext) |d| d.format else .json,
+                    .format = if (ext) |d| d.format else .canonical,
                     // Skip content sniffing when targeting an embed (the inner format
                     // is fixed by the archetype) or when the extension resolved it.
                     .detect = ext == null and embed == null,
@@ -844,7 +761,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             .value = value,
             .value_mode = value_mode orelse .fig,
             .requested_help = requested_help,
-            .format = if (ext) |d| d.format else .json,
+            .format = if (ext) |d| d.format else .canonical,
             .detect = !requested_help and ext == null,
             .embed = null,
             .detect_embed = if (ext) |d| d.embed_detect else false,
@@ -880,7 +797,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             .file = file_path,
             .path = path,
             .requested_help = requested_help,
-            .format = if (ext) |d| d.format else .json,
+            .format = if (ext) |d| d.format else .canonical,
             .detect = !requested_help and ext == null,
             .embed = null,
             .detect_embed = if (ext) |d| d.embed_detect else false,
@@ -938,7 +855,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             .delete = delete,
             .get = get,
             .requested_help = requested_help,
-            .format = if (ext) |d| d.format else .json,
+            .format = if (ext) |d| d.format else .canonical,
             .detect = !requested_help and ext == null,
             .embed = null,
             .detect_embed = if (ext) |d| d.embed_detect else false,
@@ -1091,7 +1008,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         const needs_detect = !requested_help and input_override == null and embed_override == null and detected_input == null;
         const input_format = input_override orelse
             (if (embed_override) |et| embedFormat(et) else null) orelse
-            (if (detected_input) |d| d.format else null) orelse .json;
+            (if (detected_input) |d| d.format else null) orelse jsonFormat();
 
         var gron_projection: gron.Projection = .gron;
         if (gron_root) |r| gron_projection.root_name = r;
@@ -1271,7 +1188,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         const needs_detect = !requested_help and input_override == null and embed_override == null and detected_input == null;
         const from = input_override orelse
             (if (embed_override) |et| embedFormat(et) else null) orelse
-            (if (detected_input) |d| d.format else null) orelse .json;
+            (if (detected_input) |d| d.format else null) orelse jsonFormat();
 
         config.options = .{ .fmt = .{
             .file = file_path,
@@ -1454,12 +1371,12 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 };
             }
             const needs_detect = !requested_help and input_override == null and detected_input == null;
-            const from = input_override orelse (if (detected_input) |d| d.format else null) orelse .json;
+            const from = input_override orelse (if (detected_input) |d| d.format else null) orelse jsonFormat();
             config.options = .{ .convert = .{
                 .file = file_path,
                 .requested_help = requested_help,
                 .from = from,
-                .to = output_override orelse .json,
+                .to = output_override orelse jsonFormat(),
                 .detect = needs_detect,
                 .lax_tags = lax_tags,
                 .lossless = lossless,
@@ -1659,9 +1576,9 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             .deletes = try deletes.toOwnedSlice(allocator),
             .patch_options = patch_options,
             .requested_help = requested_help,
-            .format = input_override orelse (if (target_ext) |d| d.format else null) orelse .json,
+            .format = input_override orelse (if (target_ext) |d| d.format else null) orelse jsonFormat(),
             .detect = !requested_help and input_override == null and target_ext == null,
-            .patch_format = patch_input_override orelse (if (source_ext) |d| d.format else null) orelse .json,
+            .patch_format = patch_input_override orelse (if (source_ext) |d| d.format else null) orelse jsonFormat(),
             .detect_patch = !requested_help and patch_input_override == null and source_ext == null,
             .embed = embed_override,
             .detect_embed = embed_override == null and if (target_ext) |d| d.embed_detect else false,
@@ -1953,12 +1870,12 @@ test "externalCommandName accepts only words that could name a program" {
 
 test "embedTypeFromName maps archetype names" {
     const t = std.testing;
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = .yaml }), embedTypeFromName("frontmatter"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = .yaml }), embedTypeFromName("frontmatter-yaml"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = fig.Embed.innerNamed("yaml").? }), embedTypeFromName("frontmatter"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = fig.Embed.innerNamed("yaml").? }), embedTypeFromName("frontmatter-yaml"));
     try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("frontmatter-json"));
     try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("frontmatter-fig"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = .toml }), embedTypeFromName("md-toml"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = .yaml }), embedTypeFromName("fenced-yaml"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = fig.Embed.innerNamed("toml").? }), embedTypeFromName("md-toml"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = fig.Embed.innerNamed("yaml").? }), embedTypeFromName("fenced-yaml"));
     try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("frontmatter-toml"));
     try t.expectEqual(@as(?fig.Embed.Type, .endmatter_yaml), embedTypeFromName("endmatter"));
     try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("bogus"));
@@ -1967,21 +1884,21 @@ test "embedTypeFromName maps archetype names" {
     // ACCEPTED SET is what needs pinning rather than any one row: all four
     // formats in each of the three `<container>-<format>` families, plus the
     // three-of-four `md-<format>` one, and nothing else.
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = .json }), embedTypeFromName("fenced-json"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = .toml }), embedTypeFromName("fenced-toml"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = .fig }), embedTypeFromName("fenced-fig"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = .json }), embedTypeFromName("md-json"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = .fig }), embedTypeFromName("md-fig"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = .fig }), embedTypeFromName("html-script"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = .fig }), embedTypeFromName("html-script-fig"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = .yaml }), embedTypeFromName("html-script-yaml"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = .json }), embedTypeFromName("html-script-json"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = .toml }), embedTypeFromName("html-script-toml"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = .fig }), embedTypeFromName("html-code"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = .fig }), embedTypeFromName("html-code-fig"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = .yaml }), embedTypeFromName("html-code-yaml"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = .json }), embedTypeFromName("html-code-json"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = .toml }), embedTypeFromName("html-code-toml"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = fig.Embed.innerNamed("json").? }), embedTypeFromName("fenced-json"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = fig.Embed.innerNamed("toml").? }), embedTypeFromName("fenced-toml"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = fig.Embed.innerNamed("fig").? }), embedTypeFromName("fenced-fig"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = fig.Embed.innerNamed("json").? }), embedTypeFromName("md-json"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = fig.Embed.innerNamed("fig").? }), embedTypeFromName("md-fig"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = fig.Embed.innerNamed("fig").? }), embedTypeFromName("html-script"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = fig.Embed.innerNamed("fig").? }), embedTypeFromName("html-script-fig"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = fig.Embed.innerNamed("yaml").? }), embedTypeFromName("html-script-yaml"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = fig.Embed.innerNamed("json").? }), embedTypeFromName("html-script-json"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = fig.Embed.innerNamed("toml").? }), embedTypeFromName("html-script-toml"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = fig.Embed.innerNamed("fig").? }), embedTypeFromName("html-code"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = fig.Embed.innerNamed("fig").? }), embedTypeFromName("html-code-fig"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = fig.Embed.innerNamed("yaml").? }), embedTypeFromName("html-code-yaml"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = fig.Embed.innerNamed("json").? }), embedTypeFromName("html-code-json"));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = fig.Embed.innerNamed("toml").? }), embedTypeFromName("html-code-toml"));
     try t.expectEqual(@as(?fig.Embed.Type, .semicolons_json), embedTypeFromName("semicolons"));
     try t.expectEqual(@as(?fig.Embed.Type, .plus_toml), embedTypeFromName("plus"));
     try t.expectEqual(@as(?fig.Embed.Type, .endmatter_yaml), embedTypeFromName("endmatter-yaml"));
@@ -2062,7 +1979,7 @@ test "resolveEmbedTypeFromContent: explicit override wins, else sniffs, else fal
     // ```fig fenced block must resolve to FrontmatterFig, not be assumed to
     // be YAML just because the extension is `.md`.
     try t.expectEqual(
-        @as(?fig.Embed.Type, .{ .fenced = .fig }),
+        @as(?fig.Embed.Type, .{ .fenced = fig.Embed.innerNamed("fig").? }),
         resolveEmbedTypeFromContent("```fig\ntitle = hi\n```\nbody\n", null, true),
     );
     try t.expectEqual(
@@ -2070,15 +1987,15 @@ test "resolveEmbedTypeFromContent: explicit override wins, else sniffs, else fal
         resolveEmbedTypeFromContent(";;;\n{\"a\":1}\n;;;\nbody\n", null, true),
     );
     try t.expectEqual(
-        @as(?fig.Embed.Type, .{ .frontmatter = .yaml }),
+        @as(?fig.Embed.Type, .{ .frontmatter = fig.Embed.innerNamed("yaml").? }),
         resolveEmbedTypeFromContent("---\na: 1\n---\nbody\n", null, true),
     );
 
     // Nothing detected at all (e.g. a brand-new/plain host file): falls back
     // to the historical FrontmatterYaml default rather than `null`, so `set`'s
     // open-or-init still seeds the same archetype it always has.
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = .yaml }), resolveEmbedTypeFromContent("just prose\n", null, true));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = .yaml }), resolveEmbedTypeFromContent("", null, true));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = fig.Embed.innerNamed("yaml").? }), resolveEmbedTypeFromContent("just prose\n", null, true));
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = fig.Embed.innerNamed("yaml").? }), resolveEmbedTypeFromContent("", null, true));
 }
 
 test "parseConfig routes patch: both files, both sides' formats, and the merge strategies" {
@@ -2186,7 +2103,7 @@ test "parseConfig routes set, --seq, and --embed" {
     // --embed fenced-fig routes to the fig-fenced archetype.
     var fm = TestArgs{ .items = &.{ "fig", "set", "--embed", "fenced-fig", "post.md", "k", "v" } };
     const fmc = try parseConfig(a, &fm);
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = .fig }), fmc.options.set.embed);
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = fig.Embed.innerNamed("fig").? }), fmc.options.set.embed);
 
     // No --embed on a `.md` file: the fix for the fig-frontmatter
     // autodetection bug — `embed` stays null and `detect_embed` fires, so
@@ -2241,7 +2158,7 @@ test "parseConfig routes convert: whole-file mode, embed mode, and their guards"
     var ov = TestArgs{ .items = &.{ "fig", "convert", "--embed", "endmatter", "--to-embed", "fenced-fig", "post.md" } };
     const ovc = try parseConfig(a, &ov);
     try t.expectEqual(@as(?fig.Embed.Type, .endmatter_yaml), ovc.options.convert.embed);
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = .fig }), ovc.options.convert.to_embed);
+    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = fig.Embed.innerNamed("fig").? }), ovc.options.convert.to_embed);
 
     // The four guard rejections (no target at all; --output+--to-embed
     // together; --embed without --to-embed; whole-file --output on a `.md`

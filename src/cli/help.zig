@@ -11,28 +11,31 @@ const build_options = @import("build_options");
 const types = @import("types.zig");
 const Io = std.Io;
 
-/// Whether the compiled `Format` member `name` is in this build: a registry
-/// entry whose language was not compiled out, `canonical` when
-/// `-Dcanonical=true`, and `gron`, which the CLI always carries.
-fn compiledIn(comptime name: []const u8) bool {
-    if (comptime std.mem.eql(u8, name, "gron")) return true;
-    if (comptime std.mem.eql(u8, name, "canonical")) return build_options.lang_canonical;
-    return fig.Language.entryFor(name).Lang != void;
-}
+/// The format names this build knows by itself: its bundled dialects, with
+/// `canonical` (when `-Dcanonical=true`) after `zon` and `gron` after `fig`,
+/// where the CLI's format list has always put them.
+const builtin_formats: []const []const u8 = blk: {
+    var out: []const []const u8 = &.{};
+    for (fig.bundle.dialect_names) |n| {
+        out = out ++ [_][]const u8{n};
+        if (std.mem.eql(u8, n, "zon") and build_options.lang_canonical) out = out ++ [_][]const u8{"canonical"};
+        if (std.mem.eql(u8, n, "fig")) out = out ++ [_][]const u8{"gron"};
+    }
+    break :blk out;
+};
 
-/// The format names `parseFormatName` accepts in this build — every compiled
-/// `Format` member, less `except` (gron for an action that writes a stored
+/// The format names `parseFormatName` accepts in this build by itself —
+/// `builtin_formats`, less `except` (gron for an action that writes a stored
 /// document) — comma-separated and wrapped under `indent` to fit 72 columns.
-/// Derived from the enum, so a new format is listed everywhere at once.
+/// Derived from the bundle, so a new format is listed everywhere at once.
 fn formatList(comptime indent: []const u8, comptime except: []const []const u8) []const u8 {
     comptime {
         @setEvalBranchQuota(50_000);
         var out: []const u8 = indent;
         var col = indent.len;
         var first = true;
-        fields: for (@typeInfo(types.Format).@"enum".field_names) |f_name| {
+        fields: for (builtin_formats) |f_name| {
             for (except) |e| if (std.mem.eql(u8, e, f_name)) continue :fields;
-            if (!compiledIn(f_name)) continue;
             const word = f_name;
             if (!first) {
                 if (col + 2 + word.len > 72) {
@@ -51,12 +54,11 @@ fn formatList(comptime indent: []const u8, comptime except: []const []const u8) 
     }
 }
 
-/// The languages an embed archetype's `<lang>` takes — the registry's
-/// embeddable formats, the same set `args.embedTypeFromName` loops over.
+/// The languages an embed archetype's `<lang>` takes — the bundled
+/// embeddable dialects, the set `args.embedTypeFromName` reads.
 const embed_langs = blk: {
     var out: []const u8 = "";
-    for (@typeInfo(fig.Embed.InnerFormat).@"enum".field_names, 0..) |f_name, i|
-        out = out ++ (if (i == 0) "" else ", ") ++ f_name;
+    for (fig.bundle.embeddable, 0..) |n, i| out = out ++ (if (i == 0) "" else ", ") ++ n;
     break :blk out;
 };
 

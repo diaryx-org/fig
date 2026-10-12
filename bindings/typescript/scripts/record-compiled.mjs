@@ -18,30 +18,30 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Format, capabilities, convert } from "../src/index.ts";
+import { capabilities, convert, formatByName } from "../src/index.ts";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "test", "fixtures");
 
-// Each fixture directory the module can select a compiled format for, and
-// its files' extension. yaml-1.1 has no selection in this binding, and the
-// canonical form is not a module option; both are held to their tables alone.
+// Each fixture directory recorded, the dialect it is read as, and its files'
+// extension. yaml-1.1 and the canonical form are held to their tables alone.
 const DIRS = [
-  ["json", Format.Json, "json"],
-  ["jsonc", Format.Jsonc, "jsonc"],
-  ["json5", Format.Json5, "json5"],
-  ["yaml", Format.Yaml, "yaml"],
-  ["toml", Format.Toml, "toml"],
-  ["zon", Format.Zon, "zon"],
-  ["fig", Format.Fig, "figl"],
-  ["ini", Format.Ini, "ini"],
-  ["dotenv", Format.Dotenv, "env"],
-  ["properties", Format.Properties, "properties"],
-  ["plist", Format.Plist, "plist"],
-  ["nestedtext", Format.Nestedtext, "nt"],
-];
+  ["json", "json", "json"],
+  ["jsonc", "jsonc", "jsonc"],
+  ["json5", "json5", "json5"],
+  ["yaml", "yaml", "yaml"],
+  ["toml", "toml", "toml"],
+  ["zon", "zon", "zon"],
+  ["fig", "fig", "figl"],
+  ["ini", "ini", "ini"],
+  ["dotenv", "dotenv", "env"],
+  ["properties", "properties", "properties"],
+  ["plist", "plist", "plist"],
+  ["nestedtext", "nestedtext", "nt"],
+].map(([dir, name, ext]) => [dir, formatByName(name), ext]);
 
-for (const [, format] of DIRS) {
-  if (!capabilities(format).read) {
+const json = formatByName("json");
+for (const [, format] of [...DIRS, [null, json]]) {
+  if (format === null || !capabilities(format).read) {
     console.error("record-compiled: this module does not compile every format in; build it with FIG_WASM_LANGUAGES=all first");
     process.exit(1);
   }
@@ -62,7 +62,7 @@ for (const [dir, format, ext] of DIRS) {
     const stem = join(fixtures, dir, file.slice(0, -(ext.length + 1)));
     const source = readFileSync(join(fixtures, dir, file), "utf8");
     writeFileSync(`${stem}.printed`, attempt(() => convert(source, format, format)));
-    writeFileSync(`${stem}.converted`, attempt(() => convert(source, format, Format.Json)));
+    writeFileSync(`${stem}.converted`, attempt(() => convert(source, format, json)));
     n++;
   }
 }

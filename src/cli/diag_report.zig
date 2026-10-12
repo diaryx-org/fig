@@ -403,15 +403,13 @@ fn reportMaterializeErrorImpl(term: *Io.Terminal, err: fig.Materialize.Error, do
 /// it). Read straight off the format registry, which is also what
 /// `edit_ops.route` acts on — so the note printed here and the splice the user
 /// actually got cannot describe two different things.
-const SpliceStyle = fig.Language.SpliceStyle;
+const SpliceStyle = fig.Runtime.manifest.SpliceStyle;
 
 fn spliceStyle(format: Format) SpliceStyle {
-    @setEvalBranchQuota(30_000);
     return switch (format) {
         // Neither has an in-place editor, so no edit text ever reaches here.
         .canonical, .gron => .literal,
         _ => if (types.runtimeEntry(format)) |e| e.splice else .literal,
-        inline else => |f| comptime fig.Language.entryFor(@tagName(f)).splice,
     };
 }
 

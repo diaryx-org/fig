@@ -23,10 +23,6 @@ pub const Language = struct {
     }
     pub const print = zon.Printer.print;
     pub const printNode = zon.Printer.printNode;
-    /// Parse straight to a core AST with no `Document` around it — what
-    /// `deserialize.zig` maps onto a Zig type. Optional `Language` decl,
-    /// required exactly of a language with a `deserializable` dialect row.
-    pub const parseAbstract = zon.Parser.parseAbstract;
 
     pub const name = "zon";
     pub const extensions: []const []const u8 = &.{"zon"};
@@ -48,12 +44,6 @@ pub const Language = struct {
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "zon",
         .prints = .{ .holds = Language.caps.lossless.?, .char_as = "number", .comments = .pretty },
-        .abi_value = 5,
-        // After the JSON family and before every markup or key/value grammar:
-        // a `.{ … }` literal is not valid JSON, and nothing looser would read it
-        // as anything but a scalar.
-        .sniff_rank = 2,
-        .deserializable = true,
         .splice = .literal,
         .empty_doc_seed = ".{}\n",
     }};

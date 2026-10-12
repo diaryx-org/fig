@@ -17,23 +17,10 @@
 //! header's FIG_ABI_VERSION macro matches the canonical ABI version compiled into
 //! `fig_abi_version()` (likewise passed in by build.zig).
 //!
-//! Finally it diffs the header's `FIG_FORMAT_*` enumerators against the format
-//! registry (`src/languages/language.zig`'s `dialects`) in both directions —
-//! name AND integer value. This is the half of the format ABI that the symbol
-//! diff above cannot see: `FigFormat` is one symbol-free `typedef enum`, so a
-//! renumbered or missing format is invisible to a prototype comparison but
-//! catastrophic to a compiled caller, which holds the integer. The registry is
-//! the third party here (the Zig enum is pinned to it by a comptime assert in
-//! src/c_api.zig), so the header, the implementation and the table can no
-//! longer drift pairwise.
-//!
-//! The same diff runs over the three hand-written mirrors of that enum in the
-//! bindings: `fig-sys`'s `FigFormat` (name and value), the TypeScript
-//! `Format` (name and value, spelled `Name: value` since it is an `as const`
-//! object rather than a TypeScript `enum`), and the Rust wrapper's `Format`
-//! (name only — its values are the `From` impl's business). Each used to
-//! drift on its own; the Rust wrapper went five formats behind before this
-//! check existed.
+//! Every format is a registered language's handle (6.0), so it also checks
+//! that no surface — fig.h, fig-sys, the TypeScript and Rust bindings —
+//! states a fixed format number again: no `FigFormat` enum, no
+//! `FIG_FORMAT_RUNTIME_BASE`, no `Format` enumeration.
 //!
 //! `FigExtKind` is held the same way: fig.h's `FIG_EXT_*` (name and value),
 //! the TypeScript `ExtKind` (name and value) and the Rust `ExtKind` (name
@@ -47,8 +34,8 @@
 //!             <fig-sys/lib.rs> <typescript/types.ts> <fig/lib.rs> <fig/value.rs>
 
 const std = @import("std");
-/// For `Language.dialects` — the format registry, which owns the canonical
-/// `FIG_FORMAT_*` values. Wired in by src/build/checks.zig.
+/// For `Runtime.vtable_version` and the core's `ExtKind`. Wired in by
+/// src/build/checks.zig.
 const fig = @import("fig");
 
 const max_file = 4 * 1024 * 1024;
@@ -125,30 +112,6 @@ pub fn main(init: std.process.Init) !void {
         fail = true;
     }
 
-    // Runtime-range drift: fig.h's FIG_FORMAT_RUNTIME_BASE and fig-sys's mirror
-    // of it must both state the registry's `runtime_abi_base`. The registry
-    // refuses a compiled-in value at or above it at comptime; this is the check
-    // that the number a caller compiles against is the number that rule uses.
-    const want_base: i64 = fig.Language.runtime_abi_base;
-    const header_base = macroInt(header, "FIG_FORMAT_RUNTIME_BASE") orelse return error.MissingRuntimeBaseMacro;
-    if (@as(i64, header_base) != want_base) {
-        if (!fail) std.debug.print("abi-check: FAIL\n", .{});
-        std.debug.print(
-            "  runtime-range drift: fig.h FIG_FORMAT_RUNTIME_BASE is {d} but the format registry's runtime_abi_base is {d}\n",
-            .{ header_base, want_base },
-        );
-        fail = true;
-    }
-    const sys_base = rustConstInt(sys_src, "FIG_FORMAT_RUNTIME_BASE") orelse return error.MissingRuntimeBaseConst;
-    if (sys_base != want_base) {
-        if (!fail) std.debug.print("abi-check: FAIL\n", .{});
-        std.debug.print(
-            "  runtime-range drift: fig-sys FIG_FORMAT_RUNTIME_BASE is {d} but the format registry's runtime_abi_base is {d}\n",
-            .{ sys_base, want_base },
-        );
-        fail = true;
-    }
-
     // Vtable-version drift: fig.h's FIG_LANGUAGE_VTABLE_VERSION is what a host
     // writes into a FigLanguageVTable, and the registry refuses any other
     // value, so the macro and `runtime.vtable_version` must agree.
@@ -172,19 +135,21 @@ pub fn main(init: std.process.Init) !void {
         fail = true;
     }
 
-    // Format-enum drift: fig.h's FIG_FORMAT_* enumerators must match the format
-    // registry name-for-name and value-for-value — and so must each binding's
-    // mirror of them.
-    const formats = try parseEnumerators(arena, header, "typedef enum FigFormat", .values_required);
-    try checkFormats(arena, "fig.h", formats, .c_macro, &.{}, &fail);
-    const sys_formats = try parseEnumerators(arena, sys_src, "pub enum FigFormat", .values_required);
-    try checkFormats(arena, "fig-sys FigFormat", sys_formats, .pascal_valued, &.{}, &fail);
-    const ts_formats = try parseEnumerators(arena, ts_src, "export const Format = {", .values_required);
-    try checkFormats(arena, "TypeScript Format", ts_formats, .pascal_valued, &.{}, &fail);
-    const rust_formats = try parseEnumerators(arena, rust_src, "pub enum Format", .names_only);
-    // `Format::Runtime(RuntimeFormat)` is the one member no registry entry
-    // backs: a language registered at runtime, whose integer is per process.
-    try checkFormats(arena, "Rust Format", rust_formats, .pascal_named, &.{"Runtime(RuntimeFormat)"}, &fail);
+    // No fixed format numbers: every format is a registered language's
+    // handle (6.0), so no surface may state one again.
+    const gone = [_]struct { surface: []const u8, src: []const u8, needle: []const u8 }{
+        .{ .surface = "fig.h", .src = header, .needle = "typedef enum FigFormat" },
+        .{ .surface = "fig.h", .src = header, .needle = "#define FIG_FORMAT_RUNTIME_BASE" },
+        .{ .surface = "fig-sys", .src = sys_src, .needle = "pub enum FigFormat" },
+        .{ .surface = "fig-sys", .src = sys_src, .needle = "FIG_FORMAT_RUNTIME_BASE" },
+        .{ .surface = "TypeScript", .src = ts_src, .needle = "export const Format = {" },
+        .{ .surface = "Rust", .src = rust_src, .needle = "pub enum Format" },
+    };
+    for (gone) |g| if (std.mem.indexOf(u8, g.src, g.needle) != null) {
+        if (!fail) std.debug.print("abi-check: FAIL\n", .{});
+        std.debug.print("  {s} states `{s}`: formats are registered handles, with no fixed numbers\n", .{ g.surface, g.needle });
+        fail = true;
+    };
 
     // Extended-scalar-kind drift: fig.h's FIG_EXT_* enumerators and the two
     // binding mirrors must match the core's `ExtKind` name-for-name, and
@@ -198,7 +163,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (fail) std.process.exit(1);
     std.debug.print("abi-check: symbol diff OK ({d} symbols), version {s}, ABI v{d}\n", .{ exported.len, want_version, want_abi_int });
-    std.debug.print("abi-check: FIG_FORMAT_* enumerators OK ({d} formats) — fig.h, fig-sys, the TypeScript and Rust `Format` enums all match the format registry\n", .{formats.len});
+    std.debug.print("abi-check: no surface states a fixed format number\n", .{});
     std.debug.print("abi-check: FIG_EXT_* enumerators OK ({d} kinds) — fig.h, the TypeScript and Rust `ExtKind` enums all match the core's ExtKind\n", .{ext_kinds.len});
 }
 

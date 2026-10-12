@@ -127,23 +127,16 @@ const cases = [_]Case{
         // The row selecting `default_type` is the one every consumer reaches
         // the language by, so it carries the language's name.
         .name = "default dialect row not named after the language",
-        .dialects = ".{ .name = \"other\", .abi_value = 99, .splice = .raw, .empty_doc_seed = \"\" }",
+        .dialects = ".{ .name = \"other\", .splice = .raw, .empty_doc_seed = \"\" }",
         .expect = "which must be named after the language",
     },
     .{
         .name = "two dialect rows with one name",
-        .dialects = ".{ .name = \"fixture\", .abi_value = 99, .splice = .raw, .empty_doc_seed = \"\" }," ++
-            " .{ .name = \"fixture\", .abi_value = 98, .splice = .raw, .empty_doc_seed = \"\" }",
+        .dialects = ".{ .name = \"fixture\", .splice = .raw, .empty_doc_seed = \"\" }," ++
+            " .{ .name = \"fixture\", .splice = .raw, .empty_doc_seed = \"\" }",
         .expect = "declares two dialects named 'fixture'",
     },
 
-    .{
-        // `deserialize.zig` parses a deserializable dialect through the
-        // language's `parseAbstract`, so the row and the decl are a pair.
-        .name = "deserializable dialect without parseAbstract",
-        .dialects = ".{ .name = \"fixture\", .abi_value = 99, .deserializable = true, .splice = .raw, .empty_doc_seed = \"\" }",
-        .expect = "marks dialect 'fixture' deserializable but declares no parseAbstract",
-    },
 
     // ---- coherence rules (§4 job 3) ----
     .{
@@ -237,7 +230,7 @@ fn buildProbe(allocator: std.mem.Allocator, case: Case) ![]u8 {
     // One row, named after the language, selecting its (only) `Type`. The
     // ABI value is arbitrary: the fixture is never in the real registry, so
     // nothing cross-checks it.
-    const default_dialects = ".{ .name = \"fixture\", .abi_value = 99, .splice = .raw, .empty_doc_seed = \"\" }";
+    const default_dialects = ".{ .name = \"fixture\", .splice = .raw, .empty_doc_seed = \"\" }";
 
     var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(allocator);
@@ -287,14 +280,13 @@ fn buildProbe(allocator: std.mem.Allocator, case: Case) ![]u8 {
 ///
 /// The declarations are the fixture's own — its name, extension, caps,
 /// dialect row and syntax are nothing the tree has — while the parser and
-/// printer are borrowed from dotenv through `Language.moduleFor`, the
+/// printer are borrowed from dotenv through `fig.bundle.module`, the
 /// ungated route to a language's module, so the probe has a real grammar to
 /// edit without shipping one. dotenv declares no hooks, so every operation
 /// runs the generic engine, which is exactly the surface an out-of-tree
 /// format without hooks would be relying on. `build_options` still gates
 /// every real format off (see `options_src`), so the fixture is the only
-/// `Language` in the compile and cannot be reached through any registry
-/// enum — which the test also checks.
+/// `Language` in the compile.
 fn buildDrivenProbe(allocator: std.mem.Allocator) ![]u8 {
     var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(allocator);
@@ -302,7 +294,7 @@ fn buildDrivenProbe(allocator: std.mem.Allocator) ![]u8 {
         \\const std = @import("std");
         \\const fig = @import("fig");
         \\const language = fig.Language;
-        \\const borrowed = language.moduleFor("dotenv");
+        \\const borrowed = fig.bundle.module("dotenv");
         \\
         \\pub const Language = struct {
         \\    pub const Type = borrowed.Type;
@@ -319,7 +311,7 @@ fn buildDrivenProbe(allocator: std.mem.Allocator) ![]u8 {
         \\    pub const extensions: []const []const u8 = &.{"fx"};
         \\    pub const caps: language.Caps = .{ .read = true, .edit = true, .serialize = true, .max_mapping_depth = 0 };
         \\    pub const dialects: []const language.Dialect(@This()) = &.{
-        \\        .{ .name = "fixture", .abi_value = 99, .sniff_rank = 200, .splice = .raw, .empty_doc_seed = "" },
+        \\        .{ .name = "fixture", .splice = .raw, .empty_doc_seed = "" },
         \\    };
         \\    pub fn syntax(t: Type) language.Syntax {
         \\        return borrowed.Language.syntax(t);
@@ -328,8 +320,6 @@ fn buildDrivenProbe(allocator: std.mem.Allocator) ![]u8 {
         \\
         \\comptime {
         \\    language.validate(Language);
-        \\    // Out of tree means out of the registry: no derived enum names it.
-        \\    if (@hasField(fig.Serialize.SerializeFormat, "fixture")) @compileError("the fixture leaked into the registry");
         \\}
         \\
         \\test "an out-of-tree Language drives Editor end to end" {

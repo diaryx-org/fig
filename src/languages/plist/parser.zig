@@ -622,7 +622,7 @@ fn expectJson(src: []const u8, expected: []const u8) !void {
     defer doc.deinit(testing.allocator);
     var buf: [2048]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try @import("../../serialize.zig").serialize(&doc.ast, &w, .json);
+    try @import("../json/printer.zig").print(&w, &doc.ast, .{});
     try testing.expectEqualStrings(expected, w.buffered());
 }
 

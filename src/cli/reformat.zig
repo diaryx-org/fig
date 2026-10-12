@@ -36,55 +36,15 @@ pub fn reformatSlice(
     }
 
     var reports: parse_dispatch.Reports = .{};
-    const doc = parse_dispatch.parseSliceAs(format, .{}, allocator, content, false, &reports) catch |err| {
+    const doc = parse_dispatch.parseSliceAs(format, allocator, content, &reports) catch |err| {
         try reports.reportDiagnostics(term, content, file_path);
         return err;
     };
     try reports.reportWarnings(term, content, file_path, quiet, strict);
 
-    const diag_target: fig.Runtime.Target = if (types.runtimeEntry(format)) |e|
-        .{ .runtime = e }
-    else
-        .{ .compiled = types.toSerializeFormat(format) orelse unreachable }; // gron rejected up front above
+    const diag_target = types.toTarget(format) orelse unreachable; // gron rejected up front above
     try parse_dispatch.reportLoss(allocator, term, &doc.ast, doc.ast.root, diag_target, serialize, false, quiet, strict);
-
-    const target: fig.Serialize.SerializeFormat = switch (diag_target) {
-        .compiled => |f| f,
-        .runtime => |e| {
-            var out: std.Io.Writer.Allocating = .init(allocator);
-            defer out.deinit();
-            parse_dispatch.printRuntime(allocator, &out.writer, e, &doc.ast, doc.ast.root, serialize, false) catch |err| switch (err) {
-                error.OutOfMemory => return err,
-                else => |x| diag_report.reportRuntimePrintError(term, x),
-            };
-            return out.toOwnedSlice();
-        },
-    };
-
-    var out: std.Io.Writer.Allocating = .init(allocator);
-    defer out.deinit();
-    if (parse_dispatch.nullStripTarget(target)) |native| {
-        // Same lossy-strip-then-print path `get` uses for a lossy target with
-        // no null (TOML, by its own `caps.lossless`): an unrepresentable
-        // value is dropped up front (already reported above) rather than
-        // aborting mid-print.
-        const result = try fig.Lossless.lossyStrip(allocator, &doc.ast, doc.ast.root, native);
-        if (result.ast) |stripped| try fig.Serialize.serializeWith(&stripped, &out.writer, target, serialize);
-    } else if (parse_dispatch.flatStripDepth(target)) |depth| {
-        // `fmt` never converts format (always reads and writes the same one),
-        // so — unlike `convertSlice`'s twin below — there's no `--lossless` to
-        // gate this on: a value already unrepresentable in the source can only
-        // have gotten there via a lossless-envelope decode from a PRIOR
-        // conversion, and re-emitting the same format always strips it again.
-        const result = try fig.FlatStrip.lossyStrip(allocator, &doc.ast, doc.ast.root, depth);
-        if (result.ast) |stripped| try fig.Serialize.serializeWith(&stripped, &out.writer, target, serialize);
-    } else {
-        fig.Serialize.serializeWith(&doc.ast, &out.writer, target, serialize) catch |err| switch (err) {
-            error.UnrepresentableRoot => diag_report.reportUnrepresentableRoot(term),
-            else => |e| diag_report.reportSerializeError(term, e),
-        };
-    }
-    return out.toOwnedSlice();
+    return printTo(allocator, term, diag_target, &doc.ast, serialize, false);
 }
 
 /// Parse `content` as `from` and re-emit it as `to` — `convert`'s core, and the
@@ -119,7 +79,7 @@ pub fn convertSlice(
     }
 
     var reports: parse_dispatch.Reports = .{};
-    const doc = parse_dispatch.parseSliceAs(from, .{}, allocator, content, false, &reports) catch |err| {
+    const doc = parse_dispatch.parseSliceAs(from, allocator, content, &reports) catch |err| {
         try reports.reportDiagnostics(term, content, file_path);
         return err;
     };
@@ -133,11 +93,10 @@ pub fn convertSlice(
     const base_ast = try parse_dispatch.materializeFor(allocator, term, from, to, &doc, file_path, whole_file, if (lax_tags) .lax else .strict);
 
     const ast: *const fig.AST = if (lossless and !keeps_references) blk: {
-        // `to` is never `.gron` here (rejected up front above), so it always
-        // has a `SerializeFormat` counterpart, whose language declares what
-        // it holds — see `manifest.Caps.lossless` for the per-format
-        // rationale (JSON5 reuse, canonical/fig decode-only, INI/dotenv/
-        // properties/plist/NestedText's lack of an envelope).
+        // `to` is never `.gron` here (rejected up front above); its language
+        // declares what it holds — see `manifest.Caps.lossless` for the
+        // per-format rationale (JSON5 reuse, canonical/fig decode-only,
+        // INI/dotenv/properties/plist/NestedText's lack of an envelope).
         const maybe_native: ?fig.Lossless.NativeKinds = parse_dispatch.nativeForFormat(to);
         const decoded = try allocator.create(fig.AST);
         decoded.* = try fig.Lossless.decode(allocator, base_ast);
@@ -147,48 +106,24 @@ pub fn convertSlice(
         break :blk encoded;
     } else base_ast;
 
-    const diag_target: fig.Runtime.Target = if (types.runtimeEntry(to)) |e|
-        .{ .runtime = e }
-    else
-        .{ .compiled = types.toSerializeFormat(to) orelse unreachable }; // gron rejected up front above
+    const diag_target = types.toTarget(to) orelse unreachable; // gron rejected up front above
     try parse_dispatch.reportLoss(allocator, term, ast, ast.root, diag_target, serialize, lossless, quiet, strict);
+    return printTo(allocator, term, diag_target, ast, serialize, lossless);
+}
 
-    const target: fig.Serialize.SerializeFormat = switch (diag_target) {
-        .compiled => |f| f,
-        .runtime => |e| {
-            var out: std.Io.Writer.Allocating = .init(allocator);
-            defer out.deinit();
-            parse_dispatch.printRuntime(allocator, &out.writer, e, ast, ast.root, serialize, lossless) catch |err| switch (err) {
-                error.OutOfMemory => return err,
-                else => |x| diag_report.reportRuntimePrintError(term, x),
-            };
-            return out.toOwnedSlice();
-        },
-    };
-
-    const flat_strip_depth: ?usize = if (!lossless) parse_dispatch.flatStripDepth(target) else null;
-
+/// Print `ast` whole as `target`: the oracle form as it stands, a language
+/// through its vtable after the lossy strips its declarations ask for
+/// (`parse_dispatch.printRuntime`). A refusal is reported and exits.
+fn printTo(allocator: std.mem.Allocator, term: *Io.Terminal, target: fig.Serialize.Target, ast: *const fig.AST, serialize: fig.AST.SerializeOptions, lossless: bool) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
-    if (if (!lossless) parse_dispatch.nullStripTarget(target) else null) |native| {
-        // Same lossy-strip-then-print path `get` uses for a lossy target with
-        // no null (TOML, by its own `caps.lossless`): an unrepresentable
-        // value is dropped up front (already reported above) rather than
-        // aborting mid-print.
-        const result = try fig.Lossless.lossyStrip(allocator, ast, ast.root, native);
-        if (result.ast) |stripped| try fig.Serialize.serializeWith(&stripped, &out.writer, target, serialize);
-    } else if (flat_strip_depth) |depth| {
-        // A flat format (by its own `caps.max_mapping_depth`): same idea as
-        // TOML's null-stripping above, but depth-based (see
-        // `fig.FlatStrip`'s module doc); gated on `!lossless` for the same
-        // reason `get`'s twin path is — see there.
-        const result = try fig.FlatStrip.lossyStrip(allocator, ast, ast.root, depth);
-        if (result.ast) |stripped| try fig.Serialize.serializeWith(&stripped, &out.writer, target, serialize);
-    } else {
-        fig.Serialize.serializeWith(ast, &out.writer, target, serialize) catch |err| switch (err) {
-            error.UnrepresentableRoot => diag_report.reportUnrepresentableRoot(term),
-            else => |e| diag_report.reportSerializeError(term, e),
-        };
+    switch (target) {
+        .canonical => fig.Serialize.serializeWith(ast, &out.writer, .canonical, serialize) catch |err|
+            diag_report.reportSerializeError(term, err),
+        .language => |e| parse_dispatch.printRuntime(allocator, &out.writer, e, ast, ast.root, serialize, lossless) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => |x| diag_report.reportRuntimePrintError(term, x),
+        },
     }
     return out.toOwnedSlice();
 }

@@ -2112,11 +2112,10 @@ test "a splice fragment keeps a container in block unless the caller asks for fl
     defer ast.deinit();
     var block: Writer.Allocating = .init(std.testing.allocator);
     defer block.deinit();
-    const Serialize = @import("../../serialize.zig");
-    try Serialize.serializeFragmentWith(&ast, &block.writer, .fig, .{ .splice = true, .width = 1 });
+    try printFragment(&block.writer, &ast, .{ .splice = true, .width = 1 });
     try std.testing.expect(std.mem.indexOfScalar(u8, block.written(), '{') == null);
     var flow: Writer.Allocating = .init(std.testing.allocator);
     defer flow.deinit();
-    try Serialize.serializeFragmentWith(&ast, &flow.writer, .fig, .{ .splice = true, .flow = true });
+    try printFragment(&flow.writer, &ast, .{ .splice = true, .flow = true });
     try std.testing.expect(std.mem.startsWith(u8, flow.written(), "{"));
 }

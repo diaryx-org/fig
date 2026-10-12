@@ -321,9 +321,20 @@ const language = {
     kv_sep: ": ",
     empty_map_literal: "{}",
   },
-  // The compiled format's extension: where the format is compiled out
-  // and this stands in for it, the extension reaches it.
-  dialects: [{ name: "json", extensions: ["json"], splice: "escaped", empty_doc_seed: "{}\n", prints: { holds: { null: true }, char_as: "number", number_special_as: "quoted string", comments: "never" } }],
+  // The extension the Zig language claims: a file by that name reaches
+  // whichever of the two is registered.
+  dialects: [
+    {
+      name: "json",
+      extensions: ["json"],
+      splice: "escaped",
+      empty_doc_seed: "{}\n",
+      prints: { holds: { null: true }, char_as: "number", number_special_as: "quoted string", comments: "never" },
+      // How JSON is written embedded in a host file — the compiled
+      // format's spellings, which embedding finds it by.
+      embed: { fence_tag: "json", frontmatter: "---json", script_mime: "application/json", script_mime_aliases: ["application/ld+json"], code_class: "language-json" },
+    },
+  ],
   samples: ['{"a": 1, "b": [true, null, "s"], "c": {"d": 2.5}}\n', "[]\n"],
   // A key's name as JSON writes a key: quoted and escaped, as strict JSON requires.
   renderers: ["key_name"],

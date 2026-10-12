@@ -290,33 +290,19 @@ pub fn getCommentFromEmbed(
     // bytes the parser saw, so comments read correctly through the codec.
     const inner = embedded.decoded.text;
 
-    // Keyed on the archetype's inner FORMAT, not the archetype itself, so every
-    // archetype sharing a format (`---`/endmatter/```yaml ⇒ YAML, `;;;`/```json
-    // ⇒ JSON, `+++`/```toml ⇒ TOML) routes to the same reader. The reader
-    // itself is the registry's — the same `Lang`/`dialect` pair `route` uses
-    // for a whole file of that format. (No `caps.edit` test, unlike `route`:
-    // every language in tree is editable, and `Embed.InnerFormat`'s own
-    // membership assert pins which of them have an embedded spelling. So
-    // every format reachable here is editable.)
-    return switch (fig.Embed.innerFormat(embed_type)) {
-        inline else => |f| {
-            const d = comptime fig.Language.entryFor(@tagName(f));
-            if (comptime d.Lang == void) {
-                const e = try standInEditor(@field(Format, @tagName(f)));
-                return getComment(fig.Runtime.Language, allocator, inner, path, inline_comment, e.typeOf());
-            }
-            // Strict JSON frontmatter has no comment syntax, so a read here
-            // finds nothing — the editor's own answer, not a special case.
-            return getComment(d.Lang, allocator, inner, path, inline_comment, d.dialect);
-        },
-    };
+    // Keyed on the archetype's inner language, not the archetype itself, so
+    // every archetype sharing one (`---`/endmatter/```yaml ⇒ YAML, `;;;`/
+    // ```json ⇒ JSON, `+++`/```toml ⇒ TOML) routes to the same reader. Strict
+    // JSON frontmatter has no comment syntax, so a read finds nothing — the
+    // editor's own answer, not a special case.
+    const e = try innerEditor(embed_type);
+    return getComment(fig.Runtime.Language, allocator, inner, path, inline_comment, e.typeOf());
 }
 
-/// The registered language standing in for `f`, a format this build
-/// compiled out, when it can edit: an embedded region in a compiled-out
-/// format is edited through it (`languages.standIn`).
-fn standInEditor(f: Format) !*const fig.Runtime.Entry {
-    const e = types.runtimeEntry(languages.standIn(f)) orelse return error.FormatDisabled;
+/// The registered language an embedded region is written in, when it can
+/// edit.
+fn innerEditor(embed_type: fig.Embed.Type) !*const fig.Runtime.Entry {
+    const e = fig.Embed.innerFormat(embed_type) orelse return error.FormatDisabled;
     if (!e.language.caps.edit) return error.FormatNotEditable;
     return e;
 }
@@ -368,22 +354,11 @@ pub fn applyToEmbed(
     const decoded = try fig.Embed.decodeForParse(allocator, inner, codec);
     defer decoded.deinit(allocator);
 
-    // Keyed on the archetype's inner FORMAT, not the archetype itself: a fenced
-    // ```yaml block edits identically to `---` YAML, `+++`/```toml to TOML, etc.
-    // The per-format facts are `route`'s, read from the same registry entries:
-    // which language module and dialect to reparse under, and the format a
-    // value argument is rendered into (`renderEdit`).
-    const edited_decoded = switch (fig.Embed.innerFormat(embed_type)) {
-        inline else => |f| blk: {
-            const d = comptime fig.Language.entryFor(@tagName(f));
-            if (comptime d.Lang == void) {
-                const format = languages.standIn(@field(Format, @tagName(f)));
-                const e = try standInEditor(format);
-                break :blk try applyValueEdit(fig.Runtime.Language, allocator, decoded.text, path, text, value, op, format, e.typeOf());
-            }
-            break :blk try applyValueEdit(d.Lang, allocator, decoded.text, path, text, value, op, @field(Format, @tagName(f)), d.dialect);
-        },
-    };
+    // Keyed on the archetype's inner language, not the archetype itself: a
+    // fenced ```yaml block edits identically to `---` YAML, `+++`/```toml to
+    // TOML, etc.
+    const e = try innerEditor(embed_type);
+    const edited_decoded = try applyValueEdit(fig.Runtime.Language, allocator, decoded.text, path, text, value, op, types.runtimeFormat(e), e.typeOf());
     defer allocator.free(edited_decoded);
     const edited_inner = try fig.Embed.reencodeEdited(allocator, codec, inner, decoded, edited_decoded);
     defer allocator.free(edited_inner);
@@ -464,7 +439,6 @@ pub fn emptyDocSeed(format: Format) ?[]const u8 {
         // projection; neither is a stored format anyone creates from scratch.
         .canonical, .gron => null,
         _ => if (types.runtimeEntry(format)) |e| e.empty_doc_seed else null,
-        inline else => |f| comptime fig.Language.entryFor(@tagName(f)).empty_doc_seed,
     };
 }
 
@@ -536,18 +510,6 @@ pub fn route(
                 .get_comment => |g| return getCommentFromFile(fig.Runtime.Language, allocator, io, file, g.path, g.inline_comment, e.typeOf()),
                 .apply => |ap| {
                     try applyToFile(fig.Runtime.Language, allocator, io, file, ap.path, ap.text, ap.value, ap.op, format, e.typeOf());
-                    return null;
-                },
-            }
-        },
-        inline else => |f| {
-            const d = comptime fig.Language.entryFor(@tagName(f));
-            if (comptime d.Lang == void) return error.FormatDisabled;
-            if (comptime !d.Lang.caps.edit) return error.FormatNotEditable;
-            switch (req) {
-                .get_comment => |g| return getCommentFromFile(d.Lang, allocator, io, file, g.path, g.inline_comment, d.dialect),
-                .apply => |ap| {
-                    try applyToFile(d.Lang, allocator, io, file, ap.path, ap.text, ap.value, ap.op, format, d.dialect);
                     return null;
                 },
             }
@@ -893,7 +855,7 @@ test "applyEdit insert_key spells the key as the format does: `.name` in ZON, qu
     if (comptime build_options.lang_json) {
         const J = fig.bundle.Language("json");
         const dia = comptime fig.bundle.dialect("json").dialect;
-        const j = try renderEdit(a, "v", try figValue(a, "v"), .{ .insert_key = "k\"q" }, .json, .natural);
+        const j = try renderEdit(a, "v", try figValue(a, "v"), .{ .insert_key = "k\"q" }, types.mustNamed("json"), .natural);
         const out = try applyEdit(J, a, "{\"a\": 1}", &.{}, j.text, j.op, dia);
         try t.expectEqualStrings("{\"a\": 1, \"k\\\"q\": \"v\"}", out);
     }
@@ -919,7 +881,7 @@ test "applyEdit insert_key refuses a key that already exists, and does not blame
     if (comptime build_options.lang_json) {
         const J = fig.bundle.Language("json");
         const dia = comptime fig.bundle.dialect("json").dialect;
-        const j = try renderEdit(a, "x", try figValue(a, "x"), .{ .insert_key = "s" }, .json, .natural);
+        const j = try renderEdit(a, "x", try figValue(a, "x"), .{ .insert_key = "s" }, types.mustNamed("json"), .natural);
         try t.expectError(error.DuplicateKey, applyEdit(J, a, "{\"s\":\"hi\"}", &.{}, j.text, j.op, dia));
     }
     if (comptime build_options.lang_ini) {
@@ -964,14 +926,14 @@ test "applyToEmbed refuses a new leading block in front of another archetype's f
 
 test "emptyDocSeed: every seed is the byte string the registry declares" {
     const t = std.testing;
-    try t.expectEqualStrings("{}\n", emptyDocSeed(.json).?);
-    try t.expectEqualStrings("{}\n", emptyDocSeed(.jsonc).?);
-    try t.expectEqualStrings("{}\n", emptyDocSeed(.json5).?);
-    try t.expectEqualStrings(".{}\n", emptyDocSeed(.zon).?);
-    try t.expectEqualStrings("<dict>\n</dict>\n", emptyDocSeed(.plist).?);
+    try t.expectEqualStrings("{}\n", emptyDocSeed(types.mustNamed("json")).?);
+    try t.expectEqualStrings("{}\n", emptyDocSeed(types.mustNamed("jsonc")).?);
+    try t.expectEqualStrings("{}\n", emptyDocSeed(types.mustNamed("json5")).?);
+    try t.expectEqualStrings(".{}\n", emptyDocSeed(types.mustNamed("zon")).?);
+    if (types.named("plist")) |plist| try t.expectEqualStrings("<dict>\n</dict>\n", emptyDocSeed(plist).?);
     // An empty file already parses as an empty (but present) root mapping for
     // all of these, so the first key can just be inserted into it.
-    for ([_]Format{ .yaml, .toml, .fig, .dotenv, .properties, .ini, .nestedtext }) |f|
+    for ([_]Format{ types.mustNamed("yaml"), types.mustNamed("toml"), types.mustNamed("fig"), types.mustNamed("dotenv"), types.mustNamed("properties"), types.mustNamed("ini"), types.mustNamed("nestedtext") }) |f|
         try t.expectEqualStrings("", emptyDocSeed(f).?);
     // No empty-document form: a from-scratch `set` is refused before a file
     // lands on disk.
@@ -994,15 +956,15 @@ test "renderEdit spells a value as the format does and leaves a key a name, a de
     const a = arena.allocator();
 
     // The key stays a name: `applyOp` spells it through the language's `renderKeyName`.
-    const ins = try renderEdit(a, "v", try figValue(a, "v"), .{ .insert_key = "k" }, .json, .natural);
+    const ins = try renderEdit(a, "v", try figValue(a, "v"), .{ .insert_key = "k" }, types.mustNamed("json"), .natural);
     try t.expectEqualStrings("\"v\"", ins.text);
     try t.expectEqualStrings("k", ins.op.insert_key);
 
     // A number is a number in JSON too; it used to arrive as `"5"`.
-    const num = try renderEdit(a, "5", try figValue(a, "5"), .append_seq, .json, .natural);
+    const num = try renderEdit(a, "5", try figValue(a, "5"), .append_seq, types.mustNamed("json"), .natural);
     try t.expectEqualStrings("5", num.text);
 
-    const del = try renderEdit(a, "", .{}, .delete_key, .json, .natural);
+    const del = try renderEdit(a, "", .{}, .delete_key, types.mustNamed("json"), .natural);
     try t.expectEqualStrings("", del.text);
     try t.expectEqual(EditOp.delete_key, del.op);
 
@@ -1011,7 +973,7 @@ test "renderEdit spells a value as the format does and leaves a key a name, a de
     var term: Io.Terminal = .{ .writer = &sink.writer, .mode = .no_color };
     const raw_items = [_][]const u8{ "x", "true" };
     const items = [_]value_arg.Value{ try value_arg.read(a, &term, "x", .fig), try value_arg.read(a, &term, "true", .fig) };
-    const sq = try renderEdit(a, "", .{ .items = &items }, .{ .set_sequence = &raw_items }, .json, .natural);
+    const sq = try renderEdit(a, "", .{ .items = &items }, .{ .set_sequence = &raw_items }, types.mustNamed("json"), .natural);
     try t.expectEqualStrings("\"x\"", sq.op.set_sequence[0]);
     try t.expectEqualStrings("true", sq.op.set_sequence[1]);
 }
@@ -1037,28 +999,28 @@ test "applyEdit performs the structural ops on JSON5 via the CLI's render+dialec
     // insert_key quotes the new key and writes the value as the number it
     // is (unquoted keys elsewhere in the document are untouched).
     {
-        const j = try renderEdit(a, "8080", try figValue(a, "8080"), .{ .insert_key = "port" }, .json5, .natural);
+        const j = try renderEdit(a, "8080", try figValue(a, "8080"), .{ .insert_key = "port" }, types.mustNamed("json5"), .natural);
         const out = try applyEdit(J, a, "{ host: 'localhost' }", &.{}, j.text, j.op, dia);
         try t.expectEqualStrings("{ host: 'localhost', \"port\": 8080 }", out);
     }
     // replace_value (the `replace` action): a string stays one.
     {
         var p = [_]fig.AST.PathSegment{.{ .key = "host" }};
-        const j = try renderEdit(a, "example.org", try figValue(a, "example.org"), .replace_value, .json5, .natural);
+        const j = try renderEdit(a, "example.org", try figValue(a, "example.org"), .replace_value, types.mustNamed("json5"), .natural);
         const out = try applyEdit(J, a, "{ host: 'localhost', port: 8080 }", &p, j.text, j.op, dia);
         try t.expectEqualStrings("{ host: \"example.org\", port: 8080 }", out);
     }
     // delete_key carries no value and drops the entry outright.
     {
         var p = [_]fig.AST.PathSegment{.{ .key = "port" }};
-        const j = try renderEdit(a, "", .{}, .delete_key, .json5, .natural);
+        const j = try renderEdit(a, "", .{}, .delete_key, types.mustNamed("json5"), .natural);
         const out = try applyEdit(J, a, "{ host: 'localhost', port: 8080 }", &p, j.text, j.op, dia);
         try t.expectEqualStrings("{ host: 'localhost' }", out);
     }
     // append_seq onto a trailing-comma array doesn't double the comma.
     {
         var p = [_]fig.AST.PathSegment{.{ .key = "tags" }};
-        const j = try renderEdit(a, "3", try figValue(a, "3"), .append_seq, .json5, .natural);
+        const j = try renderEdit(a, "3", try figValue(a, "3"), .append_seq, types.mustNamed("json5"), .natural);
         const out = try applyEdit(J, a, "{ tags: [1, 2,] }", &p, j.text, j.op, dia);
         try t.expectEqualStrings("{ tags: [1, 2, 3,] }", out);
     }
@@ -1079,27 +1041,27 @@ test "emptyDocSeed: seedable formats round-trip a first `set`, others refuse" {
     var path = [_]fig.AST.PathSegment{.{ .key = "hello" }};
 
     // YAML: empty seed, bare value.
-    const yaml = try applyEdit(fig.bundle.Language("yaml"), a, emptyDocSeed(.yaml).?, &path, "world", .set, fig.bundle.Language("yaml").default_type);
+    const yaml = try applyEdit(fig.bundle.Language("yaml"), a, emptyDocSeed(types.mustNamed("yaml")).?, &path, "world", .set, fig.bundle.Language("yaml").default_type);
     try t.expectEqualStrings("hello: world\n", yaml);
 
     // JSON: `{}` seed, value rendered through the JSON path like the CLI does.
-    const jv = try renderEdit(a, "world", try figValue(a, "world"), .set, .json, .natural);
-    const json = try applyEdit(fig.bundle.Language("json"), a, emptyDocSeed(.json).?, &path, jv.text, jv.op, .JSON);
+    const jv = try renderEdit(a, "world", try figValue(a, "world"), .set, types.mustNamed("json"), .natural);
+    const json = try applyEdit(fig.bundle.Language("json"), a, emptyDocSeed(types.mustNamed("json")).?, &path, jv.text, jv.op, .JSON);
     try t.expect(std.mem.indexOf(u8, json, "\"hello\"") != null);
     try t.expect(std.mem.indexOf(u8, json, "\"world\"") != null);
 
     // JSON5: same `{}` seed as JSON, reparsed under the JSON5 dialect — its
     // in-place edit is no longer gated off (see the dedicated JSON5 test above).
-    const json5 = try applyEdit(fig.bundle.Language("json"), a, emptyDocSeed(.json5).?, &path, jv.text, jv.op, comptime fig.bundle.dialect("json5").dialect);
+    const json5 = try applyEdit(fig.bundle.Language("json"), a, emptyDocSeed(types.mustNamed("json5")).?, &path, jv.text, jv.op, comptime fig.bundle.dialect("json5").dialect);
     try t.expect(std.mem.indexOf(u8, json5, "\"hello\"") != null);
     try t.expect(std.mem.indexOf(u8, json5, "\"world\"") != null);
 
     // TOML: empty seed, value already a TOML literal.
-    const toml = try applyEdit(fig.bundle.Language("toml"), a, emptyDocSeed(.toml).?, &path, "\"world\"", .set, fig.bundle.Language("toml").default_type);
+    const toml = try applyEdit(fig.bundle.Language("toml"), a, emptyDocSeed(types.mustNamed("toml")).?, &path, "\"world\"", .set, fig.bundle.Language("toml").default_type);
     try t.expectEqualStrings("hello = \"world\"\n", toml);
 
     // fig: empty seed (an empty document parses as an empty map), bare value.
-    const figc = try applyEdit(fig.bundle.Language("fig"), a, emptyDocSeed(.fig).?, &path, "world", .set, fig.bundle.Language("fig").default_type);
+    const figc = try applyEdit(fig.bundle.Language("fig"), a, emptyDocSeed(types.mustNamed("fig")).?, &path, "world", .set, fig.bundle.Language("fig").default_type);
     try t.expectEqualStrings("hello = world\n", figc);
 
     // Projection formats (gron, canonical) have no empty-document form, so
@@ -1122,7 +1084,7 @@ test "emptyDocSeed: plist seeds a document a from-scratch `set` lands into" {
     const a = arena.allocator();
     const P = fig.bundle.Language("plist");
 
-    const seed = emptyDocSeed(.plist) orelse return error.TestExpectedSeed;
+    const seed = emptyDocSeed(types.mustNamed("plist")) orelse return error.TestExpectedSeed;
     // The seed alone must already be a valid plist — `createSeededFile` writes
     // it before anything reads it back.
     _ = try P.Parser.parse(a, seed, P.default_type);
@@ -1148,10 +1110,10 @@ test "applyValueEdit blames the key when the document takes no value under it" {
 
     // `bad key` is no bash identifier: `0` fares no better than `x`, so the
     // key is what was refused — not the value, as the report used to say.
-    try t.expectError(error.InvalidEditKey, applyValueEdit(D, a, "A=1\n", &.{}, "x", try figValue(a, "x"), .{ .insert_key = "bad key" }, .dotenv, dia));
+    try t.expectError(error.InvalidEditKey, applyValueEdit(D, a, "A=1\n", &.{}, "x", try figValue(a, "x"), .{ .insert_key = "bad key" }, types.mustNamed("dotenv"), dia));
     try t.expectEqual(@as(?[]const u8, null), refused_rendering);
 
     // A good key with a value the format takes lands as usual.
-    const ok = try applyValueEdit(D, a, "A=1\n", &.{}, "x", try figValue(a, "x"), .{ .insert_key = "B" }, .dotenv, dia);
+    const ok = try applyValueEdit(D, a, "A=1\n", &.{}, "x", try figValue(a, "x"), .{ .insert_key = "B" }, types.mustNamed("dotenv"), dia);
     try t.expectEqualStrings("A=1\nB=x\n", ok);
 }

@@ -2210,9 +2210,27 @@ const language = {
     line_prefix_marks: ">+",
     section_noun: "container",
   },
-  // The compiled format's extension: where the format is compiled out
-  // and this stands in for it, the extension reaches it.
-  dialects: [{ name: "fig", extensions: ["figl"], splice: "literal", empty_doc_seed: "", prints: { holds: EVERY_KIND, root_container: true } }],
+  // The extension the Zig language claims: a file by that name reaches
+  // whichever of the two is registered.
+  dialects: [
+    {
+      name: "fig",
+      extensions: ["figl"],
+      splice: "literal",
+      empty_doc_seed: "",
+      prints: { holds: EVERY_KIND, root_container: true },
+      // How fig is written embedded in a host file. The class is
+      // `language-figl` while the fence tag is `fig`.
+      embed: {
+        fence_tag: "fig",
+        fence_aliases: ["figl"],
+        frontmatter: "---fig",
+        script_mime: "application/figl",
+        script_mime_aliases: ["application/fig"],
+        code_class: "language-figl",
+      },
+    },
+  ],
   samples: ["a = 1\ndatabase\n> host = localhost\n> port = 5432\n"],
   // What follows a key: ` = value`, or a block value re-printed as a nested
   // section one marker level below the key.

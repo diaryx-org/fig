@@ -494,10 +494,8 @@ function print(_dialect, t, _options) {
 const language = {
   name: "canonical",
   caps: { read: true, serialize: true },
-  // The compiled form owns no extension — it is selected by name — and
-  // neither does fig's format registry, so this is a new format beside it
-  // rather than a stand-in; the extension is for the fixtures beside the
-  // tests.
+  // The Zig form owns no extension — it is selected by name — so the
+  // extension is for the fixtures beside the tests.
   dialects: [{ name: "canonical", extensions: ["canonical"] }],
   samples: [
     '{\n  "a": [1, ~f2, -0x1F, .5, "s\\n", null, true],\n  &x "k": @local_date "2024-01-01",\n  1: *x,\n  "e": {} // empty\n}\n',

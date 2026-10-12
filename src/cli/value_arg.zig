@@ -33,6 +33,7 @@ const types = @import("types.zig");
 const diag_report = @import("diag_report.zig");
 const parse_dispatch = @import("parse_dispatch.zig");
 const languages = @import("languages.zig");
+const args_mod = @import("args.zig");
 
 const Format = types.Format;
 const Io = std.Io;
@@ -67,17 +68,15 @@ fn readFig(allocator: std.mem.Allocator, term: *Io.Terminal, text: []const u8) !
     if (trimmed.len == 0 or trimmed.len != text.len or std.mem.indexOfAny(u8, text, "\r\n") != null)
         return .{ .tree = try stringTree(allocator, text) };
 
-    // Without the fig dialect compiled in, the language standing in for it
-    // reads the value, where there is one.
-    if (comptime fig.Language.of("fig") == void) return readFigStandIn(allocator, term, text);
-
+    // With no language for fig at all every argument is a string, the one
+    // reading that needs no parser.
+    const format = args_mod.parseFormatName("fig") orelse return .{ .tree = try stringTree(allocator, text) };
     const source = try std.mem.concat(allocator, u8, &.{ prefix, text, "\n" });
     var reports: parse_dispatch.Reports = .{};
-    const doc = parse_dispatch.parseSliceAs(.fig, .{}, allocator, source, false, &reports) catch |err| {
+    const doc = parse_dispatch.parseSliceAs(format, allocator, source, &reports) catch |err| {
         if (std.mem.indexOfScalar(u8, text, '#') != null) return .{ .tree = try stringTree(allocator, text) };
-        const d = reports.fig.diag orelse return err;
-        const P = fig.Language.entryFor("fig").Lang.Parser;
-        try diag_report.printDiag(term, text, "<value>", shift(d.offset, text), if (d.end) |e| shift(e, text) else null, "error", .red, P.describe(d.code), P.shortLabel(d.code));
+        const d = reports.diag orelse return err;
+        try diag_report.printDiag(term, text, "<value>", shift(d.offset, text), if (d.end) |e| shift(e, text) else null, "error", .red, d.message, d.short_label);
         try term.writer.print("help: this argument is read as a fig value; pass --string to take it as a string, or --raw to splice it as the file's own syntax\n", .{});
         try term.writer.flush();
         std.process.exit(2);
@@ -85,34 +84,10 @@ fn readFig(allocator: std.mem.Allocator, term: *Io.Terminal, text: []const u8) !
     // A `#` the dialect took as a comment start was part of the argument.
     if (doc.ast.node_comments.len > 0) return .{ .tree = try stringTree(allocator, text) };
 
-    const W = fig.Language.entryFor("fig").Lang.Parser.Warning;
-    for (reports.fig.warnings) |w|
-        try diag_report.printDiag(term, text, "<value>", shift(w.offset, text), if (w.end) |e| shift(e, text) else null, "warning", .yellow, W.describeWarning(w.code), W.shortLabel(w.code));
+    for (reports.warnings.items) |w|
+        try diag_report.printDiag(term, text, "<value>", shift(w.offset, text), if (w.end) |e| shift(e, text) else null, "warning", .yellow, w.message, w.short_label);
     try term.writer.flush();
 
-    var ast = doc.ast;
-    ast.root = (try ast.getValByPath(&.{.{ .key = "v" }})).id;
-    return .{ .tree = ast };
-}
-
-/// `readFig` through the language standing in for fig (`languages.standIn`)
-/// in a build without fig: its refusal is reported against the argument
-/// as the compiled dialect's is, and with no language for fig at all every
-/// argument is a string, the one reading that needs no parser.
-fn readFigStandIn(allocator: std.mem.Allocator, term: *Io.Terminal, text: []const u8) !Value {
-    const format = languages.standIn(.fig);
-    if (types.runtimeEntry(format) == null) return .{ .tree = try stringTree(allocator, text) };
-    const source = try std.mem.concat(allocator, u8, &.{ prefix, text, "\n" });
-    var reports: parse_dispatch.Reports = .{};
-    const doc = parse_dispatch.parseSliceAs(format, .{}, allocator, source, false, &reports) catch |err| {
-        if (std.mem.indexOfScalar(u8, text, '#') != null) return .{ .tree = try stringTree(allocator, text) };
-        const d = reports.runtime orelse return err;
-        try diag_report.printDiag(term, text, "<value>", shift(d.offset, text), if (d.end) |e| shift(e, text) else null, "error", .red, d.message, d.short_label);
-        try term.writer.print("help: this argument is read as a fig value; pass --string to take it as a string, or --raw to splice it as the file's own syntax\n", .{});
-        try term.writer.flush();
-        std.process.exit(2);
-    };
-    if (doc.ast.node_comments.len > 0) return .{ .tree = try stringTree(allocator, text) };
     var ast = doc.ast;
     ast.root = (try ast.getValByPath(&.{.{ .key = "v" }})).id;
     return .{ .tree = ast };
@@ -151,36 +126,28 @@ pub fn render(allocator: std.mem.Allocator, value: Value, format: Format, layout
     };
     var w: std.Io.Writer.Allocating = .init(allocator);
     defer w.deinit();
-    const one_line = layout == .flow or switch (format) {
-        .json, .jsonc, .json5 => true,
-        else => false,
-    };
+    const one_line = layout == .flow or types.is(format, "json") or types.is(format, "jsonc") or types.is(format, "json5");
     const options: fig.AST.SerializeOptions = .{
         // What the editor takes, not a document — see `SerializeOptions.splice`.
         .splice = true,
         .pretty = !one_line,
         // fig's block spellings only parse as standalone lines; a value
         // spliced after `key = ` has to be flow.
-        .flow = format == .fig,
+        .flow = types.is(format, "fig"),
     };
-    if (types.runtimeEntry(format)) |e| {
-        try fig.Runtime.printNodeWith(e, &w.writer, ast, ast.root, options);
-    } else {
-        const target: fig.Serialize.SerializeFormat = if (layout == .flow and format == .yaml)
-            .json
-        else
-            types.toSerializeFormat(format) orelse return error.UnsupportedValueTarget;
-        // Renamed, so a value the format cannot hold is never mistaken for a
-        // parse error the file raised under the same name (INI's and TOML's
-        // parsers raise `InvalidKey` on a malformed file).
-        fig.Serialize.serializeFragmentWith(ast, &w.writer, target, options) catch |err| return switch (err) {
-            error.NullUnsupported => error.UnwritableNull,
-            error.UnsupportedValue => error.UnwritableNested,
-            error.NonStringKey, error.InvalidKey => error.UnwritableKey,
-            error.NonFiniteNumber => error.UnwritableNonFinite,
-            else => err,
-        };
-    }
+    // A YAML flow site takes JSON's spelling, which every YAML reads as flow.
+    const to = if (layout == .flow and types.is(format, "yaml")) args_mod.parseFormatName("json") orelse format else format;
+    const target = types.toTarget(to) orelse return error.UnsupportedValueTarget;
+    // Renamed, so a value the format cannot hold is never mistaken for a
+    // parse error the file raised under the same name (INI's and TOML's
+    // parsers raise `InvalidKey` on a malformed file).
+    fig.Serialize.serializeFragmentWith(ast, &w.writer, target, options) catch |err| return switch (err) {
+        error.NullUnsupported => error.UnwritableNull,
+        error.UnsupportedValue => error.UnwritableNested,
+        error.NonStringKey, error.InvalidKey => error.UnwritableKey,
+        error.NonFiniteNumber => error.UnwritableNonFinite,
+        else => err,
+    };
     // Every printer ends a document with a newline; a spliced value never
     // carries one (an appended flow item would land on a line of its own).
     return allocator.dupe(u8, std.mem.trimEnd(u8, w.written(), "\n"));
@@ -198,10 +165,7 @@ pub fn refuseDropped(allocator: std.mem.Allocator, value: Value, format: Format,
         .raw => return,
         .tree => |*t| t,
     };
-    const target: fig.Runtime.Target = if (types.runtimeEntry(format)) |e|
-        .{ .runtime = e }
-    else
-        .{ .compiled = types.toSerializeFormat(format) orelse return };
+    const target = types.toTarget(format) orelse return;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const dropped = try fig.Diagnostics.firstDropped(arena.allocator(), ast, ast.root, target, depth) orelse return;
@@ -240,7 +204,7 @@ test "a fig reading types what fig types and keeps the rest a string" {
         .{ "{a = 1, b = [x]}", "{\"a\":1,\"b\":[\"x\"]}" },
     };
     for (cases) |c|
-        try t.expectEqualStrings(c[1], try render(a, try read(a, &term, c[0], .fig), .json, .natural));
+        try t.expectEqualStrings(c[1], try render(a, try read(a, &term, c[0], .fig), types.mustNamed("json"), .natural));
 }
 
 test "--string and --raw take the argument as it stands" {
@@ -252,6 +216,6 @@ test "--string and --raw take the argument as it stands" {
     var sink: std.Io.Writer.Discarding = .init(&.{});
     var term: Io.Terminal = .{ .writer = &sink.writer, .mode = .no_color };
 
-    try t.expectEqualStrings("\"1.10\"", try render(a, try read(a, &term, "1.10", .string), .json, .natural));
-    try t.expectEqualStrings("[1,2", try render(a, try read(a, &term, "[1,2", .raw), .json, .natural));
+    try t.expectEqualStrings("\"1.10\"", try render(a, try read(a, &term, "1.10", .string), types.mustNamed("json"), .natural));
+    try t.expectEqualStrings("[1,2", try render(a, try read(a, &term, "[1,2", .raw), types.mustNamed("json"), .natural));
 }

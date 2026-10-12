@@ -31,9 +31,19 @@ part_of = [proposals](proposals.md)
 > language's vtable from its module; diagnostics cross the contract; and
 > every compiled language, registered through its vtable alone
 > (`-Dcontract-copies`), scores as the compiled format on every parse suite
-> and all 27,503 edit cases. Left: step 8's switch and deletions, step 9,
-> and step 6's last stage (adopting the table as the Document). Tag
-> resolution and the lexeme's value land with §4.9's rows.
+> and all 27,503 edit cases. Step 8 is under way: the compiled registry is
+> gone (`language.zig` is the Zig contract and `validate` alone); every Zig
+> language registers through its contract vtable, from `bundle.zig`, the CLI
+> at startup and the C library on first use; a format is a registered
+> dialect's handle, from 1, with no `FigFormat`, `FIG_FORMAT_*`, stand-ins,
+> `SerializeFormat` or `Detected`; a language's `--spec` versions are dialect
+> rows (`yaml-1.1`) and its embedded spellings cross the contract
+> (`FigDialectDesc.embed_*`), so `Embed` finds an inner language by
+> declaration. Left in step 8: the preset containers (they wait on step 4's
+> registered containers), the `figl` rename, the closed `KeyStyle`/
+> `CommentStyle` leftovers and the §6 check. Then step 9, and step 6's last
+> stage (adopting the table as the Document). Tag resolution and the
+> lexeme's value land with §4.9's rows.
 >
 > §8 step 1's measurements are done (2026-10-12). They settled the third
 > revision: the contract's node table becomes the `Document`'s own

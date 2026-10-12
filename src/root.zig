@@ -1,5 +1,7 @@
 //! By convention, root.zig is the root source file when making a package.
 const build_options = @import("build_options");
+/// The Zig language contract: what a Zig language module declares, and the
+/// comptime check that holds it to it.
 pub const Language = @import("languages/language.zig");
 /// A format resolved when the program runs: the contract as a vtable, the
 /// registry, and the `Language` over it. `docs/proposals/runtime-languages.md`.
@@ -11,7 +13,6 @@ pub const bundle = @import("languages/bundle.zig");
 pub const Wire = @import("languages/wire.zig");
 /// A runtime language served by the wasm module's host (`fig_host.call`).
 pub const Host = @import("languages/host.zig");
-// TODO: Language.detect(file: []const u8);
 
 pub const Editor = @import("editor.zig").Editor;
 /// Structure-aware patching: merge one document into another through the
@@ -22,7 +23,7 @@ pub const Document = @import("kit/document.zig");
 /// A `[start, end)` byte range — what `Document`'s span tables hold.
 pub const Span = @import("kit/span.zig");
 pub const AST = @import("kit/ast/ast.zig");
-/// Rendering a tree in a format, through the format registry.
+/// Rendering a tree as canonical or through a registered language.
 pub const Serialize = @import("serialize.zig");
 pub const Embed = @import("embed.zig");
 pub const Lossless = @import("lossless.zig");
@@ -45,17 +46,15 @@ pub const ParseDiagnostic = @import("kit/parse_diagnostic.zig");
 /// The canonical form: the AST's own 1:1, total, bijective text encoding — the
 /// comparison oracle and lossless serialization.
 pub const Canonical = @import("canonical/canonical.zig");
-/// The fig authoring dialect: the human-facing, hand-writable surface over the
-/// same AST. Reader + `fig fmt` printer; see src/languages/fig/DESIGN.md.
-pub const Fig = @import("languages/fig/fig.zig");
 
 /// Reflection-based deserialization into native Zig types (à la `std.json`).
 pub const deserialize = @import("deserialize.zig");
 
 test {
-    // `language.zig`'s own test block references every language module in
-    // its `slots`, and each module's `test {}` block pulls in its submodules'
-    // tests, so root names no language.
+    // `bundle.zig`'s test block references every language module, and each
+    // module's `test {}` block pulls in its submodules' tests, so root names
+    // no language.
+    _ = @import("languages/bundle.zig");
     _ = @import("languages/language.zig");
     _ = @import("languages/harness.zig");
     _ = @import("languages/runtime.zig");

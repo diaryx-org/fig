@@ -150,21 +150,8 @@ pub const Deletion = []const AST.PathSegment;
 /// (`Language.YAML.materialize`). An alias in a patch refers to an anchor in
 /// the PATCH file, which the target has never seen, so splicing one verbatim
 /// would produce a dangling reference.
-pub fn apply(
-    comptime Language: type,
-    editor: *editor_mod.Editor(Language),
-    target_format: Serialize.SerializeFormat,
-    at: []const AST.PathSegment,
-    patch: *const AST,
-    from: Id,
-    deletes: []const Deletion,
-    options: Options,
-) !Stats {
-    return applyTo(Language, editor, .{ .compiled = target_format }, at, patch, from, deletes, options);
-}
-
-/// What patch subtrees are rendered as: a compiled `SerializeFormat`, or a
-/// runtime language's entry, whose printer is reached through its vtable.
+/// What patch subtrees are rendered as: a registered language's entry,
+/// whose printer is reached through its vtable.
 pub const Target = Runtime.Target;
 
 /// `apply` for any `Target` — the one a runtime language's
@@ -371,8 +358,8 @@ fn Walker(comptime Language: type) type {
             var w = std.Io.Writer.Allocating.init(self.allocator);
             defer w.deinit();
             switch (self.target) {
-                .compiled => |f| try Serialize.serializeFragmentWith(&view, &w.writer, f, options),
-                .runtime => |e| try Runtime.printNodeWith(e, &w.writer, &view, id, options),
+                .canonical => try Serialize.serializeNodeWith(&view, &w.writer, .canonical, id, options),
+                .language => |e| try Runtime.printNodeWith(e, &w.writer, &view, id, options),
             }
             // Every printer terminates a DOCUMENT with a newline. What the
             // editor takes is a VALUE — the same text a `fig set` argument
@@ -519,36 +506,51 @@ fn childrenEqual(a: *const AST, a_first: ?Id, b: *const AST, b_first: ?Id) bool 
 
 const build_options = @import("build_options");
 
-/// Parse `source` as `Lang`, merge `patch_source` into it, and return the
-/// edited bytes. The shape every test below wants: two documents in, one
-/// document out.
+const R = Runtime.Language;
+
+fn testEntry(name: []const u8) *const Runtime.Entry {
+    return Runtime.entryByName(name).?;
+}
+
+fn testTarget(name: []const u8) Target {
+    return .{ .language = testEntry(name) };
+}
+
+fn testParse(allocator: std.mem.Allocator, name: []const u8, source: []const u8) !Document {
+    return R.Parser.parse(allocator, source, testEntry(name).typeOf());
+}
+
+fn testEditor(allocator: std.mem.Allocator, name: []const u8) editor_mod.Editor(R) {
+    return .{ .allocator = allocator, .format = testEntry(name).typeOf() };
+}
+
+/// Parse `source` as `target`, merge `patch_source` (in `patch`) into it,
+/// and return the edited bytes. The shape every test below wants: two
+/// documents in, one document out.
 fn patchForTest(
-    comptime Lang: type,
-    comptime PatchLang: type,
     allocator: std.mem.Allocator,
-    target_format: Serialize.SerializeFormat,
+    target: []const u8,
+    patch: []const u8,
     source: []const u8,
     patch_source: []const u8,
     options: Options,
 ) ![]u8 {
-    var patch_parser: PatchLang.Parser = .{ .allocator = allocator };
-    var patch_doc = try PatchLang.parse(&patch_parser, patch_source, PatchLang.default_type);
+    var patch_doc = try testParse(allocator, patch, patch_source);
     defer patch_doc.deinit(allocator);
 
-    var editor: editor_mod.Editor(Lang) = .{ .allocator = allocator, .format = Lang.default_type };
+    var editor = testEditor(allocator, target);
     try editor.init(source);
     defer editor.deinit();
 
-    _ = try apply(Lang, &editor, target_format, &.{}, &patch_doc.ast, patch_doc.ast.root, &.{}, options);
+    _ = try applyTo(R, &editor, testTarget(target), &.{}, &patch_doc.ast, patch_doc.ast.root, &.{}, options);
     return allocator.dupe(u8, editor.source.items);
 }
 
 test "a scalar patch touches only the keys it names" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const t = std.testing;
-    const Y = @import("languages/yaml/yaml.zig").Language;
 
-    const out = try patchForTest(Y, Y, t.allocator, .yaml,
+    const out = try patchForTest(t.allocator, "yaml", "yaml",
         \\name: api          # must match the DNS record
         \\replicas: 2
         \\ports: [80, 443]
@@ -571,9 +573,8 @@ test "a scalar patch touches only the keys it names" {
 test "a patch adds absent keys and recurses into shared mappings" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const t = std.testing;
-    const Y = @import("languages/yaml/yaml.zig").Language;
 
-    const out = try patchForTest(Y, Y, t.allocator, .yaml,
+    const out = try patchForTest(t.allocator, "yaml", "yaml",
         \\service:
         \\  name: api
         \\  replicas: 2
@@ -597,19 +598,17 @@ test "a patch adds absent keys and recurses into shared mappings" {
 test "a value both sides already agree on is not spliced" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const t = std.testing;
-    const Y = @import("languages/yaml/yaml.zig").Language;
 
-    var patch_parser: Y.Parser = .{ .allocator = t.allocator };
-    var patch_doc = try Y.parse(&patch_parser, "name: 'api'\nreplicas: 5\n", Y.default_type);
+    var patch_doc = try testParse(t.allocator, "yaml", "name: 'api'\nreplicas: 5\n");
     defer patch_doc.deinit(t.allocator);
 
-    var editor: editor_mod.Editor(Y) = .{ .allocator = t.allocator, .format = Y.default_type };
+    var editor = testEditor(t.allocator, "yaml");
     // The target spells the same string unquoted. Re-rendering it would be a
     // spurious diff, so an equal value is skipped entirely.
     try editor.init("name: api\nreplicas: 2\n");
     defer editor.deinit();
 
-    const stats = try apply(Y, &editor, .yaml, &.{}, &patch_doc.ast, patch_doc.ast.root, &.{}, .{});
+    const stats = try applyTo(R, &editor, testTarget("yaml"), &.{}, &patch_doc.ast, patch_doc.ast.root, &.{}, .{});
     try t.expectEqualStrings("name: api\nreplicas: 5\n", editor.source.items);
     try t.expectEqual(@as(usize, 1), stats.replaced);
     try t.expectEqual(@as(usize, 1), stats.unchanged);
@@ -619,7 +618,6 @@ test "a value both sides already agree on is not spliced" {
 test "sequence strategies: replace, append, unite" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const t = std.testing;
-    const Y = @import("languages/yaml/yaml.zig").Language;
     const target = "tags:\n- a\n- b\n";
 
     {
@@ -628,17 +626,17 @@ test "sequence strategies: replace, append, unite" {
         // patch spelled it — the AST carries no flow-vs-block memory. Scalars
         // and untouched values keep their bytes; a contributed container gets
         // the printer's house style. See this module's header.
-        const out = try patchForTest(Y, Y, t.allocator, .yaml, target, "tags: [b, c]\n", .{ .seq = .replace });
+        const out = try patchForTest(t.allocator, "yaml", "yaml", target, "tags: [b, c]\n", .{ .seq = .replace });
         defer t.allocator.free(out);
         try t.expectEqualStrings("tags:\n- b\n- c\n", out);
     }
     {
-        const out = try patchForTest(Y, Y, t.allocator, .yaml, target, "tags: [b, c]\n", .{ .seq = .append });
+        const out = try patchForTest(t.allocator, "yaml", "yaml", target, "tags: [b, c]\n", .{ .seq = .append });
         defer t.allocator.free(out);
         try t.expectEqualStrings("tags:\n- a\n- b\n- b\n- c\n", out);
     }
     {
-        const out = try patchForTest(Y, Y, t.allocator, .yaml, target, "tags: [b, c]\n", .{ .seq = .unite });
+        const out = try patchForTest(t.allocator, "yaml", "yaml", target, "tags: [b, c]\n", .{ .seq = .unite });
         defer t.allocator.free(out);
         try t.expectEqualStrings("tags:\n- a\n- b\n- c\n", out);
     }
@@ -647,12 +645,11 @@ test "sequence strategies: replace, append, unite" {
 test "an appended item lands inside a flow sequence, on its line" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const t = std.testing;
-    const Y = @import("languages/yaml/yaml.zig").Language;
 
     // The append path splices a VALUE, not a document, so the render's
     // trailing newline has to come off first — with it on, the new item lands
     // before the `]` but a line down, turning a one-line diff into two.
-    const out = try patchForTest(Y, Y, t.allocator, .yaml, "tags: [notes, zig]\n", "tags: [systems]\n", .{ .seq = .append });
+    const out = try patchForTest(t.allocator, "yaml", "yaml", "tags: [notes, zig]\n", "tags: [systems]\n", .{ .seq = .append });
     defer t.allocator.free(out);
     try t.expectEqualStrings("tags: [notes, zig, systems]\n", out);
 }
@@ -660,7 +657,6 @@ test "an appended item lands inside a flow sequence, on its line" {
 test "comment strategies decide the entry-level conflict" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const t = std.testing;
-    const Y = @import("languages/yaml/yaml.zig").Language;
     const target = "replicas: 2 # bumped for Black Friday\n";
     const patch = "# how many api pods\nreplicas: 5 # from the overlay\nregion: us-west # new\n";
 
@@ -668,17 +664,17 @@ test "comment strategies decide the entry-level conflict" {
         // `ours` decides each POSITION on its own: the target's trailing
         // comment on `replicas` stands, but it has no leading one, so the
         // patch's lands there uncontested — as does everything on the new key.
-        const out = try patchForTest(Y, Y, t.allocator, .yaml, target, patch, .{ .comments = .ours });
+        const out = try patchForTest(t.allocator, "yaml", "yaml", target, patch, .{ .comments = .ours });
         defer t.allocator.free(out);
         try t.expectEqualStrings("# how many api pods\nreplicas: 5 # bumped for Black Friday\nregion: us-west # new\n", out);
     }
     {
-        const out = try patchForTest(Y, Y, t.allocator, .yaml, target, patch, .{ .comments = .theirs });
+        const out = try patchForTest(t.allocator, "yaml", "yaml", target, patch, .{ .comments = .theirs });
         defer t.allocator.free(out);
         try t.expectEqualStrings("# how many api pods\nreplicas: 5 # from the overlay\nregion: us-west # new\n", out);
     }
     {
-        const out = try patchForTest(Y, Y, t.allocator, .yaml, target, patch, .{ .comments = .none });
+        const out = try patchForTest(t.allocator, "yaml", "yaml", target, patch, .{ .comments = .none });
         defer t.allocator.free(out);
         try t.expectEqualStrings("replicas: 5 # bumped for Black Friday\nregion: us-west\n", out);
     }
@@ -687,11 +683,9 @@ test "comment strategies decide the entry-level conflict" {
 test "a patch crosses formats, rendering in the target's syntax" {
     if (comptime !(build_options.lang_yaml and build_options.lang_toml)) return error.SkipZigTest;
     const t = std.testing;
-    const Y = @import("languages/yaml/yaml.zig").Language;
-    const T = @import("languages/toml/toml.zig").Language;
 
     // A TOML patch into a YAML target: the value arrives, spelled as YAML.
-    const out = try patchForTest(Y, T, t.allocator, .yaml,
+    const out = try patchForTest(t.allocator, "yaml", "toml",
         \\service:
         \\  name: api
         \\
@@ -716,17 +710,15 @@ test "a patch crosses formats, rendering in the target's syntax" {
 test "patching through a YAML alias is refused, not guessed at" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const t = std.testing;
-    const Y = @import("languages/yaml/yaml.zig").Language;
 
-    var patch_parser: Y.Parser = .{ .allocator = t.allocator };
-    var patch_doc = try Y.parse(&patch_parser, "worker:\n  replicas: 4\n", Y.default_type);
+    var patch_doc = try testParse(t.allocator, "yaml", "worker:\n  replicas: 4\n");
     defer patch_doc.deinit(t.allocator);
 
-    var editor: editor_mod.Editor(Y) = .{ .allocator = t.allocator, .format = Y.default_type };
+    var editor = testEditor(t.allocator, "yaml");
     try editor.init("defaults: &d\n  replicas: 1\nworker: *d\n");
     defer editor.deinit();
 
-    try t.expectError(error.PatchThroughAlias, apply(Y, &editor, .yaml, &.{}, &patch_doc.ast, patch_doc.ast.root, &.{}, .{}));
+    try t.expectError(error.PatchThroughAlias, applyTo(R, &editor, testTarget("yaml"), &.{}, &patch_doc.ast, patch_doc.ast.root, &.{}, .{}));
     // Refused means refused: nothing was written on the way to finding out.
     try t.expectEqualStrings("defaults: &d\n  replicas: 1\nworker: *d\n", editor.source.items);
 }
@@ -734,20 +726,18 @@ test "patching through a YAML alias is refused, not guessed at" {
 test "deletions run after the merge and tolerate an absent path" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const t = std.testing;
-    const Y = @import("languages/yaml/yaml.zig").Language;
 
-    var patch_parser: Y.Parser = .{ .allocator = t.allocator };
-    var patch_doc = try Y.parse(&patch_parser, "b: 9\n", Y.default_type);
+    var patch_doc = try testParse(t.allocator, "yaml", "b: 9\n");
     defer patch_doc.deinit(t.allocator);
 
-    var editor: editor_mod.Editor(Y) = .{ .allocator = t.allocator, .format = Y.default_type };
+    var editor = testEditor(t.allocator, "yaml");
     try editor.init("a: 1\nb: 2\nc: 3\n");
     defer editor.deinit();
 
     const gone = [_]AST.PathSegment{.{ .key = "a" }};
     const missing = [_]AST.PathSegment{.{ .key = "nope" }};
     const deletes = [_]Deletion{ &gone, &missing };
-    const stats = try apply(Y, &editor, .yaml, &.{}, &patch_doc.ast, patch_doc.ast.root, &deletes, .{});
+    const stats = try applyTo(R, &editor, testTarget("yaml"), &.{}, &patch_doc.ast, patch_doc.ast.root, &deletes, .{});
     try t.expectEqualStrings("b: 9\nc: 3\n", editor.source.items);
     try t.expectEqual(@as(usize, 1), stats.deleted);
 }
@@ -755,9 +745,8 @@ test "deletions run after the merge and tolerate an absent path" {
 test "a patch merges into an empty document" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const t = std.testing;
-    const Y = @import("languages/yaml/yaml.zig").Language;
 
-    const out = try patchForTest(Y, Y, t.allocator, .yaml, "", "a: 1\nb:\n  c: 2\n", .{});
+    const out = try patchForTest(t.allocator, "yaml", "yaml", "", "a: 1\nb:\n  c: 2\n", .{});
     defer t.allocator.free(out);
     try t.expectEqualStrings("a: 1\nb:\n  c: 2\n", out);
 }
@@ -765,23 +754,18 @@ test "a patch merges into an empty document" {
 test "nodesEqual compares structure, not spelling or trivia" {
     if (comptime !(build_options.lang_yaml and build_options.lang_json)) return error.SkipZigTest;
     const t = std.testing;
-    const Y = @import("languages/yaml/yaml.zig").Language;
-    const J = @import("languages/json/json.zig").Language;
 
-    var yp: Y.Parser = .{ .allocator = t.allocator };
-    var ydoc = try Y.parse(&yp, "a: [1, 'x'] # a comment\n", Y.default_type);
+    var ydoc = try testParse(t.allocator, "yaml", "a: [1, 'x'] # a comment\n");
     defer ydoc.deinit(t.allocator);
 
-    var jp: J.Parser = .{ .allocator = t.allocator };
-    var jdoc = try J.parse(&jp, "{\"a\": [1, \"x\"]}", J.default_type);
+    var jdoc = try testParse(t.allocator, "json", "{\"a\": [1, \"x\"]}");
     defer jdoc.deinit(t.allocator);
 
     try t.expect(nodesEqual(&ydoc.ast, ydoc.ast.root, &jdoc.ast, jdoc.ast.root));
 
     // A different lexeme for the same number is a different value here, since
     // splicing it would change the file.
-    var jp2: J.Parser = .{ .allocator = t.allocator };
-    var jdoc2 = try J.parse(&jp2, "{\"a\": [1.0, \"x\"]}", J.default_type);
+    var jdoc2 = try testParse(t.allocator, "json", "{\"a\": [1.0, \"x\"]}");
     defer jdoc2.deinit(t.allocator);
     try t.expect(!nodesEqual(&ydoc.ast, ydoc.ast.root, &jdoc2.ast, jdoc2.ast.root));
 }
@@ -789,22 +773,19 @@ test "nodesEqual compares structure, not spelling or trivia" {
 test "a patch value the target cannot hold where it lands is refused, not spliced as text" {
     if (comptime !(build_options.lang_yaml and build_options.lang_dotenv and build_options.lang_ini)) return error.SkipZigTest;
     const t = std.testing;
-    const Y = @import("languages/yaml/yaml.zig").Language;
-    const D = @import("languages/dotenv/dotenv.zig").Language;
-    const I = @import("languages/ini/ini.zig").Language;
 
     // A mapping is a fine dotenv document and prints as `x=1`, which spliced
     // after `n=` would read back as the string `x=1`.
-    try t.expectError(error.UnsupportedValue, patchForTest(D, Y, t.allocator, .dotenv, "a=1\n", "n:\n  x: 1\n", .{}));
-    try t.expectError(error.UnsupportedValue, patchForTest(D, Y, t.allocator, .dotenv, "a=1\n", "s: [1]\n", .{}));
-    try t.expectError(error.NullUnsupported, patchForTest(D, Y, t.allocator, .dotenv, "a=1\n", "n: null\n", .{}));
+    try t.expectError(error.UnsupportedValue, patchForTest(t.allocator, "dotenv", "yaml", "a=1\n", "n:\n  x: 1\n", .{}));
+    try t.expectError(error.UnsupportedValue, patchForTest(t.allocator, "dotenv", "yaml", "a=1\n", "s: [1]\n", .{}));
+    try t.expectError(error.NullUnsupported, patchForTest(t.allocator, "dotenv", "yaml", "a=1\n", "n: null\n", .{}));
     // INI holds a section, but a value splice cannot write one: a table
     // below a section is too deep, and a new one at the root has no
     // spelling after `key = `.
-    try t.expectError(error.UnsupportedValue, patchForTest(I, Y, t.allocator, .ini, "[s]\na=1\n", "s:\n  b:\n    c: 1\n", .{}));
-    try t.expectError(error.UnsupportedValue, patchForTest(I, Y, t.allocator, .ini, "[s]\na=1\n", "u:\n  c: 1\n", .{}));
+    try t.expectError(error.UnsupportedValue, patchForTest(t.allocator, "ini", "yaml", "[s]\na=1\n", "s:\n  b:\n    c: 1\n", .{}));
+    try t.expectError(error.UnsupportedValue, patchForTest(t.allocator, "ini", "yaml", "[s]\na=1\n", "u:\n  c: 1\n", .{}));
     // What it can hold still lands.
-    const out = try patchForTest(D, Y, t.allocator, .dotenv, "a=1\n", "b: 2\n", .{});
+    const out = try patchForTest(t.allocator, "dotenv", "yaml", "a=1\n", "b: 2\n", .{});
     defer t.allocator.free(out);
     try t.expectEqualStrings("a=1\nb=2\n", out);
 }

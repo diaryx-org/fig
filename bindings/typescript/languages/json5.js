@@ -539,9 +539,8 @@ const language = {
     kv_sep: ": ",
     empty_map_literal: "{}",
   },
-  // The language's own name goes on its first dialect; each takes its
-  // compiled dialect's extension, which reaches it where that dialect is
-  // compiled out and this stands in for it.
+  // The language's own name goes on its first dialect; each takes the
+  // extension of the Zig dialect of its name.
   dialects: [
     { name: "json5", extensions: ["json5"], splice: "escaped", empty_doc_seed: "{}\n", prints: { holds: { null: true, number_special: true }, char_as: "number", comments: "pretty" } },
     { name: "jsonc", extensions: ["jsonc"], splice: "escaped", empty_doc_seed: "{}\n", prints: { holds: { null: true }, char_as: "number", number_special_as: "quoted string", comments: "pretty" } },

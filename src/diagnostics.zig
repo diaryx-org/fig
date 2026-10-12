@@ -30,10 +30,9 @@ const Runtime = @import("languages/runtime.zig");
 const Writer = std.Io.Writer;
 
 const ExtKind = AST.Node.Kind.Extended.ExtKind;
-const Format = Serialize.SerializeFormat;
-
-/// What the tree is analyzed as being printed to: a compiled format, or a
-/// runtime language, whose losses are read off its declaration.
+/// What the tree is analyzed as being printed to: canonical, which holds
+/// everything, or a registered language, whose losses are read off its
+/// declaration.
 pub const Target = Runtime.Target;
 
 /// One thing a conversion to a given format would lose.
@@ -70,15 +69,10 @@ pub const Warning = struct {
         explicit_option,
     };
 
-    /// Write the default human-readable message (no trailing newline). Bindings
-    /// may instead render their own text from the structured fields.
-    pub fn render(self: Warning, writer: *Writer, format: Format) Writer.Error!void {
-        return self.renderNamed(writer, @tagName(format));
-    }
-
-    /// `render` for a target named `fmt` — `Target.name`, which covers a
-    /// runtime language too.
-    pub fn renderNamed(self: Warning, writer: *Writer, fmt: []const u8) Writer.Error!void {
+    /// Write the default human-readable message (no trailing newline), for a
+    /// target named `fmt` (`Target.name`). Bindings may instead render their
+    /// own text from the structured fields.
+    pub fn render(self: Warning, writer: *Writer, fmt: []const u8) Writer.Error!void {
         switch (self.code) {
             .value_dropped => {
                 try writer.print("dropped {s} value at ", .{self.note});
@@ -143,20 +137,16 @@ pub const Options = struct {
     depth: usize = 0,
 };
 
-/// Walk the subtree rooted at `root_id` as it would be serialized to `format`
+/// Walk the subtree rooted at `root_id` as it would be printed to `target`
 /// and collect every lossy event. Warnings (and their `path` strings) are
 /// allocated in `arena`; the returned slice is owned by the caller's arena.
-pub fn analyze(arena: Allocator, ast: *const AST, root_id: AST.Node.Id, format: Format, options: Options) Allocator.Error![]Warning {
-    return analyzeFor(arena, ast, root_id, .{ .compiled = format }, options);
-}
-
-/// `analyze` for any `Target`. A runtime language is held to what it
+/// A language is held to what it
 /// declares, which is what the CLI strips before printing to it: a
 /// `lossless` declaration's missing kinds (a `null` dropped, an extended
 /// scalar degraded), a `max_mapping_depth`'s flat-format drops, and its
 /// `syntax`'s comment delimiters. What its printer does with a value, or a
 /// comment, it declared nothing about is its own, and not reported.
-pub fn analyzeFor(arena: Allocator, ast: *const AST, root_id: AST.Node.Id, target: Target, options: Options) Allocator.Error![]Warning {
+pub fn analyze(arena: Allocator, ast: *const AST, root_id: AST.Node.Id, target: Target, options: Options) Allocator.Error![]Warning {
     var c = Collector{ .ast = ast, .arena = arena, .target = target, .options = options };
     try c.walk(root_id, "", options.depth);
     return c.warnings.toOwnedSlice(arena);
@@ -171,7 +161,7 @@ pub const Dropped = enum { null_, container };
 /// text that reparses as something else (a mapping into dotenv as
 /// `key=a=1`). Null when every value has a spelling there, degraded or not.
 pub fn firstDropped(arena: Allocator, ast: *const AST, root_id: AST.Node.Id, target: Target, depth: usize) Allocator.Error!?Dropped {
-    const warnings = try analyzeFor(arena, ast, root_id, target, .{ .depth = depth, .strip_comments = true });
+    const warnings = try analyze(arena, ast, root_id, target, .{ .depth = depth, .strip_comments = true });
     for (warnings) |w| if (w.code == .value_dropped)
         return if (std.mem.eql(u8, w.note, "null")) .null_ else .container;
     return null;
@@ -226,8 +216,8 @@ const Collector = struct {
     fn checkValue(self: *Collector, id: AST.Node.Id, path: []const u8, depth: usize) Allocator.Error!void {
         const kind = self.ast.nodes[id].kind;
         const loss = switch (self.target) {
-            .compiled => |f| valueLoss(f, kind, depth),
-            .runtime => |e| runtimeValueLoss(e, kind, depth),
+            .canonical => null,
+            .language => |e| valueLoss(e, kind, depth),
         } orelse return;
         // Under lossless, unrepresentable values are enveloped, not lost.
         if (self.options.lossless) return;
@@ -247,11 +237,11 @@ const Collector = struct {
         }
         // Otherwise, a format with no comment syntax here drops it outright.
         const emitted, const block = switch (self.target) {
-            .compiled => |f| compiledComments(f, self.options.pretty),
-            // A runtime language that declares no `syntax` has said nothing
-            // about comments, and its printer receives every comment row, so
-            // there is no loss to claim.
-            .runtime => |e| runtimeComments(e, self.options.pretty) orelse return,
+            .canonical => return,
+            // A language that declares no `syntax` has said nothing about
+            // comments, and its printer receives every comment row, so there
+            // is no loss to claim.
+            .language => |e| declaredComments(e, self.options.pretty) orelse return,
         };
         if (!emitted) {
             try self.add(.{ .code = .comment_dropped, .cause = .format_limitation, .path = path });
@@ -291,30 +281,6 @@ fn indexPath(arena: Allocator, parent: []const u8, i: usize) Allocator.Error![]c
 
 const Loss = struct { code: Warning.Code, note: []const u8 };
 
-/// The value loss serializing `kind` to `format` would cause, or null if none.
-/// Lossless suppression is the caller's concern (`checkValue`). `depth` is 0
-/// for the node `analyze` was called with, incrementing per container level.
-/// Read from the dialect's `prints` declaration and its language's
-/// `max_mapping_depth` (`declaredLoss`); canonical, the lossless oracle,
-/// holds every kind.
-fn valueLoss(format: Format, kind: AST.Node.Kind, depth: usize) ?Loss {
-    return switch (format) {
-        .canonical => null,
-        inline else => |f| declaredLoss(comptime printsOf(@tagName(f)), comptime maxDepthOf(@tagName(f)), kind, depth),
-    };
-}
-
-/// The compiled dialect `name`'s `prints`, which every one whose language
-/// serializes declares.
-fn printsOf(comptime name: []const u8) Language.Prints {
-    return Language.entryFor(name).prints orelse
-        @compileError("'" ++ name ++ "' declares no `prints`, which the conversion warnings read");
-}
-
-fn maxDepthOf(comptime name: []const u8) ?u8 {
-    return Language.moduleFor(name).Language.caps.max_mapping_depth;
-}
-
 /// The loss `prints` and `max_mapping_depth` say serializing `kind` at
 /// `depth` causes. A flat format (one with `max_mapping_depth`) holds no
 /// sequence, and no mapping past that depth.
@@ -340,14 +306,15 @@ fn holdsExt(holds: Language.NativeKinds, ext: ExtKind) bool {
     };
 }
 
-/// `valueLoss` for a runtime language, from its declaration alone — the
+/// The value loss printing `kind` at `depth` to `e` would cause, or null,
+/// from its declaration alone — the
 /// same two declarations `printRuntime` strips by, so the warning and the
 /// strip cannot disagree. `lossless` names the kinds it holds: a `null` it
 /// lacks is dropped, an extended scalar it lacks reaches its printer as
 /// text. `max_mapping_depth` makes it a flat format: no `null`, no sequence,
 /// no mapping past the depth. Typed scalars are not reported degraded, as a
 /// compiled flat format's are, because nothing in the declaration says so.
-fn runtimeValueLoss(e: *const Runtime.Entry, kind: AST.Node.Kind, depth: usize) ?Loss {
+fn valueLoss(e: *const Runtime.Entry, kind: AST.Node.Kind, depth: usize) ?Loss {
     const caps = e.language.caps;
     if (e.prints) |p| return declaredLoss(p, caps.max_mapping_depth, kind, depth);
     if (caps.lossless) |native| {
@@ -366,13 +333,13 @@ fn runtimeValueLoss(e: *const Runtime.Entry, kind: AST.Node.Kind, depth: usize) 
     return null;
 }
 
-/// Whether a runtime language writes comments at all, and whether it has a
+/// Whether a language writes comments at all, and whether it has a
 /// spelling for a block one: its `syntax`'s own-line delimiter, and whether
 /// that delimiter is a pair (`<!-- -->`) that can hold several lines. Null
 /// when it declares no `syntax`, which is only required of an editable
 /// language: a read-and-serialize one may print every
 /// comment it is handed, and fig cannot know that it does not.
-fn runtimeComments(e: *const Runtime.Entry, pretty: bool) ?struct { bool, bool } {
+fn declaredComments(e: *const Runtime.Entry, pretty: bool) ?struct { bool, bool } {
     const syntax = e.syntax orelse return null;
     const block = syntax.comments.block != null or (if (syntax.comments.line) |l| l.close.len > 0 else false);
     if (e.prints) |p| return .{ switch (p.comments) {
@@ -428,33 +395,6 @@ fn dropNote(kind: AST.Node.Kind) []const u8 {
 /// Whether `format` writes comments at all in this mode, as its dialect's
 /// `prints.comments` says, and whether it has a spelling for a block one: a
 /// declared `block` comment, or a paired own-line one. Canonical writes both.
-fn compiledComments(format: Format, pretty: bool) struct { bool, bool } {
-    return switch (format) {
-        .canonical => .{ true, true },
-        inline else => |f| blk: {
-            const p = comptime printsOf(@tagName(f));
-            const emitted = switch (p.comments) {
-                .always => true,
-                .pretty => pretty,
-                .never => false,
-            };
-            const c = comptime commentsOf(@tagName(f));
-            const block = c.block != null or (if (c.line) |l| l.close.len > 0 else false);
-            break :blk .{ emitted, block };
-        },
-    };
-}
-
-/// The compiled dialect `name`'s declared comment syntax, read from its
-/// language's own row so that a language compiled out still answers.
-fn commentsOf(comptime name: []const u8) Language.Comments {
-    const L = Language.moduleFor(name).Language;
-    inline for (L.dialects) |d| {
-        if (comptime std.mem.eql(u8, d.name, name)) return L.syntax(d.dialect).comments;
-    }
-    unreachable;
-}
-
 fn hasBlock(nc: AST.NodeComments) bool {
     for (nc.leading) |c| if (c.style == .block) return true;
     for (nc.dangling) |c| if (c.style == .block) return true;
@@ -468,11 +408,16 @@ const testing = std.testing;
 
 /// Build a small AST via the Builder, run `analyze`, and return the warnings in
 /// an arena the caller owns.
-fn analyzeBuilt(arena: Allocator, build: anytype, format: Format, options: Options) ![]Warning {
+fn analyzeBuilt(arena: Allocator, build: anytype, name: []const u8, options: Options) ![]Warning {
     var b = AST.Builder.init(arena);
     const root = try build(&b);
     var ast = try b.finish(root);
-    return analyze(arena, &ast, ast.root, format, options);
+    return analyze(arena, &ast, ast.root, testTarget(name), options);
+}
+
+/// The registered dialect `name`.
+fn testTarget(name: []const u8) Target {
+    return Target.named(name).?;
 }
 
 test "null dropped for TOML, not for JSON/YAML" {
@@ -488,12 +433,12 @@ test "null dropped for TOML, not for JSON/YAML" {
         }
     };
 
-    const toml = try analyzeBuilt(arena, Build.f, .toml, .{});
+    const toml = try analyzeBuilt(arena, Build.f, "toml", .{});
     try testing.expectEqual(@as(usize, 1), toml.len);
     try testing.expectEqual(Warning.Code.value_dropped, toml[0].code);
     try testing.expectEqualStrings("a", toml[0].path);
 
-    const json = try analyzeBuilt(arena, Build.f, .json, .{});
+    const json = try analyzeBuilt(arena, Build.f, "json", .{});
     try testing.expectEqual(@as(usize, 0), json.len);
 }
 
@@ -508,12 +453,12 @@ test "datetime degrades to JSON, canonical to TOML" {
         }
     };
 
-    const json = try analyzeBuilt(arena, Build.f, .json, .{});
+    const json = try analyzeBuilt(arena, Build.f, "json", .{});
     try testing.expectEqual(@as(usize, 1), json.len);
     try testing.expectEqual(Warning.Code.type_degraded, json[0].code);
     try testing.expectEqualStrings("string", json[0].note);
 
-    const toml = try analyzeBuilt(arena, Build.f, .toml, .{});
+    const toml = try analyzeBuilt(arena, Build.f, "toml", .{});
     try testing.expectEqual(@as(usize, 0), toml.len);
 }
 
@@ -528,11 +473,11 @@ test "non-finite float degrades to JSON but not JSON5" {
         }
     };
 
-    const json = try analyzeBuilt(arena, Build.f, .json, .{});
+    const json = try analyzeBuilt(arena, Build.f, "json", .{});
     try testing.expectEqual(@as(usize, 1), json.len);
     try testing.expectEqualStrings("quoted string", json[0].note);
 
-    const json5 = try analyzeBuilt(arena, Build.f, .json5, .{});
+    const json5 = try analyzeBuilt(arena, Build.f, "json5", .{});
     try testing.expectEqual(@as(usize, 0), json5.len);
 }
 
@@ -553,11 +498,11 @@ test "char literal is native to fig, degrades to a number elsewhere" {
     };
 
     // fig re-emits it via `: char =` — no loss.
-    const fig = try analyzeBuilt(arena, Build.f, .fig, .{});
+    const fig = try analyzeBuilt(arena, Build.f, "fig", .{});
     try testing.expectEqual(@as(usize, 0), fig.len);
 
     // JSON has no char; it collapses to the codepoint as a number.
-    const json = try analyzeBuilt(arena, Build.f, .json, .{});
+    const json = try analyzeBuilt(arena, Build.f, "json", .{});
     try testing.expectEqual(@as(usize, 1), json.len);
     try testing.expectEqual(Warning.Code.type_degraded, json[0].code);
     try testing.expectEqualStrings("number", json[0].note);
@@ -578,7 +523,7 @@ test "fig root scalar is flagged as unrepresentable, a root map/sequence is not"
             return b.addNumberRaw("42", false);
         }
     };
-    const scalar = try analyzeBuilt(arena, ScalarRoot.f, .fig, .{});
+    const scalar = try analyzeBuilt(arena, ScalarRoot.f, "fig", .{});
     try testing.expectEqual(@as(usize, 1), scalar.len);
     try testing.expectEqual(Warning.Code.value_dropped, scalar[0].code);
     try testing.expectEqual(Warning.Cause.format_limitation, scalar[0].cause);
@@ -586,7 +531,7 @@ test "fig root scalar is flagged as unrepresentable, a root map/sequence is not"
     try testing.expectEqualStrings("number", scalar[0].note);
 
     // Other formats have no such rule — a bare JSON number root is fine.
-    const json = try analyzeBuilt(arena, ScalarRoot.f, .json, .{});
+    const json = try analyzeBuilt(arena, ScalarRoot.f, "json", .{});
     try testing.expectEqual(@as(usize, 0), json.len);
 
     // A root mapping is unaffected — still fully representable.
@@ -597,7 +542,7 @@ test "fig root scalar is flagged as unrepresentable, a root map/sequence is not"
             return b.addMapping(&.{.{ .key = k, .value = v }});
         }
     };
-    const map_fig = try analyzeBuilt(arena, MapRoot.f, .fig, .{});
+    const map_fig = try analyzeBuilt(arena, MapRoot.f, "fig", .{});
     try testing.expectEqual(@as(usize, 0), map_fig.len);
 }
 
@@ -614,7 +559,7 @@ test "lossless suppresses value warnings" {
         }
     };
 
-    const toml = try analyzeBuilt(arena, Build.f, .toml, .{ .lossless = true });
+    const toml = try analyzeBuilt(arena, Build.f, "toml", .{ .lossless = true });
     try testing.expectEqual(@as(usize, 0), toml.len);
 }
 
@@ -635,30 +580,30 @@ test "comment dropped, style-degraded, and explicitly stripped" {
     };
 
     // YAML emits comments but has no block syntax → style degraded.
-    const yaml = try analyzeBuilt(arena, Build.f, .yaml, .{});
+    const yaml = try analyzeBuilt(arena, Build.f, "yaml", .{});
     try testing.expectEqual(@as(usize, 1), yaml.len);
     try testing.expectEqual(Warning.Code.comment_style_degraded, yaml[0].code);
     try testing.expectEqualStrings("a", yaml[0].path);
 
     // Plain JSON has no comments at all → dropped, format limitation.
-    const json = try analyzeBuilt(arena, Build.f, .json, .{});
+    const json = try analyzeBuilt(arena, Build.f, "json", .{});
     try testing.expectEqual(@as(usize, 1), json.len);
     try testing.expectEqual(Warning.Code.comment_dropped, json[0].code);
     try testing.expectEqual(Warning.Cause.format_limitation, json[0].cause);
 
     // JSON5 keeps block comments → no warning.
-    const json5 = try analyzeBuilt(arena, Build.f, .json5, .{});
+    const json5 = try analyzeBuilt(arena, Build.f, "json5", .{});
     try testing.expectEqual(@as(usize, 0), json5.len);
 
     // Explicit strip on a format that would otherwise keep it → explicit_option.
-    const stripped = try analyzeBuilt(arena, Build.f, .json5, .{ .strip_comments = true });
+    const stripped = try analyzeBuilt(arena, Build.f, "json5", .{ .strip_comments = true });
     try testing.expectEqual(@as(usize, 1), stripped.len);
     try testing.expectEqual(Warning.Code.comment_dropped, stripped[0].code);
     try testing.expectEqual(Warning.Cause.explicit_option, stripped[0].cause);
 
     // Explicit strip wins even when the target ALSO can't hold comments: the user
     // asked for the drop, so it's `explicit_option`, not `format_limitation`.
-    const stripped_json = try analyzeBuilt(arena, Build.f, .json, .{ .strip_comments = true });
+    const stripped_json = try analyzeBuilt(arena, Build.f, "json", .{ .strip_comments = true });
     try testing.expectEqual(@as(usize, 1), stripped_json.len);
     try testing.expectEqual(Warning.Cause.explicit_option, stripped_json[0].cause);
 }
@@ -681,17 +626,17 @@ test "a runtime target is warned about comments only by what its syntax declares
 
     // No `syntax`: nothing said about comments, and the printer is handed
     // every one — so no loss is claimed.
-    try testing.expectEqual(@as(usize, 0), (try analyzeFor(arena, &ast, ast.root, .{ .runtime = &entry }, .{})).len);
+    try testing.expectEqual(@as(usize, 0), (try analyze(arena, &ast, ast.root, .{ .language = &entry }, .{})).len);
 
     // A `syntax` with no comment delimiter declares there are none: dropped.
     entry.syntax = .{ .comments = .{ .line = null, .trailing = null }, .kv_sep = null, .empty_map_literal = null };
-    const dropped = try analyzeFor(arena, &ast, ast.root, .{ .runtime = &entry }, .{});
+    const dropped = try analyze(arena, &ast, ast.root, .{ .language = &entry }, .{});
     try testing.expectEqual(@as(usize, 1), dropped.len);
     try testing.expectEqual(Warning.Code.comment_dropped, dropped[0].code);
 
     // One with a delimiter writes them: no warning.
     entry.syntax = .{ .comments = manifest.Comments.hash, .kv_sep = null, .empty_map_literal = null };
-    try testing.expectEqual(@as(usize, 0), (try analyzeFor(arena, &ast, ast.root, .{ .runtime = &entry }, .{})).len);
+    try testing.expectEqual(@as(usize, 0), (try analyze(arena, &ast, ast.root, .{ .language = &entry }, .{})).len);
 }
 
 test "path shapes match lossyStrip (dotted keys, bracket indices)" {
@@ -723,7 +668,7 @@ test "path shapes match lossyStrip (dotted keys, bracket indices)" {
         }
     };
 
-    const w = try analyzeBuilt(arena, Build.f, .toml, .{});
+    const w = try analyzeBuilt(arena, Build.f, "toml", .{});
     try testing.expectEqual(@as(usize, 3), w.len);
     try testing.expectEqualStrings("b", w[0].path);
     try testing.expectEqualStrings("c[1]", w[1].path);
@@ -743,19 +688,19 @@ test "a depth limit counts from the document's root, not the analyzed value's" {
 
     // As a whole dotenv document the mapping is the root, and fine; as a
     // value one level down it is a table dotenv cannot hold.
-    try testing.expectEqual(@as(usize, 0), (try analyze(arena, &ast, ast.root, .dotenv, .{})).len);
-    const nested = try analyze(arena, &ast, ast.root, .dotenv, .{ .depth = 1 });
+    try testing.expectEqual(@as(usize, 0), (try analyze(arena, &ast, ast.root, testTarget("dotenv"), .{})).len);
+    const nested = try analyze(arena, &ast, ast.root, testTarget("dotenv"), .{ .depth = 1 });
     try testing.expectEqual(@as(usize, 1), nested.len);
     try testing.expectEqual(Warning.Code.value_dropped, nested[0].code);
 
     // INI holds one level of `[section]`s, so the same value is fine one
     // level down and dropped two.
-    try testing.expectEqual(@as(?Dropped, null), try firstDropped(arena, &ast, ast.root, .{ .compiled = .ini }, 1));
-    try testing.expectEqual(@as(?Dropped, .container), try firstDropped(arena, &ast, ast.root, .{ .compiled = .ini }, 2));
+    try testing.expectEqual(@as(?Dropped, null), try firstDropped(arena, &ast, ast.root, testTarget("ini"), 1));
+    try testing.expectEqual(@as(?Dropped, .container), try firstDropped(arena, &ast, ast.root, testTarget("ini"), 2));
     // A degraded value is not a dropped one: dotenv writes the number as text.
     var num_ast = ast;
     num_ast.root = v;
-    try testing.expectEqual(@as(?Dropped, null), try firstDropped(arena, &num_ast, num_ast.root, .{ .compiled = .dotenv }, 1));
+    try testing.expectEqual(@as(?Dropped, null), try firstDropped(arena, &num_ast, num_ast.root, testTarget("dotenv"), 1));
 }
 
 test "firstDropped tells a null from a container" {
@@ -766,6 +711,6 @@ test "firstDropped tells a null from a container" {
     var b = AST.Builder.init(arena);
     const n = try b.addNull();
     var ast = try b.finish(n);
-    try testing.expectEqual(@as(?Dropped, .null_), try firstDropped(arena, &ast, ast.root, .{ .compiled = .toml }, 1));
-    try testing.expectEqual(@as(?Dropped, null), try firstDropped(arena, &ast, ast.root, .{ .compiled = .yaml }, 1));
+    try testing.expectEqual(@as(?Dropped, .null_), try firstDropped(arena, &ast, ast.root, testTarget("toml"), 1));
+    try testing.expectEqual(@as(?Dropped, null), try firstDropped(arena, &ast, ast.root, testTarget("yaml"), 1));
 }

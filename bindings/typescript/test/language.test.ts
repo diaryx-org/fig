@@ -1,8 +1,8 @@
 // Runtime languages: a format written in JavaScript, held to the format it
 // twins — table for table against the compiled parser's recorded tables
 // before registration, and read, print and edit for edit after it against
-// `Format.Dotenv`, which here is the package's dotenv language
-// (twins.test.ts holds that one to the compiled format).
+// `Dotenv`, the format of the package's dotenv language (twins.test.ts
+// holds that one to the compiled format).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
@@ -12,18 +12,19 @@ import {
   Document,
   Editor,
   FigError,
-  Format,
   LanguageError,
   Status,
   capabilities,
   convert,
   describe,
   formatByName,
+  formatName,
   handle,
   parse,
   registerLanguage,
   serve,
   stringify,
+  type Format,
   type Language,
   type NodeTable,
 } from "../src/index.ts";
@@ -35,7 +36,9 @@ import json5 from "@diaryx/fig/languages/json5";
 // The module compiles no format in. The formats these tests hold the test
 // twin to are the package's own languages, registered as a caller would;
 // plist is left out, for the test that stands a language in for it.
-for (const lang of [json, json5, dotenvLanguage]) registerLanguage(lang);
+const Json = registerLanguage(json);
+const Json5 = registerLanguage(json5);
+const Dotenv = registerLanguage(dotenvLanguage);
 
 // The compiled parser's tables, one per fixture: what `fig lang table -i
 // dotenv <file>` prints. `npm test` runs from the package directory.
@@ -66,31 +69,32 @@ test("the JavaScript twin gives the compiled parser's table, row for row", () =>
 const jsDotenv = registerLanguage(dotenv);
 
 test("registerLanguage hands back a runtime format every entry point accepts", () => {
-  assert.ok(jsDotenv >= 4096, `runtime formats start at FIG_FORMAT_RUNTIME_BASE, got ${jsDotenv}`);
+  assert.equal(formatName(jsDotenv), "js-dotenv");
+  assert.ok(jsDotenv > Dotenv, `handles are assigned in registration order, got ${jsDotenv}`);
   assert.deepEqual(capabilities(jsDotenv), { read: true, edit: true, serialize: true, references: false });
   assert.equal(formatByName("js-dotenv"), jsDotenv);
-  assert.equal(formatByName("dotenv"), Format.Dotenv);
-  assert.equal(formatByName("json5"), Format.Json5);
+  assert.equal(formatByName("dotenv"), Dotenv);
+  assert.equal(formatByName("json5"), Json5);
   assert.equal(formatByName("no-such-format"), null);
 });
 
 test("reads through the twin agree with the compiled format on every fixture", () => {
   for (const f of fixtures) {
-    assert.deepEqual(parse(f.source, jsDotenv), parse(f.source, Format.Dotenv), f.name);
-    assert.equal(convert(f.source, jsDotenv, Format.Json), convert(f.source, Format.Dotenv, Format.Json), f.name);
+    assert.deepEqual(parse(f.source, jsDotenv), parse(f.source, Dotenv), f.name);
+    assert.equal(convert(f.source, jsDotenv, Json), convert(f.source, Dotenv, Json), f.name);
   }
 });
 
 test("the twin's printer writes what the compiled printer writes", () => {
   for (const f of fixtures) {
-    const theirs = convert(f.source, Format.Dotenv, Format.Dotenv);
+    const theirs = convert(f.source, Dotenv, Dotenv);
     // The twin printing its own tree, and printing the compiled parser's.
     assert.equal(convert(f.source, jsDotenv, jsDotenv), theirs, `${f.name}: own tree`);
-    assert.equal(convert(f.source, Format.Dotenv, jsDotenv), theirs, `${f.name}: compiled tree`);
+    assert.equal(convert(f.source, Dotenv, jsDotenv), theirs, `${f.name}: compiled tree`);
     // And a cross-format print into it: the same file a JSON document
     // becomes under either name.
-    const json = convert(f.source, Format.Dotenv, Format.Json);
-    assert.equal(convert(json, Format.Json, jsDotenv), convert(json, Format.Json, Format.Dotenv), `${f.name}: from JSON`);
+    const json = convert(f.source, Dotenv, Json);
+    assert.equal(convert(json, Json, jsDotenv), convert(json, Json, Dotenv), `${f.name}: from JSON`);
   }
 });
 
@@ -108,11 +112,11 @@ test("edits through the twin leave the same file the compiled format leaves", ()
     return ed.source();
   };
   using mine = Editor.open(source, jsDotenv);
-  using theirs = Editor.open(source, Format.Dotenv);
+  using theirs = Editor.open(source, Dotenv);
   const edited = script(mine);
   assert.equal(edited, script(theirs));
   // What the edit produced reads the same under both.
-  assert.deepEqual(parse(edited, jsDotenv), parse(edited, Format.Dotenv));
+  assert.deepEqual(parse(edited, jsDotenv), parse(edited, Dotenv));
   assert.equal(parse<Record<string, string>>(edited, jsDotenv).DATABASE_URL, "postgres://localhost/app");
 });
 
@@ -136,7 +140,7 @@ test("a refusal by the language surfaces as a FigError with its message and offs
     () => Document.parse("A=1\n=2\n", jsDotenv),
     (err: unknown) => err instanceof FigError && /expected `KEY=value`/.test(err.message),
   );
-  // The refusal `Format.Dotenv` makes too, in this language's words, at the
+  // The refusal `Dotenv` makes too, in this language's words, at the
   // offset it names: the opening quote.
   const caught = (format: Format) => {
     try {
@@ -147,7 +151,7 @@ test("a refusal by the language surfaces as a FigError with its message and offs
     return null;
   };
   const mine = caught(jsDotenv);
-  assert.ok(caught(Format.Dotenv));
+  assert.ok(caught(Dotenv));
   assert.ok(mine);
   assert.match(mine.message, /unclosed quoted value/);
   assert.equal(mine.byteOffset, 2);
@@ -203,7 +207,7 @@ test("handle: the wire, one line to one line", () => {
   assert.deepEqual(d.description, describe(dotenv));
   assert.equal(d.description.name, "js-dotenv");
   assert.deepEqual(d.description.renderers, []);
-  assert.deepEqual((d.description.dialects as unknown[])[0], { name: "js-dotenv", extensions: ["env"], splice: "raw", empty_doc_seed: "", syntax: null, prints: null });
+  assert.deepEqual((d.description.dialects as unknown[])[0], { name: "js-dotenv", extensions: ["env"], splice: "raw", empty_doc_seed: "", syntax: null, prints: null, embed: null });
 
   const refused = JSON.parse(handle(dotenv, JSON.stringify({ op: "parse", dialect: "js-dotenv", input: "A" }))) as Record<string, unknown>;
   assert.equal(refused.ok, false);
@@ -355,15 +359,15 @@ test("a runtime printer is told when it prints splice text", () => {
   assert.deepEqual(seen, [false]);
 });
 
-test("a language named after a format the module leaves out stands in for it", (t) => {
-  // The published module leaves plist out; a module that compiles it in
-  // has no slot to stand in for.
-  if (capabilities(Format.Plist).read) return t.skip("this module compiles plist in");
+test("a language may take a name the package's languages use while none of them has it", () => {
+  // Nothing has registered plist here, so the name is free: there is no
+  // compiled format behind it, and no fixed number to take.
+  assert.equal(formatByName("plist"), null);
   const exts = ["plist"];
   const format = registerLanguage({ ...dotenv, name: "plist", dialects: [{ ...dotenv.dialects[0]!, name: "plist", extensions: exts }] });
-  assert.equal(format, Format.Plist);
-  assert.equal(formatByName("plist"), Format.Plist);
-  assert.equal(capabilities(Format.Plist).edit, true);
-  assert.deepEqual(parse("A=1\n", Format.Plist), { A: "1" });
-  assert.equal(convert("A=1\n", Format.Plist, Format.Json), '{\n  "A": "1"\n}\n');
+  assert.equal(formatByName("plist"), format);
+  assert.equal(formatName(format), "plist");
+  assert.equal(capabilities(format).edit, true);
+  assert.deepEqual(parse("A=1\n", format), { A: "1" });
+  assert.equal(convert("A=1\n", format, Json), '{\n  "A": "1"\n}\n');
 });

@@ -10,10 +10,15 @@
 // `Embed.extract` (the byte spans), `Embed.split` (the text) and
 // `Embed.detect` (which archetype) — and so is `Embed.retype`. Release with
 // `dispose`.
-import { check, FigError, Format, Status, type ParseDetail } from "./types.ts";
+//
+// The core finds an inner language only through the `embed` spellings a
+// registered dialect declares, so every archetype but the three presets
+// (`;;;`, `+++`, endmatter) needs its inner language registered even to be
+// located, and all of them to be opened.
+import { check, FigError, Status, type Format, type ParseDetail } from "./types.ts";
 import { fig, Frame, handleRegistry, probeParse, readOutSlice, readU32, writeU32 } from "./ffi.ts";
 import { Editable, type EditFns } from "./edit-ops.ts";
-import { checkFormat } from "./meta.ts";
+import { checkFormat, formatByName, formatName, unregisteredError } from "./meta.ts";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -71,36 +76,46 @@ const Container = {
   EndmatterYaml: 6, //  ```endmatter preset, YAML
 } as const;
 
-/** Each archetype's (container, inner format) pair: the C ABI's selector, and
- *  the format the embed's content is edited in. */
-const PARTS: Record<EmbedType, readonly [number, Format]> = {
-  [EmbedType.Frontmatter]: [Container.MdFrontmatter, Format.Yaml],
-  [EmbedType.MdJson]: [Container.MdFrontmatter, Format.Json],
-  [EmbedType.MdToml]: [Container.MdFrontmatter, Format.Toml],
-  [EmbedType.MdFig]: [Container.MdFrontmatter, Format.Fig],
-  [EmbedType.FencedYaml]: [Container.Fenced, Format.Yaml],
-  [EmbedType.FencedJson]: [Container.Fenced, Format.Json],
-  [EmbedType.FencedToml]: [Container.Fenced, Format.Toml],
-  [EmbedType.FencedFig]: [Container.Fenced, Format.Fig],
-  [EmbedType.HtmlScriptYaml]: [Container.HtmlScript, Format.Yaml],
-  [EmbedType.HtmlScriptJson]: [Container.HtmlScript, Format.Json],
-  [EmbedType.HtmlScriptToml]: [Container.HtmlScript, Format.Toml],
-  [EmbedType.HtmlScriptFig]: [Container.HtmlScript, Format.Fig],
-  [EmbedType.HtmlCodeYaml]: [Container.HtmlCode, Format.Yaml],
-  [EmbedType.HtmlCodeJson]: [Container.HtmlCode, Format.Json],
-  [EmbedType.HtmlCodeToml]: [Container.HtmlCode, Format.Toml],
-  [EmbedType.HtmlCodeFig]: [Container.HtmlCode, Format.Fig],
-  [EmbedType.Semicolons]: [Container.SemicolonsJson, Format.Json],
-  [EmbedType.Plus]: [Container.PlusToml, Format.Toml],
-  [EmbedType.Endmatter]: [Container.EndmatterYaml, Format.Yaml],
+/** Each archetype's container and the name of the dialect its content is
+ *  written in — the C ABI's selector is the container and that dialect's
+ *  format, resolved by name when the archetype is used, since a format is a
+ *  handle the registration of its language hands out. */
+const PARTS: Record<EmbedType, readonly [number, string]> = {
+  [EmbedType.Frontmatter]: [Container.MdFrontmatter, "yaml"],
+  [EmbedType.MdJson]: [Container.MdFrontmatter, "json"],
+  [EmbedType.MdToml]: [Container.MdFrontmatter, "toml"],
+  [EmbedType.MdFig]: [Container.MdFrontmatter, "fig"],
+  [EmbedType.FencedYaml]: [Container.Fenced, "yaml"],
+  [EmbedType.FencedJson]: [Container.Fenced, "json"],
+  [EmbedType.FencedToml]: [Container.Fenced, "toml"],
+  [EmbedType.FencedFig]: [Container.Fenced, "fig"],
+  [EmbedType.HtmlScriptYaml]: [Container.HtmlScript, "yaml"],
+  [EmbedType.HtmlScriptJson]: [Container.HtmlScript, "json"],
+  [EmbedType.HtmlScriptToml]: [Container.HtmlScript, "toml"],
+  [EmbedType.HtmlScriptFig]: [Container.HtmlScript, "fig"],
+  [EmbedType.HtmlCodeYaml]: [Container.HtmlCode, "yaml"],
+  [EmbedType.HtmlCodeJson]: [Container.HtmlCode, "json"],
+  [EmbedType.HtmlCodeToml]: [Container.HtmlCode, "toml"],
+  [EmbedType.HtmlCodeFig]: [Container.HtmlCode, "fig"],
+  [EmbedType.Semicolons]: [Container.SemicolonsJson, "json"],
+  [EmbedType.Plus]: [Container.PlusToml, "toml"],
+  [EmbedType.Endmatter]: [Container.EndmatterYaml, "yaml"],
 };
 
+/** A preset pins its own inner language, and the core does not read the
+ *  format half of its selector. */
+function isPreset(container: number): boolean {
+  return container >= Container.SemicolonsJson;
+}
+
 /** The {@link EmbedType} for a pair the core reports, or `null` for one this
- *  binding has no name for. A preset container pins its own format, so the
- *  format half is not compared for one. */
+ *  binding has no name for. A preset container pins its own format (and
+ *  reports -1 for it when that language is not registered), so the format
+ *  half is not compared for one. */
 function embedTypeOf(container: number, format: number): EmbedType | null {
-  for (const [kind, [c, f]] of Object.entries(PARTS) as Array<[EmbedType, readonly [number, Format]]>) {
-    if (c === container && (f === format || c >= Container.SemicolonsJson)) return kind;
+  const name = isPreset(container) ? null : formatName(format as Format);
+  for (const [kind, [c, n]] of Object.entries(PARTS) as Array<[EmbedType, readonly [number, string]]>) {
+    if (c === container && (isPreset(c) || n === name)) return kind;
   }
   return null;
 }
@@ -108,11 +123,27 @@ function embedTypeOf(container: number, format: number): EmbedType | null {
 /** `PARTS[kind]`, refusing a string that is not an archetype — the type says
  *  `EmbedType`, but a value read from storage or a plain-JS caller may not be
  *  one, and the C ABI should not be handed `undefined`. */
-function partsOf(kind: EmbedType): readonly [number, Format] {
+function partsOf(kind: EmbedType): readonly [number, string] {
   // `hasOwn`, not a lookup: `PARTS` is a plain object, and `"constructor"` or
   // `"toString"` would find what it inherits from `Object.prototype`.
   if (!Object.hasOwn(PARTS, kind)) throw new FigError(Status.InvalidArgument, "embed", { message: `unknown embed archetype ${JSON.stringify(kind)}` });
   return PARTS[kind];
+}
+
+/** `kind`'s inner format, or the error naming the language to register. */
+function innerFormat(kind: EmbedType, op: string): Format {
+  const name = partsOf(kind)[1];
+  const format = formatByName(name);
+  if (format === null) throw unregisteredError(name, op);
+  return format;
+}
+
+/** `kind`'s (container, format) selector for a call that only locates the
+ *  block: a preset's format half is not read, so its language need not be
+ *  registered; any other archetype's is found through it. */
+function locator(kind: EmbedType, op: string): readonly [number, number] {
+  const [container] = partsOf(kind);
+  return [container, isPreset(container) ? -1 : innerFormat(kind, op)];
 }
 
 // Frees the handle of an Embed dropped without dispose() (leak backstop only).
@@ -172,8 +203,8 @@ export interface Region {
 }
 
 export class Embed extends Editable {
-  private constructor(handle: number, kind: EmbedType) {
-    super(handle, EMBED_FNS, partsOf(kind)[1]);
+  private constructor(handle: number, format: Format) {
+    super(handle, EMBED_FNS, format);
     REGISTRY?.register(this, handle, this);
   }
 
@@ -184,17 +215,18 @@ export class Embed extends Editable {
     name: string,
   ): Embed {
     const bytes = typeof host === "string" ? encoder.encode(host) : host;
-    const [container, format] = partsOf(kind);
+    const [container] = partsOf(kind);
+    const format = innerFormat(kind, name);
     const frame = new Frame();
     const out = frame.alloc(4);
     try {
       const ptr = frame.bytes(bytes);
       const status = fn(ptr, bytes.length, container, format, out);
-      if (status === Status.ParseError) throw new FigError(status, name, Embed.parseDetail(bytes, kind));
+      if (status === Status.ParseError) throw new FigError(status, name, Embed.parseDetail(bytes, kind, format));
       checkFormat(status, name, format);
       const handle = new DataView(fig.memory.buffer).getUint32(out, true);
       if (handle === 0) throw new FigError(Status.InternalError, name);
-      return new Embed(handle, kind);
+      return new Embed(handle, format);
     } finally {
       frame.dispose();
     }
@@ -207,7 +239,7 @@ export class Embed extends Editable {
    *  reports is moved from the content into the host. The `HtmlCode*`
    *  archetypes are parsed after entity-decoding, which the binding does not
    *  repeat, so for those the status stands alone. */
-  private static parseDetail(host: Uint8Array, kind: EmbedType): ParseDetail | undefined {
+  private static parseDetail(host: Uint8Array, kind: EmbedType, format: Format): ParseDetail | undefined {
     let region: Region;
     try {
       region = Embed.extract(host, kind);
@@ -218,7 +250,7 @@ export class Embed extends Editable {
       return undefined;
     }
     if (partsOf(kind)[0] === Container.HtmlCode) return undefined;
-    const detail = probeParse(host.subarray(region.content.start, region.content.end), partsOf(kind)[1]);
+    const detail = probeParse(host.subarray(region.content.start, region.content.end), format);
     if (detail === null) return undefined;
     // `line`/`column` would be content-relative; the host-relative offset is
     // the location that means something to the caller.
@@ -274,8 +306,8 @@ export class Embed extends Editable {
   ): string {
     const hostBytes = typeof host === "string" ? encoder.encode(host) : host;
     const contentBytes = typeof content === "string" ? encoder.encode(content) : content;
-    const [fromContainer, fromFormat] = partsOf(from);
-    const [toContainer, toFormat] = partsOf(to);
+    const [fromContainer, fromFormat] = locator(from, "fig_embed_retype");
+    const [toContainer, toFormat] = locator(to, "fig_embed_retype");
     const frame = new Frame();
     try {
       const h = frame.bytes(hostBytes);
@@ -326,7 +358,7 @@ export class Embed extends Editable {
       const REGION_SIZE = 52;
       const region = frame.alloc(REGION_SIZE);
       writeU32(region, REGION_SIZE);
-      const [container, format] = partsOf(kind);
+      const [container, format] = locator(kind, "fig_embed_extract");
       check(fig.fig_embed_extract(ptr, bytes.length, container, format, region), "fig_embed_extract");
       // Spans start after the 4-byte `size` field: offsets 4, 12, 20, 28, 36,
       // 44. The span at 28 is the C struct's one-sided `body`, which the two
@@ -371,7 +403,9 @@ export class Embed extends Editable {
    *  when `host` opens none of them. Only the open delimiter is checked — an
    *  unterminated block is still *recognized* as its archetype, so a follow-up
    *  {@link Embed.extract}/{@link Embed.open} surfaces the real error instead
-   *  of a misleading "nothing found". */
+   *  of a misleading "nothing found". Only a registered language's spellings
+   *  are recognized, besides the three presets: a ```` ```toml ```` block is
+   *  not one while no `toml` language is registered. */
   static detect(host: string | Uint8Array): EmbedType | null {
     const bytes = typeof host === "string" ? encoder.encode(host) : host;
     const frame = new Frame();
@@ -382,7 +416,7 @@ export class Embed extends Editable {
       const status = fig.fig_embed_detect(ptr, bytes.length, out, out + 4);
       if (status === Status.NotFound) return null;
       check(status, "fig_embed_detect");
-      return embedTypeOf(readU32(out), readU32(out + 4));
+      return embedTypeOf(readU32(out), new DataView(fig.memory.buffer).getInt32(out + 4, true));
     } finally {
       frame.dispose();
     }

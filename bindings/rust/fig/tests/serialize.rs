@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use fig::{Format, Value};
+use fig::Value;
 
 /// Build a `Value::Map` from `(key, value)` pairs (insertion order preserved).
 fn map(pairs: Vec<(&str, Value)>) -> Value {
@@ -73,7 +73,7 @@ fn generic_values_round_trip() {
         ]),
     ];
     for case in cases {
-        let yaml = case.serialize(Format::Yaml).unwrap();
+        let yaml = case.serialize(by_name("yaml")).unwrap();
         let back: Value = fig::from_yaml_str(&yaml).unwrap();
         assert_eq!(back, case, "round-trip mismatch (yaml:\n{yaml})");
     }
@@ -90,7 +90,7 @@ fn snapshot_of_a_diaryx_shape() {
         ("draft", false.into()),
     ]);
     assert_eq!(
-        value.serialize(Format::Yaml).unwrap(),
+        value.serialize(by_name("yaml")).unwrap(),
         "title: 'My Entry: A Tale'\ntags: [a, b]\ndraft: false\n",
     );
 }
@@ -209,27 +209,27 @@ fn json_compact_vs_pretty() {
     ]);
 
     // Default serialize == pretty default == 2-space multi-line.
-    let pretty = value.serialize(Format::Json).unwrap();
+    let pretty = value.serialize(by_name("json")).unwrap();
     assert_eq!(
         pretty,
         "{\n  \"name\": \"Ada\",\n  \"tags\": [\n    \"zig\",\n    true,\n    null\n  ]\n}\n"
     );
     assert_eq!(
         value
-            .serialize_with(Format::Json, SerializeOptions::default())
+            .serialize_with(by_name("json"), SerializeOptions::default())
             .unwrap(),
         pretty
     );
 
     // Compact: no insignificant whitespace.
     let compact = value
-        .serialize_with(Format::Json, SerializeOptions::compact())
+        .serialize_with(by_name("json"), SerializeOptions::compact())
         .unwrap();
     assert_eq!(compact, "{\"name\":\"Ada\",\"tags\":[\"zig\",true,null]}\n");
 
     // Custom indent width.
     let wide = value
-        .serialize_with(Format::Json, SerializeOptions::pretty(4))
+        .serialize_with(by_name("json"), SerializeOptions::pretty(4))
         .unwrap();
     assert!(wide.contains("\n    \"name\": \"Ada\""));
 }
@@ -244,14 +244,14 @@ fn toml_width_controls_inline_vs_section() {
 
     // Default budget (80): the small mapping stays an inline table.
     assert_eq!(
-        value.serialize(Format::Toml).unwrap(),
+        value.serialize(by_name("toml")).unwrap(),
         "point = { x = 1, y = 2 }\n"
     );
 
     // A tight budget forces it to expand to a [section].
     assert_eq!(
         value
-            .serialize_with(Format::Toml, SerializeOptions::default().width(8))
+            .serialize_with(by_name("toml"), SerializeOptions::default().width(8))
             .unwrap(),
         "[point]\nx = 1\ny = 2\n"
     );
@@ -267,12 +267,12 @@ fn zon_compact_vs_pretty() {
     ]);
 
     let compact = value
-        .serialize_with(Format::Zon, SerializeOptions::compact())
+        .serialize_with(by_name("zon"), SerializeOptions::compact())
         .unwrap();
     assert_eq!(compact, ".{ .name = \"Ada\", .xs = .{ 1, 2 } }\n");
 
     // Pretty stays the idiomatic four-space `zig fmt` shape.
-    let pretty = value.serialize(Format::Zon).unwrap();
+    let pretty = value.serialize(by_name("zon")).unwrap();
     assert_eq!(
         pretty,
         ".{\n    .name = \"Ada\",\n    .xs = .{\n        1,\n        2,\n    },\n}\n"
@@ -281,12 +281,12 @@ fn zon_compact_vs_pretty() {
 
 #[test]
 fn json5_serializes_and_parses_back() {
-    // Proves `Format::Json5` is wired through both the writer and the reader, not
+    // Proves `by_name("json5")` is wired through both the writer and the reader, not
     // just the editor: serialize emits JSON5 (bare identifier keys), and the
     // JSON5 reader round-trips it back to the same logical value.
     let value = map(vec![("host", "localhost".into()), ("port", 8080i64.into())]);
 
-    let text = value.serialize(Format::Json5).unwrap();
+    let text = value.serialize(by_name("json5")).unwrap();
     assert!(text.contains("host:"), "JSON5 keys are bare: {text:?}");
 
     #[derive(Deserialize, PartialEq, Debug)]
@@ -294,7 +294,7 @@ fn json5_serializes_and_parses_back() {
         host: String,
         port: i64,
     }
-    let back: Cfg = fig::from_slice(text.as_bytes(), Format::Json5).unwrap();
+    let back: Cfg = fig::from_slice(text.as_bytes(), by_name("json5")).unwrap();
     assert_eq!(
         back,
         Cfg {
@@ -307,12 +307,12 @@ fn json5_serializes_and_parses_back() {
 #[test]
 #[cfg(feature = "fig")]
 fn fig_dialect_serializes_and_parses_back() {
-    // Proves `Format::Fig` (the native authoring dialect) is wired through both
+    // Proves `by_name("fig")` (the native authoring dialect) is wired through both
     // the writer and the reader: serialize emits `key = value` fig syntax, and
     // the fig reader round-trips it back to the same logical value.
     let value = map(vec![("host", "localhost".into()), ("port", 8080i64.into())]);
 
-    let text = value.serialize(Format::Fig).unwrap();
+    let text = value.serialize(by_name("fig")).unwrap();
     assert_eq!(text, "host = localhost\nport = 8080\n");
 
     #[derive(Deserialize, PartialEq, Debug)]
@@ -320,7 +320,7 @@ fn fig_dialect_serializes_and_parses_back() {
         host: String,
         port: i64,
     }
-    let back: Cfg = fig::from_slice(text.as_bytes(), Format::Fig).unwrap();
+    let back: Cfg = fig::from_slice(text.as_bytes(), by_name("fig")).unwrap();
     assert_eq!(
         back,
         Cfg {
@@ -343,13 +343,13 @@ fn yaml_width_controls_nested_flow_vs_block_and_zero_means_unset() {
 
     // Default budget: the small nested mapping stays flow.
     assert_eq!(
-        nested.serialize(Format::Yaml).unwrap(),
+        nested.serialize(by_name("yaml")).unwrap(),
         "a: { k: v }\nz: 1\n"
     );
     // A tight budget expands it to block lines.
     assert_eq!(
         nested
-            .serialize_with(Format::Yaml, SerializeOptions::default().width(1))
+            .serialize_with(by_name("yaml"), SerializeOptions::default().width(1))
             .unwrap(),
         "a:\n  k: v\nz: 1\n"
     );
@@ -357,9 +357,9 @@ fn yaml_width_controls_nested_flow_vs_block_and_zero_means_unset() {
     // back to the 80-column default.
     assert_eq!(
         nested
-            .serialize_with(Format::Yaml, SerializeOptions::default().width(0))
+            .serialize_with(by_name("yaml"), SerializeOptions::default().width(0))
             .unwrap(),
-        nested.serialize(Format::Yaml).unwrap()
+        nested.serialize(by_name("yaml")).unwrap()
     );
 
     // A ROOT container ignores the budget entirely — always block. This is the
@@ -367,7 +367,7 @@ fn yaml_width_controls_nested_flow_vs_block_and_zero_means_unset() {
     let root = map(vec![("k", "v".into())]);
     for w in [80u16, 1, 0] {
         assert_eq!(
-            root.serialize_with(Format::Yaml, SerializeOptions::default().width(w))
+            root.serialize_with(by_name("yaml"), SerializeOptions::default().width(w))
                 .unwrap(),
             "k: v\n",
             "root should be block at width {w}"
@@ -409,4 +409,11 @@ fn unsigned_fields_serialize_to_the_canonical_integer_variant() {
     let parsed: Value = fig::from_yaml_str(&text).unwrap();
     assert_eq!(parsed, fig::to_value(&ports).unwrap());
     assert_eq!(fig::from_yaml_str::<Ports>(&text).unwrap(), ports);
+}
+
+/// The registered format named `name`; a test that names one this build
+/// does not carry is a test bug.
+#[allow(dead_code)]
+fn by_name(name: &str) -> fig::Format {
+    fig::Format::by_name(name).unwrap_or_else(|| panic!("no format named {name:?}"))
 }

@@ -18,10 +18,9 @@
 //!   * **The registry.** `register` validates a vtable by the rules
 //!     `Language.validate` applies at comptime, runs the harness of
 //!     `harness.zig` over the samples it declares, and — only then — appends
-//!     one `Entry` per dialect row and returns the first's ABI integer, at or
-//!     above `Language.runtime_abi_base` — or, for a row named after a
-//!     format compiled out of this build, that format's own integer, so the
-//!     registration stands in for it. Append-only under a mutex; an entry
+//!     one `Entry` per dialect row and returns the first's ABI integer: the
+//!     row's index plus one, so that 0 is never a format. Append-only under
+//!     a mutex; an entry
 //!     is immutable once its integer is out, so every read is of a settled
 //!     value and the threading promise in fig.h holds. There is no
 //!     unregistration: an integer is valid for the life of the process.
@@ -50,7 +49,7 @@ const AST = @import("../kit/ast/ast.zig");
 const Serialize = @import("../serialize.zig");
 const Document = @import("../kit/document.zig");
 const Span = @import("../kit/span.zig");
-const manifest = @import("../kit/manifest.zig");
+pub const manifest = @import("../kit/manifest.zig");
 const ParseDiagnostic = @import("../kit/parse_diagnostic.zig");
 const Languages = @import("language.zig");
 const editor = @import("../editor.zig");
@@ -104,23 +103,8 @@ pub const gated = C.gated;
 
 /// One registered dialect: `Language.Type`'s value `index` names it, and
 /// `abi` is the integer a C caller holds. Immutable once appended.
-/// What a tree is printed as: a compiled `SerializeFormat`, or a runtime
-/// language's entry, whose printer is reached through its vtable. The one
-/// type for every pass that has to handle both — rendering a patch, reporting
-/// what a print loses, the C API's serialize.
-pub const Target = union(enum) {
-    compiled: Serialize.SerializeFormat,
-    runtime: *const Entry,
-
-    /// What the target is called in a message: the compiled format's member
-    /// name, the runtime entry's registered one.
-    pub fn name(self: Target) []const u8 {
-        return switch (self) {
-            .compiled => |f| @tagName(f),
-            .runtime => |e| e.name,
-        };
-    }
-};
+/// What a tree is printed as (`serialize.zig`).
+pub const Target = Serialize.Target;
 
 pub const Entry = struct {
     index: u16,
@@ -136,6 +120,11 @@ pub const Entry = struct {
     /// What the dialect's printer makes of another format's tree, if it
     /// says.
     prints: ?manifest.Prints = null,
+    /// How the dialect is named inside a host document, or null for none.
+    embed: ?manifest.EmbedSpellings = null,
+    /// The openers `embed` makes, built once: ```` ```<fence_tag> ````,
+    /// `<script type="<script_mime>">` and `<pre><code class="<code_class>">`.
+    embed_open: ?EmbedOpen = null,
 
     /// The name handed to every vtable function for this row.
     pub fn dialectZ(self: *const Entry) [*:0]const u8 {
@@ -145,6 +134,8 @@ pub const Entry = struct {
         return @fromBackingInt(@intCast(self.index));
     }
 };
+
+pub const EmbedOpen = struct { fenced: []const u8, script: []const u8, code: []const u8 };
 
 /// One registration: the vtable, copied, with its strings owned here.
 pub const Registered = struct {
@@ -158,9 +149,8 @@ pub const Registered = struct {
     entries: []const *const Entry,
 };
 
-/// As many dialect rows as the registry holds; `Language.Type` is a u16 and
-/// the ABI integers run from `runtime_abi_base`, so the bound is the
-/// smaller of the two spaces less headroom. Static so that a read needs no
+/// As many dialect rows as the registry holds; `Language.Type` is a u16, so
+/// the bound is that space less headroom. Static so that a read needs no
 /// lock: `slots[i]` for `i < count` was written before `count` was
 /// published and is never written again.
 pub const max_entries: usize = 4096;
@@ -267,18 +257,15 @@ pub fn registerWith(allocator: Allocator, raw: *const VTable, options: RegisterO
         if (a.vtable != allocator.vtable) return error.AllocatorMismatch;
     } else registry_allocator = allocator;
 
-    // A name is taken by a registration or by a format compiled in. The name
-    // of a format compiled OUT is free, and a dialect by that name stands in
-    // for it: it takes that format's ABI value rather than one from
-    // `runtime_abi_base` (`Languages.standInAbi`).
+    // A name is taken once.
     const name = std.mem.span(vt.name);
-    if (findByNameLocked(name) != null or Languages.isCompiledName(name)) {
+    if (findByNameLocked(name) != null) {
         refuse("a format named '{s}' is already registered", .{name});
         return error.NameTaken;
     }
     for (vt.dialects[0..vt.dialect_count]) |d| {
         const dn = std.mem.span(d.name);
-        if (findByNameLocked(dn) != null or Languages.isCompiledName(dn)) {
+        if (findByNameLocked(dn) != null) {
             refuse("a format named '{s}' is already registered", .{dn});
             return error.NameTaken;
         }
@@ -316,8 +303,7 @@ pub fn registerWith(allocator: Allocator, raw: *const VTable, options: RegisterO
         const index = first_index + i;
         e.* = .{
             .index = @intCast(index),
-            .abi = Languages.standInAbi(std.mem.span(d.name)) orelse
-                @intCast(@as(i64, Languages.runtime_abi_base) + @as(i64, @intCast(index))),
+            .abi = @intCast(index + 1),
             .language = reg,
             .name = try arena.dupeSentinel(u8, std.mem.span(d.name), 0),
             .extensions = try exts.toOwnedSlice(arena),
@@ -325,6 +311,12 @@ pub fn registerWith(allocator: Allocator, raw: *const VTable, options: RegisterO
             .empty_doc_seed = if (d.empty_doc_seed) |s| try arena.dupe(u8, std.mem.span(s)) else null,
             .syntax = if (d.syntax) |s| try syntaxOf(arena, s) else null,
             .prints = try printsOf(arena, &d),
+            .embed = try embedOf(arena, &d),
+        };
+        if (e.embed) |sp| e.embed_open = .{
+            .fenced = try std.fmt.allocPrint(arena, "```{s}", .{sp.fence_tag}),
+            .script = try std.fmt.allocPrint(arena, "<script type=\"{s}\">", .{sp.script_mime}),
+            .code = try std.fmt.allocPrint(arena, "<pre><code class=\"{s}\">", .{sp.code_class}),
         };
         out.* = e;
     }
@@ -354,6 +346,29 @@ pub fn registerWith(allocator: Allocator, raw: *const VTable, options: RegisterO
     registrations.appendAssumeCapacity(reg);
     published.store(@intCast(first_index + vt.dialect_count), .release);
     return row_entries[0].abi;
+}
+
+/// A row's embed spellings, copied into `arena`; null when it declares none.
+fn embedOf(arena: Allocator, d: *const DialectDesc) Allocator.Error!?manifest.EmbedSpellings {
+    const tag = d.embed_fence_tag orelse return null;
+    return .{
+        .fence_tag = try arena.dupe(u8, std.mem.span(tag)),
+        .fence_aliases = try stringsOf(arena, d.embed_fence_aliases),
+        .frontmatter = try arena.dupe(u8, if (d.embed_frontmatter) |f| std.mem.span(f) else ""),
+        .script_mime = try arena.dupe(u8, if (d.embed_script_mime) |m| std.mem.span(m) else ""),
+        .script_mime_aliases = try stringsOf(arena, d.embed_script_mime_aliases),
+        .code_class = try arena.dupe(u8, if (d.embed_code_class) |c| std.mem.span(c) else ""),
+    };
+}
+
+/// A NULL-terminated C string array, copied into `arena`.
+fn stringsOf(arena: Allocator, arr: ?[*]const ?[*:0]const u8) Allocator.Error![]const []const u8 {
+    const a = arr orelse return &.{};
+    var n: usize = 0;
+    while (a[n] != null) n += 1;
+    const out = try arena.alloc([]const u8, n);
+    for (out, 0..) |*o, i| o.* = try arena.dupe(u8, std.mem.span(a[i].?));
+    return out;
 }
 
 /// The slot range the registering thread is checking, visible to
@@ -403,18 +418,12 @@ pub fn entryAt(index: usize) ?*const Entry {
     return null;
 }
 
-/// The entry an ABI integer names, or null for one never handed out. At or
-/// above the runtime base the integer is the slot; below it, it is a
-/// compiled-out format's, and names the registration standing in for that
-/// format when there is one. Null for a compiled-in format's integer, which
-/// no registration can take.
+/// The entry an ABI integer names — its index plus one — or null for one
+/// never handed out.
 pub fn entryByAbi(abi: c_int) ?*const Entry {
     ensureBundled();
-    if (abi >= Languages.runtime_abi_base) return entryAt(@intCast(abi - Languages.runtime_abi_base));
-    const n = published.load(.acquire);
-    for (slots[0..n]) |e| if (e.abi == abi) return e;
-    if (checking) |c| for (slots[c.from..c.to]) |e| if (e.abi == abi) return e;
-    return null;
+    if (abi < 1) return null;
+    return entryAt(@intCast(abi - 1));
 }
 
 /// The entry named `name` — a dialect row's name — or null.
@@ -433,20 +442,35 @@ pub fn registeredByName(name: []const u8) ?*const Entry {
     return findByNameLocked(name);
 }
 
+/// Content sniffing in the consumer's order: the first registered dialect
+/// `order` names whose parser accepts `input`, or null. The order is the
+/// consumer's to choose — the grammars overlap, so it decides what ambiguous
+/// input means — and a language never ranks itself against another. A name
+/// no dialect has, or one that cannot read, is skipped.
+pub fn detectAmong(allocator: Allocator, input: []const u8, order: []const []const u8) ?*const Entry {
+    for (order) |name| {
+        const e = entryByName(name) orelse continue;
+        if (!e.language.caps.read) continue;
+        const doc = Language.Parser.parse(allocator, input, e.typeOf()) catch continue;
+        doc.deinit(allocator);
+        return e;
+    }
+    return null;
+}
+
 /// How many dialect rows are registered.
 pub fn count() usize {
     ensureBundled();
     return published.load(.acquire);
 }
 
-// ── the bundle, in a build with no compiled registry ───────────────────────
+// ── the bundle, registered on first use ────────────────────────────────────
 //
-// INTERIM (docs/proposals/core-only.md §8): in a build whose compiled
-// registry is empty (`-Dcompiled-registry=false`), the languages the build
-// bundles (`bundle.zig`) are registered the first time anything looks a
-// format up, so that a caller holding a format's number reaches its
-// language without registering it. Deleted with the format numbers, when a
-// consumer registers what it uses. Core names no language once it is gone.
+// INTERIM (docs/proposals/core-only.md §8, step 9): the languages a build
+// bundles (`bundle.zig`, `-D<name>`) are registered the first time anything
+// looks a format up, so that a C or binding caller reaches one by name
+// without registering it. Deleted when each language ships as an archive of
+// its own and a consumer registers what it uses.
 
 /// 0 not yet, 1 registering (a lookup the registration itself makes
 /// returns), 2 done.
@@ -466,7 +490,6 @@ fn defaultAllocator() Allocator {
 }
 
 fn ensureBundledWith(allocator: Allocator) void {
-    if (comptime build_options.compiled_registry) return;
     if (bundle_state.load(.acquire) == 2 or bundling_here) return;
     if (bundle_state.cmpxchgStrong(0, 1, .acq_rel, .acquire) != null) {
         // Another thread is registering the bundle: what this one is about
@@ -1014,8 +1037,6 @@ pub const Language = struct {
     /// of `language.zig`, whose rows are compiled formats.
     pub const dialects: []const manifest.Dialect(@This()) = &.{.{
         .name = "runtime",
-        .abi_value = Languages.runtime_abi_base,
-        .sniff_rank = null,
         .splice = .raw,
         .empty_doc_seed = null,
     }};
@@ -1190,7 +1211,7 @@ test "a mapping table round-trips through Document and back" {
 
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
     defer out.deinit();
-    try Serialize.serializeWith(&doc.ast, &out.writer, .json, .{ .pretty = false });
+    try Serialize.serializeWith(&doc.ast, &out.writer, Serialize.Target.named("json").?, .{ .pretty = false });
     try testing.expectEqualStrings("{\"a\":1,\"b\":[true,\"x\"]}\n", out.written());
     try testing.expectEqualStrings("hello", doc.ast.comments(2).leading[0].text);
     try testing.expect(doc.sepSpan(doc.ast.nodes[1]) != null);
@@ -1464,7 +1485,7 @@ test "a language registered from Zig parses, edits and prints through the contra
     var alloc: TinyKv.Alloc = .{ .allocator = testing.allocator };
     const vt = TinyKv.vtable(&alloc);
     const abi = try register(testing.allocator, &vt);
-    try testing.expect(abi >= Languages.runtime_abi_base);
+    try testing.expectEqual(@as(c_int, @intCast(entryByName("tinykv").?.index + 1)), abi);
     const e = entryByAbi(abi).?;
     try testing.expectEqualStrings("tinykv", e.name);
     try testing.expect(entryByName("tinykv") == e);
@@ -1478,7 +1499,7 @@ test "a language registered from Zig parses, edits and prints through the contra
     defer doc.deinit(testing.allocator);
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
     defer out.deinit();
-    try Serialize.serializeWith(&doc.ast, &out.writer, .json, .{ .pretty = false });
+    try Serialize.serializeWith(&doc.ast, &out.writer, Serialize.Target.named("json").?, .{ .pretty = false });
     try testing.expectEqualStrings("{\"x\":\"1\",\"y\":\"2\"}\n", out.written());
 
     // Edit through the engine: replace, insert, a comment, delete.
@@ -2038,55 +2059,13 @@ test "registration refuses a record that fails validation or the harness" {
     _ = try register(testing.allocator, &vt);
     try testing.expectError(error.NameTaken, register(testing.allocator, &vt));
 
-    if (Languages.isCompiledName("yaml")) {
-        const taken = [_]DialectDesc{.{ .name = "yaml" }};
-        var vt2 = TinyKv.vtable(&alloc);
-        vt2.name = "yaml";
-        vt2.dialects = &taken;
-        try testing.expectError(error.NameTaken, register(testing.allocator, &vt2));
-    }
-}
-
-test "a language named after a compiled-out format stands in for it, at that format's integer" {
-    // plist is off in the default build; a build that compiles it in has no
-    // slot to stand in for.
-    if (comptime !build_options.compiled_registry) return error.SkipZigTest;
-    const plist_abi = Languages.standInAbi("plist") orelse return error.SkipZigTest;
-    deinitAll();
-    defer deinitAll();
-    var alloc: TinyKv.Alloc = .{ .allocator = testing.allocator };
-    const exts = [_]?[*:0]const u8{ "plist", null };
-    const rows = [_]DialectDesc{
-        .{ .name = "plist", .extensions = &exts, .splice = 2, .empty_doc_seed = "" },
-        .{ .name = "plist-strict", .splice = 2, .empty_doc_seed = "" },
-    };
-    var vt = TinyKv.vtable(&alloc);
-    vt.name = "plist";
-    vt.dialects = &rows;
-    vt.dialect_count = rows.len;
-
-    // The row named after the format takes its integer; the other row takes
-    // the next runtime one, as any registration's would.
-    try testing.expectEqual(plist_abi, try register(testing.allocator, &vt));
-    const e = entryByAbi(plist_abi).?;
-    try testing.expectEqualStrings("plist", e.name);
-    try testing.expect(entryByName("plist") == e);
-    const strict = entryByName("plist-strict").?;
-    try testing.expectEqual(@as(c_int, Languages.runtime_abi_base) + @as(c_int, strict.index), strict.abi);
-    try testing.expect(entryByAbi(strict.abi) == strict);
-
-    const doc = try Language.Parser.parse(testing.allocator, "a=1\n", e.typeOf());
-    defer doc.deinit(testing.allocator);
-
-    // Content sniffing tries it at plist's place in the order: after JSON,
-    // JSON5 and ZON, which all refuse `a=1`, and ahead of the formats
-    // that would take it.
-    try testing.expectEqual(Languages.Detected.plist, Languages.detect(testing.allocator, "a=1\n").?);
-
-    // Taken now, like any registered name; and a compiled-in format's
-    // integer names no runtime entry.
-    try testing.expectError(error.NameTaken, register(testing.allocator, &vt));
-    try testing.expect(entryByAbi(Languages.entryFor("json").abi_value) == null);
+    // A dialect row named as another language's is taken too.
+    const taken = [_]DialectDesc{ .{ .name = "tinykv2" }, .{ .name = "tinykv" } };
+    var vt2 = TinyKv.vtable(&alloc);
+    vt2.name = "tinykv2";
+    vt2.dialects = &taken;
+    vt2.dialect_count = taken.len;
+    try testing.expectError(error.NameTaken, register(testing.allocator, &vt2));
 }
 
 test "a record from an older or a newer header is read as far as its size says" {

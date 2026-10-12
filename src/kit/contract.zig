@@ -94,12 +94,33 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
     return struct {
         const editable = L.caps.edit;
 
+        /// A dialect row: one of `L.dialects`, or one of their `--spec`
+        /// versions, named `<dialect>-<spec>` (`yaml-1.1`), which claims no
+        /// extension and no embedded spelling of its own.
+        const Row = struct {
+            name: []const u8,
+            /// The declared row it is, or is a version of.
+            of: usize,
+            dialect: L.Type,
+            declared: bool,
+        };
+
+        const rows: []const Row = blk: {
+            @setEvalBranchQuota(100_000);
+            var out: []const Row = &.{};
+            for (L.dialects, 0..) |d, i| out = out ++ [_]Row{.{ .name = d.name, .of = i, .dialect = d.dialect, .declared = true }};
+            for (L.dialects, 0..) |d, i| {
+                for (d.specs) |sp| out = out ++ [_]Row{.{ .name = d.name ++ "-" ++ sp.name, .of = i, .dialect = sp.dialect, .declared = false }};
+            }
+            break :blk out;
+        };
+
         /// The dialect row named `name`, as this vtable names it.
         fn typeOf(dialect: [*:0]const u8) ?L.Type {
             @setEvalBranchQuota(100_000);
             const n = std.mem.span(dialect);
-            inline for (L.dialects) |d| {
-                if (eql(prefix ++ d.name, n)) return d.dialect;
+            inline for (rows) |r| {
+                if (eql(prefix ++ r.name, n)) return r.dialect;
             }
             return null;
         }
@@ -119,19 +140,27 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
             return out ++ [_]?[*:0]const u8{null};
         }
 
+        fn zList(comptime list: []const []const u8) ?[*]const ?[*:0]const u8 {
+            if (list.len == 0) return null;
+            comptime var out: []const ?[*:0]const u8 = &.{};
+            inline for (list) |x| out = out ++ [_]?[*:0]const u8{z(x)};
+            return (out ++ [_]?[*:0]const u8{null}).ptr;
+        }
+
         const dialect_syntaxes = blk: {
             @setEvalBranchQuota(100_000);
-            var out: [L.dialects.len]abi.SyntaxDesc = undefined;
+            var out: [rows.len]abi.SyntaxDesc = undefined;
             if (editable) {
-                for (L.dialects, 0..) |d, i| out[i] = syntaxDesc(L.syntax(d.dialect));
+                for (rows, 0..) |r, i| out[i] = syntaxDesc(L.syntax(r.dialect));
             }
             break :blk out;
         };
 
         const dialects = blk: {
             @setEvalBranchQuota(100_000);
-            var out: [L.dialects.len]abi.DialectDesc = undefined;
-            for (L.dialects, 0..) |d, i| {
+            var out: [rows.len]abi.DialectDesc = undefined;
+            for (rows, 0..) |r, i| {
+                const d = L.dialects[r.of];
                 const p = d.prints;
                 var flags: u32 = 0;
                 if (p) |x| {
@@ -139,9 +168,10 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
                     if (x.null_at_root) flags |= abi.prints_null_at_root;
                     if (x.root_container) flags |= abi.prints_root_container;
                 }
+                const e = if (r.declared) d.embed else null;
                 out[i] = .{
-                    .name = z(prefix ++ d.name),
-                    .extensions = extensionsOf(i).ptr,
+                    .name = z(prefix ++ r.name),
+                    .extensions = if (r.declared) extensionsOf(r.of).ptr else null,
                     .splice = @backingInt(d.splice),
                     .empty_doc_seed = zOpt(d.empty_doc_seed),
                     .syntax = if (editable) &dialect_syntaxes[i] else null,
@@ -150,6 +180,12 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
                     .prints_char_as = if (p) |x| z(x.char_as) else null,
                     .prints_number_special_as = if (p) |x| z(x.number_special_as) else null,
                     .prints_comments = if (p) |x| @backingInt(x.comments) else 0,
+                    .embed_fence_tag = if (e) |x| z(x.fence_tag) else null,
+                    .embed_fence_aliases = if (e) |x| zList(x.fence_aliases) else null,
+                    .embed_frontmatter = if (e) |x| z(x.frontmatter) else null,
+                    .embed_script_mime = if (e) |x| z(x.script_mime) else null,
+                    .embed_script_mime_aliases = if (e) |x| zList(x.script_mime_aliases) else null,
+                    .embed_code_class = if (e) |x| z(x.code_class) else null,
                 };
             }
             break :blk out;
@@ -184,10 +220,23 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
             // A parser with a report says why it refused, where, and what it
             // would warn about on input it reads: each goes into the table's
             // diagnostics, and a refusal's into `err` as well.
+            // A parser that can keep going past an error does, so that every
+            // error in the input crosses, not only the first.
             var report: P.Report = .{};
-            const parsed = P.parseWithReport(out.allocator, src, t, &report);
+            const parsed = if (comptime @hasDecl(P, "parseCollecting"))
+                P.parseCollecting(out.allocator, src, t, &report)
+            else
+                P.parseWithReport(out.allocator, src, t, &report);
             defer if (comptime @hasField(P.Report, "warnings")) out.allocator.free(report.warnings);
+            defer if (comptime @hasField(P.Report, "errors")) out.allocator.free(report.errors);
             var doc = parsed catch |e| {
+                if (comptime @hasField(P.Report, "errors")) if (report.errors.len > 1) {
+                    for (report.errors) |d| addDiagnostic(out, table.diagnostic_error, d.offset, d.end, P.describe(d.code), P.shortLabel(d.code)) catch return 3;
+                    const first = report.errors[0];
+                    err.set(P.describe(first.code));
+                    err.byte_offset = first.offset;
+                    return 2;
+                };
                 if (report.diag) |d| {
                     addDiagnostic(out, table.diagnostic_error, d.offset, d.end, P.describe(d.code), P.shortLabel(d.code)) catch return 3;
                     err.set(P.describe(d.code));
@@ -257,8 +306,10 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
         /// editor splices, its fragment printer for a fragment, else its
         /// document printer.
         fn printWith(t: L.Type, w: *std.Io.Writer, ast: *const AST, options: AST.SerializeOptions) !void {
-            inline for (L.dialects) |d| {
-                if (d.dialect == t) {
+            // A `--spec` row prints as the dialect it is a version of.
+            inline for (rows) |r| {
+                const d = L.dialects[r.of];
+                if (r.dialect == t) {
                     if (comptime @hasDecl(L.Printer, "printSplice")) {
                         if (options.splice) return L.Printer.printSplice(w, ast, options);
                     }

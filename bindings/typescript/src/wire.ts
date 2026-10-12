@@ -20,6 +20,18 @@
 // have the same `handle` the wasm module calls. `registerLanguage`, which
 // needs the module, is in `language.ts`.
 
+// ── the format ─────────────────────────────────────────────────────────────
+
+declare const formatBrand: unique symbol;
+
+/** A format: the handle of a registered dialect. Handles are assigned per
+ *  process, in registration order, so persist a format's NAME and resolve
+ *  it with `formatByName` — never the number. A `Format` comes only from
+ *  `registerLanguage`, `formatByName`, `requireFormat`, `detectFormat` or a
+ *  registered language's `format`. Declared here, beside the `Language`
+ *  that carries one, so that this module still imports nothing. */
+export type Format = number & { readonly [formatBrand]: true };
+
 // ── the description ────────────────────────────────────────────────────────
 
 /** How one comment is delimited: `open` alone (`#`, `//`) or a pair
@@ -132,6 +144,30 @@ export interface Dialect {
    *  fig's conversion warnings are computed from; absent leaves them to
    *  `caps` and `lossless`. */
   prints?: Prints | null;
+  /** How this dialect is written embedded in a host file — frontmatter, a
+   *  fenced block, an HTML `<script>` or `<pre><code>` island. Embedding
+   *  finds an inner language only through these declarations: a dialect
+   *  without one is never an embed's content. */
+  embed?: EmbedSpellings | null;
+}
+
+/** How a dialect is spelled embedded in a host file. Spellings are matched
+ *  case-insensitively; only `fence_tag` is required. */
+export interface EmbedSpellings {
+  /** The info string of a fenced block, without the backticks: `yaml` for
+   *  ```` ```yaml ````. What a fenced block of this dialect is written with. */
+  fence_tag: string;
+  /** Info strings read as this dialect but never written (`yml`). */
+  fence_aliases?: string[];
+  /** The whole frontmatter opener (`---json`); a bare `---` claims untagged
+   *  frontmatter. Absent: the dialect has no frontmatter form. */
+  frontmatter?: string | null;
+  /** The `type` of an HTML `<script>` data island (`application/yaml`). */
+  script_mime?: string | null;
+  /** Further `<script type>`s read as this dialect but never written. */
+  script_mime_aliases?: string[];
+  /** The class of an HTML `<pre><code>` block (`language-yaml`). */
+  code_class?: string | null;
 }
 
 /** What a dialect's printer writes of a tree read from another format. */
@@ -203,7 +239,7 @@ export interface PrintOptions {
   /** Print a container root inline — fig's `{a=1}` / `[a, b]` — as a
    *  value spliced after `key = ` must be, since a block spelling re-reads
    *  there as a string. The editors set it for fig alone, so a language
-   *  standing in for fig answers it; any other ignores it. */
+   *  registered as fig answers it; any other ignores it. */
   flow: boolean;
 }
 
@@ -333,11 +369,15 @@ export interface DiagnosticRow {
  *  format declares — with the functions the format is. Hand one to
  *  {@link registerLanguage}, or {@link serve} it to a `fig` command line. */
 export interface Language {
-  /** Must differ from the name of every format compiled into the module
-   *  and every language already registered; `dialects[0].name` must equal
-   *  it. The name of a format compiled out of the module is free, and
-   *  the language stands in for that format ({@link registerLanguage}). */
+  /** Must differ from the name of every language already registered;
+   *  `dialects[0].name` must equal it. */
   name: string;
+  /** The format of the first dialect, once {@link registerLanguage} has
+   *  registered this object — `yaml.format` after `registerLanguage(yaml)`
+   *  — and `undefined` before. Written by registration, never read from
+   *  the description; the other dialects are found by name
+   *  ({@link formatByName}). */
+  readonly format?: Format;
   /** `references`: the format has a reference layer — anchors, aliases,
    *  `<<` merges, tags — so its parse may return those columns and its print
    *  spells them; fig collapses the layer only when a document leaves such
@@ -424,6 +464,7 @@ export function describe(lang: Language): Record<string, unknown> {
       empty_doc_seed: d.empty_doc_seed ?? null,
       syntax: d.syntax ?? null,
       prints: d.prints ?? null,
+      embed: d.embed ?? null,
     })),
     samples: lang.samples,
     renderers: lang.renderers ?? [],

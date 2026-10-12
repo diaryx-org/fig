@@ -37,10 +37,65 @@ pub fn bundles(comptime name: []const u8) bool {
     return @field(build_options, "lang_" ++ name);
 }
 
+/// The module of the language `name`, bundled or not: its `Language`,
+/// `Parser`, `Printer` and `Type`.
+pub fn module(comptime name: []const u8) type {
+    return @field(modules, name);
+}
+
 /// The `Language` of the bundled language `name`.
 pub fn Language(comptime name: []const u8) type {
     return @field(modules, name).Language;
 }
+
+/// The declared dialects of every language fig ships, in list order,
+/// whether or not this build bundles each — what a consumer lists as the
+/// formats it knows of. `--spec` versions are rows of their own once
+/// registered, but are not listed here.
+pub const all_dialects: []const []const u8 = blk: {
+    var out: []const []const u8 = &.{};
+    for (list.rows) |row| {
+        for (@field(modules, row.name).Language.dialects) |d| out = out ++ [_][]const u8{d.name};
+    }
+    break :blk out;
+};
+
+/// The language fig ships that owns extension `ext` but this build does not
+/// bundle, or null: what a consumer names when such a file meets no
+/// language, rather than reading it as something else.
+pub fn unbundledOwner(ext: []const u8) ?[]const u8 {
+    inline for (list.rows) |row| {
+        if (comptime !bundles(row.name)) {
+            inline for (@field(modules, row.name).Language.extensions) |x| {
+                if (std.mem.eql(u8, x, ext)) return row.name;
+            }
+        }
+    }
+    return null;
+}
+
+/// `all_dialects`, less the languages this build does not bundle.
+pub const dialect_names: []const []const u8 = blk: {
+    var out: []const []const u8 = &.{};
+    for (list.rows) |row| {
+        if (!@field(build_options, "lang_" ++ row.name)) continue;
+        for (@field(modules, row.name).Language.dialects) |d| out = out ++ [_][]const u8{d.name};
+    }
+    break :blk out;
+};
+
+/// The bundled dialects with an embedded spelling, in list order — what
+/// a consumer's help text names as an embed archetype's `<lang>`.
+pub const embeddable: []const []const u8 = blk: {
+    var out: []const []const u8 = &.{};
+    for (list.rows) |row| {
+        if (!@field(build_options, "lang_" ++ row.name)) continue;
+        for (@field(modules, row.name).Language.dialects) |d| {
+            if (d.embed != null) out = out ++ [_][]const u8{d.name};
+        }
+    }
+    break :blk out;
+};
 
 /// The dialect record named `name` (`"json5"`, `"yaml-1.1"`), from
 /// whichever bundled language declares it.
@@ -78,5 +133,16 @@ pub fn register(allocator: std.mem.Allocator, comptime name: []const u8) Runtime
 pub fn registerAll(allocator: std.mem.Allocator) Runtime.RegisterError!void {
     inline for (list.rows) |row| {
         if (comptime bundles(row.name)) _ = try register(allocator, row.name);
+    }
+}
+
+// Test discovery: referencing each language module pulls its own `test {}`
+// block — and through it every submodule's tests — into the suite, so
+// `root.zig` names no language. Every module, bundled or not: a module's
+// tests skip themselves when its language is left out.
+test {
+    inline for (@typeInfo(@TypeOf(modules)).@"struct".field_names) |f| _ = @field(modules, f);
+    inline for (list.rows) |row| {
+        if (comptime bundles(row.name)) @import("language.zig").validate(Language(row.name));
     }
 }

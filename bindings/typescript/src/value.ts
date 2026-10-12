@@ -9,7 +9,7 @@
 import {
   check,
   ExtKind,
-  Format,
+  type Format,
   WarningCause,
   WarningCode,
   type SerializeOptions,

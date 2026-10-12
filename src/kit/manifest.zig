@@ -306,11 +306,9 @@ pub const SpliceStyle = enum {
     raw,
 };
 
-/// One `--spec <version>` string and the dialect it selects. The element type
-/// of `Dialect.specs`, generic over the language so a gated-out one collapses
-/// to a `void` dialect and the registry still compiles (and still lists the
-/// version STRINGS, which are build-invariant — `resolveSpec` rejects them
-/// for a gated-out language rather than not knowing them).
+/// One `--spec <version>` string and the dialect it selects. The element
+/// type of `Dialect.specs`. A language's contract vtable registers each as a
+/// dialect row of its own, named `<dialect>-<version>` (`yaml-1.1`).
 pub fn SpecName(comptime Lang: type) type {
     return struct {
         /// The accepted `--spec` text, matched exactly. Several map to one
@@ -323,63 +321,22 @@ pub fn SpecName(comptime Lang: type) type {
 /// One user-facing dialect of a language: everything about it that is not
 /// the language module itself. A language declares its own as
 /// `Language.dialects: []const Dialect(Language)` — one entry for most, three
-/// for JSON (json/jsonc/json5 share one `Language`) — and `language.zig`
-/// assembles the format registry from those tables, in language order.
-///
-/// Generic over the language so the `void` protocol survives (see
-/// `DialectOf`): in the registry a gated-out language's entries are
-/// `Dialect(void)`, still present with their names, ABI values and spellings,
-/// so every enum derived from the registry is build-invariant. A language's
-/// own table is always `Dialect(Language)` — it is the registry that lifts
-/// the entries to the gated type.
+/// for JSON (json/jsonc/json5 share one `Language`) — and its contract
+/// vtable registers each as a dialect row (`kit/contract.zig`).
 pub fn Dialect(comptime L: type) type {
     return struct {
-        /// The member name this dialect has in every derived enum, and —
-        /// upper-cased — the `FIG_FORMAT_<NAME>` suffix in fig.h. Sentinel-
-        /// terminated because a reified enum's field names must be. The
-        /// entry that selects the language's `default_type` must be named
-        /// `Language.name` (`validate` checks); the others are the language's
-        /// business (JSON's `jsonc`/`json5`).
+        /// The dialect's registered name. The entry that selects the
+        /// language's `default_type` must be named `Language.name`
+        /// (`validate` checks); the others are the language's business
+        /// (JSON's `jsonc`/`json5`).
         name: [:0]const u8,
 
-        /// The language this dialect is a dialect OF; `void` when that
-        /// language is gated out of this build. Every consumer must test this
-        /// FIRST — it is the gate, and reading any other `Lang`-derived field
-        /// past a `void` is a compile error, which is the point.
+        /// The language this dialect is a dialect OF.
         Lang: type = L,
 
         /// The `Lang.Type` value this dialect selects. Defaults to the
         /// language's own default; only the JSON trio overrides it.
         dialect: DialectOf(L) = defaultDialect(L),
-
-        /// The `FigFormat` value in the C ABI. FROZEN: a released value can
-        /// never change or be reused, so a new dialect takes the next unused
-        /// integer (which is why these run 1,2,7 down the JSON family — JSON5
-        /// arrived after generic XML took 6, a value that stays retired now
-        /// that the format is gone). `zig build abi-check` compares these against
-        /// fig.h's `FIG_FORMAT_*` enumerators in both directions, and
-        /// `language.zig` refuses a duplicate.
-        abi_value: c_int,
-
-        /// Where this dialect sits in `Language.detect`'s probe order, or
-        /// null for a dialect `detect` never sniffs (and which is then no
-        /// member of `Detected`) — `jsonc` alone today, since it overlaps
-        /// json/json5 on almost all input.
-        ///
-        /// The order is one argument about grammar overlap — strictest first,
-        /// so a permissive grammar cannot claim what a stricter one would
-        /// have accepted — and each row carries its own place in it with the
-        /// reasoning beside the number. Ranks are unique across the registry
-        /// (`language.zig` refuses a duplicate) and need not be contiguous;
-        /// `language.zig` pins the resulting sequence in a test, so a new
-        /// format choosing a rank cannot reorder the existing ones unnoticed.
-        /// Every language must give at least one of its dialects a rank.
-        sniff_rank: ?u8 = null,
-
-        /// Whether `deserialize.Format` covers it — the typed
-        /// struct-deserialization entry points, which today reach five of the
-        /// thirteen dialects.
-        deserializable: bool = false,
 
         /// How this dialect takes spliced edit text. See `SpliceStyle`.
         splice: SpliceStyle,
@@ -397,12 +354,9 @@ pub fn Dialect(comptime L: type) type {
         /// dialect, and the one that writes a single node. Two names rather
         /// than one because the JSON family shares a printer and separates its
         /// dialects by entry point (`print`/`printc`/`print5`), and YAML's
-        /// document printer is `printWith`.
-        ///
-        /// These ARE the serializer's dispatch: `serialize.zig`
-        /// calls `@field(d.Lang.Printer, d.print_name)(writer, ast, options)`
-        /// (and the `print_node_name` twin) for every entry, so a wrong name
-        /// here is a compile error rather than a wrong output.
+        /// document printer is `printWith`. The contract's `print` thunk
+        /// calls `@field(L.Printer, d.print_name)`, so a wrong name here is a
+        /// compile error rather than a wrong output.
         print_name: [:0]const u8 = "print",
         print_node_name: [:0]const u8 = "printNode",
         /// The printer entry for a value FRAGMENT where it differs from the
@@ -412,23 +366,20 @@ pub fn Dialect(comptime L: type) type {
         /// calls this one instead.
         print_fragment_name: ?[:0]const u8 = null,
 
-        /// The `--spec` strings this dialect accepts and what each selects.
-        /// Empty for the eleven dialects with a single grammar. See
-        /// `cli/parse_dispatch.zig`'s `resolveSpec`, whose behaviour a
-        /// comptime assert beside it pins against the registry.
+        /// The `--spec` strings this dialect accepts and what each selects,
+        /// each registered as a dialect row `<name>-<version>`. Empty for the
+        /// dialects with a single grammar.
         specs: []const SpecName(L) = &.{},
 
         /// How this format spells itself inside a host document, or null when
-        /// it has no embedded form (`Embed.InnerFormat` is REIFIED from
-        /// exactly the entries where this is non-null). `embed.zig` builds
-        /// every fence, frontmatter marker, `<script type>` and `<code class>`
-        /// it writes — and every tag/MIME it accepts on read — out of these
-        /// fields, so they are the spelling, not a description of it.
+        /// it has no embedded form. `embed.zig` builds every fence,
+        /// frontmatter marker, `<script type>` and `<code class>` it writes —
+        /// and every tag/MIME it accepts on read — out of the registered
+        /// copy, so they are the spelling, not a description of it.
         embed: ?EmbedSpellings = null,
 
         /// What this dialect's printer makes of a tree from another format,
-        /// for the conversion warnings (`diagnostics.zig`). Required of a
-        /// compiled dialect whose language serializes. See `Prints`.
+        /// for the conversion warnings (`diagnostics.zig`). See `Prints`.
         prints: ?Prints = null,
     };
 }

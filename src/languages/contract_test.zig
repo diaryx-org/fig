@@ -1,12 +1,12 @@
-//! Every compiled language, reached through the contract alone: its vtable
-//! built by `kit/contract.zig`, registered beside the compiled format (its
-//! dialects prefixed `c-`), held by registration to the harness on its own
-//! samples, and then read alike — the table its contract parse fills is the
-//! table the compiled parse records, row for row.
+//! Every bundled language, reached through the contract alone: its vtable
+//! built by `kit/contract.zig`, registered (its dialects prefixed `c-`),
+//! held by registration to the harness on its own samples, and then read
+//! alike — the table its contract parse fills is the table its own parse
+//! records, row for row.
 
 const std = @import("std");
 const testing = std.testing;
-const Languages = @import("language.zig");
+const bundle = @import("bundle.zig");
 const list = @import("list.zig");
 const Runtime = @import("runtime.zig");
 const contract = @import("../kit/contract.zig");
@@ -28,8 +28,8 @@ test "every compiled language registers through the contract and reads its sampl
     Runtime.deinitAll();
     defer Runtime.deinitAll();
     inline for (list.rows) |row| {
-        const L = Languages.of(row.name);
-        if (L != void) {
+        if (comptime bundle.bundles(row.name)) {
+            const L = bundle.Language(row.name);
             const V = contract.VTable(L, "c-");
             _ = Runtime.register(testing.allocator, &V.vtable) catch |err| {
                 std.debug.print("{s}: {s}: {s}\n", .{ row.name, @errorName(err), Runtime.lastRefusal() });
@@ -58,8 +58,8 @@ test "every compiled language registers through the contract and reads its sampl
 }
 
 test "a language's diagnostics cross the contract: a refusal's message and offset, and the warnings of a clean parse" {
-    const L = Languages.of("dotenv");
-    if (L == void) return error.SkipZigTest;
+    if (comptime !bundle.bundles("dotenv")) return error.SkipZigTest;
+    const L = bundle.Language("dotenv");
     Runtime.deinitAll();
     defer Runtime.deinitAll();
     const V = contract.VTable(L, "c-");

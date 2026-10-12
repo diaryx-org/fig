@@ -1,73 +1,41 @@
 // Public enums and the error type, shared across the binding.
 //
 // ENUMS. Every enum in this binding is a frozen-shape object literal
-// (`as const`) paired with a type of the same name — `Format.Json` is a value,
-// `Format` a type — rather than a TypeScript `enum`. The pair is erasable
+// (`as const`) paired with a type of the same name — `NodeKind.Mapping` is a
+// value, `NodeKind` a type — rather than a TypeScript `enum`. The pair is erasable
 // syntax: Node's strip-only TypeScript and `erasableSyntaxOnly` accept it, and
 // the compiled JavaScript is the object literal itself.
 //
 // UNKNOWN VALUES — the one rule, which every enum mirroring a C enum follows
-// (`Format`, `NodeKind`, `ExtKind`, `WarningCode`, `WarningCause`, `Status`):
-// a number the core reports that has no name here passes through unchanged
-// and compares numerically. Nothing maps it to a name, throws on it, or clamps
-// it. That is what a format registered at runtime is (its integer is assigned
-// per process), and what a node kind, extended kind, warning or status added
-// by a newer core looks like to an older binding. So each such type is its
+// (`NodeKind`, `ExtKind`, `WarningCode`, `WarningCause`, `Status`): a number
+// the core reports that has no name here passes through unchanged and
+// compares numerically. Nothing maps it to a name, throws on it, or clamps
+// it. That is what a node kind, extended kind, warning or status added by a
+// newer core looks like to an older binding. So each such type is its
 // named members *or any number*, and code that switches on one keeps a
 // `default` arm. The member names are for writing; the number is the value.
 import { Status } from "./ffi.ts";
 
 export { Status };
 
-/** A config format. `Json`/`Jsonc`/`Json5`/`Yaml`/`Toml`/`Fig`/`Ini`/
- *  `Dotenv`/`Properties`/`Nestedtext` parse, edit, and serialize in the module
- *  published to npm. `Zon` and `Plist` are fully editable too — full parity
- *  with the other formats — but are **not compiled into the default published
- *  wasm module**, to keep the inlined payload smaller. Build with
- *  `FIG_WASM_ZON=1` / `FIG_WASM_PLIST=1 npm run build:wasm` to get a module
- *  with them, and call {@link capabilities} at runtime rather than assuming
- *  which module you're running. Values match the C ABI (`Json5 = 7`
- *  is appended, leaving a gap at 6, which was generic XML until core 3.0
- *  retired it; `Fig` is appended after it for the same reason). A format
- *  registered at runtime ({@link registerLanguage}) is a `Format` too: an
- *  unnamed number, per the unknown-values rule at the top of this file. */
-export const Format = {
-  Json: 1,
-  Jsonc: 2,
-  Yaml: 3,
-  Toml: 4,
-  Zon: 5,
-  Json5: 7,
-  /** The native `fig` authoring dialect (see `src/languages/fig/DESIGN.md` in
-   *  the core repo) — a memorable, typeable surface over the same AST. */
-  Fig: 8,
-  /** INI (`[section]` + `key = value`). Read/edit/serialize. Untyped-string
-   *  scalars: `port = 8080` reads back as the string "8080". */
-  Ini: 9,
-  /** dotenv / `.env` (flat `KEY=value`). Read/edit/serialize. Flat string map
-   *  only — no nesting, untyped scalars (serialize surfaces a diagnostic when
-   *  a nested value cannot be represented). */
-  Dotenv: 10,
-  /** Java `.properties` (flat `key=value`). Read/edit/serialize. Same flat,
-   *  untyped limits as {@link Format.Dotenv}. */
-  Properties: 11,
-  /** Apple XML property list. Read/edit/serialize. Typed and nested
-   *  (dict/array/string/integer/real/bool, date/data via the extended scalar). */
-  Plist: 12,
-  /** NestedText (https://nestedtext.org). Read/edit/serialize. Nested
-   *  (dict/list) but deliberately untyped — every leaf is a string. */
-  Nestedtext: 13,
-} as const;
-export type Format = (typeof Format)[keyof typeof Format] | (number & {});
+/** A config format: the opaque handle of a registered dialect. The module
+ *  compiles no format in, so every format is one a language brought —
+ *  `registerLanguage(yaml)` returns YAML's, as `yaml.format` holds it from
+ *  then on — and the rest of a language's dialects are found by name with
+ *  {@link formatByName} (`"jsonc"`, `"yaml-1.1"`). Handles are assigned per
+ *  process in registration order, so persist the name, never the number.
+ *  Through 5.x this was also an object of fixed members (`Format.Json`);
+ *  6.0 has none. */
+export type { Format } from "./wire.ts";
 
 /** Controls how {@link stringify}, `convert` and `Document.serialize` render
  *  output. Omitted fields fall back to
  *  fig's historical style (pretty-printed, two-space indent), so passing no
- *  options renders exactly as before. `pretty` is honored by `Format.Json`
- *  (multi-line vs. minified), `Format.Zon` (`zig fmt` multi-line vs. inline
- *  `.{ a, b }`), and `Format.Toml` (gates array wrapping); `indent` by
- *  `Format.Json` and `Format.Toml`'s wrapped arrays; `width` by the
- *  inline-vs-expanded layout of `Format.Toml`, `Format.Yaml`, and `Format.Fig`. */
+ *  options renders exactly as before. Each language reads the options it has a
+ *  use for: of the package's, `pretty` is honored by JSON (multi-line vs.
+ *  minified), ZON (`zig fmt` multi-line vs. inline `.{ a, b }`), and TOML
+ *  (gates array wrapping); `indent` by JSON and TOML's wrapped arrays;
+ *  `width` by the inline-vs-expanded layout of TOML, YAML, and fig. */
 export interface SerializeOptions {
   /** `true` (default): multi-line, indented output. `false`: compact
    *  single-line output with no insignificant whitespace. For TOML, `false`
@@ -85,8 +53,8 @@ export interface SerializeOptions {
    *  (lossy — an unrepresentable value throws `UnsupportedFormat`). Ignored by
    *  `stringify` (a built value has no source envelopes). */
   lossless?: boolean;
-  /** The column budget for the inline-vs-expanded layout of `Format.Toml`,
-   *  `Format.Yaml`, and `Format.Fig`. A mapping/array that renders within
+  /** The column budget for the inline-vs-expanded layout of TOML, YAML and
+   *  fig. A mapping/array that renders within
    *  `width` columns stays inline (`k = { … }` / `[a, b]`); a wider one expands
    *  to a `[section]` / a wrapped array / block lines. Defaults to `80`. Ignored
    *  by the other formats.

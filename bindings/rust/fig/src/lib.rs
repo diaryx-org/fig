@@ -57,142 +57,75 @@ pub use ser::to_yaml_string;
 
 use ffi::{FIG_NODE_NONE, FigNodeId, FigNodeKind};
 
-/// A config format: every format the core registers, plus
-/// [`Format::Runtime`] for a language registered while the program runs.
-/// Every compiled variant parses, edits, and serializes.
+/// A config format: an opaque, per-process handle naming a dialect
+/// registered with the linked fig core.
 ///
-/// Every variant is always present in the enum, but each compiled format is
-/// gated by a crate feature of the same name: `json`, `yaml`, `toml`, `fig`,
-/// `ini`, `dotenv`, `properties` and `nestedtext` are on by default; `zon` and
-/// `plist` are opt-in. Disabling a feature compiles that format out of the
-/// bundled native library, so selecting it then fails with
-/// [`Error::UnsupportedFormat`] at runtime — [`capabilities`] says so up
-/// front. `Json`/`Jsonc`/`Json5` share one core behind the `json` feature.
+/// A `Format` is obtained by name — [`Format::by_name`]`("yaml")` — or from
+/// [`language::register`], [`Format::detect`] and [`EmbedType::inner_format`];
+/// it cannot be built from an integer. Handles are assigned in registration
+/// order and differ between processes: persist [`Format::name`] and resolve it
+/// again with [`Format::by_name`], never the handle.
 ///
-/// `#[non_exhaustive]`: the core gains formats over time, so a `match` needs a
-/// `_` arm. Constructing a variant is unaffected.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
-pub enum Format {
-    Json,
-    Jsonc,
-    Json5,
-    Yaml,
-    Toml,
-    Zon,
-    /// The native `fig` authoring dialect (see `src/languages/fig/DESIGN.md`
-    /// in the core repo) — a memorable, typeable surface over the same AST.
-    Fig,
-    /// INI (`[section]` + `key = value`). Untyped-string scalars: `port = 8080`
-    /// reads back as the string `"8080"`. A root mapping and one level of
-    /// `[section]` nesting only.
-    Ini,
-    /// dotenv / `.env` (flat `KEY=value`). A flat string map: no nesting,
-    /// untyped scalars.
-    Dotenv,
-    /// Java `.properties` (flat `key=value`). Same flat, untyped limits as
-    /// [`Format::Dotenv`].
-    Properties,
-    /// Apple XML property list. Typed and nested (dict/array/string/integer/
-    /// real/bool, with date/data on the extended scalar). Opt-in: the `plist`
-    /// feature.
-    Plist,
-    /// NestedText (<https://nestedtext.org>). Nested (dict/list) but
-    /// deliberately untyped — every leaf is a string.
-    Nestedtext,
-    /// A language registered at runtime through [`language::register`] —
-    /// the value that call returns, a peer of every variant above at every
-    /// entry point that takes a `Format`. Its integer is assigned per
-    /// process: persist the name and resolve it with [`Format::by_name`].
-    Runtime(RuntimeFormat),
-}
-
-/// The per-process identity of a [`Format::Runtime`]. Opaque; compare it,
-/// copy it, do not persist it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub struct RuntimeFormat(c_int);
+/// The bundled native library carries the languages its crate features
+/// select: `json` (`json`, `jsonc`, `json5`), `yaml`, `toml`, `fig`, `ini`,
+/// `dotenv`, `properties` and `nestedtext` are on by default; `zon` and
+/// `plist` are opt-in. A language whose feature is off is not registered, so
+/// [`Format::by_name`] returns `None` for its names. Besides the dialect names,
+/// a language's `--spec` versions are dialects of their own (`yaml-1.1`,
+/// `yaml-1.2.2`, `toml-1.0`, …).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Format(c_int);
 
 impl Format {
-    /// The C ABI integer: a compiled format's `FigFormat` enumerator, or the
-    /// per-process integer a runtime language was handed.
+    /// The C ABI handle.
     pub(crate) fn to_c(self) -> c_int {
-        let compiled = match self {
-            Format::Json => ffi::FigFormat::Json,
-            Format::Jsonc => ffi::FigFormat::Jsonc,
-            Format::Json5 => ffi::FigFormat::Json5,
-            Format::Yaml => ffi::FigFormat::Yaml,
-            Format::Toml => ffi::FigFormat::Toml,
-            Format::Zon => ffi::FigFormat::Zon,
-            Format::Fig => ffi::FigFormat::Fig,
-            Format::Ini => ffi::FigFormat::Ini,
-            Format::Dotenv => ffi::FigFormat::Dotenv,
-            Format::Properties => ffi::FigFormat::Properties,
-            Format::Plist => ffi::FigFormat::Plist,
-            Format::Nestedtext => ffi::FigFormat::Nestedtext,
-            Format::Runtime(r) => return r.0,
-        };
-        compiled as c_int
+        self.0
     }
 
-    /// The `Format` an ABI integer names, or `None` for one this crate
-    /// cannot name (a value below the runtime base that is no compiled
-    /// format this crate knows of, or a runtime value never handed out).
+    /// The `Format` an ABI handle names, or `None` for one never handed out.
     pub(crate) fn from_c(value: c_int) -> Option<Format> {
-        if value >= ffi::FIG_FORMAT_RUNTIME_BASE {
-            // Only an integer the registry handed out reports a capability.
-            if unsafe { ffi::fig_format_capabilities(value) } == 0 {
-                return None;
-            }
-            return Some(Format::Runtime(RuntimeFormat(value)));
+        if value <= 0 || unsafe { ffi::fig_format_name(value) }.is_null() {
+            return None;
         }
-        Some(match value {
-            v if v == ffi::FigFormat::Json as c_int => Format::Json,
-            v if v == ffi::FigFormat::Jsonc as c_int => Format::Jsonc,
-            v if v == ffi::FigFormat::Json5 as c_int => Format::Json5,
-            v if v == ffi::FigFormat::Yaml as c_int => Format::Yaml,
-            v if v == ffi::FigFormat::Toml as c_int => Format::Toml,
-            v if v == ffi::FigFormat::Zon as c_int => Format::Zon,
-            v if v == ffi::FigFormat::Fig as c_int => Format::Fig,
-            v if v == ffi::FigFormat::Ini as c_int => Format::Ini,
-            v if v == ffi::FigFormat::Dotenv as c_int => Format::Dotenv,
-            v if v == ffi::FigFormat::Properties as c_int => Format::Properties,
-            v if v == ffi::FigFormat::Plist as c_int => Format::Plist,
-            v if v == ffi::FigFormat::Nestedtext as c_int => Format::Nestedtext,
-            _ => return None,
-        })
+        Some(Format(value))
     }
 
-    /// The format's name as a sentence spells it (`TOML`, `JSON5`), for error
-    /// text. A runtime language is "its format": its registry name is the
-    /// caller's own, and may not read as a name at all.
-    pub(crate) fn display_name(self) -> &'static str {
-        match self {
-            Format::Json => "JSON",
-            Format::Jsonc => "JSONC",
-            Format::Json5 => "JSON5",
-            Format::Yaml => "YAML",
-            Format::Toml => "TOML",
-            Format::Zon => "ZON",
-            Format::Fig => "fig",
-            Format::Ini => "INI",
-            Format::Dotenv => "dotenv",
-            Format::Properties => "properties",
-            Format::Plist => "a property list",
-            Format::Nestedtext => "NestedText",
-            Format::Runtime(_) => "its format",
-        }
-    }
-
-    /// The format named `name`: a compiled format's registry name (`"json5"`,
-    /// `"yaml"`, …) or a language registered at runtime. `None` when nothing
-    /// answers to it in this process.
+    /// The registered format named `name` (`"json5"`, `"yaml"`, `"yaml-1.1"`,
+    /// or a language registered at runtime). `None` when nothing answers to it
+    /// in this process — a misspelling, or a language this build compiled out.
     pub fn by_name(name: &str) -> Option<Format> {
         let c = std::ffi::CString::new(name).ok()?;
         let value = unsafe { ffi::fig_format_by_name(c.as_ptr()) };
-        if value < 0 {
+        if value <= 0 {
             return None;
         }
-        Format::from_c(value)
+        Some(Format(value))
+    }
+
+    /// [`Format::by_name`], with a name nothing answers to as
+    /// [`Error::UnsupportedFormat`]: how the crate reaches the formats it names
+    /// itself (an [`EmbedType`]'s inner format, JSON for the helper wire).
+    pub(crate) fn require(name: &str) -> Result<Format, Error> {
+        Format::by_name(name).ok_or(Error::UnsupportedFormat)
+    }
+
+    /// The dialect name this format was registered under — the name
+    /// [`Format::by_name`] resolves back to this handle.
+    ///
+    /// Every `Format` this crate hands out names a registered dialect, and
+    /// the core never forgets one, so the name is always there; should the
+    /// core ever answer with none (or with a name that is not UTF-8), this is
+    /// the empty string, which [`Format::by_name`] resolves to nothing.
+    pub fn name(self) -> &'static str {
+        let ptr = unsafe { ffi::fig_format_name(self.0) };
+        if ptr.is_null() {
+            return "";
+        }
+        // Safety: a non-NULL name is NUL-terminated and lives as long as the
+        // process (the registry is append-only).
+        unsafe { std::ffi::CStr::from_ptr(ptr) }
+            .to_str()
+            .unwrap_or("")
     }
 
     /// The documents of a multi-document stream in this format (YAML's
@@ -262,12 +195,12 @@ impl Format {
 /// fig's historical style (pretty-printed, two-space indent), so
 /// [`Value::serialize`] is exactly `serialize_with(format, SerializeOptions::default())`.
 ///
-/// `pretty` is honored by [`Format::Json`] (multi-line vs. minified),
-/// [`Format::Zon`] (`zig fmt` multi-line vs. inline `.{ a, b }`), and
-/// [`Format::Toml`] (gates array wrapping); `indent` by [`Format::Json`] and
-/// [`Format::Toml`]'s wrapped arrays; `width` by the inline-vs-expanded (flow vs.
-/// block) layout of [`Format::Toml`], [`Format::Yaml`], and [`Format::Fig`] — with
-/// the caveats on [`width`](SerializeOptions::width) itself.
+/// Each language reads the options it has a use for. Of the bundled ones,
+/// `pretty` is honored by `json` (multi-line vs. minified), `zon` (`zig fmt`
+/// multi-line vs. inline `.{ a, b }`), and `toml` (gates array wrapping);
+/// `indent` by `json` and `toml`'s wrapped arrays; `width` by the
+/// inline-vs-expanded (flow vs. block) layout of `toml`, `yaml`, and `fig` —
+/// with the caveats on [`width`](SerializeOptions::width) itself.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct SerializeOptions {
@@ -287,8 +220,8 @@ pub struct SerializeOptions {
     /// `false` (lossy — an unrepresentable value is an [`Error::UnsupportedFormat`]).
     /// Ignored by [`Value::serialize_with`] (a built value has no source envelopes).
     pub lossless: bool,
-    /// The column budget for the inline-vs-expanded layout of [`Format::Toml`],
-    /// [`Format::Yaml`], and [`Format::Fig`]. A mapping/array that renders within
+    /// The column budget for the inline-vs-expanded layout of `toml`, `yaml`,
+    /// and `fig` (of the bundled languages). A mapping/array that renders within
     /// `width` columns stays inline (flow: `k = { … }` / `[a, b]`); a wider one
     /// expands to a `[section]`, a wrapped array, or block form. Default `80`.
     /// Ignored by the other formats.
@@ -300,7 +233,7 @@ pub struct SerializeOptions {
     ///   Pass `1` to force block layout.
     /// * **For YAML the budget applies to nested containers only.** A *root*
     ///   map or sequence always renders block, whatever the width — so
-    ///   `Value::Map([("k", "v")]).serialize_with(Yaml, …)` is `"k: v\n"` at
+    ///   `Value::Map([("k", "v")]).serialize_with(yaml, …)` is `"k: v\n"` at
     ///   every setting, and a width change first becomes visible one level in
     ///   (`a: { k: v }` vs `a:\n  k: v`).
     pub width: u16,
@@ -421,10 +354,8 @@ pub fn version_string() -> &'static str {
         .unwrap_or("")
 }
 
-/// What this build of the fig core can do with a format. Reflects both inherent
-/// support (every format the `Format` enum exposes parses, edits, and
-/// serializes; the core's reader-only XML is not surfaced here) and build-time
-/// gating (a format compiled out reports all-false).
+/// What this build of the fig core can do with a format: the capabilities its
+/// language declared when it was registered.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct Capabilities {
@@ -787,15 +718,20 @@ fn normalize(id: FigNodeId) -> Option<FigNodeId> {
 mod tests {
     use super::{Document, Embed, EmbedType, Error, Format, Segment};
 
+    /// The registered format named `name`.
+    fn by_name(name: &str) -> Format {
+        Format::by_name(name).unwrap_or_else(|| panic!("no format named {name:?}"))
+    }
+
     #[test]
     fn parses_json_document() {
-        let doc = Document::parse(br#"{"name":"fig","ok":true}"#, Format::Json);
+        let doc = Document::parse(br#"{"name":"fig","ok":true}"#, by_name("json"));
         assert!(doc.is_ok());
     }
 
     #[test]
     fn parse_error_is_reported() {
-        let err = Document::parse(br#"{"name":"fig""#, Format::Json).unwrap_err();
+        let err = Document::parse(br#"{"name":"fig""#, by_name("json")).unwrap_err();
         let Error::Parse(detail) = &err else {
             panic!("expected Error::Parse, got {err:?}");
         };
@@ -806,7 +742,7 @@ mod tests {
 
     #[test]
     fn version_and_capabilities() {
-        use super::{Format, capabilities, version, version_string};
+        use super::{capabilities, version, version_string};
         let v = version();
         // The packed version round-trips through the string form.
         assert_eq!(
@@ -814,16 +750,16 @@ mod tests {
             format!("{}.{}.{}", v.major, v.minor, v.patch)
         );
         // JSON is always fully supported in any build.
-        let json = capabilities(Format::Json);
+        let json = capabilities(by_name("json"));
         assert!(json.read && json.edit && json.serialize);
     }
 
     #[test]
     fn document_serialize_converts_cross_format() {
         // YAML in, JSON out — the conversion primitive, not a value rebuild.
-        let doc = Document::parse(b"name: fig\nnums:\n- 1\n- 2\n", Format::Yaml).unwrap();
+        let doc = Document::parse(b"name: fig\nnums:\n- 1\n- 2\n", by_name("yaml")).unwrap();
         assert_eq!(
-            doc.serialize(Format::Json).unwrap(),
+            doc.serialize(by_name("json")).unwrap(),
             "{\n  \"name\": \"fig\",\n  \"nums\": [\n    1,\n    2\n  ]\n}\n",
         );
     }
@@ -832,10 +768,10 @@ mod tests {
     #[cfg(feature = "toml")]
     fn document_diagnose_reports_dropped_null() {
         use super::{SerializeOptions, WarningCause, WarningCode};
-        let doc = Document::parse(b"a: null\nb: 1\n", Format::Yaml).unwrap();
+        let doc = Document::parse(b"a: null\nb: 1\n", by_name("yaml")).unwrap();
         // A null can't survive in TOML → one value-dropped warning at path "a".
         let warns = doc
-            .diagnose(Format::Toml, SerializeOptions::default())
+            .diagnose(by_name("toml"), SerializeOptions::default())
             .unwrap();
         assert_eq!(warns.len(), 1);
         assert_eq!(warns[0].code, WarningCode::ValueDropped);
@@ -843,14 +779,14 @@ mod tests {
         assert_eq!(warns[0].path, "a");
         // Lossless preserves the null → nothing lost.
         let none = doc
-            .diagnose(Format::Toml, SerializeOptions::default().lossless())
+            .diagnose(by_name("toml"), SerializeOptions::default().lossless())
             .unwrap();
         assert!(none.is_empty());
     }
 
     #[test]
     fn parse_error_message_is_surfaced_in_display() {
-        let err = Document::parse(br#"{"name":"fig""#, Format::Json).unwrap_err();
+        let err = Document::parse(br#"{"name":"fig""#, by_name("json")).unwrap_err();
         // Display includes the core's message after the generic prefix.
         assert!(err.to_string().starts_with("failed to parse input: "));
     }
@@ -858,7 +794,7 @@ mod tests {
     #[test]
     fn editor_comment_ops_add_set_and_delete() {
         use super::{Editor, Segment};
-        let mut ed = Editor::open(b"a: 1\nb: 2\n", Format::Yaml).unwrap();
+        let mut ed = Editor::open(b"a: 1\nb: 2\n", by_name("yaml")).unwrap();
         ed.add_leading_comment(&[Segment::Key("b")], "why").unwrap();
         ed.set_trailing_comment(&[Segment::Key("b")], "two")
             .unwrap();
@@ -871,7 +807,7 @@ mod tests {
     #[test]
     fn editor_comments_unsupported_in_strict_json() {
         use super::{Editor, Error, Segment};
-        let mut ed = Editor::open(br#"{"a":1}"#, Format::Json).unwrap();
+        let mut ed = Editor::open(br#"{"a":1}"#, by_name("json")).unwrap();
         assert!(matches!(
             ed.add_leading_comment(&[Segment::Key("a")], "x"),
             Err(Error::UnsupportedFormat)

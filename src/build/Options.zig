@@ -54,17 +54,6 @@ pub const BuildOptions = struct {
     /// Off by default, which keeps `zig build wasi` a module any WASI
     /// runtime runs (`-Dwasi-host=true`).
     wasi_host: bool = false,
-    /// A build for scoring the contract path against the compiled one: the
-    /// first `fig_format_by_name` of a `c-` name registers every compiled
-    /// language again through its contract vtable (`kit/contract.zig`), its
-    /// dialects named `c-<name>`. Off by default; fig-conformance uses it.
-    contract_copies: bool = false,
-    /// Whether core's compiled registry holds the languages the build
-    /// includes, or is empty and every language is the bundle's
-    /// (`languages/bundle.zig`), registered through its contract vtable and
-    /// standing in at its format's number. On by default until the switch
-    /// to the contract is complete (docs/proposals/core-only.md §8).
-    compiled_registry: bool = false,
 
     /// Whether the format named `name` (a `list.Row.name`) is compiled in.
     pub fn lang(self: BuildOptions, comptime name: []const u8) bool {
@@ -104,8 +93,6 @@ pub fn resolve(b: *std.Build) BuildOptions {
     }
 
     cfg.lang_canonical = b.option(bool, "canonical", "Include the canonical oracle format (opt-in; default off — used mainly by the test suite)") orelse false;
-    cfg.compiled_registry = b.option(bool, "compiled-registry", "Keep the languages in core's compiled registry; false reaches every one through the contract, registered from the bundle") orelse false;
-    cfg.contract_copies = b.option(bool, "contract-copies", "Register each compiled language again through its contract vtable, as c-<name>, on first lookup (for scoring the contract path)") orelse false;
     cfg.wasi_host = b.option(bool, "wasi-host", "WASI CLI: ask the host (@diaryx/fig-wasi) for formats not compiled in; needs the fig_host imports") orelse false;
     return cfg;
 }
@@ -122,8 +109,6 @@ pub fn addFigOptions(b: *std.Build, cfg: BuildOptions, ver: Versions) *std.Build
     }
     options.addOption(bool, "lang_canonical", cfg.lang_canonical);
     options.addOption(bool, "wasi_host", cfg.wasi_host);
-    options.addOption(bool, "contract_copies", cfg.contract_copies);
-    options.addOption(bool, "compiled_registry", cfg.compiled_registry);
     // The package version, surfaced through the C ABI (`fig_version` /
     // `fig_version_string`) and by the CLI's `fig version`. Parsed from
     // `.version` in `build.zig.zon` — the one version every artifact ships

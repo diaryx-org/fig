@@ -73,15 +73,7 @@ pub fn applyToSlice(
         _ => {
             const e = types.runtimeEntry(format) orelse return error.FormatDisabled;
             if (!e.language.caps.edit) return error.FormatNotEditable;
-            return patchAs(fig.Runtime.Language, allocator, content, e.typeOf(), .{ .runtime = e }, req);
-        },
-        inline else => |f| {
-            const d = comptime fig.Language.entryFor(@tagName(f));
-            if (comptime d.Lang == void) return error.FormatDisabled;
-            if (comptime !d.Lang.caps.edit) return error.FormatNotEditable;
-            // `toSerializeFormat` is null only for gron, returned above.
-            const target = comptime (types.toSerializeFormat(f) orelse unreachable);
-            return patchAs(d.Lang, allocator, content, d.dialect, .{ .compiled = target }, req);
+            return patchAs(fig.Runtime.Language, allocator, content, e.typeOf(), .{ .language = e }, req);
         },
     }
 }

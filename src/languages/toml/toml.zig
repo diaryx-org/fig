@@ -26,10 +26,6 @@ pub const Language = struct {
     }
     pub const print = toml.Printer.print;
     pub const printNode = toml.Printer.printNode;
-    /// Parse straight to a core AST with no `Document` around it — what
-    /// `deserialize.zig` maps onto a Zig type. Optional `Language` decl,
-    /// required exactly of a language with a `deserializable` dialect row.
-    pub const parseAbstract = toml.Parser.parseAbstract;
 
     pub const name = "toml";
     pub const extensions: []const []const u8 = &.{"toml"};
@@ -60,12 +56,6 @@ pub const Language = struct {
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "toml",
         .prints = .{ .holds = Language.caps.lossless.?, .char_as = "integer" },
-        .abi_value = 4,
-        // First of the `key = value` grammars. fig, INI and dotenv all accept
-        // plain TOML-shaped content, so TOML gets first claim on it and they
-        // win only what TOML rejects.
-        .sniff_rank = 5,
-        .deserializable = true,
         .splice = .literal,
         .empty_doc_seed = "",
         .specs = &.{

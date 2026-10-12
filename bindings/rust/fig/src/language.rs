@@ -19,7 +19,7 @@
 //!
 //! A registered language lives for the rest of the process: there is no
 //! unregistration, and the [`Format`] it returns is valid until exit. Its
-//! integer is per process; persist the name and resolve it with
+//! handle is per process; persist [`Format::name`] and resolve it with
 //! [`Format::by_name`].
 
 use std::ffi::{CString, c_void};
@@ -1072,13 +1072,14 @@ pub trait Language: Send + Sync + 'static {
 
 /// Register `lang` with the core. Returns one [`Format`] per dialect the
 /// description declares, in declaration order — the first is the language's
-/// own. A dialect named after a format compiled out of the linked library
-/// stands in for it: it comes back as that format's own variant
-/// ([`Format::Yaml`] for a dialect named `yaml`), and every API taking that
-/// variant reaches it. Refused, with the reason in [`Error::Language`], when the
+/// own. A runtime language is a peer of the bundled ones: a dialect named
+/// after a language compiled out of the linked library (`yaml` in a build
+/// without the `yaml` feature) takes that name, and [`Format::by_name`]
+/// resolves it. Refused, with the reason in [`Error::Language`], when the
 /// description breaks a rule the core holds its own formats to, when a
 /// sample fails to parse, print, reparse to the same tree or take a no-op
-/// edit, or when the name is taken.
+/// edit, or when a dialect's name is already registered — the bundled
+/// languages' names included.
 pub fn register(lang: impl Language) -> Result<Vec<Format>, Error> {
     let desc = lang.describe();
     let dialect_names: Vec<String> = desc.dialects.iter().map(|d| d.name.clone()).collect();
@@ -1103,9 +1104,8 @@ pub fn register(lang: impl Language) -> Result<Vec<Format>, Error> {
             byte_offset: (err.byte_offset != 0).then_some(err.byte_offset),
         }));
     }
-    // By name, not by counting up from `format`: a dialect named after a
-    // format compiled out of the linked library stands in for it and takes
-    // that format's integer, so the rows' integers need not be consecutive.
+    // By name, not by counting up from `format`: the core promises each row
+    // a handle of its own, not that the handles are consecutive.
     dialect_names
         .iter()
         .map(|name| Format::by_name(name).ok_or(Error::Internal))
@@ -1367,6 +1367,14 @@ impl Registration {
                     CommentsPrinted::Pretty => 1,
                     CommentsPrinted::Never => 2,
                 }),
+                // A runtime dialect declares no embedded spelling (yet): it
+                // is not found inside a host document.
+                embed_fence_tag: std::ptr::null(),
+                embed_fence_aliases: std::ptr::null(),
+                embed_frontmatter: std::ptr::null(),
+                embed_script_mime: std::ptr::null(),
+                embed_script_mime_aliases: std::ptr::null(),
+                embed_code_class: std::ptr::null(),
             });
             owned.push(CDialect {
                 _name: dname,

@@ -201,7 +201,9 @@ fn handle_inner(lang: &dyn Language, request: &str) -> Result<Value, LanguageErr
 // ── JSON in and out, through fig ───────────────────────────────────────────
 
 fn decode(line: &str) -> Result<Value, LanguageError> {
-    let doc = Document::parse(line.as_bytes(), Format::Json)
+    let json = Format::require("json")
+        .map_err(|e| LanguageError::new(format!("this build cannot read JSON: {e}")))?;
+    let doc = Document::parse(line.as_bytes(), json)
         .map_err(|e| LanguageError::new(format!("request is not JSON: {e}")))?;
     doc.to_value()
         .map_err(|e| LanguageError::new(format!("request is not JSON: {e}")))
@@ -213,8 +215,8 @@ pub fn encode(value: &Value) -> String {
         pretty: false,
         ..Default::default()
     };
-    let mut s = value
-        .serialize_with(Format::Json, opts)
+    let mut s = Format::require("json")
+        .and_then(|json| value.serialize_with(json, opts))
         .unwrap_or_else(|_| "null".to_owned());
     while s.ends_with('\n') {
         s.pop();

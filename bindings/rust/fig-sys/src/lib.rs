@@ -2,7 +2,7 @@
 //! and links the native `libfig.a`.
 //!
 //! This is the `-sys` layer: raw `extern "C"` functions, `#[repr(C)]` type
-//! mirrors, and status/format constants — nothing else. The safe, ergonomic
+//! mirrors, and status constants — nothing else. The safe, ergonomic
 //! API (and serde/derive integration) lives in the `fig` crate, which depends
 //! on this one. Direct use is `unsafe` and unstable across ABI-version bumps.
 #![allow(non_camel_case_types)]
@@ -35,31 +35,6 @@ impl FigStatus {
     pub const UNSUPPORTED_OPERATION: FigStatus = FigStatus(6);
     pub const INTERNAL_ERROR: FigStatus = FigStatus(255);
 }
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FigFormat {
-    Json = 1,
-    Jsonc = 2,
-    Yaml = 3,
-    Toml = 4,
-    Zon = 5,
-    // 6 was generic XML through core 2.x; retired with the format in core
-    // 3.0 and never reused, which is why JSON5 keeps its gap.
-    Json5 = 7,
-    // The native `fig` authoring dialect. Appended, same reasoning as JSON5.
-    Fig = 8,
-    Ini = 9,
-    Dotenv = 10,
-    Properties = 11,
-    Plist = 12,
-    Nestedtext = 13,
-}
-
-/// Mirror of fig.h's `FIG_FORMAT_RUNTIME_BASE`: a format integer at or above
-/// this names a language registered at runtime, assigned per process and
-/// never a `FigFormat` variant. Every compiled-in variant above is below it.
-pub const FIG_FORMAT_RUNTIME_BASE: c_int = 4096;
 
 pub enum FigDocument {}
 
@@ -437,7 +412,7 @@ pub struct FigRegion {
 }
 
 /// The container half of an embed selector; every `fig_embed_*` entry point
-/// that selects a region takes one of these beside a `FigFormat`. The four
+/// that selects a region takes one of these beside a format handle. The four
 /// parametric containers read the format; the three presets pin their own
 /// and ignore it. Mirrors `FigEmbedContainer` in `fig.h` (ABI 2).
 #[repr(C)]
@@ -1281,6 +1256,21 @@ pub struct FigDialectDesc {
     pub prints_char_as: *const c_char,
     pub prints_number_special_as: *const c_char,
     pub prints_comments: c_int,
+    /// The ```` ```<tag> ```` info string the dialect is written with inside a
+    /// host document; NULL when it has no embedded spelling, and then the
+    /// other `embed_*` fields are not read.
+    pub embed_fence_tag: *const c_char,
+    /// NULL-terminated, or NULL: other fence tags read as this dialect.
+    pub embed_fence_aliases: *const *const c_char,
+    /// The whole frontmatter opener (`"---"` for the dialect a bare one
+    /// means, `"---toml"` otherwise).
+    pub embed_frontmatter: *const c_char,
+    /// The `<script type>` the dialect is written with.
+    pub embed_script_mime: *const c_char,
+    /// NULL-terminated, or NULL: other script types read as this dialect.
+    pub embed_script_mime_aliases: *const *const c_char,
+    /// The `<pre><code class>` the dialect is written with.
+    pub embed_code_class: *const c_char,
 }
 
 /// `FigDialectDesc.prints_flags`: booleans and numbers print as text.
@@ -1388,7 +1378,14 @@ unsafe extern "C" {
         out_format: *mut c_int,
         out_err: *mut FigError,
     ) -> FigStatus;
+    /// The format handle of the registered dialect named `name`, or -1. A
+    /// format is a `c_int` handle naming a registered dialect, assigned per
+    /// process in registration order from 1; 0 and negative values name no
+    /// format. Persist a format's name, never its handle.
     pub fn fig_format_by_name(name: *const c_char) -> c_int;
+    /// The dialect name `format` names, NUL-terminated and valid for the
+    /// life of the process; NULL for a handle never handed out.
+    pub fn fig_format_name(format: c_int) -> *const c_char;
     pub fn fig_table_rows(t: *mut FigTable, n: usize) -> *mut FigRow;
     pub fn fig_table_string(
         t: *mut FigTable,

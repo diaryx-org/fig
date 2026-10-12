@@ -12,123 +12,70 @@ const fig = @import("fig");
 // deriving straight from the public AST (see `cli/gron.zig`).
 const gron = @import("gron.zig");
 
-const L = fig.Language;
-
-// `gron` is a CLI-only output/echo format with no `AST.SerializeFormat`
-// counterpart; the `get` handler intercepts it before the serializer dispatch.
-// `canonical` (formerly `native`) is the AST's 1:1 oracle encoding, selectable
-// only via `--input/--output canonical` — it owns no file extension. `fig` is
-// the human-facing authoring dialect: it owns `.figl`, has a reader + `fig fmt`
-// printer (see `get`), and `Editor(fig.Language.FIG)` wires `replace`/`rename`/`set`/
-// `insert`/`delete`/`comment` through the same span-splice engine as
-// TOML/YAML/ZON (see `fig/edit.zig` and `fig/editor_test.zig`, which carry the
-// whole-container structural ops — `deleteContainer`/`moveContainer`/
-// `reorderContainers`, the same declared ops TOML and INI supply for their own
-// scattered containers; reachable from the C ABI and the Rust/TypeScript
-// bindings as `fig_editor_*_container`, but not from this CLI, which has no
-// verb for a whole container yet). `gron` is a CLI-only echo format with no
-// `AST.SerializeFormat` counterpart.
-///
-/// NON-EXHAUSTIVE, as of cli 4.1: a value at or above `runtime_base` names a
-/// language registered at runtime (`languages.zig`) — `runtime_base + i`
-/// for the registry's entry `i` — and every switch over the enum has a `_`
-/// arm for it, which reads the entry through `runtimeEntry`. The named
-/// members are the compiled formats, and `@tagName` is only ever applied to
-/// one of those; `name` is the spelling that covers both.
-pub const Format = @Enum(u16, .nonexhaustive, format_names, &format_values);
-
-const format_values = blk: {
-    var values: [format_names.len]u16 = undefined;
-    for (&values, 0..) |*v, i| v.* = @intCast(i);
-    break :blk values;
+/// What a CLI command reads or writes: `canonical`, the AST's 1:1 oracle
+/// encoding (selectable only by name — it owns no file extension); `gron`, a
+/// CLI-only line projection the `get` handler intercepts before any printer;
+/// or a registered dialect — `runtime_base + i` for the registry's entry `i`
+/// (`languages.zig` registers the bundled ones at startup). Every switch over
+/// it has a `_` arm for the registered dialects, which reads the entry
+/// through `runtimeEntry`; `name` is the spelling that covers all three.
+pub const Format = enum(u16) {
+    canonical = 0,
+    gron = 1,
+    _,
 };
 
-/// The first `Format` value naming a runtime language. The same number as
-/// the C ABI's `FIG_FORMAT_RUNTIME_BASE` — so the CLI's value for a runtime
-/// entry is its ABI integer — though the two are separate enumerations (a
-/// compiled CLI member is its registry position, not its ABI value).
-pub const runtime_base: u16 = @intCast(fig.Language.runtime_abi_base);
+/// The first `Format` value naming a registered dialect.
+pub const runtime_base: u16 = 16;
 
 /// The `Format` naming the registry entry `e`.
 pub fn runtimeFormat(e: *const fig.Runtime.Entry) Format {
     return @fromBackingInt(@intCast(runtime_base + e.index));
 }
 
-/// The registry entry `f` names, or null for a compiled format.
+/// The registry entry `f` names, or null for `canonical` and `gron`.
 pub fn runtimeEntry(f: Format) ?*const fig.Runtime.Entry {
     const v = @backingInt(f);
     if (v < runtime_base) return null;
     return fig.Runtime.entryAt(v - runtime_base);
 }
 
-/// What `f` is called: the member name of a compiled format, the registered
-/// name of a runtime one. Use this wherever a format is printed.
+/// What `f` is called: `canonical`, `gron`, or the registered dialect's
+/// name. Use this wherever a format is printed.
 pub fn name(f: Format) []const u8 {
-    if (runtimeEntry(f)) |e| return e.name;
-    return @tagName(f);
-}
-
-/// Every format registry entry (`languages/language.zig`'s `dialects`), in
-/// registry order, plus the two members no `Language` backs: `canonical` after
-/// `zon`, `gron` after `fig`. Those positions are not arbitrary — they are
-/// where the hand-written enum this replaces put them (`canonical` followed
-/// generic `xml` until core 3.0 removed it), and the member order is what
-/// `@intFromEnum` and `main.zig`'s `--help` format list both read.
-///
-/// `yml` is deliberately NOT here: it used to be a member of its own, an alias
-/// of `yaml` that duplicated it in ~ten switches and bought nothing but a
-/// second spelling in `@tagName` echoes. It survives where it was actually
-/// used — `--input yml` is an accepted spelling (`args.parseFormatName`), and
-/// the `.yml` FILE extension resolves through `Language.YAML.extensions` —
-/// and both now land on `.yaml` itself.
-const format_names = blk: {
-    @setEvalBranchQuota(20_000);
-    break :blk L.namesWith(.all, &.{
-        .{ .after = "zon", .name = "canonical" },
-        .{ .after = "fig", .name = "gron" },
-    });
-};
-
-// `namesWith` places the two non-registry members and would fail the build if
-// either named a nonexistent entry to follow, so membership and registry order
-// are true by construction. What that does NOT state is the intent — that
-// `canonical` belongs beside `zon` and `gron` beside `fig` rather than merely
-// somewhere — so that is what is left to check, plus the removal of `yml`.
-comptime {
-    if (@backingInt(Format.canonical) != @backingInt(Format.zon) + 1)
-        @compileError("cli.Format's `canonical` no longer sits directly after `zon`");
-    if (@backingInt(Format.gron) != @backingInt(Format.fig) + 1)
-        @compileError("cli.Format's `gron` no longer sits directly after `fig`");
-    if (@hasField(Format, "yml"))
-        @compileError("`yml` is an accepted SPELLING of `yaml` (see `args.parseFormatName`)," ++
-            " not a format of its own — a member here would resurrect the duplicated switch arms");
-}
-
-/// The `AST.SerializeFormat` counterpart of a CLI format, or null for gron (a
-/// CLI-only projection with no serializer — the `get`/`fmt`/`convert` handlers
-/// intercept it before reaching the serializer dispatch; see each call site's
-/// own early return/`orelse unreachable`). gron's `.gron` maps to `.json` in
-/// the callers that still need one (the lossless-envelope target switches);
-/// every other member is identity.
-pub fn toSerializeFormat(f: Format) ?fig.Serialize.SerializeFormat {
     return switch (f) {
-        .json => .json,
-        .jsonc => .jsonc,
-        .json5 => .json5,
-        .yaml => .yaml,
-        .toml => .toml,
-        .zon => .zon,
+        .canonical => "canonical",
+        .gron => "gron",
+        _ => if (runtimeEntry(f)) |e| e.name else "?",
+    };
+}
+
+/// The format called `n` — `canonical`, `gron` or a registered dialect — or
+/// null.
+pub fn named(n: []const u8) ?Format {
+    if (std.mem.eql(u8, n, "canonical")) return .canonical;
+    if (std.mem.eql(u8, n, "gron")) return .gron;
+    const e = fig.Runtime.entryByName(n) orelse return null;
+    return runtimeFormat(e);
+}
+
+/// `named(n)`, which the caller knows is registered — a test's format.
+pub fn mustNamed(n: []const u8) Format {
+    return named(n).?;
+}
+
+/// Whether `f` is the dialect called `n`.
+pub fn is(f: Format, n: []const u8) bool {
+    return std.mem.eql(u8, name(f), n);
+}
+
+/// What a CLI format prints as, or null for gron (a CLI-only projection with
+/// no printer — the `get`/`fmt`/`convert` handlers intercept it first).
+pub fn toTarget(f: Format) ?fig.Serialize.Target {
+    return switch (f) {
         .canonical => .canonical,
-        .fig => .fig,
-        .ini => .ini,
-        .dotenv => .dotenv,
-        .properties => .properties,
-        .plist => .plist,
-        .nestedtext => .nestedtext,
-        // gron has no serializer; a runtime format prints through its
-        // entry (`fig.Runtime.printWith`), which is not a `SerializeFormat`
-        // either. Both are intercepted before the serializer dispatch.
-        .gron, _ => null,
+        .gron => null,
+        _ => .{ .language = runtimeEntry(f) orelse return null },
     };
 }
 
@@ -412,8 +359,8 @@ pub const ConvertOptions = struct {
     /// Whole-file mode (`--output`): parse as `from`, re-emit as `to`.
     /// Mutually exclusive with the embed-archetype mode (`to_embed`) — one
     /// of the two must be set, checked in `parseConfig`.
-    from: Format = .json,
-    to: Format = .json,
+    from: Format = .canonical,
+    to: Format = .canonical,
     /// Set when `from` couldn't be pinned by `--input`/the file extension:
     /// the handler sniffs the contents with `Language.detect`, mirroring
     /// `fmt`/`get`.

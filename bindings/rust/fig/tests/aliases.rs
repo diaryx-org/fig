@@ -2,7 +2,7 @@
 //! serde both give the anchored node's value wherever an alias stands.
 #![cfg(feature = "yaml")]
 
-use fig::{Document, Error, Format, Value};
+use fig::{Document, Error, Value};
 
 const SRC: &str = "\
 base: &b
@@ -21,7 +21,7 @@ fn map(pairs: Vec<(&str, Value)>) -> Value {
 
 #[test]
 fn to_value_reads_an_alias_and_a_merge_key() {
-    let doc = Document::parse(SRC.as_bytes(), Format::Yaml).unwrap();
+    let doc = Document::parse(SRC.as_bytes(), by_name("yaml")).unwrap();
     let base = map(vec![
         ("host", Value::Str("localhost".into())),
         ("port", Value::Int(80)),
@@ -46,12 +46,12 @@ fn to_value_reads_an_alias_and_a_merge_key() {
 #[test]
 fn an_alias_with_no_value_is_a_parse_error() {
     // Undefined: the YAML parser refuses it, before any value is read.
-    let err = Document::parse(b"a: *missing\n", Format::Yaml).unwrap_err();
+    let err = Document::parse(b"a: *missing\n", by_name("yaml")).unwrap_err();
     assert!(matches!(err, Error::Parse(_)), "{err:?}");
 
     // Inside the node it names: the document parses, and its value is refused.
     let src = "ok: 1\nloop: &a [1, *a]\n";
-    let doc = Document::parse(src.as_bytes(), Format::Yaml).unwrap();
+    let doc = Document::parse(src.as_bytes(), by_name("yaml")).unwrap();
     let Err(Error::Parse(p)) = doc.to_value() else {
         panic!("expected a parse error");
     };
@@ -97,4 +97,11 @@ fn serde_reads_an_alias_and_a_merge_key() {
 
     let err = fig::from_yaml_str::<Value>("loop: &a [*a]\n").unwrap_err();
     assert!(matches!(err, Error::Parse(_)), "{err:?}");
+}
+
+/// The registered format named `name`; a test that names one this build
+/// does not carry is a test bug.
+#[allow(dead_code)]
+fn by_name(name: &str) -> fig::Format {
+    fig::Format::by_name(name).unwrap_or_else(|| panic!("no format named {name:?}"))
 }

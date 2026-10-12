@@ -1,5 +1,5 @@
 // The formats in `languages/` (`@diaryx/fig/languages/*`), each held to
-// the compiled format it stands in for. The contract is the format and the
+// the Zig language of the same name. The contract is the format and the
 // tree, not the compiled parser's code or its messages:
 //
 //   * **table for table** — `test/fixtures/<dialect>/*` are documents, and
@@ -15,14 +15,14 @@
 //     compiles every format in.
 //
 // The module these tests load compiles no format in, as the published one
-// does not, so each language registers under its own name and stands in
-// for its format at that format's number.
+// does not, so each language registers under its own name, and each of its
+// dialects is a format of its own, found by name.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { Format, capabilities, convert, detectFormat, formatByName, handle, splitStream, registerLanguage, type Language, type NodeTable } from "../src/index.ts";
+import { capabilities, convert, detectFormat, formatByName, formatName, handle, splitStream, registerLanguage, type Language, type NodeTable } from "../src/index.ts";
 
 import canonical from "@diaryx/fig/languages/canonical";
 import dotenv from "@diaryx/fig/languages/dotenv";
@@ -137,31 +137,43 @@ function attempt(write: () => string): string {
   }
 }
 
-test("each language stands in for its format, at the format's own number", () => {
-  const byName = (name: string) => registered.find((t) => t.lang.name === name)!;
-  assert.equal(byName("json").format, Format.Json);
-  assert.equal(byName("json5").format, Format.Json5);
-  assert.equal(formatByName("jsonc"), Format.Jsonc);
-  assert.equal(byName("yaml").format, Format.Yaml);
-  assert.equal(byName("zon").format, Format.Zon);
-  assert.equal(byName("plist").format, Format.Plist);
-  assert.equal(capabilities(Format.Yaml).references, true);
-  // A dialect no compiled format has a row for is a runtime number of its
-  // own, found by name.
-  assert.ok(formatByName("yaml-1.1")! >= 4096);
-  assert.ok(byName("canonical").format >= 4096);
+test("each language's format is its first dialect's, and every dialect is a format found by name", () => {
+  const seen = new Set<number>();
+  for (const t of registered) {
+    assert.equal(t.lang.format, t.format, `${t.lang.name}.format`);
+    assert.equal(formatName(t.format), t.lang.name);
+    for (const d of t.dialects) {
+      const format = formatByName(d.name);
+      assert.ok(format !== null, d.name);
+      assert.equal(formatName(format), d.name);
+      assert.ok(!seen.has(format), `${d.name} has a handle of its own`);
+      seen.add(format);
+    }
+  }
+  // Handles are assigned in registration order from 1; nothing was
+  // registered in this process before JSON.
+  assert.equal(json.format, 1);
+  // JSON5's second dialect is a format beside its first.
+  assert.notEqual(formatByName("jsonc"), json5.format);
+  assert.equal(capabilities(yaml.format!).references, true);
+  // A handle never handed out names nothing.
+  assert.equal(formatName(0 as never), null);
+  assert.equal(formatName(100000 as never), null);
+  assert.equal(formatByName("no-such-format"), null);
+  // A spread of a registered language is a new object, carrying no format.
+  assert.equal({ ...yaml }.format, undefined);
 });
 
 test("detectFormat tries the registered languages in the caller's order", () => {
-  assert.equal(detectFormat('{"a": 1}', ["json", "yaml"]), Format.Json);
-  assert.equal(detectFormat('{"a": 1}', ["yaml", "json"]), Format.Yaml);
-  assert.equal(detectFormat("a = 1\n", ["nosuch", "json", "toml"]), Format.Toml);
+  assert.equal(detectFormat('{"a": 1}', ["json", "yaml"]), json.format!);
+  assert.equal(detectFormat('{"a": 1}', ["yaml", "json"]), yaml.format!);
+  assert.equal(detectFormat("a = 1\n", ["nosuch", "json", "toml"]), toml.format!);
   assert.equal(detectFormat('{"a": ', ["json"]), null);
 });
 
 test("splitStream locates a YAML stream's documents through the twin", () => {
   const src = "# lead\n%YAML 1.2\n---\na: 1\n...\nb: 2\n--- é\n";
-  const docs = splitStream(src, Format.Yaml);
+  const docs = splitStream(src, yaml.format!);
   assert.deepEqual(
     docs.map((d) => [d.text, d.explicit]),
     [
@@ -170,8 +182,8 @@ test("splitStream locates a YAML stream's documents through the twin", () => {
       ["--- é\n", true],
     ],
   );
-  assert.deepEqual(splitStream("", Format.Yaml), [{ text: "", start: 0, end: 0, explicit: false }]);
-  assert.throws(() => splitStream("{}", Format.Json));
+  assert.deepEqual(splitStream("", yaml.format!), [{ text: "", start: 0, end: 0, explicit: false }]);
+  assert.throws(() => splitStream("{}", json.format!));
 });
 
 test("each language prints every fixture as the compiled printer did", () => {
@@ -194,7 +206,7 @@ test("each language converts every fixture to the JSON the compiled format did",
       const format = formatByName(d.name)!;
       for (const f of fixtures(d.name, d.ext)) {
         if (f.converted === null) continue;
-        assert.equal(attempt(() => convert(f.source, format, Format.Json)), f.converted, f.name);
+        assert.equal(attempt(() => convert(f.source, format, json.format!)), f.converted, f.name);
       }
     }
   }

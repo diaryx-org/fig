@@ -47,25 +47,23 @@ setHostCall(hostCall);
 /** Register `lang`, the way a caller brings a format into the module: the
  *  package compiles none in, so `@diaryx/fig/languages/yaml` and its peers
  *  are registered here, each the caller imports, and the rest cost nothing.
+ *  Returns the `Format` of the language's first dialect, and from then on
+ *  `lang.format` is that `Format` too (`yaml.format`); the other dialects
+ *  — JSON5's `jsonc`, YAML's `yaml-1.1` — are found by name with
+ *  {@link formatByName}. `Document.parse`, `Editor.open`, `stringify`,
+ *  `capabilities` and every other call that takes a format accept them at
+ *  the tier `lang.caps` declares, and an embed reaches a dialect through
+ *  the `embed` spellings it declares.
+ *
  *  Registering the same object again returns the format it already has, so
  *  a library and the application using it may each register what they
- *  use. The returned `Format` is a peer of the compiled ones at the tier
- *  `lang.caps` declares: `Document.parse`, `Editor.open`,
- *  `stringify`, `capabilities` and every other call that takes a format
- *  accept it from then on. Registration validates the description by the
- *  rules a compiled format is held to and runs fig's harness over
+ *  use. Registration validates the description and runs fig's harness over
  *  `samples` — each parsed, printed, reparsed and edited — and throws a
  *  {@link FigError} with the reason when either fails; nothing is
- *  registered then. A name already taken, compiled or registered, is
- *  refused the same way.
+ *  registered then. A name already registered is refused the same way.
  *
- *  A language named after a format compiled out of the module stands in
- *  for it: registering a `yaml` language where the module has no YAML
- *  returns `Format.Yaml`, and `Format.Yaml`, `formatByName("yaml")` and
- *  YAML frontmatter reach it from then on. Any other format integer is
- *  assigned per process; persist the NAME and resolve it with
- *  {@link formatByName}, which is also how to find a dialect row after
- *  the first. */
+ *  Formats are handles assigned per process in registration order, from 1:
+ *  persist a format's NAME and resolve it with {@link formatByName}. */
 export function registerLanguage(lang: Language): Format {
   // The same language again — a library and the application using it each
   // registering the YAML they import — is the format it already is.
@@ -85,16 +83,19 @@ export function registerLanguage(lang: Language): Format {
     }
     const format = readU32(outFormat) as Format;
     registered.set(lang, format);
+    // `yaml.format`: written on the language object, not enumerable, so
+    // that a spread of it (`{ ...yaml, name: "x" }`, a new language) does
+    // not carry this one's format along. A frozen object keeps none; the
+    // returned format is the same.
+    if (Object.isExtensible(lang) && !Object.hasOwn(lang, "format")) {
+      Object.defineProperty(lang, "format", { value: format, enumerable: false, writable: false, configurable: true });
+    }
     return format;
   } finally {
     frame.dispose();
   }
 }
 
-/** The `Format` of the dialect named `name` — a compiled format's registry
- *  name (`"json5"`, `"yaml"`, …) or a registered language's — or `null`.
- *  The only stable way to persist a runtime format: its integer is assigned
- *  per process, its name is not. */
 /** Content sniffing in the caller's order: the first format `order` names
  *  whose parser accepts `input`, or `null`. The grammars overlap, so put
  *  the strictest first; a name nothing answers to is skipped. */
@@ -154,17 +155,6 @@ export function splitStream(input: string | Uint8Array, format: Format): StreamD
     }
     fig.fig_stream_free(docs, count);
     return out;
-  } finally {
-    frame.dispose();
-  }
-}
-
-export function formatByName(name: string): Format | null {
-  const frame = new Frame();
-  try {
-    const s = frame.str(name + "\0");
-    const value = fig.fig_format_by_name(s.ptr);
-    return value < 0 ? null : (value as Format);
   } finally {
     frame.dispose();
   }

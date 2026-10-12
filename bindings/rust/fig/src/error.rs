@@ -129,15 +129,11 @@ impl std::error::Error for LanguageFailure {}
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct ParseError {
-    /// A human-readable message: for a compiled format, the core's error name
-    /// (e.g. `"UnclosedObject"`); for a runtime language, the message its
-    /// parser gave.
+    /// A human-readable message: what the language's parser gave.
     pub message: String,
-    /// Byte offset of the failure within the input, when known. A runtime
-    /// language's parse failure carries the offset its parser reported; the
-    /// compiled formats do not surface one yet, so for them this is `None`.
-    /// An offset of 0 is indistinguishable from "unknown" at the C ABI and
-    /// also reads as `None`.
+    /// Byte offset of the failure within the input, when the language
+    /// reports one. An offset of 0 is indistinguishable from "unknown" at the
+    /// C ABI and also reads as `None`.
     pub byte_offset: Option<usize>,
     /// 1-based line of the failure, when known (see `byte_offset`).
     pub line: Option<u32>,
@@ -176,7 +172,7 @@ impl ParseError {
     /// as `format` with it applied. fig knows no more than that — the core
     /// reports a bare status — so this says which part of the request did it.
     pub(crate) fn refused_edit(format: Format, what: EditTarget) -> Self {
-        let name = format.display_name();
+        let name = format.name();
         Self::sentence(match what {
             EditTarget::Value => format!("the new value would not parse as {name}"),
             EditTarget::Key => format!("the new key would not parse as {name}"),

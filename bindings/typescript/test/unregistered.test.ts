@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { Document, Editor, Embed, EmbedType, FigError, Format, Status, capabilities, convert, registerLanguage, stringify } from "../src/index.ts";
+import { Document, Embed, EmbedType, FigError, Status, convert, formatByName, formatName, registerLanguage, requireFormat, stringify } from "../src/index.ts";
 import json from "@diaryx/fig/languages/json";
 import json5 from "@diaryx/fig/languages/json5";
 import yaml from "@diaryx/fig/languages/yaml";
@@ -24,26 +24,49 @@ function refusesFor(f: () => unknown, module: string): void {
 }
 
 test("a format no language is registered for says which one to import", () => {
-  assert.deepEqual(capabilities(Format.Toml), { read: false, edit: false, serialize: false, references: false });
-  refusesFor(() => Document.parse("a = 1\n", Format.Toml), "toml");
-  refusesFor(() => Editor.open("a = 1\n", Format.Toml), "toml");
+  assert.equal(formatByName("toml"), null);
+  refusesFor(() => requireFormat("toml"), "toml");
+  // JSONC is a dialect of the JSON5 language, and YAML 1.1 of YAML's.
+  refusesFor(() => requireFormat("jsonc"), "json5");
+  refusesFor(() => requireFormat("yaml-1.1"), "yaml");
+  // An embed names its inner language, so opening one says which.
   refusesFor(() => Embed.open("+++\na = 1\n+++\n", EmbedType.Plus), "toml");
-  refusesFor(() => stringify({ a: 1 }, Format.Toml), "toml");
-  // JSONC is a dialect of the JSON5 language.
-  refusesFor(() => Document.parse("{}", Format.Jsonc), "json5");
+  refusesFor(() => Embed.open("---\na: 1\n---\n", EmbedType.Frontmatter), "yaml");
+  refusesFor(() => Embed.extract("```json\n{}\n```\n", EmbedType.FencedJson), "json");
+  // A preset is located without its language: only opening it needs one.
+  assert.deepEqual(Embed.split("+++\na = 1\n+++\nbody\n", EmbedType.Plus), ["a = 1\n", "body\n"]);
+  assert.equal(Embed.detect("+++\na = 1\n+++\n"), EmbedType.Plus);
+  // A fenced block of a language nobody registered is not recognized.
+  assert.equal(Embed.detect("```toml\na = 1\n```\n"), null);
+  // A name no package language has gets no module to import.
+  assert.throws(
+    () => requireFormat("no-such"),
+    (err: unknown) => err instanceof FigError && err.status === Status.UnsupportedFormat && !err.message.includes("@diaryx/fig/languages") && /registerLanguage/.test(err.message),
+  );
+  // A number no registration handed out is not a format.
+  assert.throws(
+    () => Document.parse("a = 1\n", 7 as never),
+    (err: unknown) => err instanceof FigError && err.status === Status.UnsupportedFormat && /names no registered format/.test(err.message),
+  );
+  assert.throws(() => stringify({ a: 1 }, 0 as never), (err: unknown) => err instanceof FigError && err.status === Status.UnsupportedFormat);
 });
 
 test("registering a language brings in its format, and registering it again is the same format", () => {
   const first = registerLanguage(yaml);
-  assert.equal(first, Format.Yaml);
+  // Handles are assigned in registration order, from 1.
+  assert.equal(first, 1);
+  assert.equal(yaml.format, first);
+  assert.equal(formatByName("yaml"), first);
+  assert.equal(formatName(first), "yaml");
   assert.equal(registerLanguage(yaml), first);
-  registerLanguage(json);
+  const Json = registerLanguage(json);
   registerLanguage(json5);
-  assert.equal(convert("a: [1, 2]\n", Format.Yaml, Format.Json), '{\n  "a": [\n    1,\n    2\n  ]\n}\n');
-  assert.equal(convert("// c\n{\"a\": 1}\n", Format.Jsonc, Format.Yaml), "# c\na: 1\n");
+  assert.equal(json.format, Json);
+  assert.equal(convert("a: [1, 2]\n", first, Json), '{\n  "a": [\n    1,\n    2\n  ]\n}\n');
+  assert.equal(convert("// c\n{\"a\": 1}\n", requireFormat("jsonc"), first), "# c\na: 1\n");
   // A different language under a name already taken is refused as ever.
   assert.throws(() => registerLanguage({ ...yaml }), (err: unknown) => err instanceof FigError && /already registered/.test(err.message));
-  // Frontmatter reaches the registered YAML.
+  // Frontmatter reaches the registered YAML, through the spellings it declares.
   using fm = Embed.open("---\ntitle: Hi\n---\nbody\n", EmbedType.Frontmatter);
   fm.setValue(["title"], "Bye");
   assert.equal(fm.render(), "---\ntitle: Bye\n---\nbody\n");

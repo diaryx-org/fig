@@ -1,7 +1,8 @@
 // The module under test compiles no format in, as the published one does
 // not: every format here is a language of `@diaryx/fig/languages`,
-// registered first, standing in for the format at its own number.
-import "./register-all.ts";
+// registered first, and `Format` is the table of what registration handed
+// out.
+import { Format } from "./register-all.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -15,7 +16,6 @@ import {
   EmbedType,
   ExtKind,
   FigError,
-  Format,
   init,
   isReady,
   NodeKind,

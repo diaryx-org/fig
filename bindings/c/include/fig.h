@@ -48,7 +48,9 @@ extern "C" {
 // render_key_name; FigComments loses style for a declared block delimiter;
 // section_noun is a string; the node table is fig's — parse fills a FigTable
 // through the fig_table_* calls and print reads a FigTableView of 32-byte
-// FigRows and sparse side facts — and free_table is gone.
+// FigRows and sparse side facts — and free_table is gone; FigFormat, its
+// FIG_FORMAT_* enumerators and FIG_FORMAT_RUNTIME_BASE are gone, and every
+// format is a registered language's handle, from 1.
 #define FIG_ABI_VERSION 4
 
 // Linked-library version, packed as (major << 16) | (minor << 8) | patch.
@@ -109,7 +111,7 @@ uint8_t *fig_alloc(size_t len);
 void fig_free(uint8_t *ptr, size_t len);
 
 // Forward compatibility: later fig releases may add values to every enum and
-// bit set this header defines — FigStatus, FigNodeKind, FigExtKind, FigFormat,
+// bit set this header defines — FigStatus, FigNodeKind, FigExtKind,
 // FigEmbedContainer, the FigWarning codes and causes, FIG_CAP_* bits, the
 // FIG_COMMENT_* slots and styles and the FIG_MENTION_* kinds. Treat a value
 // you do not recognize as opaque rather than asserting the set is closed:
@@ -143,52 +145,14 @@ typedef enum FigStatus {
     FIG_STATUS_INTERNAL_ERROR = 255,
 } FigStatus;
 
-// Every member of a full build is accepted by fig_parse, the editor
-// (fig_editor_*) and the serializers (JSONC = plain-JSON syntax with comments).
-// A format compiled out of this build returns FIG_STATUS_UNSUPPORTED_FORMAT
-// everywhere; to query the matrix programmatically, call
-// fig_format_capabilities below.
-//
-// Value 6 was FIG_FORMAT_XML, the generic XML fold, through core 2.x. It was
-// removed in core 3.0 (ABI 2) and the value is retired: it will never be
-// reused, so a caller that still passes it gets FIG_STATUS_UNSUPPORTED_FORMAT
-// (or 0 from fig_format_capabilities) rather than some other format.
-typedef enum FigFormat {
-    FIG_FORMAT_JSON = 1,
-    FIG_FORMAT_JSONC = 2,
-    FIG_FORMAT_YAML = 3,
-    FIG_FORMAT_TOML = 4,
-    FIG_FORMAT_ZON = 5,
-    FIG_FORMAT_JSON5 = 7,
-    // The native `fig` authoring dialect (see src/languages/fig/DESIGN.md).
-    // Appended (not inserted) to keep the ABI values of the existing members
-    // stable, same as FIG_FORMAT_JSON5 before it.
-    FIG_FORMAT_FIG = 8,
-    // INI (`[section]` + `key = value`). Read/edit/serialize. Untyped-string
-    // scalars: `port = 8080` reads back as the string "8080".
-    FIG_FORMAT_INI = 9,
-    // dotenv / `.env` (flat `KEY=value`). Read/edit/serialize. Flat string map
-    // only — no nesting, untyped scalars (a nested tree cannot be represented;
-    // serialize surfaces a diagnostic).
-    FIG_FORMAT_DOTENV = 10,
-    // Java `.properties` (flat `key=value`). Read/edit/serialize. Same flat,
-    // untyped representational limits as dotenv.
-    FIG_FORMAT_PROPERTIES = 11,
-    // Apple XML property list. Read/edit/serialize. Genuinely typed and nested
-    // (dict/array/string/integer/real/bool, date/data via the extended scalar).
-    FIG_FORMAT_PLIST = 12,
-    // NestedText (https://nestedtext.org). Read/edit/serialize. Nested
-    // (dict/list) but deliberately untyped — every leaf is a string.
-    FIG_FORMAT_NESTEDTEXT = 13,
-} FigFormat;
-
-// Format integers at or above this value name a language registered at
-// runtime rather than compiled in. They are assigned per process, in
-// registration order, and are never pinned here: a caller that persists a
-// format persists its name. Every compiled-in FIG_FORMAT_* enumerator is below
-// it, and always will be. Reserved in core 3.0 (ABI 2); fig_language_register
-// hands them out.
-#define FIG_FORMAT_RUNTIME_BASE 4096
+// A format is an `int` handle naming a registered dialect: the integer
+// fig_language_register writes, or fig_format_by_name returns for a dialect's
+// name ("json", "jsonc", "yaml", "yaml-1.1", …). Handles are assigned per
+// process, in registration order, from 1; 0 and negative values name no
+// format. They are never pinned: a caller that persists a format persists
+// its name. A handle never handed out returns FIG_STATUS_UNSUPPORTED_FORMAT
+// everywhere, and 0 from fig_format_capabilities. (Through 5.x a compiled
+// format had a FIG_FORMAT_* enumerator; core 6.0 compiles no format in.)
 
 // Capability bits, OR-combined in the return of fig_format_capabilities.
 typedef enum FigCapability {
@@ -203,11 +167,13 @@ typedef enum FigCapability {
     FIG_CAP_REFERENCES = 1u << 3,
 } FigCapability;
 
-// Bitmask of FIG_CAP_* describing what this build can do with `format`. Reflects
-// both inherent support (the format's own capability declaration) and
-// build-time gating: a format compiled out of this build, or an unknown
-// `format` value, reports 0.
+// Bitmask of FIG_CAP_* describing what fig can do with `format`: the caps its
+// language declared. A handle never handed out reports 0.
 uint32_t fig_format_capabilities(int format);
+
+// The name of the dialect `format` names, NUL-terminated and valid for the
+// life of the process; NULL for a handle never handed out.
+const char *fig_format_name(int format);
 
 typedef struct FigDocument FigDocument;
 
@@ -609,24 +575,26 @@ typedef struct FigRegion {
 } FigRegion;
 
 // The container half of an embed selector. Every fig_embed_* entry point that
-// selects a region takes a (container, format) pair: this enum and a FigFormat.
-// The four PARAMETRIC containers hold any format with an embedded spelling
-// (JSON, YAML, TOML and fig today; FIG_STATUS_INVALID_ARGUMENT for one without,
-// such as INI, and for an unknown value of either integer). The three PRESET
-// containers pin their own format and ignore the format argument; detection
-// reports the pinned one, so a pair read back from fig_embed_detect is always
-// meaningful on its own.
+// selects a region takes a (container, format) pair: this enum and a format
+// handle. The four PARAMETRIC containers hold any registered dialect that
+// declares an embedded spelling (`embed_fence_tag` in its FigDialectDesc;
+// FIG_STATUS_INVALID_ARGUMENT for one without, such as INI, and for an unknown
+// value of either integer). The three PRESET containers name their own
+// language — `;;;` JSON, `+++` TOML, endmatter YAML — and ignore the format
+// argument; detection reports that language's handle, or -1 when it is not
+// registered.
 //
 // ABI 2 shape. ABI 1 (core 2.4 - 2.9) flattened the pair into one FigEmbedType
 // enum of nineteen products; each value maps onto exactly one pair, e.g.
-// FIG_EMBED_FRONTMATTER_YAML -> (FIG_EMBED_MD_FRONTMATTER, FIG_FORMAT_YAML),
+// FIG_EMBED_FRONTMATTER_YAML -> (FIG_EMBED_MD_FRONTMATTER, yaml),
 // FIG_EMBED_FRONTMATTER_JSON -> (FIG_EMBED_SEMICOLONS_JSON, any),
-// FIG_EMBED_FRONTMATTER_FIG -> (FIG_EMBED_FENCED, FIG_FORMAT_FIG),
-// FIG_EMBED_FENCED_TOML -> (FIG_EMBED_FENCED, FIG_FORMAT_TOML), and so on down
-// the MD_FRONTMATTER_*, HTML_SCRIPT_* and HTML_CODE_* groups.
+// FIG_EMBED_FRONTMATTER_FIG -> (FIG_EMBED_FENCED, fig),
+// FIG_EMBED_FENCED_TOML -> (FIG_EMBED_FENCED, toml), and so on down the
+// MD_FRONTMATTER_*, HTML_SCRIPT_* and HTML_CODE_* groups.
 typedef enum FigEmbedContainer {
-    // ---<lang> ... --- (or ...) markdown frontmatter. A bare --- is YAML, so
-    // (FIG_EMBED_MD_FRONTMATTER, FIG_FORMAT_YAML) is the classic frontmatter.
+    // ---<lang> ... --- (or ...) markdown frontmatter. A bare --- is the
+    // dialect whose frontmatter opener is bare (YAML), so
+    // (FIG_EMBED_MD_FRONTMATTER, yaml) is the classic frontmatter.
     FIG_EMBED_MD_FRONTMATTER = 0,
     // ```<lang> ... ``` fenced block.
     FIG_EMBED_FENCED = 1,
@@ -658,11 +626,11 @@ FigStatus fig_embed_extract(const uint8_t *input, size_t input_len,
 // delimiter is checked — an unterminated block is still recognized as its
 // archetype, so a follow-up fig_embed_extract/fig_embed_open surfaces the real
 // FIG_STATUS_PARSE_ERROR instead of a misleading "nothing found". Writes the
-// detected FigEmbedContainer and FigFormat to `out_container` and `out_format`
-// and returns FIG_STATUS_OK, or FIG_STATUS_NOT_FOUND when `input` opens none of
-// them (both out params are left untouched). A preset container reports the
-// format it pins. Detection is delimiter-only, so it works regardless of which
-// inner formats this build compiles in.
+// detected FigEmbedContainer and format handle to `out_container` and
+// `out_format` and returns FIG_STATUS_OK, or FIG_STATUS_NOT_FOUND when `input`
+// opens none of them (both out params are left untouched). A preset container
+// reports the language it names, -1 when that is not registered. A tagged
+// opener is recognized by the registered dialects' embedded spellings.
 FigStatus fig_embed_detect(const uint8_t *input, size_t input_len,
                            int *out_container, int *out_format);
 
@@ -705,11 +673,11 @@ FigStatus fig_embed_retype(const uint8_t *input, size_t input_len,
 
 // ============================================================================
 // Embed editor (combined): opens the config inside a host file — selected by a
-// (FigEmbedContainer, FigFormat) pair — and edits it in its inner format,
+// (FigEmbedContainer, format) pair — and edits it in its inner format,
 // leaving the fences and surrounding host text byte-identical. fig_embed_open
 // picks the inner editor from the pair; the edit ops mirror fig_editor_*. A
-// pair whose format is compiled out of this build is
-// FIG_STATUS_UNSUPPORTED_FORMAT; one the model cannot spell (see
+// preset whose language is not registered, or does not edit, is
+// FIG_STATUS_UNSUPPORTED_FORMAT; a pair the model cannot spell (see
 // FigEmbedContainer) is FIG_STATUS_INVALID_ARGUMENT.
 // ============================================================================
 
@@ -956,9 +924,9 @@ FigStatus fig_value_serialize_opts(FigValue *value, FigNodeId root, int format,
 // Document serialization (cross-format conversion)
 //
 // Render a whole parsed FigDocument to a writable format — the conversion
-// primitive. `format` is any FigFormat this build compiled in (a compiled-out
-// one returns FIG_STATUS_UNSUPPORTED_FORMAT). The source may be any parsed
-// format (e.g. plist in, JSON out).
+// primitive. `format` is any registered format whose language serializes
+// (another returns FIG_STATUS_UNSUPPORTED_FORMAT). The source may be any
+// parsed format (e.g. plist in, JSON out).
 //
 // When the source is YAML and the target is not, the reference layer (anchors,
 // aliases, merge keys, tags) is collapsed automatically (strict tag mode: an
@@ -1035,13 +1003,12 @@ typedef struct FigWarning {
 // ============================================================================
 // Runtime languages
 //
-// A format fig did not compile in. A host fills a FigLanguageVTable — the
-// same declarations a compiled format makes, as fields, with parse/print as
-// function pointers — and fig_language_register hands back a format integer
-// at or above FIG_FORMAT_RUNTIME_BASE that every entry point taking `int
-// format` accepts from then on: fig_parse, fig_document_serialize,
-// fig_value_serialize, fig_editor_create and fig_format_capabilities alike.
-// The format is a peer of a compiled one at the tier its `caps` declare.
+// Every format is a registered language. A host fills a FigLanguageVTable —
+// its declarations as fields, with parse/print as function pointers — and
+// fig_language_register hands back a format handle that every entry point
+// taking `int format` accepts from then on: fig_parse,
+// fig_document_serialize, fig_value_serialize, fig_editor_create and
+// fig_format_capabilities alike, at the tier its `caps` declare.
 //
 // The vtable's parse fills, and its print reads, a node table: one FigRow per
 // node in pre-order (row index is node id; a parent precedes its children; a
@@ -1365,6 +1332,16 @@ typedef struct FigSyntax {
 // "string". `prints_comments`: 0 always, 1 only when pretty-printing, 2
 // never.
 //
+// The embed_* fields say how the dialect is named inside a host document;
+// a NULL `embed_fence_tag` says it has none, and the rest are not read.
+// `embed_fence_tag` is the ```<tag> info string it is written with, and
+// `embed_fence_aliases` (NULL-terminated, or NULL) the others read as it, as
+// is a `language-<tag>` class; `embed_frontmatter` the whole frontmatter
+// opener ("---" for the dialect a bare one means, "---toml" otherwise);
+// `embed_script_mime` the <script type> it is written with and
+// `embed_script_mime_aliases` the others read as it; `embed_code_class` the
+// <pre><code class> it is written with.
+//
 // fig-abi: stride-gated — rows are read at FigLanguageVTable.dialect_size.
 typedef struct FigDialectDesc {
     const char        *name;
@@ -1377,6 +1354,12 @@ typedef struct FigDialectDesc {
     const char        *prints_char_as;
     const char        *prints_number_special_as;
     int                prints_comments;
+    const char        *embed_fence_tag;
+    const char *const *embed_fence_aliases;
+    const char        *embed_frontmatter;
+    const char        *embed_script_mime;
+    const char *const *embed_script_mime_aliases;
+    const char        *embed_code_class;
 } FigDialectDesc;
 
 #define FIG_PRINTS_TEXT_SCALARS   (1u << 0)
@@ -1476,22 +1459,18 @@ typedef struct FigLanguageVTable {
 // The FIG_LANGUAGE_VTABLE_VERSION of the linked library.
 uint32_t fig_language_vtable_version(void);
 
-// Register a language. On FIG_STATUS_OK writes the format integer of its
-// first dialect row to *out_format. A row takes an integer at or above
-// FIG_FORMAT_RUNTIME_BASE, except a row named after a format compiled out of
-// this build, which takes that format's own FIG_FORMAT_* value and stands in
-// for it — frontmatter, fig_format_by_name and every entry point taking that
-// value reach it. The rows' integers are therefore not consecutive in
-// general; fig_format_by_name finds each. The record is validated by the rules a compiled format is held to, and
-// every sample is parsed, printed, reparsed and edited before anything is
-// registered; a record that fails either is refused as
-// FIG_STATUS_INVALID_ARGUMENT with the reason in `out_err` (nullable), and
-// registers nothing. A name already registered, or the name of a format
-// compiled into this build, is refused the same way.
+// Register a language. On FIG_STATUS_OK writes the format handle of its first
+// dialect row to *out_format; each row has a handle of its own, which
+// fig_format_by_name finds. The record is validated by the rules every
+// language is held to, and every sample is parsed, printed, reparsed and
+// edited before anything is registered; a record that fails either is
+// refused as FIG_STATUS_INVALID_ARGUMENT with the reason in `out_err`
+// (nullable), and registers nothing. A name already registered is refused
+// the same way.
 FigStatus fig_language_register(const FigLanguageVTable *vt, int *out_format, FigError *out_err);
 
-// The format integer of the dialect named `name` — a compiled format's
-// registry name ("json5", "yaml", …) or a registered language's — or -1.
+// The format handle of the registered dialect named `name` ("json5", "yaml",
+// "yaml-1.1", …), or -1.
 int fig_format_by_name(const char *name);
 
 // Content sniffing in the caller's order: writes to `out_format` the format

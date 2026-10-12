@@ -72,42 +72,71 @@ pub enum EmbedType {
 }
 
 impl EmbedType {
-    /// The `(container, format)` pair the C ABI selects this archetype by.
-    /// The Rust enum stays flat — one name per archetype is what a caller
-    /// wants to write — and this is the one place the two shapes meet.
-    fn parts(self) -> (ffi::FigEmbedContainer, ffi::FigFormat) {
+    /// The `(container, format)` pair the C ABI selects this archetype by,
+    /// the format resolved by name. The Rust enum stays flat — one name per
+    /// archetype is what a caller wants to write — and this is the one place
+    /// the two shapes meet. [`Error::UnsupportedFormat`] when the inner
+    /// language is not registered in this build.
+    fn parts(self) -> Result<(ffi::FigEmbedContainer, Format), Error> {
+        Ok((self.container(), self.inner_format()?))
+    }
+
+    fn container(self) -> ffi::FigEmbedContainer {
         use ffi::FigEmbedContainer as C;
-        use ffi::FigFormat as F;
         match self {
-            EmbedType::Frontmatter => (C::MdFrontmatter, F::Yaml),
-            EmbedType::Semicolons => (C::SemicolonsJson, F::Json),
-            EmbedType::Endmatter => (C::EndmatterYaml, F::Yaml),
-            EmbedType::FencedFig => (C::Fenced, F::Fig),
-            EmbedType::Plus => (C::PlusToml, F::Toml),
-            EmbedType::FencedYaml => (C::Fenced, F::Yaml),
-            EmbedType::FencedJson => (C::Fenced, F::Json),
-            EmbedType::FencedToml => (C::Fenced, F::Toml),
-            EmbedType::MdJson => (C::MdFrontmatter, F::Json),
-            EmbedType::MdToml => (C::MdFrontmatter, F::Toml),
-            EmbedType::MdFig => (C::MdFrontmatter, F::Fig),
-            EmbedType::HtmlScriptFig => (C::HtmlScript, F::Fig),
-            EmbedType::HtmlScriptYaml => (C::HtmlScript, F::Yaml),
-            EmbedType::HtmlScriptJson => (C::HtmlScript, F::Json),
-            EmbedType::HtmlScriptToml => (C::HtmlScript, F::Toml),
-            EmbedType::HtmlCodeFig => (C::HtmlCode, F::Fig),
-            EmbedType::HtmlCodeYaml => (C::HtmlCode, F::Yaml),
-            EmbedType::HtmlCodeJson => (C::HtmlCode, F::Json),
-            EmbedType::HtmlCodeToml => (C::HtmlCode, F::Toml),
+            EmbedType::Frontmatter | EmbedType::MdJson | EmbedType::MdToml | EmbedType::MdFig => {
+                C::MdFrontmatter
+            }
+            EmbedType::Semicolons => C::SemicolonsJson,
+            EmbedType::Endmatter => C::EndmatterYaml,
+            EmbedType::Plus => C::PlusToml,
+            EmbedType::FencedFig
+            | EmbedType::FencedYaml
+            | EmbedType::FencedJson
+            | EmbedType::FencedToml => C::Fenced,
+            EmbedType::HtmlScriptFig
+            | EmbedType::HtmlScriptYaml
+            | EmbedType::HtmlScriptJson
+            | EmbedType::HtmlScriptToml => C::HtmlScript,
+            EmbedType::HtmlCodeFig
+            | EmbedType::HtmlCodeYaml
+            | EmbedType::HtmlCodeJson
+            | EmbedType::HtmlCodeToml => C::HtmlCode,
+        }
+    }
+
+    /// The name of the dialect this archetype's content is written in.
+    fn inner_name(self) -> &'static str {
+        match self {
+            EmbedType::Frontmatter
+            | EmbedType::Endmatter
+            | EmbedType::FencedYaml
+            | EmbedType::HtmlScriptYaml
+            | EmbedType::HtmlCodeYaml => "yaml",
+            EmbedType::Semicolons
+            | EmbedType::FencedJson
+            | EmbedType::MdJson
+            | EmbedType::HtmlScriptJson
+            | EmbedType::HtmlCodeJson => "json",
+            EmbedType::FencedFig
+            | EmbedType::MdFig
+            | EmbedType::HtmlScriptFig
+            | EmbedType::HtmlCodeFig => "fig",
+            EmbedType::Plus
+            | EmbedType::FencedToml
+            | EmbedType::MdToml
+            | EmbedType::HtmlScriptToml
+            | EmbedType::HtmlCodeToml => "toml",
         }
     }
 
     /// `parts`' inverse: decode the `(container, format)` pair the library
-    /// reports (from `fig_embed_detect`). `None` for a pair this binding has
-    /// no name for — a newer core may know containers or embeddable formats
-    /// this enum doesn't.
+    /// reports (from `fig_embed_detect`). A preset container names its own
+    /// language whatever the format says. `None` for a pair this binding has
+    /// no name for — a newer core may know containers, and the registry
+    /// languages, this enum doesn't.
     fn from_parts(container: i32, format: i32) -> Option<Self> {
         use ffi::FigEmbedContainer as C;
-        use ffi::FigFormat as F;
         let c = match container {
             v if v == C::MdFrontmatter as i32 => C::MdFrontmatter,
             v if v == C::Fenced as i32 => C::Fenced,
@@ -118,59 +147,35 @@ impl EmbedType {
             v if v == C::EndmatterYaml as i32 => return Some(EmbedType::Endmatter),
             _ => return None,
         };
-        let f = match format {
-            v if v == F::Yaml as i32 => F::Yaml,
-            v if v == F::Json as i32 => F::Json,
-            v if v == F::Toml as i32 => F::Toml,
-            v if v == F::Fig as i32 => F::Fig,
-            _ => return None,
-        };
-        Some(match (c, f) {
-            (C::MdFrontmatter, F::Yaml) => EmbedType::Frontmatter,
-            (C::MdFrontmatter, F::Json) => EmbedType::MdJson,
-            (C::MdFrontmatter, F::Toml) => EmbedType::MdToml,
-            (C::MdFrontmatter, F::Fig) => EmbedType::MdFig,
-            (C::Fenced, F::Yaml) => EmbedType::FencedYaml,
-            (C::Fenced, F::Json) => EmbedType::FencedJson,
-            (C::Fenced, F::Toml) => EmbedType::FencedToml,
-            (C::Fenced, F::Fig) => EmbedType::FencedFig,
-            (C::HtmlScript, F::Yaml) => EmbedType::HtmlScriptYaml,
-            (C::HtmlScript, F::Json) => EmbedType::HtmlScriptJson,
-            (C::HtmlScript, F::Toml) => EmbedType::HtmlScriptToml,
-            (C::HtmlScript, F::Fig) => EmbedType::HtmlScriptFig,
-            (C::HtmlCode, F::Yaml) => EmbedType::HtmlCodeYaml,
-            (C::HtmlCode, F::Json) => EmbedType::HtmlCodeJson,
-            (C::HtmlCode, F::Toml) => EmbedType::HtmlCodeToml,
-            (C::HtmlCode, F::Fig) => EmbedType::HtmlCodeFig,
+        let name = Format::from_c(format)?.name();
+        Some(match (c, name) {
+            (C::MdFrontmatter, "yaml") => EmbedType::Frontmatter,
+            (C::MdFrontmatter, "json") => EmbedType::MdJson,
+            (C::MdFrontmatter, "toml") => EmbedType::MdToml,
+            (C::MdFrontmatter, "fig") => EmbedType::MdFig,
+            (C::Fenced, "yaml") => EmbedType::FencedYaml,
+            (C::Fenced, "json") => EmbedType::FencedJson,
+            (C::Fenced, "toml") => EmbedType::FencedToml,
+            (C::Fenced, "fig") => EmbedType::FencedFig,
+            (C::HtmlScript, "yaml") => EmbedType::HtmlScriptYaml,
+            (C::HtmlScript, "json") => EmbedType::HtmlScriptJson,
+            (C::HtmlScript, "toml") => EmbedType::HtmlScriptToml,
+            (C::HtmlScript, "fig") => EmbedType::HtmlScriptFig,
+            (C::HtmlCode, "yaml") => EmbedType::HtmlCodeYaml,
+            (C::HtmlCode, "json") => EmbedType::HtmlCodeJson,
+            (C::HtmlCode, "toml") => EmbedType::HtmlCodeToml,
+            (C::HtmlCode, "fig") => EmbedType::HtmlCodeFig,
             _ => return None,
         })
     }
 
     /// The inner format this archetype's content is written in (and serialized to
-    /// when spliced in). Lets a caller resolve the parser to use for a detected
-    /// embed's content instead of duplicating the archetype→format mapping.
-    pub fn inner_format(self) -> Format {
-        match self {
-            EmbedType::Frontmatter
-            | EmbedType::Endmatter
-            | EmbedType::FencedYaml
-            | EmbedType::HtmlScriptYaml
-            | EmbedType::HtmlCodeYaml => Format::Yaml,
-            EmbedType::Semicolons
-            | EmbedType::FencedJson
-            | EmbedType::MdJson
-            | EmbedType::HtmlScriptJson
-            | EmbedType::HtmlCodeJson => Format::Json,
-            EmbedType::FencedFig
-            | EmbedType::MdFig
-            | EmbedType::HtmlScriptFig
-            | EmbedType::HtmlCodeFig => Format::Fig,
-            EmbedType::Plus
-            | EmbedType::FencedToml
-            | EmbedType::MdToml
-            | EmbedType::HtmlScriptToml
-            | EmbedType::HtmlCodeToml => Format::Toml,
-        }
+    /// when spliced in), resolved by name: `yaml`, `json`, `toml` or `fig`. Lets
+    /// a caller resolve the parser to use for a detected embed's content instead
+    /// of duplicating the archetype→format mapping. [`Error::UnsupportedFormat`]
+    /// when that language is not registered in this build.
+    pub fn inner_format(self) -> Result<Format, Error> {
+        Format::require(self.inner_name())
     }
 }
 
@@ -311,22 +316,19 @@ impl Embed {
     /// region exists.
     pub fn open(host: &[u8], kind: EmbedType) -> Result<Self, Error> {
         let mut raw = std::ptr::null_mut();
-        let (container, format) = kind.parts();
+        let (container, format) = kind.parts()?;
         let status = unsafe {
             ffi::fig_embed_open(
                 host.as_ptr(),
                 host.len(),
                 container as i32,
-                format as i32,
+                format.to_c(),
                 &mut raw,
             )
         };
         Error::from_status(status)?;
         let raw = NonNull::new(raw).ok_or(Error::Internal)?;
-        Ok(Self {
-            raw,
-            inner: kind.inner_format(),
-        })
+        Ok(Self { raw, inner: format })
     }
 
     /// Open the embed of `kind` in `host`, creating an empty region when none
@@ -341,22 +343,19 @@ impl Embed {
     /// line.
     pub fn open_or_init(host: &[u8], kind: EmbedType) -> Result<Self, Error> {
         let mut raw = std::ptr::null_mut();
-        let (container, format) = kind.parts();
+        let (container, format) = kind.parts()?;
         let status = unsafe {
             ffi::fig_embed_open_or_init(
                 host.as_ptr(),
                 host.len(),
                 container as i32,
-                format as i32,
+                format.to_c(),
                 &mut raw,
             )
         };
         Error::from_status(status)?;
         let raw = NonNull::new(raw).ok_or(Error::Internal)?;
-        Ok(Self {
-            raw,
-            inner: kind.inner_format(),
-        })
+        Ok(Self { raw, inner: format })
     }
 
     /// Re-house `host`'s embedded region under a different archetype's fences:
@@ -402,16 +401,16 @@ impl Embed {
     ) -> Result<String, Error> {
         let mut ptr: *mut u8 = std::ptr::null_mut();
         let mut len: usize = 0;
-        let (from_container, from_format) = from.parts();
-        let (to_container, to_format) = to.parts();
+        let (from_container, from_format) = from.parts()?;
+        let (to_container, to_format) = to.parts()?;
         let status = unsafe {
             ffi::fig_embed_retype(
                 host.as_ptr(),
                 host.len(),
                 from_container as i32,
-                from_format as i32,
+                from_format.to_c(),
                 to_container as i32,
-                to_format as i32,
+                to_format.to_c(),
                 content.as_ptr(),
                 content.len(),
                 &mut ptr,
@@ -438,13 +437,13 @@ impl Embed {
             size: core::mem::size_of::<ffi::FigRegion>() as u32,
             ..Default::default()
         };
-        let (container, format) = kind.parts();
+        let (container, format) = kind.parts()?;
         let status = unsafe {
             ffi::fig_embed_extract(
                 content.as_ptr(),
                 content.len(),
                 container as i32,
-                format as i32,
+                format.to_c(),
                 &mut region,
             )
         };

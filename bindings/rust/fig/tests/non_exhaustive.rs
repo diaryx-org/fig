@@ -1,12 +1,13 @@
-//! The public types that grow are `#[non_exhaustive]`, so a new format, status,
-//! diagnostic, or render knob is a minor release rather than a major one. This
+//! The public types that grow are `#[non_exhaustive]` or opaque (`Format`), so a
+//! new format, status, diagnostic, or render knob is a minor release rather
+//! than a major one. This
 //! file is an EXTERNAL crate, so it sees exactly what a downstream sees — its job
 //! is to prove the sweep locked nobody out: every option field is still settable,
 //! every value is still constructible, and every returned field is still readable.
 //! If a future field/variant has no way to reach it from here, this test is where
 //! that shows up.
 
-use fig::{Document, Format, SerializeOptions, Value};
+use fig::{Document, SerializeOptions, Value};
 
 #[test]
 fn every_serialize_options_field_is_reachable_without_a_struct_literal() {
@@ -27,7 +28,7 @@ fn every_serialize_options_field_is_reachable_without_a_struct_literal() {
     // And they still reach the serializer.
     let v = Value::Map(vec![(Value::Str("k".into()), Value::Str("v".into()))]);
     assert_eq!(
-        v.serialize_with(Format::Json, SerializeOptions::compact())
+        v.serialize_with(by_name("json"), SerializeOptions::compact())
             .unwrap(),
         "{\"k\":\"v\"}\n"
     );
@@ -35,18 +36,17 @@ fn every_serialize_options_field_is_reachable_without_a_struct_literal() {
 
 #[test]
 fn growable_enums_are_matchable_with_a_wildcard_and_still_constructible() {
-    // Constructing a variant is unaffected by `non_exhaustive` — only exhaustive
-    // matching needs the wildcard, which is the point: a new variant can't break
-    // a downstream match.
-    let format = Format::Yaml;
-    let described = match format {
-        Format::Yaml => "yaml",
-        Format::Json | Format::Jsonc | Format::Json5 => "json-family",
+    // A format is an opaque handle: a caller branches on its name, so a
+    // language the core gains can't break a downstream match.
+    let format = by_name("yaml");
+    let described = match format.name() {
+        "yaml" => "yaml",
+        "json" | "jsonc" | "json5" => "json-family",
         _ => "other",
     };
     assert_eq!(described, "yaml");
 
-    let err = Document::parse(b"{ not valid", Format::Json).unwrap_err();
+    let err = Document::parse(b"{ not valid", by_name("json")).unwrap_err();
     let msg = match err {
         fig::Error::Parse(ref detail) => detail.message.clone(),
         ref other => format!("{other}"),
@@ -62,17 +62,17 @@ fn returned_struct_fields_are_still_readable() {
     // types the library hands back.
     let v = fig::version();
     assert!(v.major >= 2 || v.minor > 0 || v.patch > 0);
-    let caps = fig::capabilities(Format::Yaml);
+    let caps = fig::capabilities(by_name("yaml"));
     assert!(caps.read || caps.edit || caps.serialize);
 
-    let doc = Document::parse(b"a: null\n", Format::Yaml).unwrap();
+    let doc = Document::parse(b"a: null\n", by_name("yaml")).unwrap();
     let warns = doc
-        .diagnose(Format::Toml, SerializeOptions::default())
+        .diagnose(by_name("toml"), SerializeOptions::default())
         .unwrap();
     assert_eq!(warns[0].path, "a");
     let _ = (&warns[0].code, &warns[0].cause, &warns[0].note);
 
-    if let fig::Error::Parse(detail) = Document::parse(b"{ oops", Format::Json).unwrap_err() {
+    if let fig::Error::Parse(detail) = Document::parse(b"{ oops", by_name("json")).unwrap_err() {
         let _ = (
             detail.message,
             detail.byte_offset,
@@ -273,4 +273,11 @@ fn a_language_failure_is_readable() {
         }
     }
     assert_eq!(read(&fig::Error::NotFound), None);
+}
+
+/// The registered format named `name`; a test that names one this build
+/// does not carry is a test bug.
+#[allow(dead_code)]
+fn by_name(name: &str) -> fig::Format {
+    fig::Format::by_name(name).unwrap_or_else(|| panic!("no format named {name:?}"))
 }

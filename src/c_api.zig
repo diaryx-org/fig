@@ -32,15 +32,6 @@ fn trapPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
     @trap();
 }
 
-/// The language registry (`languages/language.zig`'s `dialects`): the table
-/// `FigFormat` is reified from, and the one every dispatch in this file reads.
-/// A gated-out format is `void` in it — that is the build gate, and it is why
-/// this file no longer names a single `languages/<lang>/…` module directly.
-/// There is nothing left here to keep behind a `build_options.lang_*` test by
-/// hand: each derived arm's first statement is the `d.Lang == void` guard, and
-/// a `void` language has no parser, printer, dialect or `caps` to reach past
-/// it.
-const Languages = @import("languages/language.zig");
 // Cross-format conversion helpers used by `fig_document_serialize`. Both are
 // format-agnostic AST passes, always compiled in: `Lossless` for the `$fig`
 // envelope, `Materialize` for collapsing a reference layer on the way out of
@@ -48,13 +39,13 @@ const Languages = @import("languages/language.zig");
 const Lossless = @import("lossless.zig");
 const Materialize = @import("materialize.zig");
 const Diagnostics = @import("diagnostics.zig");
-/// A format registered at runtime (`fig_language_register`): the vtable and
-/// node-table shapes this file re-exports under their `Fig*` names, the
-/// registry an integer at or above `FIG_FORMAT_RUNTIME_BASE` resolves in,
-/// and the one `Language` every such format is read, edited and printed
-/// through. Every entry point that takes a format integer asks
-/// `runtimeOf` first; see `docs/proposals/runtime-languages.md` §8.2.
+/// The language registry: every format is a language registered through
+/// `fig_language_register`, its dialects named by the integer handles the
+/// registry hands out. The vtable and node-table shapes this file re-exports
+/// under their `Fig*` names are its, and so is the one `Language` every
+/// format is read, edited and printed through.
 const Runtime = @import("languages/runtime.zig");
+const manifest = @import("kit/manifest.zig");
 
 // The wasm module's half of the runtime-language carrier: a language
 // whose functions are JavaScript, reached through a wasm import. Exported
@@ -100,112 +91,12 @@ pub const FigStatus = enum(c_int) {
     internal_error = 255,
 };
 
-/// Translation of `fig.Language.Type` to the C ABI, REIFIED from the format
-/// registry: one member per `Languages.dialects` entry, named for the entry and
-/// valued at its `abi_value`. Two facts about the result are worth stating,
-/// since neither is visible in the two lines that build it:
-///
-///   * The VALUES are the ABI, and a released one is permanent — which is
-///     exactly why they are registry DATA rather than member positions. They
-///     run 1,2,7 down the JSON family because JSON5 was appended after
-///     generic XML took 6 — a value retired with the format in core 3.0 and
-///     never reused — and 8..13 for the members that arrived later still. `zig build
-///     abi-check` diffs them against fig.h's `FIG_FORMAT_*` enumerators in
-///     both directions, and the literal pin below restates them a third time.
-///   * The member ORDER is now the registry's (json, jsonc, json5, yaml, …)
-///     rather than the ABI-value order this enum used to be written in.
-///     Nothing depends on it — what a compiled caller holds is the value, and
-///     every switch over this enum is either named-arm or `inline else`.
-///
-/// Every function accepts every member of a full build: `fig_parse`, the
-/// serializers (`fig_value_serialize`, `fig_document_serialize`) and the
-/// editor (`fig_editor_*`) alike. Whether a format is editable is not spelled
-/// here: it is the language's own `caps.edit`, which `fig_editor_create`
-/// reads, and a format compiled out of this build is rejected with
-/// `unsupported_format` the same way. `fig_format_capabilities` reports the
-/// exact support in a given build; the per-format prose (what each dialect is,
-/// and what it can and cannot represent) lives on the registry entries and in
-/// fig.h. JSONC = plain-JSON syntax with comments.
-pub const FigFormat = @Enum(c_int, .exhaustive, format_names, &format_abi_values);
-
-const format_names = Languages.namesOf(.all);
-
-/// `FigFormat`'s tag values: each registry entry's frozen `abi_value`, in
-/// registry order (so index-for-index with `format_names`).
-const format_abi_values = blk: {
-    var values: [format_names.len]c_int = undefined;
-    var i: usize = 0;
-    for (Languages.dialects) |d| {
-        values[i] = d.abi_value;
-        i += 1;
-    }
-    break :blk values;
-};
-
-// The ABI pin, restated as LITERALS. `FigFormat` is now built FROM the registry,
-// so asserting that the two agree would be circular — checking a derivation
-// against what it derives from proves nothing. What is left to state is the
-// contract itself: these thirteen names carry these thirteen integers,
-// permanently, because that pairing is what every compiled caller holds. With
-// `zig build abi-check` (registry vs fig.h's `FIG_FORMAT_*`, both directions)
-// the numbering stays pinned from three independent directions: this literal
-// table, the header, and the registry that now feeds the enum.
-comptime {
-    const pinned = .{
-        .{ "json", 1 },        .{ "jsonc", 2 },  .{ "yaml", 3 },
-        .{ "toml", 4 },        .{ "zon", 5 },    .{ "json5", 7 },
-        .{ "fig", 8 },         .{ "ini", 9 },    .{ "dotenv", 10 },
-        .{ "properties", 11 }, .{ "plist", 12 }, .{ "nestedtext", 13 },
-    };
-    // Values a released ABI once carried and no longer does. Retired, not
-    // free: a caller compiled against the old header still holds the integer,
-    // and a new dialect taking it would be silently misread by that caller.
-    const retired = .{
-        .{ "xml", 6 }, // generic XML, core 2.x; removed in core 3.0
-    };
-    for (retired) |r| {
-        if (@hasField(FigFormat, r[0]))
-            @compileError("`FigFormat." ++ r[0] ++ "` was removed from the C ABI and cannot come back under that name");
-        for (pinned) |p| if (p[1] == r[1])
-            @compileError("ABI value " ++ std.fmt.comptimePrint("{d}", .{r[1]}) ++
-                " is retired (it was '" ++ r[0] ++ "') and cannot be given to '" ++ p[0] ++ "'");
-    }
-    if (@typeInfo(FigFormat).@"enum".field_names.len != pinned.len)
-        @compileError("`FigFormat` no longer has exactly " ++
-            std.fmt.comptimePrint("{d}", .{pinned.len}) ++ " members — a format added to the" ++
-            " registry is a new C ABI value, so it must be added to this pin (and to fig.h) too");
-    // The pin itself stays below the runtime range. The registry check in
-    // `language.zig` proves the same of the rows the enum is built from; this
-    // one proves it of the literals, so that a pin written for a future format
-    // cannot promise a caller an integer the runtime registry may already have
-    // handed out.
-    for (pinned) |p| {
-        if (p[1] >= Languages.runtime_abi_base)
-            @compileError("the ABI pin gives '" ++ p[0] ++ "' the value " ++
-                std.fmt.comptimePrint("{d}", .{p[1]}) ++ ", which is inside the range reserved" ++
-                " for runtime-registered languages (FIG_FORMAT_RUNTIME_BASE = " ++
-                std.fmt.comptimePrint("{d}", .{Languages.runtime_abi_base}) ++ ")");
-    }
-    for (pinned) |p| {
-        if (!@hasField(FigFormat, p[0]))
-            @compileError("`FigFormat` has no member '" ++ p[0] ++
-                "' — a released ABI member cannot be renamed or dropped");
-        const got = @backingInt(@field(FigFormat, p[0]));
-        if (got != p[1])
-            @compileError("`FigFormat." ++ p[0] ++ "` is " ++
-                std.fmt.comptimePrint("{d}", .{got}) ++ " but the released C ABI says " ++
-                std.fmt.comptimePrint("{d}", .{p[1]}) ++
-                " — a released ABI value is permanent, so the registry entry is the mistake");
-    }
-}
-
 // ==================
 // VERSION + CAPABILITIES
 // ==================
 //
 // The stable query surface a host uses to interrogate the linked library before
-// trusting it: which version it is, and what it can actually do in THIS build
-// (formats can be compiled out — see `build_options.lang_*`). Both are pure
+// trusting it: which version it is, and what a registered format can do. Pure
 // functions: no handle, no allocation, safe to call from any thread at any time.
 
 /// Packed library version `(major << 16) | (minor << 8) | patch`. A host can
@@ -252,29 +143,25 @@ pub const FigCapability = enum(u32) {
     _,
 };
 
-/// Report what `fig` can do with `format` in THIS build as a bitmask of
-/// `FigCapability` (read | edit | serialize). Reflects both the format's inherent
-/// support (its `Language.caps` declaration) and
-/// build-time gating: a format compiled out reports 0, as does an unknown
-/// `format` value. JSON/JSONC/JSON5 are always fully supported. Lets a host pick
-/// a working format up front instead of probing via `unsupported_format` returns.
+/// Report what `fig` can do with the registered format `format` as a
+/// bitmask of `FigCapability` (read | edit | serialize | references): its
+/// language's `caps`. A handle never handed out reports 0.
 pub export fn fig_format_capabilities(format: c_int) u32 {
-    @setEvalBranchQuota(30_000);
-    // An unknown integer reports nothing, which is also what a `void` (compiled
-    // out) language reports — `capsOf` returns 0 for it, so the build gate needs
-    // no test of its own here.
-    if (runtimeOf(format)) |e| return capsBits(e.language.caps);
-    const f = std.enums.fromInt(FigFormat, format) orelse return 0;
-    return switch (f) {
-        inline else => |tag| comptime capsOf(Languages.entryFor(@tagName(tag)).Lang),
-    };
+    const e = entryOf(format) orelse return 0;
+    return capsBits(e.language.caps);
 }
 
-/// The registry entry a format integer at or above `FIG_FORMAT_RUNTIME_BASE`
-/// names, or null — for an integer below it (a compiled format, resolved by
-/// the caller's own switch) and for one never handed out. The checked
-/// lookup every entry point taking `int format` opens with.
-fn runtimeOf(format: c_int) ?*const Runtime.Entry {
+/// The name of the dialect `format` names, or null for a handle never
+/// handed out. Registry entries live as long as the process.
+pub export fn fig_format_name(format: c_int) ?[*:0]const u8 {
+    const e = entryOf(format) orelse return null;
+    return e.name.ptr;
+}
+
+/// The registered dialect a format handle names, or null for one never
+/// handed out. The checked lookup every entry point taking `int format`
+/// opens with.
+fn entryOf(format: c_int) ?*const Runtime.Entry {
     return Runtime.entryByAbi(format);
 }
 
@@ -346,14 +233,8 @@ pub export fn fig_language_register(vt: ?*const FigLanguageVTable, out_format: ?
 /// per process, its name is not.
 pub export fn fig_format_by_name(name: ?[*:0]const u8) c_int {
     const n = std.mem.span(name orelse return -1);
-    if (comptime build_options.contract_copies) {
-        if (std.mem.startsWith(u8, n, "c-")) registerContractCopies();
-    }
-    if (Runtime.entryByName(n)) |e| return e.abi;
-    inline for (Languages.dialects) |d| {
-        if (std.mem.eql(u8, d.name, n)) return d.abi_value;
-    }
-    return -1;
+    const e = Runtime.entryByName(n) orelse return -1;
+    return e.abi;
 }
 
 /// Content sniffing in the caller's order: the format integer of the first
@@ -366,8 +247,8 @@ pub export fn fig_detect_order(input: ?[*]const u8, input_len: usize, names: ?[*
     var order = std.ArrayList([]const u8).initCapacity(allocator, list.len) catch return .out_of_memory;
     defer order.deinit(allocator);
     for (list) |n| order.appendAssumeCapacity(std.mem.span(n orelse return .invalid_argument));
-    const name = Languages.detectAmong(allocator, bytes, order.items) orelse return .not_found;
-    out.* = fig_format_by_name(@ptrCast(name.ptr));
+    const e = Runtime.detectAmong(allocator, bytes, order.items) orelse return .not_found;
+    out.* = e.abi;
     return .ok;
 }
 
@@ -498,23 +379,11 @@ pub export fn fig_stream_split(input: ?[*]const u8, input_len: usize, format: c_
     count_out.* = 0;
     const bytes: []const u8 = if (input_len == 0) "" else (input orelse return .invalid_argument)[0..input_len];
     const allocator = activeAllocator();
-    const located: []Languages.StreamDocument = blk: {
-        if (runtimeOf(format)) |e| {
-            break :blk Runtime.Language.splitStream(allocator, bytes, e.typeOf()) catch |err| return switch (err) {
-                error.UnsupportedOperation => .unsupported_operation,
-                error.OutOfMemory => .out_of_memory,
-                else => fillError(out_err, .parse_error, "the language could not split the stream"),
-            };
-        }
-        const f = std.enums.fromInt(FigFormat, format) orelse return .unsupported_format;
-        switch (f) {
-            inline else => |tag| {
-                const d = comptime Languages.entryFor(@tagName(tag));
-                if (comptime d.Lang == void) return .unsupported_format;
-                if (comptime !@hasDecl(d.Lang, "splitStream")) return .unsupported_operation;
-                break :blk d.Lang.splitStream(allocator, bytes, d.dialect) catch return .out_of_memory;
-            },
-        }
+    const e = entryOf(format) orelse return .unsupported_format;
+    const located = Runtime.Language.splitStream(allocator, bytes, e.typeOf()) catch |err| return switch (err) {
+        error.UnsupportedOperation => .unsupported_operation,
+        error.OutOfMemory => .out_of_memory,
+        else => fillError(out_err, .parse_error, "the language could not split the stream"),
     };
     defer allocator.free(located);
     const out = allocator.alloc(FigStreamDoc, located.len) catch return .out_of_memory;
@@ -530,56 +399,13 @@ pub export fn fig_stream_free(docs: ?[*]FigStreamDoc, count: usize) void {
     activeAllocator().free(p[0..count]);
 }
 
-/// `-Dcontract-copies`: every compiled language registered again through its
-/// contract vtable, its dialects named `c-<name>`, once.
-fn registerContractCopies() void {
-    const contract = @import("kit/contract.zig");
-    const list = @import("languages/list.zig");
-    if (Runtime.entryByName("c-json") != null or Runtime.entryByName("c-yaml") != null) return;
-    inline for (list.rows) |row| {
-        const L = Languages.of(row.name);
-        if (L != void) {
-            const V = contract.VTable(L, "c-");
-            _ = Runtime.register(activeAllocator(), &V.vtable) catch {};
-        }
-    }
-}
 
-fn capsBits(caps: Languages.Caps) u32 {
+fn capsBits(caps: manifest.Caps) u32 {
     var bits: u32 = 0;
     if (caps.read) bits |= @backingInt(FigCapability.read);
     if (caps.edit) bits |= @backingInt(FigCapability.edit);
     if (caps.serialize) bits |= @backingInt(FigCapability.serialize);
     if (caps.references) bits |= @backingInt(FigCapability.references);
-    return bits;
-}
-
-/// The `FigCapability` bits `Lang` declares, or 0 when it is compiled out.
-///
-/// The values come from `Lang.caps` — the format's own declaration in
-/// `<lang>/<lang>.zig`, required and checked by `language.validate` — rather
-/// than being spelled a second time here. This switch WAS that second spelling,
-/// and the drift it invited was silent both ways: a format gaining an editor
-/// without its bit being set here reads as uneditable to every C host, and a
-/// bit set here for support that does not exist sends hosts down a path that
-/// fails with `unsupported_format`.
-///
-/// No `build_options.lang_*` test either: a compiled-out format is already
-/// `void` in `languages/language.zig`, which is the same fact the gate stated.
-///
-/// The mapping above is no longer hand-written either: `FigFormat` is
-/// per-DIALECT (json/jsonc/json5 are three ABI values over one `Language`)
-/// while `caps` is per-LANGUAGE, and the bridge between the two tables is the
-/// format registry's `Lang` field — so the caller looks the entry up by member
-/// name and hands its language straight to this function. See the proposal's
-/// §8.5.
-fn capsOf(comptime Lang: type) u32 {
-    if (Lang == void) return 0;
-    var bits: u32 = 0;
-    if (Lang.caps.read) bits |= @backingInt(FigCapability.read);
-    if (Lang.caps.edit) bits |= @backingInt(FigCapability.edit);
-    if (Lang.caps.serialize) bits |= @backingInt(FigCapability.serialize);
-    if (Lang.caps.references) bits |= @backingInt(FigCapability.references);
     return bits;
 }
 
@@ -589,13 +415,10 @@ const DocumentHandle = struct {
     allocator: std.mem.Allocator,
     source: []u8,
     document: Document,
-    /// The format `source` was parsed as. `fig_document_serialize` consults it to
-    /// decide whether to collapse a reference layer before printing.
-    /// Meaningless when `runtime` is set.
-    format: FigFormat,
-    /// The runtime language `source` was parsed by, when it was one; its
-    /// entry's `caps.references` then says whether there is a layer.
-    runtime: ?*const Runtime.Entry = null,
+    /// The dialect `source` was parsed as. `fig_document_serialize` reads its
+    /// `caps.references` to decide whether to collapse a reference layer
+    /// before printing.
+    entry: *const Runtime.Entry,
     /// Reused across `fig_document_serialize` calls; holds the bytes the most
     /// recent call returned (cleared and refilled each time). Mirrors
     /// `ValueHandle.rendered`.
@@ -734,13 +557,8 @@ pub export fn fig_parse_ex(
     const input = sliceOf(input_ptr, input_len) orelse
         return fillError(out_err, .invalid_argument, "null input with nonzero length");
 
-    const runtime_entry = runtimeOf(format);
-    const fig_format = if (runtime_entry != null)
-        // Any member: `handle.format` is not read for a runtime document.
-        @as(FigFormat, @fromBackingInt(@intCast(format_abi_values[0])))
-    else
-        std.enums.fromInt(FigFormat, format) orelse
-            return fillError(out_err, .unsupported_format, "unsupported or unknown format");
+    const entry = entryOf(format) orelse
+        return fillError(out_err, .unsupported_format, "unsupported or unknown format");
 
     const allocator = activeAllocator();
 
@@ -751,43 +569,25 @@ pub export fn fig_parse_ex(
         return fillError(out_err, .out_of_memory, "out of memory");
     };
 
-    // On any parser error: free the not-yet-installed source/handle and report
-    // the error name as the message. The parser error set is payload-free, so the
-    // name is the best diagnostic available until per-parser span plumbing lands;
-    // `byte_offset`/`line`/`column` stay 0 for now. A runtime language's
-    // parser fills a `FigError` itself, and that is what is reported.
-    const doc = if (runtime_entry) |e| blk: {
-        var parser: Runtime.Language.Parser = .{ .allocator = allocator };
-        break :blk Runtime.Language.parse(&parser, source, e.typeOf()) catch |err| {
-            allocator.free(source);
-            allocator.destroy(handle);
-            if (err == error.OutOfMemory) return fillError(out_err, .out_of_memory, "out of memory");
-            const status = fillError(out_err, .parse_error, parser.lastMessage());
-            if (out_err) |oe| if (errCovers(oe.size, "byte_offset")) {
-                oe.byte_offset = parser.last_error.byte_offset;
-            };
-            return status;
+    // On a parse error: free the not-yet-installed source/handle and report
+    // what the language's parser said, and where.
+    var parser: Runtime.Language.Parser = .{ .allocator = allocator };
+    const doc = Runtime.Language.parse(&parser, source, entry.typeOf()) catch |err| {
+        allocator.free(source);
+        allocator.destroy(handle);
+        if (err == error.OutOfMemory) return fillError(out_err, .out_of_memory, "out of memory");
+        const status = fillError(out_err, .parse_error, parser.lastMessage());
+        if (out_err) |oe| if (errCovers(oe.size, "byte_offset")) {
+            oe.byte_offset = parser.last_error.byte_offset;
         };
-    } else switch (fig_format) {
-        inline else => |f| blk: {
-            const d = comptime Languages.entryFor(@tagName(f));
-            // The void guard first: a format compiled out of this build has no
-            // parser to call, and reporting that is `formatDisabled`.
-            if (comptime d.Lang == void) return formatDisabled(out_err, source, handle);
-            // `d.dialect` is the language default for every entry but the JSON
-            // trio, which is the whole reason the registry carries it — three
-            // ABI values (json/jsonc/json5) over one parser.
-            break :blk d.Lang.Parser.parse(allocator, source, d.dialect) catch |err|
-                return parseFailed(out_err, err, source, handle);
-        },
+        return status;
     };
 
     handle.* = .{
         .allocator = allocator,
         .source = source,
         .document = doc,
-        .format = fig_format,
-        .runtime = runtime_entry,
+        .entry = entry,
         .rendered = std.Io.Writer.Allocating.init(allocator),
         .diag_arena = std.heap.ArenaAllocator.init(allocator),
     };
@@ -1110,8 +910,7 @@ pub export fn fig_document_resolve_aliases(
         .allocator = allocator,
         .source = &.{},
         .document = .{ .source = "", .ast = ast, .node_spans = &.{} },
-        .format = src.format,
-        .runtime = src.runtime,
+        .entry = src.entry,
         .rendered = std.Io.Writer.Allocating.init(allocator),
         .diag_arena = std.heap.ArenaAllocator.init(allocator),
         .arena = arena,
@@ -1356,61 +1155,13 @@ fn editStatus(err: anyerror) FigStatus {
 
 pub const FigEditor = opaque {};
 
-// The editor backends, shared by the document editor and the embed editor: a
-// tagged union with one variant per editable language COMPILED INTO THIS BUILD
-// (json/yaml/toml/zon/fig/…, every one whose `caps.edit` is true). The type is assembled from
-// only the enabled languages — rather than carrying `void` placeholder fields —
-// so the `inline else` switches over `handle.inner` stay valid: every variant
-// has a real `Editor` payload to act on.
-//
-// Both halves of "editable and enabled" are read rather than restated:
-// `Languages.compiled` is already the enabled list (a gated-out language is
-// absent from it), and `caps.edit` is the format's own declaration of whether
-// an `Editor` can be instantiated for it — the same bit `fig_editor_create`
-// tests and `fig_format_capabilities` reports. This is per-LANGUAGE, not
-// per-dialect: the three JSON dialects share one variant, which is what makes
-// `@unionInit(EditorUnion, d.Lang.name, …)` in `fig_editor_create` land jsonc
-// and json5 on the `json` backend with their own `format` payload.
-//
-// The variant ORDER is `compiled`'s (it was hand-written as json, yaml, toml,
-// fig, zon, … before). Nothing observes it: the tag is internal, never
-// serialized, never crosses the ABI, and every switch over the union is
-// `inline else`.
-//
-// Plus one arm that is not a compiled language: `runtime`, the `Editor` over
-// `Runtime.Language`, which every runtime format is edited through — the
-// `format` payload names the registry entry. It is the `.runtime` member the
-// proposal's §10 asks for, and the whole of what the C API's editor gains.
-const editor_variants = blk: {
-    const Variant = struct { name: [:0]const u8, Lang: type };
-    var variants: []const Variant = &.{};
-    for (Languages.compiled) |Lang| {
-        if (!Lang.caps.edit) continue;
-        variants = variants ++ &[_]Variant{.{ .name = Lang.name, .Lang = Lang }};
-    }
-    variants = variants ++ &[_]Variant{.{ .name = "runtime", .Lang = Runtime.Language }};
-    break :blk variants;
-};
-
-const EditorUnion = blk: {
-    if (editor_variants.len == 0)
-        @compileError("fig C ABI: no editable language enabled; build with at least one of -Djson/-Dyaml/-Dtoml");
-    const n = editor_variants.len;
-    const IntTag = std.math.IntFittingRange(0, n - 1);
-    var names: [n][:0]const u8 = undefined;
-    var types: [n]type = undefined;
-    var values: [n]IntTag = undefined;
-    var attrs: [n]std.lang.Type.Union.FieldAttributes = undefined;
-    for (editor_variants, 0..) |v, i| {
-        names[i] = v.name;
-        types[i] = Editor(v.Lang);
-        values[i] = @intCast(i);
-        attrs[i] = .{};
-    }
-    // This Zig spells type reification as granular builtins (`@Enum`/`@Union`)
-    // rather than `@Type(.{...})`.
-    const Tag = @Enum(IntTag, .exhaustive, &names, &values);
-    break :blk @Union(.auto, Tag, &names, &types, &attrs);
+// The editor backend, shared by the document editor and the embed editor:
+// the `Editor` over `Runtime.Language`, which every format is edited
+// through, its `format` payload naming the registered dialect. A union of
+// one, so that the editor operations below read the same as when there was
+// one variant per compiled language.
+const EditorUnion = union(enum) {
+    runtime: Editor(Runtime.Language),
 };
 
 const EditorHandle = struct {
@@ -1449,35 +1200,12 @@ pub export fn fig_editor_create(
     const slice = sliceOf(input_ptr, input_len) orelse return .invalid_argument;
 
     const allocator = activeAllocator();
-    // The backend is chosen BEFORE the handle is allocated, so the three ways a
-    // format can be refused — unknown value, compiled out, no in-place editor —
-    // all return without anything to free. `activeAllocator` itself allocates
-    // nothing.
-    const inner: EditorUnion = if (runtimeOf(format)) |e| blk: {
-        if (!e.language.caps.edit) return .unsupported_format;
-        break :blk @unionInit(EditorUnion, "runtime", .{ .allocator = allocator, .format = e.typeOf() });
-    } else switch (std.enums.fromInt(FigFormat, format) orelse return .unsupported_format) {
-        inline else => |f| blk: {
-            const d = comptime Languages.entryFor(@tagName(f));
-            // Compiled out of this build, and a format with a reader and a
-            // writer but no in-place editor (`caps.edit = false`, which no
-            // format in tree declares any more). Both are the same
-            // answer to a caller, and both are read rather than listed: a
-            // `void` language has no `Editor` instantiation, and `caps.edit` is
-            // the format's own declaration (`EditorUnion` is built from exactly
-            // this pair of tests, so a variant is guaranteed to exist below).
-            if (comptime d.Lang == void) return .unsupported_format;
-            if (comptime !d.Lang.caps.edit) return .unsupported_format;
-            // Keyed by the LANGUAGE name, so all three JSON dialects land on the
-            // one `json` variant and separate by payload: jsonc and json5 carry
-            // their own `format`, which is what makes the JSON5 editor accept
-            // unquoted keys, trailing commas and `//` comments (it splices
-            // source in place, so all of that survives untouched outside the
-            // edited span). For every other entry `d.dialect` IS
-            // `Lang.default_type`, which is the field's default.
-            break :blk @unionInit(EditorUnion, d.Lang.name, .{ .allocator = allocator, .format = d.dialect });
-        },
-    };
+    // The format is checked BEFORE the handle is allocated, so the two ways
+    // it can be refused — an unknown handle, no in-place editor — return
+    // without anything to free.
+    const entry = entryOf(format) orelse return .unsupported_format;
+    if (!entry.language.caps.edit) return .unsupported_format;
+    const inner: EditorUnion = .{ .runtime = .{ .allocator = allocator, .format = entry.typeOf() } };
 
     const handle = allocator.create(EditorHandle) catch return .out_of_memory;
     handle.allocator = allocator;
@@ -2293,17 +2021,12 @@ pub const FigEmbedContainer = enum(c_int) {
     endmatter_yaml = 6,
 };
 
-/// The embed model's inner format for a `FigFormat` value: the registry
-/// entry of that name, when it declares an embedded spelling. Null for an
-/// out-of-range integer and for a format with no spelling (jsonc, ini, …).
+/// The embed model's inner format for a format handle: the registered
+/// dialect, when it declares an embedded spelling. Null for a handle never
+/// handed out and for a dialect with none (jsonc, ini, …).
 fn embedInnerOf(format: c_int) ?Embed.InnerFormat {
-    const f = std.enums.fromInt(FigFormat, format) orelse return null;
-    return switch (f) {
-        inline else => |tag| if (@hasField(Embed.InnerFormat, @tagName(tag)))
-            @field(Embed.InnerFormat, @tagName(tag))
-        else
-            null,
-    };
+    const e = entryOf(format) orelse return null;
+    return if (e.embed != null) e else null;
 }
 
 /// `(container, format)` → `Embed.Type`, or null when either integer is out
@@ -2322,10 +2045,10 @@ fn embedTypeOf(container: c_int, format: c_int) ?Embed.Type {
     };
 }
 
-/// What `fig_embed_detect` writes: `embedTypeOf`'s inverse, total. A preset
-/// reports the format it pins, so the pair a caller reads back is always
-/// meaningful on its own — `Embed.innerFormat` is what names it.
-const FigEmbedPair = struct { container: FigEmbedContainer, format: FigFormat };
+/// What `fig_embed_detect` writes: `embedTypeOf`'s inverse. A preset
+/// reports the format it names, so the pair a caller reads back is
+/// meaningful on its own; -1 when that language is not registered.
+const FigEmbedPair = struct { container: FigEmbedContainer, format: c_int };
 
 fn figEmbedPairOf(t: Embed.Type) FigEmbedPair {
     const container: FigEmbedContainer = switch (t) {
@@ -2337,11 +2060,7 @@ fn figEmbedPairOf(t: Embed.Type) FigEmbedPair {
         .plus_toml => .plus_toml,
         .endmatter_yaml => .endmatter_yaml,
     };
-    // `InnerFormat`'s members are registry names, and every registry name is a
-    // `FigFormat` member, so the lookup by tag name is total.
-    const format: FigFormat = switch (Embed.innerFormat(t)) {
-        inline else => |f| @field(FigFormat, @tagName(f)),
-    };
+    const format: c_int = if (Embed.innerFormat(t)) |e| e.abi else -1;
     return .{ .container = container, .format = format };
 }
 
@@ -2399,7 +2118,7 @@ pub export fn fig_embed_detect(
     const t = Embed.detect(input) orelse return .not_found;
     const pair = figEmbedPairOf(t);
     out_c.* = @backingInt(pair.container);
-    out_f.* = @backingInt(pair.format);
+    out_f.* = pair.format;
     return .ok;
 }
 
@@ -2521,35 +2240,22 @@ fn embedFrom(em: ?*FigEmbed) ?*EmbedHandle {
     return @ptrCast(@alignCast(p));
 }
 
-/// Whether this build can edit `t`'s inner format (YAML frontmatter needs YAML,
-/// JSON needs JSON, …) — compiled in, or stood in for by a registered runtime
-/// language that edits (`Runtime.register`). Otherwise
+/// Whether `t`'s inner language is registered and edits. Otherwise
 /// `fig_embed_open`/`fig_embed_open_or_init` report `unsupported_format`,
 /// while `fig_embed_extract`/`fig_embed_detect` (locate-only, no editor) work
 /// regardless. The entity-encoded `<code>` archetype is fully editable — the
 /// handle decodes on open and re-encodes span-aware on render (see
 /// `embedHandleFromHost`/`fig_embed_render`).
 fn embedInnerSupported(t: Embed.Type) bool {
-    return switch (Embed.innerFormat(t)) {
-        // `InnerFormat` is itself reified from the registry, so its members are
-        // registry entries by name and "compiled into this build" is the same
-        // `Lang == void` test every other dispatch here opens with.
-        inline else => |f| blk: {
-            const d = comptime Languages.entryFor(@tagName(f));
-            if (comptime d.Lang != void) break :blk true;
-            const e = runtimeOf(d.abi_value) orelse break :blk false;
-            break :blk e.language.caps.edit;
-        },
-    };
+    const e = Embed.innerFormat(t) orelse return false;
+    return e.language.caps.edit;
 }
 
 /// Build an `EmbedHandle` over an already-owned `host` with a known `region`,
 /// initializing the inner editor over the region's content. Takes ownership of
 /// `host` (frees it on any failure). Shared by `fig_embed_open` and
-/// `fig_embed_open_or_init`; the caller has already validated the format —
-/// specifically, both callers check `embedInnerSupported(t)` first, so a
-/// gated-out inner format reaches the switch below only when a runtime
-/// language stands in for it.
+/// `fig_embed_open_or_init`; both callers check `embedInnerSupported(t)`
+/// first, so the inner language is registered and edits.
 fn embedHandleFromHost(
     allocator: std.mem.Allocator,
     host: []u8,
@@ -2567,19 +2273,7 @@ fn embedHandleFromHost(
         .region = region,
         .body_before = Embed.bodyIsBefore(t),
         .one_body = Embed.hasOneBody(t),
-        .editor = switch (Embed.innerFormat(t)) {
-            inline else => |f| blk: {
-                const d = comptime Languages.entryFor(@tagName(f));
-                // `embedInnerSupported` is the caller's precondition, so a
-                // gated-out inner format reaches here only with a runtime
-                // language standing in for it.
-                if (comptime d.Lang == void) {
-                    const e = runtimeOf(d.abi_value).?;
-                    break :blk @unionInit(EditorUnion, "runtime", .{ .allocator = allocator, .format = e.typeOf() });
-                }
-                break :blk @unionInit(EditorUnion, d.Lang.name, .{ .allocator = allocator, .format = d.dialect });
-            },
-        },
+        .editor = .{ .runtime = .{ .allocator = allocator, .format = Embed.innerFormat(t).?.typeOf() } },
     };
     // Decode the content for editing. For `<code>` this entity-decodes into an
     // owned buffer (+ provenance map) the editor works on; `render` re-encodes it
@@ -3300,40 +2994,17 @@ fn extKindOf(kind: c_int) ?AST.Node.Kind.Extended.ExtKind {
     };
 }
 
-/// Map a C `format` to the writable-format set, or null if it cannot be written
-/// in THIS build. Gated formats compiled out return null here — the single policy
-/// point that keeps `fig_*_serialize`, `fig_*_diagnose`, and
-/// `fig_format_capabilities` in agreement (all yield `unsupported_format` for a
-/// compiled-out format, rather than serialize rejecting it at print time while
-/// diagnose silently accepts it). The `FormatDisabled` arms in the printers
-/// remain as defense-in-depth for any path that bypasses this map.
-/// A serialize target: a compiled format, or a runtime one printed through
-/// its vtable. `targetOf` is `serializeFormatOf` with the §8.2 lookup in
-/// front of it.
+/// A serialize target: the registered dialect a format handle names, when
+/// it can be written. The one policy point that keeps `fig_*_serialize`,
+/// `fig_*_diagnose` and `fig_format_capabilities` in agreement: a handle
+/// never handed out, or one whose language does not serialize, is
+/// `unsupported_format` to all three.
 const Target = Runtime.Target;
 
 fn targetOf(format: c_int) ?Target {
-    if (runtimeOf(format)) |e| {
-        if (!e.language.caps.serialize) return null;
-        return .{ .runtime = e };
-    }
-    return .{ .compiled = serializeFormatOf(format) orelse return null };
-}
-
-fn serializeFormatOf(format: c_int) ?Serialize.SerializeFormat {
-    @setEvalBranchQuota(30_000);
-    const f = std.enums.fromInt(FigFormat, format) orelse return null;
-    return switch (f) {
-        inline else => |tag| {
-            const d = comptime Languages.entryFor(@tagName(tag));
-            if (comptime d.Lang == void) return null;
-            // Both enums are reified from the registry, so a member of one is a
-            // member of the other under the same name — `SerializeFormat`
-            // additionally carries `canonical`, which no `FigFormat` value maps
-            // to (see this function's callers, which never see it).
-            return @field(Serialize.SerializeFormat, d.name);
-        },
-    };
+    const e = entryOf(format) orelse return null;
+    if (!e.language.caps.serialize) return null;
+    return .{ .language = e };
 }
 
 /// Translate the canonical serialize error set onto `FigStatus`. Exhaustive over
@@ -3627,8 +3298,8 @@ pub export fn fig_value_serialize_opts(
     // whole-document output — see `AST.serializeFragmentWith`). A runtime
     // printer is handed the subtree from `root` and decides for itself.
     switch (target) {
-        .compiled => |fmt| Serialize.serializeFragmentWith(&ast, &handle.rendered.writer, fmt, serializeOptionsOf(options)) catch |err| return serializeStatus(err),
-        .runtime => |e| Runtime.printNodeWith(e, &handle.rendered.writer, &ast, root, serializeOptionsOf(options)) catch |err| return runtimePrintStatus(err),
+        .canonical => unreachable, // `targetOf` never yields it
+        .language => |e| Runtime.printNodeWith(e, &handle.rendered.writer, &ast, root, serializeOptionsOf(options)) catch |err| return runtimePrintStatus(err),
     }
 
     const bytes = handle.rendered.written();
@@ -3694,8 +3365,8 @@ pub export fn fig_document_serialize(
 
     handle.rendered.clearRetainingCapacity();
     switch (target) {
-        .compiled => |fmt| Serialize.serializeWith(ast, &handle.rendered.writer, fmt, opts) catch |err| return serializeStatus(err),
-        .runtime => |e| Runtime.printWith(e, &handle.rendered.writer, ast, opts) catch |err| return runtimePrintStatus(err),
+        .canonical => unreachable, // `targetOf` never yields it
+        .language => |e| Runtime.printWith(e, &handle.rendered.writer, ast, opts) catch |err| return runtimePrintStatus(err),
     }
     const bytes = handle.rendered.written();
     p.* = bytes.ptr;
@@ -3703,28 +3374,15 @@ pub export fn fig_document_serialize(
     return .ok;
 }
 
-/// Whether a source or target carries a reference layer (`Caps.references`):
-/// the compiled language's declaration, or the runtime entry's.
+/// Whether a source or target carries a reference layer (`Caps.references`).
 fn sourceCarriesReferences(handle: *const DocumentHandle) bool {
-    if (handle.runtime) |e| return e.language.caps.references;
-    return switch (handle.format) {
-        inline else => |f| comptime blk: {
-            const d = Languages.entryFor(@tagName(f));
-            break :blk d.Lang != void and d.Lang.caps.references;
-        },
-    };
+    return handle.entry.language.caps.references;
 }
 
 fn targetCarriesReferences(target: Target) bool {
     return switch (target) {
-        .runtime => |e| e.language.caps.references,
-        .compiled => |fmt| switch (fmt) {
-            .canonical => false,
-            inline else => |f| comptime blk: {
-                const d = Languages.entryFor(@tagName(f));
-                break :blk d.Lang != void and d.Lang.caps.references;
-            },
-        },
+        .language => |e| e.language.caps.references,
+        .canonical => false,
     };
 }
 
@@ -3760,16 +3418,11 @@ fn prepareDocumentAst(handle: *DocumentHandle, target: Target, options: ?*const 
     // re-encode for the target. Skipped for YAML→YAML (its reference layer already
     // round-trips, and the core-AST passes would strip it).
     if (losslessRequested(options) and !ref_layer_round_trip) {
-        // `.canonical` is never yielded by `serializeFormatOf`, so `nativeFor`
-        // returning null for it here is moot in practice; every other null
-        // answer is the format's own `caps.lossless` declaration (see
-        // `manifest.Caps.lossless` for the per-format rationale — `.fig`,
-        // INI/dotenv/.properties/plist/NestedText have no envelope of
-        // their own to encode into).
-        const native: ?Lossless.NativeKinds = switch (target) {
-            .compiled => |fmt| Lossless.nativeFor(fmt),
-            .runtime => |e| e.language.caps.lossless,
-        };
+        // A null answer is the format's own `caps.lossless` declaration (see
+        // `manifest.Caps.lossless` for the per-format rationale — figl,
+        // INI/dotenv/.properties/plist/NestedText have no envelope of their
+        // own to encode into).
+        const native = Lossless.nativeFor(target);
         const decoded = try arena.create(AST);
         decoded.* = try Lossless.decode(arena, base_ast);
         const n = native orelse return decoded;
@@ -3905,7 +3558,7 @@ pub export fn fig_document_diagnose(
     handle.diag_warnings = &.{}; // a failed analyze must not leave a stale set indexable
     const arena = handle.diag_arena.allocator();
     const ast = prepareDocumentAst(handle, target, options, arena) catch |err| return convertStatus(err);
-    const warnings = Diagnostics.analyzeFor(arena, ast, ast.root, target, diagnoseOptionsOf(options)) catch return .out_of_memory;
+    const warnings = Diagnostics.analyze(arena, ast, ast.root, target, diagnoseOptionsOf(options)) catch return .out_of_memory;
     handle.diag_warnings = warnings;
     oc.* = warnings.len;
     return .ok;
@@ -3947,7 +3600,7 @@ pub export fn fig_value_diagnose(
     handle.diag_warnings = &.{};
     const arena = handle.diag_arena.allocator();
     const ast = handle.builder.view(root) catch return .out_of_memory; // borrows the builder; never deinit'd
-    const warnings = Diagnostics.analyzeFor(arena, &ast, root, target, diagnoseOptionsOf(options)) catch return .out_of_memory;
+    const warnings = Diagnostics.analyze(arena, &ast, root, target, diagnoseOptionsOf(options)) catch return .out_of_memory;
     handle.diag_warnings = warnings;
     oc.* = warnings.len;
     return .ok;
@@ -3964,12 +3617,20 @@ pub export fn fig_value_warning(value: ?*FigValue, index: usize, out: ?*FigWarni
     return .ok;
 }
 
+
+/// The handle of the registered dialect `name`, for a test.
+fn fmtOf(name: [:0]const u8) c_int {
+    const f = fig_format_by_name(name);
+    std.debug.assert(f >= 0);
+    return f;
+}
+
 test "traversal over a parsed mapping" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const src = "title: Hello\ncount: 42\ntags:\n- a\n- b\n";
 
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.yaml), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("yaml"), &out_doc));
     defer fig_document_destroy(out_doc);
 
     const doc: ?*const FigDocument = out_doc;
@@ -4011,11 +3672,11 @@ test "fig_document_diagnose reports a dropped null for TOML" {
     const src = "a: null\nb: 1\n";
 
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.yaml), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("yaml"), &out_doc));
     defer fig_document_destroy(out_doc);
 
     var count: usize = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_document_diagnose(out_doc, @backingInt(FigFormat.toml), null, &count));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_diagnose(out_doc, fmtOf("toml"), null, &count));
     try std.testing.expectEqual(@as(usize, 1), count);
     var w: FigWarning = undefined;
     w.size = @sizeOf(FigWarning);
@@ -4028,13 +3689,13 @@ test "fig_document_diagnose reports a dropped null for TOML" {
 
     // Lossless preserves the null → no warnings.
     var opts: FigSerializeOptions = .{ .lossless = 1 };
-    try std.testing.expectEqual(FigStatus.ok, fig_document_diagnose(out_doc, @backingInt(FigFormat.toml), &opts, &count));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_diagnose(out_doc, fmtOf("toml"), &opts, &count));
     try std.testing.expectEqual(@as(usize, 0), count);
     // With nothing reported, even index 0 is out of range.
     try std.testing.expectEqual(FigStatus.invalid_argument, fig_document_warning(out_doc, 0, &w));
 
     // A representable target loses nothing.
-    try std.testing.expectEqual(FigStatus.ok, fig_document_diagnose(out_doc, @backingInt(FigFormat.json), null, &count));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_diagnose(out_doc, fmtOf("json"), null, &count));
     try std.testing.expectEqual(@as(usize, 0), count);
 }
 
@@ -4049,7 +3710,7 @@ test "fig_value_diagnose reports a degraded datetime" {
     try std.testing.expectEqual(FigStatus.ok, fig_value_extended(v, @backingInt(FigExtKind.offset_datetime), ts.ptr, ts.len, &dt));
 
     var count: usize = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_value_diagnose(v, dt, @backingInt(FigFormat.json), null, &count));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_diagnose(v, dt, fmtOf("json"), null, &count));
     try std.testing.expectEqual(@as(usize, 1), count);
     var w: FigWarning = undefined;
     w.size = @sizeOf(FigWarning);
@@ -4059,7 +3720,7 @@ test "fig_value_diagnose reports a degraded datetime" {
 
     // TOML holds datetimes natively → no warning.
     if (comptime build_options.lang_toml) {
-        try std.testing.expectEqual(FigStatus.ok, fig_value_diagnose(v, dt, @backingInt(FigFormat.toml), null, &count));
+        try std.testing.expectEqual(FigStatus.ok, fig_value_diagnose(v, dt, fmtOf("toml"), null, &count));
         try std.testing.expectEqual(@as(usize, 0), count);
     }
 }
@@ -4075,7 +3736,7 @@ test "fig_value_warning honors a truncated (size-gated) FigWarning" {
     try std.testing.expectEqual(FigStatus.ok, fig_value_extended(v, @backingInt(FigExtKind.offset_datetime), ts.ptr, ts.len, &dt));
 
     var count: usize = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_value_diagnose(v, dt, @backingInt(FigFormat.json), null, &count));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_diagnose(v, dt, fmtOf("json"), null, &count));
     try std.testing.expectEqual(@as(usize, 1), count);
 
     // A caller whose layout stops after `cause` (an older/smaller struct) gets
@@ -4097,7 +3758,7 @@ test "fig_parse_ex fills FigError on a parse failure" {
     var out_doc: ?*FigDocument = null;
     try std.testing.expectEqual(
         FigStatus.parse_error,
-        fig_parse_ex(bad.ptr, bad.len, @backingInt(FigFormat.json), &out_doc, null),
+        fig_parse_ex(bad.ptr, bad.len, fmtOf("json"), &out_doc, null),
     );
     try std.testing.expectEqual(@as(?*FigDocument, null), out_doc);
 
@@ -4108,7 +3769,7 @@ test "fig_parse_ex fills FigError on a parse failure" {
     err.size = @sizeOf(FigError);
     try std.testing.expectEqual(
         FigStatus.parse_error,
-        fig_parse_ex(bad.ptr, bad.len, @backingInt(FigFormat.json), &out_doc, &err),
+        fig_parse_ex(bad.ptr, bad.len, fmtOf("json"), &out_doc, &err),
     );
     try std.testing.expectEqual(@backingInt(FigStatus.parse_error), err.code);
     try std.testing.expect(err.message_len > 0);
@@ -4137,7 +3798,7 @@ test "fig_parse_ex honors a truncated (size-gated) FigError" {
     var out_doc: ?*FigDocument = null;
     try std.testing.expectEqual(
         FigStatus.parse_error,
-        fig_parse_ex(bad.ptr, bad.len, @backingInt(FigFormat.json), &out_doc, &err),
+        fig_parse_ex(bad.ptr, bad.len, fmtOf("json"), &out_doc, &err),
     );
     try std.testing.expectEqual(@backingInt(FigStatus.parse_error), err.code);
     try std.testing.expectEqual(@as(usize, 999), err.message_len); // beyond `size`: untouched
@@ -4151,7 +3812,7 @@ test "fig_parse_ex leaves out_doc null and succeeds on a valid parse" {
     err.size = @sizeOf(FigError);
     try std.testing.expectEqual(
         FigStatus.ok,
-        fig_parse_ex(src.ptr, src.len, @backingInt(FigFormat.json), &out_doc, &err),
+        fig_parse_ex(src.ptr, src.len, fmtOf("json"), &out_doc, &err),
     );
     defer fig_document_destroy(out_doc);
     try std.testing.expect(out_doc != null);
@@ -4164,7 +3825,7 @@ test "a compiled-out format is unsupported in serialize and diagnose alike" {
 
     const src = "{\"a\": 1}"; // JSON is always compiled in, so the parse succeeds.
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.json), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("json"), &out_doc));
     defer fig_document_destroy(out_doc);
 
     // Serialize rejects the gated-out target...
@@ -4172,7 +3833,7 @@ test "a compiled-out format is unsupported in serialize and diagnose alike" {
     var len: usize = undefined;
     try std.testing.expectEqual(
         FigStatus.unsupported_format,
-        fig_document_serialize(out_doc, @backingInt(FigFormat.toml), null, &ptr, &len),
+        fig_document_serialize(out_doc, fmtOf("toml"), null, &ptr, &len),
     );
 
     // ...and diagnose agrees, instead of silently accepting it. The count is
@@ -4180,12 +3841,12 @@ test "a compiled-out format is unsupported in serialize and diagnose alike" {
     var count: usize = 999;
     try std.testing.expectEqual(
         FigStatus.unsupported_format,
-        fig_document_diagnose(out_doc, @backingInt(FigFormat.toml), null, &count),
+        fig_document_diagnose(out_doc, fmtOf("toml"), null, &count),
     );
     try std.testing.expectEqual(@as(usize, 0), count);
 
     // Capabilities report the same verdict: nothing for a compiled-out format.
-    try std.testing.expectEqual(@as(u32, 0), fig_format_capabilities(@backingInt(FigFormat.toml)));
+    try std.testing.expectEqual(@as(u32, 0), fig_format_capabilities(fmtOf("toml")));
 }
 
 test "parse c abi reads toml and zon" {
@@ -4194,7 +3855,7 @@ test "parse c abi reads toml and zon" {
     {
         var out_doc: ?*FigDocument = null;
         const src = "name = \"fig\"\ncount = 42\n";
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.toml), &out_doc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("toml"), &out_doc));
         defer fig_document_destroy(out_doc);
         const root = fig_document_root(out_doc);
         try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.mapping)), fig_node_kind(out_doc, root));
@@ -4204,7 +3865,7 @@ test "parse c abi reads toml and zon" {
     {
         var out_doc: ?*FigDocument = null;
         const src = ".{ .name = \"fig\", .count = 42 }";
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.zon), &out_doc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("zon"), &out_doc));
         defer fig_document_destroy(out_doc);
         const root = fig_document_root(out_doc);
         try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.mapping)), fig_node_kind(out_doc, root));
@@ -4220,14 +3881,14 @@ test "parse c abi reads json5 and rejects it under strict json" {
     const src = "{\n  // c\n  host: 'localhost',\n  port: 8080,\n}\n";
 
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.json5), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("json5"), &out_doc));
     defer fig_document_destroy(out_doc);
     const root = fig_document_root(out_doc);
     try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.mapping)), fig_node_kind(out_doc, root));
     try std.testing.expectEqual(@as(usize, 2), fig_node_child_count(out_doc, root));
 
     var strict_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.parse_error, fig_parse(src.ptr, src.len, @backingInt(FigFormat.json), &strict_doc));
+    try std.testing.expectEqual(FigStatus.parse_error, fig_parse(src.ptr, src.len, fmtOf("json"), &strict_doc));
 }
 
 test "fig_node_extended recovers datetime and char-literal scalars" {
@@ -4241,7 +3902,7 @@ test "fig_node_extended recovers datetime and char-literal scalars" {
     {
         var out_doc: ?*FigDocument = null;
         const src = "d = 2026-06-18\n";
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.toml), &out_doc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("toml"), &out_doc));
         defer fig_document_destroy(out_doc);
         const val = fig_keyvalue_value(out_doc, fig_node_first_child(out_doc, fig_document_root(out_doc)));
         try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.extended)), fig_node_kind(out_doc, val));
@@ -4254,7 +3915,7 @@ test "fig_node_extended recovers datetime and char-literal scalars" {
     {
         var out_doc: ?*FigDocument = null;
         const src = ".{ .c = 'a' }";
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.zon), &out_doc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("zon"), &out_doc));
         defer fig_document_destroy(out_doc);
         const val = fig_keyvalue_value(out_doc, fig_node_first_child(out_doc, fig_document_root(out_doc)));
         try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.extended)), fig_node_kind(out_doc, val));
@@ -4267,7 +3928,7 @@ test "fig_node_extended recovers datetime and char-literal scalars" {
     {
         var out_doc: ?*FigDocument = null;
         const src = "s = \"hi\"\n";
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.toml), &out_doc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("toml"), &out_doc));
         defer fig_document_destroy(out_doc);
         const val = fig_keyvalue_value(out_doc, fig_node_first_child(out_doc, fig_document_root(out_doc)));
         try std.testing.expect(!fig_node_extended(out_doc, val, &kind, &ptr, &len));
@@ -4282,7 +3943,7 @@ test "editor c abi insert + source round-trip" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const src = "a: 1\nb: 2\n";
     var out_ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.yaml), &out_ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("yaml"), &out_ed));
     defer fig_editor_destroy(out_ed);
 
     const c = "c";
@@ -4299,7 +3960,7 @@ test "editor c abi accepts empty input as an empty document" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     var out_ed: ?*FigEditor = null;
     // Null pointer + zero length is a valid empty document.
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(null, 0, @backingInt(FigFormat.yaml), &out_ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(null, 0, fmtOf("yaml"), &out_ed));
     defer fig_editor_destroy(out_ed);
 
     const k = "k";
@@ -4316,7 +3977,7 @@ test "toml editor c abi insert + replace + delete round-trip" {
     if (comptime !build_options.lang_toml) return error.SkipZigTest;
     const src = "[server]\nhost = \"a\"\nport = 1\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("toml"), &ed));
     defer fig_editor_destroy(ed);
 
     // Insert a key into the [server] table (lands at the end of the table region).
@@ -4344,7 +4005,7 @@ test "toml editor c abi add leading comment uses the # marker" {
     if (comptime !build_options.lang_toml) return error.SkipZigTest;
     const src = "a = 1\nb = 2\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("toml"), &ed));
     defer fig_editor_destroy(ed);
 
     const b = [_]FigPathSegment{keySeg("b")};
@@ -4361,7 +4022,7 @@ test "toml editor c abi maps a shape-mismatch edit to invalid_argument" {
     if (comptime !build_options.lang_toml) return error.SkipZigTest;
     const src = "a = 1\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("toml"), &ed));
     defer fig_editor_destroy(ed);
 
     // Inserting a key that already exists rolls back with error.DuplicateKey,
@@ -4382,7 +4043,7 @@ test "yaml editor c abi refuses inserting a key that already exists" {
     // leave `a: 1\na: 2\n`; the engine refuses it now, by name or by syntax.
     const src = "a: 1\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.yaml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("yaml"), &ed));
     defer fig_editor_destroy(ed);
     const a = "a";
     const two = "2";
@@ -4398,7 +4059,7 @@ test "frontmatter c abi preserves fences and body" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntitle: Hi\n# keep\ntags:\n- x\n---\n# Body\ntext\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), fmtOf("yaml"), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const author = "author";
@@ -4426,7 +4087,7 @@ test "frontmatter c abi reorder keys preserves comments, fences, body" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntitle: Hi\n# keep\ntags:\n- x\nauthor: me\n---\n# Body\ntext\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), fmtOf("yaml"), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const keys = [_]FigStr{ figStr("author"), figStr("title") };
@@ -4445,7 +4106,7 @@ test "frontmatter c abi move key preserves fences and body" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\na: 1\nb: 2\nc: 3\n---\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), fmtOf("yaml"), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const src = [_]FigPathSegment{keySeg("c")};
@@ -4462,7 +4123,7 @@ test "frontmatter c abi reorder items in a block sequence value" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntags:\n- x\n- y\n- z\n---\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), fmtOf("yaml"), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const path = [_]FigPathSegment{keySeg("tags")};
@@ -4479,7 +4140,7 @@ test "frontmatter c abi move item in a flow sequence value" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntags: [x, y, z]\n---\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), fmtOf("yaml"), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const path = [_]FigPathSegment{keySeg("tags")};
@@ -4500,9 +4161,9 @@ test "fig_embed_retype re-houses a block, keeping every host byte" {
         md.ptr,
         md.len,
         @backingInt(FigEmbedContainer.md_frontmatter),
-        @backingInt(FigFormat.yaml),
+        fmtOf("yaml"),
         @backingInt(FigEmbedContainer.semicolons_json),
-        @backingInt(FigFormat.json),
+        fmtOf("json"),
         content.ptr,
         content.len,
         &ptr,
@@ -4522,9 +4183,9 @@ test "fig_embed_retype refuses to move a mid-document block to an edge" {
         html.ptr,
         html.len,
         @backingInt(FigEmbedContainer.html_script),
-        @backingInt(FigFormat.yaml),
+        fmtOf("yaml"),
         @backingInt(FigEmbedContainer.md_frontmatter),
-        @backingInt(FigFormat.yaml),
+        fmtOf("yaml"),
         content.ptr,
         content.len,
         &ptr,
@@ -4535,9 +4196,9 @@ test "fig_embed_retype refuses to move a mid-document block to an edge" {
         html.ptr,
         html.len,
         @backingInt(FigEmbedContainer.html_script),
-        @backingInt(FigFormat.yaml),
+        fmtOf("yaml"),
         @backingInt(FigEmbedContainer.html_code),
-        @backingInt(FigFormat.yaml),
+        fmtOf("yaml"),
         content.ptr,
         content.len,
         &ptr,
@@ -4554,9 +4215,9 @@ test "fig_embed_retype reports a missing or unterminated region" {
     var ptr: [*]u8 = undefined;
     var len: usize = undefined;
     const plain = "# just markdown\n";
-    try std.testing.expectEqual(FigStatus.not_found, fig_embed_retype(plain.ptr, plain.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), @backingInt(FigEmbedContainer.plus_toml), @backingInt(FigFormat.toml), "", 0, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.not_found, fig_embed_retype(plain.ptr, plain.len, @backingInt(FigEmbedContainer.md_frontmatter), fmtOf("yaml"), @backingInt(FigEmbedContainer.plus_toml), fmtOf("toml"), "", 0, &ptr, &len));
     const unterminated = "---\nk: v\nno close\n";
-    try std.testing.expectEqual(FigStatus.parse_error, fig_embed_retype(unterminated.ptr, unterminated.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), @backingInt(FigEmbedContainer.plus_toml), @backingInt(FigFormat.toml), "", 0, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.parse_error, fig_embed_retype(unterminated.ptr, unterminated.len, @backingInt(FigEmbedContainer.md_frontmatter), fmtOf("yaml"), @backingInt(FigEmbedContainer.plus_toml), fmtOf("toml"), "", 0, &ptr, &len));
     // Null out params are rejected, not crashed on.
     try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_retype(plain.ptr, plain.len, 0, 0, 0, 0, "", 0, null, &len));
 }
@@ -4564,7 +4225,7 @@ test "fig_embed_retype reports a missing or unterminated region" {
 test "embed c abi locates region with content and body spans" {
     const md = "---\nk: v\n---\nbody\n";
     var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined, .body_before = undefined, .body_after = undefined };
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &region));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), fmtOf("yaml"), &region));
     try std.testing.expectEqualStrings("k: v\n", md[region.content.start..region.content.end]);
     // The body is the suffix after the close fence.
     try std.testing.expectEqualStrings("body\n", md[region.body.start..region.body.end]);
@@ -4574,7 +4235,7 @@ test "embed c abi locates a ```fig fenced frontmatter block (extract-only)" {
     if (comptime !build_options.lang_fig) return error.SkipZigTest;
     const md = "```fig\nk = v\n```\nbody\n";
     var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined, .body_before = undefined, .body_after = undefined };
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @backingInt(FigEmbedContainer.fenced), @backingInt(FigFormat.fig), &region));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @backingInt(FigEmbedContainer.fenced), fmtOf("fig"), &region));
     try std.testing.expectEqualStrings("k = v\n", md[region.content.start..region.content.end]);
     try std.testing.expectEqualStrings("body\n", md[region.body.start..region.body.end]);
 }
@@ -4582,25 +4243,25 @@ test "embed c abi locates a ```fig fenced frontmatter block (extract-only)" {
 test "embed c abi detects each archetype by its open delimiter" {
     // A preset container reports the format it pins, so every pair read back
     // names a real inner format.
-    const cases = [_]struct { src: []const u8, container: FigEmbedContainer, format: FigFormat }{
-        .{ .src = "---\nk: v\n---\nbody\n", .container = .md_frontmatter, .format = .yaml },
-        .{ .src = ";;;\n{\"k\": 1}\n;;;\nbody\n", .container = .semicolons_json, .format = .json },
-        .{ .src = "```fig\nk = v\n```\nbody\n", .container = .fenced, .format = .fig },
-        .{ .src = "body\n```endmatter\nk: v\n```\n", .container = .endmatter_yaml, .format = .yaml },
-        .{ .src = "+++\nk = \"v\"\n+++\nbody\n", .container = .plus_toml, .format = .toml },
-        .{ .src = "```toml\nk = \"v\"\n```\nbody\n", .container = .fenced, .format = .toml },
-        .{ .src = "```yaml\nk: v\n```\nbody\n", .container = .fenced, .format = .yaml },
-        .{ .src = "```json\n{\"k\": 1}\n```\nbody\n", .container = .fenced, .format = .json },
-        .{ .src = "---toml\nk = \"v\"\n---\nbody\n", .container = .md_frontmatter, .format = .toml },
-        .{ .src = "<html><head>\n<script type=\"application/figl\">\nk = \"v\"\n</script>\n</head></html>\n", .container = .html_script, .format = .fig },
-        .{ .src = "<pre><code class=\"language-yaml\">\nk: v\n</code></pre>\n", .container = .html_code, .format = .yaml },
+    const cases = [_]struct { src: []const u8, container: FigEmbedContainer, format: [:0]const u8 }{
+        .{ .src = "---\nk: v\n---\nbody\n", .container = .md_frontmatter, .format = "yaml" },
+        .{ .src = ";;;\n{\"k\": 1}\n;;;\nbody\n", .container = .semicolons_json, .format = "json" },
+        .{ .src = "```fig\nk = v\n```\nbody\n", .container = .fenced, .format = "fig" },
+        .{ .src = "body\n```endmatter\nk: v\n```\n", .container = .endmatter_yaml, .format = "yaml" },
+        .{ .src = "+++\nk = \"v\"\n+++\nbody\n", .container = .plus_toml, .format = "toml" },
+        .{ .src = "```toml\nk = \"v\"\n```\nbody\n", .container = .fenced, .format = "toml" },
+        .{ .src = "```yaml\nk: v\n```\nbody\n", .container = .fenced, .format = "yaml" },
+        .{ .src = "```json\n{\"k\": 1}\n```\nbody\n", .container = .fenced, .format = "json" },
+        .{ .src = "---toml\nk = \"v\"\n---\nbody\n", .container = .md_frontmatter, .format = "toml" },
+        .{ .src = "<html><head>\n<script type=\"application/figl\">\nk = \"v\"\n</script>\n</head></html>\n", .container = .html_script, .format = "fig" },
+        .{ .src = "<pre><code class=\"language-yaml\">\nk: v\n</code></pre>\n", .container = .html_code, .format = "yaml" },
     };
     for (cases) |case| {
         var out_c: c_int = -1;
         var out_f: c_int = -1;
         try std.testing.expectEqual(FigStatus.ok, fig_embed_detect(case.src.ptr, case.src.len, &out_c, &out_f));
         try std.testing.expectEqual(@backingInt(case.container), out_c);
-        try std.testing.expectEqual(@backingInt(case.format), out_f);
+        try std.testing.expectEqual(fmtOf(case.format), out_f);
     }
 }
 
@@ -4609,9 +4270,9 @@ test "embed c abi refuses a pair the model cannot spell" {
     var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined, .body_before = undefined, .body_after = undefined };
     // A format with no embedded spelling, an unknown format, an unknown
     // container: each is a malformed selector, not a missing region.
-    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_extract(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.ini), &region));
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_extract(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), fmtOf("ini"), &region));
     try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_extract(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), 6, &region));
-    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_extract(md.ptr, md.len, 99, @backingInt(FigFormat.yaml), &region));
+    try std.testing.expectEqual(FigStatus.invalid_argument, fig_embed_extract(md.ptr, md.len, 99, fmtOf("yaml"), &region));
     // A preset ignores the format argument — even a nonsense one.
     const jf = ";;;\n{\"k\": 1}\n;;;\nbody\n";
     try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(jf.ptr, jf.len, @backingInt(FigEmbedContainer.semicolons_json), -1, &region));
@@ -4631,7 +4292,7 @@ test "embed c abi detect: not_found leaves out untouched; unterminated still det
     const unterminated = "---\nk: v\nno close\n";
     try std.testing.expectEqual(FigStatus.ok, fig_embed_detect(unterminated.ptr, unterminated.len, &out_c, &out_f));
     try std.testing.expectEqual(@backingInt(FigEmbedContainer.md_frontmatter), out_c);
-    try std.testing.expectEqual(@backingInt(FigFormat.yaml), out_f);
+    try std.testing.expectEqual(fmtOf("yaml"), out_f);
     var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined, .body_before = undefined, .body_after = undefined };
     try std.testing.expectEqual(FigStatus.parse_error, fig_embed_extract(unterminated.ptr, unterminated.len, out_c, out_f, &region));
     // A null out param is invalid, not a crash — either of them.
@@ -4643,7 +4304,7 @@ test "embed c abi fig_embed_open edits a ```fig fenced frontmatter block" {
     if (comptime !build_options.lang_fig) return error.SkipZigTest;
     const md = "```fig\nk = v\n```\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.fenced), @backingInt(FigFormat.fig), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.fenced), fmtOf("fig"), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const path = [_]FigPathSegment{keySeg("k")};
@@ -4660,7 +4321,7 @@ test "embed c abi edits a <code> block span-aware (untouched entity encoding pre
     // Mixed original encodings: `expr` uses numeric &#60;, `note` uses named &lt;.
     const html = "<pre><code class=\"language-figl\">\nexpr = \"a &#60; b\"\nnote = \"x &lt; y\"\n</code></pre>\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(html.ptr, html.len, @backingInt(FigEmbedContainer.html_code), @backingInt(FigFormat.fig), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(html.ptr, html.len, @backingInt(FigEmbedContainer.html_code), fmtOf("fig"), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     // Edit `expr` to a quoted value containing `>` — it must canonically re-encode.
@@ -4686,7 +4347,7 @@ test "embed c abi fig_embed_set splices a block map into a ```fig fence" {
     // per-key flow inserts).
     const md = "```fig\ntitle = hi\n```\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.fenced), @backingInt(FigFormat.fig), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.fenced), fmtOf("fig"), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const path = [_]FigPathSegment{keySeg("registry")};
@@ -4712,7 +4373,7 @@ test "embed c abi region size-gate leaves uncovered fields untouched" {
         .body_before = .{ .start = 555, .end = 666 },
         .body_after = .{ .start = 777, .end = 888 },
     };
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &region));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), fmtOf("yaml"), &region));
     try std.testing.expectEqualStrings("k: v\n", md[region.content.start..region.content.end]);
     try std.testing.expectEqual(@as(usize, 111), region.close_fence.start);
     try std.testing.expectEqual(@as(usize, 333), region.body.start);
@@ -4725,7 +4386,7 @@ test "fig_embed_replace_body swaps the body, keeps fences + edited content" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntitle: Hi\n---\nold body\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), fmtOf("yaml"), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     var ptr: [*c]const u8 = undefined;
@@ -4750,7 +4411,7 @@ test "fig_embed_replace_body refuses a mid-document block, which has no one body
     // Host text on both sides: swapping the side after the block lost `</head>`.
     const html = "<head>\n<script type=\"application/yaml\">\nk: v\n</script>\n</head>\n";
     var em: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(html.ptr, html.len, @backingInt(FigEmbedContainer.html_script), @backingInt(FigFormat.yaml), &em));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(html.ptr, html.len, @backingInt(FigEmbedContainer.html_script), fmtOf("yaml"), &em));
     defer fig_embed_destroy(em);
     const body = "NEW\n";
     try std.testing.expectEqual(FigStatus.unsupported_operation, fig_embed_replace_body(em, body.ptr, body.len));
@@ -4764,7 +4425,7 @@ test "fig_embed_open_or_init creates a frontmatter block where none exists" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "# Just a body\n\nprose\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), fmtOf("yaml"), &out_fm));
     defer fig_embed_destroy(out_fm);
     // The synthesized block is empty; the first set lands the opening key.
     const title = [_]FigPathSegment{keySeg("title")};
@@ -4780,7 +4441,7 @@ test "fig_embed_open_or_init opens an existing region unchanged" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "---\ntitle: Old # c\n---\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), @backingInt(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @backingInt(FigEmbedContainer.md_frontmatter), fmtOf("yaml"), &out_fm));
     defer fig_embed_destroy(out_fm);
     // Behaves like open: edits the existing region, comment + body preserved.
     const title = [_]FigPathSegment{keySeg("title")};
@@ -4796,7 +4457,7 @@ test "fig_embed_open_or_init creates a JSON (;;;) frontmatter block" {
     if (comptime !build_options.lang_json) return error.SkipZigTest;
     const md = "# Doc\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @backingInt(FigEmbedContainer.semicolons_json), @backingInt(FigFormat.json), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @backingInt(FigEmbedContainer.semicolons_json), fmtOf("json"), &out_fm));
     defer fig_embed_destroy(out_fm);
     const title = [_]FigPathSegment{keySeg("title")};
     const hi = "\"Hi\""; // strict JSON value: a quoted string
@@ -4812,7 +4473,7 @@ test "fig_embed_open_or_init appends an endmatter block at the bottom" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const md = "# Title\n\nbody text\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @backingInt(FigEmbedContainer.endmatter_yaml), @backingInt(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @backingInt(FigEmbedContainer.endmatter_yaml), fmtOf("yaml"), &out_fm));
     defer fig_embed_destroy(out_fm);
     const k = [_]FigPathSegment{keySeg("k")};
     const v = "v";
@@ -4829,10 +4490,10 @@ test "fig_embed_open_or_init refuses a leading block in front of frontmatter of 
     // the first line and so no longer frontmatter.
     const md = "---\ntitle: x\n---\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.unsupported_operation, fig_embed_open_or_init(md.ptr, md.len, @backingInt(FigEmbedContainer.semicolons_json), @backingInt(FigFormat.json), &out_fm));
+    try std.testing.expectEqual(FigStatus.unsupported_operation, fig_embed_open_or_init(md.ptr, md.len, @backingInt(FigEmbedContainer.semicolons_json), fmtOf("json"), &out_fm));
     try std.testing.expect(out_fm == null);
     // Endmatter goes after everything and displaces nothing.
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @backingInt(FigEmbedContainer.endmatter_yaml), @backingInt(FigFormat.yaml), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open_or_init(md.ptr, md.len, @backingInt(FigEmbedContainer.endmatter_yaml), fmtOf("yaml"), &out_fm));
     fig_embed_destroy(out_fm);
 }
 
@@ -4840,7 +4501,7 @@ test "embed c abi edits json frontmatter (`;;;` fences, JSON inner editor)" {
     if (comptime !build_options.lang_json) return error.SkipZigTest;
     const md = ";;;\n{\"title\": \"Hi\", \"draft\": true}\n;;;\n# Body\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.semicolons_json), @backingInt(FigFormat.json), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.semicolons_json), fmtOf("json"), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     // The replacement crosses the ABI already serialized — JSON value text here.
@@ -4881,12 +4542,12 @@ test "value c abi builds and serializes to multiple formats" {
 
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @backingInt(FigFormat.json), &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, fmtOf("json"), &ptr, &len));
     try std.testing.expectEqualStrings("{\n  \"name\": \"fig\",\n  \"nums\": [\n    1,\n    2\n  ]\n}\n", ptr[0..len]);
 
     // Same value, different format — the borrowed bytes are refreshed in place.
     if (comptime build_options.lang_yaml) {
-        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @backingInt(FigFormat.yaml), &ptr, &len));
+        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, fmtOf("yaml"), &ptr, &len));
         try std.testing.expectEqualStrings("name: fig\nnums: [1, 2]\n", ptr[0..len]);
     }
 }
@@ -4909,9 +4570,9 @@ test "value c abi maps an unrepresentable value to unsupported_format" {
 
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
-    try std.testing.expectEqual(FigStatus.unsupported_format, fig_value_serialize(out_value, root, @backingInt(FigFormat.toml), &ptr, &len));
+    try std.testing.expectEqual(FigStatus.unsupported_format, fig_value_serialize(out_value, root, fmtOf("toml"), &ptr, &len));
     // The same value serializes fine to a format that has null.
-    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @backingInt(FigFormat.json), &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, fmtOf("json"), &ptr, &len));
     try std.testing.expectEqualStrings("{\n  \"k\": null\n}\n", ptr[0..len]);
 }
 
@@ -4941,32 +4602,32 @@ test "value c abi spells a non-finite float in each format's own words, and JSON
 
         var ptr: [*c]const u8 = undefined;
         var len: usize = undefined;
-        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @backingInt(FigFormat.toml), &ptr, &len));
+        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, fmtOf("toml"), &ptr, &len));
         try std.testing.expectEqualStrings(c.toml, ptr[0..len]);
-        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @backingInt(FigFormat.yaml), &ptr, &len));
+        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, fmtOf("yaml"), &ptr, &len));
         try std.testing.expectEqualStrings(c.yaml, ptr[0..len]);
-        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @backingInt(FigFormat.json5), &ptr, &len));
+        try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, fmtOf("json5"), &ptr, &len));
         try std.testing.expectEqualStrings(c.json5, ptr[0..len]);
         // JSON and JSONC have no infinity or NaN: refused, as TOML refuses a null.
-        try std.testing.expectEqual(FigStatus.unsupported_format, fig_value_serialize(out_value, root, @backingInt(FigFormat.json), &ptr, &len));
-        try std.testing.expectEqual(FigStatus.unsupported_format, fig_value_serialize(out_value, root, @backingInt(FigFormat.jsonc), &ptr, &len));
+        try std.testing.expectEqual(FigStatus.unsupported_format, fig_value_serialize(out_value, root, fmtOf("json"), &ptr, &len));
+        try std.testing.expectEqual(FigStatus.unsupported_format, fig_value_serialize(out_value, root, fmtOf("jsonc"), &ptr, &len));
     }
 }
 
 test "document c abi converts a non-finite float into the target's spelling" {
     if (comptime !build_options.lang_json or !build_options.lang_toml or !build_options.lang_yaml) return error.SkipZigTest;
-    const cases = [_]struct { src: []const u8, from: FigFormat, to: FigFormat, want: ?[]const u8 }{
-        .{ .src = "a: .inf\nb: -.inf\nc: .nan\n", .from = .yaml, .to = .toml, .want = "a = inf\nb = -inf\nc = nan\n" },
-        .{ .src = "a = inf\nb = -inf\nc = nan\n", .from = .toml, .to = .yaml, .want = "a: .inf\nb: -.inf\nc: .nan\n" },
-        .{ .src = "a: .inf\n", .from = .yaml, .to = .json, .want = null },
+    const cases = [_]struct { src: []const u8, from: [:0]const u8, to: [:0]const u8, want: ?[]const u8 }{
+        .{ .src = "a: .inf\nb: -.inf\nc: .nan\n", .from = "yaml", .to = "toml", .want = "a = inf\nb = -inf\nc = nan\n" },
+        .{ .src = "a = inf\nb = -inf\nc = nan\n", .from = "toml", .to = "yaml", .want = "a: .inf\nb: -.inf\nc: .nan\n" },
+        .{ .src = "a: .inf\n", .from = "yaml", .to = "json", .want = null },
     };
     for (cases) |c| {
         var doc: ?*FigDocument = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(c.src.ptr, c.src.len, @backingInt(c.from), &doc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(c.src.ptr, c.src.len, fmtOf(c.from), &doc));
         defer fig_document_destroy(doc);
         var ptr: [*c]const u8 = undefined;
         var len: usize = undefined;
-        const status = fig_document_serialize(doc, @backingInt(c.to), null, &ptr, &len);
+        const status = fig_document_serialize(doc, fmtOf(c.to), null, &ptr, &len);
         if (c.want) |want| {
             try std.testing.expectEqual(FigStatus.ok, status);
             try std.testing.expectEqualStrings(want, ptr[0..len]);
@@ -4978,7 +4639,7 @@ test "toml editor c abi takes inf and nan as a replacement value" {
     if (comptime !build_options.lang_toml) return error.SkipZigTest;
     const src = "name = \"music\"\nversion = 1\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("toml"), &ed));
     defer fig_editor_destroy(ed);
     const path = [_]FigPathSegment{keySeg("version")};
     var ptr: [*c]const u8 = undefined;
@@ -5011,14 +4672,14 @@ test "value c abi serialize options honor the size/version field" {
 
     // A fully-populated options struct: compact output.
     var opts: FigSerializeOptions = .{ .pretty = 0 };
-    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize_opts(out_value, root, @backingInt(FigFormat.json), &opts, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize_opts(out_value, root, fmtOf("json"), &opts, &ptr, &len));
     try std.testing.expectEqualStrings("[1,2]\n", ptr[0..len]);
 
     // A `size` that does not reach `pretty` must leave it (and `indent`) at the
     // default — i.e. behave as if those fields were absent, not read as garbage.
     // This is the forward-compat contract: an older/under-sized layout defaults.
     opts.size = @offsetOf(FigSerializeOptions, "pretty"); // covers only `size`
-    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize_opts(out_value, root, @backingInt(FigFormat.json), &opts, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize_opts(out_value, root, fmtOf("json"), &opts, &ptr, &len));
     try std.testing.expectEqualStrings("[\n  1,\n  2\n]\n", ptr[0..len]);
 }
 
@@ -5052,12 +4713,12 @@ test "value c abi serialize options carry TOML width through to the inline/secti
     var len: usize = undefined;
 
     // Default width (80): the mapping fits, so it stays an inline table.
-    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @backingInt(FigFormat.toml), &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, fmtOf("toml"), &ptr, &len));
     try std.testing.expectEqualStrings("point = { x = 1, y = 2 }\n", ptr[0..len]);
 
     // A tight width budget forces it to expand to a [section].
     const opts: FigSerializeOptions = .{ .width = 8 };
-    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize_opts(out_value, root, @backingInt(FigFormat.toml), &opts, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize_opts(out_value, root, fmtOf("toml"), &opts, &ptr, &len));
     try std.testing.expectEqualStrings("[point]\nx = 1\ny = 2\n", ptr[0..len]);
 }
 
@@ -5082,11 +4743,11 @@ test "value c abi flow option renders fig-dialect container fragments inline" {
 
     // flow set: the inline spelling — the only one that survives a splice.
     const flow_opts: FigSerializeOptions = .{ .flow = 1 };
-    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize_opts(out_value, root, @backingInt(FigFormat.fig), &flow_opts, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize_opts(out_value, root, fmtOf("fig"), &flow_opts, &ptr, &len));
     try std.testing.expectEqualStrings("[a.md, b.md]\n", ptr[0..len]);
 
     // flow unset (default): unchanged block rendering.
-    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, @backingInt(FigFormat.fig), &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, fmtOf("fig"), &ptr, &len));
     try std.testing.expectEqualStrings("* a.md\n* b.md\n", ptr[0..len]);
 }
 
@@ -5110,23 +4771,23 @@ test "fig_parse empty input is judged per format" {
     // malformed argument regardless of format.
     {
         var out_doc: ?*FigDocument = null;
-        try std.testing.expectEqual(FigStatus.parse_error, fig_parse(null, 0, @backingInt(FigFormat.json), &out_doc));
+        try std.testing.expectEqual(FigStatus.parse_error, fig_parse(null, 0, fmtOf("json"), &out_doc));
         try std.testing.expect(out_doc == null);
     }
     {
         var out_doc: ?*FigDocument = null;
-        try std.testing.expectEqual(FigStatus.invalid_argument, fig_parse(null, 5, @backingInt(FigFormat.json), &out_doc));
+        try std.testing.expectEqual(FigStatus.invalid_argument, fig_parse(null, 5, fmtOf("json"), &out_doc));
         try std.testing.expect(out_doc == null);
     }
     if (comptime build_options.lang_yaml) {
         var out_doc: ?*FigDocument = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(null, 0, @backingInt(FigFormat.yaml), &out_doc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(null, 0, fmtOf("yaml"), &out_doc));
         defer fig_document_destroy(out_doc);
         try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.null_)), fig_node_kind(out_doc, fig_document_root(out_doc)));
     }
     if (comptime build_options.lang_toml) {
         var out_doc: ?*FigDocument = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(null, 0, @backingInt(FigFormat.toml), &out_doc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(null, 0, fmtOf("toml"), &out_doc));
         defer fig_document_destroy(out_doc);
         try std.testing.expectEqual(@as(c_int, @backingInt(FigNodeKind.mapping)), fig_node_kind(out_doc, fig_document_root(out_doc)));
         try std.testing.expectEqual(@as(usize, 0), fig_node_child_count(out_doc, fig_document_root(out_doc)));
@@ -5138,17 +4799,17 @@ test "fig_document_serialize converts JSON to YAML" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const src = "{\"name\":\"fig\",\"nums\":[1,2]}";
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.json), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("json"), &out_doc));
     defer fig_document_destroy(out_doc);
 
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.yaml), null, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, fmtOf("yaml"), null, &ptr, &len));
     try std.testing.expectEqualStrings("name: fig\nnums: [1, 2]\n", ptr[0..len]);
 
     // Same handle, re-serialize to TOML — the borrowed bytes refresh in place.
     if (comptime build_options.lang_toml) {
-        try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.toml), null, &ptr, &len));
+        try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, fmtOf("toml"), null, &ptr, &len));
         try std.testing.expectEqualStrings("name = \"fig\"\nnums = [1, 2]\n", ptr[0..len]);
     }
 }
@@ -5157,13 +4818,13 @@ test "fig_parse parses the fig authoring dialect" {
     if (comptime !build_options.lang_fig) return error.SkipZigTest;
     const src = "title = Hello\ncount = 42\n";
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.fig), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("fig"), &out_doc));
     defer fig_document_destroy(out_doc);
 
     if (comptime build_options.lang_json) {
         var ptr: [*c]const u8 = undefined;
         var len: usize = undefined;
-        try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.json), null, &ptr, &len));
+        try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, fmtOf("json"), null, &ptr, &len));
         try std.testing.expectEqualStrings("{\n  \"title\": \"Hello\",\n  \"count\": 42\n}\n", ptr[0..len]);
     }
 }
@@ -5173,12 +4834,12 @@ test "fig_document_serialize converts JSON to the fig authoring dialect" {
     if (comptime !build_options.lang_fig) return error.SkipZigTest;
     const src = "{\"name\":\"fig\",\"nums\":[1,2]}";
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.json), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("json"), &out_doc));
     defer fig_document_destroy(out_doc);
 
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.fig), null, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, fmtOf("fig"), null, &ptr, &len));
     try std.testing.expectEqualStrings("name = fig\nnums = [1, 2]\n", ptr[0..len]);
 }
 
@@ -5186,7 +4847,7 @@ test "fig_editor_create edits the fig authoring dialect" {
     if (comptime !build_options.lang_fig) return error.SkipZigTest;
     const src = "title = old\nport = 8080\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.fig), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("fig"), &ed));
     defer fig_editor_destroy(ed);
 
     const path = [_]FigPathSegment{keySeg("port")};
@@ -5203,7 +4864,7 @@ test "fig_editor_create edits ZON through the C ABI" {
     if (comptime !build_options.lang_zon) return error.SkipZigTest;
     const src = ".{ .title = \"old\", .port = 8080 }";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.zon), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("zon"), &ed));
     defer fig_editor_destroy(ed);
 
     const path = [_]FigPathSegment{keySeg("port")};
@@ -5223,7 +4884,7 @@ test "fig_editor_insert_named_key spells the name as the format does" {
     if (comptime build_options.lang_zon) {
         const src = ".{ .a = 1 }";
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.zon), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("zon"), &ed));
         defer fig_editor_destroy(ed);
         const name = "new";
         const val = "true";
@@ -5235,7 +4896,7 @@ test "fig_editor_insert_named_key spells the name as the format does" {
     if (comptime build_options.lang_json) {
         const src = "{\"a\": 1}";
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.json), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("json"), &ed));
         defer fig_editor_destroy(ed);
         const name = "k\"q";
         const val = "2";
@@ -5250,7 +4911,7 @@ test "fig_editor_replace_named_key spells the new name as the format does" {
     if (comptime build_options.lang_zon) {
         const src = ".{ .a = 1, .b = 2 }";
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.zon), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("zon"), &ed));
         defer fig_editor_destroy(ed);
         const a = [_]FigPathSegment{keySeg("a")};
         const b = [_]FigPathSegment{keySeg("b")};
@@ -5263,7 +4924,7 @@ test "fig_editor_replace_named_key spells the new name as the format does" {
     if (comptime build_options.lang_plist) {
         const src = "<dict><key>a</key><string>x</string></dict>";
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.plist), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("plist"), &ed));
         defer fig_editor_destroy(ed);
         const a = [_]FigPathSegment{keySeg("a")};
         const name = "b&c";
@@ -5276,7 +4937,7 @@ test "fig_editor_replace_key refuses a path with no key and a name already held"
     if (comptime !build_options.lang_json) return error.SkipZigTest;
     const src = "{\"l\": [1, 2], \"a\": 1, \"b\": 2}";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.json), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("json"), &ed));
     defer fig_editor_destroy(ed);
     // A sequence item has no key: the old splice overwrote the item's value.
     const item = [_]FigPathSegment{ keySeg("l"), .{ .kind = 1, .key_ptr = null, .key_len = 0, .index = 0 } };
@@ -5310,7 +4971,7 @@ test "fig_editor whole-container ops reach a TOML table the key ops cannot" {
 
     {
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("toml"), &ed));
         defer fig_editor_destroy(ed);
         // Refused by the key op…
         try std.testing.expectEqual(FigStatus.invalid_argument, fig_editor_delete_key(ed, &path_a, 1));
@@ -5320,7 +4981,7 @@ test "fig_editor whole-container ops reach a TOML table the key ops cannot" {
     }
     {
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("toml"), &ed));
         defer fig_editor_destroy(ed);
         const leaf = "q";
         try std.testing.expectEqual(FigStatus.ok, fig_editor_rename_container(ed, &path_a, 1, leaf.ptr, leaf.len));
@@ -5328,7 +4989,7 @@ test "fig_editor whole-container ops reach a TOML table the key ops cannot" {
     }
     {
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("toml"), &ed));
         defer fig_editor_destroy(ed);
         const body = "z = 3\n";
         const path_c = [_]FigPathSegment{keySeg("c")};
@@ -5337,7 +4998,7 @@ test "fig_editor whole-container ops reach a TOML table the key ops cannot" {
     }
     {
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("toml"), &ed));
         defer fig_editor_destroy(ed);
         // The generic move is refused; the container move relocates the whole
         // table. A NULL destination is "to EOF", which is why it cannot be
@@ -5348,7 +5009,7 @@ test "fig_editor whole-container ops reach a TOML table the key ops cannot" {
     }
     {
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("toml"), &ed));
         defer fig_editor_destroy(ed);
         const order = [_]FigStr{ figStr("b"), figStr("a") };
         // `fig_editor_reorder_keys` at the root would have moved the header
@@ -5363,7 +5024,7 @@ test "fig_editor_append_container_to_seq appends a TOML array-of-tables element"
     if (comptime !build_options.lang_toml) return error.SkipZigTest;
     const src = "[[bin]]\nname = \"a\"\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("toml"), &ed));
     defer fig_editor_destroy(ed);
     const path = [_]FigPathSegment{keySeg("bin")};
     const body = "name = \"b\"\n";
@@ -5381,7 +5042,7 @@ test "fig_editor whole-container ops answer unsupported_format where the format 
     {
         const src = "a:\n  x: 1\nb:\n  y: 2\n";
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.yaml), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("yaml"), &ed));
         defer fig_editor_destroy(ed);
         try std.testing.expectEqual(FigStatus.unsupported_format, fig_editor_delete_container(ed, &path, 1));
         try std.testing.expectEqual(FigStatus.ok, fig_editor_delete_key(ed, &path, 1));
@@ -5394,7 +5055,7 @@ test "fig_editor whole-container ops answer unsupported_format where the format 
     {
         const src = "[a]\nx = 1\n[b]\ny = 2\n[a]\nz = 3\n";
         var ed: ?*FigEditor = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.ini), &ed));
+        try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("ini"), &ed));
         defer fig_editor_destroy(ed);
         const leaf = "q";
         const body = "";
@@ -5414,16 +5075,16 @@ test "fig_document_serialize materializes the YAML reference layer when leaving 
     // a copied value, not leak `*x` or fail with unsupported_format.
     const src = "a: &x 1\nb: *x\n";
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.yaml), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("yaml"), &out_doc));
     defer fig_document_destroy(out_doc);
 
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.json), null, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, fmtOf("json"), null, &ptr, &len));
     try std.testing.expectEqualStrings("{\n  \"a\": 1,\n  \"b\": 1\n}\n", ptr[0..len]);
 
     // YAML→YAML keeps the reference layer intact (no materialize).
-    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.yaml), null, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, fmtOf("yaml"), null, &ptr, &len));
     try std.testing.expect(std.mem.indexOf(u8, ptr[0..len], "*x") != null);
 }
 
@@ -5444,7 +5105,7 @@ test "fig_document_resolve_aliases reads an alias and a merge key as values" {
         \\
     ;
     var doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.yaml), &doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("yaml"), &doc));
     var resolved: ?*FigDocument = null;
     try std.testing.expectEqual(FigStatus.ok, fig_document_resolve_aliases(doc, &resolved, null));
     defer fig_document_destroy(resolved);
@@ -5463,20 +5124,20 @@ test "fig_document_resolve_aliases reads an alias and a merge key as values" {
     // It is a document like any other: it serializes, with no `*` or `&` left.
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(resolved, @backingInt(FigFormat.yaml), null, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(resolved, fmtOf("yaml"), null, &ptr, &len));
     try std.testing.expect(std.mem.indexOfAny(u8, ptr[0..len], "*&") == null);
 }
 
 test "fig_document_resolve_aliases answers NULL for a document with nothing to resolve" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     if (comptime !build_options.lang_json) return error.SkipZigTest;
-    const cases = [_]struct { src: []const u8, format: FigFormat }{
-        .{ .src = "a: &x 1\nb: 2\n", .format = .yaml }, // an anchor no alias names
-        .{ .src = "{\"<<\": {\"a\": 1}}", .format = .json }, // `<<` is a merge only where there are references
+    const cases = [_]struct { src: []const u8, format: [:0]const u8 }{
+        .{ .src = "a: &x 1\nb: 2\n", .format = "yaml" }, // an anchor no alias names
+        .{ .src = "{\"<<\": {\"a\": 1}}", .format = "json" }, // `<<` is a merge only where there are references
     };
     for (cases) |c| {
         var doc: ?*FigDocument = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(c.src.ptr, c.src.len, @backingInt(c.format), &doc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(c.src.ptr, c.src.len, fmtOf(c.format), &doc));
         defer fig_document_destroy(doc);
         var resolved: ?*FigDocument = @ptrFromInt(0x10);
         try std.testing.expectEqual(FigStatus.ok, fig_document_resolve_aliases(doc, &resolved, null));
@@ -5488,7 +5149,7 @@ test "fig_document_resolve_aliases refuses a cyclic alias as a parse error at th
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const src = "ok: 1\nloop: &a [1, *a]\n";
     var doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.yaml), &doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("yaml"), &doc));
     defer fig_document_destroy(doc);
     var resolved: ?*FigDocument = null;
     var err: FigError = .empty;
@@ -5503,7 +5164,7 @@ test "fig_document_resolve_aliases refuses a cyclic alias as a parse error at th
     // A mapping merged into itself has no value either.
     const self_merge = "m: &m {a: 1, <<: *m}\n";
     var doc2: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(self_merge.ptr, self_merge.len, @backingInt(FigFormat.yaml), &doc2));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(self_merge.ptr, self_merge.len, fmtOf("yaml"), &doc2));
     defer fig_document_destroy(doc2);
     try std.testing.expectEqual(FigStatus.parse_error, fig_document_resolve_aliases(doc2, &resolved, null));
     try std.testing.expect(resolved == null);
@@ -5516,15 +5177,15 @@ test "fig_document_serialize honors the lossless option for TOML null" {
     // wraps it in a `$fig` envelope so the document still serializes.
     const src = "{\"k\":null}";
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.json), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("json"), &out_doc));
     defer fig_document_destroy(out_doc);
 
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
-    try std.testing.expectEqual(FigStatus.unsupported_format, fig_document_serialize(out_doc, @backingInt(FigFormat.toml), null, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.unsupported_format, fig_document_serialize(out_doc, fmtOf("toml"), null, &ptr, &len));
 
     var opts: FigSerializeOptions = .{ .lossless = 1 };
-    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.toml), &opts, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, fmtOf("toml"), &opts, &ptr, &len));
     try std.testing.expect(std.mem.indexOf(u8, ptr[0..len], "$fig") != null);
 }
 
@@ -5535,18 +5196,18 @@ test "fig_document_serialize preserves comments across formats" {
     // serve: a comment captured from JSON5 re-emitted into YAML.
     const src = "{\n  // hello\n  a: 1,\n}\n";
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.json5), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("json5"), &out_doc));
     defer fig_document_destroy(out_doc);
 
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.yaml), null, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, fmtOf("yaml"), null, &ptr, &len));
     try std.testing.expect(std.mem.indexOf(u8, ptr[0..len], "# hello") != null);
     try std.testing.expect(std.mem.indexOf(u8, ptr[0..len], "a: 1") != null);
 
     // strip_comments drops it.
     var opts: FigSerializeOptions = .{ .strip_comments = 1 };
-    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.yaml), &opts, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, fmtOf("yaml"), &opts, &ptr, &len));
     try std.testing.expect(std.mem.indexOf(u8, ptr[0..len], "hello") == null);
 }
 
@@ -5571,15 +5232,14 @@ test "a runtime language registers through the C ABI and is a peer at every entr
     var alloc: Runtime.test_language.Alloc = .{ .allocator = std.testing.allocator };
     const vt = Runtime.test_language.vtable(&alloc);
 
-    // Register; the integer is in the runtime range, resolves by name, and
-    // reports the record's capabilities.
+    // Register; the integer resolves by name, and reports the record's
+    // capabilities.
     var format: c_int = 0;
     var err: FigError = Runtime.ErrorInfo.empty;
     try std.testing.expectEqual(FigStatus.ok, fig_language_register(&vt, &format, &err));
-    try std.testing.expect(format >= Languages.runtime_abi_base);
+    try std.testing.expect(format >= 1);
     try std.testing.expectEqual(format, fig_format_by_name("tinykv"));
     try std.testing.expectEqual(@as(c_int, -1), fig_format_by_name("nosuch"));
-    try std.testing.expectEqual(@as(c_int, 1), fig_format_by_name("json"));
     const all = @backingInt(FigCapability.read) | @backingInt(FigCapability.edit) | @backingInt(FigCapability.serialize);
     try std.testing.expectEqual(all, fig_format_capabilities(format));
     try std.testing.expectEqual(@as(u32, 0), fig_format_capabilities(format + 7));
@@ -5601,11 +5261,11 @@ test "a runtime language registers through the C ABI and is a peer at every entr
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
     if (comptime build_options.lang_json) {
-        try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(doc, @backingInt(FigFormat.json), null, &ptr, &len));
+        try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(doc, fmtOf("json"), null, &ptr, &len));
         try std.testing.expectEqualStrings("{\n  \"x\": \"1\",\n  \"y\": \"two\"\n}\n", ptr[0..len]);
         const json = "{\"k\": \"v\"}";
         var jdoc: ?*FigDocument = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(json.ptr, json.len, @backingInt(FigFormat.json), &jdoc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(json.ptr, json.len, fmtOf("json"), &jdoc));
         defer fig_document_destroy(jdoc.?);
         try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(jdoc, format, null, &ptr, &len));
         try std.testing.expectEqualStrings("k=v\n", ptr[0..len]);
@@ -5617,7 +5277,7 @@ test "a runtime language registers through the C ABI and is a peer at every entr
         try std.testing.expectEqual(@as(usize, 0), n);
         const nested = "{\"a\": {\"b\": \"1\"}, \"c\": \"2\"}";
         var ndoc: ?*FigDocument = null;
-        try std.testing.expectEqual(FigStatus.ok, fig_parse(nested.ptr, nested.len, @backingInt(FigFormat.json), &ndoc));
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(nested.ptr, nested.len, fmtOf("json"), &ndoc));
         defer fig_document_destroy(ndoc.?);
         try std.testing.expectEqual(FigStatus.ok, fig_document_diagnose(ndoc, format, null, &n));
         try std.testing.expectEqual(@as(usize, 1), n);
@@ -5680,27 +5340,27 @@ test "fig_format_capabilities reports the per-format matrix" {
     const references = @backingInt(FigCapability.references);
 
     // JSON family: always fully supported, regardless of build options.
-    for ([_]FigFormat{ .json, .jsonc, .json5 }) |f| {
-        try std.testing.expectEqual(read | edit | serialize, fig_format_capabilities(@backingInt(f)));
+    for ([_][:0]const u8{ "json", "jsonc", "json5" }) |f| {
+        try std.testing.expectEqual(read | edit | serialize, fig_format_capabilities(fmtOf(f)));
     }
 
     // Gated formats: capabilities track both inherent support and the build gate.
     // YAML alone has a reference layer.
     try std.testing.expectEqual(
         if (build_options.lang_yaml) read | edit | serialize | references else 0,
-        fig_format_capabilities(@backingInt(FigFormat.yaml)),
+        fig_format_capabilities(fmtOf("yaml")),
     );
     try std.testing.expectEqual(
         if (build_options.lang_toml) read | edit | serialize else 0,
-        fig_format_capabilities(@backingInt(FigFormat.toml)),
+        fig_format_capabilities(fmtOf("toml")),
     );
     try std.testing.expectEqual(
         if (build_options.lang_zon) read | edit | serialize else 0,
-        fig_format_capabilities(@backingInt(FigFormat.zon)),
+        fig_format_capabilities(fmtOf("zon")),
     );
     try std.testing.expectEqual(
         if (build_options.lang_fig) read | edit | serialize else 0,
-        fig_format_capabilities(@backingInt(FigFormat.fig)),
+        fig_format_capabilities(fmtOf("fig")),
     );
 
     // Unknown / out-of-range format values report no capabilities.
@@ -5721,15 +5381,15 @@ test "fig_format_capabilities agrees with actual READ/EDIT/SERIALIZE behavior" {
     const edit = @backingInt(FigCapability.edit);
     const serialize = @backingInt(FigCapability.serialize);
 
-    const Case = struct { fmt: FigFormat, sample: []const u8 };
+    const Case = struct { fmt: [:0]const u8, sample: []const u8 };
     const cases = [_]Case{
-        .{ .fmt = .json, .sample = "{\"a\":1}" },
-        .{ .fmt = .jsonc, .sample = "{\"a\":1}" },
-        .{ .fmt = .json5, .sample = "{a:1}" },
-        .{ .fmt = .yaml, .sample = "a: 1\n" },
-        .{ .fmt = .toml, .sample = "a = 1\n" },
-        .{ .fmt = .zon, .sample = ".{ .a = 1 }" },
-        .{ .fmt = .fig, .sample = "a = 1\n" },
+        .{ .fmt = "json", .sample = "{\"a\":1}" },
+        .{ .fmt = "jsonc", .sample = "{\"a\":1}" },
+        .{ .fmt = "json5", .sample = "{a:1}" },
+        .{ .fmt = "yaml", .sample = "a: 1\n" },
+        .{ .fmt = "toml", .sample = "a = 1\n" },
+        .{ .fmt = "zon", .sample = ".{ .a = 1 }" },
+        .{ .fmt = "fig", .sample = "a = 1\n" },
     };
 
     // A value every writable format can represent ({"a": 1}); used for the
@@ -5748,7 +5408,7 @@ test "fig_format_capabilities agrees with actual READ/EDIT/SERIALIZE behavior" {
     const root = id;
 
     for (cases) |c| {
-        const fmt = @backingInt(c.fmt);
+        const fmt = fmtOf(c.fmt);
         const caps = fig_format_capabilities(fmt);
 
         // READ: a valid sample parses iff the format is compiled in (which is
@@ -5779,7 +5439,7 @@ test "fig_editor comment ops add, set, and delete through the C ABI" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const src = "a: 1\nb: 2\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.yaml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("yaml"), &ed));
     defer fig_editor_destroy(ed);
 
     // path = ["b"]
@@ -5807,7 +5467,7 @@ test "fig_editor_set_sequence reconciles a list, preserving survivors' comments"
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const src = "tags:\n- a # first\n- b # second\n- c # third\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.yaml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("yaml"), &ed));
     defer fig_editor_destroy(ed);
 
     var key = [_]u8{ 't', 'a', 'g', 's' };
@@ -5834,7 +5494,7 @@ test "fig_editor comment ops reject strict JSON with unsupported_format" {
     if (comptime !build_options.lang_json) return error.SkipZigTest;
     const src = "{\"a\":1}";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.json), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("json"), &ed));
     defer fig_editor_destroy(ed);
     var key = [_]u8{'a'};
     const path = [_]FigPathSegment{.{ .kind = 0, .key_ptr = &key, .key_len = 1, .index = 0 }};
@@ -5855,7 +5515,7 @@ test "fig_editor comment ops on a one-line flow item answer as if it had none" {
     // `not_found` (= absent) for the reads.
     const src = "# above members\nmembers = [\"a\", \"b\"] # note\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.toml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("toml"), &ed));
     defer fig_editor_destroy(ed);
 
     var key = [_]u8{ 'm', 'e', 'm', 'b', 'e', 'r', 's' };
@@ -5890,7 +5550,7 @@ test "fig_editor comment reads return bytes, distinguishing absent from empty" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const src = "# why\na: 1 # two\nb: 2 #\nc: 3\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, @backingInt(FigFormat.yaml), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("yaml"), &ed));
     defer fig_editor_destroy(ed);
 
     var ptr: [*c]const u8 = undefined;

@@ -313,7 +313,8 @@ int main(void) {
         fprintf(stderr, "abi_runtime_probe: register: %d: %.*s\n", (int)st, (int)err.message_len, (const char *)err.message);
         return 1;
     }
-    CHECK(format >= FIG_FORMAT_RUNTIME_BASE);
+    CHECK(format >= 1);
+    CHECK(strcmp(fig_format_name(format), "tinykv") == 0);
     CHECK(fig_format_by_name("tinykv") == format);
     CHECK(fig_format_capabilities(format) == (FIG_CAP_READ | FIG_CAP_EDIT | FIG_CAP_SERIALIZE));
 
@@ -328,9 +329,10 @@ int main(void) {
     size_t out_len;
     CHECK(fig_document_serialize(doc, format, NULL, &out, &out_len) == FIG_STATUS_OK);
     CHECK(out_len == sizeof src - 1 && memcmp(out, src, out_len) == 0);
-    if (fig_format_capabilities(FIG_FORMAT_JSON) & FIG_CAP_SERIALIZE) {
+    const int json = fig_format_by_name("json");
+    if (json > 0 && (fig_format_capabilities(json) & FIG_CAP_SERIALIZE)) {
         static const char want[] = "{\n  \"x\": \"1\",\n  \"y\": \"two\"\n}\n";
-        CHECK(fig_document_serialize(doc, FIG_FORMAT_JSON, NULL, &out, &out_len) == FIG_STATUS_OK);
+        CHECK(fig_document_serialize(doc, json, NULL, &out, &out_len) == FIG_STATUS_OK);
         CHECK(out_len == sizeof want - 1 && memcmp(out, want, out_len) == 0);
     }
     fig_document_destroy(doc);

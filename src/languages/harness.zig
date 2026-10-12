@@ -1,13 +1,13 @@
 //! The per-format harness: the checks that hold for ANY format, run over
-//! every compiled-in dialect of the registry.
+//! every dialect of every language this build bundles.
 //!
 //! Each language has its own tests — its parser's, its printer's, its
 //! editor helper's — and fig-conformance scores each against its format's
 //! own suite. What none of that covers is the set of
 //! properties the *engine* relies on every format having, which used to be
 //! stated in prose and checked by whichever language's tests happened to
-//! exercise them. This file states them once and runs them over
-//! `Language.dialects`:
+//! exercise them. This file states them once and runs them over each
+//! bundled language's `dialects`:
 //!
 //!   * every `empty_doc_seed` parses (it is what `set` writes to a file that
 //!     does not exist yet, so a seed that does not parse strands the user
@@ -27,14 +27,12 @@
 //! (`Decls.optional` in language.zig): a few small documents in its own
 //! grammar that exercise a mapping, a sequence where the format has one,
 //! and a section where the format has those. The seeds need no opt-in; they
-//! are on the registry row already.
-//!
-//! The registry's own invariants — the list ↔ slot pairing, unique ABI
-//! values and sniff ranks, the pinned probe order — live in `language.zig`
-//! beside the tables they check, not here.
+//! are on the dialect row already. `runtime.zig` runs the same checks over a
+//! registration, through the contract.
 
 const std = @import("std");
-const Language = @import("language.zig");
+const list = @import("list.zig");
+const bundle = @import("bundle.zig");
 const AST = @import("../kit/ast/ast.zig");
 const Serialize = @import("../serialize.zig");
 const Document = @import("../kit/document.zig");
@@ -49,12 +47,12 @@ fn parseWith(comptime d: anytype, allocator: std.mem.Allocator, input: []const u
     return d.Lang.parse(&parser, input, d.dialect);
 }
 
-/// Print `ast` in dialect `d` through the serializer's registry dispatch —
-/// the same path the CLI takes — into an owned buffer.
+/// Print `ast` in dialect `d` through the language's own printer, into an
+/// owned buffer.
 fn printAs(comptime d: anytype, allocator: std.mem.Allocator, ast: *const AST) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
-    try Serialize.serializeWith(ast, &out.writer, @field(Serialize.SerializeFormat, d.name), .{});
+    try @field(d.Lang.Printer, d.print_name)(&out.writer, ast, .{});
     return allocator.dupe(u8, out.written());
 }
 
@@ -125,43 +123,52 @@ fn isSectionFormat(comptime Lang: type) bool {
 }
 
 test "harness: every empty_doc_seed parses and round-trips" {
-    inline for (Language.dialects) |d| {
-        if (comptime d.Lang != void) {
-            if (comptime d.empty_doc_seed) |seed| {
-                try expectRoundTrip(d, testing.allocator, seed);
+    inline for (list.rows) |row| {
+        if (comptime !bundle.bundles(row.name)) continue;
+        inline for (bundle.Language(row.name).dialects) |d| {
+            if (comptime d.Lang != void) {
+                if (comptime d.empty_doc_seed) |seed| {
+                    try expectRoundTrip(d, testing.allocator, seed);
+                }
             }
         }
     }
 }
 
 test "harness: every declared sample parses, prints, and reparses to the same tree" {
-    inline for (Language.dialects) |d| {
-        if (comptime d.Lang != void and @hasDecl(d.Lang, "samples")) {
-            for (d.Lang.samples) |sample| try expectRoundTrip(d, testing.allocator, sample);
+    inline for (list.rows) |row| {
+        if (comptime !bundle.bundles(row.name)) continue;
+        inline for (bundle.Language(row.name).dialects) |d| {
+            if (comptime d.Lang != void and @hasDecl(d.Lang, "samples")) {
+                for (d.Lang.samples) |sample| try expectRoundTrip(d, testing.allocator, sample);
+            }
         }
     }
 }
 
 test "harness: node_regions is well-formed, and a section format's parser fills it" {
-    inline for (Language.dialects) |d| {
-        if (comptime d.Lang != void and @hasDecl(d.Lang, "samples")) {
-            var any_regions = false;
-            for (d.Lang.samples) |sample| {
-                const doc = try parseWith(d, testing.allocator, sample);
-                defer doc.deinit(testing.allocator);
-                try expectRegionsWellFormed(doc, sample);
-                if (doc.node_regions.len > 0) any_regions = true;
-            }
-            if (comptime isSectionFormat(d.Lang)) {
-                // A section format whose samples produce no section is either
-                // a parser that stopped recording headers or a sample set
-                // that never opens one; both are the format's to fix.
-                if (!any_regions) {
-                    std.debug.print("\n{s}: declares section_noun but no sample produced a node_regions row\n", .{d.name});
-                    return error.SectionFormatRecordsNoRegions;
+    inline for (list.rows) |row| {
+        if (comptime !bundle.bundles(row.name)) continue;
+        inline for (bundle.Language(row.name).dialects) |d| {
+            if (comptime d.Lang != void and @hasDecl(d.Lang, "samples")) {
+                var any_regions = false;
+                for (d.Lang.samples) |sample| {
+                    const doc = try parseWith(d, testing.allocator, sample);
+                    defer doc.deinit(testing.allocator);
+                    try expectRegionsWellFormed(doc, sample);
+                    if (doc.node_regions.len > 0) any_regions = true;
                 }
-            } else {
-                try testing.expect(!any_regions);
+                if (comptime isSectionFormat(d.Lang)) {
+                    // A section format whose samples produce no section is either
+                    // a parser that stopped recording headers or a sample set
+                    // that never opens one; both are the format's to fix.
+                    if (!any_regions) {
+                        std.debug.print("\n{s}: declares section_noun but no sample produced a node_regions row\n", .{d.name});
+                        return error.SectionFormatRecordsNoRegions;
+                    }
+                } else {
+                    try testing.expect(!any_regions);
+                }
             }
         }
     }
@@ -175,22 +182,25 @@ test "harness: a dangling comment written at the root reads back and deletes cle
     // the write/read/delete cycle here; the two refusals it may legitimately
     // give — no comment syntax at all, and no body line to anchor on — are the
     // documented answers and are accepted as such.
-    inline for (Language.dialects) |d| {
-        if (comptime d.Lang != void and d.Lang.caps.edit and @hasDecl(d.Lang, "samples")) {
-            for (d.Lang.samples) |sample| {
-                var ed: Editor(d.Lang) = .{ .allocator = testing.allocator, .format = d.dialect };
-                defer ed.deinit();
-                try ed.init(sample);
-                if (ed.addDanglingComment(&.{}, "harness")) |_| {
-                    const got = try ed.getDanglingComment(&.{});
-                    defer if (got) |g| testing.allocator.free(g);
-                    try testing.expect(got != null);
-                    try testing.expectEqualStrings("harness", got.?);
-                    try ed.deleteDanglingComments(&.{});
-                    try testing.expectEqualStrings(sample, ed.source.items);
-                } else |err| switch (err) {
-                    error.CommentsUnsupported, error.UnsupportedShape => {},
-                    else => return err,
+    inline for (list.rows) |row| {
+        if (comptime !bundle.bundles(row.name)) continue;
+        inline for (bundle.Language(row.name).dialects) |d| {
+            if (comptime d.Lang != void and d.Lang.caps.edit and @hasDecl(d.Lang, "samples")) {
+                for (d.Lang.samples) |sample| {
+                    var ed: Editor(d.Lang) = .{ .allocator = testing.allocator, .format = d.dialect };
+                    defer ed.deinit();
+                    try ed.init(sample);
+                    if (ed.addDanglingComment(&.{}, "harness")) |_| {
+                        const got = try ed.getDanglingComment(&.{});
+                        defer if (got) |g| testing.allocator.free(g);
+                        try testing.expect(got != null);
+                        try testing.expectEqualStrings("harness", got.?);
+                        try ed.deleteDanglingComments(&.{});
+                        try testing.expectEqualStrings(sample, ed.source.items);
+                    } else |err| switch (err) {
+                        error.CommentsUnsupported, error.UnsupportedShape => {},
+                        else => return err,
+                    }
                 }
             }
         }
@@ -198,15 +208,18 @@ test "harness: a dangling comment written at the root reads back and deletes cle
 }
 
 test "harness: Editor constructs over every sample, and a no-op splice changes nothing" {
-    inline for (Language.dialects) |d| {
-        if (comptime d.Lang != void and d.Lang.caps.edit and @hasDecl(d.Lang, "samples")) {
-            for (d.Lang.samples) |sample| {
-                var ed: Editor(d.Lang) = .{ .allocator = testing.allocator, .format = d.dialect };
-                defer ed.deinit();
-                try ed.init(sample);
-                try ed.replaceAtSpan(Span.init(0, 0), "");
-                try testing.expectEqualStrings(sample, ed.source.items);
-                _ = try ed.getParsed();
+    inline for (list.rows) |row| {
+        if (comptime !bundle.bundles(row.name)) continue;
+        inline for (bundle.Language(row.name).dialects) |d| {
+            if (comptime d.Lang != void and d.Lang.caps.edit and @hasDecl(d.Lang, "samples")) {
+                for (d.Lang.samples) |sample| {
+                    var ed: Editor(d.Lang) = .{ .allocator = testing.allocator, .format = d.dialect };
+                    defer ed.deinit();
+                    try ed.init(sample);
+                    try ed.replaceAtSpan(Span.init(0, 0), "");
+                    try testing.expectEqualStrings(sample, ed.source.items);
+                    _ = try ed.getParsed();
+                }
             }
         }
     }

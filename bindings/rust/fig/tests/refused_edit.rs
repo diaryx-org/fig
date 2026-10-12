@@ -44,10 +44,10 @@ fn toml_takes_an_infinite_or_nan_float() {
         ("nan", "nan"),
         ("inf", "inf"),
     ] {
-        let out = replace(TOML, Format::Toml, typed(typed_text)).unwrap();
+        let out = replace(TOML, by_name("toml"), typed(typed_text)).unwrap();
         assert_eq!(out, format!("name = \"music\"\nversion = {written}\n"));
         // And it reads back as the same float.
-        let back = Document::parse(out.as_bytes(), Format::Toml)
+        let back = Document::parse(out.as_bytes(), by_name("toml"))
             .unwrap()
             .to_value()
             .unwrap();
@@ -65,17 +65,17 @@ fn toml_takes_an_infinite_or_nan_float() {
 #[test]
 fn json5_and_yaml_take_an_infinite_or_nan_float() {
     assert_eq!(
-        replace(JSON, Format::Json5, typed("1e999999")).unwrap(),
+        replace(JSON, by_name("json5"), typed("1e999999")).unwrap(),
         "{\"name\": \"music\", \"version\": Infinity}\n"
     );
     assert_eq!(
-        replace(JSON, Format::Json5, typed("nan")).unwrap(),
+        replace(JSON, by_name("json5"), typed("nan")).unwrap(),
         "{\"name\": \"music\", \"version\": NaN}\n"
     );
     assert_eq!(
         replace(
             "name: music\nversion: 1\n",
-            Format::Yaml,
+            by_name("yaml"),
             typed("-1e999999")
         )
         .unwrap(),
@@ -85,13 +85,8 @@ fn json5_and_yaml_take_an_infinite_or_nan_float() {
 
 #[test]
 fn json_refuses_an_infinite_float_and_says_why() {
-    for format in [Format::Json, Format::Jsonc] {
-        let err = replace(JSON, format, typed("1e999999")).unwrap_err();
-        let name = if format == Format::Json {
-            "JSON"
-        } else {
-            "JSONC"
-        };
+    for name in ["json", "jsonc"] {
+        let err = replace(JSON, by_name(name), typed("1e999999")).unwrap_err();
         assert_eq!(
             err.to_string(),
             format!("{name} has no way to write an infinite number")
@@ -102,13 +97,13 @@ fn json_refuses_an_infinite_float_and_says_why() {
 
 #[test]
 fn json_refuses_nan_and_says_why() {
-    let err = replace(JSON, Format::Json, typed("nan")).unwrap_err();
-    assert_eq!(err.to_string(), "JSON has no way to write NaN");
+    let err = replace(JSON, by_name("json"), typed("nan")).unwrap_err();
+    assert_eq!(err.to_string(), "json has no way to write NaN");
 }
 
 #[test]
 fn a_refused_json_edit_leaves_the_document_unchanged() {
-    let mut ed = Editor::open(JSON.as_bytes(), Format::Json).unwrap();
+    let mut ed = Editor::open(JSON.as_bytes(), by_name("json")).unwrap();
     ed.replace_value(&[Segment::Key("version")], typed("1e999999"))
         .unwrap_err();
     assert_eq!(ed.source().unwrap(), JSON);
@@ -121,13 +116,13 @@ fn serializing_an_infinite_float_to_json_says_why() {
         Value::Seq(vec![Value::Float(f64::NEG_INFINITY)]),
     )]);
     assert_eq!(
-        v.serialize(Format::Json).unwrap_err().to_string(),
-        "JSON has no way to write an infinite number"
+        v.serialize(by_name("json")).unwrap_err().to_string(),
+        "json has no way to write an infinite number"
     );
     // Other refusals keep their own words.
     let null = Value::Map(vec![(Value::Str("k".into()), Value::Null)]);
     assert!(matches!(
-        null.serialize(Format::Toml),
+        null.serialize(by_name("toml")),
         Err(fig::Error::UnsupportedFormat)
     ));
 }
@@ -139,25 +134,25 @@ fn a_value_the_document_would_not_parse_with_is_one_sentence() {
         kind: ExtKind::LocalDate,
         text: "not a date".into(),
     };
-    let err = replace(TOML, Format::Toml, bad).unwrap_err();
+    let err = replace(TOML, by_name("toml"), bad).unwrap_err();
     assert!(matches!(err, fig::Error::Parse(_)), "{err:?}");
-    assert_eq!(err.to_string(), "the new value would not parse as TOML");
+    assert_eq!(err.to_string(), "the new value would not parse as toml");
     assert_said_once(&err.to_string());
 }
 
 #[test]
 fn a_key_the_document_would_not_parse_with_is_one_sentence() {
     // INI writes a key's name as it stands, so a newline in one cannot parse.
-    let mut ed = Editor::open(b"[s]\nname = x\n", Format::Ini).unwrap();
+    let mut ed = Editor::open(b"[s]\nname = x\n", by_name("ini")).unwrap();
     let err = ed
         .rename_key(&[Segment::Key("s"), Segment::Key("name")], "a\nb")
         .unwrap_err();
-    assert_eq!(err.to_string(), "the new key would not parse as INI");
+    assert_eq!(err.to_string(), "the new key would not parse as ini");
 }
 
 #[test]
 fn opening_a_document_that_does_not_parse_names_the_failure_once() {
-    let err = Editor::open(b"{\"a\": ", Format::Json).unwrap_err();
+    let err = Editor::open(b"{\"a\": ", by_name("json")).unwrap_err();
     let message = err.to_string();
     assert!(
         message.starts_with("failed to parse input: "),
@@ -165,4 +160,11 @@ fn opening_a_document_that_does_not_parse_names_the_failure_once() {
     );
     assert_ne!(message, "failed to parse input: failed to parse input");
     assert_said_once(&message);
+}
+
+/// The registered format named `name`; a test that names one this build
+/// does not carry is a test bug.
+#[allow(dead_code)]
+fn by_name(name: &str) -> fig::Format {
+    fig::Format::by_name(name).unwrap_or_else(|| panic!("no format named {name:?}"))
 }

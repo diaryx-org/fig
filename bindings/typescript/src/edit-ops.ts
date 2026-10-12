@@ -8,7 +8,7 @@
 // value-taking edit renders its `Value` through fig's serializer (stripping the
 // trailing newline) and lets the Zig editor re-frame indentation at the splice
 // site; the `*Raw` variants pass already-serialized text straight through.
-import { check, disposedError, Format, type SerializeOptions } from "./types.ts";
+import { check, disposedError, type Format, type SerializeOptions } from "./types.ts";
 import { Frame, encodePath, encodeKeyList, encodeIndexList, readOutSlice, Status, type Segment } from "./ffi.ts";
 import { V, valueText, valueTextWith, type JsInput, type Value } from "./value.ts";
 

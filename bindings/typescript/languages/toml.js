@@ -915,9 +915,19 @@ const language = {
     section_noun: "table",
     section_header: { open: "[", close: "]", seq_open: "[[", seq_close: "]]" },
   },
-  // The compiled format's extension: where the format is compiled out
-  // and this stands in for it, the extension reaches it.
-  dialects: [{ name: "toml", extensions: ["toml"], splice: "literal", empty_doc_seed: "", prints: { holds: { offset_datetime: true, local_datetime: true, local_date: true, local_time: true, number_special: true }, char_as: "integer" } }],
+  // The extension the Zig language claims: a file by that name reaches
+  // whichever of the two is registered.
+  dialects: [
+    {
+      name: "toml",
+      extensions: ["toml"],
+      splice: "literal",
+      empty_doc_seed: "",
+      prints: { holds: { offset_datetime: true, local_datetime: true, local_date: true, local_time: true, number_special: true }, char_as: "integer" },
+      // How TOML is written embedded in a host file.
+      embed: { fence_tag: "toml", frontmatter: "---toml", script_mime: "application/toml", code_class: "language-toml" },
+    },
+  ],
   samples: ['a = 1\nb = [1, 2]\n\n[s]\nk = "v"\nt = { x = 1 }\n'],
   // A key's name as TOML writes a key: bare when it can be, else a basic string.
   renderers: ["key_name"],

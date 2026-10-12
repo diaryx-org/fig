@@ -6,7 +6,7 @@
 //! Run with `cargo test -p fig --features plist`: the two kinds are plist's.
 #![cfg(feature = "plist")]
 
-use fig::{Document, ExtKind, Format, Value};
+use fig::{Document, ExtKind, Value};
 
 #[test]
 fn plist_date_and_data_reach_the_wrapper() {
@@ -18,7 +18,7 @@ fn plist_date_and_data_reach_the_wrapper() {
 </dict>
 </plist>
 "#;
-    let doc = Document::parse(src, Format::Plist).expect("plist parses");
+    let doc = Document::parse(src, by_name("plist")).expect("plist parses");
     let value = doc.to_value().expect("to_value");
     let map = value.as_mapping().expect("root is a dict");
     let get = |k: &str| {
@@ -41,4 +41,11 @@ fn plist_date_and_data_reach_the_wrapper() {
             text: "aGVsbG8=".into()
         }
     );
+}
+
+/// The registered format named `name`; a test that names one this build
+/// does not carry is a test bug.
+#[allow(dead_code)]
+fn by_name(name: &str) -> fig::Format {
+    fig::Format::by_name(name).unwrap_or_else(|| panic!("no format named {name:?}"))
 }

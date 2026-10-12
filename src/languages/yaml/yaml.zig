@@ -30,10 +30,6 @@ pub const Language = struct {
     }
     pub const print = yaml.Printer.print;
     pub const printNode = yaml.Printer.printNode;
-    /// Parse straight to a core AST with no `Document` around it — what
-    /// `deserialize.zig` maps onto a Zig type. Optional `Language` decl,
-    /// required exactly of a language with a `deserializable` dialect row.
-    pub const parseAbstract = yaml.Parser.parseAbstract;
     /// A `---`/`...` stream's documents, each to be parsed on its own.
     pub fn splitStream(allocator: std.mem.Allocator, input: []const u8, t: yaml.Type) ![]lang.StreamDocument {
         _ = t;
@@ -64,14 +60,6 @@ pub const Language = struct {
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "yaml",
         .prints = .{ .holds = Language.caps.lossless.?, .char_as = "number" },
-        .abi_value = 3,
-        // Third from last: YAML is so permissive (a bare line is a valid plain
-        // scalar) that almost anything falls through to it, so every stricter
-        // grammar — and fig and INI, which it would otherwise starve — must
-        // have had its turn first. Only `.properties` and NestedText accept
-        // more.
-        .sniff_rank = 9,
-        .deserializable = true,
         .splice = .literal,
         // A bare `key:` seed, not `{}`: see `Syntax.empty_map_literal`'s
         // note on why an empty YAML document is the empty string.

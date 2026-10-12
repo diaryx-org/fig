@@ -6,7 +6,7 @@
 //! further setup.
 
 use chrono::{TimeZone, Utc};
-use fig::{Document, Format};
+use fig::Document;
 use nu_plugin::{EngineInterface, EvaluatedCall, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, Span, Type, Value};
 
@@ -86,7 +86,8 @@ impl SimplePluginCommand for FromFigl {
             }
         };
 
-        let document = Document::parse(bytes, Format::Fig).map_err(|e| parse_error(e, span))?;
+        let document =
+            Document::parse(bytes, crate::figl_format(span)?).map_err(|e| parse_error(e, span))?;
         let value = document.to_value().map_err(|e| parse_error(e, span))?;
         Ok(fig_to_nu(&value, span))
     }
@@ -95,11 +96,11 @@ impl SimplePluginCommand for FromFigl {
 /// Turn a fig error into a nushell one.
 ///
 /// The label covers the whole input rather than the offending byte: fig's
-/// `ParseError` carries `line`/`column`/`byte_offset` fields, but the core does
-/// not yet fill them through the C ABI (they are wired for when it does), and a
-/// nushell span is an offset into engine source — for `open foo.figl` that is
-/// the `open` call itself, not the file's bytes, so a byte offset from inside
-/// the file could not be added to it meaningfully anyway.
+/// `ParseError` carries `line`/`column`/`byte_offset` where the language
+/// reports them, but a nushell span is an offset into engine source — for
+/// `open foo.figl` that is the `open` call itself, not the file's bytes, so a
+/// byte offset from inside the file could not be added to it meaningfully.
+/// A line and column, when given, go in the help text instead.
 fn parse_error(error: fig::Error, span: Span) -> LabeledError {
     let mut label = LabeledError::new("could not parse figl").with_label(error.to_string(), span);
     if let fig::Error::Parse(parse) = &error

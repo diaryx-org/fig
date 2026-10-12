@@ -55,11 +55,11 @@ compiles it. Under Node, Bun, Deno, and Web Workers that "just works" and you ca
 call any API directly:
 
 ```ts
-import { parse, registerLanguage, Format } from "@diaryx/fig";
+import { parse, registerLanguage } from "@diaryx/fig";
 import json from "@diaryx/fig/languages/json";
 
-registerLanguage(json);
-parse('{"ok":true}', Format.Json); // → { ok: true }
+const Json = registerLanguage(json);
+parse('{"ok":true}', Json); // → { ok: true }
 ```
 
 In the **browser main thread**, synchronous compilation of a module larger than
@@ -67,12 +67,12 @@ In the **browser main thread**, synchronous compilation of a module larger than
 other fig API:
 
 ```ts
-import { init, parse, registerLanguage, Format } from "@diaryx/fig";
+import { init, parse, registerLanguage } from "@diaryx/fig";
 import json from "@diaryx/fig/languages/json";
 
 await init();                       // do this once, e.g. during app bootstrap
-registerLanguage(json);
-parse('{"ok":true}', Format.Json);  // now synchronous everywhere
+const Json = registerLanguage(json);
+parse('{"ok":true}', Json);         // now synchronous everywhere
 ```
 
 `init()` is idempotent and safe to call anywhere; `isReady()` reports whether the
@@ -82,63 +82,73 @@ call throws a clear error telling you to `await init()`.
 ## Quick start
 
 ```ts
-import { parse, stringify, convert, registerLanguage, Format } from "@diaryx/fig";
+import { parse, stringify, convert, registerLanguage } from "@diaryx/fig";
 import json from "@diaryx/fig/languages/json";
 import toml from "@diaryx/fig/languages/toml";
 import yaml from "@diaryx/fig/languages/yaml";
 
-// Bring in the formats you use, once, at startup.
-registerLanguage(json);
-registerLanguage(toml);
-registerLanguage(yaml);
+// Bring in the formats you use, once, at startup. Each registration hands
+// back the language's `Format`.
+const Json = registerLanguage(json);
+const Toml = registerLanguage(toml);
+const Yaml = registerLanguage(yaml);
 
 // Parse any format straight to plain JS values.
-const cfg = parse('name = "fig"\nport = 8080\n', Format.Toml);
+const cfg = parse('name = "fig"\nport = 8080\n', Toml);
 // → { name: "fig", port: 8080 }
 
 // Serialize plain JS values to any format.
-stringify({ name: "fig", tags: ["a", "b"] }, Format.Yaml);
+stringify({ name: "fig", tags: ["a", "b"] }, Yaml);
 // → "name: fig\ntags: [a, b]\n"
 
 // Convert one format to another in a single call (comments preserved where the
 // target allows).
-convert("name: fig\nport: 8080\n", Format.Yaml, Format.Json);
+convert("name: fig\nport: 8080\n", Yaml, Json);
 // → '{\n  "name": "fig",\n  "port": 8080\n}\n'
 ```
 
 The examples in the rest of this guide assume the formats they use are
-registered this way.
+registered this way, each held in a constant named after it (`Json`, `Toml`,
+`Yaml`).
 
 `parse` takes an optional type parameter to assert the shape you expect (no
 runtime check is performed):
 
 ```ts
 interface Config { name: string; port: number }
-const cfg = parse<Config>('name = "fig"\nport = 8080\n', Format.Toml);
+const cfg = parse<Config>('name = "fig"\nport = 8080\n', Toml);
 cfg.port; // typed as number
 ```
 
 ## Formats
 
 Every format is a language you import from `@diaryx/fig/languages/<name>` and
-pass to `registerLanguage`. It then takes the format's own number, so
-`Format.Yaml` reaches it everywhere: `parse`, `Editor`, `convert`, markdown
-frontmatter and fenced blocks. A format you don't import costs nothing.
+pass to `registerLanguage`, which returns its `Format`: an opaque handle that
+`parse`, `Editor`, `convert` and the rest take. The language object holds it
+from then on too (`yaml.format`), and every dialect is found by its name
+(`formatByName("jsonc")`). Markdown frontmatter, fenced blocks and HTML
+islands reach a registered language through the embed spellings it declares.
+A format you don't import costs nothing.
 
-| `Format`     | Import                          | Notes |
+| Dialect      | Import                          | Notes |
 | ------------ | ------------------------------- | ----- |
-| `Json`       | `@diaryx/fig/languages/json`    | Strict JSON (no comments). |
-| `Jsonc`      | `@diaryx/fig/languages/json5`   | JSON with `//` and `/* */` comments; a dialect of the JSON5 language. |
-| `Json5`      | `@diaryx/fig/languages/json5`   | Unquoted keys, trailing commas, etc. |
-| `Yaml`       | `@diaryx/fig/languages/yaml`    | YAML 1.2.2; its `yaml-1.1` dialect resolves scalars as 1.1 (`formatByName("yaml-1.1")`). |
-| `Toml`       | `@diaryx/fig/languages/toml`    | TOML 1.0 / 1.1, incl. datetimes. |
-| `Fig`        | `@diaryx/fig/languages/fig`     | The native `fig` authoring dialect. |
-| `Ini`        | `@diaryx/fig/languages/ini`     | `[section]` + `key = value`. Untyped scalars — `port = 8080` reads back as the string `"8080"`. |
-| `Dotenv`     | `@diaryx/fig/languages/dotenv`  | Flat `KEY=value`: no nesting, untyped scalars. |
-| `Properties` | `@diaryx/fig/languages/properties` | Java `.properties`; same flat, untyped limits as `Dotenv`. |
-| `Nestedtext` | `@diaryx/fig/languages/nestedtext` | [NestedText](https://nestedtext.org) — nested (dict/list) but deliberately untyped. |
-| `Zon`        | `@diaryx/fig/languages/zon`     | Zig Object Notation. |
-| `Plist`      | `@diaryx/fig/languages/plist`   | Apple XML property list; typed and nested. |
+| `json`       | `@diaryx/fig/languages/json`    | Strict JSON (no comments). |
+| `jsonc`      | `@diaryx/fig/languages/json5`   | JSON with `//` and `/* */` comments; a dialect of the JSON5 language. |
+| `json5`      | `@diaryx/fig/languages/json5`   | Unquoted keys, trailing commas, etc. |
+| `yaml`       | `@diaryx/fig/languages/yaml`    | YAML 1.2.2; its `yaml-1.1` dialect resolves scalars as 1.1. |
+| `toml`       | `@diaryx/fig/languages/toml`    | TOML 1.0 / 1.1, incl. datetimes. |
+| `fig`        | `@diaryx/fig/languages/fig`     | The native `fig` authoring dialect. |
+| `ini`        | `@diaryx/fig/languages/ini`     | `[section]` + `key = value`. Untyped scalars — `port = 8080` reads back as the string `"8080"`. |
+| `dotenv`     | `@diaryx/fig/languages/dotenv`  | Flat `KEY=value`: no nesting, untyped scalars. |
+| `properties` | `@diaryx/fig/languages/properties` | Java `.properties`; same flat, untyped limits as dotenv. |
+| `nestedtext` | `@diaryx/fig/languages/nestedtext` | [NestedText](https://nestedtext.org) — nested (dict/list) but deliberately untyped. |
+| `zon`        | `@diaryx/fig/languages/zon`     | Zig Object Notation. |
+| `plist`      | `@diaryx/fig/languages/plist`   | Apple XML property list; typed and nested. |
+
+A format is a handle assigned per process, in registration order: persist
+its **name**, never the number, and resolve it with `formatByName(name)`
+(`null` when no registered language has the name) or `requireFormat(name)`,
+which throws instead. `formatName(format)` goes the other way.
 
 Every language reads, edits and serializes. Each is held by the package's
 tests to fig's compiled format of the same name: the same tree for every
@@ -146,31 +156,31 @@ fixture, and the same bytes printed.
 
 Register at startup, before the first call that uses the format. Registering
 the same language again returns the format it already has, so a library and
-the application using it may each register what they import. A call on a
-format nobody registered throws a `FigError` naming the module to import:
+the application using it may each register what they import. Looking up a
+format nobody registered with `requireFormat`, or opening an embed whose
+language nobody registered, throws a `FigError` naming the module to import:
 
 ```ts
-parse("a = 1\n", Format.Toml);
-// FigError: fig_parse: no language is registered for this format — import toml
-// from "@diaryx/fig/languages/toml" and pass it to registerLanguage()
+requireFormat("toml");
+// FigError: requireFormat("toml"): no language is registered for the format
+// "toml" — import toml from "@diaryx/fig/languages/toml" and pass it to
+// registerLanguage()
 ```
 
-`capabilities(format)` reports what a format can do right now, all `false`
-until its language is registered:
+`capabilities(format)` reports what a format can do — the `caps` its
+language declared:
 
 ```ts
-import { capabilities, registerLanguage, Format } from "@diaryx/fig";
+import { capabilities, registerLanguage } from "@diaryx/fig";
 import yaml from "@diaryx/fig/languages/yaml";
 
-capabilities(Format.Yaml); // → { read: false, edit: false, serialize: false, references: false }
-registerLanguage(yaml);
-capabilities(Format.Yaml); // → { read: true, edit: true, serialize: true, references: true }
+capabilities(registerLanguage(yaml)); // → { read: true, edit: true, serialize: true, references: true }
 ```
 
-The four untyped formats — `Ini`, `Dotenv`, `Properties`, `Nestedtext` — parse
+The four untyped formats — INI, dotenv, `.properties`, NestedText — parse
 every scalar as a string; nothing infers a number or a boolean from them. The
-first three are also shape-limited (`Ini` holds one level of sections; `Dotenv`
-and `Properties` are flat), so serializing a nested value to one of them drops
+first three are also shape-limited (INI holds one level of sections; dotenv
+and `.properties` are flat), so serializing a nested value to one of them drops
 what it cannot hold — run `diagnose` first to see exactly what.
 
 ## Reading data
@@ -179,11 +189,11 @@ For most cases, `parse` is all you need. When you want one value out of a large
 document without materializing the whole thing, open a `Document` and use `get`:
 
 ```ts
-import { Document, Format } from "@diaryx/fig";
+import { Document } from "@diaryx/fig";
 
 using doc = Document.parse(
   "[server]\nhost = \"localhost\"\nports = [80, 443]\n",
-  Format.Toml,
+  Toml,
 );
 
 doc.get(["server", "host"]);     // → "localhost"
@@ -230,14 +240,14 @@ When you need full fidelity — distinguishing `int` from `uint`, ordered non-st
 keys, or building datetimes — use the `Value` tree and its `V` constructors:
 
 ```ts
-import { V, stringify, Format } from "@diaryx/fig";
+import { V, stringify } from "@diaryx/fig";
 
 const value = V.map([
   [V.string("name"), V.string("fig")],
   [V.string("nums"), V.seq([V.int(1), V.int(2)])],
 ]);
 
-stringify(value, Format.Json); // '{\n  "name": "fig",\n  "nums": [\n    1,\n    2\n  ]\n}\n'
+stringify(value, Json); // '{\n  "name": "fig",\n  "nums": [\n    1,\n    2\n  ]\n}\n'
 ```
 
 `fromJS(jsValue)` lifts plain JS into a `Value`; `toJS(value)` lowers it back.
@@ -248,11 +258,11 @@ This is what sets `fig` apart. `Editor` splices only the bytes of the node you
 touch — everything else in the file is preserved exactly.
 
 ```ts
-import { Editor, Format } from "@diaryx/fig";
+import { Editor } from "@diaryx/fig";
 
 using ed = Editor.open(
   "# app config\nhost = \"localhost\"  # dev box\nport = 8080\n",
-  Format.Toml,
+  Toml,
 );
 
 ed.replaceValue(["port"], 9090);
@@ -344,7 +354,7 @@ twins, since no embed archetype hosts a scattered-container format today.
 `setSequence` has a narrower domain than the rest: it matches new items to old
 ones by *value* so a kept-or-merely-reordered item keeps its comments, which
 means each item has to parse as a standalone document. It therefore throws
-`InvalidArgument` on `Format.Toml` (whose scalars can't stand alone), on an
+`InvalidArgument` on `Toml` (whose scalars can't stand alone), on an
 empty list on either side, and on any non-scalar item. Nothing is lost there —
 a TOML inline array carries no per-element comments, so `replaceValue` on the
 whole list is equivalent. It earns its keep on `Yaml` and `Fig`, where per-item
@@ -414,6 +424,12 @@ string instead of a `Value`.
 `Embed` edits a config block embedded in a host file — markdown frontmatter, a
 fenced code block, a trailing endmatter block, or an HTML data island, holding
 JSON, YAML, TOML or `fig` — leaving the fences and surrounding prose intact.
+The inner language must be registered: the core finds it only through the
+embed spellings a registered language declares (see
+[Runtime languages](#runtime-languages)). Until it is, `Embed.open` and the
+rest throw a `FigError` naming the module to import, and `Embed.detect` does
+not recognize its blocks; the `;;;`, `+++` and endmatter presets are located
+without it, and need it only to be opened.
 
 ```ts
 import { Embed, EmbedType } from "@diaryx/fig";
@@ -492,10 +508,10 @@ Everything that takes an archetype is a static on `Embed`:
 `SerializeOptions`:
 
 ```ts
-stringify(value, Format.Json, { pretty: false });   // minified
-stringify(value, Format.Json, { indent: 4 });       // 4-space indent
-stringify(value, Format.Toml, { width: 40 });       // inline vs [section] budget
-convert(src, Format.Yaml, Format.Json, { stripComments: true });
+stringify(value, Json, { pretty: false });   // minified
+stringify(value, Json, { indent: 4 });       // 4-space indent
+stringify(value, Toml, { width: 40 });       // inline vs [section] budget
+convert(src, Yaml, Json, { stripComments: true });
 ```
 
 | Option          | Applies to           | Meaning                                            |
@@ -518,15 +534,15 @@ datetimes or comments. `diagnose` tells you exactly what *would* be lost, withou
 doing it:
 
 ```ts
-import { Document, Format, WarningCode } from "@diaryx/fig";
+import { Document, WarningCode } from "@diaryx/fig";
 
-using doc = Document.parse("a: null\nb: 1 # keep\n", Format.Yaml);
+using doc = Document.parse("a: null\nb: 1 # keep\n", Yaml);
 
 // TOML has no null, so `a` would be dropped (its comments would survive).
-doc.diagnose(Format.Toml); // → [{ code: ValueDropped, path: "a", ... }]
+doc.diagnose(Toml); // → [{ code: ValueDropped, path: "a", ... }]
 
 // Strict JSON has no comments, so the `# keep` comment on `b` would be dropped.
-doc.diagnose(Format.Json); // → [{ code: CommentDropped, path: "b", ... }]
+doc.diagnose(Json); // → [{ code: CommentDropped, path: "b", ... }]
 ```
 
 To *preserve* those values instead, pass `{ lossless: true }` — unrepresentable
@@ -534,14 +550,14 @@ values are round-tripped through a `$fig` envelope, and `diagnose` then reports
 nothing lost:
 
 ```ts
-convert("a: null\nb: 1\n", Format.Yaml, Format.Toml, { lossless: true });
+convert("a: null\nb: 1\n", Yaml, Toml, { lossless: true });
 ```
 
 There's also a top-level `diagnose(value, format, options?)` for a built `Value`.
 
 ## Runtime languages
 
-A format the module did not compile in can be an object. `registerLanguage`
+Every format is an object. `registerLanguage`
 takes a `Language` — what the format declares, and the functions it is — and
 hands back a `Format` that every call above accepts from then on, at the tier
 its `caps` declare: `Document.parse`, `Editor.open`, `convert`, `capabilities`,
@@ -549,7 +565,7 @@ all of them, with the format's own parser reading and its own printer writing,
 and fig's splice engine editing between them.
 
 ```ts
-import { registerLanguage, parse, convert, Editor, Format, type Language } from "@diaryx/fig";
+import { registerLanguage, parse, convert, Editor, type Language } from "@diaryx/fig";
 
 const tinykv: Language = {
   name: "tinykv",
@@ -579,7 +595,7 @@ const tinykv: Language = {
 
 const fmt = registerLanguage(tinykv);
 parse("a=1\n", fmt);                        // → { a: "1" }
-convert("a=1\n", fmt, Format.Json);         // → '{\n  "a": "1"\n}\n'
+convert("a=1\n", fmt, Json);         // → '{\n  "a": "1"\n}\n'
 using ed = Editor.open("a=1\n", fmt);
 ed.setValue(["b"], "2");                          // the splice engine writes `b=2` from `syntax`
 ed.source();                                 // → "a=1\nb=2\n"
@@ -613,15 +629,21 @@ edited before anything is registered — so a language whose `syntax` cannot
 splice its own samples, or whose `print` does not round-trip its `parse`, is
 refused with the reason as a `FigError`, and nothing is registered. A name a
 language registered earlier already has is refused the same way, unless it is
-the same object again, which returns the format it has. A format's own name —
-`yaml` — is free until a language takes it, and that language stands in for
-the format; to set your own beside it, name it apart (`js-yaml`). Refuse
+the same object again, which returns the format it has. A name is free until
+a language takes it: to set your own YAML beside the package's, name it
+apart (`js-yaml`). Refuse
 input from `parse` by throwing a
 `LanguageError` with a message and byte offset; anything else you throw is
 reported as a parse error without one. A registered language lives for the
-rest of the process, and its `Format` integer is assigned per process — persist
-the **name** and resolve it with `formatByName(name)`, which also answers for
-the package's formats (`formatByName("yaml")` is `Format.Yaml`).
+rest of the process, and its `Format` is assigned per process — persist
+the **name** and resolve it with `formatByName(name)`.
+
+**Embedding.** A dialect that may sit in a host file declares how it is
+spelled there, in its `embed` row: `fence_tag` (and `fence_aliases`) for a
+fenced block, `frontmatter` for its `---<lang>` opener, `script_mime` (and
+`script_mime_aliases`) for an HTML `<script>` island, `code_class` for a
+`<pre><code>` block. `Embed` finds an inner language only through these —
+the package's `json`, `yaml`, `toml` and `fig` declare theirs.
 
 **Editing needs no code.** fig's splice engine writes an edit from `syntax`
 alone — what a comment looks like, what separates a key from its value, how
@@ -646,9 +668,7 @@ last item, so a trailing separator (`1 | 2 |`) stays trailing. The kit's
 
 **The package's own languages** are written this way: every format in
 [Formats](#formats) is a `Language` at `@diaryx/fig/languages/<name>`, named
-after the format it serves. A language named after a format with no language
-yet stands in for it, at the format's own number. `canonical`, fig's canonical
-form, is one more, which registers as a new format.
+after the format it serves. `canonical`, fig's canonical form, is one more.
 
 The languages are written with `@diaryx/fig/kit`, which the package ships
 for your own formats too:
@@ -712,10 +732,10 @@ failed, and, for parse failures, the core's diagnostic message and source
 location when available:
 
 ```ts
-import { Document, Format, FigError, Status } from "@diaryx/fig";
+import { Document, FigError, Status } from "@diaryx/fig";
 
 try {
-  Document.parse("{ not valid", Format.Json);
+  Document.parse("{ not valid", Json);
 } catch (err) {
   if (err instanceof FigError && err.status === Status.ParseError) {
     console.error(err.op);               // "fig_parse"
@@ -742,7 +762,7 @@ The best way is a `using` declaration, which disposes it at the end of the scope
 even on a throw:
 
 ```ts
-using ed = Editor.open(src, Format.Yaml);
+using ed = Editor.open(src, Yaml);
 // ...edit...
 return ed.source();
 // handle released here automatically
@@ -752,7 +772,7 @@ If you can't use `using`, call `.dispose()` yourself (it's idempotent), ideally 
 a `finally`:
 
 ```ts
-const doc = Document.parse(src, Format.Json);
+const doc = Document.parse(src, Json);
 try {
   return doc.get(["version"]);
 } finally {
@@ -781,9 +801,12 @@ manage the handle for you, so no cleanup is needed.
 - `diagnose(value, format, options?)` — lossy-conversion warnings for a `Value`.
 - `version()` / `versionString()` / `capabilities(format)` — introspection.
 - `registerLanguage(lang)` — register a format written in JavaScript, one of
-  `@diaryx/fig/languages/*` or your own; returns its `Format`, and the same
-  `Format` again for the same object. `formatByName(name)` — the `Format` of
-  a registered name, or `null`.
+  `@diaryx/fig/languages/*` or your own; returns its `Format` (also
+  `lang.format` from then on), and the same `Format` again for the same
+  object. `formatByName(name)` — the `Format` of a registered dialect name,
+  or `null`; `requireFormat(name)` — the same, throwing a `FigError` that
+  names the module to import; `formatName(format)` — a format's dialect
+  name, or `null`.
 - `serve(lang, io?)` — run `lang` as a `fig` CLI helper over stdin/stdout.
   `handle(lang, line)` — the wire, one request line to one response line.
   `describe(lang)` — the wire's `description` of `lang`. All three, the
@@ -805,20 +828,22 @@ manage the handle for you, so no cleanup is needed.
 
 - `V` — `Value` constructors (`V.null()`, `V.int()`, `V.uint()`, `V.float()`,
   `V.string()`, `V.bool()`, `V.extended()`, `V.seq()`, `V.map()`).
-- `Format`, `NodeKind`, `ExtKind`, `EmbedType`, `Status`, `WarningCode`,
+- `Format` — a type only: the opaque handle of a registered dialect, from
+  `registerLanguage`, `formatByName` or a language's `format`.
+- `NodeKind`, `ExtKind`, `EmbedType`, `Status`, `WarningCode`,
   `WarningCause` — enums, each an `as const` object with a type of the same
-  name (`Format.Json` is a value, `Format` a type), not a TypeScript `enum`.
-  A number the core reports that has no name here — a format registered at
-  runtime, a node kind or warning code from a newer core — passes through
-  unchanged and compares numerically, so each type is its named members or
-  any number; there is no reverse lookup from a value to its name.
+  name (`NodeKind.Mapping` is a value, `NodeKind` a type), not a TypeScript
+  `enum`. A number the core reports that has no name here — a node kind or
+  warning code from a newer core — passes through unchanged and compares
+  numerically, so each type is its named members or any number; there is no
+  reverse lookup from a value to its name.
 - `FigError` — the thrown error type. `LanguageError` — how a `Language`
   refuses its input, with a byte offset.
 - Types: `Value`, `JsValue` (read side), `JsInput` (write side), `Segment`,
   `SerializeOptions`, `Warning`, `ParseDetail`, `Region`, `Span`, `Version`,
   `Capabilities`.
 - Runtime-language types, the wire's shapes field for field: `Language`,
-  `Dialect`, `Syntax`, `Comments`, `CommentDelimiter`, `SectionHeader`,
+  `Dialect`, `EmbedSpellings`, `Syntax`, `Comments`, `CommentDelimiter`, `SectionHeader`,
   `ClosedContainers`, `NativeKinds`, `Renderer`, `Literal`, `RenderArgs`,
   `PrintOptions`, `NodeTable`, `NodeRow`, `RowKind`, `RowExtKind`, `RowSpan`,
   `RegionRow`, `MentionRow`, `CommentRow`, `DirectiveRow`, `HelperIo`.

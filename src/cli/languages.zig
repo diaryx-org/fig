@@ -11,9 +11,9 @@
 //! `fig lang list` and `fig lang check` are the two actions that spawn on
 //! purpose. The WASI build, which cannot spawn, asks its host first
 //! (`host_languages.zig`): `@diaryx/fig-wasi` serves `@diaryx/fig`'s
-//! JavaScript languages in-process. A format this build compiled out is not something the CLI can
-//! resolve itself either: its name, extension and embedded spellings reach
-//! the configured language standing in for it (`standIn`).
+//! JavaScript languages in-process. A format this build does not bundle is
+//! not something the CLI can resolve itself either: its name, extension and
+//! embedded spellings reach the configured language of that name.
 //!
 //! The helper runner is a `fig.Wire.Transport` — the wire
 //! `bindings/rust/fig/src/helper.rs` documents, newline-delimited JSON, one
@@ -94,7 +94,7 @@ pub fn init(io: Io, allocator: Allocator, environ: *const std.process.Environ.Ma
     state.environ = environ;
     // The languages this binary carries, registered before anything looks
     // one up, and in the allocator a configured helper's registration uses.
-    if (comptime !build_options.compiled_registry) fig.bundle.registerAll(allocator) catch {};
+    fig.bundle.registerAll(allocator) catch {};
 }
 
 // ── configuration ──────────────────────────────────────────────────────────
@@ -303,25 +303,7 @@ pub fn resolveExtension(ext: []const u8) ?Format {
     return null;
 }
 
-/// `f`, or the configured language standing in for it when `f` is a format
-/// this build compiled out: `--input yaml` in a build without YAML reaches
-/// a `languages.figl` block that serves a `yaml` dialect, which registers
-/// at YAML's own integer (`fig.Runtime.register`), so an embedded region
-/// the core parses reaches it too. Any other `f`, and a compiled-out one
-/// nothing configured answers to, is handed back as it is, and reading it
-/// is the `FormatDisabled` it always was.
-pub fn standIn(f: Format) Format {
-    if (types.runtimeEntry(f) != null) return f;
-    const tag = @tagName(f);
-    const abi = fig.Language.standInAbi(tag) orelse return f;
-    // A language already registered at the format's own number: the
-    // bundle's, in a build whose compiled registry is empty.
-    if (Runtime.entryByAbi(abi)) |e| return types.runtimeFormat(e);
-    return resolveName(tag) orelse f;
-}
-
-/// The registered language that owns extension `ext` — the bundle's, in a
-/// build whose compiled registry is empty — or null.
+/// The registered language that owns extension `ext`, or null.
 pub fn registeredExtension(ext: []const u8) ?Format {
     var i: usize = 0;
     while (i < Runtime.count()) : (i += 1) {
@@ -329,15 +311,6 @@ pub fn registeredExtension(ext: []const u8) ?Format {
         for (e.extensions) |x| if (std.mem.eql(u8, x, ext)) return types.runtimeFormat(e);
     }
     return null;
-}
-
-/// Ask for the language standing in for every format this build compiled
-/// out that content sniffing tries (`fig.Language.detect`), so it is
-/// registered to be tried. Nothing, in a build that compiles them all in.
-pub fn registerStandIns() void {
-    inline for (@typeInfo(fig.Language.Detected).@"enum".field_names) |f_name| {
-        if (comptime fig.Language.entryFor(f_name).Lang == void) _ = standIn(@field(Format, f_name));
-    }
 }
 
 /// Spawn and register `c` if it has not been, and hand back its `Format`.
@@ -496,22 +469,19 @@ fn expandArgv(a: Allocator, command: []const []const u8) ![]const []const u8 {
 
 // ── `fig lang` ─────────────────────────────────────────────────────────────
 
-/// `fig lang list`: every compiled format and every configured language,
+/// `fig lang list`: every format fig ships and every configured language,
 /// with what each can do. A configured language is spawned to be asked.
 pub fn list(io: Io, a: Allocator, out: *Io.Terminal) !void {
     _ = io;
     _ = a;
-    try out.writer.writeAll(if (host_languages.enabled) "formats:\n" else "compiled:\n");
-    inline for (fig.Language.dialects) |d| {
-        if (comptime d.Lang == void) {
-            // The WASI build's host serves what it did not compile in.
-            if (host_languages.byName(d.name)) |e| {
-                try out.writer.print("  {s:<14} {s}  (a JavaScript language, served by the host)\n", .{ d.name, capsWord(e.language.caps) });
-            } else if (Runtime.entryByName(d.name)) |e| {
-                // The bundle's, in a build whose compiled registry is empty.
-                try out.writer.print("  {s:<14} {s}\n", .{ d.name, capsWord(e.language.caps) });
-            } else try out.writer.print("  {s:<14} compiled out\n", .{d.name});
-        } else try out.writer.print("  {s:<14} {s}\n", .{ d.name, capsWord(d.Lang.caps) });
+    try out.writer.writeAll(if (host_languages.enabled) "formats:\n" else "built in:\n");
+    for (fig.bundle.all_dialects) |n| {
+        if (host_languages.byName(n)) |e| {
+            // The WASI build's host serves what it does not bundle.
+            try out.writer.print("  {s:<14} {s}  (a JavaScript language, served by the host)\n", .{ n, capsWord(e.language.caps) });
+        } else if (Runtime.entryByName(n)) |e| {
+            try out.writer.print("  {s:<14} {s}\n", .{ n, capsWord(e.language.caps) });
+        } else try out.writer.print("  {s:<14} not built in\n", .{n});
     }
     // A WASI build spawns nothing (`load`).
     if (comptime builtin.os.tag == .wasi) return out.writer.flush();
@@ -540,7 +510,7 @@ pub fn list(io: Io, a: Allocator, out: *Io.Terminal) !void {
     try out.writer.flush();
 }
 
-fn capsWord(caps: fig.Language.Caps) []const u8 {
+fn capsWord(caps: Runtime.manifest.Caps) []const u8 {
     if (caps.read and caps.edit and caps.serialize) return "read edit serialize";
     if (caps.read and caps.serialize) return "read serialize";
     if (caps.read and caps.edit) return "read edit";
@@ -580,8 +550,8 @@ pub fn check(io: Io, a: Allocator, out: *Io.Terminal, err_term: *Io.Terminal, na
     try out.writer.writeAll("\n");
 
     if (against) |sibling_name| {
-        const sibling = std.meta.stringToEnum(Format, sibling_name) orelse {
-            try err_term.writer.print("error: `--against` names a compiled format; `{s}` is not one\n", .{sibling_name});
+        const sibling = types.named(sibling_name) orelse {
+            try err_term.writer.print("error: `--against` names a format; `{s}` is not one\n", .{sibling_name});
             try err_term.writer.flush();
             std.process.exit(2);
         };
@@ -600,13 +570,13 @@ pub fn check(io: Io, a: Allocator, out: *Io.Terminal, err_term: *Io.Terminal, na
         const parse_dispatch = @import("parse_dispatch.zig");
         for (inputs.items) |in| {
             var reports: parse_dispatch.Reports = .{};
-            const mine = parse_dispatch.parseSliceAs(format, .{}, a, in.content, false, &reports) catch |perr| {
-                try err_term.writer.print("{s}: `{s}` does not parse it: {s}\n", .{ in.label, e.name, if (reports.runtime) |d| d.message else @errorName(perr) });
+            const mine = parse_dispatch.parseSliceAs(format, a, in.content, &reports) catch |perr| {
+                try err_term.writer.print("{s}: `{s}` does not parse it: {s}\n", .{ in.label, e.name, if (reports.diag) |d| d.message else @errorName(perr) });
                 try err_term.writer.flush();
                 std.process.exit(1);
             };
             var sib_reports: parse_dispatch.Reports = .{};
-            const theirs = parse_dispatch.parseSliceAs(sibling, .{}, a, in.content, false, &sib_reports) catch |perr| {
+            const theirs = parse_dispatch.parseSliceAs(sibling, a, in.content, &sib_reports) catch |perr| {
                 try err_term.writer.print("{s}: `{s}` does not parse it: {s}\n", .{ in.label, sibling_name, @errorName(perr) });
                 try err_term.writer.flush();
                 std.process.exit(1);
@@ -636,13 +606,13 @@ pub fn printTable(io: Io, a: Allocator, out: *Io.Terminal, err_term: *Io.Termina
     const content = try fileio.readAll(a, io, handle);
     const format = input orelse
         (if (args.detectLanguageFromFileEnding(file)) |d| d.format else try parse_dispatch.resolveFormatFromContent(a, content, file));
-    const spec = parse_dispatch.resolveSpec(format, spec_str) catch {
+    const dialect = parse_dispatch.resolveSpec(format, spec_str) catch {
         try err_term.writer.print("error: --spec {s} is not a version of {s}\n", .{ spec_str.?, types.name(format) });
         try err_term.writer.flush();
         return error.UnsupportedSpec;
     };
     var reports: parse_dispatch.Reports = .{};
-    const doc = parse_dispatch.parseSliceAs(format, spec, a, content, false, &reports) catch |err| {
+    const doc = parse_dispatch.parseSliceAs(dialect, a, content, &reports) catch |err| {
         try reports.reportDiagnostics(err_term, content, file);
         return err;
     };

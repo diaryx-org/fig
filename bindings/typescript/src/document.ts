@@ -14,7 +14,7 @@ import {
   disposedError,
   ExtKind,
   FigError,
-  Format,
+  type Format,
   NodeKind,
   Status,
   WarningCause,

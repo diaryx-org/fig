@@ -15,23 +15,7 @@ const std = @import("std");
 const AST = @import("kit/ast/ast.zig");
 const build_options = @import("build_options");
 
-/// The format registry `Format` is reified from.
-const Language = @import("languages/language.zig");
 const Runtime = @import("languages/runtime.zig");
-
-/// The source format to parse before mapping onto `T`: exactly the format
-/// registry entries marked `deserializable`, in registry order. A format that
-/// was compiled out is still a valid enum value (the registry keeps every
-/// entry in every build), but parsing it yields `error.FormatDisabled` — see
-/// `parseToAst`.
-pub const Format = @Enum(
-    Language.EnumTag(format_names),
-    .exhaustive,
-    format_names,
-    &Language.enumValues(format_names),
-);
-
-const format_names = Language.namesOf(.deserializable);
 
 pub const Options = struct {
     /// Mapping keys with no matching struct field are ignored when true (the
@@ -75,7 +59,8 @@ pub fn parseFromSlice(
     comptime T: type,
     allocator: std.mem.Allocator,
     source: []const u8,
-    format: Format,
+    /// The registered dialect to parse `source` as (`"yaml"`, `"json5"`).
+    format: []const u8,
     options: Options,
 ) !Parsed(T) {
     const arena = try allocator.create(std.heap.ArenaAllocator);
@@ -94,7 +79,7 @@ pub fn parseFromSliceLeaky(
     comptime T: type,
     allocator: std.mem.Allocator,
     source: []const u8,
-    format: Format,
+    format: []const u8,
     options: Options,
 ) !T {
     var ast = try parseToAst(allocator, source, format);
@@ -102,24 +87,12 @@ pub fn parseFromSliceLeaky(
     return parseValue(T, allocator, &ast, ast.root, options);
 }
 
-/// Parse through the registry: a `deserializable` dialect's language declares
-/// `parseAbstract` (an optional `Language` decl that `validate` requires of
-/// exactly those languages), and the dialect row says which `Type` to parse
-/// as. A gated-out language has `Lang == void` and refuses, so no parser is
-/// pulled into a build that gates its format out.
-fn parseToAst(allocator: std.mem.Allocator, source: []const u8, format: Format) !AST {
-    return switch (format) {
-        inline else => |f| blk: {
-            const d = comptime Language.entryFor(@tagName(f));
-            if (comptime d.Lang == void) {
-                // Not compiled in: the language registered under the name.
-                const e = Runtime.entryByName(@tagName(f)) orelse break :blk error.FormatDisabled;
-                const doc = try Runtime.Language.Parser.parse(allocator, source, e.typeOf());
-                break :blk doc.intoAst(allocator);
-            }
-            break :blk d.Lang.parseAbstract(allocator, source, d.dialect);
-        },
-    };
+/// Parse through the language registered under `format`, keeping only its
+/// tree; `error.UnsupportedFormat` when no dialect has that name.
+fn parseToAst(allocator: std.mem.Allocator, source: []const u8, format: []const u8) !AST {
+    const e = Runtime.entryByName(format) orelse return error.UnsupportedFormat;
+    const doc = try Runtime.Language.Parser.parse(allocator, source, e.typeOf());
+    return doc.intoAst(allocator);
 }
 
 fn parseValue(comptime T: type, allocator: std.mem.Allocator, ast: *const AST, id: AST.Node.Id, options: Options) Error!T {
@@ -304,7 +277,7 @@ test "deserialize: yaml into a struct (defaults, optionals, unknown ignored)" {
         \\extra: ignored
         \\
     ;
-    const parsed = try parseFromSlice(Config, testing.allocator, src, .yaml, .{});
+    const parsed = try parseFromSlice(Config, testing.allocator, src, "yaml", .{});
     defer parsed.deinit();
 
     try testing.expectEqualStrings("Hi", parsed.value.title);
@@ -321,7 +294,7 @@ test "deserialize: yaml into a struct (defaults, optionals, unknown ignored)" {
 test "deserialize: json into a struct" {
     if (comptime !build_options.lang_json) return error.SkipZigTest;
     const S = struct { name: []const u8, n: u32 };
-    const parsed = try parseFromSlice(S, testing.allocator, "{\"name\": \"x\", \"n\": 5}", .json, .{});
+    const parsed = try parseFromSlice(S, testing.allocator, "{\"name\": \"x\", \"n\": 5}", "json", .{});
     defer parsed.deinit();
     try testing.expectEqualStrings("x", parsed.value.name);
     try testing.expectEqual(@as(u32, 5), parsed.value.n);
@@ -331,11 +304,11 @@ test "deserialize: enums from string scalars" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const Color = enum { red, green, blue };
     const S = struct { c: Color };
-    const parsed = try parseFromSlice(S, testing.allocator, "c: green\n", .yaml, .{});
+    const parsed = try parseFromSlice(S, testing.allocator, "c: green\n", "yaml", .{});
     defer parsed.deinit();
     try testing.expectEqual(Color.green, parsed.value.c);
 
-    try testing.expectError(error.InvalidEnum, parseFromSlice(S, testing.allocator, "c: mauve\n", .yaml, .{}));
+    try testing.expectError(error.InvalidEnum, parseFromSlice(S, testing.allocator, "c: mauve\n", "yaml", .{}));
 }
 
 test "deserialize: strict unknown fields and missing required fields error" {
@@ -343,11 +316,11 @@ test "deserialize: strict unknown fields and missing required fields error" {
     const S = struct { a: u8, b: u8 };
     try testing.expectError(
         error.UnknownField,
-        parseFromSlice(S, testing.allocator, "a: 1\nb: 2\nx: 3\n", .yaml, .{ .ignore_unknown_fields = false }),
+        parseFromSlice(S, testing.allocator, "a: 1\nb: 2\nx: 3\n", "yaml", .{ .ignore_unknown_fields = false }),
     );
     try testing.expectError(
         error.MissingField,
-        parseFromSlice(S, testing.allocator, "a: 1\n", .yaml, .{}),
+        parseFromSlice(S, testing.allocator, "a: 1\n", "yaml", .{}),
     );
 }
 
@@ -357,13 +330,13 @@ test "deserialize: zon enum literals and toml scalars" {
     const S = struct { mode: Mode, n: u32 };
 
     // ZON: a `.field = value` struct, `.fast` an enum literal.
-    const z = try parseFromSlice(S, testing.allocator, ".{ .mode = .fast, .n = 3 }", .zon, .{});
+    const z = try parseFromSlice(S, testing.allocator, ".{ .mode = .fast, .n = 3 }", "zon", .{});
     defer z.deinit();
     try testing.expectEqual(Mode.fast, z.value.mode);
     try testing.expectEqual(@as(u32, 3), z.value.n);
 
     // TOML: enums come from string scalars.
-    const t = try parseFromSlice(S, testing.allocator, "mode = \"slow\"\nn = 9\n", .toml, .{});
+    const t = try parseFromSlice(S, testing.allocator, "mode = \"slow\"\nn = 9\n", "toml", .{});
     defer t.deinit();
     try testing.expectEqual(Mode.slow, t.value.mode);
     try testing.expectEqual(@as(u32, 9), t.value.n);
@@ -372,9 +345,9 @@ test "deserialize: zon enum literals and toml scalars" {
 test "deserialize: fixed-size array requires an exact-length sequence" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const S = struct { rgb: [3]u8 };
-    const ok = try parseFromSlice(S, testing.allocator, "rgb: [1, 2, 3]\n", .yaml, .{});
+    const ok = try parseFromSlice(S, testing.allocator, "rgb: [1, 2, 3]\n", "yaml", .{});
     defer ok.deinit();
     try testing.expectEqual([3]u8{ 1, 2, 3 }, ok.value.rgb);
 
-    try testing.expectError(error.UnexpectedType, parseFromSlice(S, testing.allocator, "rgb: [1, 2]\n", .yaml, .{}));
+    try testing.expectError(error.UnexpectedType, parseFromSlice(S, testing.allocator, "rgb: [1, 2]\n", "yaml", .{}));
 }

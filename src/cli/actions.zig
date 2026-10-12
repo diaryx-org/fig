@@ -260,7 +260,7 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     // file is the body.
     if (opts.body) {
         const content = try fileio.readAll(a, io, input);
-        const embed_type = args_mod.resolveEmbedTypeFromContent(content, opts.embed, opts.detect_embed) orelse fig.Embed.Type{ .frontmatter = .yaml };
+        const embed_type = args_mod.resolveEmbedTypeFromContent(content, opts.embed, opts.detect_embed) orelse args_mod.defaultEmbed() orelse return error.FormatDisabled;
         if (fig.Embed.locateRegion(content, embed_type)) |region| {
             try stdout_term.writer.writeAll(content[region.body_before.start..region.body_before.end]);
             try stdout_term.writer.writeAll(content[region.body_after.start..region.body_after.end]);
@@ -306,7 +306,7 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
             if (!opts.output_explicit) to = from;
         }
         var reports: parse_dispatch.Reports = .{};
-        const parsed = parse_dispatch.parseSliceAs(from, .{}, a, content, false, &reports) catch |err| {
+        const parsed = parse_dispatch.parseSliceAs(from, a, content, &reports) catch |err| {
             // A parse failure renders as a `file:line:col` teaching
             // message (DESIGN.md: every diagnostic names the fix) and
             // exits cleanly — no error-return trace for a user typo.
@@ -387,20 +387,18 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     // dropped/degraded, values dropped/degraded) — unless `--quiet`;
     // `--strict` turns any warning into a hard failure. A runtime target is
     // held to what its declaration says it holds.
-    const diag_target: fig.Runtime.Target = if (types.runtimeEntry(to)) |e|
-        .{ .runtime = e }
-    else
-        .{ .compiled = types.toSerializeFormat(to) orelse unreachable }; // gron returned above
+    const diag_target = types.toTarget(to) orelse unreachable; // gron returned above
     try parse_dispatch.reportLoss(a, stderr_term, ast, node_id, diag_target, opts.serialize, opts.lossless, opts.quiet, opts.strict);
 
-    // A runtime target prints through its vtable, with the same lossy
-    // strips a compiled one gets. A scalar comes back as the fragment the
-    // editor would splice — the value as it stands alone, no newline —
-    // where a compiled printer ends the line itself, so `get` ends it here
-    // to print the same as one.
-    const target: fig.Serialize.SerializeFormat = switch (diag_target) {
-        .compiled => |f| f,
-        .runtime => |e| {
+    switch (diag_target) {
+        // The oracle form holds every value; nothing to strip.
+        .canonical => fig.Serialize.serializeNodeWith(ast, stdout_term.writer, .canonical, node_id, opts.serialize) catch |err|
+            diag_report.reportSerializeError(stderr_term, err),
+        // A language prints through its vtable, after the lossy strips its
+        // declarations ask for. A scalar comes back as the fragment the
+        // editor would splice — the value as it stands alone, no newline —
+        // so `get` ends the line here.
+        .language => |e| {
             var out: std.Io.Writer.Allocating = .init(a);
             defer out.deinit();
             parse_dispatch.printRuntime(a, &out.writer, e, ast, node_id, opts.serialize, opts.lossless) catch |err| switch (err) {
@@ -414,50 +412,7 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
                 else => false,
             };
             if (!is_container and text.len > 0 and text[text.len - 1] != '\n') try stdout_term.writer.writeByte('\n');
-            try stdout_term.writer.flush();
-            return;
         },
-    };
-
-    // `!opts.lossless` only: under `--lossless` these formats fall through to
-    // the plain print below and, having no envelope of their own (see
-    // `fig.FlatStrip`'s module doc), surface whatever they can't hold as a
-    // real error via `reportSerializeError` — `--lossless` means "don't
-    // silently drop data," so silently stripping under it would defeat the
-    // flag's whole point.
-    const flat_strip_depth: ?usize = if (!opts.lossless) parse_dispatch.flatStripDepth(target) else null;
-
-    if (if (!opts.lossless) parse_dispatch.nullStripTarget(target) else null) |native| {
-        // The target has no null (TOML, by its own `caps.lossless`). In lossy
-        // mode, rather than the printer aborting mid-document on one, strip
-        // unrepresentable values up front so output stays valid and complete
-        // (the warnings above already reported them). `lossyStrip` re-roots
-        // at `node_id`, so the result serializes whole.
-        const result = try fig.Lossless.lossyStrip(a, ast, node_id, native);
-        if (result.ast) |stripped| {
-            try fig.Serialize.serializeWith(&stripped, stdout_term.writer, target, opts.serialize);
-        }
-    } else if (flat_strip_depth) |depth| {
-        // A flat format (INI/dotenv/.properties, by their own
-        // `caps.max_mapping_depth`): same idea as TOML's null-stripping
-        // above, but the capability rule is DEPTH-based, not
-        // scalar-kind-based — an array, or a table nested past what the
-        // format allows, would otherwise abort the printer mid-document
-        // (already warned about above).
-        const result = try fig.FlatStrip.lossyStrip(a, ast, node_id, depth);
-        if (result.ast) |stripped| {
-            try fig.Serialize.serializeWith(&stripped, stdout_term.writer, target, opts.serialize);
-        }
-    } else if (opts.path == null) {
-        fig.Serialize.serializeWith(ast, stdout_term.writer, target, opts.serialize) catch |err| switch (err) {
-            error.UnrepresentableRoot => diag_report.reportUnrepresentableRoot(stderr_term),
-            else => |e| diag_report.reportSerializeError(stderr_term, e),
-        };
-    } else {
-        fig.Serialize.serializeNodeWith(ast, stdout_term.writer, target, node_id, opts.serialize) catch |err| switch (err) {
-            error.UnrepresentableRoot => diag_report.reportUnrepresentableRoot(stderr_term),
-            else => |e| diag_report.reportSerializeError(stderr_term, e),
-        };
     }
     try stdout_term.writer.flush();
 }
@@ -470,25 +425,16 @@ fn scalarText(a: std.mem.Allocator, ast: *const fig.AST, id: fig.AST.Node.Id) !?
         .null_, .boolean, .number, .extended => {},
         .sequence, .mapping, .keyvalue, .alias => return null,
     }
-    // fig's spelling: compiled, or through the language standing in for
-    // it; JSON's otherwise, which agrees for every scalar but a datetime (a
-    // JSON string, unquoted here).
-    const compiled_fig = fig.Language.of("fig") != void;
-    const compiled_json = fig.Language.of("json") != void;
+    // fig's spelling; JSON's otherwise, which agrees for every scalar but
+    // a datetime (a JSON string, unquoted here).
+    const has_fig = args_mod.parseFormatName("fig") != null;
+    const target = fig.Serialize.Target.named(if (has_fig) "fig" else "json") orelse return error.FormatDisabled;
     var view = ast.*;
     view.root = id;
     var w: std.Io.Writer.Allocating = .init(a);
-    if (comptime !compiled_fig) {
-        if (types.runtimeEntry(languages.standIn(.fig))) |e| {
-            try fig.Runtime.printNodeWith(e, &w.writer, ast, id, .{});
-            return std.mem.trimEnd(u8, w.written(), "\n");
-        }
-        if (comptime !compiled_json) return error.FormatDisabled;
-    }
-    const target: fig.Serialize.SerializeFormat = if (comptime compiled_fig) .fig else .json;
     try fig.Serialize.serializeFragmentWith(&view, &w.writer, target, .{});
     const text = std.mem.trimEnd(u8, w.written(), "\n");
-    if (comptime !compiled_fig) if (ast.nodes[id].kind == .extended and text.len > 0 and text[0] == '"') return ast.nodes[id].kind.extended.text;
+    if (!has_fig) if (ast.nodes[id].kind == .extended and text.len > 0 and text[0] == '"') return ast.nodes[id].kind.extended.text;
     return text;
 }
 
@@ -506,22 +452,22 @@ pub fn runComment(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
     if (opts.get) {
         const comment = if (try args_mod.resolveEmbedType(io, a, input, opts.embed, opts.detect_embed)) |embed_type|
             try edit_ops.getCommentFromEmbed(a, io, input, embed_type, opts.path, opts.inline_comment)
-        else switch (resolved) {
+        else blk: {
             // Strict JSON has no comment syntax: there can be nothing to get.
             // The one refusal the shared dispatch can't state, because it is
             // about a DIALECT of an otherwise comment-carrying language — and
             // it is a message-and-exit(1), not an error value: the
             // document's format refuses, as it would a missing path.
-            .json => {
+            if (types.is(resolved, "json")) {
                 try stderr_term.writer.print("error: strict JSON has no comments; use a .jsonc or .json5 file instead.\n", .{});
                 try stderr_term.writer.flush();
                 std.process.exit(1);
-            },
+            }
             // Everything else reads its comment through the shared editor
             // dispatch. A format whose grammar has no same-line comment (INI,
             // NestedText) still answers a leading-comment read and surfaces
             // `error.CommentsUnsupported` from the editor under `--inline`.
-            else => try edit_ops.getCommentAs(a, io, input, resolved, opts.path, opts.inline_comment),
+            break :blk try edit_ops.getCommentAs(a, io, input, resolved, opts.path, opts.inline_comment);
         };
         // A missing comment is a missing path: nothing on stdout and exit 1,
         // the way `get` answers for a path that is not there, so "is there a
@@ -548,20 +494,20 @@ pub fn runComment(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
 
     if (try args_mod.resolveEmbedType(io, a, input, opts.embed, opts.detect_embed)) |embed_type| {
         try edit_ops.applyToEmbed(a, io, input, embed_type, opts.path, opts.text, .{}, op);
-    } else switch (resolved) {
+    } else {
         // Strict JSON has no comment syntax: fail with a clear message
-        // rather than letting the editor surface a bare error. Same explicit
-        // arm, and the same reason, as the `--get` branch above.
-        .json => {
+        // rather than letting the editor surface a bare error. The same
+        // refusal, and the same reason, as the `--get` branch above.
+        if (types.is(resolved, "json")) {
             try stderr_term.writer.print("error: strict JSON has no comments; use a .jsonc or .json5 file instead.\n", .{});
             try stderr_term.writer.flush();
             std.process.exit(1);
-        },
+        }
         // Everything else goes through the shared editor dispatch — JSONC/
         // JSON5's `//` comments reparse under their own dialect there, and
         // `--inline` set/delete on a format with no same-line comment syntax
         // surfaces `error.CommentsUnsupported` from the editor.
-        else => try edit_ops.applyToFileAs(a, io, input, resolved, opts.path, opts.text, .{}, op),
+        try edit_ops.applyToFileAs(a, io, input, resolved, opts.path, opts.text, .{}, op);
     }
 }
 
@@ -799,7 +745,7 @@ fn loadPatch(
     // what the merge reads all the way through — so a `&doc.ast` into a local
     // would dangle the moment this returns.
     const doc = try a.create(fig.Document);
-    doc.* = parse_dispatch.parseSliceAs(format, .{}, a, source, false, &reports) catch |err| {
+    doc.* = parse_dispatch.parseSliceAs(format, a, source, &reports) catch |err| {
         // Same contract as `get`'s: a parse failure in a file the user named
         // renders as a `file:line:col` teaching message, not an error name.
         try reports.reportDiagnostics(stderr_term, source, opts.patch_file);
@@ -825,9 +771,9 @@ fn loadPatch(
     view.root = root;
     const decoded = try a.create(fig.AST);
     decoded.* = try fig.Lossless.decode(a, &view);
-    // gron (no `SerializeFormat` of its own) encodes for JSON's declaration,
-    // as `runGet` does — its value layer is JSON.
-    const native = fig.Lossless.nativeFor(types.toSerializeFormat(target_format) orelse .json) orelse
+    // gron encodes for JSON's declaration, as `runGet` does — its value
+    // layer is JSON.
+    const native = parse_dispatch.nativeForFormat(target_format) orelse
         return .{ .ast = decoded, .root = decoded.root };
     const encoded = try a.create(fig.AST);
     encoded.* = try fig.Lossless.encode(a, decoded, native);
@@ -1005,12 +951,13 @@ pub fn runConvert(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
             // or silently dropping the half of it on the wrong side of the
             // block. Say so, and name the two conversions that do work.
             error.MidDocumentRegionCannotMove => {
+                var name_buf: [64]u8 = undefined;
                 try stderr_term.writer.print(
                     "error: `{s}` keeps its config in a mid-document block, which cannot move to `{s}`" ++
                         " without rewriting the host around it.\n" ++
                         "note: convert between mid-document archetypes (html-script-*, html-code-*) instead," ++
                         " or extract the config to its own file with `fig get`.\n",
-                    .{ opts.file, args_mod.embedTypeName(to_embed_type) },
+                    .{ opts.file, args_mod.embedTypeName(&name_buf, to_embed_type) },
                 );
                 try stderr_term.writer.flush();
                 std.process.exit(1);

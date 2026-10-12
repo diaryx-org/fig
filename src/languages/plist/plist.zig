@@ -60,15 +60,6 @@ pub const Language = struct {
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "plist",
         .prints = .{ .holds = .{ .plist_date = true, .plist_data = true }, .comments = .never },
-        .abi_value = 12,
-        // After ZON and before the key/value grammars, none of which accept a
-        // `<tag>`. Rank 4 was generic XML's until core 3.0 removed it; the
-        // gap is left so that any typed XML flavor added later (a `.csproj`
-        // reader, a manifest reader) has a slot in the XML-shaped part of the
-        // order without renumbering. plist's own grammar rejects anything
-        // outside its fixed element vocabulary (`error.UnknownElement`), so
-        // it cannot starve such a flavor.
-        .sniff_rank = 3,
         .splice = .raw,
         // A bare `<dict>` IS a document this parser accepts (see its `detect`
         // probe), so `fig set` on a nonexistent `.plist` can create one.

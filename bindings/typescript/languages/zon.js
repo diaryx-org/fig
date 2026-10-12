@@ -558,8 +558,8 @@ const language = {
     flow_map_open: ".{",
     flow_map_close: "}",
   },
-  // The compiled format's extension: where the format is compiled out
-  // and this stands in for it, the extension reaches it.
+  // The extension the Zig language claims: a file by that name reaches
+  // whichever of the two is registered.
   dialects: [{ name: "zon", extensions: ["zon"], splice: "literal", empty_doc_seed: ".{}\n", prints: { holds: { null: true, enum_literal: true, char_literal: true }, char_as: "number", comments: "pretty" } }],
   samples: ['.{ .a = 1, .b = .{ .c = "d" }, .e = .{ 1, 2 } }\n'],
   // A key's name as ZON writes a key: `.name`, or `.@"has space"`.

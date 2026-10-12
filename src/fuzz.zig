@@ -37,7 +37,8 @@
 const std = @import("std");
 
 const Canonical = @import("canonical/canonical.zig");
-const Language = @import("languages/language.zig");
+const Runtime = @import("languages/runtime.zig");
+const bundle = @import("languages/bundle.zig");
 
 /// Byte weights shaping random input into something the parsers will actually
 /// walk into rather than reject on the first token. The first entry must span
@@ -109,8 +110,8 @@ const canonical_weights: []const std.testing.Smith.Weight = &.{
 /// be a per-iteration heap allocation competing with the parser's own.
 const max_input = 2048;
 
-/// Breadth target: `Language.detect` tries every compiled-in parser in turn
-/// (`languages/language.zig`), discarding each Document, so this one call
+/// Breadth target: `Runtime.detectAmong` over every bundled dialect tries
+/// each parser in turn, discarding each Document, so this one call
 /// exercises all of them. The assertion is everything the test runner does
 /// implicitly around it — no crash, no hang, no leak (each iteration gets a
 /// fresh `testing.allocator` instance and fails on a leak) — which is why the
@@ -125,7 +126,7 @@ fn detectNeverCrashes(_: void, smith: *std.testing.Smith) anyerror!void {
 
     // `tryParse` frees every Document it builds, so a leak reported here is a
     // real one inside a parser's error path, not a harness artifact.
-    _ = Language.detect(std.testing.allocator, buf[0..len]);
+    _ = Runtime.detectAmong(std.testing.allocator, buf[0..len], bundle.dialect_names);
 }
 
 test "fuzz: detect never crashes or leaks on arbitrary input" {

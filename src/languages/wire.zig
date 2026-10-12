@@ -171,6 +171,16 @@ fn optString(a: Allocator, obj: std.json.ObjectMap, key: []const u8) !?[*:0]cons
     };
 }
 
+/// A string array as a NULL-terminated C array, or null when absent.
+fn optStrings(a: Allocator, obj: std.json.ObjectMap, key: []const u8) !?[*]const ?[*:0]const u8 {
+    const v = obj.get(key) orelse return null;
+    if (v != .array) return null;
+    var out: std.ArrayList(?[*:0]const u8) = .empty;
+    for (v.array.items) |x| if (x == .string) try out.append(a, try zstr(a, x.string));
+    try out.append(a, null);
+    return (try out.toOwnedSlice(a)).ptr;
+}
+
 fn boolOr(obj: std.json.ObjectMap, key: []const u8, default: bool) bool {
     const v = obj.get(key) orelse return default;
     return if (v == .bool) v.bool else default;
@@ -327,6 +337,7 @@ fn vtableFromDescription(a: Allocator, t: *Transport, desc: std.json.Value) !Run
             try exts.append(a, null);
             const splice: c_int = if (d.object.get("splice")) |sp| (if (sp == .string) (if (std.mem.eql(u8, sp.string, "escaped")) 1 else if (std.mem.eql(u8, sp.string, "raw")) 2 else 0) else 0) else 0;
             const pv = try printsOfWire(a, d.object.get("prints"));
+            const ev: ?std.json.ObjectMap = if (d.object.get("embed")) |e| (if (e == .object) e.object else null) else null;
             try dialects.append(a, .{
                 .name = try zstr(a, dn.string),
                 .extensions = (try exts.toOwnedSlice(a)).ptr,
@@ -338,6 +349,12 @@ fn vtableFromDescription(a: Allocator, t: *Transport, desc: std.json.Value) !Run
                 .prints_char_as = if (pv) |p| p.char_as else null,
                 .prints_number_special_as = if (pv) |p| p.number_special_as else null,
                 .prints_comments = if (pv) |p| p.comments else 0,
+                .embed_fence_tag = if (ev) |e| try optString(a, e, "fence_tag") else null,
+                .embed_fence_aliases = if (ev) |e| try optStrings(a, e, "fence_aliases") else null,
+                .embed_frontmatter = if (ev) |e| try optString(a, e, "frontmatter") else null,
+                .embed_script_mime = if (ev) |e| try optString(a, e, "script_mime") else null,
+                .embed_script_mime_aliases = if (ev) |e| try optStrings(a, e, "script_mime_aliases") else null,
+                .embed_code_class = if (ev) |e| try optString(a, e, "code_class") else null,
             });
         }
     };

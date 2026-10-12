@@ -51,9 +51,9 @@ case "$out" in *"tinykv         read edit serialize  .tkv"*) ;; *) fail "lang li
 out="$("$fig" lang check tinykv 2>/dev/null)"
 expect "lang check" "tinykv: registered (read edit serialize); every sample parsed, printed and reparsed to the same tree, and took a no-op edit" "$out"
 
-# `--lang` reads a file a compiled format owns by extension through the
+# `--lang` reads a file a bundled format owns by extension through the
 # helper; the extension reaches it without the flag; a path prints a value
-# with the line ended, as a compiled printer would.
+# with the line ended, as a bundled language's does.
 printf '# secret\nA=1\nB=two\n' > secrets.env
 cp secrets.env s.tkv
 expect "get --lang" "$(printf '# secret\nA=1\nB=two')" "$("$fig" get secrets.env --lang tinykv 2>/dev/null)"
@@ -85,7 +85,7 @@ printf 'a: 1\nb: 20\nc: 3\n' > overlay.yaml
 expect "patched file" "$(printf 'a=1\nb=20\nc=3')" "$(cat p.tkv)"
 
 # Conversion both ways, and fmt through the helper's printer. A nested
-# mapping is stripped before the print the way a compiled flat format's
+# mapping is stripped before the print the way a bundled flat format's
 # is: the helper declared max_mapping_depth 0, and 0 is a limit, not the
 # "no limit" sentinel.
 expect "convert out" "$(printf '{\n  "A": "10",\n  "C": "three"\n}')" "$("$fig" convert s.tkv -o json -q 2>/dev/null)"
@@ -93,7 +93,7 @@ printf '{"k":"v"}' > j.json
 expect "convert in" "k=v" "$("$fig" convert j.json -o tinykv 2>/dev/null)"
 printf 'a:\n  b: 1\nc: 2\nd: true\n' > n.yaml
 expect "flat strip" "$(printf 'c=2\nd=true')" "$("$fig" get n.yaml -o tinykv 2>/dev/null)"
-# ...and warned about, as a compiled flat format's is: the warning is read
+# ...and warned about, as a bundled flat format's is: the warning is read
 # off the same declaration the strip is, and `--strict` refuses it.
 expect "loss warning" "warning: dropped table value at \`a\` (tinykv cannot represent it)" "$("$fig" get n.yaml -o tinykv 2>&1 >/dev/null | grep '^warning')"
 set +e
@@ -157,22 +157,22 @@ set -e
 [ "$status" -eq 1 ] || fail "lang check of a broken helper exited $status"
 case "$out" in "broken: refused: could not start \`/nonexistent/helper\`: "*) ;; *) fail "broken helper not reported: $out" ;; esac
 
-# A helper named after a format this build compiled out stands in for it:
-# the format's own name and extension reach it, as input and as output.
-# plist is off in a default build; a build with it on has nothing to show.
-if "$fig" lang list 2>/dev/null | grep -q '^  plist  *compiled out'; then
+# A helper named after a format this build does not bundle is that format:
+# its name and extension reach it, as input and as output. plist is off in
+# a default build; a build with it on has nothing to show.
+if "$fig" lang list 2>/dev/null | grep -q '^  plist  *not built in'; then
     printf 'language[]\n> name = plist\n> command = [%s, plist]\n' "$helper" > standin.figl
     printf 'A=1\nB=two\n' > s.plist
-    expect "stand-in by extension" "1" "$(FIG_LANGUAGES="$tmp/standin.figl" "$fig" get s.plist A 2>/dev/null)"
-    expect "stand-in by --input" "two" "$(FIG_LANGUAGES="$tmp/standin.figl" "$fig" get -i plist - B < s.plist 2>/dev/null)"
-    expect "stand-in as --output" "k=v" "$(FIG_LANGUAGES="$tmp/standin.figl" "$fig" convert j.json -o plist 2>/dev/null)"
+    expect "unbundled format by extension" "1" "$(FIG_LANGUAGES="$tmp/standin.figl" "$fig" get s.plist A 2>/dev/null)"
+    expect "unbundled format by --input" "two" "$(FIG_LANGUAGES="$tmp/standin.figl" "$fig" get -i plist - B < s.plist 2>/dev/null)"
+    expect "unbundled format as --output" "k=v" "$(FIG_LANGUAGES="$tmp/standin.figl" "$fig" convert j.json -o plist 2>/dev/null)"
     FIG_LANGUAGES="$tmp/standin.figl" "$fig" set s.plist A 3 2>/dev/null
-    expect "stand-in edit" "$(printf 'A=3\nB=two')" "$(cat s.plist)"
+    expect "unbundled format edit" "$(printf 'A=3\nB=two')" "$(cat s.plist)"
     set +e
     FIG_LANGUAGES="$tmp/languages.figl" "$fig" get s.plist A >/dev/null 2>&1
     status=$?
     set -e
-    [ "$status" -ne 0 ] || fail "a compiled-out format read with nothing standing in for it succeeded"
+    [ "$status" -ne 0 ] || fail "a format this build does not bundle was read with no language configured for it"
 fi
 
 echo "cli-lang-check: the CLI reads, edits, converts and checks through a configured helper"

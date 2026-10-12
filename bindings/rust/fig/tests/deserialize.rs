@@ -28,21 +28,24 @@ fn from_slice_deserializes_every_format() {
     // Only the formats whose features are enabled are linked into the native
     // library; gate the cases so the suite passes under any feature selection.
     let mut cases: Vec<(&[u8], Format)> =
-        vec![(br#"{"name":"x","n":5,"tags":["a","b"]}"#, Format::Json)];
+        vec![(br#"{"name":"x","n":5,"tags":["a","b"]}"#, by_name("json"))];
     #[cfg(feature = "yaml")]
-    cases.push((b"name: x\nn: 5\ntags:\n- a\n- b\n", Format::Yaml));
+    cases.push((b"name: x\nn: 5\ntags:\n- a\n- b\n", by_name("yaml")));
     #[cfg(feature = "toml")]
     cases.push((
         b"name = \"x\"\nn = 5\ntags = [\"a\", \"b\"]\n",
-        Format::Toml,
+        by_name("toml"),
     ));
     #[cfg(feature = "zon")]
     cases.push((
         b".{ .name = \"x\", .n = 5, .tags = .{ \"a\", \"b\" } }",
-        Format::Zon,
+        by_name("zon"),
     ));
     #[cfg(feature = "fig")]
-    cases.push((b"name = \"x\"\nn = 5\ntags = [\"a\", \"b\"]\n", Format::Fig));
+    cases.push((
+        b"name = \"x\"\nn = 5\ntags = [\"a\", \"b\"]\n",
+        by_name("fig"),
+    ));
     for (src, format) in cases {
         let got: S = fig::from_slice(src, format).unwrap();
         assert_eq!(got, want, "mismatch for {format:?}");
@@ -254,4 +257,11 @@ fn parses_frontmatter_shapes() {
         let ours: Value = fig::from_yaml_str(src).unwrap();
         assert_eq!(ours, want, "mismatch for source:\n{src}");
     }
+}
+
+/// The registered format named `name`; a test that names one this build
+/// does not carry is a test bug.
+#[allow(dead_code)]
+fn by_name(name: &str) -> fig::Format {
+    fig::Format::by_name(name).unwrap_or_else(|| panic!("no format named {name:?}"))
 }

@@ -668,15 +668,15 @@ impl<I: Index> std::ops::Index<I> for Value {
 }
 
 /// Why `format` refused `value`, when the reason is a float it has no way to
-/// write: JSON and JSONC have no infinity or NaN. The core's status says only
-/// that the format cannot hold the value, which for these two formats and a
-/// value holding such a float can only be this.
+/// write: `json` and `jsonc` have no infinity or NaN. The core's status says
+/// only that the format cannot hold the value, which for these two dialects and
+/// a value holding such a float can only be this.
 fn non_finite_refusal(value: &Value, format: Format) -> Option<String> {
-    if !matches!(format, Format::Json | Format::Jsonc) {
+    let name = format.name();
+    if !matches!(name, "json" | "jsonc") {
         return None;
     }
     let f = first_non_finite(value)?;
-    let name = format.display_name();
     Some(if f.is_nan() {
         format!("{name} has no way to write NaN")
     } else {
@@ -924,6 +924,11 @@ impl<'de> serde::Deserialize<'de> for Value {
 mod tests {
     use super::*;
 
+    /// The registered format named `name`.
+    fn by_name(name: &str) -> Format {
+        Format::by_name(name).unwrap_or_else(|| panic!("no format named {name:?}"))
+    }
+
     // Exercises the whole build+serialize path with no serde involvement, so it
     // runs under `--no-default-features` too.
     #[test]
@@ -936,11 +941,11 @@ mod tests {
             ),
         ]);
         assert_eq!(
-            v.serialize(Format::Yaml).unwrap(),
+            v.serialize(by_name("yaml")).unwrap(),
             "name: fig\nnums: [1, 2]\n"
         );
         assert_eq!(
-            v.serialize(Format::Json).unwrap(),
+            v.serialize(by_name("json")).unwrap(),
             "{\n  \"name\": \"fig\",\n  \"nums\": [\n    1,\n    2\n  ]\n}\n",
         );
     }
@@ -949,7 +954,9 @@ mod tests {
     fn quotes_and_round_trip_safe_strings() {
         // A colon-space scalar must be single-quoted to stay a string.
         assert_eq!(
-            Value::Str("a: b".into()).serialize(Format::Yaml).unwrap(),
+            Value::Str("a: b".into())
+                .serialize(by_name("yaml"))
+                .unwrap(),
             "'a: b'\n"
         );
         // A multi-line string *value* becomes a `|` block scalar (a bare root
@@ -959,7 +966,7 @@ mod tests {
             Value::Str("multi\nline".into()),
         )]);
         assert_eq!(
-            v.serialize(Format::Yaml).unwrap(),
+            v.serialize(by_name("yaml")).unwrap(),
             "s: |-\n  multi\n  line\n"
         );
     }
@@ -1022,7 +1029,7 @@ mod tests {
     fn null_value_is_unsupported_in_toml() {
         let v = Value::Map(vec![(Value::Str("k".into()), Value::Null)]);
         assert!(matches!(
-            v.serialize(Format::Toml),
+            v.serialize(by_name("toml")),
             Err(Error::UnsupportedFormat)
         ));
     }
@@ -1030,9 +1037,9 @@ mod tests {
     // The non-serde read path: parse → to_value → serialize round-trips.
     #[test]
     fn document_reads_into_value() {
-        use crate::{Document, Format};
+        use crate::Document;
         let doc =
-            Document::parse(b"title: Hi\nnums:\n- 1\n- 2\nratio: 1.5\n", Format::Yaml).unwrap();
+            Document::parse(b"title: Hi\nnums:\n- 1\n- 2\nratio: 1.5\n", by_name("yaml")).unwrap();
         let v = doc.to_value().unwrap();
         assert_eq!(
             v,
@@ -1044,7 +1051,7 @@ mod tests {
         );
         // round-trips back out through serialize
         assert_eq!(
-            v.serialize(Format::Yaml).unwrap(),
+            v.serialize(by_name("yaml")).unwrap(),
             "title: Hi\nnums: [1, 2]\nratio: 1.5\n"
         );
     }
@@ -1054,9 +1061,9 @@ mod tests {
     #[test]
     #[cfg(feature = "toml")]
     fn toml_datetimes_round_trip_as_extended() {
-        use crate::{Document, ExtKind, Format};
+        use crate::{Document, ExtKind};
         let src = "d = 2026-06-18\nt = 07:32:00\n";
-        let v = Document::parse(src.as_bytes(), Format::Toml)
+        let v = Document::parse(src.as_bytes(), by_name("toml"))
             .unwrap()
             .to_value()
             .unwrap();
@@ -1079,7 +1086,7 @@ mod tests {
                 ),
             ])
         );
-        assert_eq!(v.serialize(Format::Toml).unwrap(), src);
+        assert_eq!(v.serialize(by_name("toml")).unwrap(), src);
     }
 
     // ZON enum and char literals read into `Value::Extended` (the char literal
@@ -1087,8 +1094,8 @@ mod tests {
     #[test]
     #[cfg(feature = "zon")]
     fn zon_literals_round_trip_as_extended() {
-        use crate::{Document, ExtKind, Format};
-        let v = Document::parse(b".{ .mode = .fast, .c = 'a' }", Format::Zon)
+        use crate::{Document, ExtKind};
+        let v = Document::parse(b".{ .mode = .fast, .c = 'a' }", by_name("zon"))
             .unwrap()
             .to_value()
             .unwrap();
@@ -1116,7 +1123,7 @@ mod tests {
     // A built datetime degrades to a string in JSON → one type-degraded warning.
     #[test]
     fn value_diagnose_reports_degraded_datetime() {
-        use crate::{Format, SerializeOptions, WarningCode};
+        use crate::{SerializeOptions, WarningCode};
         let v = Value::Map(vec![(
             "when".into(),
             Value::Extended {
@@ -1125,7 +1132,7 @@ mod tests {
             },
         )]);
         let warns = v
-            .diagnose(Format::Json, SerializeOptions::default())
+            .diagnose(by_name("json"), SerializeOptions::default())
             .unwrap();
         assert_eq!(warns.len(), 1);
         assert_eq!(warns[0].code, WarningCode::TypeDegraded);
@@ -1145,7 +1152,7 @@ mod tests {
             },
         )]);
         assert_eq!(
-            v.serialize(Format::Toml).unwrap(),
+            v.serialize(by_name("toml")).unwrap(),
             "when = 1979-05-27T07:32:00Z\n"
         );
     }
@@ -1407,8 +1414,8 @@ mod tests {
     #[test]
     #[cfg(feature = "yaml")]
     fn parsed_and_constructed_integers_agree() {
-        use crate::{Document, Format};
-        let parsed = Document::parse(b"n: 3\n", Format::Yaml)
+        use crate::Document;
+        let parsed = Document::parse(b"n: 3\n", by_name("yaml"))
             .unwrap()
             .to_value()
             .unwrap();

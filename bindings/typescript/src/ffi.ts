@@ -44,6 +44,7 @@ interface Exports {
   fig_version_string(): number;
   fig_format_capabilities(format: number): number;
   fig_format_by_name(name: number): number;
+  fig_format_name(format: number): number;
   fig_detect_order(input: number, inputLen: number, names: number, count: number, outFormat: number): number;
   fig_stream_split(input: number, inputLen: number, format: number, outDocs: number, outCount: number, outErr: number): number;
   fig_stream_free(docs: number, count: number): void;

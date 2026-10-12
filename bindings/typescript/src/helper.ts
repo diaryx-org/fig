@@ -41,6 +41,7 @@ export {
   LanguageError,
   type Language,
   type Dialect,
+  type EmbedSpellings,
   type Syntax,
   type Comments,
   type CommentDelimiter,
@@ -63,6 +64,7 @@ export {
   type DiagnosticRow,
   type StreamRange,
   type Prints,
+  type Format,
 } from "./wire.ts";
 
 /** Where `serve` reads requests and writes responses. */

@@ -7,7 +7,7 @@
 //! goal is to change one value in a real file, the `fig` CLI's `set`/`comment`
 //! subcommands edit in place and preserve every other byte.
 
-use fig::{Format, SerializeOptions};
+use fig::SerializeOptions;
 use nu_plugin::{EngineInterface, EvaluatedCall, SimplePluginCommand};
 use nu_protocol::{Category, Example, LabeledError, Signature, SyntaxShape, Type, Value};
 
@@ -79,9 +79,11 @@ impl SimplePluginCommand for ToFigl {
             options = options.width(width);
         }
 
-        let rendered = value.serialize_with(Format::Fig, options).map_err(|e| {
-            LabeledError::new("could not write figl").with_label(e.to_string(), span)
-        })?;
+        let rendered = value
+            .serialize_with(crate::figl_format(span)?, options)
+            .map_err(|e| {
+                LabeledError::new("could not write figl").with_label(e.to_string(), span)
+            })?;
         Ok(Value::string(rendered, span))
     }
 }

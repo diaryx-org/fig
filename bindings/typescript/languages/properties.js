@@ -211,8 +211,8 @@ const language = {
     empty_map_literal: "{}",
     flow_containers: false,
   },
-  // The compiled format's extension: where the format is compiled out
-  // and this stands in for it, the extension reaches it.
+  // The extension the Zig language claims: a file by that name reaches
+  // whichever of the two is registered.
   dialects: [{ name: "properties", extensions: ["properties"], splice: "raw", empty_doc_seed: "", prints: { holds: {}, typed_scalars: false, char_as: "number" } }],
   samples: ["a=1\nb: two\nc three\n"],
   renderers: [],

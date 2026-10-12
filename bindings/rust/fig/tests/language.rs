@@ -168,25 +168,28 @@ fn a_rust_language_is_a_peer_at_every_entry_point() {
     let formats = fig::language::register(TinyKv).expect("registers");
     assert_eq!(formats.len(), 1);
     let tkv = formats[0];
-    assert!(matches!(tkv, Format::Runtime(_)));
+    assert_eq!(tkv.name(), "tinykv");
     assert_eq!(Format::by_name("tinykv"), Some(tkv));
-    assert_eq!(Format::by_name("json"), Some(Format::Json));
+    assert_eq!(by_name("yaml").name(), "yaml");
+    assert_eq!(by_name("yaml-1.1").name(), "yaml-1.1");
+    assert_ne!(by_name("yaml-1.1"), by_name("yaml"));
+    assert_eq!(Format::by_name("json"), Some(by_name("json")));
     assert_eq!(Format::by_name("nosuch"), None);
     // A YAML stream's documents, each a byte range to parse on its own.
     let src = b"a: 1\n---\nb: 2\n...\n";
-    let docs = Format::Yaml.split_stream(src).unwrap();
+    let docs = by_name("yaml").split_stream(src).unwrap();
     let texts: Vec<&[u8]> = docs.iter().map(|d| &src[d.start..d.end]).collect();
     assert_eq!(texts, [&b"a: 1\n"[..], &b"---\nb: 2\n"[..]]);
     assert!(docs[1].explicit && !docs[0].explicit);
-    assert!(Format::Json.split_stream(b"{}").is_err());
+    assert!(by_name("json").split_stream(b"{}").is_err());
     // Content sniffing tries the formats in the order given.
     assert_eq!(
         Format::detect(b"{\"a\": 1}", &["json", "yaml"]),
-        Some(Format::Json)
+        Some(by_name("json"))
     );
     assert_eq!(
         Format::detect(b"{\"a\": 1}", &["yaml", "json"]),
-        Some(Format::Yaml)
+        Some(by_name("yaml"))
     );
     assert_eq!(Format::detect(b"a: [", &["nosuch", "json"]), None);
     assert_eq!(fig::capabilities(tkv), Capabilities::new(true, true, true));
@@ -197,7 +200,7 @@ fn a_rust_language_is_a_peer_at_every_entry_point() {
     let value = doc.to_value().expect("value");
     assert_eq!(value.get("x").and_then(Value::as_str), Some("1"));
     assert_eq!(
-        doc.serialize(Format::Json).unwrap(),
+        doc.serialize(by_name("json")).unwrap(),
         "{\n  \"x\": \"1\",\n  \"y\": \"two\"\n}\n"
     );
     assert_eq!(doc.serialize(tkv).unwrap(), src);
@@ -374,7 +377,7 @@ fn the_helper_wire_round_trips_describe_parse_print_and_render() {
         .push(fig::language::DirectiveRow::new("!e!", "tag:x/"));
     let encoded = helper::encode(&helper::table_to_value(&with));
     assert!(encoded.contains(r#""directives":[{"handle":"!e!","prefix":"tag:x/"}]"#));
-    let decoded = fig::Document::parse(encoded.as_bytes(), Format::Json)
+    let decoded = fig::Document::parse(encoded.as_bytes(), by_name("json"))
         .unwrap()
         .to_value()
         .unwrap();
@@ -520,20 +523,27 @@ impl Language for PlistKv {
 
 #[test]
 fn a_language_named_after_a_format_left_out_stands_in_for_it() {
-    // A library that compiles plist in has no slot to stand in for.
-    if fig::capabilities(Format::Plist).read {
+    // A library that compiles plist in has registered the name already.
+    if Format::by_name("plist").is_some() {
         return;
     }
     let formats = fig::language::register(PlistKv).expect("registers");
-    // The row named after the format is that format; the other row is a
-    // runtime format of its own.
-    assert_eq!(formats[0], Format::Plist);
-    assert!(matches!(formats[1], Format::Runtime(_)));
-    assert_eq!(Format::by_name("plist"), Some(Format::Plist));
+    // Each row is a format of its own, found by its name.
+    assert_eq!(formats[0].name(), "plist");
+    assert_eq!(formats[1].name(), "plist-kv");
+    assert_ne!(formats[0], formats[1]);
+    assert_eq!(Format::by_name("plist"), Some(formats[0]));
     assert_eq!(Format::by_name("plist-kv"), Some(formats[1]));
-    let doc = Document::parse(b"a=1\n", Format::Plist).expect("parses");
+    let doc = Document::parse(b"a=1\n", formats[0]).expect("parses");
     assert_eq!(
-        doc.serialize(Format::Json).unwrap(),
+        doc.serialize(by_name("json")).unwrap(),
         "{\n  \"a\": \"1\"\n}\n"
     );
+}
+
+/// The registered format named `name`; a test that names one this build
+/// does not carry is a test bug.
+#[allow(dead_code)]
+fn by_name(name: &str) -> fig::Format {
+    fig::Format::by_name(name).unwrap_or_else(|| panic!("no format named {name:?}"))
 }

@@ -1,12 +1,12 @@
 // Comment-preserving, in-place editing of a whole document in any editable
-// format — every compiled format, and a runtime language whose caps say edit.
+// format: one a registered language brings, whose caps say edit.
 //
 // Unlike `stringify`, which re-renders a whole value, `Editor` splices only the
 // bytes of the node you change — comments, key order, blank lines, and quoting
 // everywhere else stay byte-identical. Inserted values are rendered by fig's
 // serializer (see `Editable`) and re-framed at the splice site. Release with
 // `dispose` (or a `using` declaration).
-import { check, FigError, Format, Status } from "./types.ts";
+import { check, FigError, Status, type Format } from "./types.ts";
 import { encodeKeyList, encodePath, fig, Frame, handleRegistry, probeParse, readOutSlice } from "./ffi.ts";
 import { Editable, type EditFns, type Segment } from "./edit-ops.ts";
 import { checkFormat } from "./meta.ts";
@@ -61,8 +61,7 @@ export class Editor extends Editable {
   }
 
   /** Open an editor over a copy of `input` in `format` — any format whose
-   *  {@link capabilities} report `edit`, a registered runtime language
-   *  included; otherwise `UnsupportedFormat`. Empty input is a valid empty
+   *  {@link capabilities} report `edit`; otherwise `UnsupportedFormat`. Empty input is a valid empty
    *  document. A parse failure throws `ParseError` carrying the core's
    *  message and location, as {@link Document.parse} does. */
   static open(input: string | Uint8Array, format: Format): Editor {

@@ -1,10 +1,8 @@
-// Shared comment-preserving edit operations for the document editor and the
-// embed editor.
+// The comment-preserving, path-addressed edit operations `Editor` inherits.
 //
-// The two write paths are identical apart from the C symbol prefix
-// (`fig_editor_*` vs `fig_embed_*`) and the format a `Value` is serialized to
-// before splicing. `Editable` captures that: a subclass hands it the bound FFI
-// functions and its text format, and inherits every path-addressed edit. Each
+// `Editable` takes the bound `fig_editor_*` functions and the format a
+// `Value` is serialized to before splicing, and supplies every path-addressed
+// edit. Each
 // value-taking edit renders its `Value` through fig's serializer (stripping the
 // trailing newline) and lets the Zig editor re-frame indentation at the splice
 // site; the `*Raw` variants pass already-serialized text straight through.

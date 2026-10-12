@@ -9,9 +9,7 @@
 //!
 //! # Naming
 //!
-//! [`Editor`] and [`Embed`](crate::Embed) carry the same edit methods under the
-//! same names, which follow one scheme. The `*_container` ops are the one
-//! exception, and are `Editor`'s alone: the C ABI has no embed form of them.
+//! [`Editor`]'s edit methods follow one naming scheme.
 //!
 //! * **Value edits** are `<verb>_value` — `replace_value`, `insert_value`,
 //!   `set_value`, `append_value`, `prepend_value` — each taking any

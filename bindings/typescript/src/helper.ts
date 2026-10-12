@@ -41,7 +41,6 @@ export {
   LanguageError,
   type Language,
   type Dialect,
-  type EmbedSpellings,
   type Syntax,
   type Comments,
   type CommentDelimiter,

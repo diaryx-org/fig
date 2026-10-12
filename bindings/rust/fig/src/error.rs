@@ -15,9 +15,7 @@ use crate::{Format, ffi};
 ///
 /// `NotFound` carries no path. The core's status says only that something on
 /// the way was missing, not which segment, so the one path the binding could
-/// attach is the one the caller just passed — and `NotFound` also comes from
-/// calls with no path at all ([`Embed::open`](crate::Embed::open) on a host
-/// with no region).
+/// attach is the one the caller just passed.
 #[derive(Debug)]
 // `Number` is only constructed on the serde paths.
 #[cfg_attr(not(feature = "serde"), allow(dead_code))]
@@ -34,10 +32,11 @@ pub enum Error {
     UnsupportedFormat,
     /// The operation is not defined for these arguments, though each argument
     /// is individually valid — distinct from [`Error::InvalidArgument`] (a
-    /// malformed call). Returned by [`Embed::retype`](crate::Embed::retype)
-    /// when asked to move a mid-document block to an edge archetype.
+    /// malformed call). Returned, for instance, by
+    /// [`Editor::uncomment_leading`](crate::Editor::uncomment_leading) when
+    /// the lines turn out not to be an entry.
     UnsupportedOperation,
-    /// A path, key, or embedded region was not found.
+    /// A path or key was not found.
     NotFound,
     /// An unexpected internal error occurred.
     Internal,

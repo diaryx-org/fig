@@ -2219,16 +2219,6 @@ const language = {
       splice: "literal",
       empty_doc_seed: "",
       prints: { holds: EVERY_KIND, root_container: true },
-      // How fig is written embedded in a host file. The class is
-      // `language-figl` while the fence tag is `fig`.
-      embed: {
-        fence_tag: "fig",
-        fence_aliases: ["figl"],
-        frontmatter: "---fig",
-        script_mime: "application/figl",
-        script_mime_aliases: ["application/fig"],
-        code_class: "language-figl",
-      },
     },
   ],
   samples: ["a = 1\ndatabase\n> host = localhost\n> port = 5432\n"],

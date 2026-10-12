@@ -111,10 +111,6 @@ export class Editor extends Editable {
   // delete/move/reorder three, every other format none. That is not a gap —
   // Yaml, Json and the rest nest a container in one contiguous region, so the
   // inherited edits already handle it.
-  //
-  // These live on `Editor` rather than on `Editable` because the C ABI has no
-  // `fig_embed_*` twins: an embedded region is opened by archetype, and no
-  // archetype hosts a scattered-container format today.
 
   /** Delete the whole container at `path` — every scattered region of its
    *  subtree, leaving interleaved foreign content in place. */

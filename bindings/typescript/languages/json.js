@@ -330,9 +330,6 @@ const language = {
       splice: "escaped",
       empty_doc_seed: "{}\n",
       prints: { holds: { null: true }, char_as: "number", number_special_as: "quoted string", comments: "never" },
-      // How JSON is written embedded in a host file — the compiled
-      // format's spellings, which embedding finds it by.
-      embed: { fence_tag: "json", frontmatter: "---json", script_mime: "application/json", script_mime_aliases: ["application/ld+json"], code_class: "language-json" },
     },
   ],
   samples: ['{"a": 1, "b": [true, null, "s"], "c": {"d": 2.5}}\n', "[]\n"],

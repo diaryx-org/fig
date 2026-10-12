@@ -2759,16 +2759,6 @@ const language = {
       splice: "literal",
       empty_doc_seed: "",
       prints: YAML_PRINTS,
-      // How YAML is written embedded in a host file; a bare `---`, not
-      // `---yaml`, since untagged frontmatter is YAML.
-      embed: {
-        fence_tag: "yaml",
-        fence_aliases: ["yml"],
-        frontmatter: "---",
-        script_mime: "application/yaml",
-        script_mime_aliases: ["application/x-yaml", "text/yaml"],
-        code_class: "language-yaml",
-      },
     },
     { name: "yaml-1.1", extensions: [], splice: "literal", empty_doc_seed: "", prints: YAML_PRINTS },
   ],

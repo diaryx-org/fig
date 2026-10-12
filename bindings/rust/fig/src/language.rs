@@ -1367,14 +1367,6 @@ impl Registration {
                     CommentsPrinted::Pretty => 1,
                     CommentsPrinted::Never => 2,
                 }),
-                // A runtime dialect declares no embedded spelling (yet): it
-                // is not found inside a host document.
-                embed_fence_tag: std::ptr::null(),
-                embed_fence_aliases: std::ptr::null(),
-                embed_frontmatter: std::ptr::null(),
-                embed_script_mime: std::ptr::null(),
-                embed_script_mime_aliases: std::ptr::null(),
-                embed_code_class: std::ptr::null(),
             });
             owned.push(CDialect {
                 _name: dname,

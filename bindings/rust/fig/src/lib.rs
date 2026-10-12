@@ -4,7 +4,6 @@ extern crate self as fig;
 
 mod diagnostics;
 mod editor;
-mod embed;
 mod error;
 mod value;
 
@@ -30,7 +29,6 @@ pub use editor::{Editor, Segment};
 #[cfg(feature = "json")]
 pub mod helper;
 pub mod language;
-pub use embed::{Embed, EmbedType, Extracted, Region, Span, detect, split};
 pub use error::{Error, LanguageFailure, ParseError};
 pub use value::{ExtKind, Value};
 
@@ -57,12 +55,37 @@ pub use ser::to_yaml_string;
 
 use ffi::{FIG_NODE_NONE, FigNodeId, FigNodeKind};
 
+/// A half-open `[start, end)` byte range within the input, as a runtime
+/// language's node table records one. Converts to and from a
+/// `Range<usize>`, so `Span::from(0..5)` builds one and
+/// `&source[Range::from(span)]` slices by one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
+impl From<std::ops::Range<usize>> for Span {
+    fn from(r: std::ops::Range<usize>) -> Self {
+        Span {
+            start: r.start,
+            end: r.end,
+        }
+    }
+}
+
+impl From<Span> for std::ops::Range<usize> {
+    fn from(s: Span) -> Self {
+        s.start..s.end
+    }
+}
+
 /// A config format: an opaque, per-process handle naming a dialect
 /// registered with the linked fig core.
 ///
 /// A `Format` is obtained by name — [`Format::by_name`]`("yaml")` — or from
-/// [`language::register`], [`Format::detect`] and [`EmbedType::inner_format`];
-/// it cannot be built from an integer. Handles are assigned in registration
+/// [`language::register`] and [`Format::detect`]; it cannot be built from an
+/// integer. Handles are assigned in registration
 /// order and differ between processes: persist [`Format::name`] and resolve it
 /// again with [`Format::by_name`], never the handle.
 ///
@@ -104,7 +127,7 @@ impl Format {
 
     /// [`Format::by_name`], with a name nothing answers to as
     /// [`Error::UnsupportedFormat`]: how the crate reaches the formats it names
-    /// itself (an [`EmbedType`]'s inner format, JSON for the helper wire).
+    /// itself (YAML for the serde helpers, JSON for the helper wire).
     pub(crate) fn require(name: &str) -> Result<Format, Error> {
         Format::by_name(name).ok_or(Error::UnsupportedFormat)
     }
@@ -361,7 +384,7 @@ pub fn version_string() -> &'static str {
 pub struct Capabilities {
     /// [`Document::parse`] accepts this format.
     pub read: bool,
-    /// The editor/embed APIs accept this format.
+    /// The [`Editor`] accepts this format.
     pub edit: bool,
     /// The serializers can write this format.
     pub serialize: bool,
@@ -716,7 +739,7 @@ fn normalize(id: FigNodeId) -> Option<FigNodeId> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Document, Embed, EmbedType, Error, Format, Segment};
+    use super::{Document, Error, Format};
 
     /// The registered format named `name`.
     fn by_name(name: &str) -> Format {
@@ -812,65 +835,5 @@ mod tests {
             ed.add_leading_comment(&[Segment::Key("a")], "x"),
             Err(Error::UnsupportedFormat)
         ));
-    }
-
-    #[test]
-    fn frontmatter_reorder_keys_preserves_comments_and_body() {
-        let md = "---\ntitle: Hi\n# a comment\ntags:\n- x\nauthor: me\n---\n# Body\n";
-        let mut fm = Embed::open(md.as_bytes(), EmbedType::Frontmatter).unwrap();
-        // String keys (the diaryx call site passes `Vec<String>`).
-        let order = vec![String::from("author"), String::from("title")];
-        fm.reorder_keys(&[], &order).unwrap();
-        assert_eq!(
-            fm.render().unwrap(),
-            "---\nauthor: me\ntitle: Hi\n# a comment\ntags:\n- x\n---\n# Body\n",
-        );
-    }
-
-    #[test]
-    fn frontmatter_move_key_preserves_comments_and_body() {
-        let md = "---\na: 1\n# note for c\nc: 3\nb: 2\n---\nbody\n";
-        let mut fm = Embed::open(md.as_bytes(), EmbedType::Frontmatter).unwrap();
-        fm.move_key(&[Segment::Key("c")], &[Segment::Key("a")])
-            .unwrap();
-        assert_eq!(
-            fm.render().unwrap(),
-            "---\n# note for c\nc: 3\na: 1\nb: 2\n---\nbody\n",
-        );
-    }
-
-    #[test]
-    fn frontmatter_reorder_items_in_block_sequence() {
-        let md = "---\ntags:\n- x\n- y\n- z\n---\nbody\n";
-        let mut fm = Embed::open(md.as_bytes(), EmbedType::Frontmatter).unwrap();
-        fm.reorder_items(&[Segment::Key("tags")], &[2, 0]).unwrap();
-        assert_eq!(
-            fm.render().unwrap(),
-            "---\ntags:\n- z\n- x\n- y\n---\nbody\n",
-        );
-    }
-
-    #[test]
-    fn frontmatter_move_item_in_flow_sequence_keeps_separators() {
-        let md = "---\ntags: [x, y, z]\n---\nbody\n";
-        let mut fm = Embed::open(md.as_bytes(), EmbedType::Frontmatter).unwrap();
-        fm.move_item(&[Segment::Key("tags")], 2, 0).unwrap();
-        assert_eq!(fm.render().unwrap(), "---\ntags: [z, x, y]\n---\nbody\n");
-    }
-
-    #[test]
-    fn html_code_edit_is_span_aware_over_the_entity_codec() {
-        // An entity-encoded <code> block with MIXED encodings (numeric &#60; vs
-        // named &lt;). Editing `expr` must canonically re-encode only that value
-        // and leave `note`'s original &lt; byte-for-byte.
-        let html = "<pre><code class=\"language-figl\">\nexpr = \"a &#60; b\"\nnote = \"x &lt; y\"\n</code></pre>\n";
-        let mut ec = Embed::open(html.as_bytes(), EmbedType::HtmlCodeFig).unwrap();
-        ec.replace_value(&[Segment::Key("expr")], "p > q").unwrap();
-        // The edited value canonically encodes `>`→`&gt;`; the untouched `note`
-        // keeps its ORIGINAL `&lt;` byte-for-byte (not normalized).
-        assert_eq!(
-            ec.render().unwrap(),
-            "<pre><code class=\"language-figl\">\nexpr = p &gt; q\nnote = \"x &lt; y\"\n</code></pre>\n",
-        );
     }
 }

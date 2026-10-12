@@ -924,8 +924,6 @@ const language = {
       splice: "literal",
       empty_doc_seed: "",
       prints: { holds: { offset_datetime: true, local_datetime: true, local_date: true, local_time: true, number_special: true }, char_as: "integer" },
-      // How TOML is written embedded in a host file.
-      embed: { fence_tag: "toml", frontmatter: "---toml", script_mime: "application/toml", code_class: "language-toml" },
     },
   ],
   samples: ['a = 1\nb = [1, 2]\n\n[s]\nk = "v"\nt = { x = 1 }\n'],

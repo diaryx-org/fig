@@ -52,8 +52,7 @@ setHostCall(hostCall);
  *  — JSON5's `jsonc`, YAML's `yaml-1.1` — are found by name with
  *  {@link formatByName}. `Document.parse`, `Editor.open`, `stringify`,
  *  `capabilities` and every other call that takes a format accept them at
- *  the tier `lang.caps` declares, and an embed reaches a dialect through
- *  the `embed` spellings it declares.
+ *  the tier `lang.caps` declares.
  *
  *  Registering the same object again returns the format it already has, so
  *  a library and the application using it may each register what they

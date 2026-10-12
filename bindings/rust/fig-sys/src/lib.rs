@@ -31,7 +31,7 @@ impl FigStatus {
     pub const UNSUPPORTED_FORMAT: FigStatus = FigStatus(4);
     pub const NOT_FOUND: FigStatus = FigStatus(5);
     /// The operation is not defined for these arguments, though each is
-    /// individually valid. Added in core 2.7.0; see `fig_embed_retype`.
+    /// individually valid. Added in core 2.7.0.
     pub const UNSUPPORTED_OPERATION: FigStatus = FigStatus(6);
     pub const INTERNAL_ERROR: FigStatus = FigStatus(255);
 }
@@ -356,7 +356,6 @@ unsafe extern "C" {
 // ---- editing (write path) ----
 
 pub enum FigEditor {}
-pub enum FigEmbed {}
 
 /// One step of a path: `kind == 0` selects mapping key `key_ptr[0..key_len]`;
 /// `kind == 1` selects sequence element `index`. Mirrors `FigPathSegment` in
@@ -377,55 +376,6 @@ pub struct FigPathSegment {
 pub struct FigStr {
     pub ptr: *const u8,
     pub len: usize,
-}
-
-// `FigSpan`/`FigRegion`/`fig_embed_extract` mirror the low-level embed C ABI.
-// The Rust-facing consumer is `Embed` (which uses `fig_embed_*`); these are
-// declared for parity with the header and for any future low-level wrapper.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-#[allow(dead_code)]
-pub struct FigSpan {
-    pub start: usize,
-    pub end: usize,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-#[allow(dead_code)]
-pub struct FigRegion {
-    /// Size-version tag: set to `size_of::<FigRegion>()` before
-    /// `fig_embed_extract` so the library only writes the fields this layout
-    /// covers. A zero `size` (e.g. from `Default`) makes the library write
-    /// nothing — always set it explicitly.
-    pub size: u32,
-    pub open_fence: FigSpan,
-    pub content: FigSpan,
-    pub close_fence: FigSpan,
-    pub body: FigSpan,
-    /// `[0, open_fence.start)` and `[close_fence.end, input_len)` — the host
-    /// text on each side of the block. With the three region spans they tile
-    /// the input exactly, so a rebuild loses nothing. Added in core 2.7.0; an older
-    /// `size` leaves them unwritten.
-    pub body_before: FigSpan,
-    pub body_after: FigSpan,
-}
-
-/// The container half of an embed selector; every `fig_embed_*` entry point
-/// that selects a region takes one of these beside a format handle. The four
-/// parametric containers read the format; the three presets pin their own
-/// and ignore it. Mirrors `FigEmbedContainer` in `fig.h` (ABI 2).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(dead_code)]
-pub enum FigEmbedContainer {
-    MdFrontmatter = 0,
-    Fenced = 1,
-    HtmlScript = 2,
-    HtmlCode = 3,
-    SemicolonsJson = 4,
-    PlusToml = 5,
-    EndmatterYaml = 6,
 }
 
 unsafe extern "C" {
@@ -677,254 +627,9 @@ unsafe extern "C" {
         out_len: *mut usize,
     ) -> FigStatus;
 
-    pub fn fig_embed_extract(
-        input: *const u8,
-        input_len: usize,
-        container: c_int,
-        format: c_int,
-        out_region: *mut FigRegion,
-    ) -> FigStatus;
-
-    pub fn fig_embed_detect(
-        input: *const u8,
-        input_len: usize,
-        out_container: *mut c_int,
-        out_format: *mut c_int,
-    ) -> FigStatus;
-
-    /// Re-house an embedded region under a different archetype's fences. On
-    /// `OK` the result is an OWNED buffer — release it with `fig_free`, passing
-    /// back the exact `out_len`. Added in core 2.7.0.
-    pub fn fig_embed_retype(
-        input: *const u8,
-        input_len: usize,
-        from_container: c_int,
-        from_format: c_int,
-        to_container: c_int,
-        to_format: c_int,
-        content: *const u8,
-        content_len: usize,
-        out_ptr: *mut *mut u8,
-        out_len: *mut usize,
-    ) -> FigStatus;
-
-    /// Sized free for a buffer fig allocated (`fig_embed_retype`'s result) or
-    /// that the caller obtained from `fig_alloc`. `len` must be exact.
+    /// Sized free for a buffer the caller obtained from `fig_alloc`. `len`
+    /// must be exact.
     pub fn fig_free(ptr: *mut u8, len: usize);
-
-    pub fn fig_embed_open(
-        input: *const u8,
-        input_len: usize,
-        container: c_int,
-        format: c_int,
-        out_embed: *mut *mut FigEmbed,
-    ) -> FigStatus;
-    pub fn fig_embed_open_or_init(
-        input: *const u8,
-        input_len: usize,
-        container: c_int,
-        format: c_int,
-        out_embed: *mut *mut FigEmbed,
-    ) -> FigStatus;
-    pub fn fig_embed_destroy(fm: *mut FigEmbed);
-
-    pub fn fig_embed_replace_val(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        repl: *const u8,
-        repl_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_replace_key(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        repl: *const u8,
-        repl_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_replace_named_key(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        name: *const u8,
-        name_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_set(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        val: *const u8,
-        val_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_add_leading_comment(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        text: *const u8,
-        text_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_set_trailing_comment(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        text: *const u8,
-        text_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_delete_leading_comments(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_delete_trailing_comment(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_get_leading_comment(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        out_ptr: *mut *const u8,
-        out_len: *mut usize,
-    ) -> FigStatus;
-    pub fn fig_embed_get_trailing_comment(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        out_ptr: *mut *const u8,
-        out_len: *mut usize,
-    ) -> FigStatus;
-    pub fn fig_embed_add_dangling_comment(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        text: *const u8,
-        text_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_delete_dangling_comments(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_get_dangling_comment(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        out_ptr: *mut *const u8,
-        out_len: *mut usize,
-    ) -> FigStatus;
-    pub fn fig_embed_comment_out(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_uncomment_leading(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        first_line: usize,
-        line_count: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_uncomment_dangling(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        first_line: usize,
-        line_count: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_insert_key(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        key: *const u8,
-        key_len: usize,
-        val: *const u8,
-        val_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_insert_named_key(
-        embed: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        name: *const u8,
-        name_len: usize,
-        val: *const u8,
-        val_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_delete_key(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_append_seq(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        val: *const u8,
-        val_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_prepend_seq(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        val: *const u8,
-        val_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_insert_seq_item(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        index: usize,
-        val: *const u8,
-        val_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_remove_seq_item(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        index: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_move_key(
-        fm: *mut FigEmbed,
-        src_path: *const FigPathSegment,
-        src_path_len: usize,
-        dest_path: *const FigPathSegment,
-        dest_path_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_reorder_keys(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        keys: *const FigStr,
-        keys_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_move_item(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        from: usize,
-        to: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_reorder_items(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        indices: *const usize,
-        indices_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_set_sequence(
-        fm: *mut FigEmbed,
-        path: *const FigPathSegment,
-        path_len: usize,
-        items: *const FigStr,
-        items_len: usize,
-    ) -> FigStatus;
-    pub fn fig_embed_replace_body(fm: *mut FigEmbed, body: *const u8, body_len: usize)
-    -> FigStatus;
-    pub fn fig_embed_render(
-        fm: *mut FigEmbed,
-        out_ptr: *mut *const u8,
-        out_len: *mut usize,
-    ) -> FigStatus;
 }
 
 // ── Runtime languages ──────────────────────────────────────────────────────
@@ -937,8 +642,8 @@ unsafe extern "C" {
 
 /// Mirror of `FIG_LANGUAGE_VTABLE_VERSION`.
 pub const FIG_LANGUAGE_VTABLE_VERSION: u32 = 3;
-/// Mirror of `FIG_OFFSET_NONE` / `FIG_LEN_NONE`: an absent optional span or
-/// string.
+/// Mirror of `FIG_OFFSET_NONE` / `FIG_LEN_NONE`: no offset, and an absent
+/// optional string.
 pub const FIG_OFFSET_NONE: usize = usize::MAX;
 pub const FIG_LEN_NONE: usize = usize::MAX;
 /// Mirror of `FIG_ROW_NONE`: the root's `parent`, and an absent span or text
@@ -978,14 +683,6 @@ impl FigStr {
     pub const NONE: FigStr = FigStr {
         ptr: std::ptr::null(),
         len: FIG_LEN_NONE,
-    };
-}
-
-impl FigSpan {
-    /// The absent optional span.
-    pub const NONE: FigSpan = FigSpan {
-        start: FIG_OFFSET_NONE,
-        end: FIG_OFFSET_NONE,
     };
 }
 
@@ -1256,21 +953,6 @@ pub struct FigDialectDesc {
     pub prints_char_as: *const c_char,
     pub prints_number_special_as: *const c_char,
     pub prints_comments: c_int,
-    /// The ```` ```<tag> ```` info string the dialect is written with inside a
-    /// host document; NULL when it has no embedded spelling, and then the
-    /// other `embed_*` fields are not read.
-    pub embed_fence_tag: *const c_char,
-    /// NULL-terminated, or NULL: other fence tags read as this dialect.
-    pub embed_fence_aliases: *const *const c_char,
-    /// The whole frontmatter opener (`"---"` for the dialect a bare one
-    /// means, `"---toml"` otherwise).
-    pub embed_frontmatter: *const c_char,
-    /// The `<script type>` the dialect is written with.
-    pub embed_script_mime: *const c_char,
-    /// NULL-terminated, or NULL: other script types read as this dialect.
-    pub embed_script_mime_aliases: *const *const c_char,
-    /// The `<pre><code class>` the dialect is written with.
-    pub embed_code_class: *const c_char,
 }
 
 /// `FigDialectDesc.prints_flags`: booleans and numbers print as text.

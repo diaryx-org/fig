@@ -20,7 +20,6 @@ export {
 } from "./types.ts";
 export { Document } from "./document.ts";
 export { Editor } from "./editor.ts";
-export { Embed, EmbedType, type Region, type Span } from "./embed.ts";
 export { type Segment } from "./edit-ops.ts";
 export { V, fromJS, toJS, stringify, diagnose, type Value, type JsValue, type JsInput } from "./value.ts";
 export { version, versionString, capabilities, formatByName, formatName, requireFormat, type Version, type Capabilities } from "./meta.ts";
@@ -32,7 +31,6 @@ export {
   LanguageError,
   type Language,
   type Dialect,
-  type EmbedSpellings,
   type Syntax,
   type Comments,
   type CommentDelimiter,

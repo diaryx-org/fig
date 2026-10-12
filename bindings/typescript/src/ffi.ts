@@ -4,7 +4,7 @@
 // JavaScript values and fig's C ABI: allocating in linear memory, encoding the
 // path / key / id arrays the editor takes, and reading back the borrowed
 // `(ptr, len)` slices the read and serialize paths return. Everything above it
-// (Document, Editor, Embed, stringify) speaks in JS types and never touches a
+// (Document, Editor, stringify) speaks in JS types and never touches a
 // pointer.
 //
 // The module imports one host function — `fig_host.call`, through which a
@@ -27,7 +27,7 @@ export const Status = {
   NotFound: 5,
   /** The operation is not defined for these arguments, though each argument is
    *  individually valid — distinct from `InvalidArgument` (a malformed call).
-   *  Added in core 2.7.0; see `Embed.retype`. */
+   *  Added in core 2.7.0; see `Editor.uncommentLeading`. */
   UnsupportedOperation: 6,
   InternalError: 255,
 } as const;
@@ -106,7 +106,7 @@ interface Exports {
   fig_editor_reorder_items(ed: number, path: number, path_len: number, indices: number, indices_len: number): number;
   fig_editor_set_sequence(ed: number, path: number, path_len: number, items: number, items_len: number): number;
   // Whole-container ops (scattered containers: a TOML `[header]` table, an INI
-  // `[section]`, a fig block container). No `fig_embed_*` twins exist.
+  // `[section]`, a fig block container).
   fig_editor_delete_container(ed: number, path: number, path_len: number): number;
   fig_editor_insert_container(ed: number, path: number, path_len: number, body: number, body_len: number): number;
   fig_editor_rename_container(ed: number, path: number, path_len: number, leaf: number, leaf_len: number): number;
@@ -114,57 +114,6 @@ interface Exports {
   fig_editor_reorder_containers(ed: number, order: number, order_len: number): number;
   fig_editor_append_container_to_seq(ed: number, path: number, path_len: number, body: number, body_len: number): number;
   fig_editor_source(ed: number, out_ptr: number, out_len: number): number;
-
-  fig_embed_extract(input: number, input_len: number, container: number, format: number, out_region: number): number;
-  fig_embed_detect(input: number, input_len: number, out_container: number, out_format: number): number;
-  /** Re-house an embedded region under a different archetype. On `Ok` the
-   *  result is an OWNED buffer in linear memory — free it with `fig_free`,
-   *  passing back the exact length. Added in core 2.7.0. */
-  fig_embed_retype(
-    input: number,
-    input_len: number,
-    from_container: number,
-    from_format: number,
-    to_container: number,
-    to_format: number,
-    content: number,
-    content_len: number,
-    out_ptr: number,
-    out_len: number,
-  ): number;
-  fig_embed_open(input: number, input_len: number, container: number, format: number, out: number): number;
-  fig_embed_open_or_init(input: number, input_len: number, container: number, format: number, out: number): number;
-  fig_embed_destroy(em: number): void;
-  fig_embed_replace_val(em: number, path: number, path_len: number, repl: number, repl_len: number): number;
-  fig_embed_replace_key(em: number, path: number, path_len: number, repl: number, repl_len: number): number;
-  fig_embed_replace_named_key(em: number, path: number, path_len: number, name: number, name_len: number): number;
-  fig_embed_set(em: number, path: number, path_len: number, val: number, val_len: number): number;
-  fig_embed_add_leading_comment(em: number, path: number, path_len: number, text: number, text_len: number): number;
-  fig_embed_set_trailing_comment(em: number, path: number, path_len: number, text: number, text_len: number): number;
-  fig_embed_delete_leading_comments(em: number, path: number, path_len: number): number;
-  fig_embed_delete_trailing_comment(em: number, path: number, path_len: number): number;
-  fig_embed_get_leading_comment(em: number, path: number, path_len: number, out_ptr: number, out_len: number): number;
-  fig_embed_get_trailing_comment(em: number, path: number, path_len: number, out_ptr: number, out_len: number): number;
-  fig_embed_add_dangling_comment(em: number, path: number, path_len: number, text: number, text_len: number): number;
-  fig_embed_delete_dangling_comments(em: number, path: number, path_len: number): number;
-  fig_embed_get_dangling_comment(em: number, path: number, path_len: number, out_ptr: number, out_len: number): number;
-  fig_embed_comment_out(em: number, path: number, path_len: number): number;
-  fig_embed_uncomment_leading(em: number, path: number, path_len: number, first_line: number, line_count: number): number;
-  fig_embed_uncomment_dangling(em: number, path: number, path_len: number, first_line: number, line_count: number): number;
-  fig_embed_insert_key(em: number, path: number, path_len: number, key: number, key_len: number, val: number, val_len: number): number;
-  fig_embed_insert_named_key(em: number, path: number, path_len: number, name: number, name_len: number, val: number, val_len: number): number;
-  fig_embed_delete_key(em: number, path: number, path_len: number): number;
-  fig_embed_append_seq(em: number, path: number, path_len: number, val: number, val_len: number): number;
-  fig_embed_prepend_seq(em: number, path: number, path_len: number, val: number, val_len: number): number;
-  fig_embed_remove_seq_item(em: number, path: number, path_len: number, index: number): number;
-  fig_embed_insert_seq_item(em: number, path: number, path_len: number, index: number, val: number, val_len: number): number;
-  fig_embed_move_key(em: number, src: number, src_len: number, dest: number, dest_len: number): number;
-  fig_embed_reorder_keys(em: number, path: number, path_len: number, keys: number, keys_len: number): number;
-  fig_embed_move_item(em: number, path: number, path_len: number, from: number, to: number): number;
-  fig_embed_reorder_items(em: number, path: number, path_len: number, indices: number, indices_len: number): number;
-  fig_embed_set_sequence(em: number, path: number, path_len: number, items: number, items_len: number): number;
-  fig_embed_replace_body(em: number, body: number, body_len: number): number;
-  fig_embed_render(em: number, out_ptr: number, out_len: number): number;
 
   fig_value_create(out: number): number;
   fig_value_destroy(value: number): void;
@@ -476,9 +425,8 @@ export function readFigError(ptr: number): {
 /** Why `input` fails to parse as `format`, as `fig_parse_ex` reports it, or
  *  `null` when it parses (or fails with nothing to say).
  *
- *  The editor and embed constructors (`fig_editor_create`, `fig_embed_open`,
- *  `fig_embed_open_or_init`) return a bare status: the C ABI has no `_ex`
- *  twin for them. Their parse is the one `fig_parse_ex` runs, so on a
+ *  The editor constructor (`fig_editor_create`) returns a bare status: the
+ *  C ABI has no `_ex` twin for it. Their parse is the one `fig_parse_ex` runs, so on a
  *  `ParseError` the binding asks it again for the message and location
  *  rather than throw a bare "parse error". Only on the failure path. */
 export function probeParse(input: Uint8Array, format: number): ParseDetail | null {

@@ -29,7 +29,7 @@ export function versionString(): string {
 export interface Capabilities {
   /** `Document.parse` accepts this format. */
   read: boolean;
-  /** The editor / embed APIs accept this format. */
+  /** The `Editor` accepts this format. */
   edit: boolean;
   /** The serializers can write this format. */
   serialize: boolean;

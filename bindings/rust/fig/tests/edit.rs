@@ -1,12 +1,11 @@
 //! Comment-preserving write-path tests: edits must change only the targeted
-//! node's bytes and leave comments, key order, fences, and the markdown body
-//! intact. The edits are the `*_value` methods, which need no serde; the file
+//! node's bytes and leave comments, key order and formatting intact. The edits are the `*_value` methods, which need no serde; the file
 //! is serde-gated because it reads results back with `from_yaml_str` and builds a
 //! typed struct's value with `fig::to_value`. Run with
 //! `cargo test -p fig --features serde`.
 #![cfg(all(feature = "serde", feature = "yaml"))]
 
-use fig::{Editor, Embed, EmbedType, Segment};
+use fig::{Editor, Segment};
 
 #[test]
 fn editor_insert_appends_after_last_entry() {
@@ -23,39 +22,6 @@ fn editor_set_replaces_or_inserts() {
     // Absent key → insert at the end.
     ed.set_value(&[Segment::Key("c")], 3).unwrap();
     assert_eq!(ed.source().unwrap(), "a: 9\nb: 2\nc: 3\n");
-}
-
-#[test]
-fn embed_open_or_init_creates_block_then_sets_first_key() {
-    // No frontmatter: open_or_init synthesizes an empty block; set lands the key.
-    let mut fm = Embed::open_or_init(b"# Just a body\n\nprose\n", EmbedType::Frontmatter).unwrap();
-    fm.set_value(&[Segment::Key("title")], "Hi").unwrap();
-    assert_eq!(
-        fm.render().unwrap(),
-        "---\ntitle: Hi\n---\n# Just a body\n\nprose\n"
-    );
-}
-
-#[test]
-fn embed_open_or_init_opens_existing_region_unchanged() {
-    // Existing frontmatter: behaves like open, preserving the comment + body.
-    let mut fm =
-        Embed::open_or_init(b"---\ntitle: Old # c\n---\nbody\n", EmbedType::Frontmatter).unwrap();
-    fm.set_value(&[Segment::Key("title")], "New").unwrap();
-    assert_eq!(fm.render().unwrap(), "---\ntitle: New # c\n---\nbody\n");
-}
-
-#[test]
-fn frontmatter_set_upserts_preserving_comments_and_body() {
-    const NOTE: &str = "---\ntitle: Hi # greeting\ntags:\n- x\n---\nbody\n";
-    let mut fm = Embed::open(NOTE.as_bytes(), EmbedType::Frontmatter).unwrap();
-    // Replace an existing scalar (comment on the line survives) and insert a new key.
-    fm.set_value(&[Segment::Key("title")], "Yo").unwrap();
-    fm.set_value(&[Segment::Key("author")], "me").unwrap();
-    assert_eq!(
-        fm.render().unwrap(),
-        "---\ntitle: Yo # greeting\ntags:\n- x\nauthor: me\n---\nbody\n",
-    );
 }
 
 #[test]
@@ -257,13 +223,6 @@ fn append_and_prepend_take_serialize_options_like_the_other_value_edits() {
     ed.prepend_value_with(&[Segment::Key("items")], "z", SerializeOptions::default())
         .unwrap();
     assert_eq!(ed.source().unwrap(), "items:\n- z\n- a\n- k: v\n");
-
-    let mut fm = Embed::open(b"---\nitems:\n- a\n---\n", EmbedType::Frontmatter).unwrap();
-    fm.append_value_with(&[Segment::Key("items")], "b", SerializeOptions::default())
-        .unwrap();
-    fm.prepend_value_with(&[Segment::Key("items")], "z", SerializeOptions::default())
-        .unwrap();
-    assert_eq!(fm.render().unwrap(), "---\nitems:\n- z\n- a\n- b\n---\n");
 }
 
 #[test]
@@ -298,10 +257,6 @@ fn insert_item_puts_an_item_at_an_index_in_block_and_flow_sequences() {
         ed.source().unwrap(),
         "items:\n- a\n- b\n# about c\n- c\nflow: [a, b, c, d]\n"
     );
-
-    let mut fm = Embed::open(b"---\nitems: [a, c]\n---\n", EmbedType::Frontmatter).unwrap();
-    fm.insert_item(&[Segment::Key("items")], 1, "b").unwrap();
-    assert_eq!(fm.render().unwrap(), "---\nitems: [a, b, c]\n---\n");
 }
 
 #[test]
@@ -337,143 +292,12 @@ fn editor_set_sequence_declines_empty_target() {
 }
 
 #[test]
-fn frontmatter_set_sequence_preserves_item_comments_and_body() {
-    const DOC: &str = "\
----
-title: Hello
-tags:
-- a # alpha
-- b # beta
-- c # gamma
----
-# Body
-
-prose goes here
-";
-    let mut fm = Embed::open(DOC.as_bytes(), EmbedType::Frontmatter).unwrap();
-    // Any `impl Into<Value>` items: here plain `&str`s.
-    fm.set_sequence(&[Segment::Key("tags")], ["c", "a", "d"])
-        .unwrap();
-    let expected = "\
----
-title: Hello
-tags:
-- c # gamma
-- a # alpha
-- d
----
-# Body
-
-prose goes here
-";
-    assert_eq!(fm.render().unwrap(), expected);
-}
-
-const NOTE: &str = "\
----
-title: Hello
-# keep this comment
-tags:
-- a
-- b
----
-# Body
-
-prose goes here
-";
-
-#[test]
-fn frontmatter_preserves_comments_fences_and_body() {
-    let mut fm = Embed::open(NOTE.as_bytes(), EmbedType::Frontmatter).unwrap();
-    fm.replace_value(&[Segment::Key("title")], "Hi there")
-        .unwrap();
-    fm.append_value(&[Segment::Key("tags")], "c").unwrap();
-    fm.insert_value(&[], "author", "me").unwrap();
-
-    let expected = "\
----
-title: Hi there
-# keep this comment
-tags:
-- a
-- b
-- c
-author: me
----
-# Body
-
-prose goes here
-";
-    assert_eq!(fm.render().unwrap(), expected);
-}
-
-#[test]
-fn frontmatter_edit_touches_only_target_bytes() {
-    let mut fm = Embed::open(NOTE.as_bytes(), EmbedType::Frontmatter).unwrap();
-    fm.replace_value(&[Segment::Key("title")], "Hello world")
-        .unwrap();
-    let rendered = fm.render().unwrap();
-    // Everything except the title line is byte-identical to the original.
-    let expected = NOTE.replace("title: Hello\n", "title: Hello world\n");
-    assert_eq!(rendered, expected);
-}
-
-#[test]
-fn split_borrows_both_sides_and_the_content() {
-    let (before, fm, after) = fig::split(NOTE, EmbedType::Frontmatter).unwrap();
-    assert_eq!(before, "");
-    assert_eq!(fm, "title: Hello\n# keep this comment\ntags:\n- a\n- b\n");
-    assert_eq!(after, "# Body\n\nprose goes here\n");
-    // CRLF fences are handled (Diaryx's hand-rolled split special-cased these).
-    let crlf = "---\r\nk: v\r\n---\r\nbody\r\n";
-    let (_, fm, after) = fig::split(crlf, EmbedType::Frontmatter).unwrap();
-    assert_eq!(fm, "k: v\r\n");
-    assert_eq!(after, "body\r\n");
-    // Endmatter: the prose is before the block.
-    let end = "# Title\n\n```endmatter\nk: v\n```\n";
-    let (before, fm, after) = fig::split(end, EmbedType::Endmatter).unwrap();
-    assert_eq!((before, fm, after), ("# Title\n\n", "k: v\n", ""));
-    // No frontmatter -> None.
-    assert_eq!(
-        fig::split("# just markdown\n", EmbedType::Frontmatter),
-        None
-    );
-    // Unterminated fence -> None (not a panic / partial split).
-    assert_eq!(
-        fig::split("---\nk: v\nno close\n", EmbedType::Frontmatter),
-        None
-    );
-}
-
-#[test]
-fn detect_sniffs_each_archetype() {
-    assert_eq!(fig::detect(NOTE), Some(EmbedType::Frontmatter));
-    assert_eq!(
-        fig::detect(";;;\n{\"k\": 1}\n;;;\nbody\n"),
-        Some(EmbedType::Semicolons)
-    );
-    assert_eq!(
-        fig::detect("```fig\nk = v\n```\nbody\n"),
-        Some(EmbedType::FencedFig)
-    );
-    assert_eq!(
-        fig::detect("body\n```endmatter\nk: v\n```\n"),
-        Some(EmbedType::Endmatter)
-    );
-    // Plain markdown opens no archetype.
-    assert_eq!(fig::detect("# just markdown\n"), None);
-    assert_eq!(fig::detect(""), None);
-    // Detect + inner_format resolves the parser for the detected content.
-    let kind = fig::detect("```fig\nk = v\n```\n").unwrap();
-    assert_eq!(kind.inner_format().unwrap(), by_name("figl"));
-}
-
-#[test]
+#[cfg(feature = "figl")]
 fn fig_dialect_container_splices_render_flow_and_round_trip() {
-    // A container value spliced into a fig-dialect embed must render as flow
+    // A container value spliced into a figl document must render as flow
     // (`[a, b]` / `{k=v}`): the block spellings only parse as standalone
     // lines, so a block splice after `key = ` re-reads as a bare string.
-    let mut em = Embed::open(b"```fig\nt = x\n```\nbody\n", EmbedType::FencedFig).unwrap();
+    let mut em = Editor::open(b"t = x\n", by_name("figl")).unwrap();
     em.set_value(
         &[Segment::Key("contents")],
         fig::Value::Seq(vec![
@@ -487,13 +311,12 @@ fn fig_dialect_container_splices_render_flow_and_round_trip() {
         fig::Value::Map(vec![(fig::Value::Str("k".into()), fig::Value::Int(1))]),
     )
     .unwrap();
-    let rendered = em.render().unwrap().to_string();
+    let rendered = em.source().unwrap().to_string();
     assert!(rendered.contains("contents = [a.md, b.md]"), "{rendered}");
     assert!(rendered.contains("meta = {k=1}"), "{rendered}");
 
     // And the result re-parses as the containers, not strings.
-    let (_, content, _) = fig::split(&rendered, EmbedType::FencedFig).unwrap();
-    let doc = fig::Document::parse(content.as_bytes(), by_name("figl")).unwrap();
+    let doc = fig::Document::parse(rendered.as_bytes(), by_name("figl")).unwrap();
     let v = doc.to_value().unwrap();
     let fig::Value::Map(entries) = &v else {
         panic!("{v:?}")
@@ -515,12 +338,13 @@ fn fig_dialect_container_splices_render_flow_and_round_trip() {
 }
 
 #[test]
-fn fig_dialect_block_map_splices_into_a_fence_with_the_width_knob() {
+#[cfg(feature = "figl")]
+fn fig_dialect_block_map_splices_with_the_width_knob() {
     // The `*_with` twin honors the layout knob: a block map value lands as a
-    // nested section under its key inside a ```fig``` fence — the prov case
+    // nested section under its key — the prov case
     // that plain `set_value` (forced inline flow) could not express.
     use fig::SerializeOptions;
-    let mut em = Embed::open(b"```fig\ntitle = hi\n```\nbody\n", EmbedType::FencedFig).unwrap();
+    let mut em = Editor::open(b"title = hi\n", by_name("figl")).unwrap();
     em.set_value_with(
         &[Segment::Key("registry")],
         fig::Value::Map(vec![
@@ -530,15 +354,11 @@ fn fig_dialect_block_map_splices_into_a_fence_with_the_width_knob() {
         SerializeOptions::default().width(1),
     )
     .unwrap();
-    let rendered = em.render().unwrap().to_string();
-    assert_eq!(
-        rendered,
-        "```fig\ntitle = hi\nregistry\n> a = 1\n> b = 2\n```\nbody\n"
-    );
+    let rendered = em.source().unwrap().to_string();
+    assert_eq!(rendered, "title = hi\nregistry\n> a = 1\n> b = 2\n");
 
     // It re-parses as the nested map, not a string.
-    let (_, content, _) = fig::split(&rendered, EmbedType::FencedFig).unwrap();
-    let doc = fig::Document::parse(content.as_bytes(), by_name("figl")).unwrap();
+    let doc = fig::Document::parse(rendered.as_bytes(), by_name("figl")).unwrap();
     let v = doc.to_value().unwrap();
     let fig::Value::Map(entries) = &v else {
         panic!("{v:?}")
@@ -550,191 +370,6 @@ fn fig_dialect_block_map_splices_into_a_fence_with_the_width_knob() {
         matches!(registry, Some((_, fig::Value::Map(inner))) if inner.len() == 2),
         "{v:?}"
     );
-}
-
-#[test]
-fn detect_recognizes_an_unterminated_fence() {
-    // Open-delimiter-only sniff: the archetype is still recognized, so the
-    // follow-up extract reports the real error instead of "nothing found".
-    let unterminated = "---\nk: v\nno close\n";
-    let kind = fig::detect(unterminated).unwrap();
-    assert_eq!(kind, EmbedType::Frontmatter);
-    assert!(fig::Embed::extract(unterminated, kind).is_err());
-}
-
-#[test]
-fn extract_exposes_region_spans_and_slices() {
-    let e = fig::Embed::extract(NOTE, EmbedType::Frontmatter).unwrap();
-    assert_eq!(
-        e.content(),
-        "title: Hello\n# keep this comment\ntags:\n- a\n- b\n"
-    );
-    assert_eq!(e.host_before(), "");
-    assert_eq!(e.host_after(), "# Body\n\nprose goes here\n");
-    let r = e.region();
-    // The spans tile the source: the host after starts at the close fence's end.
-    assert_eq!(r.body_after.start, r.close_fence.end);
-    assert_eq!(r.body_before.end, r.open_fence.start);
-}
-
-#[test]
-fn embed_retype_rehouses_a_block_keeping_every_host_byte() {
-    // Frontmatter -> endmatter: the block moves to the bottom, prose leads.
-    let out = Embed::retype(
-        "---\ntitle: hi\n---\n# body\n",
-        EmbedType::Frontmatter,
-        EmbedType::Endmatter,
-        "title: hi\n",
-    )
-    .unwrap();
-    assert_eq!(out, "# body\n```endmatter\ntitle: hi\n```\n");
-
-    // Retyping to the SAME archetype is a byte-identical rebuild, on a source
-    // with host text on both sides of the block.
-    let html = "<head>\n<script type=\"application/yaml\">\nk: v\n</script>\n</head>\n";
-    let same = Embed::retype(
-        html,
-        EmbedType::HtmlScriptYaml,
-        EmbedType::HtmlScriptYaml,
-        "k: v\n",
-    )
-    .unwrap();
-    assert_eq!(same, html);
-}
-
-#[test]
-fn embed_retype_refuses_to_move_a_mid_document_block_to_an_edge() {
-    let html = "<head>\n<script type=\"application/yaml\">\nk: v\n</script>\n</head>\n";
-    // The `<head>` above the block has nowhere to go under an edge archetype.
-    assert!(matches!(
-        Embed::retype(
-            html,
-            EmbedType::HtmlScriptYaml,
-            EmbedType::Frontmatter,
-            "k: v\n"
-        ),
-        Err(fig::Error::UnsupportedOperation)
-    ));
-    // Mid-document to mid-document splices in place, both sides intact.
-    let moved = Embed::retype(
-        html,
-        EmbedType::HtmlScriptYaml,
-        EmbedType::HtmlCodeYaml,
-        "k: v\n",
-    )
-    .unwrap();
-    assert_eq!(
-        moved,
-        "<head>\n<pre><code class=\"language-yaml\">\nk: v\n</code></pre>\n</head>\n"
-    );
-}
-
-#[test]
-fn embed_retype_reports_a_missing_region() {
-    assert!(matches!(
-        Embed::retype(
-            "# just markdown\n",
-            EmbedType::Frontmatter,
-            EmbedType::Plus,
-            ""
-        ),
-        Err(fig::Error::NotFound)
-    ));
-}
-
-#[test]
-fn embed_region_spans_tile_the_host_exactly() {
-    // Both sides of the block are reported, so a caller can rebuild the host
-    // without losing a byte — including for a mid-document `<script>` island,
-    // which has host text on both sides.
-    let html = "<head>\n<script type=\"application/yaml\">\nk: v\n</script>\n</head>\n";
-    let e = Embed::extract(html, EmbedType::HtmlScriptYaml).unwrap();
-    assert_eq!(e.host_before(), "<head>\n");
-    assert_eq!(e.host_after(), "</head>\n");
-
-    let r = e.region();
-    assert_eq!(r.body_before.start, 0);
-    assert_eq!(r.body_before.end, r.open_fence.start);
-    assert_eq!(r.body_after.start, r.close_fence.end);
-    assert_eq!(r.body_after.end, html.len());
-    // Reassembling the five spans in order reproduces the file byte-for-byte.
-    let rebuilt = format!(
-        "{}{}{}{}{}",
-        e.host_before(),
-        &html[r.open_fence.start..r.open_fence.end],
-        e.content(),
-        &html[r.close_fence.start..r.close_fence.end],
-        e.host_after(),
-    );
-    assert_eq!(rebuilt, html);
-}
-
-#[test]
-fn replace_body_refuses_a_block_with_host_text_on_both_sides() {
-    // A data island has no one body: swapping the side after it lost `</head>`.
-    let html = "<head>\n<script type=\"application/yaml\">\nk: v\n</script>\n</head>\n";
-    let mut em = Embed::open(html.as_bytes(), EmbedType::HtmlScriptYaml).unwrap();
-    assert!(matches!(
-        em.replace_body("NEW\n"),
-        Err(fig::Error::UnsupportedOperation)
-    ));
-    assert_eq!(em.render().unwrap(), html);
-}
-
-#[test]
-fn frontmatter_replace_body_keeps_frontmatter_byte_identical() {
-    let mut fm = Embed::open(NOTE.as_bytes(), EmbedType::Frontmatter).unwrap();
-    fm.replace_body("# New Body\n").unwrap();
-    let rendered = fm.render().unwrap();
-    // Frontmatter block (fences + content + comments) is verbatim; only body swapped.
-    let (_, orig_fm, _) = fig::split(NOTE, EmbedType::Frontmatter).unwrap();
-    let (_, new_fm, new_body) = fig::split(rendered, EmbedType::Frontmatter).unwrap();
-    assert_eq!(new_fm, orig_fm);
-    assert_eq!(new_body, "# New Body\n");
-}
-
-#[test]
-fn frontmatter_replace_body_composes_with_edits() {
-    let mut fm = Embed::open(NOTE.as_bytes(), EmbedType::Frontmatter).unwrap();
-    fm.replace_value(&[Segment::Key("title")], "Hi there")
-        .unwrap();
-    fm.replace_body("# New Body\n").unwrap();
-    let rendered = fm.render().unwrap();
-    let (_, new_fm, new_body) = fig::split(rendered, EmbedType::Frontmatter).unwrap();
-    assert!(new_fm.starts_with("title: Hi there\n"));
-    assert!(new_fm.contains("# keep this comment")); // comment preserved
-    assert_eq!(new_body, "# New Body\n");
-}
-
-#[test]
-fn frontmatter_open_without_frontmatter_is_not_found() {
-    let err = Embed::open(b"# just markdown\n", EmbedType::Frontmatter).unwrap_err();
-    assert!(matches!(err, fig::Error::NotFound));
-}
-
-#[test]
-fn frontmatter_delete_then_read_back() {
-    let mut fm = Embed::open(NOTE.as_bytes(), EmbedType::Frontmatter).unwrap();
-    fm.delete_key(&[Segment::Key("title")]).unwrap();
-    let rendered = fm.render().unwrap().to_string();
-    assert!(!rendered.contains("title:"));
-    assert!(rendered.contains("# keep this comment"));
-    assert!(rendered.contains("prose goes here"));
-}
-
-#[test]
-fn frontmatter_reads_a_leading_comment() {
-    let fm = Embed::open(NOTE.as_bytes(), EmbedType::Frontmatter).unwrap();
-    // `# keep this comment` sits above `tags` in the frontmatter.
-    assert_eq!(
-        fm.leading_comment(&[Segment::Key("tags")])
-            .unwrap()
-            .as_deref(),
-        Some("keep this comment"),
-    );
-    // `title` has no comment of its own.
-    assert_eq!(fm.leading_comment(&[Segment::Key("title")]).unwrap(), None);
-    assert_eq!(fm.trailing_comment(&[Segment::Key("title")]).unwrap(), None);
 }
 
 #[test]
@@ -785,33 +420,11 @@ fn json_editor_rejects_json5_only_syntax() {
 }
 
 #[test]
-fn json_frontmatter_edits_in_json() {
-    // The same selector opens `;;;` JSON frontmatter; values serialize as JSON.
-    let md = ";;;\n{\"title\": \"Hi\", \"draft\": true}\n;;;\n# Body\n";
-    let mut em = fig::Embed::open(md.as_bytes(), fig::EmbedType::Semicolons).unwrap();
-    em.replace_value(&[Segment::Key("title")], "Hello").unwrap();
-    assert_eq!(
-        em.render().unwrap(),
-        ";;;\n{\"title\": \"Hello\", \"draft\": true}\n;;;\n# Body\n",
-    );
-}
-
-#[test]
 #[cfg(feature = "figl")]
 fn fig_dialect_editor_edits_in_place() {
     let mut ed = Editor::open(b"title = old\nport = 8080\n", by_name("figl")).unwrap();
     ed.replace_value(&[Segment::Key("port")], 9090).unwrap();
     assert_eq!(ed.source().unwrap(), "title = old\nport = 9090\n");
-}
-
-#[test]
-#[cfg(feature = "figl")]
-fn fig_dialect_frontmatter_embed_round_trips() {
-    // ```fig fenced frontmatter, in the native fig authoring dialect.
-    let md = "```fig\ntitle = Hi\n```\nbody\n";
-    let mut fm = Embed::open(md.as_bytes(), EmbedType::FencedFig).unwrap();
-    fm.set_value(&[Segment::Key("title")], "Yo").unwrap();
-    assert_eq!(fm.render().unwrap(), "```fig\ntitle = Yo\n```\nbody\n");
 }
 
 // ── YAML container splices (regressions from downstream `set_meta_in_text`) ──

@@ -144,30 +144,6 @@ export interface Dialect {
    *  fig's conversion warnings are computed from; absent leaves them to
    *  `caps` and `lossless`. */
   prints?: Prints | null;
-  /** How this dialect is written embedded in a host file — frontmatter, a
-   *  fenced block, an HTML `<script>` or `<pre><code>` island. Embedding
-   *  finds an inner language only through these declarations: a dialect
-   *  without one is never an embed's content. */
-  embed?: EmbedSpellings | null;
-}
-
-/** How a dialect is spelled embedded in a host file. Spellings are matched
- *  case-insensitively; only `fence_tag` is required. */
-export interface EmbedSpellings {
-  /** The info string of a fenced block, without the backticks: `yaml` for
-   *  ```` ```yaml ````. What a fenced block of this dialect is written with. */
-  fence_tag: string;
-  /** Info strings read as this dialect but never written (`yml`). */
-  fence_aliases?: string[];
-  /** The whole frontmatter opener (`---json`); a bare `---` claims untagged
-   *  frontmatter. Absent: the dialect has no frontmatter form. */
-  frontmatter?: string | null;
-  /** The `type` of an HTML `<script>` data island (`application/yaml`). */
-  script_mime?: string | null;
-  /** Further `<script type>`s read as this dialect but never written. */
-  script_mime_aliases?: string[];
-  /** The class of an HTML `<pre><code>` block (`language-yaml`). */
-  code_class?: string | null;
 }
 
 /** What a dialect's printer writes of a tree read from another format. */
@@ -464,7 +440,6 @@ export function describe(lang: Language): Record<string, unknown> {
       empty_doc_seed: d.empty_doc_seed ?? null,
       syntax: d.syntax ?? null,
       prints: d.prints ?? null,
-      embed: d.embed ?? null,
     })),
     samples: lang.samples,
     renderers: lang.renderers ?? [],

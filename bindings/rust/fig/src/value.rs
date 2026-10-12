@@ -174,7 +174,7 @@ impl From<Vec<Value>> for Value {
     }
 }
 /// Clone a borrowed value into an owned one. This is what lets a `&Value` still
-/// satisfy the `impl Into<Value>` value parameters on the editor/embed methods
+/// satisfy the `impl Into<Value>` value parameters on the editor methods
 /// (pass an owned `Value` instead to move rather than clone).
 impl From<&Value> for Value {
     fn from(v: &Value) -> Self {
@@ -770,7 +770,7 @@ pub(crate) fn value_text(value: &Value, format: Format) -> Result<String, Error>
 }
 
 /// Render `value` as splice text honoring `options` — the "width knob" path
-/// behind the `*_with` editor/embed methods.
+/// behind the `*_with` editor methods.
 ///
 /// Unlike [`value_text`], the fig dialect's inline-flow override is NOT forced:
 /// a container renders in its natural, width-driven layout, so a block map or

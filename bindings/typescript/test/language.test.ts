@@ -207,7 +207,7 @@ test("handle: the wire, one line to one line", () => {
   assert.deepEqual(d.description, describe(dotenv));
   assert.equal(d.description.name, "js-dotenv");
   assert.deepEqual(d.description.renderers, []);
-  assert.deepEqual((d.description.dialects as unknown[])[0], { name: "js-dotenv", extensions: ["env"], splice: "raw", empty_doc_seed: "", syntax: null, prints: null, embed: null });
+  assert.deepEqual((d.description.dialects as unknown[])[0], { name: "js-dotenv", extensions: ["env"], splice: "raw", empty_doc_seed: "", syntax: null, prints: null });
 
   const refused = JSON.parse(handle(dotenv, JSON.stringify({ op: "parse", dialect: "js-dotenv", input: "A" }))) as Record<string, unknown>;
   assert.equal(refused.ok, false);

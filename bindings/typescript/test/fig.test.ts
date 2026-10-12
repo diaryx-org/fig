@@ -12,8 +12,6 @@ import {
   diagnose,
   Document,
   Editor,
-  Embed,
-  EmbedType,
   ExtKind,
   FigError,
   init,
@@ -355,188 +353,29 @@ test("Editor edits the fig authoring dialect", () => {
   assert.equal(ed.source(), "title = old\nport = 9090\n");
 });
 
-test("Embed edits a ```fig fenced frontmatter block, fences and body intact", () => {
-  using fm = Embed.open("```fig\ntitle = Hi\n```\nbody\n", EmbedType.FencedFig);
-  fm.setValue(["title"], "Yo");
-  assert.equal(fm.render(), "```fig\ntitle = Yo\n```\nbody\n");
-});
-
-test("Embed setValueWith splices a block map into a ```fig fence (width knob)", () => {
-  using fm = Embed.open("```fig\ntitle = hi\n```\nbody\n", EmbedType.FencedFig);
-  fm.setValueWith(["registry"], { a: 1, b: 2 }, { width: 1 });
-  assert.equal(fm.render(), "```fig\ntitle = hi\nregistry\n> a = 1\n> b = 2\n```\nbody\n");
+test("setValueWith splices a block map into figl (width knob)", () => {
+  using ed = Editor.open("title = hi\n", Format.Fig);
+  ed.setValueWith(["registry"], { a: 1, b: 2 }, { width: 1 });
+  assert.equal(ed.source(), "title = hi\nregistry\n> a = 1\n> b = 2\n");
   // Plain set still freezes a container inline as flow.
-  using flow = Embed.open("```fig\ntitle = hi\n```\nbody\n", EmbedType.FencedFig);
+  using flow = Editor.open("title = hi\n", Format.Fig);
   flow.setValue(["registry"], { a: 1, b: 2 });
-  assert.equal(flow.render(), "```fig\ntitle = hi\nregistry = {a=1 b=2}\n```\nbody\n");
-});
-
-test("Embed edits YAML frontmatter, fences and body intact", () => {
-  using fm = Embed.open("---\ntitle: Hi\n# keep\ntags:\n- x\n---\n# Body\ntext\n", EmbedType.Frontmatter);
-  fm.insertValue([], "author", "me");
-  fm.appendValue(["tags"], "y");
-  assert.equal(
-    fm.render(),
-    "---\ntitle: Hi\n# keep\ntags:\n- x\n- y\nauthor: me\n---\n# Body\ntext\n",
-  );
-});
-
-test("Embed.openOrInit creates a block when none exists, else opens it", () => {
-  // No frontmatter: a block is synthesized and the first set lands the key.
-  {
-    using fm = Embed.openOrInit("# Just a body\n\nprose\n", EmbedType.Frontmatter);
-    fm.setValue(["title"], "Hi");
-    assert.equal(fm.render(), "---\ntitle: Hi\n---\n# Just a body\n\nprose\n");
-  }
-  // Existing frontmatter: behaves like open, comment + body preserved.
-  {
-    using fm = Embed.openOrInit("---\ntitle: Old # c\n---\nbody\n", EmbedType.Frontmatter);
-    fm.setValue(["title"], "New");
-    assert.equal(fm.render(), "---\ntitle: New # c\n---\nbody\n");
-  }
-});
-
-test("Embed edits JSON frontmatter via raw text", () => {
-  using fm = Embed.open(';;;\n{"title": "Hi", "draft": true}\n;;;\n# Body\n', EmbedType.Semicolons);
-  fm.replaceValueRaw(["title"], '"Hello"');
-  assert.equal(fm.render(), ';;;\n{"title": "Hello", "draft": true}\n;;;\n# Body\n');
-});
-
-test("Embed.extract locates the region and the host after it", () => {
-  const md = "---\nk: v\n---\nbody\n";
-  const region = Embed.extract(md, EmbedType.Frontmatter);
-  assert.equal(md.slice(region.content.start, region.content.end), "k: v\n");
-  assert.equal(md.slice(region.bodyAfter.start, region.bodyAfter.end), "body\n");
-  assert.equal(region.bodyAfter.start, region.closeFence.end);
-  assert.deepEqual(region.bodyBefore, { start: 0, end: 0 });
-});
-
-test("Embed.retype re-houses a block, keeping every host byte", () => {
-  assert.equal(
-    Embed.retype("---\ntitle: hi\n---\n# body\n", EmbedType.Frontmatter, EmbedType.Plus, 'title = "hi"\n'),
-    '+++\ntitle = "hi"\n+++\n# body\n',
-  );
-  // Same archetype in and out is a byte-identical rebuild, even with host text
-  // on both sides of the block.
-  const html = '<head>\n<script type="application/yaml">\nk: v\n</script>\n</head>\n';
-  assert.equal(Embed.retype(html, EmbedType.HtmlScriptYaml, EmbedType.HtmlScriptYaml, "k: v\n"), html);
-});
-
-test("Embed.retype refuses to move a mid-document block to an edge", () => {
-  const html = '<head>\n<script type="application/yaml">\nk: v\n</script>\n</head>\n';
-  assert.throws(
-    () => Embed.retype(html, EmbedType.HtmlScriptYaml, EmbedType.Frontmatter, "k: v\n"),
-    (e: unknown) => e instanceof FigError && e.status === Status.UnsupportedOperation,
-  );
-  // Mid-document to mid-document splices in place, both sides intact.
-  assert.equal(
-    Embed.retype(html, EmbedType.HtmlScriptYaml, EmbedType.HtmlCodeYaml, "k: v\n"),
-    '<head>\n<pre><code class="language-yaml">\nk: v\n</code></pre>\n</head>\n',
-  );
-  // A missing region is NotFound, not a silent pass-through.
-  assert.throws(
-    () => Embed.retype("# just markdown\n", EmbedType.Frontmatter, EmbedType.Plus, ""),
-    (e: unknown) => e instanceof FigError && e.status === Status.NotFound,
-  );
-});
-
-test("Embed.extract reports both host sides, which tile the input exactly", () => {
-  // A mid-document `<script>` island has host text on BOTH sides, and the
-  // two sides tile it with the three region spans.
-  const html = '<head>\n<script type="application/yaml">\nk: v\n</script>\n</head>\n';
-  const r = Embed.extract(html, EmbedType.HtmlScriptYaml);
-  const slice = (s: { start: number; end: number }) => html.slice(s.start, s.end);
-  assert.equal(slice(r.bodyBefore), "<head>\n");
-  assert.equal(slice(r.bodyAfter), "</head>\n");
-  assert.equal(
-    slice(r.bodyBefore) + slice(r.openFence) + slice(r.content) + slice(r.closeFence) + slice(r.bodyAfter),
-    html,
-  );
-});
-
-test("split returns [content, body], or null when absent", () => {
-  assert.deepEqual(Embed.split("---\nk: v\n---\nbody\n", EmbedType.Frontmatter), ["k: v\n", "body\n"]);
-  // CRLF fences handled.
-  assert.deepEqual(Embed.split("---\r\nk: v\r\n---\r\nx\r\n", EmbedType.Frontmatter), ["k: v\r\n", "x\r\n"]);
-  assert.equal(Embed.split("# just markdown\n", EmbedType.Frontmatter), null);
-  assert.equal(Embed.split("---\nk: v\nno close\n", EmbedType.Frontmatter), null);
-  // The body is the host with the block cut out: the prose before endmatter,
-  // and both sides of a mid-document island.
-  assert.deepEqual(Embed.split("prose\n```endmatter\nk: v\n```\n", EmbedType.Endmatter), ["k: v\n", "prose\n"]);
-  assert.deepEqual(
-    Embed.split('<head>\n<script type="application/yaml">\nk: v\n</script>\n</head>\n', EmbedType.HtmlScriptYaml),
-    ["k: v\n", "<head>\n</head>\n"],
-  );
-});
-
-test("EmbedType values are the CLI's archetype names", () => {
-  assert.equal(EmbedType.Frontmatter, "frontmatter");
-  assert.equal(EmbedType.Semicolons, "semicolons");
-  assert.equal(EmbedType.Plus, "plus");
-  assert.equal(EmbedType.Endmatter, "endmatter");
-  assert.equal(EmbedType.MdToml, "md-toml");
-  assert.equal(EmbedType.FencedFig, "fenced-figl");
-  assert.equal(EmbedType.HtmlScriptJson, "html-script-json");
-  assert.equal(EmbedType.HtmlCodeYaml, "html-code-yaml");
-  assert.equal(Object.keys(EmbedType).length, 19);
-  // A string that is not an archetype is refused before it reaches the core.
-  assert.throws(
-    () => Embed.open("---\nk: v\n---\n", "md-yaml" as EmbedType),
-    (err: unknown) => err instanceof FigError && err.status === Status.InvalidArgument && /md-yaml/.test(err.message),
-  );
-  // ...including a name every plain object inherits.
-  for (const inherited of ["constructor", "toString", "__proto__"]) {
-    assert.throws(
-      () => Embed.open("---\nk: v\n---\n", inherited as EmbedType),
-      (err: unknown) => err instanceof FigError && err.status === Status.InvalidArgument,
-    );
-  }
-});
-
-test("detect sniffs the embed archetype by its open delimiter", () => {
-  assert.equal(Embed.detect("---\nk: v\n---\nbody\n"), EmbedType.Frontmatter);
-  assert.equal(Embed.detect(';;;\n{"k": 1}\n;;;\nbody\n'), EmbedType.Semicolons);
-  assert.equal(Embed.detect("```fig\nk = v\n```\nbody\n"), EmbedType.FencedFig);
-  assert.equal(Embed.detect("body\n```endmatter\nk: v\n```\n"), EmbedType.Endmatter);
-  // Plain markdown opens no archetype.
-  assert.equal(Embed.detect("# just markdown\n"), null);
-  assert.equal(Embed.detect(""), null);
-  // Open-delimiter-only sniff: an unterminated fence is still recognized, so a
-  // follow-up extract/split reports the real problem instead of "nothing found".
-  assert.equal(Embed.detect("---\nk: v\nno close\n"), EmbedType.Frontmatter);
+  assert.equal(flow.source(), "title = hi\nregistry = {a=1 b=2}\n");
 });
 
 test("fig-dialect container splices render flow and round-trip", () => {
-  using em = Embed.open("```fig\nt = x\n```\nbody\n", EmbedType.FencedFig);
-  em.setValue(["contents"], ["a.md", "b.md"]);
-  em.setValue(["meta"], { k: 1 });
-  const rendered = em.render();
+  using ed = Editor.open("t = x\n", Format.Fig);
+  ed.setValue(["contents"], ["a.md", "b.md"]);
+  ed.setValue(["meta"], { k: 1 });
+  const rendered = ed.source();
   assert.ok(rendered.includes("contents = [a.md, b.md]"), rendered);
   assert.ok(rendered.includes("meta = {k=1}"), rendered);
   // Re-parses as containers, not bare strings.
-  const [content] = Embed.split(rendered, EmbedType.FencedFig)!;
-  const v = parse<Record<string, unknown>>(content, Format.Fig);
+  const v = parse<Record<string, unknown>>(rendered, Format.Fig);
   assert.deepEqual(v["contents"], ["a.md", "b.md"]);
   assert.deepEqual(v["meta"], { k: 1 });
   // Whole-document Map serialization is unchanged (block sections).
   assert.equal(stringify({ title: "T" }, Format.Fig), "title = T\n");
-});
-
-test("Embed.replaceBody swaps the body, composing with edits", () => {
-  using fm = Embed.open("---\ntitle: Hi\n---\nold body\n", EmbedType.Frontmatter);
-  fm.replaceValue(["title"], "Hello");
-  fm.replaceBody("new body\n");
-  assert.equal(fm.render(), "---\ntitle: Hello\n---\nnew body\n");
-});
-
-test("Embed.replaceBody refuses a data island, which has host text on both sides", () => {
-  const html = '<head>\n<script type="application/yaml">\nk: v\n</script>\n</head>\n';
-  using em = Embed.open(html, EmbedType.HtmlScriptYaml);
-  assert.throws(
-    () => em.replaceBody("NEW\n"),
-    (err: unknown) => err instanceof FigError && err.status === Status.UnsupportedOperation,
-  );
-  assert.equal(em.render(), html);
 });
 
 test("editor comment ops add, set, and delete", () => {
@@ -618,18 +457,6 @@ test("editor uncomment refuses lines that are not an entry, byte-exactly", () =>
   assert.equal(ed.source(), src);
 });
 
-test("embed reads a frontmatter comment", () => {
-  using fm = Embed.open("---\ntitle: Hi\n# keep\ntags:\n- x\n---\n# Body\ntext\n", EmbedType.Frontmatter);
-  assert.equal(fm.getLeadingComment(["tags"]), "keep");
-  assert.equal(fm.getLeadingComment(["title"]), null);
-});
-
-test("embed comments edit markdown frontmatter", () => {
-  using fm = Embed.open("---\ntitle: Hi\ndraft: true\n---\n# Body\n", EmbedType.Frontmatter);
-  fm.addLeadingComment(["draft"], "WIP");
-  assert.equal(fm.render(), "---\ntitle: Hi\n# WIP\ndraft: true\n---\n# Body\n");
-});
-
 test("parse error surfaces as FigError", () => {
   assert.throws(
     () => Document.parse("{ not valid", Format.Json),
@@ -652,7 +479,7 @@ test("parse error carries the core's message", () => {
   assert.equal(caught!.op, "fig_parse");
 });
 
-test("Editor.open and Embed.open carry the parse message Document.parse does", () => {
+test("Editor.open carries the parse message Document.parse does", () => {
   const thrown = (fn: () => unknown): FigError => {
     try {
       fn();
@@ -668,16 +495,6 @@ test("Editor.open and Embed.open carry the parse message Document.parse does", (
   assert.equal(opened.op, "fig_editor_create");
   assert.equal(opened.message, parsed.message.replace(/^fig_parse:/, "fig_editor_create:"));
   assert.notEqual(opened.message, "fig_editor_create: parse error");
-
-  // The content of a block, parsed in the block's own format.
-  const embedded = thrown(() => Embed.open(';;;\n{"a":\n;;;\nbody\n', EmbedType.Semicolons));
-  assert.equal(embedded.status, Status.ParseError);
-  assert.equal(embedded.op, "fig_embed_open");
-  assert.notEqual(embedded.message, "fig_embed_open: parse error");
-  // A block that never closes says so.
-  const unclosed = thrown(() => Embed.openOrInit("---\nk: v\nno close\n", EmbedType.Frontmatter));
-  assert.equal(unclosed.status, Status.ParseError);
-  assert.match(unclosed.message, /no matching close/);
 });
 
 test("version and capabilities", () => {
@@ -946,10 +763,6 @@ test("insertItem puts an item at an index, in a block and a flow sequence alike"
   // Past the end: refused, and nothing written.
   assert.throws(() => ed.insertItem(["ys"], 9, "q"), (e: unknown) => e instanceof FigError && e.status === Status.NotFound);
   assert.equal(ed.source(), "xs:\n  - a\n  - b\n  # about c\n  - c\nys: [z, a, b, c, d]\n");
-
-  using em = Embed.open("---\nys: [a, c]\n---\nbody\n", EmbedType.Frontmatter);
-  em.insertItem(["ys"], 1, "b");
-  assert.equal(em.render(), "---\nys: [a, b, c]\n---\nbody\n");
 });
 
 test("appendValueWith and prependValueWith render the item with the options given", () => {

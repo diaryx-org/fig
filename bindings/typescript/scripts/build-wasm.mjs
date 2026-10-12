@@ -19,7 +19,7 @@ const srcDir = resolve(here, "..", "src");
 // language the caller imports and registers (`@diaryx/fig/languages/<name>`),
 // which hands back its `Format` — so a page pays for the formats it uses and
 // no others, and the module itself is the core alone: the tree, the editor's
-// splice engine, serialization, embeds.
+// splice engine, serialization.
 //
 // FIG_WASM_LANGUAGES names formats to compile in anyway, comma-separated, or
 // `all` for every one: a reference module whose compiled formats the

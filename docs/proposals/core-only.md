@@ -22,7 +22,17 @@ part_of = [proposals](proposals.md)
 > `indent_requested`; of `SerializeError` only `FigUnrepresentableRoot`
 > named a format. `splitStream` is a declaration, a `split_stream` vtable
 > slot and wire op, and `fig_stream_split` / `Format::split_stream` /
-> `splitStream` in the bindings; step 2 is done. Tag
+> `splitStream` in the bindings; step 2 is done. Step 3 (the kit, `src/kit/`)
+> is done. Step 6's first stage — the contract's table as ABI 4 spells it —
+> is done (05b5faf). Step 7 is done in substance: the tree a language
+> builds, `Document`, the table and its conversions, the contract's
+> declarations and C shapes are the kit's; a language's own source imports
+> nothing of core (its editor tests may); `kit/contract.zig` builds a Zig
+> language's vtable from its module; diagnostics cross the contract; and
+> every compiled language, registered through its vtable alone
+> (`-Dcontract-copies`), scores as the compiled format on every parse suite
+> and all 27,503 edit cases. Left: step 8's switch and deletions, step 9,
+> and step 6's last stage (adopting the table as the Document). Tag
 > resolution and the lexeme's value land with §4.9's rows.
 >
 > §8 step 1's measurements are done (2026-10-12). They settled the third

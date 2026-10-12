@@ -9,13 +9,13 @@ part_of = [fig docs](docs.md)
 `fig`'s job is to read bytes it did not write, in eleven formats, without
 misreading them. Three layers guard that, in increasing order of paranoia:
 
-| Layer | Command | Asks |
+| Layer | Where | Asks |
 | --- | --- | --- |
-| Unit tests | `zig build test` | Does each piece do what it says? |
-| Conformance | `zig build conformance` | Do we agree with the format's own spec suite? |
+| Unit tests | `zig build test`, `zig build all-on` | Does each piece do what it says? |
+| Conformance | [fig-conformance](https://github.com/diaryx-org/fig-conformance) | Do we agree with the format's own spec suite? |
 | Fuzzing | `zig build fuzz --fuzz=1G` | Is there *any* input that breaks us? |
 
-The first two run on every push, via `zig build check`. The third runs nightly —
+The unit tests run on every push, via `zig build check`. Fuzzing runs nightly —
 see [Fuzzing](#Fuzzing) for why it cannot sensibly run on a pull request.
 
 `check` also runs the Rust and TypeScript binding suites, each of which skips
@@ -23,89 +23,33 @@ with a note when its toolchain is missing, so the gate stays useful on a partial
 checkout. The TypeScript suite additionally skips on Node older than 24 — see
 [Developing the binding](typescript.md#developing-the-binding) for why.
 
+## Every format on
+
+`zig build all-on` runs the library's tests and the CLI's again in a build
+with every format compiled in. plist and canonical are off by default, so
+this is the only build that proves the everything-on configuration still
+compiles, and the CLI is what instantiates the generic engines for every
+language. `check` depends on it.
+
+Between the unit tests and conformance sits one more layer:
+`src/languages/harness.zig`, the checks that hold for *any* format, run over
+every compiled-in dialect. Each format declares a few `samples` in its own
+grammar; the harness parses each, prints it, and reparses it to the same
+tree, checks that `Document.node_regions` is well-formed and that a section
+format's parser fills it, and constructs an `Editor` over it with a no-op
+splice. It also parses every registry row's `empty_doc_seed`. A new format is
+covered by declaring `samples`.
+
 # Conformance
 
 Conformance suites answer a question unit tests cannot: *does `fig` agree with
-everyone else?* Each one scores our parser against a corpus the format's own
-community maintains, so a passing score is evidence about the format, not just
-about our reading of it.
-
-```bash
-zig build conformance   # all suites, ~13s
-```
-
-The corpora are vendored under `testdata/` — about 2,700 cases, tracked in git.
-Nothing here touches the network, and nothing needs an external checkout.
-
-| Suite | Corpus | Source |
-| --- | --- | --- |
-| JSON | `testdata/json/` | JSONTestSuite |
-| JSON5 | `testdata/json5/` | json5/json5-tests |
-| YAML | `testdata/yaml/`, `testdata/yaml-1.1/` | yaml-test-suite |
-| TOML | `testdata/toml/`, `testdata/toml-1.1.0/` | toml-lang/toml-test |
-| NestedText | `testdata/nestedtext/` | official NestedText suite |
-| plist | `testdata/plist/` | system `Info.plist` files + `plutil`-verified oracles |
-
-## Scoreboards ratchet
-
-Every suite prints a scoreboard and asserts against a **baseline** — the number
-of cases that pass today:
-
-```
-  1.0.0  valid: 209/209 (baseline 209)   invalid: 495/495 (baseline 495)
-plist conformance (testdata/plist)
-  valid   parsed:   9/9 (baseline 9)
-  valid   vs plutil oracle: 7/7 (baseline 7)
-  invalid rejected: 5/5 (baseline 5)
-```
-
-The baseline can only go up. A regression fails the build; fixing more cases
-means raising the number in the same commit. This is what lets a suite be
-adopted before it fully passes — the score is a record of where we are, not a
-claim to be perfect.
-
-Note the plist suite tracks *parsed*, *matches the oracle*, and *rejected*
-separately, on purpose. Folding oracle-match into parse-success would let a
-silent mis-parse hide behind a passing parse count, which is precisely the bug
-class the oracle exists to catch.
-
-## How it is wired
-
-The suites sit behind `-D*-conformance` flags that default **off**, so a routine
-`zig build test` stays fast. `zig build conformance` builds a variant of the
-library module with all six forced on — and every language forced on too, which
-is a deliberate bonus: `xml`, `plist` and `canonical` are all off by default, so
-this is the only build that proves the everything-on configuration still
-compiles.
-
-`check` depends on it, which is the point. CI runs `zig build check` and nothing
-else, so a new suite is scored the moment it is added to `src/root.zig` — there
-is no workflow to remember to edit. The flags still work by hand when iterating
-on one format:
-
-```bash
-zig build test -Dtoml-conformance=true
-```
-
-Between the unit tests and the suites sits one more layer that needs no
-flag: `src/languages/harness.zig`, the checks that hold for *any* format,
-run over every compiled-in dialect. Each format declares a few `samples` in
-its own grammar; the harness parses each, prints it, and reparses it to the
-same tree, checks that `Document.node_regions` is well-formed and that a
-section format's parser fills it, and constructs an `Editor` over it with a
-no-op splice. It also parses every registry row's `empty_doc_seed`. A new
-format is covered by declaring `samples`; a corpus is not needed for that,
-and the corpora under `testdata/` are deliberately left to the suites that
-know their shape.
-
-## Refreshing a corpus
-
-The `gen-*-conformance` steps vendor an upstream corpus into `testdata/`. They
-take a path to a local checkout and are run by hand, never by the test suite:
-
-```bash
-zig build gen-toml-conformance -- ../toml-test
-```
+everyone else?* They live in their own repository, fig-conformance, beside
+this one, because they prove a *language* and not this library: a suite
+scores any implementation of a format through the language contract, the
+compiled Zig formats and the JavaScript languages in `@diaryx/fig` alike.
+There are parse suites (yaml-test-suite, toml-test, JSONTestSuite,
+json5-tests, the NestedText suite, plist and figl) and an edit suite for
+every format fig edits. Its README says how to run and record them.
 
 # Fuzzing
 
@@ -211,7 +155,7 @@ stderr — `build_runner.zig`'s *"No matter the result, we want to display
 error/warning messages"* — and a `failed command: <argv>` line comes with it,
 because `Run` fills in `result_failed_command` before spawning the child and
 clears it only on two paths that success is not one of. A green `zig build
-check` prints one right now, for the conformance scoreboards, and still exits 0;
+check` printed one, for the conformance scoreboards it then ran, and still exited 0;
 that line is context, not a verdict. The nightly passes `--error-style minimal`,
 which suppresses it (the flag gates `error_style.verboseContext()`) while
 leaving `error:` lines and their return traces intact, so the marker cannot fire
@@ -242,6 +186,5 @@ leaks are caught.
 Prefer a target that asserts a **property** over one that only checks for
 crashes; "does not crash" is a low bar, and the canonical round-trip shows what
 a real oracle buys. One trap worth knowing: `FuzzInputOptions.corpus` entries
-are `Smith` *decision tapes*, not source text, so the fixtures under `testdata/`
-cannot be dropped in as seeds — they are ordinary files, and the conformance
-suites already read them as such.
+are `Smith` *decision tapes*, not source text, so a conformance corpus cannot
+be dropped in as seeds — its cases are ordinary files.

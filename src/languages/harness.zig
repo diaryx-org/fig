@@ -2,8 +2,8 @@
 //! every compiled-in dialect of the registry.
 //!
 //! Each language has its own tests — its parser's, its printer's, its
-//! editor helper's — and the ones with a vendored corpus have a
-//! `conformance.zig` that scores it. What none of that covers is the set of
+//! editor helper's — and fig-conformance scores each against its format's
+//! own suite. What none of that covers is the set of
 //! properties the *engine* relies on every format having, which used to be
 //! stated in prose and checked by whichever language's tests happened to
 //! exercise them. This file states them once and runs them over
@@ -27,10 +27,7 @@
 //! (`Decls.optional` in language.zig): a few small documents in its own
 //! grammar that exercise a mapping, a sequence where the format has one,
 //! and a section where the format has those. The seeds need no opt-in; they
-//! are on the registry row already. The corpora under `testdata/` are
-//! deliberately not walked here: each is shaped by the suite that vendored
-//! it (accept/reject directories, a single `tests.json`, per-version trees)
-//! and its `conformance.zig` is the reader that knows the shape.
+//! are on the registry row already.
 //!
 //! The registry's own invariants — the list ↔ slot pairing, unique ABI
 //! values and sniff ranks, the pinned probe order — live in `language.zig`

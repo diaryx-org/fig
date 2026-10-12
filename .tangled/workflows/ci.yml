@@ -4,7 +4,7 @@ engine: microvm
 # "spindle"; see https://docs.tangled.org/spindles).
 #
 # It runs the same one pre-release gate — `zig build check` (test +
-# conformance + abi-check + semver-check + version-check) — and nothing else:
+# all-on + abi-check + semver-check + version-check) — and nothing else:
 # a tangled workflow file has no `jobs:`, one file *is* one job, so the
 # `rust` / `rust-semver` / `typescript` jobs that run in parallel on GitHub
 # would each need their own file here. They stay GitHub-only for now; `check`
@@ -61,7 +61,7 @@ steps:
       | tar -xJ --strip-components=1 -C .zig
     .zig/zig version
 # The one pre-release gate, same as the GitHub `zig` job: zig test +
-# conformance + abi-check + semver-check + version-check. The Rust/TS halves
+# all-on + abi-check + semver-check + version-check. The Rust/TS halves
 # of `check` degrade gracefully — no cargo or npm in this image, so they
 # skip with a note (see figl/ci.figl for the jobs that run them for real).
 #

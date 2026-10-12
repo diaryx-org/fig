@@ -7,9 +7,8 @@
 //! owned here.
 //!
 //! The per-format knobs are not written here either. `src/languages/list.zig`
-//! is the one list of formats and conformance suites, and this file declares
-//! one `-D<name>` option and one `build_options.lang_<name>` decl per row of
-//! it (and one `-D<name>-conformance` / `<name>_conformance` pair per suite).
+//! is the one list of formats, and this file declares one `-D<name>` option
+//! and one `build_options.lang_<name>` decl per row of it.
 //! The only knob spelled by hand below is `canonical`, which is not a format:
 //! it gates the AST's own oracle encoding.
 
@@ -34,7 +33,7 @@ pub const Versions = struct {
 /// This exists as a struct + `addFigOptions` rather than an inline block because
 /// the option set is now constructed TWICE: once from the user's `-D` flags —
 /// shared by the library, CLI, wasm and `zig build test` — and once with
-/// everything forced on for `zig build conformance` (see that step below).
+/// everything forced on for `zig build all-on` (see `all_on` below).
 /// Options are baked into a module at configure time, so a step that needs
 /// different values has no choice but to build its own `addOptions` instance;
 /// funnelling both through one function is what keeps the two from drifting
@@ -42,8 +41,6 @@ pub const Versions = struct {
 pub const BuildOptions = struct {
     /// One per `list.rows`, in that order: whether the format is compiled in.
     langs: [list.rows.len]bool,
-    /// One per `list.suites`, in that order: whether the suite runs.
-    suites: [list.suites.len]bool,
     /// The canonical form is the AST's own 1:1 oracle encoding — invaluable
     /// in tests but not exposed through the C ABI or any binding, so shipping
     /// it in the default library/CLI/wasm is dead weight for everyone but the
@@ -63,33 +60,27 @@ pub const BuildOptions = struct {
         return self.langs[comptime list.indexOf(name)];
     }
 
-    /// The configuration `zig build conformance` builds: every suite and every
-    /// language on, independent of whatever `-D` flags the caller passed, so the
-    /// gate means the same thing on every machine.
+    /// The configuration `zig build all-on` builds: every language on,
+    /// independent of whatever `-D` flags the caller passed, so the gate means
+    /// the same thing on every machine.
     ///
-    /// Forcing the suites on is the point of the step. Forcing every language
-    /// on is a deliberate second win: plist and canonical are both off by
-    /// default, so nothing else in CI ever compiles them together — this is
-    /// the only build that proves the everything-on configuration still
-    /// builds at all. It builds both the library's test root and the CLI's
-    /// (tests.zig): the CLI is what instantiates the generic engines for
-    /// every language, so the library alone is not the whole proof.
+    /// plist and canonical are both off by default, so nothing else in CI
+    /// ever compiles them together — this is the only build that proves the
+    /// everything-on configuration still builds at all. It builds both the
+    /// library's test root and the CLI's (tests.zig): the CLI is what
+    /// instantiates the generic engines for every language, so the library
+    /// alone is not the whole proof.
     pub const all_on: BuildOptions = .{
         .langs = @splat(true),
-        .suites = @splat(true),
         .lang_canonical = true,
     };
 };
 
 /// Read every `-D` flag into a `BuildOptions`. Called once from `build.zig` for
-/// the user-facing configuration; `zig build conformance` uses
+/// the user-facing configuration; `zig build all-on` uses
 /// `BuildOptions.all_on` instead of calling this.
 pub fn resolve(b: *std.Build) BuildOptions {
     var cfg: BuildOptions = undefined;
-
-    inline for (list.suites, 0..) |suite, i| {
-        cfg.suites[i] = b.option(bool, suite.name ++ "-conformance", suite.help) orelse false;
-    }
 
     // Per-language feature gates. Any format can be compiled out to shrink the
     // binary and drop its parser/printer — including JSON, now that the native
@@ -112,9 +103,6 @@ pub fn resolve(b: *std.Build) BuildOptions {
 /// knobs — every build gets the same ones.
 pub fn addFigOptions(b: *std.Build, cfg: BuildOptions, ver: Versions) *std.Build.Step.Options {
     const options = b.addOptions();
-    inline for (list.suites, 0..) |suite, i| {
-        options.addOption(bool, suite.name ++ "_conformance", cfg.suites[i]);
-    }
     // Language gates, consumed across the codebase as `build_options.lang_*`.
     inline for (list.rows, 0..) |row, i| {
         options.addOption(bool, "lang_" ++ row.name, cfg.langs[i]);

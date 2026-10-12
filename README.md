@@ -274,9 +274,9 @@ If you use `fig` in your work, I would love to hear from you and feature you her
 
 **Credits**
 
-I took the JSON test suite at `testdata/json` from [Nicolas Seriot's JSONTestSuite repository](https://github.com/nst/JSONTestSuite).
+I took the JSON test suite in [fig-conformance](https://github.com/diaryx-org/fig-conformance) from [Nicolas Seriot's JSONTestSuite repository](https://github.com/nst/JSONTestSuite).
 I'm grateful that it is licensed under the MIT license, so I am allowed to use it for `fig`.
-A copy of the license is included in this repository at `testdata/json/LICENSE`.
+A copy of the license is included beside it there.
 
 I've done likewise for the other testing suites:
 

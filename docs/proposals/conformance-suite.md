@@ -12,8 +12,10 @@ part_of = [proposals](proposals.md)
 > **Status: DRAFT.** Written against `main` at acd8701 (5.2.0). It is the
 > gate that [core only](core-only.md) §8 step 5 refers to. The edit suites
 > of §4.1 are built, in a local `fig-conformance` repository with no
-> remote yet. The parse suites are not moved; a scratch runner of the
-> kind §4 describes produced core only §5.6's parse numbers.
+> remote yet. The parse suites moved there on 2026-10-11, and fig keeps
+> no corpus or scoreboard (§5). `fig lang serve` (§4) is not built; the
+> runner reaches the compiled formats through a wasm module that compiles
+> them all in.
 
 ## 1. The claim
 
@@ -176,21 +178,26 @@ does.
 
 ## 5. What fig keeps
 
-`fig` pins a tag of `fig-conformance` and holds its scores in one file,
-`conformance.figl`, one row per language and check. `zig build check`
-runs the suite against `fig lang serve` for every compiled language and
-against each JS twin as a module, and fails when a score drops below
-its row. Raising a score is an edit to that file in the commit that
-earns it.
+Nothing of conformance. The corpora, their runners and the scores all live
+in fig-conformance, which holds one scores file per implementation it
+knows (the compiled formats, the JS languages) and fails a run that falls
+below one. fig's `zig build check` does not run the suites. Raising a
+score is an edit to that file in the fig-conformance commit that records
+it.
 
-Deleted from fig: `testdata/{yaml,yaml-1.1,toml,toml-1.1.0,json,json5,plist,nestedtext}`,
-the seven scoreboards (`conformance*.zig`, `json5_conformance.zig`), and `tools/gen_*_conformance.zig`.
-The fixtures in `bindings/typescript/test/fixtures/` stay: they test the
-twins against the compiled formats' tables, not a format against its
-spec, and they go once there is one implementation of each format.
+Deleted from fig on 2026-10-11:
+`testdata/{yaml,yaml-1.1,toml,toml-1.1.0,json,json5,plist,nestedtext}`,
+the seven scoreboards (`conformance*.zig`, `json5_conformance.zig`), the
+`-D<suite>-conformance` options, `tools/gen_*_conformance.zig` and
+`tools/check_yaml_trees.zig`. The `conformance` build step also ran the
+library's and the CLI's tests with every format compiled in; that part
+stays, as `zig build all-on`. The fixtures in
+`bindings/typescript/test/fixtures/` stay: they test the twins against the
+compiled formats' tables, not a format against its spec, and they go once
+there is one implementation of each format.
 
-fig-lua and fig-quickjs pin the same suite and keep their own
-`conformance.figl`. A language added later starts with one.
+fig-lua and fig-quickjs keep their own scores files in fig-conformance
+the same way. A language added later starts with one.
 
 ## 6. Sequencing
 
@@ -204,8 +211,8 @@ fig-lua and fig-quickjs pin the same suite and keep their own
    the twins. The compiled scores should match the Zig scoreboards, and
    any difference is a bug in the runner. The YAML `expect` checks are
    new, so their first scores are new facts.
-4. **Switch fig over.** Add `conformance.figl` and the check, and delete
-   what §5 lists.
+4. **Switch fig over.** Delete what §5 lists. Done, without a check in
+   fig: the suites run from fig-conformance.
 5. **The editing corpus.** Done for every language fig edits (§4.1).
    More invariants belong beside the first: a value edit changes nothing
    outside its path, and a reorder changes no value.

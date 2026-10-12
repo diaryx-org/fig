@@ -51,9 +51,7 @@ pub const deserialize = @import("deserialize.zig");
 test {
     // `language.zig`'s own test block references every language module in
     // its `slots`, and each module's `test {}` block pulls in its submodules'
-    // tests, so root names no language. Build-option-gated conformance
-    // suites stay enumerated below: each is a file, and a file is imported by
-    // literal.
+    // tests, so root names no language.
     _ = @import("languages/language.zig");
     _ = @import("languages/harness.zig");
     _ = @import("languages/runtime.zig");
@@ -73,28 +71,9 @@ test {
     _ = @import("deserialize.zig");
     _ = @import("c_api.zig");
     _ = @import("util/util.zig");
-    // Unconditional, unlike the gated suites below: the fuzz targets double as
-    // deterministic smoke tests under a plain `zig build test` (Zig runs each
-    // one over an empty Smith tape when the binary is not built in fuzz mode),
-    // so they should never need a flag to be compiled or discovered.
+    // The fuzz targets double as deterministic smoke tests under a plain
+    // `zig build test` (Zig runs each one over an empty Smith tape when the
+    // binary is not built in fuzz mode), so they should never need a flag to
+    // be compiled or discovered.
     _ = @import("fuzz.zig");
-    if (build_options.json_conformance) {
-        _ = @import("languages/json/conformance.zig");
-    }
-    if (build_options.json5_conformance) {
-        _ = @import("languages/json/json5_conformance.zig");
-    }
-    if (build_options.yaml_conformance) {
-        _ = @import("languages/yaml/conformance.zig");
-        _ = @import("languages/yaml/conformance_1_1.zig");
-    }
-    if (build_options.toml_conformance) {
-        _ = @import("languages/toml/conformance.zig");
-    }
-    if (build_options.plist_conformance) {
-        _ = @import("languages/plist/conformance.zig");
-    }
-    if (build_options.nestedtext_conformance) {
-        _ = @import("languages/nestedtext/conformance.zig");
-    }
 }

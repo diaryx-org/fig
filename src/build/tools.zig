@@ -1,6 +1,5 @@
 //! Developer/maintenance tooling: vendoring the Zig source into the Rust crate,
-//! regenerating the conformance corpora, the figl → generated-file sync, and the
-//! version sync. None of these run on a normal build; they are explicit steps
+//! the figl → generated-file sync, and the version sync. None of these run on a normal build; they are explicit steps
 //! a maintainer invokes (a few are wired into the `check` gate via the handles
 //! returned in `Result`).
 
@@ -14,7 +13,7 @@ pub const Result = struct {
     /// which `zig build check` runs.
     check_figl_step: *std.Build.Step,
     /// The `Language` contract's compile-failure cases, which `zig build check`
-    /// runs. Not part of `test`/`conformance`: asserting a `@compileError`
+    /// runs. Not part of `test`/`all-on`: asserting a `@compileError`
     /// means compiling something that must NOT build, which a test binary
     /// cannot host.
     validate_check_step: *std.Build.Step,
@@ -31,7 +30,6 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     const b = ctx.b;
     const target = ctx.target;
     const optimize = ctx.optimize;
-    const mod = arts.fig_mod;
     const exe = arts.exe;
 
     // Vendor this Zig source into fig-sys (bindings/rust/fig-sys/zig) so the
@@ -65,72 +63,6 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     vendor_check_run.has_side_effects = true;
     const vendor_check_step = b.step("vendor-check", "Fail if a path the published crate needs (or build.zig.zon's .paths promises) is missing");
     vendor_check_step.dependOn(&vendor_check_run.step);
-
-    // Dev tool: regenerate the YAML conformance corpus from the yaml-test-suite,
-    // parsing the suite meta-files with fig itself (no third-party YAML library).
-    //   zig build gen-yaml-conformance -- <path-to-yaml-test-suite> [<fig-root>]
-    const gen_yaml = b.addExecutable(.{
-        .name = "gen_yaml_conformance",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/gen_yaml_conformance.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{.{ .name = "fig", .module = mod }},
-        }),
-    });
-    const gen_yaml_run = b.addRunArtifact(gen_yaml);
-    gen_yaml_run.addPassthruArgs();
-    const gen_yaml_step = b.step("gen-yaml-conformance", "Regenerate the YAML conformance corpus");
-    gen_yaml_step.dependOn(&gen_yaml_run.step);
-
-    // Dev tool: STRUCTURAL conformance — compare the shape of fig's parse against
-    // the suite's canonical `tree:` event stream (the pass/fail scoreboard can't
-    // see a wrong-shape accept). zig build check-yaml-trees -- <suite> [<fig-root>]
-    const check_trees = b.addExecutable(.{
-        .name = "check_yaml_trees",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/check_yaml_trees.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{.{ .name = "fig", .module = mod }},
-        }),
-    });
-    const check_trees_run = b.addRunArtifact(check_trees);
-    check_trees_run.addPassthruArgs();
-    const check_trees_step = b.step("check-yaml-trees", "Structural-diff fig's parse vs the suite tree");
-    check_trees_step.dependOn(&check_trees_run.step);
-
-    // Dev tool: vendor the toml-lang/toml-test corpus into testdata/toml/.
-    //   zig build gen-toml-conformance -- <path-to-toml-test> [<version>] [<fig-root>]
-    const gen_toml = b.addExecutable(.{
-        .name = "gen_toml_conformance",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/gen_toml_conformance.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{.{ .name = "fig", .module = mod }},
-        }),
-    });
-    const gen_toml_run = b.addRunArtifact(gen_toml);
-    gen_toml_run.addPassthruArgs();
-    const gen_toml_step = b.step("gen-toml-conformance", "Vendor the toml-test corpus");
-    gen_toml_step.dependOn(&gen_toml_run.step);
-
-    // Dev tool: vendor the json5/json5-tests corpus into testdata/json5/.
-    //   zig build gen-json5-conformance -- <path-to-json5-tests> [<fig-root>]
-    const gen_json5 = b.addExecutable(.{
-        .name = "gen_json5_conformance",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/gen_json5_conformance.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{.{ .name = "fig", .module = mod }},
-        }),
-    });
-    const gen_json5_run = b.addRunArtifact(gen_json5);
-    gen_json5_run.addPassthruArgs();
-    const gen_json5_step = b.step("gen-json5-conformance", "Vendor the json5-tests corpus");
-    gen_json5_step.dependOn(&gen_json5_run.step);
 
     // fig ships every artifact under one version, decided in build.zig.zon's
     // `.version` (see docs/VERSIONING.md). `version-sync` copies it into every

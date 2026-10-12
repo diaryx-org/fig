@@ -559,8 +559,8 @@ fn collectMultilineKey(self: *Parser, indent: usize) ParserError!struct { text: 
 // value-region under an item that left its same-line value empty. Never
 // recognized after `key: ` on the same line (rest-of-line values are always
 // literal — see the module doc comment). Delimiter-error rules below are
-// reverse-engineered from the official conformance suite (see
-// `testdata/nestedtext/tests.json`, cases `emanate`/`conclude`/`baptism`/
+// reverse-engineered from the official conformance suite (in
+// fig-conformance, cases `emanate`/`conclude`/`baptism`/
 // `protrude`/`collate` etc.): a trailing comma before a closing delimiter is
 // `error.MissingValue` ("expected a value here"), a value/key that runs off
 // the end of the line without a delimiter is `error.UnclosedDelim`, a raw

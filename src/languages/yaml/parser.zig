@@ -146,7 +146,7 @@ source: []const u8 = "",
 /// The YAML version whose scalar-resolution rules `scalarKind` applies. Set
 /// from the `format` passed to `parseOnce`. `.v1_1` routes plain scalars
 /// through `scalarKind1_1` (1.1 tag-repository resolution); `.v1_2_2` uses the
-/// 1.2 core schema. The spec fixtures under `testdata/yaml-1.1/` pin 1.1.
+/// 1.2 core schema. fig-conformance's YAML 1.1 suite pins 1.1.
 version: Type = .v1_2_2,
 /// Where the parse failed and why, set at the moment it did (see
 /// `Diagnostic`). A site that knows more than the error it returns — the
@@ -2038,7 +2038,7 @@ fn scalarKind(self: *Parser, source: []const u8) ParserError!AST.Node.Kind {
 // ints, `_` digit separators, floats requiring a `.` with a *signed* exponent,
 // and `!!timestamp` auto-resolution. The lexeme stays in `number.raw` /
 // `extended.text`; value normalization (radix, `_`, base-60) is the consumer's
-// job — see `conformance_1_1.zig`, which recomputes from the raw.
+// job — fig-conformance's YAML 1.1 suite holds a reader to it.
 fn scalarKind1_1(source: []const u8) AST.Node.Kind {
     if (eqlAny(source, &.{ "null", "Null", "NULL", "~" })) return .null_;
     if (bool1_1(source)) |b| return .{ .boolean = b };

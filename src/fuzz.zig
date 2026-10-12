@@ -31,9 +31,8 @@
 //! structured generator — NOT the input slice older versions passed. The bytes
 //! under test are synthesized here, from Smith decisions. The corollary is a
 //! trap worth stating outright: `FuzzInputOptions.corpus` entries are Smith
-//! DECISION TAPES, not source text, so the fixtures under `testdata/` cannot be
-//! seeded as a corpus — they are ordinary files, and the conformance suites
-//! already read them as such. Modeled on `std/zig/tokenizer.zig`'s own fuzz test.
+//! DECISION TAPES, not source text, so a conformance corpus cannot be seeded
+//! as one — its cases are ordinary files. Modeled on `std/zig/tokenizer.zig`'s own fuzz test.
 
 const std = @import("std");
 

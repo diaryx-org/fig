@@ -409,7 +409,7 @@ fn eqlAny(s: []const u8, options: []const []const u8) bool {
 // ── tests ────────────────────────────────────────────────────────────────
 const testing = std.testing;
 const build_options = @import("build_options");
-// By path, like `conformance.zig`'s: these exercise the pass over what the
+// By path: these exercise the pass over what the
 // compiled YAML parser builds, and skip when it is gated out of the build.
 const Parser = @import("languages/yaml/parser.zig");
 

@@ -2,7 +2,7 @@
 //! all together: the C ABI surface check, the SemVer diff, the cargo-semver-checks
 //! pass, and the Rust/TypeScript binding test suites. `check` additionally
 //! depends on the `check-figl` and `version-check` steps (from `tools`) and the
-//! `test`/`conformance` steps (from `tests`), passed in via
+//! `test`/`all-on` steps (from `tests`), passed in via
 //! `Deps` so this module doesn't reach back into the others.
 
 const std = @import("std");
@@ -21,8 +21,8 @@ pub const Deps = struct {
     version_check_step: *std.Build.Step,
     /// From `tests`: the unit-test suite.
     test_step: *std.Build.Step,
-    /// From `tests`: the conformance run.
-    conformance_step: *std.Build.Step,
+    /// From `tests`: the tests again with every format compiled in.
+    all_on_step: *std.Build.Step,
 };
 
 pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
@@ -145,13 +145,13 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     // guard that lives in cargo's world rather than zig's (it diffs the native
     // Rust API, which never crosses the C ABI the Zig tools inspect). A
     // TypeScript API guard can hang off this same step later the same way.
-    const check_step = b.step("check", "Pre-release gate: zig test + conformance suites + abi/semver/version/figl guards + cargo-semver-checks + rust & typescript tests (binding suites skip with a note if their toolchain is missing)");
+    const check_step = b.step("check", "Pre-release gate: zig test (default and every format on) + abi/semver/version/figl guards + cargo-semver-checks + rust & typescript tests (binding suites skip with a note if their toolchain is missing)");
     check_step.dependOn(abi_check_step);
     check_step.dependOn(semver_check_step);
     check_step.dependOn(deps.version_check_step);
     check_step.dependOn(deps.check_figl_step);
     check_step.dependOn(deps.vendor_check_step);
-    // The negative half of the `Language` contract. `test`/`conformance` cover
+    // The negative half of the `Language` contract. `test`/`all-on` cover
     // what a well-formed manifest DOES; this covers what `validate` refuses,
     // which nothing inside a test binary can reach — see tools/validate-check.zig.
     check_step.dependOn(deps.validate_check_step);
@@ -288,5 +288,5 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     // `zig build check`, wiring it here — rather than as its own CI step — is what
     // keeps the corpus from going stale again: a new format's suite is scored by
     // CI the moment it is added to root.zig, with no workflow edit to forget.
-    check_step.dependOn(deps.conformance_step);
+    check_step.dependOn(deps.all_on_step);
 }

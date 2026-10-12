@@ -6,7 +6,7 @@ const std = @import("std");
 const Context = @import("Context.zig");
 
 /// The handles later stages need to hang more graph off of:
-///   * `fig_mod`  — the `fig` library module (the gen-* dev tools import it).
+///   * `fig_mod`  — the `fig` library module (the tests and the abi probes import it).
 ///   * `exe`      — the CLI (its tests, and the sync-figl/version-sync tools that
 ///                  shell out to it, reference it).
 ///   * `c_lib`    — the static C ABI lib the abi probes link against.

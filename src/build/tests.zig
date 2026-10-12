@@ -1,7 +1,11 @@
-//! The test surface: the unit-test suite (`test`), the conformance run against
-//! the vendored corpora (`conformance`), coverage-guided fuzzing (`fuzz`), and
+//! The test surface: the unit-test suite (`test`), the same tests with every
+//! format compiled in (`all-on`), coverage-guided fuzzing (`fuzz`), and
 //! installing the test binaries for debugging (`install-tests`). Returns the two
 //! step handles the `check` gate folds in.
+//!
+//! The conformance corpora (yaml-test-suite, toml-test and the rest) are not
+//! here: they live in fig-conformance, which scores any implementation of a
+//! language through the contract.
 
 const std = @import("std");
 const Context = @import("Context.zig");
@@ -11,7 +15,7 @@ const artifacts = @import("artifacts.zig");
 /// The step handles `checks` wires into the `check` gate.
 pub const Result = struct {
     test_step: *std.Build.Step,
-    conformance_step: *std.Build.Step,
+    all_on_step: *std.Build.Step,
 };
 
 pub fn add(ctx: Context, arts: artifacts.Result) Result {
@@ -65,41 +69,32 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_version_sync_tests.step);
 
-    // The conformance corpora vendored into `testdata/` (~2.7k cases: the
-    // upstream yaml-test-suite, toml-test, json5-tests, JSONTestSuite, the
-    // NestedText suite, and the plist fixtures) sit behind the six
-    // `-D*-conformance` flags, which default off so that a routine `zig build
-    // test` stays fast. The cost of that default was that nothing ever passed the
-    // flags — CI included — so the whole corpus sat dormant. This step exists so
-    // that running them is automatic in the one place it has to be: the gate.
-    //
-    // The suites live in `mod`'s test block (see the `build_options.*_conformance`
-    // branches at the bottom of src/root.zig), and options are baked into a module
-    // at configure time — so scoring them needs a *variant* of `mod` carrying
-    // different options, not a flag on `mod_tests`. Hence the second module and
-    // the second `addOptions` instance (a second instance is also what keeps Zig
-    // from rejecting one generated file shared by two modules — see `options_mod`
-    // in artifacts.zig). Corpus paths are relative to the repo root, which is
-    // where `zig build` always runs.
-    const conformance_options_mod = Options.addFigOptions(b, Options.BuildOptions.all_on, ctx.ver).createModule();
-    const conformance_mod = b.createModule(.{
+    // The library's tests again with every format compiled in (see
+    // `Options.BuildOptions.all_on`). Options are baked into a module at
+    // configure time, so this needs a *variant* of `mod` carrying different
+    // options, not a flag on `mod_tests`. Hence the second module and the
+    // second `addOptions` instance (a second instance is also what keeps Zig
+    // from rejecting one generated file shared by two modules — see
+    // `options_mod` in artifacts.zig).
+    const all_on_options_mod = Options.addFigOptions(b, Options.BuildOptions.all_on, ctx.ver).createModule();
+    const all_on_mod = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
     });
-    conformance_mod.addImport("build_options", conformance_options_mod);
+    all_on_mod.addImport("build_options", all_on_options_mod);
     // Same libc reasoning as `mod` in artifacts.zig: root.zig's test block pulls
     // in c_api.zig, which reaches for `std.heap.c_allocator` on every non-wasm
     // target.
-    conformance_mod.link_libc = !resolved_target.cpu.arch.isWasm();
+    all_on_mod.link_libc = !resolved_target.cpu.arch.isWasm();
 
-    const conformance_tests = b.addTest(.{
-        .root_module = conformance_mod,
+    const all_on_lib_tests = b.addTest(.{
+        .root_module = all_on_mod,
         .filters = test_filters,
     });
-    const run_conformance_tests = b.addRunArtifact(conformance_tests);
+    const run_all_on_lib_tests = b.addRunArtifact(all_on_lib_tests);
 
     // The CLI's test root, built against the everything-on library. The
-    // conformance variant above is the one build that turns every format on,
+    // variant above is the one build that turns every format on,
     // but on its own it proves only that the LIBRARY compiles that way: the
     // CLI instantiates the generic engines (patch.zig, the editor) for every
     // compiled-in language, and a comptime error there — a `switch` arm naming
@@ -113,17 +108,17 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
             .target = target,
             .optimize = ctx.optimize,
             .imports = &.{
-                .{ .name = "fig", .module = conformance_mod },
-                .{ .name = "build_options", .module = conformance_options_mod },
+                .{ .name = "fig", .module = all_on_mod },
+                .{ .name = "build_options", .module = all_on_options_mod },
             },
         }),
         .filters = test_filters,
     });
     const run_all_on_exe_tests = b.addRunArtifact(all_on_exe_tests);
 
-    const conformance_step = b.step("conformance", "Score every format against its vendored conformance corpus in testdata/, and run the CLI's tests with every format on");
-    conformance_step.dependOn(&run_conformance_tests.step);
-    conformance_step.dependOn(&run_all_on_exe_tests.step);
+    const all_on_step = b.step("all-on", "Run the library's and the CLI's tests with every format compiled in");
+    all_on_step.dependOn(&run_all_on_lib_tests.step);
+    all_on_step.dependOn(&run_all_on_exe_tests.step);
 
     // Coverage-guided fuzzing for the hand-written tokenizers/parsers — the
     // targets themselves live in src/fuzz.zig. Conformance proves fig handles the
@@ -166,5 +161,5 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     const install_tests_step = b.step("install-tests", "Install test executables for debugging");
     install_tests_step.dependOn(&install_mod_tests.step);
 
-    return .{ .test_step = test_step, .conformance_step = conformance_step };
+    return .{ .test_step = test_step, .all_on_step = all_on_step };
 }

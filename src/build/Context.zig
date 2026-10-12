@@ -30,6 +30,6 @@ cfg: Options.BuildOptions,
 options_mod: *std.Build.Module,
 /// The package-identity numbers (the version, the ABI version, the epoch), sourced from
 /// `build.zig`. Carried here because more than one stage needs them: `tests`
-/// rebuilds a second `build_options` for the conformance run, and `checks`
+/// rebuilds a second `build_options` for the all-on run, and `checks`
 /// embeds the version into the abi/semver tool args.
 ver: Options.Versions,

@@ -13,8 +13,8 @@ pub const Type = enum {
     /// booleans, leading-zero octal (`0777`) + binary (`0b…`) + sexagesimal
     /// (`190:20:30`) ints, `_` digit separators, mandatory-sign float exponents,
     /// and `!!timestamp` auto-resolution. Structure/syntax is unchanged.
-    /// Resolution differences are pinned by the spec fixtures in
-    /// `testdata/yaml-1.1/` (see `conformance_1_1.zig`) and implemented by
+    /// Resolution differences are pinned by fig-conformance's YAML 1.1
+    /// suite and implemented by
     /// `scalarKind1_1` in `parser.zig`. Structure/syntax is shared with 1.2.
     v1_1,
 };

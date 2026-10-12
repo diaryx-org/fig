@@ -11,8 +11,8 @@ const checks = @import("src/build/checks.zig");
 //   * src/build/Context.zig   — the inputs every stage shares (target, optimize, …)
 //   * src/build/Options.zig   — the `-D` knobs baked into `build_options`
 //   * src/build/artifacts.zig — the fig lib, CLI, LSP, C ABI (static+shared), wasm/wasi
-//   * src/build/tools.zig     — vendor-rust, gen-*-conformance, sync/check-figl, version-sync
-//   * src/build/tests.zig     — test, conformance, fuzz, install-tests
+//   * src/build/tools.zig     — vendor-rust, sync/check-figl, version-sync
+//   * src/build/tests.zig     — test, all-on, fuzz, install-tests
 //   * src/build/checks.zig    — abi/semver guards, rust/ts suites, the `check` gate
 //
 // The package-identity constants below stay HERE, not in Options.zig, and are
@@ -94,6 +94,6 @@ pub fn build(b: *std.Build) void {
         .vendor_check_step = tools_result.vendor_check_step,
         .version_check_step = tools_result.version_check_step,
         .test_step = tests_result.test_step,
-        .conformance_step = tests_result.conformance_step,
+        .all_on_step = tests_result.all_on_step,
     });
 }

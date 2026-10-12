@@ -2,7 +2,7 @@
 title = Core only
 description = Every format moves out of core, figl included — core names no language in its source or its C ABI, every language reaches core only through the contract, and every consumer registers the languages it uses
 created = 2026-10-09
-updated = 2026-10-11
+updated = 2026-10-12
 status = draft
 part_of = [proposals](proposals.md)
 ```
@@ -10,8 +10,13 @@ part_of = [proposals](proposals.md)
 # Core only
 
 > **Status: DRAFT.** Written against `main` at f459cce (5.2.0, core ABI
-> 3). Nothing here is built. §7 lists what breaks; §8 orders the work so
-> that most of it lands in 5.x as additive changes and 6.0 only deletes.
+> 3). Nothing here is built. §7 lists what breaks; §8 orders the work.
+> All of it lands in 6.0, ABI 4, staged in §8's order.
+>
+> §8 step 1's measurements are done (2026-10-12). They settled the third
+> revision: the contract's node table becomes the `Document`'s own
+> storage, adopted without a copy (§4.9), and a language can ship as a
+> crate of its own (§5.2).
 >
 > The second draft. The first let a Zig language import core's internals
 > and shipped the languages as a second prebuilt payload. A language built
@@ -272,6 +277,63 @@ escape grammar is defined in the spec, not by reference to a format.
 it. It is never registered, has no handle, and is absent from `fig.h`.
 It is the harness's oracle, not a format.
 
+### 4.9 The Document is the table
+
+Through the contract, every format would pay a copy: the language's
+node table is rebuilt into `Document`, an AST of tagged-union nodes with
+seven side arrays beside it. Measured on a prototype (§8 step 1), the
+copy costs 21–49% of the compiled parse, an edit round costs 1.5–2× (an
+edit reparses), and peak memory rises 2.5–3.6× (the 6 MB YAML file:
+134 MB compiled, 361 MB through the table).
+
+So the table and the `Document` become one structure. Each node is a
+row of fixed columns, stored column by column:
+
+| Column | Type | |
+|---|---|---|
+| `kind` | u8 | null, boolean, string, number, extended, sequence, mapping, keyvalue, alias |
+| `flags` | u8 | which sparse tables hold a fact for this node |
+| `start`, `end` | u32 | the node's span |
+| `parent`, `first_child`, `next_sibling` | u32 | the tree; a keyvalue's key and value are its two children |
+| `text` | u32 offset, u32 length | a scalar's text, in the source or, with the length's high bit set, in the document's string buffer |
+
+Everything rarer is a sparse table sorted by node: anchor names and
+spans, tags and their spans, markers, separators, item separators,
+regions, mentions, directives and comments. A node with none costs a
+flag bit. The prototype carried every corpus through
+`Document` → rows → `Document` with every field equal, at 30–38 bytes a
+node against today's 64–208.
+
+A language writes rows straight into memory core hands it, and core
+validates and adopts them: the tree's links, kinds, spans in bounds,
+sparse tables in order. Validation measured 4–9% of the compiled parse,
+against the copy's 21–49%. The projected peak for the 6 MB YAML file is
+about 43 MB, a third of today's compiled path. Core allocates everything
+a `Document` owns, so a language in an archive of its own never frees, or
+is freed by, another archive's allocator. A JS or out-of-process
+language still pays the wire's decode, which writes the same rows.
+
+The row's layout is ABI: it is `fig.h`'s `FigNodeRow` and its sparse
+tables, versioned with ABI 4 and frozen for the major version. A builder
+call per node would keep it private, at a cost per node that crosses an
+archive boundary uninlined; a frozen layout is the cheaper price, since
+the ABI only breaks at a major version anyway. A later version may add
+columns and sparse tables, never change one.
+
+Core's own code reads the rows through `Document`'s accessors. A
+`view(id)` returns today's tagged union for a node, so a `switch` over a
+node's kind stays exhaustive and most of core reads as it does now. The
+port touches about 1,080 lines in 23 files, a fifth of them on the
+editor; the languages' 1,700 are ported by §5.1 regardless. A walk that
+reads every span and every scalar costs the same on both layouts.
+
+Offsets are u32, so a source is limited to 4 GiB.
+
+Two savings need none of this, and are worth taking first: YAML
+allocates its anchor and tag arrays at full length for a file with none
+(96 bytes a node), and TOML its comment array for a file with one
+comment.
+
 ## 5. Where the languages go
 
 ### 5.1 Zig: through the contract only
@@ -298,40 +360,58 @@ core for the value and reference layers. The JS twins are the evidence
 that the contract holds them (§5.6), and the conformance corpora are what
 a port is held to.
 
-Every format pays the `NodeTable` copy from the contract's table into
-`Document`, which a compiled format avoids today because `Editor(Lang)`
-instantiates over it directly. There is no fallback slot that skips it,
-since one would need the language and core in the same image at the same
-layout. The copy's cost on the YAML corpus is the second measurement in
-§8. If it is too high, the remedy is in the table's shape, not in a
-private path around it.
+A compiled format avoids a copy today because `Editor(Lang)`
+instantiates over `Document` directly. Through the contract there is no
+copy to avoid: the table a language writes is the `Document` (§4.9).
 
 ### 5.2 Rust and C: the payload question
 
-`fig-sys`'s seven payloads become language-free. There are ten Zig
-language modules, and ten modules times seven targets is seventy payload
-crates, which nobody should maintain, so the languages cannot each have
-their own.
+`fig-sys`'s payloads become language-free. The first draft assumed a
+crate per language per target, seventy in all, and proposed one shared
+languages payload instead. Measured (§8 step 1), neither the split by
+target nor the shared payload is needed. A crate may hold all seven
+targets' archives, since crates.io's 10 MB limit is on the compressed
+`.crate`:
 
-The proposed shape is **one more payload set**, `fig-languages-sys`. It
-holds every Zig language, and each exports a single
-`fig_lang_<name>_register` symbol and nothing that core references. §5.1
-is what makes a second archive safe: the languages hold no copy of core,
-so the two link side by side. Thin crates (`fig-yaml`, `fig-toml`, …)
-each call one symbol, and ship one header for C. A binary that never
-calls `fig_yaml::register` never references YAML, so the linker's
-dead-code pass drops it.
+| Crate, all seven targets | `.crate` |
+|---|---|
+| core, no language | 1.86 MB |
+| yaml | 0.81 MB |
+| figl, zon | 0.66 MB |
+| toml | 0.47 MB |
+| json, nestedtext, plist | 0.38–0.41 MB |
+| ini, dotenv, properties | 0.32–0.33 MB |
 
-That only holds if the dead-code pass can see the boundary inside a Zig
-static library, which compiles a module to few objects. It needs function
-sections, and has to be measured before anything is built (§8 step 1).
-If it fails, the fallback is to build the languages payload from source
-for any subset and prebuild only the full set: the rule `fig-sys`
-already follows for non-default features.
+Today's seven payloads would fit in one crate too, at 4.3 MB.
+
+So each language can be **a crate of its own** (`fig-yaml`, `fig-toml`,
+…) holding its archive for every target and exporting one
+`fig_lang_<name>_register` symbol, beside a language-free `fig-sys`.
+A Rust binary depending on a core-only `fig-sys` and a yaml-only
+`fig-yaml` linked and ran on macOS and wasm32-wasip1, and linked for iOS,
+Linux and a Windows stand-in, with no duplicate or undefined symbols,
+provided neither archive bundles Zig's compiler_rt (`fig-sys` already
+leaves it out). Dead-stripping works per function; Linux needs
+`link_function_sections` and `link_data_sections` set, which saves
+about 1.1 MB there today.
+
+What it costs:
+
+- Each archive carries its own copy of the std and kit code it uses:
+  31–33 KB per language on macOS, 83–88 KB on Linux, measured with a
+  prototype bridge that also carried a copy routine §4.9 removes.
+- A release builds 77 archives into 11 crates, against 7 into 8 today.
+- A language crate is built against ABI 4 and checks it when it
+  registers, so its `fig-sys` requirement is the ABI's, not core's
+  version.
+- A crate holding every target is downloaded whole: core and the eight
+  default languages come to about 5.6 MB, against about 0.6 MB a target
+  today.
 
 Per-language crates also let a language fix ship without a core release,
 since a language depends on the contract's ABI, not on core's internals.
-They keep the single version of CLI 5 §6 unless that proves to be a cost.
+Whether they ship in 6.0, or 6.0 keeps one crate of every language, is
+open (§9).
 
 ### 5.3 TypeScript
 
@@ -469,42 +549,47 @@ Everything here is 6.0, ABI 4.
 
 ## 8. Sequencing
 
-1. **Measure.** Build `libfig.a` language-free and `libfig_languages.a`
-   with every language behind its own register symbol, link a Rust binary
-   that registers one, and compare its size against 5.2. Measure the
-   `NodeTable` copy on the YAML corpus. These two numbers decide §5.2 and
-   §5.1, and neither design is settled until they exist.
-2. **Declarations, in 5.x.** Add `render_key`, `resolveScalar`,
+1. **Measure.** Done, 2026-10-12: the node table's copy, a compact
+   layout adopted in place, and per-language archives on every target.
+   They decided §4.9 and §5.2.
+2. **Declarations.** Add `render_key`, `resolveScalar`,
    `splitStream`, `caps.root_container`, `degrades_to`, the declared
    noun, delimiter-driven comment scanning, fragment printing, the
    lexeme's value (§4.2) and the consumer's sniff order. Have every
    compiled language declare them, and switch core to read them. Each pin
    and switch is deleted in the commit that makes it redundant. All of
-   this is additive at ABI 3.
-3. **The kit, in 5.x.** Move the shared helpers, and the JSON pieces the
+   this is additive, and could have shipped at ABI 3.
+3. **The kit.** Move the shared helpers, and the JSON pieces the
    other languages borrow.
-4. **Registered containers, in 5.x,** beside the existing presets, which
+4. **Registered containers,** beside the existing presets, which
    become thin wrappers.
 5. **The parity gate.** The [conformance suite](conformance-suite.md)
    scores any language through the contract. The twins close §5.6's four
    differences against it, and gain an editing corpus. This is the bar
    for step 6.
-6. **Port the Zig languages to the contract.** Each moves to
+6. **The Document is the table** (§4.9). `FigNodeRow` and its sparse
+   tables, core's accessors and `view`, the wire's decode into rows, and
+   the twins and compiled languages writing them. Held to the
+   conformance suites before and after.
+7. **Port the Zig languages to the contract.** Each moves to
    `languages/<name>/`, drops its imports of core, and clears the same
    suite at the compiled format's scores before the compiled one is
    deleted. Core builds and tests with no language. The CLI and LSP
    register theirs. Add the §6 check.
-7. **6.0, ABI 4.** Delete the identity enums, the stand-ins, the
+8. **6.0, ABI 4.** Delete the identity enums, the stand-ins, the
    presets, the closed `KeyStyle` and `CommentStyle`, and the
    one-language options. Rename `ExtKind` and the dialect.
-8. **Bindings.** `fig-languages-sys` and the per-language crates, the
-   C headers, and the npm wasm without stand-ins.
+9. **Bindings.** A language-free `fig-sys` in one crate, the language
+   crates (§5.2), the C headers, and the npm wasm without stand-ins.
 
-Steps 2 to 5 are worth doing whether or not 6.0 happens, since each
+Steps 2 to 5 would be worth doing even without 6.0, since each
 replaces a switch with a declaration a registered language can also make,
 or holds a registered language to the bar a compiled one meets.
 
 ## 9. Open questions
+
+- **Language crates in 6.0.** §5.2 measured them viable. Do they ship
+  with 6.0, or does 6.0 ship one crate of every language and split later?
 
 - **Plist dates.** Should they merge into `offset_datetime` (§4.2), or
   stay a kind of their own under a neutral name (`timestamp`)? Merging is

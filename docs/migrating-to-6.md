@@ -42,8 +42,8 @@ the change; this page is the part of it that asks you to change something.
 
 The CLI no longer reads or writes embedded blocks. `--embed`, `--to-embed`,
 `--patch-embed` and `get --body` are gone, and a Markdown or HTML file is no
-longer opened through its frontmatter or blocks: like any file whose
-extension names no format, its contents are sniffed. The library APIs — Rust
+longer opened through its frontmatter or blocks. Such a file is refused
+rather than sniffed; `-i <format>` reads the whole file as that format. The library APIs — Rust
 `Embed`, TypeScript `Embed`, C `fig_embed_*` — are unchanged in this release.
 
 ## Rust

@@ -273,6 +273,16 @@ pub const sniff_order = [_][]const u8{
     "ini",  "dotenv", "yaml", "properties", "nestedtext",
 };
 
+/// The extensions of host documents whose contents a sniff would misread.
+fn documentKind(ext: []const u8) ?[]const u8 {
+    const kinds = [_]struct { []const u8, []const u8 }{
+        .{ "md", "a Markdown" },   .{ "markdown", "a Markdown" },
+        .{ "html", "an HTML" },    .{ "htm", "an HTML" },
+    };
+    for (kinds) |k| if (std.ascii.eqlIgnoreCase(ext, k[0])) return k[1];
+    return null;
+}
+
 pub fn resolveFormatFromContent(allocator: std.mem.Allocator, content: []const u8, file_path: []const u8) !Format {
     // A name in the order this build does not bundle is tried through the
     // language configured (or, on WASI, served by the host) under it, which
@@ -282,6 +292,13 @@ pub fn resolveFormatFromContent(allocator: std.mem.Allocator, content: []const u
     const dot = std.mem.findLast(u8, file_path, ".");
     if (dot) |d| if (fig.bundle.unbundledOwner(file_path[d + 1 ..])) |owner| {
         std.log.scoped(.detect).err("`{s}` is a {s} file, and this build does not include {s}; configure a language for it in languages.figl (see `fig lang --help`)", .{ file_path, owner, owner });
+        return error.UnsupportedFileFormat;
+    };
+    // A document is not sniffed: its frontmatter would read as a config
+    // file and an edit would land in the prose. A language configured for
+    // the extension has already claimed it before this point.
+    if (dot) |d| if (documentKind(file_path[d + 1 ..])) |kind| {
+        std.log.scoped(.detect).err("`{s}` is {s} document, not a config file; fig does not edit embedded blocks (pass an explicit format to read the whole file as one)", .{ file_path, kind });
         return error.UnsupportedFileFormat;
     };
     for (sniff_order) |n| {

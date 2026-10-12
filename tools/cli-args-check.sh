@@ -296,6 +296,12 @@ row 2 replace --key ok.yaml a c
 row 2 get --embed frontmatter ok.yaml
 row 2 convert --to-embed semicolons ok.yaml
 row 2 patch --patch-embed frontmatter ok.yaml ok.yaml
+# ...and a Markdown file is refused, not sniffed: its frontmatter would
+# read as properties and an edit would land in the prose.
+printf -- '---\ntitle: x\n---\n\nbody\n' >fixtures/post.md
+row 1 get post.md title
+row 1 set post.md a 1
+cmp -s run/post.md fixtures/post.md || fail "set on a Markdown file touched it"
 row 0 delete ok.yaml a
 row 1 delete ok.yaml zz
 row 2 delete ok.yaml a b

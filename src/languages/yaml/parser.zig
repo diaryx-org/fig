@@ -824,6 +824,7 @@ fn parseTokens(self: *Parser, input: []const u8) ParserError!Document {
         .node_anchors = node_anchors,
         .anchors = anchors,
         .tag_directives = tag_directives,
+        .merge_key = @import("yaml.zig").Language.syntax(.v1_2_2).merge_key,
     };
     if (self.comments_seen) {
         ast.node_comments = try self.node_comments.toOwnedSlice(self.allocator);

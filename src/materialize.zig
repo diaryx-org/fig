@@ -197,7 +197,7 @@ const Materializer = struct {
         var entry = node.kind.mapping;
         while (entry) |eid| : (entry = self.src.nodes[eid].next_sibling) {
             const kv = self.src.nodes[eid].kind.keyvalue;
-            if (self.stringKey(kv.key)) |ks| if (std.mem.eql(u8, ks, "<<")) {
+            if (self.stringKey(kv.key)) |ks| if (self.isMergeKey(ks)) {
                 merge_value = kv.value;
                 continue;
             };
@@ -245,7 +245,7 @@ const Materializer = struct {
             const kv = self.src.nodes[eid].kind.keyvalue;
             const key_str = self.stringKey(kv.key);
             if (key_str) |ks| {
-                if (std.mem.eql(u8, ks, "<<")) {
+                if (self.isMergeKey(ks)) {
                     try self.mergeInto(map_id, last, seen, kv.value); // nested merge in a source
                     continue;
                 }
@@ -253,6 +253,11 @@ const Materializer = struct {
             }
             try self.appendEntry(map_id, last, seen, kv.key, kv.value);
         }
+    }
+
+    fn isMergeKey(self: *const Materializer, key: []const u8) bool {
+        const mk = self.src.merge_key orelse return false;
+        return std.mem.eql(u8, key, mk);
     }
 
     fn stringKey(self: *const Materializer, key: AST.Node.Id) ?[]const u8 {
@@ -635,4 +640,20 @@ test "materialize: keep collapses aliases and merges and leaves every tag as wri
     // A custom tag is neither refused nor dropped.
     const ey = try mat.getValByPath(&.{ .{ .key = "e" }, .{ .key = "y" } });
     try testing.expectEqualStrings("!custom", mat.tagOf(ey.id).?.text);
+}
+
+test "materialize: a `<<` key merges only where the language declares it as its merge key" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    var doc = try Parser.parse(testing.allocator, "base: &b {x: 1}\nd: {<<: *b}\n", .v1_2_2);
+    defer doc.deinit(testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const merged = try materialize(arena.allocator(), &doc.ast, .strict);
+    _ = try merged.getValByPath(&.{ .{ .key = "d" }, .{ .key = "x" } });
+
+    // The same tree from a language with no merge key keeps `<<` as a key.
+    doc.ast.merge_key = null;
+    const kept = try materialize(arena.allocator(), &doc.ast, .strict);
+    try testing.expectError(error.NotFound, kept.getValByPath(&.{ .{ .key = "d" }, .{ .key = "x" } }));
+    _ = try kept.getValByPath(&.{ .{ .key = "d" }, .{ .key = "<<" } });
 }

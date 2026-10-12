@@ -1877,7 +1877,7 @@ pub const Language = struct {
         const rc = reg.vt.parse(reg.vt.ctx, e.dialectZ(), Str.of(input), &table, &parser.last_error);
         if (rc != 0) return error.RuntimeParseFailed;
         defer reg.vt.free_table(reg.vt.ctx, &table);
-        return tableToDocument(parser.allocator, input, &table) catch |err| {
+        var doc = tableToDocument(parser.allocator, input, &table) catch |err| {
             parser.last_error.set(switch (err) {
                 error.UnknownKind => "the parser returned a node kind this fig does not know",
                 error.MalformedTable => "the parser returned a malformed node table",
@@ -1885,6 +1885,8 @@ pub const Language = struct {
             });
             return error.RuntimeParseFailed;
         };
+        if (e.syntax orelse reg.syntax) |sx| doc.ast.merge_key = sx.merge_key;
+        return doc;
     }
 
     pub const print = Printer.print;

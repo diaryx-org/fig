@@ -86,6 +86,11 @@ owned_strings: []const []const u8 = &.{},
 /// Points to first sequence/mapping that contains all other nodes.
 root: Node.Id,
 
+/// The key whose value is merged into its mapping (YAML's `<<`), from the
+/// language's `Syntax.merge_key`, or null when the language has no merge.
+/// Not owned: it lives as long as the language's registration.
+merge_key: ?[]const u8 = null,
+
 /// Complete node tree, such that `ast.nodes[node.id] == node`
 nodes: []const Node,
 

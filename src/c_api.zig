@@ -937,12 +937,12 @@ fn resolvedAst(arena: std.mem.Allocator, ast: *const AST, culprit: *?AST.Node.Id
 }
 
 /// Whether `ast` holds anything `fig_document_resolve_aliases` would
-/// collapse: an alias node, or an entry keyed `<<`.
+/// collapse: an alias node, or an entry keyed with the language's merge key.
 fn hasAliasOrMerge(ast: *const AST) bool {
     for (ast.nodes) |n| switch (n.kind) {
         .alias => return true,
         .keyvalue => |kv| switch (ast.nodes[kv.key].kind) {
-            .string => |k| if (std.mem.eql(u8, k, "<<")) return true,
+            .string => |k| if (ast.merge_key) |mk| if (std.mem.eql(u8, k, mk)) return true,
             else => {},
         },
         else => {},

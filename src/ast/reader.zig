@@ -139,7 +139,7 @@ fn mergedChildInner(self: *const AST, mapping: Node, key: []const u8, visited: [
         const kv = self.nodes[cid].kind.keyvalue;
         const kkind = self.nodes[kv.key].kind;
         if (kkind != .string) continue;
-        if (util.eql(u8, kkind.string, "<<")) {
+        if (self.merge_key != null and util.eql(u8, kkind.string, self.merge_key.?)) {
             merge_value = kv.value;
         } else if (util.eql(u8, kkind.string, key)) {
             return kv.value;

@@ -44,13 +44,14 @@ turned off independently:
 zig build -Dyaml=false -Dtoml=false -Dnestedtext=false
 ```
 
-A format left out is compiled out entirely, not merely hidden: its parser and
-printer are never built, `fig_format_capabilities` reports `0` for it over the C
-ABI, and asking the CLI to read one fails with `FormatDisabled`. `zig build -h`
-lists the full set with their defaults — note that `plist`, `xml` and
-`canonical` are opt-**in** (`-Dplist=true`), and that `-Dfigl=false` also drops
-`fig-lsp`, which is a language server for the fig dialect and has nothing to
-serve without it.
+A format left out is not built at all, not merely hidden: its parser and
+printer never compile, nothing registers it, `fig_format_by_name` finds no
+handle for it over the C ABI, and the CLI refuses a file of its extension
+unless a `languages.figl` configures a language by that name. `zig build -h`
+lists the full set with their defaults — note that `plist` and `canonical`
+are opt-**in** (`-Dplist=true`), and that `-Dfigl=false` also drops
+`fig-lsp`, which is a language server for figl and has nothing to serve
+without it.
 </details>
 
 In the `fig` folder, a new folder called `zig-out` has been created.

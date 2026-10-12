@@ -2,7 +2,7 @@
 title = Using fig in Zig
 author = adammharris
 created = 2026-07-05T21:35:14-06:00
-updated = 2026-08-08T10:00:00-06:00
+updated = 2026-10-12T16:30:00-06:00
 part_of = [docs](docs.md)
 ```
 
@@ -10,7 +10,7 @@ part_of = [docs](docs.md)
 
 `fig` is a Zig library that parses, **edits**, and serializes configuration
 files — JSON, JSONC, JSON5, YAML, TOML, ZON, INI, dotenv, Java `.properties`,
-NestedText, Apple XML property lists, and the native `fig` authoring
+NestedText, Apple XML property lists, and figl, fig's own authoring
 dialect — from one small package with no external
 dependencies. Its distinguishing feature is *comment-preserving editing*: you
 can change one value deep in a YAML or TOML file and every comment, blank
@@ -20,7 +20,7 @@ markdown frontmatter.
 
 This is the core library — the same code the C ABI, the TypeScript/WASM
 package, and the `fig` CLI are all built on. Used directly from Zig you get
-the whole surface: comptime language selection, zero-copy reads over the
+the whole surface: build-time language selection, zero-copy reads over the
 source buffer, and full control over allocation (there is no hidden global
 state or GC — you manage every `deinit`).
 
@@ -51,9 +51,11 @@ const fig_dep = b.dependency("fig", .{ .target = target, .optimize = optimize })
 exe.root_module.addImport("fig", fig_dep.module("fig"));
 ```
 
-Most formats are compiled in by default. Each is gated by its own build
-option, so a consumer that only needs JSON+YAML can trim the rest out of the
-binary by passing options through to the dependency:
+fig's core names no language: every format is a *language* that registers
+with it. The package ships one per format, and a build option per language
+says whether this build bundles it, so a consumer that only needs JSON+YAML
+can trim the rest out of the binary by passing options through to the
+dependency:
 
 ```zig
 const fig_dep = b.dependency("fig", .{
@@ -71,7 +73,7 @@ const fig_dep = b.dependency("fig", .{
 | `yaml`        |   ✅    | YAML 1.2.2 / 1.1.                           |
 | `toml`        |   ✅    | TOML 1.0 / 1.1.                             |
 | `zon`         |   ✅    | Zig Object Notation.                        |
-| `fig`         |   ✅    | The native `fig` authoring dialect.         |
+| `figl`        |   ✅    | figl, fig's authoring dialect.              |
 | `ini`         |   ✅    | INI (`[section]` + `key = value`).          |
 | `dotenv`      |   ✅    | dotenv / `.env`.                            |
 | `properties`  |   ✅    | Java `.properties`.                         |
@@ -79,10 +81,10 @@ const fig_dep = b.dependency("fig", .{
 | `plist`       |         | Apple XML property lists.                   |
 | `canonical`   |         | The AST's own oracle encoding (mostly for tests; always compiled for a test build). |
 
-A disabled language's `Language.*` member (see below) resolves to `void` at
-comptime rather than being omitted, so any code path that touches a gated-out
-language must itself be guarded with `if (comptime build_options.lang_toml)
-...` — see [Formats](#formats).
+The languages a build bundles register the first time anything looks a
+format up (`fig.bundle` names them, and `fig.bundle.registerAll(allocator)`
+registers them up front, in an allocator of your choosing — the one any
+`Runtime.register` you make later must use too).
 
 ## Quick start
 
@@ -95,37 +97,45 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
+    // A format is a registered dialect, found by name.
+    const json = fig.Runtime.entryByName("json").?;
+    const yaml = fig.Serialize.Target.named("yaml").?;
+
     // Parse JSON into a Document (the AST plus source spans).
-    const doc = try fig.Language.JSON.Parser.parse(allocator, "{\"name\":\"fig\",\"nums\":[1,2]}", .JSON);
+    const doc = try fig.Runtime.Language.Parser.parse(allocator, "{\"name\":\"fig\",\"nums\":[1,2]}", json.typeOf());
     defer doc.deinit(allocator);
 
     // Convert to YAML.
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
-    try fig.Serialize.serialize(&doc.ast, &out.writer, .yaml);
-    std.debug.print("{s}", .{out.written()}); // name: fig\nnums:\n- 1\n- 2\n
+    try fig.Serialize.serialize(&doc.ast, &out.writer, yaml);
+    std.debug.print("{s}", .{out.written()}); // name: fig\nnums: [1, 2]\n
 }
 ```
 
-Every `Language` module exposes the same two entry points — `Parser.parse`
-(text → `Document`) and `Printer.print`/`AST.serialize` (`AST` → text) — so
-swapping `.JSON`/`json.Type` for `.TOML`/`toml.Type` etc. is the whole
-adaptation needed to target a different format.
+Every format is read, edited and printed through the one
+`fig.Runtime.Language`, whose `Type` names a registered dialect
+(`entry.typeOf()`), so swapping `"json"` for `"toml"` is the whole adaptation
+needed to target a different format.
 
 ## Formats
 
-| `Language.*` | Parse | Edit | Serialize | Notes                                    |
+| Dialect      | Parse | Edit | Serialize | Notes                                    |
 | ------------ | :---: | :--: | :-------: | ----------------------------------------- |
-| `JSON`       |  ✅   |  ✅  |    ✅     | `Type` is `JSON` / `JSONC` / `JSON5`.     |
-| `YAML`       |  ✅   |  ✅  |    ✅     | YAML 1.2.2 / 1.1, incl. anchors/aliases.  |
-| `TOML`       |  ✅   |  ✅  |    ✅     | TOML 1.0 / 1.1, incl. datetimes.          |
-| `ZON`        |  ✅   |  ✅  |    ✅     | Zig Object Notation.                      |
-| `FIG`        |  ✅   |  ✅  |    ✅     | The native `fig` authoring dialect.       |
-| `INI`        |  ✅   |  ✅  |    ✅     | Untyped scalars — `port = 8080` reads back as the *string* `"8080"`. |
-| `DOTENV`     |  ✅   |  ✅  |    ✅     | Flat string map: no nesting, untyped scalars. |
-| `PROPERTIES` |  ✅   |  ✅  |    ✅     | Java `.properties`; same flat, untyped limits as dotenv. |
-| `PLIST`      |  ✅   |  ✅  |    ✅     | Opt-in (`-Dplist`). Typed *and* nested; date/data ride on `extended`. |
-| `NESTEDTEXT` |  ✅   |  ✅  |    ✅     | Nested (dict/list) but deliberately untyped — every leaf is a string. |
+| `json`, `jsonc`, `json5` |  ✅   |  ✅  |    ✅     | One language, three dialects.  |
+| `yaml`       |  ✅   |  ✅  |    ✅     | YAML 1.2.2; `yaml-1.1` for 1.1. Anchors/aliases. |
+| `toml`       |  ✅   |  ✅  |    ✅     | TOML 1.1; `toml-1.0` for 1.0. Datetimes. |
+| `zon`        |  ✅   |  ✅  |    ✅     | Zig Object Notation.                      |
+| `figl`       |  ✅   |  ✅  |    ✅     | fig's authoring dialect.                  |
+| `ini`        |  ✅   |  ✅  |    ✅     | Untyped scalars — `port = 8080` reads back as the *string* `"8080"`. |
+| `dotenv`     |  ✅   |  ✅  |    ✅     | Flat string map: no nesting, untyped scalars. |
+| `properties` |  ✅   |  ✅  |    ✅     | Java `.properties`; same flat, untyped limits as dotenv. |
+| `plist`      |  ✅   |  ✅  |    ✅     | Opt-in (`-Dplist`). Typed *and* nested; date/data ride on `extended`. |
+| `nestedtext` |  ✅   |  ✅  |    ✅     | Nested (dict/list) but deliberately untyped — every leaf is a string. |
+
+A language's `--spec` versions are dialects of their own, named
+`<dialect>-<version>`: `yaml-1.1`, `yaml-1.1.0`, `yaml-1.2`, `yaml-1.2.2`,
+`toml-1.0`, `toml-1.0.0`, `toml-1.1`, `toml-1.1.0`.
 
 The four untyped formats (INI, dotenv, `.properties`, NestedText) parse every
 scalar as a string; nothing infers a number or a bool from them. INI, dotenv
@@ -133,75 +143,30 @@ and `.properties` are also shape-limited — see
 [`FlatStrip`](#diagnostics--lossless-conversion) for what a serialize to one
 of them drops.
 
-Don't hard-code this table into your program — each row is only compiled in
-when its build option is set (`build_options.lang_<name>`, one per row of
-`src/languages/list.zig`: `lang_json`, `lang_yaml`, `lang_toml`, and so on),
-and `Language.TOML` etc. — or `Language.of("toml")`, the same lookup by name
-— is `void` when its flag is off. Guard any generic code with the matching
-comptime check, the way `Language.detect` itself does:
+Don't hard-code this table into your program: a language this build does not
+bundle is not registered, and `entryByName` returns null for it.
+`fig.Runtime.detectAmong(allocator, input, order)` sniffs content in the
+order you give it — the first dialect of `order` whose parser accepts
+`input` — since the grammars overlap and only the caller knows what
+ambiguous input should mean. The CLI's order is strictest first: JSON,
+JSON5, ZON, plist, TOML, figl, INI, dotenv, YAML, `.properties`, NestedText.
+
+### Languages
+
+A language is a contract: its declarations as fields of a
+`fig.Runtime.VTable` — name, caps, dialect rows (with extensions, edit-text
+style, empty-document seed, embedded spellings and what its printer holds),
+syntax, samples — `parse` and `print` as function pointers, and the six
+renderers as pointers that may be null. `fig.Runtime.register(allocator,
+&vtable)` validates the record, runs the checks of `languages/harness.zig`
+over the samples it declares (parse, print, reparse to the same tree, an
+`Editor` over each), and only then publishes it, handing back the handle of
+its first dialect; a record that fails either is refused with the reason in
+`Runtime.lastRefusal()` and registers nothing.
 
 ```zig
-if (comptime build_options.lang_toml) {
-    const doc = try fig.Language.TOML.Parser.parse(allocator, source, fig.Language.TOML.default_type);
-    defer doc.deinit(allocator);
-}
-```
-
-`fig.Language.detect(allocator, input)` sniffs which compiled-in format
-`input` parses as, returning a `Language.Detected`. It tries strictest first:
-JSON, JSON5, ZON, plist, TOML, fig, INI, dotenv, YAML, `.properties`,
-NestedText. The tail of that order is what keeps the permissive formats from
-starving the rest — `.properties` accepts nearly any UTF-8 text, and plain
-`key: value` NestedText is also valid YAML (but types `port: 80` as the string
-`"80"` rather than an integer), so both sit after YAML and reach selection
-mainly via their file extension. Each format declares its own place in that
-order as the `sniff_rank` on its dialect row, with the reasoning beside it;
-`Language.sniff_order` is the sorted result, and a test in
-`languages/language.zig` pins it to the sequence above.
-
-`fig.Language.validate(comptime Lang)` is a comptime assertion that a type has
-the shape (`Type`, `default_type`, `parse`, `print`) the generic engines
-(`Editor(Lang)`, `deserialize`) require, and `fig.Language.compiled` is the
-list of language modules this build actually contains.
-
-That assertion is also the contract for a format declared *outside* the tree:
-a type that passes `Language.validate` can be given to `Editor`, and it
-appears in no registry-derived enum — no `SerializeFormat` member, no CLI
-selector, no C ABI value, no embedded spelling; those belong to the formats
-listed in `src/languages/list.zig`. There are no editing hooks: what a format
-tells the editor is its `syntax` (the declared half), what its parser records
-on `Document` beside the spans — each block-sequence item's marker, each
-entry's separator, a section's header lines and every place its name is
-written — and, where the format spells a fragment in a way no declaration
-covers, a *renderer*: `renderValue`, `renderEntry`, `renderItem`,
-`renderTail`, `renderKey` or `renderKeyName`, each a pure function from the dialect and a
-`RenderRequest` — the strings the fragment is made of, and the container it
-goes into — to a string that the engine splices under the same reparse net
-as any other edit. The
-renderers are documented on `Decls.renderers` in `src/languages/language.zig`
-and on the `Editor` methods that call them.
-`zig build validate-check` proves the claim rather than describing it: one
-of its cases declares such a `Language` in a temporary directory, hands it to
-`Editor`, and runs a `set` and a `deleteKey` through it.
-
-### Runtime languages
-
-A format can also join *after* the build: `fig.Runtime` carries the same
-contract as a table of function pointers filled when the program runs —
-the declarations of a `Language` as fields, `parse` and `print` as function
-pointers, the six renderers as pointers that may be null — and a registry
-that hands out a format integer at or above `Language.runtime_abi_base`
-for it. `Runtime.register(allocator, &vtable)` validates the record by the
-rules `Language.validate` applies at comptime, runs the checks of
-`languages/harness.zig` over the samples it declares (parse, print,
-reparse to the same tree, an `Editor` over each), and only then publishes
-it; a record that fails either is refused with the reason in
-`Runtime.lastRefusal()` and registers nothing. `Runtime.Language` is then
-a `Language` whose `Type` names a registered dialect:
-
-```zig
-const abi = try fig.Runtime.register(allocator, &vtable);
-const entry = fig.Runtime.entryByAbi(abi).?;
+const handle = try fig.Runtime.register(allocator, &vtable);
+const entry = fig.Runtime.entryByAbi(handle).?;
 const doc = try fig.Runtime.Language.Parser.parse(allocator, source, entry.typeOf());
 var ed: fig.Editor(fig.Runtime.Language) = .{ .allocator = allocator, .format = entry.typeOf() };
 ```
@@ -211,35 +176,53 @@ owns it, and `parse` writes into one fig allocated — `addRows`,
 `addString`, and a list per side fact — while `print` is handed a `View`.
 A row is 32 bytes: kind, flags, parent, span and text, in pre-order (row
 index is node id), and anchors, tags, item markers, entry separators,
-item separators, regions, mentions, comments and tag directives are sparse
-side facts, each naming its row. The shapes are `extern struct`s, stated
-in `fig.h` as `FigLanguageVTable`, `FigRow`, `FigTableView` and the
-`fig_table_*` calls a C language fills its table through, and registered
-from C through `fig_language_register`;
+item separators, regions, mentions, comments, tag directives and
+diagnostics are sparse side facts, each naming its row. The shapes are
+`extern struct`s, stated in `fig.h` as `FigLanguageVTable`, `FigRow`,
+`FigTableView` and the `fig_table_*` calls a C language fills its table
+through, and registered from C through `fig_language_register`;
 `tools/abi_runtime_probe.c` is the smallest complete host, written in C,
-and `zig build abi-check` runs it. What a runtime format cannot do is add a
-node kind, join content sniffing, or receive the editor: a renderer returns
-text. See `docs/proposals/runtime-languages.md`.
+and `zig build abi-check` runs it. What a language cannot do is add a node
+kind or receive the editor: a renderer returns text. See
+`docs/proposals/runtime-languages.md` and `docs/proposals/core-only.md`.
 
-Every "Edit" ✅ above goes through the *same* generic `Editor(Language)` engine
-(next section) — ZON included, splicing its `.key = value` struct-field syntax
-and `.{}`/`.@"..."` quoting rules exactly like JSON gets `"key": value`. Only
-TOML, fig and INI additionally get the whole-table/whole-container structural
-ops listed near the end of that section: delete, move, reorder and rename for
-all three, and the two that write a `[header]` line for TOML, which alone
-declares a `section_header`.
+fig's own languages are Zig modules (`src/languages/<name>/`), and
+`kit/contract.zig`'s `VTable(L, prefix)` builds the vtable from one.
+`fig.Language.validate(comptime L)` holds such a module to the contract at
+comptime — the declarations it must and may make, and their coherence — and
+`zig build validate-check` proves the claims rather than describing them:
+one of its cases declares a `Language` in a temporary directory, hands it to
+`Editor`, and runs a `set` and a `deleteKey` through it. There are no
+editing hooks: what a language tells the editor is its `syntax` (the
+declared half), what its parser records on `Document` beside the spans —
+each block-sequence item's marker, each entry's separator, a section's
+header lines and every place its name is written — and, where it spells a
+fragment in a way no declaration covers, a *renderer*: `renderValue`,
+`renderEntry`, `renderItem`, `renderTail`, `renderKey` or `renderKeyName`,
+each a pure function from the dialect and a `RenderRequest` to a string
+that the engine splices under the same reparse net as any other edit. The
+renderers are documented on `Decls.renderers` in
+`src/languages/language.zig` and on the `Editor` methods that call them.
+
+Every "Edit" ✅ above goes through the *same* `Editor(Runtime.Language)`
+engine (next section) — ZON included, splicing its `.key = value`
+struct-field syntax and `.{}`/`.@"..."` quoting rules exactly like JSON gets
+`"key": value`. TOML, figl and INI, whose containers are scattered, also
+answer the whole-container operations listed near the end of that section.
 
 ## Reading data
 
-`Language.X.Parser.parse` gives you a `Document`: the parsed `AST` plus a
-`node_spans` table mapping each node back to its byte range in `source`.
-`source` is *borrowed* — keep it alive as long as the `Document` is:
+`Runtime.Language.Parser.parse` gives you a `Document`: the parsed `AST`
+plus a `node_spans` table mapping each node back to its byte range in
+`source`. `source` is *borrowed* — keep it alive as long as the `Document`
+is:
 
 ```zig
-const doc = try fig.Language.TOML.Parser.parse(
+const toml = fig.Runtime.entryByName("toml").?;
+const doc = try fig.Runtime.Language.Parser.parse(
     allocator,
     "[server]\nhost = \"localhost\"\nports = [80, 443]\n",
-    fig.Language.TOML.default_type, // .TOML_1_1
+    toml.typeOf(),
 );
 defer doc.deinit(allocator);
 
@@ -320,7 +303,7 @@ defer ast.deinit();
 
 var out: std.Io.Writer.Allocating = .init(allocator);
 defer out.deinit();
-try fig.Serialize.serialize(&ast, &out.writer, .json);
+try fig.Serialize.serialize(&ast, &out.writer, fig.Serialize.Target.named("json").?);
 // {"name": "fig", "nums": [1, 2]}
 ```
 
@@ -329,20 +312,20 @@ every string passed in is copied into the built AST, so caller buffers need
 not outlive it. `Builder` also has `addNull`/`addBool`/`addUint`/
 `addNumberRaw`/`addExtended`; `setComments`/`addLeadingComment`/
 `addDanglingComment`/`setTrailingComment` to attach comments programmatically;
-and `setTag` for a cross-format type annotation (fig's `: int =`, YAML's
+and `setTag` for a cross-format type annotation (figl's `: int =`, YAML's
 `!!int`). Use `b.view()` instead of `finish()` to inspect/serialize an
 in-progress build without consuming the builder.
 
 ## Editing without reserializing
 
-This is what sets `fig` apart. `Editor(Language)` splices only the bytes of
-the node you touch — everything else in the file is preserved exactly.
-Instantiate the generic per format, then `init` it with the source:
+This is what sets `fig` apart. `Editor(Runtime.Language)` splices only the
+bytes of the node you touch — everything else in the file is preserved
+exactly. Give it the dialect to edit as, then `init` it with the source:
 
 ```zig
-const Toml = fig.Language.TOML;
+const toml = fig.Runtime.entryByName("toml").?;
 
-var ed: fig.Editor(Toml) = .{ .allocator = allocator };
+var ed: fig.Editor(fig.Runtime.Language) = .{ .allocator = allocator, .format = toml.typeOf() };
 defer ed.deinit();
 try ed.init("# app config\nhost = \"localhost\"  # dev box\nport = 8080\n");
 
@@ -361,7 +344,7 @@ Unlike a higher-level binding, `Editor` never frames a value for you: every
 document's own format** — a bare `9090` for TOML/YAML, but `"9090"` for
 strict JSON if you mean a string. For a literal scalar you can just write the
 text by hand; to splice a *computed* value correctly quoted for the target
-format, render it with `AST.Builder` + `AST.serializeNode` first:
+format, render it with `AST.Builder` + `Serialize.serializeNode` first:
 
 ```zig
 var vb: fig.AST.Builder = .init(allocator);
@@ -371,7 +354,7 @@ var ast = try vb.view(v); // no need to `finish` just to serialize one node
 
 var text: std.Io.Writer.Allocating = .init(allocator);
 defer text.deinit();
-try ast.serializeNode(&text.writer, .toml, v); // -> `"a value with \"quotes\""`
+try fig.Serialize.serializeNode(&ast, &text.writer, .{ .language = toml }, v); // -> `"a value with \"quotes\""`
 try ed.replaceValAtPath(&.{.{ .key = "note" }}, text.written());
 ```
 
@@ -407,10 +390,10 @@ standalone document. TOML scalars can't stand alone, so it declines there with
 `error.UnsupportedShape` — as it does for an empty list on either side, or any
 non-scalar item. (Nothing is lost: a TOML inline array carries no per-element
 comments to preserve, so replacing the whole value is equivalent.) It is worth
-reaching for on YAML and fig, where per-item comments are real:
+reaching for on YAML and figl, where per-item comments are real:
 
 ```zig
-var ed: fig.Editor(fig.Language.YAML) = .{ .allocator = allocator };
+var ed: fig.Editor(fig.Runtime.Language) = .{ .allocator = allocator, .format = fig.Runtime.entryByName("yaml").?.typeOf() };
 defer ed.deinit();
 try ed.init("tags:\n- a # keep me\n- b\n");
 try ed.setSequence(&.{.{ .key = "tags" }}, &.{ "c", "a" });
@@ -491,7 +474,7 @@ one that does not have its lines to itself (an item of `[a, b]`, an entry of
 
 ### Whole-container editing (section formats)
 
-TOML, fig and INI have containers whose bytes are *scattered* — a TOML table
+TOML, figl and INI have containers whose bytes are *scattered* — a TOML table
 reopened by a later `[header]`, a fig container re-entered further down, an INI
 `[section]` written twice. There is no single byte range to splice, so these
 formats get extra operations that gather a container's disjoint regions and
@@ -510,16 +493,14 @@ try ed.renameContainer(&.{.{ .key = "servers" }}, "hosts"); // also `[servers.x]
 try ed.appendContainerToSeq(&.{.{ .key = "products" }}, "name = \"hammer\"\n"); // new `[[products]]`
 ```
 
-Which ops a format has is a declaration, not a hardcoded list: each is present
-exactly when that language declares it (`@hasDecl(Lang, "deleteContainer")`),
-and calling one a format doesn't declare is a compile error naming the format
-and the missing declaration. Today TOML declares all six, fig and INI the first
-three. Everything else — YAML, JSON, ZON, … — has contiguous containers, where
-`deleteKey` is already the right operation.
+Every `Editor` has them, and what they can do is read off the language's
+declarations: the section regions its parser records, and its `syntax`'s
+`section_header` for the two that write a header line, which TOML alone
+declares. A format with contiguous containers — YAML, JSON, ZON, … — refuses
+them (`NotASection`), since `deleteKey` is already the right operation there.
 
 All six are also in the C ABI as `fig_editor_*_container`, and wrapped by the
-Rust and TypeScript bindings. There the "format doesn't declare it" case cannot
-be a compile error, so it answers `FIG_STATUS_UNSUPPORTED_FORMAT` instead.
+Rust and TypeScript bindings.
 
 ## Markdown frontmatter & embeds
 
@@ -532,27 +513,33 @@ follows).
 ### Archetypes
 
 `fig.Embed.Type` is a *union*, not a flat enum: the four container shapes that
-name their format in the source are parametric over an `Embed.InnerFormat`
-(`.json`, `.yaml`, `.toml`, `.fig` — exactly the formats with an embedded
-spelling), and three popular conventions whose delimiter is its own distinct
-token stay as blessed presets:
+name their format in the source are parametric over an `Embed.InnerFormat` —
+a registered dialect that declares an embedded spelling (`json`, `yaml`,
+`toml` and `figl` among fig's own), found with `Embed.innerNamed` — and three
+popular conventions whose delimiter is its own distinct token stay as
+blessed presets:
 
 ```zig
-const t: fig.Embed.Type = .{ .frontmatter = .yaml };  // ---      … --- / ...  (bare --- is YAML)
-_ = fig.Embed.Type{ .fenced = .toml };                // ```toml  … ```
-_ = fig.Embed.Type{ .html_script = .json };           // <script type="application/json"> … </script>
-_ = fig.Embed.Type{ .html_code = .fig };              // <pre><code class="language-figl"> … </code></pre>
+const yaml = fig.Embed.innerNamed("yaml").?;
+const t: fig.Embed.Type = .{ .frontmatter = yaml };   // ---      … --- / ...  (bare --- is YAML)
+_ = fig.Embed.Type{ .fenced = fig.Embed.innerNamed("toml").? };      // ```toml  … ```
+_ = fig.Embed.Type{ .html_script = fig.Embed.innerNamed("json").? }; // <script type="application/json"> … </script>
+_ = fig.Embed.Type{ .html_code = fig.Embed.innerNamed("figl").? };   // <pre><code class="language-figl"> … </code></pre>
 _ = fig.Embed.Type.semicolons_json;                   // ;;;      … ;;;
 _ = fig.Embed.Type.plus_toml;                         // +++      … +++   (Hugo/Zola)
 _ = fig.Embed.Type.endmatter_yaml;                    // trailing ```endmatter block
 ```
+
+A tag inside a host (```` ```yml ````, `---toml`, `application/ld+json`) is
+read through the spellings each registered dialect declares, and a bare
+`---` means the dialect whose declared frontmatter opener is bare (YAML's).
 
 Read-only extraction:
 
 ```zig
 const md = "---\ntitle: Hello\ntags:\n- draft\n---\n# Body\n\ntext\n";
 
-const embedded = try fig.Embed.extract(allocator, md, .{ .frontmatter = .yaml });
+const embedded = try fig.Embed.extract(allocator, md, .{ .frontmatter = fig.Embed.innerNamed("yaml").? });
 defer embedded.deinit(allocator);
 
 const title = try embedded.document.ast.getValByPath(&.{.{ .key = "title" }});
@@ -580,7 +567,8 @@ result back between the retained fences:
 
 ```zig
 fn setFrontmatterTitle(allocator: std.mem.Allocator, host: []const u8, new_title: []const u8) ![]u8 {
-    const t: fig.Embed.Type = .{ .frontmatter = .yaml };
+    const yaml = fig.Embed.innerNamed("yaml").?;
+    const t: fig.Embed.Type = .{ .frontmatter = yaml };
     const region = try fig.Embed.locateRegion(host, t);
     const inner = host[region.content.start..region.content.end];
 
@@ -590,7 +578,7 @@ fn setFrontmatterTitle(allocator: std.mem.Allocator, host: []const u8, new_title
     const decoded = try fig.Embed.decodeForParse(allocator, inner, codec);
     defer decoded.deinit(allocator);
 
-    var ed: fig.Editor(fig.Language.YAML) = .{ .allocator = allocator };
+    var ed: fig.Editor(fig.Runtime.Language) = .{ .allocator = allocator, .format = yaml.typeOf() };
     defer ed.deinit();
     try ed.init(decoded.text);
     try ed.set(&.{.{ .key = "title" }}, new_title); // e.g. `"Hello, world"`
@@ -617,9 +605,10 @@ function work for `.{ .html_code = ... }` unchanged.
 - `fig.Embed.locateRegion(source, t)` finds the region without parsing it;
   `fig.Embed.extract` does both. `fig.Embed.parseSpan` parses a content span
   you already have.
-- `fig.Embed.detect(source)` sniffs which archetype `source` opens (mirrors
-  `Language.detect`); `fig.Embed.innerFormat(t)` reports the format that
-  archetype's content is written in, and `fig.Embed.bodyIsBefore(t)` whether
+- `fig.Embed.detect(source)` sniffs which archetype `source` opens;
+  `fig.Embed.innerFormat(t)` reports the registered dialect that archetype's
+  content is written in (null for a preset whose language is not
+  registered), and `fig.Embed.bodyIsBefore(t)` whether
   the host prose precedes the region (endmatter) or follows it.
 - `fig.Embed.initRegion(allocator, source, t)` synthesizes a host with a fresh
   *empty* region when none exists yet — the "create" half of open-or-init, for
@@ -628,47 +617,51 @@ function work for `.{ .html_code = ... }` unchanged.
 - `fig.Embed.retype(allocator, source, region, to, new_content)` rebuilds the
   region as a *different* archetype (e.g. YAML frontmatter → `;;;` JSON
   frontmatter) while keeping the host prose byte-identical.
-- `fig.Embed.extractStream(allocator, source)` splits a multi-document YAML
-  stream (`---`/`...`-delimited) into independently parsed `StreamDoc`s, each
-  with its own `outerSpan` lift-back helper; always yields at least one
-  (possibly `null`) document.
+- A multi-document stream is the language's to split:
+  `fig.Runtime.Language.splitStream(allocator, input, entry.typeOf())` locates
+  each document of a YAML stream (`---`/`...`-delimited) as a byte range to
+  parse on its own, and refuses with `error.UnsupportedOperation` for a
+  language without streams.
 
 ## Serialization options
 
 `fig.Serialize.serialize`/`serializeWith` (whole tree) and
-`serializeNode`/`serializeNodeWith` (one subtree) take an optional
-`AST.SerializeOptions`:
+`serializeNode`/`serializeNodeWith` (one subtree) print to a
+`Serialize.Target` — `.canonical`, or `.{ .language = entry }` for a
+registered dialect (`Target.named("json")` finds either) — and take an
+optional `AST.SerializeOptions`:
 
 ```zig
-try fig.Serialize.serializeWith(&ast, &out.writer, .json, .{ .pretty = false });      // minified
-try fig.Serialize.serializeWith(&ast, &out.writer, .json, .{ .indent = 4 });          // 4-space indent
-try fig.Serialize.serializeWith(&ast, &out.writer, .toml, .{ .width = 40 });          // inline vs [section] budget
-try fig.Serialize.serializeWith(&ast, &out.writer, .yaml, .{ .strip_comments = true });
+const json = fig.Serialize.Target.named("json").?;
+try fig.Serialize.serializeWith(&ast, &out.writer, json, .{ .pretty = false });      // minified
+try fig.Serialize.serializeWith(&ast, &out.writer, json, .{ .indent = 4 });          // 4-space indent
+try fig.Serialize.serializeWith(&ast, &out.writer, fig.Serialize.Target.named("toml").?, .{ .width = 40 });  // inline vs [section] budget
+try fig.Serialize.serializeWith(&ast, &out.writer, fig.Serialize.Target.named("yaml").?, .{ .strip_comments = true });
 ```
 
 | Field           | Applies to        | Meaning                                          |
 | --------------- | ----------------- | ------------------------------------------------- |
 | `pretty`        | JSON/JSON5, ZON, TOML | Multi-line (default) vs. compact. TOML uses it to gate array wrapping; YAML ignores it. |
 | `indent`        | JSON/JSON5, TOML  | Spaces per level (default 2).                    |
-| `width`         | TOML, YAML, fig   | Column budget for inline (flow) vs. expanded layout (default 80). `1` means "always block". |
+| `width`         | TOML, YAML, figl  | Column budget for inline (flow) vs. expanded layout (default 80). `1` means "always block". |
 | `strip_comments`| all               | Drop carried comments instead of emitting them.  |
-| `indent_requested`    | fig               | Opt-in cosmetic `2 × depth` indentation (`fig fmt --indent`). |
-| `flow`          | fig, fragments    | Render a container root as inline flow (`[a, b]` / `{k=v}`) rather than block. |
+| `indent_requested`    | figl              | Opt-in cosmetic `2 × depth` indentation (`fig fmt --indent`). |
+| `flow`          | figl, fragments   | Render a container root as inline flow (`[a, b]` / `{k=v}`) rather than block. |
 
-`AST.SerializeFormat` is `json | jsonc | json5 | yaml | toml | zon |
-canonical | fig | ini | dotenv | properties | plist | nestedtext` — every
-format-registry dialect, plus `canonical` spliced in after `zon`. `canonical`
-is the AST's own total, bijective encoding: every node kind,
+`canonical` is the AST's own total, bijective encoding: every node kind,
 including ones no other format can hold, round-trips through it unchanged,
 which makes it useful both as a debug dump and as the comparison oracle
-round-trip tests use. It is opt-in at build time (`-Dcanonical`), though a test
-build always compiles it.
+round-trip tests use. It is opt-in at build time (`-Dcanonical`), though a
+test build always compiles it.
 
 Serializing can fail for reasons the target format decides — `SerializeError`
 covers `NullUnsupported` (TOML), `NonStringKey` (TOML/ZON),
 `UnrepresentableRoot`, `UnsupportedValue` (a sequence or mapping
-reaching INI/dotenv), `InvalidKey` (a dotenv key that isn't a bash identifier),
-and `FormatDisabled` when the target was compiled out of this build.
+reaching INI/dotenv), `InvalidKey` (a dotenv key that isn't a bash
+identifier), `NonFiniteNumber`, and `PrintRefused` for a refusal the
+language gave no reason core names. A language's printer refuses through
+the contract (`ErrorInfo.code`, `abi.Refusal`), and the refusal comes back as
+the `SerializeError` it names.
 
 ## Diagnostics & lossless conversion
 
@@ -680,14 +673,15 @@ what *would* be lost, without doing it:
 var arena_state = std.heap.ArenaAllocator.init(allocator);
 defer arena_state.deinit();
 
-const doc = try fig.Language.YAML.Parser.parse(allocator, "a: null\nb: 1 # keep\n", .v1_2_2);
+const doc = try fig.Runtime.Language.Parser.parse(allocator, "a: null\nb: 1 # keep\n", fig.Runtime.entryByName("yaml").?.typeOf());
 defer doc.deinit(allocator);
 
-const warnings = try fig.Diagnostics.analyze(arena_state.allocator(), &doc.ast, doc.ast.root, .toml, .{});
+const toml = fig.Serialize.Target.named("toml").?;
+const warnings = try fig.Diagnostics.analyze(arena_state.allocator(), &doc.ast, doc.ast.root, toml, .{});
 for (warnings) |w| {
     var msg: std.Io.Writer.Allocating = .init(allocator);
     defer msg.deinit();
-    try w.render(&msg.writer, .toml);
+    try w.render(&msg.writer, toml.name());
     std.debug.print("{s}\n", .{msg.written()});
     // "dropped null value at `a` (toml cannot represent it)"
 }
@@ -696,7 +690,10 @@ for (warnings) |w| {
 Each `Warning` carries a `code` (`.value_dropped`, `.type_degraded`,
 `.comment_dropped`, `.comment_style_degraded`), a `cause`
 (`.format_limitation` vs. `.explicit_option`, when you passed
-`strip_comments`), and a dotted/`[i]` `path` to the affected node.
+`strip_comments`), and a dotted/`[i]` `path` to the affected node. What a
+language loses is read off what it declares — the `prints` of its dialect
+rows, its `max_mapping_depth`, its comment syntax — so a language you
+register is held to the same warnings as fig's own.
 
 To *preserve* an otherwise-lossy value instead of dropping or degrading it,
 use `fig.Lossless`: `encode(arena, ast, native)` rewrites every value the
@@ -709,8 +706,8 @@ target truly cannot represent at all (today, just a `null` bound for TOML) and
 report the dropped paths, rather than aborting the whole serialize.
 `Lossless.NativeKinds` is what a target holds — the scalar kinds a format
 spells natively, declared by the format itself in `Language.caps.lossless` —
-and `Lossless.nativeFor(format)` reads a `SerializeFormat`'s declaration off
-the registry, or `null` for a format that takes no envelope.
+and `Lossless.nativeFor(target)` reads a target's declaration, or `null` for
+a format that takes no envelope.
 
 `fig.FlatStrip` is the sibling pass for the three flat/shallow formats — INI,
 dotenv, `.properties` — whose limits are about *depth* rather than scalar kind
@@ -736,16 +733,16 @@ const Config = struct {
     retries: u8 = 7,
 };
 
-const parsed = try fig.deserialize.parseFromSlice(Config, allocator, source, .yaml, .{});
+const parsed = try fig.deserialize.parseFromSlice(Config, allocator, source, "yaml", .{});
 defer parsed.deinit();
 
 parsed.value.title; // ...
 ```
 
 `Parsed(T)` owns an arena backing every allocation `T` needed (slices,
-strings); `deinit()` frees all of it in one shot. `fig.deserialize.Format` is
-`json | jsonc | yaml | toml | zon` (a smaller set than `SerializeFormat` — no
-canonical/fig target here). Structs, optionals (missing → `null`),
+strings); `deinit()` frees all of it in one shot. The format is any
+registered dialect's name; one not registered is `error.UnsupportedFormat`.
+Structs, optionals (missing → `null`),
 defaulted fields (`= 7`), enums (from a string or ZON enum-literal scalar),
 slices, and fixed-size arrays (which require an *exact*-length sequence) are
 all supported; a mapping key with no matching field is ignored by default
@@ -761,17 +758,20 @@ Every entry point returns a plain Zig error union — `try`/`catch` it as usual.
 A bare `parse` gives you only the error code:
 
 ```zig
-const doc = fig.Language.JSON.Parser.parse(allocator, "{ not valid", .JSON) catch |err| {
-    std.debug.print("parse failed: {s}\n", .{@errorName(err)});
+const json = fig.Runtime.entryByName("json").?;
+var parser: fig.Runtime.Language.Parser = .{ .allocator = allocator };
+const doc = fig.Runtime.Language.parse(&parser, "{ not valid", json.typeOf()) catch |err| {
+    std.debug.print("parse failed: {s}\n", .{parser.lastMessage()});
     return err;
 };
 ```
 
-For a compiler-style `file:line:col: message` report with the offending
-source line and a caret, most languages also expose a `parseWithReport`
-(stop at the first diagnostic) and `parseCollecting` (recover past errors to
-report every diagnostic in one pass) alongside `parse` — see
-`languages/json/parser.zig`'s `Report`/`Diagnostic`/`Warning` for the shape.
+A language says why it refused, where, and what it would warn about on
+input it reads: the diagnostics cross the contract as rows of the node
+table. Give the `Parser` an `errors` and a `warnings` list
+(`std.ArrayList(ParseDiagnostic.Rendered)`) and it fills them — every error
+of a failed parse where the language can keep going past one, the
+authoring warnings of a clean one — each with its span, message and label.
 `fig.ParseDiagnostic.locateOffset(source, offset)` turns a raw byte offset
 into a 1-based `{ line, column, line_text }`, and `renderReport`/
 `renderReportAlloc` format the `file:line:col: label: message` + caret text
@@ -783,20 +783,21 @@ Nothing here is garbage collected — every owning value must be `deinit`ed,
 almost always paired with `defer` right after construction:
 
 ```zig
-const doc = try fig.Language.YAML.Parser.parse(allocator, source, .v1_2_2);
+const yaml = fig.Runtime.entryByName("yaml").?;
+const doc = try fig.Runtime.Language.Parser.parse(allocator, source, yaml.typeOf());
 defer doc.deinit(allocator); // frees ast, node_spans, and friends
 
-var ed: fig.Editor(fig.Language.YAML) = .{ .allocator = allocator };
+var ed: fig.Editor(fig.Runtime.Language) = .{ .allocator = allocator, .format = yaml.typeOf() };
 defer ed.deinit(); // frees its internal Document + source buffer
 try ed.init(source);
 
-const embedded = try fig.Embed.extract(allocator, host, .{ .frontmatter = .yaml });
+const embedded = try fig.Embed.extract(allocator, host, .{ .frontmatter = fig.Embed.innerNamed("yaml").? });
 defer embedded.deinit(allocator); // frees embedded.document and its decoded buffer
 
-const stream = try fig.Embed.extractStream(allocator, host);
-defer stream.deinit(allocator); // frees every StreamDoc's document
+const docs = try fig.Runtime.Language.splitStream(allocator, host, yaml.typeOf());
+defer allocator.free(docs); // the byte range of each document of a stream
 
-const parsed = try fig.deserialize.parseFromSlice(Config, allocator, source, .yaml, .{});
+const parsed = try fig.deserialize.parseFromSlice(Config, allocator, source, "yaml", .{});
 defer parsed.deinit(); // frees the arena backing parsed.value
 
 var b: fig.AST.Builder = .init(allocator);
@@ -805,7 +806,8 @@ defer b.deinit(); // harmless no-op after a successful `finish()`
 
 `AST.deinit()` (called via `Document.deinit`, or directly on an AST you built/
 decoded yourself) frees `nodes`, `owned_strings`, and the tag/anchor/comment
-side-tables. A `Document`'s `source` is always borrowed — freeing it, if it
+side-tables. A registration lives as long as the process: the registry
+frees nothing until it ends. A `Document`'s `source` is always borrowed — freeing it, if it
 was heap-allocated in the first place, is the caller's responsibility, done
 only *after* the `Document` that borrows it is itself freed.
 
@@ -813,22 +815,28 @@ only *after* the `Document` that borrows it is itself freed.
 
 **Top-level modules** (`@import("fig")` re-exports each as a member)
 
-- `Language` — per-format namespace (`.JSON`/`.YAML`/`.TOML`/`.ZON`/
-  `.FIG`/`.INI`/`.DOTENV`/`.PROPERTIES`/`.PLIST`/`.NESTEDTEXT`, each `void`
-  when compiled out) plus `detect`/`Detected`/`validate`/`compiled`.
+- `Runtime` — the registry and the one `Language` every format goes through:
+  `register`/`registerWith`, `entryByName`/`entryByAbi`/`entryAt`/`count`,
+  `detectAmong`, `Language` (`Parser`, `parse`, `splitStream`), `VTable` and
+  the node table (`table`).
+- `bundle` — the languages fig ships: `register`/`registerAll`, `bundles`,
+  `Language`/`module` (a language's Zig module), `dialect_names`,
+  `embeddable`.
+- `Language` — the Zig language contract: `validate`, and the declaration
+  types (`Caps`, `Syntax`, `Dialect`, `Prints`, …).
 - `Document` — `{ source, ast, node_spans, ... }`; `deinit`, `span`,
   `anchorSpan`, `tagSpan`.
 - `AST` — the value tree: `Node`/`Node.Kind`, path navigation
   (`getValByPath`/`getKeyByPath`/`getNodeByPath`/`child`/`next`/`lastChild`),
   reference-layer resolution (`resolveAlias`/`resolveDeep`/`mergedChild`),
-  serialization (`serialize`/`serializeWith`/`serializeNode`/
-  `serializeNodeWith`, `SerializeFormat`, `SerializeOptions`), and
-  `AST.Builder` (the write path).
-- `Editor(Language)` — comment-preserving generic editor; see
+  `SerializeOptions`, and `AST.Builder` (the write path).
+- `Serialize` — `serialize`/`serializeWith`/`serializeNode`/
+  `serializeNodeWith` to a `Target` (`.canonical` or a registered language).
+- `Editor(Runtime.Language)` — the comment-preserving editor; see
   [Editing without reserializing](#editing-without-reserializing).
 - `Embed` — frontmatter/embed location + splicing: `Type`, `InnerFormat`,
-  `extract`, `locateRegion`, `parseSpan`, `detect`, `innerFormat`,
-  `initRegion`, `retype`, `extractStream`, and the codec trio
+  `innerNamed`, `extract`, `locateRegion`, `parseSpan`, `detect`,
+  `innerFormat`, `initRegion`, `retype`, and the codec trio
   (`codecOf`/`decodeForParse`/`reencodeEdited`); see
   [Markdown frontmatter & embeds](#markdown-frontmatter--embeds).
 - `Lossless` — `$fig`-envelope lossless conversion: `encode`, `decode`,
@@ -842,12 +850,12 @@ only *after* the `Document` that borrows it is itself freed.
   (`locateOffset`, `renderReport`, `renderReportAlloc`, `Rendered`).
 - `Canonical` — the AST's own 1:1 total
   encoding: `parse`, `parseAbstract`, `print`, `printNode`.
-- `Fig` — the native `fig` authoring dialect's `Language`-shaped module
-  (`Parser`, `Printer`, `Type`).
 - `deserialize` — reflection-based `parseFromSlice`/`parseFromSliceLeaky`
-  into a native Zig type; see [Reflective deserialization](#reflective-deserialization).
+  into a native Zig type, from a dialect named; see
+  [Reflective deserialization](#reflective-deserialization).
 
-**Per-`Language` shape** (what `Language.validate` requires)
+**Per-`Language` shape** (what `Language.validate` requires of a Zig
+language module)
 
 - `Type` — the format's dialect enum (e.g. JSON's `JSON`/`JSONC`/`JSON5`).
 - `default_type: Type` — the dialect `parse`/`print` use when none is named.

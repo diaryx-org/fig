@@ -142,14 +142,14 @@ Originally made for [Diaryx](https://diaryx.org),
 
 - YAML (1.2.2 and 1.1)
 - JSON (strict, JSONC, JSON5)
-- TOML (1.1 and 1.2)
+- TOML (1.1 and 1.0)
 - ZON (Zig Object Notation, via `std.zig.AST`)
 - NestedText (<https://nestedtext.org>)
 - Java (`.properties`)
 - dotenv (`.dotenv`)
 - INI (`.ini`)
 - Property list (`.plist`)
-- Fig (`.figl`), an in-house authoring dialect authored by yours truly!
+- figl (`.figl`), an in-house authoring dialect authored by yours truly!
 
 And has bindings in the following programming languages:
 
@@ -181,7 +181,7 @@ PATH, the way `git` does — so installing a tool named `fig-schema` makes
 `fig schema ...` run it, with every argument after the action passed through
 untouched.
 
-A format `fig` doesn't compile in can be a program too. A `languages.figl`
+A format `fig` doesn't ship can be a program too. A `languages.figl`
 (in `.fig/` beside your files, or under `~/.config/fig/`) names a helper —
 any executable speaking the [helper wire](docs/rust.md#runtime-languages),
 such as a `fig-lua` script — and it becomes a format every action accepts,
@@ -200,12 +200,12 @@ $ fig lang list
 $ fig lang check lua-dotenv --against dotenv secrets.env
 ```
 
-A helper named after a format your build left out (`fig lang list` says
-"compiled out") stands in for it: `.plist` files, `-i plist` and, for the
-formats that have one, markdown frontmatter all reach the helper.
+A helper named after a format your build leaves out (`fig lang list` says
+"not built in") is that format: `.plist` files and `-i plist` reach the
+helper.
 
-`fig lang list` shows every compiled and configured language; `fig lang check`
-holds a configured one to a compiled twin, table for table; `fig lang table`
+`fig lang list` shows every built-in and configured language; `fig lang check`
+holds a configured one to a built-in twin, table for table; `fig lang table`
 prints the table a file parses to, which is what a twin has to produce.
 
 ## Nushell

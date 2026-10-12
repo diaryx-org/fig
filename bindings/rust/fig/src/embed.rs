@@ -23,7 +23,7 @@ use crate::{Format, SerializeOptions, ffi};
 /// `Embed.Type`. The three parametric families (markdown `---<lang>`
 /// frontmatter, ```` ```<lang> ```` fenced blocks, `<script type>` HTML data
 /// islands) are enumerated once per format. Each name is the CLI's archetype
-/// name (`--embed semicolons`, `--embed fenced-fig`) in `UpperCamelCase`, as
+/// name (`--embed semicolons`, `--embed fenced-figl`) in `UpperCamelCase`, as
 /// the TypeScript binding's string values are.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]

@@ -71,7 +71,7 @@ your machine than expected; see
 
 `zig build wasi` compiles the same `fig` CLI source to a WASI preview1 module
 (a real `_start` command, not a library). The module this package ships is
-built with no format compiled in (`-Dwasi-host=true`, every language off),
+built with no language in it (`-Dwasi-host=true`, every language off),
 and `bin/fig.mjs` runs it under Node's built-in `node:wasi`, wiring `argv`,
 `env` and stdio straight through so piping and redirection behave like the
 native binary.
@@ -84,7 +84,7 @@ answers in-process through the same wire a helper process speaks. That is
 also what keeps the module small: the whole CLI with no format in it, and
 the languages as JavaScript Node already runs. The standalone `fig-wasi.wasm`
 on GitHub Releases, for `wasmtime` and `wasmer`, is built the ordinary way,
-with every format compiled in.
+with every Zig language built in.
 
 ## Known limitations
 

@@ -10,7 +10,7 @@ part_of = [docs](docs.md)
 
 `fig` parses, **edits**, and serializes configuration files — JSON, JSONC, JSON5,
 YAML, TOML, INI, dotenv, Java `.properties`, NestedText, ZON, Apple property
-lists and the native `fig` dialect — from one package, in which you import
+lists and the native `figl` dialect — from one package, in which you import
 only the formats you use (see [Formats](#formats)). Its
 distinguishing feature is *comment-preserving editing*: you can change one value
 deep in a YAML or TOML file and every comment, blank line, key order, and quoting
@@ -137,7 +137,7 @@ A format you don't import costs nothing.
 | `json5`      | `@diaryx/fig/languages/json5`   | Unquoted keys, trailing commas, etc. |
 | `yaml`       | `@diaryx/fig/languages/yaml`    | YAML 1.2.2; its `yaml-1.1` dialect resolves scalars as 1.1. |
 | `toml`       | `@diaryx/fig/languages/toml`    | TOML 1.0 / 1.1, incl. datetimes. |
-| `fig`        | `@diaryx/fig/languages/fig`     | The native `fig` authoring dialect. |
+| `figl`       | `@diaryx/fig/languages/figl`    | The native `figl` authoring dialect. |
 | `ini`        | `@diaryx/fig/languages/ini`     | `[section]` + `key = value`. Untyped scalars — `port = 8080` reads back as the string `"8080"`. |
 | `dotenv`     | `@diaryx/fig/languages/dotenv`  | Flat `KEY=value`: no nesting, untyped scalars. |
 | `properties` | `@diaryx/fig/languages/properties` | Java `.properties`; same flat, untyped limits as dotenv. |
@@ -151,7 +151,7 @@ its **name**, never the number, and resolve it with `formatByName(name)`
 which throws instead. `formatName(format)` goes the other way.
 
 Every language reads, edits and serializes. Each is held by the package's
-tests to fig's compiled format of the same name: the same tree for every
+tests to fig's Zig language of the same name: the same tree for every
 fixture, and the same bytes printed.
 
 Register at startup, before the first call that uses the format. Registering
@@ -318,7 +318,7 @@ item's comment block.
 The operations above address a container the same way they address a scalar: by
 the one range of source it occupies. A TOML `[header]` table occupies no such
 range — its body is the lines after the header, and an `[a.b]` header further
-down the file extends it — and neither does an INI `[section]` or a `fig` block
+down the file extends it — and neither does an INI `[section]` or a `figl` block
 container. At a path naming one, `delete`, `replaceValue`, `moveKey` and
 `reorderKeys` all throw `InvalidArgument` rather than rewrite the header and
 leave the entries behind. These six are the route for those shapes:
@@ -339,12 +339,12 @@ back.
 Support varies by format, and an unsupported operation throws
 `UnsupportedFormat`:
 
-| | `Toml` | `Ini` | `Fig` | others |
+| | TOML | INI | figl | others |
 |---|---|---|---|---|
 | `deleteContainer`, `moveContainer`, `reorderContainers` | ✓ | ✓ | ✓ | — |
 | `insertContainer`, `renameContainer`, `appendContainerToSeq` | ✓ | — | — | — |
 
-"Others" is not a gap: `Yaml`, `Json` and the rest nest a container in one
+"Others" is not a gap: YAML, JSON and the rest nest a container in one
 contiguous region, so `delete` and `replaceValue` already handle it — which is
 why they succeed on a YAML block mapping where TOML's refuse.
 
@@ -354,10 +354,10 @@ twins, since no embed archetype hosts a scattered-container format today.
 `setSequence` has a narrower domain than the rest: it matches new items to old
 ones by *value* so a kept-or-merely-reordered item keeps its comments, which
 means each item has to parse as a standalone document. It therefore throws
-`InvalidArgument` on `Toml` (whose scalars can't stand alone), on an
+`InvalidArgument` on TOML (whose scalars can't stand alone), on an
 empty list on either side, and on any non-scalar item. Nothing is lost there —
 a TOML inline array carries no per-element comments, so `replaceValue` on the
-whole list is equivalent. It earns its keep on `Yaml` and `Fig`, where per-item
+whole list is equivalent. It earns its keep on YAML and figl, where per-item
 comments are real.
 
 Comments are first-class:
@@ -371,9 +371,9 @@ ed.deleteTrailingComment(["port"]);
 ed.deleteLeadingComment(["port"]); // drops the whole owned block
 ```
 
-The comment marker (`#`, `//`, `;`) is chosen for the format; strict `Json` has
+The comment marker (`#`, `//`, `;`) is chosen for the format; strict JSON has
 no comments and throws `UnsupportedFormat` if you try. Not every format has
-both halves either: `Ini` and `Nestedtext` have real leading comments but no
+both halves either: INI and NestedText have real leading comments but no
 trailing-comment syntax, so `setTrailingComment` throws there too — a `;`/`#`
 after a value on those formats' value lines is literal text, not a comment.
 
@@ -423,7 +423,7 @@ string instead of a `Value`.
 
 `Embed` edits a config block embedded in a host file — markdown frontmatter, a
 fenced code block, a trailing endmatter block, or an HTML data island, holding
-JSON, YAML, TOML or `fig` — leaving the fences and surrounding prose intact.
+JSON, YAML, TOML or `figl` — leaving the fences and surrounding prose intact.
 The inner language must be registered: the core finds it only through the
 embed spellings a registered language declares (see
 [Runtime languages](#runtime-languages)). Until it is, `Embed.open` and the
@@ -454,12 +454,12 @@ console.log(fm.render());
 
 `EmbedType` selects the container *and* the inner format. Each value is the
 archetype's name as the `fig` command line spells it (`fig get --embed
-fenced-fig`), so `EmbedType.FencedFig === "fenced-fig"` and a stored value is
+fenced-figl`), so `EmbedType.FencedFig === "fenced-figl"` and a stored value is
 readable. Four container families cross the four embeddable formats:
 
 | Container | Members | `--embed` names |
 | --------- | ------- | --------------- |
-| Markdown frontmatter | `Frontmatter` (bare `---`, YAML), `MdJson` (`---json`), `MdToml`, `MdFig` | `frontmatter`, `md-json`, `md-toml`, `md-fig` |
+| Markdown frontmatter | `Frontmatter` (bare `---`, YAML), `MdJson` (`---json`), `MdToml`, `MdFig` | `frontmatter`, `md-json`, `md-toml`, `md-figl` |
 | Fenced code block | `FencedYaml`, `FencedJson`, `FencedToml`, `FencedFig` (```` ```<lang> ````) | `fenced-<lang>` |
 | HTML data island | `HtmlScriptYaml`, `HtmlScriptJson`, `HtmlScriptToml`, `HtmlScriptFig` — `<script type="application/…">` | `html-script-<lang>` |
 | HTML visible code | `HtmlCodeYaml`, `HtmlCodeJson`, `HtmlCodeToml`, `HtmlCodeFig` — `<pre><code class="language-…">` | `html-code-<lang>` |
@@ -518,7 +518,7 @@ convert(src, Yaml, Json, { stripComments: true });
 | --------------- | -------------------- | -------------------------------------------------- |
 | `pretty`        | JSON, ZON, TOML      | Multi-line (default) vs. compact. For TOML it gates array wrapping. |
 | `indent`        | JSON, TOML           | Spaces per level (default 2).                      |
-| `width`         | TOML, YAML, Fig      | Column budget for inline (flow) vs. expanded layout (default 80). |
+| `width`         | TOML, YAML, figl     | Column budget for inline (flow) vs. expanded layout (default 80). |
 | `stripComments` | all                  | Drop carried comments instead of emitting them.    |
 | `lossless`      | `Document`/`convert` | Round-trip values the target can't natively hold.  |
 
@@ -565,7 +565,7 @@ all of them, with the format's own parser reading and its own printer writing,
 and fig's splice engine editing between them.
 
 ```ts
-import { registerLanguage, parse, convert, Editor, type Language } from "@diaryx/fig";
+import { registerLanguage, parse, convert, Editor, type Language, type NodeRow } from "@diaryx/fig";
 
 const tinykv: Language = {
   name: "tinykv",
@@ -583,7 +583,7 @@ const tinykv: Language = {
   parse(dialect, input) {
     // one row per node, in pre-order; row index is node id; spans are
     // BYTE offsets into the input, [start, end)
-    const rows = [{ kind: "mapping", parent: null, span: [0, input.length] }];
+    const rows: NodeRow[] = [{ kind: "mapping", parent: null, span: [0, input.length] }];
     // … a keyvalue row, then its key row, then its value row, per line
     return { rows, comments: [] };
   },
@@ -603,7 +603,7 @@ ed.source();                                 // → "a=1\nb=2\n"
 
 A dialect may also say what its printer makes of another format's tree, in
 `prints`, and `Document.diagnose` and `convert`'s warnings then answer from
-it as they do for a built-in format: `holds` the kinds it writes as
+it: `holds` the kinds it writes as
 themselves, `typed_scalars: false` where every scalar becomes text,
 `char_as` and `number_special_as` what those two become when not held, and
 `comments` whether it writes comments `"always"`, only when `"pretty"`, or
@@ -623,8 +623,8 @@ the TypeScript types `Language`, `NodeTable`, `NodeRow`, `Syntax` and the
 rest mirror them field for field, and `docs/proposals/runtime-languages.md`
 in the core is the design.
 
-**What registration checks.** The description is validated by the rules a
-compiled format is held to, and every sample is parsed, printed, reparsed and
+**What registration checks.** The description is validated by the rules
+every language is held to, and every sample is parsed, printed, reparsed and
 edited before anything is registered — so a language whose `syntax` cannot
 splice its own samples, or whose `print` does not round-trip its `parse`, is
 refused with the reason as a `FigError`, and nothing is registered. A name a
@@ -643,7 +643,7 @@ spelled there, in its `embed` row: `fence_tag` (and `fence_aliases`) for a
 fenced block, `frontmatter` for its `---<lang>` opener, `script_mime` (and
 `script_mime_aliases`) for an HTML `<script>` island, `code_class` for a
 `<pre><code>` block. `Embed` finds an inner language only through these —
-the package's `json`, `yaml`, `toml` and `fig` declare theirs.
+the package's `json`, `yaml`, `toml` and `figl` declare theirs.
 
 **Editing needs no code.** fig's splice engine writes an edit from `syntax`
 alone — what a comment looks like, what separates a key from its value, how
@@ -710,18 +710,20 @@ language[]
 ```sh
 fig get settings.tkv
 fig lang check tinykv                          # the same harness registration runs
-fig lang check js-dotenv --against dotenv *.env # a twin, held to its compiled sibling row for row
+fig lang check js-dotenv --against dotenv *.env # a twin, held to its Zig sibling row for row
 ```
 
-`bindings/typescript/test/languages/dotenv.ts` in the repository is a complete twin of the compiled
-`dotenv` format — parser and printer, held by the test suite to the compiled
+`bindings/typescript/test/languages/dotenv.ts` in the repository is a complete twin of the Zig
+`dotenv` language — parser and printer, held by the test suite to the Zig
 parser's tables and to its edits — and is what a new language is best written
 against. `handle(lang, requestLine)` is the wire itself, one JSON line to one,
 if you want to carry it over something other than a pipe.
 
-A runtime format never joins content sniffing — it is selected by name or by
-extension, never guessed. `Document.diagnose` against a runtime target reports
-what its registration declares it cannot hold: a kind missing from `lossless`,
+Nothing guesses a format from content unless asked: `detectFormat(input,
+order)` tries the dialects `order` names, in that order, and returns the
+first whose parser accepts `input`, or `null`. `Document.diagnose` against a
+format whose dialect declares no `prints` reports what its registration
+declares it cannot hold: a kind missing from `lossless`,
 what `max_mapping_depth` forbids, and a comment its `syntax` has no delimiter
 for.
 
@@ -866,13 +868,13 @@ npm run build   # builds the wasm module, then compiles with tsc
 npm test
 ```
 
-The module the package ships, and the one `npm run build` builds, compiles no
-format in. The tests register the package's languages, and `test/twins.test.ts`
-holds them to fig's compiled formats through what those formats recorded for
-every fixture: the tables `fig lang table` prints, and the `.printed` and
-`.converted` files `scripts/record-compiled.mjs` writes from a module with
-every format compiled in (`FIG_WASM_LANGUAGES=all npm run build:wasm`). Rerun
-it when a compiled printer changes.
+The module the package ships, and the one `npm run build` builds, has no
+language in it. The tests register the package's languages, and
+`test/twins.test.ts` holds them to fig's Zig languages through what those
+recorded for every fixture: the tables `fig lang table` prints, and the
+`.printed` and `.converted` files `scripts/record-compiled.mjs` writes from a
+module with every Zig language built in (`FIG_WASM_LANGUAGES=all npm run
+build:wasm`). Rerun it when a Zig printer changes.
 
 This is a test-time requirement only. The published package stays at
 `"engines": { "node": ">=22" }`, because `tsc` downlevels `using` in the shipped

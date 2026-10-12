@@ -628,7 +628,7 @@ pub const Help = struct {
             \\Usage: {s} lang list
             \\       {s} lang check <name> [--against <format>] [files...]
             \\       {s} lang table <file> [-i <format>] [--spec <version>]
-            \\  Languages fig did not compile in. One is a helper program that
+            \\  Languages fig does not build in. One is a helper program that
             \\  speaks the wire in fig's Rust crate (`fig::helper`), configured in
             \\  a `languages.figl`:
             \\
@@ -641,25 +641,26 @@ pub const Help = struct {
             \\  .fig/languages.figl in the working directory or any ancestor, and
             \\  $XDG_CONFIG_HOME/fig/languages.figl (~/.config/fig/languages.figl).
             \\  `name` is what --input, --output and --lang accept; `extensions`
-            \\  resolves a file to it, but a compiled format's extension always
-            \\  wins, so a twin of a compiled language is reached with --lang.
-            \\  A language named after a format this build left out (`list` says
-            \\  "compiled out") stands in for it: the format's name, extension and
-            \\  embedded spellings (markdown frontmatter, fenced blocks) reach it.
+            \\  resolves a file to it, but a built-in language's extension always
+            \\  wins, so a twin of a built-in language is reached with --lang.
+            \\  A language named after a format this build leaves out (`list` says
+            \\  "not built in") is that format: its name and extension reach it,
+            \\  and the embedded spellings it declares (markdown frontmatter,
+            \\  fenced blocks) do too.
             \\
             \\  Nothing is spawned until a name or extension the CLI cannot resolve
             \\  itself is asked for; the helper is then started once and asked to
             \\  parse its own samples, print and reparse them, and take a no-op
             \\  edit, and is refused with the reason if any of that fails.
             \\
-            \\  list: every compiled format, and every configured language with
+            \\  list: every built-in language, and every configured one with
             \\    what it can do (read, edit, serialize), its extensions and the
             \\    file that configured it — or why it was refused.
             \\  check <name>: load the language and report what the harness found.
-            \\    --against <format>: also hold it to a compiled format — parse each
+            \\    --against <format>: also hold it to another format — parse each
             \\    of the language's samples and each file given with both, and
             \\    compare the tables row for row, the way a reimplementation of a
-            \\    compiled language is proven (`{s} lang check lua-dotenv --against
+            \\    built-in language is proven (`{s} lang check lua-dotenv --against
             \\    dotenv secrets.env`). Exits 1 on the first difference.
             \\  table <file>: parse the file (as -i <format>, else by its extension,
             \\    else by its contents) and print its node table as the JSON a

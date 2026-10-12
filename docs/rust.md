@@ -2,14 +2,14 @@
 title = Using fig in Rust
 author = adammharris
 created = 2026-07-05T21:35:14-06:00
-updated = 2026-09-26T18:00:00-06:00
+updated = 2026-10-12T12:00:00-06:00
 part_of = [docs](docs.md)
 ```
 
 # `fig` for Rust
 
 `fig` parses, **edits**, and serializes configuration files — JSON, JSONC, JSON5,
-YAML, TOML, ZON, and the native `fig` dialect — from one small crate. Its
+YAML, TOML, ZON, and the native `figl` dialect — from one small crate. Its
 distinguishing feature is *comment-preserving editing*: you can change one value
 deep in a YAML or TOML file and every comment, blank line, key order, and quoting
 style elsewhere stays byte-for-byte identical. It also converts losslessly
@@ -42,7 +42,7 @@ production as a `serde` replacement.
 
 ```toml
 [dependencies]
-fig = "5"
+fig = "6"
 ```
 
 For the **default feature set** on a tier-1 target, `fig-sys` links a prebuilt
@@ -64,10 +64,15 @@ straight into your binary.
 use fig::{Document, Format};
 
 fn main() -> Result<(), fig::Error> {
+    // A format is looked up by its name; `None` means this build has no such
+    // language.
+    let json = Format::by_name("json").ok_or(fig::Error::UnsupportedFormat)?;
+    let yaml = Format::by_name("yaml").ok_or(fig::Error::UnsupportedFormat)?;
+
     // `Document::serialize` is the cross-format primitive: it preserves comments
     // where the target allows and collapses YAML's reference layer on the way out.
-    let doc = Document::parse(br#"{"name":"fig","nums":[1,2]}"#, Format::Json)?;
-    println!("{}", doc.serialize(Format::Yaml)?);
+    let doc = Document::parse(br#"{"name":"fig","nums":[1,2]}"#, json)?;
+    println!("{}", doc.serialize(yaml)?);
     // name: fig
     // nums: [1, 2]
 
@@ -84,13 +89,16 @@ get `serde_json`-style helpers:
 ```rust
 use fig::Format;
 
+let toml = Format::by_name("toml").expect("the toml feature is on");
+let json = Format::by_name("json").expect("the json feature is on");
+
 // Parse straight into a typed value, in any format…
-let cfg: MyConfig = fig::from_slice(input, Format::Toml)?;
+let cfg: MyConfig = fig::from_slice(input, toml)?;
 // …or YAML text, with the `yaml` feature.
 let cfg: MyConfig = fig::from_yaml_str(yaml)?;
 
 // Serialize any `Serialize` type: to any format through a `Value`…
-let json = fig::to_value(&cfg)?.serialize(Format::Json)?;
+let json = fig::to_value(&cfg)?.serialize(json)?;
 // …or straight to YAML.
 let yaml = fig::to_yaml_string(&cfg)?;
 ```
@@ -111,28 +119,30 @@ change to the language set means the library has to be rebuilt from Zig source.
 | `yaml`     |   ✅    | YAML parser/printer in the linked core.                                   |
 | `toml`     |   ✅    | TOML parser/printer/editor.                                              |
 | `zon`      |         | ZON parser/printer/editor.                                              |
-| `fig`      |   ✅    | The native `fig` authoring dialect.                                      |
+| `figl`     |   ✅    | The native `figl` authoring dialect.                                     |
 | `ini`      |   ✅    | INI parser/printer/editor.                                              |
 | `dotenv`   |   ✅    | dotenv / `.env` parser/printer/editor.                                  |
 | `properties` | ✅    | Java `.properties` parser/printer/editor.                               |
 | `plist`    |         | Apple XML property list parser/printer/editor.                          |
 | `nestedtext` | ✅    | NestedText parser/printer/editor.                                       |
 
-The default set is `json`, `yaml`, `toml`, `fig`, `ini`, `dotenv`, `properties`,
+The default set is `json`, `yaml`, `toml`, `figl`, `ini`, `dotenv`, `properties`,
 `nestedtext` — the core's own defaults, which is also what the prebuilt archive is
 compiled with. Enable the rest explicitly — `serde` for the `serde_json`-style
 helpers (otherwise the `Value` tree and `derive` cover typed mapping with no serde
 dependency), and `zon` / `plist` when you need those formats. JSON/JSONC/JSON5
 share one core behind the `json` gate: on by
-default but, like every language, removable (`--no-default-features`). The
-`Format` enum keeps *every* variant regardless of features — selecting a format
-whose feature is off returns [`Error::UnsupportedFormat`] at runtime, so query
-[`capabilities`] if you want to fail up front:
+default but, like every language, removable (`--no-default-features`). A
+language whose feature is off is simply not registered: [`Format::by_name`]
+returns `None` for its names, so a build without TOML finds out at the lookup
+rather than at the first parse. Once you hold a `Format`, [`capabilities`]
+says what it can do:
 
 ```rust
 use fig::{capabilities, Format};
 
-let caps = capabilities(Format::Toml);
+let toml = Format::by_name("toml").expect("the toml feature is on");
+let caps = capabilities(toml);
 // caps.read, caps.edit, caps.serialize, caps.references — all bools; the
 // last says the format has a reference layer (anchors, aliases, tags —
 // YAML's), which a conversion collapses when leaving it for a format without.
@@ -140,40 +150,55 @@ let caps = capabilities(Format::Toml);
 
 ## Formats
 
-| `Format` | Parse | Edit | Serialize | Notes                                |
-| -------- | :---: | :--: | :-------: | ------------------------------------ |
-| `Json`   |  ✅   |  ✅  |    ✅     | Strict JSON (no comments).           |
-| `Jsonc`  |  ✅   |  ✅  |    ✅     | JSON with `//` and `/* */` comments. |
-| `Json5`  |  ✅   |  ✅  |    ✅     | Unquoted keys, trailing commas, etc. |
-| `Yaml`   |  ✅   |  ✅  |    ✅     | YAML 1.2.2 / 1.1.                    |
-| `Toml`   |  ✅   |  ✅  |    ✅     | TOML 1.0 / 1.1, incl. datetimes.     |
-| `Zon`    |  ⚠️   |  ⚠️  |    ⚠️     | Zig Object Notation — **not** in `default`; enable the `zon` feature. |
-| `Fig`    |  ✅   |  ✅  |    ✅     | The native `fig` authoring dialect.  |
-| `Ini`    |  ✅   |  ✅  |    ✅     | `[section]` + `key = value`; untyped-string scalars, one level of sections. |
-| `Dotenv` |  ✅   |  ✅  |    ✅     | Flat `KEY=value`; a flat string map.  |
-| `Properties` | ✅ |  ✅  |    ✅     | Java `.properties`; same flat, untyped limits as dotenv. |
-| `Plist`  |  ⚠️   |  ⚠️  |    ⚠️     | Apple XML property list, typed and nested — **not** in `default`; enable the `plist` feature. |
-| `Nestedtext` | ✅ |  ✅  |    ✅     | NestedText; nested but every leaf is a string. |
+A [`Format`] is an opaque, `Copy` handle naming a dialect registered with
+the linked core. You get one by name — `Format::by_name("toml")` — or from
+[runtime registration](#runtime-languages), `Format::detect`, or
+`EmbedType::inner_format`; [`Format::name`] gives the name back. The
+languages the bundled core carries, by the name `by_name` takes:
 
-Every format the Rust `Format` enum exposes parses, edits, and serializes when
-its feature is on — but `zon` and `plist` are not in the default feature set, so
-on a stock build `capabilities(Format::Zon)` is all-`false` and using it returns
-[`Error::UnsupportedFormat`]. Ask [`capabilities`] at runtime rather than
+| Name         | Parse | Edit | Serialize | Notes                                |
+| ------------ | :---: | :--: | :-------: | ------------------------------------ |
+| `json`       |  ✅   |  ✅  |    ✅     | Strict JSON (no comments).           |
+| `jsonc`      |  ✅   |  ✅  |    ✅     | JSON with `//` and `/* */` comments. |
+| `json5`      |  ✅   |  ✅  |    ✅     | Unquoted keys, trailing commas, etc. |
+| `yaml`       |  ✅   |  ✅  |    ✅     | YAML 1.2.2 / 1.1.                    |
+| `toml`       |  ✅   |  ✅  |    ✅     | TOML 1.0 / 1.1, incl. datetimes.     |
+| `zon`        |  ⚠️   |  ⚠️  |    ⚠️     | Zig Object Notation — **not** in `default`; enable the `zon` feature. |
+| `figl`       |  ✅   |  ✅  |    ✅     | The native `figl` authoring dialect. |
+| `ini`        |  ✅   |  ✅  |    ✅     | `[section]` + `key = value`; untyped-string scalars, one level of sections. |
+| `dotenv`     |  ✅   |  ✅  |    ✅     | Flat `KEY=value`; a flat string map.  |
+| `properties` |  ✅   |  ✅  |    ✅     | Java `.properties`; same flat, untyped limits as dotenv. |
+| `plist`      |  ⚠️   |  ⚠️  |    ⚠️     | Apple XML property list, typed and nested — **not** in `default`; enable the `plist` feature. |
+| `nestedtext` |  ✅   |  ✅  |    ✅     | NestedText; nested but every leaf is a string. |
+
+A language's versions are dialects of their own, each with its own handle:
+`yaml-1.1`, `yaml-1.2`, `toml-1.0`, `toml-1.1`, and the full `yaml-1.2.2`-style
+spellings. `zon` and `plist` are not in the default feature set, so on a stock
+build `Format::by_name("zon")` is `None`. Ask at runtime rather than
 hard-coding the table.
 
-`Format` is the whole registry: every format the core knows, at the C ABI value
-it has there, and `zig build abi-check` refuses a core whose registry this enum
-(or the TypeScript one) has fallen behind. Because `Format` is
-`#[non_exhaustive]`, a format the core gains later is a **minor** release — see
-[Forward compatibility](#forward-compatibility-non_exhaustive).
+Handles are assigned per process, in the order languages register, so a
+`Format` is something to compare and pass around, never to persist: store
+`format.name()` and resolve it again with `Format::by_name`. Being opaque, a
+`Format` has no variants to match — branch on `name()` when you need to — and
+a language the core gains later is a **minor** release.
+
+```rust
+use fig::Format;
+
+let yaml = Format::by_name("yaml").expect("the yaml feature is on");
+assert_eq!(yaml.name(), "yaml");
+assert_ne!(Format::by_name("yaml-1.1"), Some(yaml));
+assert_eq!(Format::by_name("no-such-language"), None);
+```
 
 ### Runtime languages
 
-One variant is not in the core's registry: `Format::Runtime`, a language
-registered while the program runs. Implement
+The bundled languages are not special: a language registered while the
+program runs is a `Format` like any other. Implement
 [`language::Language`](https://docs.rs/fig/latest/fig/language/trait.Language.html)
 — a [`Description`](https://docs.rs/fig/latest/fig/language/struct.Description.html)
-of what the format declares (the same declarations a compiled format makes:
+of what the format declares (the same declarations every bundled language makes:
 capabilities, dialects, the `Syntax` the splice engine writes it with, and a
 few sample documents), a `parse` that returns a
 [`NodeTable`](https://docs.rs/fig/latest/fig/language/struct.NodeTable.html),
@@ -200,8 +225,9 @@ impl Language for Hcl {
     }
 }
 
-let hcl = fig::language::register(Hcl)?[0];
-let doc = Document::parse(b"a = 1\n", hcl)?;   // a peer of Format::Toml at every call
+let hcl = fig::language::register(Hcl)?[0];  // one Format per dialect; the first is the language's own
+let doc = Document::parse(b"a = 1\n", hcl)?;   // a peer of the bundled languages at every call
+assert_eq!(hcl.name(), "hcl");
 assert_eq!(Format::by_name("hcl"), Some(hcl));
 ```
 
@@ -247,14 +273,17 @@ on one takes a `_` arm.
 somewhere, and a slot it had never heard of could only be dropped by a
 wildcard, so a fourth anchor is a major release and a compile error.
 
-The core validates the description by the rules it holds its own formats to
-and runs its harness over the samples — each is parsed, printed, reparsed
-and edited — before anything is registered; a description that fails is
-refused as [`Error::Language`], whose [`LanguageFailure`] carries the
-core's reason as `message` (and a `byte_offset` where the failure names a
-place — the NUL in a declared string that has one). A registered language lives
-for the rest of the process, and its `Format` is per process: persist the
-name and resolve it with `Format::by_name`.
+`register` returns a `Vec<Format>`, one per dialect the description
+declares, in declaration order. The core validates the description by the
+rules it holds every language to and runs its harness over the samples —
+each is parsed, printed, reparsed and edited — before anything is
+registered; a description that fails, or a dialect whose name is already
+registered (the bundled languages' names included), is refused as
+[`Error::Language`], whose [`LanguageFailure`] carries the core's reason as
+`message` (and a `byte_offset` where the failure names a place — the NUL in
+a declared string that has one). A registered language lives for the rest
+of the process, and its `Format` is per process: persist the name and
+resolve it with `Format::by_name`.
 
 The same `Language` can be served to the `fig` command line as a helper
 process — JSON over stdin and stdout — with [`helper::serve`], which is what
@@ -270,8 +299,8 @@ The CLI spawns it from a `languages.figl` — `name`, the `extensions` it
 owns, and the `command` to run — and it is then a format every action
 accepts, by extension or by `--lang <name>`; `fig lang list` shows what
 loaded and `fig lang check <name> --against <format>` holds it to a
-compiled twin. A helper named after a format the build compiled out
-stands in for it, reached by that format's name, extension and embedded
+bundled twin. A helper may take the name of a language the build leaves
+out, and is then reached by that name, its extensions and its embedded
 spellings. `examples/tinykv_helper.rs` is a complete helper, and
 `tools/cli-lang-check.sh` in the core drives the CLI through it. The wire
 is documented on the `helper` module; see
@@ -286,7 +315,8 @@ an owned [`Value`] tree:
 ```rust
 use fig::{Document, Format};
 
-let doc = Document::parse(b"[server]\nhost = \"localhost\"\nports = [80, 443]\n", Format::Toml)?;
+let toml = Format::by_name("toml").ok_or(fig::Error::UnsupportedFormat)?;
+let doc = Document::parse(b"[server]\nhost = \"localhost\"\nports = [80, 443]\n", toml)?;
 let value = doc.to_value()?; // the whole document as a Value
 ```
 
@@ -300,7 +330,8 @@ node it names has no value, and is `Error::Parse` located at the alias.
 target allows and collapses YAML's reference layer on the way out:
 
 ```rust
-let json = doc.serialize(Format::Json)?; // TOML in, JSON out, comments kept
+let json = doc.serialize(Format::by_name("json").ok_or(fig::Error::UnsupportedFormat)?)?;
+// TOML in, JSON out, comments kept
 ```
 
 A lower-level node API backs `to_value` (root/first-child/next-sibling walking),
@@ -358,7 +389,8 @@ let value = Value::Map(vec![
     ("nums".into(), Value::Seq(vec![1i64.into(), 2i64.into()])),
 ]);
 
-value.serialize(Format::Json)?; // {\n  "name": "fig",\n  "nums": [\n    1,\n    2\n  ]\n}\n
+let json = Format::by_name("json").ok_or(fig::Error::UnsupportedFormat)?;
+value.serialize(json)?; // {\n  "name": "fig",\n  "nums": [\n    1,\n    2\n  ]\n}\n
 ```
 
 The reverse direction — scalar *text* back into a `Value` — is
@@ -391,13 +423,16 @@ use fig::Format;
 #[derive(Serialize, Deserialize)]
 struct Config { name: String, port: u16 }
 
-let cfg: Config = fig::from_slice(b"name = \"fig\"\nport = 8080\n", Format::Toml)?;
-let json = fig::to_value(&cfg)?.serialize(Format::Json)?; // to any format
+let toml = Format::by_name("toml").ok_or(fig::Error::UnsupportedFormat)?;
+let json = Format::by_name("json").ok_or(fig::Error::UnsupportedFormat)?;
+
+let cfg: Config = fig::from_slice(b"name = \"fig\"\nport = 8080\n", toml)?;
+let json = fig::to_value(&cfg)?.serialize(json)?;         // to any format
 let yaml = fig::to_yaml_string(&cfg)?;                     // to YAML (`yaml` feature)
 ```
 
-`from_slice` takes any [`Format`] — every compiled format whose feature is on,
-and a registered runtime language — and `to_value(&x)?.serialize(format)`
+`from_slice` takes any [`Format`] — a bundled language whose feature is on,
+or one registered at runtime — and `to_value(&x)?.serialize(format)`
 writes any of them. `from_yaml_str` and `to_yaml_string` are the YAML
 shorthands, and exist only with the `yaml` feature, so a build without YAML
 cannot call them and fail at runtime. `Value` itself implements
@@ -414,7 +449,8 @@ use fig::{FromValue, ToValue};
 #[derive(ToValue, FromValue)]
 struct Config { name: String, port: u16 }
 
-let value = fig::Document::parse(src, fig::Format::Toml)?.to_value()?;
+let toml = fig::Format::by_name("toml").ok_or(fig::Error::UnsupportedFormat)?;
+let value = fig::Document::parse(src, toml)?.to_value()?;
 let cfg = Config::from_value(&value)?;
 let back = cfg.to_value();          // -> Value, ready to serialize
 ```
@@ -438,9 +474,10 @@ touch — everything else in the file is preserved exactly.
 ```rust
 use fig::{Editor, Format, Segment};
 
+let toml = Format::by_name("toml").ok_or(fig::Error::UnsupportedFormat)?;
 let mut ed = Editor::open(
     b"# app config\nhost = \"localhost\"  # dev box\nport = 8080\n",
-    Format::Toml,
+    toml,
 )?;
 
 ed.replace_value(&[Segment::Key("port")], 9090i64)?;
@@ -507,7 +544,7 @@ the path names — a `key`, an `item` (by index), or a `container` (below) — s
 The operations above address a container the same way they address a scalar:
 by the one range of source it occupies. A TOML `[header]` table occupies no
 such range — its body is the lines after the header, and `[a.b]` further down
-the file extends it — and neither does an INI `[section]` or a `fig` block
+the file extends it — and neither does an INI `[section]` or a `figl` block
 container. At a path naming one, `delete_key`, `replace_value`, `move_key` and
 `reorder_keys` all answer `Error::InvalidArgument` rather than rewrite the
 header and leave the entries behind. These six are the route for those shapes:
@@ -527,7 +564,7 @@ like any other edit, so a body that doesn't parse rolls the document back.
 Support varies by format, and a format that lacks an operation answers
 `Error::UnsupportedFormat`:
 
-| | `Toml` | `Ini` | `Fig` | others |
+| | `toml` | `ini` | `figl` | others |
 |---|---|---|---|---|
 | `delete_container`, `move_container`, `reorder_containers` | ✓ | ✓ | ✓ | — |
 | `insert_container`, `rename_container`, `append_container_to_seq` | ✓ | — | — | — |
@@ -539,10 +576,10 @@ why they succeed on a YAML block mapping where TOML's refuse.
 `set_sequence` has a narrower domain than the rest: it matches new items to old
 ones by *value* so a kept-or-merely-reordered item keeps its comments, which
 means each item has to parse as a standalone document. It therefore declines —
-with `Error::InvalidArgument` — on `Toml` (whose scalars can't stand alone), on
+with `Error::InvalidArgument` — on `toml` (whose scalars can't stand alone), on
 an empty list on either side, and on any non-scalar item. Nothing is lost
 there: a TOML inline array carries no per-element comments, so `replace_value`
-on the whole list is equivalent. It earns its keep on `Yaml` and `Fig`, where
+on the whole list is equivalent. It earns its keep on `yaml` and `figl`, where
 per-item comments are real.
 
 Comments are first-class:
@@ -560,7 +597,7 @@ The write verb says what the anchor holds: the leading block is a run of
 lines, so `add_leading_comment` appends one to it; the trailing comment is a
 single line, so `set_trailing_comment` replaces it.
 
-The comment marker (`#`, `//`) is chosen for the format; strict `Json` has no
+The comment marker (`#`, `//`) is chosen for the format; strict `json` has no
 comments and returns [`Error::UnsupportedFormat`] if you try.
 
 A container has a third anchor — the **dangling** run at the end of its body,
@@ -614,7 +651,7 @@ ed.set_value(&["server".into()], fig::to_value(&server)?)?;   // server: #[deriv
 
 ## Markdown frontmatter & embeds
 
-[`Embed`] edits a config block embedded in a host file — YAML/JSON/`fig`
+[`Embed`] edits a config block embedded in a host file — YAML/JSON/`figl`
 frontmatter, or YAML endmatter — leaving the fences and surrounding prose intact.
 It carries the same edit and comment API as [`Editor`].
 
@@ -640,7 +677,7 @@ println!("{}", fm.render()?);
 ```
 
 - [`EmbedType`] selects the container *and* the inner format. Four container
-  families, crossed with the four embeddable formats (JSON, YAML, TOML, fig):
+  families, crossed with the four embeddable formats (JSON, YAML, TOML, figl):
 
   | Container | Variants |
   | --------- | -------- |
@@ -652,8 +689,11 @@ println!("{}", fm.render()?);
   Plus three conventions with their own distinct delimiter: `Semicolons`
   (`;;;` JSON), `Plus` (`+++` TOML, the Hugo/Zola convention), and `Endmatter`
   (a trailing ```` ```endmatter ```` YAML block). Each name is the CLI's
-  `--embed` archetype in `UpperCamelCase` (`semicolons`, `fenced-fig`), and the
-  TypeScript binding's `EmbedType` values are the same names as strings.
+  `--embed` archetype in `UpperCamelCase` (`semicolons`, `fenced-yaml`), with
+  `Fig` for `figl` (`FencedFig` is `fenced-figl`, `MdFig` is `md-figl`), and
+  the TypeScript binding's `EmbedType` values are those archetype names as
+  strings. Inside the host the spellings stay ```` ```fig ````, `---fig` and
+  `application/figl`.
 
   The `HtmlCode*` variants are entity-encoded on disk. Editing decodes on open
   and re-encodes span-aware on `render`, so an edit preserves every untouched
@@ -671,9 +711,22 @@ println!("{}", fm.render()?);
   `content()`, `host_before()` and `host_after()`, and its [`Region`] the byte
   spans of all five pieces.
 - `detect(source)` sniffs which [`EmbedType`] a host opens with, or `None`;
-  `EmbedType::inner_format()` then reports the [`Format`] that archetype's
+  `EmbedType::inner_format()` then returns the [`Format`] that archetype's
   content is written in, so a detected embed resolves to a parser without
-  duplicating the mapping.
+  duplicating the mapping. It is a `Result`: [`Error::UnsupportedFormat`] when
+  that language is not registered in this build, which is also what
+  `Embed::open`, `extract` and `retype` answer for such an archetype.
+
+  ```rust
+  use fig::{detect, Document};
+
+  let md = "+++\ntitle = \"Hi\"\n+++\nbody\n";
+  if let Some(kind) = detect(md) {
+      let inner = kind.inner_format()?;            // toml
+      let content = fig::Embed::extract(md, kind)?.content();
+      let doc = Document::parse(content.as_bytes(), inner)?;
+  }
+  ```
 - `replace_body(text)` swaps the prose while keeping the (possibly edited) config:
   the text after frontmatter, or before endmatter. An HTML data island has host
   text on both sides and no one body, so it is refused (`UnsupportedOperation`).
@@ -694,19 +747,21 @@ methods take a [`SerializeOptions`]. The [`Default`] is fig's historical style
 (pretty, two-space indent), and there are builder helpers:
 
 ```rust
-use fig::SerializeOptions;
+use fig::{Format, SerializeOptions};
 
-value.serialize_with(Format::Json, SerializeOptions::compact())?;      // minified
-value.serialize_with(Format::Json, SerializeOptions::pretty(4))?;      // 4-space indent
-value.serialize_with(Format::Yaml, SerializeOptions::default().width(120))?; // wider inline budget
-doc.serialize_with(Format::Yaml, SerializeOptions::default().strip_comments())?;
+let json = Format::by_name("json").ok_or(fig::Error::UnsupportedFormat)?;
+let yaml = Format::by_name("yaml").ok_or(fig::Error::UnsupportedFormat)?;
+value.serialize_with(json, SerializeOptions::compact())?;      // minified
+value.serialize_with(json, SerializeOptions::pretty(4))?;      // 4-space indent
+value.serialize_with(yaml, SerializeOptions::default().width(120))?; // wider inline budget
+doc.serialize_with(yaml, SerializeOptions::default().strip_comments())?;
 ```
 
 | Field            | Applies to           | Meaning                                            |
 | ---------------- | -------------------- | -------------------------------------------------- |
 | `pretty`         | JSON, ZON, TOML      | Multi-line (default) vs. compact.                  |
 | `indent`         | JSON, TOML           | Spaces per level (default 2).                      |
-| `width`          | TOML, YAML, Fig      | Column budget for inline (flow) vs. expanded layout. |
+| `width`          | TOML, YAML, figl     | Column budget for inline (flow) vs. expanded layout. |
 | `strip_comments` | all                  | Drop carried comments instead of emitting them.    |
 | `lossless`       | `Document`           | Round-trip values the target can't natively hold.  |
 
@@ -722,10 +777,12 @@ doing it, returning one [`Warning`] per lossy event:
 ```rust
 use fig::{Document, Format, SerializeOptions, WarningCode};
 
-let doc = Document::parse(b"a: null\nb: 1 # keep\n", Format::Yaml)?;
+let yaml = Format::by_name("yaml").ok_or(fig::Error::UnsupportedFormat)?;
+let toml = Format::by_name("toml").ok_or(fig::Error::UnsupportedFormat)?;
+let doc = Document::parse(b"a: null\nb: 1 # keep\n", yaml)?;
 
 // TOML has no null, so `a` would be dropped.
-let warns = doc.diagnose(Format::Toml, SerializeOptions::default())?;
+let warns = doc.diagnose(toml, SerializeOptions::default())?;
 assert_eq!(warns[0].code, WarningCode::ValueDropped);
 assert_eq!(warns[0].path, "a");
 ```
@@ -740,7 +797,7 @@ values round-trip through a `$fig` envelope, and `diagnose` then reports nothing
 lost:
 
 ```rust
-let toml = doc.serialize_with(Format::Toml, SerializeOptions::default().lossless())?;
+let out = doc.serialize_with(toml, SerializeOptions::default().lossless())?;
 ```
 
 ## Errors
@@ -751,17 +808,19 @@ implementing `std::error::Error` (and, with `serde`, `serde::de/ser::Error`):
 ```rust
 use fig::{Document, Format, Error};
 
-match Document::parse(b"{ not valid", Format::Json) {
+let json = Format::by_name("json").ok_or(Error::UnsupportedFormat)?;
+match Document::parse(b"{ not valid", json) {
     Ok(doc) => { /* … */ }
     Err(Error::Parse(detail)) => {
-        eprintln!("{}", detail.message);          // the core's diagnostic
-        eprintln!("{:?} {:?}", detail.line, detail.column); // when the core reports them
+        eprintln!("{}", detail.message);          // the language's diagnostic
+        eprintln!("{:?}", detail.byte_offset);    // Some(2): where it reports one
     }
     Err(e) => eprintln!("{e}"),
 }
 ```
 
-Notable variants: `Parse(ParseError)`, `UnsupportedFormat`, `NotFound` (a path,
+Notable variants: `Parse(ParseError)`, `UnsupportedFormat` (a format this
+build has not registered, or one that cannot do what was asked), `NotFound` (a path,
 key, or region), `InvalidArgument`, `UnsupportedOperation` (every argument valid,
 but the operation is not defined for them), `Utf8`, `Language(LanguageFailure)`
 (a runtime language refused at registration), plus serde/derive mapping errors
@@ -774,11 +833,10 @@ constructor (`Error::missing_field(field, ty)`), as the derive macros do.
 missing but not which segment, so the only path the binding could attach is the
 one you just passed.
 
-[`ParseError`] carries the core's message: for a compiled format its error name,
-for a runtime language the message its parser gave. A runtime language's parse
-failure also carries the `byte_offset` its parser reported; the compiled formats
-do not surface offsets yet, so for them `byte_offset`, `line` and `column` are
-`None`.
+[`ParseError`] carries the message the language's parser gave, and the
+`byte_offset` it reported where it reports one — the bundled JSON does, a
+runtime language does when its parser says where. `line` and `column` are
+`None` unless the core fills them, and an offset of 0 reads as `None` too.
 
 ## Managing resources
 
@@ -788,7 +846,7 @@ they release deterministically when they go out of scope — normal Rust RAII:
 
 ```rust
 {
-    let mut ed = Editor::open(src, Format::Yaml)?;
+    let mut ed = Editor::open(src, yaml)?;
     // …edit…
     let out = ed.source()?.to_owned();
     out
@@ -821,6 +879,7 @@ text to outlive the next edit — the borrow checker enforces this for you.
 - [`Embed`] — frontmatter/embed editor: `open`, `open_or_init`, `extract`, `retype`, `render`, `replace_body`, and the edit methods.
 - [`Extracted`] — a located-but-unparsed region, from `Embed::extract`: `region()`, `content()`, `host_before()`, `host_after()`.
 - [`Value`] — the owned value tree; `serialize`/`serialize_with`/`diagnose`, plus `From` impls.
+- [`Format`] — an opaque, `Copy` handle to a registered dialect: `by_name`, `name`, `detect`, `split_stream`.
 - `Segment<'a>` — path step (`Key(&str)` / `Index(usize)`), with `From<&str>`/`From<usize>`.
 - `SerializeOptions` — output style (`compact()`, `pretty(n)`, `.indent(n)`, `.width(n)`, `.strip_comments()`, `.lossless()`).
 - `Span` — a `[start, end)` byte range; `Hash`, and `From`/`Into` `Range<usize>`.
@@ -829,8 +888,8 @@ text to outlive the next edit — the borrow checker enforces this for you.
 
 **Enums**
 
-- `Format` (with `Format::by_name`), `ExtKind`, `WarningCode`, `WarningCause` — plain data enums.
-- `EmbedType` — with `inner_format()`, the `Format` its content is written in.
+- `ExtKind`, `WarningCode`, `WarningCause` — plain data enums.
+- `EmbedType` — with `inner_format() -> Result<Format>`, the format its content is written in.
 - `Error` — the returned error type.
 
 **Traits** *(the `derive` feature)*
@@ -843,7 +902,9 @@ text to outlive the next edit — the borrow checker enforces this for you.
 The public types that grow with the core are `#[non_exhaustive]`: fig adds
 formats, statuses, diagnostics and runtime-language declarations regularly, and
 marking these means such an addition is a **minor** release instead of a major
-one. They are `Format`, `EmbedType`, `ExtKind`, `Error` and its struct variants,
+one. (A new format needs no marking: [`Format`] is an opaque handle, not an
+enum, so a language the core gains is just another name `by_name` finds.)
+They are `EmbedType`, `ExtKind`, `Error` and its struct variants,
 `WarningCode`, `WarningCause`, `SerializeOptions`, `Version`, `Capabilities`,
 `Warning`, `ParseError`, `Region`, `LanguageFailure`, and in `fig::language`
 `Description`, `Dialect`, `Syntax`, `Comments`, `CommentDelimiter`,
@@ -855,8 +916,9 @@ one. They are `Format`, `EmbedType`, `ExtKind`, `Error` and its struct variants,
 
 What it asks of you:
 
-- **Match with a wildcard.** `match format { Format::Yaml => …, _ => … }`.
+- **Match with a wildcard.** `match code { WarningCode::ValueDropped => …, _ => … }`.
   Constructing a variant is unaffected — only exhaustive matching needs the `_`.
+  A `Format` is matched by name: `match format.name() { "yaml" => …, _ => … }`.
 - **Match a struct variant with `..`**: `Error::MissingField { field, .. }`.
 - **Build from a constructor, then set or assign**, not a struct literal:
   `SerializeOptions::default().width(1).strip_comments()` (a chainable setter

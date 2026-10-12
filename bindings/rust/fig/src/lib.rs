@@ -194,6 +194,32 @@ impl Format {
         }
         Format::from_c(value)
     }
+
+    /// The first format `order` names whose parser accepts `input`, tried in
+    /// that order: content sniffing, with the order the caller's to choose.
+    /// The grammars overlap, so put the strictest first. A name nothing
+    /// answers to is skipped.
+    pub fn detect(input: &[u8], order: &[&str]) -> Option<Format> {
+        let names: Vec<std::ffi::CString> = order
+            .iter()
+            .filter_map(|n| std::ffi::CString::new(*n).ok())
+            .collect();
+        let ptrs: Vec<*const std::os::raw::c_char> = names.iter().map(|n| n.as_ptr()).collect();
+        let mut out: std::os::raw::c_int = -1;
+        let status = unsafe {
+            ffi::fig_detect_order(
+                input.as_ptr(),
+                input.len(),
+                ptrs.as_ptr(),
+                ptrs.len(),
+                &mut out,
+            )
+        };
+        if status != ffi::FigStatus::OK {
+            return None;
+        }
+        Format::from_c(out)
+    }
 }
 
 /// Controls how [`Value::serialize_with`] renders output. The [`Default`] is

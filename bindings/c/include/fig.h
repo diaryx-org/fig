@@ -1448,6 +1448,13 @@ FigStatus fig_language_register(const FigLanguageVTable *vt, int *out_format, Fi
 // registry name ("json5", "yaml", …) or a registered language's — or -1.
 int fig_format_by_name(const char *name);
 
+// Content sniffing in the caller's order: writes to `out_format` the format
+// integer of the first of the `count` formats `names` names whose parser
+// accepts `input`, and returns FIG_STATUS_OK; FIG_STATUS_NOT_FOUND when
+// none does. The grammars overlap, so the order decides what ambiguous input
+// means: strictest first. A name that resolves to no format is skipped.
+FigStatus fig_detect_order(const uint8_t *input, size_t input_len, const char *const *names, size_t count, int *out_format);
+
 // Report HOW MANY events serializing the whole parsed document to `format` would
 // produce, using the same pipeline fig_document_serialize prints from (YAML
 // collapse and, under `options->lossless`, $fig envelopes — so lossless

@@ -95,6 +95,25 @@ export function registerLanguage(lang: Language): Format {
  *  name (`"json5"`, `"yaml"`, …) or a registered language's — or `null`.
  *  The only stable way to persist a runtime format: its integer is assigned
  *  per process, its name is not. */
+/** Content sniffing in the caller's order: the first format `order` names
+ *  whose parser accepts `input`, or `null`. The grammars overlap, so put
+ *  the strictest first; a name nothing answers to is skipped. */
+export function detectFormat(input: string, order: readonly string[]): Format | null {
+  const frame = new Frame();
+  try {
+    const src = frame.str(input);
+    const names = order.map((n) => frame.str(n + "\0").ptr);
+    const list = frame.alloc(4 * Math.max(names.length, 1));
+    const out = frame.alloc(4);
+    const view = dv();
+    names.forEach((p, i) => view.setUint32(list + 4 * i, p, true));
+    const status = fig.fig_detect_order(src.ptr, src.len, list, names.length, out);
+    return status === 0 ? (dv().getInt32(out, true) as Format) : null;
+  } finally {
+    frame.dispose();
+  }
+}
+
 export function formatByName(name: string): Format | null {
   const frame = new Frame();
   try {

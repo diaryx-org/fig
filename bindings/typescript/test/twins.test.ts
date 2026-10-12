@@ -22,7 +22,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { Format, capabilities, convert, formatByName, handle, registerLanguage, type Language, type NodeTable } from "../src/index.ts";
+import { Format, capabilities, convert, detectFormat, formatByName, handle, registerLanguage, type Language, type NodeTable } from "../src/index.ts";
 
 import canonical from "@diaryx/fig/languages/canonical";
 import dotenv from "@diaryx/fig/languages/dotenv";
@@ -150,6 +150,13 @@ test("each language stands in for its format, at the format's own number", () =>
   // own, found by name.
   assert.ok(formatByName("yaml-1.1")! >= 4096);
   assert.ok(byName("canonical").format >= 4096);
+});
+
+test("detectFormat tries the registered languages in the caller's order", () => {
+  assert.equal(detectFormat('{"a": 1}', ["json", "yaml"]), Format.Json);
+  assert.equal(detectFormat('{"a": 1}', ["yaml", "json"]), Format.Yaml);
+  assert.equal(detectFormat("a = 1\n", ["nosuch", "json", "toml"]), Format.Toml);
+  assert.equal(detectFormat('{"a": ', ["json"]), null);
 });
 
 test("each language prints every fixture as the compiled printer did", () => {

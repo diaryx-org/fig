@@ -172,6 +172,16 @@ fn a_rust_language_is_a_peer_at_every_entry_point() {
     assert_eq!(Format::by_name("tinykv"), Some(tkv));
     assert_eq!(Format::by_name("json"), Some(Format::Json));
     assert_eq!(Format::by_name("nosuch"), None);
+    // Content sniffing tries the formats in the order given.
+    assert_eq!(
+        Format::detect(b"{\"a\": 1}", &["json", "yaml"]),
+        Some(Format::Json)
+    );
+    assert_eq!(
+        Format::detect(b"{\"a\": 1}", &["yaml", "json"]),
+        Some(Format::Yaml)
+    );
+    assert_eq!(Format::detect(b"a: [", &["nosuch", "json"]), None);
     assert_eq!(fig::capabilities(tkv), Capabilities::new(true, true, true));
 
     // Parse, read, convert out.

@@ -1279,4 +1279,11 @@ unsafe extern "C" {
         out_err: *mut FigError,
     ) -> FigStatus;
     pub fn fig_format_by_name(name: *const c_char) -> c_int;
+    pub fn fig_detect_order(
+        input: *const u8,
+        input_len: usize,
+        names: *const *const c_char,
+        count: usize,
+        out_format: *mut c_int,
+    ) -> FigStatus;
 }

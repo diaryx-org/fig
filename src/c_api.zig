@@ -353,6 +353,21 @@ pub export fn fig_format_by_name(name: ?[*:0]const u8) c_int {
     return -1;
 }
 
+/// Content sniffing in the caller's order: the format integer of the first
+/// of `names` whose parser accepts `input`. `not_found` when none does.
+pub export fn fig_detect_order(input: ?[*]const u8, input_len: usize, names: ?[*]const ?[*:0]const u8, count: usize, out_format: ?*c_int) FigStatus {
+    const out = out_format orelse return .invalid_argument;
+    const bytes: []const u8 = if (input_len == 0) "" else (input orelse return .invalid_argument)[0..input_len];
+    const list = if (count == 0) &[_]?[*:0]const u8{} else (names orelse return .invalid_argument)[0..count];
+    const allocator = activeAllocator();
+    var order = std.ArrayList([]const u8).initCapacity(allocator, list.len) catch return .out_of_memory;
+    defer order.deinit(allocator);
+    for (list) |n| order.appendAssumeCapacity(std.mem.span(n orelse return .invalid_argument));
+    const name = Languages.detectAmong(allocator, bytes, order.items) orelse return .not_found;
+    out.* = fig_format_by_name(@ptrCast(name.ptr));
+    return .ok;
+}
+
 fn capsBits(caps: Languages.Caps) u32 {
     var bits: u32 = 0;
     if (caps.read) bits |= @backingInt(FigCapability.read);

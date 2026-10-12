@@ -699,6 +699,31 @@ pub fn detect(allocator: Allocator, input: []const u8) ?Detected {
     return null;
 }
 
+/// Content sniffing in the consumer's order: try each format `order` names,
+/// compiled or registered, and return the first name whose parser accepts
+/// `input`, or null if none does. The order is the consumer's to choose —
+/// the grammars overlap, so it decides what ambiguous input means — and a
+/// language never ranks itself against another. A name that resolves to no
+/// format, or to one that cannot read, is skipped.
+pub fn detectAmong(allocator: Allocator, input: []const u8, order: []const []const u8) ?[]const u8 {
+    for (order) |name| {
+        if (acceptsAs(allocator, input, name)) return name;
+    }
+    return null;
+}
+
+/// Whether the format `name` parses `input`: the compiled dialect of that
+/// name where it is compiled in, else the registered language of that name.
+fn acceptsAs(allocator: Allocator, input: []const u8, name: []const u8) bool {
+    inline for (dialects) |d| {
+        if (comptime d.Lang != void) {
+            if (std.mem.eql(u8, d.name, name)) return tryParse(d.Lang, allocator, input, d.dialect);
+        }
+    }
+    const e = Runtime.entryByName(name) orelse return false;
+    return e.language.caps.read and tryParse(Runtime.Language, allocator, input, e.typeOf());
+}
+
 /// Parse with `Lang` and report only whether it succeeded, releasing the document
 /// either way. The detection probe — content is parsed, never retained.
 fn tryParse(comptime Lang: type, allocator: Allocator, input: []const u8, t: Lang.Type) bool {

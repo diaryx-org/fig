@@ -585,15 +585,27 @@ pub fn reportLoss(
 /// every sniffed stdin is noise in it — as silent as a file whose extension
 /// resolved it. The guess matters only when it is wrong, and then the parse
 /// fails and says so.
+/// The order the CLI sniffs content in: strictest grammar first, since
+/// input valid as more than one format means the earliest. JSON before
+/// JSON5, which reads every JSON document; ZON and plist, whose openers no
+/// other format shares; TOML before figl and INI, which read most `a = 1`
+/// files; dotenv before YAML, which reads nearly anything; `.properties`
+/// and NestedText last, which read every line as something. JSONC is never
+/// sniffed: JSON5 reads every JSONC document.
+pub const sniff_order = [_][]const u8{
+    "json", "json5",  "zon",  "plist",      "toml",       "fig",
+    "ini",  "dotenv", "yaml", "properties", "nestedtext",
+};
+
 pub fn resolveFormatFromContent(allocator: std.mem.Allocator, content: []const u8, file_path: []const u8) !Format {
     // A format this build compiled out is sniffed through the language
     // standing in for it, which is registered only when asked for.
     languages.registerStandIns();
-    const detected = fig.Language.detect(allocator, content) orelse {
+    const detected = fig.Language.detectAmong(allocator, content, &sniff_order) orelse {
         std.log.scoped(.detect).err("could not infer the format of `{s}` from its contents; pass an explicit format", .{file_path});
         return error.UnsupportedFileFormat;
     };
-    const format = languages.standIn(mapDetected(detected));
+    const format = languages.standIn(args_mod.parseFormatName(detected).?);
     std.log.scoped(.detect).debug("inferred format `{s}` for `{s}` from its contents", .{ types.name(format), file_path });
     return format;
 }

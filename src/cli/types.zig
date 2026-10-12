@@ -176,6 +176,8 @@ pub const LangOptions = struct {
 
 pub const HelpOptions = struct {
     requested_help: bool = false,
+    /// `help --oneline`: what fig is for, in one line on stdout.
+    oneline: bool = false,
 };
 
 pub const VersionOptions = struct {

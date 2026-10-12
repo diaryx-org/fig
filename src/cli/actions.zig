@@ -28,7 +28,12 @@ const EditOp = types.EditOp;
 const append_index = types.append_index;
 const Io = std.Io;
 
-pub fn runHelp(stderr_term: *Io.Terminal, binary_name: []const u8) !void {
+pub fn runHelp(stdout_term: *Io.Terminal, stderr_term: *Io.Terminal, binary_name: []const u8, opts: types.HelpOptions) !void {
+    if (opts.oneline) {
+        try stdout_term.writer.writeAll(help.oneline);
+        try stdout_term.writer.flush();
+        return;
+    }
     try stderr_term.writer.print(help.title_string, .{});
     try Help.general(stderr_term, binary_name);
 }
@@ -162,6 +167,14 @@ pub fn runSet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
         if (created) fileio.deleteCreatedFile(io, opts.file);
         if (err == error.NotFound and op == .replace_value) {
             try stderr_term.writer.print("error: there is no item [{d}] to set, so nothing was written; set replaces an item that is there, or appends one with [-].\n", .{item.?});
+            try stderr_term.writer.flush();
+            std.process.exit(1);
+        }
+        // `set` makes missing maps but not a missing list, so an append to
+        // one has nothing to land in; say how to start it, rather than the
+        // "no such path" or "not a mapping" the lookup gives.
+        if ((err == error.NotFound or err == error.NotAMapping) and op == .append_seq) {
+            try stderr_term.writer.print("error: there is no list to append to, so nothing was written; start one with `{s} set {s} <path> '[<value>]'`.\n", .{ binary_name, opts.file });
             try stderr_term.writer.flush();
             std.process.exit(1);
         }

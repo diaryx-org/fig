@@ -248,6 +248,12 @@ row 0 replace seq.yaml 'l[-]' z
 row 0 set objs.yaml 'o[-].m' 1
 [ "$(cat run/objs.yaml)" = "$(printf 'o:\n  - n: a\n  - n: b\n    m: 1')" ] || fail "set o[-].m: $(cat run/objs.yaml)"
 row 1 get seq.yaml 'nosuch[-]'
+row 1 set seq.yaml 'nosuch[-]' z
+cmp -s run/seq.yaml fixtures/seq.yaml || fail "a refused append to a missing list changed the file"
+# `help --oneline` is one line on stdout.
+[ "$("$fig" help --oneline 2>/dev/null | wc -l | tr -d ' ')" = 1 ] || fail "help --oneline is not one line"
+row 0 help --oneline
+row 2 help --bogus
 row 0 replace ok.yaml a 2
 row 1 replace ok.yaml zz 2
 row 2 replace ok.yaml a

@@ -13,17 +13,17 @@ part_of = [Tasks](/docs/tasks/tasks.md)
 
 ```sh
 printf 'a: 1\n' >t.yaml
-fig set t.yaml 'tags[-]' x      # error: no such path in the document
+fig set t.yaml 'tags[-]' x      # error: there is no list to append to …
 fig set --seq t.yaml tags x     # exit 1, nothing written
 fig insert t.yaml 'tags[-]' x   # exit 1
-fig set new.yaml 'tags[-]' x    # error: a segment of this path is not a mapping, …
+fig set new.yaml 'tags[-]' x    # the same, and new.yaml is not created
 ```
 
 `set` is the upsert, and it already makes every missing parent map along a
 path (`mkdir -p`). A missing list is the one container it will not make, so
 the only way to start one is `set t.yaml tags '[x]'`, which an agent or a
-script has to know to reach for. The last line's message is also wrong
-about the cause: nothing in an empty new file is a scalar.
+script has to know to reach for. The two `set … 'tags[-]'` lines now say so
+in their error; the other two still report only that they failed.
 
 **Done when.** `set f 'list[-]' x` and `set --seq f list x …` create `list`
 when it is absent, in every format with a spelling for an empty sequence,

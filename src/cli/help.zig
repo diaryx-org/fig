@@ -106,6 +106,10 @@ const path_and_markdown =
     \\
 ;
 
+/// What fig is for, in one line: `fig help --oneline`, for a list of tools
+/// where each gets a line and the rest is a `fig help` away.
+pub const oneline = "fig: read and edit JSON, YAML, TOML, INI, dotenv, plist and other config files, and Markdown frontmatter, by path, keeping comments and formatting. More: `fig help`.\n";
+
 pub const title_string = "\n=========\n   FIG\n=========\n\n";
 
 pub const Help = struct {
@@ -114,7 +118,8 @@ pub const Help = struct {
             \\Usage:
             \\  {s} <action> [action options] --[flags]
             \\Possible actions:
-            \\  help: prints this text (default action)
+            \\  help: prints this text (default action); `help --oneline` prints
+            \\    what fig is for in one line
             \\  version: prints version number
             \\  replace: replace the value at a path
             \\  rename: rename the key at a path
@@ -143,6 +148,16 @@ pub const Help = struct {
             \\stands. fig has no bare -inf or nan (they are strings), so
             \\-inf reads as a flag.
             \\
+            \\Paths: dots for keys, brackets for indices (`a.list[0].name`), and
+            \\[-] for the last item. Quote a path that holds brackets, since a
+            \\shell may read `[...]` as a glob. `{s} get <file> -o gron` prints
+            \\every path in a file with its value.
+            \\
+            \\Edits are made in place, and only the edited span changes: comments,
+            \\key order, quoting and blank lines elsewhere stay as they were. Only
+            \\`patch` previews (`--dry-run`, `--diff`); for the other edits, `get`
+            \\the value first or diff the file afterward.
+            \\
             \\Exit status, for every action:
             \\  0  done (for `fmt --dry-run`/`--diff` and `check`: nothing to
             \\     change, everything parses)
@@ -164,7 +179,7 @@ pub const Help = struct {
             \\For information on action options, pass --help or -h
             \\to the action you would like to learn about.
             \\
-        , .{ binary_name, binary_name, binary_name, binary_name });
+        , .{ binary_name, binary_name, binary_name, binary_name, binary_name });
         try term.writer.flush();
     }
 

@@ -285,7 +285,7 @@ fn reportParseFailure(a: std.mem.Allocator, io: std.Io, term: *std.Io.Terminal, 
 
 fn dispatch(a: std.mem.Allocator, io: Io, stdout_terminal: *Io.Terminal, stderr_terminal: *Io.Terminal, config: types.CliConfig) !void {
     return switch (config.action) {
-        .help => actions.runHelp(stderr_terminal, config.binary_name),
+        .help => actions.runHelp(stdout_terminal, stderr_terminal, config.binary_name, config.options.help),
         .version => actions.runVersion(stdout_terminal, config.binary_name, version, epoch, config.options.version),
         .replace => actions.runEdit(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.replace),
         .rename => actions.runEdit(a, io, stdout_terminal, stderr_terminal, config.binary_name, config.options.rename),

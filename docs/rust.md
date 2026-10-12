@@ -13,7 +13,7 @@ YAML, TOML, ZON, and the native `figl` dialect — from one small crate. Its
 distinguishing feature is *comment-preserving editing*: you can change one value
 deep in a YAML or TOML file and every comment, blank line, key order, and quoting
 style elsewhere stays byte-for-byte identical. It also converts losslessly
-between formats and edits config embedded in markdown frontmatter.
+between formats.
 
 The core is a Zig library statically linked into your crate — as a prebuilt
 archive for the default feature set, so the common case needs no Zig toolchain.
@@ -30,7 +30,7 @@ production as a `serde` replacement.
 - [The value tree](#the-value-tree)
 - [Typed structs: serde or derive](#typed-structs-serde-or-derive)
 - [Editing without reserializing](#editing-without-reserializing)
-- [Markdown frontmatter & embeds](#markdown-frontmatter--embeds)
+- [Config inside a host file](#config-inside-a-host-file)
 - [Serialization options](#serialization-options)
 - [Diagnostics & lossless conversion](#diagnostics--lossless-conversion)
 - [Errors](#errors)
@@ -152,8 +152,8 @@ let caps = capabilities(toml);
 
 A [`Format`] is an opaque, `Copy` handle naming a dialect registered with
 the linked core. You get one by name — `Format::by_name("toml")` — or from
-[runtime registration](#runtime-languages), `Format::detect`, or
-`EmbedType::inner_format`; [`Format::name`] gives the name back. The
+[runtime registration](#runtime-languages) or `Format::detect`;
+[`Format::name`] gives the name back. The
 languages the bundled core carries, by the name `by_name` takes:
 
 | Name         | Parse | Edit | Serialize | Notes                                |
@@ -300,8 +300,7 @@ owns, and the `command` to run — and it is then a format every action
 accepts, by extension or by `--lang <name>`; `fig lang list` shows what
 loaded and `fig lang check <name> --against <format>` holds it to a
 bundled twin. A helper may take the name of a language the build leaves
-out, and is then reached by that name, its extensions and its embedded
-spellings. `examples/tinykv_helper.rs` is a complete helper, and
+out, and is then reached by that name and its extensions. `examples/tinykv_helper.rs` is a complete helper, and
 `tools/cli-lang-check.sh` in the core drives the CLI through it. The wire
 is documented on the `helper` module; see
 `docs/proposals/runtime-languages.md` in the core for the design.
@@ -498,7 +497,7 @@ a built [`Value`], or a `&Value` all pass directly. Whatever you pass is rendere
 in the document's own format automatically (a string becomes `"x"` for TOML/JSON
 but a bare `x` for YAML).
 
-Common operations (identical on [`Editor`] and [`Embed`]):
+Common operations:
 
 ```rust
 ed.insert_value(&[], "key", &value)?;                 // add a mapping entry
@@ -530,7 +529,7 @@ them, a flow item takes a separator laid out as its sequence is, and a block
 item goes on its own line above the item at `index` and that item's comment
 block.
 
-The names follow one scheme, on [`Editor`] and [`Embed`] alike. Value edits
+The names follow one scheme. Value edits
 are `<verb>_value`, except the insert at an index, `insert_item`, named by its
 noun as `delete_item` is because `insert_value` inserts a key. Structural edits are `<verb>_<noun>`, the noun being what
 the path names — a `key`, an `item` (by index), or a `container` (below) — so
@@ -649,96 +648,13 @@ ed.set_value(&["server".into()], server.to_value())?;         // server: #[deriv
 ed.set_value(&["server".into()], fig::to_value(&server)?)?;   // server: #[derive(Serialize)]
 ```
 
-## Markdown frontmatter & embeds
+## Config inside a host file
 
-[`Embed`] edits a config block embedded in a host file — YAML/JSON/`figl`
-frontmatter, or YAML endmatter — leaving the fences and surrounding prose intact.
-It carries the same edit and comment API as [`Editor`].
-
-```rust
-use fig::{Embed, EmbedType};
-
-let md = "---\ntitle: Hello\ntags:\n- draft\n---\n# Body\n\ntext\n";
-
-let mut fm = Embed::open(md.as_bytes(), EmbedType::Frontmatter)?;
-fm.set_value(&["title".into()], "Hello, world")?;
-fm.append_value(&["tags".into()], "published")?;
-
-println!("{}", fm.render()?);
-// ---
-// title: Hello, world
-// tags:
-// - draft
-// - published
-// ---
-// # Body
-//
-// text
-```
-
-- [`EmbedType`] selects the container *and* the inner format. Four container
-  families, crossed with the four embeddable formats (JSON, YAML, TOML, figl):
-
-  | Container | Variants |
-  | --------- | -------- |
-  | Markdown frontmatter | `Frontmatter` (bare `---`), `MdJson` (`---json`), `MdToml`, `MdFig` |
-  | Fenced code block | `FencedFig` (```` ```fig ````), `FencedYaml`, `FencedJson`, `FencedToml` |
-  | HTML data island | `HtmlScriptFig`, `HtmlScriptYaml`, `HtmlScriptJson`, `HtmlScriptToml` — `<script type="application/…">` |
-  | HTML visible code | `HtmlCodeFig`, `HtmlCodeYaml`, `HtmlCodeJson`, `HtmlCodeToml` — `<pre><code class="language-…">` |
-
-  Plus three conventions with their own distinct delimiter: `Semicolons`
-  (`;;;` JSON), `Plus` (`+++` TOML, the Hugo/Zola convention), and `Endmatter`
-  (a trailing ```` ```endmatter ```` YAML block). Each name is the
-  archetype's name (`semicolons`, `fenced-yaml`) in `UpperCamelCase`, with
-  `Fig` for `figl` (`FencedFig` is `fenced-figl`, `MdFig` is `md-figl`), and
-  the TypeScript binding's `EmbedType` values are those archetype names as
-  strings. Inside the host the spellings stay ```` ```fig ````, `---fig` and
-  `application/figl`.
-
-  The `HtmlCode*` variants are entity-encoded on disk. Editing decodes on open
-  and re-encodes span-aware on `render`, so an edit preserves every untouched
-  byte's original encoding and canonically encodes only what changed.
-- `Embed::open_or_init(host, kind)` creates the block if none exists, so the
-  first `set_value` lands cleanly. A block that goes at the top is refused
-  ([`Error::UnsupportedOperation`]) when the host already opens with
-  frontmatter of another archetype, rather than pushing it off the first line;
-  `retype` changes a region's archetype.
-- `Embed::extract(host, kind)` / `split(host, kind)` locate the region
-  *without* parsing — handy for reading the raw frontmatter and the prose apart.
-  `split` returns `(before, content, after)`: the host text before the block,
-  the text between the fences, and the host text after it, which concatenated
-  with the fences reproduce the host. [`Extracted`] gives you `region()`,
-  `content()`, `host_before()` and `host_after()`, and its [`Region`] the byte
-  spans of all five pieces.
-- `detect(source)` sniffs which [`EmbedType`] a host opens with, or `None`;
-  `EmbedType::inner_format()` then returns the [`Format`] that archetype's
-  content is written in, so a detected embed resolves to a parser without
-  duplicating the mapping. It is a `Result`: [`Error::UnsupportedFormat`] when
-  that language is not registered in this build, which is also what
-  `Embed::open`, `extract` and `retype` answer for such an archetype.
-
-  ```rust
-  use fig::{detect, Document};
-
-  let md = "+++\ntitle = \"Hi\"\n+++\nbody\n";
-  if let Some(kind) = detect(md) {
-      let inner = kind.inner_format()?;            // toml
-      let content = fig::Embed::extract(md, kind)?.content();
-      let doc = Document::parse(content.as_bytes(), inner)?;
-  }
-  ```
-- `replace_body(text)` swaps the prose while keeping the (possibly edited) config:
-  the text after frontmatter, or before endmatter. An HTML data island has host
-  text on both sides and no one body, so it is refused (`UnsupportedOperation`).
-- `Embed::retype(host, from, to, content)` re-houses the block under a
-  *different* archetype's fences — the splice half of "convert this file's embed
-  style", with `content` the already re-serialized inner document. Every host
-  byte outside the block survives, and the block moves only when the target puts
-  it at the other end of the file, so retyping to the same archetype is a
-  byte-identical rebuild. Moving a mid-document block (`HtmlScript*`,
-  `HtmlCode*`) to an edge archetype is [`Error::UnsupportedOperation`]: there is
-  no honest place to put the host text that sits above it. Mid-document to
-  mid-document splices in place.
+fig edits a config document, not the file it sits in. Frontmatter,
+endmatter, and fenced or HTML blocks in Markdown are located by
+[twig](https://github.com/diaryx-org/twig): open an [`Editor`] over the
+block's contents and splice its `source()` back between the byte spans twig
+reported.
 
 ## Serialization options
 
@@ -820,8 +736,8 @@ match Document::parse(b"{ not valid", json) {
 ```
 
 Notable variants: `Parse(ParseError)`, `UnsupportedFormat` (a format this
-build has not registered, or one that cannot do what was asked), `NotFound` (a path,
-key, or region), `InvalidArgument`, `UnsupportedOperation` (every argument valid,
+build has not registered, or one that cannot do what was asked), `NotFound` (a path
+or key), `InvalidArgument`, `UnsupportedOperation` (every argument valid,
 but the operation is not defined for them), `Utf8`, `Language(LanguageFailure)`
 (a runtime language refused at registration), plus serde/derive mapping errors
 (`Message`, `MissingField`, `UnknownVariant`, `TypeMismatch`, …). The struct
@@ -840,8 +756,8 @@ runtime language does when its parser says where. `line` and `column` are
 
 ## Managing resources
 
-Unlike the TypeScript binding, there is **no manual cleanup**. [`Document`],
-[`Editor`], and [`Embed`] each own a native handle freed by their `Drop` impl, so
+Unlike the TypeScript binding, there is **no manual cleanup**. [`Document`]
+and [`Editor`] each own a native handle freed by their `Drop` impl, so
 they release deterministically when they go out of scope — normal Rust RAII:
 
 ```rust
@@ -854,7 +770,7 @@ they release deterministically when they go out of scope — normal Rust RAII:
 }
 ```
 
-The one thing to watch is **borrows**: `Editor::source`, `Embed::render`, and the
+The one thing to watch is **borrows**: `Editor::source` and the
 comment reads return `&str` (or `Option<String>`) that borrow handle memory and
 are invalidated by the next mutation. Copy out with `.to_owned()` if you need the
 text to outlive the next edit — the borrow checker enforces this for you.
@@ -865,8 +781,6 @@ text to outlive the next edit — the borrow checker enforces this for you.
 
 - `capabilities(format) -> Capabilities` — what this build can read/edit/serialize.
 - `version() -> Version` / `version_string() -> &'static str` — linked core version.
-- `split(host, kind) -> Option<(&str, &str, &str)>` — read-only `(before, content, after)` of an embed.
-- `detect(source) -> Option<EmbedType>` — which embed archetype a host opens with.
 - *(serde)* `from_slice<T>(bytes, format) -> Result<T>` — deserialize any format.
 - *(serde)* `to_value<T>(&value) -> Result<Value>` — build a `Value` from any `Serialize`.
 - *(serde + yaml)* `from_yaml_str<T>(s) -> Result<T>` — deserialize a YAML string.
@@ -876,20 +790,17 @@ text to outlive the next edit — the borrow checker enforces this for you.
 
 - [`Document`] — read path: `parse`, `to_value`, `serialize`/`serialize_with`, `diagnose`.
 - [`Editor`] — comment-preserving editor: `open`, `source`, and the edit/comment methods.
-- [`Embed`] — frontmatter/embed editor: `open`, `open_or_init`, `extract`, `retype`, `render`, `replace_body`, and the edit methods.
-- [`Extracted`] — a located-but-unparsed region, from `Embed::extract`: `region()`, `content()`, `host_before()`, `host_after()`.
 - [`Value`] — the owned value tree; `serialize`/`serialize_with`/`diagnose`, plus `From` impls.
 - [`Format`] — an opaque, `Copy` handle to a registered dialect: `by_name`, `name`, `detect`, `split_stream`.
 - `Segment<'a>` — path step (`Key(&str)` / `Index(usize)`), with `From<&str>`/`From<usize>`.
 - `SerializeOptions` — output style (`compact()`, `pretty(n)`, `.indent(n)`, `.width(n)`, `.strip_comments()`, `.lossless()`).
 - `Span` — a `[start, end)` byte range; `Hash`, and `From`/`Into` `Range<usize>`.
-- `Warning` / `Region` / `Version` / `Capabilities` / `ParseError` / `LanguageFailure`.
+- `Warning` / `Version` / `Capabilities` / `ParseError` / `LanguageFailure`.
 - `fig::language` — `Language`, `register`, `Description` and its parts, `NodeTable` and its rows, `RenderArgs`, `PrintOptions`, `LanguageError`; see [Runtime languages](#runtime-languages).
 
 **Enums**
 
 - `ExtKind`, `WarningCode`, `WarningCause` — plain data enums.
-- `EmbedType` — with `inner_format() -> Result<Format>`, the format its content is written in.
 - `Error` — the returned error type.
 
 **Traits** *(the `derive` feature)*
@@ -904,9 +815,9 @@ formats, statuses, diagnostics and runtime-language declarations regularly, and
 marking these means such an addition is a **minor** release instead of a major
 one. (A new format needs no marking: [`Format`] is an opaque handle, not an
 enum, so a language the core gains is just another name `by_name` finds.)
-They are `EmbedType`, `ExtKind`, `Error` and its struct variants,
+They are `ExtKind`, `Error` and its struct variants,
 `WarningCode`, `WarningCause`, `SerializeOptions`, `Version`, `Capabilities`,
-`Warning`, `ParseError`, `Region`, `LanguageFailure`, and in `fig::language`
+`Warning`, `ParseError`, `LanguageFailure`, and in `fig::language`
 `Description`, `Dialect`, `Syntax`, `Comments`, `CommentDelimiter`,
 `SectionHeader`, `ClosedContainers`, `NativeKinds`, `Renderers`, `PrintOptions`,
 `LanguageError`, `RenderArgs`, `NodeTable`, `NodeRow`, `RegionRow`,
@@ -927,8 +838,8 @@ What it asks of you:
   `new` or `Default` followed by plain field assignment
   (`let mut s = Syntax::default(); s.kv_sep = Some("=".into());`). Reading
   fields is unchanged everywhere.
-- **Returned structs are read-only to you.** `Version`, `Warning`, `ParseError`,
-  `LanguageFailure` and `Region` come from the library; their fields stay public
+- **Returned structs are read-only to you.** `Version`, `Warning`, `ParseError`
+  and `LanguageFailure` come from the library; their fields stay public
   and readable, but there is no constructor, because nothing takes one back.
 
 [`Value`], `Segment`, `Span` and `language::CommentSlot` are deliberately

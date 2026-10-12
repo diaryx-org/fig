@@ -37,11 +37,10 @@ part_of = [proposals](proposals.md)
 > at startup and the C library on first use; a format is a registered
 > dialect's handle, from 1, with no `FigFormat`, `FIG_FORMAT_*`, stand-ins,
 > `SerializeFormat` or `Detected`; a language's `--spec` versions are dialect
-> rows (`yaml-1.1`) and its embedded spellings cross the contract
-> (`FigDialectDesc.embed_*`), so `Embed` finds an inner language by
-> declaration; the authoring dialect is `figl`, with no alias. Left in step
-> 8: the preset containers (they wait on step 4's registered containers),
-> the closed `KeyStyle`/`CommentStyle` leftovers and the §6 check. Then step 9, and step 6's last
+> rows (`yaml-1.1`); the authoring dialect is `figl`, with no alias.
+> Embedding, its preset containers and §4.5 with it, is no longer fig's: it
+> moved to twig. Left in step 8: the closed `KeyStyle`/`CommentStyle`
+> leftovers and the §6 check. Then step 9, and step 6's last
 > stage (adopting the table as the Document). Tag resolution and the
 > lexeme's value land with §4.9's rows.
 >

@@ -20,9 +20,7 @@ the change; this page is the part of it that asks you to change something.
 - **The authoring dialect is `figl`.** `fig` is the library's name and no
   format's: `-i fig`, `-o fig`, `fig_format_by_name("fig")`,
   `Format::by_name("fig")` and `formatByName("fig")` find nothing. There is
-  no alias. Write `figl`. The spellings inside a host document are
-  unchanged: ```` ```fig ````, `---fig` and `application/figl` still read as
-  figl.
+  no alias. Write `figl`.
 - **No fixed format numbers.** A format is a per-process handle, assigned in
   registration order from 1. Find one by name; persist the name, never the
   number.
@@ -40,11 +38,21 @@ the change; this page is the part of it that asks you to change something.
 | messages saying "a fig value" | "a figl value" |
 | `zig build -Dfig=false` | `-Dfigl=false` |
 
-The CLI no longer reads or writes embedded blocks. `--embed`, `--to-embed`,
-`--patch-embed` and `get --body` are gone, and a Markdown or HTML file is no
-longer opened through its frontmatter or blocks. Such a file is refused
-rather than sniffed; `-i <format>` reads the whole file as that format. The library APIs — Rust
-`Embed`, TypeScript `Embed`, C `fig_embed_*` — are unchanged in this release.
+## Embedding has left fig
+
+fig reads and edits a config document, never the file it sits in. The CLI's
+`--embed`, `--to-embed`, `--patch-embed` and `get --body` are gone, and a
+Markdown or HTML file is refused rather than sniffed; `-i <format>` reads
+the whole file as that format. Rust `Embed`, `EmbedType`, `Extracted`,
+`Region`, `split` and `detect`, TypeScript `Embed`, `EmbedType`, `Region`
+and `Span`, Zig
+`fig.Embed` and C `fig_embed_*`, `FigEmbed`, `FigEmbedContainer`,
+`FigRegion` and `FigSpan` are gone too.
+
+[twig](https://github.com/diaryx-org/twig) locates frontmatter, endmatter
+and fenced or HTML blocks: a Markdown `metadata` node's byte spans, through
+twig's query API. Open fig's `Editor` over the block's contents, edit, and
+splice its source back between those spans.
 
 ## Rust
 
@@ -54,13 +62,10 @@ rather than sniffed; `-i <format>` reads the whole file as that format. The libr
 | `Format::Runtime(RuntimeFormat)`, `RuntimeFormat` | gone: a registered language's handle is a `Format` like any other |
 | `match format { Format::Yaml => … }` | compare handles, or `format.name() == "yaml"` |
 | `Debug` printing `Yaml` | `Format(<n>)`; use `name()` |
-| `EmbedType::inner_format() -> Format` | `-> Result<Format, Error>`, `Err(UnsupportedFormat)` when the inner language is not registered |
 | the crate feature `fig` | `figl` |
 | `fig_sys::FigFormat`, `FIG_FORMAT_RUNTIME_BASE` | gone; formats are `c_int` handles; `fig_sys::fig_format_name` names one |
 
-`Embed::open`, `open_or_init`, `extract` and `retype` refuse with
-`Error::UnsupportedFormat` when an `EmbedType`'s inner language is not
-registered, presets included. Error text names the dialect ("would not parse
+Error text names the dialect ("would not parse
 as toml"). `ParseError::byte_offset` is filled where the language reports
 one. Registering a language under a name already taken — a bundled one
 included — is refused with `Error::Language`.
@@ -82,17 +87,10 @@ formatByName("yaml") === yamlFormat;       // true
 | `Format.Json`, `Format.Yaml`, … | `registerLanguage(json)`'s return, `json.format`, `formatByName("json")` or `requireFormat("json")` |
 | a raw number as a `Format` | does not type-check; a number nobody registered throws `UnsupportedFormat` |
 | `@diaryx/fig/languages/fig` | `@diaryx/fig/languages/figl` |
-| `EmbedType.FencedFig === "fenced-fig"` (and `MdFig`, `HtmlScriptFig`, `HtmlCodeFig`) | `"fenced-figl"`, … — the member names are unchanged |
 
 `formatName(format)` names a handle, and `requireFormat(name)` throws
-`UnsupportedFormat` naming the module to import. `Embed.extract`, `split`,
-`retype` and `detect` on a fenced, frontmatter or HTML block find the inner
-language through the spellings a registered dialect declares (`embed` on a
-dialect row), so they need it registered; the `;;;`, `+++` and endmatter
-presets are still located without it. A language you register under `json`,
-`yaml`, `toml` or `figl` is an embed's content only if it declares `embed`.
-`registerLanguage` writes a non-enumerable `format` onto the language object,
-and `describe(lang)` includes `embed` on every dialect.
+`UnsupportedFormat` naming the module to import. `registerLanguage` writes
+a non-enumerable `format` onto the language object.
 
 ## Zig
 
@@ -102,7 +100,6 @@ and `describe(lang)` includes `embed` on every dialect.
 | `fig.Editor(fig.Language.TOML)` | `fig.Editor(fig.Runtime.Language)` with `.format = entry.typeOf()` |
 | `fig.Serialize.serialize(&ast, w, .yaml)`, `SerializeFormat` | `serialize(&ast, w, fig.Serialize.Target.named("yaml").?)`; a `Target` is `.canonical` or `.{ .language = entry }` |
 | `fig.deserialize.parseFromSlice(T, a, src, .yaml, opts)` | `…(T, a, src, "yaml", opts)`; `error.UnsupportedFormat` for a name nobody registered |
-| `fig.Embed.Type{ .frontmatter = .yaml }` | `.{ .frontmatter = fig.Embed.innerNamed("yaml").? }`; `innerFormat` returns an optional |
 | `fig.Language.detect`, `Detected`, `sniff_order` | `fig.Runtime.detectAmong(a, input, order)` in your own order |
 | `fig.Diagnostics.analyze(…, .toml, …)`, `analyzeFor` | `analyze(…, target, …)`; `Warning.render(w, target.name())` |
 | `fig.Fig`, `fig.Language.of`, `dialects`, `compiled`, `moduleFor` | `fig.bundle.Language(name)` / `fig.bundle.module(name)` for a shipped language's Zig module |
@@ -120,8 +117,6 @@ every later `Runtime.register` must share.
 | `FIG_FORMAT_RUNTIME_BASE`, a registered language's handle ≥ 4096 | gone; every handle counts from 1 |
 | a language named after a compiled-out format taking its number | refused if the name is taken; otherwise a handle like any other |
 | — | `const char *fig_format_name(int format)` |
-| `fig_embed_detect` always writing a format | writes -1 for a preset container whose language is not registered |
-| `FigDialectDesc` ending at `prints_comments` | six `embed_*` fields follow, read at `dialect_size`, so an older record still registers |
 | a print failure's reason lost | a language sets `FigError.code` to a refusal, and fig reports it as the matching failure |
 
 The static library still bundles the languages its build includes and

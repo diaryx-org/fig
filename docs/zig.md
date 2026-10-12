@@ -15,8 +15,7 @@ dialect — from one small package with no external
 dependencies. Its distinguishing feature is *comment-preserving editing*: you
 can change one value deep in a YAML or TOML file and every comment, blank
 line, key order, and quoting style elsewhere stays byte-for-byte identical. It
-also converts losslessly between formats and edits config embedded in
-markdown frontmatter.
+also converts losslessly between formats.
 
 This is the core library — the same code the C ABI, the TypeScript/WASM
 package, and the `fig` CLI are all built on. Used directly from Zig you get
@@ -30,7 +29,7 @@ state or GC — you manage every `deinit`).
 - [Reading data](#reading-data)
 - [The value tree](#the-value-tree)
 - [Editing without reserializing](#editing-without-reserializing)
-- [Markdown frontmatter & embeds](#markdown-frontmatter--embeds)
+- [Config inside a host file](#config-inside-a-host-file)
 - [Serialization options](#serialization-options)
 - [Diagnostics & lossless conversion](#diagnostics--lossless-conversion)
 - [Reflective deserialization](#reflective-deserialization)
@@ -155,7 +154,7 @@ JSON5, ZON, plist, TOML, figl, INI, dotenv, YAML, `.properties`, NestedText.
 
 A language is a contract: its declarations as fields of a
 `fig.Runtime.VTable` — name, caps, dialect rows (with extensions, edit-text
-style, empty-document seed, embedded spellings and what its printer holds),
+style, empty-document seed and what its printer holds),
 syntax, samples — `parse` and `print` as function pointers, and the six
 renderers as pointers that may be null. `fig.Runtime.register(allocator,
 &vtable)` validates the record, runs the checks of `languages/harness.zig`
@@ -250,6 +249,12 @@ from default navigation, which treats an alias as an opaque leaf:
 target (guarding cycles/depth), and `ast.mergedChild(mapping, key)` looks a
 key up through a `<<` merge. `deserialize` (below) calls `resolveDeep`
 automatically; hand-rolled traversal must opt in explicitly.
+
+A multi-document stream is the language's to split:
+`fig.Runtime.Language.splitStream(allocator, input, entry.typeOf())` locates
+each document of a YAML stream (`---`/`...`-delimited) as a byte range to
+parse on its own, and refuses with `error.UnsupportedOperation` for a
+language without streams.
 
 ## The value tree
 
@@ -502,125 +507,12 @@ them (`NotASection`), since `deleteKey` is already the right operation there.
 All six are also in the C ABI as `fig_editor_*_container`, and wrapped by the
 Rust and TypeScript bindings.
 
-## Markdown frontmatter & embeds
+## Config inside a host file
 
-`fig.Embed` locates a config block embedded in a host file without touching an
-`Editor` directly; you compose it with `Editor` yourself for edits (there is
-no combined "embedded editor" type at this layer — the example below is the
-pattern).
-
-### Archetypes
-
-`fig.Embed.Type` is a *union*, not a flat enum: the four container shapes that
-name their format in the source are parametric over an `Embed.InnerFormat` —
-a registered dialect that declares an embedded spelling (`json`, `yaml`,
-`toml` and `figl` among fig's own), found with `Embed.innerNamed` — and three
-popular conventions whose delimiter is its own distinct token stay as
-blessed presets:
-
-```zig
-const yaml = fig.Embed.innerNamed("yaml").?;
-const t: fig.Embed.Type = .{ .frontmatter = yaml };   // ---      … --- / ...  (bare --- is YAML)
-_ = fig.Embed.Type{ .fenced = fig.Embed.innerNamed("toml").? };      // ```toml  … ```
-_ = fig.Embed.Type{ .html_script = fig.Embed.innerNamed("json").? }; // <script type="application/json"> … </script>
-_ = fig.Embed.Type{ .html_code = fig.Embed.innerNamed("figl").? };   // <pre><code class="language-figl"> … </code></pre>
-_ = fig.Embed.Type.semicolons_json;                   // ;;;      … ;;;
-_ = fig.Embed.Type.plus_toml;                         // +++      … +++   (Hugo/Zola)
-_ = fig.Embed.Type.endmatter_yaml;                    // trailing ```endmatter block
-```
-
-A tag inside a host (```` ```yml ````, `---toml`, `application/ld+json`) is
-read through the spellings each registered dialect declares, and a bare
-`---` means the dialect whose declared frontmatter opener is bare (YAML's).
-
-Read-only extraction:
-
-```zig
-const md = "---\ntitle: Hello\ntags:\n- draft\n---\n# Body\n\ntext\n";
-
-const embedded = try fig.Embed.extract(allocator, md, .{ .frontmatter = fig.Embed.innerNamed("yaml").? });
-defer embedded.deinit(allocator);
-
-const title = try embedded.document.ast.getValByPath(&.{.{ .key = "title" }});
-title.kind.string; // "Hello"
-
-// `embedded.region` gives the region's spans in *outer* coordinates. The five
-// spans tile the host exactly —
-//
-//     body_before ++ open_fence ++ content ++ close_fence ++ body_after == md
-//
-// — so a rebuild from them loses nothing, whichever side of the block the host
-// prose sits on (both sides, for an HTML `<script>` data island; a leading BOM
-// heads `body_before`). `region.body` is the older one-sided view of the same
-// thing, kept because `replace_body` addresses exactly one side.
-//
-// A node span from `embedded.document` is relative to the DECODED content —
-// lift it back with `embedded.outerSpan(doc.span(node))`, which routes through
-// the decode provenance map for the `<code>` archetype.
-```
-
-To edit an embedded block in place: locate the region, decode the content for
-the archetype's codec, run `Editor` over just that slice (as the archetype's
-inner format — `Embed.innerFormat` tells you which), re-encode, and splice the
-result back between the retained fences:
-
-```zig
-fn setFrontmatterTitle(allocator: std.mem.Allocator, host: []const u8, new_title: []const u8) ![]u8 {
-    const yaml = fig.Embed.innerNamed("yaml").?;
-    const t: fig.Embed.Type = .{ .frontmatter = yaml };
-    const region = try fig.Embed.locateRegion(host, t);
-    const inner = host[region.content.start..region.content.end];
-
-    // Identity for every archetype but `html_code`, whose on-disk content is
-    // entity-encoded — decode so the editor sees real config.
-    const codec = fig.Embed.codecOf(t);
-    const decoded = try fig.Embed.decodeForParse(allocator, inner, codec);
-    defer decoded.deinit(allocator);
-
-    var ed: fig.Editor(fig.Runtime.Language) = .{ .allocator = allocator, .format = yaml.typeOf() };
-    defer ed.deinit();
-    try ed.init(decoded.text);
-    try ed.set(&.{.{ .key = "title" }}, new_title); // e.g. `"Hello, world"`
-
-    // Span-aware: only the bytes the editor actually changed are re-encoded, so
-    // an untouched `&#60;` never normalizes to `&lt;`. A passthrough copy for
-    // `identity`.
-    const edited = try fig.Embed.reencodeEdited(allocator, codec, inner, decoded, ed.source.items);
-    defer allocator.free(edited);
-
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(allocator);
-    try out.appendSlice(allocator, host[0..region.content.start]);
-    try out.appendSlice(allocator, edited);
-    try out.appendSlice(allocator, host[region.content.end..]);
-    return out.toOwnedSlice(allocator);
-}
-```
-
-If you only ever handle identity archetypes you can skip the codec pair and
-splice `ed.source.items` directly — but going through it is what makes the same
-function work for `.{ .html_code = ... }` unchanged.
-
-- `fig.Embed.locateRegion(source, t)` finds the region without parsing it;
-  `fig.Embed.extract` does both. `fig.Embed.parseSpan` parses a content span
-  you already have.
-- `fig.Embed.detect(source)` sniffs which archetype `source` opens;
-  `fig.Embed.innerFormat(t)` reports the registered dialect that archetype's
-  content is written in (null for a preset whose language is not
-  registered), and `fig.Embed.bodyIsBefore(t)` whether
-  the host prose precedes the region (endmatter) or follows it.
-- `fig.Embed.initRegion(allocator, source, t)` synthesizes a host with a fresh
-  *empty* region when none exists yet — the "create" half of open-or-init, for
-  seeding a brand-new frontmatter block before the first `set`. It returns
-  `Initialized{ host, region }`, and `host` is caller-owned.
-- `fig.Embed.retype(allocator, source, region, to, new_content)` rebuilds the
-  region as a *different* archetype (e.g. YAML frontmatter → `;;;` JSON
-  frontmatter) while keeping the host prose byte-identical.
-- A multi-document stream is the language's to split:
-  `fig.Runtime.Language.splitStream(allocator, input, entry.typeOf())` locates
-  each document of a YAML stream (`---`/`...`-delimited) as a byte range to
-  parse on its own, and refuses with `error.UnsupportedOperation` for a
-  language without streams.
+fig edits a config document, not the file it sits in. Frontmatter,
+endmatter, and fenced or HTML blocks in Markdown are located by
+[twig](https://github.com/diaryx-org/twig); run an `Editor` over the block's
+contents and splice its `source` back between the bytes twig reported.
 
 ## Serialization options
 
@@ -790,10 +682,7 @@ var ed: fig.Editor(fig.Runtime.Language) = .{ .allocator = allocator, .format = 
 defer ed.deinit(); // frees its internal Document + source buffer
 try ed.init(source);
 
-const embedded = try fig.Embed.extract(allocator, host, .{ .frontmatter = fig.Embed.innerNamed("yaml").? });
-defer embedded.deinit(allocator); // frees embedded.document and its decoded buffer
-
-const docs = try fig.Runtime.Language.splitStream(allocator, host, yaml.typeOf());
+const docs = try fig.Runtime.Language.splitStream(allocator, source, yaml.typeOf());
 defer allocator.free(docs); // the byte range of each document of a stream
 
 const parsed = try fig.deserialize.parseFromSlice(Config, allocator, source, "yaml", .{});
@@ -819,8 +708,7 @@ only *after* the `Document` that borrows it is itself freed.
   `detectAmong`, `Language` (`Parser`, `parse`, `splitStream`), `VTable` and
   the node table (`table`).
 - `bundle` — the languages fig ships: `register`/`registerAll`, `bundles`,
-  `Language`/`module` (a language's Zig module), `dialect_names`,
-  `embeddable`.
+  `Language`/`module` (a language's Zig module), `dialect_names`.
 - `Language` — the Zig language contract: `validate`, and the declaration
   types (`Caps`, `Syntax`, `Dialect`, `Prints`, …).
 - `Document` — `{ source, ast, node_spans, ... }`; `deinit`, `span`,
@@ -833,11 +721,6 @@ only *after* the `Document` that borrows it is itself freed.
   `serializeNodeWith` to a `Target` (`.canonical` or a registered language).
 - `Editor(Runtime.Language)` — the comment-preserving editor; see
   [Editing without reserializing](#editing-without-reserializing).
-- `Embed` — frontmatter/embed location + splicing: `Type`, `InnerFormat`,
-  `innerNamed`, `extract`, `locateRegion`, `parseSpan`, `detect`,
-  `innerFormat`, `initRegion`, `retype`, and the codec trio
-  (`codecOf`/`decodeForParse`/`reencodeEdited`); see
-  [Markdown frontmatter & embeds](#markdown-frontmatter--embeds).
 - `Lossless` — `$fig`-envelope lossless conversion: `encode`, `decode`,
   `needsEnvelope`, `isUnrepresentable`, `lossyStrip`, `NativeKinds`,
   `nativeFor`.

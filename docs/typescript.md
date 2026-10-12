@@ -15,7 +15,7 @@ only the formats you use (see [Formats](#formats)). Its
 distinguishing feature is *comment-preserving editing*: you can change one value
 deep in a YAML or TOML file and every comment, blank line, key order, and quoting
 style elsewhere stays byte-for-byte identical. It also converts losslessly
-between formats and edits config embedded in markdown frontmatter.
+between formats.
 
 The core is a Zig library compiled to WebAssembly and embedded directly in the
 package, so there is **no native build step and no separate `.wasm` file to
@@ -30,7 +30,7 @@ reads YAML carries YAML and no TOML.
 - [Reading data](#reading-data)
 - [The value tree](#the-value-tree)
 - [Editing without reserializing](#editing-without-reserializing)
-- [Markdown frontmatter & embeds](#markdown-frontmatter--embeds)
+- [Config inside a host file](#config-inside-a-host-file)
 - [Serialization options](#serialization-options)
 - [Diagnostics & lossless conversion](#diagnostics--lossless-conversion)
 - [Runtime languages](#runtime-languages)
@@ -126,8 +126,7 @@ Every format is a language you import from `@diaryx/fig/languages/<name>` and
 pass to `registerLanguage`, which returns its `Format`: an opaque handle that
 `parse`, `Editor`, `convert` and the rest take. The language object holds it
 from then on too (`yaml.format`), and every dialect is found by its name
-(`formatByName("jsonc")`). Markdown frontmatter, fenced blocks and HTML
-islands reach a registered language through the embed spellings it declares.
+(`formatByName("jsonc")`).
 A format you don't import costs nothing.
 
 | Dialect      | Import                          | Notes |
@@ -157,8 +156,8 @@ fixture, and the same bytes printed.
 Register at startup, before the first call that uses the format. Registering
 the same language again returns the format it already has, so a library and
 the application using it may each register what they import. Looking up a
-format nobody registered with `requireFormat`, or opening an embed whose
-language nobody registered, throws a `FigError` naming the module to import:
+format nobody registered with `requireFormat` throws a `FigError` naming the
+module to import:
 
 ```ts
 requireFormat("toml");
@@ -281,7 +280,7 @@ Values you pass are rendered in the document's own format automatically (a strin
 becomes `"x"` for TOML/JSON but a bare `x` for YAML), so pass plain JS or a
 `Value` and let fig frame it.
 
-Common operations (available on both `Editor` and `Embed`):
+Common operations:
 
 ```ts
 ed.insertValue([], "key", value);      // add a mapping entry
@@ -347,9 +346,6 @@ Support varies by format, and an unsupported operation throws
 "Others" is not a gap: YAML, JSON and the rest nest a container in one
 contiguous region, so `delete` and `replaceValue` already handle it — which is
 why they succeed on a YAML block mapping where TOML's refuse.
-
-These live on `Editor` and not on `Embed`: the C ABI has no `fig_embed_*`
-twins, since no embed archetype hosts a scattered-container format today.
 
 `setSequence` has a narrower domain than the rest: it matches new items to old
 ones by *value* so a kept-or-merely-reordered item keeps its comments, which
@@ -419,87 +415,12 @@ Every value method has a `*Raw` twin — `replaceValueRaw`, `insertValueRaw`,
 `appendValueRaw`, `prependValueRaw`, `insertItemRaw`, `setValueRaw` — that takes a
 string instead of a `Value`.
 
-## Markdown frontmatter & embeds
+## Config inside a host file
 
-`Embed` edits a config block embedded in a host file — markdown frontmatter, a
-fenced code block, a trailing endmatter block, or an HTML data island, holding
-JSON, YAML, TOML or `figl` — leaving the fences and surrounding prose intact.
-The inner language must be registered: the core finds it only through the
-embed spellings a registered language declares (see
-[Runtime languages](#runtime-languages)). Until it is, `Embed.open` and the
-rest throw a `FigError` naming the module to import, and `Embed.detect` does
-not recognize its blocks; the `;;;`, `+++` and endmatter presets are located
-without it, and need it only to be opened.
-
-```ts
-import { Embed, EmbedType } from "@diaryx/fig";
-
-const md = "---\ntitle: Hello\ntags:\n- draft\n---\n# Body\n\ntext\n";
-
-using fm = Embed.open(md, EmbedType.Frontmatter);
-fm.setValue(["title"], "Hello, world");
-fm.appendValue(["tags"], "published");
-
-console.log(fm.render());
-// ---
-// title: Hello, world
-// tags:
-// - draft
-// - published
-// ---
-// # Body
-//
-// text
-```
-
-`EmbedType` selects the container *and* the inner format. Each value is the
-archetype's name, so `EmbedType.FencedFig === "fenced-figl"` and a stored value
-is readable. Four container families cross the four embeddable formats:
-
-| Container | Members | Names |
-| --------- | ------- | --------------- |
-| Markdown frontmatter | `Frontmatter` (bare `---`, YAML), `MdJson` (`---json`), `MdToml`, `MdFig` | `frontmatter`, `md-json`, `md-toml`, `md-figl` |
-| Fenced code block | `FencedYaml`, `FencedJson`, `FencedToml`, `FencedFig` (```` ```<lang> ````) | `fenced-<lang>` |
-| HTML data island | `HtmlScriptYaml`, `HtmlScriptJson`, `HtmlScriptToml`, `HtmlScriptFig` — `<script type="application/…">` | `html-script-<lang>` |
-| HTML visible code | `HtmlCodeYaml`, `HtmlCodeJson`, `HtmlCodeToml`, `HtmlCodeFig` — `<pre><code class="language-…">` | `html-code-<lang>` |
-
-Plus three presets with their own distinct delimiter, each pinned to one
-format: `Semicolons` (`;;;`, JSON), `Plus` (`+++`, TOML — the Hugo/Zola
-convention), and `Endmatter` (a trailing ```` ```endmatter ```` block, YAML).
-
-The `HtmlCode*` members are entity-encoded on disk. Editing decodes on open and
-re-encodes span-aware on `render`, so an edit preserves every untouched byte's
-original encoding and canonically encodes only what changed.
-
-Everything that takes an archetype is a static on `Embed`:
-
-- `Embed.open(host, kind)` opens the block, throwing `NotFound` when there is
-  none and `ParseError` — with the core's message — when the block never
-  closes or its content does not parse.
-- `Embed.openOrInit(host, kind)` creates the block if none exists, so the first
-  `setValue` lands cleanly. A block that goes at the top is refused
-  (`UnsupportedOperation`) when the host already opens with frontmatter of
-  another archetype, rather than pushing it off the first line; `retype`
-  changes a region's archetype.
-- `Embed.extract(host, kind)` locates the region *without* parsing and returns
-  its byte spans — `openFence`, `content`, `closeFence`, and the host on either
-  side, `bodyBefore` and `bodyAfter`, which with the other three tile the
-  source exactly.
-- `Embed.split(host, kind)` is the same as text: `[content, body]`, where the
-  body is the host with the whole block cut out, or `null` when there is no
-  such region.
-- `Embed.detect(host)` sniffs which `EmbedType` a host opens with, or `null`.
-- `replaceBody(text)` swaps the prose while keeping the (possibly edited) config:
-  the text after frontmatter, or before endmatter. An HTML data island has host
-  text on both sides and no one body, so it is refused (`UnsupportedOperation`).
-- `Embed.retype(host, from, to, content)` re-houses the block under a *different*
-  archetype's fences — the splice half of "convert this file's embed style", with
-  `content` the already re-serialized inner document. Every host byte outside the
-  block survives, and the block moves only when the target puts it at the other
-  end of the file, so retyping to the same archetype is a byte-identical rebuild.
-  Moving a mid-document block (`HtmlScript*`, `HtmlCode*`) to an edge archetype
-  throws `Status.UnsupportedOperation`: there is no honest place to put the host
-  text above it. Mid-document to mid-document splices in place.
+fig edits a config document, not the file it sits in. Frontmatter,
+endmatter, and fenced or HTML blocks in Markdown are located by
+[twig](https://github.com/diaryx-org/twig): open an `Editor` over the block's
+contents and splice its `source()` back between the byte spans twig reported.
 
 ## Serialization options
 
@@ -637,13 +558,6 @@ reported as a parse error without one. A registered language lives for the
 rest of the process, and its `Format` is assigned per process — persist
 the **name** and resolve it with `formatByName(name)`.
 
-**Embedding.** A dialect that may sit in a host file declares how it is
-spelled there, in its `embed` row: `fence_tag` (and `fence_aliases`) for a
-fenced block, `frontmatter` for its `---<lang>` opener, `script_mime` (and
-`script_mime_aliases`) for an HTML `<script>` island, `code_class` for a
-`<pre><code>` block. `Embed` finds an inner language only through these —
-the package's `json`, `yaml`, `toml` and `figl` declare theirs.
-
 **Editing needs no code.** fig's splice engine writes an edit from `syntax`
 alone — what a comment looks like, what separates a key from its value, how
 containers open and close — and reparses through your `parse` to find its
@@ -747,18 +661,17 @@ try {
 }
 ```
 
-`Editor.open`, `Embed.open` and `Embed.openOrInit` report a parse failure the
-same way `Document.parse` does, with the core's message; an embed's offset is
-into the host file, not the block. A location the core does not report is
+`Editor.open` reports a parse failure the same way `Document.parse` does,
+with the core's message. A location the core does not report is
 `undefined`. A language's refusal carries its byte offset — except an offset
 of 0, which the C ABI cannot tell apart from "none".
 
-Calling a method on a `Document`, `Editor` or `Embed` after `dispose()` throws
+Calling a method on a `Document` or `Editor` after `dispose()` throws
 a `FigError` with `Status.InvalidArgument`.
 
 ## Managing resources
 
-`Document`, `Editor`, and `Embed` each own a native handle that must be released.
+`Document` and `Editor` each own a native handle that must be released.
 The best way is a `using` declaration, which disposes it at the end of the scope
 even on a throw:
 
@@ -821,9 +734,6 @@ manage the handle for you, so no cleanup is needed.
   `firstChild`, `nextSibling`, `childCount`, `keyOf`, `valueOf`, `asBool`,
   `asString`, `asNumberRaw`, `asExtended`).
 - `Editor` — comment-preserving editor: `open`, `source`, and the edit methods.
-- `Embed` — frontmatter/embed editor: the statics `open`, `openOrInit`,
-  `extract`, `split`, `detect` and `retype`; the instance methods `render`,
-  `replaceBody`, and the edit methods.
 
 **Values & enums**
 
@@ -831,7 +741,7 @@ manage the handle for you, so no cleanup is needed.
   `V.string()`, `V.bool()`, `V.extended()`, `V.seq()`, `V.map()`).
 - `Format` — a type only: the opaque handle of a registered dialect, from
   `registerLanguage`, `formatByName` or a language's `format`.
-- `NodeKind`, `ExtKind`, `EmbedType`, `Status`, `WarningCode`,
+- `NodeKind`, `ExtKind`, `Status`, `WarningCode`,
   `WarningCause` — enums, each an `as const` object with a type of the same
   name (`NodeKind.Mapping` is a value, `NodeKind` a type), not a TypeScript
   `enum`. A number the core reports that has no name here — a node kind or
@@ -841,10 +751,10 @@ manage the handle for you, so no cleanup is needed.
 - `FigError` — the thrown error type. `LanguageError` — how a `Language`
   refuses its input, with a byte offset.
 - Types: `Value`, `JsValue` (read side), `JsInput` (write side), `Segment`,
-  `SerializeOptions`, `Warning`, `ParseDetail`, `Region`, `Span`, `Version`,
+  `SerializeOptions`, `Warning`, `ParseDetail`, `Version`,
   `Capabilities`.
 - Runtime-language types, the wire's shapes field for field: `Language`,
-  `Dialect`, `EmbedSpellings`, `Syntax`, `Comments`, `CommentDelimiter`, `SectionHeader`,
+  `Dialect`, `Syntax`, `Comments`, `CommentDelimiter`, `SectionHeader`,
   `ClosedContainers`, `NativeKinds`, `Renderer`, `Literal`, `RenderArgs`,
   `PrintOptions`, `NodeTable`, `NodeRow`, `RowKind`, `RowExtKind`, `RowSpan`,
   `RegionRow`, `MentionRow`, `CommentRow`, `DirectiveRow`, `HelperIo`.

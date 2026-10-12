@@ -36,7 +36,6 @@ everything else byte-for-byte identical.
 - **Set a value, keep the file.** `fig set config.yaml service.replicas 5` touches one line.
 - **Comments are data.** Attach one inline: `fig comment --inline config.yaml service.replicas "bumped"` — and they survive every edit and conversion.
 - **Convert without loss.** YAML → JSON5 → TOML carries comments along.
-- **Edit embedded config too.** Frontmatter inside Markdown is just another document to fig.
 
 ## Where it fits
 

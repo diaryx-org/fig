@@ -230,9 +230,27 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
             };
             var w: std.Io.Writer.Allocating = .init(gpa);
             defer w.deinit();
-            printWith(t, &w.writer, &doc.ast, opts) catch |e| return fail(err, @errorName(e));
+            printWith(t, &w.writer, &doc.ast, opts) catch |e| {
+                err.code = @intFromEnum(refusalOf(e));
+                return fail(err, @errorName(e));
+            };
             out.* = abi.Str.of(gpa.dupe(u8, w.written()) catch return 3);
             return 0;
+        }
+
+        fn refusalOf(e: anyerror) abi.Refusal {
+            return switch (e) {
+                error.NullUnsupported => .null_unsupported,
+                error.NonStringKey => .non_string_key,
+                error.UnrepresentableRoot => .unrepresentable_root,
+                error.UnsupportedValue => .unsupported_value,
+                error.InvalidKey => .invalid_key,
+                error.NonFiniteNumber => .non_finite_number,
+                error.UnresolvedAlias => .unresolved_alias,
+                error.NestingTooDeep => .nesting_too_deep,
+                error.UnexpectedNodeKind => .unexpected_node_kind,
+                else => .unspecified,
+            };
         }
 
         /// The printer of the dialect `t`: its splice printer for a value the

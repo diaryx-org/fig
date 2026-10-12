@@ -137,6 +137,20 @@ pub const MentionKind = enum {
     entry,
 };
 
+/// Free everything but the tree, and return the tree: for a caller that
+/// wants values, not source positions.
+pub fn intoAst(self: Document, allocator: std.mem.Allocator) AST {
+    allocator.free(self.node_spans);
+    allocator.free(self.node_anchor_spans);
+    allocator.free(self.node_tag_spans);
+    allocator.free(self.node_marker_spans);
+    allocator.free(self.node_sep_spans);
+    allocator.free(self.node_item_seps);
+    allocator.free(self.node_regions);
+    allocator.free(self.node_mentions);
+    return self.ast;
+}
+
 pub fn deinit(self: Document, allocator: std.mem.Allocator) void {
     var ast = self.ast;
     ast.deinit();

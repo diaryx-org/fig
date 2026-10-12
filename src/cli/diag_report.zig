@@ -571,6 +571,7 @@ pub fn reportSerializeError(term: *Io.Terminal, err: fig.AST.SerializeError) nor
         error.UnsupportedValue => "this document contains an array, or a table nested deeper than this format allows (INI: one level of `[section]`; dotenv/`.properties`: none)",
         error.InvalidKey => "a mapping key is not valid in this output format (a dotenv key must be a bash identifier: `[A-Za-z_][A-Za-z0-9_]*`)",
         error.NonFiniteNumber => "this output format has no way to write infinity or NaN",
+        error.PrintRefused => "the language's printer refused this document",
     };
     term.writer.print("error: {s}\n", .{message}) catch {};
     term.writer.flush() catch {};
@@ -581,6 +582,12 @@ pub fn reportSerializeError(term: *Io.Terminal, err: fig.AST.SerializeError) nor
 /// refused the tree (its own reason was reported through the helper's
 /// stderr, which the CLI leaves connected), or it declares no printer.
 pub fn reportRuntimePrintError(term: *Io.Terminal, err: anyerror) noreturn {
+    switch (err) {
+        // A refusal the language named: the same words as a compiled printer's.
+        error.NullUnsupported, error.NonStringKey, error.UnrepresentableRoot, error.UnsupportedValue => |e| reportSerializeError(term, e),
+        error.InvalidKey, error.NonFiniteNumber, error.UnresolvedAlias, error.NestingTooDeep, error.UnexpectedNodeKind => |e| reportSerializeError(term, e),
+        else => {},
+    }
     const message: []const u8 = switch (err) {
         error.RuntimePrintFailed => "the language's printer refused this document",
         error.FormatNotSerializable, error.FormatDisabled => "this language declares no printer; it can be read but not written",

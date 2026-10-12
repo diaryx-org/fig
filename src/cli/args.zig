@@ -221,7 +221,7 @@ pub fn detectLanguageFromFileEnding(file_path: []const u8) ?Detected {
     // YAML endmatter fence) must not be mistaken for `---` YAML frontmatter
     // just because the file ends in `.md`.
     if (std.mem.eql(u8, ext, "md") or std.mem.eql(u8, ext, "markdown")) {
-        return .{ .format = .yaml, .embed_detect = true };
+        return .{ .format = languages.standIn(.yaml), .embed_detect = true };
     }
 
     // An extension that names a `Format` member IS that format. Tried first so
@@ -1850,7 +1850,7 @@ test "parseConfig routes insert/delete to the right action and path tail" {
     try t.expectEqual(CliAction.insert, ic.action);
     try t.expectEqualStrings("newkey", ic.options.insert.path[1].key);
     try t.expectEqualStrings("42", ic.options.insert.value);
-    try t.expectEqual(Format.yaml, ic.options.insert.format);
+    try t.expectEqual(parseFormatName("yaml").?, ic.options.insert.format);
 
     // insert append onto a sequence: trailing sentinel index.
     var app = TestArgs{ .items = &.{ "fig", "insert", "f.yaml", "list[-]", "z" } };
@@ -1862,7 +1862,7 @@ test "parseConfig routes insert/delete to the right action and path tail" {
     const dc = try parseConfig(a, &del);
     try t.expectEqual(CliAction.delete, dc.action);
     try t.expectEqual(@as(usize, 1), dc.options.delete.path[1].index);
-    try t.expectEqual(Format.toml, dc.options.delete.format);
+    try t.expectEqual(parseFormatName("toml").?, dc.options.delete.format);
 }
 
 test "parseTarget names the file a failed action is re-parsed from, and its format" {
@@ -1875,11 +1875,11 @@ test "parseTarget names the file a failed action is re-parsed from, and its form
     var set = TestArgs{ .items = &.{ "fig", "set", "f.yaml", "a", "1" } };
     const st = types.parseTarget(try parseConfig(a, &set)).?;
     try t.expectEqualStrings("f.yaml", st.file);
-    try t.expectEqual(@as(?Format, .yaml), st.format);
+    try t.expectEqual(parseFormatName("yaml"), st.format);
 
     // A read: its `from` format.
     var get = TestArgs{ .items = &.{ "fig", "get", "f.toml" } };
-    try t.expectEqual(@as(?Format, .toml), types.parseTarget(try parseConfig(a, &get)).?.format);
+    try t.expectEqual(parseFormatName("toml"), types.parseTarget(try parseConfig(a, &get)).?.format);
 
     // A host document: the region is the extension's to find, so no format
     // is forced onto the whole file.
@@ -2001,7 +2001,7 @@ test "detectLanguageFromFileEnding: .md/.markdown defer the archetype to a runti
     if (comptime !(build_options.lang_yaml and build_options.lang_fig)) return error.SkipZigTest;
     const t = std.testing;
     const md = detectLanguageFromFileEnding("post.md").?;
-    try t.expectEqual(Format.yaml, md.format);
+    try t.expectEqual(parseFormatName("yaml").?, md.format);
     try t.expect(md.embed_detect);
 
     const markdown = detectLanguageFromFileEnding("post.markdown").?;
@@ -2012,7 +2012,7 @@ test "detectLanguageFromFileEnding: .md/.markdown defer the archetype to a runti
     try t.expect(!yaml.embed_detect);
 
     const figl_ext = detectLanguageFromFileEnding("f.figl").?;
-    try t.expectEqual(Format.fig, figl_ext.format);
+    try t.expectEqual(parseFormatName("fig").?, figl_ext.format);
     try t.expect(!figl_ext.embed_detect);
 
     // `.fig` is not an extension of the format any more (5.0).
@@ -2023,9 +2023,9 @@ test "figl is an accepted spelling of fig, as a --input value and as an extensio
     const t = std.testing;
     if (comptime !build_options.lang_fig) return error.SkipZigTest;
 
-    try t.expectEqual(@as(?Format, .fig), parseFormatName("figl"));
-    try t.expectEqual(@as(?Format, .fig), parseFormatName("fig"));
-    try t.expectEqual(Format.fig, detectLanguageFromFileEnding("f.figl").?.format);
+    try t.expectEqual(parseFormatName("fig"), parseFormatName("figl"));
+    try t.expectEqual(parseFormatName("fig"), parseFormatName("fig"));
+    try t.expectEqual(parseFormatName("fig").?, detectLanguageFromFileEnding("f.figl").?.format);
 }
 
 test "yml is an accepted spelling of yaml, as a --input value and as an extension" {
@@ -2033,16 +2033,16 @@ test "yml is an accepted spelling of yaml, as a --input value and as an extensio
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
 
     // `--input yml`: the alias line above, not an enum member of its own.
-    try t.expectEqual(@as(?Format, .yaml), parseFormatName("yml"));
-    try t.expectEqual(@as(?Format, .yaml), parseFormatName("yaml"));
+    try t.expectEqual(parseFormatName("yaml"), parseFormatName("yml"));
+    try t.expectEqual(parseFormatName("yaml"), parseFormatName("yaml"));
 
     // `.yml` files: `stringToEnum` no longer answers for the extension, so it
     // falls through to `Language.YAML.extensions`, which owns both spellings —
     // the same `.yaml` parse either way.
     const yml_ext = detectLanguageFromFileEnding("f.yml").?;
-    try t.expectEqual(Format.yaml, yml_ext.format);
+    try t.expectEqual(parseFormatName("yaml").?, yml_ext.format);
     try t.expect(!yml_ext.embed_detect);
-    try t.expectEqual(Format.yaml, detectLanguageFromFileEnding("f.yaml").?.format);
+    try t.expectEqual(parseFormatName("yaml").?, detectLanguageFromFileEnding("f.yaml").?.format);
 
     // An unknown token is still unknown (the alias must not widen the lookup).
     try t.expectEqual(@as(?Format, null), parseFormatName("yamll"));
@@ -2095,8 +2095,8 @@ test "parseConfig routes patch: both files, both sides' formats, and the merge s
     try t.expectEqual(CliAction.patch, b.action);
     try t.expectEqualStrings("config.yaml", b.options.patch.file);
     try t.expectEqualStrings("overlay.toml", b.options.patch.patch_file);
-    try t.expectEqual(Format.yaml, b.options.patch.format);
-    try t.expectEqual(Format.toml, b.options.patch.patch_format);
+    try t.expectEqual(parseFormatName("yaml").?, b.options.patch.format);
+    try t.expectEqual(parseFormatName("toml").?, b.options.patch.patch_format);
     try t.expect(!b.options.patch.detect);
     try t.expect(!b.options.patch.detect_patch);
     // The defaults are the conservative ones: the target's comments stand and
@@ -2169,7 +2169,7 @@ test "parseConfig routes set, --seq, and --embed" {
     try t.expectEqualStrings("b", sc.options.set.path[1].key);
     try t.expectEqualStrings("1", sc.options.set.value);
     try t.expect(!sc.options.set.seq);
-    try t.expectEqual(Format.yaml, sc.options.set.format);
+    try t.expectEqual(parseFormatName("yaml").?, sc.options.set.format);
 
     // --seq collects the trailing items into `values`.
     var sq = TestArgs{ .items = &.{ "fig", "set", "--seq", "f.yaml", "tags", "x", "y", "z" } };
@@ -2208,8 +2208,8 @@ test "parseConfig routes convert: whole-file mode, embed mode, and their guards"
     var wf = TestArgs{ .items = &.{ "fig", "convert", "-i", "yaml", "-o", "toml", "f.yaml" } };
     const wfc = try parseConfig(a, &wf);
     try t.expectEqual(CliAction.convert, wfc.action);
-    try t.expectEqual(Format.yaml, wfc.options.convert.from);
-    try t.expectEqual(Format.toml, wfc.options.convert.to);
+    try t.expectEqual(parseFormatName("yaml").?, wfc.options.convert.from);
+    try t.expectEqual(parseFormatName("toml").?, wfc.options.convert.to);
     try t.expectEqual(@as(?fig.Embed.Type, null), wfc.options.convert.to_embed);
     try t.expect(!wfc.options.convert.detect);
 
@@ -2256,7 +2256,7 @@ test "parseConfig routes convert: whole-file mode, embed mode, and their guards"
     // An explicit --input forces whole-file conversion on a `.md` file anyway.
     var mdforced = TestArgs{ .items = &.{ "fig", "convert", "-i", "yaml", "-o", "toml", "post.md" } };
     const mdforcedc = try parseConfig(a, &mdforced);
-    try t.expectEqual(Format.yaml, mdforcedc.options.convert.from);
+    try t.expectEqual(parseFormatName("yaml").?, mdforcedc.options.convert.from);
     try t.expect(!mdforcedc.options.convert.detect);
 }
 
@@ -2271,11 +2271,11 @@ test "parseConfig: --lang is taken from anywhere in the line and names the forma
     const config = try parseConfig(a, &args);
     try t.expectEqual(types.CliAction.get, config.action);
     try t.expectEqualStrings("secrets.env", config.options.get.file);
-    try t.expectEqual(Format.json, languages.langOverride().?);
+    try t.expectEqual(parseFormatName("json").?, languages.langOverride().?);
     // The override is what the extension would otherwise decide.
-    try t.expectEqual(Format.json, detectLanguageFromFileEnding("secrets.env").?.format);
-    languages.setLangOverride(.yaml);
-    try t.expectEqual(Format.yaml, detectLanguageFromFileEnding("secrets.env").?.format);
+    try t.expectEqual(parseFormatName("json").?, detectLanguageFromFileEnding("secrets.env").?.format);
+    languages.setLangOverride(parseFormatName("yaml").?);
+    try t.expectEqual(parseFormatName("yaml").?, detectLanguageFromFileEnding("secrets.env").?.format);
 
     // `--lang nosuch` and a bare `--lang` return `UnsupportedFileFormat`
     // after a `log.err` — the test runner counts a logged error as a
@@ -2306,7 +2306,7 @@ test "parseConfig routes lang: list by default, check with a name, --against and
     const ct = try parseConfig(a, &table);
     try t.expectEqual(types.LangOptions.Verb.table, ct.options.lang.verb);
     try t.expectEqualStrings("secrets.env", ct.options.lang.name);
-    try t.expectEqual(Format.json, ct.options.lang.input.?);
+    try t.expectEqual(parseFormatName("json").?, ct.options.lang.input.?);
     try t.expect(ct.options.lang.spec == null);
 
     var versioned = TestArgs{ .items = &.{ "fig", "lang", "table", "a.yaml", "--spec", "1.1" } };
@@ -2388,5 +2388,5 @@ test "parseConfig: a `--` that is a flag's value does not end the flags for --la
     var args = TestArgs{ .items = &.{ "fig", "get", "f.txt", "--gron-sep", "--", "--lang", "json" } };
     const config = try parseConfig(a, &args);
     try t.expectEqualStrings("--", config.options.get.gron_projection.assign);
-    try t.expectEqual(Format.json, languages.langOverride().?);
+    try t.expectEqual(parseFormatName("json").?, languages.langOverride().?);
 }

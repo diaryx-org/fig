@@ -138,7 +138,7 @@ test "applyToSlice merges one YAML document into another, touching only what cha
     const result = try applyToSlice(
         t.allocator,
         "name: api # keep me\nreplicas: 2\n",
-        .yaml,
+        @import("args.zig").parseFormatName("yaml").?,
         .{ .patch = &patch.ast, .from = patch.ast.root },
     );
     defer t.allocator.free(result.content);

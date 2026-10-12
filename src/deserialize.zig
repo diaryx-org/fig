@@ -17,6 +17,7 @@ const build_options = @import("build_options");
 
 /// The format registry `Format` is reified from.
 const Language = @import("languages/language.zig");
+const Runtime = @import("languages/runtime.zig");
 
 /// The source format to parse before mapping onto `T`: exactly the format
 /// registry entries marked `deserializable`, in registry order. A format that
@@ -110,7 +111,12 @@ fn parseToAst(allocator: std.mem.Allocator, source: []const u8, format: Format) 
     return switch (format) {
         inline else => |f| blk: {
             const d = comptime Language.entryFor(@tagName(f));
-            if (comptime d.Lang == void) break :blk error.FormatDisabled;
+            if (comptime d.Lang == void) {
+                // Not compiled in: the language registered under the name.
+                const e = Runtime.entryByName(@tagName(f)) orelse break :blk error.FormatDisabled;
+                const doc = try Runtime.Language.Parser.parse(allocator, source, e.typeOf());
+                break :blk doc.intoAst(allocator);
+            }
             break :blk d.Lang.parseAbstract(allocator, source, d.dialect);
         },
     };

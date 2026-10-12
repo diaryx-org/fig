@@ -92,6 +92,9 @@ pub fn init(io: Io, allocator: Allocator, environ: *const std.process.Environ.Ma
     state.io = io;
     state.allocator = allocator;
     state.environ = environ;
+    // The languages this binary carries, registered before anything looks
+    // one up, and in the allocator a configured helper's registration uses.
+    if (comptime !build_options.compiled_registry) fig.bundle.registerAll(allocator) catch {};
 }
 
 // ── configuration ──────────────────────────────────────────────────────────
@@ -504,6 +507,9 @@ pub fn list(io: Io, a: Allocator, out: *Io.Terminal) !void {
             // The WASI build's host serves what it did not compile in.
             if (host_languages.byName(d.name)) |e| {
                 try out.writer.print("  {s:<14} {s}  (a JavaScript language, served by the host)\n", .{ d.name, capsWord(e.language.caps) });
+            } else if (Runtime.entryByName(d.name)) |e| {
+                // The bundle's, in a build whose compiled registry is empty.
+                try out.writer.print("  {s:<14} {s}\n", .{ d.name, capsWord(e.language.caps) });
             } else try out.writer.print("  {s:<14} compiled out\n", .{d.name});
         } else try out.writer.print("  {s:<14} {s}\n", .{ d.name, capsWord(d.Lang.caps) });
     }

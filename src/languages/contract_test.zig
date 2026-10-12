@@ -25,6 +25,7 @@ fn tableJson(a: std.mem.Allocator, doc: anytype) ![]const u8 {
 }
 
 test "every compiled language registers through the contract and reads its samples as the compiled format does" {
+    Runtime.deinitAll();
     defer Runtime.deinitAll();
     inline for (list.rows) |row| {
         const L = Languages.of(row.name);
@@ -59,6 +60,7 @@ test "every compiled language registers through the contract and reads its sampl
 test "a language's diagnostics cross the contract: a refusal's message and offset, and the warnings of a clean parse" {
     const L = Languages.of("dotenv");
     if (L == void) return error.SkipZigTest;
+    Runtime.deinitAll();
     defer Runtime.deinitAll();
     const V = contract.VTable(L, "c-");
     _ = try Runtime.register(testing.allocator, &V.vtable);

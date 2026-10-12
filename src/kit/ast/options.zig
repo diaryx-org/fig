@@ -86,4 +86,5 @@ pub const SerializeError = Writer.Error || error{
     UnsupportedValue, // a sequence or mapping value has no spelling where it sits
     InvalidKey, // a mapping key is not one the format can spell
     NonFiniteNumber, // an infinite or NaN float has no spelling in the format
+    PrintRefused, // a registered language's printer refused, giving no reason core names
 };

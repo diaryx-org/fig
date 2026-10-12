@@ -3352,6 +3352,7 @@ fn serializeStatus(err: AST.SerializeError) FigStatus {
         error.UnsupportedValue,
         error.InvalidKey,
         error.NonFiniteNumber,
+        error.PrintRefused,
         => .unsupported_format,
         error.WriteFailed => .out_of_memory,
     };
@@ -5565,6 +5566,7 @@ test "fig_version matches build options and string form" {
 }
 
 test "a runtime language registers through the C ABI and is a peer at every entry point" {
+    Runtime.deinitAll();
     defer Runtime.deinitAll();
     var alloc: Runtime.test_language.Alloc = .{ .allocator = std.testing.allocator };
     const vt = Runtime.test_language.vtable(&alloc);

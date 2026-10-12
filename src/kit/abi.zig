@@ -132,6 +132,24 @@ pub const ErrorInfo = extern struct {
     }
 };
 
+/// Why a printer refused a table, in `ErrorInfo.code` when `print` fails.
+/// A language that sets none leaves `unspecified`, and its message is the
+/// only reason. Each names a `SerializeError` member, which is what core
+/// raises for it.
+pub const Refusal = enum(c_int) {
+    unspecified = 0,
+    null_unsupported = 1,
+    non_string_key = 2,
+    unrepresentable_root = 3,
+    unsupported_value = 4,
+    invalid_key = 5,
+    non_finite_number = 6,
+    unresolved_alias = 7,
+    nesting_too_deep = 8,
+    unexpected_node_kind = 9,
+    _,
+};
+
 /// The subset of `AST.SerializeOptions` a printer outside core is told. fig
 /// writes it and a language reads it: `size` is fig's `sizeof`, and a
 /// language reads a field only when `size` covers it, so a field appended

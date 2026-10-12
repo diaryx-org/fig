@@ -18,6 +18,7 @@ const Node = AST.Node;
 /// `entry.print_node_name`). No printer is imported by path here any more —
 /// `canonical`'s is the one exception, since canonical is not a `Language`.
 const Language = @import("languages/language.zig");
+const Runtime = @import("languages/runtime.zig");
 
 // Printers reach this file only through the registry, and only for the formats
 // compiled into this build: a gated-out language collapses its entry's `Lang`
@@ -96,7 +97,7 @@ pub fn serializeWith(self: *const AST, writer: *Writer, format: SerializeFormat,
         .canonical => if (comptime canonical_enabled) CanonicalPrinter.print(writer, ast) else error.FormatDisabled,
         inline else => |f| {
             const d = comptime Language.entryFor(@tagName(f));
-            if (comptime d.Lang == void) return error.FormatDisabled;
+            if (comptime d.Lang == void) return registered(@tagName(f), writer, ast, ast.root, options);
             // `print_name` is what separates the three JSON dialects, which
             // share one printer module and differ only by entry point
             // (`print`/`printc`/`print5`), and what routes YAML to its
@@ -124,7 +125,7 @@ pub fn serializeFragmentWith(self: *const AST, writer: *Writer, format: Serializ
         .canonical => if (comptime canonical_enabled) CanonicalPrinter.print(writer, ast) else error.FormatDisabled,
         inline else => |f| {
             const d = comptime Language.entryFor(@tagName(f));
-            if (comptime d.Lang == void) return error.FormatDisabled;
+            if (comptime d.Lang == void) return registered(@tagName(f), writer, ast, ast.root, options);
             if (comptime @hasDecl(d.Lang.Printer, "printSplice")) {
                 if (options.splice) return d.Lang.Printer.printSplice(writer, ast, options);
             }
@@ -147,13 +148,27 @@ pub fn serializeNodeWith(self: *const AST, writer: *Writer, format: SerializeFor
         .canonical => if (comptime canonical_enabled) CanonicalPrinter.printNode(writer, ast, id, 0) else error.FormatDisabled,
         inline else => |f| {
             const d = comptime Language.entryFor(@tagName(f));
-            if (comptime d.Lang == void) return error.FormatDisabled;
+            if (comptime d.Lang == void) return registered(@tagName(f), writer, ast, id, options);
             // `printNode` on the printer MODULE, which every format has —
             // including plist, whose `Language` declares no `printNode`
             // of its own (its `print` is written inline; see `Decls.optional`
             // in languages/language.zig).
             return @field(d.Lang.Printer, d.print_node_name)(writer, ast, id, 0, options);
         },
+    };
+}
+
+/// Print through the language registered under `name`, for a format this
+/// build does not compile in.
+fn registered(name: []const u8, writer: *Writer, ast: *const AST, root: Node.Id, options: SerializeOptions) SerializeError!void {
+    const e = Runtime.entryByName(name) orelse return error.FormatDisabled;
+    Runtime.printNodeWith(e, writer, ast, root, options) catch |err| return switch (err) {
+        // A writer reports its own allocation failure as `WriteFailed`.
+        error.OutOfMemory, error.WriteFailed => error.WriteFailed,
+        error.NullUnsupported, error.NonStringKey, error.UnrepresentableRoot, error.UnsupportedValue => |x| x,
+        error.InvalidKey, error.NonFiniteNumber, error.UnresolvedAlias, error.NestingTooDeep, error.UnexpectedNodeKind => |x| x,
+        error.FormatDisabled => error.FormatDisabled,
+        else => error.PrintRefused,
     };
 }
 

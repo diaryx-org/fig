@@ -232,6 +232,17 @@ pub fn clearRefusal() void {
 /// general — `entryByName` finds each. See the module doc for what happens
 /// in between.
 pub fn register(allocator: Allocator, raw: *const VTable) RegisterError!c_int {
+    return registerWith(allocator, raw, .{});
+}
+
+pub const RegisterOptions = struct {
+    /// Run the harness over the samples. A language its build has already
+    /// held to it — one a consumer bundles — may skip it at startup.
+    harness: bool = true,
+};
+
+/// `register`, with `options`.
+pub fn registerWith(allocator: Allocator, raw: *const VTable, options: RegisterOptions) RegisterError!c_int {
     // The bundle first, outside the lock and in this call's allocator: a
     // lookup made while this registration holds the lock must not start
     // the bundle's, and the registry takes one allocator.
@@ -330,7 +341,7 @@ pub fn register(allocator: Allocator, raw: *const VTable) RegisterError!c_int {
     for (row_entries, 0..) |e, i| slots[first_index + i] = e;
     checking = .{ .from = first_index, .to = first_index + vt.dialect_count };
     defer checking = null;
-    checkRegistration(allocator, reg) catch |err| {
+    if (options.harness) checkRegistration(allocator, reg) catch |err| {
         if (err == error.OutOfMemory) return error.OutOfMemory;
         return error.HarnessFailed;
     };
@@ -409,6 +420,14 @@ pub fn entryByAbi(abi: c_int) ?*const Entry {
 /// The entry named `name` — a dialect row's name — or null.
 pub fn entryByName(name: []const u8) ?*const Entry {
     ensureBundled();
+    mutex.lock();
+    defer mutex.unlock();
+    return findByNameLocked(name);
+}
+
+/// `entryByName`, without registering the bundle first: for the bundle's
+/// own registration.
+pub fn registeredByName(name: []const u8) ?*const Entry {
     mutex.lock();
     defer mutex.unlock();
     return findByNameLocked(name);
@@ -855,7 +874,18 @@ pub fn printNodeWith(e: *const Entry, writer: *std.Io.Writer, ast: *const AST, r
     var out: Str = .{};
     var err: ErrorInfo = .empty;
     const rc = print(reg.vt.ctx, e.dialectZ(), &view, &opts, &out, &err);
-    if (rc != 0) return error.RuntimePrintFailed;
+    if (rc != 0) return switch (@as(C.Refusal, @enumFromInt(err.code))) {
+        .null_unsupported => error.NullUnsupported,
+        .non_string_key => error.NonStringKey,
+        .unrepresentable_root => error.UnrepresentableRoot,
+        .unsupported_value => error.UnsupportedValue,
+        .invalid_key => error.InvalidKey,
+        .non_finite_number => error.NonFiniteNumber,
+        .unresolved_alias => error.UnresolvedAlias,
+        .nesting_too_deep => error.NestingTooDeep,
+        .unexpected_node_kind => error.UnexpectedNodeKind,
+        else => error.RuntimePrintFailed,
+    };
     defer reg.vt.free_bytes(reg.vt.ctx, out);
     try writer.writeAll(out.slice() orelse "");
 }
@@ -1410,6 +1440,7 @@ const TinyKv = struct {
 test "a language registered from Zig parses, edits and prints through the contract" {
     // The round trip is checked by printing through compiled JSON.
     if (comptime !@import("build_options").lang_json) return error.SkipZigTest;
+    deinitAll();
     defer deinitAll();
     var alloc: TinyKv.Alloc = .{ .allocator = testing.allocator };
     const vt = TinyKv.vtable(&alloc);
@@ -1420,7 +1451,8 @@ test "a language registered from Zig parses, edits and prints through the contra
     try testing.expect(entryByName("tinykv") == e);
     try testing.expect(e.language.caps.edit);
     try testing.expectEqualStrings("tkv", e.extensions[0]);
-    try testing.expectEqual(@as(usize, 1), count());
+    // The last registered, after whatever the build bundles.
+    try testing.expectEqual(e.index + 1, count());
 
     // Parse through the Language, as the C API and CLI do.
     const doc = try Language.Parser.parse(testing.allocator, "# note\nx=1\ny=2\n", e.typeOf());
@@ -1540,6 +1572,7 @@ test "a runtime language's flow root is edited by comma-aware splice, not as a s
     // dialect's `section_noun` settles it at the call. Before it did, a
     // runtime `[a, b, c]` was taken for a section root and its items were
     // deleted by line — the whole document, for a one-line list.
+    deinitAll();
     defer deinitAll();
     var alloc: TinyList.Alloc = .{ .allocator = testing.allocator };
     const vt = TinyList.vtable(&alloc);
@@ -1652,6 +1685,7 @@ const TinyDeps = struct {
 };
 
 test "a runtime renderer is told the container its fragment goes into: the list's key and tag" {
+    deinitAll();
     defer deinitAll();
     var alloc: TinyDeps.Alloc = .{ .allocator = testing.allocator };
     const vt = TinyDeps.vtable(&alloc);
@@ -1843,6 +1877,7 @@ const TinyTune = struct {
 };
 
 test "a sequence its parser gives a separator of its own is edited item by item" {
+    deinitAll();
     defer deinitAll();
     var alloc: TinyTune.Alloc = .{ .allocator = testing.allocator };
     const vt = TinyTune.vtable(&alloc);
@@ -1892,6 +1927,7 @@ test "a sequence its parser gives a separator of its own is edited item by item"
 }
 
 test "an edit to a separated sequence the language rejects is rolled back" {
+    deinitAll();
     defer deinitAll();
     var alloc: TinyTune.Alloc = .{ .allocator = testing.allocator };
     const vt = TinyTune.vtable(&alloc);
@@ -1954,6 +1990,7 @@ test "an item separator is a sequence's, and an empty one is none" {
 }
 
 test "registration refuses a record that fails validation or the harness" {
+    deinitAll();
     defer deinitAll();
     var alloc: TinyKv.Alloc = .{ .allocator = testing.allocator };
     var vt = TinyKv.vtable(&alloc);
@@ -1962,6 +1999,8 @@ test "registration refuses a record that fails validation or the harness" {
     try testing.expectError(error.InvalidLanguage, register(testing.allocator, &vt));
     try testing.expect(std.mem.indexOf(u8, lastRefusal(), "vtable version 99") != null);
     vt.version = vtable_version;
+    // What is registered before any refusal: none of them adds to it.
+    const before = count();
 
     vt.samples = &.{};
     vt.sample_count = 0;
@@ -1973,7 +2012,7 @@ test "registration refuses a record that fails validation or the harness" {
     vt.sample_count = 1;
     try testing.expectError(error.HarnessFailed, register(testing.allocator, &vt));
     try testing.expect(std.mem.indexOf(u8, lastRefusal(), "sample does not parse") != null);
-    try testing.expectEqual(@as(usize, 0), count());
+    try testing.expectEqual(before, count());
 
     vt.samples = &TinyKv.samples;
     vt.sample_count = TinyKv.samples.len;
@@ -1992,7 +2031,9 @@ test "registration refuses a record that fails validation or the harness" {
 test "a language named after a compiled-out format stands in for it, at that format's integer" {
     // plist is off in the default build; a build that compiles it in has no
     // slot to stand in for.
+    if (comptime !build_options.compiled_registry) return error.SkipZigTest;
     const plist_abi = Languages.standInAbi("plist") orelse return error.SkipZigTest;
+    deinitAll();
     defer deinitAll();
     var alloc: TinyKv.Alloc = .{ .allocator = testing.allocator };
     const exts = [_]?[*:0]const u8{ "plist", null };
@@ -2030,6 +2071,7 @@ test "a language named after a compiled-out format stands in for it, at that for
 }
 
 test "a record from an older or a newer header is read as far as its size says" {
+    deinitAll();
     defer deinitAll();
     var alloc: TinyKv.Alloc = .{ .allocator = testing.allocator };
 
@@ -2075,6 +2117,7 @@ test "a record from an older or a newer header is read as far as its size says" 
 }
 
 test "a capability or lossless bit this fig does not know is refused" {
+    deinitAll();
     defer deinitAll();
     var alloc: TinyKv.Alloc = .{ .allocator = testing.allocator };
     var vt = TinyKv.vtable(&alloc);

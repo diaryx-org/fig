@@ -67,9 +67,11 @@ fn DialectOf(comptime name: []const u8) type {
 pub fn register(allocator: std.mem.Allocator, comptime name: []const u8) Runtime.RegisterError!c_int {
     if (comptime !bundles(name)) @compileError("'" ++ name ++ "' is not bundled in this build");
     const L = Language(name);
-    if (Runtime.entryByName(L.dialects[0].name)) |e| return e.abi;
+    if (Runtime.registeredByName(L.dialects[0].name)) |e| return e.abi;
     const V = contract.VTable(L, "");
-    return Runtime.register(allocator, &V.vtable);
+    // Its build ran the harness over its samples (`contract_test.zig`); a
+    // test build runs it again here.
+    return Runtime.registerWith(allocator, &V.vtable, .{ .harness = @import("builtin").is_test });
 }
 
 /// Register every language the build bundles.

@@ -398,7 +398,6 @@ pub export fn fig_stream_free(docs: ?[*]FigStreamDoc, count: usize) void {
     activeAllocator().free(p[0..count]);
 }
 
-
 fn capsBits(caps: manifest.Caps) u32 {
     var bits: u32 = 0;
     if (caps.read) bits |= @backingInt(FigCapability.read);
@@ -2641,7 +2640,6 @@ pub export fn fig_value_warning(value: ?*FigValue, index: usize, out: ?*FigWarni
     writeWarning(o, handle.diag_warnings[index]);
     return .ok;
 }
-
 
 /// The handle of the registered dialect `name`, for a test.
 fn fmtOf(name: [:0]const u8) c_int {

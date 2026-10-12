@@ -266,7 +266,7 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
             var w: std.Io.Writer.Allocating = .init(gpa);
             defer w.deinit();
             printWith(t, &w.writer, &doc.ast, opts) catch |e| {
-                err.code = @intFromEnum(refusalOf(e));
+                err.code = @backingInt(refusalOf(e));
                 return fail(err, @errorName(e));
             };
             out.* = abi.Str.of(gpa.dupe(u8, w.written()) catch return 3);

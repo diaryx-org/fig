@@ -137,7 +137,6 @@ const cases = [_]Case{
         .expect = "declares two dialects named 'fixture'",
     },
 
-
     // ---- coherence rules (§4 job 3) ----
     .{
         // There are no editing hooks: a format that still spells one is

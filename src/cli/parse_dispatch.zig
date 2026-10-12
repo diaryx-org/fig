@@ -276,8 +276,8 @@ pub const sniff_order = [_][]const u8{
 /// The extensions of host documents whose contents a sniff would misread.
 fn documentKind(ext: []const u8) ?[]const u8 {
     const kinds = [_]struct { []const u8, []const u8 }{
-        .{ "md", "a Markdown" },   .{ "markdown", "a Markdown" },
-        .{ "html", "an HTML" },    .{ "htm", "an HTML" },
+        .{ "md", "a Markdown" }, .{ "markdown", "a Markdown" },
+        .{ "html", "an HTML" },  .{ "htm", "an HTML" },
     };
     for (kinds) |k| if (std.ascii.eqlIgnoreCase(ext, k[0])) return k[1];
     return null;

@@ -322,4 +322,3 @@ pub fn validate(comptime Lang: type) void {
         }
     }
 }
-

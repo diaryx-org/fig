@@ -880,7 +880,7 @@ pub fn printNodeWith(e: *const Entry, writer: *std.Io.Writer, ast: *const AST, r
     var out: Str = .{};
     var err: ErrorInfo = .empty;
     const rc = print(reg.vt.ctx, e.dialectZ(), &view, &opts, &out, &err);
-    if (rc != 0) return switch (@as(C.Refusal, @enumFromInt(err.code))) {
+    if (rc != 0) return switch (@as(C.Refusal, @fromBackingInt(@intCast(err.code)))) {
         .null_unsupported => error.NullUnsupported,
         .non_string_key => error.NonStringKey,
         .unrepresentable_root => error.UnrepresentableRoot,

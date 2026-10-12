@@ -399,12 +399,15 @@ pub fn Dialect(comptime L: type) type {
         /// These ARE the serializer's dispatch: `ast/serialize_options.zig`
         /// calls `@field(d.Lang.Printer, d.print_name)(writer, ast, options)`
         /// (and the `print_node_name` twin) for every entry, so a wrong name
-        /// here is a compile error rather than a wrong output. There is no
-        /// separate fragment name: `serializeFragmentWith` uses `print_name`
-        /// for every dialect but fig, whose `printFragment` takes an explicit
-        /// arm there for the reason documented on that function.
+        /// here is a compile error rather than a wrong output.
         print_name: [:0]const u8 = "print",
         print_node_name: [:0]const u8 = "printNode",
+        /// The printer entry for a value FRAGMENT where it differs from the
+        /// document's, or null for `print_name`. figl's document printer
+        /// refuses a scalar root, which a whole figl document cannot be, but a
+        /// value a caller built is not a document: `serializeFragmentWith`
+        /// calls this one instead.
+        print_fragment_name: ?[:0]const u8 = null,
 
         /// The `--spec` strings this dialect accepts and what each selects.
         /// Empty for the eleven dialects with a single grammar. See

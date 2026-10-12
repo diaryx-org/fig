@@ -356,10 +356,6 @@ fn Walker(comptime Language: type) type {
 
             var options = self.options.serialize;
             if (self.options.comments == .none) options.strip_comments = true;
-            // fig's block spellings (`* ` items, section headers) only parse as
-            // standalone lines, so a fragment spliced after `key = ` has to be
-            // flow — the same reason the C ABI's value serializer sets this.
-            if (self.target == .compiled and self.target.compiled == .fig) options.flow = true;
             // What the editor takes, not a document: plist's bare element
             // rather than a wrapped `<plist>`, a NestedText scalar's plain
             // text rather than a `>` block.

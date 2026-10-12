@@ -102,6 +102,15 @@ pub fn printFragment(writer: *Writer, ast: *const AST, options: AST.SerializeOpt
     try writer.flush();
 }
 
+/// The editor's splice text: a fragment, in flow, since figl's block
+/// spellings (`* ` items, section headers) only parse as lines of their own
+/// and a value spliced after `key = ` would re-read as a bare string.
+pub fn printSplice(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Error!void {
+    var o = options;
+    o.flow = true;
+    return printFragment(writer, ast, o);
+}
+
 pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize, options: AST.SerializeOptions) Error!void {
     var p: Printer = .{ .writer = writer, .ast = ast, .options = options };
     const memo = p.initWidthMemo();

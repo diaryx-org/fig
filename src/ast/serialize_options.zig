@@ -197,16 +197,12 @@ pub fn serializeWith(self: *const AST, writer: *Writer, format: SerializeFormat,
 }
 
 /// Render the whole AST to `writer` as a value *fragment*, controlling output
-/// style via `options`. Identical to `serializeWith` for every format except
-/// `fig`: JSON/YAML/ZON/canonical already treat a scalar/null root as a fine
-/// value to render (e.g. `9090`), and TOML falls back to an inline fragment —
-/// but fig's document printer (`fig/printer.zig`'s `print`, which
-/// `serializeWith` reaches) deliberately errors `FigUnrepresentableRoot` on a
-/// bare scalar/null root, since a *whole fig document* (`fig fmt`, `fig get`,
-/// `fig_document_serialize`) can't be spelled that way. A value fragment built
-/// by the caller (`fig_value_serialize_opts`, backing the editors'
-/// `replace`/`set` and the bindings' `serialize`) is not a whole fig document,
-/// so it uses that module's `printFragment` instead, which allows that root.
+/// style via `options`. Identical to `serializeWith` except for a dialect
+/// that declares `print_fragment_name`: one whose document printer refuses
+/// a root a value may have (a scalar, where a whole document must be a
+/// container), which a value fragment built by the caller
+/// (`fig_value_serialize_opts`, backing the editors' `replace`/`set` and the
+/// bindings' `serialize`) is not bound by.
 ///
 /// With `options.splice` the fragment is the editor's splice text, and a
 /// printer that declares `printSplice` renders it — see that option.
@@ -216,24 +212,13 @@ pub fn serializeFragmentWith(self: *const AST, writer: *Writer, format: Serializ
     const ast = commentView(self, options, &buf);
     return switch (format) {
         .canonical => if (comptime canonical_enabled) CanonicalPrinter.print(writer, ast) else error.FormatDisabled,
-        // The one format whose fragment entry point differs from its document
-        // one — see this function's doc comment for why. The registry's
-        // `print_name` names the DOCUMENT printer, which is the right entry
-        // point for every other dialect here (including YAML, whose
-        // `printWith` serves both), so fig takes an explicit arm rather than
-        // the registry carrying a second name.
-        .fig => {
-            const d = comptime Language.entryFor("fig");
-            if (comptime d.Lang == void) return error.FormatDisabled;
-            return d.Lang.Printer.printFragment(writer, ast, options);
-        },
         inline else => |f| {
             const d = comptime Language.entryFor(@tagName(f));
             if (comptime d.Lang == void) return error.FormatDisabled;
             if (comptime @hasDecl(d.Lang.Printer, "printSplice")) {
                 if (options.splice) return d.Lang.Printer.printSplice(writer, ast, options);
             }
-            return @field(d.Lang.Printer, d.print_name)(writer, ast, options);
+            return @field(d.Lang.Printer, d.print_fragment_name orelse d.print_name)(writer, ast, options);
         },
     };
 }

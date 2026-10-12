@@ -48,6 +48,8 @@ pub const Language = struct {
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "fig",
         .prints = .{ .holds = lang.holds_everything, .root_container = true },
+        // A whole figl document must be a container; a value need not be.
+        .print_fragment_name = "printFragment",
         // 8: appended to the C ABI after json5 (7).
         .abi_value = 8,
         // Right after TOML and before INI/YAML, not last: fig overlaps TOML

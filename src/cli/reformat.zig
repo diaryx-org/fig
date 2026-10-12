@@ -52,9 +52,8 @@ pub fn reformatSlice(
 /// YAML's reference layer when leaving YAML (aliases/merges/tags resolved),
 /// the optional `--lossless` envelope round-trip, the same lossy-conversion
 /// diagnostics, and TOML's lossy null-strip when serializing without
-/// `--lossless`. Unlike `get` there is no `--path`/gron/`--body` projection —
-/// `convert` always converts the whole document (or, under embed-archetype
-/// mode, the whole embedded region's content). Returns the converted bytes
+/// `--lossless`. Unlike `get` there is no `--path`/gron projection —
+/// `convert` always converts the whole document. Returns the converted bytes
 /// (caller-owned).
 pub fn convertSlice(
     allocator: std.mem.Allocator,
@@ -63,9 +62,6 @@ pub fn convertSlice(
     from: Format,
     to: Format,
     content: []const u8,
-    /// `content` is the whole of `file_path`, not a region extracted from
-    /// it — so a span in it names the line the user sees.
-    whole_file: bool,
     serialize: fig.AST.SerializeOptions,
     lossless: bool,
     lax_tags: bool,
@@ -90,7 +86,7 @@ pub fn convertSlice(
     // applied/dropped); YAML→YAML keeps it intact for round-trip. Mirrors
     // `get`.
     const keeps_references = parse_dispatch.carriesReferences(from) and parse_dispatch.carriesReferences(to);
-    const base_ast = try parse_dispatch.materializeFor(allocator, term, from, to, &doc, file_path, whole_file, if (lax_tags) .lax else .strict);
+    const base_ast = try parse_dispatch.materializeFor(allocator, term, from, to, &doc, file_path, if (lax_tags) .lax else .strict);
 
     const ast: *const fig.AST = if (lossless and !keeps_references) blk: {
         // `to` is never `.gron` here (rejected up front above); its language

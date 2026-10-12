@@ -688,8 +688,8 @@ println!("{}", fm.render()?);
 
   Plus three conventions with their own distinct delimiter: `Semicolons`
   (`;;;` JSON), `Plus` (`+++` TOML, the Hugo/Zola convention), and `Endmatter`
-  (a trailing ```` ```endmatter ```` YAML block). Each name is the CLI's
-  `--embed` archetype in `UpperCamelCase` (`semicolons`, `fenced-yaml`), with
+  (a trailing ```` ```endmatter ```` YAML block). Each name is the
+  archetype's name (`semicolons`, `fenced-yaml`) in `UpperCamelCase`, with
   `Fig` for `figl` (`FencedFig` is `fenced-figl`, `MdFig` is `md-figl`), and
   the TypeScript binding's `EmbedType` values are those archetype names as
   strings. Inside the host the spellings stay ```` ```fig ````, `---fig` and

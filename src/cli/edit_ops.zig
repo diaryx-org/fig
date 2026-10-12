@@ -1,7 +1,7 @@
 //! In-place editing plumbing shared by `replace`/`rename`/`set`/`insert`/`delete`/
 //! `comment`: the single span-splice path (`applyEdit`) behind every
-//! structural op, its embed-aware twin (`applyToEmbed`), and the small
-//! helpers (value rendering, empty-document seeds) those two lean on.
+//! structural op, and the small helpers (value rendering, empty-document
+//! seeds) it leans on.
 const std = @import("std");
 const fig = @import("fig");
 const build_options = @import("build_options");
@@ -14,14 +14,6 @@ const value_arg = @import("value_arg.zig");
 const Format = types.Format;
 const EditOp = types.EditOp;
 const Io = std.Io;
-
-/// Extract the embedded config of `embed_type` from a host file and parse it.
-/// The returned document's node spans are relative to the embedded region.
-pub fn parseEmbeddedFromFile(allocator: std.mem.Allocator, io: Io, file: Io.File, embed_type: fig.Embed.Type) !fig.Document {
-    const content = try fileio.readAll(allocator, io, file);
-    const embedded = try fig.Embed.extract(allocator, content, embed_type);
-    return embedded.document;
-}
 
 /// Apply one in-place edit to `content` (a complete document parsed under
 /// `dialect`) and return the new bytes. The single span-splice path behind both
@@ -178,8 +170,7 @@ pub fn applyToFile(
 pub var refused_rendering: ?[]const u8 = null;
 
 /// `applyEdit` with `value` rendered into `format` first — the one place a
-/// value argument meets the document, for a whole file (`applyToFile`) and
-/// an embedded region (`applyToEmbed`) alike. Two retries live here, each on
+/// value argument meets the document (`applyToFile`). Two retries live here, each on
 /// the one copy of `content`, so neither reads or parses the file again:
 ///
 ///   * a value rendered in the format's own layout (a YAML block) whose site
@@ -270,119 +261,6 @@ pub fn getCommentFromFile(
     return getComment(Lang, allocator, content, path, inline_comment, dialect);
 }
 
-/// Read a comment from the embedded config of a host file: extract the region,
-/// parse only that slice as its inner format, and read the comment from it. The
-/// read-only twin of `applyToEmbed`.
-pub fn getCommentFromEmbed(
-    allocator: std.mem.Allocator,
-    io: Io,
-    file: Io.File,
-    embed_type: fig.Embed.Type,
-    path: []fig.AST.PathSegment,
-    inline_comment: bool,
-) !?[]u8 {
-    const content = try fileio.readAll(allocator, io, file);
-    defer allocator.free(content);
-
-    const embedded = try fig.Embed.extract(allocator, content, embed_type);
-    defer embedded.deinit(allocator);
-    // The DECODED content (entity-decoded for `<code>`, a borrow otherwise) — the
-    // bytes the parser saw, so comments read correctly through the codec.
-    const inner = embedded.decoded.text;
-
-    // Keyed on the archetype's inner language, not the archetype itself, so
-    // every archetype sharing one (`---`/endmatter/```yaml ⇒ YAML, `;;;`/
-    // ```json ⇒ JSON, `+++`/```toml ⇒ TOML) routes to the same reader. Strict
-    // JSON frontmatter has no comment syntax, so a read finds nothing — the
-    // editor's own answer, not a special case.
-    const e = try innerEditor(embed_type);
-    return getComment(fig.Runtime.Language, allocator, inner, path, inline_comment, e.typeOf());
-}
-
-/// The registered language an embedded region is written in, when it can
-/// edit.
-fn innerEditor(embed_type: fig.Embed.Type) !*const fig.Runtime.Entry {
-    const e = fig.Embed.innerFormat(embed_type) orelse return error.FormatDisabled;
-    if (!e.language.caps.edit) return error.FormatNotEditable;
-    return e;
-}
-
-/// Apply an edit to the embedded config of a host file in place: extract the
-/// region, edit only that slice as its inner format, then splice it back between
-/// the retained fences so the rest of the host file is byte-identical.
-pub fn applyToEmbed(
-    allocator: std.mem.Allocator,
-    io: Io,
-    file: Io.File,
-    embed_type: fig.Embed.Type,
-    path: []fig.AST.PathSegment,
-    text: []const u8,
-    value: OpValue,
-    op: EditOp,
-) !void {
-    const content = try fileio.readAll(allocator, io, file);
-    defer allocator.free(content);
-
-    // Locate the region; when it's absent and the op can seed a fresh block
-    // (`set` / insert-a-key), synthesize an empty one — the CLI's open-or-init.
-    // `base` is the document the edited content splices back into: the original
-    // file, or the synthesized host carrying the new empty block.
-    var base: []const u8 = content;
-    var created_host: ?[]u8 = null;
-    defer if (created_host) |h| allocator.free(h);
-    const region = reg: {
-        if (fig.Embed.locateRegion(content, embed_type)) |r| {
-            break :reg r;
-        } else |err| switch (err) {
-            error.NotFound => {
-                if (!opSeedsEmptyRegion(op)) return err;
-                const created = try fig.Embed.initRegion(allocator, content, embed_type);
-                created_host = created.host;
-                base = created.host;
-                break :reg created.region;
-            },
-            else => return err,
-        }
-    };
-    const inner = base[region.content.start..region.content.end];
-
-    // For a codec archetype (`<code>`), the on-disk content is entity-encoded:
-    // decode it (with provenance) so the editor sees real config, then re-encode
-    // span-aware so only the edited bytes change. Identity archetypes borrow
-    // `inner` unchanged and `reencodeEdited` is a passthrough.
-    const codec = fig.Embed.codecOf(embed_type);
-    const decoded = try fig.Embed.decodeForParse(allocator, inner, codec);
-    defer decoded.deinit(allocator);
-
-    // Keyed on the archetype's inner language, not the archetype itself: a
-    // fenced ```yaml block edits identically to `---` YAML, `+++`/```toml to
-    // TOML, etc.
-    const e = try innerEditor(embed_type);
-    const edited_decoded = try applyValueEdit(fig.Runtime.Language, allocator, decoded.text, path, text, value, op, types.runtimeFormat(e), e.typeOf());
-    defer allocator.free(edited_decoded);
-    const edited_inner = try fig.Embed.reencodeEdited(allocator, codec, inner, decoded, edited_decoded);
-    defer allocator.free(edited_inner);
-
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(allocator);
-    try out.appendSlice(allocator, base[0..region.content.start]);
-    try out.appendSlice(allocator, edited_inner);
-    try out.appendSlice(allocator, base[region.content.end..]);
-
-    try file.writePositionalAll(io, out.items, 0);
-    try file.setLength(io, out.items.len);
-}
-
-/// Whether `op` can seed a freshly-created empty embed region — only the ops
-/// that establish a first entry (`set` upserts it; `insert_key` adds it). Other
-/// ops (replace/delete/comment/sequence) require an already-present region.
-pub fn opSeedsEmptyRegion(op: EditOp) bool {
-    return switch (op) {
-        .set, .insert_key => true,
-        else => false,
-    };
-}
-
 /// The value an op carries, read (`value_arg.read`) but not yet rendered:
 /// `renderEdit` spells it once the target format is known. `one` is the
 /// value of `set`/`insert`/`replace`; `items` are `set --seq`'s. Empty for an op
@@ -421,9 +299,7 @@ pub fn renderEdit(allocator: std.mem.Allocator, text: []const u8, value: OpValue
 /// refused before any file is created — the two non-`Language` projections,
 /// canonical and gron.
 ///
-/// Every seed now comes from the format registry's `empty_doc_seed`, which is
-/// also what `Embed.initRegion` writes into a freshly created region, so the
-/// two can no longer drift. The seeds themselves and the reasoning behind each
+/// Every seed comes from the format registry's `empty_doc_seed`. The seeds themselves and the reasoning behind each
 /// (why an empty STRING is a valid seed for YAML/TOML/fig/INI/dotenv/
 /// `.properties`/NestedText but `{}`/`.{}` is needed for JSON/ZON) are
 /// documented on the entries in `languages/language.zig`.
@@ -455,7 +331,7 @@ pub const EditRequest = union(enum) {
 /// THE editor dispatch: the one place a CLI `Format` becomes "which language
 /// module, which dialect, and is this format editable at all". Every editing
 /// entry point in the CLI goes through it — `replace`'s value and `rename`'s key,
-/// `set`/`insert`/`delete`'s structural ops (via `applyStructuralEdit`), and
+/// `set`/`insert`/`delete`'s structural ops (via `applyToFileAs`), and
 /// both halves of `comment` — so the per-format knowledge below is stated once
 /// rather than in four parallel switches that could disagree.
 ///
@@ -551,25 +427,6 @@ pub fn getCommentAs(
     inline_comment: bool,
 ) !?[]u8 {
     return route(allocator, io, file, format, .{ .get_comment = .{ .path = path, .inline_comment = inline_comment } });
-}
-
-/// Shared per-format routing for the structural `set`/`insert`/`delete`
-/// actions: `embed` routes through the host-document splicer, everything else
-/// through `route`. `op` already encodes which editor primitive runs and `path`
-/// is the container path it operates on.
-pub fn applyStructuralEdit(
-    allocator: std.mem.Allocator,
-    io: Io,
-    input: Io.File,
-    resolved: Format,
-    embed: ?fig.Embed.Type,
-    path: []fig.AST.PathSegment,
-    text: []const u8,
-    value: OpValue,
-    op: EditOp,
-) !void {
-    if (embed) |embed_type| return applyToEmbed(allocator, io, input, embed_type, path, text, value, op);
-    return applyToFileAs(allocator, io, input, resolved, path, text, value, op);
 }
 
 test "applyEdit reads [-] before the end of a path as the last item" {
@@ -896,34 +753,6 @@ test "applyEdit insert_key refuses a key that already exists, and does not blame
     }
 }
 
-test "applyToEmbed refuses a new leading block in front of another archetype's frontmatter" {
-    if (comptime !build_options.lang_json or !build_options.lang_yaml) return error.SkipZigTest;
-    const t = std.testing;
-    const io = t.io;
-    var arena = std.heap.ArenaAllocator.init(t.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    var tmp = t.tmpDir(.{});
-    defer tmp.cleanup();
-
-    // `fig set --embed semicolons p.md k 1` on YAML frontmatter used to
-    // prepend a `;;;` block, leaving the `---` one under it — two metadata
-    // blocks, the original no longer on the first line.
-    const md = "---\ntitle: x\n---\nbody\n";
-    const file = try tmp.dir.createFile(io, "p.md", .{ .read = true });
-    defer file.close(io);
-    try file.writeStreamingAll(io, md);
-    var p = [_]fig.AST.PathSegment{.{ .key = "k" }};
-    try t.expectError(error.FrontmatterExists, applyToEmbed(a, io, file, .semicolons_json, &p, "1", .{}, .set));
-    const back = try tmp.dir.readFileAlloc(io, "p.md", a, .limited(1 << 20));
-    try t.expectEqualStrings(md, back);
-
-    // Endmatter goes at the bottom and displaces nothing.
-    try applyToEmbed(a, io, file, .endmatter_yaml, &p, "1", .{}, .set);
-    const both = try tmp.dir.readFileAlloc(io, "p.md", a, .limited(1 << 20));
-    try t.expectEqualStrings(md ++ "```endmatter\nk: 1\n```\n", both);
-}
-
 test "emptyDocSeed: every seed is the byte string the registry declares" {
     const t = std.testing;
     try t.expectEqualStrings("{}\n", emptyDocSeed(types.mustNamed("json")).?);
@@ -979,7 +808,7 @@ test "renderEdit spells a value as the format does and leaves a key a name, a de
 }
 
 // Regression: `.json5` used to be a hard-refused branch in both `runEdit`
-// and `applyStructuralEdit` (`error.UnsupportedJson5Edit`) even though
+// and `applyToFileAs` (`error.UnsupportedJson5Edit`) even though
 // `Editor(json.Language)` with `.format = .JSON5` fully supports every
 // structural op (see `languages/json/editor_test.zig`). These exercise the
 // CLI's own dispatch path — `renderEdit` spelling the value, then
@@ -1037,7 +866,7 @@ test "emptyDocSeed: seedable formats round-trip a first `set`, others refuse" {
     const a = arena.allocator();
 
     // The seed a from-scratch `set` writes must parse and accept the first key,
-    // reproducing on-disk `createSeededFile` + `applyStructuralEdit` in memory.
+    // reproducing on-disk `createSeededFile` + `applyToFileAs` in memory.
     var path = [_]fig.AST.PathSegment{.{ .key = "hello" }};
 
     // YAML: empty seed, bare value.
@@ -1074,7 +903,7 @@ test "emptyDocSeed: seedable formats round-trip a first `set`, others refuse" {
 // so `fig set missing.plist key value` refused ("plist has no empty-document
 // form") even though `Editor(Plist)` can edit one and the parser accepts a bare
 // `<dict>` root. The registry now declares the seed, and this reproduces the
-// on-disk path in memory — `createSeededFile(seed)` then `applyStructuralEdit`
+// on-disk path in memory — `createSeededFile(seed)` then `applyToFileAs`
 // — and checks the result is a plist that reparses with the new key in it.
 test "emptyDocSeed: plist seeds a document a from-scratch `set` lands into" {
     if (comptime !build_options.lang_plist) return error.SkipZigTest;

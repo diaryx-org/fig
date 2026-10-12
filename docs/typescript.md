@@ -453,11 +453,10 @@ console.log(fm.render());
 ```
 
 `EmbedType` selects the container *and* the inner format. Each value is the
-archetype's name as the `fig` command line spells it (`fig get --embed
-fenced-figl`), so `EmbedType.FencedFig === "fenced-figl"` and a stored value is
-readable. Four container families cross the four embeddable formats:
+archetype's name, so `EmbedType.FencedFig === "fenced-figl"` and a stored value
+is readable. Four container families cross the four embeddable formats:
 
-| Container | Members | `--embed` names |
+| Container | Members | Names |
 | --------- | ------- | --------------- |
 | Markdown frontmatter | `Frontmatter` (bare `---`, YAML), `MdJson` (`---json`), `MdToml`, `MdFig` | `frontmatter`, `md-json`, `md-toml`, `md-figl` |
 | Fenced code block | `FencedYaml`, `FencedJson`, `FencedToml`, `FencedFig` (```` ```<lang> ````) | `fenced-<lang>` |

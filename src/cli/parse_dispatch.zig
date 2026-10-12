@@ -132,11 +132,9 @@ pub fn carriesReferences(f: Format) bool {
 /// A document the pass refuses — a custom tag under strict mode, a tag its
 /// value does not fit, an alias inside its own anchor — is reported to `term`
 /// against `file` and the process exits 1, the status the unreported error
-/// had. The report points at the node when `located`: the document was parsed
-/// from the whole of `file`, so its spans are offsets into what `file` shows
-/// the user. An embedded document's spans are offsets into the extracted
-/// region, and would name the wrong line.
-pub fn materializeFor(a: std.mem.Allocator, term: *Io.Terminal, from: Format, to: Format, doc: *const fig.Document, file: []const u8, located: bool, mode: fig.Materialize.TagMode) !*const fig.AST {
+/// had. The report points at the node: the document was parsed from the
+/// whole of `file`, so its spans are offsets into what `file` shows the user.
+pub fn materializeFor(a: std.mem.Allocator, term: *Io.Terminal, from: Format, to: Format, doc: *const fig.Document, file: []const u8, mode: fig.Materialize.TagMode) !*const fig.AST {
     if (!carriesReferences(from) or carriesReferences(to)) return &doc.ast;
     const mat = try a.create(fig.AST);
     var culprit: ?fig.AST.Node.Id = null;
@@ -145,7 +143,7 @@ pub fn materializeFor(a: std.mem.Allocator, term: *Io.Terminal, from: Format, to
             term,
             err,
             doc,
-            if (located) culprit else null,
+            culprit,
             file,
             types.name(to),
         ),
@@ -312,9 +310,8 @@ pub fn detectFileFormat(io: Io, allocator: std.mem.Allocator, file_path: []const
 /// Format precedence mirrors `get`: an explicit `--input` `override`, else the
 /// file extension, else sniffing the contents. `spec_str` (from `--spec`) pins
 /// the language version to validate against and is resolved once the format is
-/// known — an unknown/inapplicable version is reported like a parse error. When
-/// the extension implies an embedded region (e.g. markdown frontmatter) the
-/// inner document is extracted and parsed. Any IO/parse/spec error propagates to
+/// known — an unknown/inapplicable version is reported like a parse error.
+/// Any IO/parse/spec error propagates to
 /// the caller, which reports it — except for the languages in the report layer
 /// (`reporting` above): there, a parse failure fills
 /// `diag_errors` with every diagnostic rendered into the language-agnostic
@@ -328,41 +325,29 @@ pub fn checkOne(allocator: std.mem.Allocator, io: Io, file: []const u8, override
     defer if (!std.mem.eql(u8, file, "-")) input.close(io);
     const content = try fileio.readAll(allocator, io, input);
 
-    var format: Format = undefined;
-    var embed: ?fig.Embed.Type = null;
-    if (override) |f| {
-        // An explicit format is taken at face value: no extension-driven embed
-        // extraction, so `--input yaml file.md` parses the whole file as YAML.
-        format = f;
-    } else if (args_mod.detectLanguageFromFileEnding(file)) |d| {
-        format = d.format;
-        embed = args_mod.resolveEmbedTypeFromContent(content, null, d.embed_detect);
-    } else {
-        format = try resolveFormatFromContent(allocator, content, file);
-    }
+    const format: Format = if (override) |f|
+        f
+    else if (args_mod.detectLanguageFromFileEnding(file)) |d|
+        d.format
+    else
+        try resolveFormatFromContent(allocator, content, file);
 
     // Resolve `--spec` against the now-known format. This rejects a nonsense
     // version (e.g. `--spec 1.0` on a JSON or markdown file) before parsing.
     const dialect = try resolveSpec(format, spec_str);
 
-    // `Embed.extract` parses the inner region; `parseSliceAs` parses the whole
-    // file. Either surfaces a parse error — all we need to validate. The parsed
-    // result is discarded; we only care that it parsed. (Embed extraction uses
-    // the inner format's default version; `spec` was still validated above.)
-    if (embed) |embed_type| {
-        _ = try fig.Embed.extract(allocator, content, embed_type);
-    } else {
-        diag_source.* = content;
-        var reports: Reports = .{};
-        // A language that collects every error reports them all in one pass
-        // (`check` shouldn't hide errors 2..N behind the first); one that
-        // does not stops at its first.
-        _ = parseSliceAs(dialect, allocator, content, &reports) catch |err| {
-            diag_errors.* = try reports.renderErrors(allocator);
-            return err;
-        };
-        diag_warnings.* = try reports.renderWarnings(allocator);
-    }
+    // A parse error is all we need to validate: the parsed result is
+    // discarded.
+    diag_source.* = content;
+    var reports: Reports = .{};
+    // A language that collects every error reports them all in one pass
+    // (`check` shouldn't hide errors 2..N behind the first); one that
+    // does not stops at its first.
+    _ = parseSliceAs(dialect, allocator, content, &reports) catch |err| {
+        diag_errors.* = try reports.renderErrors(allocator);
+        return err;
+    };
+    diag_warnings.* = try reports.renderWarnings(allocator);
     return format;
 }
 

@@ -155,13 +155,6 @@ pub const EditOptions = struct {
     /// Set when the format could not be inferred from the file extension:
     /// the handler then sniffs the file's contents with `Language.detect`.
     detect: bool = false,
-    /// When set, `file` is a host document (e.g. markdown) and edits apply
-    /// to the embedded config of this archetype, spliced back in place.
-    embed: ?fig.Embed.Type = null,
-    /// Set when `embed` couldn't be pinned by the extension (e.g. `.md`
-    /// implies SOME embedded region but not which archetype): the handler
-    /// sniffs the host content with `Embed.detect` (see `resolveEmbedType`).
-    detect_embed: bool = false,
 };
 
 pub const SetOptions = struct {
@@ -180,13 +173,6 @@ pub const SetOptions = struct {
     requested_help: bool = false,
     format: Format,
     detect: bool = false,
-    /// When set, `file` is a host document and the upsert targets the
-    /// embedded config of this archetype — creating the block (open-or-init)
-    /// when the host has none.
-    embed: ?fig.Embed.Type = null,
-    /// As in `EditOptions`: set when `embed` needs a runtime content sniff
-    /// (`resolveEmbedType`) rather than being pinned by `--embed`.
-    detect_embed: bool = false,
 };
 
 pub const InsertOptions = struct {
@@ -205,10 +191,6 @@ pub const InsertOptions = struct {
     /// Set when the format could not be inferred from the extension; the
     /// handler then sniffs the contents with `Language.detect`.
     detect: bool = false,
-    /// As in `EditOptions`: when set, edit the embedded config of this archetype.
-    embed: ?fig.Embed.Type = null,
-    /// As in `EditOptions`: set when `embed` needs a runtime content sniff.
-    detect_embed: bool = false,
 };
 
 pub const DeleteOptions = struct {
@@ -220,9 +202,6 @@ pub const DeleteOptions = struct {
     requested_help: bool = false,
     format: Format,
     detect: bool = false,
-    embed: ?fig.Embed.Type = null,
-    /// As in `EditOptions`: set when `embed` needs a runtime content sniff.
-    detect_embed: bool = false,
 };
 
 pub const GetOptions = struct {
@@ -247,16 +226,6 @@ pub const GetOptions = struct {
     /// envelope, and reconstruct any such envelope found in the input. Gates
     /// both the encode (output) and decode (input) passes; default is lossy.
     lossless: bool = false,
-    /// When set, the input is extracted from a host document of this
-    /// archetype (e.g. YAML frontmatter inside markdown) before parsing.
-    embed: ?fig.Embed.Type = null,
-    /// As in `EditOptions`: set when `embed` needs a runtime content sniff
-    /// (`resolveEmbedType`) rather than being pinned by `--embed`.
-    detect_embed: bool = false,
-    /// When set, print the host *body* (the prose outside the fences) of the
-    /// embed archetype instead of converting its content. Demonstrates the
-    /// region's `body` span; ignored when there is no embed.
-    body: bool = false,
     /// Output style. `--compact` clears `pretty` for a single-line render;
     /// `--indent N` sets the indent width; `--width N` sets TOML's inline-vs-
     /// expanded column budget. Honored by JSON (pretty + indent), ZON (pretty),
@@ -291,11 +260,6 @@ pub const CommentOptions = struct {
     /// Set when the format could not be inferred from the file extension:
     /// the handler then sniffs the file's contents with `Language.detect`.
     detect: bool = false,
-    /// As in `EditOptions`: when set, `file` is a host document and the comment is
-    /// applied to the embedded config of this archetype, spliced back.
-    embed: ?fig.Embed.Type = null,
-    /// As in `EditOptions`: set when `embed` needs a runtime content sniff.
-    detect_embed: bool = false,
 };
 
 pub const CheckOptions = struct {
@@ -343,12 +307,6 @@ pub const FmtOptions = struct {
     /// Like `dry_run`, but print a unified diff of the change instead of
     /// the whole reformatted file (nothing is written either way).
     diff: bool = false,
-    /// When set, `file` is a host document (e.g. markdown) and only its
-    /// embedded region is reformatted, spliced back in place.
-    embed: ?fig.Embed.Type = null,
-    /// As in `get`: set when `embed` needs a runtime content sniff
-    /// (`resolveEmbedTypeFromContent`) rather than being pinned by `--embed`.
-    detect_embed: bool = false,
 };
 
 pub const ConvertOptions = struct {
@@ -356,31 +314,13 @@ pub const ConvertOptions = struct {
     /// (there is nowhere to write an in-place result back to).
     file: []const u8,
     requested_help: bool = false,
-    /// Whole-file mode (`--output`): parse as `from`, re-emit as `to`.
-    /// Mutually exclusive with the embed-archetype mode (`to_embed`) — one
-    /// of the two must be set, checked in `parseConfig`.
+    /// Parse as `from`, re-emit as `to` (`--output`, required).
     from: Format = .canonical,
     to: Format = .canonical,
     /// Set when `from` couldn't be pinned by `--input`/the file extension:
     /// the handler sniffs the contents with `Language.detect`, mirroring
     /// `fmt`/`get`.
     detect: bool = false,
-    /// Embed-archetype mode (`--to-embed <archetype>`): rehouse a host
-    /// document's embedded region from one archetype's fence-and-format
-    /// convention to another's (e.g. YAML frontmatter → JSON frontmatter),
-    /// splicing the new fences + re-serialized content in place while
-    /// leaving the host prose (`Embed.Region.body`) byte-identical. `to`/
-    /// `from`/`detect` are unused in this mode; the archetypes fix both
-    /// formats.
-    to_embed: ?fig.Embed.Type = null,
-    /// The source archetype for embed-archetype mode: `--embed`, else —
-    /// when `detect_embed` is set — sniffed from the content with
-    /// `Embed.detect` (the extension alone, e.g. `.md`, only tells us an
-    /// embed is likely present, never which archetype it is).
-    embed: ?fig.Embed.Type = null,
-    /// Set when `embed` couldn't be pinned by `--embed` and `to_embed` is
-    /// set: the handler sniffs the host content with `Embed.detect`.
-    detect_embed: bool = false,
     /// As in `get`: drop unknown/custom YAML tags instead of erroring,
     /// when converting away from YAML.
     lax_tags: bool = false,
@@ -429,15 +369,6 @@ pub const PatchOptions = struct {
     /// against its own extension — hence its own `detect` twin.
     patch_format: Format,
     detect_patch: bool = false,
-    /// When set, the target is a host document and the merge applies to its
-    /// embedded config of this archetype, spliced back in place.
-    embed: ?fig.Embed.Type = null,
-    /// As in `EditOptions`: set when `embed` needs a runtime content sniff.
-    detect_embed: bool = false,
-    /// The same pair for the PATCH document, so one post's frontmatter can be
-    /// merged into another's.
-    patch_embed: ?fig.Embed.Type = null,
-    detect_patch_embed: bool = false,
     /// Preserve values the target format can't represent natively through a
     /// `$fig` envelope, and decode any envelope the patch document carries.
     /// Same flag, same meaning, as `get`/`convert`.
@@ -654,8 +585,7 @@ pub fn targetFile(config: CliConfig) ?[]const u8 {
 }
 
 /// The single file `config`'s action parses, and the format to parse it as —
-/// null where the action resolves that itself (`--detect` sniffing, or an
-/// embedded region, whose host format is the extension's to decide). What
+/// null where the action resolves that itself (`--detect` sniffing). What
 /// `main` hands `parse_dispatch.checkOne` to locate a parse failure that
 /// escaped the action unreported. Null for stdin, which cannot be read twice,
 /// and for everything `targetFile` is null for.
@@ -665,11 +595,11 @@ pub fn parseTarget(config: CliConfig) ?ParseTarget {
     const t: ParseTarget = switch (config.options) {
         inline .replace, .rename, .set, .insert, .delete, .comment, .patch => |o| .{
             .file = o.file,
-            .format = if (o.detect or o.embed != null or o.detect_embed) null else o.format,
+            .format = if (o.detect) null else o.format,
         },
         inline .get, .fmt, .convert => |o| .{
             .file = o.file,
-            .format = if (o.detect or o.embed != null or o.detect_embed) null else o.from,
+            .format = if (o.detect) null else o.from,
         },
         .help, .version, .check, .lang, .external => return null,
     };
@@ -677,17 +607,9 @@ pub fn parseTarget(config: CliConfig) ?ParseTarget {
     return t;
 }
 
-pub const ArgError = error{ UnsupportedFileFormat, MissingReplaceArgument, MissingRenameArgument, MissingSetArgument, MissingInsertArgument, MissingDeleteArgument, MissingGetArgument, MissingCommentArgument, MissingCheckArgument, MissingFmtArgument, MissingConvertArgument, MissingPatchArgument, MissingLangArgument, SurplusArgument, UnknownArchetype, HelpNamesAction, OutOfMemory, Overflow, InvalidCharacter, InvalidPath };
+pub const ArgError = error{ UnsupportedFileFormat, MissingReplaceArgument, MissingRenameArgument, MissingSetArgument, MissingInsertArgument, MissingDeleteArgument, MissingGetArgument, MissingCommentArgument, MissingCheckArgument, MissingFmtArgument, MissingConvertArgument, MissingPatchArgument, MissingLangArgument, SurplusArgument, HelpNamesAction, OutOfMemory, Overflow, InvalidCharacter, InvalidPath };
 
-/// Result of mapping a file extension to a parse strategy. `embed_detect` is
-/// set when the file is a host document whose config lives in an embedded
-/// region (currently only `.md`/`.markdown`) — but the extension alone can't
-/// say which archetype it is (YAML/JSON/fig frontmatter, YAML endmatter all
-/// use different fences), so the caller still has to sniff the actual bytes
-/// with `Embed.detect` (see `resolveEmbedType`/`resolveEmbedTypeFromContent`)
-/// rather than assuming one outright. `format` describes the whole-file parse
-/// strategy for the (rarer) case where there turns out to be no embed at all.
+/// Result of mapping a file extension to a parse strategy.
 pub const Detected = struct {
     format: Format,
-    embed_detect: bool = false,
 };

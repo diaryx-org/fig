@@ -50,8 +50,8 @@ pub fn readAll(allocator: std.mem.Allocator, io: Io, file: Io.File) ![]u8 {
 /// upsert verb). Most editors can't parse a truly empty buffer, so the file is
 /// primed with a minimal valid empty document for its format (`{}` for JSON,
 /// `.{}` for ZON, nothing for YAML/TOML — see `emptyDocSeed` in `edit_ops.zig`);
-/// the subsequent `set` then lands the first key into a parseable document,
-/// exactly as an absent embed block is seeded before its first key. Writing is
+/// the subsequent `set` then lands the first key into a parseable document.
+/// Writing is
 /// positional and leaves the read cursor at 0, so `applyToFile`'s `readAll`
 /// reads the seed back.
 pub fn createSeededFile(io: Io, file_path: []const u8, seed: []const u8) !Io.File {

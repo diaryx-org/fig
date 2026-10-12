@@ -25,7 +25,6 @@
     "toml",
     "config",
     "cli",
-    "frontmatter",
     "comment-preserving",
     "cross-format",
     "wasi",

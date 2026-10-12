@@ -12,8 +12,8 @@
 //! purpose. The WASI build, which cannot spawn, asks its host first
 //! (`host_languages.zig`): `@diaryx/fig-wasi` serves `@diaryx/fig`'s
 //! JavaScript languages in-process. A format this build does not bundle is
-//! not something the CLI can resolve itself either: its name, extension and
-//! embedded spellings reach the configured language of that name.
+//! not something the CLI can resolve itself either: its name and extension
+//! reach the configured language of that name.
 //!
 //! The helper runner is a `fig.Wire.Transport` — the wire
 //! `bindings/rust/fig/src/helper.rs` documents, newline-delimited JSON, one

@@ -98,15 +98,12 @@ test("every format is served, by its extension", () => {
   });
 });
 
-test("a value argument is read as fig reads it, and frontmatter is edited in place", () => {
+test("a value argument is read as fig reads it", () => {
   withTempDir((dir) => {
     writeFileSync(join(dir, "c.yaml"), "a: 1\n");
     run(["set", "c.yaml", "a", "2"], { cwd: dir });
     run(["set", "c.yaml", "b", "[x, y]"], { cwd: dir });
     assert.equal(readFileSync(join(dir, "c.yaml"), "utf8"), "a: 2\nb:\n- x\n- y\n");
-    writeFileSync(join(dir, "n.md"), "---\ntitle: Hi\n---\nbody\n");
-    run(["set", "n.md", "title", "Bye"], { cwd: dir });
-    assert.equal(readFileSync(join(dir, "n.md"), "utf8"), "---\ntitle: Bye\n---\nbody\n");
   });
 });
 

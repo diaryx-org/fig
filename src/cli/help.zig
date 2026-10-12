@@ -1,9 +1,8 @@
 //! `--help`/usage text for the `fig` CLI, one function per action plus the
 //! top-level `general` summary. Pure output — no parsing or state.
 //!
-//! The two lists that drifted per action — the format names `--input`/
-//! `--output` take and the `--embed` archetypes — are derived or shared
-//! (`formatList`, `embed_archetypes`), so every action's help says what the
+//! The list that drifted per action — the format names `--input`/`--output`
+//! take — is derived (`formatList`), so every action's help says what the
 //! argument parser accepts.
 const std = @import("std");
 const fig = @import("fig");
@@ -54,30 +53,6 @@ fn formatList(comptime indent: []const u8, comptime except: []const []const u8) 
     }
 }
 
-/// The languages an embed archetype's `<lang>` takes — the bundled
-/// embeddable dialects, the set `args.embedTypeFromName` reads.
-const embed_langs = blk: {
-    var out: []const u8 = "";
-    for (fig.bundle.embeddable, 0..) |n, i| out = out ++ (if (i == 0) "" else ", ") ++ n;
-    break :blk out;
-};
-
-/// The `--embed <archetype>` vocabulary, indented to sit under the flag's own
-/// line — the one text every action that takes `--embed` prints, matching
-/// `args.embedTypeFromName`.
-pub const embed_archetypes =
-    "    Parametric families take a <lang> — " ++ embed_langs ++ ":\n" ++
-    \\    `md-<lang>` (---<lang> frontmatter; bare `frontmatter` is ---/YAML,
-    \\    so there is no `md-yaml`), `fenced-<lang>` (```lang code block),
-    \\    `html-script[-<lang>]` (<script type="application/<lang>"> data
-    \\    island) and `html-code[-<lang>]` (<pre><code class="language-<lang>">
-    \\    visible block); a bare html-script/html-code is fig. Plus the fixed
-    \\    presets `semicolons` (;;; JSON), `plus` (+++ TOML), and
-    \\    `endmatter` (trailing ```endmatter block). Also accepted:
-    \\    `frontmatter-yaml` and `endmatter-yaml`.
-    \\
-    ;
-
 /// How `replace`/`set`/`insert` read a value argument (`value_arg.zig`).
 pub const value_reading =
     \\  <value> is read as a figl value and written in the file's own syntax,
@@ -94,23 +69,19 @@ pub const value_reading =
     \\
 ;
 
-/// The <path> syntax and the Markdown-host note `replace` and `rename` share.
-const path_and_markdown =
+/// The <path> syntax `replace` and `rename` share.
+const path_syntax =
     \\  path format: dot syntax for keys, bracket syntax for indices
     \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',
     \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
     \\    example: school.class[0].student[3]
     \\    [-] or [$] in place of an index means "the last item"
-    \\  .md/.markdown files: edits the frontmatter/endmatter in place —
-    \\    its archetype (YAML/JSON/TOML/fig frontmatter, fenced ```lang
-    \\    frontmatter, YAML endmatter) is sniffed from the file,
-    \\    defaulting to YAML when none is found
     \\
 ;
 
 /// What fig is for, in one line: `fig help --oneline`, for a list of tools
 /// where each gets a line and the rest is a `fig help` away.
-pub const oneline = "fig: read and edit JSON, YAML, TOML, INI, dotenv, plist and other config files, and Markdown frontmatter, by path, keeping comments and formatting. More: `fig help`.\n";
+pub const oneline = "fig: read and edit JSON, YAML, TOML, INI, dotenv, plist and other config files by path, keeping comments and formatting. More: `fig help`.\n";
 
 pub const title_string = "\n=========\n   FIG\n=========\n\n";
 
@@ -125,16 +96,15 @@ pub const Help = struct {
             \\  version: prints version number
             \\  replace: replace the value at a path
             \\  rename: rename the key at a path
-            \\  set: upsert a value (create the key, embed block, or file, if absent)
+            \\  set: upsert a value (create the key, or file, if absent)
             \\  insert: add a new key or list item to a file
             \\  delete: remove a key or list item from a file
             \\  get: print a file or a specific part of a file to stdout
             \\  comment: add or edit a comment on part of a file
             \\  check: validate that one or more files parse cleanly
             \\  fmt: reformat a file in place (house style; gofmt-style)
-            \\  convert: convert a file (or a host document's embedded region)
-            \\    from one format/archetype to another; prints to stdout, or
-            \\    writes the file in place with --write
+            \\  convert: convert a file from one format to another; prints to
+            \\    stdout, or writes the file in place with --write
             \\  patch: merge one document into another, in place and losslessly
             \\  lang: list the languages fig knows, or check a configured one
             \\
@@ -192,7 +162,7 @@ pub const Help = struct {
             \\    creates it when absent). To rename the key there, use
             \\    `{s} rename`.
             \\
-        ++ value_reading ++ path_and_markdown, .{ binary_name, binary_name });
+        ++ value_reading ++ path_syntax, .{ binary_name, binary_name });
         try term.writer.flush();
     }
 
@@ -219,14 +189,14 @@ pub const Help = struct {
             \\    already holds would be a second key of that name: both are
             \\    refused, exit 1. To replace the value there, use `{s} replace`.
             \\
-        ++ path_and_markdown, .{ binary_name, binary_name });
+        ++ path_syntax, .{ binary_name, binary_name });
         try term.writer.flush();
     }
 
     pub fn set(term: *Io.Terminal, binary_name: []const u8) !void {
         try term.writer.print(
-            \\Usage: {s} set [--embed <archetype>] [--string | --raw] <file> <path> <value>
-            \\       {s} set [--embed <archetype>] [--string | --raw] --seq <file> <path> <item>...
+            \\Usage: {s} set [--string | --raw] <file> <path> <value>
+            \\       {s} set [--string | --raw] --seq <file> <path> <item>...
             \\  Upsert: replace the value at <path>, or create it when absent —
             \\    one verb for `replace`+`insert`. Missing parent maps along <path>
             \\    are auto-created (`mkdir -p`); a segment that is an existing
@@ -237,20 +207,11 @@ pub const Help = struct {
             \\  When <file> itself does not exist, it is CREATED and seeded with
             \\    <path>: <value>; `fig get <file>` then prints what was written.
             \\    The format comes from the extension, so a new file needs a known
-            \\    one — .figl/.json/.jsonc/.yaml/.yml/.toml (or a .md host, via
-            \\    --embed). .zon/.json5 have no from-scratch seed and must already
-            \\    exist.
+            \\    one — .figl/.json/.jsonc/.yaml/.yml/.toml. .zon/.json5 have no
+            \\    from-scratch seed and must already exist.
             \\  --seq: reconcile the sequence at <path> to exactly <item>..., keeping
             \\    the comments on items that survive (only new items are inserted,
             \\    only dropped ones removed; result order matches the arguments).
-            \\  --embed <archetype>: target an embedded region of a host file.
-            \\
-        ++ embed_archetypes ++
-            \\    When the host has no such block, it is CREATED (frontmatter at
-            \\    the top, endmatter at the bottom) and seeded with <path>:
-            \\    <value> — unless one would go at the top of a host that already
-            \\    has frontmatter of another kind, which is refused (`{s} convert
-            \\    --to-embed` changes it).
             \\
         ++ value_reading ++
             \\    A created key is written in the file's syntax too, so new keys
@@ -260,11 +221,8 @@ pub const Help = struct {
             \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
             \\    example: school.class[0].student[3]
             \\    [-] or [$] before the end of the path means "the last item"
-            \\  .md/.markdown files: upserts the frontmatter/endmatter, creating
-            \\    it (as YAML) if absent — the archetype is otherwise sniffed
-            \\    from the file, not assumed from the extension.
             \\
-        , .{ binary_name, binary_name, binary_name });
+        , .{ binary_name, binary_name });
         try term.writer.flush();
     }
 
@@ -283,8 +241,6 @@ pub const Help = struct {
             \\  path format: dot syntax for keys, bracket syntax for indices.
             \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',
             \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
-            \\  .md/.markdown files: edits the frontmatter/endmatter in place —
-            \\    its archetype is sniffed from the file (YAML by default).
             \\
         , .{binary_name});
         try term.writer.flush();
@@ -305,8 +261,6 @@ pub const Help = struct {
             \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
             \\    example: school.class[0].student[3]
             \\    [-] or [$] in place of an index means "the last item"
-            \\  .md/.markdown files: edits the frontmatter/endmatter in place —
-            \\    its archetype is sniffed from the file (YAML by default).
             \\
         , .{binary_name});
         try term.writer.flush();
@@ -331,9 +285,6 @@ pub const Help = struct {
             \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
             \\    example: school.class[0].student[3]
             \\    [-] or [$] in place of an index means "the last item"
-            \\  .md/.markdown files: comments the frontmatter/endmatter in
-            \\    place — its archetype is sniffed from the file (YAML by
-            \\    default).
             \\
         , .{binary_name});
         try term.writer.flush();
@@ -414,21 +365,11 @@ pub const Help = struct {
             \\    likely missing comma in a flow value, indent/marker-count
             \\    disagreement, ...).
             \\  --strict: treat any warning as an error (exit 1).
-            \\  --embed <archetype>: read an embedded region of a host file.
-            \\    Without this flag, a `.md`/`.markdown` file has its archetype
-            \\    sniffed from the content (falling back to `frontmatter`/YAML
-            \\    when none is found).
-            \\
-        ++ embed_archetypes ++
-            \\  --body: print the host prose OUTSIDE the fences (the body span) instead
-            \\    of the embed content; the whole file when there is no such region.
             \\  path format: dot syntax for keys, bracket syntax for indices
             \\    a key holding a . or [ is quoted or escaped: a."b.c", a.'b.c',
             \\    a["b.c"] (as `-o gron` prints it), or a.b\.c
             \\    example: school.class[0].student[3]
             \\    [-] or [$] in place of an index means "the last item"
-            \\  .md/.markdown files: reads the frontmatter/endmatter, whichever
-            \\    archetype it turns out to be
             \\
         , .{ binary_name, binary_name });
         try term.writer.flush();
@@ -454,8 +395,6 @@ pub const Help = struct {
             \\    figl authoring warnings; errors still print.
             \\  --strict: a file that parses with warnings fails too (exit 1).
             \\  reads stdin when <file> is `-`.
-            \\  .md/.markdown files: validates the frontmatter/endmatter,
-            \\    whichever archetype it turns out to be (YAML by default).
             \\
         , .{ binary_name, binary_name });
         try term.writer.flush();
@@ -490,16 +429,8 @@ pub const Help = struct {
             \\  --strip-comments: drop comments instead of re-emitting them.
             \\  -q, --quiet, --no-warnings: suppress warnings on stderr.
             \\  --strict: treat any warning as an error (exit 1, no write).
-            \\  --embed <archetype>: reformat an embedded region of a host file
-            \\    instead of the whole file. Without this flag, a `.md`/`.markdown`
-            \\    file has its archetype sniffed from the content (falling back to
-            \\    `frontmatter`/YAML when none is found).
-            \\
-        ++ embed_archetypes ++
             \\  reads stdin when <file> is `-`, but only with --dry-run/--diff:
             \\    there is nowhere to write an in-place result back to.
-            \\  .md/.markdown files: reformats the frontmatter/endmatter in
-            \\    place, whichever archetype it turns out to be.
             \\
         , .{binary_name});
         try term.writer.flush();
@@ -508,35 +439,16 @@ pub const Help = struct {
     pub fn convert(term: *Io.Terminal, binary_name: []const u8) !void {
         try term.writer.print(
             \\Usage: {s} convert --output <format> [--input <format>] [--write | --diff] <file>
-            \\       {s} convert --to-embed <archetype> [--embed <archetype>] [--write | --diff] <file>
             \\  Convert a file — `fmt`'s twin for when the target format differs
-            \\  from the source. Exactly one of --output/--to-embed picks the
-            \\  target; the other flag group is unused (rejected together).
-            \\  Like `get`, it prints the converted result to stdout by default;
-            \\  pass --write to write it back to <file> in place instead.
-            \\
-            \\  Whole-file mode (--output): parse the whole file as --input (else the
-            \\    extension, else sniffed from its contents) and re-emit it as
-            \\    --output, in the target format's house style. A host document
-            \\    whose extension implies an embedded region (`.md`/`.markdown`) is
-            \\    rejected here — use embed-archetype mode, or pass --input to force
-            \\    whole-file conversion anyway.
+            \\  from the source: parse the whole file as --input (else the
+            \\  extension, else sniffed from its contents) and re-emit it as
+            \\  --output, in the target format's house style. Like `get`, it
+            \\  prints the converted result to stdout by default; pass --write to
+            \\  write it back to <file> in place instead.
             \\  -i, --input, -o, --output: one of these, or a language configured
             \\    in languages.figl:
             \\
         ++ formatList("    ", &.{"gron"}) ++
-            \\
-            \\  Embed-archetype mode (--to-embed): rehouse a host document's
-            \\    embedded region from one archetype's fence-and-content convention
-            \\    to another's — e.g. turn YAML frontmatter into JSON frontmatter —
-            \\    splicing the new fences and re-serialized content in place while
-            \\    leaving the surrounding prose byte-identical. The source archetype
-            \\    is --embed, else sniffed from the file's own fences (falling back
-            \\    to frontmatter/YAML when none is found).
-            \\  --embed, --to-embed <archetype>:
-            \\
-        ++ embed_archetypes ++
-            \\
             \\  -w, --write: write the converted result back to <file> in place
             \\    (skipped if it's already byte-identical) instead of printing it.
             \\  --diff: print a unified diff of the change instead of the whole
@@ -552,7 +464,7 @@ pub const Help = struct {
             \\  --strict: treat any warning as an error (exit 1, no write).
             \\  reads stdin when <file> is `-`, but only without --write.
             \\
-        , .{ binary_name, binary_name });
+        , .{binary_name});
         try term.writer.flush();
     }
 
@@ -599,11 +511,6 @@ pub const Help = struct {
             \\  --strip-comments: the same as `--comments none`, in `get`'s word.
             \\  -i, --input <format>: the format of <file> (else its extension, else
             \\    sniffed). --patch-input does the same for <patch-file>.
-            \\  --embed <archetype>: patch the embedded region of a host <file>
-            \\    (e.g. a markdown post's frontmatter), splicing the result back
-            \\    between its fences and leaving the prose byte-identical.
-            \\    --patch-embed does the same for <patch-file>. A `.md`/`.markdown`
-            \\    extension implies the sniff on either side without the flag.
             \\  --lossless / --lossy: preserve values the target format can't hold
             \\    natively via a $fig envelope (default --lossy).
             \\  --indent N / --width N / --compact / --pretty: style knobs for the
@@ -644,9 +551,7 @@ pub const Help = struct {
             \\  resolves a file to it, but a built-in language's extension always
             \\  wins, so a twin of a built-in language is reached with --lang.
             \\  A language named after a format this build leaves out (`list` says
-            \\  "not built in") is that format: its name and extension reach it,
-            \\  and the embedded spellings it declares (markdown frontmatter,
-            \\  fenced blocks) do too.
+            \\  "not built in") is that format: its name and extension reach it.
             \\
             \\  Nothing is spawned until a name or extension the CLI cannot resolve
             \\  itself is asked for; the helper is then started once and asked to
@@ -682,25 +587,4 @@ test "every format the help lists is one the argument parser accepts" {
         var it = std.mem.tokenizeAny(u8, list, ", \n");
         while (it.next()) |name| try std.testing.expect(args.parseFormatName(name) != null);
     }
-}
-
-test "every --embed archetype the help names is one the argument parser accepts" {
-    const args = @import("args.zig");
-    var langs = std.mem.tokenizeAny(u8, embed_langs, ", ");
-    while (langs.next()) |l| {
-        var buf: [64]u8 = undefined;
-        for ([_][]const u8{ "md-", "fenced-", "html-script-", "html-code-" }) |family| {
-            const name = try std.fmt.bufPrint(&buf, "{s}{s}", .{ family, l });
-            // `md-yaml` is deliberately not a spelling, and the help says so.
-            if (std.mem.eql(u8, name, "md-yaml")) {
-                try std.testing.expect(args.embedTypeFromName(name) == null);
-                continue;
-            }
-            try std.testing.expect(args.embedTypeFromName(name) != null);
-        }
-    }
-    for ([_][]const u8{
-        "frontmatter", "semicolons", "plus",             "endmatter",
-        "html-script", "html-code",  "frontmatter-yaml", "endmatter-yaml",
-    }) |name| try std.testing.expect(args.embedTypeFromName(name) != null);
 }

@@ -78,12 +78,8 @@ pub fn runEdit(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_t
     // is also where the value is spelled in the file's format, and where the
     // refusal of a read-only format and the canonical/gron refusals live; see
     // `edit_ops.route`.
-    if (try args_mod.resolveEmbedType(io, a, input, opts.embed, opts.detect_embed)) |embed_type| {
-        try edit_ops.applyToEmbed(a, io, input, embed_type, opts.path, opts.replacement, value, op);
-    } else {
-        const resolved = if (opts.detect) try parse_dispatch.detectFileFormat(io, a, opts.file) else opts.format;
-        try edit_ops.applyToFileAs(a, io, input, resolved, opts.path, opts.replacement, value, op);
-    }
+    const resolved = if (opts.detect) try parse_dispatch.detectFileFormat(io, a, opts.file) else opts.format;
+    try edit_ops.applyToFileAs(a, io, input, resolved, opts.path, opts.replacement, value, op);
 }
 
 pub fn runSet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_term: *Io.Terminal, binary_name: []const u8, opts: types.SetOptions) !void {
@@ -113,8 +109,6 @@ pub fn runSet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     //     (`--detect`): it must carry a known extension;
     //   - a format with no empty-document form (`emptyDocSeed` == null,
     //     e.g. fig) has nothing valid to seed.
-    // When targeting an embed, the host is seeded empty ("") and the
-    // embed machinery (`initRegion`) synthesizes the inner block itself.
     var created = false;
     const input = fileio.getInput(io, opts.file, .read_write) catch |err| switch (err) {
         error.FileNotFound => blk: {
@@ -124,7 +118,7 @@ pub fn runSet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
                 try stderr_term.writer.flush();
                 std.process.exit(2);
             }
-            const seed: []const u8 = if (opts.embed != null or opts.detect_embed) "" else edit_ops.emptyDocSeed(opts.format) orelse {
+            const seed: []const u8 = edit_ops.emptyDocSeed(opts.format) orelse {
                 try stderr_term.writer.print("error: cannot create {s}: {s} has no empty-document form to seed a new file. Start from an existing file.\n", .{ opts.file, types.name(opts.format) });
                 try stderr_term.writer.flush();
                 std.process.exit(2);
@@ -138,8 +132,7 @@ pub fn runSet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
 
     const resolved = if (opts.detect) try parse_dispatch.detectFileFormat(io, a, opts.file) else opts.format;
     // `--seq` reconciles the sequence at `path`; otherwise upsert a scalar.
-    // Both flow through the shared structural-edit router, so the embed
-    // path (which open-or-inits a missing block) is reused for free.
+    // Both flow through the shared structural-edit router.
     // A path ending in an index upserts a sequence item: `[-]` appends, the
     // way it does for `insert`, and an index that is there is replaced.
     // An index past the end is refused below, since there is no item
@@ -162,8 +155,7 @@ pub fn runSet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     // behind — matching how it leaves an existing file untouched on
     // failure. A merely-missing parent map is no longer a failure: `set`
     // auto-vivifies it (see `Editor.set`).
-    const embed = try args_mod.resolveEmbedType(io, a, input, opts.embed, opts.detect_embed);
-    edit_ops.applyStructuralEdit(a, io, input, resolved, embed, path, text, value, op) catch |err| {
+    edit_ops.applyToFileAs(a, io, input, resolved, path, text, value, op) catch |err| {
         if (created) fileio.deleteCreatedFile(io, opts.file);
         if (err == error.NotFound and op == .replace_value) {
             try stderr_term.writer.print("error: there is no item [{d}] to set, so nothing was written; set replaces an item that is there, or appends one with [-].\n", .{item.?});
@@ -202,9 +194,8 @@ pub fn runInsert(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr
     }
     const parent = opts.path[0 .. opts.path.len - 1];
     const resolved = if (opts.detect) try parse_dispatch.detectFileFormat(io, a, opts.file) else opts.format;
-    const embed = try args_mod.resolveEmbedType(io, a, input, opts.embed, opts.detect_embed);
     switch (opts.path[opts.path.len - 1]) {
-        .key => |key| try edit_ops.applyStructuralEdit(a, io, input, resolved, embed, parent, opts.value, value, .{ .insert_key = key }),
+        .key => |key| try edit_ops.applyToFileAs(a, io, input, resolved, parent, opts.value, value, .{ .insert_key = key }),
         .index => |index| {
             // `[0]` prepends, `[-]`/`[$]` appends, and any other index
             // inserts before the item there; past the end is the editor's
@@ -215,7 +206,7 @@ pub fn runInsert(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr
                 .append_seq
             else
                 .{ .insert_seq_item = index };
-            try edit_ops.applyStructuralEdit(a, io, input, resolved, embed, parent, opts.value, value, op);
+            try edit_ops.applyToFileAs(a, io, input, resolved, parent, opts.value, value, op);
         },
     }
 }
@@ -234,12 +225,11 @@ pub fn runDelete(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr
         std.process.exit(2);
     }
     const resolved = if (opts.detect) try parse_dispatch.detectFileFormat(io, a, opts.file) else opts.format;
-    const embed = try args_mod.resolveEmbedType(io, a, input, opts.embed, opts.detect_embed);
     // A trailing index removes that item from the parent sequence; a
     // trailing key deletes the mapping entry named by the full path.
     switch (opts.path[opts.path.len - 1]) {
-        .index => |index| try edit_ops.applyStructuralEdit(a, io, input, resolved, embed, opts.path[0 .. opts.path.len - 1], "", .{}, .{ .remove_seq_item = index }),
-        .key => try edit_ops.applyStructuralEdit(a, io, input, resolved, embed, opts.path, "", .{}, .delete_key),
+        .index => |index| try edit_ops.applyToFileAs(a, io, input, resolved, opts.path[0 .. opts.path.len - 1], "", .{}, .{ .remove_seq_item = index }),
+        .key => try edit_ops.applyToFileAs(a, io, input, resolved, opts.path, "", .{}, .delete_key),
     }
 }
 
@@ -251,27 +241,6 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     const input = try fileio.getInput(io, opts.file, .read_only);
     defer if (!std.mem.eql(u8, opts.file, "-")) input.close(io);
 
-    // `--body`: print the host prose OUTSIDE the fences — the complement of
-    // extracting the embed content. Both sides, in file order: for frontmatter
-    // or endmatter one of them is empty (bar a BOM), so this is the block's
-    // own side and nothing else; for a mid-document block (an HTML `<script>`
-    // island) it is the whole host with just the block cut out, rather than
-    // the arbitrary half `region.body` can name. With no such region the whole
-    // file is the body.
-    if (opts.body) {
-        const content = try fileio.readAll(a, io, input);
-        const embed_type = args_mod.resolveEmbedTypeFromContent(content, opts.embed, opts.detect_embed) orelse args_mod.defaultEmbed() orelse return error.FormatDisabled;
-        if (fig.Embed.locateRegion(content, embed_type)) |region| {
-            try stdout_term.writer.writeAll(content[region.body_before.start..region.body_before.end]);
-            try stdout_term.writer.writeAll(content[region.body_after.start..region.body_after.end]);
-        } else |err| switch (err) {
-            error.NotFound => try stdout_term.writer.writeAll(content),
-            else => return err,
-        }
-        try stdout_term.writer.flush();
-        return;
-    }
-
     // Resolved input/output formats. They equal the parsed options unless
     // the input format has to be sniffed from the file's contents (no
     // `--input`, unrecognized extension): detection overwrites `from`, and
@@ -280,24 +249,7 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     var from = opts.from;
     var to = opts.to;
 
-    // Whether `doc`'s spans are offsets into the file itself — false for an
-    // embedded region, whose spans count from the region's own start.
-    var whole_file = true;
-    const doc = if (try args_mod.resolveEmbedType(io, a, input, opts.embed, opts.detect_embed)) |embed_type| blk_embed: {
-        // `embed_type` may have just been sniffed at runtime
-        // (`detect_embed`), in which case the parse-time
-        // placeholder `from`/`to` (the extension's guess, not the
-        // real archetype) needs correcting: the inner format
-        // always follows the archetype outright, and — same as
-        // the whole-file `detect` echo below — an unpinned
-        // output follows it too rather than silently defaulting
-        // to something else (e.g. `.yaml` for a `.md` file whose
-        // actual frontmatter turned out to be fig or JSON).
-        from = args_mod.embedFormat(embed_type);
-        if (!opts.output_explicit) to = from;
-        whole_file = false;
-        break :blk_embed try edit_ops.parseEmbeddedFromFile(a, io, input, embed_type);
-    } else blk: {
+    const doc = blk: {
         // Read once so detection and parsing share the same bytes — a
         // piped stdin can only be consumed a single time.
         const content = try fileio.readAll(a, io, input);
@@ -328,7 +280,7 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     // applied/dropped). YAML→YAML keeps it intact for round-trip; JSON
     // never has it. Each side is asked, not named (`Caps.references`).
     const keeps_references = parse_dispatch.carriesReferences(from) and parse_dispatch.carriesReferences(to);
-    const base_ast = try parse_dispatch.materializeFor(a, stderr_term, from, to, &doc, opts.file, whole_file, if (opts.lax_tags) .lax else .strict);
+    const base_ast = try parse_dispatch.materializeFor(a, stderr_term, from, to, &doc, opts.file, if (opts.lax_tags) .lax else .strict);
 
     // Lossless mode: decode any `$fig` envelopes in the input back to
     // their real node kinds, then re-encode for the target format. Skipped
@@ -450,9 +402,7 @@ pub fn runComment(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
     const resolved = if (opts.detect) try parse_dispatch.detectFileFormat(io, a, opts.file) else opts.format;
 
     if (opts.get) {
-        const comment = if (try args_mod.resolveEmbedType(io, a, input, opts.embed, opts.detect_embed)) |embed_type|
-            try edit_ops.getCommentFromEmbed(a, io, input, embed_type, opts.path, opts.inline_comment)
-        else blk: {
+        const comment = blk: {
             // Strict JSON has no comment syntax: there can be nothing to get.
             // The one refusal the shared dispatch can't state, because it is
             // about a DIALECT of an otherwise comment-carrying language — and
@@ -492,23 +442,19 @@ pub fn runComment(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
     else
         (if (opts.inline_comment) .set_trailing_comment else .add_leading_comment);
 
-    if (try args_mod.resolveEmbedType(io, a, input, opts.embed, opts.detect_embed)) |embed_type| {
-        try edit_ops.applyToEmbed(a, io, input, embed_type, opts.path, opts.text, .{}, op);
-    } else {
-        // Strict JSON has no comment syntax: fail with a clear message
-        // rather than letting the editor surface a bare error. The same
-        // refusal, and the same reason, as the `--get` branch above.
-        if (types.is(resolved, "json")) {
-            try stderr_term.writer.print("error: strict JSON has no comments; use a .jsonc or .json5 file instead.\n", .{});
-            try stderr_term.writer.flush();
-            std.process.exit(1);
-        }
-        // Everything else goes through the shared editor dispatch — JSONC/
-        // JSON5's `//` comments reparse under their own dialect there, and
-        // `--inline` set/delete on a format with no same-line comment syntax
-        // surfaces `error.CommentsUnsupported` from the editor.
-        try edit_ops.applyToFileAs(a, io, input, resolved, opts.path, opts.text, .{}, op);
+    // Strict JSON has no comment syntax: fail with a clear message
+    // rather than letting the editor surface a bare error. The same
+    // refusal, and the same reason, as the `--get` branch above.
+    if (types.is(resolved, "json")) {
+        try stderr_term.writer.print("error: strict JSON has no comments; use a .jsonc or .json5 file instead.\n", .{});
+        try stderr_term.writer.flush();
+        std.process.exit(1);
     }
+    // Everything else goes through the shared editor dispatch — JSONC/
+    // JSON5's `//` comments reparse under their own dialect there, and
+    // `--inline` set/delete on a format with no same-line comment syntax
+    // surfaces `error.CommentsUnsupported` from the editor.
+    try edit_ops.applyToFileAs(a, io, input, resolved, opts.path, opts.text, .{}, op);
 }
 
 pub fn runCheck(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_term: *Io.Terminal, binary_name: []const u8, opts: types.CheckOptions) !void {
@@ -592,8 +538,8 @@ pub fn runCheck(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_
 
 /// `fig patch`: merge one document into another, in place.
 ///
-/// The order below is not arbitrary. The TARGET is resolved first — read,
-/// format-detected, embed-sniffed — because the patch document's own
+/// The order below is not arbitrary. The TARGET is resolved first — read
+/// and format-detected — because the patch document's own
 /// preparation depends on it: `--lossless` encodes the patch's values for the
 /// format they are about to be rendered into, which is the target's.
 pub fn runPatch(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_term: *Io.Terminal, binary_name: []const u8, opts: types.PatchOptions) !void {
@@ -618,12 +564,8 @@ pub fn runPatch(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_
     defer if (!target_is_stdin) input.close(io);
     const content = try fileio.readAll(a, io, input);
 
-    // An embedded target is patched as its inner format; a whole-file one as
-    // itself, sniffed from the bytes when the extension didn't say.
-    const embed_type = args_mod.resolveEmbedTypeFromContent(content, opts.embed, opts.detect_embed);
-    const target_format = if (embed_type) |et|
-        args_mod.embedFormat(et)
-    else if (opts.detect)
+    // Sniffed from the bytes when the extension didn't say.
+    const target_format = if (opts.detect)
         try parse_dispatch.resolveFormatFromContent(a, content, opts.file)
     else
         opts.format;
@@ -637,10 +579,7 @@ pub fn runPatch(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_
         .options = opts.patch_options,
     };
 
-    const patched: patch_ops.Result = if (embed_type) |et|
-        try patchEmbed(a, content, et, target_format, req)
-    else
-        try patch_ops.applyToSlice(a, content, target_format, req);
+    const patched = try patch_ops.applyToSlice(a, content, target_format, req);
 
     // The one thing a silent success would hide: trivia the patch carried that
     // the target has nowhere to put (strict JSON has no comment syntax at all).
@@ -673,32 +612,6 @@ pub fn runPatch(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_
     }
 }
 
-/// Patch only the bytes between a host document's fences, and splice the
-/// result back. The prose either side stays byte-identical; a codec archetype
-/// (`<pre><code>`) is decoded for the merge and re-encoded span-aware after,
-/// exactly as `edit_ops.applyToEmbed` does it for a single edit.
-fn patchEmbed(
-    a: std.mem.Allocator,
-    content: []const u8,
-    embed_type: fig.Embed.Type,
-    format: Format,
-    req: patch_ops.Request,
-) !patch_ops.Result {
-    const region = try fig.Embed.locateRegion(content, embed_type);
-    const inner = content[region.content.start..region.content.end];
-    const codec = fig.Embed.codecOf(embed_type);
-    const decoded = try fig.Embed.decodeForParse(a, inner, codec);
-
-    const patched = try patch_ops.applyToSlice(a, decoded.text, format, req);
-    const edited_inner = try fig.Embed.reencodeEdited(a, codec, inner, decoded, patched.content);
-
-    var out: std.ArrayList(u8) = .empty;
-    try out.appendSlice(a, content[0..region.content.start]);
-    try out.appendSlice(a, edited_inner);
-    try out.appendSlice(a, content[region.content.end..]);
-    return .{ .content = try out.toOwnedSlice(a), .stats = patched.stats };
-}
-
 /// Read, parse and prepare the patch document: the subtree `--from` names, in
 /// a form that can be rendered into `target_format` without dangling.
 ///
@@ -726,32 +639,23 @@ fn loadPatch(
     defer if (!is_stdin) file.close(io);
     const content = try fileio.readAll(a, io, file);
 
-    // The patch document may itself be a host document (one post's frontmatter
-    // merged into another's), so it gets the same embed resolution the target
-    // does — via `--patch-embed`, or sniffed for a `.md` extension.
-    var format = opts.patch_format;
-    var source: []const u8 = content;
-    if (args_mod.resolveEmbedTypeFromContent(content, opts.patch_embed, opts.detect_patch_embed)) |et| {
-        const region = try fig.Embed.locateRegion(content, et);
-        const decoded = try fig.Embed.decodeForParse(a, content[region.content.start..region.content.end], fig.Embed.codecOf(et));
-        source = decoded.text;
-        format = args_mod.embedFormat(et);
-    } else if (opts.detect_patch) {
-        format = try parse_dispatch.resolveFormatFromContent(a, content, opts.patch_file);
-    }
+    const format = if (opts.detect_patch)
+        try parse_dispatch.resolveFormatFromContent(a, content, opts.patch_file)
+    else
+        opts.patch_format;
 
     var reports: parse_dispatch.Reports = .{};
     // In the arena, not on this frame: the AST outlives `loadPatch` — it is
     // what the merge reads all the way through — so a `&doc.ast` into a local
     // would dangle the moment this returns.
     const doc = try a.create(fig.Document);
-    doc.* = parse_dispatch.parseSliceAs(format, a, source, &reports) catch |err| {
+    doc.* = parse_dispatch.parseSliceAs(format, a, content, &reports) catch |err| {
         // Same contract as `get`'s: a parse failure in a file the user named
         // renders as a `file:line:col` teaching message, not an error name.
-        try reports.reportDiagnostics(stderr_term, source, opts.patch_file);
+        try reports.reportDiagnostics(stderr_term, content, opts.patch_file);
         return err;
     };
-    try reports.reportWarnings(stderr_term, source, opts.patch_file, opts.quiet, opts.strict);
+    try reports.reportWarnings(stderr_term, content, opts.patch_file, opts.quiet, opts.strict);
 
     var ast: *const fig.AST = &doc.ast;
     if (doc.ast.anchors.len > 0) {
@@ -808,35 +712,6 @@ pub fn runFmt(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
 
     const content = try fileio.readAll(a, io, input);
 
-    // `--embed`: only the region between the fences is reformatted; the
-    // rest of the host document is carried through byte-identical.
-    if (args_mod.resolveEmbedTypeFromContent(content, opts.embed, opts.detect_embed)) |embed_type| {
-        const region = try fig.Embed.locateRegion(content, embed_type);
-        const inner = content[region.content.start..region.content.end];
-        const reformatted_inner = try reformat.reformatSlice(a, stderr_term, opts.file, args_mod.embedFormat(embed_type), inner, opts.serialize, opts.quiet, opts.strict);
-
-        var out: std.ArrayList(u8) = .empty;
-        defer out.deinit(a);
-        try out.appendSlice(a, content[0..region.content.start]);
-        try out.appendSlice(a, reformatted_inner);
-        try out.appendSlice(a, content[region.content.end..]);
-
-        const changed = !std.mem.eql(u8, content, out.items);
-        if (opts.diff) {
-            try diff.unifiedDiff(a, stdout_term.writer, opts.file, content, out.items, 3);
-            try stdout_term.writer.flush();
-            if (changed) std.process.exit(1);
-        } else if (opts.dry_run) {
-            try stdout_term.writer.writeAll(out.items);
-            try stdout_term.writer.flush();
-            if (changed) std.process.exit(1);
-        } else if (changed) {
-            try input.writePositionalAll(io, out.items, 0);
-            try input.setLength(io, out.items.len);
-        }
-        return;
-    }
-
     var from = opts.from;
     if (opts.detect) from = try parse_dispatch.resolveFormatFromContent(a, content, opts.file);
 
@@ -866,8 +741,7 @@ pub fn runFmt(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
 /// either a unified diff (`show_diff`) or the whole `result` to stdout — the
 /// whole result only when neither `write` nor `show_diff` fired, so `--write`
 /// alone stays silent (like `fmt`) and `--write --diff` shows what changed
-/// without also dumping the full file. Shared by both of `runConvert`'s modes
-/// (whole-file and `--to-embed`), which differ only in how `result` is produced.
+/// without also dumping the full file.
 fn finishConvert(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, input: Io.File, file_path: []const u8, content: []const u8, result: []const u8, write: bool, show_diff: bool) !void {
     const changed = !std.mem.eql(u8, content, result);
     if (write and changed) {
@@ -915,59 +789,6 @@ pub fn runConvert(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
 
     const content = try fileio.readAll(a, io, input);
 
-    if (opts.to_embed) |to_embed_type| {
-        // Embed-archetype mode: resolve the SOURCE archetype (--embed,
-        // else content-sniffed with `Embed.detect` — extension-derived
-        // defaults were already folded into `opts.embed` at parse time),
-        // convert the region's inner content, then rehouse it under the
-        // target archetype's fences, preserving the host prose exactly.
-        const source_type = opts.embed orelse (if (opts.detect_embed) fig.Embed.detect(content) else null) orelse {
-            try stderr_term.writer.print(
-                "error: could not detect an embedded region in `{s}`; pass --embed explicitly.\n",
-                .{opts.file},
-            );
-            try stderr_term.writer.flush();
-            std.process.exit(1);
-        };
-        const region = try fig.Embed.locateRegion(content, source_type);
-        const inner = content[region.content.start..region.content.end];
-        const converted_inner = try reformat.convertSlice(
-            a,
-            stderr_term,
-            opts.file,
-            args_mod.embedFormat(source_type),
-            args_mod.embedFormat(to_embed_type),
-            inner,
-            false,
-            opts.serialize,
-            opts.lossless,
-            opts.lax_tags,
-            opts.quiet,
-            opts.strict,
-        );
-        const out = fig.Embed.retype(a, content, region, source_type, to_embed_type, converted_inner) catch |err| switch (err) {
-            // A mid-document block (an HTML `<script>`/`<pre><code>` island)
-            // cannot become an edge archetype without either mangling the host
-            // or silently dropping the half of it on the wrong side of the
-            // block. Say so, and name the two conversions that do work.
-            error.MidDocumentRegionCannotMove => {
-                var name_buf: [64]u8 = undefined;
-                try stderr_term.writer.print(
-                    "error: `{s}` keeps its config in a mid-document block, which cannot move to `{s}`" ++
-                        " without rewriting the host around it.\n" ++
-                        "note: convert between mid-document archetypes (html-script-*, html-code-*) instead," ++
-                        " or extract the config to its own file with `fig get`.\n",
-                    .{ opts.file, args_mod.embedTypeName(&name_buf, to_embed_type) },
-                );
-                try stderr_term.writer.flush();
-                std.process.exit(1);
-            },
-            else => |e| return e,
-        };
-        try finishConvert(a, io, stdout_term, input, opts.file, content, out, opts.write, opts.diff);
-        return;
-    }
-
     var from = opts.from;
     if (opts.detect) from = try parse_dispatch.resolveFormatFromContent(a, content, opts.file);
 
@@ -978,7 +799,6 @@ pub fn runConvert(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stder
         from,
         opts.to,
         content,
-        true,
         opts.serialize,
         opts.lossless,
         opts.lax_tags,

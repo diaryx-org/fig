@@ -506,9 +506,8 @@ Rust and TypeScript bindings.
 
 `fig.Embed` locates a config block embedded in a host file without touching an
 `Editor` directly; you compose it with `Editor` yourself for edits (there is
-no combined "embedded editor" type at this layer — see the CLI's
-`applyToEmbed` in `src/cli/edit_ops.zig` for the exact pattern this section
-follows).
+no combined "embedded editor" type at this layer — the example below is the
+pattern).
 
 ### Archetypes
 

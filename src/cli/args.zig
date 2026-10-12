@@ -1,5 +1,5 @@
 //! Command-line parsing: turns the raw arg iterator into a `CliConfig`
-//! (`parseConfig`), plus the small format/path/embed-archetype resolvers that
+//! (`parseConfig`), plus the small format/path resolvers that
 //! parsing (and later, the action handlers) share.
 const std = @import("std");
 const fig = @import("fig");
@@ -215,15 +215,6 @@ pub fn detectLanguageFromFileEnding(file_path: []const u8) ?Detected {
     const dot = std.mem.findLast(u8, file_path, ".");
     const ext = file_path[(dot orelse 0) + 1 .. file_path.len];
 
-    // Markdown conventionally carries an embedded region (frontmatter, or
-    // endmatter), but which archetype it is still has to be sniffed from the
-    // actual bytes — a `` ```fig ``` ``-fenced or JSON frontmatter block (or a
-    // YAML endmatter fence) must not be mistaken for `---` YAML frontmatter
-    // just because the file ends in `.md`.
-    if (std.mem.eql(u8, ext, "md") or std.mem.eql(u8, ext, "markdown")) {
-        if (parseFormatName("yaml")) |f| return .{ .format = f, .embed_detect = true };
-    }
-
     // An extension that names a format IS that format. Tried first so every
     // name keeps its exact meaning — notably the dialects (`jsonc`, `json5`)
     // that share a language with the default spelling, and the CLI's own
@@ -244,167 +235,6 @@ pub fn detectLanguageFromFileEnding(file_path: []const u8) ?Detected {
     if (languages.resolveExtension(ext)) |format| return .{ .format = format };
 
     return null;
-}
-
-/// Map a `--embed <archetype>` flag value to its `Embed.Type`. Lets any
-/// embed-capable action target a region explicitly — overriding whatever
-/// `resolveEmbedType`/`resolveEmbedTypeFromContent` would otherwise sniff —
-/// so endmatter and JSON frontmatter are reachable. Returns null for an
-/// unknown name.
-pub fn embedTypeFromName(name: []const u8) ?fig.Embed.Type {
-    const eql = std.mem.eql;
-
-    // The four PARAMETRIC families: every embeddable dialect is reachable in
-    // every parametric container as `<container>-<dialect>`. The container
-    // half is this file's own spelling (`Embed.Type`'s union tags); the
-    // `<dialect>` half is the registered name.
-    const families = [_]struct { prefix: []const u8, kind: std.meta.Tag(fig.Embed.Type) }{
-        .{ .prefix = "md-", .kind = .frontmatter },
-        .{ .prefix = "fenced-", .kind = .fenced },
-        .{ .prefix = "html-script-", .kind = .html_script },
-        .{ .prefix = "html-code-", .kind = .html_code },
-    };
-    for (families) |fam| {
-        if (!std.mem.startsWith(u8, name, fam.prefix)) continue;
-        const lang = name[fam.prefix.len..];
-        const f = innerNamed(lang) orelse return null;
-        // `md-yaml` is deliberately not a spelling: a bare `---` block IS
-        // frontmatter in the dialect that declares the bare opener, so it
-        // answers to `frontmatter` below.
-        if (fam.kind == .frontmatter and std.mem.eql(u8, f.embed.?.frontmatter, "---")) return null;
-        return switch (fam.kind) {
-            .frontmatter => .{ .frontmatter = f },
-            .fenced => .{ .fenced = f },
-            .html_script => .{ .html_script = f },
-            .html_code => .{ .html_code = f },
-            else => unreachable,
-        };
-    }
-
-    // The rest are not `<container>-<dialect>` pairs: the blessed presets
-    // whose delimiter is its own distinct token rather than a language tag,
-    // and the bare container names.
-    //
-    // Markdown `---` frontmatter (bare ⇒ yaml; see the `md-yaml` note above).
-    if (eql(u8, name, "frontmatter") or eql(u8, name, "frontmatter-yaml")) return .{ .frontmatter = innerNamed("yaml") orelse return null };
-    // Blessed distinct-delimiter presets: the `;;;` and `+++` blocks. (fig 5
-    // dropped their older names `frontmatter-json`/`frontmatter-toml`, and
-    // `frontmatter-fig` for `fenced-fig`: each read as the `md-<lang>` block
-    // it was not.)
-    if (eql(u8, name, "semicolons")) return .semicolons_json;
-    if (eql(u8, name, "plus")) return .plus_toml;
-    if (eql(u8, name, "endmatter") or eql(u8, name, "endmatter-yaml")) return .endmatter_yaml;
-    // The bare container names, whose default language is fig — a choice
-    // this project made, not one a language states.
-    if (eql(u8, name, "html-script")) return .{ .html_script = innerNamed("figl") orelse return null };
-    if (eql(u8, name, "html-code")) return .{ .html_code = innerNamed("figl") orelse return null };
-    return null;
-}
-
-/// The registered dialect `name` as an embed archetype's inner language,
-/// registering a configured language of that name on this ask.
-fn innerNamed(name: []const u8) ?fig.Embed.InnerFormat {
-    _ = parseFormatName(name);
-    return fig.Embed.innerNamed(name);
-}
-
-/// The canonical `--embed` spelling of an archetype — the inverse of
-/// `embedTypeFromName`, for diagnostics that have a `Type` in hand and need
-/// to name it back to the user in the vocabulary they typed: the
-/// `<container>-<dialect>` name for the parametric families, and the primary
-/// (not alias) name for the presets, so the result reads back through
-/// `embedTypeFromName` as the same `Type`. Written into `buf`.
-pub fn embedTypeName(buf: []u8, t: fig.Embed.Type) []const u8 {
-    const fmt = std.fmt.bufPrint;
-    return switch (t) {
-        // A bare `---` block is spelled `frontmatter`, not `md-yaml`.
-        .frontmatter => |f| if (std.mem.eql(u8, f.embed.?.frontmatter, "---"))
-            "frontmatter"
-        else
-            fmt(buf, "md-{s}", .{f.name}) catch "md-?",
-        .fenced => |f| fmt(buf, "fenced-{s}", .{f.name}) catch "fenced-?",
-        .html_script => |f| fmt(buf, "html-script-{s}", .{f.name}) catch "html-script-?",
-        .html_code => |f| fmt(buf, "html-code-{s}", .{f.name}) catch "html-code-?",
-        .semicolons_json => "semicolons",
-        .plus_toml => "plus",
-        .endmatter_yaml => "endmatter",
-    };
-}
-
-test "embedTypeName round-trips through embedTypeFromName" {
-    // Every archetype the CLI can name must name itself back to the same Type,
-    // so a diagnostic never prints a spelling the parser would reject.
-    var buf: [64]u8 = undefined;
-    for (fig.bundle.embeddable) |n| {
-        const f = fig.Embed.innerNamed(n).?;
-        for ([_]fig.Embed.Type{ .{ .frontmatter = f }, .{ .fenced = f }, .{ .html_script = f }, .{ .html_code = f } }) |t| {
-            try std.testing.expectEqual(@as(?fig.Embed.Type, t), embedTypeFromName(embedTypeName(&buf, t)));
-        }
-    }
-    for ([_]fig.Embed.Type{ .semicolons_json, .plus_toml, .endmatter_yaml }) |t| {
-        try std.testing.expectEqual(@as(?fig.Embed.Type, t), embedTypeFromName(embedTypeName(&buf, t)));
-    }
-}
-
-/// The `--embed <archetype>` names accepted by `embedTypeFromName`, for error
-/// messages — one source of truth so a new archetype is listed everywhere.
-/// The `<lang>` half is the bundled embeddable dialects (`fig.bundle`).
-pub const embed_archetype_names = blk: {
-    var langs: []const u8 = "";
-    for (fig.bundle.embeddable, 0..) |n, i| langs = langs ++ (if (i == 0) "" else ", ") ++ n;
-    break :blk "frontmatter, semicolons (;;;), plus (+++), endmatter, " ++
-        "md-<lang>, fenced-<lang>, html-script[-<lang>], html-code[-<lang>]; " ++
-        "<lang> is one of " ++ langs ++ " (there is no md-yaml: that is `frontmatter`)";
-};
-
-/// The CLI `Format` an embed archetype's content is written in — the `get`
-/// action's `--input`/`--output` twin of `Embed.innerFormat`. Lets an
-/// explicit `--embed <archetype>` pick the right parser/printer on its own,
-/// without also requiring a redundant `--input`/`--output`. `.canonical` for
-/// a preset whose language is not registered, which nothing parses.
-pub fn embedFormat(t: fig.Embed.Type) Format {
-    const e = fig.Embed.innerFormat(t) orelse return .canonical;
-    return types.runtimeFormat(e);
-}
-
-/// Resolve the embed archetype an action should operate on, given
-/// already-read `content`. An explicit `embed` (a `--embed` flag, or a format
-/// pinned outright some other way) always wins. Otherwise, when the file's
-/// extension only implied "there's probably an embedded region here" without
-/// saying which archetype (`detect_embed` — today only `.md`/`.markdown`,
-/// via `Detected.embed_detect`), sniff the real bytes with `Embed.detect` so
-/// a `` ```fig ``` ``-fenced or JSON frontmatter block (or a YAML endmatter
-/// fence) isn't silently mistaken for `---` YAML frontmatter. Falls back to
-/// the conventional `FrontmatterYaml` default when nothing is found at all —
-/// e.g. a brand-new host file with no frontmatter yet — so `set`'s
-/// open-or-init still seeds the same archetype it always has. Returns `null`
-/// when this isn't an embed operation at all (no override, and the extension
-/// implies no embed).
-pub fn resolveEmbedTypeFromContent(content: []const u8, embed: ?fig.Embed.Type, detect_embed: bool) ?fig.Embed.Type {
-    if (embed) |e| return e;
-    if (!detect_embed) return null;
-    return fig.Embed.detect(content) orelse defaultEmbed();
-}
-
-/// The archetype a host with no region gets: bare `---` frontmatter, in
-/// the dialect that declares the bare opener.
-pub fn defaultEmbed() ?fig.Embed.Type {
-    return .{ .frontmatter = innerNamed("yaml") orelse return null };
-}
-
-/// Same as `resolveEmbedTypeFromContent`, but reads `input` itself first, for
-/// call sites that haven't already buffered the file's bytes at the point
-/// they need to decide. This only performs that read when a sniff is
-/// actually needed (`embed == null and detect_embed`) — which today only
-/// happens for a real `.md`/`.markdown` path, never stdin (`-`), so the extra
-/// positional read is always safe: it's a second read of a regular, seekable
-/// file, not a second (and empty) read of a pipe.
-pub fn resolveEmbedType(io: Io, allocator: std.mem.Allocator, input: Io.File, embed: ?fig.Embed.Type, detect_embed: bool) !?fig.Embed.Type {
-    if (embed) |e| return e;
-    if (!detect_embed) return null;
-    const content = try fileio.readAll(allocator, io, input);
-    defer allocator.free(content);
-    return fig.Embed.detect(content) orelse defaultEmbed();
 }
 
 /// The argument list with `--lang <name>` taken out: the one flag every
@@ -476,11 +306,10 @@ const Positionals = struct {
 /// `patch` and nothing in `set`.
 fn takesValue(flag: []const u8, action: []const u8) bool {
     const valued = [_][]const u8{
-        "--lang",     "--input",       "-i",            "--output",  "-o",
-        "--embed",    "--to-embed",    "--indent",      "--width",   "--gron-root",
-        "--gron-sep", "--gron-term",   "--at",          "--from",    "--delete",
-        "--comments", "--patch-input", "--patch-embed", "--against", "--spec",
-        "-s",
+        "--lang",    "--input", "-i",          "--output",   "-o",
+        "--indent",  "--width", "--gron-root", "--gron-sep", "--gron-term",
+        "--at",      "--from",  "--delete",    "--comments", "--patch-input",
+        "--against", "--spec",  "-s",
     };
     for (valued) |v| if (std.mem.eql(u8, flag, v)) return !(std.mem.eql(u8, flag, "--delete") and !isPatch(action));
     return std.mem.eql(u8, flag, "--seq") and isPatch(action);
@@ -643,19 +472,16 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             .requested_help = requested_help,
             .format = if (ext) |d| d.format else .canonical,
             .detect = !requested_help and ext == null,
-            .embed = null,
-            .detect_embed = if (ext) |d| d.embed_detect else false,
         };
         config.options = if (rename) .{ .rename = opts } else .{ .replace = opts };
     } else if (std.mem.eql(u8, action_str, "set") or std.mem.eql(u8, action_str, "s")) {
         config.action = .set;
 
-        // Leading flags in any order: `--seq`, `--embed <archetype>`, `--help`.
+        // Leading flags in any order: `--seq`, `--string`/`--raw`, `--help`.
         // Positionals follow: file, path, then the value (or, with `--seq`, the
         // sequence items).
         var seq = false;
         var value_mode: ?types.ValueMode = null;
-        var embed_override: ?fig.Embed.Type = null;
         var requested_help = false;
         var positionals: Positionals = .{};
         defer positionals.deinit(allocator);
@@ -668,15 +494,6 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 seq = true;
             } else if (try valueModeFlag("set", arg, &value_mode, ArgError.MissingSetArgument)) {
                 // taken
-            } else if (std.mem.eql(u8, arg, "--embed")) {
-                const name = args.next() orelse {
-                    log.err("Missing archetype after {s}\n", .{arg});
-                    return ArgError.MissingSetArgument;
-                };
-                embed_override = embedTypeFromName(name) orelse {
-                    log.err("Unknown --embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
-                    return ArgError.UnknownArchetype;
-                };
             } else if (!try positionals.add(allocator, "set", arg)) return ArgError.MissingSetArgument;
         }
         const pos = positionals.items.items;
@@ -694,7 +511,6 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             const file_path = pos[0];
             const path = try pathArg(allocator, pos[1]);
             const ext = detectLanguageFromFileEnding(file_path);
-            const embed = embed_override;
             config.options = .{
                 .set = .{
                     .file = file_path,
@@ -705,11 +521,8 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     .value_mode = value_mode orelse .fig,
                     .requested_help = false,
                     .format = if (ext) |d| d.format else .canonical,
-                    // Skip content sniffing when targeting an embed (the inner format
-                    // is fixed by the archetype) or when the extension resolved it.
-                    .detect = ext == null and embed == null,
-                    .embed = embed,
-                    .detect_embed = embed == null and (if (ext) |d| d.embed_detect else false),
+                    // Sniff the content when the extension resolved nothing.
+                    .detect = ext == null,
                 },
             };
         }
@@ -757,8 +570,6 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             .requested_help = requested_help,
             .format = if (ext) |d| d.format else .canonical,
             .detect = !requested_help and ext == null,
-            .embed = null,
-            .detect_embed = if (ext) |d| d.embed_detect else false,
         } };
     } else if (std.mem.eql(u8, action_str, "delete") or std.mem.eql(u8, action_str, "d")) {
         config.action = .delete;
@@ -793,8 +604,6 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             .requested_help = requested_help,
             .format = if (ext) |d| d.format else .canonical,
             .detect = !requested_help and ext == null,
-            .embed = null,
-            .detect_embed = if (ext) |d| d.embed_detect else false,
         } };
     } else if (std.mem.eql(u8, action_str, "comment") or std.mem.eql(u8, action_str, "c")) {
         config.action = .comment;
@@ -851,8 +660,6 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             .requested_help = requested_help,
             .format = if (ext) |d| d.format else .canonical,
             .detect = !requested_help and ext == null,
-            .embed = null,
-            .detect_embed = if (ext) |d| d.embed_detect else false,
         } };
     } else if (std.mem.eql(u8, action_str, "get") or std.mem.eql(u8, action_str, "g")) {
         config.action = .get;
@@ -863,9 +670,6 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         var lossless = false;
         var quiet = false;
         var strict = false;
-        // Explicit `--embed <archetype>` override and `--body` projection.
-        var embed_override: ?fig.Embed.Type = null;
-        var body = false;
         var serialize: fig.AST.SerializeOptions = .{};
         // gron projection overrides; null means "keep the gron default".
         var gron_root: ?[]const u8 = null;
@@ -911,17 +715,6 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 quiet = true;
             } else if (std.mem.eql(u8, arg, "--strict")) {
                 strict = true;
-            } else if (std.mem.eql(u8, arg, "--embed")) {
-                const name = args.next() orelse {
-                    log.err("Missing archetype after {s}\n", .{arg});
-                    return ArgError.MissingGetArgument;
-                };
-                embed_override = embedTypeFromName(name) orelse {
-                    log.err("Unknown --embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
-                    return ArgError.UnknownArchetype;
-                };
-            } else if (std.mem.eql(u8, arg, "--body")) {
-                body = true;
             } else if (std.mem.eql(u8, arg, "--indent")) {
                 const n = args.next() orelse {
                     log.err("Missing value after {s}\n", .{arg});
@@ -988,20 +781,11 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             detectLanguageFromFileEnding(file_path)
         else
             null;
-        // An explicit `--embed` archetype wins outright; otherwise, when the
-        // extension implies SOME embedded region (`.md`), the handler sniffs
-        // which archetype it actually is at runtime (`resolveEmbedType`).
-        const embed = embed_override;
         // No `--input` and an unrecognized extension ⇒ sniff the contents in the
         // handler. `.json` here is a placeholder `from`/`to`, overwritten once the
-        // real format is known. An explicit `--embed` is never sniffed: its
-        // archetype fixes the inner format outright (`embedFormat`), and that
-        // wins over a same-named extension guess — e.g. `--embed md-fig`
-        // on a `.md` file (whose extension alone says nothing about which
-        // archetype it actually is) must read/render the embed as fig, not YAML.
-        const needs_detect = !requested_help and input_override == null and embed_override == null and detected_input == null;
+        // real format is known.
+        const needs_detect = !requested_help and input_override == null and detected_input == null;
         const input_format = input_override orelse
-            (if (embed_override) |et| embedFormat(et) else null) orelse
             (if (detected_input) |d| d.format else null) orelse jsonFormat();
 
         var gron_projection: gron.Projection = .gron;
@@ -1019,9 +803,6 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             .output_explicit = output_override != null,
             .lax_tags = lax_tags,
             .lossless = lossless,
-            .embed = embed,
-            .detect_embed = embed == null and (if (detected_input) |d| d.embed_detect else false),
-            .body = body,
             .serialize = serialize,
             .quiet = quiet,
             .strict = strict,
@@ -1090,7 +871,6 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
         var dry_run = false;
         var diff_mode = false;
         var requested_help = false;
-        var embed_override: ?fig.Embed.Type = null;
         var serialize: fig.AST.SerializeOptions = .{};
         var positionals: Positionals = .{};
         defer positionals.deinit(allocator);
@@ -1113,15 +893,6 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 quiet = true;
             } else if (std.mem.eql(u8, arg, "--strict")) {
                 strict = true;
-            } else if (std.mem.eql(u8, arg, "--embed")) {
-                const name = args.next() orelse {
-                    log.err("Missing archetype after {s}\n", .{arg});
-                    return ArgError.MissingFmtArgument;
-                };
-                embed_override = embedTypeFromName(name) orelse {
-                    log.err("Unknown --embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
-                    return ArgError.UnknownArchetype;
-                };
             } else if (std.mem.eql(u8, arg, "--indent")) {
                 const n = args.next() orelse {
                     log.err("Missing value after {s}\n", .{arg});
@@ -1158,7 +929,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             log.err("No file provided.\n", .{});
             return ArgError.MissingFmtArgument;
         }
-        // `fmt` reformats a whole file (or a whole embedded region) — there is no
+        // `fmt` reformats a whole file — there is no
         // sub-document path argument the way `get`/`replace`/etc. take one.
         if (!requested_help and positionals.items.items.len > 1) {
             log.err("fmt takes a single file, not a path within it: {s}\n", .{positionals.items.items[1]});
@@ -1175,13 +946,8 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             detectLanguageFromFileEnding(file_path)
         else
             null;
-        // An explicit `--embed` archetype wins outright; otherwise, when the
-        // extension implies SOME embedded region (`.md`), the handler sniffs
-        // which archetype it actually is at runtime.
-        const embed = embed_override;
-        const needs_detect = !requested_help and input_override == null and embed_override == null and detected_input == null;
+        const needs_detect = !requested_help and input_override == null and detected_input == null;
         const from = input_override orelse
-            (if (embed_override) |et| embedFormat(et) else null) orelse
             (if (detected_input) |d| d.format else null) orelse jsonFormat();
 
         config.options = .{ .fmt = .{
@@ -1194,16 +960,12 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             .strict = strict,
             .dry_run = dry_run,
             .diff = diff_mode,
-            .embed = embed,
-            .detect_embed = embed == null and (if (detected_input) |d| d.embed_detect else false),
         } };
     } else if (std.mem.eql(u8, action_str, "convert") or std.mem.eql(u8, action_str, "cv")) {
         config.action = .convert;
 
         var input_override: ?Format = null;
         var output_override: ?Format = null;
-        var embed_override: ?fig.Embed.Type = null;
-        var to_embed_override: ?fig.Embed.Type = null;
         var lax_tags = false;
         var lossless = false;
         var quiet = false;
@@ -1242,24 +1004,6 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                 quiet = true;
             } else if (std.mem.eql(u8, arg, "--strict")) {
                 strict = true;
-            } else if (std.mem.eql(u8, arg, "--embed")) {
-                const name = args.next() orelse {
-                    log.err("Missing archetype after {s}\n", .{arg});
-                    return ArgError.MissingConvertArgument;
-                };
-                embed_override = embedTypeFromName(name) orelse {
-                    log.err("Unknown --embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
-                    return ArgError.UnknownArchetype;
-                };
-            } else if (std.mem.eql(u8, arg, "--to-embed")) {
-                const name = args.next() orelse {
-                    log.err("Missing archetype after {s}\n", .{arg});
-                    return ArgError.MissingConvertArgument;
-                };
-                to_embed_override = embedTypeFromName(name) orelse {
-                    log.err("Unknown --to-embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
-                    return ArgError.UnknownArchetype;
-                };
             } else if (std.mem.eql(u8, arg, "--indent")) {
                 const n = args.next() orelse {
                     log.err("Missing value after {s}\n", .{arg});
@@ -1309,20 +1053,8 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             log.err("convert takes a single file, not a path within it: {s}\n", .{positionals.items.items[1]});
             return ArgError.MissingConvertArgument;
         }
-        if (!requested_help and output_override != null and to_embed_override != null) {
-            log.err("--output and --to-embed are mutually exclusive: whole-file conversion picks the target format directly, embed-archetype conversion picks it via the archetype.\n", .{});
-            return ArgError.MissingConvertArgument;
-        }
-        if (!requested_help and output_override == null and to_embed_override == null) {
-            log.err("convert needs a target: pass --output <format> to convert the whole file, or --to-embed <archetype> to rehouse an embedded region.\n", .{});
-            return ArgError.MissingConvertArgument;
-        }
-        if (!requested_help and input_override != null and to_embed_override != null) {
-            log.err("--input is not used with --to-embed: the source archetype (--embed, else detected) fixes the input format.\n", .{});
-            return ArgError.MissingConvertArgument;
-        }
-        if (!requested_help and embed_override != null and to_embed_override == null) {
-            log.err("--embed requires --to-embed (embed-archetype conversion always changes the archetype); use `fmt --embed` to reformat without changing format.\n", .{});
+        if (!requested_help and output_override == null) {
+            log.err("convert needs a target: pass --output <format>.\n", .{});
             return ArgError.MissingConvertArgument;
         }
 
@@ -1330,64 +1062,27 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
 
         const detected_input: ?Detected = if (!requested_help) detectLanguageFromFileEnding(file_path) else null;
 
-        if (!requested_help and to_embed_override != null) {
-            // Embed-archetype mode: `from`/`to`/`detect` are unused — the
-            // source and target archetypes fix both formats. The source
-            // archetype is never pinned by the extension alone (`.md` only
-            // implies SOME embed, not which one) — an explicit `--embed`
-            // wins, else `detect_embed` sniffs it from the content at runtime.
-            const embed = embed_override;
-            config.options = .{ .convert = .{
-                .file = file_path,
-                .requested_help = requested_help,
-                .to_embed = to_embed_override,
-                .embed = embed,
-                .detect_embed = embed == null,
-                .lax_tags = lax_tags,
-                .lossless = lossless,
-                .serialize = serialize,
-                .quiet = quiet,
-                .strict = strict,
-                .write = write,
-                .diff = diff_mode,
-            } };
-        } else {
-            // Whole-file mode. A host document whose extension implies an
-            // embed (currently only `.md`/`.markdown`) can't be converted
-            // whole without either destroying its prose or guessing at a
-            // fence convention for `--output`'s format — point the user at
-            // `--to-embed` instead, unless they passed an explicit `--input`
-            // that overrides the extension's guess entirely.
-            if (!requested_help and input_override == null) {
-                if (detected_input) |d| if (d.embed_detect) {
-                    log.err("{s} is a host document (embedded config detected); use --to-embed <archetype> to convert its embedded region, or pass --input explicitly to force whole-file conversion.\n", .{file_path});
-                    return ArgError.MissingConvertArgument;
-                };
-            }
-            const needs_detect = !requested_help and input_override == null and detected_input == null;
-            const from = input_override orelse (if (detected_input) |d| d.format else null) orelse jsonFormat();
-            config.options = .{ .convert = .{
-                .file = file_path,
-                .requested_help = requested_help,
-                .from = from,
-                .to = output_override orelse jsonFormat(),
-                .detect = needs_detect,
-                .lax_tags = lax_tags,
-                .lossless = lossless,
-                .serialize = serialize,
-                .quiet = quiet,
-                .strict = strict,
-                .write = write,
-                .diff = diff_mode,
-            } };
-        }
+        const needs_detect = !requested_help and input_override == null and detected_input == null;
+        const from = input_override orelse (if (detected_input) |d| d.format else null) orelse jsonFormat();
+        config.options = .{ .convert = .{
+            .file = file_path,
+            .requested_help = requested_help,
+            .from = from,
+            .to = output_override orelse jsonFormat(),
+            .detect = needs_detect,
+            .lax_tags = lax_tags,
+            .lossless = lossless,
+            .serialize = serialize,
+            .quiet = quiet,
+            .strict = strict,
+            .write = write,
+            .diff = diff_mode,
+        } };
     } else if (std.mem.eql(u8, action_str, "patch") or std.mem.eql(u8, action_str, "p")) {
         config.action = .patch;
 
         var input_override: ?Format = null;
         var patch_input_override: ?Format = null;
-        var embed_override: ?fig.Embed.Type = null;
-        var patch_embed_override: ?fig.Embed.Type = null;
         var at: []fig.AST.PathSegment = &.{};
         var from: []fig.AST.PathSegment = &.{};
         var deletes: std.ArrayList(fig.Patch.Deletion) = .empty;
@@ -1510,24 +1205,6 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     log.err("Unsupported format: {s}\n", .{fmt_name});
                     return ArgError.UnsupportedFileFormat;
                 };
-            } else if (std.mem.eql(u8, arg, "--embed")) {
-                const name = args.next() orelse {
-                    log.err("Missing archetype after {s}\n", .{arg});
-                    return ArgError.MissingPatchArgument;
-                };
-                embed_override = embedTypeFromName(name) orelse {
-                    log.err("Unknown --embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
-                    return ArgError.UnknownArchetype;
-                };
-            } else if (std.mem.eql(u8, arg, "--patch-embed")) {
-                const name = args.next() orelse {
-                    log.err("Missing archetype after {s}\n", .{arg});
-                    return ArgError.MissingPatchArgument;
-                };
-                patch_embed_override = embedTypeFromName(name) orelse {
-                    log.err("Unknown --patch-embed archetype: {s} (" ++ embed_archetype_names ++ ")\n", .{name});
-                    return ArgError.UnknownArchetype;
-                };
             } else if (!try positionals.add(allocator, "patch", arg)) return ArgError.MissingPatchArgument;
         }
 
@@ -1574,10 +1251,6 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
             .detect = !requested_help and input_override == null and target_ext == null,
             .patch_format = patch_input_override orelse (if (source_ext) |d| d.format else null) orelse jsonFormat(),
             .detect_patch = !requested_help and patch_input_override == null and source_ext == null,
-            .embed = embed_override,
-            .detect_embed = embed_override == null and if (target_ext) |d| d.embed_detect else false,
-            .patch_embed = patch_embed_override,
-            .detect_patch_embed = patch_embed_override == null and if (source_ext) |d| d.embed_detect else false,
             .lossless = lossless,
             .dry_run = dry_run,
             .diff = diff_mode,
@@ -1792,8 +1465,8 @@ test "parseTarget names the file a failed action is re-parsed from, and its form
     var get = TestArgs{ .items = &.{ "fig", "get", "f.toml" } };
     try t.expectEqual(parseFormatName("toml"), types.parseTarget(try parseConfig(a, &get)).?.format);
 
-    // A host document: the region is the extension's to find, so no format
-    // is forced onto the whole file.
+    // An extension that names no format: the handler sniffs, so no format
+    // is forced onto the file.
     var md = TestArgs{ .items = &.{ "fig", "set", "notes.md", "a", "1" } };
     try t.expectEqual(@as(?Format, null), types.parseTarget(try parseConfig(a, &md)).?.format);
 
@@ -1862,69 +1535,20 @@ test "externalCommandName accepts only words that could name a program" {
     try t.expectEqual(@as(?[]const u8, null), externalCommandName(""));
 }
 
-test "embedTypeFromName maps archetype names" {
-    const t = std.testing;
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = fig.Embed.innerNamed("yaml").? }), embedTypeFromName("frontmatter"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = fig.Embed.innerNamed("yaml").? }), embedTypeFromName("frontmatter-yaml"));
-    try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("frontmatter-json"));
-    try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("frontmatter-fig"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = fig.Embed.innerNamed("toml").? }), embedTypeFromName("md-toml"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = fig.Embed.innerNamed("yaml").? }), embedTypeFromName("fenced-yaml"));
-    try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("frontmatter-toml"));
-    try t.expectEqual(@as(?fig.Embed.Type, .endmatter_yaml), embedTypeFromName("endmatter"));
-    try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("bogus"));
-
-    // The parametric families are derived over the format registry, so the
-    // ACCEPTED SET is what needs pinning rather than any one row: all four
-    // formats in each of the three `<container>-<format>` families, plus the
-    // three-of-four `md-<format>` one, and nothing else.
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = fig.Embed.innerNamed("json").? }), embedTypeFromName("fenced-json"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = fig.Embed.innerNamed("toml").? }), embedTypeFromName("fenced-toml"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = fig.Embed.innerNamed("figl").? }), embedTypeFromName("fenced-figl"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = fig.Embed.innerNamed("json").? }), embedTypeFromName("md-json"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = fig.Embed.innerNamed("figl").? }), embedTypeFromName("md-figl"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = fig.Embed.innerNamed("figl").? }), embedTypeFromName("html-script"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = fig.Embed.innerNamed("figl").? }), embedTypeFromName("html-script-figl"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = fig.Embed.innerNamed("yaml").? }), embedTypeFromName("html-script-yaml"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = fig.Embed.innerNamed("json").? }), embedTypeFromName("html-script-json"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_script = fig.Embed.innerNamed("toml").? }), embedTypeFromName("html-script-toml"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = fig.Embed.innerNamed("figl").? }), embedTypeFromName("html-code"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = fig.Embed.innerNamed("figl").? }), embedTypeFromName("html-code-figl"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = fig.Embed.innerNamed("yaml").? }), embedTypeFromName("html-code-yaml"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = fig.Embed.innerNamed("json").? }), embedTypeFromName("html-code-json"));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .html_code = fig.Embed.innerNamed("toml").? }), embedTypeFromName("html-code-toml"));
-    try t.expectEqual(@as(?fig.Embed.Type, .semicolons_json), embedTypeFromName("semicolons"));
-    try t.expectEqual(@as(?fig.Embed.Type, .plus_toml), embedTypeFromName("plus"));
-    try t.expectEqual(@as(?fig.Embed.Type, .endmatter_yaml), embedTypeFromName("endmatter-yaml"));
-
-    // Deliberately NOT spellings: `md-yaml` (a bare `---` block IS YAML
-    // frontmatter — `frontmatter`/`frontmatter-yaml` name it), and the
-    // container names that never had a bare form.
-    try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("md-yaml"));
-    try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("fenced"));
-    try t.expectEqual(@as(?fig.Embed.Type, null), embedTypeFromName("md"));
-}
-
-test "detectLanguageFromFileEnding: .md/.markdown defer the archetype to a runtime sniff" {
+test "detectLanguageFromFileEnding: .md/.markdown name no language" {
     // The extension table is derived from each compiled-in language's own
     // `extensions`, so a gated-out language contributes none — `.yaml`/`.figl`
     // below simply have no entry in a build without YAML/fig.
     if (comptime !(build_options.lang_yaml and build_options.lang_figl)) return error.SkipZigTest;
     const t = std.testing;
-    const md = detectLanguageFromFileEnding("post.md").?;
-    try t.expectEqual(parseFormatName("yaml").?, md.format);
-    try t.expect(md.embed_detect);
+    // 6.0: the CLI reads no embedded block, so a Markdown or HTML file is
+    // one whose format it can't tell, like any other unknown extension.
+    try t.expect(detectLanguageFromFileEnding("post.md") == null);
+    try t.expect(detectLanguageFromFileEnding("post.markdown") == null);
+    try t.expect(detectLanguageFromFileEnding("page.html") == null);
 
-    const markdown = detectLanguageFromFileEnding("post.markdown").?;
-    try t.expect(markdown.embed_detect);
-
-    // Other extensions imply no embed at all.
-    const yaml = detectLanguageFromFileEnding("f.yaml").?;
-    try t.expect(!yaml.embed_detect);
-
-    const figl_ext = detectLanguageFromFileEnding("f.figl").?;
-    try t.expectEqual(parseFormatName("figl").?, figl_ext.format);
-    try t.expect(!figl_ext.embed_detect);
+    try t.expectEqual(parseFormatName("yaml").?, detectLanguageFromFileEnding("f.yaml").?.format);
+    try t.expectEqual(parseFormatName("figl").?, detectLanguageFromFileEnding("f.figl").?.format);
 
     // `.fig` is not an extension of the format any more (5.0).
     try t.expect(detectLanguageFromFileEnding("f.fig") == null);
@@ -1954,44 +1578,10 @@ test "yml is an accepted spelling of yaml, as a --input value and as an extensio
     // the same `.yaml` parse either way.
     const yml_ext = detectLanguageFromFileEnding("f.yml").?;
     try t.expectEqual(parseFormatName("yaml").?, yml_ext.format);
-    try t.expect(!yml_ext.embed_detect);
     try t.expectEqual(parseFormatName("yaml").?, detectLanguageFromFileEnding("f.yaml").?.format);
 
     // An unknown token is still unknown (the alias must not widen the lookup).
     try t.expectEqual(@as(?Format, null), parseFormatName("yamll"));
-}
-
-test "resolveEmbedTypeFromContent: explicit override wins, else sniffs, else falls back to YAML" {
-    const t = std.testing;
-
-    // An explicit override always wins, regardless of content.
-    try t.expectEqual(@as(?fig.Embed.Type, .endmatter_yaml), resolveEmbedTypeFromContent("anything", .endmatter_yaml, true));
-
-    // Not a detect_embed case at all (e.g. a plain .json file): no embed.
-    try t.expectEqual(@as(?fig.Embed.Type, null), resolveEmbedTypeFromContent("{}", null, false));
-
-    // detect_embed sniffs the real archetype from the bytes — this is the
-    // fig-frontmatter regression: a `.md` file whose actual content is a
-    // ```fig fenced block must resolve to FrontmatterFig, not be assumed to
-    // be YAML just because the extension is `.md`.
-    try t.expectEqual(
-        @as(?fig.Embed.Type, .{ .fenced = fig.Embed.innerNamed("figl").? }),
-        resolveEmbedTypeFromContent("```fig\ntitle = hi\n```\nbody\n", null, true),
-    );
-    try t.expectEqual(
-        @as(?fig.Embed.Type, .semicolons_json),
-        resolveEmbedTypeFromContent(";;;\n{\"a\":1}\n;;;\nbody\n", null, true),
-    );
-    try t.expectEqual(
-        @as(?fig.Embed.Type, .{ .frontmatter = fig.Embed.innerNamed("yaml").? }),
-        resolveEmbedTypeFromContent("---\na: 1\n---\nbody\n", null, true),
-    );
-
-    // Nothing detected at all (e.g. a brand-new/plain host file): falls back
-    // to the historical FrontmatterYaml default rather than `null`, so `set`'s
-    // open-or-init still seeds the same archetype it always has.
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = fig.Embed.innerNamed("yaml").? }), resolveEmbedTypeFromContent("just prose\n", null, true));
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .frontmatter = fig.Embed.innerNamed("yaml").? }), resolveEmbedTypeFromContent("", null, true));
 }
 
 test "parseConfig routes patch: both files, both sides' formats, and the merge strategies" {
@@ -2040,22 +1630,6 @@ test "parseConfig routes patch: both files, both sides' formats, and the merge s
     try t.expectEqualStrings("x", s.options.patch.deletes[0][0].key);
     try t.expectEqual(@as(usize, 2), s.options.patch.deletes[1][1].index);
 
-    // A `.md` on either side implies SOME embedded region but never which
-    // archetype, so each side defers to its own runtime sniff — the same rule
-    // the other actions follow.
-    var md = TestArgs{ .items = &.{ "fig", "patch", "post.md", "meta.md" } };
-    const m = try parseConfig(a, &md);
-    try t.expect(m.options.patch.detect_embed);
-    try t.expect(m.options.patch.detect_patch_embed);
-    try t.expectEqual(@as(?fig.Embed.Type, null), m.options.patch.embed);
-
-    // An explicit archetype pins one side without touching the other.
-    var pinned = TestArgs{ .items = &.{ "fig", "patch", "post.md", "meta.md", "--embed", "endmatter" } };
-    const pin = try parseConfig(a, &pinned);
-    try t.expectEqual(@as(?fig.Embed.Type, .endmatter_yaml), pin.options.patch.embed);
-    try t.expect(!pin.options.patch.detect_embed);
-    try t.expect(pin.options.patch.detect_patch_embed);
-
     // Unknown extensions on both sides defer both formats to a content sniff.
     var sniff = TestArgs{ .items = &.{ "fig", "patch", "a.weird", "-" } };
     const sn = try parseConfig(a, &sniff);
@@ -2069,7 +1643,7 @@ test "parseConfig routes patch: both files, both sides' formats, and the merge s
     // `convert` test above.
 }
 
-test "parseConfig routes set, --seq, and --embed" {
+test "parseConfig routes set and --seq" {
     const t = std.testing;
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
@@ -2090,28 +1664,9 @@ test "parseConfig routes set, --seq, and --embed" {
     try t.expect(sqc.options.set.seq);
     try t.expectEqual(@as(usize, 3), sqc.options.set.values.len);
     try t.expectEqualStrings("z", sqc.options.set.values[2]);
-
-    // --embed selects the archetype explicitly (endmatter here).
-    var em = TestArgs{ .items = &.{ "fig", "set", "--embed", "endmatter", "post.md", "k", "v" } };
-    const emc = try parseConfig(a, &em);
-    try t.expectEqual(@as(?fig.Embed.Type, .endmatter_yaml), emc.options.set.embed);
-
-    // --embed fenced-fig routes to the fig-fenced archetype.
-    var fm = TestArgs{ .items = &.{ "fig", "set", "--embed", "fenced-figl", "post.md", "k", "v" } };
-    const fmc = try parseConfig(a, &fm);
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = fig.Embed.innerNamed("figl").? }), fmc.options.set.embed);
-
-    // No --embed on a `.md` file: the fix for the fig-frontmatter
-    // autodetection bug — `embed` stays null and `detect_embed` fires, so
-    // the handler sniffs the actual archetype from the file's bytes at
-    // runtime instead of the extension alone assuming YAML frontmatter.
-    var md = TestArgs{ .items = &.{ "fig", "set", "post.md", "k", "v" } };
-    const mdc = try parseConfig(a, &md);
-    try t.expectEqual(@as(?fig.Embed.Type, null), mdc.options.set.embed);
-    try t.expect(mdc.options.set.detect_embed);
 }
 
-test "parseConfig routes convert: whole-file mode, embed mode, and their guards" {
+test "parseConfig routes convert" {
     const t = std.testing;
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
@@ -2123,7 +1678,6 @@ test "parseConfig routes convert: whole-file mode, embed mode, and their guards"
     try t.expectEqual(CliAction.convert, wfc.action);
     try t.expectEqual(parseFormatName("yaml").?, wfc.options.convert.from);
     try t.expectEqual(parseFormatName("toml").?, wfc.options.convert.to);
-    try t.expectEqual(@as(?fig.Embed.Type, null), wfc.options.convert.to_embed);
     try t.expect(!wfc.options.convert.detect);
 
     // Whole-file mode with an unrecognized extension: `--output` alone still
@@ -2132,41 +1686,14 @@ test "parseConfig routes convert: whole-file mode, embed mode, and their guards"
     const detc = try parseConfig(a, &det);
     try t.expect(detc.options.convert.detect);
 
-    // Embed mode: --to-embed alone (no --embed) defers source detection to
-    // the handler (`detect_embed`); the file extension doesn't imply an
-    // archetype here (not .md), so `embed` stays null.
-    var em = TestArgs{ .items = &.{ "fig", "convert", "--to-embed", "semicolons", "f.txt" } };
-    const emc = try parseConfig(a, &em);
-    try t.expectEqual(@as(?fig.Embed.Type, .semicolons_json), emc.options.convert.to_embed);
-    try t.expectEqual(@as(?fig.Embed.Type, null), emc.options.convert.embed);
-    try t.expect(emc.options.convert.detect_embed);
-
-    // Embed mode on a `.md` file: the extension alone only implies SOME
-    // embedded region, never which archetype — `embed` stays null and
-    // `detect_embed` fires so the handler sniffs the actual fences at
-    // runtime instead of assuming YAML frontmatter outright.
-    var md = TestArgs{ .items = &.{ "fig", "convert", "--to-embed", "semicolons", "post.md" } };
-    const mdc = try parseConfig(a, &md);
-    try t.expectEqual(@as(?fig.Embed.Type, null), mdc.options.convert.embed);
-    try t.expect(mdc.options.convert.detect_embed);
-
-    // Embed mode: explicit --embed overrides the extension default.
-    var ov = TestArgs{ .items = &.{ "fig", "convert", "--embed", "endmatter", "--to-embed", "fenced-figl", "post.md" } };
-    const ovc = try parseConfig(a, &ov);
-    try t.expectEqual(@as(?fig.Embed.Type, .endmatter_yaml), ovc.options.convert.embed);
-    try t.expectEqual(@as(?fig.Embed.Type, .{ .fenced = fig.Embed.innerNamed("figl").? }), ovc.options.convert.to_embed);
-
-    // The four guard rejections (no target at all; --output+--to-embed
-    // together; --embed without --to-embed; whole-file --output on a `.md`
-    // host document without an explicit --input) all return
-    // `ArgError.MissingConvertArgument` after a `log.err` — verified manually
-    // against the built CLI rather than here, since this test binary's
-    // default runner (Zig 0.16) fails any test that logs at `.err`
-    // regardless of whether the returned error was expected (see
+    // The rejections (no --output) return `ArgError.MissingConvertArgument`
+    // after a `log.err` — verified against the built CLI rather than here,
+    // since this test binary's default runner fails any test that logs at
+    // `.err` regardless of whether the returned error was expected (see
     // `test_runner.zig`'s `log_err_count`), the same reason no other
     // `parseConfig` error path in this file is exercised as a unit test.
 
-    // An explicit --input forces whole-file conversion on a `.md` file anyway.
+    // An explicit --input reads a file whose extension names no format.
     var mdforced = TestArgs{ .items = &.{ "fig", "convert", "-i", "yaml", "-o", "toml", "post.md" } };
     const mdforcedc = try parseConfig(a, &mdforced);
     try t.expectEqual(parseFormatName("yaml").?, mdforcedc.options.convert.from);

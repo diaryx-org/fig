@@ -10,9 +10,7 @@
 //! refusals, the same registry-derived dialect.
 //!
 //! Slice in, slice out (never a file handle) so the one function serves all
-//! four of the action's modes — write in place, `--dry-run`, `--diff`, and the
-//! embedded-region path, which patches only the bytes between a host
-//! document's fences and splices the result back.
+//! three of the action's modes — write in place, `--dry-run` and `--diff`.
 const std = @import("std");
 const fig = @import("fig");
 

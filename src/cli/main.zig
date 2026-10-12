@@ -4,7 +4,7 @@
 //!
 //! This file is deliberately thin: process/terminal setup, `std.log` routing,
 //! and `parseConfig`'s error-to-help mapping, then a dispatch switch straight
-//! into `actions.zig`. Everything else (arg parsing, format/embed detection,
+//! into `actions.zig`. Everything else (arg parsing, format detection,
 //! parse dispatch, in-place editing, reformat/convert, diagnostic rendering,
 //! the `fig-<action>` handoff) lives in its own sibling module — see each
 //! file's own doc comment.
@@ -205,11 +205,10 @@ pub fn main(init: std.process.Init) !void {
             try Help.lang(&stderr_terminal, "fig");
             std.process.exit(2);
         },
-        // Each has said what was wrong already (`args.pathArg`, the archetype
-        // error, the action `help` was given), and nothing more is worth
-        // adding: the format list would only mislead after a bad archetype
-        // name, and `fig --help` after being told `fig <action> --help`.
-        ArgError.InvalidPath, ArgError.UnknownArchetype, ArgError.HelpNamesAction => std.process.exit(2),
+        // Each has said what was wrong already (`args.pathArg`, the action
+        // `help` was given), and nothing more is worth adding: `fig --help`
+        // would only mislead after being told `fig <action> --help`.
+        ArgError.InvalidPath, ArgError.HelpNamesAction => std.process.exit(2),
         // `help`/`version` with an argument after them: said which already.
         ArgError.SurplusArgument => {
             try stderr_terminal.writer.writeAll("See `fig --help`.\n");

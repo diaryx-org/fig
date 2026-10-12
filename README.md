@@ -81,26 +81,6 @@ $ fig get config.yaml service -o json5
 }
 ```
 
-`fig`can also edit (and convert) config *embedded in* other files:
-
-```bash
-$ fig set post.md tags --seq notes zig
-$ fig convert post.md --to-embed plus --diff
---- post.md
-+++ post.md
-@@ -1,7 +1,7 @@
-----
--title: Hello
--tags: [notes, zig]   # taxonomy
-----
-++++
-+title = "Hello"
-+tags = ["notes", "zig"] # taxonomy
-++++
-
- # Hello
-```
-
 `fig` can also merge one file into another —
 or one part of one file into part of another —
 touching nothing the patch doesn't name:

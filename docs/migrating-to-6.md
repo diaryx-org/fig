@@ -34,12 +34,17 @@ the change; this page is the part of it that asks you to change something.
 | 5.x | 6.0 |
 | --- | --- |
 | `-i fig` / `-o fig` | `-i figl` / `-o figl` |
-| `--embed fenced-fig`, `md-fig`, `html-script-fig`, `html-code-fig` | `fenced-figl`, `md-figl`, `html-script-figl`, `html-code-figl` (the same for `--to-embed` and `--patch-embed`) |
 | `fig lang list` under `compiled:`, a left-out format "compiled out" | under `built in:`, a left-out format "not built in" |
 | a helper named after a left-out format "stands in" for it | a helper of that name *is* that format; its extension reaches it too |
 | `--strict` counting "fig authoring warning(s)" | counts under the dialect's name: "3 yaml warning(s)" |
 | messages saying "a fig value" | "a figl value" |
 | `zig build -Dfig=false` | `-Dfigl=false` |
+
+The CLI no longer reads or writes embedded blocks. `--embed`, `--to-embed`,
+`--patch-embed` and `get --body` are gone, and a Markdown or HTML file is no
+longer opened through its frontmatter or blocks: like any file whose
+extension names no format, its contents are sniffed. The library APIs — Rust
+`Embed`, TypeScript `Embed`, C `fig_embed_*` — are unchanged in this release.
 
 ## Rust
 

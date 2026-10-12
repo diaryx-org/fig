@@ -125,6 +125,7 @@ pub const Language = struct {
 // submodule's tests, so the module owns its own test surface. The conformance
 // suite is build-option-gated and stays in root.zig.
 test {
+    _ = @import("stream.zig");
     _ = @import("tokenizer.zig");
     _ = @import("parser.zig");
     _ = @import("printer.zig");

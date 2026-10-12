@@ -263,10 +263,11 @@ function render(value: Value | JsInput, format: Format, options: SerializeOption
  *  Mirrors the Rust binding's crate-private `value_text`; module-internal
  *  here too (the package root does not export it), shared with edit-ops.ts. */
 export function valueText(value: Value | JsInput, format: Format, options?: SerializeOptions): string {
-  // Spliced text lands inline (`key = <text>`): fig-dialect containers must
-  // render as flow, since their block spellings only parse as standalone
-  // lines and would re-read as a bare string after the splice.
-  const s = render(value, format, options, format === Format.Fig, true);
+  // Spliced text lands inline (`key = <text>`), so a container is asked for
+  // in flow: a format whose block spelling only parses as lines of its own
+  // (figl's `* ` items and section headers) would re-read one there as a bare
+  // string. A format with one spelling for a container ignores it.
+  const s = render(value, format, options, true, true);
   return s.endsWith("\n") ? s.slice(0, -1) : s;
 }
 

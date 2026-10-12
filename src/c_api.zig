@@ -346,6 +346,9 @@ pub export fn fig_language_register(vt: ?*const FigLanguageVTable, out_format: ?
 /// per process, its name is not.
 pub export fn fig_format_by_name(name: ?[*:0]const u8) c_int {
     const n = std.mem.span(name orelse return -1);
+    if (comptime build_options.contract_copies) {
+        if (std.mem.startsWith(u8, n, "c-")) registerContractCopies();
+    }
     if (Runtime.entryByName(n)) |e| return e.abi;
     inline for (Languages.dialects) |d| {
         if (std.mem.eql(u8, d.name, n)) return d.abi_value;
@@ -525,6 +528,21 @@ pub export fn fig_stream_split(input: ?[*]const u8, input_len: usize, format: c_
 pub export fn fig_stream_free(docs: ?[*]FigStreamDoc, count: usize) void {
     const p = docs orelse return;
     activeAllocator().free(p[0..count]);
+}
+
+/// `-Dcontract-copies`: every compiled language registered again through its
+/// contract vtable, its dialects named `c-<name>`, once.
+fn registerContractCopies() void {
+    const contract = @import("kit/contract.zig");
+    const list = @import("languages/list.zig");
+    if (Runtime.entryByName("c-json") != null or Runtime.entryByName("c-yaml") != null) return;
+    inline for (list.rows) |row| {
+        const L = Languages.of(row.name);
+        if (L != void) {
+            const V = contract.VTable(L, "c-");
+            _ = Runtime.register(activeAllocator(), &V.vtable) catch {};
+        }
+    }
 }
 
 fn capsBits(caps: Languages.Caps) u32 {

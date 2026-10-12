@@ -755,16 +755,13 @@ fn build(handle: *mut ffi::FigValue, value: &Value) -> Result<ffi::FigNodeId, Er
 /// scalar's plain text), minus the trailing newline the serializer appends
 /// (the editor owns newline framing).
 pub(crate) fn value_text(value: &Value, format: Format) -> Result<String, Error> {
-    // The text is spliced inline (`key = <text>`), so for the fig dialect a
-    // container must render as flow — its block spelling (`* ` element lines,
-    // section headers) only parses as standalone lines and would re-read as a
-    // bare string after the splice. Other formats keep their defaults: their
-    // block spellings splice correctly (YAML) or don't arise.
+    // The text is spliced inline (`key = <text>`), so a container is asked
+    // for in flow: a format whose block spelling only parses as lines of its
+    // own (figl's `* ` items and section headers) would re-read one there as
+    // a bare string. A format with one spelling for a container ignores it.
     let mut ffi_options: crate::ffi::FigSerializeOptions = SerializeOptions::default().into();
     ffi_options.splice = 1;
-    if format == Format::Fig {
-        ffi_options.flow = 1;
-    }
+    ffi_options.flow = 1;
     let mut s = value.serialize_ffi(format, ffi_options)?;
     if s.ends_with('\n') {
         s.pop();

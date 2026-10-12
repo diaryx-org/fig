@@ -236,18 +236,24 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
         }
 
         /// The printer of the dialect `t`: its splice printer for a value the
-        /// editor splices, its fragment printer for a root a whole document
-        /// cannot have, else its document printer.
+        /// editor splices, its fragment printer for a fragment, else its
+        /// document printer.
         fn printWith(t: L.Type, w: *std.Io.Writer, ast: *const AST, options: AST.SerializeOptions) !void {
             inline for (L.dialects) |d| {
                 if (d.dialect == t) {
                     if (comptime @hasDecl(L.Printer, "printSplice")) {
                         if (options.splice) return L.Printer.printSplice(w, ast, options);
                     }
-                    if (comptime d.print_fragment_name) |fragment| switch (ast.nodes[ast.root].kind) {
-                        .mapping, .sequence => {},
-                        else => return @field(L.Printer, fragment)(w, ast, options),
-                    };
+                    // A fragment: a value the editor splices (`splice`, and
+                    // `flow`, which only a fragment reads), or a root a whole
+                    // document cannot have.
+                    if (comptime d.print_fragment_name) |fragment| {
+                        const scalar_root = switch (ast.nodes[ast.root].kind) {
+                            .mapping, .sequence => false,
+                            else => true,
+                        };
+                        if (options.splice or options.flow or scalar_root) return @field(L.Printer, fragment)(w, ast, options);
+                    }
                     return @field(L.Printer, d.print_name)(w, ast, options);
                 }
             }

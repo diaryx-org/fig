@@ -16,7 +16,7 @@
 const Printer = @This();
 const std = @import("std");
 const AST = @import("../../ast/ast.zig");
-const num = @import("../../util/number.zig");
+const num = @import("../../kit/number.zig");
 const Writer = std.Io.Writer;
 
 /// ZON cannot represent a YAML alias (materialize expands them first) nor a

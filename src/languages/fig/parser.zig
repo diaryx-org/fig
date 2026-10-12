@@ -41,8 +41,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
-const Span = @import("../../util/span.zig");
-const datetime = @import("../../util/datetime.zig");
+const Span = @import("../../kit/span.zig");
+const datetime = @import("../../kit/datetime.zig");
 const tok = @import("tokenizer.zig");
 const Type = @import("fig.zig").Type;
 
@@ -230,11 +230,11 @@ pub fn shortLabel(code: Error) []const u8 {
 /// half of the diagnostic system that has nothing to do with fig's own error
 /// codes. Every other language's parser (`json`, and `toml`/`yaml` to come)
 /// reuses this same module rather than each growing its own copy — see
-/// `src/parse_diagnostic.zig`'s doc comment. `Location`/`locateOffset` are
+/// `src/kit/parse_diagnostic.zig`'s doc comment. `Location`/`locateOffset` are
 /// re-exported under their original names so existing call sites
 /// (`Parser.locateOffset`, `Parser.Location`, in `main.zig`/`lsp/main.zig`)
 /// keep working unchanged.
-const parse_diagnostic = @import("../../parse_diagnostic.zig");
+const parse_diagnostic = @import("../../kit/parse_diagnostic.zig");
 pub const Location = parse_diagnostic.Location;
 pub const locateOffset = parse_diagnostic.locateOffset;
 
@@ -1567,7 +1567,9 @@ fn sniffToNode(self: *Parser, text: []const u8) TNode {
         .null_ => .{ .value = .null_, .span = span },
         .boolean => |b| .{ .value = .{ .boolean = b }, .span = span },
         .number => |n| .{ .value = .{ .number = n }, .span = span },
-        .datetime => |d| .{ .value = .{ .extended = .{ .kind = d.kind, .text = d.raw } }, .span = span },
+        .datetime => |d| .{ .value = .{ .extended = .{ .kind = switch (d.kind) {
+            inline else => |k| @field(AST.Node.Kind.Extended.ExtKind, @tagName(k)),
+        }, .text = d.raw } }, .span = span },
         .string => .{ .value = .{ .string = text }, .span = span },
     };
 }

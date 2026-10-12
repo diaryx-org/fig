@@ -56,8 +56,8 @@ const std = @import("std");
 const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
 const Type = @import("plist.zig").Type;
-const Span = @import("../../util/span.zig");
-const Tokenizer = @import("../xml/tokenizer.zig");
+const Span = @import("../../kit/span.zig");
+const Tokenizer = @import("../../kit/xml.zig");
 
 const Id = AST.Node.Id;
 const ExtKind = AST.Node.Kind.Extended.ExtKind;

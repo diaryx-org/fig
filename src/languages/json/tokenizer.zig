@@ -9,9 +9,9 @@ const builtin = @import("builtin");
 const log = std.log.scoped(.tokenizer);
 const testing = std.testing;
 const JsonFormat = @import("json.zig").Type;
-const Span = @import("../../util/span.zig");
-const ascii = @import("../../util/util.zig").ascii;
-pub const Token = @import("../../token.zig").Token(Kind);
+const Span = @import("../../kit/span.zig");
+const ascii = @import("../../kit/kit.zig").ascii;
+pub const Token = @import("../../kit/token.zig").Token(Kind);
 
 pub const Kind = enum {
     // Structural

@@ -16,8 +16,8 @@ const testing = std.testing;
 const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
 const Type = @import("toml.zig").Type;
-const util = @import("../../util/util.zig");
-const Span = @import("../../util/span.zig");
+const util = @import("../../kit/kit.zig");
+const Span = @import("../../kit/span.zig");
 const ascii = util.ascii;
 const datetime = util.datetime;
 const Unicode = util.Unicode;
@@ -132,7 +132,7 @@ pub const ParseError = error{
 };
 pub const ParserError = ParseError || Tokenizer.TokenizeError || std.mem.Allocator.Error;
 
-const parse_diagnostic = @import("../../parse_diagnostic.zig");
+const parse_diagnostic = @import("../../kit/parse_diagnostic.zig");
 
 /// Every error this parser can produce — both the tokenizer (which runs to
 /// completion before the statement loop starts, so its failures need

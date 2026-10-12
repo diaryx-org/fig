@@ -56,7 +56,7 @@ const testing = std.testing;
 
 const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
-const Span = @import("../../util/span.zig");
+const Span = @import("../../kit/span.zig");
 const editor = @import("../../editor.zig");
 const lang = @import("../manifest.zig");
 const splice = @import("../../editor/splice.zig");

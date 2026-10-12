@@ -5,18 +5,16 @@
 //! tokens by it.
 
 const std = @import("std");
-const AST = @import("../ast/ast.zig");
 const datetime = @import("datetime.zig");
 const ascii = @import("ascii.zig");
 
-pub const ExtKind = AST.Node.Kind.Extended.ExtKind;
 
 /// The result of sniffing a bare (unquoted, undelimited) token.
 pub const Sniffed = union(enum) {
     null_,
     boolean: bool,
     number: NumberResult,
-    datetime: struct { kind: ExtKind, raw: []const u8 },
+    datetime: struct { kind: datetime.Kind, raw: []const u8 },
     /// Nothing typed matched; the caller keeps the original text verbatim as a
     /// plain string (the literal-else-string fallback).
     string,
@@ -35,15 +33,7 @@ pub fn sniffBare(token: []const u8) Sniffed {
     if (std.mem.eql(u8, token, "false")) return .{ .boolean = false };
     if (sniffNumber(token)) |n| return .{ .number = n };
     if (datetime.classify(token, .{})) |k| {
-        return .{ .datetime = .{
-            .kind = switch (k) {
-                .offset_datetime => .offset_datetime,
-                .local_datetime => .local_datetime,
-                .local_date => .local_date,
-                .local_time => .local_time,
-            },
-            .raw = token,
-        } };
+        return .{ .datetime = .{ .kind = k, .raw = token } };
     } else |_| {}
     return .string;
 }

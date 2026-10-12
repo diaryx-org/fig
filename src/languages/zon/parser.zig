@@ -30,7 +30,7 @@ const Ast = std.zig.Ast;
 const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
 const Type = @import("zon.zig").Type;
-const Span = @import("../../util/span.zig");
+const Span = @import("../../kit/span.zig");
 
 allocator: std.mem.Allocator,
 /// Borrowed: the original (non-sentinel) input. AST string/number payloads that

@@ -27,7 +27,7 @@ const AST = @import("ast.zig");
 const Node = AST.Node;
 const Comment = AST.Comment;
 const NodeComments = AST.NodeComments;
-const Span = @import("../util/span.zig");
+const Span = @import("../kit/span.zig");
 
 allocator: Allocator,
 nodes: std.ArrayList(Node) = .empty,

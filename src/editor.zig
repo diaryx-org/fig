@@ -5,7 +5,7 @@ const build_options = @import("build_options");
 
 const AST = @import("ast/ast.zig");
 const Document = @import("document.zig");
-const Span = @import("util/span.zig");
+const Span = @import("kit/span.zig");
 const json = @import("languages/json/json.zig");
 const regions = @import("editor/regions.zig");
 /// The source-coordinate utilities the engine and the regions module share.
@@ -34,7 +34,7 @@ const log = std.log.scoped(.editor);
 // `docs/proposals/language-interface.md`. A leaf module, so importing it here
 // (and from every `<lang>/<lang>.zig`) pulls in nothing else.
 const lang = @import("languages/manifest.zig");
-const bare_literal = @import("util/literal.zig");
+const bare_literal = @import("kit/literal.zig");
 
 // The RENDERING half of the interface — the part `syntax` can't express.
 //
@@ -85,7 +85,7 @@ const Ini = @import("languages/ini/ini.zig").Language;
 const Plist = @import("languages/plist/plist.zig").Language;
 const NestedText = @import("languages/nestedtext/nestedtext.zig").Language;
 
-/// What the bare-literal rule (`util/literal.zig`) makes of `text`, trimmed
+/// What the bare-literal rule (`kit/literal.zig`) makes of `text`, trimmed
 /// of whitespace: the `Literal` a value renderer is handed. `true`, `42`,
 /// `2.5`, `2026-09-10` and `null` are typed and `Yes`, `007` and `TRUE`
 /// stay strings, in every format alike.

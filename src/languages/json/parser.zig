@@ -15,15 +15,15 @@ const std = @import("std");
 const builtin = @import("builtin");
 const testing = std.testing;
 const log = std.log.scoped(.parser);
-const Unicode = @import("../../util/util.zig").Unicode;
+const Unicode = @import("../../kit/kit.zig").Unicode;
 const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
 const Tokenizer = @import("tokenizer.zig").Tokenizer;
-const Token = @import("../../token.zig").Token(Tokenizer.Kind);
+const Token = @import("../../kit/token.zig").Token(Tokenizer.Kind);
 const Type = @import("json.zig").Type;
-const Span = @import("../../util/span.zig");
+const Span = @import("../../kit/span.zig");
 
-const parse_diagnostic = @import("../../parse_diagnostic.zig");
+const parse_diagnostic = @import("../../kit/parse_diagnostic.zig");
 
 const ContainerKind = enum { array, object };
 /// Either an array or object in the process of being parsed.

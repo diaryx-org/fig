@@ -3,7 +3,7 @@ const std = @import("std");
 const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
 const lang = @import("../manifest.zig");
-const json_string = @import("../../util/json_string.zig");
+const json_string = @import("../../kit/json_string.zig");
 
 pub const Parser = @import("parser.zig");
 pub const Tokenizer = @import("tokenizer.zig");

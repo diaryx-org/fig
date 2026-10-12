@@ -11,13 +11,13 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const AST = @import("../../ast/ast.zig");
-const literal = @import("../../util/literal.zig");
+const literal = @import("../../kit/literal.zig");
 
 pub const ExtKind = AST.Node.Kind.Extended.ExtKind;
 
 /// The literal-else-string classifier is the contract's, not figl's alone:
 /// the editor types a caller's value text by the same rule. It lives in
-/// `util/literal.zig`, shared by core and this tokenizer.
+/// the kit's `literal.zig`, shared by core and this tokenizer.
 pub const Sniffed = literal.Sniffed;
 pub const sniffBare = literal.sniffBare;
 pub const NumberResult = literal.NumberResult;

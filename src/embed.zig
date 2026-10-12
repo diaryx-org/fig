@@ -6,7 +6,7 @@ const Allocator = std.mem.Allocator;
 const Language = @import("languages/language.zig");
 const Runtime = @import("languages/runtime.zig");
 const Document = @import("document.zig");
-const Span = @import("util/span.zig");
+const Span = @import("kit/span.zig");
 const build_options = @import("build_options");
 
 const Embed = @This();

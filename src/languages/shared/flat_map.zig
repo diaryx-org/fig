@@ -15,7 +15,7 @@
 
 const std = @import("std");
 const AST = @import("../../ast/ast.zig");
-const Span = @import("../../util/span.zig");
+const Span = @import("../../kit/span.zig");
 const Document = @import("../../document.zig");
 
 /// Owns the three parallel node-indexed arrays every fig parser builds

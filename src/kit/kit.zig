@@ -1,6 +1,17 @@
+//! The kit: the stateless helpers fig's languages share — the spelling of
+//! numbers and datetimes, the JSON-style string escaper several formats
+//! borrow, the bare-literal rule, a token and its span, the XML tokenizer,
+//! and the shape of a parse diagnostic. It imports nothing of core's, so a
+//! language built apart from core can carry a copy of it, which costs bytes
+//! and nothing else (docs/proposals/core-only.md §4.8). Core uses it too.
+
 const std = @import("std");
 
 pub const Span = @import("span.zig");
+pub const Token = @import("token.zig").Token;
+pub const literal = @import("literal.zig");
+pub const parse_diagnostic = @import("parse_diagnostic.zig");
+pub const xml = @import("xml.zig");
 pub const Unicode = @import("unicode.zig");
 pub const json_string = @import("json_string.zig");
 pub const ascii = @import("ascii.zig");
@@ -9,6 +20,10 @@ pub const width = @import("width.zig");
 pub const number = @import("number.zig");
 
 test {
+    _ = literal;
+    _ = parse_diagnostic;
+    _ = xml;
+    _ = @import("token.zig");
     _ = json_string;
     _ = ascii;
     _ = datetime;

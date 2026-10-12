@@ -18,7 +18,7 @@ pub const Editor = @import("editor.zig").Editor;
 pub const Patch = @import("patch.zig");
 pub const Document = @import("document.zig");
 /// A `[start, end)` byte range — what `Document`'s span tables hold.
-pub const Span = @import("util/span.zig");
+pub const Span = @import("kit/span.zig");
 pub const AST = @import("ast/ast.zig");
 pub const Embed = @import("embed.zig");
 pub const Lossless = @import("lossless.zig");
@@ -37,7 +37,7 @@ pub const Diagnostics = @import("diagnostics.zig");
 /// shape). Each language keeps its own error/warning codes and teaching
 /// messages; only the offset/rendering machinery is shared — see the module
 /// doc comment.
-pub const ParseDiagnostic = @import("parse_diagnostic.zig");
+pub const ParseDiagnostic = @import("kit/parse_diagnostic.zig");
 /// The canonical form: the AST's own 1:1, total, bijective text encoding — the
 /// comparison oracle and lossless serialization.
 pub const Canonical = @import("canonical/canonical.zig");
@@ -66,12 +66,11 @@ test {
     _ = @import("materialize.zig");
     _ = @import("flat_strip.zig");
     _ = @import("diagnostics.zig");
-    _ = @import("parse_diagnostic.zig");
+    _ = @import("kit/parse_diagnostic.zig");
     _ = @import("canonical/canonical.zig");
     _ = @import("deserialize.zig");
     _ = @import("c_api.zig");
-    _ = @import("util/util.zig");
-    _ = @import("util/literal.zig");
+    _ = @import("kit/kit.zig");
     // The fuzz targets double as deterministic smoke tests under a plain
     // `zig build test` (Zig runs each one over an empty Smith tape when the
     // binary is not built in fuzz mode), so they should never need a flag to

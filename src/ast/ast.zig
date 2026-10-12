@@ -15,7 +15,7 @@ const AST = @This();
 const std = @import("std");
 const activeTag = std.meta.activeTag;
 const Allocator = std.mem.Allocator;
-const util = @import("../util/util.zig");
+const util = @import("../kit/kit.zig");
 
 // ── Sub-modules ─────────────────────────────────────────────────────────────
 // The AST's behavior is split across sibling files, each operating on a

@@ -17,7 +17,7 @@
 //! arithmetic, shared by the engine and `editor/regions.zig`.
 
 const std = @import("std");
-const Span = @import("../util/span.zig");
+const Span = @import("../kit/span.zig");
 const lang = @import("../languages/manifest.zig");
 
 /// Byte index of the start of the line containing `at` (just past the previous

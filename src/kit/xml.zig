@@ -19,8 +19,8 @@
 const Tokenizer = @This();
 
 const std = @import("std");
-const Span = @import("../../util/span.zig");
-pub const Token = @import("../../token.zig").Token(Kind);
+const Span = @import("span.zig");
+pub const Token = @import("token.zig").Token(Kind);
 
 pub const Kind = enum {
     /// `<` opening an element start-tag (span is just the `<`).

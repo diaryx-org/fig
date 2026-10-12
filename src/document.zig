@@ -2,7 +2,7 @@ const Document = @This();
 const std = @import("std");
 
 const AST = @import("ast/ast.zig");
-const Span = @import("util/span.zig");
+const Span = @import("kit/span.zig");
 
 /// A parsed document plus source-location metadata.
 ///

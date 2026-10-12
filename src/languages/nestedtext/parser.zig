@@ -44,11 +44,11 @@ const testing = std.testing;
 const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
 const Type = @import("nestedtext.zig").Type;
-const Span = @import("../../util/span.zig");
+const Span = @import("../../kit/span.zig");
 const flat_map = @import("../shared/flat_map.zig");
 const Tokenizer = @import("tokenizer.zig");
 const Line = Tokenizer.Line;
-const parse_diagnostic = @import("../../parse_diagnostic.zig");
+const parse_diagnostic = @import("../../kit/parse_diagnostic.zig");
 
 allocator: std.mem.Allocator,
 version: Type = .NESTEDTEXT,

@@ -4,8 +4,8 @@
 const std = @import("std");
 const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
-const util = @import("../../util/util.zig");
-const Span = @import("../../util/span.zig");
+const util = @import("../../kit/kit.zig");
+const Span = @import("../../kit/span.zig");
 const Unicode = util.Unicode;
 const ascii = util.ascii;
 const datetime = util.datetime;
@@ -161,7 +161,7 @@ const PendingAnchor = struct { name: []const u8, span: Span };
 const ParseError = error{ UnexpectedToken, EmptyDocument, UnclosedString, InvalidUnicodeEscape, MultipleDocuments, DuplicateProperty, UndefinedAlias, InvalidDirective, UndefinedTagHandle };
 const ParserError = ParseError || std.mem.Allocator.Error;
 
-const parse_diagnostic = @import("../../parse_diagnostic.zig");
+const parse_diagnostic = @import("../../kit/parse_diagnostic.zig");
 
 /// Every error a YAML parse can return: the tokenizer's (it runs to completion
 /// before the parser starts, and rejects indentation, tabs, and malformed

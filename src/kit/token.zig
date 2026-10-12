@@ -1,6 +1,6 @@
-// src/token.zig
+// src/kit/token.zig
 const token = @This();
-const Span = @import("util/span.zig");
+const Span = @import("span.zig");
 
 pub fn Token(comptime KindType: type) type {
     comptime {

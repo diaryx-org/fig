@@ -46,7 +46,7 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const AST = @import("../ast/ast.zig");
 const Document = @import("../document.zig");
-const Span = @import("../util/span.zig");
+const Span = @import("../kit/span.zig");
 const manifest = @import("manifest.zig");
 const Languages = @import("language.zig");
 const editor = @import("../editor.zig");
@@ -2075,6 +2075,8 @@ test "a null-row table is the empty document and an empty one is refused" {
 }
 
 test "a mapping table round-trips through Document and back" {
+    // The round trip is checked by printing through compiled JSON.
+    if (comptime !@import("build_options").lang_json) return error.SkipZigTest;
     // { a: 1, b: [true, "x"] } as `a: 1\nb: [true, x]\n`
     const src = "a: 1\nb: [true, x]\n";
     const rows = [_]NodeRow{
@@ -2355,6 +2357,8 @@ const TinyKv = struct {
 };
 
 test "a language registered from Zig parses, edits and prints through the contract" {
+    // The round trip is checked by printing through compiled JSON.
+    if (comptime !@import("build_options").lang_json) return error.SkipZigTest;
     defer deinitAll();
     var alloc: TinyKv.Alloc = .{ .allocator = testing.allocator };
     const vt = TinyKv.vtable(&alloc);

@@ -146,5 +146,5 @@ test {
     // The shared XML lexing substrate has no entry module of its own since
     // generic XML stopped being a format (core 3.0); plist is its one consumer
     // in tree, so plist discovers its tests.
-    _ = @import("../xml/tokenizer.zig");
+    _ = @import("../../kit/xml.zig");
 }

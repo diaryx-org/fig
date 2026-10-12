@@ -37,7 +37,7 @@ const std = @import("std");
 const Language = @import("language.zig");
 const AST = @import("../ast/ast.zig");
 const Document = @import("../document.zig");
-const Span = @import("../util/span.zig");
+const Span = @import("../kit/span.zig");
 const Editor = @import("../editor.zig").Editor;
 
 const testing = std.testing;

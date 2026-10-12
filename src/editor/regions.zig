@@ -35,7 +35,7 @@ const std = @import("std");
 
 const AST = @import("../ast/ast.zig");
 const Document = @import("../document.zig");
-const Span = @import("../util/span.zig");
+const Span = @import("../kit/span.zig");
 const splice = @import("splice.zig");
 
 const lineStartBefore = splice.lineStartBefore;

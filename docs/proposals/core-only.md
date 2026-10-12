@@ -190,9 +190,20 @@ move into YAML through declarations:
 
 - `syntax.merge_key` (already present) replaces the hardcoded `"<<"` in
   `ast/reader.zig` and `materialize.zig`.
-- A `resolveScalar` declaration replaces the import of YAML's
-  `classifyNumber` in `materialize.zig`, and covers the bool spellings
-  and the core-schema tag resolution (`tag:yaml.org,2002:`, `!!`).
+- Tag resolution moves into the language, as data rather than a
+  callback. Core today decodes tag text itself: `coreTagName` reads
+  `!!int`, `tag:yaml.org,2002:int` and `%TAG` handles, `asNumber` judges
+  a `!!int` payload by YAML's `classifyNumber`, and `asBool` knows YAML's
+  bool spellings. Instead, a row's tag carries its text verbatim, for a
+  language that re-emits it, and what the language resolved it to: a
+  core kind, custom, or non-specific (YAML's `!`), and whether the
+  scalar's text agrees with the kind. Materialize reads the resolution,
+  never the text. A callback was the alternative, but it would cross the
+  wire per tagged scalar on every conversion, and a JS language would
+  answer it from another process. This is a row field, so it lands with
+  §4.9's layout (§8 step 6), not with the other declarations. The
+  contract's spelling of a kind tag (`!!int`, from `Tag.spelling`) goes
+  with it.
 - The `c_api.zig` pin that only YAML may declare references is deleted.
 
 ### 4.4 The editor

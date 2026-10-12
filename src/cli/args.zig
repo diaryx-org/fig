@@ -1020,10 +1020,10 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     return ArgError.MissingGetArgument;
                 };
                 // fig has no `pretty` gate of its own to read `indent`'s value
-                // against (see `SerializeOptions.fig_indent`'s doc comment), so
+                // against (see `SerializeOptions.indent_requested`'s doc comment), so
                 // an explicit `--indent` is fig's own on/off signal, independent
                 // of the numeric width other formats use it for.
-                serialize.fig_indent = true;
+                serialize.indent_requested = true;
             } else if (std.mem.eql(u8, arg, "--width")) {
                 const n = args.next() orelse {
                     log.err("Missing value after {s}\n", .{arg});
@@ -1220,7 +1220,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     return ArgError.MissingFmtArgument;
                 };
                 // See the matching comment on `get`'s `--indent` handling above.
-                serialize.fig_indent = true;
+                serialize.indent_requested = true;
             } else if (std.mem.eql(u8, arg, "--width")) {
                 const n = args.next() orelse {
                     log.err("Missing value after {s}\n", .{arg});
@@ -1358,7 +1358,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     return ArgError.MissingConvertArgument;
                 };
                 // See the matching comment on `get`'s `--indent` handling above.
-                serialize.fig_indent = true;
+                serialize.indent_requested = true;
             } else if (std.mem.eql(u8, arg, "--width")) {
                 const n = args.next() orelse {
                     log.err("Missing value after {s}\n", .{arg});
@@ -1570,7 +1570,7 @@ pub fn parseConfig(allocator: std.mem.Allocator, args_in: anytype) ArgError!CliC
                     log.err("Invalid --indent value: {s}\n", .{n});
                     return ArgError.MissingPatchArgument;
                 };
-                patch_options.serialize.fig_indent = true;
+                patch_options.serialize.indent_requested = true;
             } else if (std.mem.eql(u8, arg, "--width")) {
                 const n = args.next() orelse {
                     log.err("Missing value after {s}\n", .{arg});

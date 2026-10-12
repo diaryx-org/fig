@@ -105,32 +105,23 @@ pub const SerializeOptions = struct {
     /// `true`: do not emit comments carried on the AST (a clean, comment-free
     /// render). `false` (default): preserve them where the target format allows.
     strip_comments: bool = false,
-    /// fig only, opt-in (`fig fmt --indent`): prefix each marker/comment line
-    /// with `2 × depth` literal spaces of cosmetic indentation on top of the
-    /// spaced `> ` marker runs that alone carry parse depth (docs/spec.md §
-    /// 3.3's "clean" convention — indentation that agrees with `2 × depth`
-    /// reparses with no `indent_marker_mismatch` warning and doesn't change
-    /// the AST). Every other format instead treats `indent` as the width to
-    /// use whenever it already indents, gated by `pretty` (JSON/JSON5's
-    /// multi-line mode; TOML's wrapped arrays) — fig has no such `pretty` gate
-    /// of its own (its zero-indent house style holds regardless of `pretty`),
-    /// and its cosmetic indentation is a fixed 2-per-depth overlay rather than
-    /// a configurable width, so `indent`'s numeric value can't double as
-    /// fig's on/off signal the way it does for those formats (its default,
-    /// 2, is not distinguishable from an explicit `--indent 2`). `false`
-    /// (default): canonical, zero-indent output — unchanged from before this
-    /// field existed.
-    fig_indent: bool = false,
-    /// fig only, fragment path only: render a container root as inline *flow*
-    /// (`[a, b]` / `{ k = v }`) instead of the block spelling. The editors'
-    /// splice path sets this: a fragment spliced after `key = ` has NO valid
-    /// block spelling in the fig dialect (`* ` element lines and section
-    /// headers only parse as standalone lines — a block sequence spliced
-    /// inline re-reads as a bare string), so flow is the only spelling that
-    /// survives the round-trip. `false` (default): unchanged behavior —
-    /// `serializeFragmentWith(.fig)` keeps rendering a mapping root as block
-    /// sections (callers do treat that output as a whole document, which flow
-    /// would break). Ignored by every other format and by the document path.
+    /// The caller asked for indentation (`fig fmt --indent`) rather than
+    /// taking the default, which `indent`'s value alone cannot say: its
+    /// default, 2, is also an explicit `--indent 2`. A format with no
+    /// `pretty` gate on its indentation reads this instead — figl, whose
+    /// canonical output is unindented and which, asked, prefixes each line
+    /// with `2 × depth` cosmetic spaces ahead of the `> ` markers that carry
+    /// its depth (docs/spec.md §3.3's "clean" convention). Every other format
+    /// ignores it.
+    indent_requested: bool = false,
+    /// Fragment path only: render a container root inline, in *flow*
+    /// (`[a, b]` / `{ k = v }`), rather than in a block spelling. The
+    /// editors' splice paths set it, because a fragment spliced after
+    /// `key = ` lands inline, and a block spelling that only parses as lines
+    /// of its own (figl's `* ` items and section headers) re-reads there as
+    /// a bare string. `false` (default) keeps a container root in block, as a
+    /// caller that treats the output as a document needs. A format with one
+    /// spelling for a container ignores it.
     flow: bool = false,
     /// Fragment path only: render the value as the editor takes it spliced
     /// into a document, not as a document of its own. A printer whose

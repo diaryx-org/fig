@@ -4,7 +4,7 @@
 //!   * Spaced marker runs (`> > key`) and NO leading indentation by default —
 //!     the markers themselves form the visual ruler (each level shifts the
 //!     line two columns, the same geometry indentation would add, without a
-//!     redundant second signal to maintain). `options.fig_indent` is an
+//!     redundant second signal to maintain). `options.indent_requested` is an
 //!     opt-in (`fig fmt --indent`) cosmetic overlay that prefixes each marker
 //!     run with `2 × depth` literal spaces on top — purely visual (see
 //!     `writeCosmeticIndent`); canonical (default) output is unaffected.
@@ -100,15 +100,6 @@ pub fn printFragment(writer: *Writer, ast: *const AST, options: AST.SerializeOpt
     try p.leadingComments(ast.leadingCommentAnchor(ast.root), 0);
     try p.root(ast.root, .fragment);
     try writer.flush();
-}
-
-/// The editor's splice text: a fragment, in flow, since figl's block
-/// spellings (`* ` items, section headers) only parse as lines of their own
-/// and a value spliced after `key = ` would re-read as a bare string.
-pub fn printSplice(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Error!void {
-    var o = options;
-    o.flow = true;
-    return printFragment(writer, ast, o);
 }
 
 pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize, options: AST.SerializeOptions) Error!void {
@@ -867,12 +858,12 @@ fn hasTrailingOrDangling(self: *const Printer, id: AST.Node.Id) bool {
 
 // ── Line primitives ──────────────────────────────────────────────────────────
 
-/// Opt-in (`options.fig_indent`) cosmetic indentation ahead of a marker run:
+/// Opt-in (`options.indent_requested`) cosmetic indentation ahead of a marker run:
 /// `2 × depth` literal spaces, agreeing with the `> ` markers that alone carry
 /// the real parse depth (docs/spec.md § 3.3) — purely visual, never emitted by
 /// default.
 fn writeCosmeticIndent(self: *Printer, depth: usize) Error!void {
-    if (self.options.fig_indent) try self.writer.splatByteAll(' ', 2 * depth);
+    if (self.options.indent_requested) try self.writer.splatByteAll(' ', 2 * depth);
 }
 
 /// The spaced marker run for a key/comment line: `"> "` per level, so the last
@@ -1428,7 +1419,7 @@ test "spaced markers, no indentation" {
     );
 }
 
-test "fig_indent: opt-in cosmetic indentation is 2 x depth, canonical output unaffected, both re-parse equal" {
+test "indent_requested: opt-in cosmetic indentation is 2 x depth, canonical output unaffected, both re-parse equal" {
     const input =
         \\server
         \\> description = this line is deliberately padded far past the eighty column budget so it cannot inline
@@ -1441,7 +1432,7 @@ test "fig_indent: opt-in cosmetic indentation is 2 x depth, canonical output una
 
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
-    try print(&out.writer, &ast, .{ .fig_indent = true });
+    try print(&out.writer, &ast, .{ .indent_requested = true });
     try std.testing.expectEqualStrings(
         \\server
         \\  > description = this line is deliberately padded far past the eighty column budget so it cannot inline
@@ -2110,4 +2101,20 @@ test "a string-tagged value that IS bare-representable keeps the tag when inject
     defer ast2.deinit();
     try std.testing.expect(ast.eql(ast2));
     try std.testing.expect(ast.tagsEql(ast2));
+}
+
+test "a splice fragment keeps a container in block unless the caller asks for flow" {
+    // The bindings' `*With` editor paths ask for the splice alone, and want a
+    // container in its natural block layout, which the editor re-frames under
+    // the key; the plain paths also ask for flow.
+    var ast = try Parser.parseAbstract(std.testing.allocator, "a = 1\nb\n> c = 2\n", .Fig);
+    defer ast.deinit();
+    var block: Writer.Allocating = .init(std.testing.allocator);
+    defer block.deinit();
+    try ast.serializeFragmentWith(&block.writer, .fig, .{ .splice = true, .width = 1 });
+    try std.testing.expect(std.mem.indexOfScalar(u8, block.written(), '{') == null);
+    var flow: Writer.Allocating = .init(std.testing.allocator);
+    defer flow.deinit();
+    try ast.serializeFragmentWith(&flow.writer, .fig, .{ .splice = true, .flow = true });
+    try std.testing.expect(std.mem.startsWith(u8, flow.written(), "{"));
 }

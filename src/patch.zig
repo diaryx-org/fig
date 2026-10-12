@@ -356,6 +356,12 @@ fn Walker(comptime Language: type) type {
 
             var options = self.options.serialize;
             if (self.options.comments == .none) options.strip_comments = true;
+            // A value spliced after `key = ` lands inline, so a container is
+            // asked for in flow: a format whose block spelling only parses as
+            // lines of its own (figl's `* ` items and section headers) would
+            // re-read one there as a bare string. A format with one spelling
+            // ignores it.
+            options.flow = true;
             // What the editor takes, not a document: plist's bare element
             // rather than a wrapped `<plist>`, a NestedText scalar's plain
             // text rather than a `>` block.

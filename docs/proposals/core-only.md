@@ -17,8 +17,10 @@ part_of = [proposals](proposals.md)
 > flow opener, key spelling (`renderKeyName`), line prefix marks, section
 > refusals, comment delimiters, the bare-literal rule, conversion warnings
 > (`prints`), the fragment printer, the consumer's sniff order, and YAML's
-> stream splitter moved into YAML. Left of it: named print options and the
-> neutral `SerializeError` (§4.6), and the `splitStream` declaration. Tag
+> stream splitter moved into YAML. §4.6 needed no named options: `flow`
+> means "a container root inline" for any format, and `fig_indent` became
+> `indent_requested`; of `SerializeError` only `FigUnrepresentableRoot`
+> named a format. Left of step 2: the `splitStream` declaration. Tag
 > resolution and the lexeme's value land with §4.9's rows.
 >
 > §8 step 1's measurements are done (2026-10-12). They settled the third

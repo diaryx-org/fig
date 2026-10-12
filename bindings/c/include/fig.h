@@ -921,12 +921,13 @@ typedef struct FigSerializeOptions {
   // Appended after `lossless`; older callers (smaller `size`)
   // keep the 80-column default. uint16_t, so the struct pads to a 12-byte size.
   uint16_t width;
-  // fig_value_serialize_opts + FIG_FORMAT_FIG only: nonzero renders a container
-  // root as inline *flow* ([a, b] / {k=v}) instead of the block spelling.
-  // This is what the bindings' editor splice paths set: a fragment spliced
-  // after `key = ` has no valid block spelling in the fig dialect (`* ` element
-  // lines and section headers only parse as standalone lines), so flow is the
-  // only round-trippable form. Zero (default): unchanged block rendering.
+  // fig_value_serialize_opts only: nonzero renders a container root inline, in
+  // *flow* ([a, b] / {k=v}), rather than in a block spelling. The bindings'
+  // editor splice paths set it: a fragment spliced after `key = ` lands
+  // inline, where a block spelling that only parses as lines of its own
+  // (figl's `* ` items and section headers) would re-read as a string. A
+  // format with one spelling for a container ignores it. Zero (default):
+  // block.
   // Appended after `width`; it occupies what was the 12-byte layout's trailing
   // padding, so sizeof does not change -- a zero-initialized older caller reads
   // as the default (off), per the same forward-compat rule as the fields above.
@@ -1214,10 +1215,9 @@ typedef struct FigPrintOptions {
     // `>` block) is written bare. Every other language prints the same
     // either way.
     bool     splice;
-    // Print a container root inline — fig's `{a=1}` / `[a, b]` — as a
-    // value spliced after `key = ` must be; a block spelling re-reads there
-    // as a string. Set for fig alone; a language with no such distinction
-    // ignores it.
+    // Print a container root inline — `{a=1}` / `[a, b]` — as a value
+    // spliced after `key = ` must be where a block spelling would re-read
+    // there as a string. A language with no such distinction ignores it.
     bool     flow;
 } FigPrintOptions;
 

@@ -71,15 +71,6 @@ pub const Language = struct {
             .{ .name = "1.1", .dialect = .v1_1 },
             .{ .name = "1.1.0", .dialect = .v1_1 },
         },
-        .embed = .{
-            .fence_tag = "yaml",
-            .fence_aliases = &.{"yml"},
-            // Bare, not `---yaml`: an untagged frontmatter block is YAML.
-            .frontmatter = "---",
-            .script_mime = "application/yaml",
-            .script_mime_aliases = &.{ "application/x-yaml", "text/yaml" },
-            .code_class = "language-yaml",
-        },
     }};
 
     /// 1.1 and 1.2.2 differ only in scalar type RESOLUTION, never in the

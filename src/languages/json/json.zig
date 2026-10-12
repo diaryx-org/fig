@@ -57,13 +57,6 @@ pub const Language = struct {
             .dialect = .JSON,
             .splice = .escaped,
             .empty_doc_seed = "{}\n",
-            .embed = .{
-                .fence_tag = "json",
-                .frontmatter = "---json",
-                .script_mime = "application/json",
-                .script_mime_aliases = &.{"application/ld+json"},
-                .code_class = "language-json",
-            },
         },
         .{
             .name = "jsonc",

@@ -1,7 +1,6 @@
 //! YAML's multi-document stream: `---` and `...` markers at column 0 split a
 //! file into documents, each parsed on its own by the single-document parser.
-//! YAML's own concept, so it lives with YAML rather than in core's embed
-//! layer. `locate` is YAML's `splitStream` declaration, which core and the
+//! YAML's own concept, so it lives with YAML rather than in core. `locate` is YAML's `splitStream` declaration, which core and the
 //! bindings reach through the contract (docs/proposals/core-only.md §4.5).
 
 const std = @import("std");
@@ -24,7 +23,7 @@ pub const StreamDoc = struct {
     document: Document,
 
     /// Lift a node span (relative to this document's content) into outer-file
-    /// coordinates — as an embedded region's `outerSpan` does.
+    /// coordinates.
     pub fn outerSpan(self: StreamDoc, s: Span) Span {
         const base = self.content.start;
         return Span.init(s.start + base, s.end + base);

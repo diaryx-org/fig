@@ -64,12 +64,6 @@ pub const Language = struct {
             .{ .name = "1.1", .dialect = .TOML_1_1 },
             .{ .name = "1.1.0", .dialect = .TOML_1_1 },
         },
-        .embed = .{
-            .fence_tag = "toml",
-            .frontmatter = "---toml",
-            .script_mime = "application/toml",
-            .code_class = "language-toml",
-        },
     }};
 
     /// A key's name as TOML writes it: bare when it can be, else a basic

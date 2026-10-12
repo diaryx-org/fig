@@ -96,7 +96,7 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
 
         /// A dialect row: one of `L.dialects`, or one of their `--spec`
         /// versions, named `<dialect>-<spec>` (`yaml-1.1`), which claims no
-        /// extension and no embedded spelling of its own.
+        /// extension of its own.
         const Row = struct {
             name: []const u8,
             /// The declared row it is, or is a version of.
@@ -140,13 +140,6 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
             return out ++ [_]?[*:0]const u8{null};
         }
 
-        fn zList(comptime list: []const []const u8) ?[*]const ?[*:0]const u8 {
-            if (list.len == 0) return null;
-            comptime var out: []const ?[*:0]const u8 = &.{};
-            inline for (list) |x| out = out ++ [_]?[*:0]const u8{z(x)};
-            return (out ++ [_]?[*:0]const u8{null}).ptr;
-        }
-
         const dialect_syntaxes = blk: {
             @setEvalBranchQuota(100_000);
             var out: [rows.len]abi.SyntaxDesc = undefined;
@@ -168,7 +161,6 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
                     if (x.null_at_root) flags |= abi.prints_null_at_root;
                     if (x.root_container) flags |= abi.prints_root_container;
                 }
-                const e = if (r.declared) d.embed else null;
                 out[i] = .{
                     .name = z(prefix ++ r.name),
                     .extensions = if (r.declared) extensionsOf(r.of).ptr else null,
@@ -180,12 +172,6 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
                     .prints_char_as = if (p) |x| z(x.char_as) else null,
                     .prints_number_special_as = if (p) |x| z(x.number_special_as) else null,
                     .prints_comments = if (p) |x| @backingInt(x.comments) else 0,
-                    .embed_fence_tag = if (e) |x| z(x.fence_tag) else null,
-                    .embed_fence_aliases = if (e) |x| zList(x.fence_aliases) else null,
-                    .embed_frontmatter = if (e) |x| z(x.frontmatter) else null,
-                    .embed_script_mime = if (e) |x| z(x.script_mime) else null,
-                    .embed_script_mime_aliases = if (e) |x| zList(x.script_mime_aliases) else null,
-                    .embed_code_class = if (e) |x| z(x.code_class) else null,
                 };
             }
             break :blk out;

@@ -52,16 +52,6 @@ pub const Language = struct {
         .print_fragment_name = "printFragment",
         .splice = .literal,
         .empty_doc_seed = "",
-        .embed = .{
-            .fence_tag = "fig",
-            .fence_aliases = &.{"figl"},
-            .frontmatter = "---fig",
-            .script_mime = "application/figl",
-            .script_mime_aliases = &.{"application/fig"},
-            // `language-figl`, not `language-fig`: the class token and the
-            // fence tag genuinely differ in `embed.zig`.
-            .code_class = "language-figl",
-        },
     }};
 
     pub fn syntax(t: fig.Type) lang.Syntax {

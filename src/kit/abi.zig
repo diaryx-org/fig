@@ -268,7 +268,7 @@ comptime {
 }
 
 /// `manifest.Dialect`'s runtime half: what a dialect row of a runtime
-/// language states. Sniff rank, deserializability, embedding and `--spec`
+/// language states. Sniff rank, deserializability and `--spec`
 /// names are not here — a runtime format is never sniffed (proposal §8.1)
 /// and the rest is deferred until a format asks.
 pub const DialectDesc = extern struct {
@@ -297,16 +297,6 @@ pub const DialectDesc = extern struct {
     prints_number_special_as: ?[*:0]const u8 = null,
     /// 0 always, 1 when pretty-printing, 2 never.
     prints_comments: c_int = 0,
-    /// How the dialect is named inside a host document
-    /// (`manifest.EmbedSpellings`); a null `embed_fence_tag` says it has no
-    /// embedded form, and the other five are then not read. The two alias
-    /// lists are NULL-terminated arrays, or null for none.
-    embed_fence_tag: ?[*:0]const u8 = null,
-    embed_fence_aliases: ?[*]const ?[*:0]const u8 = null,
-    embed_frontmatter: ?[*:0]const u8 = null,
-    embed_script_mime: ?[*:0]const u8 = null,
-    embed_script_mime_aliases: ?[*]const ?[*:0]const u8 = null,
-    embed_code_class: ?[*:0]const u8 = null,
 };
 
 pub const prints_text_scalars: u32 = 1 << 0;

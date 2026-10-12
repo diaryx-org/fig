@@ -25,7 +25,6 @@ pub const Span = @import("kit/span.zig");
 pub const AST = @import("kit/ast/ast.zig");
 /// Rendering a tree as canonical or through a registered language.
 pub const Serialize = @import("serialize.zig");
-pub const Embed = @import("embed.zig");
 pub const Lossless = @import("lossless.zig");
 /// Collapsing a document's reference layer — aliases, merges, tags, anchors —
 /// into a core AST, when it leaves a language that carries one for a
@@ -64,7 +63,6 @@ test {
     _ = @import("editor.zig");
     _ = @import("editor/regions.zig");
     _ = @import("patch.zig");
-    _ = @import("embed.zig");
     _ = @import("lossless.zig");
     _ = @import("materialize.zig");
     _ = @import("flat_strip.zig");

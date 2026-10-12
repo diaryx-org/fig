@@ -50,7 +50,9 @@ extern "C" {
 // through the fig_table_* calls and print reads a FigTableView of 32-byte
 // FigRows and sparse side facts — and free_table is gone; FigFormat, its
 // FIG_FORMAT_* enumerators and FIG_FORMAT_RUNTIME_BASE are gone, and every
-// format is a registered language's handle, from 1.
+// format is a registered language's handle, from 1; embedding has left fig
+// for twig, and with it every fig_embed_* call, FigEmbed, FigEmbedContainer,
+// FigRegion and FigSpan.
 #define FIG_ABI_VERSION 4
 
 // Linked-library version, packed as (major << 16) | (minor << 8) | patch.
@@ -67,7 +69,7 @@ uint32_t fig_abi_version(void);
 // Threading: fig keeps no shared mutable global state, so calls that touch
 // DIFFERENT handles (or no handle, e.g. fig_parse, fig_version,
 // fig_format_capabilities) may run concurrently on different threads. A SINGLE
-// handle — FigDocument, FigEditor, FigEmbed, or FigValue — is NOT internally
+// handle — FigDocument, FigEditor, or FigValue — is NOT internally
 // synchronized: never call two functions on the same handle concurrently;
 // serialize access externally if you must share one across threads. The one
 // process-wide table is the runtime-language registry (fig_language_register):
@@ -81,10 +83,10 @@ uint32_t fig_abi_version(void);
 //   * Source-borrowing reads (fig_node_string/_number/_extended,
 //     fig_keyvalue_*): valid until fig_document_destroy on that document.
 //   * Rendered-buffer borrows (fig_document_serialize, fig_value_serialize[_opts],
-//     fig_editor_source, fig_embed_render): each handle holds ONE reused output
-//     buffer, so the returned pointer is invalidated by the next call that
-//     rewrites it — the next serialize/render on that handle, or (for the editor/
-//     embed) the next mutation — and by destroying the handle. Copy the bytes
+//     fig_editor_source): each handle holds ONE reused output buffer, so the
+//     returned pointer is invalidated by the next call that rewrites it — the
+//     next serialize on that handle, or (for the editor) the next mutation —
+//     and by destroying the handle. Copy the bytes
 //     out before that point if you need to keep them.
 // Buffers from fig_alloc are the only ones the caller owns; release them (only
 // them) with fig_free.
@@ -112,10 +114,10 @@ void fig_free(uint8_t *ptr, size_t len);
 
 // Forward compatibility: later fig releases may add values to every enum and
 // bit set this header defines — FigStatus, FigNodeKind, FigExtKind,
-// FigEmbedContainer, the FigWarning codes and causes, FIG_CAP_* bits, the
+// the FigWarning codes and causes, FIG_CAP_* bits, the
 // FIG_COMMENT_* slots and styles and the FIG_MENTION_* kinds. Treat a value
 // you do not recognize as opaque rather than asserting the set is closed:
-// FigStatus as a generic failure; a kind, code, cause or container as
+// FigStatus as a generic failure; a kind, code or cause as
 // "unknown", compared as the int it is; a capability bit as absent. A
 // printer handed a comment row whose slot it does not know leaves that
 // comment out; one whose style it does not know writes it as a line
@@ -139,8 +141,8 @@ typedef enum FigStatus {
     // The operation is not defined for these arguments, though each argument is
     // individually valid — as distinct from FIG_STATUS_INVALID_ARGUMENT (a
     // malformed call) and FIG_STATUS_UNSUPPORTED_FORMAT (a format this build
-    // cannot handle). Added in core 2.7.0; see fig_embed_retype and
-    // fig_editor_uncomment_leading (lines that turned out not to be an entry).
+    // cannot handle). Added in core 2.7.0; see fig_editor_uncomment_leading
+    // (lines that turned out not to be an entry).
     FIG_STATUS_UNSUPPORTED_OPERATION = 6,
     FIG_STATUS_INTERNAL_ERROR = 255,
 } FigStatus;
@@ -157,7 +159,7 @@ typedef enum FigStatus {
 // Capability bits, OR-combined in the return of fig_format_capabilities.
 typedef enum FigCapability {
     FIG_CAP_READ      = 1u << 0, // fig_parse accepts this format
-    FIG_CAP_EDIT      = 1u << 1, // fig_editor_*/fig_embed_* accept this format
+    FIG_CAP_EDIT      = 1u << 1, // fig_editor_* accepts this format
     FIG_CAP_SERIALIZE = 1u << 2, // fig_*_serialize can write this format
     // The format has a reference layer — anchors, aliases, `<<` merges, tags
     // (YAML's). fig_document_serialize collapses it when a document leaves
@@ -541,248 +543,6 @@ FigStatus fig_editor_source(const FigEditor *editor,
                             const uint8_t **out_ptr, size_t *out_len);
 
 // ============================================================================
-// Embedded regions (e.g. markdown frontmatter)
-// ============================================================================
-
-typedef struct FigSpan { size_t start; size_t end; } FigSpan;
-// `size` is the version tag, exactly like FigError/FigSerializeOptions: set it to
-// sizeof(FigRegion) before calling fig_embed_extract and the library writes only
-// the fields `size` covers, so the struct can gain trailing fields in later
-// releases without disturbing an older caller's layout. A field past `size` is
-// left untouched.
-typedef struct FigRegion {
-    uint32_t size;          // caller sets sizeof(FigRegion); see note above
-    FigSpan open_fence;
-    FigSpan content;
-    FigSpan close_fence;
-    // The host body outside the fences (in host-file coordinates): the suffix
-    // after the close fence for frontmatter, the prefix before the open fence
-    // for endmatter. The read-side twin of `content` (frontmatter vs. body),
-    // and one-sided: for a mid-document block (an HTML <script> data island)
-    // it names only the text AFTER the block. Prefer the two spans below when
-    // reassembling the file.
-    FigSpan body;
-    // The host text on each side of the block: [0, open_fence.start) and
-    // [close_fence.end, input_len). Together with the three region spans they
-    // tile the input exactly — every byte in exactly one span, a leading UTF-8
-    // BOM at the head of `body_before` — so a caller can rebuild the host
-    // without losing a byte, whichever side the block sits on.
-    //
-    // Added in core 2.7.0. A caller whose `size` predates these fields is not
-    // written past its own layout; see the `size` note above.
-    FigSpan body_before;
-    FigSpan body_after;
-} FigRegion;
-
-// The container half of an embed selector. Every fig_embed_* entry point that
-// selects a region takes a (container, format) pair: this enum and a format
-// handle. The four PARAMETRIC containers hold any registered dialect that
-// declares an embedded spelling (`embed_fence_tag` in its FigDialectDesc;
-// FIG_STATUS_INVALID_ARGUMENT for one without, such as INI, and for an unknown
-// value of either integer). The three PRESET containers name their own
-// language — `;;;` JSON, `+++` TOML, endmatter YAML — and ignore the format
-// argument; detection reports that language's handle, or -1 when it is not
-// registered.
-//
-// ABI 2 shape. ABI 1 (core 2.4 - 2.9) flattened the pair into one FigEmbedType
-// enum of nineteen products; each value maps onto exactly one pair, e.g.
-// FIG_EMBED_FRONTMATTER_YAML -> (FIG_EMBED_MD_FRONTMATTER, yaml),
-// FIG_EMBED_FRONTMATTER_JSON -> (FIG_EMBED_SEMICOLONS_JSON, any),
-// FIG_EMBED_FRONTMATTER_FIG -> (FIG_EMBED_FENCED, fig),
-// FIG_EMBED_FENCED_TOML -> (FIG_EMBED_FENCED, toml), and so on down the
-// MD_FRONTMATTER_*, HTML_SCRIPT_* and HTML_CODE_* groups.
-typedef enum FigEmbedContainer {
-    // ---<lang> ... --- (or ...) markdown frontmatter. A bare --- is the
-    // dialect whose frontmatter opener is bare (YAML), so
-    // (FIG_EMBED_MD_FRONTMATTER, yaml) is the classic frontmatter.
-    FIG_EMBED_MD_FRONTMATTER = 0,
-    // ```<lang> ... ``` fenced block.
-    FIG_EMBED_FENCED = 1,
-    // <script type="application/<lang>"> ... </script> HTML data island.
-    FIG_EMBED_HTML_SCRIPT = 2,
-    // <pre><code class="language-<lang>"> ... </code></pre> visible code block.
-    // Content is entity-encoded; the editing handle decodes on open and
-    // re-encodes span-aware on render, so an edit keeps every untouched byte's
-    // original encoding while canonically encoding only what changed.
-    FIG_EMBED_HTML_CODE = 3,
-    // ;;; ... ;;; JSON frontmatter. Preset: format argument ignored (JSON).
-    FIG_EMBED_SEMICOLONS_JSON = 4,
-    // +++ ... +++ TOML frontmatter (Hugo/Zola). Preset: format ignored (TOML).
-    FIG_EMBED_PLUS_TOML = 5,
-    // A trailing ```endmatter ... ``` YAML block. Preset: format ignored (YAML).
-    FIG_EMBED_ENDMATTER_YAML = 6,
-} FigEmbedContainer;
-
-// Locate an embedded region and report its fence/content/body spans (in
-// host-file coordinates) without parsing the content. The caller must set
-// `out_region->size = sizeof(FigRegion)` first (see FigRegion). FIG_STATUS_NOT_FOUND
-// when no region of that type exists; a region whose open fence has no matching
-// close is FIG_STATUS_PARSE_ERROR.
-FigStatus fig_embed_extract(const uint8_t *input, size_t input_len,
-                            int container, int format, FigRegion *out_region);
-
-// Best-effort sniff of which embed archetype `input` uses: try each known
-// archetype's OPEN delimiter and report the first that matches. Only the open
-// delimiter is checked — an unterminated block is still recognized as its
-// archetype, so a follow-up fig_embed_extract/fig_embed_open surfaces the real
-// FIG_STATUS_PARSE_ERROR instead of a misleading "nothing found". Writes the
-// detected FigEmbedContainer and format handle to `out_container` and
-// `out_format` and returns FIG_STATUS_OK, or FIG_STATUS_NOT_FOUND when `input`
-// opens none of them (both out params are left untouched). A preset container
-// reports the language it names, -1 when that is not registered. A tagged
-// opener is recognized by the registered dialects' embedded spellings.
-FigStatus fig_embed_detect(const uint8_t *input, size_t input_len,
-                           int *out_container, int *out_format);
-
-// Re-house `input`'s embedded region under a DIFFERENT archetype's fences: keep
-// every host byte outside the block, and wrap `content` — the already
-// re-serialized inner document, in the TARGET archetype's inner format — in the
-// target's convention. The stateless counterpart of fig_embed_extract, and the
-// splice half of "convert this file's embed style": the caller does the format
-// conversion (fig_value_serialize, or its own printer), fig does the fences and
-// the placement.
-//
-// The block MOVES only when the target puts it at the other end of the file
-// (frontmatter <-> endmatter); otherwise it is re-housed exactly where it sat,
-// so a same-archetype retype is a byte-identical rebuild. The host text on both
-// sides survives in file order either way, and a UTF-8 BOM is re-emitted at
-// offset 0 rather than travelling with the prose it precedes.
-//
-// Moving a MID-DOCUMENT block (FIG_EMBED_HTML_SCRIPT, FIG_EMBED_HTML_CODE)
-// to an archetype that sits at an edge of the file returns
-// FIG_STATUS_UNSUPPORTED_OPERATION: hoisting a `---` fence above <html> is
-// neither valid markdown nor valid HTML, and leaving the block where it is does
-// not make it frontmatter. Converting such a file means converting the host too.
-// Mid-document to mid-document is fine, and splices in place.
-//
-// FIG_STATUS_NOT_FOUND when `input` has no region of the `from` pair;
-// FIG_STATUS_PARSE_ERROR when it opens one and never closes it.
-//
-// OWNERSHIP: on FIG_STATUS_OK the result is a freshly allocated buffer the
-// CALLER owns — release it with fig_free(ptr, len), passing back the exact
-// *out_len. This is the one fig call that hands back an owned buffer rather than
-// one borrowed from a handle, because it holds no handle. Nothing is written to
-// the out params on failure.
-//
-// Added in core 2.7.0; takes (container, format) pairs since core 3.0.
-FigStatus fig_embed_retype(const uint8_t *input, size_t input_len,
-                           int from_container, int from_format,
-                           int to_container, int to_format,
-                           const uint8_t *content, size_t content_len,
-                           uint8_t **out_ptr, size_t *out_len);
-
-// ============================================================================
-// Embed editor (combined): opens the config inside a host file — selected by a
-// (FigEmbedContainer, format) pair — and edits it in its inner format,
-// leaving the fences and surrounding host text byte-identical. fig_embed_open
-// picks the inner editor from the pair; the edit ops mirror fig_editor_*. A
-// preset whose language is not registered, or does not edit, is
-// FIG_STATUS_UNSUPPORTED_FORMAT; a pair the model cannot spell (see
-// FigEmbedContainer) is FIG_STATUS_INVALID_ARGUMENT.
-// ============================================================================
-
-typedef struct FigEmbed FigEmbed;
-
-FigStatus fig_embed_open(const uint8_t *input, size_t input_len, int container, int format, FigEmbed **out_embed);
-// Like fig_embed_open, but when no region of that pair exists, create an empty
-// one (frontmatter at the top, endmatter at the bottom) instead of returning
-// FIG_STATUS_NOT_FOUND — so a subsequent fig_embed_set / fig_embed_insert_key
-// lands the first entry. An existing region is opened unchanged; a malformed one
-// (open fence with no close) still fails. A block that goes at the top (every
-// archetype but endmatter) is refused with FIG_STATUS_UNSUPPORTED_OPERATION
-// when the host already opens with frontmatter of another archetype, rather
-// than pushing it off the first line; fig_embed_retype changes an archetype.
-FigStatus fig_embed_open_or_init(const uint8_t *input, size_t input_len, int container, int format, FigEmbed **out_embed);
-void fig_embed_destroy(FigEmbed *embed);
-
-FigStatus fig_embed_replace_val(FigEmbed *embed, const FigPathSegment *path,
-                                size_t path_len, const uint8_t *repl, size_t repl_len);
-FigStatus fig_embed_replace_key(FigEmbed *embed, const FigPathSegment *path,
-                                size_t path_len, const uint8_t *repl, size_t repl_len);
-FigStatus fig_embed_replace_named_key(FigEmbed *embed, const FigPathSegment *path,
-                                      size_t path_len, const uint8_t *name, size_t name_len);
-// Upsert on the embedded config (mirrors fig_editor_set): replace the value at
-// `path`, or insert it when only the trailing key is absent. `path` must end in
-// a key.
-FigStatus fig_embed_set(FigEmbed *embed, const FigPathSegment *path,
-                        size_t path_len, const uint8_t *val, size_t val_len);
-// Comment editing on the embedded config (mirrors fig_editor_*; YAML frontmatter
-// uses `#`, JSON frontmatter is strict JSON and rejects comments).
-FigStatus fig_embed_add_leading_comment(FigEmbed *embed, const FigPathSegment *path,
-                                        size_t path_len, const uint8_t *text, size_t text_len);
-FigStatus fig_embed_set_trailing_comment(FigEmbed *embed, const FigPathSegment *path,
-                                         size_t path_len, const uint8_t *text, size_t text_len);
-FigStatus fig_embed_delete_leading_comments(FigEmbed *embed, const FigPathSegment *path,
-                                            size_t path_len);
-FigStatus fig_embed_delete_trailing_comment(FigEmbed *embed, const FigPathSegment *path,
-                                            size_t path_len);
-// Read a comment from the embedded config (mirrors fig_editor_get_*): borrowed
-// bytes on OK, FIG_STATUS_NOT_FOUND when absent, len 0 when present-but-empty.
-FigStatus fig_embed_get_leading_comment(FigEmbed *embed, const FigPathSegment *path,
-                                        size_t path_len,
-                                        const uint8_t **out_ptr, size_t *out_len);
-FigStatus fig_embed_get_trailing_comment(FigEmbed *embed, const FigPathSegment *path,
-                                         size_t path_len,
-                                         const uint8_t **out_ptr, size_t *out_len);
-// The dangling anchor and the comment-out pair on the embedded config (mirrors
-// fig_editor_*; see those for the semantics and the failure modes).
-FigStatus fig_embed_add_dangling_comment(FigEmbed *embed, const FigPathSegment *path,
-                                         size_t path_len, const uint8_t *text, size_t text_len);
-FigStatus fig_embed_delete_dangling_comments(FigEmbed *embed, const FigPathSegment *path,
-                                             size_t path_len);
-FigStatus fig_embed_get_dangling_comment(FigEmbed *embed, const FigPathSegment *path,
-                                         size_t path_len,
-                                         const uint8_t **out_ptr, size_t *out_len);
-FigStatus fig_embed_comment_out(FigEmbed *embed, const FigPathSegment *path, size_t path_len);
-FigStatus fig_embed_uncomment_leading(FigEmbed *embed, const FigPathSegment *path,
-                                      size_t path_len, size_t first_line, size_t line_count);
-FigStatus fig_embed_uncomment_dangling(FigEmbed *embed, const FigPathSegment *path,
-                                       size_t path_len, size_t first_line, size_t line_count);
-FigStatus fig_embed_insert_named_key(FigEmbed *embed, const FigPathSegment *path, size_t path_len,
-                                     const uint8_t *name, size_t name_len,
-                                     const uint8_t *val, size_t val_len);
-FigStatus fig_embed_insert_key(FigEmbed *embed, const FigPathSegment *path, size_t path_len,
-                               const uint8_t *key, size_t key_len,
-                               const uint8_t *val, size_t val_len);
-FigStatus fig_embed_delete_key(FigEmbed *embed, const FigPathSegment *path, size_t path_len);
-FigStatus fig_embed_append_seq(FigEmbed *embed, const FigPathSegment *path, size_t path_len,
-                               const uint8_t *val, size_t val_len);
-FigStatus fig_embed_prepend_seq(FigEmbed *embed, const FigPathSegment *path, size_t path_len,
-                                const uint8_t *val, size_t val_len);
-FigStatus fig_embed_remove_seq_item(FigEmbed *embed, const FigPathSegment *path,
-                                    size_t path_len, size_t index);
-FigStatus fig_embed_insert_seq_item(FigEmbed *embed, const FigPathSegment *path,
-                                    size_t path_len, size_t index,
-                                    const uint8_t *val, size_t val_len);
-FigStatus fig_embed_move_key(FigEmbed *embed,
-                             const FigPathSegment *src_path, size_t src_path_len,
-                             const FigPathSegment *dest_path, size_t dest_path_len);
-FigStatus fig_embed_reorder_keys(FigEmbed *embed, const FigPathSegment *path, size_t path_len,
-                                 const FigStr *keys, size_t keys_len);
-FigStatus fig_embed_move_item(FigEmbed *embed, const FigPathSegment *path, size_t path_len,
-                              size_t from, size_t to);
-FigStatus fig_embed_reorder_items(FigEmbed *embed, const FigPathSegment *path, size_t path_len,
-                                  const size_t *indices, size_t indices_len);
-// Comment-preserving sequence reconcile (see fig_editor_set_sequence).
-FigStatus fig_embed_set_sequence(FigEmbed *embed, const FigPathSegment *path, size_t path_len,
-                                 const FigStr *items, size_t items_len);
-
-// Replace the host BODY (the prose the config is embedded in) with `body`,
-// keeping the fences and the current (possibly edited) content byte-identical.
-// The body is the suffix after the close fence (frontmatter) or the prefix
-// before the open fence (endmatter); only that side is swapped. `body` is taken
-// verbatim (not parsed) and copied; an empty `body` clears it. Composes with the
-// value edits — edit keys, replace the body, then render once. Takes effect at
-// the next fig_embed_render.
-// A mid-document block (an HTML data island) has host text on both sides and no
-// one body: FIG_STATUS_UNSUPPORTED_OPERATION, and nothing changes.
-FigStatus fig_embed_replace_body(FigEmbed *embed, const uint8_t *body, size_t body_len);
-
-// Render the full host file with the edited embed. Borrowed bytes, valid
-// until the next call or fig_embed_destroy.
-FigStatus fig_embed_render(FigEmbed *embed, const uint8_t **out_ptr, size_t *out_len);
-
-// ============================================================================
 // Value construction + serialization
 //
 // The build/serialize counterpart to the read-side traversal API. Construct a
@@ -1059,8 +819,7 @@ typedef struct FigWarning {
 // what they would gain is appended to the record that holds them.
 #define FIG_LANGUAGE_VTABLE_VERSION 3
 
-// A `size_t` that says "no offset": FigSpan { FIG_OFFSET_NONE, FIG_OFFSET_NONE }
-// is an absent optional span, and a FigStr with len == FIG_LEN_NONE is an
+// A `size_t` that says "no offset", and a FigStr with len == FIG_LEN_NONE is an
 // absent optional string (distinct from the empty string, which is a value).
 #define FIG_OFFSET_NONE SIZE_MAX
 #define FIG_LEN_NONE SIZE_MAX
@@ -1332,16 +1091,6 @@ typedef struct FigSyntax {
 // "string". `prints_comments`: 0 always, 1 only when pretty-printing, 2
 // never.
 //
-// The embed_* fields say how the dialect is named inside a host document;
-// a NULL `embed_fence_tag` says it has none, and the rest are not read.
-// `embed_fence_tag` is the ```<tag> info string it is written with, and
-// `embed_fence_aliases` (NULL-terminated, or NULL) the others read as it, as
-// is a `language-<tag>` class; `embed_frontmatter` the whole frontmatter
-// opener ("---" for the dialect a bare one means, "---toml" otherwise);
-// `embed_script_mime` the <script type> it is written with and
-// `embed_script_mime_aliases` the others read as it; `embed_code_class` the
-// <pre><code class> it is written with.
-//
 // fig-abi: stride-gated — rows are read at FigLanguageVTable.dialect_size.
 typedef struct FigDialectDesc {
     const char        *name;
@@ -1354,12 +1103,6 @@ typedef struct FigDialectDesc {
     const char        *prints_char_as;
     const char        *prints_number_special_as;
     int                prints_comments;
-    const char        *embed_fence_tag;
-    const char *const *embed_fence_aliases;
-    const char        *embed_frontmatter;
-    const char        *embed_script_mime;
-    const char *const *embed_script_mime_aliases;
-    const char        *embed_code_class;
 } FigDialectDesc;
 
 #define FIG_PRINTS_TEXT_SCALARS   (1u << 0)

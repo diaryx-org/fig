@@ -84,7 +84,7 @@ const isFlow = splice.isFlow;
 /// level), so re-printing the fragment's root at `depth` — one level below the
 /// key it hangs under — yields body lines that carry their own full marker run
 /// and need no further indentation. This is what lets a caller splice a block
-/// map/sequence into a document (e.g. a fenced embed) instead of freezing every
+/// map/sequence into a document instead of freezing every
 /// short map inline as flow.
 fn blockBody(allocator: std.mem.Allocator, depth: usize, value_text: []const u8) ?[]u8 {
     const t = std.mem.trim(u8, value_text, " \t\r\n");

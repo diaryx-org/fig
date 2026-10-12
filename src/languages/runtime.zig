@@ -120,11 +120,6 @@ pub const Entry = struct {
     /// What the dialect's printer makes of another format's tree, if it
     /// says.
     prints: ?manifest.Prints = null,
-    /// How the dialect is named inside a host document, or null for none.
-    embed: ?manifest.EmbedSpellings = null,
-    /// The openers `embed` makes, built once: ```` ```<fence_tag> ````,
-    /// `<script type="<script_mime>">` and `<pre><code class="<code_class>">`.
-    embed_open: ?EmbedOpen = null,
 
     /// The name handed to every vtable function for this row.
     pub fn dialectZ(self: *const Entry) [*:0]const u8 {
@@ -134,8 +129,6 @@ pub const Entry = struct {
         return @fromBackingInt(@intCast(self.index));
     }
 };
-
-pub const EmbedOpen = struct { fenced: []const u8, script: []const u8, code: []const u8 };
 
 /// One registration: the vtable, copied, with its strings owned here.
 pub const Registered = struct {
@@ -311,12 +304,6 @@ pub fn registerWith(allocator: Allocator, raw: *const VTable, options: RegisterO
             .empty_doc_seed = if (d.empty_doc_seed) |s| try arena.dupe(u8, std.mem.span(s)) else null,
             .syntax = if (d.syntax) |s| try syntaxOf(arena, s) else null,
             .prints = try printsOf(arena, &d),
-            .embed = try embedOf(arena, &d),
-        };
-        if (e.embed) |sp| e.embed_open = .{
-            .fenced = try std.fmt.allocPrint(arena, "```{s}", .{sp.fence_tag}),
-            .script = try std.fmt.allocPrint(arena, "<script type=\"{s}\">", .{sp.script_mime}),
-            .code = try std.fmt.allocPrint(arena, "<pre><code class=\"{s}\">", .{sp.code_class}),
         };
         out.* = e;
     }
@@ -346,29 +333,6 @@ pub fn registerWith(allocator: Allocator, raw: *const VTable, options: RegisterO
     registrations.appendAssumeCapacity(reg);
     published.store(@intCast(first_index + vt.dialect_count), .release);
     return row_entries[0].abi;
-}
-
-/// A row's embed spellings, copied into `arena`; null when it declares none.
-fn embedOf(arena: Allocator, d: *const DialectDesc) Allocator.Error!?manifest.EmbedSpellings {
-    const tag = d.embed_fence_tag orelse return null;
-    return .{
-        .fence_tag = try arena.dupe(u8, std.mem.span(tag)),
-        .fence_aliases = try stringsOf(arena, d.embed_fence_aliases),
-        .frontmatter = try arena.dupe(u8, if (d.embed_frontmatter) |f| std.mem.span(f) else ""),
-        .script_mime = try arena.dupe(u8, if (d.embed_script_mime) |m| std.mem.span(m) else ""),
-        .script_mime_aliases = try stringsOf(arena, d.embed_script_mime_aliases),
-        .code_class = try arena.dupe(u8, if (d.embed_code_class) |c| std.mem.span(c) else ""),
-    };
-}
-
-/// A NULL-terminated C string array, copied into `arena`.
-fn stringsOf(arena: Allocator, arr: ?[*]const ?[*:0]const u8) Allocator.Error![]const []const u8 {
-    const a = arr orelse return &.{};
-    var n: usize = 0;
-    while (a[n] != null) n += 1;
-    const out = try arena.alloc([]const u8, n);
-    for (out, 0..) |*o, i| o.* = try arena.dupe(u8, std.mem.span(a[i].?));
-    return out;
 }
 
 /// The slot range the registering thread is checking, visible to

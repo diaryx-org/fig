@@ -84,19 +84,6 @@ pub const dialect_names: []const []const u8 = blk: {
     break :blk out;
 };
 
-/// The bundled dialects with an embedded spelling, in list order — what
-/// a consumer's help text names as an embed archetype's `<lang>`.
-pub const embeddable: []const []const u8 = blk: {
-    var out: []const []const u8 = &.{};
-    for (list.rows) |row| {
-        if (!@field(build_options, "lang_" ++ row.name)) continue;
-        for (@field(modules, row.name).Language.dialects) |d| {
-            if (d.embed != null) out = out ++ [_][]const u8{d.name};
-        }
-    }
-    break :blk out;
-};
-
 /// The dialect record named `name` (`"json5"`, `"yaml-1.1"`), from
 /// whichever bundled language declares it.
 pub fn dialect(comptime name: []const u8) DialectOf(name) {

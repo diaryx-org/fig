@@ -85,8 +85,8 @@ pub fn print(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Er
 }
 
 /// Render `ast.root` as a value *fragment* — the caller-built-`Value` path
-/// behind `fig_value_serialize_opts`, which backs the editors' `replace`/`set`
-/// (`Editor`/`Embed` splice a replacement value's text into existing source,
+/// behind `fig_value_serialize_opts`, which backs the editor's `replace`/`set`
+/// (`Editor` splices a replacement value's text into existing source,
 /// e.g. after `key = `). Unlike `print`, a fragment is never asked to stand
 /// alone as a document, so a scalar/null root — which `root`'s `.document` mode
 /// rejects as `UnrepresentableRoot` — is fine here: `root`'s `.fragment` mode

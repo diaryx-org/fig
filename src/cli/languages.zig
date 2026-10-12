@@ -153,7 +153,7 @@ fn parseConfigFile(a: Allocator, path: []const u8, content: []const u8) !void {
         log.warn("{s}: this build has no fig-format reader, so the file cannot be read", .{path});
         return;
     }
-    const Fig = fig.Language.FIG;
+    const Fig = fig.bundle.Language("fig");
     var parser: Fig.Parser = .{ .allocator = a };
     const doc = try Fig.parse(&parser, content, Fig.default_type);
     const ast = &doc.ast;
@@ -310,8 +310,22 @@ pub fn resolveExtension(ext: []const u8) ?Format {
 pub fn standIn(f: Format) Format {
     if (types.runtimeEntry(f) != null) return f;
     const tag = @tagName(f);
-    if (fig.Language.standInAbi(tag) == null) return f;
+    const abi = fig.Language.standInAbi(tag) orelse return f;
+    // A language already registered at the format's own number: the
+    // bundle's, in a build whose compiled registry is empty.
+    if (Runtime.entryByAbi(abi)) |e| return types.runtimeFormat(e);
     return resolveName(tag) orelse f;
+}
+
+/// The registered language that owns extension `ext` — the bundle's, in a
+/// build whose compiled registry is empty — or null.
+pub fn registeredExtension(ext: []const u8) ?Format {
+    var i: usize = 0;
+    while (i < Runtime.count()) : (i += 1) {
+        const e = Runtime.entryAt(i) orelse continue;
+        for (e.extensions) |x| if (std.mem.eql(u8, x, ext)) return types.runtimeFormat(e);
+    }
+    return null;
 }
 
 /// Ask for the language standing in for every format this build compiled

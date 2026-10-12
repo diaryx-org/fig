@@ -4,6 +4,8 @@ pub const Language = @import("languages/language.zig");
 /// A format resolved when the program runs: the contract as a vtable, the
 /// registry, and the `Language` over it. `docs/proposals/runtime-languages.md`.
 pub const Runtime = @import("languages/runtime.zig");
+/// The languages fig ships, as a consumer registers them.
+pub const bundle = @import("languages/bundle.zig");
 /// The helper wire — the contract as newline-delimited JSON — as a vtable
 /// over any transport: the CLI's child process, the wasm module's host call.
 pub const Wire = @import("languages/wire.zig");

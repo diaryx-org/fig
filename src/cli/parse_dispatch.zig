@@ -701,20 +701,20 @@ test "resolveSpec maps YAML version strings" {
     // has no enum to spell — the version STRINGS survive gating (the registry
     // still lists them), but `resolveSpec` refuses them, so there is nothing
     // here left to check.
-    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    if (comptime !build_options.lang_yaml or !build_options.compiled_registry) return error.SkipZigTest;
     const t = std.testing;
     // Default (no --spec) yields each language's default; YAML default is 1.2.2.
-    try t.expectEqual(fig.Language.YAML.default_type, (try resolveSpec(.yaml, null)).yaml);
-    try t.expectEqual(@as(fig.Language.YAML.Type, .v1_2_2), (try resolveSpec(.yaml, "1.2.2")).yaml);
-    try t.expectEqual(@as(fig.Language.YAML.Type, .v1_2_2), (try resolveSpec(.yaml, "1.2")).yaml);
+    try t.expectEqual(fig.bundle.Language("yaml").default_type, (try resolveSpec(.yaml, null)).yaml);
+    try t.expectEqual(@as(fig.bundle.Language("yaml").Type, .v1_2_2), (try resolveSpec(.yaml, "1.2.2")).yaml);
+    try t.expectEqual(@as(fig.bundle.Language("yaml").Type, .v1_2_2), (try resolveSpec(.yaml, "1.2")).yaml);
     // 1.1 is now selectable (was previously rejected as UnsupportedSpec).
-    try t.expectEqual(@as(fig.Language.YAML.Type, .v1_1), (try resolveSpec(.yaml, "1.1")).yaml);
-    try t.expectEqual(@as(fig.Language.YAML.Type, .v1_1), (try resolveSpec(.yaml, "1.1.0")).yaml);
+    try t.expectEqual(@as(fig.bundle.Language("yaml").Type, .v1_1), (try resolveSpec(.yaml, "1.1")).yaml);
+    try t.expectEqual(@as(fig.bundle.Language("yaml").Type, .v1_1), (try resolveSpec(.yaml, "1.1.0")).yaml);
     // `--input yml --spec 1.1` still selects YAML 1.1. `yml` is no longer a
     // `Format` member of its own; `parseFormatName` collapses the spelling to
     // `.yaml` before anything downstream — including this — ever sees it.
     try t.expectEqual(
-        @as(fig.Language.YAML.Type, .v1_1),
+        @as(fig.bundle.Language("yaml").Type, .v1_1),
         (try resolveSpec(args_mod.parseFormatName("yml").?, "1.1")).yaml,
     );
     // Unknown YAML versions still error.

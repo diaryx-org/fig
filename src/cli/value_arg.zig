@@ -69,7 +69,7 @@ fn readFig(allocator: std.mem.Allocator, term: *Io.Terminal, text: []const u8) !
 
     // Without the fig dialect compiled in, the language standing in for it
     // reads the value, where there is one.
-    if (comptime !build_options.lang_fig) return readFigStandIn(allocator, term, text);
+    if (comptime fig.Language.of("fig") == void) return readFigStandIn(allocator, term, text);
 
     const source = try std.mem.concat(allocator, u8, &.{ prefix, text, "\n" });
     var reports: parse_dispatch.Reports = .{};

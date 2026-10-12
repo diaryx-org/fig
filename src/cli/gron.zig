@@ -42,7 +42,7 @@ const activeTag = std.meta.activeTag;
 /// JSON is gron's value layer; resolves to `void` when JSON is gated out, in
 /// which case every call site below is comptime-pruned to `unreachable` and the
 /// public entry points are unreachable behind a caller's `lang_json` guard.
-const JSON = if (build_options.lang_json) fig.Language.JSON else void;
+const JSON = if (build_options.lang_json) fig.bundle.Language("json") else void;
 
 /// The customizable surface of the projection. The field defaults reproduce
 /// gron's exact syntax (also exposed as the `Projection.gron` preset); overrides

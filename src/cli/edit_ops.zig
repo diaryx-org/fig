@@ -613,7 +613,7 @@ pub fn applyStructuralEdit(
 test "applyEdit reads [-] before the end of a path as the last item" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const t = std.testing;
-    const Y = fig.Language.YAML;
+    const Y = fig.bundle.Language("yaml");
     const dia = Y.default_type;
     const last = types.append_index;
 
@@ -637,7 +637,7 @@ test "applyEdit reads [-] before the end of a path as the last item" {
 test "applyEdit performs the structural ops on YAML" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const t = std.testing;
-    const Y = fig.Language.YAML;
+    const Y = fig.bundle.Language("yaml");
     const dia = Y.default_type;
 
     // insert_key appends a mapping entry.
@@ -677,7 +677,7 @@ test "applyEdit performs the structural ops on YAML" {
 test "applyEdit blames the spliced text, not the file, when the edit won't parse" {
     if (comptime !build_options.lang_toml) return error.SkipZigTest;
     const t = std.testing;
-    const T = fig.Language.TOML;
+    const T = fig.bundle.Language("toml");
     const dia = T.default_type;
 
     // The file parses; the replacement (a git sha, unquoted) doesn't. The
@@ -704,7 +704,7 @@ test "applyEdit blames the spliced text, not the file, when the edit won't parse
 test "applyEdit set upserts a scalar and reconciles a sequence on YAML" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const t = std.testing;
-    const Y = fig.Language.YAML;
+    const Y = fig.bundle.Language("yaml");
     const dia = Y.default_type;
 
     // set replaces an existing key …
@@ -741,7 +741,7 @@ test "applyEdit set upserts a scalar and reconciles a sequence on YAML" {
 test "applyEdit performs the structural ops on dotenv, including from-empty insert" {
     if (comptime !build_options.lang_dotenv) return error.SkipZigTest;
     const t = std.testing;
-    const D = fig.Language.DOTENV;
+    const D = fig.bundle.Language("dotenv");
     const dia = D.default_type;
 
     // insert_key into a brand-new (empty) document — the from-scratch `set`
@@ -775,7 +775,7 @@ test "applyEdit performs the structural ops on dotenv, including from-empty inse
 test "applyEdit deletes a TOML table and an array-of-tables element whole" {
     if (comptime !build_options.lang_toml) return error.SkipZigTest;
     const t = std.testing;
-    const T = fig.Language.TOML;
+    const T = fig.bundle.Language("toml");
     const dia = T.default_type;
     const src = "[[x]]\na = 1\n[[x]]\na = 2\n[y]\nb = 1\n";
     {
@@ -808,7 +808,7 @@ test "applyEdit deletes a TOML table and an array-of-tables element whole" {
 test "applyEdit performs the structural ops on ini, root and section" {
     if (comptime !build_options.lang_ini) return error.SkipZigTest;
     const t = std.testing;
-    const I = fig.Language.INI;
+    const I = fig.bundle.Language("ini");
     const dia = I.default_type;
 
     // insert_key into a brand-new (empty) document.
@@ -845,7 +845,7 @@ test "applyEdit performs the structural ops on ini, root and section" {
 test "applyEdit refuses replace_value on a toml [table] header" {
     if (comptime !build_options.lang_toml) return error.SkipZigTest;
     const t = std.testing;
-    const T = fig.Language.TOML;
+    const T = fig.bundle.Language("toml");
     const dia = T.default_type;
 
     // The reported shape: `["REPLACED"]` is valid TOML, so the splice into the
@@ -862,7 +862,7 @@ test "applyEdit refuses replace_value on a toml [table] header" {
 test "applyEdit performs the structural ops on .properties, including from-empty insert" {
     if (comptime !build_options.lang_properties) return error.SkipZigTest;
     const t = std.testing;
-    const P = fig.Language.PROPERTIES;
+    const P = fig.bundle.Language("properties");
     const dia = P.default_type;
 
     const out = try applyEdit(P, t.allocator, "", &.{}, "bar", .{ .insert_key = "foo" }, dia);
@@ -883,16 +883,16 @@ test "applyEdit insert_key spells the key as the format does: `.name` in ZON, qu
     // The CLI's `insert` carries a key NAME; before this, ZON got `new = 5`
     // spliced in — no `.` — and every ZON insert was refused as invalid.
     if (comptime build_options.lang_zon) {
-        const Z = fig.Language.ZON;
-        const dia = comptime fig.Language.entryFor("zon").dialect;
+        const Z = fig.bundle.Language("zon");
+        const dia = comptime fig.bundle.dialect("zon").dialect;
         const out = try applyEdit(Z, a, ".{\n    .a = 1,\n}\n", &.{}, "5", .{ .insert_key = "new" }, dia);
         try t.expectEqualStrings(".{\n    .a = 1,\n    .new = 5,\n}\n", out);
         const quoted = try applyEdit(Z, a, ".{ .a = 1 }", &.{}, "5", .{ .insert_key = "has space" }, dia);
         try t.expectEqualStrings(".{ .a = 1, .@\"has space\" = 5 }", quoted);
     }
     if (comptime build_options.lang_json) {
-        const J = fig.Language.JSON;
-        const dia = comptime fig.Language.entryFor("json").dialect;
+        const J = fig.bundle.Language("json");
+        const dia = comptime fig.bundle.dialect("json").dialect;
         const j = try renderEdit(a, "v", try figValue(a, "v"), .{ .insert_key = "k\"q" }, .json, .natural);
         const out = try applyEdit(J, a, "{\"a\": 1}", &.{}, j.text, j.op, dia);
         try t.expectEqualStrings("{\"a\": 1, \"k\\\"q\": \"v\"}", out);
@@ -909,27 +909,27 @@ test "applyEdit insert_key refuses a key that already exists, and does not blame
     // reported the rejected reparse as a bad VALUE. `set` is the op for an
     // existing key.
     if (comptime build_options.lang_yaml) {
-        const Y = fig.Language.YAML;
-        const dia = comptime fig.Language.entryFor("yaml").dialect;
+        const Y = fig.bundle.Language("yaml");
+        const dia = comptime fig.bundle.dialect("yaml").dialect;
         try t.expectError(error.DuplicateKey, applyEdit(Y, a, "a: 1\n", &.{}, "3", .{ .insert_key = "a" }, dia));
         var p = [_]fig.AST.PathSegment{.{ .key = "a" }};
         const set = try applyEdit(Y, a, "a: 1\n", &p, "3", .set, dia);
         try t.expectEqualStrings("a: 3\n", set);
     }
     if (comptime build_options.lang_json) {
-        const J = fig.Language.JSON;
-        const dia = comptime fig.Language.entryFor("json").dialect;
+        const J = fig.bundle.Language("json");
+        const dia = comptime fig.bundle.dialect("json").dialect;
         const j = try renderEdit(a, "x", try figValue(a, "x"), .{ .insert_key = "s" }, .json, .natural);
         try t.expectError(error.DuplicateKey, applyEdit(J, a, "{\"s\":\"hi\"}", &.{}, j.text, j.op, dia));
     }
     if (comptime build_options.lang_ini) {
-        const I = fig.Language.INI;
-        const dia = comptime fig.Language.entryFor("ini").dialect;
+        const I = fig.bundle.Language("ini");
+        const dia = comptime fig.bundle.dialect("ini").dialect;
         var p = [_]fig.AST.PathSegment{.{ .key = "a" }};
         try t.expectError(error.DuplicateKey, applyEdit(I, a, "[a]\nx = 1\n", &p, "2", .{ .insert_key = "x" }, dia));
     }
     if (comptime build_options.lang_toml) {
-        const T = fig.Language.TOML;
+        const T = fig.bundle.Language("toml");
         try t.expectError(error.DuplicateKey, applyEdit(T, a, "a = 1\n", &.{}, "3", .{ .insert_key = "a" }, T.default_type));
     }
 }
@@ -1030,8 +1030,8 @@ test "applyEdit performs the structural ops on JSON5 via the CLI's render+dialec
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const J = fig.Language.JSON;
-    const dia = comptime fig.Language.entryFor("json5").dialect;
+    const J = fig.bundle.Language("json");
+    const dia = comptime fig.bundle.dialect("json5").dialect;
     try t.expectEqual(J.Type.JSON5, dia);
 
     // insert_key quotes the new key and writes the value as the number it
@@ -1079,27 +1079,27 @@ test "emptyDocSeed: seedable formats round-trip a first `set`, others refuse" {
     var path = [_]fig.AST.PathSegment{.{ .key = "hello" }};
 
     // YAML: empty seed, bare value.
-    const yaml = try applyEdit(fig.Language.YAML, a, emptyDocSeed(.yaml).?, &path, "world", .set, fig.Language.YAML.default_type);
+    const yaml = try applyEdit(fig.bundle.Language("yaml"), a, emptyDocSeed(.yaml).?, &path, "world", .set, fig.bundle.Language("yaml").default_type);
     try t.expectEqualStrings("hello: world\n", yaml);
 
     // JSON: `{}` seed, value rendered through the JSON path like the CLI does.
     const jv = try renderEdit(a, "world", try figValue(a, "world"), .set, .json, .natural);
-    const json = try applyEdit(fig.Language.JSON, a, emptyDocSeed(.json).?, &path, jv.text, jv.op, .JSON);
+    const json = try applyEdit(fig.bundle.Language("json"), a, emptyDocSeed(.json).?, &path, jv.text, jv.op, .JSON);
     try t.expect(std.mem.indexOf(u8, json, "\"hello\"") != null);
     try t.expect(std.mem.indexOf(u8, json, "\"world\"") != null);
 
     // JSON5: same `{}` seed as JSON, reparsed under the JSON5 dialect — its
     // in-place edit is no longer gated off (see the dedicated JSON5 test above).
-    const json5 = try applyEdit(fig.Language.JSON, a, emptyDocSeed(.json5).?, &path, jv.text, jv.op, comptime fig.Language.entryFor("json5").dialect);
+    const json5 = try applyEdit(fig.bundle.Language("json"), a, emptyDocSeed(.json5).?, &path, jv.text, jv.op, comptime fig.bundle.dialect("json5").dialect);
     try t.expect(std.mem.indexOf(u8, json5, "\"hello\"") != null);
     try t.expect(std.mem.indexOf(u8, json5, "\"world\"") != null);
 
     // TOML: empty seed, value already a TOML literal.
-    const toml = try applyEdit(fig.Language.TOML, a, emptyDocSeed(.toml).?, &path, "\"world\"", .set, fig.Language.TOML.default_type);
+    const toml = try applyEdit(fig.bundle.Language("toml"), a, emptyDocSeed(.toml).?, &path, "\"world\"", .set, fig.bundle.Language("toml").default_type);
     try t.expectEqualStrings("hello = \"world\"\n", toml);
 
     // fig: empty seed (an empty document parses as an empty map), bare value.
-    const figc = try applyEdit(fig.Language.FIG, a, emptyDocSeed(.fig).?, &path, "world", .set, fig.Language.FIG.default_type);
+    const figc = try applyEdit(fig.bundle.Language("fig"), a, emptyDocSeed(.fig).?, &path, "world", .set, fig.bundle.Language("fig").default_type);
     try t.expectEqualStrings("hello = world\n", figc);
 
     // Projection formats (gron, canonical) have no empty-document form, so
@@ -1120,7 +1120,7 @@ test "emptyDocSeed: plist seeds a document a from-scratch `set` lands into" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const P = fig.Language.PLIST;
+    const P = fig.bundle.Language("plist");
 
     const seed = emptyDocSeed(.plist) orelse return error.TestExpectedSeed;
     // The seed alone must already be a valid plist — `createSeededFile` writes
@@ -1143,8 +1143,8 @@ test "applyValueEdit blames the key when the document takes no value under it" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const D = fig.Language.DOTENV;
-    const dia = comptime fig.Language.entryFor("dotenv").dialect;
+    const D = fig.bundle.Language("dotenv");
+    const dia = comptime fig.bundle.dialect("dotenv").dialect;
 
     // `bad key` is no bash identifier: `0` fares no better than `x`, so the
     // key is what was refused — not the value, as the report used to say.

@@ -473,20 +473,22 @@ fn scalarText(a: std.mem.Allocator, ast: *const fig.AST, id: fig.AST.Node.Id) !?
     // fig's spelling: compiled, or through the language standing in for
     // it; JSON's otherwise, which agrees for every scalar but a datetime (a
     // JSON string, unquoted here).
+    const compiled_fig = fig.Language.of("fig") != void;
+    const compiled_json = fig.Language.of("json") != void;
     var view = ast.*;
     view.root = id;
     var w: std.Io.Writer.Allocating = .init(a);
-    if (comptime !build_options.lang_fig) {
+    if (comptime !compiled_fig) {
         if (types.runtimeEntry(languages.standIn(.fig))) |e| {
             try fig.Runtime.printNodeWith(e, &w.writer, ast, id, .{});
             return std.mem.trimEnd(u8, w.written(), "\n");
         }
-        if (comptime !build_options.lang_json) return error.FormatDisabled;
+        if (comptime !compiled_json) return error.FormatDisabled;
     }
-    const target: fig.Serialize.SerializeFormat = if (comptime build_options.lang_fig) .fig else .json;
+    const target: fig.Serialize.SerializeFormat = if (comptime compiled_fig) .fig else .json;
     try fig.Serialize.serializeFragmentWith(&view, &w.writer, target, .{});
     const text = std.mem.trimEnd(u8, w.written(), "\n");
-    if (comptime !build_options.lang_fig) if (ast.nodes[id].kind == .extended and text.len > 0 and text[0] == '"') return ast.nodes[id].kind.extended.text;
+    if (comptime !compiled_fig) if (ast.nodes[id].kind == .extended and text.len > 0 and text[0] == '"') return ast.nodes[id].kind.extended.text;
     return text;
 }
 

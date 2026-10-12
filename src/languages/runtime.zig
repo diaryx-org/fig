@@ -44,6 +44,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
 const AST = @import("../kit/ast/ast.zig");
 const Serialize = @import("../serialize.zig");
@@ -231,6 +232,10 @@ pub fn clearRefusal() void {
 /// general — `entryByName` finds each. See the module doc for what happens
 /// in between.
 pub fn register(allocator: Allocator, raw: *const VTable) RegisterError!c_int {
+    // The bundle first, outside the lock and in this call's allocator: a
+    // lookup made while this registration holds the lock must not start
+    // the bundle's, and the registry takes one allocator.
+    ensureBundledWith(allocator);
     last_refusal_len = 0;
 
     // Build the registration in an arena so a refusal below frees it whole.
@@ -365,6 +370,7 @@ fn deinitAllImpl() void {
     registrations.deinit(allocator);
     registrations = .empty;
     registry_allocator = null;
+    bundle_state.store(0, .release);
 }
 
 fn findByNameLocked(name: []const u8) ?*const Entry {
@@ -380,6 +386,7 @@ pub fn entryOf(t: Language.Type) *const Entry {
 }
 
 pub fn entryAt(index: usize) ?*const Entry {
+    ensureBundled();
     if (index < published.load(.acquire)) return slots[index];
     if (checking) |c| if (index >= c.from and index < c.to) return slots[index];
     return null;
@@ -391,6 +398,7 @@ pub fn entryAt(index: usize) ?*const Entry {
 /// format when there is one. Null for a compiled-in format's integer, which
 /// no registration can take.
 pub fn entryByAbi(abi: c_int) ?*const Entry {
+    ensureBundled();
     if (abi >= Languages.runtime_abi_base) return entryAt(@intCast(abi - Languages.runtime_abi_base));
     const n = published.load(.acquire);
     for (slots[0..n]) |e| if (e.abi == abi) return e;
@@ -400,6 +408,7 @@ pub fn entryByAbi(abi: c_int) ?*const Entry {
 
 /// The entry named `name` — a dialect row's name — or null.
 pub fn entryByName(name: []const u8) ?*const Entry {
+    ensureBundled();
     mutex.lock();
     defer mutex.unlock();
     return findByNameLocked(name);
@@ -407,7 +416,33 @@ pub fn entryByName(name: []const u8) ?*const Entry {
 
 /// How many dialect rows are registered.
 pub fn count() usize {
+    ensureBundled();
     return published.load(.acquire);
+}
+
+// ── the bundle, in a build with no compiled registry ───────────────────────
+//
+// INTERIM (docs/proposals/core-only.md §8): in a build whose compiled
+// registry is empty (`-Dcompiled-registry=false`), the languages the build
+// bundles (`bundle.zig`) are registered the first time anything looks a
+// format up, so that a caller holding a format's number reaches its
+// language without registering it. Deleted with the format numbers, when a
+// consumer registers what it uses. Core names no language once it is gone.
+
+/// 0 not yet, 1 registering (a lookup the registration itself makes
+/// returns), 2 done.
+var bundle_state: std.atomic.Value(u8) = .init(0);
+
+fn ensureBundled() void {
+    ensureBundledWith(registry_allocator orelse std.heap.page_allocator);
+}
+
+fn ensureBundledWith(allocator: Allocator) void {
+    if (comptime build_options.compiled_registry) return;
+    if (bundle_state.load(.acquire) != 0) return;
+    if (bundle_state.cmpxchgStrong(0, 1, .acq_rel, .acquire) != null) return;
+    @import("bundle.zig").registerAll(registry_allocator orelse allocator) catch {};
+    bundle_state.store(2, .release);
 }
 
 // ── validation ─────────────────────────────────────────────────────────────

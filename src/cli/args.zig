@@ -250,6 +250,7 @@ pub fn detectLanguageFromFileEnding(file_path: []const u8) ?Detected {
     // `--input dotenv` for those. The canonical form deliberately owns no
     // extension at all — select it with `--input canonical`.
     if (extensionFormat(ext)) |format| return .{ .format = format };
+    if (languages.registeredExtension(ext)) |format| return .{ .format = format };
 
     // Last, the languages `languages.figl` configures: a compiled format's
     // extension always wins, so a configured language is only reached by an

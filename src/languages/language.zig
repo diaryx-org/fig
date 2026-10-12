@@ -84,7 +84,7 @@ comptime {
 /// Whether the format named `name` is compiled into this build: the
 /// `build_options.lang_<name>` decl the build declares per row of the list.
 fn gateOf(comptime name: []const u8) bool {
-    return @field(build_options, "lang_" ++ name);
+    return @field(build_options, "lang_" ++ name) and build_options.compiled_registry;
 }
 
 /// A slot's `Language` when its gate is on, `void` when it is off.

@@ -15,7 +15,8 @@ const std = @import("std");
 const fig = @import("fig");
 
 const Io = std.Io;
-const Parser = fig.Language.FIG.Parser;
+const Fig = fig.bundle.Language("fig");
+const Parser = Fig.Parser;
 
 const max_body = 64 * 1024 * 1024; // hard cap on one JSON-RPC message
 
@@ -265,7 +266,7 @@ fn diagnose(a: std.mem.Allocator, text: []const u8) Parser.Report {
     var report: Parser.Report = .{};
     // Recover past each error so the server squiggles the WHOLE file at once,
     // not just the first mistake (`report.errors`, source order).
-    _ = Parser.parseCollecting(a, text, fig.Language.FIG.default_type, &report) catch {};
+    _ = Parser.parseCollecting(a, text, Fig.default_type, &report) catch {};
     return report;
 }
 

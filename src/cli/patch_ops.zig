@@ -131,8 +131,8 @@ test "applyToSlice merges one YAML document into another, touching only what cha
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const t = std.testing;
 
-    var parser: fig.Language.YAML.Parser = .{ .allocator = t.allocator };
-    var patch = try fig.Language.YAML.parse(&parser, "replicas: 5\n", fig.Language.YAML.default_type);
+    var parser: fig.bundle.Language("yaml").Parser = .{ .allocator = t.allocator };
+    var patch = try fig.bundle.Language("yaml").parse(&parser, "replicas: 5\n", fig.bundle.Language("yaml").default_type);
     defer patch.deinit(t.allocator);
 
     const result = try applyToSlice(

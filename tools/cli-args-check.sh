@@ -228,8 +228,12 @@ row 2 insert ok.yaml c
 printf 'l: [a, b, c]\n' >fixtures/seq.yaml
 row 0 insert seq.yaml 'l[0]' z
 row 0 insert seq.yaml 'l[-]' z
-row 1 insert seq.yaml 'l[1]' z
-cmp -s run/seq.yaml fixtures/seq.yaml || fail "a refused mid-sequence insert changed the file"
+# A middle index inserts before the item there; past the end is refused
+# with the file untouched.
+row 0 insert seq.yaml 'l[1]' z
+[ "$(cat run/seq.yaml)" = "l: [a, z, b, c]" ] || fail "insert l[1]: $(cat run/seq.yaml)"
+row 1 insert seq.yaml 'l[4]' z
+cmp -s run/seq.yaml fixtures/seq.yaml || fail "a refused insert past the end changed the file"
 # `set` upserts a sequence item: an index that is there is replaced, `[-]`
 # appends, and an index past the end is refused with the file untouched.
 row 1 set seq.yaml 'l[3]' z

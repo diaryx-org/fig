@@ -471,6 +471,22 @@ pub struct NodeRow {
     /// For a keyvalue: the span of the token separating key from value. A
     /// zero-width span marks a value hanging under a bare key.
     pub sep: Option<Span>,
+    /// For a sequence whose items are joined by a separator of its own, not
+    /// the dialect's `flow_entry_sep` nor one per line: the bytes written
+    /// between two items on one line — `" | "`, `" "`, or `"\n\n"` for
+    /// items a blank line apart. The sequence is then edited item by item
+    /// with it: a delete takes one item and the separator beside it (this
+    /// with its whitespace trimmed, or only whitespace where nothing is
+    /// left), and an append splices after the last item, so a trailing
+    /// separator stays trailing. `None` on every other row (an empty one is
+    /// `None`); on a row that is not a sequence it makes the table
+    /// malformed.
+    pub item_sep: Option<String>,
+    /// For a sequence: it has no delimiters, so its items run from its
+    /// span's start to its end — a voice's bars after `Name:`. Makes the
+    /// sequence a separated one, with the dialect's separator when
+    /// `item_sep` is `None`.
+    pub open: bool,
 }
 
 impl NodeRow {
@@ -488,6 +504,8 @@ impl NodeRow {
             tag_span: None,
             marker: None,
             sep: None,
+            item_sep: None,
+            open: false,
         }
     }
 
@@ -503,6 +521,14 @@ impl NodeRow {
 
     pub fn with_marker(mut self, marker: Span) -> Self {
         self.marker = Some(marker);
+        self
+    }
+
+    /// A sequence joined by `sep` (see [`item_sep`](Self::item_sep)), with
+    /// delimiters or, when `open`, none.
+    pub fn with_item_sep(mut self, sep: &str, open: bool) -> Self {
+        self.item_sep = Some(sep.to_owned());
+        self.open = open;
         self
     }
 
@@ -1415,6 +1441,8 @@ const EMPTY_ROW: ffi::FigNodeRow = ffi::FigNodeRow {
     tag_span: ffi::FigSpan::NONE,
     marker: ffi::FigSpan::NONE,
     sep: ffi::FigSpan::NONE,
+    item_sep: ffi::FigStr::NONE,
+    open: false,
 };
 
 unsafe fn reg_of<'a>(ctx: *mut c_void) -> &'a Registration {
@@ -1484,6 +1512,8 @@ fn table_to_c(table: NodeTable) -> Box<TableHolder> {
             tag_span: span_of(r.tag_span),
             marker: span_of(r.marker),
             sep: span_of(r.sep),
+            item_sep: str_of(&r.item_sep),
+            open: r.open,
         })
         .collect();
     let regions = table
@@ -1649,6 +1679,8 @@ pub(crate) fn table_from_c(t: &ffi::FigNodeTable) -> Result<NodeTable, LanguageE
             tag_span: span_of(r.tag_span),
             marker: span_of(r.marker),
             sep: span_of(r.sep),
+            item_sep: text_of(r.item_sep)?,
+            open: r.open,
         });
     }
     for r in regions {

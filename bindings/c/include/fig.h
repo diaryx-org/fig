@@ -479,6 +479,16 @@ FigStatus fig_editor_prepend_seq(FigEditor *editor, const FigPathSegment *path, 
                                  const uint8_t *val, size_t val_len);
 FigStatus fig_editor_remove_seq_item(FigEditor *editor, const FigPathSegment *path,
                                      size_t path_len, size_t index);
+// Insert `val` into the sequence at `path` so it is the item at `index`
+// afterwards: before the item there now, or after the last when `index` is
+// the length. 0 is fig_editor_prepend_seq and the length (or SIZE_MAX, the
+// end) is fig_editor_append_seq. A flow item takes a separator laid out as
+// its sequence is; a block item goes on its own line above the item at
+// `index` and that item's comment block. An index past the length is
+// FIG_STATUS_NOT_FOUND, and nothing is written.
+FigStatus fig_editor_insert_seq_item(FigEditor *editor, const FigPathSegment *path,
+                                     size_t path_len, size_t index,
+                                     const uint8_t *val, size_t val_len);
 // Move the mapping entry at `src_path` to immediately before the entry at
 // `dest_path` (both must name keys in the same mapping). Reorder the entries of
 // the mapping at `path` so `keys` come first in order, the rest following in
@@ -768,6 +778,9 @@ FigStatus fig_embed_prepend_seq(FigEmbed *embed, const FigPathSegment *path, siz
                                 const uint8_t *val, size_t val_len);
 FigStatus fig_embed_remove_seq_item(FigEmbed *embed, const FigPathSegment *path,
                                     size_t path_len, size_t index);
+FigStatus fig_embed_insert_seq_item(FigEmbed *embed, const FigPathSegment *path,
+                                    size_t path_len, size_t index,
+                                    const uint8_t *val, size_t val_len);
 FigStatus fig_embed_move_key(FigEmbed *embed,
                              const FigPathSegment *src_path, size_t src_path_len,
                              const FigPathSegment *dest_path, size_t dest_path_len);
@@ -1097,6 +1110,22 @@ typedef struct FigWarning {
 // that introduces a block-sequence item; `sep` the token separating a
 // keyvalue's key from its value (zero-width: the value hangs under a bare
 // key).
+//
+// `item_sep` and `open` make a SEQUENCE a separated one, edited item by item
+// with a separator of its own whatever its first byte: `item_sep` is the
+// bytes written between two of its items on one line (" | ", " ", "\n\n"
+// for items a blank line apart; FIG_LEN_NONE for the dialect's
+// `flow_entry_sep`), and `open` says it has no delimiters, so its items run
+// from its span's start to its end. A delete takes one item and the one
+// separator beside it (`item_sep` with its whitespace trimmed, or only
+// whitespace where nothing is left); an append splices after the last
+// item, so a trailing separator stays trailing. An empty `item_sep` is the
+// same as none, so a zeroed row means neither; either on a row that is not a
+// sequence is a malformed table.
+//
+// fig-abi: stride-gated — rows are read at FigNodeTable.row_size, so a field
+// appended here is read as its default from a language built against an
+// older header.
 typedef struct FigNodeRow {
     int      kind;
     int      ext_kind;
@@ -1109,6 +1138,8 @@ typedef struct FigNodeRow {
     FigSpan  tag_span;
     FigSpan  marker;
     FigSpan  sep;
+    FigStr   item_sep;
+    bool     open;
 } FigNodeRow;
 
 // One whole header line of a SECTION node (a TOML `[table]`, an INI
@@ -1284,6 +1315,8 @@ typedef struct FigSyntax {
 // `empty_doc_seed`: what `set` writes to a file that does not exist yet, or
 // NULL to refuse creation. `syntax`: this dialect's own where it differs
 // from the language's, else NULL.
+//
+// fig-abi: stride-gated — rows are read at FigLanguageVTable.dialect_size.
 typedef struct FigDialectDesc {
     const char        *name;
     const char *const *extensions;

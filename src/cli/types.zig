@@ -574,6 +574,9 @@ pub const EditOp = union(enum) {
     append_seq,
     /// Insert `text` as the new first item of the sequence at `path`.
     prepend_seq,
+    /// Insert `text` into the sequence at `path` as the item at this index,
+    /// before the item there now.
+    insert_seq_item: usize,
     /// Delete the mapping entry named by `path` (text unused).
     delete_key,
     /// Remove the item at this index from the sequence at `path` (text unused).
@@ -582,7 +585,7 @@ pub const EditOp = union(enum) {
 
 /// Sentinel sequence index meaning "the end" — produced by `parsePath` for the
 /// `[-]`/`[$]` append tokens and consumed by the `insert` handler to pick
-/// `append_seq` over `prepend_seq`. Out of range for any real index, so it never
+/// `append_seq` over an insert at an index. Out of range for any real index, so it never
 /// collides with an addressable item.
 pub const append_index = std.math.maxInt(usize);
 

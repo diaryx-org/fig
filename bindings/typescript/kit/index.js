@@ -67,14 +67,16 @@ export class Table {
    *  "int", "float", "string", "sequence", "mapping", "keyvalue", "alias";
    *  `parent` is a row id or null for the root; `span` is `[start, end]`.
    *  `extra` may carry `text`, `sep`, `marker`, `anchor`, `anchor_span`,
-   *  `tag`, `tag_span` and `ext_kind`; an undefined one is left out. */
+   *  `tag`, `tag_span`, `ext_kind`, and for a sequence `item_sep` and
+   *  `open`; an undefined one, and a false `open`, is left out. */
   row(kind, parent, span, extra) {
     const id = this.rows.length;
     const row = { kind, parent: parent ?? null, span };
     if (span === undefined) delete row.span;
     if (extra) {
       for (const k of Object.keys(extra)) {
-        if (extra[k] !== undefined && extra[k] !== null) row[k] = extra[k];
+        if (extra[k] === undefined || extra[k] === null || (k === "open" && extra[k] === false)) continue;
+        row[k] = extra[k];
       }
     }
     this.rows.push(row);
@@ -240,7 +242,9 @@ export function mapping(span, opts) {
   return n;
 }
 
-/** A sequence; `seq.add(item)` appends. */
+/** A sequence; `seq.add(item)` appends. Set `item_sep` on it for one whose
+ *  items are joined by a separator of its own (`" | "`, `" "`), and `open`
+ *  for one with no delimiters. */
 export function sequence(span) {
   const n = new Node("sequence", span);
   n.items = [];
@@ -270,6 +274,8 @@ export function rows(root) {
       anchor_span: n.anchor_span,
       tag: n.tag,
       tag_span: n.tag_span,
+      item_sep: n.item_sep,
+      open: n.open,
     });
     for (const slot of ["leading", "trailing", "dangling"]) {
       for (const c of n[slot] ?? []) t.comment(id, slot, c.style ?? "line", c.text);

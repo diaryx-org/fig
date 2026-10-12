@@ -49,6 +49,21 @@ node_marker_spans: []const ?Span = &.{},
 /// text begins: past it, then past any anchor or tag. See
 /// `editor.Editor.replaceValAtPath`.
 node_sep_spans: []const ?Span = &.{},
+/// Indexed by node id: for a SEPARATED sequence, how its items are joined —
+/// the separator the language names for this one container, and whether
+/// the container has delimiters — or null for every other node. Empty when
+/// the document records none, which is every document of a compiled format.
+///
+/// The dialect's `Syntax.flow_entry_sep` and `flow_root` say how a format's
+/// flow containers are spelled, once for the whole format. A format whose
+/// separator differs by container cannot say it there: a `.tune` voice
+/// joins its bars with `|` and a bar its tokens with spaces, and neither
+/// has brackets. Only the parser knows which container it read, so the
+/// fact is a column of the parse, as the item markers and entry separators
+/// are. A sequence with one is edited by the flow arm with this separator,
+/// whatever its first byte. See `docs/proposals/runtime-languages.md` §4.1,
+/// the `item_sep` and `open` columns.
+node_item_seps: []const ?ItemSep = &.{},
 /// The physical HEADER LINES of every container whose span does not describe
 /// its extent — a SECTION node: a TOML `[table]`/`[[array]]`/dotted table, an
 /// INI `[section]`, a fig block container. One entry per header line that
@@ -93,6 +108,19 @@ node_regions: []const NodeRegion = &.{},
 /// what TOML's rename hook did by scanning.
 node_mentions: []const NodeMention = &.{},
 
+/// How a separated sequence's items are joined. See `node_item_seps`.
+pub const ItemSep = struct {
+    /// The bytes written between two items that share a line — `" | "`,
+    /// `" "`, or `"\n\n"` for items a blank line apart. What a delete
+    /// consumes is this with its whitespace trimmed (`|`), or whitespace
+    /// alone where nothing is left. Null: the dialect's `flow_entry_sep`.
+    text: ?[]const u8,
+    /// The container has no delimiters: its items run from its span's
+    /// start to its end, a trailing separator included where the format
+    /// allows one. `flow_root` is this for a root mapping.
+    open: bool,
+};
+
 /// One physical header line belonging to node `node_id`: `[start, end)` is the
 /// whole line, `end` just past its newline (or `source.len` on an unterminated
 /// final line). See `node_regions`.
@@ -117,6 +145,7 @@ pub fn deinit(self: Document, allocator: std.mem.Allocator) void {
     allocator.free(self.node_tag_spans);
     allocator.free(self.node_marker_spans);
     allocator.free(self.node_sep_spans);
+    allocator.free(self.node_item_seps);
     allocator.free(self.node_regions);
     allocator.free(self.node_mentions);
 }
@@ -165,6 +194,13 @@ pub fn sepSpan(self: Document, node: AST.Node) ?Span {
 pub fn markerSpan(self: Document, node: AST.Node) ?Span {
     if (node.id >= self.node_marker_spans.len) return null;
     return self.node_marker_spans[node.id];
+}
+
+/// How the items of sequence `node` are joined, when the parser said so for
+/// this container, or null — see `node_item_seps`.
+pub fn itemSep(self: Document, node: AST.Node) ?ItemSep {
+    if (node.id >= self.node_item_seps.len) return null;
+    return self.node_item_seps[node.id];
 }
 
 /// One recorded per-node span, as a parser accumulates them: `span` is the

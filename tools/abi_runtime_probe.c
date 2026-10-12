@@ -45,6 +45,8 @@ static FigNodeRow row(int kind, uint32_t parent, size_t start, size_t end) {
     r.tag_span = SPAN_NONE;
     r.marker = SPAN_NONE;
     r.sep = SPAN_NONE;
+    r.item_sep = STR_NONE;
+    r.open = false;
     return r;
 }
 
@@ -178,6 +180,111 @@ static void free_bytes(void *ctx, FigStr bytes) {
     free((void *)bytes.ptr);
 }
 
+/* `cbars`: one line of words joined by ` | `, a trailing `|` allowed — an
+ * open sequence whose row names its separator, so the item edits work on it
+ * through the C ABI, and `fig_editor_insert_seq_item` with them. */
+static int parse_bars(void *ctx, const char *dialect, FigStr input, FigNodeTable *out, FigError *err) {
+    (void)ctx;
+    (void)dialect;
+    (void)err;
+    const char *src = (const char *)input.ptr;
+    size_t n = input.len;
+    while (n > 0 && (src[n - 1] == '\n' || src[n - 1] == ' ')) n--;
+    FigNodeRow *rows = calloc(n + 2, sizeof *rows);
+    size_t nrows = 0;
+    rows[nrows] = row(FIG_NODE_SEQUENCE, FIG_ROW_NONE, 0, n);
+    rows[nrows].item_sep = str(" | ", 3);
+    rows[nrows].open = true;
+    nrows++;
+    size_t at = 0;
+    while (at < n) {
+        while (at < n && (src[at] == ' ' || src[at] == '|')) at++;
+        size_t end = at;
+        while (end < n && src[end] != ' ' && src[end] != '|') end++;
+        if (end == at) break;
+        rows[nrows] = row(FIG_NODE_STRING, 0, at, end);
+        rows[nrows].text = str(src + at, end - at);
+        nrows++;
+        at = end;
+    }
+    memset(out, 0, sizeof *out);
+    out->size = sizeof *out;
+    out->row_size = sizeof(FigNodeRow);
+    out->rows = rows;
+    out->row_count = nrows;
+    return 0;
+}
+
+static int bars_probe(void) {
+    static const FigSyntax syntax = {
+        /* size */ sizeof(FigSyntax),
+        /* comments */ { 0, { "#", NULL, NULL }, { NULL, NULL, NULL } },
+        /* kv_sep */ ": ",
+        /* flow_kv_sep_from_siblings */ false,
+        /* flow_map_pad */ NULL,
+        /* key_style */ 0,
+        /* key_sigil */ 0,
+        /* empty_map_literal */ NULL,
+        /* block_seq_editable */ true,
+        /* flow_containers */ false,
+        /* indent_unit */ NULL,
+        /* seq_item_marker */ NULL,
+        /* closed_containers */ { NULL, NULL, NULL, NULL },
+        /* single_line_block_mapping */ false,
+        /* bare_document_mapping */ false,
+        /* flow_map_open */ NULL,
+        /* flow_map_close */ NULL,
+        /* structural_indent */ false,
+        /* section_noun */ -1,
+        /* section_header */ { NULL, NULL, NULL, NULL, NULL, true },
+        /* merge_key */ NULL,
+    };
+    static const char *const extensions[] = { "cbars", NULL };
+    static const FigDialectDesc dialects[] = {
+        { "cbars", extensions, 2, "", NULL },
+    };
+    static const char sample[] = "a | b |\n";
+    const FigStr samples[] = { str(sample, sizeof sample - 1) };
+    FigLanguageVTable vt;
+    memset(&vt, 0, sizeof vt);
+    vt.version = FIG_LANGUAGE_VTABLE_VERSION;
+    vt.size = sizeof vt;
+    vt.name = "cbars";
+    vt.caps = FIG_CAP_READ | FIG_CAP_EDIT;
+    vt.max_mapping_depth = 0;
+    vt.syntax = &syntax;
+    vt.dialects = dialects;
+    vt.dialect_count = 1;
+    vt.dialect_size = sizeof(FigDialectDesc);
+    vt.samples = samples;
+    vt.sample_count = 1;
+    vt.parse = parse_bars;
+    vt.free_table = free_table;
+    vt.free_bytes = free_bytes;
+    int format = 0;
+    FigError err;
+    memset(&err, 0, sizeof err);
+    err.size = sizeof err;
+    if (fig_language_register(&vt, &format, &err) != FIG_STATUS_OK) {
+        fprintf(stderr, "abi_runtime_probe: register cbars: %.*s\n", (int)err.message_len, (const char *)err.message);
+        return 1;
+    }
+    static const char src[] = "a | b | c |\n";
+    FigEditor *ed = NULL;
+    CHECK(fig_editor_create((const uint8_t *)src, sizeof src - 1, format, &ed) == FIG_STATUS_OK);
+    CHECK(fig_editor_insert_seq_item(ed, NULL, 0, 1, (const uint8_t *)"x", 1) == FIG_STATUS_OK);
+    CHECK(fig_editor_remove_seq_item(ed, NULL, 0, 0) == FIG_STATUS_OK);
+    CHECK(fig_editor_append_seq(ed, NULL, 0, (const uint8_t *)"d", 1) == FIG_STATUS_OK);
+    CHECK(fig_editor_insert_seq_item(ed, NULL, 0, 9, (const uint8_t *)"y", 1) == FIG_STATUS_NOT_FOUND);
+    static const char edited[] = "x | b | c | d |\n";
+    const uint8_t *out;
+    size_t out_len;
+    CHECK(fig_editor_source(ed, &out, &out_len) == FIG_STATUS_OK);
+    CHECK(out_len == sizeof edited - 1 && memcmp(out, edited, out_len) == 0);
+    fig_editor_destroy(ed);
+    return 0;
+}
+
 int main(void) {
     static const FigSyntax syntax = {
         /* size */ sizeof(FigSyntax),
@@ -275,6 +382,8 @@ int main(void) {
     int again = 0;
     CHECK(fig_language_register(&vt, &again, &err) == FIG_STATUS_INVALID_ARGUMENT);
     CHECK(strstr((const char *)err.message, "already registered") != NULL);
+
+    if (bars_probe() != 0) return 1;
 
     puts("abi_runtime_probe: a C-hosted runtime language registers, parses, converts and edits through fig.h");
     return 0;

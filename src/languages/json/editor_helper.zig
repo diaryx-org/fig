@@ -269,6 +269,29 @@ test "json5 remove last item of a multi-line trailing-comma array (regression)" 
 // its own. An owned comment — the block above a member on its own line, or
 // the comment closing its line — moves with it.
 
+test "json5 insertItem lands between two items of a multi-line array, one per line" {
+    var ed = try newJson5Editor(
+        \\{
+        \\  ports: [
+        \\    1,
+        \\    3,
+        \\  ],
+        \\}
+    );
+    defer ed.deinit();
+    try ed.insertItem(&.{.{ .key = "ports" }}, 1, "2");
+    try expectJson5Source(&ed,
+        \\{
+        \\  ports: [
+        \\    1,
+        \\    2,
+        \\    3,
+        \\  ],
+        \\}
+    );
+    try std.testing.expectError(error.NotFound, ed.insertItem(&.{.{ .key = "ports" }}, 4, "9"));
+}
+
 fn expectReorder(format: json.Language.Type, input: []const u8, path: []const AST.PathSegment, keys: []const []const u8, expected: []const u8) !void {
     var ed: editor.Editor(json.Language) = .{ .allocator = std.testing.allocator, .format = format };
     try ed.init(input);

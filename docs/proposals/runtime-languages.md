@@ -177,6 +177,7 @@ index is node id, which is what `AST.Node.Id` already is.
 | `tag`, `tag_span` | The tag on this node, verbatim, and where it is written, or none. A format with no tag syntax leaves the column empty. |
 | `marker` | For a block-sequence item: the span of the token that introduces it — the `-`, the `*` — or none. Where a leading comment goes and where a delete or reorder starts (`Document.node_marker_spans`). |
 | `sep` | For a keyvalue: the span of the token that separates key from value, or none. A recorded separator is the parser's statement that the value *reframes* rather than splices in place; a zero-width one marks a value hanging under a bare key (`Document.node_sep_spans`). |
+| `item_sep`, `open` | For a sequence whose items are joined by a separator of its own: the bytes written between two items on one line (`" \| "`, `" "`, `"\n\n"`), and whether it has no delimiters. Either makes the sequence a separated one, edited item by item with that separator whatever its first byte; none for every other row (`Document.node_item_seps`). Added in 6.0 for dottune's `.tune`, whose voices join bars with `\|`, bars tokens with spaces, and a tune its blocks with a blank line — the per-container separator [separated entries](separated-entries.md) §6 set aside. |
 
 The side tables, each sorted by row:
 

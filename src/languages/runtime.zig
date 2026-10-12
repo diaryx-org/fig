@@ -127,6 +127,13 @@ pub const CSpan = extern struct {
     }
 };
 
+/// A row's `item_sep`, or null for none — and for the empty string, which is
+/// what a row zeroed by a writer that predates the field holds.
+fn itemSepOf(r: NodeRow) ?[]const u8 {
+    const t = r.item_sep.slice() orelse return null;
+    return if (t.len == 0) null else t;
+}
+
 /// The row index that says "no row": the root's `parent`.
 pub const no_node: u32 = std.math.maxInt(u32);
 
@@ -185,6 +192,18 @@ pub const NodeRow = extern struct {
     /// zero-width one marks a value hanging under a bare key.
     /// `Document.node_sep_spans`.
     sep: CSpan = .none,
+    /// For a sequence whose items are joined by a separator of its own
+    /// rather than by the dialect's (`flow_entry_sep`) or one per line: the
+    /// bytes written between two items on one line — `" | "`, `" "`, or
+    /// `"\n\n"` for items a blank line apart. `none` (or empty, which is
+    /// the same) for every other row; a non-sequence row with one is
+    /// malformed. `Document.node_item_seps`.
+    item_sep: Str = .none,
+    /// For a sequence: it has no delimiters, so its items run from its
+    /// span's start to its end (a voice's bars after `Name:`). Makes the
+    /// sequence a separated one, with the dialect's `flow_entry_sep` when
+    /// `item_sep` is none. False for every other row.
+    open: bool = false,
 };
 
 /// One header line of a section node. `Document.NodeRegion`.
@@ -1323,6 +1342,7 @@ pub fn tableToDocument(allocator: Allocator, source: []const u8, table: *const N
     var any_tag = false;
     var any_marker = false;
     var any_sep = false;
+    var any_item_sep = false;
     for (rows, 0..) |r, i| {
         if (i == 0) {
             if (r.parent != no_node) return error.MalformedTable;
@@ -1334,6 +1354,17 @@ pub fn tableToDocument(allocator: Allocator, source: []const u8, table: *const N
         if (r.tag.slice() != null) any_tag = true;
         if (r.marker.span() != null) any_marker = true;
         if (r.sep.span() != null) any_sep = true;
+        // A separator joins items, so only a sequence has one. An empty one
+        // is none: it is what a zeroed row from a writer that knows nothing
+        // of the field holds, and it would write two items as one.
+        if (itemSepOf(r) != null) {
+            if (r.kind != @backingInt(RowKind.sequence)) return error.MalformedTable;
+            any_item_sep = true;
+        }
+        if (r.open) {
+            if (r.kind != @backingInt(RowKind.sequence)) return error.MalformedTable;
+            any_item_sep = true;
+        }
 
         const kind: Node.Kind = blk: {
             if (r.ext_kind != no_ext_kind) {
@@ -1454,6 +1485,19 @@ pub fn tableToDocument(allocator: Allocator, source: []const u8, table: *const N
     errdefer allocator.free(marker_spans);
     const sep_spans = try Document.buildSpanTable(allocator, rows.len, seps.items);
     errdefer allocator.free(sep_spans);
+    var item_seps: []const ?Document.ItemSep = &.{};
+    errdefer allocator.free(item_seps);
+    if (any_item_sep) {
+        const table_seps = try allocator.alloc(?Document.ItemSep, rows.len);
+        item_seps = table_seps;
+        for (rows, table_seps) |r, *out| {
+            const text = itemSepOf(r);
+            out.* = if (text != null or r.open) .{
+                .text = if (text) |t| try own(allocator, &owned, t) else null,
+                .open = r.open,
+            } else null;
+        }
+    }
 
     const regions = try allocator.alloc(Document.NodeRegion, table.region_count);
     errdefer allocator.free(regions);
@@ -1542,6 +1586,7 @@ pub fn tableToDocument(allocator: Allocator, source: []const u8, table: *const N
         .node_tag_spans = tag_spans,
         .node_marker_spans = marker_spans,
         .node_sep_spans = sep_spans,
+        .node_item_seps = item_seps,
         .node_regions = regions,
         .node_mentions = mentions,
     };
@@ -1610,10 +1655,10 @@ pub const Table = struct { table: NodeTable, strings: []const []const u8 };
 
 /// The table a `parse` of `doc`'s source would have to answer with: rows
 /// as `documentToTable` builds them, plus every source-coupled column the
-/// document records — node spans, item markers, entry separators, anchor
-/// and tag spans, header regions and name mentions — and the document's
-/// tag directives. What a twin of a compiled format is held to, row for
-/// row.
+/// document records — node spans, item markers, entry separators, item
+/// separators, anchor and tag spans, header regions and name mentions — and
+/// the document's tag directives. What a twin of a compiled format is held
+/// to, row for row.
 pub fn fullTable(arena: Allocator, doc: *const Document) Allocator.Error!Table {
     const ast = &doc.ast;
     var built = try documentToTable(arena, ast, ast.root);
@@ -1629,6 +1674,10 @@ pub fn fullTable(arena: Allocator, doc: *const Document) Allocator.Error!Table {
         row.span = CSpan.of(doc.span(node));
         if (doc.markerSpan(node)) |sp| row.marker = CSpan.of(sp);
         if (doc.sepSpan(node)) |sp| row.sep = CSpan.of(sp);
+        if (doc.itemSep(node)) |is| {
+            if (is.text) |t| row.item_sep = Str.of(t);
+            row.open = is.open;
+        }
         if (doc.anchorSpan(node)) |sp| row.anchor_span = CSpan.of(sp);
         if (doc.tagSpan(node)) |sp| row.tag_span = CSpan.of(sp);
         for (doc.regionsOf(id)) |r| try regions.append(arena, .{ .node = @intCast(i), .start = r.start, .end = r.end });
@@ -2515,6 +2564,308 @@ test "a runtime renderer is told the container its fragment goes into: the list'
     try testing.expectEqualStrings("deps !dep\n- dep:deps:z@deps\n- b\n- dep:deps:c@deps\n", ed.source.items);
 }
 
+// `tinytune`: the shape of dottune's `.tune`. Blocks a blank line apart,
+// each a mapping of `Name: bars` lines; a voice's bars joined by `|`, with a
+// trailing one allowed; a bar's tokens joined by spaces, and a `[ ]` group's
+// too. Four containers, three separators, three of them with no
+// delimiters — said per row, since no one `flow_entry_sep` could. `x` is
+// not a token, so an edit that writes one is the language's to reject and
+// the engine's to roll back. `#` lines are comments, not rows.
+const TinyTune = struct {
+    pub const Alloc = TinyKv.Alloc;
+    const Rows = std.ArrayList(NodeRow);
+
+    fn add(a: *Alloc, rows: *Rows, r: NodeRow) Allocator.Error!u32 {
+        try rows.append(a.allocator, r);
+        return @intCast(rows.items.len - 1);
+    }
+
+    fn seq(parent: u32, start: usize, end: usize, sep: []const u8, open: bool) NodeRow {
+        return .{ .kind = @backingInt(RowKind.sequence), .parent = parent, .span = .{ .start = start, .end = end }, .item_sep = Str.of(sep), .open = open };
+    }
+
+    /// A bar's tokens and groups, `src[start..end]`, under row `bar`.
+    fn tokens(a: *Alloc, rows: *Rows, src: []const u8, start: usize, end: usize, bar: u32, err: *ErrorInfo) !void {
+        var stack: [8]u32 = undefined;
+        stack[0] = bar;
+        var depth: usize = 1;
+        var i = start;
+        while (i < end) {
+            switch (src[i]) {
+                ' ' => i += 1,
+                '[' => {
+                    if (depth == stack.len) return error.Refused;
+                    stack[depth] = try add(a, rows, seq(stack[depth - 1], i, i + 1, " ", false));
+                    depth += 1;
+                    i += 1;
+                },
+                ']' => {
+                    if (depth == 1) {
+                        err.set("a `]` with no `[`");
+                        return error.Refused;
+                    }
+                    depth -= 1;
+                    rows.items[stack[depth]].span.end = i + 1;
+                    i += 1;
+                },
+                else => {
+                    var e = i;
+                    while (e < end and src[e] != ' ' and src[e] != '[' and src[e] != ']') e += 1;
+                    if (std.mem.eql(u8, src[i..e], "x")) {
+                        err.set("x is not a note");
+                        return error.Refused;
+                    }
+                    _ = try add(a, rows, .{ .kind = @backingInt(RowKind.string), .parent = stack[depth - 1], .span = .{ .start = i, .end = e }, .text = Str.of(src[i..e]) });
+                    i = e;
+                },
+            }
+        }
+        if (depth != 1) {
+            err.set("a `[` with no `]`");
+            return error.Refused;
+        }
+    }
+
+    fn parseInto(a: *Alloc, rows: *Rows, src: []const u8, err: *ErrorInfo) !void {
+        const root = try add(a, rows, seq(no_node, 0, 0, "\n\n", true));
+        var block: ?u32 = null;
+        var first = true;
+        var at: usize = 0;
+        while (at < src.len) {
+            const nl = std.mem.indexOfScalarPos(u8, src, at, '\n') orelse src.len;
+            defer at = nl + 1;
+            const full = src[at..nl];
+            if (std.mem.trim(u8, full, " ").len == 0) {
+                block = null;
+                continue;
+            }
+            if (full[0] == '#') continue;
+            const body = std.mem.trimEnd(u8, full[0 .. std.mem.indexOfScalar(u8, full, '#') orelse full.len], " ");
+            const colon = std.mem.indexOfScalar(u8, body, ':') orelse {
+                err.set("expected Name: bars");
+                return error.Refused;
+            };
+            const end = at + body.len;
+            if (first) rows.items[root].span.start = at;
+            first = false;
+            rows.items[root].span.end = end;
+            const b = block orelse try add(a, rows, .{ .kind = @backingInt(RowKind.mapping), .parent = root, .span = .{ .start = at, .end = end } });
+            block = b;
+            rows.items[b].span.end = end;
+            const kv = try add(a, rows, .{ .kind = @backingInt(RowKind.keyvalue), .parent = b, .span = .{ .start = at, .end = end }, .sep = .{ .start = at + colon, .end = at + colon + 1 } });
+            _ = try add(a, rows, .{ .kind = @backingInt(RowKind.string), .parent = kv, .span = .{ .start = at, .end = at + colon }, .text = Str.of(body[0..colon]) });
+            const bars = try add(a, rows, seq(kv, end, end, " | ", true));
+            // The bars: `|`-separated segments after the colon, the last
+            // dropped when it is empty — a trailing `|`.
+            const music = body[colon + 1 ..];
+            if (std.mem.trim(u8, music, " ").len == 0) continue;
+            var segments: std.ArrayList(Span) = .empty;
+            defer segments.deinit(a.allocator);
+            var s: usize = 0;
+            while (true) {
+                const bar = std.mem.indexOfScalarPos(u8, music, s, '|') orelse music.len;
+                try segments.append(a.allocator, Span.init(s, bar));
+                if (bar == music.len) break;
+                s = bar + 1;
+            }
+            const last = segments.items[segments.items.len - 1];
+            if (segments.items.len > 1 and std.mem.trim(u8, music[last.start..last.end], " ").len == 0) _ = segments.pop();
+            for (segments.items, 0..) |seg, i| {
+                const text = music[seg.start..seg.end];
+                const lead = text.len - std.mem.trimStart(u8, text, " ").len;
+                const start = at + colon + 1 + seg.start + lead;
+                const stop = at + colon + 1 + seg.start + std.mem.trimEnd(u8, text, " ").len;
+                const bar = try add(a, rows, seq(bars, start, @max(start, stop), " ", true));
+                if (i == 0) rows.items[bars].span.start = start;
+                try tokens(a, rows, src, start, @max(start, stop), bar, err);
+            }
+        }
+    }
+
+    fn parse(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Str, out: *NodeTable, err: *ErrorInfo) callconv(.c) c_int {
+        _ = dialect;
+        const a: *Alloc = @ptrCast(@alignCast(ctx.?));
+        var rows: Rows = .empty;
+        parseInto(a, &rows, input.slice() orelse "", err) catch |e| {
+            rows.deinit(a.allocator);
+            return if (e == error.Refused) 2 else 255;
+        };
+        const r = rows.toOwnedSlice(a.allocator) catch return 255;
+        out.* = .{ .rows = r.ptr, .row_count = r.len };
+        return 0;
+    }
+
+    fn freeTable(ctx: ?*anyopaque, table: *NodeTable) callconv(.c) void {
+        const a: *Alloc = @ptrCast(@alignCast(ctx.?));
+        a.allocator.free(table.rowSlice());
+    }
+
+    const syntax: SyntaxDesc = .{
+        .comments = .{ .style = @backingInt(manifest.CommentStyle.hash), .line = .{ .open = "#" }, .trailing = .{ .open = "#" } },
+        .kv_sep = ": ",
+        .empty_map_literal = null,
+        .flow_containers = false,
+    };
+    const extensions = [_]?[*:0]const u8{ "ttune", null };
+    const dialects = [_]DialectDesc{.{ .name = "tinytune", .extensions = &extensions, .splice = 2, .empty_doc_seed = "" }};
+    const samples = [_]Str{Str.of("RH: 1 2 | [3 4] 5 |\nLH: I | V\n\nRH: 1 |\n")};
+
+    pub fn vtable(alloc: *Alloc) VTable {
+        return .{
+            .version = vtable_version,
+            .ctx = alloc,
+            .name = "tinytune",
+            .caps = cap_read | cap_edit,
+            .syntax = &syntax,
+            .dialects = &dialects,
+            .dialect_count = dialects.len,
+            .samples = &samples,
+            .sample_count = samples.len,
+            .parse = parse,
+            .free_table = freeTable,
+            .free_bytes = TinyKv.freeBytes,
+        };
+    }
+
+    const Edit = union(enum) {
+        append: []const u8,
+        prepend: []const u8,
+        insert: struct { usize, []const u8 },
+        remove: usize,
+        move: struct { usize, usize },
+    };
+
+    /// `input` with `edit` made to the sequence at `path`, which must read
+    /// `expected` afterwards.
+    fn expectEdit(t: Language.Type, input: []const u8, path: []const AST.PathSegment, edit: Edit, expected: []const u8) !void {
+        var ed: editor.Editor(Language) = .{ .allocator = testing.allocator, .format = t };
+        defer ed.deinit();
+        try ed.init(input);
+        switch (edit) {
+            .append => |text| try ed.appendToSeq(path, text),
+            .prepend => |text| try ed.prependToSeq(path, text),
+            .insert => |x| try ed.insertItem(path, x[0], x[1]),
+            .remove => |i| try ed.removeSeqItem(path, i),
+            .move => |x| try ed.moveItem(path, x[0], x[1]),
+        }
+        try testing.expectEqualStrings(expected, ed.source.items);
+    }
+};
+
+test "a sequence its parser gives a separator of its own is edited item by item" {
+    defer deinitAll();
+    var alloc: TinyTune.Alloc = .{ .allocator = testing.allocator };
+    const vt = TinyTune.vtable(&alloc);
+    const t = entryByAbi(try register(testing.allocator, &vt)).?.typeOf();
+    const expectEdit = TinyTune.expectEdit;
+    const tune = "RH: 1 2 3 4 | 5 6 7 1' |\nLH: I | V |\n\nRH: 3 - - - |\n";
+    const rh: []const AST.PathSegment = &.{ .{ .index = 0 }, .{ .key = "RH" } };
+    const bar: []const AST.PathSegment = &.{ .{ .index = 0 }, .{ .key = "RH" }, .{ .index = 0 } };
+
+    // A voice's bars: `|`, open, a trailing `|` that stays trailing.
+    try expectEdit(t, tune, rh, .{ .append = "1 - - -" }, "RH: 1 2 3 4 | 5 6 7 1' | 1 - - - |\nLH: I | V |\n\nRH: 3 - - - |\n");
+    try expectEdit(t, tune, rh, .{ .prepend = "0" }, "RH: 0 | 1 2 3 4 | 5 6 7 1' |\nLH: I | V |\n\nRH: 3 - - - |\n");
+    try expectEdit(t, tune, rh, .{ .insert = .{ 1, "9" } }, "RH: 1 2 3 4 | 9 | 5 6 7 1' |\nLH: I | V |\n\nRH: 3 - - - |\n");
+    try expectEdit(t, tune, rh, .{ .remove = 0 }, "RH: 5 6 7 1' |\nLH: I | V |\n\nRH: 3 - - - |\n");
+    try expectEdit(t, tune, rh, .{ .remove = 1 }, "RH: 1 2 3 4 |\nLH: I | V |\n\nRH: 3 - - - |\n");
+    try expectEdit(t, tune, rh, .{ .move = .{ 1, 0 } }, "RH: 5 6 7 1' | 1 2 3 4 |\nLH: I | V |\n\nRH: 3 - - - |\n");
+    // Without the trailing `|`, the same edits, and none is written.
+    try expectEdit(t, "LH: I | V\n", &.{ .{ .index = 0 }, .{ .key = "LH" } }, .{ .append = "IV" }, "LH: I | V | IV\n");
+    try expectEdit(t, "LH: I | V\n", &.{ .{ .index = 0 }, .{ .key = "LH" } }, .{ .remove = 1 }, "LH: I\n");
+
+    // A bar's tokens: spaces, open, inside the voice's line.
+    try expectEdit(t, tune, bar, .{ .append = "5" }, "RH: 1 2 3 4 5 | 5 6 7 1' |\nLH: I | V |\n\nRH: 3 - - - |\n");
+    try expectEdit(t, tune, bar, .{ .remove = 0 }, "RH: 2 3 4 | 5 6 7 1' |\nLH: I | V |\n\nRH: 3 - - - |\n");
+    try expectEdit(t, tune, bar, .{ .remove = 1 }, "RH: 1 3 4 | 5 6 7 1' |\nLH: I | V |\n\nRH: 3 - - - |\n");
+    try expectEdit(t, tune, bar, .{ .insert = .{ 2, "[2 1]" } }, "RH: 1 2 [2 1] 3 4 | 5 6 7 1' |\nLH: I | V |\n\nRH: 3 - - - |\n");
+    // A group: spaces, between brackets.
+    const group: []const AST.PathSegment = &.{ .{ .index = 0 }, .{ .key = "RH" }, .{ .index = 0 }, .{ .index = 1 } };
+    try expectEdit(t, "RH: 1 [2 3] 4 |\n", group, .{ .append = "5" }, "RH: 1 [2 3 5] 4 |\n");
+    try expectEdit(t, "RH: 1 [2 3] 4 |\n", group, .{ .remove = 0 }, "RH: 1 [3] 4 |\n");
+
+    // The blocks: a blank line, open, across lines; a block's comment goes
+    // with it.
+    try expectEdit(t, tune, &.{}, .{ .append = "RH: 1 |" }, tune ++ "\nRH: 1 |\n");
+    try expectEdit(t, tune, &.{}, .{ .insert = .{ 1, "RH: 9 |" } }, "RH: 1 2 3 4 | 5 6 7 1' |\nLH: I | V |\n\nRH: 9 |\n\nRH: 3 - - - |\n");
+    try expectEdit(t, tune, &.{}, .{ .remove = 0 }, "RH: 3 - - - |\n");
+    try expectEdit(t, tune, &.{}, .{ .remove = 1 }, "RH: 1 2 3 4 | 5 6 7 1' |\nLH: I | V |\n");
+    try expectEdit(t, tune, &.{}, .{ .move = .{ 1, 0 } }, "RH: 3 - - - |\n\nRH: 1 2 3 4 | 5 6 7 1' |\nLH: I | V |\n");
+    try expectEdit(t, "RH: 1 |\n\n# two\nRH: 2 |\n", &.{}, .{ .remove = 1 }, "RH: 1 |\n");
+    try expectEdit(t, "RH: 1 |\n\n# two\nRH: 2 |\n", &.{}, .{ .remove = 0 }, "# two\nRH: 2 |\n");
+    // And the comment that ends a block's last line; a voice's comment
+    // stays with the voice when one of its bars goes.
+    const commented = "RH: 1 | # one\n\n# two\nRH: 2 |\n";
+    try expectEdit(t, commented, &.{}, .{ .remove = 0 }, "# two\nRH: 2 |\n");
+    try expectEdit(t, commented, &.{}, .{ .remove = 1 }, "RH: 1 | # one\n");
+    try expectEdit(t, commented, &.{}, .{ .move = .{ 1, 0 } }, "# two\nRH: 2 |\n\nRH: 1 | # one\n");
+    try expectEdit(t, "RH: 1 | 2 | # c\n", &.{ .{ .index = 0 }, .{ .key = "RH" } }, .{ .remove = 1 }, "RH: 1 | # c\n");
+}
+
+test "an edit to a separated sequence the language rejects is rolled back" {
+    defer deinitAll();
+    var alloc: TinyTune.Alloc = .{ .allocator = testing.allocator };
+    const vt = TinyTune.vtable(&alloc);
+    const t = entryByAbi(try register(testing.allocator, &vt)).?.typeOf();
+    const tune = "RH: 1 2 | 3 |\n";
+    var ed: editor.Editor(Language) = .{ .allocator = testing.allocator, .format = t };
+    defer ed.deinit();
+    try ed.init(tune);
+    const bar: []const AST.PathSegment = &.{ .{ .index = 0 }, .{ .key = "RH" }, .{ .index = 0 } };
+    try testing.expectError(error.RuntimeParseFailed, ed.appendToSeq(bar, "x"));
+    try testing.expectError(error.RuntimeParseFailed, ed.insertItem(bar, 1, "x"));
+    try testing.expectError(error.RuntimeParseFailed, ed.prependToSeq(&.{ .{ .index = 0 }, .{ .key = "RH" } }, "x"));
+    try testing.expect(ed.splice_rejected);
+    try testing.expectEqualStrings(tune, ed.source.items);
+    // And the editor is as it was: the next edit lands.
+    try ed.appendToSeq(bar, "5");
+    try testing.expectEqualStrings("RH: 1 2 5 | 3 |\n", ed.source.items);
+    try testing.expectError(error.NotFound, ed.insertItem(bar, 9, "1"));
+}
+
+test "an item separator is a sequence's, and an empty one is none" {
+    const src = "a b";
+    var rows = [_]NodeRow{
+        .{ .kind = @backingInt(RowKind.sequence), .parent = no_node, .span = .{ .start = 0, .end = 3 }, .item_sep = Str.of(" "), .open = true },
+        .{ .kind = @backingInt(RowKind.string), .parent = 0, .span = .{ .start = 0, .end = 1 }, .text = Str.of("a") },
+        .{ .kind = @backingInt(RowKind.string), .parent = 0, .span = .{ .start = 2, .end = 3 }, .text = Str.of("b") },
+    };
+    const table: NodeTable = .{ .rows = &rows, .row_count = rows.len };
+    {
+        const doc = try tableToDocument(testing.allocator, src, &table);
+        defer doc.deinit(testing.allocator);
+        const is = doc.itemSep(doc.ast.nodes[0]).?;
+        try testing.expectEqualStrings(" ", is.text.?);
+        try testing.expect(is.open);
+        try testing.expect(doc.itemSep(doc.ast.nodes[1]) == null);
+        // And back, as `fullTable` answers for the parse.
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const full = (try fullTable(arena.allocator(), &doc)).table.rowSlice();
+        try testing.expectEqualStrings(" ", full[0].item_sep.slice().?);
+        try testing.expect(full[0].open and !full[1].open and full[1].item_sep.slice() == null);
+    }
+    // Zeroed, as a row from a writer that predates the field is: none.
+    rows[0].item_sep = .{};
+    rows[0].open = false;
+    {
+        const doc = try tableToDocument(testing.allocator, src, &table);
+        defer doc.deinit(testing.allocator);
+        try testing.expect(doc.itemSep(doc.ast.nodes[0]) == null);
+    }
+    // On a string row too: a zeroed field is no separator, not a misplaced one.
+    rows[1].item_sep = .{};
+    {
+        const doc = try tableToDocument(testing.allocator, src, &table);
+        doc.deinit(testing.allocator);
+    }
+    rows[1].item_sep = .none;
+    rows[1].open = true;
+    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &table));
+    rows[1].open = false;
+    rows[1].item_sep = Str.of(",");
+    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &table));
+}
+
 test "registration refuses a record that fails validation or the harness" {
     defer deinitAll();
     var alloc: TinyKv.Alloc = .{ .allocator = testing.allocator };
@@ -2667,6 +3018,19 @@ test "rows written at another stride are read as far as the stride says" {
     defer arena.deinit();
     const got = (try wide.normalizedRows(arena.allocator())).?;
     try testing.expectEqualStrings("x", got[0].text.slice().?);
+    // A row from a header before the item separator: none, and not open,
+    // whatever lies past the stride.
+    const Older = extern struct { bytes: [@offsetOf(NodeRow, "item_sep")]u8 align(@alignOf(NodeRow)) };
+    var older = [_]Older{ undefined, undefined };
+    for (&older) |*o| {
+        const full: NodeRow = .{ .kind = @backingInt(RowKind.sequence), .parent = no_node, .span = .{ .start = 0, .end = 1 }, .item_sep = Str.of(","), .open = true };
+        @memcpy(&o.bytes, std.mem.asBytes(&full)[0..o.bytes.len]);
+    }
+    const old: NodeTable = .{ .row_size = @sizeOf(Older), .rows = @ptrCast(&older), .row_count = 2 };
+    for ((try old.normalizedRows(arena.allocator())).?) |r| {
+        try testing.expect(r.item_sep.slice() == null);
+        try testing.expect(!r.open);
+    }
     // A stride that stops before `span` holds no row.
     const narrow: NodeTable = .{ .row_size = @offsetOf(NodeRow, "span"), .rows = @ptrCast(&rows), .row_count = 1 };
     try testing.expect((try narrow.normalizedRows(arena.allocator())) == null);

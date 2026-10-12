@@ -1,13 +1,28 @@
 ```fig
 title = A language cannot make its sequences editable when their items are not one per line or comma-joined
 description = Append, prepend, delete and move refuse every sequence in a format like dottune's .tune, whose items are joined by `|`, by spaces or by blank lines, and no sequence anywhere can take an item at an index
-status = open
+status = done
 created = 2026-10-11
 updated = 2026-10-11
-part_of = [Tasks](/docs/tasks/tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # A language cannot make its sequences editable when their items are not one per line or comma-joined
+
+**Status.** Done, in `feat: a sequence row names its own item separator, and insertItem inserts at an index`.
+A sequence row carries `item_sep` (the bytes written between two items on
+one line) and `open` (no delimiters), on the wire, in `FigNodeRow` and in
+the Rust and TypeScript rows; core keeps them as `Document.node_item_seps`.
+Such a sequence goes to the flow arm with its own separator whatever its
+first byte, an open one's scan stays inside its span, and an item that
+begins its line takes its comments with it. `insertItem(path, index,
+text)` is `Editor.insertItem`, `fig_editor_insert_seq_item` and
+`fig_embed_insert_seq_item`, Rust's `insert_item`, TypeScript's
+`insertItem`/`insertItemRaw`, and `fig insert list[N]`. The repro table
+passes against a copy of `fig-tune.mjs` that declares its separators and
+drops `block_seq_editable = false`; the language tests in
+`src/languages/runtime.zig` (`tinytune`), `bindings/rust/fig/tests/separated_sequences.rs`
+and `bindings/typescript/test/language.test.ts` hold the shape.
 
 **Repro.** dottune's `.tune` language (`tools/fig-tune.mjs` in dottune), through `@diaryx/fig` 5.0.0:
 

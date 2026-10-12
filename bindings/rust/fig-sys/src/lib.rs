@@ -603,6 +603,14 @@ unsafe extern "C" {
         val: *const u8,
         val_len: usize,
     ) -> FigStatus;
+    pub fn fig_editor_insert_seq_item(
+        editor: *mut FigEditor,
+        path: *const FigPathSegment,
+        path_len: usize,
+        index: usize,
+        val: *const u8,
+        val_len: usize,
+    ) -> FigStatus;
     pub fn fig_editor_remove_seq_item(
         editor: *mut FigEditor,
         path: *const FigPathSegment,
@@ -886,6 +894,14 @@ unsafe extern "C" {
         val: *const u8,
         val_len: usize,
     ) -> FigStatus;
+    pub fn fig_embed_insert_seq_item(
+        fm: *mut FigEmbed,
+        path: *const FigPathSegment,
+        path_len: usize,
+        index: usize,
+        val: *const u8,
+        val_len: usize,
+    ) -> FigStatus;
     pub fn fig_embed_remove_seq_item(
         fm: *mut FigEmbed,
         path: *const FigPathSegment,
@@ -996,6 +1012,11 @@ pub struct FigNodeRow {
     pub tag_span: FigSpan,
     pub marker: FigSpan,
     pub sep: FigSpan,
+    /// For a sequence joined by a separator of its own: the bytes written
+    /// between two items on one line; [`FigStr::NONE`] otherwise.
+    pub item_sep: FigStr,
+    /// For a sequence: it has no delimiters.
+    pub open: bool,
 }
 
 /// Mirror of `FigRegionRow`.

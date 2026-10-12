@@ -83,6 +83,7 @@ fn applyOp(
         .set_sequence => |items| try editor.setSequence(path, items),
         .append_seq => try editor.appendToSeq(path, text),
         .prepend_seq => try editor.prependToSeq(path, text),
+        .insert_seq_item => |index| try editor.insertItem(path, index, text),
         .delete_key => if (!try deleteIfSection(Lang, editor, path)) try editor.deleteKey(path),
         .remove_seq_item => |index| {
             // A sequence of sections — TOML's `[[x]]` — has its elements
@@ -204,7 +205,7 @@ pub fn applyValueEdit(
     // How deep the value lands: at `path` for a replacement or an upsert,
     // one level below it for a new key or a sequence item.
     const depth = path.len + @as(usize, switch (op) {
-        .insert_key, .append_seq, .prepend_seq, .set_sequence => 1,
+        .insert_key, .append_seq, .prepend_seq, .insert_seq_item, .set_sequence => 1,
         else => 0,
     });
     if (value.one) |v| try value_arg.refuseDropped(allocator, v, format, depth);
@@ -654,6 +655,11 @@ test "applyEdit performs the structural ops on YAML" {
         const pre = try applyEdit(Y, t.allocator, "- x\n- y\n", &.{}, "w", .prepend_seq, dia);
         defer t.allocator.free(pre);
         try t.expectEqualStrings("- w\n- x\n- y\n", pre);
+
+        const mid = try applyEdit(Y, t.allocator, "- x\n- y\n", &.{}, "m", .{ .insert_seq_item = 1 }, dia);
+        defer t.allocator.free(mid);
+        try t.expectEqualStrings("- x\n- m\n- y\n", mid);
+        try t.expectError(error.NotFound, applyEdit(Y, t.allocator, "- x\n- y\n", &.{}, "m", .{ .insert_seq_item = 3 }, dia));
     }
     // delete_key removes a mapping entry; remove_seq_item drops an item.
     {

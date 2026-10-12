@@ -129,6 +129,8 @@ Rust against `fig::language::Language`. What fig owes it is §3 and §4.
   block is not supported.
 - **A separator that differs by container**, for the same reason. A format
   that needs it is the argument for a per-node separator in the node table.
+  dottune's `.tune` was that format: a sequence row's `item_sep` and `open`
+  ([runtime languages](runtime-languages.md) §4.1) carry it, for sequences.
 - **Repeated keys.** CSS repeats a property as a fallback (`fill: red; fill:
   var(--ink)`) and a selector in a later rule. The tree holds both; a path
   names the first. That is fig's rule for every format.

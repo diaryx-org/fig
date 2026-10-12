@@ -384,6 +384,44 @@ test "yaml append onto a multi-line one-item-per-line flow seq" {
     try expectSource(&ed, "t: [\n  a,\n  b,\n  c,\n]\n");
 }
 
+test "yaml insertItem: a block item at an index, above the item there and its comment" {
+    var ed = try newYamlEditor("- a\n# about b\n- b\n");
+    defer ed.deinit();
+    try ed.insertItem(&.{}, 1, "m");
+    try expectSource(&ed, "- a\n- m\n# about b\n- b\n");
+    // 0 prepends and the length appends, as their own ops do.
+    try ed.insertItem(&.{}, 0, "first");
+    try ed.insertItem(&.{}, 4, "last");
+    try expectSource(&ed, "- first\n- a\n- m\n# about b\n- b\n- last\n");
+    // Past the end is refused, and nothing is written.
+    try std.testing.expectError(error.NotFound, ed.insertItem(&.{}, 9, "x"));
+    try expectSource(&ed, "- first\n- a\n- m\n# about b\n- b\n- last\n");
+}
+
+test "yaml insertItem: a nested block item takes its siblings' indent" {
+    var ed = try newYamlEditor("k:\n  - a\n  - b\n");
+    defer ed.deinit();
+    try ed.insertItem(&.{.{ .key = "k" }}, 1, "m");
+    try expectSource(&ed, "k:\n  - a\n  - m\n  - b\n");
+}
+
+test "yaml insertItem: a flow item at an index, on one line and one per line" {
+    var ed = try newYamlEditor("t: [a, b, c]\n");
+    defer ed.deinit();
+    try ed.insertItem(&.{.{ .key = "t" }}, 2, "m");
+    try expectSource(&ed, "t: [a, b, m, c]\n");
+    try ed.insertItem(&.{.{ .key = "t" }}, std.math.maxInt(usize), "z");
+    try expectSource(&ed, "t: [a, b, m, c, z]\n");
+
+    var multi = try newYamlEditor("t: [\n  a,\n  b,\n]\n");
+    defer multi.deinit();
+    try multi.insertItem(&.{.{ .key = "t" }}, 1, "m");
+    try expectSource(&multi, "t: [\n  a,\n  m,\n  b,\n]\n");
+    // 0 is a prepend, which keeps the dialect's one-line spelling.
+    try multi.insertItem(&.{.{ .key = "t" }}, 0, "z");
+    try expectSource(&multi, "t: [\n  z, a,\n  m,\n  b,\n]\n");
+}
+
 test "yaml remove block seq middle" {
     var ed = try newYamlEditor("- a\n- b\n- c\n");
     defer ed.deinit();

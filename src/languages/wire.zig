@@ -576,6 +576,8 @@ pub fn tableFromJson(a: Allocator, v: std.json.Value) !Runtime.NodeTable {
                 .tag_span = try spanOf(ro.get("tag_span")),
                 .marker = try spanOf(ro.get("marker")),
                 .sep = try spanOf(ro.get("sep")),
+                .item_sep = try strOf(a, ro.get("item_sep")),
+                .open = boolOr(ro, "open", false),
             });
         }
     }
@@ -672,6 +674,8 @@ pub fn tableToJson(w: *Io.Writer, t: *const Runtime.NodeTable) !void {
         try writeSpan(w, "tag_span", r.tag_span);
         try writeSpan(w, "marker", r.marker);
         try writeSpan(w, "sep", r.sep);
+        try writeStr(w, "item_sep", r.item_sep);
+        if (r.open) try w.writeAll(",\"open\":true");
         try w.writeByte('}');
     }
     try w.writeAll("],\"regions\":[");

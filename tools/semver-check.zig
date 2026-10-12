@@ -41,7 +41,8 @@
 //! Coverage: the exported function surface (names + normalized signatures) AND
 //! the `typedef struct/enum` surface — struct field layout (order, type, array
 //! size) and enum *values* — applying fig's forward-compat policy (size-gated
-//! structs, and structs marked `// fig-abi: host-written`, may append fields =
+//! structs, and structs marked `// fig-abi: host-written` or
+//! `// fig-abi: stride-gated`, may append fields =
 //! MINOR; adding an enumerator = MINOR; reordering/
 //! retyping/removing a field or changing an enumerator's value = MAJOR). C has no
 //! name mangling, so this string-level compare of normalized declarations stands
@@ -123,6 +124,12 @@ const Aggregate = struct {
     /// a callee built against an older header reads the fields it knows at
     /// the offsets they had. Appending a field is safe; nothing else is.
     host_written: bool = false,
+    /// A struct whose comment block carries `fig-abi: stride-gated`: it is
+    /// only ever an element of an array whose holder says the stride it was
+    /// written at (`FigNodeTable.row_size`, `FigLanguageVTable.dialect_size`),
+    /// and a reader takes the prefix of each element it knows and the
+    /// default past it. Appending a field is safe; nothing else is.
+    stride_gated: bool = false,
     fields: []Field, // structs
     enumerators: []Enumerator, // enums
 };
@@ -505,11 +512,11 @@ fn lessThanFn(_: void, a: Fn, b: Fn) bool {
 // value silently reassigns meaning under every caller — a break.
 // ============================================================================
 
-/// The structs the header marks `fig-abi: host-written`: each mark names the
-/// `typedef struct <Tag>` that follows it. Read off the raw header, since the
-/// mark is a comment and `collectAggregates` parses comment-stripped text.
-fn hostWrittenNames(arena: std.mem.Allocator, header: []const u8) ![]const []const u8 {
-    const mark = "fig-abi: host-written";
+/// The structs the header marks with `mark` (`fig-abi: host-written`,
+/// `fig-abi: stride-gated`): each mark names the `typedef struct <Tag>` that
+/// follows it. Read off the raw header, since the mark is a comment and
+/// `collectAggregates` parses comment-stripped text.
+fn markedNames(arena: std.mem.Allocator, header: []const u8, mark: []const u8) ![]const []const u8 {
     var names: std.ArrayList([]const u8) = .empty;
     var i: usize = 0;
     while (std.mem.indexOfPos(u8, header, i, mark)) |at| {
@@ -542,7 +549,8 @@ fn readIdent(s: []const u8, idx: usize) []const u8 {
 /// Aggregate. Opaque handles (`typedef struct Foo Foo;`, no `{`) carry no layout
 /// and are skipped, as is anything that is not a struct/enum typedef.
 fn collectAggregates(arena: std.mem.Allocator, header: []const u8) ![]Aggregate {
-    const host_written = try hostWrittenNames(arena, header);
+    const host_written = try markedNames(arena, header, "fig-abi: host-written");
+    const stride_gated = try markedNames(arena, header, "fig-abi: stride-gated");
     const no_comments = try stripComments(arena, header);
     const text = try stripDirectives(arena, no_comments);
 
@@ -614,6 +622,9 @@ fn collectAggregates(arena: std.mem.Allocator, header: []const u8) ![]Aggregate 
                 .size_gated = gated,
                 .host_written = for (host_written) |hw| {
                     if (std.mem.eql(u8, hw, name)) break true;
+                } else false,
+                .stride_gated = for (stride_gated) |sg| {
+                    if (std.mem.eql(u8, sg, name)) break true;
                 } else false,
                 .fields = fields,
                 .enumerators = &.{},
@@ -808,9 +819,10 @@ fn diffStruct(arena: std.mem.Allocator, lines: *std.ArrayList([]const u8), b: Ag
     // Appending fields is safe ONLY for a size-versioned struct (its layout is
     // size-gated), or one the current header marks host-written — which is a
     // promise about who allocates it, true of the baseline too, so the mark
-    // is read off the current header alone. For any other struct it changes
-    // sizeof and is a break.
-    const gated = (b.size_gated and c.size_gated) or c.host_written;
+    // is read off the current header alone; so is a stride-gated mark, a
+    // promise that the struct is only read at a stride its writer declares.
+    // For any other struct it changes sizeof and is a break.
+    const gated = (b.size_gated and c.size_gated) or c.host_written or c.stride_gated;
     if (c.fields.len < b.fields.len) {
         v = worse(v, .major);
         try lines.append(arena, try std.fmt.allocPrint(arena, "- {s}: {d} field(s) removed (MAJOR)", .{ c.name, b.fields.len - c.fields.len }));
@@ -819,7 +831,7 @@ fn diffStruct(arena: std.mem.Allocator, lines: *std.ArrayList([]const u8), b: Ag
         while (k < c.fields.len) : (k += 1) {
             if (gated) {
                 v = worse(v, .minor);
-                const why = if (b.size_gated and c.size_gated) "size-gated" else "host-written";
+                const why = if (b.size_gated and c.size_gated) "size-gated" else if (c.host_written) "host-written" else "stride-gated";
                 try lines.append(arena, try std.fmt.allocPrint(arena, "+ {s}: field `{s}` appended ({s}, MINOR)", .{ c.name, c.fields[k].sig, why }));
             } else {
                 v = worse(v, .major);

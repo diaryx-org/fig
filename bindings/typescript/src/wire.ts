@@ -215,6 +215,20 @@ export interface NodeRow {
    *  separator says the value reframes rather than splices in place; a
    *  zero-width one marks a value hanging under a bare key. */
   sep?: RowSpan;
+  /** For a sequence whose items are joined by a separator of its own, not
+   *  the dialect's `flow_entry_sep` nor one per line: the bytes written
+   *  between two items on one line — `" | "`, `" "`, or `"\n\n"` for items
+   *  a blank line apart. The sequence is then edited item by item with it:
+   *  a delete takes one item and the separator beside it (this with its
+   *  whitespace trimmed, or only whitespace where nothing is left), and an
+   *  append splices after the last item, so a trailing separator stays
+   *  trailing. Only a sequence may carry one; an empty one is none. */
+  item_sep?: string;
+  /** For a sequence: it has no delimiters, so its items run from its span's
+   *  start to its end — a voice's bars after `Name:`. Makes the sequence a
+   *  separated one, with the dialect's `flow_entry_sep` when `item_sep` is
+   *  absent. */
+  open?: boolean;
 }
 
 /** One whole header line of a section node (`[table]`), `end` just past

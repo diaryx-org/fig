@@ -1735,6 +1735,23 @@ pub export fn fig_editor_prepend_seq(
     };
 }
 
+pub export fn fig_editor_insert_seq_item(
+    ed: ?*FigEditor,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    index: usize,
+    val_ptr: ?[*]const u8,
+    val_len: usize,
+) FigStatus {
+    const handle = editorFrom(ed) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    const val = sliceOf(val_ptr, val_len) orelse return .invalid_argument;
+    return switch (handle.inner) {
+        inline else => |*e| if (e.insertItem(path, index, val)) .ok else |err| editStatus(err),
+    };
+}
+
 pub export fn fig_editor_remove_seq_item(
     ed: ?*FigEditor,
     path_ptr: ?[*]const FigPathSegment,
@@ -2817,6 +2834,23 @@ pub export fn fig_embed_prepend_seq(
     const val = sliceOf(val_ptr, val_len) orelse return .invalid_argument;
     return switch (handle.editor) {
         inline else => |*e| if (e.prependToSeq(path, val)) .ok else |err| editStatus(err),
+    };
+}
+
+pub export fn fig_embed_insert_seq_item(
+    em: ?*FigEmbed,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    index: usize,
+    val_ptr: ?[*]const u8,
+    val_len: usize,
+) FigStatus {
+    const handle = embedFrom(em) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    const val = sliceOf(val_ptr, val_len) orelse return .invalid_argument;
+    return switch (handle.editor) {
+        inline else => |*e| if (e.insertItem(path, index, val)) .ok else |err| editStatus(err),
     };
 }
 

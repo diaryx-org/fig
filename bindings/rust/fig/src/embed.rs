@@ -655,6 +655,47 @@ impl Embed {
         edit_status(status, self.inner, EditTarget::Value)
     }
 
+    /// Insert `value` (any `impl Into<Value>`) into the sequence at `path` so
+    /// it is the item at `index` afterwards. Mirrors
+    /// [`crate::Editor::insert_item`].
+    pub fn insert_item(
+        &mut self,
+        path: &[Segment],
+        index: usize,
+        value: impl Into<Value>,
+    ) -> Result<(), Error> {
+        let val = value_text(&value.into(), self.inner)?;
+        self.insert_item_text(path, index, &val)
+    }
+
+    /// Insert `value` at `index` in the sequence at `path`, rendering it with
+    /// `options`. Mirrors [`crate::Editor::insert_item_with`].
+    pub fn insert_item_with(
+        &mut self,
+        path: &[Segment],
+        index: usize,
+        value: impl Into<Value>,
+        options: SerializeOptions,
+    ) -> Result<(), Error> {
+        let val = value_text_with(&value.into(), self.inner, options)?;
+        self.insert_item_text(path, index, &val)
+    }
+
+    fn insert_item_text(&mut self, path: &[Segment], index: usize, val: &str) -> Result<(), Error> {
+        let p = to_ffi_path(path);
+        let status = unsafe {
+            ffi::fig_embed_insert_seq_item(
+                self.ptr(),
+                p.as_ptr(),
+                p.len(),
+                index,
+                val.as_ptr(),
+                val.len(),
+            )
+        };
+        edit_status(status, self.inner, EditTarget::Value)
+    }
+
     // ── comment editing ─────────────────────────────────────────────────────
 
     /// Add an own-line comment ABOVE the node at `path`. Mirrors

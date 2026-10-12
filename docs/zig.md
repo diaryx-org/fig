@@ -388,6 +388,7 @@ try ed.set(&.{.{ .key = "debug" }}, "false");          // upsert (replace or ins
 try ed.deleteKey(&.{.{ .key = "debug" }});             // remove a mapping entry
 try ed.appendToSeq(&.{.{ .key = "tags" }}, "\"c\"");   // push onto a sequence
 try ed.prependToSeq(&.{.{ .key = "tags" }}, "\"a\"");
+try ed.insertItem(&.{.{ .key = "tags" }}, 1, "\"b\"");  // insert so it is item 1; past the end is NotFound
 try ed.removeSeqItem(&.{.{ .key = "tags" }}, 0);       // remove sequence item by index
 try ed.moveKey(&.{.{ .key = "a" }}, &.{.{ .key = "b" }});     // reorder mapping entries
 try ed.reorderKeys(&.{}, &.{ "title", "body" });              // named keys first, rest follow

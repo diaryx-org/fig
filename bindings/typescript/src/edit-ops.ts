@@ -25,6 +25,7 @@ export interface EditFns {
   appendSeq(h: number, path: number, pathLen: number, val: number, valLen: number): number;
   prependSeq(h: number, path: number, pathLen: number, val: number, valLen: number): number;
   removeSeqItem(h: number, path: number, pathLen: number, index: number): number;
+  insertSeqItem(h: number, path: number, pathLen: number, index: number, val: number, valLen: number): number;
   moveKey(h: number, src: number, srcLen: number, dest: number, destLen: number): number;
   reorderKeys(h: number, path: number, pathLen: number, keys: number, keysLen: number): number;
   moveItem(h: number, path: number, pathLen: number, from: number, to: number): number;
@@ -137,6 +138,23 @@ export abstract class Editable {
     this.prependValueRaw(path, valueText(value, this.textFormat));
   }
 
+  /** Insert `value` into the sequence at `path` so it is the item at
+   *  `index` afterwards: before the item there now, or after the last when
+   *  `index` is the length. 0 is `prependValue` and the length is
+   *  `appendValue`. A flow item takes a separator laid out as its sequence
+   *  is; a block item goes on its own line above the item at `index` and
+   *  that item's comment block. An index past the length throws
+   *  (`Status.NotFound`), and nothing is written. */
+  insertItem(path: readonly Segment[], index: number, value: Value | JsInput): void {
+    this.insertItemRaw(path, index, valueText(value, this.textFormat));
+  }
+
+  /** Insert `value` at `index` in the sequence at `path`, rendering it with
+   *  `options`. The width-aware twin of `insertItem`. */
+  insertItemWith(path: readonly Segment[], index: number, value: Value | JsInput, options?: SerializeOptions): void {
+    this.insertItemRaw(path, index, valueTextWith(value, this.textFormat, options));
+  }
+
   /** Append `value` to the sequence at `path`, rendering it with `options`. */
   appendValueWith(path: readonly Segment[], value: Value | JsInput, options?: SerializeOptions): void {
     this.appendValueRaw(path, valueTextWith(value, this.textFormat, options));
@@ -197,6 +215,19 @@ export abstract class Editable {
   /** Prepend already-serialized `text` to the sequence at `path`. */
   prependValueRaw(path: readonly Segment[], text: string): void {
     this.seqEdit(path, text, this.fns.prependSeq, "prependValue");
+  }
+
+  /** Insert already-serialized `text` at `index` in the sequence at `path`.
+   *  See `insertItem`. */
+  insertItemRaw(path: readonly Segment[], index: number, text: string): void {
+    const frame = new Frame();
+    try {
+      const p = encodePath(frame, path);
+      const t = frame.str(text);
+      check(this.fns.insertSeqItem(this.live(), p.ptr, p.len, index, t.ptr, t.len), "insertItem");
+    } finally {
+      frame.dispose();
+    }
   }
 
   private seqEdit(path: readonly Segment[], text: string, fn: EditFns["appendSeq"], op: string): void {

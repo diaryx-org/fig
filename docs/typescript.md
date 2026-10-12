@@ -281,6 +281,7 @@ ed.setValue(path, value);                   // upsert (replace or insert)
 ed.deleteKey(path);                       // remove a mapping entry
 ed.appendValue(["list"], value);       // push onto a sequence
 ed.prependValue(["list"], value);
+ed.insertItem(["list"], 2, value);     // insert so it is item 2, before the item there now
 ed.deleteItem(["list"], 0);            // remove sequence item by index
 ed.moveKey(["a"], ["b"]);              // reorder mapping entries
 ed.reorderKeys([], ["title", "body"]); // named keys first, rest follow
@@ -291,7 +292,16 @@ ed.setSequence(["tags"], ["c", "a"]);  // reconcile a list, keeping survivors' c
 
 `replaceValue`, `insertValue` and `setValue` each have a `*With` twin taking a
 `SerializeOptions`, for when the spliced value's own rendering needs
-controlling — `replaceValueWith`, `insertValueWith`, `setValueWith`.
+controlling — `replaceValueWith`, `insertValueWith`, `setValueWith` — and so
+do the sequence inserts, `appendValueWith`, `prependValueWith` and
+`insertItemWith`.
+
+`insertItem(path, index, value)` is the insert at an index: 0 is
+`prependValue`, the sequence's length is `appendValue`, and an index past it
+throws `NotFound` with nothing written. Between them, a flow item takes a
+separator laid out as its sequence is (one per line when the sequence is),
+and a block item goes on its own line above the item at `index` and that
+item's comment block.
 
 ### Whole containers (`Editor` only)
 
@@ -396,8 +406,8 @@ byte-for-byte as it was.
 
 Need to insert already-serialized text verbatim (e.g. preserving exact quoting)?
 Every value method has a `*Raw` twin — `replaceValueRaw`, `insertValueRaw`,
-`appendValueRaw`, `prependValueRaw`, `setValueRaw` — that takes a string instead of a
-`Value`.
+`appendValueRaw`, `prependValueRaw`, `insertItemRaw`, `setValueRaw` — that takes a
+string instead of a `Value`.
 
 ## Markdown frontmatter & embeds
 
@@ -613,6 +623,17 @@ element, an entry whose key wraps its value) declares `renderers` and answers
 the value renderer is told what fig's own literal rules made of the text
 (`args.literal`: `"int"`, `"bool"`, `"string"`, …), so every format means the
 same thing by `42` and a renderer spells a kind rather than deciding one.
+
+A sequence whose items are joined by something other than one per line or
+the dialect's `flow_entry_sep` says so on its row: `item_sep` is the bytes
+written between two of its items on one line, and `open: true` says it has
+no delimiters. A `.tune` voice's bars are
+`{ kind: "sequence", item_sep: " | ", open: true }`, a bar's tokens
+`item_sep: " "`, and blocks a blank line apart `item_sep: "\n\n"`. Such a sequence takes every item edit — append,
+prepend, `insertItem`, delete and move — whatever its first byte: a delete
+takes one item and the separator beside it, and an append splices after the
+last item, so a trailing separator (`1 | 2 |`) stays trailing. The kit's
+`sequence(span)` takes the same two fields.
 
 **The package's own languages** are written this way: every format in
 [Formats](#formats) is a `Language` at `@diaryx/fig/languages/<name>`, named

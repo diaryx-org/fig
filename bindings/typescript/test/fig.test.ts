@@ -925,6 +925,22 @@ test("Editor container ops are unsupported where the key ops already suffice", (
   assert.equal(ed.source(), "b:\n  y: 2\n");
 });
 
+test("insertItem puts an item at an index, in a block and a flow sequence alike", () => {
+  using ed = Editor.open("xs:\n  - a\n  # about c\n  - c\nys: [a, c]\n", Format.Yaml);
+  ed.insertItem(["xs"], 1, "b");
+  ed.insertItem(["ys"], 1, "b");
+  ed.insertItemRaw(["ys"], 3, "d");
+  ed.insertItemWith(["ys"], 0, "z", { width: 1 });
+  assert.equal(ed.source(), "xs:\n  - a\n  - b\n  # about c\n  - c\nys: [z, a, b, c, d]\n");
+  // Past the end: refused, and nothing written.
+  assert.throws(() => ed.insertItem(["ys"], 9, "q"), (e: unknown) => e instanceof FigError && e.status === Status.NotFound);
+  assert.equal(ed.source(), "xs:\n  - a\n  - b\n  # about c\n  - c\nys: [z, a, b, c, d]\n");
+
+  using em = Embed.open("---\nys: [a, c]\n---\nbody\n", EmbedType.Frontmatter);
+  em.insertItem(["ys"], 1, "b");
+  assert.equal(em.render(), "---\nys: [a, b, c]\n---\nbody\n");
+});
+
 test("appendValueWith and prependValueWith render the item with the options given", () => {
   using ed = Editor.open("xs:\n  - b\n", Format.Yaml);
   ed.appendValueWith(["xs"], V.map([[V.string("k"), V.int(1)]]), { width: 1 });

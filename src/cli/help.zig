@@ -272,11 +272,10 @@ pub const Help = struct {
             \\  Adds a new entry. The last path segment names the slot to create:
             \\    a.b.newkey   -> insert key `newkey` into the mapping at a.b
             \\    a.list[0]    -> prepend <value> as the first item of a.list
+            \\    a.list[2]    -> insert <value> before the item now at [2]
             \\    a.list[-]    -> append <value> as the last item ([$] also works)
             \\  An empty parent targets the root container, so the document's own
             \\    root (mapping vs list) decides which form applies — not the format.
-            \\  There is no insert in the middle of a sequence (list[2]): `set --seq`
-            \\    rewrites the whole sequence.
             \\
         ++ value_reading ++
             \\  path format: dot syntax for keys, bracket syntax for indices.

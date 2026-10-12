@@ -16,7 +16,10 @@
 //! * **Value edits** are `<verb>_value` — `replace_value`, `insert_value`,
 //!   `set_value`, `append_value`, `prepend_value` — each taking any
 //!   `impl Into<Value>`, and each with a `<verb>_value_with` twin taking a
-//!   [`SerializeOptions`] for the spliced value's own rendering. A typed
+//!   [`SerializeOptions`] for the spliced value's own rendering. The one
+//!   value edit at an index is `insert_item` (and `insert_item_with`),
+//!   named by its noun as `delete_item` is, since `insert_value` inserts a
+//!   key. A typed
 //!   struct goes in through `to_value()` (the `derive` feature) or
 //!   `fig::to_value(&x)?` (the `serde` feature).
 //! * **Structural edits** are `<verb>_<noun>`, where the noun is what the path
@@ -352,6 +355,52 @@ impl Editor {
         let p = to_ffi_path(path);
         let status = unsafe {
             ffi::fig_editor_prepend_seq(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
+        };
+        edit_status(status, self.format, EditTarget::Value)
+    }
+
+    /// Insert `value` (any `impl Into<Value>`) into the sequence at `path` so
+    /// it is the item at `index` afterwards: before the item there now, or
+    /// after the last when `index` is the length (or `usize::MAX`, the end).
+    /// 0 is [`prepend_value`](Self::prepend_value) and the length is
+    /// [`append_value`](Self::append_value). A flow item takes a separator
+    /// laid out as its sequence is; a block item goes on its own line above
+    /// the item at `index` and that item's comment block. An index past the
+    /// length is [`Error::NotFound`], and nothing is written.
+    pub fn insert_item(
+        &mut self,
+        path: &[Segment],
+        index: usize,
+        value: impl Into<Value>,
+    ) -> Result<(), Error> {
+        let val = value_text(&value.into(), self.format)?;
+        self.insert_item_text(path, index, &val)
+    }
+
+    /// Insert `value` at `index` in the sequence at `path`, rendering it with
+    /// `options`. The width-aware twin of [`insert_item`](Self::insert_item).
+    pub fn insert_item_with(
+        &mut self,
+        path: &[Segment],
+        index: usize,
+        value: impl Into<Value>,
+        options: SerializeOptions,
+    ) -> Result<(), Error> {
+        let val = value_text_with(&value.into(), self.format, options)?;
+        self.insert_item_text(path, index, &val)
+    }
+
+    fn insert_item_text(&mut self, path: &[Segment], index: usize, val: &str) -> Result<(), Error> {
+        let p = to_ffi_path(path);
+        let status = unsafe {
+            ffi::fig_editor_insert_seq_item(
+                self.ptr(),
+                p.as_ptr(),
+                p.len(),
+                index,
+                val.as_ptr(),
+                val.len(),
+            )
         };
         edit_status(status, self.format, EditTarget::Value)
     }

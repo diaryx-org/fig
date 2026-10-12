@@ -130,6 +130,7 @@ const EMBED_FNS: EditFns = {
   appendSeq: (...a) => fig.fig_embed_append_seq(...a),
   prependSeq: (...a) => fig.fig_embed_prepend_seq(...a),
   removeSeqItem: (...a) => fig.fig_embed_remove_seq_item(...a),
+  insertSeqItem: (...a) => fig.fig_embed_insert_seq_item(...a),
   moveKey: (...a) => fig.fig_embed_move_key(...a),
   reorderKeys: (...a) => fig.fig_embed_reorder_keys(...a),
   moveItem: (...a) => fig.fig_embed_move_item(...a),

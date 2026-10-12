@@ -28,8 +28,7 @@ fn editor_set_replaces_or_inserts() {
 #[test]
 fn embed_open_or_init_creates_block_then_sets_first_key() {
     // No frontmatter: open_or_init synthesizes an empty block; set lands the key.
-    let mut fm =
-        Embed::open_or_init(b"# Just a body\n\nprose\n", EmbedType::Frontmatter).unwrap();
+    let mut fm = Embed::open_or_init(b"# Just a body\n\nprose\n", EmbedType::Frontmatter).unwrap();
     fm.set_value(&[Segment::Key("title")], "Hi").unwrap();
     assert_eq!(
         fm.render().unwrap(),
@@ -40,11 +39,8 @@ fn embed_open_or_init_creates_block_then_sets_first_key() {
 #[test]
 fn embed_open_or_init_opens_existing_region_unchanged() {
     // Existing frontmatter: behaves like open, preserving the comment + body.
-    let mut fm = Embed::open_or_init(
-        b"---\ntitle: Old # c\n---\nbody\n",
-        EmbedType::Frontmatter,
-    )
-    .unwrap();
+    let mut fm =
+        Embed::open_or_init(b"---\ntitle: Old # c\n---\nbody\n", EmbedType::Frontmatter).unwrap();
     fm.set_value(&[Segment::Key("title")], "New").unwrap();
     assert_eq!(fm.render().unwrap(), "---\ntitle: New # c\n---\nbody\n");
 }
@@ -281,6 +277,31 @@ fn editor_sequence_ops() {
 }
 
 #[test]
+fn insert_item_puts_an_item_at_an_index_in_block_and_flow_sequences() {
+    let mut ed =
+        Editor::open(b"items:\n- a\n# about c\n- c\nflow: [a, c]\n", Format::Yaml).unwrap();
+    ed.insert_item(&[Segment::Key("items")], 1, "b").unwrap();
+    ed.insert_item(&[Segment::Key("flow")], 1, "b").unwrap();
+    ed.insert_item(&[Segment::Key("flow")], usize::MAX, "d")
+        .unwrap();
+    assert_eq!(
+        ed.source().unwrap(),
+        "items:\n- a\n- b\n# about c\n- c\nflow: [a, b, c, d]\n"
+    );
+    // Past the end: refused, and nothing written.
+    let err = ed.insert_item(&[Segment::Key("flow")], 9, "z").unwrap_err();
+    assert!(matches!(err, fig::Error::NotFound), "{err:?}");
+    assert_eq!(
+        ed.source().unwrap(),
+        "items:\n- a\n- b\n# about c\n- c\nflow: [a, b, c, d]\n"
+    );
+
+    let mut fm = Embed::open(b"---\nitems: [a, c]\n---\n", EmbedType::Frontmatter).unwrap();
+    fm.insert_item(&[Segment::Key("items")], 1, "b").unwrap();
+    assert_eq!(fm.render().unwrap(), "---\nitems: [a, b, c]\n---\n");
+}
+
+#[test]
 fn editor_set_sequence_reconciles_preserving_comments() {
     use fig::Value;
     let mut ed = Editor::open(
@@ -496,11 +517,7 @@ fn fig_dialect_block_map_splices_into_a_fence_with_the_width_knob() {
     // nested section under its key inside a ```fig``` fence — the prov case
     // that plain `set_value` (forced inline flow) could not express.
     use fig::SerializeOptions;
-    let mut em = Embed::open(
-        b"```fig\ntitle = hi\n```\nbody\n",
-        EmbedType::FencedFig,
-    )
-    .unwrap();
+    let mut em = Embed::open(b"```fig\ntitle = hi\n```\nbody\n", EmbedType::FencedFig).unwrap();
     em.set_value_with(
         &[Segment::Key("registry")],
         fig::Value::Map(vec![

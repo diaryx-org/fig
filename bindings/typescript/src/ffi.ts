@@ -95,6 +95,7 @@ interface Exports {
   fig_editor_append_seq(ed: number, path: number, path_len: number, val: number, val_len: number): number;
   fig_editor_prepend_seq(ed: number, path: number, path_len: number, val: number, val_len: number): number;
   fig_editor_remove_seq_item(ed: number, path: number, path_len: number, index: number): number;
+  fig_editor_insert_seq_item(ed: number, path: number, path_len: number, index: number, val: number, val_len: number): number;
   fig_editor_move_key(ed: number, src: number, src_len: number, dest: number, dest_len: number): number;
   fig_editor_reorder_keys(ed: number, path: number, path_len: number, keys: number, keys_len: number): number;
   fig_editor_move_item(ed: number, path: number, path_len: number, from: number, to: number): number;
@@ -152,6 +153,7 @@ interface Exports {
   fig_embed_append_seq(em: number, path: number, path_len: number, val: number, val_len: number): number;
   fig_embed_prepend_seq(em: number, path: number, path_len: number, val: number, val_len: number): number;
   fig_embed_remove_seq_item(em: number, path: number, path_len: number, index: number): number;
+  fig_embed_insert_seq_item(em: number, path: number, path_len: number, index: number, val: number, val_len: number): number;
   fig_embed_move_key(em: number, src: number, src_len: number, dest: number, dest_len: number): number;
   fig_embed_reorder_keys(em: number, path: number, path_len: number, keys: number, keys_len: number): number;
   fig_embed_move_item(em: number, path: number, path_len: number, from: number, to: number): number;

@@ -34,6 +34,7 @@ const EDITOR_FNS: EditFns = {
   appendSeq: (...a) => fig.fig_editor_append_seq(...a),
   prependSeq: (...a) => fig.fig_editor_prepend_seq(...a),
   removeSeqItem: (...a) => fig.fig_editor_remove_seq_item(...a),
+  insertSeqItem: (...a) => fig.fig_editor_insert_seq_item(...a),
   moveKey: (...a) => fig.fig_editor_move_key(...a),
   reorderKeys: (...a) => fig.fig_editor_reorder_keys(...a),
   moveItem: (...a) => fig.fig_editor_move_item(...a),

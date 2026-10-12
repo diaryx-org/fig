@@ -13,6 +13,7 @@ import {
   Editor,
   FigError,
   Format,
+  LanguageError,
   Status,
   capabilities,
   convert,
@@ -244,6 +245,61 @@ test("a renderer is told the container its fragment goes into", () => {
     handle(tagged, JSON.stringify({ op: "render", which: "item", dialect: "js-tagged-env", value: "v", parent_key: "deps", parent_tag: "!dep" })),
   ) as Record<string, unknown>;
   assert.deepEqual(wire, { ok: true, output: "!dep|deps|v" });
+});
+
+test("a sequence its parser gives a separator of its own is edited item by item", () => {
+  // One line of bars, as a `.tune` voice's: bars joined by `|` with a
+  // trailing one allowed, a bar's tokens by spaces, neither delimited. `x`
+  // is not a token, so an edit that writes one is rolled back.
+  const bars: Language = {
+    name: "js-bars",
+    caps: { read: true, edit: true, serialize: false },
+    max_mapping_depth: 0,
+    syntax: { kv_sep: ": ", empty_map_literal: null, flow_containers: false },
+    dialects: [{ name: "js-bars", extensions: ["jsbars"], splice: "raw", empty_doc_seed: "" }],
+    samples: ["1 2 | 3 |\n"],
+    parse: (_dialect, input) => {
+      const line = input.replace(/\n$/, "");
+      const rows: NodeTable["rows"] = [{ kind: "sequence", parent: null, span: [0, line.length], item_sep: " | ", open: true }];
+      const segments = line.split("|");
+      if (segments.length > 1 && segments.at(-1)!.trim() === "") segments.pop();
+      let at = 0;
+      for (const seg of segments) {
+        const start = at + (seg.length - seg.trimStart().length);
+        const end = Math.max(start, at + seg.trimEnd().length);
+        const bar = rows.length;
+        rows.push({ kind: "sequence", parent: 0, span: [start, end], item_sep: " ", open: true });
+        for (const m of seg.matchAll(/\S+/g)) {
+          if (m[0] === "x") throw new LanguageError("x is not a note", at + m.index);
+          rows.push({ kind: "string", parent: bar, span: [at + m.index, at + m.index + m[0].length], text: m[0] });
+        }
+        at += seg.length + 1;
+      }
+      rows[0]!.span = [rows[1]?.span?.[0] ?? 0, line.length];
+      return { rows };
+    },
+  };
+  const f = registerLanguage(bars);
+  const line = "1 2 3 4 | 5 6 7 1' |\n";
+  const edit = (op: (ed: Editor) => void) => {
+    using ed = Editor.open(line, f);
+    op(ed);
+    return ed.source();
+  };
+  assert.equal(edit((ed) => ed.appendValueRaw([], "1 - - -")), "1 2 3 4 | 5 6 7 1' | 1 - - - |\n");
+  assert.equal(edit((ed) => ed.prependValueRaw([], "0")), "0 | 1 2 3 4 | 5 6 7 1' |\n");
+  assert.equal(edit((ed) => ed.insertItemRaw([], 1, "9")), "1 2 3 4 | 9 | 5 6 7 1' |\n");
+  assert.equal(edit((ed) => ed.deleteItem([], 0)), "5 6 7 1' |\n");
+  assert.equal(edit((ed) => ed.deleteItem([], 1)), "1 2 3 4 |\n");
+  assert.equal(edit((ed) => ed.moveItem([], 1, 0)), "5 6 7 1' | 1 2 3 4 |\n");
+  assert.equal(edit((ed) => ed.appendValueRaw([0], "5")), "1 2 3 4 5 | 5 6 7 1' |\n");
+  assert.equal(edit((ed) => ed.deleteItem([0], 1)), "1 3 4 | 5 6 7 1' |\n");
+
+  using ed = Editor.open(line, f);
+  const refused = (e: unknown) => e instanceof FigError && e.status === Status.ParseError;
+  assert.throws(() => ed.appendValueRaw([0], "x"), refused);
+  assert.throws(() => ed.insertItemRaw([], 1, "x"), refused);
+  assert.equal(ed.source(), line);
 });
 
 test("serve: the same wire over any line source", async () => {

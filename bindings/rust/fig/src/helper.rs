@@ -48,8 +48,8 @@
 //! optionals as `null`. A table is `{"rows":[…],"regions":[…],"mentions":[…],
 //! "comments":[…],"directives":[…]}`: a row is `{"kind":"mapping","parent":0,
 //! "span":[s,e],"text":"…"}` plus `ext_kind`, `anchor`, `anchor_span`, `tag`,
-//! `tag_span`, `marker` and `sep` where present (an absent optional is
-//! omitted, not `null`); a region `{"node","start","end"}`; a mention
+//! `tag_span`, `marker`, `sep`, `item_sep` and `open` where present (an
+//! absent optional is omitted, not `null`, and `open` only when true); a region `{"node","start","end"}`; a mention
 //! `{"node","span":[s,e],"kind":"header|entry"}`; a comment `{"node",
 //! "slot":"leading|trailing|dangling","style":"line|block","text"}`; a
 //! directive `{"handle","prefix"}`, and the array is omitted when empty.
@@ -795,6 +795,12 @@ pub fn table_to_value(t: &NodeTable) -> Value {
             if let Some(sp) = r.sep {
                 e.push(("sep", span_v(sp)));
             }
+            if let Some(t) = &r.item_sep {
+                e.push(("item_sep", Value::Str(t.clone())));
+            }
+            if r.open {
+                e.push(("open", Value::Bool(true)));
+            }
             map(e)
         })
         .collect();
@@ -892,6 +898,8 @@ pub fn table_from_value(v: &Value) -> Result<NodeTable, LanguageError> {
             tag_span: None,
             marker: None,
             sep: None,
+            item_sep: None,
+            open: false,
         };
         row.ext_kind = r
             .get("ext_kind")
@@ -905,6 +913,8 @@ pub fn table_from_value(v: &Value) -> Result<NodeTable, LanguageError> {
         row.tag_span = opt_span_of(r.get("tag_span"))?;
         row.marker = opt_span_of(r.get("marker"))?;
         row.sep = opt_span_of(r.get("sep"))?;
+        row.item_sep = opt_str_of(r.get("item_sep"));
+        row.open = r.get("open").and_then(Value::as_bool).unwrap_or(false);
         t.rows.push(row);
     }
     let n = |v: &Value, name: &str| -> Result<u64, LanguageError> {

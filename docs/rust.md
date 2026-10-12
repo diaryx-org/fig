@@ -213,6 +213,16 @@ and each of its rows — so a field the contract gains is a minor release.
 Their fields stay public: build one from its constructor or `Default` and
 assign what differs, rather than with a struct literal.
 
+A sequence whose items are joined by something other than one per line or
+the dialect's `flow_entry_sep` says so on its row:
+`NodeRow::new(NodeKind::Sequence, parent, span).with_item_sep(" | ", true)`
+names the bytes written between two items on one line, and `true` says it
+has no delimiters (a `.tune` voice's bars run from after `Name:` to the end
+of the line). Such a sequence takes every item edit — append, prepend,
+`insert_item`, delete and move — whatever its first byte: a delete takes one
+item and the separator beside it, and an append splices after the last item,
+so a trailing separator stays trailing.
+
 ```rust
 use fig::language::{Dialect, SectionHeader, Splice, Syntax};
 
@@ -459,6 +469,7 @@ ed.replace_value(path, &value)?;                      // change a value
 ed.set_value(path, &value)?;                          // upsert (replace or insert)
 ed.append_value(&[Segment::Key("list")], &value)?;    // push onto a sequence
 ed.prepend_value(&[Segment::Key("list")], &value)?;
+ed.insert_item(&[Segment::Key("list")], 2, &value)?;  // insert so it is item 2, before the item there now
 ed.rename_key(path, "new_key")?;                      // rename a key (a name, spelled as the format spells a key)
 ed.delete_key(path)?;                                 // remove a mapping entry
 ed.delete_item(&[Segment::Key("list")], 0)?;          // remove a sequence item by index
@@ -472,11 +483,19 @@ ed.set_sequence(&[Segment::Key("tags")], ["a", "b"])?; // reconcile a list, keep
 Every value edit has a `*_with` twin taking a [`SerializeOptions`], for when
 the spliced value's own rendering needs controlling: `replace_value_with`,
 `insert_value_with`, `set_value_with`, `append_value_with`,
-`prepend_value_with`. `set_sequence` takes anything iterable over
+`prepend_value_with`, `insert_item_with`. `set_sequence` takes anything iterable over
 `impl Into<Value>` — a `&[Value]`, a `Vec<String>`, an array of `&str`.
 
+`insert_item(path, index, value)` is the insert at an index: 0 is
+`prepend_value`, the sequence's length (or `usize::MAX`) is `append_value`,
+and an index past it is [`Error::NotFound`] with nothing written. Between
+them, a flow item takes a separator laid out as its sequence is, and a block
+item goes on its own line above the item at `index` and that item's comment
+block.
+
 The names follow one scheme, on [`Editor`] and [`Embed`] alike. Value edits
-are `<verb>_value`. Structural edits are `<verb>_<noun>`, the noun being what
+are `<verb>_value`, except the insert at an index, `insert_item`, named by its
+noun as `delete_item` is because `insert_value` inserts a key. Structural edits are `<verb>_<noun>`, the noun being what
 the path names — a `key`, an `item` (by index), or a `container` (below) — so
 `delete_key`/`delete_item`/`delete_container`, `move_key`/`move_item`/
 `move_container`, `reorder_keys`/`reorder_items`/`reorder_containers`, and

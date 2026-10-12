@@ -28,7 +28,7 @@ const EditTextKind = types.EditTextKind;
 /// this one function; only `renderAll`'s
 /// per-language `describe`/`shortLabel` calls differ. This is a CLI-only
 /// sibling of a language's own `Diagnostic.renderAlloc`/`Warning.renderAlloc`
-/// (see `languages/fig/parser.zig`'s private `renderReportAlloc`, which still
+/// (see `languages/figl/parser.zig`'s private `renderReportAlloc`, which still
 /// produces its own plain `file:line:col: <label>: <message>` shape) — not a
 /// replacement: the library's `renderAlloc` stays a plain, colorless string for
 /// every other caller (the LSP reads the structured `code`/`offset` fields
@@ -414,7 +414,7 @@ fn spliceStyle(format: Format) SpliceStyle {
 }
 
 /// Report an edit whose *argument* — not the file — is what doesn't parse, and
-/// exit: 2 when the text was source the user typed, 1 when it was a fig value
+/// exit: 2 when the text was source the user typed, 1 when it was a figl value
 /// the document refused (see below). `replace`/`rename`/`set`/`insert` splice the text
 /// into the document, so when the reparse fails the underlying error describes the
 /// spliced bytes ("not a valid TOML number" for a git sha) while pointing at a
@@ -459,20 +459,20 @@ fn reportBadEditTextImpl(term: *Io.Terminal, file: []const u8, format: ?Format, 
     try term.writer.writeAll("note");
     try term.setColor(.reset);
     if (kind == .value) {
-        // Read as a fig value and spelled as this format spells it: the
+        // Read as a figl value and spelled as this format spells it: the
         // spelling was refused where it landed, not the user's text. Show
         // that spelling when it differs from what was typed.
         const fmt_name = if (format) |f| types.name(f) else "the file's format";
         if (rendered) |r| if (text == null or !std.mem.eql(u8, r, text.?)) {
             const r_shown = r[0..@min(r.len, max_shown)];
             try term.writer.print(
-                ": the value was read as a fig value and written as {s} writes it — `{s}{s}` — and the document would not take that there; --raw splices your text as it stands.\n",
+                ": the value was read as a figl value and written as {s} writes it — `{s}{s}` — and the document would not take that there; --raw splices your text as it stands.\n",
                 .{ fmt_name, r_shown, if (r.len > max_shown) "…" else "" },
             );
             return;
         };
         try term.writer.print(
-            ": the value was read as a fig value and written as {s} writes it, and the document would not take it there; --raw splices your text as it stands.\n",
+            ": the value was read as a figl value and written as {s} writes it, and the document would not take it there; --raw splices your text as it stands.\n",
             .{fmt_name},
         );
         return;
@@ -526,7 +526,7 @@ pub fn reportUnwritableValue(term: *Io.Terminal, file: []const u8, err: anyerror
 }
 
 /// A scalar/null value reaching the fig printer as a document root has no
-/// authoring spelling there (`languages/fig/printer.zig`'s `root` hard-errors
+/// authoring spelling there (`languages/figl/printer.zig`'s `root` hard-errors
 /// with `UnrepresentableRoot` rather than emit non-conforming output) — print
 /// the teaching message and exit(1) here rather than let the raw error escape
 /// to `main`'s top level. Letting it escape would still work, but would print
@@ -539,7 +539,7 @@ pub fn reportUnwritableValue(term: *Io.Terminal, file: []const u8, err: anyerror
 /// here, like every other user-facing CLI failure in this binary, sidesteps
 /// that entirely.
 pub fn reportUnrepresentableRoot(term: *Io.Terminal) noreturn {
-    term.writer.writeAll("error: a scalar value cannot be the root of a .fig/.figl document; use canonical form or another output format instead (see docs/spec.md § 2).\n") catch {};
+    term.writer.writeAll("error: a scalar value cannot be the root of a .figl document; use canonical form or another output format instead (see docs/spec.md § 2).\n") catch {};
     term.writer.flush() catch {};
     std.process.exit(1);
 }
@@ -565,7 +565,7 @@ pub fn reportSerializeError(term: *Io.Terminal, err: fig.AST.SerializeError) nor
         error.FormatDisabled => "the requested format was not compiled into this build",
         error.NestingTooDeep => "this document nests too deeply for the canonical printer's depth guard",
         error.UnexpectedNodeKind => "an internal fig printer error occurred (please report this)",
-        error.UnrepresentableRoot => "a scalar value cannot be the root of a .fig/.figl document; use canonical form or another output format instead (see docs/spec.md § 2)",
+        error.UnrepresentableRoot => "a scalar value cannot be the root of a .figl document; use canonical form or another output format instead (see docs/spec.md § 2)",
         error.UnsupportedValue => "this document contains an array, or a table nested deeper than this format allows (INI: one level of `[section]`; dotenv/`.properties`: none)",
         error.InvalidKey => "a mapping key is not valid in this output format (a dotenv key must be a bash identifier: `[A-Za-z_][A-Za-z0-9_]*`)",
         error.NonFiniteNumber => "this output format has no way to write infinity or NaN",

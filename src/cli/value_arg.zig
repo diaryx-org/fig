@@ -1,5 +1,5 @@
 //! A value argument — `set`'s value and `--seq` items, `insert`'s value,
-//! `replace`'s replacement — read once as a fig value and rendered into whatever
+//! `replace`'s replacement — read once as a figl value and rendered into whatever
 //! format it lands in, the way a binding's `Value` is (CLI 5 §1). The format
 //! decides the spelling, never the meaning: `fig set f version 5` writes the
 //! number 5 into JSON, YAML and TOML alike, and `hello` is a string in all
@@ -70,14 +70,14 @@ fn readFig(allocator: std.mem.Allocator, term: *Io.Terminal, text: []const u8) !
 
     // With no language for fig at all every argument is a string, the one
     // reading that needs no parser.
-    const format = args_mod.parseFormatName("fig") orelse return .{ .tree = try stringTree(allocator, text) };
+    const format = args_mod.parseFormatName("figl") orelse return .{ .tree = try stringTree(allocator, text) };
     const source = try std.mem.concat(allocator, u8, &.{ prefix, text, "\n" });
     var reports: parse_dispatch.Reports = .{};
     const doc = parse_dispatch.parseSliceAs(format, allocator, source, &reports) catch |err| {
         if (std.mem.indexOfScalar(u8, text, '#') != null) return .{ .tree = try stringTree(allocator, text) };
         const d = reports.diag orelse return err;
         try diag_report.printDiag(term, text, "<value>", shift(d.offset, text), if (d.end) |e| shift(e, text) else null, "error", .red, d.message, d.short_label);
-        try term.writer.print("help: this argument is read as a fig value; pass --string to take it as a string, or --raw to splice it as the file's own syntax\n", .{});
+        try term.writer.print("help: this argument is read as a figl value; pass --string to take it as a string, or --raw to splice it as the file's own syntax\n", .{});
         try term.writer.flush();
         std.process.exit(2);
     };
@@ -133,7 +133,7 @@ pub fn render(allocator: std.mem.Allocator, value: Value, format: Format, layout
         .pretty = !one_line,
         // fig's block spellings only parse as standalone lines; a value
         // spliced after `key = ` has to be flow.
-        .flow = types.is(format, "fig"),
+        .flow = types.is(format, "figl"),
     };
     // A YAML flow site takes JSON's spelling, which every YAML reads as flow.
     const to = if (layout == .flow and types.is(format, "yaml")) args_mod.parseFormatName("json") orelse format else format;
@@ -176,7 +176,7 @@ pub fn refuseDropped(allocator: std.mem.Allocator, value: Value, format: Format,
 }
 
 test "a fig reading types what fig types and keeps the rest a string" {
-    if (comptime !build_options.lang_fig or !build_options.lang_json) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl or !build_options.lang_json) return error.SkipZigTest;
     const t = std.testing;
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();

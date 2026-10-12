@@ -29,7 +29,7 @@ const prefix = join(repoRoot, "zig-out", "wasi-npm");
 // `@diaryx/fig`'s JavaScript languages to the CLI in-process
 // (src/cli/host_languages.zig), as the library package serves them to its
 // own module.
-const LANGUAGES = ["json", "yaml", "toml", "zon", "fig", "ini", "dotenv", "properties", "plist", "nestedtext"];
+const LANGUAGES = ["json", "yaml", "toml", "zon", "figl", "ini", "dotenv", "properties", "plist", "nestedtext"];
 const zigArgs = ["build", "wasi", "-Dwasi-host=true", ...LANGUAGES.map((name) => `-D${name}=false`), "--prefix", prefix];
 console.error(`· zig ${zigArgs.join(" ")}`);
 execFileSync("zig", zigArgs, { cwd: repoRoot, stdio: "inherit" });

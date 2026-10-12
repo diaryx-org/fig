@@ -26,7 +26,7 @@ import { capabilities, convert, detectFormat, formatByName, formatName, handle, 
 
 import canonical from "@diaryx/fig/languages/canonical";
 import dotenv from "@diaryx/fig/languages/dotenv";
-import fig from "@diaryx/fig/languages/fig";
+import fig from "@diaryx/fig/languages/figl";
 import ini from "@diaryx/fig/languages/ini";
 import json from "@diaryx/fig/languages/json";
 import json5 from "@diaryx/fig/languages/json5";
@@ -49,7 +49,7 @@ const TWINS: Twin[] = [
   { lang: yaml, dialects: [{ name: "yaml", ext: "yaml" }, { name: "yaml-1.1", ext: "yaml" }] },
   { lang: toml, dialects: [{ name: "toml", ext: "toml" }] },
   { lang: ini, dialects: [{ name: "ini", ext: "ini" }] },
-  { lang: fig, dialects: [{ name: "fig", ext: "figl" }] },
+  { lang: fig, dialects: [{ name: "figl", ext: "figl" }] },
   { lang: dotenv, dialects: [{ name: "dotenv", ext: "env" }] },
   { lang: properties, dialects: [{ name: "properties", ext: "properties" }] },
   { lang: nestedtext, dialects: [{ name: "nestedtext", ext: "nt" }] },

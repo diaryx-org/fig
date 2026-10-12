@@ -41,10 +41,10 @@ fn from_slice_deserializes_every_format() {
         b".{ .name = \"x\", .n = 5, .tags = .{ \"a\", \"b\" } }",
         by_name("zon"),
     ));
-    #[cfg(feature = "fig")]
+    #[cfg(feature = "figl")]
     cases.push((
         b"name = \"x\"\nn = 5\ntags = [\"a\", \"b\"]\n",
-        by_name("fig"),
+        by_name("figl"),
     ));
     for (src, format) in cases {
         let got: S = fig::from_slice(src, format).unwrap();

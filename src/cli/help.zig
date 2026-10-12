@@ -19,7 +19,7 @@ const builtin_formats: []const []const u8 = blk: {
     for (fig.bundle.dialect_names) |n| {
         out = out ++ [_][]const u8{n};
         if (std.mem.eql(u8, n, "zon") and build_options.lang_canonical) out = out ++ [_][]const u8{"canonical"};
-        if (std.mem.eql(u8, n, "fig")) out = out ++ [_][]const u8{"gron"};
+        if (std.mem.eql(u8, n, "figl")) out = out ++ [_][]const u8{"gron"};
     }
     break :blk out;
 };
@@ -80,7 +80,7 @@ pub const embed_archetypes =
 
 /// How `replace`/`set`/`insert` read a value argument (`value_arg.zig`).
 pub const value_reading =
-    \\  <value> is read as a fig value and written in the file's own syntax,
+    \\  <value> is read as a figl value and written in the file's own syntax,
     \\    so it means the same thing in every format: 5, 2.5, true, null and
     \\    2026-09-22 are typed; hello, hello world, Yes and 007 are strings;
     \\    [1, 2] and {{a = 1, b = [x]}} are a sequence and a mapping; '"5"' is
@@ -359,9 +359,9 @@ pub const Help = struct {
             \\    extension — select it explicitly.) Compiled in only with
             \\    `-Dcanonical=true` (opt-in, off by default — it is a
             \\    test/debugging oracle, not exposed through the C ABI or bindings).
-            \\  fig: the human-facing authoring dialect (`.figl`); lossy at the
+            \\  figl: the human-facing authoring dialect (`.figl`); lossy at the
             \\    edges (non-string keys, YAML refs) —
-            \\    use `canonical`/`--lossless` for those. `-o fig` prints in
+            \\    use `canonical`/`--lossless` for those. `-o figl` prints in
             \\    house style; use `fig fmt` to
             \\    rewrite a file in place instead of printing to stdout.
             \\  ini: `[section]` headers + `key = value` lines, `;`/`#` full-line
@@ -410,7 +410,7 @@ pub const Help = struct {
             \\  --lax-tags: drop unknown/custom YAML tags instead of erroring, when
             \\    converting away from YAML.
             \\  -q, --quiet, --no-warnings: suppress warnings on stderr — lossy
-            \\    conversions, and fig authoring lints (`Yes`-style strings, a
+            \\    conversions, and figl authoring lints (`Yes`-style strings, a
             \\    likely missing comma in a flow value, indent/marker-count
             \\    disagreement, ...).
             \\  --strict: treat any warning as an error (exit 1).
@@ -451,7 +451,7 @@ pub const Help = struct {
             \\    (default 1.2.2).
             \\    JSON strictness is the format itself (json vs jsonc vs json5).
             \\  -q, --quiet, --no-warnings: suppress the per-file `ok` lines and
-            \\    fig authoring warnings; errors still print.
+            \\    figl authoring warnings; errors still print.
             \\  --strict: a file that parses with warnings fails too (exit 1).
             \\  reads stdin when <file> is `-`.
             \\  .md/.markdown files: validates the frontmatter/endmatter,

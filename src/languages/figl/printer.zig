@@ -2107,7 +2107,7 @@ test "a splice fragment keeps a container in block unless the caller asks for fl
     // The bindings' `*With` editor paths ask for the splice alone, and want a
     // container in its natural block layout, which the editor re-frames under
     // the key; the plain paths also ask for flow.
-    if (comptime !@import("build_options").lang_fig) return error.SkipZigTest;
+    if (comptime !@import("build_options").lang_figl) return error.SkipZigTest;
     var ast = try Parser.parseAbstract(std.testing.allocator, "a = 1\nb\n> c = 2\n", .Fig);
     defer ast.deinit();
     var block: Writer.Allocating = .init(std.testing.allocator);

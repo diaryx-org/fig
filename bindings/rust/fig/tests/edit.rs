@@ -465,7 +465,7 @@ fn detect_sniffs_each_archetype() {
     assert_eq!(fig::detect(""), None);
     // Detect + inner_format resolves the parser for the detected content.
     let kind = fig::detect("```fig\nk = v\n```\n").unwrap();
-    assert_eq!(kind.inner_format().unwrap(), by_name("fig"));
+    assert_eq!(kind.inner_format().unwrap(), by_name("figl"));
 }
 
 #[test]
@@ -493,7 +493,7 @@ fn fig_dialect_container_splices_render_flow_and_round_trip() {
 
     // And the result re-parses as the containers, not strings.
     let (_, content, _) = fig::split(&rendered, EmbedType::FencedFig).unwrap();
-    let doc = fig::Document::parse(content.as_bytes(), by_name("fig")).unwrap();
+    let doc = fig::Document::parse(content.as_bytes(), by_name("figl")).unwrap();
     let v = doc.to_value().unwrap();
     let fig::Value::Map(entries) = &v else {
         panic!("{v:?}")
@@ -511,7 +511,7 @@ fn fig_dialect_container_splices_render_flow_and_round_trip() {
         fig::Value::Str("title".into()),
         fig::Value::Str("T".into()),
     )]);
-    assert_eq!(map.serialize(by_name("fig")).unwrap(), "title = T\n");
+    assert_eq!(map.serialize(by_name("figl")).unwrap(), "title = T\n");
 }
 
 #[test]
@@ -538,7 +538,7 @@ fn fig_dialect_block_map_splices_into_a_fence_with_the_width_knob() {
 
     // It re-parses as the nested map, not a string.
     let (_, content, _) = fig::split(&rendered, EmbedType::FencedFig).unwrap();
-    let doc = fig::Document::parse(content.as_bytes(), by_name("fig")).unwrap();
+    let doc = fig::Document::parse(content.as_bytes(), by_name("figl")).unwrap();
     let v = doc.to_value().unwrap();
     let fig::Value::Map(entries) = &v else {
         panic!("{v:?}")
@@ -797,15 +797,15 @@ fn json_frontmatter_edits_in_json() {
 }
 
 #[test]
-#[cfg(feature = "fig")]
+#[cfg(feature = "figl")]
 fn fig_dialect_editor_edits_in_place() {
-    let mut ed = Editor::open(b"title = old\nport = 8080\n", by_name("fig")).unwrap();
+    let mut ed = Editor::open(b"title = old\nport = 8080\n", by_name("figl")).unwrap();
     ed.replace_value(&[Segment::Key("port")], 9090).unwrap();
     assert_eq!(ed.source().unwrap(), "title = old\nport = 9090\n");
 }
 
 #[test]
-#[cfg(feature = "fig")]
+#[cfg(feature = "figl")]
 fn fig_dialect_frontmatter_embed_round_trips() {
     // ```fig fenced frontmatter, in the native fig authoring dialect.
     let md = "```fig\ntitle = Hi\n```\nbody\n";

@@ -475,7 +475,7 @@ test("EmbedType values are the CLI's archetype names", () => {
   assert.equal(EmbedType.Plus, "plus");
   assert.equal(EmbedType.Endmatter, "endmatter");
   assert.equal(EmbedType.MdToml, "md-toml");
-  assert.equal(EmbedType.FencedFig, "fenced-fig");
+  assert.equal(EmbedType.FencedFig, "fenced-figl");
   assert.equal(EmbedType.HtmlScriptJson, "html-script-json");
   assert.equal(EmbedType.HtmlCodeYaml, "html-code-yaml");
   assert.equal(Object.keys(EmbedType).length, 19);

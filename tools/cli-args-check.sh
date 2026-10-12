@@ -100,7 +100,7 @@ exits "comment --get --inline missing" 1 comment --get --inline f.yaml a
 exits "comment --get no such path" 1 comment --get f.yaml zz
 exits "comment --delete missing" 0 comment --delete f.yaml b
 
-# A value argument is a fig value, spelled as each format spells it.
+# A value argument is a figl value, spelled as each format spells it.
 is() { # is <label> <want> <got>
     [ "$2" = "$3" ] || fail "$(printf '%s\n--- want\n%s\n--- got\n%s' "$1" "$2" "$3")"
 }

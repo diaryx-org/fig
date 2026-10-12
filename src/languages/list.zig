@@ -39,7 +39,7 @@ pub const rows = [_]Row{
     // What survives is the shared XML *lexing substrate*, `xml/tokenizer.zig`,
     // which typed flavors (plist, and future `.csproj`/manifest readers) sit
     // on top of and which compiles whenever one of them does.
-    .{ .name = "fig", .help = "Include the fig authoring dialect support", .default_on = true },
+    .{ .name = "figl", .help = "Include the figl authoring dialect support", .default_on = true },
     .{ .name = "ini", .help = "Include INI support", .default_on = true },
     .{ .name = "dotenv", .help = "Include dotenv (.env) support", .default_on = true },
     .{ .name = "properties", .help = "Include Java .properties support", .default_on = true },

@@ -38,7 +38,7 @@ fn main() {
 
 /// Whether the active cargo feature set matches the prebuilt `libfig.a`, which
 /// is compiled with fig's **default** language set: `json`, `yaml`, `toml`,
-/// `fig`, `ini`, `dotenv`, `properties`, `nestedtext` on; `zon`, `plist` off.
+/// `figl`, `ini`, `dotenv`, `properties`, `nestedtext` on; `zon`, `plist` off.
 /// Any other combination — an extra language or a disabled default — requires
 /// compiling the core from source so the linked archive matches.
 /// (serde/derive/indexmap are Rust-only and don't affect this; they aren't
@@ -48,7 +48,7 @@ fn features_match_prebuilt() -> bool {
     on("JSON")
         && on("YAML")
         && on("TOML")
-        && on("FIG")
+        && on("FIGL")
         && on("INI")
         && on("DOTENV")
         && on("PROPERTIES")
@@ -127,7 +127,7 @@ fn build_from_source(cargo_target: &str, cargo_host: &str) {
         ("CARGO_FEATURE_YAML", "yaml"),
         ("CARGO_FEATURE_TOML", "toml"),
         ("CARGO_FEATURE_ZON", "zon"),
-        ("CARGO_FEATURE_FIG", "fig"),
+        ("CARGO_FEATURE_FIGL", "figl"),
         ("CARGO_FEATURE_INI", "ini"),
         ("CARGO_FEATURE_DOTENV", "dotenv"),
         ("CARGO_FEATURE_PROPERTIES", "properties"),

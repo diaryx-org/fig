@@ -933,7 +933,7 @@ test "emptyDocSeed: every seed is the byte string the registry declares" {
     if (types.named("plist")) |plist| try t.expectEqualStrings("<dict>\n</dict>\n", emptyDocSeed(plist).?);
     // An empty file already parses as an empty (but present) root mapping for
     // all of these, so the first key can just be inserted into it.
-    for ([_]Format{ types.mustNamed("yaml"), types.mustNamed("toml"), types.mustNamed("fig"), types.mustNamed("dotenv"), types.mustNamed("properties"), types.mustNamed("ini"), types.mustNamed("nestedtext") }) |f|
+    for ([_]Format{ types.mustNamed("yaml"), types.mustNamed("toml"), types.mustNamed("figl"), types.mustNamed("dotenv"), types.mustNamed("properties"), types.mustNamed("ini"), types.mustNamed("nestedtext") }) |f|
         try t.expectEqualStrings("", emptyDocSeed(f).?);
     // No empty-document form: a from-scratch `set` is refused before a file
     // lands on disk.
@@ -941,7 +941,7 @@ test "emptyDocSeed: every seed is the byte string the registry declares" {
         try t.expectEqual(@as(?[]const u8, null), emptyDocSeed(f));
 }
 
-/// `text` read as a fig value, as the CLI reads a value argument.
+/// `text` read as a figl value, as the CLI reads a value argument.
 fn figValue(a: std.mem.Allocator, text: []const u8) !OpValue {
     var sink: std.Io.Writer.Discarding = .init(&.{});
     var term: Io.Terminal = .{ .writer = &sink.writer, .mode = .no_color };
@@ -949,7 +949,7 @@ fn figValue(a: std.mem.Allocator, text: []const u8) !OpValue {
 }
 
 test "renderEdit spells a value as the format does and leaves a key a name, a delete bare" {
-    if (comptime !build_options.lang_json or !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_json or !build_options.lang_figl) return error.SkipZigTest;
     const t = std.testing;
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
@@ -987,7 +987,7 @@ test "renderEdit spells a value as the format does and leaves a key a name, a de
 // — the same two calls `route` makes, so a re-introduced gate would only be
 // caught by hitting this path, not by the lower-level editor tests alone.
 test "applyEdit performs the structural ops on JSON5 via the CLI's render+dialect path" {
-    if (comptime !build_options.lang_json or !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_json or !build_options.lang_figl) return error.SkipZigTest;
     const t = std.testing;
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
@@ -1030,7 +1030,7 @@ test "emptyDocSeed: seedable formats round-trip a first `set`, others refuse" {
     // Names YAML/JSON/TOML/fig dialects and parsers directly, so it has
     // nothing left to assert in a build without them.
     if (comptime !(build_options.lang_yaml and build_options.lang_json and
-        build_options.lang_toml and build_options.lang_fig)) return error.SkipZigTest;
+        build_options.lang_toml and build_options.lang_figl)) return error.SkipZigTest;
     const t = std.testing;
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
@@ -1061,7 +1061,7 @@ test "emptyDocSeed: seedable formats round-trip a first `set`, others refuse" {
     try t.expectEqualStrings("hello = \"world\"\n", toml);
 
     // fig: empty seed (an empty document parses as an empty map), bare value.
-    const figc = try applyEdit(fig.bundle.Language("fig"), a, emptyDocSeed(types.mustNamed("fig")).?, &path, "world", .set, fig.bundle.Language("fig").default_type);
+    const figc = try applyEdit(fig.bundle.Language("figl"), a, emptyDocSeed(types.mustNamed("figl")).?, &path, "world", .set, fig.bundle.Language("figl").default_type);
     try t.expectEqualStrings("hello = world\n", figc);
 
     // Projection formats (gron, canonical) have no empty-document form, so
@@ -1100,7 +1100,7 @@ test "emptyDocSeed: plist seeds a document a from-scratch `set` lands into" {
 }
 
 test "applyValueEdit blames the key when the document takes no value under it" {
-    if (comptime !build_options.lang_dotenv or !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_dotenv or !build_options.lang_figl) return error.SkipZigTest;
     const t = std.testing;
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();

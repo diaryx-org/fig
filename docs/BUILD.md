@@ -48,7 +48,7 @@ A format left out is compiled out entirely, not merely hidden: its parser and
 printer are never built, `fig_format_capabilities` reports `0` for it over the C
 ABI, and asking the CLI to read one fails with `FormatDisabled`. `zig build -h`
 lists the full set with their defaults — note that `plist`, `xml` and
-`canonical` are opt-**in** (`-Dplist=true`), and that `-Dfig=false` also drops
+`canonical` are opt-**in** (`-Dplist=true`), and that `-Dfigl=false` also drops
 `fig-lsp`, which is a language server for the fig dialect and has nothing to
 serve without it.
 </details>

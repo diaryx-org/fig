@@ -1110,7 +1110,7 @@ test "extract: YAML frontmatter comments survive into the parsed AST" {
 }
 
 test "extract: fig frontmatter (```fig fenced block) locates and parses" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     const src =
         \\```fig
         \\# the title
@@ -1120,7 +1120,7 @@ test "extract: fig frontmatter (```fig fenced block) locates and parses" {
         \\# body
         \\
     ;
-    const embedded = try extract(testing.allocator, src, ty(.fenced, "fig"));
+    const embedded = try extract(testing.allocator, src, ty(.fenced, "figl"));
     defer embedded.deinit(testing.allocator);
     // Fences excluded from content; body is everything after the close fence.
     try testing.expectEqualStrings("```fig\n", src[embedded.region.open_fence.start..embedded.region.open_fence.end]);
@@ -1136,7 +1136,7 @@ test "extract: fig frontmatter (```fig fenced block) locates and parses" {
 }
 
 test "extract: a generic ```something fence is not mistaken for ```fig" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     // The open token match is whole-line-exact (`.whole_line`), not a prefix
     // match, so a same-family fenced code block with a different/longer info
     // string (an ordinary markdown code fence, not this archetype) must not
@@ -1147,14 +1147,14 @@ test "extract: a generic ```something fence is not mistaken for ```fig" {
         \\```
         \\
     ;
-    try testing.expectError(Error.NotFound, locateRegion(src, ty(.fenced, "fig")));
+    try testing.expectError(Error.NotFound, locateRegion(src, ty(.fenced, "figl")));
 }
 
 test "innerFormat reports each archetype's content format" {
     try testing.expectEqual(dialect("yaml"), innerFormat(ty(.frontmatter, "yaml")));
     try testing.expectEqual(dialect("yaml"), innerFormat(.endmatter_yaml));
     try testing.expectEqual(dialect("json"), innerFormat(.semicolons_json));
-    try testing.expectEqual(dialect("fig"), innerFormat(ty(.fenced, "fig")));
+    try testing.expectEqual(dialect("figl"), innerFormat(ty(.fenced, "figl")));
     try testing.expectEqual(dialect("toml"), innerFormat(.plus_toml));
     try testing.expectEqual(dialect("yaml"), innerFormat(ty(.fenced, "yaml")));
     try testing.expectEqual(dialect("json"), innerFormat(ty(.fenced, "json")));
@@ -1170,23 +1170,23 @@ test "the four spelling tables are derived, and still spell exactly what they us
     try testing.expectEqualStrings("```yaml", fencedLiteral(dialect("yaml")));
     try testing.expectEqualStrings("```json", fencedLiteral(dialect("json")));
     try testing.expectEqualStrings("```toml", fencedLiteral(dialect("toml")));
-    try testing.expectEqualStrings("```fig", fencedLiteral(dialect("fig")));
+    try testing.expectEqualStrings("```fig", fencedLiteral(dialect("figl")));
 
     try testing.expectEqualStrings("---", frontmatterLiteral(dialect("yaml"))); // bare: untagged IS yaml
     try testing.expectEqualStrings("---json", frontmatterLiteral(dialect("json")));
     try testing.expectEqualStrings("---toml", frontmatterLiteral(dialect("toml")));
-    try testing.expectEqualStrings("---fig", frontmatterLiteral(dialect("fig")));
+    try testing.expectEqualStrings("---fig", frontmatterLiteral(dialect("figl")));
 
     try testing.expectEqualStrings("<script type=\"application/yaml\">", scriptLiteral(dialect("yaml")));
     try testing.expectEqualStrings("<script type=\"application/json\">", scriptLiteral(dialect("json")));
     try testing.expectEqualStrings("<script type=\"application/toml\">", scriptLiteral(dialect("toml")));
-    try testing.expectEqualStrings("<script type=\"application/figl\">", scriptLiteral(dialect("fig")));
+    try testing.expectEqualStrings("<script type=\"application/figl\">", scriptLiteral(dialect("figl")));
 
     try testing.expectEqualStrings("<pre><code class=\"language-yaml\">", codeLiteral(dialect("yaml")));
     try testing.expectEqualStrings("<pre><code class=\"language-json\">", codeLiteral(dialect("json")));
     try testing.expectEqualStrings("<pre><code class=\"language-toml\">", codeLiteral(dialect("toml")));
     // `language-figl`, while the fence tag is `fig` — the two genuinely differ.
-    try testing.expectEqualStrings("<pre><code class=\"language-figl\">", codeLiteral(dialect("fig")));
+    try testing.expectEqualStrings("<pre><code class=\"language-figl\">", codeLiteral(dialect("figl")));
 
     // Canonical tags, the read-only aliases, case folding, and a non-config tag.
     try testing.expectEqual(dialect("yaml"), formatFromLangTag("yaml"));
@@ -1194,8 +1194,8 @@ test "the four spelling tables are derived, and still spell exactly what they us
     try testing.expectEqual(dialect("yaml"), formatFromLangTag("YAML"));
     try testing.expectEqual(dialect("json"), formatFromLangTag("json"));
     try testing.expectEqual(dialect("toml"), formatFromLangTag("toml"));
-    try testing.expectEqual(dialect("fig"), formatFromLangTag("fig"));
-    try testing.expectEqual(dialect("fig"), formatFromLangTag("figl"));
+    try testing.expectEqual(dialect("figl"), formatFromLangTag("fig"));
+    try testing.expectEqual(dialect("figl"), formatFromLangTag("figl"));
     try testing.expectEqual(@as(?InnerFormat, null), formatFromLangTag("python"));
     try testing.expectEqual(@as(?InnerFormat, null), formatFromLangTag("endmatter"));
 
@@ -1205,8 +1205,8 @@ test "the four spelling tables are derived, and still spell exactly what they us
     try testing.expectEqual(dialect("json"), formatFromScriptMime("application/json"));
     try testing.expectEqual(dialect("json"), formatFromScriptMime("application/ld+json"));
     try testing.expectEqual(dialect("toml"), formatFromScriptMime("application/toml"));
-    try testing.expectEqual(dialect("fig"), formatFromScriptMime("application/figl"));
-    try testing.expectEqual(dialect("fig"), formatFromScriptMime("application/fig"));
+    try testing.expectEqual(dialect("figl"), formatFromScriptMime("application/figl"));
+    try testing.expectEqual(dialect("figl"), formatFromScriptMime("application/fig"));
     try testing.expectEqual(@as(?InnerFormat, null), formatFromScriptMime("text/javascript"));
 }
 
@@ -1268,7 +1268,7 @@ test "extract: fenced ```toml / ```yaml / ```json frontmatter locate and parse" 
 }
 
 test "extract: HTML <script type=\"application/figl\"> data island locates and parses" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     // A realistic page: doctype + head, the island indented inside <head>, prose
     // both BEFORE and AFTER the block (the mid-document case).
     const src =
@@ -1284,7 +1284,7 @@ test "extract: HTML <script type=\"application/figl\"> data island locates and p
         \\</html>
         \\
     ;
-    const embedded = try extract(testing.allocator, src, ty(.html_script, "fig"));
+    const embedded = try extract(testing.allocator, src, ty(.html_script, "figl"));
     defer embedded.deinit(testing.allocator);
     // The open/close fence spans cover their whole (indented) lines; content is
     // exactly what sits between them, spliced back byte-for-byte on edit.
@@ -1296,11 +1296,11 @@ test "extract: HTML <script type=\"application/figl\"> data island locates and p
 
 test "parseScriptOpen: tolerates quoting/order/extra attrs, resolves the format, rejects near-misses" {
     // Accepted variants → the resolved format (figl ⇒ .fig).
-    try testing.expectEqual(dialect("fig"), parseScriptOpen("<script type=\"application/figl\">"));
-    try testing.expectEqual(dialect("fig"), parseScriptOpen("<script type='application/figl'>"));
-    try testing.expectEqual(dialect("fig"), parseScriptOpen("<script id=\"cfg\" type=\"application/figl\">"));
-    try testing.expectEqual(dialect("fig"), parseScriptOpen("<script type = \"application/figl\" defer>"));
-    try testing.expectEqual(dialect("fig"), parseScriptOpen("<SCRIPT TYPE=\"application/figl\">")); // HTML folds case
+    try testing.expectEqual(dialect("figl"), parseScriptOpen("<script type=\"application/figl\">"));
+    try testing.expectEqual(dialect("figl"), parseScriptOpen("<script type='application/figl'>"));
+    try testing.expectEqual(dialect("figl"), parseScriptOpen("<script id=\"cfg\" type=\"application/figl\">"));
+    try testing.expectEqual(dialect("figl"), parseScriptOpen("<script type = \"application/figl\" defer>"));
+    try testing.expectEqual(dialect("figl"), parseScriptOpen("<SCRIPT TYPE=\"application/figl\">")); // HTML folds case
     // Other config MIMEs resolve to their formats.
     try testing.expectEqual(dialect("toml"), parseScriptOpen("<script type=\"application/toml\">"));
     try testing.expectEqual(dialect("json"), parseScriptOpen("<script type=\"application/ld+json\">"));
@@ -1312,10 +1312,10 @@ test "parseScriptOpen: tolerates quoting/order/extra attrs, resolves the format,
 }
 
 test "parseCodeOpen: matches language-/lang- tokens and the <pre> wrapper; rejects the rest" {
-    try testing.expectEqual(dialect("fig"), parseCodeOpen("<code class=\"language-figl\">"));
-    try testing.expectEqual(dialect("fig"), parseCodeOpen("<pre><code class=\"language-figl\">")); // pre wrapper
-    try testing.expectEqual(dialect("fig"), parseCodeOpen("<code class=\"lang-figl\">")); // lang- prefix
-    try testing.expectEqual(dialect("fig"), parseCodeOpen("<code class=\"hljs language-figl\">")); // token in a list
+    try testing.expectEqual(dialect("figl"), parseCodeOpen("<code class=\"language-figl\">"));
+    try testing.expectEqual(dialect("figl"), parseCodeOpen("<pre><code class=\"language-figl\">")); // pre wrapper
+    try testing.expectEqual(dialect("figl"), parseCodeOpen("<code class=\"lang-figl\">")); // lang- prefix
+    try testing.expectEqual(dialect("figl"), parseCodeOpen("<code class=\"hljs language-figl\">")); // token in a list
     try testing.expectEqual(dialect("toml"), parseCodeOpen("<pre><code class='language-toml'>"));
     // Rejected: no class, a non-config language, a same-line block.
     try testing.expectEqual(@as(?InnerFormat, null), parseCodeOpen("<code>"));
@@ -1353,7 +1353,7 @@ test "reencodeEdited: span-aware — untouched encoding is byte-preserved, only 
 }
 
 test "extract: <code> block decodes entities, parses, and lifts spans to source" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     const src =
         \\<p>see the config:</p>
         \\<pre><code class="language-figl">
@@ -1363,7 +1363,7 @@ test "extract: <code> block decodes entities, parses, and lifts spans to source"
         \\<p>after</p>
         \\
     ;
-    const embedded = try extract(testing.allocator, src, ty(.html_code, "fig"));
+    const embedded = try extract(testing.allocator, src, ty(.html_code, "figl"));
     defer embedded.deinit(testing.allocator);
     // The value round-trips through entity decoding.
     try testing.expectEqualStrings("a < b", (try embedded.document.ast.getValByPath(&.{.{ .key = "expr" }})).kind.string);
@@ -1371,22 +1371,22 @@ test "extract: <code> block decodes entities, parses, and lifts spans to source"
 }
 
 test "detect: recognizes a <code class=\"language-…\"> block" {
-    try testing.expectEqual(@as(?Type, ty(.html_code, "fig")), detect("<pre><code class=\"language-figl\">\nk = v\n</code></pre>\n"));
+    try testing.expectEqual(@as(?Type, ty(.html_code, "figl")), detect("<pre><code class=\"language-figl\">\nk = v\n</code></pre>\n"));
     try testing.expectEqual(@as(?Type, ty(.html_code, "toml")), detect("<article>\n<code class=\"language-toml\">\nk = 1\n</code>\n</article>\n"));
 }
 
 test "initRegion: an HTML-script archetype seeds an empty <script> island" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
-    const init = try initRegion(testing.allocator, "<html></html>\n", ty(.html_script, "fig"));
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
+    const init = try initRegion(testing.allocator, "<html></html>\n", ty(.html_script, "figl"));
     defer testing.allocator.free(init.host);
     try testing.expectEqualStrings("<script type=\"application/figl\">\n</script>\n<html></html>\n", init.host);
     try testing.expectEqual(init.region.content.start, init.region.content.end);
 }
 
 test "detect: recognizes an HTML <script> data island (scanned mid-document)" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     const src = "<html><head>\n<script type=\"application/figl\">\nk = v\n</script>\n</head></html>\n";
-    try testing.expectEqual(@as(?Type, ty(.html_script, "fig")), detect(src));
+    try testing.expectEqual(@as(?Type, ty(.html_script, "figl")), detect(src));
 }
 
 test "detect: recognizes TOML and fenced-label frontmatter" {
@@ -1396,7 +1396,7 @@ test "detect: recognizes TOML and fenced-label frontmatter" {
     try testing.expectEqual(@as(?Type, ty(.fenced, "yaml")), detect("```yaml\ntitle: hi\n```\nbody\n"));
     try testing.expectEqual(@as(?Type, ty(.fenced, "json")), detect("```json\n{\"t\":1}\n```\nbody\n"));
     // A ```fig fence still wins its own detection, not the new fenced labels.
-    try testing.expectEqual(@as(?Type, ty(.fenced, "fig")), detect("```fig\nt = 1\n```\nbody\n"));
+    try testing.expectEqual(@as(?Type, ty(.fenced, "figl")), detect("```fig\nt = 1\n```\nbody\n"));
 }
 
 test "initRegion: refuses a leading block in front of another archetype's frontmatter" {
@@ -1410,7 +1410,7 @@ test "initRegion: refuses a leading block in front of another archetype's frontm
         "```yaml\na: 1\n```\nbody\n",
         "\xEF\xBB\xBF---json\n{}\n---\nbody\n",
     };
-    const tops = [_]Type{ .semicolons_json, .plus_toml, ty(.frontmatter, "toml"), ty(.fenced, "fig"), ty(.html_script, "json") };
+    const tops = [_]Type{ .semicolons_json, .plus_toml, ty(.frontmatter, "toml"), ty(.fenced, "figl"), ty(.html_script, "json") };
     for (hosts) |h| for (tops) |t| {
         if (std.meta.eql(leadingRegion(h), @as(?Type, t))) continue;
         try testing.expectError(error.FrontmatterExists, initRegion(testing.allocator, h, t));
@@ -1436,7 +1436,7 @@ test "initRegion: a fig-inner archetype seeds an empty block from nothing" {
     // An empty fig document is a valid empty map (see `fig/parser.zig`), so a
     // brand-new ```fig``` frontmatter block seeds empty (like YAML) and a
     // subsequent set/insert lands its first key.
-    const init = try initRegion(testing.allocator, "body text\n", ty(.fenced, "fig"));
+    const init = try initRegion(testing.allocator, "body text\n", ty(.fenced, "figl"));
     defer testing.allocator.free(init.host);
     try testing.expectEqualStrings("```fig\n```\nbody text\n", init.host);
     // The seeded content is an empty span between the fences.
@@ -1445,14 +1445,14 @@ test "initRegion: a fig-inner archetype seeds an empty block from nothing" {
 }
 
 test "extract: fig frontmatter with no host body" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     const src =
         \\```fig
         \\title = hi
         \\```
         \\
     ;
-    const embedded = try extract(testing.allocator, src, ty(.fenced, "fig"));
+    const embedded = try extract(testing.allocator, src, ty(.fenced, "figl"));
     defer embedded.deinit(testing.allocator);
     try testing.expectEqualStrings("", src[embedded.region.body.start..embedded.region.body.end]);
 }
@@ -1470,9 +1470,9 @@ test "detect: recognizes JSON frontmatter" {
 }
 
 test "detect: recognizes fig frontmatter" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     const src = "```fig\ntitle = hi\n```\nbody\n";
-    try testing.expectEqual(@as(?Type, ty(.fenced, "fig")), detect(src));
+    try testing.expectEqual(@as(?Type, ty(.fenced, "figl")), detect(src));
 }
 
 test "detect: recognizes YAML endmatter" {

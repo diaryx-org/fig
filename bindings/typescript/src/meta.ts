@@ -63,7 +63,7 @@ const LANGUAGE_MODULE: Readonly<Record<string, string>> = {
   "yaml-1.1": "yaml",
   toml: "toml",
   zon: "zon",
-  fig: "fig",
+  figl: "figl",
   ini: "ini",
   dotenv: "dotenv",
   properties: "properties",

@@ -139,7 +139,7 @@ const parse_diagnostic = @import("../../kit/parse_diagnostic.zig");
 /// describing too) and the parser proper. Just an alias for `ParserError`
 /// (which already unions both): named to match the sibling `describe`/
 /// `shortLabel` pair in `languages/json/parser.zig` and
-/// `languages/fig/parser.zig`.
+/// `languages/figl/parser.zig`.
 pub const Error = ParserError;
 
 /// The teaching message for `code` — one sentence naming the fix, same
@@ -257,7 +257,7 @@ pub const Warning = struct {
 };
 
 /// Everything a parse reports besides the tree — mirrors fig's `Report`
-/// (`languages/fig/parser.zig`) and JSON's twin field-for-field, so the CLI
+/// (`languages/figl/parser.zig`) and JSON's twin field-for-field, so the CLI
 /// treats every language's report the same shape (see `main.zig`'s
 /// `checkOne`).
 pub const Report = struct {

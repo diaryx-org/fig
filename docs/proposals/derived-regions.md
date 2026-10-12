@@ -83,7 +83,7 @@ position that spells a table's key, which for a dotted table is one per line.
 | `moveTable` | 823–854 | (a) gather src; dest is the `[`-line of the dest table (a dotted dest is refused) | (a) |
 | `reorderTables` | 856–899 | (a) gather per name | (a) |
 
-### 2.2 fig — `src/languages/fig/editor_helper.zig`, `parser.zig`
+### 2.2 fig — `src/languages/figl/editor_helper.zig`, `parser.zig`
 
 | Site | Lines | Needs | Kind |
 |---|---|---|---|
@@ -318,7 +318,7 @@ Each is a test in the relevant `editor_helper.zig`, and each is a
 
 `zig build check` (test + conformance + abi-check + semver-check +
 version-floor + validate-check + check-figl + vendor-check) green;
-`zig build test -Dtoml=false`, `-Dfig=false`, `-Dini=false` green. `fig.h`
+`zig build test -Dtoml=false`, `-Dfigl=false`, `-Dini=false` green. `fig.h`
 unchanged. Test counts: 1240 → 1247 (three parser tests reshaped around the
 new table, two `Document` tests, seven editor tests for §4 and §8).
 

@@ -1026,7 +1026,7 @@ throughout.
 it could not see is that two of the parameters it named were not carrying their
 own weight once written down: one asked the same question three times, and one
 asked a question four formats have no answer to. Both showed up the same way —
-a reader looking at `fig/fig.zig` and asking why `#` appears three times and why
+a reader looking at `figl/figl.zig` and asking why `#` appears three times and why
 a format that spells entries `key = value` declares `": "`.
 
 ### 14.1 `comment_style`/`line_comment`/`trailing_comment` → `comments`

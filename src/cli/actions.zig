@@ -427,8 +427,8 @@ fn scalarText(a: std.mem.Allocator, ast: *const fig.AST, id: fig.AST.Node.Id) !?
     }
     // fig's spelling; JSON's otherwise, which agrees for every scalar but
     // a datetime (a JSON string, unquoted here).
-    const has_fig = args_mod.parseFormatName("fig") != null;
-    const target = fig.Serialize.Target.named(if (has_fig) "fig" else "json") orelse return error.FormatDisabled;
+    const has_fig = args_mod.parseFormatName("figl") != null;
+    const target = fig.Serialize.Target.named(if (has_fig) "figl" else "json") orelse return error.FormatDisabled;
     var view = ast.*;
     view.root = id;
     var w: std.Io.Writer.Allocating = .init(a);

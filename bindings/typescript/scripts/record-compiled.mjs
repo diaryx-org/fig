@@ -31,7 +31,7 @@ const DIRS = [
   ["yaml", "yaml", "yaml"],
   ["toml", "toml", "toml"],
   ["zon", "zon", "zon"],
-  ["fig", "fig", "figl"],
+  ["figl", "figl", "figl"],
   ["ini", "ini", "ini"],
   ["dotenv", "dotenv", "env"],
   ["properties", "properties", "properties"],

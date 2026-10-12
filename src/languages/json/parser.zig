@@ -214,7 +214,7 @@ pub const Warning = struct {
 };
 
 /// Everything a parse reports besides the tree — mirrors fig's `Report`
-/// (`languages/fig/parser.zig`) field-for-field, so the CLI treats every
+/// (`languages/figl/parser.zig`) field-for-field, so the CLI treats every
 /// language's report the same shape (see `main.zig`'s `checkOne`).
 pub const Report = struct {
     diag: ?Diagnostic = null,

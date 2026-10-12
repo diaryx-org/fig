@@ -44,7 +44,7 @@ const Document = @import("../../kit/document.zig");
 const Span = @import("../../kit/span.zig");
 const datetime = @import("../../kit/datetime.zig");
 const tok = @import("tokenizer.zig");
-const Type = @import("fig.zig").Type;
+const Type = @import("figl.zig").Type;
 
 pub const Error = error{
     /// A container ended up with children of both shapes (`key = v` AND `*`).

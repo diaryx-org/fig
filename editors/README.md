@@ -45,7 +45,7 @@ on purpose so Zed can build the grammar without running codegen.
 Sanity-check against the canonical feature dump (should print no `ERROR` nodes):
 
 ```sh
-npx tree-sitter parse ../../src/languages/fig/testdata/kitchen_sink.figl | grep -c ERROR
+npx tree-sitter parse ../../src/languages/figl/testdata/kitchen_sink.figl | grep -c ERROR
 ```
 
 To render highlighting in the terminal, add this directory to your

@@ -152,11 +152,11 @@ fn loadFile(io: Io, a: Allocator, path: []const u8) void {
 /// reader; a build without the fig format compiled in has no way to read
 /// the file and says so.
 fn parseConfigFile(a: Allocator, path: []const u8, content: []const u8) !void {
-    if (comptime !build_options.lang_fig) {
+    if (comptime !build_options.lang_figl) {
         log.warn("{s}: this build has no fig-format reader, so the file cannot be read", .{path});
         return;
     }
-    const Fig = fig.bundle.Language("fig");
+    const Fig = fig.bundle.Language("figl");
     var parser: Fig.Parser = .{ .allocator = a };
     const doc = try Fig.parse(&parser, content, Fig.default_type);
     const ast = &doc.ast;
@@ -764,7 +764,7 @@ fn resetForTest(a: Allocator) void {
 }
 
 test "languages.figl: one language[] block per language; an earlier file wins a name" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     const t = std.testing;
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
@@ -809,7 +809,7 @@ test "languages.figl: one language[] block per language; an earlier file wins a 
 }
 
 test "languages.figl: a block without a name or a command is refused whole" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     const t = std.testing;
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();

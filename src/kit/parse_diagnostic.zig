@@ -1,5 +1,5 @@
 //! Shared parse-diagnostic rendering — the language-agnostic half of fig's
-//! diagnostic system (see `languages/fig/parser.zig`'s `Location`/`Diagnostic`/
+//! diagnostic system (see `languages/figl/parser.zig`'s `Location`/`Diagnostic`/
 //! `Warning`, and DESIGN.md's "Authoring-time diagnostics"): locating a byte
 //! offset in source text, and rendering the compiler-style `file:line:col:
 //! label: message` report.

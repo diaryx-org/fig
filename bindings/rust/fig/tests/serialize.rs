@@ -305,14 +305,14 @@ fn json5_serializes_and_parses_back() {
 }
 
 #[test]
-#[cfg(feature = "fig")]
+#[cfg(feature = "figl")]
 fn fig_dialect_serializes_and_parses_back() {
-    // Proves `by_name("fig")` (the native authoring dialect) is wired through both
+    // Proves `by_name("figl")` (the native authoring dialect) is wired through both
     // the writer and the reader: serialize emits `key = value` fig syntax, and
     // the fig reader round-trips it back to the same logical value.
     let value = map(vec![("host", "localhost".into()), ("port", 8080i64.into())]);
 
-    let text = value.serialize(by_name("fig")).unwrap();
+    let text = value.serialize(by_name("figl")).unwrap();
     assert_eq!(text, "host = localhost\nport = 8080\n");
 
     #[derive(Deserialize, PartialEq, Debug)]
@@ -320,7 +320,7 @@ fn fig_dialect_serializes_and_parses_back() {
         host: String,
         port: i64,
     }
-    let back: Cfg = fig::from_slice(text.as_bytes(), by_name("fig")).unwrap();
+    let back: Cfg = fig::from_slice(text.as_bytes(), by_name("figl")).unwrap();
     assert_eq!(
         back,
         Cfg {

@@ -56,13 +56,13 @@ pub fn add(ctx: Context) Result {
     // fig-lsp: a Language Server (LSP over stdio) that wraps the fig parser to
     // publish its teaching diagnostics to editors. Thin shell over `mod`.
     //
-    // Built only with `-Dfig` (the default). This is a language server FOR the
+    // Built only with `-Dfigl` (the default). This is a language server FOR the
     // fig authoring dialect — it names `Language.FIG.Parser` at file scope and
     // has nothing to serve without it — so a fig-less build drops the artifact
     // rather than compiling a server that could never answer. That is why the
     // gate is here in the build graph and not a `comptime` branch in the
     // source: the source has no meaningful fig-less form to compile.
-    if (ctx.cfg.lang("fig")) {
+    if (ctx.cfg.lang("figl")) {
         const lsp_exe = b.addExecutable(.{
             .name = "fig-lsp",
             .root_module = b.createModule(.{

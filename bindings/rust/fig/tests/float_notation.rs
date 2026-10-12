@@ -4,7 +4,7 @@
 #[test]
 fn float_scientific_text_survives_every_format() {
     for f in [1e300f64, 1e-7, -2.5e-9, 1.0, 0.1] {
-        for name in ["json", "yaml", "toml", "fig"] {
+        for name in ["json", "yaml", "toml", "figl"] {
             let fmt = by_name(name);
             let v = fig::Value::Map(vec![(fig::Value::Str("k".into()), fig::Value::Float(f))]);
             let text = v.serialize(fmt).unwrap();

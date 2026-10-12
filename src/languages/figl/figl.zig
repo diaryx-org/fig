@@ -30,7 +30,7 @@ pub const Language = struct {
     pub const print = fig.Printer.print;
     pub const printNode = fig.Printer.printNode;
 
-    pub const name = "fig";
+    pub const name = "figl";
     /// `.figl` is the authoring dialect's extension. (The canonical form
     /// deliberately owns no extension — select it with `--input canonical`.)
     pub const extensions: []const []const u8 = &.{"figl"};
@@ -46,7 +46,7 @@ pub const Language = struct {
     /// The native authoring dialect (`DESIGN.md`): read, written and edited
     /// by every surface.
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
-        .name = "fig",
+        .name = "figl",
         .prints = .{ .holds = lang.holds_everything, .root_container = true },
         // A whole figl document must be a container; a value need not be.
         .print_fragment_name = "printFragment",

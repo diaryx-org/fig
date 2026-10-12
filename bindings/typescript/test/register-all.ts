@@ -8,7 +8,7 @@
 import { formatByName, registerLanguage, type Format as Handle } from "../src/index.ts";
 import canonical from "@diaryx/fig/languages/canonical";
 import dotenv from "@diaryx/fig/languages/dotenv";
-import fig from "@diaryx/fig/languages/fig";
+import fig from "@diaryx/fig/languages/figl";
 import ini from "@diaryx/fig/languages/ini";
 import json from "@diaryx/fig/languages/json";
 import json5 from "@diaryx/fig/languages/json5";

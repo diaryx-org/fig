@@ -4,7 +4,7 @@ Two text surfaces sit over one AST (`src/kit/ast/ast.zig`). They optimize for
 opposite things, so they are kept as separate surfaces rather than one
 compromise format.
 
-| | **canonical form** (`src/canonical/`, formerly "native") | **fig authoring dialect** (`src/languages/fig/`) |
+| | **canonical form** (`src/canonical/`, formerly "native") | **fig authoring dialect** (`src/languages/figl/`) |
 |---|---|---|
 | Audience | machines / the test oracle | humans writing config by hand |
 | Goal | totality + a single spelling per document | memorability, typeability, ergonomics |
@@ -375,7 +375,7 @@ rest — so any two documents that build the same tree normalize to the same scr
 Canonical is the diff oracle, but the authoring dialect needs a *house style* so a
 fmt'd repo reads consistently (many spellings → one predictable form; the reader
 learns *this rule*, not each author's taste). The decision procedure below is
-**implemented** (`src/languages/fig/printer.zig`); the numbers are defaults, not law.
+**implemented** (`src/languages/figl/printer.zig`); the numbers are defaults, not law.
 
 - **Markers:** spaced runs (`> > key`), zero leading indentation. The spaced run
   recreates indentation's column geometry (two columns per level) out of the
@@ -1329,7 +1329,7 @@ All of the following is **done**; build, tests, and `zig build semver-check`
 - Add `FIG_FORMAT_CANONICAL` (and eventually a fig-authoring member) to the C ABI
   `FigFormat` if hosts need canonical output through the bindings. Additive →
   MINOR.
-- **Landed:** `src/languages/fig/` (reader + `fig fmt` printer), wired into `Language`,
+- **Landed:** `src/languages/figl/` (reader + `fig fmt` printer), wired into `Language`,
   `AST.SerializeFormat`, and the CLI's `get` path (`--input/--output fig`,
   `.figl` extension — `.fig` still accepted). **Also landed:** the `fig fmt` house-style heuristics
   (spaced markers, fits-or-breaks flow budget, dotted-key collapse, root

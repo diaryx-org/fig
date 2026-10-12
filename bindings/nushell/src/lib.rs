@@ -24,7 +24,7 @@ use nu_protocol::{LabeledError, Span};
 /// the linked fig library registers. Every build of this plugin links one
 /// with `fig` in it, so a miss is a broken build, reported at `span`.
 pub(crate) fn figl_format(span: Span) -> Result<fig::Format, LabeledError> {
-    fig::Format::by_name("fig").ok_or_else(|| {
+    fig::Format::by_name("figl").ok_or_else(|| {
         LabeledError::new("figl is not available")
             .with_label("the linked fig library registers no `fig` language", span)
     })

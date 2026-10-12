@@ -271,7 +271,7 @@ pub fn reportLoss(
 /// and NestedText last, which read every line as something. JSONC is never
 /// sniffed: JSON5 reads every JSONC document.
 pub const sniff_order = [_][]const u8{
-    "json", "json5",  "zon",  "plist",      "toml",       "fig",
+    "json", "json5",  "zon",  "plist",      "toml",       "figl",
     "ini",  "dotenv", "yaml", "properties", "nestedtext",
 };
 

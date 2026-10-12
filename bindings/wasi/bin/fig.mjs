@@ -193,7 +193,7 @@ const imports = wasi.getImportObject();
 // a call cross from the guest into JavaScript while `wasi.start()` blocks.
 // All are loaded up front, since nothing can be imported once the guest
 // runs.
-const LANGUAGE_NAMES = ["json", "json5", "yaml", "toml", "zon", "fig", "ini", "dotenv", "properties", "plist", "nestedtext"];
+const LANGUAGE_NAMES = ["json", "json5", "yaml", "toml", "zon", "figl", "ini", "dotenv", "properties", "plist", "nestedtext"];
 let handle;
 const languages = []; // the host's id for a language is its index + 1
 try {

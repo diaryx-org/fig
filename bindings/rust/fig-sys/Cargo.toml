@@ -42,12 +42,12 @@ path = "src/lib.rs"
 # exact `default` set, so a default-feature build links it with no Zig toolchain;
 # any other language combination triggers a source build.
 [features]
-default = ["json", "yaml", "toml", "fig", "ini", "dotenv", "properties", "nestedtext"]
+default = ["json", "yaml", "toml", "figl", "ini", "dotenv", "properties", "nestedtext"]
 json = []
 yaml = []
 toml = []
 zon = []
-fig = []
+figl = []
 ini = []
 dotenv = []
 properties = []

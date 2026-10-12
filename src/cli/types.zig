@@ -133,7 +133,7 @@ pub const VersionOptions = struct {
 
 /// How a value argument (`set`/`insert`/`replace`) is read — see `value_arg.zig`.
 pub const ValueMode = enum {
-    /// As a fig value: `5` a number, `hello` a string, `[1, 2]` a sequence.
+    /// As a figl value: `5` a number, `hello` a string, `[1, 2]` a sequence.
     fig,
     /// `--string`: a string, whatever it looks like.
     string,
@@ -558,7 +558,7 @@ pub const SplicedText = struct {
 /// What a piece of spliced text was meant to be — only ever used to word the
 /// report in `diag_report.reportBadEditText` ("the new value" vs "the new key").
 pub const EditTextKind = enum {
-    /// A value argument, read as a fig value (or with `--string`) and
+    /// A value argument, read as a figl value (or with `--string`) and
     /// rendered in the file's own spelling.
     value,
     /// A `--raw` value argument, spliced as the user typed it.

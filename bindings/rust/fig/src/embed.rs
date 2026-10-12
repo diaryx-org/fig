@@ -121,7 +121,7 @@ impl EmbedType {
             EmbedType::FencedFig
             | EmbedType::MdFig
             | EmbedType::HtmlScriptFig
-            | EmbedType::HtmlCodeFig => "fig",
+            | EmbedType::HtmlCodeFig => "figl",
             EmbedType::Plus
             | EmbedType::FencedToml
             | EmbedType::MdToml
@@ -152,19 +152,19 @@ impl EmbedType {
             (C::MdFrontmatter, "yaml") => EmbedType::Frontmatter,
             (C::MdFrontmatter, "json") => EmbedType::MdJson,
             (C::MdFrontmatter, "toml") => EmbedType::MdToml,
-            (C::MdFrontmatter, "fig") => EmbedType::MdFig,
+            (C::MdFrontmatter, "figl") => EmbedType::MdFig,
             (C::Fenced, "yaml") => EmbedType::FencedYaml,
             (C::Fenced, "json") => EmbedType::FencedJson,
             (C::Fenced, "toml") => EmbedType::FencedToml,
-            (C::Fenced, "fig") => EmbedType::FencedFig,
+            (C::Fenced, "figl") => EmbedType::FencedFig,
             (C::HtmlScript, "yaml") => EmbedType::HtmlScriptYaml,
             (C::HtmlScript, "json") => EmbedType::HtmlScriptJson,
             (C::HtmlScript, "toml") => EmbedType::HtmlScriptToml,
-            (C::HtmlScript, "fig") => EmbedType::HtmlScriptFig,
+            (C::HtmlScript, "figl") => EmbedType::HtmlScriptFig,
             (C::HtmlCode, "yaml") => EmbedType::HtmlCodeYaml,
             (C::HtmlCode, "json") => EmbedType::HtmlCodeJson,
             (C::HtmlCode, "toml") => EmbedType::HtmlCodeToml,
-            (C::HtmlCode, "fig") => EmbedType::HtmlCodeFig,
+            (C::HtmlCode, "figl") => EmbedType::HtmlCodeFig,
             _ => return None,
         })
     }

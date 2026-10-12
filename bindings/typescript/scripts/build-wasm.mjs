@@ -25,7 +25,7 @@ const srcDir = resolve(here, "..", "src");
 // `all` for every one: a reference module whose compiled formats the
 // languages are held to (`scripts/record-printed.mjs`). A language registered
 // into such a module under a compiled format's name is refused as taken.
-const LANGUAGES = ["json", "yaml", "toml", "zon", "fig", "ini", "dotenv", "properties", "plist", "nestedtext"];
+const LANGUAGES = ["json", "yaml", "toml", "zon", "figl", "ini", "dotenv", "properties", "plist", "nestedtext"];
 const wanted = (process.env.FIG_WASM_LANGUAGES ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 for (const w of wanted) {
   if (w !== "all" && !LANGUAGES.includes(w)) throw new Error(`FIG_WASM_LANGUAGES: no format named \`${w}\` (one of ${LANGUAGES.join(", ")}, or all)`);

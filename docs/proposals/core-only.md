@@ -39,9 +39,9 @@ part_of = [proposals](proposals.md)
 > `SerializeFormat` or `Detected`; a language's `--spec` versions are dialect
 > rows (`yaml-1.1`) and its embedded spellings cross the contract
 > (`FigDialectDesc.embed_*`), so `Embed` finds an inner language by
-> declaration. Left in step 8: the preset containers (they wait on step 4's
-> registered containers), the `figl` rename, the closed `KeyStyle`/
-> `CommentStyle` leftovers and the §6 check. Then step 9, and step 6's last
+> declaration; the authoring dialect is `figl`, with no alias. Left in step
+> 8: the preset containers (they wait on step 4's registered containers),
+> the closed `KeyStyle`/`CommentStyle` leftovers and the §6 check. Then step 9, and step 6's last
 > stage (adopting the table as the Document). Tag resolution and the
 > lexeme's value land with §4.9's rows.
 >

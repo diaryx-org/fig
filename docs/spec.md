@@ -2,7 +2,7 @@
 
 **Version: 2.0**
 
-This document is normative: where the implementation and this document disagree, that is an implementation bug. The reference implementation is the reader at `src/languages/fig/parser.zig` (with `tokenizer.zig`) and the formatter at `src/languages/fig/printer.zig`.
+This document is normative: where the implementation and this document disagree, that is an implementation bug. The reference implementation is the reader at `src/languages/figl/parser.zig` (with `tokenizer.zig`) and the formatter at `src/languages/figl/printer.zig`.
 
 Key words MUST, MUST NOT, SHOULD, and MAY are to be interpreted as in RFC 2119.
 
@@ -426,7 +426,7 @@ The normative warning set: `string_looks_like_literal` (§ 4.2), `string_leading
 ## 11. Conformance
 
 - **Round-trip**: for any valid document, parse → AST → canonical-form emission MUST be byte-identical to the canonical emission of the same data authored in any other supported format (the canonical form is the comparison oracle). `fig fmt` MUST be idempotent (a second pass is byte-equal) and its output MUST re-parse to an equal AST, comments included.
-- **Reference corpus**: `src/languages/fig/testdata/kitchen_sink.figl` is a canonical valid document exercising every construct in this spec (it deliberately carries warning examples); the parser and printer test suites in `parser.zig` / `printer.zig` are the behavioral reference.
+- **Reference corpus**: `src/languages/figl/testdata/kitchen_sink.figl` is a canonical valid document exercising every construct in this spec (it deliberately carries warning examples); the parser and printer test suites in `parser.zig` / `printer.zig` are the behavioral reference.
 - **Informative grammar**: `editors/tree-sitter-fig/grammar.js` is a shallow, lexical grammar for editor highlighting. It is informative only; where it and the reference parser disagree, the parser is authoritative. It predates compact objects (§ 6.3) and still reads a fig object as comma-separated, so `{x=1 y=2}` highlights with an error node until it is updated. One further accepted cosmetic gap remains: a double-quoted `: char` RHS (invalid — only a single-quoted `'A'` is a valid char literal, § 5.3) still highlights as an ordinary string, since distinguishing it from the valid single-quoted spelling isn't worth the added grammar complexity for a highlighting-only grammar.
 
 ## 12. File extensions

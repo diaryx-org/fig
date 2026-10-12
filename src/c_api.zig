@@ -4232,10 +4232,10 @@ test "embed c abi locates region with content and body spans" {
 }
 
 test "embed c abi locates a ```fig fenced frontmatter block (extract-only)" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     const md = "```fig\nk = v\n```\nbody\n";
     var region: FigRegion = .{ .size = @sizeOf(FigRegion), .open_fence = undefined, .content = undefined, .close_fence = undefined, .body = undefined, .body_before = undefined, .body_after = undefined };
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @backingInt(FigEmbedContainer.fenced), fmtOf("fig"), &region));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_extract(md.ptr, md.len, @backingInt(FigEmbedContainer.fenced), fmtOf("figl"), &region));
     try std.testing.expectEqualStrings("k = v\n", md[region.content.start..region.content.end]);
     try std.testing.expectEqualStrings("body\n", md[region.body.start..region.body.end]);
 }
@@ -4246,14 +4246,14 @@ test "embed c abi detects each archetype by its open delimiter" {
     const cases = [_]struct { src: []const u8, container: FigEmbedContainer, format: [:0]const u8 }{
         .{ .src = "---\nk: v\n---\nbody\n", .container = .md_frontmatter, .format = "yaml" },
         .{ .src = ";;;\n{\"k\": 1}\n;;;\nbody\n", .container = .semicolons_json, .format = "json" },
-        .{ .src = "```fig\nk = v\n```\nbody\n", .container = .fenced, .format = "fig" },
+        .{ .src = "```fig\nk = v\n```\nbody\n", .container = .fenced, .format = "figl" },
         .{ .src = "body\n```endmatter\nk: v\n```\n", .container = .endmatter_yaml, .format = "yaml" },
         .{ .src = "+++\nk = \"v\"\n+++\nbody\n", .container = .plus_toml, .format = "toml" },
         .{ .src = "```toml\nk = \"v\"\n```\nbody\n", .container = .fenced, .format = "toml" },
         .{ .src = "```yaml\nk: v\n```\nbody\n", .container = .fenced, .format = "yaml" },
         .{ .src = "```json\n{\"k\": 1}\n```\nbody\n", .container = .fenced, .format = "json" },
         .{ .src = "---toml\nk = \"v\"\n---\nbody\n", .container = .md_frontmatter, .format = "toml" },
-        .{ .src = "<html><head>\n<script type=\"application/figl\">\nk = \"v\"\n</script>\n</head></html>\n", .container = .html_script, .format = "fig" },
+        .{ .src = "<html><head>\n<script type=\"application/figl\">\nk = \"v\"\n</script>\n</head></html>\n", .container = .html_script, .format = "figl" },
         .{ .src = "<pre><code class=\"language-yaml\">\nk: v\n</code></pre>\n", .container = .html_code, .format = "yaml" },
     };
     for (cases) |case| {
@@ -4301,10 +4301,10 @@ test "embed c abi detect: not_found leaves out untouched; unterminated still det
 }
 
 test "embed c abi fig_embed_open edits a ```fig fenced frontmatter block" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     const md = "```fig\nk = v\n```\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.fenced), fmtOf("fig"), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.fenced), fmtOf("figl"), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const path = [_]FigPathSegment{keySeg("k")};
@@ -4317,11 +4317,11 @@ test "embed c abi fig_embed_open edits a ```fig fenced frontmatter block" {
 }
 
 test "embed c abi edits a <code> block span-aware (untouched entity encoding preserved)" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     // Mixed original encodings: `expr` uses numeric &#60;, `note` uses named &lt;.
     const html = "<pre><code class=\"language-figl\">\nexpr = \"a &#60; b\"\nnote = \"x &lt; y\"\n</code></pre>\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(html.ptr, html.len, @backingInt(FigEmbedContainer.html_code), fmtOf("fig"), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(html.ptr, html.len, @backingInt(FigEmbedContainer.html_code), fmtOf("figl"), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     // Edit `expr` to a quoted value containing `>` — it must canonically re-encode.
@@ -4340,14 +4340,14 @@ test "embed c abi edits a <code> block span-aware (untouched entity encoding pre
 }
 
 test "embed c abi fig_embed_set splices a block map into a ```fig fence" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     // Regression for the prov follow-up: a block-map value CAN now be
     // spliced into a fenced embed — it re-frames as a nested section under the
     // key rather than failing (previously the caller had to fall back to
     // per-key flow inserts).
     const md = "```fig\ntitle = hi\n```\nbody\n";
     var out_fm: ?*FigEmbed = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.fenced), fmtOf("fig"), &out_fm));
+    try std.testing.expectEqual(FigStatus.ok, fig_embed_open(md.ptr, md.len, @backingInt(FigEmbedContainer.fenced), fmtOf("figl"), &out_fm));
     defer fig_embed_destroy(out_fm);
 
     const path = [_]FigPathSegment{keySeg("registry")};
@@ -4723,7 +4723,7 @@ test "value c abi serialize options carry TOML width through to the inline/secti
 }
 
 test "value c abi flow option renders fig-dialect container fragments inline" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     var out_value: ?*FigValue = null;
     try std.testing.expectEqual(FigStatus.ok, fig_value_create(&out_value));
     defer fig_value_destroy(out_value);
@@ -4743,11 +4743,11 @@ test "value c abi flow option renders fig-dialect container fragments inline" {
 
     // flow set: the inline spelling — the only one that survives a splice.
     const flow_opts: FigSerializeOptions = .{ .flow = 1 };
-    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize_opts(out_value, root, fmtOf("fig"), &flow_opts, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize_opts(out_value, root, fmtOf("figl"), &flow_opts, &ptr, &len));
     try std.testing.expectEqualStrings("[a.md, b.md]\n", ptr[0..len]);
 
     // flow unset (default): unchanged block rendering.
-    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, fmtOf("fig"), &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_value_serialize(out_value, root, fmtOf("figl"), &ptr, &len));
     try std.testing.expectEqualStrings("* a.md\n* b.md\n", ptr[0..len]);
 }
 
@@ -4815,10 +4815,10 @@ test "fig_document_serialize converts JSON to YAML" {
 }
 
 test "fig_parse parses the fig authoring dialect" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     const src = "title = Hello\ncount = 42\n";
     var out_doc: ?*FigDocument = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("fig"), &out_doc));
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("figl"), &out_doc));
     defer fig_document_destroy(out_doc);
 
     if (comptime build_options.lang_json) {
@@ -4831,7 +4831,7 @@ test "fig_parse parses the fig authoring dialect" {
 
 test "fig_document_serialize converts JSON to the fig authoring dialect" {
     if (comptime !build_options.lang_json) return error.SkipZigTest;
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     const src = "{\"name\":\"fig\",\"nums\":[1,2]}";
     var out_doc: ?*FigDocument = null;
     try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, fmtOf("json"), &out_doc));
@@ -4839,15 +4839,15 @@ test "fig_document_serialize converts JSON to the fig authoring dialect" {
 
     var ptr: [*c]const u8 = undefined;
     var len: usize = undefined;
-    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, fmtOf("fig"), null, &ptr, &len));
+    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, fmtOf("figl"), null, &ptr, &len));
     try std.testing.expectEqualStrings("name = fig\nnums = [1, 2]\n", ptr[0..len]);
 }
 
 test "fig_editor_create edits the fig authoring dialect" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     const src = "title = old\nport = 8080\n";
     var ed: ?*FigEditor = null;
-    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("fig"), &ed));
+    try std.testing.expectEqual(FigStatus.ok, fig_editor_create(src.ptr, src.len, fmtOf("figl"), &ed));
     defer fig_editor_destroy(ed);
 
     const path = [_]FigPathSegment{keySeg("port")};
@@ -5359,8 +5359,8 @@ test "fig_format_capabilities reports the per-format matrix" {
         fig_format_capabilities(fmtOf("zon")),
     );
     try std.testing.expectEqual(
-        if (build_options.lang_fig) read | edit | serialize else 0,
-        fig_format_capabilities(fmtOf("fig")),
+        if (build_options.lang_figl) read | edit | serialize else 0,
+        fig_format_capabilities(fmtOf("figl")),
     );
 
     // Unknown / out-of-range format values report no capabilities.
@@ -5389,7 +5389,7 @@ test "fig_format_capabilities agrees with actual READ/EDIT/SERIALIZE behavior" {
         .{ .fmt = "yaml", .sample = "a: 1\n" },
         .{ .fmt = "toml", .sample = "a = 1\n" },
         .{ .fmt = "zon", .sample = ".{ .a = 1 }" },
-        .{ .fmt = "fig", .sample = "a = 1\n" },
+        .{ .fmt = "figl", .sample = "a = 1\n" },
     };
 
     // A value every writable format can represent ({"a": 1}); used for the

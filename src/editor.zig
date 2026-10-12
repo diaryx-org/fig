@@ -77,7 +77,7 @@ const bare_literal = @import("kit/literal.zig");
 // declarations (`usingnamespace` was removed in 0.15), so the methods exist
 // for every format.
 const Toml = @import("languages/toml/toml.zig").Language;
-const Fig = @import("languages/fig/fig.zig").Language;
+const Fig = @import("languages/figl/figl.zig").Language;
 const Yaml = @import("languages/yaml/yaml.zig").Language;
 const Zon = @import("languages/zon/zon.zig").Language;
 const Dotenv = @import("languages/dotenv/dotenv.zig").Language;
@@ -4136,7 +4136,7 @@ test "addLeadingComment on TOML uses #" {
 // `fig.zig`'s own `test {}`, and carry the rest of `Editor(Fig)`'s coverage
 // rather than duplicating it here; the same split holds for TOML above.)
 test "addLeadingComment on fig uses # at the target's own marker depth" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     try expectCommentEdit(Fig, .Fig, "a = 1\nb = 2\n", "a = 1\n# note\nb = 2\n", .leading, &.{.{ .key = "b" }}, "note");
     try expectCommentEdit(
         Fig,
@@ -4450,7 +4450,7 @@ test "YAML: a flow item on its parent's line owns no leading comment" {
 }
 
 test "fig: a flow item on its parent's line owns no leading comment" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     const one_line = "# above\nmembers = [a, b]\n";
     try expectCommentGet(Fig, .Fig, one_line, null, .leading, flow_item0);
     try expectCommentGet(Fig, .Fig, one_line, null, .leading, flow_item1);
@@ -4516,7 +4516,7 @@ test "a flow item on its parent's line owns no trailing comment either" {
         try expectCommentDelete(Yaml, .v1_2_2, src, src, .trailing, flow_item0);
         try expectSetTrailingUnanchored(Yaml, .v1_2_2, src, flow_item0);
     }
-    if (comptime build_options.lang_fig) {
+    if (comptime build_options.lang_figl) {
         const src = "members = [a, b] # note\n";
         try expectCommentGet(Fig, .Fig, src, null, .trailing, flow_item0);
         try expectCommentGet(Fig, .Fig, src, "note", .trailing, flow_members);
@@ -4603,7 +4603,7 @@ test "dangling comment round-trips in a TOML table, before any sub-table" {
 }
 
 test "dangling comment round-trips at a fig container's marker depth" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     try expectDanglingCycle(
         Fig,
         .Fig,
@@ -4809,7 +4809,7 @@ test "commentOut round-trips a TOML entry and a JSONC member" {
 }
 
 test "commentOut round-trips a fig entry" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     try expectCommentOutRoundTrip(
         Fig,
         .Fig,
@@ -4823,7 +4823,7 @@ test "commentOut round-trips a fig entry" {
 }
 
 test "commentOut writes a nested fig entry's marker after its `>` run" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     // The `>` run is section depth, not indentation: the marker goes after it,
     // or the comment detaches to the root. Coming BACK is
     // `uncommentDangling`'s here — `commentBlockStart`, which is the block
@@ -4882,7 +4882,7 @@ test "commentOut of the last entry lands in the parent's dangling run" {
             "host = \"local\"",
         );
     }
-    if (comptime build_options.lang_fig) {
+    if (comptime build_options.lang_figl) {
         try expectCommentOutLastRoundTrip(
             Fig,
             .Fig,
@@ -5206,7 +5206,7 @@ test "insertNamedKey refuses a key the mapping already holds, in every format" {
         try testing.expectError(error.DuplicateKey, ed.insertNamedKey(&.{.{ .key = "a" }}, "x", "2"));
         try testing.expectEqualStrings("[a]\nx = 1\n", ed.source.items);
     }
-    if (comptime build_options.lang_fig) {
+    if (comptime build_options.lang_figl) {
         // fig's parser rejects the repeat itself; the name check answers
         // first, so it is `DuplicateKey` here too, not a blamed value.
         var ed: Editor(Fig) = .{ .allocator = testing.allocator, .format = .Fig };
@@ -5344,7 +5344,7 @@ test "non-YAML formats keep vivifying through flow seeds" {
 }
 
 test "fig set vivifies a nested path from an empty document" {
-    if (comptime !build_options.lang_fig) return error.SkipZigTest;
+    if (comptime !build_options.lang_figl) return error.SkipZigTest;
     var ed: Editor(Fig) = .{ .allocator = testing.allocator, .format = .Fig };
     try ed.init(""); // empty fig doc = empty root map (seedable from scratch)
     defer ed.deinit();

@@ -498,7 +498,7 @@ test "char literal is native to fig, degrades to a number elsewhere" {
     };
 
     // fig re-emits it via `: char =` — no loss.
-    const fig = try analyzeBuilt(arena, Build.f, "fig", .{});
+    const fig = try analyzeBuilt(arena, Build.f, "figl", .{});
     try testing.expectEqual(@as(usize, 0), fig.len);
 
     // JSON has no char; it collapses to the codepoint as a number.
@@ -514,7 +514,7 @@ test "fig root scalar is flagged as unrepresentable, a root map/sequence is not"
     const arena = arena_state.allocator();
 
     // A bare number sitting at the document root: the fig dialect's root must
-    // be a map or a sequence (see `languages/fig/printer.zig`'s `root`, which
+    // be a map or a sequence (see `languages/figl/printer.zig`'s `root`, which
     // hard-errors with `UnrepresentableRoot` for exactly this AST shape) —
     // this is defense in depth so `--strict` catches it independent of the
     // printer's hard error.
@@ -523,7 +523,7 @@ test "fig root scalar is flagged as unrepresentable, a root map/sequence is not"
             return b.addNumberRaw("42", false);
         }
     };
-    const scalar = try analyzeBuilt(arena, ScalarRoot.f, "fig", .{});
+    const scalar = try analyzeBuilt(arena, ScalarRoot.f, "figl", .{});
     try testing.expectEqual(@as(usize, 1), scalar.len);
     try testing.expectEqual(Warning.Code.value_dropped, scalar[0].code);
     try testing.expectEqual(Warning.Cause.format_limitation, scalar[0].cause);
@@ -542,7 +542,7 @@ test "fig root scalar is flagged as unrepresentable, a root map/sequence is not"
             return b.addMapping(&.{.{ .key = k, .value = v }});
         }
     };
-    const map_fig = try analyzeBuilt(arena, MapRoot.f, "fig", .{});
+    const map_fig = try analyzeBuilt(arena, MapRoot.f, "figl", .{});
     try testing.expectEqual(@as(usize, 0), map_fig.len);
 }
 

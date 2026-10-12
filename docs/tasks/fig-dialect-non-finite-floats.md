@@ -27,7 +27,7 @@ The Rust binding does the same: `Editor::replace_value` with
 and reports success, and the value reads back as the string `".inf"`.
 
 **Cause.** A number node keeps its source's lexeme in `raw`, and the fig
-printer writes it verbatim (`languages/fig/printer.zig`, `value`). The fig
+printer writes it verbatim (`languages/figl/printer.zig`, `value`). The fig
 dialect has no bare spelling for a non-finite float: `inf`, `.inf` and
 `Infinity` all sniff to strings, and the only spelling is the annotated
 `a: float = inf`, which the parser lifts to an extended `number_special`.

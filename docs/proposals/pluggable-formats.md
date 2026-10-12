@@ -428,7 +428,7 @@ A review against the code at c9761cd found, before anything was built:
   `accept/`, `edgecase/`, `reject/`; `testdata/toml/` is `valid/`,
   `invalid/`; `testdata/yaml/` has `accept/`, `reject/`, `reject-stream/` and
   a skiplist; `testdata/nestedtext/` is one `tests.json`; fig's corpus is one
-  file under `src/languages/fig/testdata/`. "Parse each file in
+  file under `src/languages/figl/testdata/`. "Parse each file in
   `testdata/<lang>/`" fails on every reject case.
 - **§3 undercounts.** `diagnostics.zig`'s `valueLoss` has an arm for every
   format, and the flat three encode "no typed scalars" and "no sequences"

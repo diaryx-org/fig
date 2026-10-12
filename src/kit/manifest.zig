@@ -760,7 +760,7 @@ pub const RenderRequest = struct {
 /// What fig's bare-literal rules make of the text a value renderer is
 /// handed: `null`, `true`/`false`, a number (integer or float), a datetime
 /// shape, or a string — the classification the `.fig` dialect gives a bare
-/// token (`languages/fig/tokenizer.zig`'s `sniffBare`: `Yes` and `007` stay
+/// token (`languages/figl/tokenizer.zig`'s `sniffBare`: `Yes` and `007` stay
 /// strings), computed once by the engine over the text trimmed of
 /// whitespace and passed to `renderValue`, so that no format restates the
 /// rule and every format's `set` means the same thing by `42`. A datetime

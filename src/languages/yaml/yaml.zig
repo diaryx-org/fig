@@ -1,4 +1,5 @@
 const yaml = @This();
+const std = @import("std");
 const Document = @import("../../document.zig");
 const AST = @import("../../ast/ast.zig");
 const lang = @import("../manifest.zig");
@@ -33,6 +34,11 @@ pub const Language = struct {
     /// `deserialize.zig` maps onto a Zig type. Optional `Language` decl,
     /// required exactly of a language with a `deserializable` dialect row.
     pub const parseAbstract = yaml.Parser.parseAbstract;
+    /// A `---`/`...` stream's documents, each to be parsed on its own.
+    pub fn splitStream(allocator: std.mem.Allocator, input: []const u8, t: yaml.Type) ![]lang.StreamDocument {
+        _ = t;
+        return @import("stream.zig").locate(allocator, input);
+    }
     pub const name = "yaml";
     pub const extensions: []const []const u8 = &.{ "yaml", "yml" };
     pub const caps: lang.Caps = .{

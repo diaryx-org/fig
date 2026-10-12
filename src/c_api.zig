@@ -368,6 +368,58 @@ pub export fn fig_detect_order(input: ?[*]const u8, input_len: usize, names: ?[*
     return .ok;
 }
 
+/// One document of a stream, as `fig_stream_split` reports it: a byte range
+/// of the input and whether it opened with a document-start marker.
+pub const FigStreamDoc = extern struct {
+    start: usize,
+    end: usize,
+    marked: bool,
+};
+
+/// Locate the documents of a multi-document stream in `format`, each one's
+/// byte range to be parsed as a document of its own. `unsupported_operation`
+/// for a format without streams; `parse_error` when the language refuses the
+/// input. Free the array with `fig_stream_free`.
+pub export fn fig_stream_split(input: ?[*]const u8, input_len: usize, format: c_int, out_docs: ?*?[*]FigStreamDoc, out_count: ?*usize, out_err: ?*FigError) FigStatus {
+    @setEvalBranchQuota(30_000);
+    const docs_out = out_docs orelse return .invalid_argument;
+    const count_out = out_count orelse return .invalid_argument;
+    docs_out.* = null;
+    count_out.* = 0;
+    const bytes: []const u8 = if (input_len == 0) "" else (input orelse return .invalid_argument)[0..input_len];
+    const allocator = activeAllocator();
+    const located: []Languages.StreamDocument = blk: {
+        if (runtimeOf(format)) |e| {
+            break :blk Runtime.Language.splitStream(allocator, bytes, e.typeOf()) catch |err| return switch (err) {
+                error.UnsupportedOperation => .unsupported_operation,
+                error.OutOfMemory => .out_of_memory,
+                else => fillError(out_err, .parse_error, "the language could not split the stream"),
+            };
+        }
+        const f = std.enums.fromInt(FigFormat, format) orelse return .unsupported_format;
+        switch (f) {
+            inline else => |tag| {
+                const d = comptime Languages.entryFor(@tagName(tag));
+                if (comptime d.Lang == void) return .unsupported_format;
+                if (comptime !@hasDecl(d.Lang, "splitStream")) return .unsupported_operation;
+                break :blk d.Lang.splitStream(allocator, bytes, d.dialect) catch return .out_of_memory;
+            },
+        }
+    };
+    defer allocator.free(located);
+    const out = allocator.alloc(FigStreamDoc, located.len) catch return .out_of_memory;
+    for (located, out) |l, *o| o.* = .{ .start = l.start, .end = l.end, .marked = l.explicit };
+    docs_out.* = out.ptr;
+    count_out.* = out.len;
+    return .ok;
+}
+
+/// Free what `fig_stream_split` returned.
+pub export fn fig_stream_free(docs: ?[*]FigStreamDoc, count: usize) void {
+    const p = docs orelse return;
+    activeAllocator().free(p[0..count]);
+}
+
 fn capsBits(caps: Languages.Caps) u32 {
     var bits: u32 = 0;
     if (caps.read) bits |= @backingInt(FigCapability.read);

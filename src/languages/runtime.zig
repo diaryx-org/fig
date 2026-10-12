@@ -520,6 +520,17 @@ pub const RenderRequest = extern struct {
 
 /// Every renderer slot's shape: the request in, the fragment out.
 pub const RenderFn = *const fn (ctx: ?*anyopaque, request: *const RenderRequest, out: *Str, err: *ErrorInfo) callconv(.c) c_int;
+/// Locate the documents of a stream: `out` is an array of `StreamDoc`, its
+/// `len` in bytes, which fig frees with `free_bytes`.
+pub const SplitStreamFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, input: Str, out: *Str, err: *ErrorInfo) callconv(.c) c_int;
+
+/// `manifest.StreamDocument`, as a language's `split_stream` writes it.
+pub const StreamDoc = extern struct {
+    start: usize,
+    end: usize,
+    /// Opened with a document-start marker.
+    marked: bool,
+};
 
 /// The contract, as a record. `register` copies every string and array it
 /// reaches, so the struct and what it points to may be freed after the
@@ -575,6 +586,9 @@ pub const VTable = extern struct {
     render_tail: ?RenderFn = null,
     render_key: ?RenderFn = null,
     render_key_name: ?RenderFn = null,
+    /// The language's `splitStream`, or null for a language without
+    /// multi-document streams.
+    split_stream: ?SplitStreamFn = null,
 };
 
 /// `FigCapability` bits, restated so this file is a leaf.
@@ -1977,6 +1991,30 @@ pub const Language = struct {
     }
     pub fn renderKeyName(t: Type, allocator: Allocator, out: *std.ArrayList(u8), r: manifest.RenderRequest) !void {
         return render(t, allocator, out, .key_name, r);
+    }
+
+    /// The entry's `split_stream`, or `UnsupportedOperation` for a language
+    /// without one. The documents are fig's, in `allocator`.
+    pub fn splitStream(allocator: Allocator, input: []const u8, t: Type) ![]manifest.StreamDocument {
+        const e = entryOf(t);
+        const vt = &e.language.vt;
+        const f = vt.split_stream orelse return error.UnsupportedOperation;
+        var s: Str = .{};
+        var err: ErrorInfo = .empty;
+        if (f(vt.ctx, e.dialectZ(), Str.of(input), &s, &err) != 0) return error.RuntimeParseFailed;
+        defer vt.free_bytes(vt.ctx, s);
+        const bytes = s.slice() orelse "";
+        const n = bytes.len / @sizeOf(StreamDoc);
+        const out = try allocator.alloc(manifest.StreamDocument, n);
+        for (out, 0..) |*d, i| {
+            const r = std.mem.bytesToValue(StreamDoc, bytes[i * @sizeOf(StreamDoc) ..][0..@sizeOf(StreamDoc)]);
+            if (r.start > r.end or r.end > input.len) {
+                allocator.free(out);
+                return error.RuntimeParseFailed;
+            }
+            d.* = .{ .start = r.start, .end = r.end, .explicit = r.marked };
+        }
+        return out;
     }
 
     /// One renderer call: the request in the C shape, the slot `which`

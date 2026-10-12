@@ -14,6 +14,7 @@ pub const Language = @This();
 pub const Caps = manifest.Caps;
 pub const NativeKinds = manifest.NativeKinds;
 pub const Prints = manifest.Prints;
+pub const StreamDocument = manifest.StreamDocument;
 pub const Comments = manifest.Comments;
 pub const Syntax = manifest.Syntax;
 pub const Literal = manifest.Literal;
@@ -783,7 +784,11 @@ const Decls = struct {
     ///     not a comptime fact: the editor's two gates that read every
     ///     dialect's `syntax` at comptime (may it have sections, may it
     ///     spell a header) answer "ask the entry" instead.
-    const optional = [_][]const u8{ "printNode", "parseAbstract", "samples", "hasRenderer", "runtime" };
+    /// `splitStream(allocator, input, t) ![]StreamDocument` locates the
+    /// documents of a multi-document stream (YAML's `---`/`...`), each one's
+    /// byte range for a parse of its own; a language without streams leaves
+    /// it out.
+    const optional = [_][]const u8{ "printNode", "parseAbstract", "samples", "hasRenderer", "runtime", "splitStream" };
 
     /// Editing hooks: none. A hook was a `pub` decl that took over an
     /// `editor.Editor` method wholesale, with the editor in hand. Twenty-five

@@ -380,6 +380,7 @@ fn vtableFromDescription(a: Allocator, t: *Transport, desc: std.json.Value) !Run
         .render_tail = if (renderers[3]) renderTailThunk else null,
         .render_key = if (renderers[4]) renderKeyThunk else null,
         .render_key_name = if (renderers[5]) renderKeyNameThunk else null,
+        .split_stream = if (boolOr(o, "split_stream", false)) splitStreamThunk else null,
     };
 }
 
@@ -535,6 +536,56 @@ fn renderKeyThunk(ctx: ?*anyopaque, r: *const Runtime.RenderRequest, out: *Runti
 }
 fn renderKeyNameThunk(ctx: ?*anyopaque, r: *const Runtime.RenderRequest, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
     return renderCall(ctx, "key_name", r, out, err);
+}
+
+/// `{"op":"split_stream","dialect","input"}`, answered with
+/// `{"ok":true,"documents":[{"start","end","explicit"}]}` in byte offsets.
+fn splitStreamThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Runtime.Str, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
+    const t = transportOf(ctx);
+    const src = input.slice() orelse "";
+    if (!std.unicode.utf8ValidateSlice(src)) {
+        setErr(err, "the input is not UTF-8, which the helper wire carries as text", 0);
+        return 2;
+    }
+    var req: Io.Writer.Allocating = .init(t.allocator);
+    defer req.deinit();
+    const w = &req.writer;
+    w.writeAll("{\"op\":\"split_stream\",\"dialect\":") catch return 3;
+    jsonString(w, std.mem.span(dialect)) catch return 3;
+    w.writeAll(",\"input\":") catch return 3;
+    jsonString(w, src) catch return 3;
+    w.writeAll("}") catch return 3;
+
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const resp = t.call(arena.allocator(), req.written()) catch |e| {
+        setErr(err, @errorName(e), 0);
+        return 2;
+    };
+    const docs = okField(resp, "documents") orelse {
+        setErr(err, failureMessage(resp), failureOffset(resp));
+        return 2;
+    };
+    if (docs != .array) {
+        setErr(err, "the helper's documents are not an array", 0);
+        return 2;
+    }
+    // Bytes, not `StreamDoc`s: `free_bytes` frees what it is handed as bytes.
+    const size = @sizeOf(Runtime.StreamDoc);
+    const bytes = t.allocator.alloc(u8, docs.array.items.len * size) catch return 3;
+    for (docs.array.items, 0..) |d, i| {
+        const start = if (d == .object) d.object.get("start") else null;
+        const end = if (d == .object) d.object.get("end") else null;
+        if (start == null or end == null or start.? != .integer or end.? != .integer or start.?.integer < 0 or end.?.integer < start.?.integer) {
+            t.allocator.free(bytes);
+            setErr(err, "a stream document is not {\"start\", \"end\"} byte offsets", 0);
+            return 2;
+        }
+        const r: Runtime.StreamDoc = .{ .start = @intCast(start.?.integer), .end = @intCast(end.?.integer), .marked = boolOr(d.object, "explicit", false) };
+        @memcpy(bytes[i * size ..][0..size], std.mem.asBytes(&r));
+    }
+    out.* = Runtime.Str.of(bytes);
+    return 0;
 }
 
 // ── the table on the wire ──────────────────────────────────────────────────

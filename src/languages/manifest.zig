@@ -430,6 +430,12 @@ pub fn Dialect(comptime L: type) type {
     };
 }
 
+/// One document of a multi-document stream, as a language's `splitStream`
+/// locates it: its byte range in the stream's source, `[start, end)`, which
+/// parses as a document of its own, and whether it opened with a
+/// document-start marker (YAML's `---`).
+pub const StreamDocument = struct { start: usize, end: usize, explicit: bool };
+
 /// What a dialect's printer writes of a tree read from another format: the
 /// declaration the conversion warnings are computed from, so that no part of
 /// core needs to know which format is the target.

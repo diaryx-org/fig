@@ -1,8 +1,8 @@
 //! YAML's multi-document stream: `---` and `...` markers at column 0 split a
 //! file into documents, each parsed on its own by the single-document parser.
 //! YAML's own concept, so it lives with YAML rather than in core's embed
-//! layer; the `splitStream` declaration that lets core and the bindings reach
-//! it through the contract is still to come (docs/proposals/core-only.md §4.5).
+//! layer. `locate` is YAML's `splitStream` declaration, which core and the
+//! bindings reach through the contract (docs/proposals/core-only.md §4.5).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -11,6 +11,7 @@ const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
 const Span = @import("../../util/span.zig");
 const Parser = @import("parser.zig");
+const lang = @import("../manifest.zig");
 
 /// One document within a multi-document YAML stream, located in *outer-source*
 /// byte coordinates. `content` is the exact slice handed to the single-document
@@ -44,24 +45,22 @@ pub const Stream = struct {
     }
 };
 
-/// Split a YAML stream into its constituent documents and parse each one
-/// independently with the single-document parser.
+/// Locate the documents of a YAML stream: each one's byte range and whether
+/// it opened with a `---` marker, without parsing any. This is YAML's
+/// `splitStream`; `split` parses each range on top of it.
 ///
 /// A stream is a sequence of documents delimited by `---` (start) and `...`
-/// (end) markers at column 0. Rather than teach the core parser to span
-/// documents — which would complicate in-place editing and round-tripping — we
-/// locate each document's byte range here (the same "locate region, then parse
-/// it" shape as an embedded region's) and hand the slices to the parser one at a time.
+/// (end) markers at column 0. Rather than teach the parser to span
+/// documents — which would complicate in-place editing and round-tripping —
+/// each document's range is located here and handed to the parser on its
+/// own. A range INCLUDES a leading `---` marker line (which the parser
+/// consumes) and excludes a trailing `...`.
 ///
-/// Always returns at least one document: an empty or comment-only stream yields
-/// a single `null` document. A parse error in any document propagates (and any
-/// already-parsed documents are freed).
-pub fn split(allocator: Allocator, source: []const u8) !Stream {
-    var docs: std.ArrayList(StreamDoc) = .empty;
-    errdefer {
-        for (docs.items) |d| d.document.deinit(allocator);
-        docs.deinit(allocator);
-    }
+/// Always returns at least one document: an empty or comment-only stream is
+/// a single bare document.
+pub fn locate(allocator: Allocator, source: []const u8) Allocator.Error![]lang.StreamDocument {
+    var docs: std.ArrayList(lang.StreamDocument) = .empty;
+    errdefer docs.deinit(allocator);
 
     var start: usize = 0;
     if (std.mem.startsWith(u8, source, "\xEF\xBB\xBF")) start += 3; // UTF-8 BOM
@@ -103,35 +102,44 @@ pub fn split(allocator: Allocator, source: []const u8) !Stream {
     }
     try pushSegment(allocator, source, &docs, seg_start, source.len, seg_explicit);
 
-    if (docs.items.len == 0) {
-        // An empty / trivia-only stream is one null document.
-        const doc = try parseYamlSlice(allocator, source[start..]);
-        try docs.append(allocator, .{ .content = Span.init(start, source.len), .explicit = false, .document = doc });
-    }
+    // An empty / trivia-only stream is one null document.
+    if (docs.items.len == 0) try docs.append(allocator, .{ .start = start, .end = source.len, .explicit = false });
 
+    return docs.toOwnedSlice(allocator);
+}
+
+/// Split a YAML stream into its documents (`locate`) and parse each one
+/// independently with the single-document parser. A parse error in any
+/// document propagates, and the documents already parsed are freed.
+pub fn split(allocator: Allocator, source: []const u8) !Stream {
+    const located = try locate(allocator, source);
+    defer allocator.free(located);
+    var docs: std.ArrayList(StreamDoc) = .empty;
+    errdefer {
+        for (docs.items) |d| d.document.deinit(allocator);
+        docs.deinit(allocator);
+    }
+    for (located) |l| {
+        const doc = try parseYamlSlice(allocator, source[l.start..l.end]);
+        try docs.append(allocator, .{ .content = Span.init(l.start, l.end), .explicit = l.explicit, .document = doc });
+    }
     return .{ .source = source, .documents = try docs.toOwnedSlice(allocator) };
 }
 
-/// Parse `source[seg_start..seg_end]` and append it as a document, unless it is
-/// a bare segment with no real content (blank/comment-only) — such a segment is
-/// not a document (e.g. a leading comment before the first `---`). An explicit
+/// Append `source[seg_start..seg_end]` as a document, unless it is a bare
+/// segment with no real content (blank/comment-only) — such a segment is not
+/// a document (e.g. a leading comment before the first `---`). An explicit
 /// segment (opened by `---`) is always a document, even when its body is empty.
 fn pushSegment(
     allocator: Allocator,
     source: []const u8,
-    docs: *std.ArrayList(StreamDoc),
+    docs: *std.ArrayList(lang.StreamDocument),
     seg_start: usize,
     seg_end: usize,
     explicit: bool,
-) !void {
-    const slice = source[seg_start..seg_end];
-    if (!explicit and !hasContent(slice)) return;
-    const doc = try parseYamlSlice(allocator, slice);
-    try docs.append(allocator, .{
-        .content = Span.init(seg_start, seg_end),
-        .explicit = explicit,
-        .document = doc,
-    });
+) Allocator.Error!void {
+    if (!explicit and !hasContent(source[seg_start..seg_end])) return;
+    try docs.append(allocator, .{ .start = seg_start, .end = seg_end, .explicit = explicit });
 }
 
 /// Parse one segment as a single YAML document.

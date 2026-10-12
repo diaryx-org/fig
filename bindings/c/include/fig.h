@@ -1387,6 +1387,20 @@ typedef struct FigRenderRequest {
 
 typedef int (*FigRenderFn)(void *ctx, const FigRenderRequest *request, FigStr *out, FigError *err);
 
+// One document of a multi-document stream: its byte range [start, end) of
+// the stream's input, which parses as a document of its own, and whether it
+// opened with a document-start marker (YAML's `---`), `marked`.
+typedef struct FigStreamDoc {
+    size_t start;
+    size_t end;
+    bool   marked;
+} FigStreamDoc;
+
+// A language's stream splitter: locate the documents of `input`, writing an
+// array of FigStreamDoc to `out` (its `len` in bytes), which fig frees with
+// free_bytes. Returns 0, or nonzero with `err` filled.
+typedef int (*FigSplitStreamFn)(void *ctx, const char *dialect, FigStr input, FigStr *out, FigError *err);
+
 // The vtable. `size` is sizeof(FigLanguageVTable) and `dialect_size`
 // sizeof(FigDialectDesc), as the language was built against them; every field
 // after free_bytes may fall past `size`, and reads as NULL there. `caps` is
@@ -1425,6 +1439,8 @@ typedef struct FigLanguageVTable {
     FigRenderFn render_tail;
     FigRenderFn render_key;
     FigRenderFn render_key_name;
+    // NULL for a language without multi-document streams.
+    FigSplitStreamFn split_stream;
 } FigLanguageVTable;
 
 // The FIG_LANGUAGE_VTABLE_VERSION of the linked library.
@@ -1454,6 +1470,16 @@ int fig_format_by_name(const char *name);
 // none does. The grammars overlap, so the order decides what ambiguous input
 // means: strictest first. A name that resolves to no format is skipped.
 FigStatus fig_detect_order(const uint8_t *input, size_t input_len, const char *const *names, size_t count, int *out_format);
+
+// Locate the documents of a multi-document stream in `format` (YAML's
+// `---`/`...`): writes an array of `*out_count` FigStreamDoc to `*out_docs`,
+// each a byte range of `input` to parse as a document of its own. An empty
+// stream is one document. FIG_STATUS_UNSUPPORTED_OPERATION for a format
+// without streams; FIG_STATUS_PARSE_ERROR when the language refuses the
+// input. Free the array with fig_stream_free.
+FigStatus fig_stream_split(const uint8_t *input, size_t input_len, int format,
+                           FigStreamDoc **out_docs, size_t *out_count, FigError *out_err);
+void fig_stream_free(FigStreamDoc *docs, size_t count);
 
 // Report HOW MANY events serializing the whole parsed document to `format` would
 // produce, using the same pipeline fig_document_serialize prints from (YAML

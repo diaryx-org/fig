@@ -1238,6 +1238,23 @@ pub type FigRenderFn = unsafe extern "C" fn(
     err: *mut FigError,
 ) -> c_int;
 
+/// Mirror of `FigStreamDoc`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigStreamDoc {
+    pub start: usize,
+    pub end: usize,
+    pub marked: bool,
+}
+
+pub type FigSplitStreamFn = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    dialect: *const c_char,
+    input: FigStr,
+    out: *mut FigStr,
+    err: *mut FigError,
+) -> c_int;
+
 /// Mirror of `FigLanguageVTable`. The five `render_*` slots and `print` are
 /// `Option`, which is the null pointer on the C side.
 #[repr(C)]
@@ -1269,6 +1286,7 @@ pub struct FigLanguageVTable {
     pub render_tail: Option<FigRenderFn>,
     pub render_key: Option<FigRenderFn>,
     pub render_key_name: Option<FigRenderFn>,
+    pub split_stream: Option<FigSplitStreamFn>,
 }
 
 unsafe extern "C" {
@@ -1279,6 +1297,15 @@ unsafe extern "C" {
         out_err: *mut FigError,
     ) -> FigStatus;
     pub fn fig_format_by_name(name: *const c_char) -> c_int;
+    pub fn fig_stream_split(
+        input: *const u8,
+        input_len: usize,
+        format: c_int,
+        out_docs: *mut *mut FigStreamDoc,
+        out_count: *mut usize,
+        out_err: *mut FigError,
+    ) -> FigStatus;
+    pub fn fig_stream_free(docs: *mut FigStreamDoc, count: usize);
     pub fn fig_detect_order(
         input: *const u8,
         input_len: usize,

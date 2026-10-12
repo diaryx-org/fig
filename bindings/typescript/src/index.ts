@@ -24,7 +24,7 @@ export { type Segment } from "./edit-ops.ts";
 export { V, fromJS, toJS, stringify, diagnose, type Value, type JsValue, type JsInput } from "./value.ts";
 export { version, versionString, capabilities, type Version, type Capabilities } from "./meta.ts";
 export { init, isReady } from "./ffi.ts";
-export { registerLanguage, formatByName, detectFormat } from "./language.ts";
+export { registerLanguage, formatByName, detectFormat, splitStream, type StreamDocument } from "./language.ts";
 export {
   handle,
   describe,
@@ -50,6 +50,8 @@ export {
   type MentionRow,
   type CommentRow,
   type DirectiveRow,
+  type StreamRange,
+  type Prints,
 } from "./wire.ts";
 export { serve, type HelperIo } from "./helper.ts";
 

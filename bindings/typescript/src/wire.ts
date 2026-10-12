@@ -154,6 +154,15 @@ export interface Prints {
   comments?: "always" | "pretty" | "never";
 }
 
+/** One document of a multi-document stream: its byte range `[start, end)`
+ *  of the stream's UTF-8 input and whether it opened with a document-start
+ *  marker. */
+export interface StreamRange {
+  start: number;
+  end: number;
+  explicit: boolean;
+}
+
 /** The six fragment renderers the editor may ask a format for. */
 export type Renderer = "value" | "entry" | "item" | "tail" | "key" | "key_name";
 
@@ -333,7 +342,7 @@ export interface Language {
   /** Required and non-empty: each is parsed, printed, reparsed and edited
    *  at registration, and a language whose samples fail is refused. */
   samples: string[];
-  /** Which of `render`'s five fragments this format spells itself. */
+  /** Which of `render`'s six fragments this format spells itself. */
   renderers?: Renderer[];
 
   /** The input — text; the wire carries no bytes that are not — to its
@@ -348,6 +357,11 @@ export interface Language {
   print?(dialect: string, table: NodeTable, options: PrintOptions): string;
   /** Answer one of the renderers `renderers` declares. */
   render?(which: Renderer, args: RenderArgs): string;
+  /** Locate the documents of a multi-document stream (YAML's `---`/`...`):
+   *  each one's BYTE range of the UTF-8 input, to be parsed on its own, and
+   *  whether it opened with a document-start marker. An empty stream is one
+   *  document. */
+  split_stream?(dialect: string, input: string): StreamRange[];
 }
 
 /** How a language refuses its input: the message a caller sees, and the
@@ -367,6 +381,7 @@ export class LanguageError extends Error {
 type Request =
   | { op: "describe" }
   | { op: "parse"; dialect: string; input: string }
+  | { op: "split_stream"; dialect: string; input: string }
   | { op: "print"; dialect: string; table: NodeTable; options?: Partial<PrintOptions> }
   | {
       op: "render";
@@ -400,6 +415,7 @@ export function describe(lang: Language): Record<string, unknown> {
     })),
     samples: lang.samples,
     renderers: lang.renderers ?? [],
+    split_stream: typeof lang.split_stream === "function",
   };
 }
 
@@ -458,6 +474,11 @@ function handleInner(lang: Language, requestLine: string): Record<string, unknow
         flow: o.flow ?? false,
       };
       return { ok: true, output: lang.print(req.dialect, req.table, options) };
+    }
+    case "split_stream": {
+      if (!lang.split_stream) throw new LanguageError(`${lang.name} has no multi-document streams`);
+      if (typeof req.dialect !== "string" || typeof req.input !== "string") throw new LanguageError("split_stream: dialect and input are strings");
+      return { ok: true, documents: lang.split_stream(req.dialect, req.input) };
     }
     case "render": {
       if (!lang.render) throw new LanguageError(`${lang.name} declares no renderers`);

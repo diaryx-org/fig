@@ -68,6 +68,19 @@ pub struct Description {
     /// declared here and not answered is a failed edit; one answered and not
     /// declared is never called.
     pub renderers: Renderers,
+    /// The language splits multi-document streams, through
+    /// [`Language::split_stream`].
+    pub streams: bool,
+}
+
+/// One document of a multi-document stream: its byte range `[start, end)`
+/// of the stream's input, which parses as a document of its own, and
+/// whether it opened with a document-start marker (YAML's `---`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StreamDocument {
+    pub start: usize,
+    pub end: usize,
+    pub explicit: bool,
 }
 
 impl Description {
@@ -998,6 +1011,20 @@ pub trait Language: Send + Sync + 'static {
             which.name()
         )))
     }
+
+    /// Locate the documents of a multi-document stream, each one's byte
+    /// range to parse on its own. Called only when the description declares
+    /// `streams`.
+    fn split_stream(
+        &self,
+        dialect: &str,
+        input: &[u8],
+    ) -> Result<Vec<StreamDocument>, LanguageError> {
+        let _ = (dialect, input);
+        Err(LanguageError::new(
+            "this language has no multi-document streams",
+        ))
+    }
 }
 
 // ── registration ───────────────────────────────────────────────────────────
@@ -1059,6 +1086,7 @@ struct Registration {
     samples: Vec<Vec<u8>>,
     sample_strs: Vec<ffi::FigStr>,
     renderers: Renderers,
+    streams: bool,
 }
 
 /// A `FigSyntax` and the strings it points into.
@@ -1331,6 +1359,7 @@ impl Registration {
             samples,
             sample_strs,
             renderers: desc.renderers,
+            streams: desc.streams,
         })
     }
 
@@ -1387,6 +1416,11 @@ impl Registration {
             },
             render_key_name: if self.renderers.key_name {
                 Some(render_key_name_thunk)
+            } else {
+                None
+            },
+            split_stream: if self.streams {
+                Some(split_stream_thunk)
             } else {
                 None
             },
@@ -1908,6 +1942,48 @@ fn render_thunk_body(
         Ok(Err(e)) => {
             fill_err(err, &e);
             ffi::FigStatus::UNSUPPORTED_OPERATION.0
+        }
+        Err(p) => {
+            fill_err(err, &panic_message(p));
+            ffi::FigStatus::INTERNAL_ERROR.0
+        }
+    }
+}
+
+unsafe extern "C" fn split_stream_thunk(
+    ctx: *mut c_void,
+    dialect: *const c_char,
+    input: ffi::FigStr,
+    out: *mut ffi::FigStr,
+    err: *mut ffi::FigError,
+) -> c_int {
+    let reg = unsafe { reg_of(ctx) };
+    let dialect = unsafe { dialect_of(dialect) };
+    let input = bytes_of(input);
+    match catch_unwind(AssertUnwindSafe(|| reg.lang.split_stream(dialect, input))) {
+        Ok(Ok(docs)) => {
+            // The rows as bytes, which `free_bytes` frees as it frees any.
+            let mut bytes =
+                Vec::with_capacity(docs.len() * std::mem::size_of::<ffi::FigStreamDoc>());
+            for d in docs {
+                let row = ffi::FigStreamDoc {
+                    start: d.start,
+                    end: d.end,
+                    marked: d.explicit,
+                };
+                bytes.extend_from_slice(unsafe {
+                    std::slice::from_raw_parts(
+                        (&row as *const ffi::FigStreamDoc).cast::<u8>(),
+                        std::mem::size_of::<ffi::FigStreamDoc>(),
+                    )
+                });
+            }
+            give_bytes(bytes, out);
+            0
+        }
+        Ok(Err(e)) => {
+            fill_err(err, &e);
+            ffi::FigStatus::PARSE_ERROR.0
         }
         Err(p) => {
             fill_err(err, &panic_message(p));

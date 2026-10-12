@@ -43,7 +43,7 @@
 //! "max_mapping_depth":n|null,"lossless":{…}|null,"syntax":{…}|null,
 //! "dialects":[{"name","extensions":[…],"splice":"literal|json_string|raw",
 //! "empty_doc_seed":"…"|null,"syntax":{…}|null,"prints":{…}|null}],
-//! "samples":[…],"renderers":["value",…]}`; a syntax is the fields of
+//! "samples":[…],"renderers":["value",…],"split_stream":bool}`; a syntax is the fields of
 //! [`Syntax`] by name, and a prints the fields of [`Prints`], with enums as
 //! their lower-case names and absent optionals as `null`. A table is `{"rows":[…],"regions":[…],"mentions":[…],
 //! "comments":[…],"directives":[…]}`: a row is `{"kind":"mapping","parent":0,
@@ -141,6 +141,25 @@ fn handle_inner(lang: &dyn Language, request: &str) -> Result<Value, LanguageErr
             let out = String::from_utf8(out)
                 .map_err(|_| LanguageError::new("print returned bytes that are not UTF-8"))?;
             Ok(ok(vec![("output", Value::Str(out))]))
+        }
+        "split_stream" => {
+            let dialect = str_field(&req, "dialect")?;
+            let input = str_field(&req, "input")?;
+            let docs = lang.split_stream(dialect, input.as_bytes())?;
+            Ok(ok(vec![(
+                "documents",
+                Value::Seq(
+                    docs.iter()
+                        .map(|d| {
+                            map(vec![
+                                ("start", Value::Int(d.start as i64)),
+                                ("end", Value::Int(d.end as i64)),
+                                ("explicit", Value::Bool(d.explicit)),
+                            ])
+                        })
+                        .collect(),
+                ),
+            )]))
         }
         "render" => {
             let dialect = str_field(&req, "dialect")?;
@@ -365,6 +384,7 @@ pub fn description_to_value(d: &Description) -> Value {
             Value::Seq(d.samples.iter().map(|x| s(x)).collect()),
         ),
         ("renderers", Value::Seq(renderers)),
+        ("split_stream", Value::Bool(d.streams)),
     ])
 }
 
@@ -444,6 +464,10 @@ pub fn description_from_value(v: &Value) -> Result<Description, LanguageError> {
             .map(str::to_owned)
             .collect(),
         renderers,
+        streams: v
+            .get("split_stream")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }
 

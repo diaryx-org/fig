@@ -20,7 +20,9 @@ part_of = [proposals](proposals.md)
 > stream splitter moved into YAML. §4.6 needed no named options: `flow`
 > means "a container root inline" for any format, and `fig_indent` became
 > `indent_requested`; of `SerializeError` only `FigUnrepresentableRoot`
-> named a format. Left of step 2: the `splitStream` declaration. Tag
+> named a format. `splitStream` is a declaration, a `split_stream` vtable
+> slot and wire op, and `fig_stream_split` / `Format::split_stream` /
+> `splitStream` in the bindings; step 2 is done. Tag
 > resolution and the lexeme's value land with §4.9's rows.
 >
 > §8 step 1's measurements are done (2026-10-12). They settled the third

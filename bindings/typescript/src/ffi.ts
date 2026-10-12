@@ -45,6 +45,8 @@ interface Exports {
   fig_format_capabilities(format: number): number;
   fig_format_by_name(name: number): number;
   fig_detect_order(input: number, inputLen: number, names: number, count: number, outFormat: number): number;
+  fig_stream_split(input: number, inputLen: number, format: number, outDocs: number, outCount: number, outErr: number): number;
+  fig_stream_free(docs: number, count: number): void;
   /** Register the language the host knows as `lang` (see language.ts):
    *  the module asks it to describe itself through `fig_host.call` and
    *  registers the result as `fig_language_register` would a C vtable.

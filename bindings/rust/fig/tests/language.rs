@@ -172,6 +172,13 @@ fn a_rust_language_is_a_peer_at_every_entry_point() {
     assert_eq!(Format::by_name("tinykv"), Some(tkv));
     assert_eq!(Format::by_name("json"), Some(Format::Json));
     assert_eq!(Format::by_name("nosuch"), None);
+    // A YAML stream's documents, each a byte range to parse on its own.
+    let src = b"a: 1\n---\nb: 2\n...\n";
+    let docs = Format::Yaml.split_stream(src).unwrap();
+    let texts: Vec<&[u8]> = docs.iter().map(|d| &src[d.start..d.end]).collect();
+    assert_eq!(texts, [&b"a: 1\n"[..], &b"---\nb: 2\n"[..]]);
+    assert!(docs[1].explicit && !docs[0].explicit);
+    assert!(Format::Json.split_stream(b"{}").is_err());
     // Content sniffing tries the formats in the order given.
     assert_eq!(
         Format::detect(b"{\"a\": 1}", &["json", "yaml"]),

@@ -60,6 +60,8 @@ export {
   type MentionRow,
   type CommentRow,
   type DirectiveRow,
+  type StreamRange,
+  type Prints,
 } from "./wire.ts";
 
 /** Where `serve` reads requests and writes responses. */

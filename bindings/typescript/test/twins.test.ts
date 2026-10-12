@@ -22,7 +22,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { Format, capabilities, convert, detectFormat, formatByName, handle, registerLanguage, type Language, type NodeTable } from "../src/index.ts";
+import { Format, capabilities, convert, detectFormat, formatByName, handle, splitStream, registerLanguage, type Language, type NodeTable } from "../src/index.ts";
 
 import canonical from "@diaryx/fig/languages/canonical";
 import dotenv from "@diaryx/fig/languages/dotenv";
@@ -157,6 +157,21 @@ test("detectFormat tries the registered languages in the caller's order", () => 
   assert.equal(detectFormat('{"a": 1}', ["yaml", "json"]), Format.Yaml);
   assert.equal(detectFormat("a = 1\n", ["nosuch", "json", "toml"]), Format.Toml);
   assert.equal(detectFormat('{"a": ', ["json"]), null);
+});
+
+test("splitStream locates a YAML stream's documents through the twin", () => {
+  const src = "# lead\n%YAML 1.2\n---\na: 1\n...\nb: 2\n--- é\n";
+  const docs = splitStream(src, Format.Yaml);
+  assert.deepEqual(
+    docs.map((d) => [d.text, d.explicit]),
+    [
+      ["# lead\n%YAML 1.2\n---\na: 1\n", true],
+      ["b: 2\n", false],
+      ["--- é\n", true],
+    ],
+  );
+  assert.deepEqual(splitStream("", Format.Yaml), [{ text: "", start: 0, end: 0, explicit: false }]);
+  assert.throws(() => splitStream("{}", Format.Json));
 });
 
 test("each language prints every fixture as the compiled printer did", () => {

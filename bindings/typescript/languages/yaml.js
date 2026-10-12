@@ -2660,6 +2660,78 @@ function print(_dialect, t, options) {
   return pr.out.join("");
 }
 
+// ── streams ───────────────────────────────────────────────────────────────
+//
+// A `---`/`...` stream's documents, each one's byte range to be parsed on its
+// own: the compiled format's `stream.zig`, line for line. A range includes a
+// leading `---` line (the parser consumes it) and excludes a trailing `...`;
+// directives before a `---` belong to the document it opens; a bare segment
+// with nothing but blanks and comments is no document; an empty stream is one.
+
+const utf8 = new TextEncoder();
+const text = new TextDecoder();
+
+function splitStream(_dialect, input) {
+  const b = utf8.encode(input);
+  const lineEnd = (from) => {
+    const nl = b.indexOf(10, from);
+    return nl < 0 ? b.length : nl + 1;
+  };
+  const lineAt = (from) => text.decode(b.subarray(from, lineEnd(from))).replace(/[\r\n]+$/, "");
+  const lines = (from, to) => text.decode(b.subarray(from, to)).split("\n").map((l) => l.replace(/\r$/, ""));
+  const marker = (at) => {
+    const line = lineAt(at);
+    if (line === "---" || line.startsWith("--- ") || line.startsWith("---\t")) return "start";
+    if (line.replace(/[ \t]+$/, "") === "...") return "end";
+    return null;
+  };
+  const isDirectives = (from, to) => {
+    let any = false;
+    for (const line of lines(from, to)) {
+      if (line.length === 0) continue;
+      if (line[0] === "%") {
+        any = true;
+        continue;
+      }
+      const body = line.trim();
+      if (body.length === 0 || body[0] === "#") continue;
+      return false;
+    }
+    return any;
+  };
+  const hasContent = (from, to) => lines(from, to).some((l) => {
+    const t = l.trim();
+    return t.length > 0 && t[0] !== "#";
+  });
+
+  const docs = [];
+  const push = (from, to, explicit) => {
+    if (explicit || hasContent(from, to)) docs.push({ start: from, end: to, explicit });
+  };
+  const start = b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf ? 3 : 0;
+  let segStart = start;
+  let segExplicit = false;
+  for (let line = start; line < b.length; ) {
+    const next = lineEnd(line);
+    const m = marker(line);
+    if (m === "start") {
+      if (!isDirectives(segStart, line)) {
+        push(segStart, line, segExplicit);
+        segStart = line;
+      }
+      segExplicit = true;
+    } else if (m === "end") {
+      push(segStart, line, segExplicit);
+      segStart = next;
+      segExplicit = false;
+    }
+    line = next;
+  }
+  push(segStart, b.length, segExplicit);
+  if (docs.length === 0) docs.push({ start, end: b.length, explicit: false });
+  return docs;
+}
+
 // What YAML's printer makes of another format's tree, in both dialects.
 const YAML_PRINTS = { holds: { null: true }, char_as: "number" };
 
@@ -2689,6 +2761,7 @@ const language = {
   renderers: [],
   parse,
   print,
+  split_stream: splitStream,
 };
 
 export default language;

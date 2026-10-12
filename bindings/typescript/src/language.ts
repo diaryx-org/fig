@@ -114,6 +114,51 @@ export function detectFormat(input: string, order: readonly string[]): Format | 
   }
 }
 
+/** One document of a multi-document stream, from {@link splitStream}: its
+ *  text, its byte range `[start, end)` of the input's UTF-8, and whether it
+ *  opened with a document-start marker (YAML's `---`). */
+export interface StreamDocument {
+  text: string;
+  start: number;
+  end: number;
+  explicit: boolean;
+}
+
+/** The documents of a multi-document stream in `format` (YAML's
+ *  `---`/`...`), each one's text to parse as a document of its own. An empty
+ *  stream is one document. Throws a {@link FigError} with
+ *  `Status.UnsupportedOperation` for a format without streams. */
+export function splitStream(input: string | Uint8Array, format: Format): StreamDocument[] {
+  const bytes = typeof input === "string" ? encoder.encode(input) : input;
+  const frame = new Frame();
+  try {
+    const src = frame.bytes(bytes);
+    const outDocs = frame.alloc(4);
+    const outCount = frame.alloc(4);
+    const errPtr = allocFigError(frame);
+    const status = fig.fig_stream_split(src, bytes.length, format, outDocs, outCount, errPtr);
+    if (status !== Status.Ok) {
+      const e = readFigError(errPtr);
+      throw new FigError(status, "fig_stream_split", { message: e.message, byteOffset: e.byteOffset });
+    }
+    const docs = readU32(outDocs);
+    const count = readU32(outCount);
+    // FigStreamDoc on wasm32: start u32, end u32, explicit bool, padded to 12.
+    const out: StreamDocument[] = [];
+    const view = dv();
+    for (let i = 0; i < count; i++) {
+      const at = docs + 12 * i;
+      const start = view.getUint32(at, true);
+      const end = view.getUint32(at + 4, true);
+      out.push({ text: decoder.decode(bytes.subarray(start, end)), start, end, explicit: view.getUint8(at + 8) !== 0 });
+    }
+    fig.fig_stream_free(docs, count);
+    return out;
+  } finally {
+    frame.dispose();
+  }
+}
+
 export function formatByName(name: string): Format | null {
   const frame = new Frame();
   try {

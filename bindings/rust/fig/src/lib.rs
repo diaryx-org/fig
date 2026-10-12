@@ -195,6 +195,42 @@ impl Format {
         Format::from_c(value)
     }
 
+    /// The documents of a multi-document stream in this format (YAML's
+    /// `---`/`...`), each a byte range of `input` to parse as a document of
+    /// its own. An empty stream is one document.
+    /// [`Error::UnsupportedOperation`] for a format without streams.
+    pub fn split_stream(self, input: &[u8]) -> Result<Vec<language::StreamDocument>, Error> {
+        let mut docs: *mut ffi::FigStreamDoc = std::ptr::null_mut();
+        let mut count = 0usize;
+        let mut err = ffi::FigError::new();
+        let status = unsafe {
+            ffi::fig_stream_split(
+                input.as_ptr(),
+                input.len(),
+                self.to_c(),
+                &mut docs,
+                &mut count,
+                &mut err,
+            )
+        };
+        if status == ffi::FigStatus::PARSE_ERROR {
+            return Err(Error::Parse(crate::error::ParseError::from_ffi(&err)));
+        }
+        Error::from_status(status)?;
+        let out = (0..count)
+            .map(|i| {
+                let d = unsafe { *docs.add(i) };
+                language::StreamDocument {
+                    start: d.start,
+                    end: d.end,
+                    explicit: d.marked,
+                }
+            })
+            .collect();
+        unsafe { ffi::fig_stream_free(docs, count) };
+        Ok(out)
+    }
+
     /// The first format `order` names whose parser accepts `input`, tried in
     /// that order: content sniffing, with the order the caller's to choose.
     /// The grammars overlap, so put the strictest first. A name nothing

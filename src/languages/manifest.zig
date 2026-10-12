@@ -715,6 +715,13 @@ pub const Syntax = struct {
     /// root is a block of rules, and one opening with an attribute selector
     /// (`[data-x] { … }`) would otherwise sniff as a flow sequence.
     flow_maps_only: bool = false,
+
+    /// Bytes other than whitespace that may stand before a node at the start
+    /// of its line, beside the non-space bytes of `seq_item_marker`, which
+    /// always may: figl's `>` depth markers and `+` lines. A line whose
+    /// prefix holds anything else holds another node too, so the node does
+    /// not own the line, and commenting it out is refused.
+    line_prefix_marks: []const u8 = "",
 };
 
 /// The five fragment renderers a format may declare — `Decls.renderers` in

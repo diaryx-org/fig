@@ -203,6 +203,9 @@ pub struct Syntax {
     /// Only a mapping opener opens a flow container; a `[` does not open a
     /// flow sequence (a CSS attribute selector begins with one).
     pub flow_maps_only: bool,
+    /// Bytes besides whitespace and `seq_item_marker`'s that may stand
+    /// before a node at the start of its line (figl's `>` and `+`).
+    pub line_prefix_marks: String,
 }
 
 impl Default for Syntax {
@@ -232,6 +235,7 @@ impl Default for Syntax {
             flow_entry_sep: ",".to_owned(),
             flow_root: false,
             flow_maps_only: false,
+            line_prefix_marks: String::new(),
         }
     }
 }
@@ -1154,6 +1158,7 @@ impl CSyntax {
             flow_entry_sep: opt_ptr(&mut strings, Some(&s.flow_entry_sep))?,
             flow_root: s.flow_root,
             flow_maps_only: s.flow_maps_only,
+            line_prefix_marks: opt_ptr(&mut strings, Some(&s.line_prefix_marks))?,
         };
         Ok(Box::new(CSyntax {
             c,

@@ -95,6 +95,9 @@ pub const Language = struct {
             // engine's prefix-bytes policy, so a glued `>>*` file stays glued.
             .indent_unit = "> ",
             .seq_item_marker = "* ",
+            // A line may open with its `>` depth run and a `+` line's mark
+            // before the node it holds.
+            .line_prefix_marks = ">+",
             // A section format: a block container may be re-entered and
             // scattered, and `parser.zig` records every block container's
             // header lines in `Document.node_regions`. Its refusals say

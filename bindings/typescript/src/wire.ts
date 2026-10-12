@@ -94,6 +94,9 @@ export interface Syntax {
   flow_root?: boolean;
   /** A `[` does not open a flow sequence. */
   flow_maps_only?: boolean;
+  /** Bytes besides whitespace and `seq_item_marker`'s that may stand before
+   *  a node at the start of its line; absent is none. */
+  line_prefix_marks?: string | null;
 }
 
 /** Which kinds the format holds natively — what the `$fig` lossless

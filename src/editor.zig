@@ -1558,10 +1558,13 @@ pub fn Editor(comptime Language: type) type {
         /// wants; a one-line YAML flow sequence is the shape that cannot.
         fn ownsItsLines(self: *const Self, line_start: usize, span: Span, marker: []const u8) bool {
             const source = self.source.items;
-            for (source[line_start..span.start]) |c| switch (c) {
-                ' ', '\t', '-', '*', '>', '+' => {},
-                else => return false,
-            };
+            const syn = self.syntax();
+            for (source[line_start..span.start]) |c| {
+                if (c == ' ' or c == '\t') continue;
+                if (std.mem.indexOfScalar(u8, syn.seq_item_marker, c) != null) continue;
+                if (std.mem.indexOfScalar(u8, syn.line_prefix_marks, c) != null) continue;
+                return false;
+            }
             const line_end = lineEndAfter(source, span.end -| 1);
             const sep = self.syntax().flow_entry_sep;
             var i = span.end;

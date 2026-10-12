@@ -427,6 +427,7 @@ pub const SyntaxDesc = extern struct {
     flow_entry_sep: ?[*:0]const u8 = null,
     flow_root: bool = false,
     flow_maps_only: bool = false,
+    line_prefix_marks: ?[*:0]const u8 = null,
 };
 
 /// `VTable.lossless`: `manifest.NativeKinds` as bits. `lossless_envelope`
@@ -1140,6 +1141,7 @@ fn syntaxOf(arena: Allocator, s: *const SyntaxDesc) Allocator.Error!manifest.Syn
         .flow_entry_sep = try dupeZstr(arena, s.flow_entry_sep) orelse defaults.flow_entry_sep,
         .flow_root = s.flow_root,
         .flow_maps_only = s.flow_maps_only,
+        .line_prefix_marks = try dupeZstr(arena, s.line_prefix_marks) orelse defaults.line_prefix_marks,
     };
     if (s.closed_containers.map_open != null) {
         out.closed_containers = .{

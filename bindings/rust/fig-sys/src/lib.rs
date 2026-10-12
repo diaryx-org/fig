@@ -1161,6 +1161,7 @@ pub struct FigSyntax {
     pub flow_entry_sep: *const c_char,
     pub flow_root: bool,
     pub flow_maps_only: bool,
+    pub line_prefix_marks: *const c_char,
 }
 
 /// `FigLanguageVTable::lossless`: the language takes the `$fig` envelope.

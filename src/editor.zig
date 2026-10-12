@@ -34,7 +34,7 @@ const log = std.log.scoped(.editor);
 // `docs/proposals/language-interface.md`. A leaf module, so importing it here
 // (and from every `<lang>/<lang>.zig`) pulls in nothing else.
 const lang = @import("languages/manifest.zig");
-const sniff = @import("languages/fig/tokenizer.zig");
+const bare_literal = @import("util/literal.zig");
 
 // The RENDERING half of the interface — the part `syntax` can't express.
 //
@@ -85,13 +85,12 @@ const Ini = @import("languages/ini/ini.zig").Language;
 const Plist = @import("languages/plist/plist.zig").Language;
 const NestedText = @import("languages/nestedtext/nestedtext.zig").Language;
 
-/// What fig's bare-literal rules make of `text`, trimmed of whitespace:
-/// the `Literal` a value renderer is handed. The `.fig` dialect's own
-/// classifier (`sniffBare`), so `true`, `42`, `2.5`, `2026-09-10` and
-/// `null` are typed and `Yes`, `007` and `TRUE` stay strings, in every
-/// format alike.
+/// What the bare-literal rule (`util/literal.zig`) makes of `text`, trimmed
+/// of whitespace: the `Literal` a value renderer is handed. `true`, `42`,
+/// `2.5`, `2026-09-10` and `null` are typed and `Yes`, `007` and `TRUE`
+/// stay strings, in every format alike.
 pub fn literalOf(text: []const u8) lang.Literal {
-    return switch (sniff.sniffBare(std.mem.trim(u8, text, " \t\r\n"))) {
+    return switch (bare_literal.sniffBare(std.mem.trim(u8, text, " \t\r\n"))) {
         .null_ => .null,
         .boolean => .bool,
         .number => |n| if (n.kind == .integer) .int else .float,

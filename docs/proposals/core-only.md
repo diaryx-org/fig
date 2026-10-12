@@ -217,6 +217,13 @@ move into YAML through declarations:
 | `SectionNoun` choosing `NotATable`/`NotASection`/`NotAContainer` | one neutral error carrying a noun the language declares |
 | `literalOf` classifying a caller's literal with figl's `sniffBare` | the caller supplies a typed `Literal` (the type `RenderArgs.literal` already carries); the CLI, which reads value arguments as figl (CLI 5 §1), parses them with the figl language |
 
+As built (2026-10-12), the last row went another way. The bare-literal
+rule moved out of figl's tokenizer into `util/literal.zig`, which core and
+figl share, so the editor still types a caller's value text itself and no
+entry point changed. The rule is the contract's, as `Literal` already
+said, and it moves to the kit with the other shared helpers (§4.8). What
+follows is the design it replaced.
+
 The last row is how figl leaves core without taking the CLI's value
 grammar with it: that grammar belongs to the CLI, which now depends on
 the figl language like any other consumer. `literalOf` reaches only a

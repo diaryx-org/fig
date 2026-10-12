@@ -71,6 +71,7 @@ test {
     _ = @import("deserialize.zig");
     _ = @import("c_api.zig");
     _ = @import("util/util.zig");
+    _ = @import("util/literal.zig");
     // The fuzz targets double as deterministic smoke tests under a plain
     // `zig build test` (Zig runs each one over an empty Smith tape when the
     // binary is not built in fuzz mode), so they should never need a flag to

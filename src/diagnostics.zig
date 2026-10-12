@@ -334,19 +334,23 @@ fn valueLoss(e: *const Runtime.Entry, kind: AST.Node.Kind, depth: usize) ?Loss {
 }
 
 /// Whether a language writes comments at all, and whether it has a
-/// spelling for a block one: its `syntax`'s own-line delimiter, and whether
-/// that delimiter is a pair (`<!-- -->`) that can hold several lines. Null
-/// when it declares no `syntax`, which is only required of an editable
-/// language: a read-and-serialize one may print every
-/// comment it is handed, and fig cannot know that it does not.
+/// spelling for a block one: its dialect's `prints.comments` where it
+/// declares one, else its `syntax`'s own-line delimiter; a block spelling
+/// is a delimiter that is a pair (`<!-- -->`) and can hold several lines.
+/// Null when it declares neither, since a language may print every comment
+/// it is handed and fig cannot know that it does not.
 fn declaredComments(e: *const Runtime.Entry, pretty: bool) ?struct { bool, bool } {
-    const syntax = e.syntax orelse return null;
-    const block = syntax.comments.block != null or (if (syntax.comments.line) |l| l.close.len > 0 else false);
+    const block = if (e.syntax) |syntax|
+        syntax.comments.block != null or (if (syntax.comments.line) |l| l.close.len > 0 else false)
+    else
+        false;
+    // What the printer says it writes decides, with or without a `syntax`.
     if (e.prints) |p| return .{ switch (p.comments) {
         .always => true,
         .pretty => pretty,
         .never => false,
     }, block };
+    const syntax = e.syntax orelse return null;
     if (syntax.comments.line == null) return .{ false, false };
     return .{ true, block };
 }
@@ -608,7 +612,7 @@ test "comment dropped, style-degraded, and explicitly stripped" {
     try testing.expectEqual(Warning.Cause.explicit_option, stripped_json[0].cause);
 }
 
-test "a runtime target is warned about comments only by what its syntax declares" {
+test "a registered target is warned about comments by what it declares" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -637,6 +641,15 @@ test "a runtime target is warned about comments only by what its syntax declares
     // One with a delimiter writes them: no warning.
     entry.syntax = .{ .comments = manifest.Comments.hash, .kv_sep = null, .empty_map_literal = null };
     try testing.expectEqual(@as(usize, 0), (try analyze(arena, &ast, ast.root, .{ .language = &entry }, .{})).len);
+
+    // A dialect whose `prints` says it never writes comments drops them,
+    // whether or not the language declares a `syntax` (a read-and-print one
+    // need not).
+    entry.syntax = null;
+    entry.prints = .{ .holds = .{ .null = true }, .comments = .never };
+    const never = try analyze(arena, &ast, ast.root, .{ .language = &entry }, .{});
+    try testing.expectEqual(@as(usize, 1), never.len);
+    try testing.expectEqual(Warning.Code.comment_dropped, never[0].code);
 }
 
 test "path shapes match lossyStrip (dotted keys, bracket indices)" {

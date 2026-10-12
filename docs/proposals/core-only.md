@@ -174,15 +174,17 @@ they *are* rather than where they came from:
 | `plist_date` | `offset_datetime`, with the lexeme kept verbatim as now |
 | `plist_data` | `bytes` (base64 payload, whitespace stripped) |
 
-Only the plist rows are required by §1's rule. The ZON renames are not;
-they ride on 6.0 because the ABI breaks there anyway.
+Only the plist rows are required by §1's rule. Decided 2026-10-12: the
+plist rows change in 6.0 (dates merge into `offset_datetime`, data becomes
+`bytes`), and the ZON rows stay as they are; `enum_literal` and
+`char_literal` name what a value is, if in Zig's words.
 
 Merging plist dates is the one real semantic change: a plist date then
 converts to a TOML datetime instead of degrading to a string. It costs
 work in the other direction. Plist spells only `YYYY-MM-DDTHH:MM:SSZ`, so
 its printer has to normalise any offset or fractional second and report
 the loss as a diagnostic. `bytes` has a second user waiting: YAML's
-`!!binary`. §9 leaves the merge open.
+`!!binary`.
 
 A row carries a scalar's lexeme, not its value, and today the value is
 decoded by whoever reads the row. The bindings decode with one family of
@@ -347,6 +349,13 @@ call per node would keep it private, at a cost per node that crosses an
 archive boundary uninlined; a frozen layout is the cheaper price, since
 the ABI only breaks at a major version anyway. A later version may add
 columns and sparse tables, never change one.
+
+Decided 2026-10-12: a scalar's text points into the source where the
+source spells it as is, and into the string buffer only when the language
+decoded it (an escape, a folded block). A row's tag carries both its text
+as written, for a language that re-emits it, and the language's
+resolution of it (§4.3). `Document` keeps its methods, now a view over the
+rows, so the Zig API reads as it did.
 
 Core's own code reads the rows through `Document`'s accessors. A
 `view(id)` returns today's tagged union for a node, so a `switch` over a
@@ -617,9 +626,6 @@ or holds a registered language to the bar a compiled one meets.
 ## 9. Open questions
 
 
-- **Plist dates.** Should they merge into `offset_datetime` (§4.2), or
-  stay a kind of their own under a neutral name (`timestamp`)? Merging is
-  better for conversion. Keeping them separate is the smaller change.
 - **One repository or several.** This proposal keeps the languages in
   this repository under one version. §5.1 makes splitting them out
   possible, since a language no longer builds against core's internals.

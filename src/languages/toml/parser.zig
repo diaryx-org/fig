@@ -100,6 +100,9 @@ const TableMeta = struct {
     /// may be navigated into (last element) or extended; a static `= [...]`
     /// array has no meta and is therefore closed.
     aot: bool = false,
+    /// An array of tables' last element, so that appending one and descending
+    /// into it do not walk the elements before it.
+    last: ?AST.Node.Id = null,
     /// A mapping from an inline `{ ... }` table — fully defined and closed; no
     /// header or dotted key may extend it.
     inline_table: bool = false,
@@ -753,20 +756,19 @@ fn descend(self: *Parser, child: AST.Node.Id) ParserError!AST.Node.Id {
 }
 
 fn lastElement(self: *Parser, seq_id: AST.Node.Id) ParserError!AST.Node.Id {
-    var last = self.nodes.items[seq_id].kind.sequence orelse return error.DuplicateKey;
-    while (self.nodes.items[last].next_sibling) |n| last = n;
-    return last;
+    const m = self.table_meta.get(seq_id) orelse TableMeta{};
+    return m.last orelse error.DuplicateKey;
 }
 
 fn appendArrayElement(self: *Parser, seq_id: AST.Node.Id) ParserError!AST.Node.Id {
     const elem = try self.addNode(.{ .mapping = null }, self.spans.items[seq_id]);
-    if (self.nodes.items[seq_id].kind.sequence) |first| {
-        var last = first;
-        while (self.nodes.items[last].next_sibling) |n| last = n;
+    const m = self.table_meta.getPtr(seq_id).?;
+    if (m.last) |last| {
         self.nodes.items[last].next_sibling = elem;
     } else {
         self.nodes.items[seq_id].kind = .{ .sequence = elem };
     }
+    m.last = elem;
     return elem;
 }
 
@@ -1662,4 +1664,29 @@ test "describe and shortLabel cover every Error variant" {
     // renders non-empty teaching text.
     try testing.expect(describe(error.DuplicateKey).len > 0);
     try testing.expect(shortLabel(error.InvalidNumber).len > 0);
+}
+
+test "an array of tables appends after its last element, and a header descends into it" {
+    var doc = try parse(testing.allocator,
+        \\[[a]]
+        \\n = 1
+        \\[[a]]
+        \\n = 2
+        \\[a.sub]
+        \\x = 1
+        \\[[a.list]]
+        \\y = 1
+        \\[[a]]
+        \\n = 3
+        \\
+    , .TOML_1_0);
+    defer doc.deinit(testing.allocator);
+    const ast = &doc.ast;
+    for ([_]i64{ 1, 2, 3 }, 0..) |want, i| {
+        const n = try ast.getValByPath(&.{ .{ .key = "a" }, .{ .index = i }, .{ .key = "n" } });
+        try testing.expectEqualStrings(&.{@intCast('0' + want)}, n.kind.number.raw);
+    }
+    _ = try ast.getValByPath(&.{ .{ .key = "a" }, .{ .index = 1 }, .{ .key = "sub" }, .{ .key = "x" } });
+    _ = try ast.getValByPath(&.{ .{ .key = "a" }, .{ .index = 1 }, .{ .key = "list" }, .{ .index = 0 }, .{ .key = "y" } });
+    try testing.expectError(error.NotFound, ast.getValByPath(&.{ .{ .key = "a" }, .{ .index = 3 } }));
 }

@@ -201,6 +201,13 @@ A lower-level node API (`root()`, `firstChild()`, `nextSibling()`,
 `asNumberRaw()`, `asExtended()`) is also available for walking the tree by hand;
 `get`/`toJS`/`toValue` are built on top of it and cover almost every need.
 
+`get`, `has`, `toJS`, `toValue` and `parse` read through YAML's references: an
+alias (`*x`) reads as the value of the node its anchor names, and a `<<` merge
+key is flattened into its mapping, the mapping's own keys winning. An alias
+inside the node it names has no value, and reading it throws a `ParseError`
+located at the alias. The node API and `nodeAt` walk the document as written,
+where an alias is a node of kind `NodeKind.Alias` and `<<` is a key.
+
 ## The value tree
 
 `toJS()`/`parse()` give you plain JavaScript. Because JS can't represent every

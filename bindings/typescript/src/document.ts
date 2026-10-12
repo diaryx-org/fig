@@ -4,6 +4,11 @@
 // `using` declaration). Nodes are addressed by numeric id; `null` stands in for
 // the C ABI's "no such node" sentinel. `toValue`/`toJS` walk the whole tree in
 // one call for the common case.
+//
+// The node API walks the document as written, so a YAML alias is a node of its
+// own and a `<<` merge key an entry like any other. The value reads (`toValue`,
+// `toJS`, `get`, `has`) walk a copy with every alias resolved and every merge
+// flattened, which the core makes once, on the first such read.
 import {
   check,
   disposedError,
@@ -50,6 +55,9 @@ const u32 = (n: number): number => n >>> 0;
 export class Document {
   /** @internal */ private handle: number;
   private disposed = false;
+  /** The document the value reads walk: `undefined` until first asked, then
+   *  the core's copy with aliases resolved, or `null` for "read this one". */
+  private resolved: Document | null | undefined = undefined;
 
   private constructor(handle: number) {
     this.handle = handle;
@@ -193,10 +201,45 @@ export class Document {
   }
 
   /** Read the whole document into a {@link Value} tree. An empty document is
-   *  `null`. Mirrors the Rust binding's `to_value`. */
+   *  `null`. Mirrors the Rust binding's `to_value`.
+   *
+   *  A YAML alias reads as the value of the node its anchor names, and a `<<`
+   *  merge key is flattened into its mapping. An alias with no value — inside
+   *  the node it names — throws a `ParseError` {@link FigError} located at
+   *  the alias. */
   toValue(): Value {
-    const root = this.root();
-    return root === null ? V.null() : this.nodeToValue(root);
+    const doc = this.values();
+    const root = doc.root();
+    return root === null ? V.null() : doc.nodeToValue(root);
+  }
+
+  /** The document the value reads walk: this one, or the copy of it the core
+   *  makes with every alias resolved and every `<<` merge flattened. */
+  private values(): Document {
+    if (this.resolved === undefined) this.resolved = this.resolveAliases();
+    return this.resolved ?? this;
+  }
+
+  private resolveAliases(): Document | null {
+    const frame = new Frame();
+    const outDoc = frame.alloc(4);
+    const errPtr = allocFigError(frame);
+    try {
+      const status = fig.fig_document_resolve_aliases(this.live(), outDoc, errPtr);
+      if (status !== Status.Ok) {
+        const e = readFigError(errPtr);
+        throw new FigError(status, "fig_document_resolve_aliases", {
+          message: e.message,
+          byteOffset: e.byteOffset,
+          line: e.line,
+          column: e.column,
+        });
+      }
+      const handle = readU32(outDoc);
+      return handle === 0 ? null : new Document(handle);
+    } finally {
+      frame.dispose();
+    }
   }
 
   /** Read the whole document into plain JavaScript values. */
@@ -206,7 +249,12 @@ export class Document {
 
   /** Resolve `path` (mapping keys as strings, sequence indices as numbers) to a
    *  node id, or `null` if any segment is missing or lands on the wrong kind. An
-   *  empty path returns the {@link Document#root}. */
+   *  empty path returns the {@link Document#root}.
+   *
+   *  The path is walked through the document as written: it can end on a YAML
+   *  alias (a `NodeKind.Alias` node), but not pass through one, and a `<<`
+   *  merge key is a key like any other. {@link Document#get} and
+   *  {@link Document#has} read through both. */
   nodeAt(path: readonly Segment[]): number | null {
     let current = this.root();
     for (const seg of path) {
@@ -242,13 +290,15 @@ export class Document {
    *  `undefined` if the path does not resolve. Convenience over manual
    *  {@link Document#nodeAt} traversal — `doc.get(["server", "port"])`. */
   get(path: readonly Segment[]): JsValue | undefined {
-    const node = this.nodeAt(path);
-    return node === null ? undefined : toJS(this.nodeToValue(node));
+    const doc = this.values();
+    const node = doc.nodeAt(path);
+    return node === null ? undefined : toJS(doc.nodeToValue(node));
   }
 
-  /** Whether `path` resolves to a node in the document. */
+  /** Whether `path` resolves to a value in the document — through aliases and
+   *  `<<` merges, as {@link Document#get} reads it. */
   has(path: readonly Segment[]): boolean {
-    return this.nodeAt(path) !== null;
+    return this.values().nodeAt(path) !== null;
   }
 
   private nodeToValue(id: number): Value {
@@ -290,7 +340,8 @@ export class Document {
         return V.map(entries);
       }
       default:
-        // A bare keyvalue, an invalid id, or an unresolved alias is not a value.
+        // A bare keyvalue or an invalid id is not a value, and the value reads
+        // walk a document whose aliases are resolved.
         throw new FigError(Status.InternalError, "fig_node_kind", { message: `node kind ${kind} is not a value` });
     }
   }
@@ -346,6 +397,7 @@ export class Document {
     if (this.disposed) return;
     this.disposed = true;
     REGISTRY?.unregister(this);
+    this.resolved?.dispose();
     fig.fig_document_destroy(this.handle);
   }
 

@@ -448,11 +448,32 @@ impl Document {
     /// Read the whole document into an owned [`Value`] tree — the non-serde
     /// structural read, the mirror of [`Value::serialize`]. An empty document is
     /// [`Value::Null`].
+    ///
+    /// A YAML alias reads as the value of the node its anchor names, and a
+    /// `<<` merge key is flattened into its mapping. An alias with no value —
+    /// its anchor undefined, or the alias inside the node it names — is
+    /// [`Error::Parse`].
     pub fn to_value(&self) -> Result<Value, Error> {
-        match self.root() {
+        let resolved = self.resolve_aliases()?;
+        let doc = resolved.as_ref().unwrap_or(self);
+        match doc.root() {
             None => Ok(Value::Null),
-            Some(id) => self.node_to_value(id),
+            Some(id) => doc.node_to_value(id),
         }
+    }
+
+    /// The document values are read from: a copy with every alias resolved
+    /// and every `<<` merge flattened, or `None` when there is neither and
+    /// `self` reads as it is. The node walk below never meets an alias.
+    pub(crate) fn resolve_aliases(&self) -> Result<Option<Document>, Error> {
+        let mut raw = std::ptr::null_mut();
+        let mut err = ffi::FigError::new();
+        let status = unsafe { ffi::fig_document_resolve_aliases(self.ptr(), &mut raw, &mut err) };
+        if status == ffi::FigStatus::PARSE_ERROR {
+            return Err(Error::Parse(crate::error::ParseError::from_ffi(&err)));
+        }
+        Error::from_status(status)?;
+        Ok(NonNull::new(raw).map(|raw| Document { raw }))
     }
 
     fn node_to_value(&self, id: FigNodeId) -> Result<Value, Error> {
@@ -495,8 +516,8 @@ impl Document {
                 }
                 Ok(Value::Map(entries))
             }
-            // A bare keyvalue, an invalid id, or an unresolved alias can't stand
-            // alone as a value.
+            // A bare keyvalue or an invalid id can't stand alone as a value,
+            // and `to_value` reads a document whose aliases are resolved.
             FigNodeKind::Keyvalue
             | FigNodeKind::Invalid
             | FigNodeKind::Alias

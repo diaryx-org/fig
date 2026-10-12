@@ -210,6 +210,14 @@ unsafe extern "C" {
         out_ptr: *mut *const u8,
         out_len: *mut usize,
     ) -> bool;
+
+    // A new document with every alias copied and every `<<` merge flattened,
+    // or a null `out_doc` when there is none to resolve.
+    pub fn fig_document_resolve_aliases(
+        doc: *const FigDocument,
+        out_doc: *mut *mut FigDocument,
+        out_err: *mut FigError,
+    ) -> FigStatus;
 }
 
 // ---- value construction + serialization ----

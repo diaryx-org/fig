@@ -63,6 +63,48 @@ test("Document low-level traversal", () => {
   assert.equal(doc.asNumberRaw(countVal), "42");
 });
 
+test("values read through a YAML alias and a `<<` merge key", () => {
+  const src = "base: &b\n  host: localhost\n  port: 80\nname: &n fig\nsite:\n  <<: *b\n  port: 8080\nalso: *n\n";
+  const site = { port: 8080, host: "localhost" };
+  assert.deepEqual(parse("a: &x 1\nb: *x\n", Format.Yaml), { a: 1, b: 1 });
+  assert.deepEqual(parse(src, Format.Yaml), { base: { host: "localhost", port: 80 }, name: "fig", site, also: "fig" });
+
+  using doc = Document.parse(src, Format.Yaml);
+  assert.deepEqual(doc.toValue(), fromJS({ base: { host: "localhost", port: 80 }, name: "fig", site, also: "fig" }));
+  assert.equal(doc.get(["also"]), "fig");
+  assert.equal(doc.get(["site", "host"]), "localhost");
+  assert.deepEqual(doc.get(["site"]), site);
+  assert.equal(doc.has(["site", "host"]), true);
+  assert.equal(doc.has(["site", "<<"]), false);
+  // The node API walks the document as written: the alias is a node, and
+  // the merge key an entry.
+  assert.equal(doc.kind(doc.nodeAt(["also"])!), NodeKind.Alias);
+  assert.equal(doc.kind(doc.nodeAt(["site", "<<"])!), NodeKind.Alias);
+  assert.equal(doc.nodeAt(["site", "host"]), null);
+});
+
+test("an alias with no value is a parse error", () => {
+  // Undefined: the YAML parser refuses it.
+  assert.throws(
+    () => parse("a: *missing\n", Format.Yaml),
+    (err: unknown) => err instanceof FigError && err.status === Status.ParseError,
+  );
+  // Inside the node it names: the document parses, and its value is refused.
+  const src = "ok: 1\nloop: &a [1, *a]\n";
+  using doc = Document.parse(src, Format.Yaml);
+  for (const read of [() => doc.toJS(), () => doc.get(["ok"])]) {
+    assert.throws(read, (err: unknown) => {
+      assert.ok(err instanceof FigError && err.status === Status.ParseError);
+      assert.match(err.message, /alias `\*a` refers to a node that contains it, so it has no value/);
+      assert.equal(err.byteOffset, src.indexOf("*a"));
+      assert.deepEqual([err.line, err.column], [2, 14]);
+      return true;
+    });
+  }
+  // Written back out as YAML, the reference layer is kept as it is.
+  assert.match(doc.serialize(Format.Yaml), /&a[\s\S]*\*a/);
+});
+
 test("extended scalars (TOML datetime, ZON enum/char) read faithfully", () => {
   // TOML datetimes report as Extended at the `kind` ABI; asExtended says which.
   {

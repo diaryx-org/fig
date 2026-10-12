@@ -417,6 +417,11 @@ const DocumentHandle = struct {
     /// in `diag_arena`); `fig_document_warning` indexes into it. Empty until the
     /// first diagnose. Replaced (not appended) each diagnose call.
     diag_warnings: []const Diagnostics.Warning = &.{},
+    /// Set on a document `fig_document_resolve_aliases` made, whose AST — and
+    /// every string it holds — lives in this arena rather than in a parse of
+    /// `source` (which is empty). Destroying the handle frees the arena in
+    /// place of `document`.
+    arena: ?*std.heap.ArenaAllocator = null,
 };
 
 fn activeAllocator() std.mem.Allocator {
@@ -629,7 +634,10 @@ pub export fn fig_document_destroy(doc: ?*FigDocument) void {
     const handle: *DocumentHandle = @ptrCast(@alignCast(public_doc));
     handle.rendered.deinit();
     handle.diag_arena.deinit();
-    handle.document.deinit(handle.allocator);
+    if (handle.arena) |a| {
+        a.deinit();
+        handle.allocator.destroy(a);
+    } else handle.document.deinit(handle.allocator);
     handle.allocator.free(handle.source);
     handle.allocator.destroy(handle);
 }
@@ -864,6 +872,141 @@ fn figExtKindOf(kind: AST.Node.Kind.Extended.ExtKind) FigExtKind {
         .plist_date => .plist_date,
         .plist_data => .plist_data,
     };
+}
+
+// ==================
+// ALIASES
+// ==================
+
+/// A new document holding `doc`'s values with the reference layer resolved:
+/// each alias is a copy of the node its anchor names, and each `<<` merge key
+/// is flattened into its mapping (the mapping's own keys win, then earlier
+/// sources). Tags stay as written, unapplied — this is what the bindings read
+/// values through, and they have never applied one. Sets `*out_doc` to NULL
+/// when `doc` has no alias and no merge key, so the caller reads `doc` itself.
+///
+/// An alias whose anchor is not defined before it, or one inside the node it
+/// refers to, has no value: `parse_error`, with the alias's offset in `out_err`.
+/// The new document is independent of `doc` (either may be destroyed first).
+pub export fn fig_document_resolve_aliases(
+    doc: ?*const FigDocument,
+    out_doc: ?*?*FigDocument,
+    out_err: ?*FigError,
+) FigStatus {
+    const out = out_doc orelse return fillError(out_err, .invalid_argument, "out_doc is null");
+    out.* = null;
+    const src = handleFrom(doc) orelse return fillError(out_err, .invalid_argument, "doc is null");
+    if (!sourceCarriesReferences(src) or !hasAliasOrMerge(&src.document.ast)) return .ok;
+
+    const allocator = src.allocator;
+    const arena = allocator.create(std.heap.ArenaAllocator) catch
+        return fillError(out_err, .out_of_memory, "out of memory");
+    arena.* = std.heap.ArenaAllocator.init(allocator);
+    var culprit: ?AST.Node.Id = null;
+    const ast = resolvedAst(arena.allocator(), &src.document.ast, &culprit) catch |err| {
+        arena.deinit();
+        allocator.destroy(arena);
+        if (err == error.OutOfMemory) return fillError(out_err, .out_of_memory, "out of memory");
+        return aliasFailed(out_err, err, &src.document, culprit);
+    };
+    const handle = allocator.create(DocumentHandle) catch {
+        arena.deinit();
+        allocator.destroy(arena);
+        return fillError(out_err, .out_of_memory, "out of memory");
+    };
+    handle.* = .{
+        .allocator = allocator,
+        .source = &.{},
+        .document = .{ .source = "", .ast = ast, .node_spans = &.{} },
+        .format = src.format,
+        .runtime = src.runtime,
+        .rendered = std.Io.Writer.Allocating.init(allocator),
+        .diag_arena = std.heap.ArenaAllocator.init(allocator),
+        .arena = arena,
+    };
+    out.* = @ptrCast(handle);
+    return .ok;
+}
+
+/// `ast` with its aliases and merges collapsed and its tags kept, built in
+/// `arena` and owning its strings there.
+fn resolvedAst(arena: std.mem.Allocator, ast: *const AST, culprit: *?AST.Node.Id) Materialize.Error!AST {
+    var mat = try Materialize.materializeReporting(arena, ast, .keep, culprit);
+    try ownStrings(arena, &mat);
+    return mat;
+}
+
+/// Whether `ast` holds anything `fig_document_resolve_aliases` would
+/// collapse: an alias node, or an entry keyed `<<`.
+fn hasAliasOrMerge(ast: *const AST) bool {
+    for (ast.nodes) |n| switch (n.kind) {
+        .alias => return true,
+        .keyvalue => |kv| switch (ast.nodes[kv.key].kind) {
+            .string => |k| if (std.mem.eql(u8, k, "<<")) return true,
+            else => {},
+        },
+        else => {},
+    };
+    return false;
+}
+
+/// Copy every string `ast` borrows — scalar text, comment text, a kept tag
+/// and the `%TAG` directives — into `arena`, so the AST outlives the source
+/// it was materialized from. `ast` was built in `arena`, so its tables are
+/// writable.
+fn ownStrings(arena: std.mem.Allocator, ast: *AST) std.mem.Allocator.Error!void {
+    for (@constCast(ast.nodes)) |*n| switch (n.kind) {
+        .string => |t| n.kind = .{ .string = try arena.dupe(u8, t) },
+        .number => |*num| num.raw = try arena.dupe(u8, num.raw),
+        .extended => |*ext| ext.text = try arena.dupe(u8, ext.text),
+        .null_, .boolean, .sequence, .mapping, .keyvalue, .alias => {},
+    };
+    for (@constCast(ast.node_comments)) |*nc| {
+        for (@constCast(nc.leading)) |*c| c.text = try arena.dupe(u8, c.text);
+        for (@constCast(nc.dangling)) |*c| c.text = try arena.dupe(u8, c.text);
+        if (nc.trailing) |*c| c.text = try arena.dupe(u8, c.text);
+    }
+    for (@constCast(ast.node_tags)) |*slot| if (slot.*) |*tag| switch (tag.*) {
+        .text => |text| tag.* = .{ .text = try arena.dupe(u8, text) },
+        .kind => {},
+    };
+    const directives = try arena.dupe(AST.TagDirective, ast.tag_directives);
+    for (directives) |*d| d.* = .{ .handle = try arena.dupe(u8, d.handle), .prefix = try arena.dupe(u8, d.prefix) };
+    ast.tag_directives = directives;
+}
+
+/// Report an alias `Materialize` could not resolve as a `parse_error` at the
+/// node it failed on: the alias itself, or the mapping whose `<<` merge it is.
+fn aliasFailed(out_err: ?*FigError, err: anyerror, doc: *const Document, culprit: ?AST.Node.Id) FigStatus {
+    const alias: ?[]const u8 = if (culprit) |id| switch (doc.ast.nodes[id].kind) {
+        .alias => |name| name,
+        else => null,
+    } else null;
+    var buf: [256]u8 = undefined;
+    const message = switch (err) {
+        error.UndefinedAlias => if (alias) |name|
+            std.fmt.bufPrint(&buf, "alias `*{s}` names an anchor that is not defined before it", .{name}) catch "an alias names an anchor that is not defined before it"
+        else
+            "a `<<` merge names an anchor that is not defined before it",
+        error.AliasCycle => if (alias) |name|
+            std.fmt.bufPrint(&buf, "alias `*{s}` refers to a node that contains it, so it has no value", .{name}) catch "an alias refers to a node that contains it, so it has no value"
+        else
+            "a `<<` merge refers to a mapping that contains it, so it has no value",
+        error.TooDeep => "aliases refer to aliases too deeply to resolve",
+        else => "an alias cannot be resolved",
+    };
+    const status = fillError(out_err, .parse_error, message);
+    const e = out_err orelse return status;
+    const id = culprit orelse return status;
+    if (id >= doc.node_spans.len) return status;
+    const offset = doc.node_spans[id].start;
+    if (offset > doc.source.len) return status;
+    const before = doc.source[0..offset];
+    const line_start = if (std.mem.lastIndexOfScalar(u8, before, '\n')) |nl| nl + 1 else 0;
+    if (errCovers(e.size, "byte_offset")) e.byte_offset = offset;
+    if (errCovers(e.size, "line")) e.line = @intCast(std.mem.countScalar(u8, before, '\n') + 1);
+    if (errCovers(e.size, "column")) e.column = @intCast(offset - line_start + 1);
+    return status;
 }
 
 // ======
@@ -5078,6 +5221,88 @@ test "fig_document_serialize materializes the YAML reference layer when leaving 
     // YAML→YAML keeps the reference layer intact (no materialize).
     try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(out_doc, @backingInt(FigFormat.yaml), null, &ptr, &len));
     try std.testing.expect(std.mem.indexOf(u8, ptr[0..len], "*x") != null);
+}
+
+/// The AST behind a document handle, for a test to walk by path.
+fn testAst(doc: ?*FigDocument) *const AST {
+    return &handleFrom(doc).?.document.ast;
+}
+
+test "fig_document_resolve_aliases reads an alias and a merge key as values" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    const src =
+        \\base: &b {x: 1, y: 2}
+        \\name: &n fig
+        \\d:
+        \\  <<: *b
+        \\  y: 3
+        \\alias: *n
+        \\
+    ;
+    var doc: ?*FigDocument = null;
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.yaml), &doc));
+    var resolved: ?*FigDocument = null;
+    try std.testing.expectEqual(FigStatus.ok, fig_document_resolve_aliases(doc, &resolved, null));
+    defer fig_document_destroy(resolved);
+    // The new document owns what it reads: the parse it came from may go first.
+    fig_document_destroy(doc);
+
+    const ast = testAst(resolved);
+    try std.testing.expectEqualStrings("fig", (try ast.getValByPath(&.{.{ .key = "alias" }})).kind.string);
+    try std.testing.expectEqualStrings("1", (try ast.getValByPath(&.{ .{ .key = "d" }, .{ .key = "x" } })).kind.number.raw);
+    try std.testing.expectEqualStrings("3", (try ast.getValByPath(&.{ .{ .key = "d" }, .{ .key = "y" } })).kind.number.raw);
+    try std.testing.expectError(error.NotFound, ast.getValByPath(&.{ .{ .key = "d" }, .{ .key = "<<" } }));
+    const d = fig_node_kind(resolved, (try ast.getValByPath(&.{.{ .key = "d" }})).id);
+    try std.testing.expectEqual(@backingInt(FigNodeKind.mapping), d);
+    for (ast.nodes) |n| try std.testing.expect(n.kind != .alias);
+
+    // It is a document like any other: it serializes, with no `*` or `&` left.
+    var ptr: [*c]const u8 = undefined;
+    var len: usize = undefined;
+    try std.testing.expectEqual(FigStatus.ok, fig_document_serialize(resolved, @backingInt(FigFormat.yaml), null, &ptr, &len));
+    try std.testing.expect(std.mem.indexOfAny(u8, ptr[0..len], "*&") == null);
+}
+
+test "fig_document_resolve_aliases answers NULL for a document with nothing to resolve" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    if (comptime !build_options.lang_json) return error.SkipZigTest;
+    const cases = [_]struct { src: []const u8, format: FigFormat }{
+        .{ .src = "a: &x 1\nb: 2\n", .format = .yaml }, // an anchor no alias names
+        .{ .src = "{\"<<\": {\"a\": 1}}", .format = .json }, // `<<` is a merge only where there are references
+    };
+    for (cases) |c| {
+        var doc: ?*FigDocument = null;
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(c.src.ptr, c.src.len, @backingInt(c.format), &doc));
+        defer fig_document_destroy(doc);
+        var resolved: ?*FigDocument = @ptrFromInt(0x10);
+        try std.testing.expectEqual(FigStatus.ok, fig_document_resolve_aliases(doc, &resolved, null));
+        try std.testing.expect(resolved == null);
+    }
+}
+
+test "fig_document_resolve_aliases refuses a cyclic alias as a parse error at the alias" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    const src = "ok: 1\nloop: &a [1, *a]\n";
+    var doc: ?*FigDocument = null;
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(src.ptr, src.len, @backingInt(FigFormat.yaml), &doc));
+    defer fig_document_destroy(doc);
+    var resolved: ?*FigDocument = null;
+    var err: FigError = .empty;
+    try std.testing.expectEqual(FigStatus.parse_error, fig_document_resolve_aliases(doc, &resolved, &err));
+    try std.testing.expect(resolved == null);
+    try std.testing.expectEqual(@backingInt(FigStatus.parse_error), err.code);
+    try std.testing.expectEqualStrings("alias `*a` refers to a node that contains it, so it has no value", err.message[0..err.message_len]);
+    try std.testing.expectEqual(std.mem.indexOf(u8, src, "*a").?, err.byte_offset);
+    try std.testing.expectEqual(@as(u32, 2), err.line);
+    try std.testing.expectEqual(@as(u32, 14), err.column);
+
+    // A mapping merged into itself has no value either.
+    const self_merge = "m: &m {a: 1, <<: *m}\n";
+    var doc2: ?*FigDocument = null;
+    try std.testing.expectEqual(FigStatus.ok, fig_parse(self_merge.ptr, self_merge.len, @backingInt(FigFormat.yaml), &doc2));
+    defer fig_document_destroy(doc2);
+    try std.testing.expectEqual(FigStatus.parse_error, fig_document_resolve_aliases(doc2, &resolved, null));
+    try std.testing.expect(resolved == null);
 }
 
 test "fig_document_serialize honors the lossless option for TOML null" {

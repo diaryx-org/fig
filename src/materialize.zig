@@ -20,6 +20,12 @@
 //!   - unknown/custom tags    → strict: error; lax: dropped (node kept as parsed)
 //!   - anchors                → dropped
 //!
+//! The third mode, `keep`, collapses only the reference half: every tag rides
+//! along on its node's copy, unapplied and unchecked, with the `%TAG`
+//! directives that spell it. It is what a binding reads values through
+//! (`fig_document_resolve_aliases`), which follows an alias but has never
+//! applied a tag.
+//!
 //! String slices in the result borrow from the source AST (source text or its
 //! `owned_strings`); the result must not outlive them. With an arena that holds
 //! both, this is automatic.
@@ -32,7 +38,7 @@ const AST = @import("ast/ast.zig");
 // the same rules.
 const yaml_scalar = @import("languages/yaml/parser.zig");
 
-pub const TagMode = enum { strict, lax };
+pub const TagMode = enum { strict, lax, keep };
 
 pub const Error = error{
     AliasCycle,
@@ -67,6 +73,9 @@ pub fn materializeReporting(arena: Allocator, ast: *const AST, mode: TagMode, cu
     // new id, so the parallel table just hands off (only if any were present).
     if (m.any_comments) result.node_comments = try m.out_comments.toOwnedSlice(arena);
     if (m.any_tags) result.node_tags = try m.out_tags.toOwnedSlice(arena);
+    // A kept tag may be spelled through a `%TAG` handle, so its declaration
+    // rides along too.
+    if (mode == .keep) result.tag_directives = ast.tag_directives;
     return result;
 }
 
@@ -148,6 +157,7 @@ const Materializer = struct {
                 try self.checkCollectionTag(node, .seq);
                 const id = try self.emit(.{ .sequence = null });
                 try self.carry(node.id, id);
+                self.keepTag(node.id, id);
                 var last: ?AST.Node.Id = null;
                 var child = first;
                 while (child) |cid| : (child = self.src.nodes[cid].next_sibling) {
@@ -178,6 +188,7 @@ const Materializer = struct {
         try self.checkCollectionTag(node, .map);
         const id = try self.emit(.{ .mapping = null });
         try self.carry(node.id, id);
+        self.keepTag(node.id, id);
         var last: ?AST.Node.Id = null;
         var seen: std.ArrayList([]const u8) = .empty;
 
@@ -254,6 +265,7 @@ const Materializer = struct {
     // ── tags ──────────────────────────────────────────────────────────────
 
     fn applyScalarTag(self: *const Materializer, node: AST.Node) Error!AST.Node.Kind {
+        if (self.mode == .keep) return node.kind;
         const name = self.coreName(self.src.tagOf(node.id) orelse return node.kind) orelse
             return self.customTag(node.id, node.kind);
         if (std.mem.eql(u8, name, "str")) return .{ .string = self.scalarText(node) };
@@ -267,6 +279,7 @@ const Materializer = struct {
     }
 
     fn checkCollectionTag(self: *const Materializer, node: AST.Node, comptime want: enum { seq, map }) Error!void {
+        if (self.mode == .keep) return;
         const tag = self.src.tagOf(node.id) orelse return;
         if (self.coreName(tag)) |name| {
             const ok = if (want == .seq) "seq" else "map";
@@ -282,10 +295,19 @@ const Materializer = struct {
     /// `!!int`). A custom/collection tag is not carried — it was already applied
     /// (collections) or errored/dropped (custom) by `applyScalarTag`.
     fn carryScalarTag(self: *Materializer, src_id: AST.Node.Id, new_id: AST.Node.Id) Error!void {
+        if (self.mode == .keep) return self.keepTag(src_id, new_id);
         const name = self.coreName(self.src.tagOf(src_id) orelse return) orelse return;
         const kind: AST.Tag.KindTag =
             if (std.mem.eql(u8, name, "str")) .string else if (std.mem.eql(u8, name, "int")) .integer else if (std.mem.eql(u8, name, "float")) .float else if (std.mem.eql(u8, name, "bool")) .boolean else if (std.mem.eql(u8, name, "null")) .null_ else return; // seq/map (collection) or unrecognized — nothing to carry
         self.out_tags.items[new_id] = .{ .kind = kind };
+        self.any_tags = true;
+    }
+
+    /// Under `keep`, put source node `src_id`'s tag, whatever it is, on its
+    /// copy `new_id`. A no-op in the other modes, which apply or drop it.
+    fn keepTag(self: *Materializer, src_id: AST.Node.Id, new_id: AST.Node.Id) void {
+        if (self.mode != .keep) return;
+        self.out_tags.items[new_id] = self.src.tagOf(src_id) orelse return;
         self.any_tags = true;
     }
 
@@ -581,4 +603,36 @@ test "materialize: a %TAG directive that rebinds `!!` or `!` decides whether a t
         const x = try mat.getValByPath(&.{.{ .key = "x" }});
         try testing.expect(x.kind == .number and x.kind.number.kind == .integer);
     }
+}
+
+test "materialize: keep collapses aliases and merges and leaves every tag as written" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    const src =
+        \\base: &b {x: !!str 1, y: !custom 2}
+        \\d:
+        \\  <<: *b
+        \\  y: 3
+        \\e: *b
+        \\
+    ;
+    const doc = try Parser.parse(testing.allocator, src, .v1_2_2);
+    defer doc.deinit(testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const mat = try materialize(arena.allocator(), &doc.ast, .keep);
+
+    try testing.expect(!hasAlias(mat));
+    // The merge is flattened, the host's key winning …
+    try testing.expectEqualSlices(u8, "3", (try mat.getValByPath(&.{ .{ .key = "d" }, .{ .key = "y" } })).kind.number.raw);
+    try testing.expectError(error.NotFound, mat.getValByPath(&.{ .{ .key = "d" }, .{ .key = "<<" } }));
+    // … and `!!str 1` is still the number it was read as, its tag carried
+    // verbatim onto the merged copy and the alias's copy alike.
+    for ([_][]const u8{ "d", "e" }) |host| {
+        const x = try mat.getValByPath(&.{ .{ .key = host }, .{ .key = "x" } });
+        try testing.expectEqualSlices(u8, "1", x.kind.number.raw);
+        try testing.expectEqualStrings("!!str", mat.tagOf(x.id).?.text);
+    }
+    // A custom tag is neither refused nor dropped.
+    const ey = try mat.getValByPath(&.{ .{ .key = "e" }, .{ .key = "y" } });
+    try testing.expectEqualStrings("!custom", mat.tagOf(ey.id).?.text);
 }

@@ -325,6 +325,22 @@ bool fig_node_string(const FigDocument *doc, FigNodeId node,
 bool fig_node_extended(const FigDocument *doc, FigNodeId node, int *out_kind,
                        const uint8_t **out_ptr, size_t *out_len);
 
+// A YAML document keeps its references: an alias is a FIG_NODE_ALIAS node
+// naming its anchor, and a `<<` merge key is an entry like any other. To read
+// values through them, read the document this makes instead: each alias is a
+// copy of the node its anchor names, and each `<<` is flattened into its
+// mapping (the mapping's own keys win, then earlier merge sources). Tags are
+// left as written. `*out_doc` is a new document, independent of `doc` and
+// released with fig_document_destroy — or NULL when `doc` has no alias and no
+// merge key, in which case read `doc` itself.
+//
+// An alias whose anchor is not defined before it, or one inside the node it
+// refers to, has no value: FIG_STATUS_PARSE_ERROR, with the alias located in
+// `out_err` (nullable; see fig_parse_ex).
+FigStatus fig_document_resolve_aliases(const FigDocument *doc,
+                                       FigDocument **out_doc,
+                                       FigError *out_err);
+
 // ============================================================================
 // Editing (write path)
 //

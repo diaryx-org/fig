@@ -280,6 +280,11 @@ let doc = Document::parse(b"[server]\nhost = \"localhost\"\nports = [80, 443]\n"
 let value = doc.to_value()?; // the whole document as a Value
 ```
 
+`to_value` and the serde paths read through YAML's references: an alias (`*x`)
+reads as the value of the node its anchor names, and a `<<` merge key is
+flattened into its mapping, the mapping's own keys winning. An alias inside the
+node it names has no value, and is `Error::Parse` located at the alias.
+
 [`Document::serialize`] is the cross-format conversion primitive — unlike
 `to_value()?.serialize()`, it preserves comments carried on the source where the
 target allows and collapses YAML's reference layer on the way out:

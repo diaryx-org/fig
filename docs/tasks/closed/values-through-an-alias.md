@@ -1,13 +1,23 @@
 ```fig
 title = A YAML alias cannot be read into a value by the Rust or TypeScript binding
 description = `toValue`/`to_value`, `parse()` and serde stop at an alias node with an internal error, where `convert` resolves the same alias; a document with `&a`/`*a` converts but cannot be read
-status = open
+status = done
 created = 2026-09-27
-updated = 2026-09-27
-part_of = [Tasks](/docs/tasks/tasks.md)
+updated = 2026-10-11
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # A YAML alias cannot be read into a value by the Rust or TypeScript binding
+
+**Status.** Done, in `fix: the bindings read values through a YAML alias
+and a merge key` (2026-10-11). The core gained
+`fig_document_resolve_aliases`, which makes a copy of a document with each
+alias a copy of its anchored node and each `<<` flattened, by the same
+`materialize` pass `convert` runs (in a `keep` tag mode, so tags stay as
+the readers have always seen them). `to_value`, serde, `toValue`, `toJS`,
+`get` and `has` read that copy; the node API and `nodeAt` still walk the
+document as written. A cyclic alias is `PARSE_ERROR` at the alias; an
+undefined one was already refused by both YAML parsers.
 
 **Repro.** TypeScript, compiled YAML:
 

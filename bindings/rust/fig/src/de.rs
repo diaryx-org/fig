@@ -25,9 +25,12 @@ pub fn from_yaml_str<T: DeserializeOwned>(s: &str) -> Result<T, Error> {
 /// runtime language registered through [`crate::language::register`]; a
 /// format whose feature is off is [`Error::UnsupportedFormat`].
 pub fn from_slice<T: DeserializeOwned>(input: &[u8], format: Format) -> Result<T, Error> {
-    let doc = Document::parse(input, format)?;
+    let parsed = Document::parse(input, format)?;
+    // Read through YAML's aliases and `<<` merges, as `to_value` does.
+    let resolved = parsed.resolve_aliases()?;
+    let doc = resolved.as_ref().unwrap_or(&parsed);
     let de = NodeDeserializer {
-        doc: &doc,
+        doc,
         id: doc.root(),
     };
     T::deserialize(de)
@@ -70,9 +73,9 @@ impl<'de, 'a> Deserializer<'de> for NodeDeserializer<'a> {
             FigNodeKind::String => visitor.visit_str(self.str_value(id)?),
             FigNodeKind::Sequence => visitor.visit_seq(SeqAccess::new(self.doc, id)),
             FigNodeKind::Mapping => visitor.visit_map(MapAccess::new(self.doc, id)),
-            // A bare keyvalue/invalid node, or an unresolved YAML alias (the
-            // document was not materialized to expand `*name` references), cannot
-            // be deserialized directly.
+            // A bare keyvalue/invalid node cannot be deserialized directly;
+            // `from_slice` reads a document whose aliases are resolved, so an
+            // alias is never reached.
             FigNodeKind::Keyvalue
             | FigNodeKind::Invalid
             | FigNodeKind::Alias

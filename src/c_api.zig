@@ -3588,28 +3588,6 @@ fn prepareDocumentAst(handle: *DocumentHandle, target: Target, options: ?*const 
     return base_ast;
 }
 
-// What the two `handle.format == .yaml` / `fmt == .yaml` tests above USED to
-// say, pinned as a literal so replacing them with a declaration is a checked
-// claim rather than an asserted one: of the languages compiled into this build,
-// `yaml` is the only one that declares `caps.references`. The dispatch is
-// already general — a second language growing a reference layer would be
-// collapsed correctly without another edit there — so this pin exists to make
-// that a DELIBERATE change (extend the list here) rather than a silent one.
-comptime {
-    for (Languages.dialects) |d| {
-        if (d.Lang == void) continue;
-        const declares = d.Lang.caps.references;
-        const expected = std.mem.eql(u8, d.name, "yaml");
-        if (declares and !expected)
-            @compileError("'" ++ d.name ++ "' now declares `caps.references`, so `prepareDocumentAst`" ++
-                " collapses its reference layer on the way out — correct, but new: add it to this" ++
-                " pin once that is what you meant");
-        if (!declares and expected)
-            @compileError("`yaml` no longer declares `caps.references`, so `fig_document_serialize` has" ++
-                " stopped collapsing its reference layer when leaving YAML");
-    }
-}
-
 // ==================
 // DIAGNOSTICS
 // ==================

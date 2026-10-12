@@ -838,7 +838,11 @@ pub fn printNodeWith(e: *const Entry, writer: *std.Io.Writer, ast: *const AST, r
     const print = reg.vt.print orelse return error.FormatDisabled;
     var arena_state = std.heap.ArenaAllocator.init(ast.allocator);
     defer arena_state.deinit();
-    const built = try documentToTable(arena_state.allocator(), ast, root);
+    // Stripping is core's, as it is for a compiled printer: the language
+    // is handed a table with no comments rather than asked to drop them.
+    var stripped: AST = ast.*;
+    if (options.strip_comments) stripped.node_comments = &.{};
+    const built = try documentToTable(arena_state.allocator(), &stripped, root);
     const view = built.view();
     const opts: PrintOptions = .{
         .pretty = options.pretty,

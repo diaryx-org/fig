@@ -1809,17 +1809,26 @@ pub fn Editor(comptime Language: type) type {
             // rollback covers a reparse failure.
             const backup = try self.allocator.dupe(u8, self.source.items);
             defer self.allocator.free(backup);
-            switch (node.kind) {
-                .mapping => |first| {
-                    if (self.isFlowNode(parsed, node)) {
-                        try self.insertFlowMapEntry(parsed, node, span, first != null, key_text, value_text);
-                    } else {
-                        try self.insertBlockKey(parsed, node, key_text, value_text);
-                    }
-                },
-                .null_ => try self.promoteNullToMapping(span, node.id == parsed.ast.root, key_text, value_text, placeOf(parsed, node)),
+            const inserted = switch (node.kind) {
+                .mapping => |first| if (self.isFlowNode(parsed, node))
+                    self.insertFlowMapEntry(parsed, node, span, first != null, key_text, value_text)
+                else
+                    self.insertBlockKey(parsed, node, key_text, value_text),
+                .null_ => self.promoteNullToMapping(span, node.id == parsed.ast.root, key_text, value_text, placeOf(parsed, node)),
                 else => return error.NotAMapping,
-            }
+            };
+            inserted catch |err| {
+                // A parser that refuses a repeated key (TOML's) fails the
+                // reparse, and through the contract its reason is only a
+                // message. The splice has rolled back; if the key syntax is
+                // how this format spells a name the mapping already holds,
+                // that is the refusal to report.
+                if (err == error.OutOfMemory) return err;
+                const now = self.getParsed() catch return err;
+                const held = now.ast.getValByPath(path) catch return err;
+                if (try self.spellsHeldName(now.ast, held, key_text)) return error.DuplicateKey;
+                return err;
+            };
             const after = try self.getParsed();
             const node_after = after.ast.getValByPath(path) catch return;
             if (try self.repeatedKeyCount(after.ast, node_after) > repeated_before) {
@@ -1851,6 +1860,31 @@ pub fn Editor(comptime Language: type) type {
                 if ((try seen.getOrPut(self.allocator, name)).found_existing) repeated += 1;
             }
             return repeated;
+        }
+
+        /// Whether `key_text` is how this format spells the key of a direct
+        /// entry of `mapping`.
+        fn spellsHeldName(self: *Self, ast: AST, mapping: AST.Node, key_text: []const u8) !bool {
+            var entry = switch (mapping.kind) {
+                .mapping => |first| first,
+                else => return false,
+            };
+            const want = std.mem.trim(u8, key_text, " \t");
+            while (entry) |id| : (entry = ast.nodes[id].next_sibling) {
+                const kv = switch (ast.nodes[id].kind) {
+                    .keyvalue => |kv| kv,
+                    else => continue,
+                };
+                const name = switch (ast.nodes[kv.key].kind) {
+                    .string => |s| s,
+                    else => continue,
+                };
+                if (std.mem.eql(u8, name, want)) return true;
+                const spelled = try self.formatInsertKey(name);
+                defer self.allocator.free(spelled);
+                if (std.mem.eql(u8, spelled, want)) return true;
+            }
+            return false;
         }
 
         /// Whether `mapping` has a direct entry whose key is `name`, other

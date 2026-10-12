@@ -4101,7 +4101,8 @@ test "fig_parse_ex fills FigError on a parse failure" {
     try std.testing.expectEqual(@as(?*FigDocument, null), out_doc);
 
     // With out_err: code mirrors the status, a non-empty NUL-terminated message
-    // is written, and the (unimplemented) offset fields are 0.
+    // is written, and the offset, where the language reports one, is within
+    // the input.
     var err: FigError = undefined;
     err.size = @sizeOf(FigError);
     try std.testing.expectEqual(
@@ -4111,8 +4112,7 @@ test "fig_parse_ex fills FigError on a parse failure" {
     try std.testing.expectEqual(@backingInt(FigStatus.parse_error), err.code);
     try std.testing.expect(err.message_len > 0);
     try std.testing.expectEqual(@as(u8, 0), err.message[err.message_len]); // NUL-terminated
-    try std.testing.expectEqual(@as(usize, 0), err.byte_offset);
-    try std.testing.expectEqual(@as(u32, 0), err.line);
+    try std.testing.expect(err.byte_offset <= bad.len);
 
     // An unsupported format reports through the same struct.
     err.size = @sizeOf(FigError);

@@ -186,7 +186,7 @@ test "fig insert key into a JSON-mode flow mapping matches its colon separator" 
 test "fig insert duplicate key rolls back" {
     var ed = try newFigEditor("a = 1\n");
     defer ed.deinit();
-    try std.testing.expectError(error.FigDuplicateKey, ed.insertKey(&.{}, "a", "2"));
+    try std.testing.expectError(error.DuplicateKey, ed.insertKey(&.{}, "a", "2"));
     try expectFigSource(&ed, "a = 1\n");
 }
 

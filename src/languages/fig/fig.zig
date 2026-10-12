@@ -117,8 +117,8 @@ pub const Language = struct {
     // an insert lands (after the last child's full extent, correct for a
     // re-entered container) and how a flow object's separator is chosen
     // (`flow_kv_sep_from_siblings`) are engine rules. The logic lives in
-    // `editor_helper.zig` (which holds this format's editor tests too).
-    const edit = @import("editor_helper.zig");
+    // `edit.zig` (and this format's editor tests are in `editor_test.zig`).
+    const edit = @import("edit.zig");
 
     /// ` = value` for an inline value; for a block map or sequence value,
     /// which has no inline `key = <block>` spelling — section headers, `> `
@@ -153,5 +153,5 @@ test {
     _ = @import("tokenizer.zig");
     _ = @import("parser.zig");
     _ = @import("printer.zig");
-    _ = @import("editor_helper.zig");
+    _ = @import("editor_test.zig");
 }

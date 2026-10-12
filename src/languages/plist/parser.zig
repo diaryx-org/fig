@@ -53,7 +53,6 @@
 const Parser = @This();
 
 const std = @import("std");
-const Serialize = @import("../../serialize.zig");
 const AST = @import("../../kit/ast/ast.zig");
 const Document = @import("../../kit/document.zig");
 const Type = @import("plist.zig").Type;
@@ -538,7 +537,7 @@ fn isAsciiWhitespace(c: u8) bool {
 /// node tree, not spans); these are the edit-grade spans `Editor(Plist)`
 /// splices against — a value node covers `<string>hi</string>`, a container
 /// `<dict>…</dict>`, so a replace/delete swaps the whole element. See
-/// `editor_helper.zig`.
+/// `edit.zig`.
 fn extent(self: *const Parser, start_sp: Span) Span {
     return Span.init(start_sp.start, self.tokens[self.pos - 1].span.end);
 }
@@ -623,7 +622,7 @@ fn expectJson(src: []const u8, expected: []const u8) !void {
     defer doc.deinit(testing.allocator);
     var buf: [2048]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try Serialize.serialize(&doc.ast, &w, .json);
+    try @import("../../serialize.zig").serialize(&doc.ast, &w, .json);
     try testing.expectEqualStrings(expected, w.buffered());
 }
 

@@ -107,11 +107,11 @@ pub const Language = struct {
 };
 
 // Test discovery: importing `ini.zig` (from root.zig) pulls in every INI
-// submodule's tests, so the module owns its own test surface. `editor_helper.zig`
+// submodule's tests, so the module owns its own test surface. `editor_test.zig`
 // holds the INI editor (section-nesting) tests, mirroring TOML's split.
 test {
     _ = @import("tokenizer.zig");
     _ = @import("parser.zig");
     _ = @import("printer.zig");
-    _ = @import("editor_helper.zig");
+    _ = @import("editor_test.zig");
 }

@@ -1,7 +1,6 @@
 const plist = @This();
 const std = @import("std");
 const AST = @import("../../kit/ast/ast.zig");
-const Serialize = @import("../../serialize.zig");
 const Document = @import("../../kit/document.zig");
 const Writer = std.Io.Writer;
 const lang = @import("../manifest.zig");
@@ -22,9 +21,9 @@ pub const Type = enum {
 /// ZON/…) and writes back out via `Printer` — the documented inverse mapping
 /// described in `parser.zig`'s header (a `dict` is a real mapping, an `array`
 /// a real sequence, `date`/`data` ride the `extended` scalar). It IS an
-/// `Serialize.SerializeFormat` member (`.plist`), so `ast.serialize` routes here like
+/// `Serialize.SerializeFormat` member (`.plist`), so core's serializer routes here like
 /// every other format. It also HAS an in-place (span-splicing) editor —
-/// `Editor(Plist)` via `editor_helper.zig` — so `fig replace`/`rename`/`set`/`insert`/
+/// `Editor(Plist)` via `edit.zig` — so `fig replace`/`rename`/`set`/`insert`/
 /// `delete`/`comment` work on a `.plist`; unlike the line-oriented formats it
 /// renders typed value elements (fig `sniffBare` typing) and uses `<!-- -->`
 /// comments. The generic XML format (`.xml`) still has none — a document syntax
@@ -80,7 +79,7 @@ pub const Language = struct {
     /// the most: an entry is a PAIR of sibling elements (`<key>k</key>` then
     /// a typed value element), not a `key<sep>value` line, so almost nothing
     /// in the line-oriented generic engine applies and the structural ops go
-    /// wholesale to `plist/editor_helper.zig`. What is declared here is what
+    /// wholesale to `plist/edit.zig`. What is declared here is what
     /// the line-based delete/remove paths — which do ride the generic code —
     /// actually consult.
     pub fn syntax(t: plist.Type) lang.Syntax {
@@ -122,9 +121,9 @@ pub const Language = struct {
     // renderers below. A value is always a typed element, never a bare
     // literal, and an entry is a PAIR OF SIBLING ELEMENTS (`<key>k</key>` then
     // the value element) on two lines rather than a `key<sep>value` line. The
-    // logic lives in `editor_helper.zig` (which holds this format's editor
+    // logic lives in `edit.zig` (and `editor_test.zig` holds this format's editor
     // tests too).
-    const edit = @import("editor_helper.zig");
+    const edit = @import("edit.zig");
 
     /// A CLI value string rendered into a typed element: fig `sniffBare`
     /// typing, or spliced verbatim when it already looks like `<…>`. The
@@ -143,7 +142,7 @@ pub const Language = struct {
 test {
     _ = @import("parser.zig");
     _ = @import("printer.zig");
-    _ = @import("editor_helper.zig");
+    _ = @import("editor_test.zig");
     // The shared XML lexing substrate has no entry module of its own since
     // generic XML stopped being a format (core 3.0); plist is its one consumer
     // in tree, so plist discovers its tests.

@@ -136,12 +136,12 @@ pub const Language = struct {
 };
 
 // Test discovery: importing `json.zig` (from root.zig) pulls in every JSON
-// submodule's tests, so the module owns its own test surface. `editor_helper.zig`
+// submodule's tests, so the module owns its own test surface. `editor_test.zig`
 // holds the JSON/JSON5 editor tests; conformance suites are build-option-gated
 // and stay in root.zig.
 test {
     _ = @import("tokenizer.zig");
     _ = @import("parser.zig");
     _ = @import("printer.zig");
-    _ = @import("editor_helper.zig");
+    _ = @import("editor_test.zig");
 }

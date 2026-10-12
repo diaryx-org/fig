@@ -124,7 +124,7 @@ pub const Language = struct {
     // above. The value reframe that lets a block collection replace an
     // inline one is the engine's too: the parser records every entry's `:`
     // (`Document.node_sep_spans`) and the engine rewrites everything after
-    // the key. `editor_helper.zig` holds this format's editor tests.
+    // the key. `editor_test.zig` holds this format's editor tests.
 };
 
 // Test discovery: importing `yaml.zig` (from root.zig) pulls in every YAML
@@ -135,5 +135,5 @@ test {
     _ = @import("tokenizer.zig");
     _ = @import("parser.zig");
     _ = @import("printer.zig");
-    _ = @import("editor_helper.zig");
+    _ = @import("editor_test.zig");
 }

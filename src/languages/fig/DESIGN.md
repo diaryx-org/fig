@@ -1374,7 +1374,7 @@ All of the following is **done**; build, tests, and `zig build semver-check`
 `Span` on every built node (key spans included; a container's span widens to
 its full subtree bottom-up as children are built — see its "AST assembly"
 section), which is what `Editor(fig.Language.FIG)` needs to splice edits
-in place, same as TOML/YAML/ZON. `fig/editor_helper.zig` holds the fig-only
+in place, same as TOML/YAML/ZON. `fig/edit.zig` holds the fig-only
 pieces: block insert/append/prepend copy an existing sibling's marker-prefix
 text verbatim (depth + spaced-vs-glued style, no separate bookkeeping — fig's
 self-describing lines make this safe to splice after any existing child,

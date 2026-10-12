@@ -64,7 +64,8 @@ const bare_literal = @import("kit/literal.zig");
 // one splice and needed only a fact the parser had dropped, an engine
 // constant that was really syntax, or a string function, and each became
 // one of those. See `docs/proposals/runtime-languages.md` §4.4. The
-// implementations live in `<lang>/editor_helper.zig` (which also holds that
+// implementations live in `<lang>/edit.zig` (and the language's editor tests
+// in `<lang>/editor_test.zig`; was: `<lang>/editor_helper.zig`, which also held that
 // language's editor tests), and the DECLARATION of which renderers a format
 // supplies, with the reason, sits in the "Renderers" block of its
 // `<lang>/<lang>.zig`.
@@ -2799,7 +2800,7 @@ pub fn Editor(comptime Language: type) type {
         /// Insert `key_text<kv_sep>value_text` as a new entry in the block
         /// (non-flow) mapping `mapping`, after its last existing entry (or,
         /// if it has none, at a language-appropriate fallback point — see
-        /// below). `pub` so `ini/editor_helper.zig`'s `iniInsertKey` (INI's
+        /// below). `pub` so `ini/editor_test.zig`'s `iniInsertKey` (INI's
         /// `isFlow`-bypassing `insertKey`) can reuse it directly rather than
         /// duplicate it.
         pub fn insertBlockKey(self: *Self, parsed: Document, mapping: AST.Node, key_text: []const u8, value_text: []const u8) !void {
@@ -4097,7 +4098,7 @@ test "addLeadingComment on TOML uses #" {
 // `Editor(Fig)`'s own methods into the test build's reachability graph — `zig
 // test` analyzes a generic struct's methods only once something calls them, so
 // an `Editor(Fig)` that nothing instantiates is an `Editor(Fig)` nothing
-// type-checks. (`fig/editor_helper.zig`'s `test` blocks are discovered through
+// type-checks. (`fig/editor_test.zig`'s `test` blocks are discovered through
 // `fig.zig`'s own `test {}`, and carry the rest of `Editor(Fig)`'s coverage
 // rather than duplicating it here; the same split holds for TOML above.)
 test "addLeadingComment on fig uses # at the target's own marker depth" {
@@ -5436,7 +5437,7 @@ test "properties comment ops: leading works with '#', trailing is unsupported" {
 // Basic root-level/parameter sanity checks only — the same level of coverage
 // TOML/fig/ZON leave here (one "uses the right marker" test apiece). The
 // section-nesting behavior (`iniInsertKey`/`isSectionHeaderLine`,
-// the `set` auto-vivify exclusion) is exercised in `ini/editor_helper.zig`,
+// the `set` auto-vivify exclusion) is exercised in `ini/editor_test.zig`,
 // next to that logic.
 
 test "ini set seeds the first root key into an empty document" {

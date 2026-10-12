@@ -21,7 +21,7 @@ const L = fig.Language;
 // the human-facing authoring dialect: it owns `.figl`, has a reader + `fig fmt`
 // printer (see `get`), and `Editor(fig.Language.FIG)` wires `replace`/`rename`/`set`/
 // `insert`/`delete`/`comment` through the same span-splice engine as
-// TOML/YAML/ZON (see `fig/editor_helper.zig`, which also carries the
+// TOML/YAML/ZON (see `fig/edit.zig` and `fig/editor_test.zig`, which carry the
 // whole-container structural ops — `deleteContainer`/`moveContainer`/
 // `reorderContainers`, the same declared ops TOML and INI supply for their own
 // scattered containers; reachable from the C ABI and the Rust/TypeScript

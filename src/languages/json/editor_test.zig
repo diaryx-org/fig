@@ -1,7 +1,7 @@
 //! Editor tests for the JSON family (`Editor(json.Language)`) — both the generic
 //! span-splice engine (plain JSON) and the JSON5 dialect.
 //!
-//! Like `toml/` and `yaml/editor_helper.zig`, each language's editor tests live
+//! Like `toml/` and `yaml/editor_test.zig`, each language's editor tests live
 //! next to that language's concerns rather than in `editor.zig`. JSON needs no
 //! format-specific editing logic (it routes straight through the generic engine),
 //! so this module is tests only — they double as the engine's own smoke tests.

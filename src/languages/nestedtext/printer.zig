@@ -56,7 +56,7 @@ pub fn print(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Er
 /// if empty). Anything that must be NESTED — a container, or a string with a
 /// line break — is a newline and then its nested block at depth 0, which the
 /// renderers re-indent under the key rather than block as a string. See
-/// `AST.SerializeOptions.splice` and `editor_helper.zig`'s `nestedBlock`.
+/// `AST.SerializeOptions.splice` and `edit.zig`'s `nestedBlock`.
 pub fn printSplice(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Error!void {
     switch (ast.nodes[ast.root].kind) {
         .null_ => return print(writer, ast, options),

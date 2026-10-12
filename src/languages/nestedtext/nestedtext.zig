@@ -86,10 +86,10 @@ pub const Language = struct {
     // engine's. The engine dispatches on PRESENCE — `Editor.hasRenderer`,
     // which is `@hasDecl` here — and a renderer it finds is called with the
     // dialect and strings, and returns a string.
-    // The logic lives in `editor_helper.zig` (which holds this format's
+    // The logic lives in `edit.zig` (and `editor_test.zig` holds this format's
     // editor tests too), not here: this block is the DECLARATION of what
     // this format supplies.
-    const edit = @import("editor_helper.zig");
+    const edit = @import("edit.zig");
 
     /// A value is framed either rest-of-line or as a nested `>`-block, on
     /// a four-space nesting convention, and a key that cannot be spelled
@@ -124,5 +124,5 @@ test {
     _ = @import("tokenizer.zig");
     _ = @import("parser.zig");
     _ = @import("printer.zig");
-    _ = @import("editor_helper.zig");
+    _ = @import("editor_test.zig");
 }

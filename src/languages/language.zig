@@ -990,7 +990,7 @@ pub fn validate(comptime Lang: type) void {
 
         // The closed set. `@typeInfo(...).decls` lists only PUBLIC
         // declarations, so a format's private helpers — the
-        // `const edit = @import("editor_helper.zig")` a renderers block opens
+        // `const edit = @import("edit.zig")` a renderers block opens
         // with — are invisible here and need no exemption.
         for (@typeInfo(Lang).@"struct".decl_names) |d_name| {
             if (Decls.known(d_name)) continue;

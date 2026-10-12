@@ -12,6 +12,7 @@ const std = @import("std");
 pub const Span = @import("span.zig");
 pub const Token = @import("token.zig").Token;
 pub const literal = @import("literal.zig");
+pub const lines = @import("lines.zig");
 pub const parse_diagnostic = @import("parse_diagnostic.zig");
 pub const xml = @import("xml.zig");
 /// The language-side tree a parser builds and a printer reads, and the
@@ -33,6 +34,7 @@ test {
     _ = table;
     _ = convert;
     _ = literal;
+    _ = lines;
     _ = parse_diagnostic;
     _ = xml;
     _ = @import("token.zig");

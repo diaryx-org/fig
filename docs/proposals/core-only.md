@@ -13,6 +13,14 @@ part_of = [proposals](proposals.md)
 > 3). Nothing here is built. §7 lists what breaks; §8 orders the work.
 > All of it lands in 6.0, ABI 4, staged in §8's order.
 >
+> Progress (2026-10-12): §8 step 2 is mostly built — the merge key, the
+> flow opener, key spelling (`renderKeyName`), line prefix marks, section
+> refusals, comment delimiters, the bare-literal rule, conversion warnings
+> (`prints`), the fragment printer, the consumer's sniff order, and YAML's
+> stream splitter moved into YAML. Left of it: named print options and the
+> neutral `SerializeError` (§4.6), and the `splitStream` declaration. Tag
+> resolution and the lexeme's value land with §4.9's rows.
+>
 > §8 step 1's measurements are done (2026-10-12). They settled the third
 > revision: the contract's node table becomes the `Document`'s own
 > storage, adopted without a copy (§4.9), and a language can ship as a

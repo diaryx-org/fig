@@ -209,7 +209,7 @@ const language = {
   syntax: {
     // `#` is read; `;` is what is written, and what the editor writes. No
     // same-line trailing comment: a `;` after a value is value text.
-    comments: { style: "semicolon", line: { open: ";" } },
+    comments: { line: { open: ";" } },
     kv_sep: " = ",
     // `{}` in INI is the two-character string `{}`, so nothing can be
     // auto-vivified; and a `[` opening the file is a header, not a flow

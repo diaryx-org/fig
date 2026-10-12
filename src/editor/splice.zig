@@ -68,53 +68,48 @@ pub fn flowOpenEnd(source: []const u8, span: Span, flow_map_open: []const u8) us
     return i + 1;
 }
 
-/// Comment syntax for the owned-comment scan: `#` line comments (YAML/TOML) vs
-/// `//` line comments and `/* */` blocks (JSON5/JSONC). Re-exported from the
-/// language manifest, where it lives so a `<lang>/<lang>.zig` can name it in
-/// its own `syntax` without importing the editor.
-pub const CommentStyle = lang.CommentStyle;
+/// The comment syntax the owned-comment scan reads: the language's declared
+/// delimiters. Re-exported from the language manifest, where it lives so a
+/// `<lang>/<lang>.zig` can name it in its own `syntax` without importing the
+/// editor.
+pub const Comments = lang.Comments;
 
 /// Grow `line_start` upward to absorb an entry's owned comment block: the
 /// contiguous run of comment lines immediately above, with no intervening blank
 /// line (trivia policy "comment-above-belongs-to-key"). A blank line or any
-/// non-comment content stops the scan. With `.slashes`, multi-line `/* ... */`
-/// blocks are walked as a unit so a delete/move carries the whole block, not
-/// just its closing line.
-pub fn commentBlockStart(source: []const u8, line_start: usize, style: CommentStyle) usize {
+/// non-comment content stops the scan. A comment line is one that opens with
+/// the declared `line` delimiter, or holds the whole of it when it is a pair
+/// (`<!-- ... -->`, recognized on one line only, so a delete never
+/// half-swallows a block); a declared `block` pair (`/* ... */`) is walked as
+/// a unit across lines, so a delete or move carries the whole block, not just
+/// its closing line.
+pub fn commentBlockStart(source: []const u8, line_start: usize, comments: Comments) usize {
     var ls = line_start;
-    // `.slashes` only: set while scanning upward through the interior of a
-    // `/* ... */` block whose opener `/*` has not been reached yet.
+    // Set while scanning upward through the interior of a `block` comment
+    // whose opener has not been reached yet.
     var in_block = false;
     while (ls > 0) {
         const prev_start = lineStartBefore(source, ls - 1);
         const line = source[prev_start..ls];
         const trimmed = std.mem.trimStart(u8, std.mem.trimEnd(u8, line, "\r\n"), " \t");
-        const is_comment = switch (style) {
-            .hash => trimmed.len > 0 and trimmed[0] == '#',
-            .semicolon => trimmed.len > 0 and trimmed[0] == ';',
-            // plist/XML `<!-- ... -->`. Only the common own-line, single-line
-            // comment is recognized for the owned-block scan (a multi-line
-            // `<!--\n...\n-->` block is not walked as a unit — a rare shape a
-            // hand-editor is unlikely to place directly above a key). A line
-            // that merely opens a block (`<!--` with no closing `-->`) is not
-            // treated as an owned comment, so a delete never half-swallows one.
-            .xml_comment => std.mem.startsWith(u8, trimmed, "<!--") and std.mem.endsWith(u8, trimmed, "-->"),
-            .slashes => blk: {
+        const is_comment = blk: {
+            if (comments.block) |b| {
                 if (in_block) {
-                    // Inside a block comment, moving up: every line belongs to it
-                    // until we reach the line bearing the `/*` opener.
-                    if (std.mem.indexOf(u8, trimmed, "/*") != null) in_block = false;
+                    // Inside a block comment, moving up: every line belongs to
+                    // it until we reach the line bearing the opener.
+                    if (std.mem.indexOf(u8, trimmed, b.open) != null) in_block = false;
                     break :blk true;
                 }
-                if (std.mem.startsWith(u8, trimmed, "//")) break :blk true;
-                // A line ending a `/* */` block: enter block-scan mode unless it is
-                // a self-contained single-line `/* ... */`.
-                if (std.mem.endsWith(u8, trimmed, "*/")) {
-                    if (!std.mem.startsWith(u8, trimmed, "/*")) in_block = true;
+                // A line ending a block: enter block-scan mode unless it is a
+                // self-contained single-line one.
+                if (b.close.len > 0 and std.mem.endsWith(u8, trimmed, b.close)) {
+                    if (!std.mem.startsWith(u8, trimmed, b.open)) in_block = true;
                     break :blk true;
                 }
-                break :blk false;
-            },
+            }
+            const l = comments.line orelse break :blk false;
+            if (l.open.len == 0 or !std.mem.startsWith(u8, trimmed, l.open)) break :blk false;
+            break :blk l.close.len == 0 or std.mem.endsWith(u8, trimmed, l.close);
         };
         if (is_comment) {
             ls = prev_start;

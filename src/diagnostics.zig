@@ -752,7 +752,7 @@ test "a runtime target is warned about comments only by what its syntax declares
     try testing.expectEqual(@as(usize, 0), (try analyzeFor(arena, &ast, ast.root, .{ .runtime = &entry }, .{})).len);
 
     // A `syntax` with no comment delimiter declares there are none: dropped.
-    entry.syntax = .{ .comments = .{ .style = .hash, .line = null, .trailing = null }, .kv_sep = null, .empty_map_literal = null };
+    entry.syntax = .{ .comments = .{ .line = null, .trailing = null }, .kv_sep = null, .empty_map_literal = null };
     const dropped = try analyzeFor(arena, &ast, ast.root, .{ .runtime = &entry }, .{});
     try testing.expectEqual(@as(usize, 1), dropped.len);
     try testing.expectEqual(Warning.Code.comment_dropped, dropped[0].code);

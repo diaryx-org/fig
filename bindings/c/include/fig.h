@@ -45,7 +45,8 @@ extern "C" {
 // size; FigLanguageVTable.lossless is a bitmask; fig_node_kind returns int
 // and reports FIG_NODE_EXTENDED. 4 — 6.0: core names no language;
 // FigSyntax loses key_style, and a language spells a key's name through
-// render_key_name.
+// render_key_name; FigComments loses style for a declared block delimiter;
+// section_noun is a string.
 #define FIG_ABI_VERSION 4
 
 // Linked-library version, packed as (major << 16) | (minor << 8) | patch.
@@ -1229,14 +1230,14 @@ typedef struct FigCommentDelimiter {
     const char *forbidden;
 } FigCommentDelimiter;
 
-// A format's comment surface. `style` selects the owned-comment-block
-// scanner: 0 hash (`#`), 1 slashes (`//` and `/* */`), 2 semicolon (`;`),
-// 3 xml_comment (`<!-- -->`). `line` is the own-line delimiter; `trailing`
-// the same-line one; either may have a NULL `open`.
+// A format's comment surface. `line` is the own-line delimiter; `trailing`
+// the same-line one; `block` a paired comment that may run over several
+// lines (`/*`, `*/`), which the owned-comment scan walks as a unit. Any may
+// have a NULL `open`.
 typedef struct FigComments {
-    int                 style;
     FigCommentDelimiter line;
     FigCommentDelimiter trailing;
+    FigCommentDelimiter block;
 } FigComments;
 
 // How a section format spells a header line that opens a container:

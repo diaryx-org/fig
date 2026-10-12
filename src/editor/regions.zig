@@ -41,7 +41,7 @@ const splice = @import("splice.zig");
 const lineStartBefore = splice.lineStartBefore;
 const lineEndAfter = splice.lineEndAfter;
 const commentBlockStart = splice.commentBlockStart;
-const CommentStyle = splice.CommentStyle;
+const Comments = splice.Comments;
 
 /// A line-aligned source range `[start, end)` belonging to one logical
 /// container's subtree.
@@ -50,18 +50,18 @@ pub const Region = struct { start: usize, end: usize };
 /// Full line-region of an in-container entry (`key = value`, possibly spanning
 /// several lines): its owned comment block through the newline ending its last
 /// line.
-pub fn entryLineRegion(source: []const u8, span: Span, style: CommentStyle) Region {
+pub fn entryLineRegion(source: []const u8, span: Span, comments: Comments) Region {
     return .{
-        .start = commentBlockStart(source, lineStartBefore(source, span.start), style),
+        .start = commentBlockStart(source, lineStartBefore(source, span.start), comments),
         .end = lineEndAfter(source, span.end -| 1),
     };
 }
 
 /// The physical line of one recorded header: its owned comment block through
-/// the header line's own newline. `style` selects the comment scanner, as it
+/// the header line's own newline. `comments` drives the comment scan, as it
 /// does for `entryLineRegion`.
-pub fn headerLineRegion(source: []const u8, header: Document.NodeRegion, style: CommentStyle) Region {
-    return .{ .start = commentBlockStart(source, header.start, style), .end = header.end };
+pub fn headerLineRegion(source: []const u8, header: Document.NodeRegion, comments: Comments) Region {
+    return .{ .start = commentBlockStart(source, header.start, comments), .end = header.end };
 }
 
 /// Append every line-region belonging to the subtree of the section node
@@ -77,8 +77,8 @@ pub fn headerLineRegion(source: []const u8, header: Document.NodeRegion, style: 
 /// version different — how it recognized a header-introduced child — is now
 /// `Document.isSection`, a fact the parser recorded rather than a line the
 /// editor sniffs.
-pub fn gather(parsed: Document, source: []const u8, allocator: std.mem.Allocator, node: AST.Node, style: CommentStyle, out: *std.ArrayList(Region)) std.mem.Allocator.Error!void {
-    for (parsed.regionsOf(node.id)) |h| try out.append(allocator, headerLineRegion(source, h, style));
+pub fn gather(parsed: Document, source: []const u8, allocator: std.mem.Allocator, node: AST.Node, comments: Comments, out: *std.ArrayList(Region)) std.mem.Allocator.Error!void {
+    for (parsed.regionsOf(node.id)) |h| try out.append(allocator, headerLineRegion(source, h, comments));
     switch (node.kind) {
         .mapping => |first| {
             var cur = first;
@@ -86,9 +86,9 @@ pub fn gather(parsed: Document, source: []const u8, allocator: std.mem.Allocator
                 const kv = parsed.ast.nodes[id];
                 const val = parsed.ast.nodes[kv.kind.keyvalue.value];
                 if (parsed.isSection(val)) {
-                    try gather(parsed, source, allocator, val, style, out);
+                    try gather(parsed, source, allocator, val, comments, out);
                 } else {
-                    try out.append(allocator, entryLineRegion(source, parsed.span(kv), style));
+                    try out.append(allocator, entryLineRegion(source, parsed.span(kv), comments));
                 }
             }
         },
@@ -97,9 +97,9 @@ pub fn gather(parsed: Document, source: []const u8, allocator: std.mem.Allocator
             while (cur) |id| : (cur = parsed.ast.nodes[id].next_sibling) {
                 const el = parsed.ast.nodes[id];
                 if (parsed.isSection(el)) {
-                    try gather(parsed, source, allocator, el, style, out);
+                    try gather(parsed, source, allocator, el, comments, out);
                 } else {
-                    try out.append(allocator, entryLineRegion(source, parsed.span(el), style));
+                    try out.append(allocator, entryLineRegion(source, parsed.span(el), comments));
                 }
             }
         },
@@ -110,10 +110,10 @@ pub fn gather(parsed: Document, source: []const u8, allocator: std.mem.Allocator
 /// `gather` followed by `normalize`: the coalesced, ascending region set of
 /// the section node `node`, as a fresh list the caller owns. `merge_touching`
 /// is `normalize`'s.
-pub fn gatherNormalized(parsed: Document, source: []const u8, allocator: std.mem.Allocator, node: AST.Node, style: CommentStyle, merge_touching: bool) std.mem.Allocator.Error!std.ArrayList(Region) {
+pub fn gatherNormalized(parsed: Document, source: []const u8, allocator: std.mem.Allocator, node: AST.Node, comments: Comments, merge_touching: bool) std.mem.Allocator.Error!std.ArrayList(Region) {
     var regions: std.ArrayList(Region) = .empty;
     errdefer regions.deinit(allocator);
-    try gather(parsed, source, allocator, node, style, &regions);
+    try gather(parsed, source, allocator, node, comments, &regions);
     regions.shrinkRetainingCapacity(normalize(regions.items, merge_touching));
     return regions;
 }
@@ -121,8 +121,8 @@ pub fn gatherNormalized(parsed: Document, source: []const u8, allocator: std.mem
 /// Byte offset just past the last line of the section node `node`'s subtree
 /// — where a new sibling section can be spliced without splitting it. The
 /// end of its last derived region, or of its own line when it has none.
-pub fn extentEnd(parsed: Document, source: []const u8, allocator: std.mem.Allocator, node: AST.Node, style: CommentStyle) std.mem.Allocator.Error!usize {
-    var regions = try gatherNormalized(parsed, source, allocator, node, style, true);
+pub fn extentEnd(parsed: Document, source: []const u8, allocator: std.mem.Allocator, node: AST.Node, comments: Comments) std.mem.Allocator.Error!usize {
+    var regions = try gatherNormalized(parsed, source, allocator, node, comments, true);
     defer regions.deinit(allocator);
     if (regions.items.len == 0) return lineEndAfter(source, parsed.span(node).end -| 1);
     return regions.items[regions.items.len - 1].end;

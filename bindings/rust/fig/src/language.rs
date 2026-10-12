@@ -248,64 +248,45 @@ impl Default for Syntax {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Comments {
-    pub style: CommentStyle,
     /// The own-line delimiter, or `None` for a format with no comments.
     pub line: Option<CommentDelimiter>,
     /// The same-line trailing delimiter, or `None` where a marker after a
     /// value is value text.
     pub trailing: Option<CommentDelimiter>,
+    /// A paired comment that may run over several lines (`/*`, `*/`), which
+    /// the owned-comment scan walks as a unit.
+    pub block: Option<CommentDelimiter>,
 }
 
 impl Comments {
-    /// A comment surface scanned as `style`, with `line` as its own-line
-    /// delimiter and `trailing` as its same-line one.
-    pub fn new(
-        style: CommentStyle,
-        line: Option<CommentDelimiter>,
-        trailing: Option<CommentDelimiter>,
-    ) -> Self {
+    /// A comment surface with `line` as its own-line delimiter and
+    /// `trailing` as its same-line one, and no block comment.
+    pub fn new(line: Option<CommentDelimiter>, trailing: Option<CommentDelimiter>) -> Self {
         Comments {
-            style,
             line,
             trailing,
+            block: None,
         }
     }
 
     /// `#` throughout.
     pub fn hash() -> Self {
-        Comments {
-            style: CommentStyle::Hash,
-            line: Some(CommentDelimiter::open("#")),
-            trailing: Some(CommentDelimiter::open("#")),
-        }
+        Comments::new(
+            Some(CommentDelimiter::open("#")),
+            Some(CommentDelimiter::open("#")),
+        )
     }
     /// `//` throughout.
     pub fn slashes() -> Self {
-        Comments {
-            style: CommentStyle::Slashes,
-            line: Some(CommentDelimiter::open("//")),
-            trailing: Some(CommentDelimiter::open("//")),
-        }
+        Comments::new(
+            Some(CommentDelimiter::open("//")),
+            Some(CommentDelimiter::open("//")),
+        )
     }
     /// No comment syntax at all.
     pub fn none() -> Self {
-        Comments {
-            style: CommentStyle::Hash,
-            line: None,
-            trailing: None,
-        }
+        Comments::new(None, None)
     }
-}
-
-/// Which owned-comment-block scanner walks the format.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-#[non_exhaustive]
-pub enum CommentStyle {
-    #[default]
-    Hash,
-    Slashes,
-    Semicolon,
-    XmlComment,
 }
 
 /// How one comment is delimited: [`CommentDelimiter::open`] for an
@@ -1086,14 +1067,9 @@ impl CSyntax {
         let c = ffi::FigSyntax {
             size: std::mem::size_of::<ffi::FigSyntax>() as u32,
             comments: ffi::FigComments {
-                style: match s.comments.style {
-                    CommentStyle::Hash => 0,
-                    CommentStyle::Slashes => 1,
-                    CommentStyle::Semicolon => 2,
-                    CommentStyle::XmlComment => 3,
-                },
                 line: delim(&mut strings, s.comments.line.as_ref())?,
                 trailing: delim(&mut strings, s.comments.trailing.as_ref())?,
+                block: delim(&mut strings, s.comments.block.as_ref())?,
             },
             kv_sep: opt_ptr(&mut strings, s.kv_sep.as_deref())?,
             flow_kv_sep_from_siblings: s.flow_kv_sep_from_siblings,

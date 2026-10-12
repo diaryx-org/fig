@@ -11,7 +11,6 @@ pub const Language = @This();
 // `<lang>/<lang>.zig` imports it to spell its own `syntax`, and this file
 // imports each of them in turn, so the types cannot live here without the
 // manifest depending on the languages that declare it.
-pub const CommentStyle = manifest.CommentStyle;
 pub const Caps = manifest.Caps;
 pub const NativeKinds = manifest.NativeKinds;
 pub const Syntax = manifest.Syntax;

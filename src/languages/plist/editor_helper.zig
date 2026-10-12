@@ -30,7 +30,7 @@
 //! or `<array/>` from `Syntax.closed_containers`.
 //!
 //! Delete-key, remove-seq-item and every comment op are generic too.
-//! Once `comments.style` is `.xml_comment` (see `editor.zig`), the generic
+//! Once `comments` is `.xml_comment` (see `editor.zig`), the generic
 //! line-based delete already does the right thing — a plist entry/item
 //! occupies whole lines, and the keyvalue's full-extent span (recorded by
 //! `parser.zig`) covers both the key and value lines, so

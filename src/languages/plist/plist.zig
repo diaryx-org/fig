@@ -85,12 +85,11 @@ pub const Language = struct {
         _ = t;
         return .{
             // A comment is the `<!-- … -->` PAIR, leading and trailing alike,
-            // and XML forbids `--` inside one. The owned-block scanner
-            // (`.xml_comment`) recognizes an own-line pair; the leading and
+            // and XML forbids `--` inside one. The owned-block scan
+            // recognizes an own-line pair; the leading and
             // trailing ops write and strip the pair; the dangling and
             // comment-out ops, which need a bare prefix, refuse it.
             .comments = .{
-                .style = .xml_comment,
                 .line = .{ .open = "<!--", .close = "-->", .forbidden = "--" },
                 .trailing = .{ .open = "<!--", .close = "-->", .forbidden = "--" },
             },

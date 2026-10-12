@@ -105,18 +105,6 @@ pub const Language = struct {
         },
     };
 
-    /// The one manifest in tree whose answer genuinely varies by dialect, and
-    /// therefore the reason `syntax` is a function of `Type` at all: strict
-    /// JSON has no comment syntax, JSONC and JSON5 do. The editor's splices
-    /// are reparsed under the dialect it is holding, so writing `//` into a
-    /// document being read as strict JSON would produce source that no longer
-    /// parses — the comment ops return `CommentsUnsupported` there instead.
-    ///
-    /// `style` stays `.slashes` for all three: it selects the scanner for
-    /// OWNED comment blocks, and in strict JSON no `//` line can exist for
-    /// that scanner to find, so the choice is unobservable rather than wrong.
-    /// That split — one scanner, a marker that varies — is why this is written
-    /// out rather than taking the `Comments.slashes` preset.
     /// A key's name as JSON writes it: quoted and escaped (`b` -> `"b"`),
     /// which strict JSON requires and JSONC and JSON5 take.
     pub fn renderKeyName(_: json.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), r: lang.RenderRequest) !void {
@@ -126,10 +114,18 @@ pub const Language = struct {
         try out.appendSlice(allocator, w.written());
     }
 
+    /// The one manifest in tree whose answer genuinely varies by dialect, and
+    /// therefore the reason `syntax` is a function of `Type` at all: strict
+    /// JSON has no comment syntax, JSONC and JSON5 have `//` lines and
+    /// `/* */` blocks. The editor's splices are reparsed under the dialect it
+    /// is holding, so writing `//` into a document being read as strict JSON
+    /// would produce source that no longer parses — the comment ops return
+    /// `CommentsUnsupported` there instead.
     pub fn syntax(t: json.Type) lang.Syntax {
         const marker: ?lang.CommentDelimiter = if (t == .JSON) null else .{ .open = "//" };
+        const block: ?lang.CommentDelimiter = if (t == .JSON) null else .{ .open = "/*", .close = "*/" };
         return .{
-            .comments = .{ .style = .slashes, .line = marker, .trailing = marker },
+            .comments = .{ .line = marker, .trailing = marker, .block = block },
             .kv_sep = ": ",
             .empty_map_literal = "{}",
         };

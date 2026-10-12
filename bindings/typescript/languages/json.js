@@ -317,7 +317,7 @@ const language = {
   // extended scalar rides in a `$fig` envelope.
   lossless: { null: true },
   syntax: {
-    comments: { style: "slashes" },
+    comments: {},
     kv_sep: ": ",
     empty_map_literal: "{}",
   },

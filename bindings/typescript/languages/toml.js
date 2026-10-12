@@ -907,7 +907,7 @@ const language = {
   // native, so a null or an enum literal rides in a `$fig` envelope.
   lossless: { offset_datetime: true, local_datetime: true, local_date: true, local_time: true, number_special: true },
   syntax: {
-    comments: { style: "hash", line: { open: "#" }, trailing: { open: "#" } },
+    comments: { line: { open: "#" }, trailing: { open: "#" } },
     kv_sep: " = ",
     flow_map_pad: " ",
     empty_map_literal: "{}",

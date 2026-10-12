@@ -218,7 +218,7 @@ static int parse_bars(void *ctx, const char *dialect, FigStr input, FigNodeTable
 static int bars_probe(void) {
     static const FigSyntax syntax = {
         /* size */ sizeof(FigSyntax),
-        /* comments */ { 0, { "#", NULL, NULL }, { NULL, NULL, NULL } },
+        /* comments */ { { "#", NULL, NULL }, { NULL, NULL, NULL }, { NULL, NULL, NULL } },
         /* kv_sep */ ": ",
         /* flow_kv_sep_from_siblings */ false,
         /* flow_map_pad */ NULL,
@@ -287,7 +287,7 @@ static int bars_probe(void) {
 int main(void) {
     static const FigSyntax syntax = {
         /* size */ sizeof(FigSyntax),
-        /* comments */ { 0, { "#", NULL, NULL }, { NULL, NULL, NULL } },
+        /* comments */ { { "#", NULL, NULL }, { NULL, NULL, NULL }, { NULL, NULL, NULL } },
         /* kv_sep */ "=",
         /* flow_kv_sep_from_siblings */ false,
         /* flow_map_pad */ NULL,

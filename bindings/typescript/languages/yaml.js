@@ -2667,7 +2667,7 @@ const language = {
   // The core schema has a `null` and none of the extended scalars.
   lossless: { null: true },
   syntax: {
-    comments: { style: "hash", line: { open: "#" }, trailing: { open: "#" } },
+    comments: { line: { open: "#" }, trailing: { open: "#" } },
     merge_key: "<<",
     kv_sep: ": ",
     empty_map_literal: "",

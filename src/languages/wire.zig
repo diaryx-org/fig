@@ -199,11 +199,11 @@ fn syntaxOf(a: Allocator, v: std.json.Value) !*const Runtime.SyntaxDesc {
     if (v != .object) return error.HelperSpokeNoJson;
     const o = v.object;
     const s = try a.create(Runtime.SyntaxDesc);
-    var comments: Runtime.CommentsDesc = .{ .style = 0, .line = .{}, .trailing = .{} };
+    var comments: Runtime.CommentsDesc = .{ .line = .{}, .trailing = .{} };
     if (o.get("comments")) |c| if (c == .object) {
-        comments.style = enumOrdinal(Language.CommentStyle, c.object, "style", 0);
         comments.line = try delimiterOf(a, c.object.get("line"));
         comments.trailing = try delimiterOf(a, c.object.get("trailing"));
+        comments.block = try delimiterOf(a, c.object.get("block"));
     };
     var closed: Runtime.ClosedContainersDesc = .{};
     if (o.get("closed_containers")) |c| if (c == .object) {
@@ -778,7 +778,7 @@ test "describe builds a vtable the registry would accept" {
         .transport = .{ .allocator = t.allocator, .callFn = Scripted.call },
         .describe_response =
         \\{"ok":true,"description":{"name":"wire-kv","caps":{"read":true,"edit":true,"serialize":true},
-        \\"max_mapping_depth":0,"syntax":{"comments":{"style":"hash","line":{"open":"#"},"trailing":{"open":"#"}},
+        \\"max_mapping_depth":0,"syntax":{"comments":{"line":{"open":"#"},"trailing":{"open":"#"}},
         \\"kv_sep":"=","empty_map_literal":"{}","flow_containers":false},
         \\"dialects":[{"name":"wire-kv","extensions":["wkv"],"splice":"raw","empty_doc_seed":""}],
         \\"samples":["a=1\n"],"renderers":["value"]}}

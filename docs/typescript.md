@@ -556,7 +556,7 @@ const tinykv: Language = {
   caps: { read: true, edit: true, serialize: true },
   max_mapping_depth: 0,                     // flat: no mapping inside the root
   syntax: {
-    comments: { style: "hash", line: { open: "#" }, trailing: { open: "#" } },
+    comments: { line: { open: "#" }, trailing: { open: "#" } },
     kv_sep: "=",
     empty_map_literal: "{}",
     flow_containers: false,

@@ -18,7 +18,7 @@ const firstNonSpace = splice.firstNonSpace;
 const columnOf = splice.columnOf;
 const isFlow = splice.isFlow;
 const flowOpenEnd = splice.flowOpenEnd;
-const CommentStyle = splice.CommentStyle;
+const Comments = splice.Comments;
 const commentBlockStart = splice.commentBlockStart;
 const appendBlockSep = splice.appendBlockSep;
 const Block = splice.Block;
@@ -28,7 +28,7 @@ const Region = regions.Region;
 const log = std.log.scoped(.editor);
 
 // The declared half of the Language interface — `Syntax`, `Caps`,
-// `CommentStyle`. Every surface-syntax parameter this engine used to select
+// `Comments`. Every surface-syntax parameter this engine used to select
 // with an `if (Language == X)` branch now comes from `Language.syntax(t)`
 // instead; see `languages/manifest.zig` and
 // `docs/proposals/language-interface.md`. A leaf module, so importing it here
@@ -1265,7 +1265,7 @@ pub fn Editor(comptime Language: type) type {
             const node = try parsed.ast.getNodeByPath(path);
             const source = self.source.items;
             const line_start = self.leadingCommentLineStart(parsed, node);
-            const block_start = commentBlockStart(source, line_start, self.syntax().comments.style);
+            const block_start = commentBlockStart(source, line_start, self.syntax().comments);
             if (block_start == line_start) return; // nothing above to remove
             try self.replaceAtSpan(Span.init(block_start, line_start), "");
         }
@@ -1302,7 +1302,7 @@ pub fn Editor(comptime Language: type) type {
             const node = try parsed.ast.getNodeByPath(path);
             const source = self.source.items;
             const line_start = self.leadingCommentLineStart(parsed, node);
-            const block_start = commentBlockStart(source, line_start, self.syntax().comments.style);
+            const block_start = commentBlockStart(source, line_start, self.syntax().comments);
             if (block_start == line_start) return null; // no block above
 
             var out: std.ArrayList(u8) = .empty;
@@ -1682,7 +1682,7 @@ pub fn Editor(comptime Language: type) type {
             const span = parsed.span(node);
             const line_start = self.leadingCommentLineStart(parsed, node);
             if (!self.ownsItsLines(line_start, span, marker)) return error.CommentsUnanchored;
-            const block_start = commentBlockStart(source, line_start, self.syntax().comments.style);
+            const block_start = commentBlockStart(source, line_start, self.syntax().comments);
             return self.uncommentBlock(block_start, line_start, first_line, line_count, parent_path);
         }
 
@@ -1977,7 +1977,7 @@ pub fn Editor(comptime Language: type) type {
                 // the entry itself keeps the survivors' indentation intact.
                 const line_start = lineStartBefore(source, entry_start);
                 const on_own_line = firstNonSpace(source, line_start) == entry_start;
-                const cbs = if (on_own_line) commentBlockStart(source, line_start, self.syntax().comments.style) else line_start;
+                const cbs = if (on_own_line) commentBlockStart(source, line_start, self.syntax().comments) else line_start;
                 const del_start = if (cbs < line_start) cbs else entry_start;
                 return self.removeFlowItem(Span.init(del_start, span.end), prev == null, self.syntax().flow_entry_sep, Span.init(0, source.len));
             }
@@ -2010,7 +2010,7 @@ pub fn Editor(comptime Language: type) type {
                 }
                 return self.replaceAtSpan(Span.init(s, e), "");
             }
-            const del_start = commentBlockStart(source, line_start, self.syntax().comments.style);
+            const del_start = commentBlockStart(source, line_start, self.syntax().comments);
             const del_end = lineEndAfter(source, span.end -| 1);
             try self.replaceAtSpan(Span.init(del_start, del_end), "");
         }
@@ -2117,7 +2117,7 @@ pub fn Editor(comptime Language: type) type {
             if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
             const source = self.source.items;
             const at = markerStart(parsed, item);
-            const insert_at = commentBlockStart(source, lineStartBefore(source, at), self.syntax().comments.style);
+            const insert_at = commentBlockStart(source, lineStartBefore(source, at), self.syntax().comments);
             try self.insertSeqLine(insert_at, at, value_text, placeOf(parsed, node));
         }
 
@@ -2169,7 +2169,7 @@ pub fn Editor(comptime Language: type) type {
                 if (joint.declared) {
                     const line_start = lineStartBefore(source, start);
                     if (firstNonSpace(source, line_start) == start) {
-                        const cbs = commentBlockStart(source, line_start, self.syntax().comments.style);
+                        const cbs = commentBlockStart(source, line_start, self.syntax().comments);
                         if (cbs < line_start) start = @max(firstNonSpace(source, cbs), limit.start);
                         const next_on_later_line = if (parsed.ast.next(&item)) |n|
                             lineStartBefore(source, parsed.span(n).start) > lineStartBefore(source, end -| 1)
@@ -2184,7 +2184,7 @@ pub fn Editor(comptime Language: type) type {
                 return;
             }
             if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
-            const line_start = commentBlockStart(source, lineStartBefore(source, markerStart(parsed, item)), self.syntax().comments.style);
+            const line_start = commentBlockStart(source, lineStartBefore(source, markerStart(parsed, item)), self.syntax().comments);
             const del_end = lineEndAfter(source, item_span.end -| 1);
             try self.replaceAtSpan(Span.init(line_start, del_end), "");
         }
@@ -2446,9 +2446,9 @@ pub fn Editor(comptime Language: type) type {
             }
             const source = self.source.items;
             try self.moveBlock(
-                entryBlockStart(source, parsed.span(src), self.syntax().comments.style),
+                entryBlockStart(source, parsed.span(src), self.syntax().comments),
                 entryBlockEnd(source, parsed.span(src)),
-                entryBlockStart(source, parsed.span(dest), self.syntax().comments.style),
+                entryBlockStart(source, parsed.span(dest), self.syntax().comments),
             );
         }
 
@@ -2575,7 +2575,7 @@ pub fn Editor(comptime Language: type) type {
             var blocks: std.ArrayList(Block) = .empty;
             defer blocks.deinit(self.allocator);
             for (entries.items) |entry| {
-                try blocks.append(self.allocator, .{ .start = entryBlockStart(source, parsed.span(entry), self.syntax().comments.style), .end = 0 });
+                try blocks.append(self.allocator, .{ .start = entryBlockStart(source, parsed.span(entry), self.syntax().comments), .end = 0 });
             }
             const last_end = entryBlockEnd(source, parsed.span(entries.items[entries.items.len - 1]));
             tileBlocks(blocks.items, last_end);
@@ -2634,7 +2634,7 @@ pub fn Editor(comptime Language: type) type {
             var blocks: std.ArrayList(Block) = .empty;
             defer blocks.deinit(self.allocator);
             for (starts.items) |at| {
-                try blocks.append(self.allocator, .{ .start = commentBlockStart(source, lineStartBefore(source, at), self.syntax().comments.style), .end = 0 });
+                try blocks.append(self.allocator, .{ .start = commentBlockStart(source, lineStartBefore(source, at), self.syntax().comments), .end = 0 });
             }
             const last_end = entryBlockEnd(source, spans.items[spans.items.len - 1]);
             tileBlocks(blocks.items, last_end);
@@ -2713,7 +2713,7 @@ pub fn Editor(comptime Language: type) type {
                 if (has_comments) {
                     const line_start = lineStartBefore(source, start);
                     if (firstNonSpace(source, line_start) == start) {
-                        const cbs = commentBlockStart(source, line_start, self.syntax().comments.style);
+                        const cbs = commentBlockStart(source, line_start, self.syntax().comments);
                         const lead = firstNonSpace(source, cbs);
                         if (cbs < line_start and lead >= prev_end) start = lead;
                     }
@@ -3003,7 +3003,7 @@ pub fn Editor(comptime Language: type) type {
         /// regions that meet exactly apart, for a caller that addresses each
         /// region's own start.
         pub fn gatherRegions(self: *const Self, parsed: Document, node: AST.Node, merge_touching: bool) !std.ArrayList(Region) {
-            return regions.gatherNormalized(parsed, self.source.items, self.allocator, node, self.syntax().comments.style, merge_touching);
+            return regions.gatherNormalized(parsed, self.source.items, self.allocator, node, self.syntax().comments, merge_touching);
         }
 
         /// Byte offset just past the last line of the section node `node`'s
@@ -3011,7 +3011,7 @@ pub fn Editor(comptime Language: type) type {
         /// splitting it. `insertContainer` and `appendContainerToSeq` place a
         /// header there.
         pub fn sectionExtentEnd(self: *const Self, parsed: Document, node: AST.Node) !usize {
-            return regions.extentEnd(parsed, self.source.items, self.allocator, node, self.syntax().comments.style);
+            return regions.extentEnd(parsed, self.source.items, self.allocator, node, self.syntax().comments);
         }
 
         /// Delete the whole container named by `path` — every scattered region
@@ -3155,7 +3155,7 @@ pub fn Editor(comptime Language: type) type {
                 if (dest_path) |dp| {
                     const dn = try self.sectionAt(parsed, dp);
                     const first = parsed.regionsOf(dn.id)[0];
-                    break :blk regions.headerLineRegion(self.source.items, first, self.syntax().comments.style).start;
+                    break :blk regions.headerLineRegion(self.source.items, first, self.syntax().comments).start;
                 }
                 break :blk self.source.items.len;
             };
@@ -3765,8 +3765,8 @@ pub fn Editor(comptime Language: type) type {
 /// Start of a mapping entry's full block: its owned leading comment block
 /// (`commentBlockStart`) at the start of the key's line. Mirrors the span math
 /// `deleteKey` uses, factored out for move/reorder.
-fn entryBlockStart(source: []const u8, kv_span: Span, style: CommentStyle) usize {
-    return commentBlockStart(source, lineStartBefore(source, kv_span.start), style);
+fn entryBlockStart(source: []const u8, kv_span: Span, comments: Comments) usize {
+    return commentBlockStart(source, lineStartBefore(source, kv_span.start), comments);
 }
 
 /// End of a mapping entry's full block: just past the newline ending its last
@@ -4208,7 +4208,7 @@ test "deleteTrailingComment removes a same-line comment (YAML/JSONC), else no-op
     try expectCommentDelete(json.Language, .JSONC, "{\n  \"a\": 1 // x\n}", "{\n  \"a\": 1\n}", .trailing, &.{.{ .key = "a" }});
 }
 
-test "ZON owned-comment scan uses // (comments.style fix)" {
+test "ZON owned-comment scan uses // (comments fix)" {
     if (comptime !build_options.lang_zon) return error.SkipZigTest;
     try expectCommentDelete(
         Zon,

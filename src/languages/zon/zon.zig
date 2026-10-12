@@ -57,11 +57,6 @@ pub const Language = struct {
         .empty_doc_seed = ".{}\n",
     }};
 
-    /// The format that most exercises the manifest's "push traits down into
-    /// parameters" rule: three of these fields exist because ZON's surface
-    /// syntax differs from the block-mapping formats, not because ZON needs
-    /// bespoke logic. Any future format whose keys carry a sigil, or which
-    /// has no keyless top-level mapping, reuses them unchanged.
     /// A key's name as a struct field: `.name`, or `.@"has space"` when
     /// it is not a bare identifier.
     pub fn renderKeyName(_: zon.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), r: lang.RenderRequest) !void {
@@ -71,11 +66,15 @@ pub const Language = struct {
         try out.appendSlice(allocator, w.written());
     }
 
+    /// The format that most exercises the manifest's "push traits down into
+    /// parameters" rule: three of these fields exist because ZON's surface
+    /// syntax differs from the block-mapping formats, not because ZON needs
+    /// bespoke logic. Any future format whose keys carry a sigil, or which
+    /// has no keyless top-level mapping, reuses them unchanged.
     pub fn syntax(t: zon.Type) lang.Syntax {
         _ = t;
         return .{
-            // ZON follows Zig: `//`, and the owned-block scanner that also
-            // walks `/* ... */` as a unit.
+            // ZON follows Zig: `//` lines, and no block comment.
             .comments = .slashes,
             // Struct-field syntax.
             .kv_sep = " = ",

@@ -535,7 +535,7 @@ const language = {
   // rides in a `$fig` envelope, JSON5's own `Infinity`/`NaN` included.
   lossless: { null: true },
   syntax: {
-    comments: { style: "slashes", line: { open: "//" }, trailing: { open: "//" } },
+    comments: { line: { open: "//" }, trailing: { open: "//" }, block: { open: "/*", close: "*/" } },
     kv_sep: ": ",
     empty_map_literal: "{}",
   },

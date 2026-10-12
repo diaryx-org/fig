@@ -63,7 +63,7 @@ pub const Language = struct {
             // rest-of-line value text, not a comment (see `parser.zig`,
             // "rest-of-line values are 100% literal"). A trailing comment can
             // only ever be its own `#` line immediately after the entry.
-            .comments = .{ .style = .hash, .line = .{ .open = "#" }, .trailing = null },
+            .comments = .{ .line = .{ .open = "#" }, .trailing = null },
             // The inline dict form, `{a: 1, b: 2}`, is what the generic
             // flow-entry insert writes; a block entry goes through
             // `renderEntry`.

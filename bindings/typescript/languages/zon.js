@@ -548,7 +548,7 @@ const language = {
   caps: { read: true, edit: true, serialize: true },
   lossless: { null: true, enum_literal: true, char_literal: true },
   syntax: {
-    comments: { style: "slashes", line: { open: "//" }, trailing: { open: "//" } },
+    comments: { line: { open: "//" }, trailing: { open: "//" } },
     kv_sep: " = ",
     // The byte before every key, which the editor removes with the key:
     // `.` (the wire carries a sigil as its byte).

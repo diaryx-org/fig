@@ -370,11 +370,11 @@ pub const CommentDelimiterDesc = extern struct {
     forbidden: ?[*:0]const u8 = null,
 };
 
-/// `manifest.Comments`. `style` is `manifest.CommentStyle`'s ordinal.
+/// `manifest.Comments`.
 pub const CommentsDesc = extern struct {
-    style: c_int,
     line: CommentDelimiterDesc,
     trailing: CommentDelimiterDesc,
+    block: CommentDelimiterDesc = .{},
 };
 
 /// `manifest.SectionHeader`; `open == null` means no header syntax.
@@ -1056,10 +1056,6 @@ pub fn validateVTable(vt: *const VTable) bool {
 }
 
 fn validateSyntax(name: []const u8, vt: *const VTable, s: *const SyntaxDesc) bool {
-    if (s.comments.style < 0 or s.comments.style >= @typeInfo(manifest.CommentStyle).@"enum".field_names.len) {
-        refuse("'{s}': unknown comment style {d}", .{ name, s.comments.style });
-        return false;
-    }
     if (s.comments.trailing.open != null and s.comments.line.open == null) {
         refuse("'{s}' declares a trailing comment marker but no line comment marker", .{name});
         return false;
@@ -1114,9 +1110,9 @@ fn syntaxOf(arena: Allocator, s: *const SyntaxDesc) Allocator.Error!manifest.Syn
     const defaults: manifest.Syntax = .{ .comments = undefined, .kv_sep = null, .empty_map_literal = null };
     var out: manifest.Syntax = .{
         .comments = .{
-            .style = @fromBackingInt(@intCast(s.comments.style)),
             .line = try delimiterOf(arena, s.comments.line),
             .trailing = try delimiterOf(arena, s.comments.trailing),
+            .block = try delimiterOf(arena, s.comments.block),
         },
         .kv_sep = try dupeZstr(arena, s.kv_sep),
         .flow_kv_sep_from_siblings = s.flow_kv_sep_from_siblings,
@@ -1908,7 +1904,7 @@ pub const Language = struct {
             // A read-only format has no syntax; the editor over it is
             // refused before it is asked (`c_api.zig`, the CLI), so this is
             // unreachable in practice and a safe default in principle.
-            .{ .comments = .{ .style = .hash, .line = null, .trailing = null }, .kv_sep = null, .empty_map_literal = null };
+            .{ .comments = .{ .line = null, .trailing = null }, .kv_sep = null, .empty_map_literal = null };
     }
 
     /// `Editor.hasRenderer`'s runtime answer: whether the entry's vtable
@@ -2252,7 +2248,7 @@ const TinyKv = struct {
     }
 
     const syntax: SyntaxDesc = .{
-        .comments = .{ .style = @backingInt(manifest.CommentStyle.hash), .line = .{ .open = "#" }, .trailing = .{} },
+        .comments = .{ .line = .{ .open = "#" }, .trailing = .{} },
         .kv_sep = "=",
         .empty_map_literal = "{}",
         .flow_containers = false,
@@ -2385,7 +2381,7 @@ const TinyList = struct {
     }
 
     const syntax: SyntaxDesc = .{
-        .comments = .{ .style = @backingInt(manifest.CommentStyle.hash), .line = .{}, .trailing = .{} },
+        .comments = .{ .line = .{}, .trailing = .{} },
         // Never written — the format has no mapping — but a null needs a
         // `render_entry` beside it, and the list is what is under test.
         .kv_sep = ": ",
@@ -2516,7 +2512,7 @@ const TinyDeps = struct {
     }
 
     const syntax: SyntaxDesc = .{
-        .comments = .{ .style = @backingInt(manifest.CommentStyle.hash), .line = .{}, .trailing = .{} },
+        .comments = .{ .line = .{}, .trailing = .{} },
         .kv_sep = " ",
         .empty_map_literal = null,
         .flow_containers = false,
@@ -2700,7 +2696,7 @@ const TinyTune = struct {
     }
 
     const syntax: SyntaxDesc = .{
-        .comments = .{ .style = @backingInt(manifest.CommentStyle.hash), .line = .{ .open = "#" }, .trailing = .{ .open = "#" } },
+        .comments = .{ .line = .{ .open = "#" }, .trailing = .{ .open = "#" } },
         .kv_sep = ": ",
         .empty_map_literal = null,
         .flow_containers = false,

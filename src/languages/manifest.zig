@@ -29,26 +29,6 @@
 //! in turn) would make the manifest's own types depend on the languages that
 //! declare them.
 
-/// Which leading-comment syntax a language uses, so the owned-comment scan in
-/// delete/move (`editor/splice.zig`'s `commentBlockStart`) recognizes the right marker.
-///
-/// Distinct from `Comments.line`: this selects the *scanner*, which is
-/// per-language and comptime, while the marker is per-dialect and may be null
-/// where the scanner still has a sensible answer. Plain JSON has no comments,
-/// but `.slashes` is harmless there since no `//` line can exist.
-pub const CommentStyle = enum {
-    /// YAML, TOML, fig, dotenv, `.properties`, NestedText.
-    hash,
-    /// JSON/JSONC/JSON5 and ZON (which follows Zig). The only style whose
-    /// scanner also walks multi-line `/* ... */` blocks as a unit.
-    slashes,
-    /// INI. Its printer accepts a leading `#` on read but always WRITES `;`,
-    /// so `;` is the marker the editor's own inserts and scans use.
-    semicolon,
-    /// plist's `<!-- ... -->`.
-    xml_comment,
-};
-
 /// A format's whole comment surface: which scanner walks an owned comment
 /// block, and the markers the editor writes and strips.
 ///
@@ -74,13 +54,6 @@ pub const CommentDelimiter = struct {
 };
 
 pub const Comments = struct {
-    /// Selects the owned-comment-block scanner. See `CommentStyle`. Never
-    /// null, and never redundant with `line`: the scanner is per-language
-    /// while a marker is per-dialect, so strict JSON declares `.slashes`
-    /// alongside a null marker — unobservable there, since no `//` line can
-    /// exist for the scanner to find.
-    style: CommentStyle,
-
     /// The own-line (leading) comment delimiter, or null when the dialect has
     /// none to write — strict JSON, where the comment ops return
     /// `CommentsUnsupported`. A paired delimiter (plist) serves the leading
@@ -101,11 +74,17 @@ pub const Comments = struct {
     /// there.
     trailing: ?CommentDelimiter,
 
+    /// A paired comment that may run over several lines, which the
+    /// owned-comment scan walks as a unit (`/* ... */` in JSONC and JSON5), or
+    /// null. A paired `line` delimiter (plist's `<!-- -->`) is recognized on
+    /// one line only; this is the one that is walked across lines.
+    block: ?CommentDelimiter = null,
+
     /// `#` throughout — YAML, TOML, fig, dotenv, `.properties`.
-    pub const hash: Comments = .{ .style = .hash, .line = .{ .open = "#" }, .trailing = .{ .open = "#" } };
+    pub const hash: Comments = .{ .line = .{ .open = "#" }, .trailing = .{ .open = "#" } };
 
     /// `//` throughout — ZON, which follows Zig.
-    pub const slashes: Comments = .{ .style = .slashes, .line = .{ .open = "//" }, .trailing = .{ .open = "//" } };
+    pub const slashes: Comments = .{ .line = .{ .open = "//" }, .trailing = .{ .open = "//" } };
 };
 
 /// How a section format spells a header line that opens a container of its

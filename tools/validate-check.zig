@@ -164,7 +164,7 @@ const cases = [_]Case{
     .{
         .name = "trailing comment marker with no line comment marker",
         .syntax_body =
-        \\.comments = .{ .style = .hash, .line = null, .trailing = .{ .open = "#" } },
+        \\.comments = .{ .line = null, .trailing = .{ .open = "#" } },
         \\.kv_sep = ": ", .empty_map_literal = "{}",
         ,
         .expect = "trailing comment marker but no line comment marker",

@@ -33,9 +33,11 @@ export interface CommentDelimiter {
 /** A format's comment surface. `style` selects the owned-comment-block
  *  scanner; `line` is the own-line delimiter, `trailing` the same-line one. */
 export interface Comments {
-  style: "hash" | "slashes" | "semicolon" | "xml_comment";
   line?: CommentDelimiter | null;
   trailing?: CommentDelimiter | null;
+  /** A paired comment that may run over several lines (`/*`, `*\/`), which
+   *  the owned-comment scan walks as a unit. */
+  block?: CommentDelimiter | null;
 }
 
 /** How a section format spells a header line that opens a container. */

@@ -60,10 +60,10 @@
 use std::io::{BufRead, Write};
 
 use crate::language::{
-    ClosedContainers, CommentDelimiter, CommentForm, CommentRow, CommentSlot, CommentStyle,
-    Comments, Description, Dialect, DirectiveRow, Language, LanguageError, Literal, MentionKind,
-    MentionRow, NativeKinds, NodeKind, NodeRow, NodeTable, PrintOptions, RegionRow, RenderArgs,
-    Renderer, Renderers, SectionHeader, Splice, Syntax,
+    ClosedContainers, CommentDelimiter, CommentForm, CommentRow, CommentSlot, Comments,
+    Description, Dialect, DirectiveRow, Language, LanguageError, Literal, MentionKind, MentionRow,
+    NativeKinds, NodeKind, NodeRow, NodeTable, PrintOptions, RegionRow, RenderArgs, Renderer,
+    Renderers, SectionHeader, Splice, Syntax,
 };
 use crate::{Capabilities, Document, ExtKind, Format, SerializeOptions, Span, Value};
 
@@ -501,17 +501,9 @@ pub fn syntax_to_value(x: &Syntax) -> Value {
         (
             "comments",
             map(vec![
-                (
-                    "style",
-                    s(match x.comments.style {
-                        CommentStyle::Hash => "hash",
-                        CommentStyle::Slashes => "slashes",
-                        CommentStyle::Semicolon => "semicolon",
-                        CommentStyle::XmlComment => "xml_comment",
-                    }),
-                ),
                 ("line", delimiter_to_value(&x.comments.line)),
                 ("trailing", delimiter_to_value(&x.comments.trailing)),
+                ("block", delimiter_to_value(&x.comments.block)),
             ]),
         ),
         ("kv_sep", opt_s(&x.kv_sep)),
@@ -586,18 +578,9 @@ pub fn syntax_from_value(v: &Value) -> Result<Syntax, LanguageError> {
     let comments = v.get("comments");
     Ok(Syntax {
         comments: Comments {
-            style: match comments
-                .and_then(|c| c.get("style"))
-                .and_then(Value::as_str)
-                .unwrap_or("hash")
-            {
-                "slashes" => CommentStyle::Slashes,
-                "semicolon" => CommentStyle::Semicolon,
-                "xml_comment" => CommentStyle::XmlComment,
-                _ => CommentStyle::Hash,
-            },
             line: delimiter_from_value(comments.and_then(|c| c.get("line"))),
             trailing: delimiter_from_value(comments.and_then(|c| c.get("trailing"))),
+            block: delimiter_from_value(comments.and_then(|c| c.get("block"))),
         },
         kv_sep: opt_str_of(v.get("kv_sep")),
         flow_kv_sep_from_siblings: b("flow_kv_sep_from_siblings", d.flow_kv_sep_from_siblings),

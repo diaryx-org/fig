@@ -1105,9 +1105,9 @@ pub struct FigCommentDelimiter {
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct FigComments {
-    pub style: c_int,
     pub line: FigCommentDelimiter,
     pub trailing: FigCommentDelimiter,
+    pub block: FigCommentDelimiter,
 }
 
 /// Mirror of `FigSectionHeader`.

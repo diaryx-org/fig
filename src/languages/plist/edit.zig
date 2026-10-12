@@ -51,7 +51,7 @@ const Plist = @import("plist.zig").Language;
 // obeys the exact same literal-else-string rules the fig language documents
 // (Norway-safe booleans, leading-zero-stays-string, datetime sniffing). Pure
 // functions on caller-owned slices; compiles regardless of `-Dfig`.
-const lang = @import("../manifest.zig");
+const lang = @import("../../kit/manifest.zig");
 
 
 // ── value rendering ────────────────────────────────────────────────────────────

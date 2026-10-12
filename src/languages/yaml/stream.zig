@@ -11,7 +11,7 @@ const AST = @import("../../kit/ast/ast.zig");
 const Document = @import("../../kit/document.zig");
 const Span = @import("../../kit/span.zig");
 const Parser = @import("parser.zig");
-const lang = @import("../manifest.zig");
+const lang = @import("../../kit/manifest.zig");
 
 /// One document within a multi-document YAML stream, located in *outer-source*
 /// byte coordinates. `content` is the exact slice handed to the single-document

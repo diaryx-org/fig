@@ -22,7 +22,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 const Runtime = @import("runtime.zig");
-const manifest = @import("manifest.zig");
+const manifest = @import("../kit/manifest.zig");
 const Language = @import("language.zig");
 const AST = @import("../kit/ast/ast.zig");
 const Span = @import("../kit/span.zig");

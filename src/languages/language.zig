@@ -2,7 +2,7 @@ const Serialize = @import("../serialize.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const build_options = @import("build_options");
-const manifest = @import("manifest.zig");
+const manifest = @import("../kit/manifest.zig");
 const Runtime = @import("runtime.zig");
 
 pub const Language = @This();

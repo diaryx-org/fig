@@ -21,6 +21,9 @@ pub const AST = @import("ast/ast.zig");
 pub const Document = @import("document.zig");
 pub const table = @import("table.zig");
 pub const convert = @import("convert.zig");
+/// The contract's declarations and C shapes, which a language fills.
+pub const manifest = @import("manifest.zig");
+pub const abi = @import("abi.zig");
 pub const Unicode = @import("unicode.zig");
 pub const json_string = @import("json_string.zig");
 pub const ascii = @import("ascii.zig");
@@ -33,6 +36,8 @@ test {
     _ = Document;
     _ = table;
     _ = convert;
+    _ = manifest;
+    _ = abi;
     _ = literal;
     _ = lines;
     _ = parse_diagnostic;

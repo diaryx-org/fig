@@ -675,7 +675,7 @@ test "a runtime target is warned about comments only by what its syntax declares
     try b.setComments(k, .{ .leading = &.{.{ .text = "note", .style = .line }} });
     var ast = try b.finish(m);
 
-    const manifest = @import("languages/manifest.zig");
+    const manifest = @import("kit/manifest.zig");
     var reg: Runtime.Registered = .{ .vt = undefined, .name = "t", .caps = .{ .serialize = true }, .syntax = null, .samples = &.{}, .entries = &.{} };
     var entry: Runtime.Entry = .{ .index = 0, .abi = 0, .language = &reg, .name = "t", .extensions = &.{}, .splice = .literal, .empty_doc_seed = null, .syntax = null };
 

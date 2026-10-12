@@ -1,6 +1,6 @@
 const nestedtext = @This();
 const Document = @import("../../kit/document.zig");
-const lang = @import("../manifest.zig");
+const lang = @import("../../kit/manifest.zig");
 
 pub const Parser = @import("parser.zig");
 pub const Tokenizer = @import("tokenizer.zig");

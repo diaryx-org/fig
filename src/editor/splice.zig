@@ -18,7 +18,7 @@
 
 const std = @import("std");
 const Span = @import("../kit/span.zig");
-const lang = @import("../languages/manifest.zig");
+const lang = @import("../kit/manifest.zig");
 
 // The line helpers languages share are the kit's (`kit/lines.zig`).
 const lines = @import("../kit/lines.zig");

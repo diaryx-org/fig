@@ -2,7 +2,7 @@ const toml = @This();
 const std = @import("std");
 const AST = @import("../../kit/ast/ast.zig");
 const Document = @import("../../kit/document.zig");
-const lang = @import("../manifest.zig");
+const lang = @import("../../kit/manifest.zig");
 
 pub const Parser = @import("parser.zig");
 pub const Tokenizer = @import("tokenizer.zig");

@@ -33,7 +33,7 @@ const log = std.log.scoped(.editor);
 // instead; see `languages/manifest.zig` and
 // `docs/proposals/language-interface.md`. A leaf module, so importing it here
 // (and from every `<lang>/<lang>.zig`) pulls in nothing else.
-const lang = @import("languages/manifest.zig");
+const lang = @import("kit/manifest.zig");
 const bare_literal = @import("kit/literal.zig");
 
 // The RENDERING half of the interface — the part `syntax` can't express.

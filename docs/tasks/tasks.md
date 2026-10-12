@@ -3,7 +3,7 @@ title = Tasks
 description = Deferred work with a done state — a bug is a task with a repro
 author = adammharris
 created = 2026-09-04
-updated = 2026-10-11
+updated = 2026-10-12
 part_of = [docs](/docs/docs.md)
 contents
 > * [A source build of fig-sys on a Mac targets the build machine's macOS](/docs/tasks/source-build-deployment-target.md)
@@ -15,6 +15,7 @@ contents
 > * [A comment appended after a .properties continuation joins the value](/docs/tasks/properties-comment-after-continuation.md)
 > * [`set` cannot append to a sequence that is not there yet](/docs/tasks/set-creates-a-missing-sequence.md)
 > * [Compiled TOML 1.0, YAML 1.1 and YAML streams cannot be scored by fig-conformance](/docs/tasks/compiled-dialects-unreachable-by-conformance.md)
+> * [Deleting the last item of a YAML block list leaves the key null](/docs/tasks/yaml-block-list-emptied-to-null.md)
 > * [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 

@@ -1316,7 +1316,9 @@ typedef struct FigSyntax {
 
 // One dialect of a language. The first row's `name` must be the language's,
 // and is what fig_format_by_name resolves. `extensions` is a NULL-terminated
-// array. `splice`: how edit text is taken — 0 literal, 1 json_string, 2 raw.
+// array. `splice`: how edit text is taken — 0 literal, 1 escaped (quoted, with
+// `"` and `\` escaped and control characters as `\n`-style or `\u00XX`
+// escapes), 2 raw.
 // `empty_doc_seed`: what `set` writes to a file that does not exist yet, or
 // NULL to refuse creation. `syntax`: this dialect's own where it differs
 // from the language's, else NULL.

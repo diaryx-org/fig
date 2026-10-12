@@ -465,7 +465,7 @@ pub const DialectDesc = extern struct {
     name: [*:0]const u8,
     /// NULL-terminated array of extensions, or null for none.
     extensions: ?[*]const ?[*:0]const u8 = null,
-    /// `manifest.SpliceStyle` ordinal: 0 literal, 1 json_string, 2 raw.
+    /// `manifest.SpliceStyle` ordinal: 0 literal, 1 escaped, 2 raw.
     splice: c_int = 0,
     /// What `set` seeds a missing file with; null refuses creation.
     empty_doc_seed: ?[*:0]const u8 = null,

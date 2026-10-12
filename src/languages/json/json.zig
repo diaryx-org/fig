@@ -64,7 +64,7 @@ pub const Language = struct {
             // ambiguous with a looser format's reading of it.
             .sniff_rank = 0,
             .deserializable = true,
-            .splice = .json_string,
+            .splice = .escaped,
             .empty_doc_seed = "{}\n",
             .embed = .{
                 .fence_tag = "json",
@@ -85,7 +85,7 @@ pub const Language = struct {
             // document.
             .sniff_rank = null,
             .deserializable = true,
-            .splice = .json_string,
+            .splice = .escaped,
             .empty_doc_seed = "{}\n",
             .print_name = "printc",
             .print_node_name = "printNodec",
@@ -101,7 +101,7 @@ pub const Language = struct {
             // Right after plain JSON: a superset of it, and still stricter than
             // everything below.
             .sniff_rank = 1,
-            .splice = .json_string,
+            .splice = .escaped,
             .empty_doc_seed = "{}\n",
             .print_name = "print5",
             .print_node_name = "printNode5",

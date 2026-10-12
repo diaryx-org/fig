@@ -157,7 +157,7 @@ fn every_description_type_is_buildable_without_a_struct_literal() {
 
     let mut dialect = Dialect::new("kv5");
     dialect.extensions = vec!["kv5".into()];
-    dialect.splice = Splice::JsonString;
+    dialect.splice = Splice::Escaped;
     d.dialects.push(dialect);
 
     let mut native = NativeKinds::default();

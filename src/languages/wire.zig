@@ -325,7 +325,7 @@ fn vtableFromDescription(a: Allocator, t: *Transport, desc: std.json.Value) !Run
                 for (ev.array.items) |x| if (x == .string) try exts.append(a, try zstr(a, x.string));
             };
             try exts.append(a, null);
-            const splice: c_int = if (d.object.get("splice")) |sp| (if (sp == .string) (if (std.mem.eql(u8, sp.string, "json_string")) 1 else if (std.mem.eql(u8, sp.string, "raw")) 2 else 0) else 0) else 0;
+            const splice: c_int = if (d.object.get("splice")) |sp| (if (sp == .string) (if (std.mem.eql(u8, sp.string, "escaped")) 1 else if (std.mem.eql(u8, sp.string, "raw")) 2 else 0) else 0) else 0;
             const pv = try printsOfWire(a, d.object.get("prints"));
             try dialects.append(a, .{
                 .name = try zstr(a, dn.string),

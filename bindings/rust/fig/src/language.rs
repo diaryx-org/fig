@@ -195,8 +195,8 @@ pub enum Splice {
     /// As written.
     #[default]
     Literal,
-    /// As a JSON string.
-    JsonString,
+    /// Quoted, with `"`, `\` and control characters escaped.
+    Escaped,
     /// Raw bytes, no quoting.
     Raw,
 }
@@ -1308,7 +1308,7 @@ impl Registration {
                 extensions: extension_ptrs.as_ptr(),
                 splice: match d.splice {
                     Splice::Literal => 0,
-                    Splice::JsonString => 1,
+                    Splice::Escaped => 1,
                     Splice::Raw => 2,
                 },
                 empty_doc_seed: seed.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()),

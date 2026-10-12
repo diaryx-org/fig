@@ -294,9 +294,12 @@ pub const SpliceStyle = enum {
     /// Spliced in verbatim as source, so a string value needs its own quotes —
     /// YAML, TOML, ZON, fig.
     literal,
-    /// Wrapped as a JSON string first (`edit_ops.jsonifyEdit`), so `"`/`\` in
-    /// the text are escaped rather than taken as syntax — the JSON family.
-    json_string,
+    /// Wrapped as a quoted, escaped string first (`edit_ops.jsonifyEdit`): in
+    /// `"` quotes, with `"` and `\` escaped as `\"` and `\\`, the C0 controls
+    /// with a short form as `\b \f \n \r \t` and the rest as `\u00XX`, and
+    /// every other byte as itself. So `"` and `\` in the text are escaped
+    /// rather than taken as syntax — the JSON family.
+    escaped,
     /// Written as raw characters, so only the format's own separators can
     /// break it — INI, dotenv, `.properties`, plist, NestedText. (plist and
     /// NestedText *render* the text rather than splicing it.)

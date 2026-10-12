@@ -482,7 +482,7 @@ fn reportBadEditTextImpl(term: *Io.Terminal, file: []const u8, format: ?Format, 
     switch (style) {
         // The JSON family splices its keys, comments and `--raw` values as
         // source, like every other literal format.
-        .literal, .json_string => try term.writer.print(
+        .literal, .escaped => try term.writer.print(
             ": the {s} is spliced in verbatim, as source text — so it has to stand on its own as a valid {s} literal.\n",
             .{ kind.noun(), if (format) |f| types.name(f) else "document" },
         ),

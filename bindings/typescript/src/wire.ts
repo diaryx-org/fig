@@ -122,7 +122,7 @@ export interface Dialect {
   name: string;
   extensions?: string[];
   /** How edit text is taken: as a literal, as a JSON string, or raw. */
-  splice?: "literal" | "json_string" | "raw";
+  splice?: "literal" | "escaped" | "raw";
   /** What `set` writes to a file that does not exist yet; `null` refuses
    *  creation. */
   empty_doc_seed?: string | null;

@@ -41,7 +41,7 @@
 //!
 //! A description is `{"name","caps":{"read","edit","serialize","references"},
 //! "max_mapping_depth":n|null,"lossless":{…}|null,"syntax":{…}|null,
-//! "dialects":[{"name","extensions":[…],"splice":"literal|json_string|raw",
+//! "dialects":[{"name","extensions":[…],"splice":"literal|escaped|raw",
 //! "empty_doc_seed":"…"|null,"syntax":{…}|null,"prints":{…}|null}],
 //! "samples":[…],"renderers":["value",…],"split_stream":bool}`; a syntax is the fields of
 //! [`Syntax`] by name, and a prints the fields of [`Prints`], with enums as
@@ -361,7 +361,7 @@ pub fn description_to_value(d: &Description) -> Value {
                                 "splice",
                                 s(match dl.splice {
                                     Splice::Literal => "literal",
-                                    Splice::JsonString => "json_string",
+                                    Splice::Escaped => "escaped",
                                     Splice::Raw => "raw",
                                 }),
                             ),
@@ -411,7 +411,7 @@ pub fn description_from_value(v: &Value) -> Result<Description, LanguageError> {
                 .and_then(Value::as_str)
                 .unwrap_or("literal")
             {
-                "json_string" => Splice::JsonString,
+                "escaped" => Splice::Escaped,
                 "raw" => Splice::Raw,
                 _ => Splice::Literal,
             },

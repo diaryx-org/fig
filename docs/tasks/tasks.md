@@ -14,6 +14,7 @@ contents
 > * [A trailing comment on a CRLF line is spliced between the CR and the LF](/docs/tasks/trailing-comment-splits-crlf.md)
 > * [A trailing comment on a ZON multiline string becomes part of the string](/docs/tasks/zon-trailing-comment-in-multiline-string.md)
 > * [A comment appended after a .properties continuation joins the value](/docs/tasks/properties-comment-after-continuation.md)
+> * [`set` cannot append to a sequence that is not there yet](/docs/tasks/set-creates-a-missing-sequence.md)
 > * [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 

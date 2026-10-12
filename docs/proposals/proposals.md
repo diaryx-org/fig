@@ -17,6 +17,7 @@ contents
 > * [Compact objects](compact-objects.md)
 > * [Conformance suite](conformance-suite.md)
 > * [Entry attributes](/docs/proposals/entry-attributes.md)
+> * [JSON-RPC wire](/docs/proposals/json-rpc-wire.md)
 ```
 
 # Proposals

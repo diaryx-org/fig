@@ -706,6 +706,21 @@ pub fn tableFromJson(v: std.json.Value, out: *Runtime.Table) !void {
             try out.comments.append(a, .{ .node = try u32Of(c.object.get("node")), .slot = slot, .style = style, .text = if (text.isAbsent()) try out.addString("") else text });
         }
     };
+    if (o.get("diagnostics")) |dv| if (dv == .array) {
+        for (dv.array.items) |d| {
+            if (d != .object) return error.MalformedTable;
+            const sp = try spanOf(d.object.get("span"));
+            const sev = d.object.get("severity");
+            const warning = sev != null and sev.? == .string and std.mem.eql(u8, sev.?.string, "warning");
+            try out.diagnostics.append(a, .{
+                .severity = if (warning) T.diagnostic_warning else T.diagnostic_error,
+                .start = if (sp.start == T.none) 0 else sp.start,
+                .end = sp.end,
+                .message = try textOf(out, d.object.get("message")),
+                .label = try textOf(out, d.object.get("label")),
+            });
+        }
+    };
     if (o.get("directives")) |dv| if (dv == .array) {
         for (dv.array.items) |d| {
             if (d != .object) return error.MalformedTable;

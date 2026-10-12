@@ -597,6 +597,21 @@ pub fn reportRuntimePrintError(term: *Io.Terminal, err: anyerror) noreturn {
 /// `--strict` contract for a language's authoring-time lints (fig's, JSON's
 /// `duplicate_key`, …), so each language's call site is one line instead of
 /// repeating the print/flush/strict-abort sequence.
+/// `handleParseWarnings` for warnings already rendered — a runtime
+/// language's, which arrive as messages rather than codes.
+pub fn handleRenderedWarnings(term: *Io.Terminal, source: []const u8, file: []const u8, kind_name: []const u8, warnings: []const fig.ParseDiagnostic.Rendered, quiet: bool, strict: bool) !void {
+    if (warnings.len == 0) return;
+    if (!quiet) {
+        for (warnings) |w| try printDiag(term, source, file, w.offset, w.end, "warning", .yellow, w.message, w.short_label);
+        try term.writer.flush();
+    }
+    if (strict) {
+        try term.writer.print("error: {d} {s} warning(s); --strict aborts.\n", .{ warnings.len, kind_name });
+        try term.writer.flush();
+        std.process.exit(1);
+    }
+}
+
 pub fn handleParseWarnings(term: *Io.Terminal, source: []const u8, file: []const u8, kind_name: []const u8, warnings: anytype, comptime describeFn: anytype, comptime labelFn: anytype, quiet: bool, strict: bool) !void {
     if (warnings.len == 0) return;
     if (!quiet) {

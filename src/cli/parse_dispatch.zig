@@ -203,6 +203,12 @@ pub const Reports = struct {
     /// over a message and an offset rather than a code this file could
     /// describe. `short_label` is the language's name.
     runtime: ?fig.ParseDiagnostic.Rendered = null,
+    /// Every diagnostic a runtime language's parse left: the errors of a
+    /// failure, the warnings of a success; and the name they are announced
+    /// under.
+    runtime_errors: std.ArrayList(fig.ParseDiagnostic.Rendered) = .empty,
+    runtime_warnings: std.ArrayList(fig.ParseDiagnostic.Rendered) = .empty,
+    runtime_label: []const u8 = "",
 
     /// Print a `file:line:col` teaching message for each language that recorded
     /// a single parse diagnostic. At most one ever has: only the format that
@@ -227,6 +233,8 @@ pub const Reports = struct {
     /// it reports errors but has grown no authoring lints, so there is nothing
     /// to announce rather than an empty list to walk.
     pub fn reportWarnings(self: *const Reports, term: *Io.Terminal, source: []const u8, file: []const u8, quiet: bool, strict: bool) !void {
+        if (self.runtime_warnings.items.len > 0)
+            try diag_report.handleRenderedWarnings(term, source, file, self.runtime_label, self.runtime_warnings.items, quiet, strict);
         inline for (reporting) |r| {
             if (comptime r[1] != void and @hasDecl(r[1].Parser, "Warning")) {
                 const W = r[1].Parser.Warning;
@@ -241,6 +249,7 @@ pub const Reports = struct {
     /// the single `diag` when a language recorded one but no error list. Null
     /// when no language recorded anything.
     pub fn renderErrors(self: *const Reports, allocator: std.mem.Allocator) !?[]const fig.ParseDiagnostic.Rendered {
+        if (self.runtime_errors.items.len > 0) return self.runtime_errors.items;
         if (self.runtime) |d| {
             const one = try allocator.alloc(fig.ParseDiagnostic.Rendered, 1);
             one[0] = d;
@@ -268,6 +277,7 @@ pub const Reports = struct {
     /// The warnings twin of `renderErrors`. Skips the languages with no
     /// `Warning` type, same as `reportWarnings`.
     pub fn renderWarnings(self: *const Reports, allocator: std.mem.Allocator) !?[]const fig.ParseDiagnostic.Rendered {
+        if (self.runtime_warnings.items.len > 0) return self.runtime_warnings.items;
         inline for (reporting) |r| {
             if (comptime r[1] != void and @hasDecl(r[1].Parser, "Warning")) {
                 const W = r[1].Parser.Warning;
@@ -339,10 +349,17 @@ pub fn parseSliceAs(format: Format, spec: Spec, allocator: std.mem.Allocator, co
         // `file:line:col` report the compiled parsers get.
         _ => {
             const e = types.runtimeEntry(format) orelse return error.FormatDisabled;
-            var parser: fig.Runtime.Language.Parser = .{ .allocator = allocator };
+            var parser: fig.Runtime.Language.Parser = .{
+                .allocator = allocator,
+                .errors = &reports.runtime_errors,
+                .warnings = &reports.runtime_warnings,
+            };
+            reports.runtime_label = e.name;
             return fig.Runtime.Language.parse(&parser, content, e.typeOf()) catch |err| {
                 if (err == error.RuntimeParseFailed) {
-                    reports.runtime = .{
+                    // The language's own first error where it left one, with
+                    // its span and label; else the message and offset it gave.
+                    reports.runtime = if (reports.runtime_errors.items.len > 0) reports.runtime_errors.items[0] else .{
                         .offset = parser.last_error.byte_offset,
                         .message = try allocator.dupe(u8, parser.lastMessage()),
                         .short_label = e.name,

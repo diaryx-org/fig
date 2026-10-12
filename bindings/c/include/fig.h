@@ -1161,6 +1161,13 @@ typedef struct FigTableMention { uint32_t node, start, end; uint8_t kind, reserv
 // those it read, in source order, and a print of a whole document (never of
 // a fragment) is handed them back.
 typedef struct FigTableDirective { FigText handle; FigText prefix; } FigTableDirective;
+// What a parse found: an error (a parse that fails may still leave the ones it
+// found, and the first is the one a caller sees) or a warning (a lint on
+// input that parses). `end` is FIG_ROW_NONE for a point; `label` is a few
+// words for a caret, and may be absent.
+typedef struct FigTableDiagnostic { uint8_t severity, reserved[3]; uint32_t start, end; FigText message; FigText label; } FigTableDiagnostic;
+#define FIG_DIAGNOSTIC_ERROR   0
+#define FIG_DIAGNOSTIC_WARNING 1
 
 #define FIG_TAG_UNSTATED     0
 #define FIG_TAG_CUSTOM       1
@@ -1196,6 +1203,7 @@ FigStatus fig_table_comment(FigTable *t, uint32_t node, uint8_t slot, uint8_t st
 FigStatus fig_table_region(FigTable *t, uint32_t node, uint32_t start, uint32_t end);
 FigStatus fig_table_mention(FigTable *t, uint32_t node, uint32_t start, uint32_t end, uint8_t kind);
 FigStatus fig_table_directive(FigTable *t, FigText handle, FigText prefix);
+FigStatus fig_table_diagnostic(FigTable *t, uint8_t severity, uint32_t start, uint32_t end, FigText message, FigText label);
 
 // What print is handed: every list of a table fig filled. A text names
 // `source` (empty on the print side) or `strings`. A print may be handed a
@@ -1218,6 +1226,7 @@ typedef struct FigTableView {
     const FigTableSpan      *regions;    size_t region_count;
     const FigTableMention   *mentions;   size_t mention_count;
     const FigTableDirective *directives; size_t directive_count;
+    const FigTableDiagnostic *diagnostics; size_t diagnostic_count;
 } FigTableView;
 
 // The subset of FigSerializeOptions a printer outside fig is told. fig writes

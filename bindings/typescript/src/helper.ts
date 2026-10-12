@@ -60,6 +60,7 @@ export {
   type MentionRow,
   type CommentRow,
   type DirectiveRow,
+  type DiagnosticRow,
   type StreamRange,
   type Prints,
 } from "./wire.ts";

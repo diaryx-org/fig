@@ -62,7 +62,6 @@ const Printer = @import("printer.zig");
 const Writer = std.Io.Writer;
 const log = std.log.scoped(.editor);
 
-
 const lineStartBefore = splice.lineStartBefore;
 const lineEndAfter = splice.lineEndAfter;
 const firstNonSpace = splice.firstNonSpace;

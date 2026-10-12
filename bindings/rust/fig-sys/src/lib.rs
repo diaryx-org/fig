@@ -1117,6 +1117,21 @@ pub struct FigTableDirective {
     pub prefix: FigText,
 }
 
+/// Mirror of `FigTableDiagnostic`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FigTableDiagnostic {
+    pub severity: u8,
+    pub reserved: [u8; 3],
+    pub start: u32,
+    pub end: u32,
+    pub message: FigText,
+    pub label: FigText,
+}
+
+pub const FIG_DIAGNOSTIC_ERROR: u8 = 0;
+pub const FIG_DIAGNOSTIC_WARNING: u8 = 1;
+
 /// The node table a `parse` fills: fig's, opaque, written through the
 /// `fig_table_*` calls.
 #[repr(C)]
@@ -1153,6 +1168,8 @@ pub struct FigTableView {
     pub mention_count: usize,
     pub directives: *const FigTableDirective,
     pub directive_count: usize,
+    pub diagnostics: *const FigTableDiagnostic,
+    pub diagnostic_count: usize,
 }
 
 /// Mirror of `FigPrintOptions`.
@@ -1414,6 +1431,14 @@ unsafe extern "C" {
         kind: u8,
     ) -> FigStatus;
     pub fn fig_table_directive(t: *mut FigTable, handle: FigText, prefix: FigText) -> FigStatus;
+    pub fn fig_table_diagnostic(
+        t: *mut FigTable,
+        severity: u8,
+        start: u32,
+        end: u32,
+        message: FigText,
+        label: FigText,
+    ) -> FigStatus;
     pub fn fig_stream_split(
         input: *const u8,
         input_len: usize,

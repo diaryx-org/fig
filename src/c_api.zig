@@ -458,6 +458,16 @@ pub export fn fig_table_mention(t: ?*FigTable, node: u32, start: u32, end: u32, 
     return .ok;
 }
 
+/// What a parse found: FIG_DIAGNOSTIC_ERROR (a failing parse may leave the
+/// errors it found) or FIG_DIAGNOSTIC_WARNING, at `[start, end)` (`end`
+/// FIG_ROW_NONE for a point), with a message and a short label.
+pub export fn fig_table_diagnostic(t: ?*FigTable, severity: u8, start: u32, end: u32, message: FigText, label: FigText) FigStatus {
+    const tbl = t orelse return .invalid_argument;
+    if (severity > Runtime.table.diagnostic_warning) return .invalid_argument;
+    tbl.diagnostics.append(tbl.allocator, .{ .severity = severity, .start = start, .end = end, .message = message, .label = label }) catch return .out_of_memory;
+    return .ok;
+}
+
 /// A tag-handle declaration of the document (YAML's `%TAG`).
 pub export fn fig_table_directive(t: ?*FigTable, handle: FigText, prefix: FigText) FigStatus {
     const tbl = t orelse return .invalid_argument;

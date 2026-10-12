@@ -152,6 +152,22 @@ pub const Mention = extern struct { node: u32, start: u32, end: u32, kind: u8, r
 /// A tag-handle declaration of the document (YAML's `%TAG`).
 pub const Directive = extern struct { handle: Text, prefix: Text };
 
+pub const diagnostic_error: u8 = 0;
+pub const diagnostic_warning: u8 = 1;
+
+/// What a parse found worth telling: an error (a parse that fails may still
+/// leave the ones it found) or a warning (a lint on input that parses), its
+/// span — `end` may be `none` for a point — a sentence that says what is
+/// wrong and how to fix it, and a few words for the caret's label.
+pub const Diagnostic = extern struct {
+    severity: u8,
+    reserved: [3]u8 = .{ 0, 0, 0 },
+    start: u32,
+    end: u32 = none,
+    message: Text,
+    label: Text = .{},
+};
+
 /// What a `print` is handed, and what any reader of a table reads: every
 /// list as a pointer and a count. `size` is fig's `sizeof`, so a reader
 /// built against an older header reads the prefix it knows.
@@ -181,6 +197,8 @@ pub const View = extern struct {
     mention_count: usize = 0,
     directives: ?[*]const Directive = null,
     directive_count: usize = 0,
+    diagnostics: ?[*]const Diagnostic = null,
+    diagnostic_count: usize = 0,
 
     pub fn rowSlice(self: *const View) []const Row {
         return slice(Row, self.rows, self.row_count);
@@ -244,6 +262,7 @@ pub const Table = struct {
     regions: std.ArrayList(SpanFact) = .empty,
     mentions: std.ArrayList(Mention) = .empty,
     directives: std.ArrayList(Directive) = .empty,
+    diagnostics: std.ArrayList(Diagnostic) = .empty,
 
     pub fn init(allocator: Allocator, source: []const u8) Table {
         return .{ .allocator = allocator, .source = source };
@@ -262,6 +281,7 @@ pub const Table = struct {
         self.regions.deinit(a);
         self.mentions.deinit(a);
         self.directives.deinit(a);
+        self.diagnostics.deinit(a);
         self.* = undefined;
     }
 
@@ -331,6 +351,8 @@ pub const Table = struct {
             .mention_count = self.mentions.items.len,
             .directives = ptrOf(Directive, self.directives.items),
             .directive_count = self.directives.items.len,
+            .diagnostics = ptrOf(Diagnostic, self.diagnostics.items),
+            .diagnostic_count = self.diagnostics.items.len,
         };
     }
 };

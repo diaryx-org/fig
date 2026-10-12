@@ -50,6 +50,7 @@ const Serialize = @import("../serialize.zig");
 const Document = @import("../kit/document.zig");
 const Span = @import("../kit/span.zig");
 const manifest = @import("../kit/manifest.zig");
+const ParseDiagnostic = @import("../kit/parse_diagnostic.zig");
 const Languages = @import("language.zig");
 const editor = @import("../editor.zig");
 
@@ -840,6 +841,11 @@ pub const Language = struct {
         allocator: Allocator,
         /// The vtable's diagnostic for the most recent failed parse.
         last_error: ErrorInfo = .empty,
+        /// Where a caller wants the parse's diagnostics — the errors a failed
+        /// parse left and the warnings a clean one raised — each message
+        /// copied in `allocator`. Null keeps none.
+        errors: ?*std.ArrayList(ParseDiagnostic.Rendered) = null,
+        warnings: ?*std.ArrayList(ParseDiagnostic.Rendered) = null,
 
         pub fn lastMessage(self: *const Parser) []const u8 {
             return self.last_error.text();
@@ -879,6 +885,7 @@ pub const Language = struct {
         defer tbl.deinit();
         parser.last_error = .empty;
         const rc = reg.vt.parse(reg.vt.ctx, e.dialectZ(), Str.of(input), &tbl, &parser.last_error);
+        try collectDiagnostics(parser, &tbl);
         if (rc != 0) return error.RuntimeParseFailed;
         var doc = tableToDocument(parser.allocator, input, &tbl) catch |err| {
             parser.last_error.set(switch (err) {
@@ -890,6 +897,19 @@ pub const Language = struct {
         };
         if (e.syntax orelse reg.syntax) |sx| doc.ast.merge_key = sx.merge_key;
         return doc;
+    }
+
+    /// The table's diagnostics, into the sinks `parser` names.
+    fn collectDiagnostics(parser: *Parser, tbl: *const Table) Allocator.Error!void {
+        for (tbl.diagnostics.items) |d| {
+            const sink = (if (d.severity == table.diagnostic_warning) parser.warnings else parser.errors) orelse continue;
+            try sink.append(parser.allocator, .{
+                .offset = d.start,
+                .end = if (d.end == table.none) null else d.end,
+                .message = try parser.allocator.dupe(u8, tbl.textOf(d.message) orelse ""),
+                .short_label = try parser.allocator.dupe(u8, tbl.textOf(d.label) orelse ""),
+            });
+        }
     }
 
     pub const print = Printer.print;

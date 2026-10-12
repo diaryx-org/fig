@@ -61,9 +61,9 @@ use std::io::{BufRead, Write};
 
 use crate::language::{
     ClosedContainers, CommentDelimiter, CommentForm, CommentRow, CommentSlot, Comments,
-    CommentsPrinted, Description, Dialect, DirectiveRow, Language, LanguageError, Literal,
-    MentionKind, MentionRow, NativeKinds, NodeKind, NodeRow, NodeTable, PrintOptions, Prints,
-    RegionRow, RenderArgs, Renderer, Renderers, SectionHeader, Splice, Syntax,
+    CommentsPrinted, Description, DiagnosticRow, Dialect, DirectiveRow, Language, LanguageError,
+    Literal, MentionKind, MentionRow, NativeKinds, NodeKind, NodeRow, NodeTable, PrintOptions,
+    Prints, RegionRow, RenderArgs, Renderer, Renderers, SectionHeader, Severity, Splice, Syntax,
 };
 use crate::{Capabilities, Document, ExtKind, Format, SerializeOptions, Span, Value};
 
@@ -908,6 +908,27 @@ pub fn table_to_value(t: &NodeTable) -> Value {
             .collect();
         fields.push(("directives", Value::Seq(directives)));
     }
+    if !t.diagnostics.is_empty() {
+        let diagnostics = t
+            .diagnostics
+            .iter()
+            .map(|d| {
+                map(vec![
+                    (
+                        "severity",
+                        s(match d.severity {
+                            Severity::Error => "error",
+                            Severity::Warning => "warning",
+                        }),
+                    ),
+                    ("span", span_v(d.span)),
+                    ("message", Value::Str(d.message.clone())),
+                    ("label", Value::Str(d.label.clone())),
+                ])
+            })
+            .collect();
+        fields.push(("diagnostics", Value::Seq(diagnostics)));
+    }
     map(fields)
 }
 
@@ -998,6 +1019,23 @@ pub fn table_from_value(v: &Value) -> Result<NodeTable, LanguageError> {
         t.directives.push(DirectiveRow {
             handle: str_field(d, "handle")?.to_owned(),
             prefix: str_field(d, "prefix")?.to_owned(),
+        });
+    }
+    for d in v.get("diagnostics").and_then(Value::as_seq).unwrap_or(&[]) {
+        t.diagnostics.push(DiagnosticRow {
+            severity: if d.get("severity").and_then(Value::as_str) == Some("warning") {
+                Severity::Warning
+            } else {
+                Severity::Error
+            },
+            span: opt_span_of(d.get("span"))?
+                .ok_or_else(|| LanguageError::new("a diagnostic has no span"))?,
+            message: str_field(d, "message")?.to_owned(),
+            label: d
+                .get("label")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
         });
     }
     Ok(t)

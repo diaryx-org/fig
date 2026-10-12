@@ -61,7 +61,6 @@ const splice = @import("../../kit/lines.zig");
 const NestedText = @import("nestedtext.zig").Language;
 const Parser = @import("parser.zig");
 
-
 const lineStartBefore = splice.lineStartBefore;
 const lineEndAfter = splice.lineEndAfter;
 const firstNonSpace = splice.firstNonSpace;

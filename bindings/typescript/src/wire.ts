@@ -313,6 +313,18 @@ export interface NodeTable {
   mentions?: MentionRow[];
   comments?: CommentRow[];
   directives?: DirectiveRow[];
+  /** What the parse found worth telling: warnings on input that parses. */
+  diagnostics?: DiagnosticRow[];
+}
+
+/** A diagnostic a parse raises: an error or a warning at `span` (byte
+ *  offsets), a sentence saying what is wrong and how to fix it, and a few
+ *  words for a caret's label. */
+export interface DiagnosticRow {
+  severity: "error" | "warning";
+  span: RowSpan;
+  message: string;
+  label?: string;
 }
 
 // ── the language ───────────────────────────────────────────────────────────

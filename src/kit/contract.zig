@@ -167,14 +167,51 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
             return 2;
         }
 
+        const P = L.Parser;
+        const reports = @hasDecl(P, "parseWithReport");
+
         fn parse(ctx: ?*anyopaque, dialect: [*:0]const u8, input: abi.Str, out: *table.Table, err: *abi.ErrorInfo) callconv(.c) c_int {
             _ = ctx;
             const t = typeOf(dialect) orelse return fail(err, "no such dialect");
-            var p: L.Parser = .{ .allocator = out.allocator };
-            var doc = L.parse(&p, input.slice() orelse "", t) catch |e| return fail(err, @errorName(e));
+            const src = input.slice() orelse "";
+            if (comptime !reports) {
+                var p: L.Parser = .{ .allocator = out.allocator };
+                var doc = L.parse(&p, src, t) catch |e| return fail(err, @errorName(e));
+                defer doc.deinit(out.allocator);
+                convert.emitDocument(out, &doc) catch return 3;
+                return 0;
+            }
+            // A parser with a report says why it refused, where, and what it
+            // would warn about on input it reads: each goes into the table's
+            // diagnostics, and a refusal's into `err` as well.
+            var report: P.Report = .{};
+            const parsed = P.parseWithReport(out.allocator, src, t, &report);
+            defer if (comptime @hasField(P.Report, "warnings")) out.allocator.free(report.warnings);
+            var doc = parsed catch |e| {
+                if (report.diag) |d| {
+                    addDiagnostic(out, table.diagnostic_error, d.offset, d.end, P.describe(d.code), P.shortLabel(d.code)) catch return 3;
+                    err.set(P.describe(d.code));
+                    err.byte_offset = d.offset;
+                    return 2;
+                }
+                return fail(err, @errorName(e));
+            };
             defer doc.deinit(out.allocator);
             convert.emitDocument(out, &doc) catch return 3;
+            if (comptime @hasField(P.Report, "warnings") and @hasDecl(P, "Warning")) {
+                for (report.warnings) |w| addDiagnostic(out, table.diagnostic_warning, w.offset, w.end, P.Warning.describeWarning(w.code), P.Warning.shortLabel(w.code)) catch return 3;
+            }
             return 0;
+        }
+
+        fn addDiagnostic(out: *table.Table, severity: u8, offset: usize, end: ?usize, message: []const u8, label: []const u8) !void {
+            try out.diagnostics.append(out.allocator, .{
+                .severity = severity,
+                .start = @intCast(offset),
+                .end = if (end) |e| @intCast(e) else table.none,
+                .message = try out.addString(message),
+                .label = try out.addString(label),
+            });
         }
 
         fn print(ctx: ?*anyopaque, dialect: [*:0]const u8, view: *const table.View, options: *const abi.PrintOptions, out: *abi.Str, err: *abi.ErrorInfo) callconv(.c) c_int {

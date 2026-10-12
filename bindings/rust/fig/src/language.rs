@@ -460,6 +460,10 @@ pub struct NodeTable {
     /// fragment — receives them back, to re-emit above any tag that uses
     /// one. Empty for a format without directives.
     pub directives: Vec<DirectiveRow>,
+    /// What the parse found worth telling: the errors a failing parse
+    /// found — the first is the one a caller sees — and the warnings of one
+    /// that succeeds. A print is handed none.
+    pub diagnostics: Vec<DiagnosticRow>,
 }
 
 impl NodeTable {
@@ -712,6 +716,41 @@ impl DirectiveRow {
             prefix: prefix.into(),
         }
     }
+}
+
+/// What a parse found: an error or a warning at `span` (`end` equal to
+/// `start` for a point), a sentence saying what is wrong and how to fix it,
+/// and a few words for a caret's label.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DiagnosticRow {
+    pub severity: Severity,
+    pub span: Span,
+    pub message: String,
+    pub label: String,
+}
+
+impl DiagnosticRow {
+    pub fn new(
+        severity: Severity,
+        span: Span,
+        message: impl Into<String>,
+        label: impl Into<String>,
+    ) -> Self {
+        DiagnosticRow {
+            severity,
+            span,
+            message: message.into(),
+            label: label.into(),
+        }
+    }
+}
+
+/// Whether a diagnostic stops the parse.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Severity {
+    Error,
+    Warning,
 }
 
 /// Where a comment sits on its node: the core's three comment anchors.
@@ -1635,6 +1674,24 @@ fn fill_table(t: *mut ffi::FigTable, table: &NodeTable) -> Result<(), LanguageEr
         let handle = text(&d.handle)?;
         let prefix = text(&d.prefix)?;
         check(unsafe { ffi::fig_table_directive(t, handle, prefix) })?;
+    }
+    for d in &table.diagnostics {
+        let severity = match d.severity {
+            Severity::Error => ffi::FIG_DIAGNOSTIC_ERROR,
+            Severity::Warning => ffi::FIG_DIAGNOSTIC_WARNING,
+        };
+        let message = text(&d.message)?;
+        let label = text(&d.label)?;
+        check(unsafe {
+            ffi::fig_table_diagnostic(
+                t,
+                severity,
+                d.span.start as u32,
+                d.span.end as u32,
+                message,
+                label,
+            )
+        })?;
     }
     Ok(())
 }

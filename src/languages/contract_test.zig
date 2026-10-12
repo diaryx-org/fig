@@ -55,3 +55,32 @@ test "every compiled language registers through the contract and reads its sampl
         }
     }
 }
+
+test "a language's diagnostics cross the contract: a refusal's message and offset, and the warnings of a clean parse" {
+    const L = Languages.of("dotenv");
+    if (L == void) return error.SkipZigTest;
+    defer Runtime.deinitAll();
+    const V = contract.VTable(L, "c-");
+    _ = try Runtime.register(testing.allocator, &V.vtable);
+    const e = Runtime.entryByName("c-dotenv").?;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var errors: std.ArrayList(@import("../kit/parse_diagnostic.zig").Rendered) = .empty;
+    var warnings: @TypeOf(errors) = .empty;
+
+    var p: Runtime.Language.Parser = .{ .allocator = a, .errors = &errors, .warnings = &warnings };
+    const doc = try Runtime.Language.parse(&p, "A=1\nA=2\n", e.typeOf());
+    _ = doc;
+    try testing.expectEqual(@as(usize, 0), errors.items.len);
+    try testing.expectEqual(@as(usize, 1), warnings.items.len);
+    try testing.expectEqualStrings("duplicate key", warnings.items[0].short_label);
+    try testing.expectEqual(@as(usize, 4), warnings.items[0].offset);
+
+    warnings.clearRetainingCapacity();
+    try testing.expectError(error.RuntimeParseFailed, Runtime.Language.parse(&p, "A=1\n=x\n", e.typeOf()));
+    try testing.expectEqual(@as(usize, 1), errors.items.len);
+    try testing.expect(std.mem.indexOf(u8, errors.items[0].message, "KEY=value") != null);
+    try testing.expectEqualStrings(errors.items[0].message, p.lastMessage());
+    try testing.expectEqual(@as(usize, 4), errors.items[0].offset);
+}

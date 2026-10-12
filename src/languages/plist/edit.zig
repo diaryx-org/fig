@@ -53,7 +53,6 @@ const Plist = @import("plist.zig").Language;
 // functions on caller-owned slices; compiles regardless of `-Dfig`.
 const lang = @import("../../kit/manifest.zig");
 
-
 // ── value rendering ────────────────────────────────────────────────────────────
 
 /// Render a CLI value string into a plist typed element, appended to `out`.

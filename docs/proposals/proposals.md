@@ -16,6 +16,7 @@ contents
 > * [Core only](core-only.md)
 > * [Compact objects](compact-objects.md)
 > * [Conformance suite](conformance-suite.md)
+> * [Entry attributes](/docs/proposals/entry-attributes.md)
 ```
 
 # Proposals

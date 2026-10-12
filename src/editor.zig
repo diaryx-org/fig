@@ -18,6 +18,7 @@ const lineEndAfter = splice.lineEndAfter;
 const firstNonSpace = splice.firstNonSpace;
 const columnOf = splice.columnOf;
 const isFlow = splice.isFlow;
+const flowOpenEnd = splice.flowOpenEnd;
 const CommentStyle = splice.CommentStyle;
 const commentBlockStart = splice.commentBlockStart;
 const appendBlockSep = splice.appendBlockSep;
@@ -163,7 +164,7 @@ pub fn Editor(comptime Language: type) type {
             if (is_section_format and self.syntax().section_noun != null and (node.id == parsed.ast.root or parsed.isSection(node))) return false;
             if (self.isOpenRoot(parsed, node)) return true;
             const source = self.source.items;
-            if (!isFlow(source, parsed.span(node))) return false;
+            if (!isFlow(source, parsed.span(node), self.syntax().flow_map_open)) return false;
             // `flow_maps_only`: a `[` is not an opener, so what it begins
             // (a CSS attribute selector) is read as block.
             return !(self.syntax().flow_maps_only and source[firstNonSpace(source, parsed.span(node).start)] == '[');
@@ -3638,7 +3639,7 @@ pub fn Editor(comptime Language: type) type {
             try out.appendSlice(self.allocator, pad);
             // Just after '{' (or ZON's '.{'); an open root has no opener, and
             // its first member starts the source.
-            const at = if (open_root) firstNonSpace(self.source.items, span.start) else flowOpenEnd(self.source.items, span);
+            const at = if (open_root) firstNonSpace(self.source.items, span.start) else flowOpenEnd(self.source.items, span, self.syntax().flow_map_open);
             try self.replaceAtSpan(Span.init(at, at), out.items);
         }
 
@@ -3701,7 +3702,7 @@ pub fn Editor(comptime Language: type) type {
         /// its span's own start.
         fn flowBodyStart(self: *const Self, parsed: Document, node: AST.Node, span: Span) usize {
             if (self.isOpen(parsed, node)) return firstNonSpace(self.source.items, span.start);
-            return flowOpenEnd(self.source.items, span);
+            return flowOpenEnd(self.source.items, span, self.syntax().flow_map_open);
         }
 
         /// Whitespace the flow-item scan may cross while hunting for the
@@ -3820,15 +3821,6 @@ pub fn Editor(comptime Language: type) type {
 //
 // The shared ones live in `editor/splice.zig` and are re-imported at the top
 // of this file; what remains here is used by the engine alone.
-
-/// Byte index just past a flow container's opening delimiter (`{`, `[`, or
-/// ZON's two-byte `.{`). Used to splice the first entry/item into an empty
-/// container, where `span.start` alone isn't past the delimiter for ZON.
-fn flowOpenEnd(source: []const u8, span: Span) usize {
-    const i = firstNonSpace(source, span.start);
-    if (i < source.len and source[i] == '.') return i + 2; // '.' + '{'
-    return i + 1;
-}
 
 /// Start of a mapping entry's full block: its owned leading comment block
 /// (`commentBlockStart`) at the start of the key's line. Mirrors the span math

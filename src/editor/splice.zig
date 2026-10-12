@@ -48,15 +48,24 @@ pub fn columnOf(source: []const u8, at: usize) usize {
     return at - lineStartBefore(source, at);
 }
 
-/// Whether the container at `span` is written in flow style (`{...}`/`[...]`).
-/// The AST records no flow/block flag, so we sniff the first content byte. ZON
-/// has no other container shape — every struct/array literal opens `.{` (its
-/// node span starts at the `.`, not the brace) — so it is unconditionally flow.
-pub fn isFlow(source: []const u8, span: Span) bool {
+/// Whether the container at `span` is written in flow style: it opens with
+/// `{`, `[`, or the language's own `flow_map_open` (ZON's `.{`, which opens
+/// its arrays too). The AST records no flow/block flag, so we sniff the
+/// first content bytes.
+pub fn isFlow(source: []const u8, span: Span, flow_map_open: []const u8) bool {
     const i = firstNonSpace(source, span.start);
     if (i >= source.len) return false;
     if (source[i] == '{' or source[i] == '[') return true;
-    return source[i] == '.' and i + 1 < source.len and source[i + 1] == '{';
+    return std.mem.startsWith(u8, source[i..], flow_map_open);
+}
+
+/// Byte index just past the flow container's opener at `span`: the
+/// language's `flow_map_open` where it opens with that, else the one-byte
+/// `{` or `[`.
+pub fn flowOpenEnd(source: []const u8, span: Span, flow_map_open: []const u8) usize {
+    const i = firstNonSpace(source, span.start);
+    if (std.mem.startsWith(u8, source[i..], flow_map_open)) return i + flow_map_open.len;
+    return i + 1;
 }
 
 /// Comment syntax for the owned-comment scan: `#` line comments (YAML/TOML) vs

@@ -421,8 +421,8 @@ What it costs:
 
 Per-language crates also let a language fix ship without a core release,
 since a language depends on the contract's ABI, not on core's internals.
-Whether they ship in 6.0, or 6.0 keeps one crate of every language, is
-open (§9).
+They ship in 6.0 (decided 2026-10-12): `fig-sys` is language-free in one
+crate, and each language is a crate of its own.
 
 ### 5.3 TypeScript
 
@@ -599,8 +599,6 @@ or holds a registered language to the bar a compiled one meets.
 
 ## 9. Open questions
 
-- **Language crates in 6.0.** §5.2 measured them viable. Do they ship
-  with 6.0, or does 6.0 ship one crate of every language and split later?
 
 - **Plist dates.** Should they merge into `offset_datetime` (§4.2), or
   stay a kind of their own under a neutral name (`timestamp`)? Merging is

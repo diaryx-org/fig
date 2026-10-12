@@ -156,16 +156,16 @@ fn commentView(self: *const AST, options: SerializeOptions, buf: *AST) *const AS
 
 /// The canonical set of ways serialization can fail
 pub const SerializeError = Writer.Error || error{
-    UnresolvedAlias, // a YAML `*alias` reached a non-YAML printer (materialize first)
-    NullUnsupported, // a `null` reached a format with no null type (TOML)
-    NonStringKey, // a mapping key was not a string (TOML, ZON)
+    UnresolvedAlias, // an alias reached a printer with no reference layer (materialize first)
+    NullUnsupported, // a `null` reached a format with no null type
+    NonStringKey, // a mapping key was not a string, in a format whose keys are
     FormatDisabled, // the target format was compiled out of this build
     NestingTooDeep, // container nesting exceeded the canonical printer's depth guard
-    UnexpectedNodeKind, // fig: a node kind reached a printer path that expects a container
-    FigUnrepresentableRoot, // fig: a scalar/null value has no authoring spelling as a document root
-    UnsupportedValue, // INI/dotenv: a sequence/mapping value has no spelling there
-    InvalidKey, // dotenv: a mapping key is not a valid bash identifier
-    NonFiniteNumber, // JSON/JSONC: an infinite or NaN float has no spelling there
+    UnexpectedNodeKind, // a node kind reached a printer path that expects a container
+    UnrepresentableRoot, // the root is a kind the format has no document spelling for (a scalar, where it must be a container)
+    UnsupportedValue, // a sequence or mapping value has no spelling where it sits
+    InvalidKey, // a mapping key is not one the format can spell
+    NonFiniteNumber, // an infinite or NaN float has no spelling in the format
 };
 
 /// Render the whole AST to `writer` in the given format, using default options.

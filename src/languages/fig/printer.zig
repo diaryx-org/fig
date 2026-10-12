@@ -31,7 +31,7 @@ const AST = @import("../../ast/ast.zig");
 const tok = @import("tokenizer.zig");
 const Writer = std.Io.Writer;
 
-pub const Error = Writer.Error || error{ UnresolvedAlias, NonStringKey, UnexpectedNodeKind, FigUnrepresentableRoot };
+pub const Error = Writer.Error || error{ UnresolvedAlias, NonStringKey, UnexpectedNodeKind, UnrepresentableRoot };
 
 /// Deepest `>` count a section header's block body may reach before the map is
 /// hoisted into per-child sections instead.
@@ -89,7 +89,7 @@ pub fn print(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Er
 /// (`Editor`/`Embed` splice a replacement value's text into existing source,
 /// e.g. after `key = `). Unlike `print`, a fragment is never asked to stand
 /// alone as a document, so a scalar/null root — which `root`'s `.document` mode
-/// rejects as `FigUnrepresentableRoot` — is fine here: `root`'s `.fragment` mode
+/// rejects as `UnrepresentableRoot` — is fine here: `root`'s `.fragment` mode
 /// renders it with the same bare/quoted spelling `value` uses for any other
 /// scalar, and the caller only ever reads it back in the context it's spliced
 /// into, not as a standalone reparse.
@@ -125,7 +125,7 @@ pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize
         // entire fig document/subdocument — see `root`'s doc comment below,
         // which this mirrors exactly (a non-zero depth never reaches this
         // switch arm: nested scalars go through `value`, not `printNode`).
-        else => if (depth == 0) return error.FigUnrepresentableRoot else {
+        else => if (depth == 0) return error.UnrepresentableRoot else {
             try p.value(id, .block);
             try p.writer.writeByte('\n');
         },
@@ -181,7 +181,7 @@ fn root(self: *Printer, id: AST.Node.Id, mode: RootMode) Error!void {
                 // silently emitting non-conforming output; the caller should
                 // use canonical form or another output format instead (see
                 // docs/spec.md § 2).
-                return error.FigUnrepresentableRoot;
+                return error.UnrepresentableRoot;
             },
         },
     }
@@ -1344,7 +1344,7 @@ test "a scalar-root AST errors rather than emitting non-conforming output" {
 
     var out: Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
-    try std.testing.expectError(error.FigUnrepresentableRoot, print(&out.writer, &ast, .{}));
+    try std.testing.expectError(error.UnrepresentableRoot, print(&out.writer, &ast, .{}));
     try std.testing.expectEqual(@as(usize, 0), out.written().len);
 
     // A root map/sequence is unaffected.

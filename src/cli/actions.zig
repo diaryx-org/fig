@@ -450,12 +450,12 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
         }
     } else if (opts.path == null) {
         ast.serializeWith(stdout_term.writer, target, opts.serialize) catch |err| switch (err) {
-            error.FigUnrepresentableRoot => diag_report.reportFigUnrepresentableRoot(stderr_term),
+            error.UnrepresentableRoot => diag_report.reportUnrepresentableRoot(stderr_term),
             else => |e| diag_report.reportSerializeError(stderr_term, e),
         };
     } else {
         ast.serializeNodeWith(stdout_term.writer, target, node_id, opts.serialize) catch |err| switch (err) {
-            error.FigUnrepresentableRoot => diag_report.reportFigUnrepresentableRoot(stderr_term),
+            error.UnrepresentableRoot => diag_report.reportUnrepresentableRoot(stderr_term),
             else => |e| diag_report.reportSerializeError(stderr_term, e),
         };
     }

@@ -80,7 +80,7 @@ pub fn reformatSlice(
         if (result.ast) |stripped| try stripped.serializeWith(&out.writer, target, serialize);
     } else {
         doc.ast.serializeWith(&out.writer, target, serialize) catch |err| switch (err) {
-            error.FigUnrepresentableRoot => diag_report.reportFigUnrepresentableRoot(term),
+            error.UnrepresentableRoot => diag_report.reportUnrepresentableRoot(term),
             else => |e| diag_report.reportSerializeError(term, e),
         };
     }
@@ -186,7 +186,7 @@ pub fn convertSlice(
         if (result.ast) |stripped| try stripped.serializeWith(&out.writer, target, serialize);
     } else {
         ast.serializeWith(&out.writer, target, serialize) catch |err| switch (err) {
-            error.FigUnrepresentableRoot => diag_report.reportFigUnrepresentableRoot(term),
+            error.UnrepresentableRoot => diag_report.reportUnrepresentableRoot(term),
             else => |e| diag_report.reportSerializeError(term, e),
         };
     }

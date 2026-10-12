@@ -569,7 +569,7 @@ test "fig root scalar is flagged as unrepresentable, a root map/sequence is not"
 
     // A bare number sitting at the document root: the fig dialect's root must
     // be a map or a sequence (see `languages/fig/printer.zig`'s `root`, which
-    // hard-errors with `FigUnrepresentableRoot` for exactly this AST shape) —
+    // hard-errors with `UnrepresentableRoot` for exactly this AST shape) —
     // this is defense in depth so `--strict` catches it independent of the
     // printer's hard error.
     const ScalarRoot = struct {

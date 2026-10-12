@@ -25,7 +25,7 @@ A document is a sequence of lines that parses to a tree of:
 - **sequences** — ordered elements,
 - **scalars** — `null`, booleans, strings, numbers, and *extended* scalars (datetimes, enum literals, char literals, non-finite floats).
 
-The root of a document is a mapping or a sequence, never a scalar. A document with no content (empty, or containing only blank lines and comments) is an empty root mapping. There is no authoring spelling for a scalar-root document; printing such an AST as `.fig`/`.figl` is a hard error (`FigUnrepresentableRoot`) rather than emitting non-conforming output — use the canonical form or another output format instead.
+The root of a document is a mapping or a sequence, never a scalar. A document with no content (empty, or containing only blank lines and comments) is an empty root mapping. There is no authoring spelling for a scalar-root document; printing such an AST as `.fig`/`.figl` is a hard error (`UnrepresentableRoot`) rather than emitting non-conforming output — use the canonical form or another output format instead.
 
 Numbers are stored and compared by their **source lexeme**, not by numeric conversion: `1.10` is preserved as `1.10`, `1e2` is distinct from `100.0`, and `0xFF` is never normalized to `255`. A conforming implementation MUST NOT define value identity by numeric conversion; it MAY offer numeric coercion as an explicitly lossy accessor. Two numbers are equal iff their lexemes match byte-for-byte and their integer/float kinds agree.
 

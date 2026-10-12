@@ -529,7 +529,7 @@ pub fn reportUnwritableValue(term: *Io.Terminal, file: []const u8, err: anyerror
 
 /// A scalar/null value reaching the fig printer as a document root has no
 /// authoring spelling there (`languages/fig/printer.zig`'s `root` hard-errors
-/// with `FigUnrepresentableRoot` rather than emit non-conforming output) — print
+/// with `UnrepresentableRoot` rather than emit non-conforming output) — print
 /// the teaching message and exit(1) here rather than let the raw error escape
 /// to `main`'s top level. Letting it escape would still work, but would print
 /// nothing but a bare Zig stack trace: `main`'s return-error path and this
@@ -540,7 +540,7 @@ pub fn reportUnwritableValue(term: *Io.Terminal, file: []const u8, err: anyerror
 /// first from byte 0, so any warning already printed disappears too. Exiting
 /// here, like every other user-facing CLI failure in this binary, sidesteps
 /// that entirely.
-pub fn reportFigUnrepresentableRoot(term: *Io.Terminal) noreturn {
+pub fn reportUnrepresentableRoot(term: *Io.Terminal) noreturn {
     term.writer.writeAll("error: a scalar value cannot be the root of a .fig/.figl document; use canonical form or another output format instead (see docs/spec.md § 2).\n") catch {};
     term.writer.flush() catch {};
     std.process.exit(1);
@@ -551,10 +551,10 @@ pub fn reportFigUnrepresentableRoot(term: *Io.Terminal) noreturn {
 /// a non-identifier dotenv key, a non-string mapping key reaching TOML/ZON,
 /// ...). Exhaustive over
 /// `fig.AST.SerializeError` so a NEW variant is a compile error here rather
-/// than silently falling through to a crash. `FigUnrepresentableRoot` is
+/// than silently falling through to a crash. `UnrepresentableRoot` is
 /// included for completeness (a call site that forgets to special-case it
 /// separately still gets a decent message) even though every current call
-/// site intercepts it first via `reportFigUnrepresentableRoot`'s more specific
+/// site intercepts it first via `reportUnrepresentableRoot`'s more specific
 /// wording. Same reasoning as that function for why this exits here instead
 /// of letting the error escape to `main`'s top level: an escaping error
 /// prints nothing but a bare, unreadable Zig stack trace (see its doc).
@@ -567,7 +567,7 @@ pub fn reportSerializeError(term: *Io.Terminal, err: fig.AST.SerializeError) nor
         error.FormatDisabled => "the requested format was not compiled into this build",
         error.NestingTooDeep => "this document nests too deeply for the canonical printer's depth guard",
         error.UnexpectedNodeKind => "an internal fig printer error occurred (please report this)",
-        error.FigUnrepresentableRoot => "a scalar value cannot be the root of a .fig/.figl document; use canonical form or another output format instead (see docs/spec.md § 2)",
+        error.UnrepresentableRoot => "a scalar value cannot be the root of a .fig/.figl document; use canonical form or another output format instead (see docs/spec.md § 2)",
         error.UnsupportedValue => "this document contains an array, or a table nested deeper than this format allows (INI: one level of `[section]`; dotenv/`.properties`: none)",
         error.InvalidKey => "a mapping key is not valid in this output format (a dotenv key must be a bash identifier: `[A-Za-z_][A-Za-z0-9_]*`)",
         error.NonFiniteNumber => "this output format has no way to write infinity or NaN",

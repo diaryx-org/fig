@@ -662,7 +662,7 @@ build always compiles it.
 
 Serializing can fail for reasons the target format decides — `SerializeError`
 covers `NullUnsupported` (TOML), `NonStringKey` (TOML/ZON),
-`FigUnrepresentableRoot`, `UnsupportedValue` (a sequence or mapping
+`UnrepresentableRoot`, `UnsupportedValue` (a sequence or mapping
 reaching INI/dotenv), `InvalidKey` (a dotenv key that isn't a bash identifier),
 and `FormatDisabled` when the target was compiled out of this build.
 

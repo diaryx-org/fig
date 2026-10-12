@@ -3171,7 +3171,7 @@ fn serializeStatus(err: AST.SerializeError) FigStatus {
         error.FormatDisabled,
         error.NestingTooDeep,
         error.UnexpectedNodeKind,
-        error.FigUnrepresentableRoot,
+        error.UnrepresentableRoot,
         error.UnsupportedValue,
         error.InvalidKey,
         error.NonFiniteNumber,
@@ -3445,7 +3445,7 @@ pub export fn fig_value_serialize_opts(
     const ast = handle.builder.view(root) catch return .out_of_memory; // borrows the builder; never deinit'd
     // Fragment mode: this is a caller-built `Value`, never a whole document, so
     // a fig scalar/null root renders its ordinary spelling instead of erroring
-    // `FigUnrepresentableRoot` (that rule is for `fig_document_serialize`/CLI
+    // `UnrepresentableRoot` (that rule is for `fig_document_serialize`/CLI
     // whole-document output — see `AST.serializeFragmentWith`). A runtime
     // printer is handed the subtree from `root` and decides for itself.
     switch (target) {

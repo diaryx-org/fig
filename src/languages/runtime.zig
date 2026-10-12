@@ -453,16 +453,35 @@ pub fn count() usize {
 var bundle_state: std.atomic.Value(u8) = .init(0);
 
 fn ensureBundled() void {
-    ensureBundledWith(registry_allocator orelse std.heap.page_allocator);
+    ensureBundledWith(registry_allocator orelse defaultAllocator());
+}
+
+/// What the C library allocates with (`c_api.zig`'s `activeAllocator`), so
+/// that a registration through `fig_language_register` after the bundle's
+/// is in the same allocator.
+fn defaultAllocator() Allocator {
+    if (builtin.cpu.arch.isWasm()) return std.heap.wasm_allocator;
+    if (builtin.abi.isAndroid() or !builtin.link_libc) return std.heap.smp_allocator;
+    return std.heap.c_allocator;
 }
 
 fn ensureBundledWith(allocator: Allocator) void {
     if (comptime build_options.compiled_registry) return;
-    if (bundle_state.load(.acquire) != 0) return;
-    if (bundle_state.cmpxchgStrong(0, 1, .acq_rel, .acquire) != null) return;
+    if (bundle_state.load(.acquire) == 2 or bundling_here) return;
+    if (bundle_state.cmpxchgStrong(0, 1, .acq_rel, .acquire) != null) {
+        // Another thread is registering the bundle: what this one is about
+        // to look up may be in it.
+        while (bundle_state.load(.acquire) != 2) std.atomic.spinLoopHint();
+        return;
+    }
+    bundling_here = true;
+    defer bundling_here = false;
     @import("bundle.zig").registerAll(registry_allocator orelse allocator) catch {};
     bundle_state.store(2, .release);
 }
+
+/// Set on the thread registering the bundle, whose own lookups return.
+threadlocal var bundling_here: bool = false;
 
 // ── validation ─────────────────────────────────────────────────────────────
 

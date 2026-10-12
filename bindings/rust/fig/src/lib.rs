@@ -799,10 +799,9 @@ mod tests {
         let Error::Parse(detail) = &err else {
             panic!("expected Error::Parse, got {err:?}");
         };
-        // The core surfaces a non-empty message (its error name). A compiled
-        // format reports no offset yet, so the location fields are None.
+        // The language says why and where: past the end of the input.
         assert!(!detail.message.is_empty());
-        assert_eq!(detail.byte_offset, None);
+        assert_eq!(detail.byte_offset, Some(13));
     }
 
     #[test]

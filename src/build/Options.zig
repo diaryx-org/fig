@@ -64,7 +64,7 @@ pub const BuildOptions = struct {
     /// (`languages/bundle.zig`), registered through its contract vtable and
     /// standing in at its format's number. On by default until the switch
     /// to the contract is complete (docs/proposals/core-only.md §8).
-    compiled_registry: bool = true,
+    compiled_registry: bool = false,
 
     /// Whether the format named `name` (a `list.Row.name`) is compiled in.
     pub fn lang(self: BuildOptions, comptime name: []const u8) bool {
@@ -104,7 +104,7 @@ pub fn resolve(b: *std.Build) BuildOptions {
     }
 
     cfg.lang_canonical = b.option(bool, "canonical", "Include the canonical oracle format (opt-in; default off — used mainly by the test suite)") orelse false;
-    cfg.compiled_registry = b.option(bool, "compiled-registry", "Keep the languages in core's compiled registry; false reaches every one through the contract, registered from the bundle") orelse true;
+    cfg.compiled_registry = b.option(bool, "compiled-registry", "Keep the languages in core's compiled registry; false reaches every one through the contract, registered from the bundle") orelse false;
     cfg.contract_copies = b.option(bool, "contract-copies", "Register each compiled language again through its contract vtable, as c-<name>, on first lookup (for scoring the contract path)") orelse false;
     cfg.wasi_host = b.option(bool, "wasi-host", "WASI CLI: ask the host (@diaryx/fig-wasi) for formats not compiled in; needs the fig_host imports") orelse false;
     return cfg;

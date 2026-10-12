@@ -15,6 +15,7 @@ contents
 > * [A comment appended after a .properties continuation joins the value](/docs/tasks/properties-comment-after-continuation.md)
 > * [`set` cannot append to a sequence that is not there yet](/docs/tasks/set-creates-a-missing-sequence.md)
 > * [Compiled TOML 1.0, YAML 1.1 and YAML streams cannot be scored by fig-conformance](/docs/tasks/compiled-dialects-unreachable-by-conformance.md)
+> * [A language cannot make its sequences editable when their items are not one per line or comma-joined](/docs/tasks/sequences-with-a-language-separator.md)
 > * [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 

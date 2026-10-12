@@ -1,6 +1,6 @@
 const Printer = @This();
 const std = @import("std");
-const AST = @import("../../ast/ast.zig");
+const AST = @import("../../kit/ast/ast.zig");
 const width = @import("../../kit/kit.zig").width;
 const num = @import("../../kit/number.zig");
 const Writer = std.Io.Writer;

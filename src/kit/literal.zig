@@ -8,7 +8,6 @@ const std = @import("std");
 const datetime = @import("datetime.zig");
 const ascii = @import("ascii.zig");
 
-
 /// The result of sniffing a bare (unquoted, undelimited) token.
 pub const Sniffed = union(enum) {
     null_,

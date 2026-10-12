@@ -110,7 +110,7 @@ comptime {
 /// own early return/`orelse unreachable`). gron's `.gron` maps to `.json` in
 /// the callers that still need one (the lossless-envelope target switches);
 /// every other member is identity.
-pub fn toSerializeFormat(f: Format) ?fig.AST.SerializeFormat {
+pub fn toSerializeFormat(f: Format) ?fig.Serialize.SerializeFormat {
     return switch (f) {
         .json => .json,
         .jsonc => .jsonc,

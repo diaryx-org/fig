@@ -1,7 +1,7 @@
 const json = @This();
 const std = @import("std");
-const AST = @import("../../ast/ast.zig");
-const Document = @import("../../document.zig");
+const AST = @import("../../kit/ast/ast.zig");
+const Document = @import("../../kit/document.zig");
 const lang = @import("../manifest.zig");
 const json_string = @import("../../kit/json_string.zig");
 

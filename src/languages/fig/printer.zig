@@ -27,7 +27,8 @@
 
 const Printer = @This();
 const std = @import("std");
-const AST = @import("../../ast/ast.zig");
+const Serialize = @import("../../serialize.zig");
+const AST = @import("../../kit/ast/ast.zig");
 const tok = @import("tokenizer.zig");
 const Writer = std.Io.Writer;
 
@@ -2112,10 +2113,10 @@ test "a splice fragment keeps a container in block unless the caller asks for fl
     defer ast.deinit();
     var block: Writer.Allocating = .init(std.testing.allocator);
     defer block.deinit();
-    try ast.serializeFragmentWith(&block.writer, .fig, .{ .splice = true, .width = 1 });
+    try Serialize.serializeFragmentWith(&ast, &block.writer, .fig, .{ .splice = true, .width = 1 });
     try std.testing.expect(std.mem.indexOfScalar(u8, block.written(), '{') == null);
     var flow: Writer.Allocating = .init(std.testing.allocator);
     defer flow.deinit();
-    try ast.serializeFragmentWith(&flow.writer, .fig, .{ .splice = true, .flow = true });
+    try Serialize.serializeFragmentWith(&ast, &flow.writer, .fig, .{ .splice = true, .flow = true });
     try std.testing.expect(std.mem.startsWith(u8, flow.written(), "{"));
 }

@@ -7,7 +7,7 @@
 
 const std = @import("std");
 const activeTag = std.meta.activeTag;
-const util = @import("../kit/kit.zig");
+const util = @import("../kit.zig");
 
 const AST = @import("ast.zig");
 const Node = AST.Node;

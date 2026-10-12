@@ -4,7 +4,7 @@
 //! so nothing here is analyzed in a library/CLI/wasm build. That is also what
 //! makes the canonical oracle below unconditionally available — every call site
 //! gates it as `lang_canonical or @import("builtin").is_test` (see
-//! `ast/serialize_options.zig`), and `is_test` always holds here, so the target
+//! `serialize.zig`), and `is_test` always holds here, so the target
 //! needs no `-Dcanonical=true`.
 //!
 //! Two targets, deliberately split by what they can prove:

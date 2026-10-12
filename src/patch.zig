@@ -57,8 +57,9 @@
 //!     is string-keyed, so there is nowhere to address such an entry.
 
 const std = @import("std");
-const AST = @import("ast/ast.zig");
-const Document = @import("document.zig");
+const AST = @import("kit/ast/ast.zig");
+const Serialize = @import("serialize.zig");
+const Document = @import("kit/document.zig");
 const editor_mod = @import("editor.zig");
 const Runtime = @import("languages/runtime.zig");
 const Diagnostics = @import("diagnostics.zig");
@@ -152,7 +153,7 @@ pub const Deletion = []const AST.PathSegment;
 pub fn apply(
     comptime Language: type,
     editor: *editor_mod.Editor(Language),
-    target_format: AST.SerializeFormat,
+    target_format: Serialize.SerializeFormat,
     at: []const AST.PathSegment,
     patch: *const AST,
     from: Id,
@@ -370,7 +371,7 @@ fn Walker(comptime Language: type) type {
             var w = std.Io.Writer.Allocating.init(self.allocator);
             defer w.deinit();
             switch (self.target) {
-                .compiled => |f| try view.serializeFragmentWith(&w.writer, f, options),
+                .compiled => |f| try Serialize.serializeFragmentWith(&view, &w.writer, f, options),
                 .runtime => |e| try Runtime.printNodeWith(e, &w.writer, &view, id, options),
             }
             // Every printer terminates a DOCUMENT with a newline. What the
@@ -525,7 +526,7 @@ fn patchForTest(
     comptime Lang: type,
     comptime PatchLang: type,
     allocator: std.mem.Allocator,
-    target_format: AST.SerializeFormat,
+    target_format: Serialize.SerializeFormat,
     source: []const u8,
     patch_source: []const u8,
     options: Options,

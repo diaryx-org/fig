@@ -1,12 +1,15 @@
-//! Serialization — the canonical output formats, their options/errors, and the
-//! `serialize*` entry points that dispatch to each format's printer. The public
-//! functions here are re-exported as `AST` methods from `ast.zig`.
+//! Serialization — the canonical output formats and the `serialize*` entry
+//! points that dispatch to each format's printer. Core's, since the dispatch
+//! reads the format registry; the options and errors a printer takes are the
+//! kit's (`kit/ast/options.zig`).
 
 const std = @import("std");
 const Writer = std.Io.Writer;
 const build_options = @import("build_options");
 
-const AST = @import("ast.zig");
+const AST = @import("kit/ast/ast.zig");
+pub const SerializeOptions = AST.SerializeOptions;
+pub const SerializeError = AST.SerializeError;
 const Node = AST.Node;
 /// The format registry. `SerializeFormat`'s members come from it, and so does
 /// every dispatch arm below: a registry entry names the language whose
@@ -14,7 +17,7 @@ const Node = AST.Node;
 /// declarations in it that do the printing (`entry.print_name`,
 /// `entry.print_node_name`). No printer is imported by path here any more —
 /// `canonical`'s is the one exception, since canonical is not a `Language`.
-const Language = @import("../languages/language.zig");
+const Language = @import("languages/language.zig");
 
 // Printers reach this file only through the registry, and only for the formats
 // compiled into this build: a gated-out language collapses its entry's `Lang`
@@ -28,7 +31,7 @@ const Language = @import("../languages/language.zig");
 // on it as a comparison oracle. When gated out, `CanonicalPrinter` is `void`
 // and the guarded arms below are never analyzed, so its code never compiles in.
 const canonical_enabled = build_options.lang_canonical or @import("builtin").is_test;
-const CanonicalPrinter = if (canonical_enabled) @import("../canonical/printer.zig") else void;
+const CanonicalPrinter = if (canonical_enabled) @import("canonical/printer.zig") else void;
 
 /// The canonical output format families. `canonical` (formerly `native`) is the
 /// AST's own 1:1 oracle encoding; `fig` is the human-facing authoring dialect
@@ -64,76 +67,6 @@ comptime {
         @compileError("AST.SerializeFormat's `canonical` no longer sits directly after `zon`");
 }
 
-/// Knobs controlling how a value is rendered. The defaults reproduce fig's
-/// historical output (pretty-printed, two-space indent), so `.{}` is a no-op
-/// change for existing callers.
-///
-/// Honored where each setting is meaningful:
-///   * `pretty` — JSON/JSON5 (multi-line vs. minified) and ZON (`zig fmt`
-///     multi-line vs. inline `.{ a, b }`). TOML uses it to gate array wrapping
-///     (`true`: wrap arrays wider than `width`; `false`: keep every array on one
-///     line). YAML ignores it (its compact flow style is not yet emitted).
-///   * `indent` — JSON/JSON5 spaces per level, and the per-level indent of TOML's
-///     wrapped arrays. ZON keeps its idiomatic four-space block indent; YAML has
-///     its own fixed layout.
-///   * `width` — TOML, YAML, and fig: the column budget that decides whether a
-///     container renders inline (TOML's inline table `k = { ... }` / a one-line
-///     array; YAML's flow `k: {a: 1}` / `[a, b]`; fig's flow spellings) or
-///     expands (a `[section]`, a wrapped array, block lines). A value that fits
-///     within `width` stays inline; one that exceeds it expands. Two things to
-///     know for YAML: the budget applies to NESTED containers only — a root
-///     mapping/sequence always renders block — and `0` is not "never inline"
-///     but the C ABI's "unset" sentinel (see `FigSerializeOptions.width`),
-///     which resolves back to 80. Use `1` to force block layout.
-///   * `strip_comments` — every format: drop the AST's carried comments instead
-///     of emitting them. Honored uniformly (it blanks the comment side-table
-///     before printing), so it works even for the formats whose printers take no
-///     options.
-pub const SerializeOptions = struct {
-    /// `true`: multi-line, indented output. `false`: compact single-line output
-    /// with no insignificant whitespace.
-    pretty: bool = true,
-    /// Spaces per indentation level when `pretty` is set (JSON; TOML wrapped
-    /// arrays).
-    indent: u8 = 2,
-    /// Column budget for the inline-vs-expanded layout decision of TOML, YAML,
-    /// and fig. Anything that renders within this many columns stays inline;
-    /// wider values expand to sections / wrapped arrays / block lines. Ignored by
-    /// the other formats. `1` is the way to say "always block"; `0` reads as
-    /// "unset" across the C ABI and resolves to 80.
-    width: u16 = 80,
-    /// `true`: do not emit comments carried on the AST (a clean, comment-free
-    /// render). `false` (default): preserve them where the target format allows.
-    strip_comments: bool = false,
-    /// The caller asked for indentation (`fig fmt --indent`) rather than
-    /// taking the default, which `indent`'s value alone cannot say: its
-    /// default, 2, is also an explicit `--indent 2`. A format with no
-    /// `pretty` gate on its indentation reads this instead — figl, whose
-    /// canonical output is unindented and which, asked, prefixes each line
-    /// with `2 × depth` cosmetic spaces ahead of the `> ` markers that carry
-    /// its depth (docs/spec.md §3.3's "clean" convention). Every other format
-    /// ignores it.
-    indent_requested: bool = false,
-    /// Fragment path only: render a container root inline, in *flow*
-    /// (`[a, b]` / `{ k = v }`), rather than in a block spelling. The
-    /// editors' splice paths set it, because a fragment spliced after
-    /// `key = ` lands inline, and a block spelling that only parses as lines
-    /// of its own (figl's `* ` items and section headers) re-reads there as
-    /// a bare string. `false` (default) keeps a container root in block, as a
-    /// caller that treats the output as a document needs. A format with one
-    /// spelling for a container ignores it.
-    flow: bool = false,
-    /// Fragment path only: render the value as the editor takes it spliced
-    /// into a document, not as a document of its own. A printer whose
-    /// document differs from that declares `printSplice`: plist's drops the
-    /// XML declaration, DOCTYPE and `<plist>` wrapper; NestedText's writes a
-    /// scalar as its plain text, since the editor's renderers spell the `>`
-    /// block where the value lands. Set by the bindings' editor splice
-    /// paths and by `fig patch`; `false` (default) for a value serialized to
-    /// be written out, which must stay a whole document.
-    splice: bool = false,
-};
-
 /// `self`, or a comment-stripped *view* of it when `options.strip_comments` is
 /// set. The view is a shallow struct copy that shares all node/string storage and
 /// only blanks `node_comments`, so stripping costs no allocation. `buf` provides
@@ -145,24 +78,10 @@ fn commentView(self: *const AST, options: SerializeOptions, buf: *AST) *const AS
     return buf;
 }
 
-/// The canonical set of ways serialization can fail
-pub const SerializeError = Writer.Error || error{
-    UnresolvedAlias, // an alias reached a printer with no reference layer (materialize first)
-    NullUnsupported, // a `null` reached a format with no null type
-    NonStringKey, // a mapping key was not a string, in a format whose keys are
-    FormatDisabled, // the target format was compiled out of this build
-    NestingTooDeep, // container nesting exceeded the canonical printer's depth guard
-    UnexpectedNodeKind, // a node kind reached a printer path that expects a container
-    UnrepresentableRoot, // the root is a kind the format has no document spelling for (a scalar, where it must be a container)
-    UnsupportedValue, // a sequence or mapping value has no spelling where it sits
-    InvalidKey, // a mapping key is not one the format can spell
-    NonFiniteNumber, // an infinite or NaN float has no spelling in the format
-};
-
 /// Render the whole AST to `writer` in the given format, using default options.
 /// Does not handle aliases, tags, or lossless `$fig` envelopes.
 pub fn serialize(self: *const AST, writer: *Writer, format: SerializeFormat) SerializeError!void {
-    return self.serializeWith(writer, format, .{});
+    return serializeWith(self, writer, format, .{});
 }
 
 /// Render the whole AST to `writer`, controlling output style via `options`.
@@ -216,7 +135,7 @@ pub fn serializeFragmentWith(self: *const AST, writer: *Writer, format: Serializ
 
 /// Render the subtree rooted at `id` to `writer`, using default options.
 pub fn serializeNode(self: *const AST, writer: *Writer, format: SerializeFormat, id: Node.Id) SerializeError!void {
-    return self.serializeNodeWith(writer, format, id, .{});
+    return serializeNodeWith(self, writer, format, id, .{});
 }
 
 /// Render the subtree rooted at `id`, controlling output style via `options`.
@@ -236,4 +155,143 @@ pub fn serializeNodeWith(self: *const AST, writer: *Writer, format: SerializeFor
             return @field(d.Lang.Printer, d.print_node_name)(writer, ast, id, 0, options);
         },
     };
+}
+
+// ── trees built by hand, printed through the registry ──────────────────────
+
+test "Builder constructs an AST that serializes" {
+    if (comptime !build_options.lang_json) return error.SkipZigTest;
+    const testing = std.testing;
+    var b = AST.Builder.init(testing.allocator);
+    defer b.deinit();
+
+    // Build { "name": "fig", "nums": [1, 2] } bottom-up.
+    const v_name = try b.addString("fig");
+    const n1 = try b.addInt(1);
+    const n2 = try b.addInt(2);
+    const v_nums = try b.addSequence(&.{ n1, n2 });
+    const k_name = try b.addString("name");
+    const k_nums = try b.addString("nums");
+    const root = try b.addMapping(&.{
+        .{ .key = k_name, .value = v_name },
+        .{ .key = k_nums, .value = v_nums },
+    });
+
+    var ast = try b.finish(root);
+    defer ast.deinit();
+
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try serialize(&ast, &w, .json);
+    try testing.expectEqualStrings(
+        \\{
+        \\  "name": "fig",
+        \\  "nums": [
+        \\    1,
+        \\    2
+        \\  ]
+        \\}
+        \\
+    , w.buffered());
+
+    // Same AST, YAML — exercises the empty side-table (anchor/tag) guard path.
+    if (comptime build_options.lang_yaml) {
+        var ybuf: [256]u8 = undefined;
+        var yw = std.Io.Writer.fixed(&ybuf);
+        try serialize(&ast, &yw, .yaml);
+        try testing.expectEqualStrings(
+            \\name: fig
+            \\nums: [1, 2]
+            \\
+        , yw.buffered());
+    }
+}
+
+test "Builder.setTag surfaces a normalized kind tag as a YAML core tag" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    const testing = std.testing;
+    var b = AST.Builder.init(testing.allocator);
+    defer b.deinit();
+    const v = try b.addNumberRaw("09", false); // integer lexeme kept verbatim
+    try b.setTag(v, .{ .kind = .integer });
+    const k = try b.addString("id");
+    const root = try b.addMapping(&.{.{ .key = k, .value = v }});
+    var ast = try b.finish(root);
+    defer ast.deinit();
+    try testing.expect(ast.node_tags[v].?.kind == .integer);
+
+    var buf: [64]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try serialize(&ast, &w, .yaml);
+    // A `.kind` tag renders as its YAML core-schema shorthand; the lexeme is kept.
+    try testing.expect(std.mem.indexOf(u8, w.buffered(), "!!int") != null);
+    try testing.expect(std.mem.indexOf(u8, w.buffered(), "09") != null);
+}
+
+test "strip_comments drops carried comments across formats" {
+    if (comptime !build_options.lang_json) return error.SkipZigTest;
+    var b = AST.Builder.init(std.testing.allocator);
+    defer b.deinit();
+    const v = try b.addString("fig");
+    const k = try b.addString("name");
+    try b.setComments(k, .{ .leading = &.{.{ .text = "hi", .style = .line }} });
+    const root = try b.addMapping(&.{.{ .key = k, .value = v }});
+    var ast = try b.finish(root);
+    defer ast.deinit();
+
+    // Default: comment preserved (JSON5).
+    var kept: Writer.Allocating = .init(std.testing.allocator);
+    defer kept.deinit();
+    try serializeWith(&ast, &kept.writer, .json5, .{});
+    try std.testing.expect(std.mem.indexOf(u8, kept.written(), "// hi") != null);
+
+    // Stripped: same AST, no comment, in JSON5 and (an options-less printer) YAML.
+    var stripped: Writer.Allocating = .init(std.testing.allocator);
+    defer stripped.deinit();
+    try serializeWith(&ast, &stripped.writer, .json5, .{ .strip_comments = true });
+    try std.testing.expect(std.mem.indexOf(u8, stripped.written(), "hi") == null);
+
+    if (comptime build_options.lang_yaml) {
+        var y: Writer.Allocating = .init(std.testing.allocator);
+        defer y.deinit();
+        try serializeWith(&ast, &y.writer, .yaml, .{ .strip_comments = true });
+        try std.testing.expectEqualStrings("name: fig\n", y.written());
+    }
+}
+
+test "Builder incremental comment helpers append and serialize" {
+    if (comptime !build_options.lang_json) return error.SkipZigTest;
+    var b = AST.Builder.init(std.testing.allocator);
+    defer b.deinit();
+
+    const v = try b.addNumberRaw("1", false);
+    const k = try b.addString("a");
+    // Two leading comments accumulate in call order; a trailing rides the value.
+    try b.addLeadingComment(k, .{ .text = "first" });
+    try b.addLeadingComment(k, .{ .text = "second" });
+    try b.setTrailingComment(v, .{ .text = "tail" });
+    const root = try b.addMapping(&.{.{ .key = k, .value = v }});
+    // A dangling comment sits at the end of the mapping body.
+    try b.addDanglingComment(root, .{ .text = "end" });
+
+    var ast = try b.finish(root);
+    defer ast.deinit();
+
+    // The leading run kept insertion order and the trailing/dangling bound too.
+    const kc = ast.comments(k);
+    try std.testing.expectEqual(@as(usize, 2), kc.leading.len);
+    try std.testing.expectEqualStrings("first", kc.leading[0].text);
+    try std.testing.expectEqualStrings("second", kc.leading[1].text);
+    try std.testing.expectEqualStrings("tail", ast.comments(v).trailing.?.text);
+    try std.testing.expectEqualStrings("end", ast.comments(root).dangling[0].text);
+
+    // A comment-bearing format renders them; this also proves the runs are valid.
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try serializeWith(&ast, &out.writer, .json5, .{});
+    const text = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, text, "// first") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "// second") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "// tail") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "// end") != null);
 }

@@ -32,7 +32,7 @@
 
 const Printer = @This();
 const std = @import("std");
-const AST = @import("../../ast/ast.zig");
+const AST = @import("../../kit/ast/ast.zig");
 const Writer = std.Io.Writer;
 
 pub const Error = Writer.Error || error{ NullUnsupported, NonStringKey, UnresolvedAlias };

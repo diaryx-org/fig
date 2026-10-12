@@ -1,7 +1,8 @@
 const plist = @This();
 const std = @import("std");
-const AST = @import("../../ast/ast.zig");
-const Document = @import("../../document.zig");
+const AST = @import("../../kit/ast/ast.zig");
+const Serialize = @import("../../serialize.zig");
+const Document = @import("../../kit/document.zig");
 const Writer = std.Io.Writer;
 const lang = @import("../manifest.zig");
 
@@ -21,7 +22,7 @@ pub const Type = enum {
 /// ZON/…) and writes back out via `Printer` — the documented inverse mapping
 /// described in `parser.zig`'s header (a `dict` is a real mapping, an `array`
 /// a real sequence, `date`/`data` ride the `extended` scalar). It IS an
-/// `AST.SerializeFormat` member (`.plist`), so `ast.serialize` routes here like
+/// `Serialize.SerializeFormat` member (`.plist`), so `ast.serialize` routes here like
 /// every other format. It also HAS an in-place (span-splicing) editor —
 /// `Editor(Plist)` via `editor_helper.zig` — so `fig replace`/`rename`/`set`/`insert`/
 /// `delete`/`comment` work on a `.plist`; unlike the line-oriented formats it

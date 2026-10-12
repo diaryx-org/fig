@@ -38,7 +38,8 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const AST = @import("ast/ast.zig");
+const AST = @import("kit/ast/ast.zig");
+const Serialize = @import("serialize.zig");
 const Language = @import("languages/language.zig");
 
 const Id = AST.Node.Id;
@@ -69,7 +70,7 @@ pub const NativeKinds = Language.NativeKinds;
 /// dispatch. A caller with a CLI-only format on top of `SerializeFormat`
 /// (gron) resolves its own arm before/via `toSerializeFormat` and consults
 /// this for the rest.
-pub fn nativeFor(fmt: AST.SerializeFormat) ?NativeKinds {
+pub fn nativeFor(fmt: Serialize.SerializeFormat) ?NativeKinds {
     return switch (fmt) {
         .canonical => null,
         inline else => |f| comptime Language.moduleFor(@tagName(f)).Language.caps.lossless,
@@ -775,7 +776,7 @@ test "declared native kinds reproduce the pre-declaration envelope table" {
 // the registry now answers: a format gaining or losing an envelope target is a
 // behaviour change to be made here on purpose.
 test "nativeFor reproduces the pre-declaration targetFor table" {
-    const Expect = struct { fmt: AST.SerializeFormat, native: ?NativeKinds };
+    const Expect = struct { fmt: Serialize.SerializeFormat, native: ?NativeKinds };
     const table = [_]Expect{
         .{ .fmt = .json, .native = json_native },
         .{ .fmt = .jsonc, .native = json_native },
@@ -792,7 +793,7 @@ test "nativeFor reproduces the pre-declaration targetFor table" {
         .{ .fmt = .nestedtext, .native = null },
     };
     // Every member is listed, so a new format has to say what it wants here.
-    try testing.expectEqual(@typeInfo(AST.SerializeFormat).@"enum".field_names.len, table.len);
+    try testing.expectEqual(@typeInfo(Serialize.SerializeFormat).@"enum".field_names.len, table.len);
     for (table) |e| {
         try testing.expectEqual(e.native, nativeFor(e.fmt));
     }

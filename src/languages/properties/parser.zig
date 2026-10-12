@@ -19,8 +19,8 @@ const Parser = @This();
 
 const std = @import("std");
 const testing = std.testing;
-const AST = @import("../../ast/ast.zig");
-const Document = @import("../../document.zig");
+const AST = @import("../../kit/ast/ast.zig");
+const Document = @import("../../kit/document.zig");
 const Type = @import("properties.zig").Type;
 const Span = @import("../../kit/span.zig");
 const Unicode = @import("../../kit/kit.zig").Unicode;

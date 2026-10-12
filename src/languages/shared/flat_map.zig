@@ -14,9 +14,9 @@
 //! formats). Only the tree-shape plumbing is shared.
 
 const std = @import("std");
-const AST = @import("../../ast/ast.zig");
+const AST = @import("../../kit/ast/ast.zig");
 const Span = @import("../../kit/span.zig");
-const Document = @import("../../document.zig");
+const Document = @import("../../kit/document.zig");
 
 /// Owns the three parallel node-indexed arrays every fig parser builds
 /// (`nodes`, `spans`, `node_comments`) and the one operation that allocates a

@@ -1,3 +1,4 @@
+const Serialize = @import("../serialize.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const build_options = @import("build_options");
@@ -127,7 +128,7 @@ pub const NESTEDTEXT = of("nestedtext");
 //
 // `compiled` (below) is the per-LANGUAGE list. This is the per-DIALECT one: the
 // table the five hand-written parallel format enumerations — `Detected` here,
-// `cli.Format`, `AST.SerializeFormat`, `c_api.FigFormat`, `deserialize.Format`,
+// `cli.Format`, `Serialize.SerializeFormat`, `c_api.FigFormat`, `deserialize.Format`,
 // `Embed.InnerFormat` — are all restatements of, plus the per-dialect facts
 // (ABI value, splice style, empty-document seed, `--spec` strings, embedded
 // spellings) that today live scattered across six files as switches nothing
@@ -135,7 +136,7 @@ pub const NESTEDTEXT = of("nestedtext");
 //
 // As of this stage ALL SIX of those enums are REIFIED from it rather than
 // merely pinned against it — `Detected` below, `cli.Format`,
-// `AST.SerializeFormat`, `deserialize.Format`, `Embed.InnerFormat` and
+// `Serialize.SerializeFormat`, `deserialize.Format`, `Embed.InnerFormat` and
 // `c_api.FigFormat` are all `@Enum` over `namesOf(…)` — along with
 // `cli/args.zig`'s extension table. The C ABI's enum is the one built over
 // `abi_value` rather than over member positions, since its integers are a
@@ -143,7 +144,7 @@ pub const NESTEDTEXT = of("nestedtext");
 // those integers, plus `zig build abi-check` diffing the same values against
 // fig.h. Every per-dialect FACT is now read rather than restated: the CLI's
 // dispatch takes the splice style, empty-document seed and `--spec` strings,
-// the serializer takes the printer names (`ast/serialize_options.zig`, whose
+// the serializer takes the printer names (`serialize.zig`, whose
 // three switches are one `inline else` each over
 // `@field(d.Lang.Printer, d.print_name)`), and `embed.zig` takes the embedded
 // spellings — its four literal builders and two tag/MIME resolvers are one
@@ -426,7 +427,7 @@ pub fn enumValues(comptime member_names: []const [:0]const u8) [member_names.len
 /// have to still exist.
 ///
 /// Reification has since taken every caller — `cli.Format`,
-/// `AST.SerializeFormat`, `deserialize.Format`, `Detected`,
+/// `Serialize.SerializeFormat`, `deserialize.Format`, `Detected`,
 /// `Embed.InnerFormat` and `c_api.FigFormat` are all BUILT from
 /// `namesOf`/`namesWith` rather than checked against them, which is the
 /// stronger statement. It stays for the next enum that must remain
@@ -748,7 +749,7 @@ const Decls = struct {
     ///
     /// `Printer` is the format's printer MODULE, and is distinct from the
     /// optional `printNode` decl below: the module is what the serializer
-    /// dispatches through (`ast/serialize_options.zig` reaches
+    /// dispatches through (`serialize.zig` reaches
     /// `@field(d.Lang.Printer, d.print_name)` for every registry entry), so
     /// every format must expose one even when — as with plist — its
     /// `Language` wraps only the module's `print`.

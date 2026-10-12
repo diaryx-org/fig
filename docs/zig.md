@@ -102,7 +102,7 @@ pub fn main() !void {
     // Convert to YAML.
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
-    try doc.ast.serialize(&out.writer, .yaml);
+    try fig.Serialize.serialize(&doc.ast, &out.writer, .yaml);
     std.debug.print("{s}", .{out.written()}); // name: fig\nnums:\n- 1\n- 2\n
 }
 ```
@@ -253,7 +253,7 @@ port1.kind.number.raw; // "443"
 _ = doc.ast.getValByPath(&.{.{ .key = "missing" }}); // error.NotFound
 ```
 
-`getValByPath`/`getKeyByPath`/`getNodeByPath` (`ast/reader.zig`) are the
+`getValByPath`/`getKeyByPath`/`getNodeByPath` (`kit/ast/reader.zig`) are the
 high-level accessors; `getValByPath` unwraps a `keyvalue` entry to its value,
 `getKeyByPath` to its key, `getNodeByPath` returns the raw entry node
 unwrapped either way. Lower-level walking is also available for hand-rolled
@@ -320,7 +320,7 @@ defer ast.deinit();
 
 var out: std.Io.Writer.Allocating = .init(allocator);
 defer out.deinit();
-try ast.serialize(&out.writer, .json);
+try fig.Serialize.serialize(&ast, &out.writer, .json);
 // {"name": "fig", "nums": [1, 2]}
 ```
 
@@ -635,14 +635,15 @@ function work for `.{ .html_code = ... }` unchanged.
 
 ## Serialization options
 
-`AST.serialize`/`serializeWith` (whole tree) and `AST.serializeNode`/
-`serializeNodeWith` (one subtree) take an optional `AST.SerializeOptions`:
+`fig.Serialize.serialize`/`serializeWith` (whole tree) and
+`serializeNode`/`serializeNodeWith` (one subtree) take an optional
+`AST.SerializeOptions`:
 
 ```zig
-try ast.serializeWith(&out.writer, .json, .{ .pretty = false });      // minified
-try ast.serializeWith(&out.writer, .json, .{ .indent = 4 });          // 4-space indent
-try ast.serializeWith(&out.writer, .toml, .{ .width = 40 });          // inline vs [section] budget
-try ast.serializeWith(&out.writer, .yaml, .{ .strip_comments = true });
+try fig.Serialize.serializeWith(&ast, &out.writer, .json, .{ .pretty = false });      // minified
+try fig.Serialize.serializeWith(&ast, &out.writer, .json, .{ .indent = 4 });          // 4-space indent
+try fig.Serialize.serializeWith(&ast, &out.writer, .toml, .{ .width = 40 });          // inline vs [section] budget
+try fig.Serialize.serializeWith(&ast, &out.writer, .yaml, .{ .strip_comments = true });
 ```
 
 | Field           | Applies to        | Meaning                                          |

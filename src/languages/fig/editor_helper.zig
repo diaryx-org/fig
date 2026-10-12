@@ -52,8 +52,8 @@
 
 const std = @import("std");
 
-const AST = @import("../../ast/ast.zig");
-const Document = @import("../../document.zig");
+const AST = @import("../../kit/ast/ast.zig");
+const Document = @import("../../kit/document.zig");
 const Span = @import("../../kit/span.zig");
 const editor = @import("../../editor.zig");
 const lang = @import("../manifest.zig");

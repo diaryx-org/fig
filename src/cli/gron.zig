@@ -514,7 +514,7 @@ test "a custom projection swaps root, separator, and terminator" {
         \\cfg.a = 1;
     );
     var json: std.Io.Writer.Allocating = .init(a);
-    try doc.ast.serializeWith(&json.writer, .json, .{ .pretty = false });
+    try fig.Serialize.serializeWith(&doc.ast, &json.writer, .json, .{ .pretty = false });
     try testing.expectEqualStrings("{\"a\":1}\n", json.written());
 }
 
@@ -532,12 +532,12 @@ test "ungron tolerates a non-identifier root (hyphens, etc.)" {
         \\adams-archive["a-b"] = 2
     );
     var json: std.Io.Writer.Allocating = .init(a);
-    try doc.ast.serializeWith(&json.writer, .json, .{ .pretty = false });
+    try fig.Serialize.serializeWith(&doc.ast, &json.writer, .json, .{ .pretty = false });
     try testing.expectEqualStrings("{\"title\":\"hi\",\"a-b\":2}\n", json.written());
 
     const scalar = try parseDocument(a, "adams-archive = 7");
     var s2: std.Io.Writer.Allocating = .init(a);
-    try scalar.ast.serializeWith(&s2.writer, .json, .{ .pretty = false });
+    try fig.Serialize.serializeWith(&scalar.ast, &s2.writer, .json, .{ .pretty = false });
     try testing.expectEqualStrings("7\n", s2.written());
 }
 
@@ -558,7 +558,7 @@ test "ungron reconstructs the document" {
     ;
     const doc = try parseDocument(a, input);
     var out: std.Io.Writer.Allocating = .init(a);
-    try doc.ast.serializeWith(&out.writer, .json, .{ .pretty = false });
+    try fig.Serialize.serializeWith(&doc.ast, &out.writer, .json, .{ .pretty = false });
     try testing.expectEqualStrings(
         "{\"a\":1,\"b\":[\"x\",{}],\"weird key\":true,\"n\":null}\n",
         out.written(),

@@ -1,7 +1,9 @@
-//! The kit: the stateless helpers fig's languages share — the spelling of
-//! numbers and datetimes, the JSON-style string escaper several formats
-//! borrow, the bare-literal rule, a token and its span, the XML tokenizer,
-//! and the shape of a parse diagnostic. It imports nothing of core's, so a
+//! The kit: what fig's languages share — the tree a parser builds and a
+//! printer reads (`AST`, `Document`), the node table that is the contract and
+//! the conversions between the two, the spelling of numbers and datetimes,
+//! the JSON-style string escaper several formats borrow, the bare-literal
+//! rule, a token and its span, the XML tokenizer, and the shape of a parse
+//! diagnostic. It imports nothing of core's, so a
 //! language built apart from core can carry a copy of it, which costs bytes
 //! and nothing else (docs/proposals/core-only.md §4.8). Core uses it too.
 
@@ -12,6 +14,12 @@ pub const Token = @import("token.zig").Token;
 pub const literal = @import("literal.zig");
 pub const parse_diagnostic = @import("parse_diagnostic.zig");
 pub const xml = @import("xml.zig");
+/// The language-side tree a parser builds and a printer reads, and the
+/// node table (the contract) each is turned into and out of.
+pub const AST = @import("ast/ast.zig");
+pub const Document = @import("document.zig");
+pub const table = @import("table.zig");
+pub const convert = @import("convert.zig");
 pub const Unicode = @import("unicode.zig");
 pub const json_string = @import("json_string.zig");
 pub const ascii = @import("ascii.zig");
@@ -20,6 +28,10 @@ pub const width = @import("width.zig");
 pub const number = @import("number.zig");
 
 test {
+    _ = AST;
+    _ = Document;
+    _ = table;
+    _ = convert;
     _ = literal;
     _ = parse_diagnostic;
     _ = xml;

@@ -22,14 +22,15 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const AST = @import("ast/ast.zig");
+const AST = @import("kit/ast/ast.zig");
+const Serialize = @import("serialize.zig");
 const Lossless = @import("lossless.zig");
 const Language = @import("languages/language.zig");
 const Runtime = @import("languages/runtime.zig");
 const Writer = std.Io.Writer;
 
 const ExtKind = AST.Node.Kind.Extended.ExtKind;
-const Format = AST.SerializeFormat;
+const Format = Serialize.SerializeFormat;
 
 /// What the tree is analyzed as being printed to: a compiled format, or a
 /// runtime language, whose losses are read off its declaration.

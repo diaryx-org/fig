@@ -20,8 +20,8 @@ const Parser = @This();
 
 const std = @import("std");
 const testing = std.testing;
-const AST = @import("../../ast/ast.zig");
-const Document = @import("../../document.zig");
+const AST = @import("../../kit/ast/ast.zig");
+const Document = @import("../../kit/document.zig");
 const Type = @import("ini.zig").Type;
 const Span = @import("../../kit/span.zig");
 const flat_map = @import("../shared/flat_map.zig");

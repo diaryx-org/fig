@@ -10,7 +10,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const AST = @import("../../ast/ast.zig");
+const AST = @import("../../kit/ast/ast.zig");
 const literal = @import("../../kit/literal.zig");
 
 pub const ExtKind = AST.Node.Kind.Extended.ExtKind;

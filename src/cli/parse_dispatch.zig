@@ -21,7 +21,7 @@ const L = fig.Language;
 
 /// The canonical oracle format is opt-in (`-Dcanonical=true`) and otherwise
 /// compiled out of the CLI — but always present in a test build. Mirrors the
-/// `canonical_enabled` gate in `ast/serialize_options.zig`.
+/// `canonical_enabled` gate in `serialize.zig`.
 const canonical_enabled = build_options.lang_canonical or @import("builtin").is_test;
 
 /// Per-language version/dialect to parse under. Each field defaults to its
@@ -406,7 +406,7 @@ pub fn mapDetected(d: fig.Language.Detected) Format {
 /// TOML's own `caps.lossless`, not by name here — and `get`/`convert`/`fmt`
 /// use it to decide whether to strip before printing so the printer never
 /// aborts a document partway through.
-pub fn nullStripTarget(target: fig.AST.SerializeFormat) ?fig.Lossless.NativeKinds {
+pub fn nullStripTarget(target: fig.Serialize.SerializeFormat) ?fig.Lossless.NativeKinds {
     const native = fig.Lossless.nativeFor(target) orelse return null;
     return if (native.null) null else native;
 }
@@ -417,7 +417,7 @@ pub fn nullStripTarget(target: fig.AST.SerializeFormat) ?fig.Lossless.NativeKind
 /// `caps.lossless`. `get`/`convert`'s lossy path use this to decide whether
 /// to run the pass before printing (the depth-based twin of
 /// `nullStripTarget` above).
-pub fn flatStripDepth(target: fig.AST.SerializeFormat) ?usize {
+pub fn flatStripDepth(target: fig.Serialize.SerializeFormat) ?usize {
     return switch (target) {
         .canonical => null,
         inline else => |f| blk: {

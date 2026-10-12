@@ -48,7 +48,7 @@ pub fn reformatSlice(
         .{ .compiled = types.toSerializeFormat(format) orelse unreachable }; // gron rejected up front above
     try parse_dispatch.reportLoss(allocator, term, &doc.ast, doc.ast.root, diag_target, serialize, false, quiet, strict);
 
-    const target: fig.AST.SerializeFormat = switch (diag_target) {
+    const target: fig.Serialize.SerializeFormat = switch (diag_target) {
         .compiled => |f| f,
         .runtime => |e| {
             var out: std.Io.Writer.Allocating = .init(allocator);
@@ -69,7 +69,7 @@ pub fn reformatSlice(
         // value is dropped up front (already reported above) rather than
         // aborting mid-print.
         const result = try fig.Lossless.lossyStrip(allocator, &doc.ast, doc.ast.root, native);
-        if (result.ast) |stripped| try stripped.serializeWith(&out.writer, target, serialize);
+        if (result.ast) |stripped| try fig.Serialize.serializeWith(&stripped, &out.writer, target, serialize);
     } else if (parse_dispatch.flatStripDepth(target)) |depth| {
         // `fmt` never converts format (always reads and writes the same one),
         // so — unlike `convertSlice`'s twin below — there's no `--lossless` to
@@ -77,9 +77,9 @@ pub fn reformatSlice(
         // have gotten there via a lossless-envelope decode from a PRIOR
         // conversion, and re-emitting the same format always strips it again.
         const result = try fig.FlatStrip.lossyStrip(allocator, &doc.ast, doc.ast.root, depth);
-        if (result.ast) |stripped| try stripped.serializeWith(&out.writer, target, serialize);
+        if (result.ast) |stripped| try fig.Serialize.serializeWith(&stripped, &out.writer, target, serialize);
     } else {
-        doc.ast.serializeWith(&out.writer, target, serialize) catch |err| switch (err) {
+        fig.Serialize.serializeWith(&doc.ast, &out.writer, target, serialize) catch |err| switch (err) {
             error.UnrepresentableRoot => diag_report.reportUnrepresentableRoot(term),
             else => |e| diag_report.reportSerializeError(term, e),
         };
@@ -153,7 +153,7 @@ pub fn convertSlice(
         .{ .compiled = types.toSerializeFormat(to) orelse unreachable }; // gron rejected up front above
     try parse_dispatch.reportLoss(allocator, term, ast, ast.root, diag_target, serialize, lossless, quiet, strict);
 
-    const target: fig.AST.SerializeFormat = switch (diag_target) {
+    const target: fig.Serialize.SerializeFormat = switch (diag_target) {
         .compiled => |f| f,
         .runtime => |e| {
             var out: std.Io.Writer.Allocating = .init(allocator);
@@ -176,16 +176,16 @@ pub fn convertSlice(
         // value is dropped up front (already reported above) rather than
         // aborting mid-print.
         const result = try fig.Lossless.lossyStrip(allocator, ast, ast.root, native);
-        if (result.ast) |stripped| try stripped.serializeWith(&out.writer, target, serialize);
+        if (result.ast) |stripped| try fig.Serialize.serializeWith(&stripped, &out.writer, target, serialize);
     } else if (flat_strip_depth) |depth| {
         // A flat format (by its own `caps.max_mapping_depth`): same idea as
         // TOML's null-stripping above, but depth-based (see
         // `fig.FlatStrip`'s module doc); gated on `!lossless` for the same
         // reason `get`'s twin path is — see there.
         const result = try fig.FlatStrip.lossyStrip(allocator, ast, ast.root, depth);
-        if (result.ast) |stripped| try stripped.serializeWith(&out.writer, target, serialize);
+        if (result.ast) |stripped| try fig.Serialize.serializeWith(&stripped, &out.writer, target, serialize);
     } else {
-        ast.serializeWith(&out.writer, target, serialize) catch |err| switch (err) {
+        fig.Serialize.serializeWith(ast, &out.writer, target, serialize) catch |err| switch (err) {
             error.UnrepresentableRoot => diag_report.reportUnrepresentableRoot(term),
             else => |e| diag_report.reportSerializeError(term, e),
         };

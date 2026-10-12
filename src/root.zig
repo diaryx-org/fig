@@ -16,10 +16,12 @@ pub const Editor = @import("editor.zig").Editor;
 /// editor's span splices, so everything the patch does not name stays
 /// byte-identical. See its module doc for the merge rule and what it refuses.
 pub const Patch = @import("patch.zig");
-pub const Document = @import("document.zig");
+pub const Document = @import("kit/document.zig");
 /// A `[start, end)` byte range — what `Document`'s span tables hold.
 pub const Span = @import("kit/span.zig");
-pub const AST = @import("ast/ast.zig");
+pub const AST = @import("kit/ast/ast.zig");
+/// Rendering a tree in a format, through the format registry.
+pub const Serialize = @import("serialize.zig");
 pub const Embed = @import("embed.zig");
 pub const Lossless = @import("lossless.zig");
 /// Collapsing a document's reference layer — aliases, merges, tags, anchors —
@@ -57,7 +59,7 @@ test {
     _ = @import("languages/runtime.zig");
     _ = @import("languages/wire.zig");
     _ = @import("languages/shared/flat_map.zig");
-    _ = @import("document.zig");
+    _ = @import("kit/document.zig");
     _ = @import("editor.zig");
     _ = @import("editor/regions.zig");
     _ = @import("patch.zig");

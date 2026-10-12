@@ -39,8 +39,8 @@ pub const Parser = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const AST = @import("../../ast/ast.zig");
-const Document = @import("../../document.zig");
+const AST = @import("../../kit/ast/ast.zig");
+const Document = @import("../../kit/document.zig");
 const Span = @import("../../kit/span.zig");
 const datetime = @import("../../kit/datetime.zig");
 const tok = @import("tokenizer.zig");

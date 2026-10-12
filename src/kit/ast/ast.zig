@@ -15,7 +15,7 @@ const AST = @This();
 const std = @import("std");
 const activeTag = std.meta.activeTag;
 const Allocator = std.mem.Allocator;
-const util = @import("../kit/kit.zig");
+const util = @import("../kit.zig");
 
 // ── Sub-modules ─────────────────────────────────────────────────────────────
 // The AST's behavior is split across sibling files, each operating on a
@@ -25,7 +25,7 @@ const util = @import("../kit/kit.zig");
 // `Node`/`Comment`/etc. types those files lean on are declared in THIS file, so
 // the imports below are mutually recursive — fine, since decl access is lazy.
 const reader = @import("reader.zig");
-const serializer = @import("serialize_options.zig");
+const options = @import("options.zig");
 
 // Builder — programmatic, bottom-up construction (the write path). Its file is
 // itself the `Builder` struct, so the import IS the type.
@@ -45,15 +45,10 @@ pub const resolveAlias = reader.resolveAlias;
 pub const resolveDeep = reader.resolveDeep;
 pub const mergedChild = reader.mergedChild;
 
-// Serialization — render the AST to each supported format (the output path).
-pub const SerializeFormat = serializer.SerializeFormat;
-pub const SerializeOptions = serializer.SerializeOptions;
-pub const SerializeError = serializer.SerializeError;
-pub const serialize = serializer.serialize;
-pub const serializeWith = serializer.serializeWith;
-pub const serializeFragmentWith = serializer.serializeFragmentWith;
-pub const serializeNode = serializer.serializeNode;
-pub const serializeNodeWith = serializer.serializeNodeWith;
+// What a printer takes and how it fails. Rendering through the format
+// registry is core's (`serialize.zig`), so it is not a method here.
+pub const SerializeOptions = options.SerializeOptions;
+pub const SerializeError = options.SerializeError;
 
 pub fn deinit(self: *AST) void {
     for (self.owned_strings) |string| {
@@ -401,5 +396,5 @@ test {
     // referenced so future tests there are picked up automatically).
     _ = Builder;
     _ = reader;
-    _ = serializer;
+    _ = options;
 }

@@ -35,8 +35,9 @@
 
 const std = @import("std");
 const Language = @import("language.zig");
-const AST = @import("../ast/ast.zig");
-const Document = @import("../document.zig");
+const AST = @import("../kit/ast/ast.zig");
+const Serialize = @import("../serialize.zig");
+const Document = @import("../kit/document.zig");
 const Span = @import("../kit/span.zig");
 const Editor = @import("../editor.zig").Editor;
 
@@ -53,7 +54,7 @@ fn parseWith(comptime d: anytype, allocator: std.mem.Allocator, input: []const u
 fn printAs(comptime d: anytype, allocator: std.mem.Allocator, ast: *const AST) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
-    try ast.serializeWith(&out.writer, @field(AST.SerializeFormat, d.name), .{});
+    try Serialize.serializeWith(ast, &out.writer, @field(Serialize.SerializeFormat, d.name), .{});
     return allocator.dupe(u8, out.written());
 }
 
@@ -66,7 +67,7 @@ fn printAs(comptime d: anytype, allocator: std.mem.Allocator, ast: *const AST) !
 fn canonicalOf(allocator: std.mem.Allocator, ast: *const AST) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
-    try ast.serializeWith(&out.writer, .canonical, .{});
+    try Serialize.serializeWith(ast, &out.writer, .canonical, .{});
     return allocator.dupe(u8, out.written());
 }
 

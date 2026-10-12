@@ -4,8 +4,9 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const Document = @import("document.zig");
-const AST = @import("ast/ast.zig");
+const Document = @import("kit/document.zig");
+const AST = @import("kit/ast/ast.zig");
+const Serialize = @import("serialize.zig");
 const Span = @import("kit/span.zig");
 const Embed = @import("embed.zig");
 const Editor = @import("editor.zig").Editor;
@@ -3291,7 +3292,7 @@ fn targetOf(format: c_int) ?Target {
     return .{ .compiled = serializeFormatOf(format) orelse return null };
 }
 
-fn serializeFormatOf(format: c_int) ?AST.SerializeFormat {
+fn serializeFormatOf(format: c_int) ?Serialize.SerializeFormat {
     @setEvalBranchQuota(30_000);
     const f = std.enums.fromInt(FigFormat, format) orelse return null;
     return switch (f) {
@@ -3302,7 +3303,7 @@ fn serializeFormatOf(format: c_int) ?AST.SerializeFormat {
             // member of the other under the same name — `SerializeFormat`
             // additionally carries `canonical`, which no `FigFormat` value maps
             // to (see this function's callers, which never see it).
-            return @field(AST.SerializeFormat, d.name);
+            return @field(Serialize.SerializeFormat, d.name);
         },
     };
 }
@@ -3597,7 +3598,7 @@ pub export fn fig_value_serialize_opts(
     // whole-document output — see `AST.serializeFragmentWith`). A runtime
     // printer is handed the subtree from `root` and decides for itself.
     switch (target) {
-        .compiled => |fmt| ast.serializeFragmentWith(&handle.rendered.writer, fmt, serializeOptionsOf(options)) catch |err| return serializeStatus(err),
+        .compiled => |fmt| Serialize.serializeFragmentWith(&ast, &handle.rendered.writer, fmt, serializeOptionsOf(options)) catch |err| return serializeStatus(err),
         .runtime => |e| Runtime.printNodeWith(e, &handle.rendered.writer, &ast, root, serializeOptionsOf(options)) catch |err| return runtimePrintStatus(err),
     }
 
@@ -3664,7 +3665,7 @@ pub export fn fig_document_serialize(
 
     handle.rendered.clearRetainingCapacity();
     switch (target) {
-        .compiled => |fmt| ast.serializeWith(&handle.rendered.writer, fmt, opts) catch |err| return serializeStatus(err),
+        .compiled => |fmt| Serialize.serializeWith(ast, &handle.rendered.writer, fmt, opts) catch |err| return serializeStatus(err),
         .runtime => |e| Runtime.printWith(e, &handle.rendered.writer, ast, opts) catch |err| return runtimePrintStatus(err),
     }
     const bytes = handle.rendered.written();
@@ -5899,20 +5900,20 @@ test "editStatus: every editor refusal is a caller error, not parse_error" {
     // each of these is raised by an editor op (not by a parser) and must map to a
     // caller-facing status. INI's and fig's delete guards had drifted this way.
     const refusals = [_]anyerror{
-        error.NotFound, error.NotAMapping,
-        error.NotASequence, error.NotAContainer,
-        error.UnsupportedShape, error.NotASection,
-        error.NotAnInlineArray, error.NotAnArrayOfTables,
-        error.SectionExists, error.DuplicateKey,
-        error.MergeOnlyKey, error.CannotDeleteSection,
-        error.CannotReplaceSection, error.CannotMoveSection,
-        error.CannotReorderSections, error.EmptyInlineContainer,
+        error.NotFound,                 error.NotAMapping,
+        error.NotASequence,             error.NotAContainer,
+        error.UnsupportedShape,         error.NotASection,
+        error.NotAnInlineArray,         error.NotAnArrayOfTables,
+        error.SectionExists,            error.DuplicateKey,
+        error.MergeOnlyKey,             error.CannotDeleteSection,
+        error.CannotReplaceSection,     error.CannotMoveSection,
+        error.CannotReorderSections,    error.EmptyInlineContainer,
         error.KeyRequiresMultilineForm, error.BlockValueIntoFlow,
-        error.CommentsUnsupported, error.NullUnsupported,
-        error.MultilineComment, error.InvalidComment,
-        error.CommentsUnanchored, error.RendererRefused,
-        error.ImplicitSection, error.ContainerClosesOnItsLine,
-        error.NotAKey, error.NonFiniteNumber,
+        error.CommentsUnsupported,      error.NullUnsupported,
+        error.MultilineComment,         error.InvalidComment,
+        error.CommentsUnanchored,       error.RendererRefused,
+        error.ImplicitSection,          error.ContainerClosesOnItsLine,
+        error.NotAKey,                  error.NonFiniteNumber,
     };
     for (refusals) |err| {
         const status = editStatus(err);

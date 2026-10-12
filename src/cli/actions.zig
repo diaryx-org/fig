@@ -398,7 +398,7 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     // editor would splice — the value as it stands alone, no newline —
     // where a compiled printer ends the line itself, so `get` ends it here
     // to print the same as one.
-    const target: fig.AST.SerializeFormat = switch (diag_target) {
+    const target: fig.Serialize.SerializeFormat = switch (diag_target) {
         .compiled => |f| f,
         .runtime => |e| {
             var out: std.Io.Writer.Allocating = .init(a);
@@ -435,7 +435,7 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
         // at `node_id`, so the result serializes whole.
         const result = try fig.Lossless.lossyStrip(a, ast, node_id, native);
         if (result.ast) |stripped| {
-            try stripped.serializeWith(stdout_term.writer, target, opts.serialize);
+            try fig.Serialize.serializeWith(&stripped, stdout_term.writer, target, opts.serialize);
         }
     } else if (flat_strip_depth) |depth| {
         // A flat format (INI/dotenv/.properties, by their own
@@ -446,15 +446,15 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
         // (already warned about above).
         const result = try fig.FlatStrip.lossyStrip(a, ast, node_id, depth);
         if (result.ast) |stripped| {
-            try stripped.serializeWith(stdout_term.writer, target, opts.serialize);
+            try fig.Serialize.serializeWith(&stripped, stdout_term.writer, target, opts.serialize);
         }
     } else if (opts.path == null) {
-        ast.serializeWith(stdout_term.writer, target, opts.serialize) catch |err| switch (err) {
+        fig.Serialize.serializeWith(ast, stdout_term.writer, target, opts.serialize) catch |err| switch (err) {
             error.UnrepresentableRoot => diag_report.reportUnrepresentableRoot(stderr_term),
             else => |e| diag_report.reportSerializeError(stderr_term, e),
         };
     } else {
-        ast.serializeNodeWith(stdout_term.writer, target, node_id, opts.serialize) catch |err| switch (err) {
+        fig.Serialize.serializeNodeWith(ast, stdout_term.writer, target, node_id, opts.serialize) catch |err| switch (err) {
             error.UnrepresentableRoot => diag_report.reportUnrepresentableRoot(stderr_term),
             else => |e| diag_report.reportSerializeError(stderr_term, e),
         };
@@ -483,8 +483,8 @@ fn scalarText(a: std.mem.Allocator, ast: *const fig.AST, id: fig.AST.Node.Id) !?
         }
         if (comptime !build_options.lang_json) return error.FormatDisabled;
     }
-    const target: fig.AST.SerializeFormat = if (comptime build_options.lang_fig) .fig else .json;
-    try view.serializeFragmentWith(&w.writer, target, .{});
+    const target: fig.Serialize.SerializeFormat = if (comptime build_options.lang_fig) .fig else .json;
+    try fig.Serialize.serializeFragmentWith(&view, &w.writer, target, .{});
     const text = std.mem.trimEnd(u8, w.written(), "\n");
     if (comptime !build_options.lang_fig) if (ast.nodes[id].kind == .extended and text.len > 0 and text[0] == '"') return ast.nodes[id].kind.extended.text;
     return text;

@@ -5,7 +5,7 @@ const Allocator = std.mem.Allocator;
 
 const Language = @import("languages/language.zig");
 const Runtime = @import("languages/runtime.zig");
-const Document = @import("document.zig");
+const Document = @import("kit/document.zig");
 const Span = @import("kit/span.zig");
 const build_options = @import("build_options");
 
@@ -1135,7 +1135,7 @@ fn scanForDelim(source: []const u8, start: usize, d: Delimiter) ?Span {
 // --- tests ---------------------------------------------------------------
 
 const testing = std.testing;
-const AST = @import("ast/ast.zig");
+const AST = @import("kit/ast/ast.zig");
 
 test "extract: YAML frontmatter comments survive into the parsed AST" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;

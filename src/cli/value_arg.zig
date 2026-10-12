@@ -166,14 +166,14 @@ pub fn render(allocator: std.mem.Allocator, value: Value, format: Format, layout
     if (types.runtimeEntry(format)) |e| {
         try fig.Runtime.printNodeWith(e, &w.writer, ast, ast.root, options);
     } else {
-        const target: fig.AST.SerializeFormat = if (layout == .flow and format == .yaml)
+        const target: fig.Serialize.SerializeFormat = if (layout == .flow and format == .yaml)
             .json
         else
             types.toSerializeFormat(format) orelse return error.UnsupportedValueTarget;
         // Renamed, so a value the format cannot hold is never mistaken for a
         // parse error the file raised under the same name (INI's and TOML's
         // parsers raise `InvalidKey` on a malformed file).
-        ast.serializeFragmentWith(&w.writer, target, options) catch |err| return switch (err) {
+        fig.Serialize.serializeFragmentWith(ast, &w.writer, target, options) catch |err| return switch (err) {
             error.NullUnsupported => error.UnwritableNull,
             error.UnsupportedValue => error.UnwritableNested,
             error.NonStringKey, error.InvalidKey => error.UnwritableKey,

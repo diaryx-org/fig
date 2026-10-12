@@ -3,8 +3,8 @@
 const std = @import("std");
 const build_options = @import("build_options");
 
-const AST = @import("ast/ast.zig");
-const Document = @import("document.zig");
+const AST = @import("kit/ast/ast.zig");
+const Document = @import("kit/document.zig");
 const Span = @import("kit/span.zig");
 const json = @import("languages/json/json.zig");
 const regions = @import("editor/regions.zig");

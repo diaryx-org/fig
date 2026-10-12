@@ -399,7 +399,7 @@ pub fn Dialect(comptime L: type) type {
         /// dialects by entry point (`print`/`printc`/`print5`), and YAML's
         /// document printer is `printWith`.
         ///
-        /// These ARE the serializer's dispatch: `ast/serialize_options.zig`
+        /// These ARE the serializer's dispatch: `serialize.zig`
         /// calls `@field(d.Lang.Printer, d.print_name)(writer, ast, options)`
         /// (and the `print_node_name` twin) for every entry, so a wrong name
         /// here is a compile error rather than a wrong output.
@@ -845,4 +845,3 @@ pub const Delimiters = struct { open: []const u8, close: []const u8 };
 /// The self-closing block container spellings of a format whose containers
 /// have them. See `Syntax.closed_containers`.
 pub const ClosedContainers = struct { map: Delimiters, seq: Delimiters };
-

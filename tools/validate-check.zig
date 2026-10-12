@@ -329,7 +329,7 @@ fn buildDrivenProbe(allocator: std.mem.Allocator) ![]u8 {
         \\comptime {
         \\    language.validate(Language);
         \\    // Out of tree means out of the registry: no derived enum names it.
-        \\    if (@hasField(fig.AST.SerializeFormat, "fixture")) @compileError("the fixture leaked into the registry");
+        \\    if (@hasField(fig.Serialize.SerializeFormat, "fixture")) @compileError("the fixture leaked into the registry");
         \\}
         \\
         \\test "an out-of-tree Language drives Editor end to end" {

@@ -24,7 +24,7 @@ const Allocator = std.mem.Allocator;
 const Runtime = @import("runtime.zig");
 const manifest = @import("manifest.zig");
 const Language = @import("language.zig");
-const AST = @import("../ast/ast.zig");
+const AST = @import("../kit/ast/ast.zig");
 const Span = @import("../kit/span.zig");
 
 /// Where a request line goes and a response line comes from. Embedded in

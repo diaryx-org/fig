@@ -1,7 +1,7 @@
 const zon = @This();
 const std = @import("std");
-const Document = @import("../../document.zig");
-const AST = @import("../../ast/ast.zig");
+const Document = @import("../../kit/document.zig");
+const AST = @import("../../kit/ast/ast.zig");
 const lang = @import("../manifest.zig");
 
 pub const Parser = @import("parser.zig");

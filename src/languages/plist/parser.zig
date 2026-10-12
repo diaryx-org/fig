@@ -53,8 +53,9 @@
 const Parser = @This();
 
 const std = @import("std");
-const AST = @import("../../ast/ast.zig");
-const Document = @import("../../document.zig");
+const Serialize = @import("../../serialize.zig");
+const AST = @import("../../kit/ast/ast.zig");
+const Document = @import("../../kit/document.zig");
 const Type = @import("plist.zig").Type;
 const Span = @import("../../kit/span.zig");
 const Tokenizer = @import("../../kit/xml.zig");
@@ -622,7 +623,7 @@ fn expectJson(src: []const u8, expected: []const u8) !void {
     defer doc.deinit(testing.allocator);
     var buf: [2048]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try doc.ast.serialize(&w, .json);
+    try Serialize.serialize(&doc.ast, &w, .json);
     try testing.expectEqualStrings(expected, w.buffered());
 }
 

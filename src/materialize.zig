@@ -32,7 +32,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const AST = @import("ast/ast.zig");
+const AST = @import("kit/ast/ast.zig");
 // The core schema's number grammar, as the compiled YAML reads a plain
 // scalar — pure functions of a lexeme, so a runtime twin's AST is judged by
 // the same rules.

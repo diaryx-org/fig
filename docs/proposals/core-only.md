@@ -11,9 +11,7 @@ part_of = [proposals](proposals.md)
 
 > **Status: DRAFT.** Written against `main` at f459cce (5.2.0, core ABI
 > 3). Nothing here is built. §7 lists what breaks; §8 orders the work so
-> that most of it lands in 6.x as additive changes and 7.0 only deletes.
-> The first draft named 6.0; 6.0.0 went to other changes (089b6ad), so
-> the deletions are 7.0's.
+> that most of it lands in 5.x as additive changes and 6.0 only deletes.
 >
 > The second draft. The first let a Zig language import core's internals
 > and shipped the languages as a second prebuilt payload. A language built
@@ -41,7 +39,7 @@ rule rather than a default:
 > does `fig.h`. A language is something a consumer registers, and it
 > reaches core only through the contract.
 
-The authoring dialect is named `figl` from 7.0, after its extension, so
+The authoring dialect is named `figl` from 6.0, after its extension, so
 that the library and the language stop sharing a word. §6 depends on the
 difference.
 
@@ -142,7 +140,7 @@ is registered, that rule would end sniffing. What replaces it is that the
 order belongs to the consumer, not the language: a language may declare a
 `sniff` predicate, and a consumer opts in by passing the order it wants
 (`fig_detect_order`). A language never ranks itself against another. The
-CLI passes 6.x's order, so `fig get -` on stdin behaves as it does now. A
+CLI passes 5.x's order, so `fig get -` on stdin behaves as it does now. A
 consumer that passes no order gets no sniffing. The pin that `jsonc` is
 never sniffed becomes the CLI's order leaving it out.
 
@@ -162,7 +160,7 @@ they *are* rather than where they came from:
 | `plist_data` | `bytes` (base64 payload, whitespace stripped) |
 
 Only the plist rows are required by §1's rule. The ZON renames are not;
-they ride on 7.0 because the ABI breaks there anyway.
+they ride on 6.0 because the ABI breaks there anyway.
 
 Merging plist dates is the one real semantic change: a plist date then
 converts to a TOML datetime instead of degrading to a string. It costs
@@ -343,7 +341,7 @@ remain the npm languages.
 ### 5.4 The CLI and LSP
 
 Consumers. They link every language and register them at startup, so
-`fig get config.yaml …` behaves exactly as it does in 6.x. They stay in
+`fig get config.yaml …` behaves exactly as it does in 5.x. They stay in
 this repository.
 
 ### 5.5 New and house formats
@@ -440,7 +438,7 @@ asserts that none is.
 
 ## 7. What breaks
 
-Everything here is 7.0, ABI 4.
+Everything here is 6.0, ABI 4.
 
 - `FIG_FORMAT_*`, Rust `Format::Json`…`Format::Plist` and TypeScript
   core `Format` members are gone. Integers 1 to 13 mean nothing, and
@@ -449,7 +447,7 @@ Everything here is 7.0, ABI 4.
   gets `UnsupportedFormat` until it calls `fig_yaml::register()`.
 - The authoring dialect's name is `figl`. `-i fig` and
   `format_by_name("fig")` stop resolving, unless figl registers `fig` as
-  an alias for 7.x.
+  an alias for 6.x.
 - `fig`'s Cargo features `json` … `nestedtext` are gone. The `default`
   feature set links no language.
 - Content sniffing happens only for a consumer that passes an order. The
@@ -476,16 +474,16 @@ Everything here is 7.0, ABI 4.
    that registers one, and compare its size against 5.2. Measure the
    `NodeTable` copy on the YAML corpus. These two numbers decide §5.2 and
    §5.1, and neither design is settled until they exist.
-2. **Declarations, in 6.x.** Add `render_key`, `resolveScalar`,
+2. **Declarations, in 5.x.** Add `render_key`, `resolveScalar`,
    `splitStream`, `caps.root_container`, `degrades_to`, the declared
    noun, delimiter-driven comment scanning, fragment printing, the
    lexeme's value (§4.2) and the consumer's sniff order. Have every
    compiled language declare them, and switch core to read them. Each pin
    and switch is deleted in the commit that makes it redundant. All of
    this is additive at ABI 3.
-3. **The kit, in 6.x.** Move the shared helpers, and the JSON pieces the
+3. **The kit, in 5.x.** Move the shared helpers, and the JSON pieces the
    other languages borrow.
-4. **Registered containers, in 6.x,** beside the existing presets, which
+4. **Registered containers, in 5.x,** beside the existing presets, which
    become thin wrappers.
 5. **The parity gate.** The [conformance suite](conformance-suite.md)
    scores any language through the contract. The twins close §5.6's four
@@ -496,13 +494,13 @@ Everything here is 7.0, ABI 4.
    suite at the compiled format's scores before the compiled one is
    deleted. Core builds and tests with no language. The CLI and LSP
    register theirs. Add the §6 check.
-7. **7.0, ABI 4.** Delete the identity enums, the stand-ins, the
+7. **6.0, ABI 4.** Delete the identity enums, the stand-ins, the
    presets, the closed `KeyStyle` and `CommentStyle`, and the
    one-language options. Rename `ExtKind` and the dialect.
 8. **Bindings.** `fig-languages-sys` and the per-language crates, the
    C headers, and the npm wasm without stand-ins.
 
-Steps 2 to 5 are worth doing whether or not 7.0 happens, since each
+Steps 2 to 5 are worth doing whether or not 6.0 happens, since each
 replaces a switch with a declaration a registered language can also make,
 or holds a registered language to the bar a compiled one meets.
 

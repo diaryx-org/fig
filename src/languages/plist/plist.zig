@@ -59,6 +59,7 @@ pub const Language = struct {
     /// format that is also a full value model.
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "plist",
+        .prints = .{ .holds = .{ .plist_date = true, .plist_data = true }, .comments = .never },
         .abi_value = 12,
         // After ZON and before the key/value grammars, none of which accept a
         // `<tag>`. Rank 4 was generic XML's until core 3.0 removed it; the

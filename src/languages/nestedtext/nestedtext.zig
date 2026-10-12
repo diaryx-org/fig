@@ -37,6 +37,7 @@ pub const Language = struct {
     /// Nested (dict/list) but deliberately untyped — every leaf is a string.
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "nestedtext",
+        .prints = .{ .holds = .{}, .typed_scalars = false, .null_at_root = true, .char_as = "number" },
         .abi_value = 13,
         // LAST, after even `.properties` — not because its own grammar is
         // unusually permissive (it isn't: keys/values have real restrictions,

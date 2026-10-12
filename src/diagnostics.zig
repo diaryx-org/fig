@@ -246,7 +246,7 @@ const Collector = struct {
         }
         // Otherwise, a format with no comment syntax here drops it outright.
         const emitted, const block = switch (self.target) {
-            .compiled => |f| .{ commentsEmitted(f, self.options.pretty), blockComments(f) },
+            .compiled => |f| compiledComments(f, self.options.pretty),
             // A runtime language that declares no `syntax` has said nothing
             // about comments, and its printer receives every comment row, so
             // there is no loss to claim.
@@ -292,110 +292,51 @@ const Loss = struct { code: Warning.Code, note: []const u8 };
 
 /// The value loss serializing `kind` to `format` would cause, or null if none.
 /// Lossless suppression is the caller's concern (`checkValue`). `depth` is 0
-/// for the node `analyze` was called with, incrementing per container level:
-/// fig's root-position rule needs only root-vs-not (`depth == 0`); INI's
-/// needs the full depth, since it can hold a ROOT mapping and one level of
-/// `[section]` mappings but nothing nested deeper. Every other branch ignores
-/// it entirely.
+/// for the node `analyze` was called with, incrementing per container level.
+/// Read from the dialect's `prints` declaration and its language's
+/// `max_mapping_depth` (`declaredLoss`); canonical, the lossless oracle,
+/// holds every kind.
 fn valueLoss(format: Format, kind: AST.Node.Kind, depth: usize) ?Loss {
-    const is_root = depth == 0;
-    switch (format) {
-        // Canonical is the lossless oracle: every kind round-trips.
-        .canonical => return null,
-        // fig natively represents every kind EXCEPT a scalar/null/extended/alias
-        // sitting at the document root: the fig dialect's root must be a map or
-        // a sequence (see `src/languages/fig/printer.zig`'s `root`, which
-        // hard-errors with `FigUnrepresentableRoot` rather than emit
-        // non-conforming output for exactly this case). Everywhere else, the
-        // `extended` scalars that lack a bare spelling (char, enum atom,
-        // non-finite float) round-trip losslessly via an explicit
-        // `: char`/`: enum`/`: float` annotation — a syntax choice, not a value
-        // loss (see `writeExtended`).
-        .fig => {
-            if (is_root) switch (kind) {
-                .mapping, .sequence => return null,
-                else => return .{ .code = .value_dropped, .note = rootScalarNote(kind) },
-            };
-            return null;
-        },
-        // Plain JSON / JSONC: no datetimes, enums, chars; non-finite floats quote.
-        .json, .jsonc => switch (kind) {
-            .extended => |e| return .{ .code = .type_degraded, .note = degradedNote(format, e.kind) },
-            else => return null,
-        },
-        // JSON5 additionally has native non-finite floats.
-        .json5 => switch (kind) {
-            .extended => |e| {
-                if (e.kind == .number_special) return null;
-                return .{ .code = .type_degraded, .note = degradedNote(format, e.kind) };
-            },
-            else => return null,
-        },
-        // YAML/TOML/ZON: defer to the lossless capability model — what each
-        // language declares in `caps.lossless` (build-invariant, so this
-        // reports the same loss whether or not the target is compiled in).
-        .yaml, .toml, .zon => {
-            const native = Lossless.nativeFor(format) orelse unreachable; // all three declare one
+    return switch (format) {
+        .canonical => null,
+        inline else => |f| declaredLoss(comptime printsOf(@tagName(f)), comptime maxDepthOf(@tagName(f)), kind, depth),
+    };
+}
 
-            if (Lossless.isUnrepresentable(native, kind)) return .{ .code = .value_dropped, .note = dropNote(kind) };
-            if (Lossless.needsEnvelope(native, kind)) {
-                // `needsEnvelope` is true here only for `extended` kinds (a `null`
-                // is either representable or already caught by `isUnrepresentable`).
-                return switch (kind) {
-                    .extended => |e| .{ .code = .type_degraded, .note = degradedNote(format, e.kind) },
-                    else => null,
-                };
-            }
-            return null;
-        },
-        // The flat formats — INI, dotenv, `.properties` — each declaring a
-        // `caps.max_mapping_depth`: no typed scalars (every boolean and
-        // number collapses to plain text the moment it leaves the AST),
-        // no `null`, no sequence at any depth, and a mapping only
-        // down to the declared depth (INI's root plus one level of
-        // `[section]`s; the other two hold the root mapping alone). This is
-        // exactly what `flat_strip.zig` drops before a lossy print, reading
-        // the same field, so the warning and the strip cannot disagree.
-        inline .ini, .dotenv, .properties => |f| {
-            const max_depth = comptime Language.moduleFor(@tagName(f)).Language.caps.max_mapping_depth orelse
-                @compileError("'" ++ @tagName(f) ++ "' takes the flat arm of `valueLoss` but declares no max_mapping_depth");
-            switch (kind) {
-                .null_ => return .{ .code = .value_dropped, .note = "null" },
-                .boolean, .number => return .{ .code = .type_degraded, .note = "string" },
-                .extended => |e| return .{ .code = .type_degraded, .note = degradedNote(format, e.kind) },
-                .sequence => return .{ .code = .value_dropped, .note = "array" },
-                .mapping => if (depth > max_depth) return .{ .code = .value_dropped, .note = "table" } else return null,
-                else => return null,
-            }
-        },
-        // plist has native `boolean`/`integer`/`real`/`string`, unlimited
-        // mapping/sequence nesting, and its own two extended kinds — the only
-        // thing it can't hold at all is `null` (the DTD has no null type).
-        // An extended kind OTHER than plist's own two (a TOML datetime, a
-        // ZON enum/char literal, a JSON5 non-finite float) degrades to a
-        // plain string, same as the flat formats' blanket treatment.
-        .plist => switch (kind) {
-            .null_ => return .{ .code = .value_dropped, .note = "null" },
-            .extended => |e| switch (e.kind) {
-                .plist_date, .plist_data => return null,
-                else => return .{ .code = .type_degraded, .note = degradedNote(format, e.kind) },
-            },
-            else => return null,
-        },
-        // NestedText: same "no typed scalars" story as INI, but with
-        // UNRESTRICTED mapping/sequence nesting (unlike INI's depth-2 cap —
-        // see `languages/nestedtext/parser.zig`'s module doc). Its only
-        // hard loss is `null`: the whole document may itself be absent/empty
-        // (root `null_`, no loss), but a `null` value nested inside a
-        // container has no spelling (`languages/nestedtext/printer.zig`
-        // hard-errors `NullUnsupported` there, same as INI).
-        .nestedtext => switch (kind) {
-            .null_ => if (is_root) return null else return .{ .code = .value_dropped, .note = "null" },
-            .boolean, .number => return .{ .code = .type_degraded, .note = "string" },
-            .extended => |e| return .{ .code = .type_degraded, .note = degradedNote(format, e.kind) },
-            else => return null,
-        },
+/// The compiled dialect `name`'s `prints`, which every one whose language
+/// serializes declares.
+fn printsOf(comptime name: []const u8) Language.Prints {
+    return Language.entryFor(name).prints orelse
+        @compileError("'" ++ name ++ "' declares no `prints`, which the conversion warnings read");
+}
+
+fn maxDepthOf(comptime name: []const u8) ?u8 {
+    return Language.moduleFor(name).Language.caps.max_mapping_depth;
+}
+
+/// The loss `prints` and `max_mapping_depth` say serializing `kind` at
+/// `depth` causes. A flat format (one with `max_mapping_depth`) holds no
+/// sequence, and no mapping past that depth.
+fn declaredLoss(p: Language.Prints, max_depth: ?u8, kind: AST.Node.Kind, depth: usize) ?Loss {
+    if (p.root_container and depth == 0) switch (kind) {
+        .mapping, .sequence => {},
+        else => return .{ .code = .value_dropped, .note = rootScalarNote(kind) },
+    };
+    switch (kind) {
+        .null_ => if (!p.holds.null and !(p.null_at_root and depth == 0)) return .{ .code = .value_dropped, .note = "null" },
+        .boolean, .number => if (!p.typed_scalars) return .{ .code = .type_degraded, .note = "string" },
+        .extended => |e| if (!holdsExt(p.holds, e.kind)) return .{ .code = .type_degraded, .note = degradedNote(p, e.kind) },
+        .sequence => if (max_depth != null) return .{ .code = .value_dropped, .note = "array" },
+        .mapping => if (max_depth) |m| if (depth > m) return .{ .code = .value_dropped, .note = "table" },
+        else => {},
     }
+    return null;
+}
+
+fn holdsExt(holds: Language.NativeKinds, ext: ExtKind) bool {
+    return switch (ext) {
+        inline else => |k| @field(holds, @tagName(k)),
+    };
 }
 
 /// `valueLoss` for a runtime language, from its declaration alone — the
@@ -435,37 +376,14 @@ fn runtimeComments(e: *const Runtime.Entry) ?struct { bool, bool } {
     return .{ true, line.close.len > 0 };
 }
 
-/// The type an `extended` value collapses to in `format` — matches what each
-/// printer actually writes (see `src/*/printer.zig`).
-fn degradedNote(format: Format, ext: ExtKind) []const u8 {
+/// The type an `extended` value the target does not hold collapses to, as
+/// its printer writes it: a char literal and a non-finite float as the
+/// dialect declares, every other kind as a string.
+fn degradedNote(p: Language.Prints, ext: ExtKind) []const u8 {
     return switch (ext) {
-        .enum_literal,
-        .offset_datetime,
-        .local_datetime,
-        .local_date,
-        .local_time,
-        => "string",
-        // A char literal's text is its codepoint: most printers emit it as a
-        // number; TOML as an integer; plist as plain text (its `<integer>` is
-        // a number type, but a char is not one). (fig never reaches here — it
-        // re-emits the char natively via `: char`, so `valueLoss(.fig, …)`
-        // returns null.)
-        .char_literal => switch (format) {
-            .toml => "integer",
-            .plist => "string",
-            else => "number",
-        },
-        // Non-finite floats quote in plain JSON/JSONC; elsewhere they degrade to
-        // a plain string scalar (YAML/ZON — JSON5 keeps them natively,
-        // handled before this is reached).
-        .number_special => switch (format) {
-            .json, .jsonc => "quoted string",
-            else => "string",
-        },
-        // plist's own two extended kinds have no foreign representation
-        // beyond a plain string (a JSON/YAML/TOML/... printer just emits
-        // their text verbatim, same treatment as an unrecognized datetime).
-        .plist_date, .plist_data => "string",
+        .char_literal => p.char_as,
+        .number_special => p.number_special_as,
+        else => "string",
     };
 }
 
@@ -499,28 +417,34 @@ fn dropNote(kind: AST.Node.Kind) []const u8 {
     };
 }
 
-/// Whether `format` emits comments at all in this mode. Plain JSON never does;
-/// JSON5/JSONC/ZON only in pretty (multi-line) output; YAML/TOML/canonical
-/// always. plist never does — its reader sits on the XML tokenizer, which
-/// skips `<!-- -->` entirely, so a plist-sourced AST never carries any and the
-/// printer emits none.
-fn commentsEmitted(format: Format, pretty: bool) bool {
+/// Whether `format` writes comments at all in this mode, as its dialect's
+/// `prints.comments` says, and whether it has a spelling for a block one: a
+/// declared `block` comment, or a paired own-line one. Canonical writes both.
+fn compiledComments(format: Format, pretty: bool) struct { bool, bool } {
     return switch (format) {
-        .json, .plist => false,
-        .json5, .jsonc, .zon => pretty,
-        .yaml, .toml, .canonical, .fig, .ini, .dotenv, .properties, .nestedtext => true,
+        .canonical => .{ true, true },
+        inline else => |f| blk: {
+            const p = comptime printsOf(@tagName(f));
+            const emitted = switch (p.comments) {
+                .always => true,
+                .pretty => pretty,
+                .never => false,
+            };
+            const c = comptime commentsOf(@tagName(f));
+            const block = c.block != null or (if (c.line) |l| l.close.len > 0 else false);
+            break :blk .{ emitted, block };
+        },
     };
 }
 
-/// Whether `format` has block-comment syntax (`/* … */`). Only the JSON5 family
-/// and canonical do; YAML/TOML/ZON/fig/INI degrade a block comment to a line
-/// run; plist has no comments at all (moot — `commentsEmitted` already
-/// excludes it).
-fn blockComments(format: Format) bool {
-    return switch (format) {
-        .json5, .jsonc, .canonical => true,
-        .json, .yaml, .toml, .zon, .fig, .ini, .dotenv, .properties, .plist, .nestedtext => false,
-    };
+/// The compiled dialect `name`'s declared comment syntax, read from its
+/// language's own row so that a language compiled out still answers.
+fn commentsOf(comptime name: []const u8) Language.Comments {
+    const L = Language.moduleFor(name).Language;
+    inline for (L.dialects) |d| {
+        if (comptime std.mem.eql(u8, d.name, name)) return L.syntax(d.dialect).comments;
+    }
+    unreachable;
 }
 
 fn hasBlock(nc: AST.NodeComments) bool {

@@ -47,6 +47,7 @@ pub const Language = struct {
     /// by every surface.
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "fig",
+        .prints = .{ .holds = lang.holds_everything, .root_container = true },
         // 8: appended to the C ABI after json5 (7).
         .abi_value = 8,
         // Right after TOML and before INI/YAML, not last: fig overlaps TOML

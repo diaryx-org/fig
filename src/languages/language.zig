@@ -13,6 +13,8 @@ pub const Language = @This();
 // manifest depending on the languages that declare it.
 pub const Caps = manifest.Caps;
 pub const NativeKinds = manifest.NativeKinds;
+pub const Prints = manifest.Prints;
+pub const Comments = manifest.Comments;
 pub const Syntax = manifest.Syntax;
 pub const Literal = manifest.Literal;
 pub const RenderRequest = manifest.RenderRequest;

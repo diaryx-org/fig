@@ -419,8 +419,48 @@ pub fn Dialect(comptime L: type) type {
         /// it writes — and every tag/MIME it accepts on read — out of these
         /// fields, so they are the spelling, not a description of it.
         embed: ?EmbedSpellings = null,
+
+        /// What this dialect's printer makes of a tree from another format,
+        /// for the conversion warnings (`diagnostics.zig`). Required of a
+        /// compiled dialect whose language serializes. See `Prints`.
+        prints: ?Prints = null,
     };
 }
+
+/// What a dialect's printer writes of a tree read from another format: the
+/// declaration the conversion warnings are computed from, so that no part of
+/// core needs to know which format is the target.
+pub const Prints = struct {
+    /// The kinds written as themselves. A `null` not held is dropped; an
+    /// extended scalar not held degrades, to what `char_as` and
+    /// `number_special_as` say for those two and to a string for the rest.
+    holds: NativeKinds,
+    /// Booleans and numbers written as themselves; false where every scalar
+    /// is text (INI, NestedText), which a typed one degrades to.
+    typed_scalars: bool = true,
+    /// A `null` at the root is an empty document rather than a loss
+    /// (NestedText), though a nested one is.
+    null_at_root: bool = false,
+    /// The root must be a mapping or a sequence (figl); any other root is
+    /// dropped.
+    root_container: bool = false,
+    /// What a char literal not held is written as: its codepoint as a
+    /// `"number"` or an `"integer"`, or a `"string"`.
+    char_as: []const u8 = "string",
+    /// What a non-finite float not held is written as: a `"string"`, or a
+    /// `"quoted string"` where the bare one would not read back as text.
+    number_special_as: []const u8 = "string",
+    /// When the printer writes comments: always, only when pretty-printing
+    /// (on one line it has nowhere to put them), or never.
+    comments: enum { always, pretty, never } = .always,
+};
+
+/// Every kind held: a format whose printer writes every value as itself.
+pub const holds_everything: NativeKinds = blk: {
+    var k: NativeKinds = .{};
+    for (@typeInfo(NativeKinds).@"struct".field_names) |f| @field(k, f) = true;
+    break :blk k;
+};
 
 /// Everything the generic splice engine needs to know about a format's
 /// surface syntax, indexed by dialect.

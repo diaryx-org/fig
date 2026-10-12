@@ -43,6 +43,7 @@ pub const Language = struct {
     /// nested value tree cannot be represented, and serializing one warns.
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "dotenv",
+        .prints = .{ .holds = .{}, .typed_scalars = false, .char_as = "number" },
         .abi_value = 10,
         // Last of the four key/value-shaped formats. dotenv is almost entirely
         // shadowed by INI: INI's key scanner accepts any non-`=`/newline run

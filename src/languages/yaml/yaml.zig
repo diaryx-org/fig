@@ -57,6 +57,7 @@ pub const Language = struct {
 
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "yaml",
+        .prints = .{ .holds = Language.caps.lossless.?, .char_as = "number" },
         .abi_value = 3,
         // Third from last: YAML is so permissive (a bare line is a valid plain
         // scalar) that almost anything falls through to it, so every stricter

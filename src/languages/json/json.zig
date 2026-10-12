@@ -57,6 +57,7 @@ pub const Language = struct {
     pub const dialects: []const lang.Dialect(@This()) = &.{
         .{
             .name = "json",
+            .prints = .{ .holds = .{ .null = true }, .char_as = "number", .number_special_as = "quoted string", .comments = .never },
             .dialect = .JSON,
             .abi_value = 1,
             // Strictest grammar of all, so it goes first: nothing JSON accepts is
@@ -75,6 +76,7 @@ pub const Language = struct {
         },
         .{
             .name = "jsonc",
+            .prints = .{ .holds = .{ .null = true }, .char_as = "number", .number_special_as = "quoted string", .comments = .pretty },
             .dialect = .JSONC,
             .abi_value = 2,
             // The one dialect `detect` never sniffs: plain JSON and JSON5
@@ -90,6 +92,7 @@ pub const Language = struct {
         },
         .{
             .name = "json5",
+            .prints = .{ .holds = .{ .null = true, .number_special = true }, .char_as = "number", .comments = .pretty },
             .dialect = .JSON5,
             // 7, not 3: JSON5 was added to the C ABI after XML (6), and a
             // released value is appended rather than inserted — the reason

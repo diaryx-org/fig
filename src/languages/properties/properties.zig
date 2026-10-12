@@ -39,6 +39,7 @@ pub const Language = struct {
     /// Flat and untyped, the same representational limits as dotenv.
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "properties",
+        .prints = .{ .holds = .{}, .typed_scalars = false, .char_as = "number" },
         .abi_value = 11,
         // After YAML. `.properties` is even more permissive: a line with no
         // separator at all is still legal (a bare key, empty value — see

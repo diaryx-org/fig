@@ -42,6 +42,7 @@ pub const Language = struct {
     /// `port = 8080` reads back as the STRING "8080".
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "ini",
+        .prints = .{ .holds = .{}, .typed_scalars = false, .char_as = "number" },
         .abi_value = 9,
         // After TOML and fig: INI's grammar is also permissive (a bare
         // `key = value` line, or an empty file, both parse), so it is tried

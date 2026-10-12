@@ -47,6 +47,7 @@ pub const Language = struct {
 
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "zon",
+        .prints = .{ .holds = Language.caps.lossless.?, .char_as = "number", .comments = .pretty },
         .abi_value = 5,
         // After the JSON family and before every markup or key/value grammar:
         // a `.{ … }` literal is not valid JSON, and nothing looser would read it

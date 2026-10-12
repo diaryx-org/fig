@@ -24,6 +24,8 @@ pub const convert = @import("convert.zig");
 /// The contract's declarations and C shapes, which a language fills.
 pub const manifest = @import("manifest.zig");
 pub const abi = @import("abi.zig");
+/// A Zig language's contract vtable, built from its module.
+pub const contract = @import("contract.zig");
 pub const Unicode = @import("unicode.zig");
 pub const json_string = @import("json_string.zig");
 pub const ascii = @import("ascii.zig");
@@ -38,6 +40,7 @@ test {
     _ = convert;
     _ = manifest;
     _ = abi;
+    _ = contract;
     _ = literal;
     _ = lines;
     _ = parse_diagnostic;

@@ -620,8 +620,8 @@ Everything here is 6.0, ABI 4.
 - A consumer that called `parse(…, Format::Yaml)` without registering
   gets `UnsupportedFormat` until it calls `fig_yaml::register()`.
 - The authoring dialect's name is `figl`. `-i fig` and
-  `format_by_name("fig")` stop resolving, unless figl registers `fig` as
-  an alias for 6.x.
+  `format_by_name("fig")` stop resolving; there is no alias (decided
+  2026-10-12).
 - `fig`'s Cargo features `json` … `nestedtext` are gone. The `default`
   feature set links no language.
 - Content sniffing happens only for a consumer that passes an order. The

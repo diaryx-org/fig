@@ -368,6 +368,51 @@ reads every span and every scalar costs the same on both layouts.
 
 Offsets are u32, so a source is limited to 4 GiB.
 
+#### The table, as ABI 4 spells it
+
+Fig owns the table; a language fills it. `parse` is handed a `FigTable *`
+that fig allocated, and writes into it through calls fig exports, so no
+memory crosses an allocator boundary and there is no `free_table`:
+
+| Call | What it does |
+|---|---|
+| `fig_table_rows(t, n)` | appends `n` zeroed rows and returns them, to be filled in place |
+| `fig_table_string(t, bytes, len)` | copies decoded text into the table's buffer, returning its `FigText` |
+| `fig_table_anchor(t, node, name, span)` | an anchor on a node |
+| `fig_table_tag(t, node, text, resolved, agrees, span)` | a tag, as written and as the language resolved it (§4.3) |
+| `fig_table_marker`, `fig_table_sep` | an item's marker, an entry's separator |
+| `fig_table_item_sep(t, node, text)` | a separated sequence's separator |
+| `fig_table_comment(t, node, slot, style, text)` | a comment |
+| `fig_table_region`, `fig_table_mention` | a section's header lines and mentions |
+| `fig_table_directive(t, handle, prefix)` | a `%TAG` declaration |
+
+A row is 32 bytes:
+
+```c
+typedef struct FigText { uint32_t off, len; } FigText; // len's high bit: the buffer, else the source
+typedef struct FigRow {
+    uint8_t  kind;        // FIG_ROW_NULL … FIG_ROW_ALIAS, or FIG_ROW_EXT + an ExtKind
+    uint8_t  flags;       // FIG_ROW_OPEN: a separated sequence with no delimiters
+    uint16_t reserved;
+    uint32_t parent;      // FIG_NONE at the root; rows are in pre-order
+    uint32_t start, end;  // the span, in the source
+    FigText  text;        // a scalar's text, an alias's anchor name
+    uint32_t first_child; // filled by fig
+    uint32_t next_sibling;// filled by fig
+} FigRow;
+```
+
+A language writes `parent`, never the child links: fig derives them while it
+validates, in the same pass. A keyvalue's two children are its key and its
+value, in that order. Booleans are two kinds rather than a kind and a text.
+Every side fact is sparse, so a document with no anchors, tags or comments
+carries no table for them.
+
+`print` is handed the same `FigTable`, read-only, and reads the rows and
+side facts through `fig_table_*` getters. A JS or out-of-process language
+answers over the wire as now; fig decodes its JSON through the same calls.
+
+
 Two savings need none of this, and are worth taking first: YAML
 allocates its anchor and tag arrays at full length for a file with none
 (96 bytes a node), and TOML its comment array for a file with one

@@ -993,7 +993,7 @@ test "renderEdit spells a value as the format does and leaves a key a name, a de
     defer arena.deinit();
     const a = arena.allocator();
 
-    // The key stays a name: `applyOp` spells it through `key_style`.
+    // The key stays a name: `applyOp` spells it through the language's `renderKeyName`.
     const ins = try renderEdit(a, "v", try figValue(a, "v"), .{ .insert_key = "k" }, .json, .natural);
     try t.expectEqualStrings("\"v\"", ins.text);
     try t.expectEqualStrings("k", ins.op.insert_key);

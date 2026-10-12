@@ -878,3 +878,12 @@ test "toml reorderKeys still reorders a document of plain root keys" {
     try ed.reorderKeys(&.{}, &.{ "c", "a" });
     try expectTomlSource(&ed, "c = 3\na = 1\nb = 2\n");
 }
+
+test "toml spells an inserted key's name bare when it can, else as an escaped basic string" {
+    var ed = try newTomlEditor("a = 1\n");
+    defer ed.deinit();
+    try ed.insertNamedKey(&.{}, "b-2", "2");
+    try ed.insertNamedKey(&.{}, "has space", "3");
+    try ed.insertNamedKey(&.{}, "line\nbreak", "4");
+    try expectTomlSource(&ed, "a = 1\nb-2 = 2\n\"has space\" = 3\n\"line\\nbreak\" = 4\n");
+}

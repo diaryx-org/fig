@@ -231,7 +231,6 @@ fn syntaxOf(a: Allocator, v: std.json.Value) !*const Runtime.SyntaxDesc {
         .kv_sep = try optString(a, o, "kv_sep"),
         .flow_kv_sep_from_siblings = boolOr(o, "flow_kv_sep_from_siblings", false),
         .flow_map_pad = try optString(a, o, "flow_map_pad"),
-        .key_style = enumOrdinal(Language.KeyStyle, o, "key_style", 0),
         .key_sigil = sigil,
         .empty_map_literal = try optString(a, o, "empty_map_literal"),
         .block_seq_editable = boolOr(o, "block_seq_editable", true),
@@ -312,10 +311,10 @@ fn vtableFromDescription(a: Allocator, t: *Transport, desc: std.json.Value) !Run
         for (sv.array.items) |x| if (x == .string) try samples.append(a, Runtime.Str.of(try a.dupe(u8, x.string)));
     };
 
-    var renderers: [5]bool = .{ false, false, false, false, false };
+    var renderers: [6]bool = .{ false, false, false, false, false, false };
     if (o.get("renderers")) |rv| if (rv == .array) {
         for (rv.array.items) |x| if (x == .string) {
-            inline for ([_][]const u8{ "value", "entry", "item", "tail", "key" }, 0..) |n, i| {
+            inline for ([_][]const u8{ "value", "entry", "item", "tail", "key", "key_name" }, 0..) |n, i| {
                 if (std.mem.eql(u8, x.string, n)) renderers[i] = true;
             }
         };
@@ -344,6 +343,7 @@ fn vtableFromDescription(a: Allocator, t: *Transport, desc: std.json.Value) !Run
         .render_item = if (renderers[2]) renderItemThunk else null,
         .render_tail = if (renderers[3]) renderTailThunk else null,
         .render_key = if (renderers[4]) renderKeyThunk else null,
+        .render_key_name = if (renderers[5]) renderKeyNameThunk else null,
     };
 }
 
@@ -496,6 +496,9 @@ fn renderTailThunk(ctx: ?*anyopaque, r: *const Runtime.RenderRequest, out: *Runt
 }
 fn renderKeyThunk(ctx: ?*anyopaque, r: *const Runtime.RenderRequest, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
     return renderCall(ctx, "key", r, out, err);
+}
+fn renderKeyNameThunk(ctx: ?*anyopaque, r: *const Runtime.RenderRequest, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
+    return renderCall(ctx, "key_name", r, out, err);
 }
 
 // ── the table on the wire ──────────────────────────────────────────────────

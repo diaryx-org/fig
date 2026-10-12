@@ -910,7 +910,6 @@ const language = {
     comments: { style: "hash", line: { open: "#" }, trailing: { open: "#" } },
     kv_sep: " = ",
     flow_map_pad: " ",
-    key_style: "bare_or_quoted",
     empty_map_literal: "{}",
     block_seq_editable: false,
     section_noun: "table",
@@ -920,9 +919,11 @@ const language = {
   // and this stands in for it, the extension reaches it.
   dialects: [{ name: "toml", extensions: ["toml"], splice: "literal", empty_doc_seed: "" }],
   samples: ['a = 1\nb = [1, 2]\n\n[s]\nk = "v"\nt = { x = 1 }\n'],
-  renderers: [],
+  // A key's name as TOML writes a key: bare when it can be, else a basic string.
+  renderers: ["key_name"],
   parse,
   print,
+  render: (_which, args) => spellKey(args.key),
 };
 
 export default language;

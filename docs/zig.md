@@ -174,7 +174,7 @@ on `Document` beside the spans — each block-sequence item's marker, each
 entry's separator, a section's header lines and every place its name is
 written — and, where the format spells a fragment in a way no declaration
 covers, a *renderer*: `renderValue`, `renderEntry`, `renderItem`,
-`renderTail` or `renderKey`, each a pure function from the dialect and a
+`renderTail`, `renderKey` or `renderKeyName`, each a pure function from the dialect and a
 `RenderRequest` — the strings the fragment is made of, and the container it
 goes into — to a string that the engine splices under the same reparse net
 as any other edit. The
@@ -189,7 +189,7 @@ of its cases declares such a `Language` in a temporary directory, hands it to
 A format can also join *after* the build: `fig.Runtime` carries the same
 contract as a table of function pointers filled when the program runs —
 the declarations of a `Language` as fields, `parse` and `print` as function
-pointers, the five renderers as pointers that may be null — and a registry
+pointers, the six renderers as pointers that may be null — and a registry
 that hands out a format integer at or above `Language.runtime_abi_base`
 for it. `Runtime.register(allocator, &vtable)` validates the record by the
 rules `Language.validate` applies at comptime, runs the checks of

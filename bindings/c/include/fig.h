@@ -43,8 +43,10 @@ extern "C" {
 // FigSyntax, FigDialectDesc rows, FigNodeRow rows) and the ones fig hands a
 // language (FigNodeTable, FigPrintOptions, FigRenderRequest) carry their
 // size; FigLanguageVTable.lossless is a bitmask; fig_node_kind returns int
-// and reports FIG_NODE_EXTENDED.
-#define FIG_ABI_VERSION 3
+// and reports FIG_NODE_EXTENDED. 4 — 6.0: core names no language;
+// FigSyntax loses key_style, and a language spells a key's name through
+// render_key_name.
+#define FIG_ABI_VERSION 4
 
 // Linked-library version, packed as (major << 16) | (minor << 8) | patch.
 uint32_t fig_version(void);
@@ -1085,7 +1087,7 @@ typedef struct FigWarning {
 // and FigClosedContainers inside FigSyntax) and the side-table rows
 // (FigRegionRow, FigMentionRow, FigCommentRow, FigDirectiveRow) are frozen:
 // what they would gain is appended to the record that holds them.
-#define FIG_LANGUAGE_VTABLE_VERSION 2
+#define FIG_LANGUAGE_VTABLE_VERSION 3
 
 // A `size_t` that says "no offset": FigSpan { FIG_OFFSET_NONE, FIG_OFFSET_NONE }
 // is an absent optional span, and a FigStr with len == FIG_LEN_NONE is an
@@ -1263,8 +1265,7 @@ typedef struct FigClosedContainers {
 // What the generic splice engine needs to know about a format's surface
 // syntax — the `Syntax` record a compiled format declares, field for field.
 // A NULL string takes the field's default (indent_unit "  ", seq_item_marker
-// "- ", flow_map_open/close "{"/"}", flow_map_pad ""). `key_style`: 0
-// verbatim, 1 json_quoted, 2 zon_field, 3 bare_or_quoted. `key_sigil`: a
+// "- ", flow_map_open/close "{"/"}", flow_map_pad ""). `key_sigil`: a
 // byte every key starts with, or 0. `section_noun`: -1 none, 0 table, 1
 // section, 2 container. `kv_sep` NULL means the engine never writes
 // `key<sep>value` for this format, which requires a render_entry.
@@ -1279,7 +1280,6 @@ typedef struct FigSyntax {
     const char         *kv_sep;
     bool                flow_kv_sep_from_siblings;
     const char         *flow_map_pad;
-    int                 key_style;
     uint8_t             key_sigil;
     const char         *empty_map_literal;
     bool                block_seq_editable;
@@ -1328,7 +1328,8 @@ typedef struct FigDialectDesc {
 // Everything a renderer is told, whichever it is; each reads the fields its
 // fragment needs. `indent` is the line prefix the fragment's first line sits
 // after, which a continuation line copies; `key` the key as written (entry,
-// tail, key); `value` the value text, already through render_value for every
+// tail, key), or for key_name the key's name, to be spelled as the format
+// writes a key (JSON's `"b"`, ZON's `.b`); `value` the value text, already through render_value for every
 // renderer but the value's own; `literal` what fig's bare-literal rules make
 // of `value` trimmed — "null", "bool", "int", "float", "datetime" or
 // "string" — classified once by fig so that every format means the same
@@ -1367,7 +1368,7 @@ typedef int (*FigRenderFn)(void *ctx, const FigRenderRequest *request, FigStr *o
 // nesting the format holds; `lossless` is FIG_LOSSLESS_ENVELOPE and FIG_NATIVE_*
 // bits, 0 for no envelope; `syntax` is required iff FIG_CAP_EDIT; `print` iff
 // FIG_CAP_SERIALIZE; `samples` is required and non-empty. The
-// five render_* slots are optional and NULL where the format declares none:
+// six render_* slots are optional and NULL where the format declares none:
 // each spells one fragment for the editor from the FigRenderRequest it is
 // handed and returns the text through `out`, which fig frees with
 // free_bytes.
@@ -1396,6 +1397,7 @@ typedef struct FigLanguageVTable {
     FigRenderFn render_item;
     FigRenderFn render_tail;
     FigRenderFn render_key;
+    FigRenderFn render_key_name;
 } FigLanguageVTable;
 
 // The FIG_LANGUAGE_VTABLE_VERSION of the linked library.

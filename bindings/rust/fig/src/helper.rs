@@ -61,9 +61,9 @@ use std::io::{BufRead, Write};
 
 use crate::language::{
     ClosedContainers, CommentDelimiter, CommentForm, CommentRow, CommentSlot, CommentStyle,
-    Comments, Description, Dialect, DirectiveRow, KeyStyle, Language, LanguageError, Literal,
-    MentionKind, MentionRow, NativeKinds, NodeKind, NodeRow, NodeTable, PrintOptions, RegionRow,
-    RenderArgs, Renderer, Renderers, SectionHeader, SectionNoun, Splice, Syntax,
+    Comments, Description, Dialect, DirectiveRow, Language, LanguageError, Literal, MentionKind,
+    MentionRow, NativeKinds, NodeKind, NodeRow, NodeTable, PrintOptions, RegionRow, RenderArgs,
+    Renderer, Renderers, SectionHeader, SectionNoun, Splice, Syntax,
 };
 use crate::{Capabilities, Document, ExtKind, Format, SerializeOptions, Span, Value};
 
@@ -150,6 +150,7 @@ fn handle_inner(lang: &dyn Language, request: &str) -> Result<Value, LanguageErr
                 "item" => Renderer::Item,
                 "tail" => Renderer::Tail,
                 "key" => Renderer::Key,
+                "key_name" => Renderer::KeyName,
                 other => {
                     return Err(LanguageError::new(format!(
                         "render: unknown renderer {other:?}"
@@ -293,6 +294,7 @@ pub fn description_to_value(d: &Description) -> Value {
         (d.renderers.item, "item"),
         (d.renderers.tail, "tail"),
         (d.renderers.key, "key"),
+        (d.renderers.key_name, "key_name"),
     ] {
         if on {
             renderers.push(s(name));
@@ -404,6 +406,7 @@ pub fn description_from_value(v: &Value) -> Result<Description, LanguageError> {
             Some("item") => renderers.item = true,
             Some("tail") => renderers.tail = true,
             Some("key") => renderers.key = true,
+            Some("key_name") => renderers.key_name = true,
             _ => {}
         }
     }
@@ -518,15 +521,6 @@ pub fn syntax_to_value(x: &Syntax) -> Value {
         ),
         ("flow_map_pad", s(&x.flow_map_pad)),
         (
-            "key_style",
-            s(match x.key_style {
-                KeyStyle::Verbatim => "verbatim",
-                KeyStyle::JsonQuoted => "json_quoted",
-                KeyStyle::ZonField => "zon_field",
-                KeyStyle::BareOrQuoted => "bare_or_quoted",
-            }),
-        ),
-        (
             "key_sigil",
             x.key_sigil.map_or(Value::Null, |b| Value::Uint(b as u64)),
         ),
@@ -615,16 +609,6 @@ pub fn syntax_from_value(v: &Value) -> Result<Syntax, LanguageError> {
         kv_sep: opt_str_of(v.get("kv_sep")),
         flow_kv_sep_from_siblings: b("flow_kv_sep_from_siblings", d.flow_kv_sep_from_siblings),
         flow_map_pad: st("flow_map_pad", &d.flow_map_pad),
-        key_style: match v
-            .get("key_style")
-            .and_then(Value::as_str)
-            .unwrap_or("verbatim")
-        {
-            "json_quoted" => KeyStyle::JsonQuoted,
-            "zon_field" => KeyStyle::ZonField,
-            "bare_or_quoted" => KeyStyle::BareOrQuoted,
-            _ => KeyStyle::Verbatim,
-        },
         key_sigil: v.get("key_sigil").and_then(Value::as_u64).map(|n| n as u8),
         empty_map_literal: opt_str_of(v.get("empty_map_literal")),
         block_seq_editable: b("block_seq_editable", d.block_seq_editable),

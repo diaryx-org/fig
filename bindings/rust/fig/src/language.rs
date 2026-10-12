@@ -161,6 +161,7 @@ pub struct Renderers {
     pub item: bool,
     pub tail: bool,
     pub key: bool,
+    pub key_name: bool,
 }
 
 /// The surface syntax the splice engine writes a format with. Every field
@@ -176,7 +177,6 @@ pub struct Syntax {
     pub kv_sep: Option<String>,
     pub flow_kv_sep_from_siblings: bool,
     pub flow_map_pad: String,
-    pub key_style: KeyStyle,
     /// A byte every key starts with.
     pub key_sigil: Option<u8>,
     pub empty_map_literal: Option<String>,
@@ -214,7 +214,6 @@ impl Default for Syntax {
             kv_sep: None,
             flow_kv_sep_from_siblings: false,
             flow_map_pad: String::new(),
-            key_style: KeyStyle::Verbatim,
             key_sigil: None,
             empty_map_literal: None,
             block_seq_editable: true,
@@ -333,17 +332,6 @@ impl CommentDelimiter {
             forbidden: None,
         }
     }
-}
-
-/// How a logical key renders into the format's key syntax on insert.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-#[non_exhaustive]
-pub enum KeyStyle {
-    #[default]
-    Verbatim,
-    JsonQuoted,
-    ZonField,
-    BareOrQuoted,
 }
 
 /// What a section format calls its scattered container.
@@ -794,6 +782,9 @@ pub enum Renderer {
     Tail,
     /// Spell a renamed key in the form the old one allows.
     Key,
+    /// Spell a key's name as the format writes a key (JSON's `"b"`, ZON's
+    /// `.b`). Without it a name is written as it stands.
+    KeyName,
 }
 
 impl Renderer {
@@ -804,6 +795,7 @@ impl Renderer {
             Renderer::Item => "item",
             Renderer::Tail => "tail",
             Renderer::Key => "key",
+            Renderer::KeyName => "key_name",
         }
     }
 }
@@ -1109,12 +1101,6 @@ impl CSyntax {
             kv_sep: opt_ptr(&mut strings, s.kv_sep.as_deref())?,
             flow_kv_sep_from_siblings: s.flow_kv_sep_from_siblings,
             flow_map_pad: opt_ptr(&mut strings, Some(&s.flow_map_pad))?,
-            key_style: match s.key_style {
-                KeyStyle::Verbatim => 0,
-                KeyStyle::JsonQuoted => 1,
-                KeyStyle::ZonField => 2,
-                KeyStyle::BareOrQuoted => 3,
-            },
             key_sigil: s.key_sigil.unwrap_or(0),
             empty_map_literal: opt_ptr(&mut strings, s.empty_map_literal.as_deref())?,
             block_seq_editable: s.block_seq_editable,
@@ -1334,6 +1320,11 @@ impl Registration {
             },
             render_key: if self.renderers.key {
                 Some(render_key_thunk)
+            } else {
+                None
+            },
+            render_key_name: if self.renderers.key_name {
+                Some(render_key_name_thunk)
             } else {
                 None
             },
@@ -1881,3 +1872,4 @@ render_thunk!(render_entry_thunk, Renderer::Entry);
 render_thunk!(render_item_thunk, Renderer::Item);
 render_thunk!(render_tail_thunk, Renderer::Tail);
 render_thunk!(render_key_thunk, Renderer::Key);
+render_thunk!(render_key_name_thunk, Renderer::KeyName);

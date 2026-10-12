@@ -319,16 +319,17 @@ const language = {
   syntax: {
     comments: { style: "slashes" },
     kv_sep: ": ",
-    key_style: "json_quoted",
     empty_map_literal: "{}",
   },
   // The compiled format's extension: where the format is compiled out
   // and this stands in for it, the extension reaches it.
   dialects: [{ name: "json", extensions: ["json"], splice: "json_string", empty_doc_seed: "{}\n" }],
   samples: ['{"a": 1, "b": [true, null, "s"], "c": {"d": 2.5}}\n', "[]\n"],
-  renderers: [],
+  // A key's name as JSON writes a key: quoted and escaped, as strict JSON requires.
+  renderers: ["key_name"],
   parse,
   print,
+  render: (_which, args) => quote(args.key),
 };
 
 export default language;

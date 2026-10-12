@@ -131,7 +131,7 @@ fn every_render_args_field_is_reachable_without_a_struct_literal() {
 #[test]
 fn every_description_type_is_buildable_without_a_struct_literal() {
     use fig::language::{
-        ClosedContainers, CommentDelimiter, CommentStyle, Comments, Description, Dialect, KeyStyle,
+        ClosedContainers, CommentDelimiter, CommentStyle, Comments, Description, Dialect,
         LanguageError, NativeKinds, PrintOptions, Renderers, SectionHeader, SectionNoun, Splice,
         Syntax,
     };
@@ -144,7 +144,6 @@ fn every_description_type_is_buildable_without_a_struct_literal() {
 
     let mut syntax = Syntax::default();
     syntax.kv_sep = Some("=".into());
-    syntax.key_style = KeyStyle::BareOrQuoted;
     let mut delimiter = CommentDelimiter::pair("/*", "*/");
     delimiter.forbidden = Some("*/".into());
     syntax.comments = Comments::new(

@@ -7,7 +7,6 @@ const AST = @import("ast/ast.zig");
 const Document = @import("document.zig");
 const Span = @import("util/span.zig");
 const json = @import("languages/json/json.zig");
-const json_string = @import("util/json_string.zig");
 const regions = @import("editor/regions.zig");
 /// The source-coordinate utilities the engine and the regions module share.
 /// Re-exported here for the engine's own use; a format's editor tests import
@@ -70,17 +69,12 @@ const sniff = @import("languages/fig/tokenizer.zig");
 // supplies, with the reason, sits in the "Renderers" block of its
 // `<lang>/<lang>.zig`.
 //
-// What remains below is what renderer dispatch does not reach:
-//
-//   * `zon_edit.appendFieldName` is reached through `key_style`, as the
-//     rendering half of a syntax parameter.
-//   * The bare language tags below are used by this file's OWN tests, nothing
-//     else. The whole-container ops are generic over `section_noun`,
-//     `section_header` and what the parser records, and refuse at comptime
-//     for a format that declares none of it; Zig has no conditional
-//     container-level declarations (`usingnamespace` was removed in 0.15),
-//     so the methods exist for every format.
-const zon_edit = @import("languages/zon/editor_helper.zig");
+// The bare language tags below are used by this file's OWN tests, nothing
+// else. The whole-container ops are generic over `section_noun`,
+// `section_header` and what the parser records, and refuse at comptime for a
+// format that declares none of it; Zig has no conditional container-level
+// declarations (`usingnamespace` was removed in 0.15), so the methods exist
+// for every format.
 const Toml = @import("languages/toml/toml.zig").Language;
 const Fig = @import("languages/fig/fig.zig").Language;
 const Yaml = @import("languages/yaml/yaml.zig").Language;
@@ -881,46 +875,21 @@ pub fn Editor(comptime Language: type) type {
             try self.reparse();
         }
 
-        /// Render a logical mapping key into this format's key syntax — for
+        /// Spell a logical mapping key as this format writes a key — for
         /// the `set` insert branch, and for a caller of `insertKey` that has
-        /// a key NAME rather than key syntax — as the format's declared
-        /// `key_style` says; see `Syntax.KeyStyle` for what each spelling is
-        /// and why. Always returns an owned slice (the caller frees it).
+        /// a key NAME rather than key syntax. A language that declares
+        /// `renderKeyName` spells it (JSON quotes it, ZON writes `.name`,
+        /// TOML quotes what is not bare); otherwise the name is the syntax.
+        /// Always returns an owned slice (the caller frees it).
+        ///
+        /// **Renderer** `renderKeyName(t, allocator, out, request) !void`,
+        /// told the name as `key`.
         pub fn formatInsertKey(self: *Self, key: []const u8) ![]u8 {
-            switch (self.syntax().key_style) {
-                .json_quoted => {
-                    var w = std.Io.Writer.Allocating.init(self.allocator);
-                    defer w.deinit();
-                    try json_string.writeQuoted(&w.writer, key);
-                    return self.allocator.dupe(u8, w.written());
-                },
-                .zon_field => {
-                    var out: std.ArrayList(u8) = .empty;
-                    defer out.deinit(self.allocator);
-                    try zon_edit.appendFieldName(&out, self.allocator, key);
-                    return out.toOwnedSlice(self.allocator);
-                },
-                .verbatim => return self.allocator.dupe(u8, key),
-                .bare_or_quoted => {
-                    var bare = key.len > 0;
-                    for (key) |c| {
-                        const ok = (c >= 'A' and c <= 'Z') or (c >= 'a' and c <= 'z') or
-                            (c >= '0' and c <= '9') or c == '_' or c == '-';
-                        if (!ok) bare = false;
-                    }
-                    if (bare) return self.allocator.dupe(u8, key);
-                    var out: std.ArrayList(u8) = .empty;
-                    defer out.deinit(self.allocator);
-                    try out.append(self.allocator, '"');
-                    for (key) |ch| switch (ch) {
-                        '"' => try out.appendSlice(self.allocator, "\\\""),
-                        '\\' => try out.appendSlice(self.allocator, "\\\\"),
-                        else => try out.append(self.allocator, ch),
-                    };
-                    try out.append(self.allocator, '"');
-                    return out.toOwnedSlice(self.allocator);
-                },
-            }
+            if (!self.hasRenderer(.key_name)) return self.allocator.dupe(u8, key);
+            var out: std.ArrayList(u8) = .empty;
+            errdefer out.deinit(self.allocator);
+            try Language.renderKeyName(self.format, self.allocator, &out, .{ .key = key });
+            return out.toOwnedSlice(self.allocator);
         }
 
         /// Like `replaceValAtPath`, but follow into the reference layer: when the
@@ -1047,7 +1016,10 @@ pub fn Editor(comptime Language: type) type {
             } else |_| {}
             const rendered = try self.formatInsertKey(name);
             defer self.allocator.free(rendered);
-            const text = if (self.syntax().key_style == .zon_field) rendered[1..] else rendered;
+            // A key's span leaves out the sigil it carries (`key_sigil`,
+            // ZON's `.`), which stays where it already stands.
+            const sigil = self.syntax().key_sigil;
+            const text = if (sigil != null and rendered.len > 0 and rendered[0] == sigil.?) rendered[1..] else rendered;
             return self.replaceKeyAtPath(path, text);
         }
 
@@ -3179,7 +3151,7 @@ pub fn Editor(comptime Language: type) type {
         }
 
         /// Rename the leaf segment of the container at `path` to the logical
-        /// key `new_leaf`, rendered per `key_style` and written over every
+        /// key `new_leaf`, spelled by `formatInsertKey` and written over every
         /// place the format spells the name (`Document.node_mentions`): the
         /// container's own header, every descendant header sharing the
         /// prefix, every dotted line, every reopening. Refuses a target that

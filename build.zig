@@ -32,7 +32,7 @@ const version = std.SemanticVersion.parse(@import("build.zig.zon").version) catc
 /// rare); decoupled from the marketing `.version` above so a feature release does
 /// not move it. `zig build semver-check` requires it to increment whenever the C
 /// ABI diff against the last release tag is breaking.
-const abi_version: u8 = 3;
+const abi_version: u8 = 4;
 
 /// The current "epoch" — a marketing name that changes far less often than
 /// `version`'s major (see docs/VERSIONING.md: "major releases are not

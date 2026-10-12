@@ -406,8 +406,6 @@ pub const SyntaxDesc = extern struct {
     kv_sep: ?[*:0]const u8 = null,
     flow_kv_sep_from_siblings: bool = false,
     flow_map_pad: ?[*:0]const u8 = null,
-    /// `manifest.KeyStyle` ordinal.
-    key_style: c_int = 0,
     /// 0 for none.
     key_sigil: u8 = 0,
     empty_map_literal: ?[*:0]const u8 = null,
@@ -477,7 +475,7 @@ pub const DialectDesc = extern struct {
 
 /// The fifth versioned surface: bumped when a field of this struct or of
 /// any struct it reaches changes meaning, never for an appended field.
-pub const vtable_version: u32 = 2;
+pub const vtable_version: u32 = 3;
 
 pub const ParseFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, input: Str, out: *NodeTable, err: *ErrorInfo) callconv(.c) c_int;
 pub const PrintFn = *const fn (ctx: ?*anyopaque, dialect: [*:0]const u8, table: *const NodeTable, options: *const PrintOptions, out: *Str, err: *ErrorInfo) callconv(.c) c_int;
@@ -558,6 +556,7 @@ pub const VTable = extern struct {
     render_item: ?RenderFn = null,
     render_tail: ?RenderFn = null,
     render_key: ?RenderFn = null,
+    render_key_name: ?RenderFn = null,
 };
 
 /// `FigCapability` bits, restated so this file is a leaf.
@@ -1040,7 +1039,7 @@ pub fn validateVTable(vt: *const VTable) bool {
         return false;
     }
     if (!edit) {
-        if (vt.render_value != null or vt.render_entry != null or vt.render_item != null or vt.render_tail != null or vt.render_key != null) {
+        if (vt.render_value != null or vt.render_entry != null or vt.render_item != null or vt.render_tail != null or vt.render_key != null or vt.render_key_name != null) {
             refuse("'{s}' declares no edit capability but supplies an editing renderer", .{name});
             return false;
         }
@@ -1058,10 +1057,6 @@ pub fn validateVTable(vt: *const VTable) bool {
 fn validateSyntax(name: []const u8, vt: *const VTable, s: *const SyntaxDesc) bool {
     if (s.comments.style < 0 or s.comments.style >= @typeInfo(manifest.CommentStyle).@"enum".field_names.len) {
         refuse("'{s}': unknown comment style {d}", .{ name, s.comments.style });
-        return false;
-    }
-    if (s.key_style < 0 or s.key_style >= @typeInfo(manifest.KeyStyle).@"enum".field_names.len) {
-        refuse("'{s}': unknown key style {d}", .{ name, s.key_style });
         return false;
     }
     if (s.section_noun != -1 and (s.section_noun < 0 or s.section_noun >= @typeInfo(manifest.SectionNoun).@"enum".field_names.len)) {
@@ -1129,7 +1124,6 @@ fn syntaxOf(arena: Allocator, s: *const SyntaxDesc) Allocator.Error!manifest.Syn
         .kv_sep = try dupeZstr(arena, s.kv_sep),
         .flow_kv_sep_from_siblings = s.flow_kv_sep_from_siblings,
         .flow_map_pad = try dupeZstr(arena, s.flow_map_pad) orelse defaults.flow_map_pad,
-        .key_style = @fromBackingInt(@intCast(s.key_style)),
         .key_sigil = if (s.key_sigil == 0) null else s.key_sigil,
         .empty_map_literal = try dupeZstr(arena, s.empty_map_literal),
         .block_seq_editable = s.block_seq_editable,
@@ -1929,6 +1923,7 @@ pub const Language = struct {
             .item => vt.render_item != null,
             .tail => vt.render_tail != null,
             .key => vt.render_key != null,
+            .key_name => vt.render_key_name != null,
         };
     }
 
@@ -1947,6 +1942,9 @@ pub const Language = struct {
     pub fn renderKey(t: Type, allocator: Allocator, out: *std.ArrayList(u8), r: manifest.RenderRequest) !void {
         return render(t, allocator, out, .key, r);
     }
+    pub fn renderKeyName(t: Type, allocator: Allocator, out: *std.ArrayList(u8), r: manifest.RenderRequest) !void {
+        return render(t, allocator, out, .key_name, r);
+    }
 
     /// One renderer call: the request in the C shape, the slot `which`
     /// names, and the fragment appended to `out`.
@@ -1959,6 +1957,7 @@ pub const Language = struct {
             .item => vt.render_item,
             .tail => vt.render_tail,
             .key => vt.render_key,
+            .key_name => vt.render_key_name,
         } orelse return error.UnsupportedShape;
         const request: RenderRequest = .{
             .dialect = e.dialectZ(),

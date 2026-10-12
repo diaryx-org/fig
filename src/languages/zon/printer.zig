@@ -201,7 +201,7 @@ fn writeExtended(writer: *Writer, ext: AST.Node.Kind.Extended) Error!void {
 
 /// Emit a dotted name (`.name` or `.@"..."`) — shared by struct field names and
 /// enum literals, which have identical lexical rules.
-fn writeDotName(writer: *Writer, name: []const u8) Error!void {
+pub fn writeDotName(writer: *Writer, name: []const u8) Error!void {
     try writer.writeByte('.');
     if (isBareIdentifier(name)) {
         try writer.writeAll(name);

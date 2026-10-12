@@ -961,7 +961,7 @@ unsafe extern "C" {
 // a Rust-hosted one through these.
 
 /// Mirror of `FIG_LANGUAGE_VTABLE_VERSION`.
-pub const FIG_LANGUAGE_VTABLE_VERSION: u32 = 2;
+pub const FIG_LANGUAGE_VTABLE_VERSION: u32 = 3;
 /// Mirror of `FIG_OFFSET_NONE` / `FIG_LEN_NONE`: an absent optional span or
 /// string.
 pub const FIG_OFFSET_NONE: usize = usize::MAX;
@@ -1142,7 +1142,6 @@ pub struct FigSyntax {
     pub kv_sep: *const c_char,
     pub flow_kv_sep_from_siblings: bool,
     pub flow_map_pad: *const c_char,
-    pub key_style: c_int,
     pub key_sigil: u8,
     pub empty_map_literal: *const c_char,
     pub block_seq_editable: bool,
@@ -1256,6 +1255,7 @@ pub struct FigLanguageVTable {
     pub render_item: Option<FigRenderFn>,
     pub render_tail: Option<FigRenderFn>,
     pub render_key: Option<FigRenderFn>,
+    pub render_key_name: Option<FigRenderFn>,
 }
 
 unsafe extern "C" {

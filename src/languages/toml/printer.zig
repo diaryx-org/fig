@@ -496,17 +496,19 @@ fn isBareKey(name: []const u8) bool {
     return true;
 }
 
+/// A key's name: bare when it can be, else a basic string.
+pub fn writeKeyName(w: *Writer, name: []const u8) Writer.Error!void {
+    if (isBareKey(name)) return w.writeAll(name);
+    try writeBasicString(w, name);
+}
+
 /// Render a header path (`a.b.c`), parent segment first.
 fn writePath(w: *Writer, path: *const Path) Error!void {
     if (path.parent) |par| {
         try writePath(w, par);
         try w.writeByte('.');
     }
-    if (isBareKey(path.key)) {
-        try w.writeAll(path.key);
-    } else {
-        try writeBasicString(w, path.key);
-    }
+    try writeKeyName(w, path.key);
 }
 
 /// Emit a TOML basic string: double-quoted, with `"`, `\`, and control bytes

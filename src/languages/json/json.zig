@@ -1,7 +1,9 @@
 const json = @This();
+const std = @import("std");
 const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
 const lang = @import("../manifest.zig");
+const json_string = @import("../../util/json_string.zig");
 
 pub const Parser = @import("parser.zig");
 pub const Tokenizer = @import("tokenizer.zig");
@@ -115,13 +117,20 @@ pub const Language = struct {
     /// that scanner to find, so the choice is unobservable rather than wrong.
     /// That split — one scanner, a marker that varies — is why this is written
     /// out rather than taking the `Comments.slashes` preset.
+    /// A key's name as JSON writes it: quoted and escaped (`b` -> `"b"`),
+    /// which strict JSON requires and JSONC and JSON5 take.
+    pub fn renderKeyName(_: json.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), r: lang.RenderRequest) !void {
+        var w = std.Io.Writer.Allocating.init(allocator);
+        defer w.deinit();
+        try json_string.writeQuoted(&w.writer, r.key);
+        try out.appendSlice(allocator, w.written());
+    }
+
     pub fn syntax(t: json.Type) lang.Syntax {
         const marker: ?lang.CommentDelimiter = if (t == .JSON) null else .{ .open = "//" };
         return .{
             .comments = .{ .style = .slashes, .line = marker, .trailing = marker },
             .kv_sep = ": ",
-            // Strict-JSON-family keys must be quoted and escaped (`b` -> `"b"`).
-            .key_style = .json_quoted,
             .empty_map_literal = "{}",
         };
     }

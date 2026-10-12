@@ -537,7 +537,6 @@ const language = {
   syntax: {
     comments: { style: "slashes", line: { open: "//" }, trailing: { open: "//" } },
     kv_sep: ": ",
-    key_style: "json_quoted",
     empty_map_literal: "{}",
   },
   // The language's own name goes on its first dialect; each takes its
@@ -548,9 +547,11 @@ const language = {
     { name: "jsonc", extensions: ["jsonc"], splice: "json_string", empty_doc_seed: "{}\n" },
   ],
   samples: ['{"a": 1, "b": [true, null, "s"], "c": {"d": 2.5}}\n', "// top\n[] // empty\n"],
-  renderers: [],
+  // A key's name as JSON5 writes a key: quoted and escaped, as the compiled format writes it.
+  renderers: ["key_name"],
   parse,
   print,
+  render: (_which, args) => quote(args.key),
 };
 
 export default language;

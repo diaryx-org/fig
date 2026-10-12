@@ -1,4 +1,5 @@
 const zon = @This();
+const std = @import("std");
 const Document = @import("../../document.zig");
 const AST = @import("../../ast/ast.zig");
 const lang = @import("../manifest.zig");
@@ -61,6 +62,15 @@ pub const Language = struct {
     /// syntax differs from the block-mapping formats, not because ZON needs
     /// bespoke logic. Any future format whose keys carry a sigil, or which
     /// has no keyless top-level mapping, reuses them unchanged.
+    /// A key's name as a struct field: `.name`, or `.@"has space"` when
+    /// it is not a bare identifier.
+    pub fn renderKeyName(_: zon.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), r: lang.RenderRequest) !void {
+        var w = std.Io.Writer.Allocating.init(allocator);
+        defer w.deinit();
+        try zon.Printer.writeDotName(&w.writer, r.key);
+        try out.appendSlice(allocator, w.written());
+    }
+
     pub fn syntax(t: zon.Type) lang.Syntax {
         _ = t;
         return .{
@@ -69,7 +79,6 @@ pub const Language = struct {
             .comments = .slashes,
             // Struct-field syntax.
             .kv_sep = " = ",
-            .key_style = .zon_field,
             // A struct field's key SPAN starts at the bare identifier, so the
             // leading `.` has to be absorbed explicitly on a flow-entry
             // delete or the splice strands it beside a survivor.

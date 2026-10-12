@@ -453,10 +453,10 @@ const isContainer = (row) => row.kind === "mapping" || row.kind === "sequence";
 const escaped = (s) =>
   s.replace(/["\\\n\r\t\x00-\x1f\x7f]/g, (c) => ESCAPES[c] ?? "\\x" + c.charCodeAt(0).toString(16).padStart(2, "0"));
 
+const fieldName = (name) => "." + (BARE.test(name) && !KEYWORDS.has(name) ? name : '@"' + escaped(name) + '"');
+
 function writeName(w, name) {
-  w.put(".");
-  if (BARE.test(name) && !KEYWORDS.has(name)) w.put(name);
-  else w.put('@"', escaped(name), '"');
+  w.put(fieldName(name));
 }
 
 // A character literal from the codepoint its text spells: the escapes it
@@ -550,7 +550,6 @@ const language = {
   syntax: {
     comments: { style: "slashes", line: { open: "//" }, trailing: { open: "//" } },
     kv_sep: " = ",
-    key_style: "zon_field",
     // The byte before every key, which the editor removes with the key:
     // `.` (the wire carries a sigil as its byte).
     key_sigil: 46,
@@ -563,9 +562,11 @@ const language = {
   // and this stands in for it, the extension reaches it.
   dialects: [{ name: "zon", extensions: ["zon"], splice: "literal", empty_doc_seed: ".{}\n" }],
   samples: ['.{ .a = 1, .b = .{ .c = "d" }, .e = .{ 1, 2 } }\n'],
-  renderers: [],
+  // A key's name as ZON writes a key: `.name`, or `.@"has space"`.
+  renderers: ["key_name"],
   parse,
   print,
+  render: (_which, args) => fieldName(args.key),
 };
 
 export default language;

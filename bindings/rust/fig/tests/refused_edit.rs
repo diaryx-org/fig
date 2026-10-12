@@ -147,9 +147,12 @@ fn a_value_the_document_would_not_parse_with_is_one_sentence() {
 
 #[test]
 fn a_key_the_document_would_not_parse_with_is_one_sentence() {
-    let mut ed = Editor::open(TOML.as_bytes(), Format::Toml).unwrap();
-    let err = ed.rename_key(&[Segment::Key("name")], "a\nb").unwrap_err();
-    assert_eq!(err.to_string(), "the new key would not parse as TOML");
+    // INI writes a key's name as it stands, so a newline in one cannot parse.
+    let mut ed = Editor::open(b"[s]\nname = x\n", Format::Ini).unwrap();
+    let err = ed
+        .rename_key(&[Segment::Key("s"), Segment::Key("name")], "a\nb")
+        .unwrap_err();
+    assert_eq!(err.to_string(), "the new key would not parse as INI");
 }
 
 #[test]

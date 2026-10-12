@@ -108,27 +108,6 @@ pub const Comments = struct {
     pub const slashes: Comments = .{ .style = .slashes, .line = .{ .open = "//" }, .trailing = .{ .open = "//" } };
 };
 
-/// How a logical mapping key renders as this format's key syntax on the `set`
-/// insert path (`editor.formatInsertKey`).
-///
-/// A logical key is plain text (`b`, `has space`); what reaches the source
-/// depends on the format's key grammar, and the splice is reparsed under it.
-pub const KeyStyle = enum {
-    /// Spliced as-is — YAML, TOML, fig, INI, dotenv, `.properties`,
-    /// NestedText, plist. The same thing `insertKey`'s other callers do.
-    verbatim,
-    /// Quoted and escaped as a JSON string (`b` -> `"b"`). Required by strict
-    /// JSON and harmless in JSONC/JSON5.
-    json_quoted,
-    /// ZON's struct-field syntax, which always carries a leading `.`
-    /// (`b` -> `.b`, quoted as `.@"has space"` when not a bare identifier).
-    zon_field,
-    /// Bare when every byte is `[A-Za-z0-9_-]`, else a basic-quoted string
-    /// with `"` and `\` escaped — TOML's key rule, used for a header path's
-    /// segments and a renamed table's leaf as well as an inserted key.
-    bare_or_quoted,
-};
-
 /// How a section format spells a header line that opens a container of its
 /// own: `[` + path + `]` for a TOML table, `[[` + path + `]]` for an element
 /// of an array of tables, an INI `[section]`. See `Syntax.section_header`.
@@ -138,7 +117,7 @@ pub const SectionHeader = struct {
     /// The element-of-a-sequence form, or null for a format without one.
     seq_open: ?[]const u8 = null,
     seq_close: ?[]const u8 = null,
-    /// Joins the path's key segments, each rendered per `key_style`.
+    /// Joins the path's key segments, each spelled by the language's `renderKeyName`.
     sep: []const u8 = ".",
     /// Whether index segments are left out of the path — `[[a.b]]` always
     /// names `a`'s last element, so the index is implied.
@@ -524,9 +503,6 @@ pub const Syntax = struct {
     /// for JSON's and YAML's tight `{x: 1}`.
     flow_map_pad: []const u8 = "",
 
-    /// How a logical key renders into this format's key syntax. See `KeyStyle`.
-    key_style: KeyStyle = .verbatim,
-
     /// A sigil each key carries in the source that its AST key span EXCLUDES
     /// — ZON's leading `.`, whose span starts at the bare identifier.
     ///
@@ -696,7 +672,7 @@ pub const Syntax = struct {
     /// How a header line that opens a container of its own is spelled, for
     /// a section format that has one — TOML's `[a.b]` and `[[a.b]]`. With
     /// it the engine's `insertContainer` and `appendContainerToSeq` are
-    /// live: they render the path through `key_style`, frame it with these
+    /// live: they spell the path through `renderKeyName`, frame it with these
     /// tokens, and splice the line past the parent's whole extent. Null for
     /// a section format whose containers are not opened by a header line
     /// the engine could write on its own (fig's headers are bare dotted
@@ -752,6 +728,7 @@ pub const Renderer = enum {
     item,
     tail,
     key,
+    key_name,
 
     /// The declaration name: `renderValue` for `.value`.
     pub fn declName(comptime self: Renderer) []const u8 {
@@ -761,6 +738,7 @@ pub const Renderer = enum {
             .item => "renderItem",
             .tail => "renderTail",
             .key => "renderKey",
+            .key_name => "renderKeyName",
         };
     }
 };

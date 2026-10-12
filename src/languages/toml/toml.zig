@@ -1,4 +1,5 @@
 const toml = @This();
+const std = @import("std");
 const AST = @import("../../ast/ast.zig");
 const Document = @import("../../document.zig");
 const lang = @import("../manifest.zig");
@@ -83,6 +84,16 @@ pub const Language = struct {
     /// 1.0 and 1.1 differ in what the PARSER accepts (newlines and trailing
     /// commas in inline tables, seconds-optional times, `\e`/`\xHH` escapes),
     /// not in what the editor writes, so both dialects answer identically.
+    /// A key's name as TOML writes it: bare when it can be, else a basic
+    /// string — for an inserted key, a header path's segments and a renamed
+    /// table's leaf alike.
+    pub fn renderKeyName(_: toml.Type, allocator: std.mem.Allocator, out: *std.ArrayList(u8), r: lang.RenderRequest) !void {
+        var w = std.Io.Writer.Allocating.init(allocator);
+        defer w.deinit();
+        try toml.Printer.writeKeyName(&w.writer, r.key);
+        try out.appendSlice(allocator, w.written());
+    }
+
     pub fn syntax(t: toml.Type) lang.Syntax {
         _ = t;
         return .{
@@ -91,10 +102,6 @@ pub const Language = struct {
             // empty inline table takes its first entry padded, `{ k = v }`.
             .kv_sep = " = ",
             .flow_map_pad = " ",
-            // A key is bare when it can be, else basic-quoted — for an
-            // inserted key, a header path's segments and a renamed table's
-            // leaf alike.
-            .key_style = .bare_or_quoted,
             // The dotted-key formats keep the flow `{}` chain as the
             // idiomatic intermediate form — `fig fmt` canonicalizes
             // `a = { b = { c = v }}` back to `a.b.c = v`.

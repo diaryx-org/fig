@@ -69,7 +69,6 @@ export interface Syntax {
   kv_sep?: string | null;
   flow_kv_sep_from_siblings?: boolean;
   flow_map_pad?: string | null;
-  key_style?: "verbatim" | "json_quoted" | "zon_field" | "bare_or_quoted";
   /** A byte every key starts with, as its code (e.g. 46 for `.`), or 0. */
   key_sigil?: number;
   empty_map_literal?: string | null;
@@ -126,8 +125,8 @@ export interface Dialect {
   syntax?: Syntax | null;
 }
 
-/** The five fragment renderers the editor may ask a format for. */
-export type Renderer = "value" | "entry" | "item" | "tail" | "key";
+/** The six fragment renderers the editor may ask a format for. */
+export type Renderer = "value" | "entry" | "item" | "tail" | "key" | "key_name";
 
 /** What fig's bare-literal rules made of a value's text — classified once
  *  by fig so that every format means the same thing by `42`. */
@@ -374,7 +373,7 @@ export function describe(lang: Language): Record<string, unknown> {
   };
 }
 
-const RENDERERS: readonly Renderer[] = ["value", "entry", "item", "tail", "key"];
+const RENDERERS: readonly Renderer[] = ["value", "entry", "item", "tail", "key", "key_name"];
 const LITERALS: readonly Literal[] = ["null", "bool", "int", "float", "datetime", "string"];
 
 /** One request line to one response line — the helper wire, in

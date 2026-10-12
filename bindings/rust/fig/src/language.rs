@@ -105,6 +105,59 @@ pub struct Dialect {
     pub empty_doc_seed: Option<String>,
     /// This dialect's own syntax where it differs from the language's.
     pub syntax: Option<Syntax>,
+    /// What the dialect's printer makes of a tree from another format, for
+    /// the conversion warnings; `None` leaves them to `caps` and `lossless`.
+    pub prints: Option<Prints>,
+}
+
+/// What a dialect's printer writes of a tree read from another format: the
+/// declaration fig's conversion warnings are computed from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Prints {
+    /// The kinds written as themselves. A `null` not held is dropped; an
+    /// extended scalar not held degrades.
+    pub holds: NativeKinds,
+    /// Booleans and numbers written as themselves; false where every scalar
+    /// is text.
+    pub typed_scalars: bool,
+    /// A `null` at the root is an empty document, not a loss.
+    pub null_at_root: bool,
+    /// The root must be a mapping or a sequence.
+    pub root_container: bool,
+    /// What a char literal not held is written as (`"number"`, `"string"`).
+    pub char_as: String,
+    /// What a non-finite float not held is written as.
+    pub number_special_as: String,
+    /// When the printer writes comments.
+    pub comments: CommentsPrinted,
+}
+
+impl Prints {
+    /// A printer that holds `holds`, types its scalars, and writes every
+    /// comment; an unheld char or non-finite float becomes a string.
+    pub fn new(holds: NativeKinds) -> Self {
+        Prints {
+            holds,
+            typed_scalars: true,
+            null_at_root: false,
+            root_container: false,
+            char_as: "string".to_owned(),
+            number_special_as: "string".to_owned(),
+            comments: CommentsPrinted::Always,
+        }
+    }
+}
+
+/// When a printer writes comments.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum CommentsPrinted {
+    #[default]
+    Always,
+    /// Only when pretty-printing.
+    Pretty,
+    Never,
 }
 
 impl Dialect {
@@ -117,6 +170,7 @@ impl Dialect {
             splice: Splice::Literal,
             empty_doc_seed: None,
             syntax: None,
+            prints: None,
         }
     }
 }
@@ -1019,6 +1073,34 @@ struct CDialect {
     _extension_ptrs: Vec<*const c_char>,
     _seed: Option<CString>,
     _syntax: Option<Box<CSyntax>>,
+    _char_as: Option<CString>,
+    _number_special_as: Option<CString>,
+}
+
+/// `kinds` as `FigLanguageVTable.lossless`'s bits: the envelope bit, then
+/// one bit per kind held natively.
+fn native_bits(l: &NativeKinds) -> u32 {
+    let ext = [
+        (l.offset_datetime, ExtKind::OffsetDateTime),
+        (l.local_datetime, ExtKind::LocalDateTime),
+        (l.local_date, ExtKind::LocalDate),
+        (l.local_time, ExtKind::LocalTime),
+        (l.enum_literal, ExtKind::EnumLiteral),
+        (l.char_literal, ExtKind::CharLiteral),
+        (l.number_special, ExtKind::NumberSpecial),
+        (l.plist_date, ExtKind::PlistDate),
+        (l.plist_data, ExtKind::PlistData),
+    ];
+    let mut bits = ffi::FIG_LOSSLESS_ENVELOPE;
+    if l.null {
+        bits |= ffi::FIG_NATIVE_NULL;
+    }
+    for (held, kind) in ext {
+        if held {
+            bits |= ffi::fig_native_ext(kind.to_c() as u32);
+        }
+    }
+    bits
 }
 
 unsafe impl Send for Registration {}
@@ -1148,29 +1230,7 @@ impl Registration {
             caps |= 1 << 3;
         }
         // The envelope bit, then one bit per kind held natively.
-        let lossless = desc.lossless.map_or(0, |l| {
-            let ext = [
-                (l.offset_datetime, ExtKind::OffsetDateTime),
-                (l.local_datetime, ExtKind::LocalDateTime),
-                (l.local_date, ExtKind::LocalDate),
-                (l.local_time, ExtKind::LocalTime),
-                (l.enum_literal, ExtKind::EnumLiteral),
-                (l.char_literal, ExtKind::CharLiteral),
-                (l.number_special, ExtKind::NumberSpecial),
-                (l.plist_date, ExtKind::PlistDate),
-                (l.plist_data, ExtKind::PlistData),
-            ];
-            let mut bits = ffi::FIG_LOSSLESS_ENVELOPE;
-            if l.null {
-                bits |= ffi::FIG_NATIVE_NULL;
-            }
-            for (held, kind) in ext {
-                if held {
-                    bits |= ffi::fig_native_ext(kind.to_c() as u32);
-                }
-            }
-            bits
-        });
+        let lossless = desc.lossless.map_or(0, |l| native_bits(&l));
         let syntax = match &desc.syntax {
             Some(s) => Some(CSyntax::new(s)?),
             None => None,
@@ -1195,6 +1255,26 @@ impl Registration {
                 Some(s) => Some(CSyntax::new(s)?),
                 None => None,
             };
+            let char_as = match &d.prints {
+                Some(p) => Some(cstr(&p.char_as)?),
+                None => None,
+            };
+            let number_special_as = match &d.prints {
+                Some(p) => Some(cstr(&p.number_special_as)?),
+                None => None,
+            };
+            let mut prints_flags = 0u32;
+            if let Some(p) = &d.prints {
+                if !p.typed_scalars {
+                    prints_flags |= ffi::FIG_PRINTS_TEXT_SCALARS;
+                }
+                if p.null_at_root {
+                    prints_flags |= ffi::FIG_PRINTS_NULL_AT_ROOT;
+                }
+                if p.root_container {
+                    prints_flags |= ffi::FIG_PRINTS_ROOT_CONTAINER;
+                }
+            }
             dialects.push(ffi::FigDialectDesc {
                 name: dname.as_ptr(),
                 extensions: extension_ptrs.as_ptr(),
@@ -1207,6 +1287,17 @@ impl Registration {
                 syntax: dsyntax
                     .as_ref()
                     .map_or(std::ptr::null(), |s| &s.c as *const _),
+                prints_holds: d.prints.as_ref().map_or(0, |p| native_bits(&p.holds)),
+                prints_flags,
+                prints_char_as: char_as.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()),
+                prints_number_special_as: number_special_as
+                    .as_ref()
+                    .map_or(std::ptr::null(), |s| s.as_ptr()),
+                prints_comments: d.prints.as_ref().map_or(0, |p| match p.comments {
+                    CommentsPrinted::Always => 0,
+                    CommentsPrinted::Pretty => 1,
+                    CommentsPrinted::Never => 2,
+                }),
             });
             owned.push(CDialect {
                 _name: dname,
@@ -1214,6 +1305,8 @@ impl Registration {
                 _extension_ptrs: extension_ptrs,
                 _seed: seed,
                 _syntax: dsyntax,
+                _char_as: char_as,
+                _number_special_as: number_special_as,
             });
         }
         let samples: Vec<Vec<u8>> = desc.samples.iter().map(|s| s.as_bytes().to_vec()).collect();

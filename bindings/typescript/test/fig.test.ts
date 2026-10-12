@@ -737,6 +737,17 @@ test("Document.diagnose reports a dropped null for TOML", () => {
   assert.equal(doc.diagnose(Format.Toml, { lossless: true }).length, 0);
 });
 
+test("Document.diagnose reads the target dialect's prints: INI types no scalar", () => {
+  using doc = Document.parse("a: true\nn: 1\nl: [1]\n", Format.Yaml);
+  const warns = doc.diagnose(Format.Ini).map((w) => [w.path, w.code, w.note]);
+  assert.deepEqual(warns, [
+    ["a", WarningCode.TypeDegraded, "string"],
+    ["n", WarningCode.TypeDegraded, "string"],
+    ["l", WarningCode.ValueDropped, "array"],
+    ["l[0]", WarningCode.TypeDegraded, "string"],
+  ]);
+});
+
 test("value diagnose reports a degraded datetime", () => {
   const v = V.map([[V.string("when"), V.extended(ExtKind.OffsetDateTime, "1979-05-27T07:32:00Z")]]);
   const warns = diagnose(v, Format.Json);

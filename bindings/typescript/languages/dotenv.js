@@ -177,7 +177,7 @@ const language = {
   dialects: [
     // `env`, the extension: the compiled format owns `.env` too, and a
     // compiled format's extension wins, so this is reached by `--lang`.
-    { name: "dotenv", extensions: ["env"], splice: "raw", empty_doc_seed: "" },
+    { name: "dotenv", extensions: ["env"], splice: "raw", empty_doc_seed: "", prints: { holds: {}, typed_scalars: false, char_as: "number" } },
   ],
   samples: ["A=1\nB=\"two words\"\n", "# top\nexport C='raw \\n'\nD=x # trailing\n"],
   renderers: [],

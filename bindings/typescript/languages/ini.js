@@ -219,7 +219,7 @@ const language = {
   },
   // The compiled format's extension: where the format is compiled out
   // and this stands in for it, the extension reaches it.
-  dialects: [{ name: "ini", extensions: ["ini"], splice: "raw", empty_doc_seed: "" }],
+  dialects: [{ name: "ini", extensions: ["ini"], splice: "raw", empty_doc_seed: "", prints: { holds: {}, typed_scalars: false, char_as: "number" } }],
   samples: ["a = 1\n\n[s]\nk = v\n"],
   renderers: [],
   parse,

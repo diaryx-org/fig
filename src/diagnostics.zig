@@ -250,7 +250,7 @@ const Collector = struct {
             // A runtime language that declares no `syntax` has said nothing
             // about comments, and its printer receives every comment row, so
             // there is no loss to claim.
-            .runtime => |e| runtimeComments(e) orelse return,
+            .runtime => |e| runtimeComments(e, self.options.pretty) orelse return,
         };
         if (!emitted) {
             try self.add(.{ .code = .comment_dropped, .cause = .format_limitation, .path = path });
@@ -348,6 +348,7 @@ fn holdsExt(holds: Language.NativeKinds, ext: ExtKind) bool {
 /// compiled flat format's are, because nothing in the declaration says so.
 fn runtimeValueLoss(e: *const Runtime.Entry, kind: AST.Node.Kind, depth: usize) ?Loss {
     const caps = e.language.caps;
+    if (e.prints) |p| return declaredLoss(p, caps.max_mapping_depth, kind, depth);
     if (caps.lossless) |native| {
         if (Lossless.isUnrepresentable(native, kind)) return .{ .code = .value_dropped, .note = dropNote(kind) };
         if (Lossless.needsEnvelope(native, kind)) switch (kind) {
@@ -370,10 +371,16 @@ fn runtimeValueLoss(e: *const Runtime.Entry, kind: AST.Node.Kind, depth: usize) 
 /// when it declares no `syntax`, which is only required of an editable
 /// language: a read-and-serialize one may print every
 /// comment it is handed, and fig cannot know that it does not.
-fn runtimeComments(e: *const Runtime.Entry) ?struct { bool, bool } {
+fn runtimeComments(e: *const Runtime.Entry, pretty: bool) ?struct { bool, bool } {
     const syntax = e.syntax orelse return null;
-    const line = syntax.comments.line orelse return .{ false, false };
-    return .{ true, line.close.len > 0 };
+    const block = syntax.comments.block != null or (if (syntax.comments.line) |l| l.close.len > 0 else false);
+    if (e.prints) |p| return .{ switch (p.comments) {
+        .always => true,
+        .pretty => pretty,
+        .never => false,
+    }, block };
+    if (syntax.comments.line == null) return .{ false, false };
+    return .{ true, block };
 }
 
 /// The type an `extended` value the target does not hold collapses to, as

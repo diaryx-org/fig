@@ -2660,6 +2660,9 @@ function print(_dialect, t, options) {
   return pr.out.join("");
 }
 
+// What YAML's printer makes of another format's tree, in both dialects.
+const YAML_PRINTS = { holds: { null: true }, char_as: "number" };
+
 /** @type {import("@diaryx/fig/helper").Language} */
 const language = {
   name: "yaml",
@@ -2679,8 +2682,8 @@ const language = {
   // format selects it with `--spec 1.1`, which a runtime dialect has no
   // row for, so it is a second dialect, reached by name.
   dialects: [
-    { name: "yaml", extensions: ["yaml", "yml"], splice: "literal", empty_doc_seed: "" },
-    { name: "yaml-1.1", extensions: [], splice: "literal", empty_doc_seed: "" },
+    { name: "yaml", extensions: ["yaml", "yml"], splice: "literal", empty_doc_seed: "", prints: YAML_PRINTS },
+    { name: "yaml-1.1", extensions: [], splice: "literal", empty_doc_seed: "", prints: YAML_PRINTS },
   ],
   samples: ["a: 1\nb:\n  - x\n  - y\nc:\n  d: true\n", "{a: 1, b: [2, 3]}\n"],
   renderers: [],

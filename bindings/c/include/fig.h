@@ -1321,6 +1321,19 @@ typedef struct FigSyntax {
 // NULL to refuse creation. `syntax`: this dialect's own where it differs
 // from the language's, else NULL.
 //
+// The prints_* fields say what the dialect's printer makes of a tree from
+// another format, which fig's conversion warnings are computed from.
+// `prints_holds` is the kinds it writes as themselves, in
+// FigLanguageVTable.lossless's bits, with FIG_LOSSLESS_ENVELOPE meaning
+// "declared"; 0 declares nothing and leaves the warnings to `caps`.
+// `prints_flags`: FIG_PRINTS_TEXT_SCALARS (booleans and numbers print as
+// text), FIG_PRINTS_NULL_AT_ROOT (a root null is an empty document),
+// FIG_PRINTS_ROOT_CONTAINER (the root must be a mapping or a sequence).
+// `prints_char_as` and `prints_number_special_as`: what an unheld char
+// literal and non-finite float become ("number", "quoted string"), NULL for
+// "string". `prints_comments`: 0 always, 1 only when pretty-printing, 2
+// never.
+//
 // fig-abi: stride-gated — rows are read at FigLanguageVTable.dialect_size.
 typedef struct FigDialectDesc {
     const char        *name;
@@ -1328,7 +1341,16 @@ typedef struct FigDialectDesc {
     int                splice;
     const char        *empty_doc_seed;
     const FigSyntax   *syntax;
+    uint32_t           prints_holds;
+    uint32_t           prints_flags;
+    const char        *prints_char_as;
+    const char        *prints_number_special_as;
+    int                prints_comments;
 } FigDialectDesc;
+
+#define FIG_PRINTS_TEXT_SCALARS   (1u << 0)
+#define FIG_PRINTS_NULL_AT_ROOT   (1u << 1)
+#define FIG_PRINTS_ROOT_CONTAINER (1u << 2)
 
 // Everything a renderer is told, whichever it is; each reads the fields its
 // fragment needs. `indent` is the line prefix the fragment's first line sits

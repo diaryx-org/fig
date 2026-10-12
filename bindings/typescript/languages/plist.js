@@ -307,7 +307,7 @@ const language = {
     closed_containers: { map_open: "<dict>", map_close: "</dict>", seq_open: "<array>", seq_close: "</array>" },
     seq_item_marker: "",
   },
-  dialects: [{ name: "plist", extensions: ["plist"], splice: "raw", empty_doc_seed: "<dict>\n</dict>\n" }],
+  dialects: [{ name: "plist", extensions: ["plist"], splice: "raw", empty_doc_seed: "<dict>\n</dict>\n", prints: { holds: { plist_date: true, plist_data: true }, comments: "never" } }],
   samples: [
     '<plist version="1.0"><dict><key>a</key><string>b</string><key>n</key><integer>1</integer><key>l</key><array><true/><false/></array></dict></plist>\n',
   ],

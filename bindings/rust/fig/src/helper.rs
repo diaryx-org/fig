@@ -42,10 +42,10 @@
 //! A description is `{"name","caps":{"read","edit","serialize","references"},
 //! "max_mapping_depth":n|null,"lossless":{…}|null,"syntax":{…}|null,
 //! "dialects":[{"name","extensions":[…],"splice":"literal|json_string|raw",
-//! "empty_doc_seed":"…"|null,"syntax":{…}|null}],"samples":[…],
-//! "renderers":["value",…]}`; a syntax is the fields of
-//! [`Syntax`] by name, with enums as their lower-case names and absent
-//! optionals as `null`. A table is `{"rows":[…],"regions":[…],"mentions":[…],
+//! "empty_doc_seed":"…"|null,"syntax":{…}|null,"prints":{…}|null}],
+//! "samples":[…],"renderers":["value",…]}`; a syntax is the fields of
+//! [`Syntax`] by name, and a prints the fields of [`Prints`], with enums as
+//! their lower-case names and absent optionals as `null`. A table is `{"rows":[…],"regions":[…],"mentions":[…],
 //! "comments":[…],"directives":[…]}`: a row is `{"kind":"mapping","parent":0,
 //! "span":[s,e],"text":"…"}` plus `ext_kind`, `anchor`, `anchor_span`, `tag`,
 //! `tag_span`, `marker`, `sep`, `item_sep` and `open` where present (an
@@ -61,9 +61,9 @@ use std::io::{BufRead, Write};
 
 use crate::language::{
     ClosedContainers, CommentDelimiter, CommentForm, CommentRow, CommentSlot, Comments,
-    Description, Dialect, DirectiveRow, Language, LanguageError, Literal, MentionKind, MentionRow,
-    NativeKinds, NodeKind, NodeRow, NodeTable, PrintOptions, RegionRow, RenderArgs, Renderer,
-    Renderers, SectionHeader, Splice, Syntax,
+    CommentsPrinted, Description, Dialect, DirectiveRow, Language, LanguageError, Literal,
+    MentionKind, MentionRow, NativeKinds, NodeKind, NodeRow, NodeTable, PrintOptions, Prints,
+    RegionRow, RenderArgs, Renderer, Renderers, SectionHeader, Splice, Syntax,
 };
 use crate::{Capabilities, Document, ExtKind, Format, SerializeOptions, Span, Value};
 
@@ -351,6 +351,10 @@ pub fn description_to_value(d: &Description) -> Value {
                                 "syntax",
                                 dl.syntax.as_ref().map_or(Value::Null, syntax_to_value),
                             ),
+                            (
+                                "prints",
+                                dl.prints.as_ref().map_or(Value::Null, prints_to_value),
+                            ),
                         ])
                     })
                     .collect(),
@@ -396,6 +400,10 @@ pub fn description_from_value(v: &Value) -> Result<Description, LanguageError> {
                 None | Some(Value::Null) => None,
                 Some(sv) => Some(syntax_from_value(sv)?),
             },
+            prints: match dl.get("prints") {
+                None | Some(Value::Null) => None,
+                Some(pv) => Some(prints_from_value(pv)),
+            },
         });
     }
     let mut renderers = Renderers::default();
@@ -437,6 +445,50 @@ pub fn description_from_value(v: &Value) -> Result<Description, LanguageError> {
             .collect(),
         renderers,
     })
+}
+
+fn prints_to_value(p: &Prints) -> Value {
+    map(vec![
+        ("holds", native_kinds_to_value(&p.holds)),
+        ("typed_scalars", Value::Bool(p.typed_scalars)),
+        ("null_at_root", Value::Bool(p.null_at_root)),
+        ("root_container", Value::Bool(p.root_container)),
+        ("char_as", s(&p.char_as)),
+        ("number_special_as", s(&p.number_special_as)),
+        (
+            "comments",
+            s(match p.comments {
+                CommentsPrinted::Always => "always",
+                CommentsPrinted::Pretty => "pretty",
+                CommentsPrinted::Never => "never",
+            }),
+        ),
+    ])
+}
+
+fn prints_from_value(v: &Value) -> Prints {
+    let b = |name: &str, default: bool| v.get(name).and_then(Value::as_bool).unwrap_or(default);
+    let st = |name: &str| {
+        v.get(name)
+            .and_then(Value::as_str)
+            .unwrap_or("string")
+            .to_owned()
+    };
+    let mut p = Prints::new(
+        v.get("holds")
+            .map_or(NativeKinds::default(), native_kinds_from_value),
+    );
+    p.typed_scalars = b("typed_scalars", true);
+    p.null_at_root = b("null_at_root", false);
+    p.root_container = b("root_container", false);
+    p.char_as = st("char_as");
+    p.number_special_as = st("number_special_as");
+    p.comments = match v.get("comments").and_then(Value::as_str) {
+        Some("pretty") => CommentsPrinted::Pretty,
+        Some("never") => CommentsPrinted::Never,
+        _ => CommentsPrinted::Always,
+    };
+    p
 }
 
 fn native_kinds_to_value(k: &NativeKinds) -> Value {

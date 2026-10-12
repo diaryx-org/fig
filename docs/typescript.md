@@ -585,6 +585,15 @@ ed.setValue(["b"], "2");                          // the splice engine writes `b
 ed.source();                                 // → "a=1\nb=2\n"
 ```
 
+A dialect may also say what its printer makes of another format's tree, in
+`prints`, and `Document.diagnose` and `convert`'s warnings then answer from
+it as they do for a built-in format: `holds` the kinds it writes as
+themselves, `typed_scalars: false` where every scalar becomes text,
+`char_as` and `number_special_as` what those two become when not held, and
+`comments` whether it writes comments `"always"`, only when `"pretty"`, or
+`"never"`. Without it the warnings come from `max_mapping_depth` and
+`lossless` alone.
+
 The object is fig's **helper wire**, as a value: the same `description` a
 helper process answers `describe` with, the same node table its `parse`
 answers, spelled with the wire's own field names — `max_mapping_depth`,

@@ -1182,7 +1182,19 @@ pub struct FigDialectDesc {
     pub splice: c_int,
     pub empty_doc_seed: *const c_char,
     pub syntax: *const FigSyntax,
+    pub prints_holds: u32,
+    pub prints_flags: u32,
+    pub prints_char_as: *const c_char,
+    pub prints_number_special_as: *const c_char,
+    pub prints_comments: c_int,
 }
+
+/// `FigDialectDesc.prints_flags`: booleans and numbers print as text.
+pub const FIG_PRINTS_TEXT_SCALARS: u32 = 1 << 0;
+/// `FigDialectDesc.prints_flags`: a root null is an empty document.
+pub const FIG_PRINTS_NULL_AT_ROOT: u32 = 1 << 1;
+/// `FigDialectDesc.prints_flags`: the root must be a container.
+pub const FIG_PRINTS_ROOT_CONTAINER: u32 = 1 << 2;
 
 pub type FigParseFn = unsafe extern "C" fn(
     ctx: *mut c_void,

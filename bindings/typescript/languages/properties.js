@@ -213,7 +213,7 @@ const language = {
   },
   // The compiled format's extension: where the format is compiled out
   // and this stands in for it, the extension reaches it.
-  dialects: [{ name: "properties", extensions: ["properties"], splice: "raw", empty_doc_seed: "" }],
+  dialects: [{ name: "properties", extensions: ["properties"], splice: "raw", empty_doc_seed: "", prints: { holds: {}, typed_scalars: false, char_as: "number" } }],
   samples: ["a=1\nb: two\nc three\n"],
   renderers: [],
   parse,

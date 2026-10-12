@@ -2176,6 +2176,20 @@ function render(which, args) {
 
 // ── the language ──────────────────────────────────────────────────────────
 
+// figl writes every kind as itself.
+const EVERY_KIND = {
+  null: true,
+  offset_datetime: true,
+  local_datetime: true,
+  local_date: true,
+  local_time: true,
+  enum_literal: true,
+  char_literal: true,
+  number_special: true,
+  plist_date: true,
+  plist_data: true,
+};
+
 /** @type {import("@diaryx/fig/helper").Language} */
 const language = {
   name: "fig",
@@ -2198,7 +2212,7 @@ const language = {
   },
   // The compiled format's extension: where the format is compiled out
   // and this stands in for it, the extension reaches it.
-  dialects: [{ name: "fig", extensions: ["figl"], splice: "literal", empty_doc_seed: "" }],
+  dialects: [{ name: "fig", extensions: ["figl"], splice: "literal", empty_doc_seed: "", prints: { holds: EVERY_KIND, root_container: true } }],
   samples: ["a = 1\ndatabase\n> host = localhost\n> port = 5432\n"],
   // What follows a key: ` = value`, or a block value re-printed as a nested
   // section one marker level below the key.

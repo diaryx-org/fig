@@ -323,7 +323,7 @@ const language = {
   },
   // The compiled format's extension: where the format is compiled out
   // and this stands in for it, the extension reaches it.
-  dialects: [{ name: "json", extensions: ["json"], splice: "json_string", empty_doc_seed: "{}\n" }],
+  dialects: [{ name: "json", extensions: ["json"], splice: "json_string", empty_doc_seed: "{}\n", prints: { holds: { null: true }, char_as: "number", number_special_as: "quoted string", comments: "never" } }],
   samples: ['{"a": 1, "b": [true, null, "s"], "c": {"d": 2.5}}\n', "[]\n"],
   // A key's name as JSON writes a key: quoted and escaped, as strict JSON requires.
   renderers: ["key_name"],

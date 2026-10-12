@@ -195,6 +195,35 @@ fn delimiterOf(a: Allocator, v: ?std.json.Value) !Runtime.CommentDelimiterDesc {
     };
 }
 
+/// A dialect's `prints` object as `DialectDesc` fields, or null for none:
+/// `holds` an object of the kinds held (as `lossless` is), `typed_scalars`,
+/// `null_at_root` and `root_container` booleans, `char_as` and
+/// `number_special_as` strings, and `comments` one of "always", "pretty" or
+/// "never".
+fn printsOfWire(a: Allocator, v: ?std.json.Value) !?struct { holds: u32, flags: u32, char_as: ?[*:0]const u8, number_special_as: ?[*:0]const u8, comments: c_int } {
+    const pv = v orelse return null;
+    if (pv != .object) return null;
+    const o = pv.object;
+    var kinds: manifest.NativeKinds = .{};
+    if (o.get("holds")) |h| if (h == .object) {
+        inline for (@typeInfo(manifest.NativeKinds).@"struct".field_names) |f_name| {
+            @field(kinds, f_name) = boolOr(h.object, f_name, false);
+        }
+    };
+    var flags: u32 = 0;
+    if (!boolOr(o, "typed_scalars", true)) flags |= Runtime.prints_text_scalars;
+    if (boolOr(o, "null_at_root", false)) flags |= Runtime.prints_null_at_root;
+    if (boolOr(o, "root_container", false)) flags |= Runtime.prints_root_container;
+    const comments: c_int = if (o.get("comments")) |c| (if (c == .string) (if (std.mem.eql(u8, c.string, "pretty")) 1 else if (std.mem.eql(u8, c.string, "never")) 2 else 0) else 0) else 0;
+    return .{
+        .holds = Runtime.losslessBits(kinds),
+        .flags = flags,
+        .char_as = try optString(a, o, "char_as"),
+        .number_special_as = try optString(a, o, "number_special_as"),
+        .comments = comments,
+    };
+}
+
 fn syntaxOf(a: Allocator, v: std.json.Value) !*const Runtime.SyntaxDesc {
     if (v != .object) return error.HelperSpokeNoJson;
     const o = v.object;
@@ -297,12 +326,18 @@ fn vtableFromDescription(a: Allocator, t: *Transport, desc: std.json.Value) !Run
             };
             try exts.append(a, null);
             const splice: c_int = if (d.object.get("splice")) |sp| (if (sp == .string) (if (std.mem.eql(u8, sp.string, "json_string")) 1 else if (std.mem.eql(u8, sp.string, "raw")) 2 else 0) else 0) else 0;
+            const pv = try printsOfWire(a, d.object.get("prints"));
             try dialects.append(a, .{
                 .name = try zstr(a, dn.string),
                 .extensions = (try exts.toOwnedSlice(a)).ptr,
                 .splice = splice,
                 .empty_doc_seed = try optString(a, d.object, "empty_doc_seed"),
                 .syntax = if (d.object.get("syntax")) |sv| (if (sv == .object) try syntaxOf(a, sv) else null) else null,
+                .prints_holds = if (pv) |p| p.holds else 0,
+                .prints_flags = if (pv) |p| p.flags else 0,
+                .prints_char_as = if (pv) |p| p.char_as else null,
+                .prints_number_special_as = if (pv) |p| p.number_special_as else null,
+                .prints_comments = if (pv) |p| p.comments else 0,
             });
         }
     };

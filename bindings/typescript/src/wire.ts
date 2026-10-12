@@ -104,7 +104,7 @@ export interface Syntax {
 /** Which kinds the format holds natively — what the `$fig` lossless
  *  envelope need not wrap. */
 export interface NativeKinds {
-  null_?: boolean;
+  null?: boolean;
   offset_datetime?: boolean;
   local_datetime?: boolean;
   local_date?: boolean;
@@ -128,6 +128,30 @@ export interface Dialect {
   empty_doc_seed?: string | null;
   /** This dialect's own syntax where it differs from the language's. */
   syntax?: Syntax | null;
+  /** What the dialect's printer makes of a tree from another format, which
+   *  fig's conversion warnings are computed from; absent leaves them to
+   *  `caps` and `lossless`. */
+  prints?: Prints | null;
+}
+
+/** What a dialect's printer writes of a tree read from another format. */
+export interface Prints {
+  /** The kinds written as themselves, named as `lossless` names them. A
+   *  `null` not held is dropped; an extended scalar not held degrades. */
+  holds: NativeKinds;
+  /** Booleans and numbers written as themselves; `false` where every scalar
+   *  is text. Absent is `true`. */
+  typed_scalars?: boolean;
+  /** A `null` at the root is an empty document, not a loss. */
+  null_at_root?: boolean;
+  /** The root must be a mapping or a sequence. */
+  root_container?: boolean;
+  /** What a char literal not held is written as; absent is "string". */
+  char_as?: string;
+  /** What a non-finite float not held is written as; absent is "string". */
+  number_special_as?: string;
+  /** When the printer writes comments; absent is "always". */
+  comments?: "always" | "pretty" | "never";
 }
 
 /** The six fragment renderers the editor may ask a format for. */
@@ -372,6 +396,7 @@ export function describe(lang: Language): Record<string, unknown> {
       splice: d.splice ?? "literal",
       empty_doc_seed: d.empty_doc_seed ?? null,
       syntax: d.syntax ?? null,
+      prints: d.prints ?? null,
     })),
     samples: lang.samples,
     renderers: lang.renderers ?? [],

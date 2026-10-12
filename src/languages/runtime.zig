@@ -472,7 +472,24 @@ pub const DialectDesc = extern struct {
     /// This dialect's `syntax` where it differs from the language's, else
     /// null.
     syntax: ?*const SyntaxDesc = null,
+    /// `manifest.Prints`. `prints_holds` is its `holds` in `VTable.lossless`'s
+    /// bits, with `lossless_envelope` meaning "declared": 0 declares none,
+    /// and the conversion warnings fall back to `caps`.
+    prints_holds: u32 = 0,
+    /// `prints_text_scalars` (typed_scalars = false), `prints_null_at_root`,
+    /// `prints_root_container`.
+    prints_flags: u32 = 0,
+    /// Null for "string".
+    prints_char_as: ?[*:0]const u8 = null,
+    /// Null for "string".
+    prints_number_special_as: ?[*:0]const u8 = null,
+    /// 0 always, 1 when pretty-printing, 2 never.
+    prints_comments: c_int = 0,
 };
+
+pub const prints_text_scalars: u32 = 1 << 0;
+pub const prints_null_at_root: u32 = 1 << 1;
+pub const prints_root_container: u32 = 1 << 2;
 
 /// The fifth versioned surface: bumped when a field of this struct or of
 /// any struct it reaches changes meaning, never for an appended field.
@@ -632,6 +649,9 @@ pub const Entry = struct {
     empty_doc_seed: ?[]const u8,
     /// The dialect's own `syntax`, or the language's.
     syntax: ?manifest.Syntax,
+    /// What the dialect's printer makes of another format's tree, if it
+    /// says.
+    prints: ?manifest.Prints = null,
 
     /// The name handed to every vtable function for this row.
     pub fn dialectZ(self: *const Entry) [*:0]const u8 {
@@ -805,6 +825,7 @@ pub fn register(allocator: Allocator, raw: *const VTable) RegisterError!c_int {
             .splice = @fromBackingInt(@intCast(d.splice)),
             .empty_doc_seed = if (d.empty_doc_seed) |s| try arena.dupe(u8, std.mem.span(s)) else null,
             .syntax = if (d.syntax) |s| try syntaxOf(arena, s) else null,
+            .prints = try printsOf(arena, &d),
         };
         out.* = e;
     }
@@ -1166,6 +1187,24 @@ fn nativeKindsOf(bits: u32) ?manifest.NativeKinds {
 
 /// `nativeKindsOf`'s inverse, for a host that holds a `manifest.NativeKinds`
 /// and fills a vtable from it.
+/// A dialect row's `manifest.Prints`, or null when it declares none.
+fn printsOf(arena: Allocator, d: *const DialectDesc) Allocator.Error!?manifest.Prints {
+    const holds = nativeKindsOf(d.prints_holds) orelse return null;
+    return .{
+        .holds = holds,
+        .typed_scalars = d.prints_flags & prints_text_scalars == 0,
+        .null_at_root = d.prints_flags & prints_null_at_root != 0,
+        .root_container = d.prints_flags & prints_root_container != 0,
+        .char_as = try dupeZstr(arena, d.prints_char_as) orelse "string",
+        .number_special_as = try dupeZstr(arena, d.prints_number_special_as) orelse "string",
+        .comments = switch (d.prints_comments) {
+            1 => .pretty,
+            2 => .never,
+            else => .always,
+        },
+    };
+}
+
 pub fn losslessBits(kinds: ?manifest.NativeKinds) u32 {
     const k = kinds orelse return 0;
     var bits: u32 = lossless_envelope;

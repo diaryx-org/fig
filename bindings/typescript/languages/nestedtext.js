@@ -568,7 +568,7 @@ const language = {
   },
   // The compiled format's extension: where the format is compiled out
   // and this stands in for it, the extension reaches it.
-  dialects: [{ name: "nestedtext", extensions: ["nt"], splice: "raw", empty_doc_seed: "" }],
+  dialects: [{ name: "nestedtext", extensions: ["nt"], splice: "raw", empty_doc_seed: "", prints: { holds: {}, typed_scalars: false, null_at_root: true, char_as: "number" } }],
   samples: ["a: 1\nb:\n  - x\n  - y\n"],
   // The compiled editor's four renderers: an entry, an item, a value's
   // tail after its key, and a key over an old one.

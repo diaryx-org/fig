@@ -543,8 +543,8 @@ const language = {
   // compiled dialect's extension, which reaches it where that dialect is
   // compiled out and this stands in for it.
   dialects: [
-    { name: "json5", extensions: ["json5"], splice: "json_string", empty_doc_seed: "{}\n" },
-    { name: "jsonc", extensions: ["jsonc"], splice: "json_string", empty_doc_seed: "{}\n" },
+    { name: "json5", extensions: ["json5"], splice: "json_string", empty_doc_seed: "{}\n", prints: { holds: { null: true, number_special: true }, char_as: "number", comments: "pretty" } },
+    { name: "jsonc", extensions: ["jsonc"], splice: "json_string", empty_doc_seed: "{}\n", prints: { holds: { null: true }, char_as: "number", number_special_as: "quoted string", comments: "pretty" } },
   ],
   samples: ['{"a": 1, "b": [true, null, "s"], "c": {"d": 2.5}}\n', "// top\n[] // empty\n"],
   // A key's name as JSON5 writes a key: quoted and escaped, as the compiled format writes it.

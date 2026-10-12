@@ -113,7 +113,7 @@ pub const Language = struct {
             // A section format: a `[table]`, `[[array]]` or dotted table is
             // assembled from scattered lines, which `parser.zig` records in
             // `Document.node_regions`. Its refusals say "table".
-            .section_noun = .table,
+            .section_noun = "table",
             // `[a.b]` opens a table, `[[a.b]]` an element of an array of
             // tables; an index segment is implied and left out.
             .section_header = .{ .open = "[", .close = "]", .seq_open = "[[", .seq_close = "]]" },
@@ -135,7 +135,7 @@ pub const Language = struct {
     // That file now holds this format's editor tests.
     //
     // The line-splice ops refuse a section node in this format's vocabulary
-    // (`CannotDeleteTable`, …) and point at the whole-container ops.
+    // (`CannotDeleteSection`, …) and point at the whole-container ops.
 };
 
 // Test discovery for the TOML module: importing `toml.zig` (from root.zig) pulls

@@ -74,7 +74,7 @@ pub const Language = struct {
             // A section format: a `[section]` may be reopened and so
             // scattered, and `parser.zig` records every section's header
             // lines in `Document.node_regions`. Its refusals say "section".
-            .section_noun = .section,
+            .section_noun = "section",
         };
     }
 

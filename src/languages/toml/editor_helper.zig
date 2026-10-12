@@ -138,7 +138,7 @@ test "toml replace refuses a [header] table (would rename the header)" {
     var ed = try newTomlEditor("[nested]\nk = \"v\"\n");
     defer ed.deinit();
     try std.testing.expectError(
-        error.CannotReplaceTable,
+        error.CannotReplaceSection,
         ed.replaceValAtPath(&.{.{ .key = "nested" }}, "\"REPLACED\""),
     );
     try expectTomlSource(&ed, "[nested]\nk = \"v\"\n");
@@ -150,7 +150,7 @@ test "toml replace refuses a dotted table" {
     // Not a `[header]` line at all — the line starts with the key — so this is
     // the case a line-based sniff would miss and splice into `"x".b = 1`.
     try std.testing.expectError(
-        error.CannotReplaceTable,
+        error.CannotReplaceSection,
         ed.replaceValAtPath(&.{.{ .key = "a" }}, "\"REPLACED\""),
     );
     try expectTomlSource(&ed, "a.b = 1\n");
@@ -162,11 +162,11 @@ test "toml replace refuses an array of tables and its elements" {
     // The `[[aot]]` sequence and every element share the header key's span, so
     // both paths are the same hazard.
     try std.testing.expectError(
-        error.CannotReplaceTable,
+        error.CannotReplaceSection,
         ed.replaceValAtPath(&.{.{ .key = "aot" }}, "[1, 2]"),
     );
     try std.testing.expectError(
-        error.CannotReplaceTable,
+        error.CannotReplaceSection,
         ed.replaceValAtPath(&.{ .{ .key = "aot" }, .{ .index = 0 } }, "{ z = 1 }"),
     );
     try expectTomlSource(&ed, "[[aot]]\nk = 1\n");
@@ -179,7 +179,7 @@ test "toml set on an existing [header] table refuses without touching the file" 
     // leave the document byte-for-byte intact through that second attempt too
     // (the insert's own reparse would hit TOML's duplicate-key rule).
     try std.testing.expectError(
-        error.CannotReplaceTable,
+        error.CannotReplaceSection,
         ed.set(&.{.{ .key = "nested" }}, "\"REPLACED\""),
     );
     try expectTomlSource(&ed, "[nested]\nk = \"v\"\n");
@@ -383,14 +383,14 @@ test "toml delete dotted key removes the line" {
 test "toml deleting a header table is refused" {
     var ed = try newTomlEditor("[a]\nx = 1\n[a.b]\ny = 2\n");
     defer ed.deinit();
-    try std.testing.expectError(error.CannotDeleteTable, ed.deleteKey(&.{ .{ .key = "a" }, .{ .key = "b" } }));
+    try std.testing.expectError(error.CannotDeleteSection, ed.deleteKey(&.{ .{ .key = "a" }, .{ .key = "b" } }));
     try expectTomlSource(&ed, "[a]\nx = 1\n[a.b]\ny = 2\n");
 }
 
 test "toml deleting an array-of-tables is refused" {
     var ed = try newTomlEditor("[[fruit]]\nname = \"apple\"\n");
     defer ed.deinit();
-    try std.testing.expectError(error.CannotDeleteTable, ed.deleteKey(&.{.{ .key = "fruit" }}));
+    try std.testing.expectError(error.CannotDeleteSection, ed.deleteKey(&.{.{ .key = "fruit" }}));
 }
 
 test "toml inline array append/prepend/remove" {
@@ -542,7 +542,7 @@ test "toml delete AoT element with nested sub-table" {
 test "toml deleteTable on a scalar key is refused" {
     var ed = try newTomlEditor("x = 1\n");
     defer ed.deinit();
-    try std.testing.expectError(error.NotATable, ed.deleteContainer(&.{.{ .key = "x" }}));
+    try std.testing.expectError(error.NotASection, ed.deleteContainer(&.{.{ .key = "x" }}));
 }
 
 // --- insertTable ---
@@ -578,7 +578,7 @@ test "toml insert table with quoted-key segment" {
 test "toml insert duplicate table is refused" {
     var ed = try newTomlEditor("[a]\nx = 1\n");
     defer ed.deinit();
-    try std.testing.expectError(error.TableExists, ed.insertContainer(&.{.{ .key = "a" }}, "y = 2\n"));
+    try std.testing.expectError(error.SectionExists, ed.insertContainer(&.{.{ .key = "a" }}, "y = 2\n"));
 }
 
 // --- renameTable ---
@@ -683,8 +683,8 @@ test "toml rename refuses a target whose name is nowhere to rewrite" {
     // rename has nothing to gather, so it says so instead of reporting a rename
     // that changed nothing. (`replaceKeyAtPath` is what renames these; see
     // below.)
-    try std.testing.expectError(error.NotATable, ed.renameContainer(&.{.{ .key = "t" }}, "q"));
-    try std.testing.expectError(error.NotATable, ed.renameContainer(&.{.{ .key = "k" }}, "q"));
+    try std.testing.expectError(error.NotASection, ed.renameContainer(&.{.{ .key = "t" }}, "q"));
+    try std.testing.expectError(error.NotASection, ed.renameContainer(&.{.{ .key = "k" }}, "q"));
     try expectTomlSource(&ed, "t = { a = 1 }\nk = 1\n");
 }
 
@@ -778,7 +778,7 @@ test "toml moveKey refuses to move a [header] table" {
     // Used to produce `[b]\nz = 0\ny = 2\n…` — only the header line moved, so
     // the root key `z` landed inside `b`.
     try std.testing.expectError(
-        error.CannotMoveTable,
+        error.CannotMoveSection,
         ed.moveKey(&.{.{ .key = "b" }}, &.{.{ .key = "z" }}),
     );
     try expectTomlSource(&ed, "z = 0\n[b]\ny = 2\n[a]\nx = 1\n");
@@ -790,7 +790,7 @@ test "toml moveKey refuses to move an entry to before a [header]" {
     // "Before `[b]`" is the end of `[a]`'s body, so `z` would have become `a.z`
     // — the destination is as much of a hazard as the source.
     try std.testing.expectError(
-        error.CannotMoveTable,
+        error.CannotMoveSection,
         ed.moveKey(&.{.{ .key = "z" }}, &.{.{ .key = "b" }}),
     );
     try expectTomlSource(&ed, "z = 0\n[a]\nx = 1\n[b]\ny = 2\n");
@@ -810,7 +810,7 @@ test "toml reorderKeys refuses a reorder that shifts a table" {
     // entry, so its block stopped at its own header line and `x = 1` stayed
     // put — becoming `b.x`, with `[a]` left empty.
     try std.testing.expectError(
-        error.CannotReorderTables,
+        error.CannotReorderSections,
         ed.reorderKeys(&.{}, &.{ "z", "a", "b" }),
     );
     try expectTomlSource(&ed, "z = 0\n[b]\ny = 2\n[a]\nx = 1\n");
@@ -839,7 +839,7 @@ test "toml deleteKey refuses a dotted table; deleteContainer takes every line" {
     var ed = try newTomlEditor("a.b = 1\nz = 0\na.c = 2\n");
     defer ed.deinit();
     // Used to delete `a.b = 1` alone, leaving `a.c = 2` to keep `a` alive.
-    try std.testing.expectError(error.CannotDeleteTable, ed.deleteKey(&.{.{ .key = "a" }}));
+    try std.testing.expectError(error.CannotDeleteSection, ed.deleteKey(&.{.{ .key = "a" }}));
     try expectTomlSource(&ed, "a.b = 1\nz = 0\na.c = 2\n");
     try ed.deleteContainer(&.{.{ .key = "a" }});
     try expectTomlSource(&ed, "z = 0\n");

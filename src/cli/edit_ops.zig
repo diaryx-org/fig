@@ -851,7 +851,7 @@ test "applyEdit refuses replace_value on a toml [table] header" {
     // The reported shape: `["REPLACED"]` is valid TOML, so the splice into the
     // header key's span reparsed cleanly and the rename went unnoticed.
     var path = [_]fig.AST.PathSegment{.{ .key = "nested" }};
-    try t.expectError(error.CannotReplaceTable, applyEdit(T, t.allocator, "[nested]\nk = \"v\"\n", &path, "\"REPLACED\"", .replace_value, dia));
+    try t.expectError(error.CannotReplaceSection, applyEdit(T, t.allocator, "[nested]\nk = \"v\"\n", &path, "\"REPLACED\"", .replace_value, dia));
     // A key INSIDE the table still edits normally.
     var inner = [_]fig.AST.PathSegment{ .{ .key = "nested" }, .{ .key = "k" } };
     const out = try applyEdit(T, t.allocator, "[nested]\nk = \"v\"\n", &inner, "\"w\"", .replace_value, dia);

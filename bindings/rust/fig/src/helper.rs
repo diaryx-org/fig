@@ -63,7 +63,7 @@ use crate::language::{
     ClosedContainers, CommentDelimiter, CommentForm, CommentRow, CommentSlot, CommentStyle,
     Comments, Description, Dialect, DirectiveRow, Language, LanguageError, Literal, MentionKind,
     MentionRow, NativeKinds, NodeKind, NodeRow, NodeTable, PrintOptions, RegionRow, RenderArgs,
-    Renderer, Renderers, SectionHeader, SectionNoun, Splice, Syntax,
+    Renderer, Renderers, SectionHeader, Splice, Syntax,
 };
 use crate::{Capabilities, Document, ExtKind, Format, SerializeOptions, Span, Value};
 
@@ -551,15 +551,7 @@ pub fn syntax_to_value(x: &Syntax) -> Value {
         ("flow_map_open", s(&x.flow_map_open)),
         ("flow_map_close", s(&x.flow_map_close)),
         ("structural_indent", Value::Bool(x.structural_indent)),
-        (
-            "section_noun",
-            match x.section_noun {
-                None => Value::Null,
-                Some(SectionNoun::Table) => s("table"),
-                Some(SectionNoun::Section) => s("section"),
-                Some(SectionNoun::Container) => s("container"),
-            },
-        ),
+        ("section_noun", opt_s(&x.section_noun)),
         (
             "section_header",
             x.section_header.as_ref().map_or(Value::Null, |h| {
@@ -646,12 +638,7 @@ pub fn syntax_from_value(v: &Value) -> Result<Syntax, LanguageError> {
         flow_map_open: st("flow_map_open", &d.flow_map_open),
         flow_map_close: st("flow_map_close", &d.flow_map_close),
         structural_indent: b("structural_indent", d.structural_indent),
-        section_noun: match v.get("section_noun").and_then(Value::as_str) {
-            Some("table") => Some(SectionNoun::Table),
-            Some("section") => Some(SectionNoun::Section),
-            Some("container") => Some(SectionNoun::Container),
-            _ => None,
-        },
+        section_noun: opt_str_of(v.get("section_noun")),
         section_header: v
             .get("section_header")
             .filter(|h| !matches!(h, Value::Null))

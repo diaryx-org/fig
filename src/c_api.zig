@@ -1102,23 +1102,22 @@ fn editStatus(err: anyerror) FigStatus {
         // shape (e.g. appending to a non-array-of-tables, deleting a table by the
         // scalar ops, inserting a key/table that already exists). These are caller
         // errors, not malformed-source reparse failures.
-        error.NotATable, error.NotAnInlineArray, error.NotAnArrayOfTables, error.TableExists, error.SectionExists, error.ContainerExists, error.DuplicateKey, error.MergeOnlyKey => .invalid_argument,
+        error.NotASection, error.NotAnInlineArray, error.NotAnArrayOfTables, error.SectionExists, error.DuplicateKey, error.MergeOnlyKey => .invalid_argument,
         // The pre-op guards: a scalar op addressed a whole scattered container,
         // whose node span covers only the header line (delete) or just the name
         // inside it (replace), so the generic splice would orphan or rename what
-        // it can't see. One error per format vocabulary — TOML tables, INI
-        // sections, fig block containers — and all of them are caller errors
-        // about the request, not malformed source: the whole-container ops
-        // (`deleteContainer`, `renameContainer`, …) are what handle these shapes.
-        error.CannotDeleteTable, error.CannotDeleteSection, error.CannotDeleteContainer => .invalid_argument,
-        error.CannotReplaceTable, error.CannotReplaceSection, error.CannotReplaceContainer => .invalid_argument,
+        // it can't see. One error for every format's sections, and a caller
+        // error about the request, not malformed source: the whole-container
+        // ops (`deleteContainer`, `renameContainer`, …) handle these shapes.
+        error.CannotDeleteSection => .invalid_argument,
+        error.CannotReplaceSection => .invalid_argument,
         // The same family for the two ops that RELOCATE an entry's block: the
         // block of a `[header]`/`[section]` entry is its header line, so a move
         // strands the body and a reorder hands it to the entry that lands
         // before it. `fig_editor_move_container`/`fig_editor_reorder_containers`
         // are the ops that relocate a scattered container whole.
-        error.CannotMoveTable, error.CannotMoveSection, error.CannotMoveContainer => .invalid_argument,
-        error.CannotReorderTables, error.CannotReorderSections, error.CannotReorderContainers => .invalid_argument,
+        error.CannotMoveSection => .invalid_argument,
+        error.CannotReorderSections => .invalid_argument,
         // NestedText declines two shapes outright: inserting into an inline
         // `{}`/`[]` (expanding one into block form is out of scope) and renaming
         // a key to text that needs the multiline `: key` form.
@@ -5737,25 +5736,20 @@ test "editStatus: every editor refusal is a caller error, not parse_error" {
     // each of these is raised by an editor op (not by a parser) and must map to a
     // caller-facing status. INI's and fig's delete guards had drifted this way.
     const refusals = [_]anyerror{
-        error.NotFound,                 error.NotAMapping,
-        error.NotASequence,             error.NotAContainer,
-        error.UnsupportedShape,         error.NotATable,
-        error.NotAnInlineArray,         error.NotAnArrayOfTables,
-        error.TableExists,              error.SectionExists,
-        error.ContainerExists,          error.DuplicateKey,
-        error.MergeOnlyKey,             error.CannotDeleteTable,
-        error.CannotDeleteSection,      error.CannotDeleteContainer,
-        error.CannotReplaceTable,       error.CannotReplaceSection,
-        error.CannotReplaceContainer,   error.CannotMoveContainer,
-        error.CannotReorderContainers,  error.CannotMoveTable,
-        error.CannotMoveSection,        error.CannotReorderTables,
-        error.CannotReorderSections,    error.EmptyInlineContainer,
+        error.NotFound, error.NotAMapping,
+        error.NotASequence, error.NotAContainer,
+        error.UnsupportedShape, error.NotASection,
+        error.NotAnInlineArray, error.NotAnArrayOfTables,
+        error.SectionExists, error.DuplicateKey,
+        error.MergeOnlyKey, error.CannotDeleteSection,
+        error.CannotReplaceSection, error.CannotMoveSection,
+        error.CannotReorderSections, error.EmptyInlineContainer,
         error.KeyRequiresMultilineForm, error.BlockValueIntoFlow,
-        error.CommentsUnsupported,      error.NullUnsupported,
-        error.MultilineComment,         error.InvalidComment,
-        error.CommentsUnanchored,       error.RendererRefused,
-        error.ImplicitSection,          error.ContainerClosesOnItsLine,
-        error.NotAKey,                  error.NonFiniteNumber,
+        error.CommentsUnsupported, error.NullUnsupported,
+        error.MultilineComment, error.InvalidComment,
+        error.CommentsUnanchored, error.RendererRefused,
+        error.ImplicitSection, error.ContainerClosesOnItsLine,
+        error.NotAKey, error.NonFiniteNumber,
     };
     for (refusals) |err| {
         const status = editStatus(err);

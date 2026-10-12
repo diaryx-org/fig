@@ -651,7 +651,7 @@ pub const Syntax = struct {
     /// calls such a container. Null for every format whose containers are
     /// contiguous, which is what the default says.
     ///
-    /// Three things hang off a non-null value, all in `editor.zig`:
+    /// Two things hang off a non-null value, both in `editor.zig`:
     ///
     ///   * the parser is expected to fill `Document.node_regions` with the
     ///     header lines of every such container (see that field), which is
@@ -659,15 +659,13 @@ pub const Syntax = struct {
     ///     read — nothing here can check that the parser does, so the two
     ///     are a pair by contract rather than by `validate`;
     ///   * the generic `deleteContainer`/`moveContainer`/`reorderContainers`
-    ///     are live, and refuse at comptime for a null;
-    ///   * the engine's refusals are spelled in this vocabulary
-    ///     (`CannotDeleteTable` for `.table`, `CannotDeleteSection` for
-    ///     `.section`, …), so a format's own words survive in its errors.
+    ///     are live, and refuse at comptime for a null.
     ///
-    /// A VALUE rather than a hook because the engine's rule is the same for
-    /// all three — "a section node cannot be line-spliced; use the container
-    /// op" — and only the noun in the error differs.
-    section_noun: ?SectionNoun = null,
+    /// The engine's refusals are the same for every section format
+    /// (`NotASection`, `CannotDeleteSection`, …); the noun is the format's
+    /// own word for one ("table", "section", "container"), for a consumer
+    /// to put in a message.
+    section_noun: ?[]const u8 = null,
 
     /// How a header line that opens a container of its own is spelled, for
     /// a section format that has one — TOML's `[a.b]` and `[[a.b]]`. With
@@ -817,18 +815,3 @@ pub const Delimiters = struct { open: []const u8, close: []const u8 };
 /// have them. See `Syntax.closed_containers`.
 pub const ClosedContainers = struct { map: Delimiters, seq: Delimiters };
 
-/// What a section format calls its scattered container — the one word that
-/// differs between the three formats' otherwise identical refusals. See
-/// `Syntax.section_noun`.
-pub const SectionNoun = enum {
-    /// TOML: `NotATable`, `CannotDeleteTable`, `CannotReplaceTable`,
-    /// `CannotMoveTable`, `CannotReorderTables`.
-    table,
-    /// INI: `NotAContainer`, `CannotDeleteSection`, `CannotReplaceSection`,
-    /// `CannotMoveSection`, `CannotReorderSections`.
-    section,
-    /// fig: `NotAContainer`, `CannotDeleteContainer`,
-    /// `CannotReplaceContainer`, `CannotMoveContainer`,
-    /// `CannotReorderContainers`.
-    container,
-};

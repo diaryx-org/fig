@@ -1406,7 +1406,7 @@ lines — the creating line and each re-open — into `Document.node_regions`
 *emits* verbatim re-entered headers (a second flat-sibling run re-enters its
 section header), so delete/move/reorder must handle them, not merely fail
 safe. `deleteKey` still refuses a block-container-valued key outright
-(`error.CannotDeleteContainer`) — use `deleteContainer` for that. Two
+(`error.CannotDeleteSection`) — use `deleteContainer` for that. Two
 documented residual edges, both fail-safe via the reparse-rollback net:
 replacing a re-entered/scattered container's entire value in one
 `replaceValAtPath` splice (span-based, not region-aware), and a delete that

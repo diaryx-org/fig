@@ -85,7 +85,7 @@ export interface Syntax {
   flow_map_open?: string | null;
   flow_map_close?: string | null;
   structural_indent?: boolean;
-  section_noun?: "table" | "section" | "container" | null;
+  section_noun?: string | null;
   section_header?: SectionHeader | null;
   merge_key?: string | null;
   /** The bytes between two members of a flow container; absent is `,`. */

@@ -102,7 +102,7 @@ pub const Language = struct {
             // scattered, and `parser.zig` records every block container's
             // header lines in `Document.node_regions`. Its refusals say
             // "container".
-            .section_noun = .container,
+            .section_noun = "container",
         };
     }
 
@@ -127,7 +127,7 @@ pub const Language = struct {
     // No delete guard: the engine's section rule covers it. Every block
     // container is a section node (`Document.node_regions`), and a section
     // node cannot be line-spliced — `deleteKey`, `moveKey` and `reorderKeys`
-    // refuse it (`CannotDeleteContainer`, …) and point at the
+    // refuse it (`CannotDeleteSection`, …) and point at the
     // whole-container ops. A block container's VALUE is still replaceable:
     // its entry records its `=`, so the engine reframes it through
     // `renderTail` rather than splicing the section's span.

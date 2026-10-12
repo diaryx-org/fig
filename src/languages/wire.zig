@@ -243,7 +243,7 @@ fn syntaxOf(a: Allocator, v: std.json.Value) !*const Runtime.SyntaxDesc {
         .flow_map_open = try optString(a, o, "flow_map_open"),
         .flow_map_close = try optString(a, o, "flow_map_close"),
         .structural_indent = boolOr(o, "structural_indent", false),
-        .section_noun = enumOrdinal(Language.SectionNoun, o, "section_noun", -1),
+        .section_noun = try optString(a, o, "section_noun"),
         .section_header = header,
         .merge_key = try optString(a, o, "merge_key"),
         .flow_entry_sep = try optString(a, o, "flow_entry_sep"),

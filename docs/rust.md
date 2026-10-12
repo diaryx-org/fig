@@ -241,7 +241,7 @@ dialect.splice = Splice::Raw;
 ```
 
 The enums a language matches on — `NodeKind`, `Renderer`, `Literal`,
-`CommentStyle`, `CommentForm`, `SectionNoun`, `Splice`, `MentionKind` — are non-exhaustive too, so a `match` on one takes a `_` arm.
+`CommentStyle`, `CommentForm`, `Splice`, `MentionKind` — are non-exhaustive too, so a `match` on one takes a `_` arm.
 `CommentSlot` is the exception, on purpose: a printer must put every comment
 somewhere, and a slot it had never heard of could only be dropped by a
 wildcard, so a fourth anchor is a major release and a compile error.
@@ -849,7 +849,7 @@ one. They are `Format`, `EmbedType`, `ExtKind`, `Error` and its struct variants,
 `SectionHeader`, `ClosedContainers`, `NativeKinds`, `Renderers`, `PrintOptions`,
 `LanguageError`, `RenderArgs`, `NodeTable`, `NodeRow`, `RegionRow`,
 `MentionRow`, `CommentRow`, `DirectiveRow`, and the enums `NodeKind`, `Renderer`,
-`Literal`, `CommentStyle`, `CommentForm`, `SectionNoun`, `Splice`,
+`Literal`, `CommentStyle`, `CommentForm`, `Splice`,
 `MentionKind`.
 
 What it asks of you:

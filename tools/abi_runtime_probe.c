@@ -234,7 +234,7 @@ static int bars_probe(void) {
         /* flow_map_open */ NULL,
         /* flow_map_close */ NULL,
         /* structural_indent */ false,
-        /* section_noun */ -1,
+        /* section_noun */ NULL,
         /* section_header */ { NULL, NULL, NULL, NULL, NULL, true },
         /* merge_key */ NULL,
     };
@@ -303,7 +303,7 @@ int main(void) {
         /* flow_map_open */ NULL,
         /* flow_map_close */ NULL,
         /* structural_indent */ false,
-        /* section_noun */ -1,
+        /* section_noun */ NULL,
         /* section_header */ { NULL, NULL, NULL, NULL, NULL, true },
         /* merge_key */ NULL,
     };

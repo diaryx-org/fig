@@ -132,8 +132,7 @@ fn every_render_args_field_is_reachable_without_a_struct_literal() {
 fn every_description_type_is_buildable_without_a_struct_literal() {
     use fig::language::{
         ClosedContainers, CommentDelimiter, CommentStyle, Comments, Description, Dialect,
-        LanguageError, NativeKinds, PrintOptions, Renderers, SectionHeader, SectionNoun, Splice,
-        Syntax,
+        LanguageError, NativeKinds, PrintOptions, Renderers, SectionHeader, Splice, Syntax,
     };
     // A constructor or `Default`, then plain field assignment: the fields
     // stay public, only the literal is the crate's.
@@ -155,7 +154,7 @@ fn every_description_type_is_buildable_without_a_struct_literal() {
     header.seq_open = Some("[[".into());
     header.seq_close = Some("]]".into());
     syntax.section_header = Some(header);
-    syntax.section_noun = Some(SectionNoun::Table);
+    syntax.section_noun = Some("table".to_owned());
     syntax.closed_containers = Some(ClosedContainers::new("{", "}", "[", "]"));
     d.syntax = Some(syntax);
 

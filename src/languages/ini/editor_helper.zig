@@ -161,7 +161,7 @@ test "ini deleteContainer refuses a root-level scalar key" {
     var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
     try ed.init("name = fig\n[a]\nx = 1\n");
     defer ed.deinit();
-    try testing.expectError(error.NotAContainer, ed.deleteContainer(&.{.{ .key = "name" }}));
+    try testing.expectError(error.NotASection, ed.deleteContainer(&.{.{ .key = "name" }}));
     try testing.expectEqualStrings("name = fig\n[a]\nx = 1\n", ed.source.items);
 }
 

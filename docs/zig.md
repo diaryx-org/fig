@@ -483,9 +483,8 @@ the parse error or `error.CommentNotAnEntry` — the document is byte-for-byte a
 it was, as every editor op promises. `error.UnsupportedShape` for the root;
 `error.CommentsUnanchored`, as the six comment ops answer the same node, for
 one that does not have its lines to itself (an item of `[a, b]`, an entry of
-`{ "a": 1, "b": 2 }`); a whole `[table]`/`[section]` is refused in the
-format's own words (`CannotDeleteTable`, …) for the reason `deleteKey` refuses
-it.
+`{ "a": 1, "b": 2 }`); a whole `[table]`/`[section]` is refused with
+`CannotDeleteSection` for the reason `deleteKey` refuses it.
 
 ### Whole-container editing (section formats)
 

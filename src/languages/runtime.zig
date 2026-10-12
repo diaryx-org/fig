@@ -419,8 +419,8 @@ pub const SyntaxDesc = extern struct {
     flow_map_open: ?[*:0]const u8 = null,
     flow_map_close: ?[*:0]const u8 = null,
     structural_indent: bool = false,
-    /// `manifest.SectionNoun` ordinal, or -1 for none.
-    section_noun: c_int = -1,
+    /// Null for a format with no sections.
+    section_noun: ?[*:0]const u8 = null,
     section_header: SectionHeaderDesc = .{},
     merge_key: ?[*:0]const u8 = null,
     /// Null for `,`; never empty.
@@ -1060,10 +1060,6 @@ fn validateSyntax(name: []const u8, vt: *const VTable, s: *const SyntaxDesc) boo
         refuse("'{s}': unknown comment style {d}", .{ name, s.comments.style });
         return false;
     }
-    if (s.section_noun != -1 and (s.section_noun < 0 or s.section_noun >= @typeInfo(manifest.SectionNoun).@"enum".field_names.len)) {
-        refuse("'{s}': unknown section noun {d}", .{ name, s.section_noun });
-        return false;
-    }
     if (s.comments.trailing.open != null and s.comments.line.open == null) {
         refuse("'{s}' declares a trailing comment marker but no line comment marker", .{name});
         return false;
@@ -1136,7 +1132,7 @@ fn syntaxOf(arena: Allocator, s: *const SyntaxDesc) Allocator.Error!manifest.Syn
         .flow_map_open = try dupeZstr(arena, s.flow_map_open) orelse defaults.flow_map_open,
         .flow_map_close = try dupeZstr(arena, s.flow_map_close) orelse defaults.flow_map_close,
         .structural_indent = s.structural_indent,
-        .section_noun = if (s.section_noun == -1) null else @fromBackingInt(@intCast(s.section_noun)),
+        .section_noun = try dupeZstr(arena, s.section_noun),
         .merge_key = try dupeZstr(arena, s.merge_key),
         .flow_entry_sep = try dupeZstr(arena, s.flow_entry_sep) orelse defaults.flow_entry_sep,
         .flow_root = s.flow_root,

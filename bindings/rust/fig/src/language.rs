@@ -190,7 +190,9 @@ pub struct Syntax {
     pub flow_map_open: String,
     pub flow_map_close: String,
     pub structural_indent: bool,
-    pub section_noun: Option<SectionNoun>,
+    /// What the format calls a container scattered through the source
+    /// ("table", "section"); `None` for a format with none.
+    pub section_noun: Option<String>,
     pub section_header: Option<SectionHeader>,
     pub merge_key: Option<String>,
     /// The bytes between two members of a flow container: `,` by default,
@@ -336,15 +338,6 @@ impl CommentDelimiter {
             forbidden: None,
         }
     }
-}
-
-/// What a section format calls its scattered container.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SectionNoun {
-    Table,
-    Section,
-    Container,
 }
 
 /// How a section format spells a header line.
@@ -1130,12 +1123,7 @@ impl CSyntax {
             flow_map_open: opt_ptr(&mut strings, Some(&s.flow_map_open))?,
             flow_map_close: opt_ptr(&mut strings, Some(&s.flow_map_close))?,
             structural_indent: s.structural_indent,
-            section_noun: match s.section_noun {
-                None => -1,
-                Some(SectionNoun::Table) => 0,
-                Some(SectionNoun::Section) => 1,
-                Some(SectionNoun::Container) => 2,
-            },
+            section_noun: opt_ptr(&mut strings, s.section_noun.as_deref())?,
             section_header: match &s.section_header {
                 Some(h) => ffi::FigSectionHeader {
                     open: opt_ptr(&mut strings, Some(&h.open))?,

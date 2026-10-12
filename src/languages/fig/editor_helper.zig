@@ -34,8 +34,8 @@
 //! pin every one of those behaviours for fig; the logic is the engine's.
 //!
 //! The same table is why `deleteKey`, `moveKey` and `reorderKeys` refuse a
-//! block-container-valued entry (`CannotDeleteContainer`, `CannotMoveContainer`,
-//! `CannotReorderContainers` — the engine's one section rule, spelled per
+//! block-container-valued entry (`CannotDeleteSection`, `CannotMoveSection`,
+//! `CannotReorderSections` — the engine's one section rule, spelled per
 //! `Syntax.section_noun`): such a container may be scattered, and a line
 //! splice would move or remove only the fragment it can see.
 //!
@@ -355,7 +355,7 @@ test "fig delete only key of a single-entry flow mapping (regression)" {
 test "fig deleting a block-container-valued key is refused" {
     var ed = try newFigEditor("database\n> host = localhost\n> pool\n> > size = 10\n");
     defer ed.deinit();
-    try std.testing.expectError(error.CannotDeleteContainer, ed.deleteKey(&.{ .{ .key = "database" }, .{ .key = "pool" } }));
+    try std.testing.expectError(error.CannotDeleteSection, ed.deleteKey(&.{ .{ .key = "database" }, .{ .key = "pool" } }));
     try expectFigSource(&ed, "database\n> host = localhost\n> pool\n> > size = 10\n");
 }
 
@@ -509,14 +509,14 @@ test "fig delete one index-addressed block-mapped sequence element" {
 test "fig deleteContainer on a scalar is refused" {
     var ed = try newFigEditor("x = 1\n");
     defer ed.deinit();
-    try std.testing.expectError(error.NotAContainer, ed.deleteContainer(&.{.{ .key = "x" }}));
+    try std.testing.expectError(error.NotASection, ed.deleteContainer(&.{.{ .key = "x" }}));
     try expectFigSource(&ed, "x = 1\n");
 }
 
 test "fig deleteContainer on a flow-valued key is refused" {
     var ed = try newFigEditor("p = { x = 1 }\n");
     defer ed.deinit();
-    try std.testing.expectError(error.NotAContainer, ed.deleteContainer(&.{.{ .key = "p" }}));
+    try std.testing.expectError(error.NotASection, ed.deleteContainer(&.{.{ .key = "p" }}));
     try expectFigSource(&ed, "p = { x = 1 }\n");
 }
 
@@ -622,7 +622,7 @@ test "fig move destination inside the source is a no-op" {
 test "fig moveContainer on a scalar is refused" {
     var ed = try newFigEditor("x = 1\na\n> y = 2\n");
     defer ed.deinit();
-    try std.testing.expectError(error.NotAContainer, ed.moveContainer(&.{.{ .key = "x" }}, null));
+    try std.testing.expectError(error.NotASection, ed.moveContainer(&.{.{ .key = "x" }}, null));
     try expectFigSource(&ed, "x = 1\na\n> y = 2\n");
 }
 
@@ -714,7 +714,7 @@ test "fig reorder leaves an unnamed container untouched, in its original relativ
 test "fig reorderContainers on a scalar is refused" {
     var ed = try newFigEditor("x = 1\na\n> y = 2\n");
     defer ed.deinit();
-    try std.testing.expectError(error.NotAContainer, ed.reorderContainers(&.{ "x", "a" }));
+    try std.testing.expectError(error.NotASection, ed.reorderContainers(&.{ "x", "a" }));
     try expectFigSource(&ed, "x = 1\na\n> y = 2\n");
 }
 
@@ -731,8 +731,8 @@ test "fig moveKey refuses a block container at either end" {
     var ed = try newFigEditor("a\n> x = 1\nother = 1\na\n> y = 2\nb\n> z = 3\n");
     defer ed.deinit();
     // Moving `a` by its span would carry only the first `a` block.
-    try std.testing.expectError(error.CannotMoveContainer, ed.moveKey(&.{.{ .key = "a" }}, &.{.{ .key = "b" }}));
-    try std.testing.expectError(error.CannotMoveContainer, ed.moveKey(&.{.{ .key = "other" }}, &.{.{ .key = "b" }}));
+    try std.testing.expectError(error.CannotMoveSection, ed.moveKey(&.{.{ .key = "a" }}, &.{.{ .key = "b" }}));
+    try std.testing.expectError(error.CannotMoveSection, ed.moveKey(&.{.{ .key = "other" }}, &.{.{ .key = "b" }}));
     try expectFigSource(&ed, "a\n> x = 1\nother = 1\na\n> y = 2\nb\n> z = 3\n");
     // `moveContainer` carries both fragments.
     try ed.moveContainer(&.{.{ .key = "a" }}, null);
@@ -750,7 +750,7 @@ test "fig moveKey still moves scalar entries, inside and around a container" {
 test "fig reorderKeys refuses a reorder that shifts a block container" {
     var ed = try newFigEditor("x = 1\na\n> p = 1\nb\n> q = 2\n");
     defer ed.deinit();
-    try std.testing.expectError(error.CannotReorderContainers, ed.reorderKeys(&.{}, &.{ "b", "a" }));
+    try std.testing.expectError(error.CannotReorderSections, ed.reorderKeys(&.{}, &.{ "b", "a" }));
     try expectFigSource(&ed, "x = 1\na\n> p = 1\nb\n> q = 2\n");
     // Scalars reordered around a container that keeps its index are fine.
     try ed.reorderKeys(&.{.{ .key = "a" }}, &.{"p"});

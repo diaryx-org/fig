@@ -17,7 +17,6 @@ pub const NativeKinds = manifest.NativeKinds;
 pub const Syntax = manifest.Syntax;
 pub const Literal = manifest.Literal;
 pub const RenderRequest = manifest.RenderRequest;
-pub const SectionNoun = manifest.SectionNoun;
 
 /// The one list of formats — `src/languages/list.zig` — re-exported so a
 /// consumer that is genuinely per-format (the build, `validate-check`, the

@@ -167,7 +167,7 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
         // tool, when what it means is that the path names a header rather than a
         // value — and a bare error name reads like a parse error in a file
         // that parses fine.
-        error.CannotReplaceTable, error.CannotReplaceSection, error.CannotReplaceContainer => {
+        error.CannotReplaceSection => {
             try term.writer.writeAll(": that path names a whole block table/section, which has no single value to replace\n");
             try term.setColor(.blue);
             try term.writer.writeAll("note");
@@ -181,7 +181,7 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
         // The same refusal on an op that removes lines — `comment` taking a
         // node out. `delete` itself never reaches here: it hands a section to
         // the whole-container delete.
-        error.CannotDeleteTable, error.CannotDeleteSection, error.CannotDeleteContainer => {
+        error.CannotDeleteSection => {
             try term.writer.writeAll(": that path names a whole block table/section, whose entries are lines this op cannot take out one by one\n");
             try term.setColor(.blue);
             try term.writer.writeAll("help");

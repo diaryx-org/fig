@@ -582,8 +582,8 @@ pub fn Editor(comptime Language: type) type {
         ///
         /// **Engine rule**: a SECTION node — one the parser recorded header
         /// lines for (`Document.node_regions`) — is refused before the generic
-        /// splice runs (`CannotReplaceTable` / `CannotReplaceSection` /
-        /// `CannotReplaceContainer`, in the format's own vocabulary). In TOML
+        /// splice runs (`CannotReplaceSection` / `CannotReplaceSection` /
+        /// `CannotReplaceSection`, in the format's own vocabulary). In TOML
         /// and INI a container's node span is only its KEY segment inside a
         /// `[header]` (or a dotted `a.b = 1` key) rather than any value text:
         /// a container's body is assembled from lines the span never covers,
@@ -746,7 +746,7 @@ pub fn Editor(comptime Language: type) type {
                 //
                 // Every other replace error means the key IS there and the
                 // replace was refused for cause — a section veto
-                // (`CannotReplaceTable` …), or a splice the reparse rolled back
+                // (`CannotReplaceSection` …), or a splice the reparse rolled back
                 // — and an insert does not cure that: it would write a second
                 // entry of the same name beside the first. Those surface as
                 // they are.
@@ -1607,8 +1607,8 @@ pub fn Editor(comptime Language: type) type {
         /// swallow a separator and where fig discards an interior comment at
         /// parse anyway (spec § 6.3). See `ownsItsLines`. A node whose value is a
         /// SECTION is refused with the format's own vocabulary
-        /// (`CannotDeleteTable` / `CannotDeleteSection` /
-        /// `CannotDeleteContainer`) for the reason `deleteKey` refuses it: its
+        /// (`CannotDeleteSection` / `CannotDeleteSection` /
+        /// `CannotDeleteSection`) for the reason `deleteKey` refuses it: its
         /// span is a name inside a header, and its body is lines this op cannot
         /// see.
         pub fn commentOut(self: *Self, path: []const AST.PathSegment) !void {
@@ -2397,8 +2397,8 @@ pub fn Editor(comptime Language: type) type {
         /// into its own comment block) is a no-op.
         ///
         /// **Engine rule**: a SECTION node at either end is refused before any
-        /// splice (`CannotMoveTable` / `CannotMoveSection` /
-        /// `CannotMoveContainer`). An entry's block is not always the region
+        /// splice (`CannotMoveSection` / `CannotMoveSection` /
+        /// `CannotMoveSection`). An entry's block is not always the region
         /// it owns: a `[header]` table's block is the header LINE, so moving
         /// it would relocate the name and strand the body, and moving anything
         /// else to sit before such a header lands it at the tail of the
@@ -2492,8 +2492,8 @@ pub fn Editor(comptime Language: type) type {
         ///
         /// **Engine rule**: once the new order is known and before any splice,
         /// an entry whose position actually changes and whose value is a
-        /// SECTION node is refused (`CannotReorderTables` /
-        /// `CannotReorderSections` / `CannotReorderContainers`). `[header]`
+        /// SECTION node is refused (`CannotReorderSections` /
+        /// `CannotReorderSections` / `CannotReorderSections`). `[header]`
         /// entries tile into blocks that stop at the *next* sibling's line —
         /// so the last entry's block excludes its own body, and any container
         /// that changes place strands or absorbs entries. `reorderContainers`
@@ -2941,9 +2941,8 @@ pub fn Editor(comptime Language: type) type {
         // so a `@compileError` remains the answer for a format that is not a
         // section format. The vocabulary is the operation's, not any one
         // format's: TOML's `[table]`, fig's block container and INI's
-        // `[section]` are the same thing here, and the format's own words
-        // survive in its errors (`NotATable` vs `NotAContainer`) through
-        // `Syntax.section_noun`.
+        // `[section]` are the same thing here, and so are their errors
+        // (`NotASection`, `CannotDeleteSection`, …).
 
         /// Whether this format has section nodes at all — a non-null
         /// `section_noun` in any dialect. Comptime, so the generic ops and the
@@ -2960,70 +2959,36 @@ pub fn Editor(comptime Language: type) type {
             break :blk any;
         };
 
-        /// The line-splice ops the section rule refuses, and the error each
-        /// refusal is spelled with per `SectionNoun`.
+        /// The line-splice ops the section rule refuses.
         const SectionOp = enum { delete, replace, move, reorder, not_a_section, exists };
 
-        /// The engine's refusal in this format's vocabulary. Returns an error
-        /// VALUE (not a union) so a caller writes `return self.refuse(.delete)`.
+        /// The engine's refusal of `op` on a section. Returns an error VALUE
+        /// (not a union) so a caller writes `return self.refuse(.delete)`.
+        /// The errors are the operation's, not any one format's: TOML's
+        /// `[table]`, figl's block container and INI's `[section]` are one
+        /// thing here, and a format's own word for it is its declared
+        /// `section_noun`, for a consumer's message.
         fn refuse(self: *const Self, comptime op: SectionOp) error{
-            NotATable,
-            NotAContainer,
-            CannotDeleteTable,
+            NotASection,
             CannotDeleteSection,
-            CannotDeleteContainer,
-            CannotReplaceTable,
             CannotReplaceSection,
-            CannotReplaceContainer,
-            CannotMoveTable,
             CannotMoveSection,
-            CannotMoveContainer,
-            CannotReorderTables,
             CannotReorderSections,
-            CannotReorderContainers,
-            TableExists,
             SectionExists,
-            ContainerExists,
         } {
-            // A format with no section nodes never reaches here (`isSection`
-            // is false for all its nodes), so `.container` is only the type's
-            // default, never a real answer.
-            const noun = self.syntax().section_noun orelse .container;
+            _ = self;
             return switch (op) {
-                .not_a_section => switch (noun) {
-                    .table => error.NotATable,
-                    .section, .container => error.NotAContainer,
-                },
-                .delete => switch (noun) {
-                    .table => error.CannotDeleteTable,
-                    .section => error.CannotDeleteSection,
-                    .container => error.CannotDeleteContainer,
-                },
-                .replace => switch (noun) {
-                    .table => error.CannotReplaceTable,
-                    .section => error.CannotReplaceSection,
-                    .container => error.CannotReplaceContainer,
-                },
-                .move => switch (noun) {
-                    .table => error.CannotMoveTable,
-                    .section => error.CannotMoveSection,
-                    .container => error.CannotMoveContainer,
-                },
-                .reorder => switch (noun) {
-                    .table => error.CannotReorderTables,
-                    .section => error.CannotReorderSections,
-                    .container => error.CannotReorderContainers,
-                },
-                .exists => switch (noun) {
-                    .table => error.TableExists,
-                    .section => error.SectionExists,
-                    .container => error.ContainerExists,
-                },
+                .not_a_section => error.NotASection,
+                .delete => error.CannotDeleteSection,
+                .replace => error.CannotReplaceSection,
+                .move => error.CannotMoveSection,
+                .reorder => error.CannotReorderSections,
+                .exists => error.SectionExists,
             };
         }
 
         /// The section node at `path`, or the format's "not a section"
-        /// refusal (`NotATable` / `NotAContainer`) — for a scalar, a flow
+        /// refusal (`NotASection` / `NotAContainer`) — for a scalar, a flow
         /// container, the root, or a path that resolves to no section.
         fn sectionAt(self: *const Self, parsed: Document, path: []const AST.PathSegment) !AST.Node {
             const node = try parsed.ast.getValByPath(path);
@@ -3055,7 +3020,7 @@ pub fn Editor(comptime Language: type) type {
         /// fig a block container (a path may end in an index, deleting one
         /// sequence element entire); for INI a `[section]`, reopened
         /// occurrences included. A scalar or flow-valued target is refused
-        /// (`NotATable` / `NotAContainer`): `deleteKey`/`removeSeqItem` is the
+        /// (`NotASection` / `NotAContainer`): `deleteKey`/`removeSeqItem` is the
         /// op for those.
         pub fn deleteContainer(self: *Self, path: []const AST.PathSegment) !void {
             comptime requireSectionFormat("deleteContainer");
@@ -3132,7 +3097,7 @@ pub fn Editor(comptime Language: type) type {
         /// `Syntax.section_header`, spliced past the parent's whole derived
         /// extent — or at end-of-file for a root-level container — so no
         /// existing key is reparented. Refuses an existing target in the
-        /// format's vocabulary (`TableExists`). Comptime-refused for a format
+        /// format's vocabulary (`SectionExists`). Comptime-refused for a format
         /// with no header syntax.
         pub fn insertContainer(self: *Self, path: []const AST.PathSegment, body_text: []const u8) !void {
             comptime requireHeaderSyntax("insertContainer");
@@ -4923,7 +4888,7 @@ test "commentOut and uncomment decline strict JSON, the root, flow items and sec
         defer ed.deinit();
         // A table's span is the name inside its header; its body is lines this
         // op cannot see. Same refusal `deleteKey` makes, in TOML's words.
-        try testing.expectError(error.CannotDeleteTable, ed.commentOut(&.{.{ .key = "server" }}));
+        try testing.expectError(error.CannotDeleteSection, ed.commentOut(&.{.{ .key = "server" }}));
     }
 }
 
@@ -5154,7 +5119,7 @@ test "set surfaces a section veto rather than inserting a second entry of that n
         var ed: Editor(Toml) = .{ .allocator = testing.allocator, .format = .TOML_1_1 };
         try ed.init("[a]\nx = 1\n");
         defer ed.deinit();
-        try testing.expectError(error.CannotReplaceTable, ed.set(&.{.{ .key = "a" }}, "2"));
+        try testing.expectError(error.CannotReplaceSection, ed.set(&.{.{ .key = "a" }}, "2"));
         try testing.expect(!ed.splice_rejected);
         try testing.expectEqualStrings("[a]\nx = 1\n", ed.source.items);
     }

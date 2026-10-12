@@ -1266,8 +1266,9 @@ typedef struct FigClosedContainers {
 // syntax — the `Syntax` record a compiled format declares, field for field.
 // A NULL string takes the field's default (indent_unit "  ", seq_item_marker
 // "- ", flow_map_open/close "{"/"}", flow_map_pad ""). `key_sigil`: a
-// byte every key starts with, or 0. `section_noun`: -1 none, 0 table, 1
-// section, 2 container. `kv_sep` NULL means the engine never writes
+// byte every key starts with, or 0. `section_noun`: what the format calls a
+// container scattered through the source ("table", "section"), or NULL for a
+// format with none. `kv_sep` NULL means the engine never writes
 // `key<sep>value` for this format, which requires a render_entry.
 // `flow_entry_sep` joins a flow container's members (NULL is ","; never
 // empty); `flow_root` makes the root a flow mapping with no delimiters (a CSS
@@ -1294,7 +1295,7 @@ typedef struct FigSyntax {
     const char         *flow_map_open;
     const char         *flow_map_close;
     bool                structural_indent;
-    int                 section_noun;
+    const char         *section_noun;
     FigSectionHeader    section_header;
     const char         *merge_key;
     const char         *flow_entry_sep;

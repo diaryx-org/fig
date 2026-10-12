@@ -1154,7 +1154,7 @@ pub struct FigSyntax {
     pub flow_map_open: *const c_char,
     pub flow_map_close: *const c_char,
     pub structural_indent: bool,
-    pub section_noun: c_int,
+    pub section_noun: *const c_char,
     pub section_header: FigSectionHeader,
     pub merge_key: *const c_char,
     /// Null for `,`.

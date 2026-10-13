@@ -14,8 +14,10 @@
 //! language's [`LanguageError`] is answered as the error
 //! [`LANGUAGE_REFUSED`], its byte offset in the error's `data`.
 //!
-//! The JSON is read and written by fig itself, through the `json` format,
-//! which this module therefore needs registered; it adds no JSON library.
+//! The JSON is read and written with `serde_json`, so a helper needs no
+//! language registered, the `json` one included; the module and the
+//! dependency come with the crate's `helper` feature. Its functions trade
+//! [`serde_json::Value`].
 
 use std::io::{BufRead, Write};
 
@@ -25,7 +27,8 @@ use crate::language::{
     Literal, MentionKind, MentionRow, NativeKinds, NodeKind, NodeRow, NodeTable, PrintOptions,
     Prints, RegionRow, RenderArgs, Renderer, Renderers, SectionHeader, Severity, Splice, Syntax,
 };
-use crate::{Capabilities, Document, ExtKind, Format, SerializeOptions, Span, Value};
+use crate::{Capabilities, ExtKind, Span};
+use serde_json::{Map, Value};
 
 /// Serve `lang` on this process's stdin and stdout until stdin closes.
 /// What a helper executable's `main` calls.
@@ -94,8 +97,10 @@ pub fn handle(lang: &dyn Language, request: &str) -> Value {
     let outcome = decode(request)
         .map_err(|e| Protocol::new(-32700, e.message))
         .and_then(|req| {
-            if let Some(v @ (Value::Int(_) | Value::Uint(_) | Value::Str(_))) = req.get("id") {
-                id = v.clone();
+            match req.get("id") {
+                Some(v @ Value::Number(n)) if n.is_i64() || n.is_u64() => id = v.clone(),
+                Some(v @ Value::String(_)) => id = v.clone(),
+                _ => {}
             }
             if req.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
                 return Err(Protocol::new(
@@ -109,28 +114,28 @@ pub fn handle(lang: &dyn Language, request: &str) -> Value {
                 .ok_or_else(|| Protocol::new(-32600, "a request names its method"))?
                 .to_owned();
             let params = match req.get("params") {
-                None => Value::Map(Vec::new()),
-                Some(p @ Value::Map(_)) => p.clone(),
+                None => Value::Object(Map::new()),
+                Some(p @ Value::Object(_)) => p.clone(),
                 Some(_) => return Err(Protocol::new(-32602, "params is an object")),
             };
             Ok((method, params))
         });
     let answered = outcome.and_then(|(method, params)| answer(lang, &method, &params));
-    let mut entries = vec![(s("jsonrpc"), s("2.0")), (s("id"), id)];
+    let mut entries = vec![("jsonrpc", s("2.0")), ("id", id)];
     match answered {
-        Ok(result) => entries.push((s("result"), result)),
+        Ok(result) => entries.push(("result", result)),
         Err(e) => {
             let mut error = vec![
-                ("code", Value::Int(e.code)),
-                ("message", Value::Str(e.message)),
+                ("code", Value::from(e.code)),
+                ("message", Value::String(e.message)),
             ];
             if let Some(off) = e.byte_offset {
-                error.push(("data", map(vec![("byte_offset", Value::Uint(off as u64))])));
+                error.push(("data", map(vec![("byte_offset", Value::from(off as u64))])));
             }
-            entries.push((s("error"), map(error)));
+            entries.push(("error", map(error)));
         }
     }
-    Value::Map(entries)
+    map(entries)
 }
 
 fn answer(lang: &dyn Language, method: &str, req: &Value) -> Result<Value, Protocol> {
@@ -168,7 +173,7 @@ fn answer(lang: &dyn Language, method: &str, req: &Value) -> Result<Value, Proto
             let out = String::from_utf8(out).map_err(|_| {
                 Protocol::new(LANGUAGE_REFUSED, "print returned bytes that are not UTF-8")
             })?;
-            Ok(Value::Str(out))
+            Ok(Value::String(out))
         }
         "split_stream" => {
             let dialect = str_field(req, "dialect")?;
@@ -176,12 +181,12 @@ fn answer(lang: &dyn Language, method: &str, req: &Value) -> Result<Value, Proto
             let docs = lang
                 .split_stream(dialect, input.as_bytes())
                 .map_err(refused)?;
-            Ok(Value::Seq(
+            Ok(Value::Array(
                 docs.iter()
                     .map(|d| {
                         map(vec![
-                            ("start", Value::Int(d.start as i64)),
-                            ("end", Value::Int(d.end as i64)),
+                            ("start", Value::from(d.start as i64)),
+                            ("end", Value::from(d.end as i64)),
                             ("explicit", Value::Bool(d.explicit)),
                         ])
                     })
@@ -221,7 +226,7 @@ fn answer(lang: &dyn Language, method: &str, req: &Value) -> Result<Value, Proto
             let out = String::from_utf8(out).map_err(|_| {
                 Protocol::new(LANGUAGE_REFUSED, "render returned bytes that are not UTF-8")
             })?;
-            Ok(Value::Str(out))
+            Ok(Value::String(out))
         }
         other => Err(Protocol::new(-32601, format!("unknown method {other:?}"))),
     }
@@ -236,32 +241,18 @@ fn refused(e: LanguageError) -> Protocol {
     }
 }
 
-// ── JSON in and out, through fig ───────────────────────────────────────────
+// ── JSON in and out ────────────────────────────────────────────────────────
 
 /// One line of JSON as a [`Value`], read as [`handle`] reads a request:
 /// [`encode`]'s counterpart, for a helper that answers a line itself.
 pub fn decode(line: &str) -> Result<Value, LanguageError> {
-    let json = Format::require("json")
-        .map_err(|e| LanguageError::new(format!("this build cannot read JSON: {e}")))?;
-    let doc = Document::parse(line.as_bytes(), json)
-        .map_err(|e| LanguageError::new(format!("request is not JSON: {e}")))?;
-    doc.to_value()
-        .map_err(|e| LanguageError::new(format!("request is not JSON: {e}")))
+    serde_json::from_str(line).map_err(|e| LanguageError::new(format!("request is not JSON: {e}")))
 }
 
 /// One line of compact JSON.
 pub fn encode(value: &Value) -> String {
-    let opts = SerializeOptions {
-        pretty: false,
-        ..Default::default()
-    };
-    let mut s = Format::require("json")
-        .and_then(|json| value.serialize_with(json, opts))
-        .unwrap_or_else(|_| "null".to_owned());
-    while s.ends_with('\n') {
-        s.pop();
-    }
-    s
+    // A `Value`'s keys are strings, so writing one cannot fail.
+    serde_json::to_string(value).unwrap_or_else(|_| "null".to_owned())
 }
 
 fn str_field<'a>(v: &'a Value, name: &str) -> Result<&'a str, LanguageError> {
@@ -271,35 +262,35 @@ fn str_field<'a>(v: &'a Value, name: &str) -> Result<&'a str, LanguageError> {
 }
 
 fn s(v: &str) -> Value {
-    Value::Str(v.to_owned())
+    Value::String(v.to_owned())
 }
 
 fn opt_s(v: &Option<String>) -> Value {
     match v {
-        Some(v) => Value::Str(v.clone()),
+        Some(v) => Value::String(v.clone()),
         None => Value::Null,
     }
 }
 
 fn map(entries: Vec<(&str, Value)>) -> Value {
-    Value::Map(
+    Value::Object(
         entries
             .into_iter()
-            .map(|(k, v)| (Value::Str(k.to_owned()), v))
+            .map(|(k, v)| (k.to_owned(), v))
             .collect(),
     )
 }
 
 fn span_v(sp: Span) -> Value {
-    Value::Seq(vec![
-        Value::Uint(sp.start as u64),
-        Value::Uint(sp.end as u64),
+    Value::Array(vec![
+        Value::from(sp.start as u64),
+        Value::from(sp.end as u64),
     ])
 }
 
 fn span_of(v: &Value) -> Result<Span, LanguageError> {
     let seq = v
-        .as_seq()
+        .as_array()
         .ok_or_else(|| LanguageError::new("a span is a [start, end] pair"))?;
     if seq.len() != 2 {
         return Err(LanguageError::new("a span is a [start, end] pair"));
@@ -356,7 +347,7 @@ pub fn description_to_value(d: &Description) -> Value {
         (
             "max_mapping_depth",
             d.max_mapping_depth
-                .map_or(Value::Null, |n| Value::Uint(n as u64)),
+                .map_or(Value::Null, |n| Value::from(n as u64)),
         ),
         (
             "lossless",
@@ -370,7 +361,7 @@ pub fn description_to_value(d: &Description) -> Value {
         ),
         (
             "dialects",
-            Value::Seq(
+            Value::Array(
                 d.dialects
                     .iter()
                     .map(|dl| {
@@ -378,7 +369,7 @@ pub fn description_to_value(d: &Description) -> Value {
                             ("name", s(&dl.name)),
                             (
                                 "extensions",
-                                Value::Seq(dl.extensions.iter().map(|e| s(e)).collect()),
+                                Value::Array(dl.extensions.iter().map(|e| s(e)).collect()),
                             ),
                             (
                                 "splice",
@@ -404,9 +395,9 @@ pub fn description_to_value(d: &Description) -> Value {
         ),
         (
             "samples",
-            Value::Seq(d.samples.iter().map(|x| s(x)).collect()),
+            Value::Array(d.samples.iter().map(|x| s(x)).collect()),
         ),
-        ("renderers", Value::Seq(renderers)),
+        ("renderers", Value::Array(renderers)),
         ("split_stream", Value::Bool(d.streams)),
     ])
 }
@@ -418,13 +409,17 @@ pub fn description_from_value(v: &Value) -> Result<Description, LanguageError> {
         .ok_or_else(|| LanguageError::new("description: no caps"))?;
     let flag = |name: &str| caps.get(name).and_then(Value::as_bool).unwrap_or(false);
     let mut dialects = Vec::new();
-    for dl in v.get("dialects").and_then(Value::as_seq).unwrap_or(&[]) {
+    for dl in v
+        .get("dialects")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice)
+    {
         dialects.push(Dialect {
             name: str_field(dl, "name")?.to_owned(),
             extensions: dl
                 .get("extensions")
-                .and_then(Value::as_seq)
-                .unwrap_or(&[])
+                .and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice)
                 .iter()
                 .filter_map(Value::as_str)
                 .map(str::to_owned)
@@ -450,7 +445,11 @@ pub fn description_from_value(v: &Value) -> Result<Description, LanguageError> {
         });
     }
     let mut renderers = Renderers::default();
-    for r in v.get("renderers").and_then(Value::as_seq).unwrap_or(&[]) {
+    for r in v
+        .get("renderers")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice)
+    {
         match r.as_str() {
             Some("value") => renderers.value = true,
             Some("entry") => renderers.entry = true,
@@ -480,8 +479,8 @@ pub fn description_from_value(v: &Value) -> Result<Description, LanguageError> {
         dialects,
         samples: v
             .get("samples")
-            .and_then(Value::as_seq)
-            .unwrap_or(&[])
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice)
             .iter()
             .filter_map(Value::as_str)
             .map(str::to_owned)
@@ -613,7 +612,7 @@ pub fn syntax_to_value(x: &Syntax) -> Value {
         ("flow_map_pad", s(&x.flow_map_pad)),
         (
             "key_sigil",
-            x.key_sigil.map_or(Value::Null, |b| Value::Uint(b as u64)),
+            x.key_sigil.map_or(Value::Null, |b| Value::from(b as u64)),
         ),
         ("empty_map_literal", opt_s(&x.empty_map_literal)),
         ("block_seq_editable", Value::Bool(x.block_seq_editable)),
@@ -665,8 +664,7 @@ pub fn syntax_to_value(x: &Syntax) -> Value {
         ("flow_map_entry_sep", s(&x.flow_map_entry_sep)),
         (
             "line_continuation",
-            x.line_continuation
-                .map_or(Value::Null, |b| Value::Uint(b as u64)),
+            x.line_continuation.map_or(Value::Null, Value::from),
         ),
     ])
 }
@@ -838,22 +836,22 @@ pub fn table_to_value(t: &NodeTable) -> Value {
             }
             e.push((
                 "parent",
-                r.parent.map_or(Value::Null, |p| Value::Uint(p as u64)),
+                r.parent.map_or(Value::Null, |p| Value::from(p as u64)),
             ));
             if let Some(sp) = r.span {
                 e.push(("span", span_v(sp)));
             }
             if let Some(t) = &r.text {
-                e.push(("text", Value::Str(t.clone())));
+                e.push(("text", Value::String(t.clone())));
             }
             if let Some(a) = &r.anchor {
-                e.push(("anchor", Value::Str(a.clone())));
+                e.push(("anchor", Value::String(a.clone())));
             }
             if let Some(sp) = r.anchor_span {
                 e.push(("anchor_span", span_v(sp)));
             }
             if let Some(t) = &r.tag {
-                e.push(("tag", Value::Str(t.clone())));
+                e.push(("tag", Value::String(t.clone())));
             }
             if let Some(sp) = r.tag_span {
                 e.push(("tag_span", span_v(sp)));
@@ -865,7 +863,7 @@ pub fn table_to_value(t: &NodeTable) -> Value {
                 e.push(("sep", span_v(sp)));
             }
             if let Some(t) = &r.item_sep {
-                e.push(("item_sep", Value::Str(t.clone())));
+                e.push(("item_sep", Value::String(t.clone())));
             }
             if r.open {
                 e.push(("open", Value::Bool(true)));
@@ -878,9 +876,9 @@ pub fn table_to_value(t: &NodeTable) -> Value {
         .iter()
         .map(|r| {
             map(vec![
-                ("node", Value::Uint(r.node as u64)),
-                ("start", Value::Uint(r.span.start as u64)),
-                ("end", Value::Uint(r.span.end as u64)),
+                ("node", Value::from(r.node as u64)),
+                ("start", Value::from(r.span.start as u64)),
+                ("end", Value::from(r.span.end as u64)),
             ])
         })
         .collect();
@@ -889,7 +887,7 @@ pub fn table_to_value(t: &NodeTable) -> Value {
         .iter()
         .map(|m| {
             map(vec![
-                ("node", Value::Uint(m.node as u64)),
+                ("node", Value::from(m.node as u64)),
                 ("span", span_v(m.span)),
                 (
                     "kind",
@@ -906,7 +904,7 @@ pub fn table_to_value(t: &NodeTable) -> Value {
         .iter()
         .map(|c| {
             map(vec![
-                ("node", Value::Uint(c.node as u64)),
+                ("node", Value::from(c.node as u64)),
                 (
                     "slot",
                     s(match c.slot {
@@ -922,15 +920,15 @@ pub fn table_to_value(t: &NodeTable) -> Value {
                         CommentForm::Block => "block",
                     }),
                 ),
-                ("text", Value::Str(c.text.clone())),
+                ("text", Value::String(c.text.clone())),
             ])
         })
         .collect();
     let mut fields = vec![
-        ("rows", Value::Seq(rows)),
-        ("regions", Value::Seq(regions)),
-        ("mentions", Value::Seq(mentions)),
-        ("comments", Value::Seq(comments)),
+        ("rows", Value::Array(rows)),
+        ("regions", Value::Array(regions)),
+        ("mentions", Value::Array(mentions)),
+        ("comments", Value::Array(comments)),
     ];
     if !t.directives.is_empty() {
         let directives = t
@@ -938,12 +936,12 @@ pub fn table_to_value(t: &NodeTable) -> Value {
             .iter()
             .map(|d| {
                 map(vec![
-                    ("handle", Value::Str(d.handle.clone())),
-                    ("prefix", Value::Str(d.prefix.clone())),
+                    ("handle", Value::String(d.handle.clone())),
+                    ("prefix", Value::String(d.prefix.clone())),
                 ])
             })
             .collect();
-        fields.push(("directives", Value::Seq(directives)));
+        fields.push(("directives", Value::Array(directives)));
     }
     if !t.diagnostics.is_empty() {
         let diagnostics = t
@@ -959,12 +957,12 @@ pub fn table_to_value(t: &NodeTable) -> Value {
                         }),
                     ),
                     ("span", span_v(d.span)),
-                    ("message", Value::Str(d.message.clone())),
-                    ("label", Value::Str(d.label.clone())),
+                    ("message", Value::String(d.message.clone())),
+                    ("label", Value::String(d.label.clone())),
                 ])
             })
             .collect();
-        fields.push(("diagnostics", Value::Seq(diagnostics)));
+        fields.push(("diagnostics", Value::Array(diagnostics)));
     }
     map(fields)
 }
@@ -972,7 +970,11 @@ pub fn table_to_value(t: &NodeTable) -> Value {
 /// A table from the wire.
 pub fn table_from_value(v: &Value) -> Result<NodeTable, LanguageError> {
     let mut t = NodeTable::new();
-    for r in v.get("rows").and_then(Value::as_seq).unwrap_or(&[]) {
+    for r in v
+        .get("rows")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice)
+    {
         let kind = kind_of(str_field(r, "kind")?)
             .ok_or_else(|| LanguageError::new("row: unknown kind"))?;
         let parent = r.get("parent").and_then(Value::as_u64).map(|p| p as u32);
@@ -1012,7 +1014,11 @@ pub fn table_from_value(v: &Value) -> Result<NodeTable, LanguageError> {
             .and_then(Value::as_u64)
             .ok_or_else(|| LanguageError::new(format!("missing integer field {name:?}")))
     };
-    for r in v.get("regions").and_then(Value::as_seq).unwrap_or(&[]) {
+    for r in v
+        .get("regions")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice)
+    {
         t.regions.push(RegionRow {
             node: n(r, "node")? as u32,
             // The wire keeps a region's offsets flat, as it always has.
@@ -1022,7 +1028,11 @@ pub fn table_from_value(v: &Value) -> Result<NodeTable, LanguageError> {
             },
         });
     }
-    for m in v.get("mentions").and_then(Value::as_seq).unwrap_or(&[]) {
+    for m in v
+        .get("mentions")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice)
+    {
         t.mentions.push(MentionRow {
             node: n(m, "node")? as u32,
             span: span_of(
@@ -1036,7 +1046,11 @@ pub fn table_from_value(v: &Value) -> Result<NodeTable, LanguageError> {
             },
         });
     }
-    for c in v.get("comments").and_then(Value::as_seq).unwrap_or(&[]) {
+    for c in v
+        .get("comments")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice)
+    {
         t.comments.push(CommentRow {
             node: n(c, "node")? as u32,
             slot: match c.get("slot").and_then(Value::as_str) {
@@ -1052,13 +1066,21 @@ pub fn table_from_value(v: &Value) -> Result<NodeTable, LanguageError> {
             text: str_field(c, "text")?.to_owned(),
         });
     }
-    for d in v.get("directives").and_then(Value::as_seq).unwrap_or(&[]) {
+    for d in v
+        .get("directives")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice)
+    {
         t.directives.push(DirectiveRow {
             handle: str_field(d, "handle")?.to_owned(),
             prefix: str_field(d, "prefix")?.to_owned(),
         });
     }
-    for d in v.get("diagnostics").and_then(Value::as_seq).unwrap_or(&[]) {
+    for d in v
+        .get("diagnostics")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice)
+    {
         t.diagnostics.push(DiagnosticRow {
             severity: if d.get("severity").and_then(Value::as_str) == Some("warning") {
                 Severity::Warning

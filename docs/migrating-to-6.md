@@ -93,7 +93,8 @@ does not carry the wire passes `-Dhelper-wire=false` and fetches nothing.
 | the crate features `json`, `yaml`, `toml`, `zon`, `figl`, `ini`, `dotenv`, `properties`, `plist`, `nestedtext` | gone: depend on the language's crate, `fig-yaml` and the rest, and call its `register()` before using its format |
 | a language there by default | nothing is: `fig-sys` carries no language, and `Format::by_name("yaml")` is `None` until `fig_yaml::register()` |
 | `fig::from_yaml_str`, `fig::to_yaml_string` | `fig_yaml::from_str`, `fig_yaml::to_string`, with `fig-yaml`'s `serde` feature |
-| `fig::helper` working by itself | it reads the wire through the json language: call `fig_json::register()` first |
+| `fig::helper` always there | behind the `helper` feature, which adds `serde_json` |
+| `helper::handle`, `encode`, `decode`, `table_to_value`, `table_from_value`, `description_to_value`, `description_from_value`, `syntax_to_value`, `syntax_from_value` trading `fig::Value` | they trade `serde_json::Value`; the wire needs no language registered |
 
 Error text names the dialect ("would not parse
 as toml"). `ParseError::byte_offset` is filled where the language reports

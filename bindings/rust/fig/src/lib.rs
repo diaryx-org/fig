@@ -26,8 +26,8 @@ pub use diagnostics::{Warning, WarningCause, WarningCode};
 pub use editor::{Editor, Segment};
 
 /// The out-of-process carrier of a runtime language: JSON-RPC over stdio,
-/// read and written through the `json` language, which a helper registers
-/// (`fig_json::register()`).
+/// read and written with `serde_json`. With the `helper` feature.
+#[cfg(feature = "helper")]
 pub mod helper;
 /// The kit's number and datetime rules, which fig's own languages are
 /// written with.
@@ -123,13 +123,6 @@ impl Format {
             return None;
         }
         Some(Format(value))
-    }
-
-    /// [`Format::by_name`], with a name nothing answers to as
-    /// [`Error::UnsupportedFormat`]: how the crate reaches the formats it names
-    /// itself (YAML for the serde helpers, JSON for the helper wire).
-    pub(crate) fn require(name: &str) -> Result<Format, Error> {
-        Format::by_name(name).ok_or(Error::UnsupportedFormat)
     }
 
     /// The dialect name this format was registered under — the name

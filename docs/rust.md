@@ -122,13 +122,15 @@ A language you don't depend on costs nothing.
 | `fig-plist`      | `plist` |
 | `fig-nestedtext` | `nestedtext` |
 
-The `fig` crate's features are the typed-mapping layers alone:
+The `fig` crate's features are the typed-mapping layers and the helper
+wire, none of them on by default:
 
 | Feature    | What it adds                                                              |
 | ---------- | ------------------------------------------------------------------------- |
 | `serde`    | `from_slice`/`to_value` and `serde` impls on `Value`.                     |
 | `derive`   | `#[derive(fig::ToValue, fig::FromValue)]` — typed mapping without serde.   |
 | `indexmap` | `ToValue`/`FromValue` for `IndexMap<String, T>` (insertion order kept).    |
+| `helper`   | `fig::helper`, which serves a `Language` over stdio; adds `serde_json`.   |
 
 A language nobody registered is not there: [`Format::by_name`] returns
 `None` for its names. Once you hold a `Format`, [`capabilities`] says what
@@ -282,7 +284,9 @@ resolve it with `Format::by_name`.
 
 The same `Language` can be served to the `fig` command line as a helper
 process — JSON over stdin and stdout — with [`helper::serve`], which is what
-a helper crate's `main` is:
+a helper crate's `main` is. It comes with the `helper` feature, and reads
+and writes the wire with `serde_json`, so a helper registers no language
+for it; the module's functions trade `serde_json::Value`:
 
 ```rust,ignore
 fn main() -> std::io::Result<()> {

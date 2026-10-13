@@ -342,11 +342,12 @@ fn a_declared_string_with_a_nul_is_refused_at_the_nul() {
 }
 
 // ── the helper wire ────────────────────────────────────────────────────────
+#[cfg(feature = "helper")]
 #[test]
 fn the_helper_wire_round_trips_describe_parse_print_and_render() {
     use fig::helper;
-    // The helper reads and writes the wire through the json language.
-    common::register_all();
+    // The wire is `serde_json`'s, and needs no language registered.
+    use serde_json::{Value, json};
     let lang = TinyKv;
 
     // describe: what comes back decodes to what was declared.
@@ -375,25 +376,16 @@ fn the_helper_wire_round_trips_describe_parse_print_and_render() {
         .push(fig::language::DirectiveRow::new("!e!", "tag:x/"));
     let encoded = helper::encode(&helper::table_to_value(&with));
     assert!(encoded.contains(r#""directives":[{"handle":"!e!","prefix":"tag:x/"}]"#));
-    let decoded = fig::Document::parse(encoded.as_bytes(), by_name("json"))
-        .unwrap()
-        .to_value()
-        .unwrap();
+    let decoded = helper::decode(&encoded).unwrap();
     assert_eq!(helper::table_from_value(&decoded).unwrap(), with);
 
     // print: the same table goes out and the text comes back.
-    let req = Value::Map(vec![
-        ("jsonrpc".into(), "2.0".into()),
-        ("id".into(), Value::Int(3)),
-        ("method".into(), "print".into()),
-        (
-            "params".into(),
-            Value::Map(vec![
-                ("dialect".into(), "tinykv".into()),
-                ("table".into(), helper::table_to_value(&table)),
-            ]),
-        ),
-    ]);
+    let req = json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "print",
+        "params": {"dialect": "tinykv", "table": helper::table_to_value(&table)},
+    });
     let resp = helper::handle(&lang, &helper::encode(&req));
     assert_eq!(
         resp.get("result").and_then(Value::as_str),
@@ -467,7 +459,9 @@ fn the_helper_wire_round_trips_describe_parse_print_and_render() {
     helper::serve_io(&lang, &input[..], &mut out).unwrap();
     let lines: Vec<&str> = std::str::from_utf8(&out).unwrap().lines().collect();
     assert_eq!(lines.len(), 2);
-    assert!(lines[0].starts_with("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":"));
+    let first = helper::decode(lines[0]).unwrap();
+    assert_eq!(first.get("id").and_then(Value::as_u64), Some(1));
+    assert!(first.get("result").is_some());
     assert!(lines[1].contains("\"rows\":["));
 }
 

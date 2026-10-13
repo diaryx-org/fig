@@ -164,7 +164,9 @@ only what is fig's or twig's:
   the first pass:* the module's public functions (`table_to_value`,
   `description_to_value`, `handle`) trade `fig::Value`, which fig-lua and
   fig-quickjs build on, so the move is its own change
-  ([task](/docs/tasks/helper-serde-json.md)).
+  ([task](/docs/tasks/helper-serde-json.md)). fig's half has since landed:
+  the functions trade `serde_json::Value`; the runners follow with their
+  move to 6.0.
 - **Anything else.** A helper in Python, Go or Lua implements `describe`,
   `parse`, `print` and `render` against whatever JSON-RPC library its
   language has. That is the point of the change.

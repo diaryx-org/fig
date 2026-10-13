@@ -23,7 +23,7 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 
 # Built from this tree's core, like the Rust tests (see checks.zig).
-(cd "$root/bindings/rust" && FIG_SYS_FORCE_SOURCE=1 cargo build --quiet --example tinykv_helper)
+(cd "$root/bindings/rust" && FIG_SYS_FORCE_SOURCE=1 cargo build --quiet --features helper --example tinykv_helper)
 helper="$root/bindings/rust/target/debug/examples/tinykv_helper"
 
 tmp="$(mktemp -d)"

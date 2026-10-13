@@ -14,7 +14,9 @@
 //! > command = [target/debug/examples/tinykv_helper]
 //! ```
 //!
-//! `zig build check` builds and runs it that way (`tools/cli-lang-check.sh`).
+//! It needs the crate's `helper` feature: `cargo build --features helper
+//! --example tinykv_helper`. `zig build check` builds and runs it that way
+//! (`tools/cli-lang-check.sh`).
 //! An argument renames it — `tinykv_helper plist` serves the same language
 //! as `plist`, which is how that script stands one in for a format the CLI
 //! compiled out.
@@ -171,7 +173,5 @@ fn is_scalar(kind: NodeKind) -> bool {
 
 fn main() -> std::io::Result<()> {
     let name = std::env::args().nth(1).unwrap_or_else(|| "tinykv".into());
-    // The wire is JSON, which fig reads and writes through the json language.
-    fig_json::register().expect("json registers");
     fig::helper::serve(TinyKv { name })
 }

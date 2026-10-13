@@ -46,6 +46,11 @@ derive = ["dep:fig-macros"]
 # `ToValue`/`FromValue` impls for `indexmap::IndexMap<String, T>`, preserving
 # insertion order (unlike the std map impls). Opt-in to keep the dep optional.
 indexmap = ["dep:indexmap"]
+# `fig::helper`, which serves a `Language` over JSON-RPC on stdio. Opt-in,
+# like the rest: only a helper executable needs it, and it brings
+# `serde_json`, which reads and writes the wire without a registered `json`
+# language.
+helper = ["dep:serde_json"]
 
 [dependencies]
 # The `-sys` layer: raw FFI + the `links = "fig"` build script that provides
@@ -55,6 +60,7 @@ fig-sys = { workspace = true }
 serde = { version = "1", optional = true }
 fig-macros = { workspace = true, optional = true }
 indexmap = { version = "2", optional = true }
+serde_json = { version = "1", optional = true }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -74,7 +80,7 @@ fig-plist = { path = "../../../languages/plist" }
 fig-nestedtext = { path = "../../../languages/nestedtext" }
 
 # The helper executable `tools/cli-lang-check.sh` spawns from the CLI. The
-# wire is JSON-RPC 2.0, which the `helper` module reads with the json
-# language, registered from `fig-json`.
+# wire is JSON-RPC 2.0, which the `helper` module reads with `serde_json`.
 [[example]]
 name = "tinykv_helper"
+required-features = ["helper"]

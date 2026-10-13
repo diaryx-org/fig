@@ -1,4 +1,5 @@
-//! The parser turns a NestedText-formatted `[]const u8` into an AST.
+//! The parser turns a NestedText-formatted `[]const u8` into the node table
+//! fig hands it, a row per node (`RowWriter`, through `shared/flat_map.zig`).
 //!
 //! Every scalar is an untyped `.string` — NestedText, like INI, never
 //! coerces a value's type at the format layer (see `nestedtext.org`'s design
@@ -41,8 +42,11 @@ const Parser = @This();
 
 const std = @import("std");
 const testing = std.testing;
-const Document = @import("../../kit/parse_tree.zig");
-const AST = Document.Nodes;
+const Document = @import("../../kit/document.zig");
+const AST = @import("../../kit/ast/ast.zig");
+const RowWriter = @import("../../kit/row_writer.zig");
+const table = @import("../../kit/table.zig");
+const Table = table.Table;
 
 const Type = @import("nestedtext.zig").Type;
 const Span = @import("../../kit/span.zig");
@@ -57,9 +61,10 @@ source: []const u8 = "",
 lines: []const Line = &.{},
 pos: usize = 0,
 arena: flat_map.NodeArena = undefined,
+/// Joined multiline strings and keys, freed when the parse ends: the table
+/// keeps its own copy.
 owned_strings: std.ArrayList([]const u8) = .empty,
 pending_leading: std.ArrayList(AST.Comment) = .empty,
-comments_seen: bool = false,
 
 /// Absolute cursor into `source` used only while scanning an inline
 /// `{...}`/`[...]` line (see the "Inline values" section). `iend` is the
@@ -149,35 +154,54 @@ pub const Diagnostic = struct {
 
 pub const Report = struct { diag: ?Diagnostic = null };
 
+/// `input` as a `Document`: its table written and adopted.
 pub fn parse(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!Document {
-    return parseImpl(allocator, input, format, null);
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseInto(&t, input, format);
+    return RowWriter.adopt(allocator, input, &t);
 }
 
+/// `parse`, reporting as `parseWithReportInto` does.
 pub fn parseWithReport(allocator: std.mem.Allocator, input: []const u8, format: Type, out: *Report) ParserError!Document {
-    return parseImpl(allocator, input, format, out);
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseWithReportInto(&t, input, format, out);
+    return RowWriter.adopt(allocator, input, &t);
 }
 
-pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!Document.RowAst {
-    var tree = try parse(allocator, input, format);
-    return tree.intoAst(allocator);
+/// Write `input`'s rows into `t`, the table fig hands a parse.
+pub fn parseInto(t: *Table, input: []const u8, format: Type) ParserError!void {
+    return parseImpl(t, input, format, null);
 }
 
-fn parseImpl(allocator: std.mem.Allocator, input: []const u8, format: Type, out: ?*Report) ParserError!Document {
-    var parser: Parser = .{ .allocator = allocator, .arena = .{ .allocator = allocator } };
+/// `parseInto`, but also fills `out.diag` on failure. On an error the
+/// table is not finished.
+pub fn parseWithReportInto(t: *Table, input: []const u8, format: Type, out: *Report) ParserError!void {
+    return parseImpl(t, input, format, out);
+}
+
+/// `input` as an `AST`, alone.
+pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!AST {
+    const doc = try parse(allocator, input, format);
+    return doc.ast;
+}
+
+fn parseImpl(t: *Table, input: []const u8, format: Type, out: ?*Report) ParserError!void {
+    const allocator = t.allocator;
+    var parser: Parser = .{ .allocator = allocator, .arena = .init(t) };
+    defer {
+        for (parser.owned_strings.items) |s| allocator.free(s);
+        parser.owned_strings.deinit(allocator);
+    }
     const result = parser.parseOnce(input, format);
     return result catch |err| {
         if (out) |o| o.diag = .{ .code = err, .offset = parser.fail_offset, .end = parser.fail_end };
-        for (parser.owned_strings.items) |s| allocator.free(s);
-        parser.owned_strings.deinit(allocator);
-        parser.arena.nodes.deinit(allocator);
-        parser.arena.spans.deinit(allocator);
-        parser.arena.markers.deinit(allocator);
-        parser.arena.seps.deinit(allocator);
         return err;
     };
 }
 
-fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Document {
+fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!void {
     self.version = format;
     self.source = input;
 
@@ -191,40 +215,13 @@ fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Documen
     defer self.allocator.free(self.lines);
     try self.pending_leading.ensureTotalCapacity(self.allocator, self.lines.len);
     defer self.pending_leading.deinit(self.allocator);
-    defer {
-        for (self.arena.node_comments.items) |nc| {
-            self.allocator.free(nc.leading);
-            self.allocator.free(nc.dangling);
-        }
-        self.arena.node_comments.deinit(self.allocator);
-    }
 
     const root_id = try self.parseRegion(null, .null_document);
     self.skipBlank();
     if (!self.atEnd()) return self.failAtLine(self.peek(), error.ExtraContent);
     try self.claimDangling(root_id);
 
-    const nodes = try self.arena.nodes.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(nodes);
-    const spans = try self.arena.spans.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(spans);
-    const node_marker_spans = try Document.buildSpanTable(self.allocator, nodes.len, self.arena.markers.items);
-    errdefer self.allocator.free(node_marker_spans);
-    self.arena.markers.deinit(self.allocator);
-    self.arena.markers = .empty;
-    const node_sep_spans = try Document.buildSpanTable(self.allocator, nodes.len, self.arena.seps.items);
-    errdefer self.allocator.free(node_sep_spans);
-    self.arena.seps.deinit(self.allocator);
-    self.arena.seps = .empty;
-    const owned = try self.owned_strings.toOwnedSlice(self.allocator);
-
-    var ast: AST = .{ .allocator = self.allocator, .root = root_id, .nodes = nodes, .owned_strings = owned };
-    if (self.comments_seen) {
-        ast.node_comments = try self.arena.node_comments.toOwnedSlice(self.allocator);
-        self.arena.node_comments = .empty;
-    }
-
-    return .{ .source = input, .ast = ast, .node_spans = spans, .node_marker_spans = node_marker_spans, .node_sep_spans = node_sep_spans };
+    try self.arena.w.finish(root_id);
 }
 
 // ── Line cursor ─────────────────────────────────────────────────────────────
@@ -252,7 +249,8 @@ fn captureComment(self: *Parser, l: Line) void {
 }
 
 fn claimLeading(self: *Parser, id: AST.Node.Id) ParserError!void {
-    self.attachLeading(id, try self.takeLeading());
+    for (self.pending_leading.items) |c| try self.arena.w.comment(id, table.comment_leading, c);
+    self.pending_leading.clearRetainingCapacity();
 }
 
 /// Snapshot-and-clear the currently pending leading comments, WITHOUT
@@ -272,18 +270,16 @@ fn takeLeading(self: *Parser) ParserError!?[]AST.Comment {
     return owned;
 }
 
-fn attachLeading(self: *Parser, id: AST.Node.Id, leading: ?[]AST.Comment) void {
+/// Write a `takeLeading` snapshot as `id`'s leading comments, and free it.
+fn attachLeading(self: *Parser, id: AST.Node.Id, leading: ?[]AST.Comment) ParserError!void {
     const owned = leading orelse return;
-    self.arena.node_comments.items[id].leading = owned;
-    self.comments_seen = true;
+    defer self.allocator.free(owned);
+    for (owned) |c| try self.arena.w.comment(id, table.comment_leading, c);
 }
 
 fn claimDangling(self: *Parser, id: AST.Node.Id) ParserError!void {
-    if (self.pending_leading.items.len == 0) return;
-    const owned = try self.allocator.dupe(AST.Comment, self.pending_leading.items);
+    for (self.pending_leading.items) |c| try self.arena.w.comment(id, table.comment_dangling, c);
     self.pending_leading.clearRetainingCapacity();
-    self.arena.node_comments.items[id].dangling = owned;
-    self.comments_seen = true;
 }
 
 fn failAtLine(self: *Parser, l: Line, err: Error) Error {
@@ -301,14 +297,20 @@ fn intern(self: *Parser, owned: []const u8) ParserError![]const u8 {
     return owned;
 }
 
-fn appendSeqItem(self: *Parser, seq_id: AST.Node.Id, value_id: AST.Node.Id) void {
-    if (self.arena.nodes.items[seq_id].kind.sequence) |first| {
-        var last = first;
-        while (self.arena.nodes.items[last].next_sibling) |n| last = n;
-        self.arena.nodes.items[last].next_sibling = value_id;
+/// Link `value_id` after `last`, sequence `seq_id`'s last item so far, or
+/// as its first when `last` is null; returns the new last item.
+fn appendSeqItem(self: *Parser, seq_id: AST.Node.Id, last: ?AST.Node.Id, value_id: AST.Node.Id) ParserError!AST.Node.Id {
+    if (last) |l| {
+        self.arena.w.setNext(l, value_id);
     } else {
-        self.arena.nodes.items[seq_id].kind = .{ .sequence = value_id };
+        try self.arena.w.set(seq_id, .{ .sequence = value_id });
     }
+    return value_id;
+}
+
+/// Set node `id`'s span to end at `end`.
+fn setEnd(self: *Parser, id: AST.Node.Id, end: usize) void {
+    self.arena.w.setSpan(id, Span.init(self.arena.w.spanOf(id).start, end));
 }
 
 // ── Regions and blocks ───────────────────────────────────────────────────────
@@ -411,6 +413,7 @@ fn parseListBlock(self: *Parser, indent: usize) ParserError!AST.Node.Id {
     const start = self.peek().line_start;
     const seq_id = try self.arena.addNode(.{ .sequence = null }, Span.init(start, start));
     var end = start;
+    var last: ?AST.Node.Id = null;
     while (true) {
         self.skipBlank();
         if (self.atEnd()) break;
@@ -425,16 +428,19 @@ fn parseListBlock(self: *Parser, indent: usize) ParserError!AST.Node.Id {
         // entry would otherwise claim this comment first (see `takeLeading`'s
         // doc comment).
         const leading = try self.takeLeading();
-        const value_id = try self.parseItemValue(l.content, indent);
-        self.attachLeading(value_id, leading);
+        const value_id = self.parseItemValue(l.content, indent) catch |err| {
+            if (leading) |x| self.allocator.free(x);
+            return err;
+        };
+        try self.attachLeading(value_id, leading);
         // The item's `-` sits right after its indentation; its value may
         // begin lines below (nested or empty), so record the marker.
         const dash = l.line_start + l.indent;
-        try self.arena.markers.append(self.allocator, .{ .node_id = value_id, .span = Span.init(dash, dash + 1) });
-        self.appendSeqItem(seq_id, value_id);
-        end = self.arena.spans.items[value_id].end;
+        try self.arena.w.marker(value_id, Span.init(dash, dash + 1));
+        last = try self.appendSeqItem(seq_id, last, value_id);
+        end = self.arena.w.spanOf(value_id).end;
     }
-    self.arena.spans.items[seq_id].end = end;
+    self.setEnd(seq_id, end);
     return seq_id;
 }
 
@@ -456,13 +462,12 @@ fn parseDictBlock(self: *Parser, indent: usize) ParserError!AST.Node.Id {
             if (self.atEnd()) return self.failHere(error.MultilineKeyNoValue);
             if (self.peek().indent <= indent) return self.failAtLine(self.peek(), error.MultilineKeyBadValue);
             const value_id = try self.parseRegion(indent, .err); // unreachable fallback: already validated deeper content exists
-            _ = try flat_map.putEntry(&self.arena, map_id, key_id, value_id, .err);
+            const put = try flat_map.putEntry(&self.arena, map_id, key_id, value_id, .err);
             // A multiline key has no separator token; its value's tail starts
             // right after the key, so record a zero-width separator there —
             // the editor still reframes the value (see the plain arm below).
-            const kv_id: AST.Node.Id = @intCast(self.arena.nodes.items.len - 1);
-            try self.arena.seps.append(self.allocator, .{ .node_id = kv_id, .span = Span.init(mk.span.end, mk.span.end) });
-            end = self.arena.spans.items[value_id].end;
+            try self.arena.w.sep(put.kv, Span.init(mk.span.end, mk.span.end));
+            end = self.arena.w.spanOf(value_id).end;
         } else if (l.kind == .other and self.isDictItemLine(l)) {
             const split = self.splitDictItem(l).?;
             self.pos += 1;
@@ -478,19 +483,16 @@ fn parseDictBlock(self: *Parser, indent: usize) ParserError!AST.Node.Id {
             const key_id = try self.arena.addNode(.{ .string = key_text }, Span.init(l.content.start, l.content.start + key_text.len));
             try self.claimLeading(key_id);
             const value_id = try self.parseItemValue(Span.init(split.val_start, l.content.end), indent);
-            _ = try flat_map.putEntry(&self.arena, map_id, key_id, value_id, .err);
-            // `putEntry` with `.err` always adds, and the `keyvalue` it adds
-            // is the newest node. Its `:` is the entry's separator, which is
-            // what lets the editor reframe the value (a multiline `: key`
-            // entry has none, and records none).
-            const kv_id: AST.Node.Id = @intCast(self.arena.nodes.items.len - 1);
-            try self.arena.seps.append(self.allocator, .{ .node_id = kv_id, .span = Span.init(split.key_end, split.key_end + 1) });
-            end = self.arena.spans.items[value_id].end;
+            const put = try flat_map.putEntry(&self.arena, map_id, key_id, value_id, .err);
+            // The entry's `:` is its separator, which is what lets the
+            // editor reframe the value.
+            try self.arena.w.sep(put.kv, Span.init(split.key_end, split.key_end + 1));
+            end = self.arena.w.spanOf(value_id).end;
         } else {
             return self.failAtLine(l, error.ExpectedDictItem);
         }
     }
-    self.arena.spans.items[map_id].end = end;
+    self.setEnd(map_id, end);
     return map_id;
 }
 
@@ -649,7 +651,7 @@ fn parseInlineDict(self: *Parser) ParserError!AST.Node.Id {
     const map_id = try self.arena.addNode(.{ .mapping = null }, Span.init(start, start));
     if (self.ipos < self.iend and self.source[self.ipos] == '}') {
         self.ipos += 1;
-        self.arena.spans.items[map_id].end = self.ipos;
+        self.setEnd(map_id, self.ipos);
         return map_id;
     }
     var first = true;
@@ -680,7 +682,7 @@ fn parseInlineDict(self: *Parser) ParserError!AST.Node.Id {
         self.fail_offset = self.ipos;
         return error.ExpectedCommaOrClose;
     }
-    self.arena.spans.items[map_id].end = self.ipos;
+    self.setEnd(map_id, self.ipos);
     return map_id;
 }
 
@@ -690,7 +692,7 @@ fn parseInlineList(self: *Parser) ParserError!AST.Node.Id {
     const seq_id = try self.arena.addNode(.{ .sequence = null }, Span.init(start, start));
     if (self.ipos < self.iend and self.source[self.ipos] == ']') {
         self.ipos += 1;
-        self.arena.spans.items[seq_id].end = self.ipos;
+        self.setEnd(seq_id, self.ipos);
         return seq_id;
     }
     // Unlike a dict entry (which needs at least a key), a list element has
@@ -699,9 +701,10 @@ fn parseInlineList(self: *Parser) ParserError!AST.Node.Id {
     // `parseInlineDict`) there is no "trailing comma" pre-check here: `[,]`
     // is `["", ""]` and `[a,]` is `["a", ""]`, confirmed by the official
     // conformance suite (`epoch`/`geyser`).
+    var last: ?AST.Node.Id = null;
     while (true) {
         const value_id = try self.parseInlineValue(.bracket);
-        self.appendSeqItem(seq_id, value_id);
+        last = try self.appendSeqItem(seq_id, last, value_id);
         self.skipInlineWs();
         if (self.ipos >= self.iend) {
             self.fail_offset = self.ipos;
@@ -719,7 +722,7 @@ fn parseInlineList(self: *Parser) ParserError!AST.Node.Id {
         self.fail_offset = self.ipos;
         return error.ExpectedCommaOrClose;
     }
-    self.arena.spans.items[seq_id].end = self.ipos;
+    self.setEnd(seq_id, self.ipos);
     return seq_id;
 }
 

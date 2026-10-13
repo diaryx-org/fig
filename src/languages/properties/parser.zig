@@ -1,4 +1,5 @@
-//! The parser turns a `.properties`-formatted []const u8 into an AST.
+//! The parser turns a `.properties`-formatted []const u8 into the node table
+//! fig hands it, a row per node (`RowWriter`, through `shared/flat_map.zig`).
 //!
 //! Shape: a single flat root mapping, `key<sep>value` per entry — like
 //! dotenv, no sections/nesting; unlike dotenv, keys are NOT restricted to
@@ -19,8 +20,11 @@ const Parser = @This();
 
 const std = @import("std");
 const testing = std.testing;
-const Document = @import("../../kit/parse_tree.zig");
-const AST = Document.Nodes;
+const Document = @import("../../kit/document.zig");
+const AST = @import("../../kit/ast/ast.zig");
+const RowWriter = @import("../../kit/row_writer.zig");
+const table = @import("../../kit/table.zig");
+const Table = table.Table;
 
 const Type = @import("properties.zig").Type;
 const Span = @import("../../kit/span.zig");
@@ -36,9 +40,10 @@ tokens: []const Token = &.{},
 pos: usize = 0,
 arena: flat_map.NodeArena = undefined,
 root_id: AST.Node.Id = 0,
+/// Decoded keys and values, freed when the parse ends: the table keeps its
+/// own copy.
 owned_strings: std.ArrayList([]const u8) = .empty,
 pending_leading: std.ArrayList(AST.Comment) = .empty,
-comments_seen: bool = false,
 
 recover: bool = false,
 diagnostics: std.ArrayList(Diagnostic) = .empty,
@@ -126,20 +131,56 @@ pub const Report = struct {
     warnings: []const Warning = &.{},
 };
 
+/// `input` as a `Document`: its table written and adopted.
 pub fn parse(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!Document {
-    return parseImpl(allocator, input, format, null, false);
-}
-pub fn parseWithReport(allocator: std.mem.Allocator, input: []const u8, format: Type, out: *Report) ParserError!Document {
-    return parseImpl(allocator, input, format, out, false);
-}
-pub fn parseCollecting(allocator: std.mem.Allocator, input: []const u8, format: Type, out: *Report) ParserError!Document {
-    return parseImpl(allocator, input, format, out, true);
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseInto(&t, input, format);
+    return RowWriter.adopt(allocator, input, &t);
 }
 
-fn parseImpl(allocator: std.mem.Allocator, input: []const u8, format: Type, out: ?*Report, recover: bool) ParserError!Document {
-    var parser: Parser = .{ .allocator = allocator, .arena = .{ .allocator = allocator }, .recover = recover };
+/// `parse`, reporting as `parseWithReportInto` does.
+pub fn parseWithReport(allocator: std.mem.Allocator, input: []const u8, format: Type, out: *Report) ParserError!Document {
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseWithReportInto(&t, input, format, out);
+    return RowWriter.adopt(allocator, input, &t);
+}
+
+/// `parse`, collecting as `parseCollectingInto` does.
+pub fn parseCollecting(allocator: std.mem.Allocator, input: []const u8, format: Type, out: *Report) ParserError!Document {
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseCollectingInto(&t, input, format, out);
+    return RowWriter.adopt(allocator, input, &t);
+}
+
+/// Write `input`'s rows into `t`, the table fig hands a parse.
+pub fn parseInto(t: *Table, input: []const u8, format: Type) ParserError!void {
+    return parseImpl(t, input, format, null, false);
+}
+
+/// `parseInto`, but also fills `out`: `diag` on failure, `warnings` always.
+pub fn parseWithReportInto(t: *Table, input: []const u8, format: Type, out: *Report) ParserError!void {
+    return parseImpl(t, input, format, out, false);
+}
+
+/// `parseWithReportInto`, but recovers past each parser-level error to
+/// collect every diagnostic (`out.errors`). On an error the table is not
+/// finished.
+pub fn parseCollectingInto(t: *Table, input: []const u8, format: Type, out: *Report) ParserError!void {
+    return parseImpl(t, input, format, out, true);
+}
+
+fn parseImpl(t: *Table, input: []const u8, format: Type, out: ?*Report, recover: bool) ParserError!void {
+    const allocator = t.allocator;
+    var parser: Parser = .{ .allocator = allocator, .arena = .init(t), .recover = recover };
     defer parser.diagnostics.deinit(allocator);
     defer parser.warnings.deinit(allocator);
+    defer {
+        for (parser.owned_strings.items) |s| allocator.free(s);
+        parser.owned_strings.deinit(allocator);
+    }
     const result = parser.parseOnce(input, format);
     if (out) |o| o.warnings = allocator.dupe(Warning, parser.warnings.items) catch &.{};
     return result catch |err| {
@@ -149,19 +190,14 @@ fn parseImpl(allocator: std.mem.Allocator, input: []const u8, format: Type, out:
                 if (recover) o.errors = allocator.dupe(Diagnostic, parser.diagnostics.items) catch &.{};
             }
         }
-        // `node_comments` is already fully cleaned up by `parseOnce`'s own
-        // `defer` on every path once tokenizing succeeds — see that defer.
-        parser.arena.nodes.deinit(allocator);
-        parser.arena.spans.deinit(allocator);
-        for (parser.owned_strings.items) |s| allocator.free(s);
-        parser.owned_strings.deinit(allocator);
         return err;
     };
 }
 
-pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!Document.RowAst {
-    var tree = try parse(allocator, input, format);
-    return tree.intoAst(allocator);
+/// `input` as an `AST`, alone.
+pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!AST {
+    const doc = try parse(allocator, input, format);
+    return doc.ast;
 }
 
 fn dispatchStatement(self: *Parser) ParserError!void {
@@ -189,7 +225,7 @@ fn resync(self: *Parser, start: usize) usize {
     return self.tokens.len - 1;
 }
 
-fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Document {
+fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!void {
     self.version = format;
     self.source = input;
 
@@ -203,13 +239,6 @@ fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Documen
     defer self.allocator.free(self.tokens);
     try self.pending_leading.ensureTotalCapacity(self.allocator, self.tokens.len);
     defer self.pending_leading.deinit(self.allocator);
-    defer {
-        for (self.arena.node_comments.items) |nc| {
-            self.allocator.free(nc.leading);
-            self.allocator.free(nc.dangling);
-        }
-        self.arena.node_comments.deinit(self.allocator);
-    }
 
     self.root_id = try self.arena.addNode(.{ .mapping = null }, Span.init(0, input.len));
 
@@ -231,19 +260,7 @@ fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Documen
 
     if (self.diagnostics.items.len > 0) return self.diagnostics.items[0].code;
 
-    const nodes = try self.arena.nodes.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(nodes);
-    const spans = try self.arena.spans.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(spans);
-    const owned = try self.owned_strings.toOwnedSlice(self.allocator);
-
-    var ast: AST = .{ .allocator = self.allocator, .root = self.root_id, .nodes = nodes, .owned_strings = owned };
-    if (self.comments_seen) {
-        ast.node_comments = try self.arena.node_comments.toOwnedSlice(self.allocator);
-        self.arena.node_comments = .empty;
-    }
-
-    return .{ .source = input, .ast = ast, .node_spans = spans };
+    try self.arena.w.finish(self.root_id);
 }
 
 // ── Token cursor ────────────────────────────────────────────────────────────
@@ -285,19 +302,13 @@ fn captureComment(self: *Parser, tok: Token) void {
 }
 
 fn claimLeading(self: *Parser, id: AST.Node.Id) ParserError!void {
-    if (self.pending_leading.items.len == 0) return;
-    const owned = try self.allocator.dupe(AST.Comment, self.pending_leading.items);
+    for (self.pending_leading.items) |c| try self.arena.w.comment(id, table.comment_leading, c);
     self.pending_leading.clearRetainingCapacity();
-    self.arena.node_comments.items[id].leading = owned;
-    self.comments_seen = true;
 }
 
 fn claimDangling(self: *Parser, id: AST.Node.Id) ParserError!void {
-    if (self.pending_leading.items.len == 0) return;
-    const owned = try self.allocator.dupe(AST.Comment, self.pending_leading.items);
+    for (self.pending_leading.items) |c| try self.arena.w.comment(id, table.comment_dangling, c);
     self.pending_leading.clearRetainingCapacity();
-    self.arena.node_comments.items[id].dangling = owned;
-    self.comments_seen = true;
 }
 
 fn addWarning(self: *Parser, code: Warning.Code, span: Span) ParserError!void {
@@ -321,8 +332,8 @@ fn parseKeyValue(self: *Parser) ParserError!void {
     const key_id = try self.arena.addNode(.{ .string = key_str }, key_tok.span);
     try self.claimLeading(key_id);
     const value_id = try self.arena.addNode(.{ .string = value_str }, value_span);
-    const result = try flat_map.putEntry(&self.arena, self.root_id, key_id, value_id, .overwrite);
-    if (result == .overwrote) try self.addWarning(.duplicate_key, key_tok.span);
+    const put = try flat_map.putEntry(&self.arena, self.root_id, key_id, value_id, .overwrite);
+    if (put.result == .overwrote) try self.addWarning(.duplicate_key, key_tok.span);
 }
 
 /// Decode a raw key/value span: `\t \n \r \f \\`, `\uXXXX`, a `\<newline>`

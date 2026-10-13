@@ -14,142 +14,154 @@
 //! formats). Only the tree-shape plumbing is shared.
 
 const std = @import("std");
-const Document = @import("../../kit/parse_tree.zig");
-const AST = Document.Nodes;
+const AST = @import("../../kit/ast/ast.zig");
+const RowWriter = @import("../../kit/row_writer.zig");
+const table = @import("../../kit/table.zig");
 const Span = @import("../../kit/span.zig");
 
-/// Owns the three parallel node-indexed arrays every fig parser builds
-/// (`nodes`, `spans`, `node_comments`) and the one operation that allocates a
-/// new node id across all three in lockstep. Mirrors TOML's `Parser.addNode`
-/// exactly, pulled out so it isn't a fourth private copy.
+/// The rows of the table a parse is writing (`RowWriter`), and the one
+/// operation that adds a node. A node's spans and side facts (comments,
+/// NestedText's item markers and entry separators) go through `w`.
 pub const NodeArena = struct {
-    allocator: std.mem.Allocator,
-    nodes: std.ArrayList(AST.Node) = .empty,
-    spans: std.ArrayList(Span) = .empty,
-    node_comments: std.ArrayList(AST.NodeComments) = .empty,
-    /// Block-sequence item markers (`Document.node_marker_spans`); only
-    /// NestedText, of the arena's users, has a block sequence to record.
-    markers: std.ArrayList(Document.SpanEntry) = .empty,
-    /// Entry separators (`Document.node_sep_spans`); NestedText records its
-    /// plain keys' `:` so their values reframe.
-    seps: std.ArrayList(Document.SpanEntry) = .empty,
+    w: RowWriter,
 
-    pub fn addNode(self: *NodeArena, kind: AST.Node.Kind, span: Span) std.mem.Allocator.Error!AST.Node.Id {
-        const id: AST.Node.Id = @intCast(self.nodes.items.len);
-        try self.nodes.append(self.allocator, .{ .id = id, .kind = kind });
-        try self.spans.append(self.allocator, span);
-        try self.node_comments.append(self.allocator, .{});
-        return id;
+    pub fn init(t: *table.Table) NodeArena {
+        return .{ .w = .init(t) };
     }
 
-    /// Release all three arrays. Does NOT free `owned_strings` or comment
-    /// slices — those stay the caller's responsibility (same split TOML's
-    /// parser makes between its node arrays and `owned_strings`), since a
-    /// caller building toward a `Document` may still want those on a
-    /// successful return.
-    pub fn deinit(self: *NodeArena) void {
-        self.nodes.deinit(self.allocator);
-        self.spans.deinit(self.allocator);
-        self.node_comments.deinit(self.allocator);
-        self.markers.deinit(self.allocator);
-        self.seps.deinit(self.allocator);
+    pub fn addNode(self: *NodeArena, kind: AST.Node.Kind, span: Span) std.mem.Allocator.Error!AST.Node.Id {
+        return self.w.add(kind, span);
     }
 };
 
 /// The keyvalue child of `map_id` keyed `key`, or null. Linear scan of the
 /// sibling chain: these formats produce flat (INI: one level deep) tables, so
-/// there's no scale where this needs to be better than O(n).
-pub fn lookupChild(nodes: []const AST.Node, map_id: AST.Node.Id, key: []const u8) ?AST.Node.Id {
-    var cur = nodes[map_id].kind.mapping;
-    while (cur) |id| : (cur = nodes[id].next_sibling) {
-        const kv = nodes[id].kind.keyvalue;
-        if (std.mem.eql(u8, nodes[kv.key].kind.string, key)) return id;
+/// there's no scale where this needs to be better than O(n). `key` must not
+/// point into the table's string buffer if the caller writes a row before
+/// it is done with it.
+pub fn lookupChild(w: RowWriter, map_id: AST.Node.Id, key: []const u8) ?AST.Node.Id {
+    return scan(w, map_id, key).found;
+}
+
+/// One pass over `map_id`'s entries: the one keyed `key`, else the last.
+fn scan(w: RowWriter, map_id: AST.Node.Id, key: []const u8) struct { found: ?AST.Node.Id, last: ?AST.Node.Id } {
+    var last: ?AST.Node.Id = null;
+    var cur = w.kindOf(map_id).mapping;
+    while (cur) |id| : (cur = w.node(id).next_sibling) {
+        const kv = w.kindOf(id).keyvalue;
+        // Read here and dropped: the buffer it may point into moves when
+        // the table grows.
+        if (std.mem.eql(u8, w.kindOf(kv.key).string, key)) return .{ .found = id, .last = null };
+        last = id;
     }
-    return null;
+    return .{ .found = null, .last = last };
 }
 
 /// How a repeated key is handled. Every INI/dotenv/`.properties` implementation
 /// in the wild silently lets the later assignment win — unlike TOML, which
 /// hard-errors — so `.overwrite` is what all three callers actually want;
-/// `.err` is kept for symmetry / a future strict dialect.
+/// `.err` is NestedText's, which refuses a repeat.
 pub const DuplicatePolicy = enum { overwrite, err };
 pub const DuplicateError = error{DuplicateKey};
 
+/// Whether `putEntry` added a fresh entry or overwrote a repeat.
+pub const PutResult = enum { added, overwrote };
+
+/// What `putEntry` did, and the keyvalue node it added or overwrote.
+pub const Put = struct { result: PutResult, kv: AST.Node.Id };
+
 /// Add (or, on a repeat with `.overwrite`, update) a `key = value` entry in
 /// mapping `map_id`. `key_id` must already be a `.string` node (each caller
-/// allocates it via its own `arena.addNode` so it can attach leading comments
+/// adds it via its own `arena.addNode` so it can attach leading comments
 /// first, same as TOML's `appendKeyValue`).
 ///
 /// `.overwrite` keeps the FIRST-SEEN position but the LAST-ASSIGNED value —
 /// repointing the existing keyvalue node's `value` in place — which is the one
 /// substantive behavioral difference from TOML's `appendKeyValue` this module
-/// exists to capture. Returns whether this was a fresh entry or a repeat, so a
-/// caller can turn a repeat into a `DuplicateKey` warning (real content, likely
-/// a mistake) without it being a parse *error*.
-pub const PutResult = enum { added, overwrote };
-
+/// exists to capture. The overwritten value's row, and the repeat's key
+/// row, are left unlinked: `RowWriter.finish` drops them. The result says
+/// whether this was a fresh entry or a repeat, so a caller can turn a repeat
+/// into a `DuplicateKey` warning (real content, likely a mistake) without it
+/// being a parse *error*.
 pub fn putEntry(
     arena: *NodeArena,
     map_id: AST.Node.Id,
     key_id: AST.Node.Id,
     value_id: AST.Node.Id,
     policy: DuplicatePolicy,
-) (DuplicateError || std.mem.Allocator.Error)!PutResult {
-    const key = arena.nodes.items[key_id].kind.string;
-    if (lookupChild(arena.nodes.items, map_id, key)) |existing_kv| {
+) (DuplicateError || std.mem.Allocator.Error)!Put {
+    const w = arena.w;
+    const found = scan(w, map_id, w.kindOf(key_id).string);
+    if (found.found) |existing_kv| {
         switch (policy) {
             .err => return error.DuplicateKey,
             .overwrite => {
-                arena.nodes.items[existing_kv].kind.keyvalue.value = value_id;
-                return .overwrote;
+                const old_key = w.kindOf(existing_kv).keyvalue.key;
+                try w.set(existing_kv, .{ .keyvalue = .{ .key = old_key, .value = value_id } });
+                return .{ .result = .overwrote, .kv = existing_kv };
             },
         }
     }
-    const kv_id = try arena.addNode(
+    const kv_id = try w.add(
         .{ .keyvalue = .{ .key = key_id, .value = value_id } },
-        Span.init(arena.spans.items[key_id].start, arena.spans.items[value_id].end),
+        Span.init(w.spanOf(key_id).start, w.spanOf(value_id).end),
     );
-    if (arena.nodes.items[map_id].kind.mapping) |first| {
-        var last = first;
-        while (arena.nodes.items[last].next_sibling) |n| last = n;
-        arena.nodes.items[last].next_sibling = kv_id;
+    if (found.last) |last| {
+        w.setNext(last, kv_id);
     } else {
-        arena.nodes.items[map_id].kind = .{ .mapping = kv_id };
+        try w.set(map_id, .{ .mapping = kv_id });
     }
-    return .added;
+    return .{ .result = .added, .kv = kv_id };
 }
 
 test "putEntry appends in order and reports fresh vs. repeat" {
     const a = std.testing.allocator;
-    var arena: NodeArena = .{ .allocator = a };
-    defer arena.deinit();
+    const src = "a=1\nb=2\na=3\n";
+    var t = table.Table.init(a, src);
+    defer t.deinit();
+    var arena: NodeArena = .init(&t);
+    const w = arena.w;
 
     const root = try arena.addNode(.{ .mapping = null }, Span.init(0, 0));
     const k1 = try arena.addNode(.{ .string = "a" }, Span.init(0, 1));
     const v1 = try arena.addNode(.{ .string = "1" }, Span.init(2, 3));
-    try std.testing.expectEqual(PutResult.added, try putEntry(&arena, root, k1, v1, .overwrite));
+    try std.testing.expectEqual(PutResult.added, (try putEntry(&arena, root, k1, v1, .overwrite)).result);
 
     const k2 = try arena.addNode(.{ .string = "b" }, Span.init(4, 5));
     const v2 = try arena.addNode(.{ .string = "2" }, Span.init(6, 7));
-    try std.testing.expectEqual(PutResult.added, try putEntry(&arena, root, k2, v2, .overwrite));
+    try std.testing.expectEqual(PutResult.added, (try putEntry(&arena, root, k2, v2, .overwrite)).result);
 
     // Repeat of "a": overwrites in place, first-seen position preserved.
     const k3 = try arena.addNode(.{ .string = "a" }, Span.init(8, 9));
     const v3 = try arena.addNode(.{ .string = "3" }, Span.init(10, 11));
-    try std.testing.expectEqual(PutResult.overwrote, try putEntry(&arena, root, k3, v3, .overwrite));
+    const put = try putEntry(&arena, root, k3, v3, .overwrite);
+    try std.testing.expectEqual(PutResult.overwrote, put.result);
 
-    const first = arena.nodes.items[root].kind.mapping.?;
-    try std.testing.expectEqual(k1, arena.nodes.items[first].kind.keyvalue.key);
-    try std.testing.expectEqual(v3, arena.nodes.items[first].kind.keyvalue.value); // last value wins
-    const second = arena.nodes.items[first].next_sibling.?;
-    try std.testing.expectEqual(k2, arena.nodes.items[second].kind.keyvalue.key);
-    try std.testing.expectEqual(null, arena.nodes.items[second].next_sibling); // no 3rd sibling appended
+    const first = w.kindOf(root).mapping.?;
+    try std.testing.expectEqual(first, put.kv);
+    try std.testing.expectEqual(k1, w.kindOf(first).keyvalue.key);
+    try std.testing.expectEqual(v3, w.kindOf(first).keyvalue.value); // last value wins
+    const second = w.node(first).next_sibling.?;
+    try std.testing.expectEqual(k2, w.kindOf(second).keyvalue.key);
+    try std.testing.expectEqual(null, w.node(second).next_sibling); // no 3rd sibling appended
+    try std.testing.expectEqual(second, lookupChild(w, root, "b").?);
+    try std.testing.expectEqual(null, lookupChild(w, root, "c"));
+
+    // The overwritten value and the repeat's key are unreachable: finished,
+    // the table holds the root, two entries and their keys and values.
+    try w.finish(root);
+    var ast = try AST.adopt(a, src, &t, .required);
+    defer ast.deinit();
+    try std.testing.expectEqual(@as(usize, 7), ast.nodeCount());
+    try std.testing.expectEqualStrings("3", (try ast.getValByPath(&.{.{ .key = "a" }})).kind.string);
 }
 
 test "putEntry .err rejects a repeat" {
     const a = std.testing.allocator;
-    var arena: NodeArena = .{ .allocator = a };
-    defer arena.deinit();
+    const src = "a=1\nb=2\na=3\n";
+    var t = table.Table.init(a, src);
+    defer t.deinit();
+    var arena: NodeArena = .init(&t);
     const root = try arena.addNode(.{ .mapping = null }, Span.init(0, 0));
     const k1 = try arena.addNode(.{ .string = "a" }, Span.init(0, 1));
     const v1 = try arena.addNode(.{ .string = "1" }, Span.init(2, 3));

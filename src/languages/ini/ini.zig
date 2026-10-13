@@ -1,5 +1,6 @@
 const ini = @This();
-const Document = @import("../../kit/parse_tree.zig");
+const Document = @import("../../kit/document.zig");
+const Table = @import("../../kit/table.zig").Table;
 const lang = @import("../../kit/manifest.zig");
 
 pub const Parser = @import("parser.zig");
@@ -19,14 +20,14 @@ pub const Language = struct {
     pub const Parser = ini.Parser;
     pub const Printer = ini.Printer;
     pub const default_type: ini.Type = .INI;
-    /// The parser's tree, which the contract writes into fig's table.
-    pub fn parseTree(parser: *ini.Parser, input: []const u8, format: ini.Type) !Document {
-        return ini.Parser.parse(parser.allocator, input, format);
+    /// Write `input`'s rows into `out`, the table fig hands a parse.
+    pub fn parseTable(parser: *ini.Parser, input: []const u8, format: ini.Type, out: *Table) !void {
+        _ = parser;
+        return ini.Parser.parseInto(out, input, format);
     }
     /// The document fig would adopt from a parse.
-    pub fn parse(parser: *ini.Parser, input: []const u8, format: ini.Type) !Document.RowDocument {
-        var tree = try parseTree(parser, input, format);
-        return tree.intoDocument(parser.allocator);
+    pub fn parse(parser: *ini.Parser, input: []const u8, format: ini.Type) !Document {
+        return ini.Parser.parse(parser.allocator, input, format);
     }
     pub const print = ini.Printer.print;
     pub const printNode = ini.Printer.printNode;

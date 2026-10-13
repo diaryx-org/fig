@@ -1,5 +1,6 @@
 const properties = @This();
-const Document = @import("../../kit/parse_tree.zig");
+const Document = @import("../../kit/document.zig");
+const Table = @import("../../kit/table.zig").Table;
 const lang = @import("../../kit/manifest.zig");
 
 pub const Parser = @import("parser.zig");
@@ -18,14 +19,14 @@ pub const Language = struct {
     pub const Parser = properties.Parser;
     pub const Printer = properties.Printer;
     pub const default_type: properties.Type = .PROPERTIES;
-    /// The parser's tree, which the contract writes into fig's table.
-    pub fn parseTree(parser: *properties.Parser, input: []const u8, format: properties.Type) !Document {
-        return properties.Parser.parse(parser.allocator, input, format);
+    /// Write `input`'s rows into `out`, the table fig hands a parse.
+    pub fn parseTable(parser: *properties.Parser, input: []const u8, format: properties.Type, out: *Table) !void {
+        _ = parser;
+        return properties.Parser.parseInto(out, input, format);
     }
     /// The document fig would adopt from a parse.
-    pub fn parse(parser: *properties.Parser, input: []const u8, format: properties.Type) !Document.RowDocument {
-        var tree = try parseTree(parser, input, format);
-        return tree.intoDocument(parser.allocator);
+    pub fn parse(parser: *properties.Parser, input: []const u8, format: properties.Type) !Document {
+        return properties.Parser.parse(parser.allocator, input, format);
     }
     pub const print = properties.Printer.print;
     pub const printNode = properties.Printer.printNode;

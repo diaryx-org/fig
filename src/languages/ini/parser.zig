@@ -1,4 +1,5 @@
-//! The parser turns an INI-formatted []const u8 into an AST.
+//! The parser turns an INI-formatted []const u8 into the node table fig
+//! hands it, a row per node (`RowWriter`, through `shared/flat_map.zig`).
 //!
 //! Shape: the root mapping holds any keys that appear before the first
 //! `[section]`, plus one child mapping per section (keyed by section name).
@@ -20,8 +21,11 @@ const Parser = @This();
 
 const std = @import("std");
 const testing = std.testing;
-const Document = @import("../../kit/parse_tree.zig");
-const AST = Document.Nodes;
+const Document = @import("../../kit/document.zig");
+const AST = @import("../../kit/ast/ast.zig");
+const RowWriter = @import("../../kit/row_writer.zig");
+const table = @import("../../kit/table.zig");
+const Table = table.Table;
 
 const Type = @import("ini.zig").Type;
 const Span = @import("../../kit/span.zig");
@@ -44,17 +48,13 @@ current_table: AST.Node.Id = 0,
 // every captured comment is simply buffered as `pending_leading` until the
 // next key/section-header claims it (or it dangles at EOF).
 pending_leading: std.ArrayList(AST.Comment) = .empty,
-comments_seen: bool = false,
-/// Every `[section]` header line, keyed by the section's node id — the one
-/// that created it and every REOPENING `[a]` in `[a]…[b]…[a]`. A section's
-/// node span anchors only its name token in the first header, so this is what
-/// lets the editor's region gather find every physical occurrence rather than
-/// just the first. Threaded out to `Document.node_regions`, the same table
-/// fig's and TOML's parsers fill for the same reason.
-built_regions: std.ArrayList(Document.NodeRegion) = .empty,
-/// Every `[section]` header's name token, on the section it names — the
-/// first header and each reopening. Becomes `Document.node_mentions`.
-built_mentions: std.ArrayList(Document.NodeMention) = .empty,
+// Every `[section]` header line is written as a region of the section's
+// node (`Document.regionsOf`) — the one that created it and every
+// REOPENING `[a]` in `[a]…[b]…[a]`. A section's node span anchors only its
+// name token in the first header, so this is what lets the editor's region
+// gather find every physical occurrence rather than just the first, the
+// same fact fig's and TOML's parsers write for the same reason. Each
+// header's name token is a mention of the section (`Document.mentionsOf`).
 
 recover: bool = false,
 diagnostics: std.ArrayList(Diagnostic) = .empty,
@@ -152,20 +152,50 @@ pub const Report = struct {
     warnings: []const Warning = &.{},
 };
 
+/// `input` as a `Document`: its table written and adopted.
 pub fn parse(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!Document {
-    return parseImpl(allocator, input, format, null, false);
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseInto(&t, input, format);
+    return RowWriter.adopt(allocator, input, &t);
 }
 
+/// `parse`, reporting as `parseWithReportInto` does.
 pub fn parseWithReport(allocator: std.mem.Allocator, input: []const u8, format: Type, out: *Report) ParserError!Document {
-    return parseImpl(allocator, input, format, out, false);
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseWithReportInto(&t, input, format, out);
+    return RowWriter.adopt(allocator, input, &t);
 }
 
+/// `parse`, collecting as `parseCollectingInto` does.
 pub fn parseCollecting(allocator: std.mem.Allocator, input: []const u8, format: Type, out: *Report) ParserError!Document {
-    return parseImpl(allocator, input, format, out, true);
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseCollectingInto(&t, input, format, out);
+    return RowWriter.adopt(allocator, input, &t);
 }
 
-fn parseImpl(allocator: std.mem.Allocator, input: []const u8, format: Type, out: ?*Report, recover: bool) ParserError!Document {
-    var parser: Parser = .{ .allocator = allocator, .arena = .{ .allocator = allocator }, .recover = recover };
+/// Write `input`'s rows into `t`, the table fig hands a parse.
+pub fn parseInto(t: *Table, input: []const u8, format: Type) ParserError!void {
+    return parseImpl(t, input, format, null, false);
+}
+
+/// `parseInto`, but also fills `out`: `diag` on failure, `warnings` always.
+pub fn parseWithReportInto(t: *Table, input: []const u8, format: Type, out: *Report) ParserError!void {
+    return parseImpl(t, input, format, out, false);
+}
+
+/// `parseWithReportInto`, but recovers past each parser-level error to
+/// collect every diagnostic (`out.errors`). On an error the table is not
+/// finished.
+pub fn parseCollectingInto(t: *Table, input: []const u8, format: Type, out: *Report) ParserError!void {
+    return parseImpl(t, input, format, out, true);
+}
+
+fn parseImpl(t: *Table, input: []const u8, format: Type, out: ?*Report, recover: bool) ParserError!void {
+    const allocator = t.allocator;
+    var parser: Parser = .{ .allocator = allocator, .arena = .init(t), .recover = recover };
     defer parser.diagnostics.deinit(allocator);
     defer parser.warnings.deinit(allocator);
     const result = parser.parseOnce(input, format);
@@ -177,21 +207,14 @@ fn parseImpl(allocator: std.mem.Allocator, input: []const u8, format: Type, out:
                 if (recover) o.errors = allocator.dupe(Diagnostic, parser.diagnostics.items) catch &.{};
             }
         }
-        // `node_comments` is already fully cleaned up (inner slices freed, list
-        // deinited) by `parseOnce`'s own `defer` on every path, once tokenizing
-        // succeeds — freeing it again here would double-free. `nodes`/`spans`
-        // are NOT covered by any defer (only `toOwnedSlice`d on success), so
-        // they're the only two this path needs to release, mirroring TOML's
-        // `parseImpl`.
-        parser.arena.nodes.deinit(allocator);
-        parser.arena.spans.deinit(allocator);
         return err;
     };
 }
 
-pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!Document.RowAst {
-    var tree = try parse(allocator, input, format);
-    return tree.intoAst(allocator);
+/// `input` as an `AST`, alone.
+pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!AST {
+    const doc = try parse(allocator, input, format);
+    return doc.ast;
 }
 
 fn dispatchStatement(self: *Parser) ParserError!void {
@@ -227,7 +250,7 @@ fn failSpan(self: *Parser, start: usize, end: usize, err: Error) Error {
     return err;
 }
 
-fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Document {
+fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!void {
     self.version = format;
     self.source = input;
 
@@ -241,17 +264,6 @@ fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Documen
     defer self.allocator.free(self.tokens);
     try self.pending_leading.ensureTotalCapacity(self.allocator, self.tokens.len);
     defer self.pending_leading.deinit(self.allocator);
-    // Covers both exits, so `parseImpl`'s error path needs no arm for it
-    // (unlike `arena.nodes`/`spans`, which are only moved out on success).
-    defer self.built_regions.deinit(self.allocator);
-    defer self.built_mentions.deinit(self.allocator);
-    defer {
-        for (self.arena.node_comments.items) |nc| {
-            self.allocator.free(nc.leading);
-            self.allocator.free(nc.dangling);
-        }
-        self.arena.node_comments.deinit(self.allocator);
-    }
 
     self.root_id = try self.arena.addNode(.{ .mapping = null }, Span.init(0, input.len));
     self.current_table = self.root_id;
@@ -274,24 +286,7 @@ fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Documen
 
     if (self.diagnostics.items.len > 0) return self.diagnostics.items[0].code;
 
-    const nodes = try self.arena.nodes.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(nodes);
-    const spans = try self.arena.spans.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(spans);
-
-    var ast: AST = .{ .allocator = self.allocator, .root = self.root_id, .nodes = nodes };
-    if (self.comments_seen) {
-        ast.node_comments = try self.arena.node_comments.toOwnedSlice(self.allocator);
-        self.arena.node_comments = .empty;
-    }
-
-    const node_regions = try self.allocator.dupe(Document.NodeRegion, self.built_regions.items);
-    Document.sortRegions(node_regions);
-    errdefer self.allocator.free(node_regions);
-    const node_mentions = try self.allocator.dupe(Document.NodeMention, self.built_mentions.items);
-    Document.sortMentions(node_mentions);
-
-    return .{ .source = input, .ast = ast, .node_spans = spans, .node_regions = node_regions, .node_mentions = node_mentions };
+    try self.arena.w.finish(self.root_id);
 }
 
 // ── Token cursor ────────────────────────────────────────────────────────────
@@ -330,19 +325,13 @@ fn captureComment(self: *Parser, tok: Token) void {
 }
 
 fn claimLeading(self: *Parser, id: AST.Node.Id) ParserError!void {
-    if (self.pending_leading.items.len == 0) return;
-    const owned = try self.allocator.dupe(AST.Comment, self.pending_leading.items);
+    for (self.pending_leading.items) |c| try self.arena.w.comment(id, table.comment_leading, c);
     self.pending_leading.clearRetainingCapacity();
-    self.arena.node_comments.items[id].leading = owned;
-    self.comments_seen = true;
 }
 
 fn claimDangling(self: *Parser, id: AST.Node.Id) ParserError!void {
-    if (self.pending_leading.items.len == 0) return;
-    const owned = try self.allocator.dupe(AST.Comment, self.pending_leading.items);
+    for (self.pending_leading.items) |c| try self.arena.w.comment(id, table.comment_dangling, c);
     self.pending_leading.clearRetainingCapacity();
-    self.arena.node_comments.items[id].dangling = owned;
-    self.comments_seen = true;
 }
 
 fn addWarning(self: *Parser, code: Warning.Code, span: Span) ParserError!void {
@@ -363,32 +352,33 @@ fn parseSectionHeader(self: *Parser) ParserError!void {
     _ = self.advance();
     if (name.len == 0) return self.failSpan(name_tok.span.start, name_tok.span.end, error.InvalidKey);
 
-    if (flat_map.lookupChild(self.arena.nodes.items, self.root_id, name)) |existing_kv| {
-        const kv = self.arena.nodes.items[existing_kv].kind.keyvalue;
-        if (self.arena.nodes.items[kv.value].kind != .mapping)
+    const w = self.arena.w;
+    if (flat_map.lookupChild(w, self.root_id, name)) |existing_kv| {
+        const kv = w.kindOf(existing_kv).keyvalue;
+        if (w.kindOf(kv.value) != .mapping)
             return self.failSpan(name_tok.span.start, name_tok.span.end, error.DuplicateKey);
         self.current_table = kv.value;
         // The header line that REOPENED this section. Its position is in no
         // node's span (the section's own anchors the first `[a]`), so record it
-        // for the editor's region gather — see `built_regions`.
-        try self.recordHeader(kv.value, name_tok.span.start);
-        try self.built_mentions.append(self.allocator, .{ .node_id = kv.value, .span = name_tok.span, .kind = .header });
+        // for the editor's region gather.
+        try self.recordHeader(kv.value, name_tok);
         try self.addWarning(.duplicate_section, name_tok.span);
     } else {
         const key_id = try self.arena.addNode(.{ .string = name }, name_tok.span);
         try self.claimLeading(key_id);
         const map_id = try self.arena.addNode(.{ .mapping = null }, name_tok.span);
         _ = try flat_map.putEntry(&self.arena, self.root_id, key_id, map_id, .overwrite);
-        try self.recordHeader(map_id, name_tok.span.start);
-        try self.built_mentions.append(self.allocator, .{ .node_id = map_id, .span = name_tok.span, .kind = .header });
+        try self.recordHeader(map_id, name_tok);
         self.current_table = map_id;
     }
 }
 
-/// Record the header line holding `at` as one of section `id`'s regions.
-fn recordHeader(self: *Parser, id: AST.Node.Id, at: usize) ParserError!void {
-    const line = Document.lineRegionAt(self.source, at);
-    try self.built_regions.append(self.allocator, .{ .node_id = id, .start = line.start, .end = line.end });
+/// Record the header line naming section `id` at `name_tok` as one of its
+/// regions, and the name as one of its mentions.
+fn recordHeader(self: *Parser, id: AST.Node.Id, name_tok: Token) ParserError!void {
+    const line = Document.lineRegionAt(self.source, name_tok.span.start);
+    try self.arena.w.region(id, line.start, line.end);
+    try self.arena.w.mention(id, name_tok.span, .header);
 }
 
 /// `key = value`, attaching to `current_table`.
@@ -413,8 +403,8 @@ fn parseKeyValue(self: *Parser) ParserError!void {
     const key_id = try self.arena.addNode(.{ .string = key_str }, key_tok.span);
     try self.claimLeading(key_id);
     const value_id = try self.arena.addNode(.{ .string = decodeValue(value_text) }, value_span);
-    const result = try flat_map.putEntry(&self.arena, self.current_table, key_id, value_id, .overwrite);
-    if (result == .overwrote) try self.addWarning(.duplicate_key, key_tok.span);
+    const put = try flat_map.putEntry(&self.arena, self.current_table, key_id, value_id, .overwrite);
+    if (put.result == .overwrote) try self.addWarning(.duplicate_key, key_tok.span);
 }
 
 /// Strip one layer of matching `"..."`/`'...'` quotes spanning the whole
@@ -551,7 +541,7 @@ test "parseCollecting recovers across multiple parser-level errors" {
     testing.allocator.free(report.warnings);
 }
 
-test "node_regions records every [section] header line, reopenings included, keyed by node id" {
+test "regions record every [section] header line, reopenings included, keyed by node id" {
     const src = "[a]\nx = 1\n[b]\ny = 2\n[a]\nz = 3\n";
     const parsed = try parse(testing.allocator, src, .INI);
     defer parsed.deinit(testing.allocator);
@@ -572,8 +562,8 @@ test "node_regions records every [section] header line, reopenings included, key
     try testing.expect(!parsed.isSection(try parsed.ast.getValByPath(&.{ .{ .key = "a" }, .{ .key = "x" } })));
 }
 
-test "node_regions is empty for a document with no section" {
+test "regions are empty for a document with no section" {
     const parsed = try parse(testing.allocator, "x = 1\ny = 2\n", .INI);
     defer parsed.deinit(testing.allocator);
-    try testing.expectEqual(@as(usize, 0), parsed.node_regions.len);
+    try testing.expectEqual(@as(usize, 0), parsed.ast.region_facts.len);
 }

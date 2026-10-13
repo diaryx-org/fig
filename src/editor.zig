@@ -1922,6 +1922,9 @@ pub fn Editor(comptime Language: type) type {
         /// The flow/block decision is `isFlowNode`'s; a block entry is spelled
         /// through `writeEntry` (a `renderEntry` where the format declares
         /// one), a flow entry with `kv_sep` or the separator its siblings use.
+        /// A table with no header of its own (TOML's `a` in `a.b = 1`) has
+        /// no lines to append to: its entry is a key path in the lines or
+        /// braces that hold it (`insertHeaderless`).
         ///
         /// **Engine rule**: an insert never gives a mapping a second entry of
         /// a name it already holds. Most parsers here accept a repeated key
@@ -1945,6 +1948,8 @@ pub fn Editor(comptime Language: type) type {
             const inserted = switch (node.kind) {
                 .mapping => |first| if (self.isFlowNode(parsed, node))
                     self.insertFlowMapEntry(parsed, node, span, first != null, key_text, value_text)
+                else if (self.headerlessHolder(parsed, node)) |owner|
+                    self.insertHeaderless(parsed, path, node, owner, key_text, value_text)
                 else
                     self.insertBlockKey(parsed, node, key_text, value_text),
                 .null_ => self.promoteNullToMapping(span, node.id == parsed.ast.root, key_text, value_text, placeOf(parsed, node)),
@@ -2317,11 +2322,53 @@ pub fn Editor(comptime Language: type) type {
         /// it is a table made by dotted keys.
         fn flowFirstEntryStart(parsed: Document, flow: AST.Node) usize {
             const first = (parsed.ast.child(&flow) catch null) orelse return parsed.span(flow).end;
-            if (first.kind == .keyvalue) {
-                var mentions = parsed.mentionsOf(first.kind.keyvalue.value);
-                if (mentions.count() > 0) return @min(mentions.at(0).span.start, parsed.span(first).start);
+            return flowEntryStart(parsed, first);
+        }
+
+        /// Where the first entry of a flow mapping that writes its child
+        /// `kv` begins: `kv`'s span, or the first place its name is written
+        /// when it is a table made by dotted keys.
+        fn flowEntryStart(parsed: Document, kv: AST.Node) usize {
+            if (kv.kind == .keyvalue) {
+                var mentions = parsed.mentionsOf(kv.kind.keyvalue.value);
+                if (mentions.count() > 0) return @min(mentions.at(0).span.start, parsed.span(kv).start);
             }
-            return parsed.span(first).start;
+            return parsed.span(kv).start;
+        }
+
+        /// Where the last entry of a flow mapping that writes its child
+        /// `kv` ends: `kv`'s span, or the end of the last entry under it
+        /// when it is a table made by dotted keys, whose own span is only
+        /// its name (`a` in `{ c = 2, a.b = 1 }`).
+        fn flowEntryEnd(self: *const Self, parsed: Document, kv: AST.Node) !usize {
+            if (dottedValue(parsed, kv)) |value| {
+                if (try self.lastWrittenLeaf(parsed, value, true)) |leaf| return parsed.span(leaf).end;
+            }
+            return parsed.span(kv).end;
+        }
+
+        /// The value of the entry `kv` when it is a table made by dotted
+        /// keys, written by entries of its parent rather than by a value of
+        /// its own: a section whose name is written on its parent's lines
+        /// or in its braces (TOML's), or a mapping whose span begins where
+        /// its key does (fig's `{a.b=1}`). Null for any other entry.
+        fn dottedValue(parsed: Document, kv: AST.Node) ?AST.Node {
+            if (kv.kind != .keyvalue) return null;
+            const value = parsed.ast.node(kv.kind.keyvalue.value);
+            if (value.kind != .mapping) return null;
+            if (parsed.isSection(value) or parsed.span(value).start <= parsed.span(parsed.ast.node(kv.kind.keyvalue.key)).start) return value;
+            return null;
+        }
+
+        /// The first entry written with a key and a value under the child
+        /// `kv` of a flow mapping: `kv`, or the first entry of the table
+        /// made by dotted keys that it is, and so on down.
+        fn firstWrittenLeaf(parsed: Document, kv: AST.Node) AST.Node {
+            var cur = kv;
+            while (dottedValue(parsed, cur)) |value| {
+                cur = (parsed.ast.child(&value) catch break) orelse break;
+            }
+            return cur;
         }
 
         /// Append the span of every entry of the flow mapping `owner.flow`
@@ -3018,6 +3065,189 @@ pub fn Editor(comptime Language: type) type {
                 return true;
             }
             return false;
+        }
+
+        /// A table with no header of its own, as `headerlessHolder` finds
+        /// it: `holder` is the nearest mapping up that has lines or braces
+        /// of its own, which write the table's entries; `top` is the table
+        /// among the holder's children on the way down, whose name begins
+        /// each of those entries; `depth` is how many keys down from the
+        /// holder the table is; `flow` is whether the holder is a flow
+        /// mapping.
+        const Headerless = struct { holder: AST.Node, top: AST.Node, depth: usize, flow: bool };
+
+        /// Whether the mapping `node` is a table with no header line of its
+        /// own — TOML's `a` made by `a.b = 1` alone, by `[a.b]` alone, or by
+        /// `a.b = 1` inside an inline table, and fig's `a` in `{a.b=1}` —
+        /// and what holds it. Null for any other node: the root, a table
+        /// with a header, an element of an array of tables, a mapping that
+        /// is a value of its own.
+        fn headerlessHolder(self: *const Self, parsed: Document, node: AST.Node) ?Headerless {
+            if (!is_section_format) return null;
+            if (!self.writtenByParent(parsed, node)) return null;
+            var cur = node;
+            var depth: usize = 1;
+            while (true) : (depth += 1) {
+                const up = parsed.ast.node(parsed.ast.parentOf(parsed.ast.parentOf(cur.id).?).?);
+                if (up.kind != .mapping) return null;
+                if (self.isFlowNode(parsed, up))
+                    return .{ .holder = up, .top = cur, .depth = depth, .flow = true };
+                if (!self.writtenByParent(parsed, up)) {
+                    // A dotted table among the block lines of a format
+                    // whose line prefix is structural (fig's) is left to
+                    // `insertBlockKey`, which copies the bytes up to the
+                    // first entry's key, key path and all, as that prefix.
+                    if (!parsed.isSection(cur) or self.syntax().structural_indent) return null;
+                    return .{ .holder = up, .top = cur, .depth = depth, .flow = false };
+                }
+                cur = up;
+            }
+        }
+
+        /// Whether the mapping `node` is a table made by dotted keys, whose
+        /// entries are its parent's lines or entries: a section with no
+        /// header line of its own, or a value `dottedValue` names.
+        fn writtenByParent(self: *const Self, parsed: Document, node: AST.Node) bool {
+            if (node.kind != .mapping) return false;
+            const kv = parsed.ast.parentOf(node.id) orelse return false;
+            if (parsed.ast.kindOf(kv) != .keyvalue) return false;
+            if (parsed.isSection(node)) return !self.ownsHeaderLine(parsed, node);
+            return dottedValue(parsed, parsed.ast.node(kv)) != null;
+        }
+
+        /// The entry under the headerless table `node` that is written last
+        /// among its holder's lines or braces, or null when none is: one
+        /// that is not itself a table written there, found down through
+        /// the tables that are. An entry under a header of its own
+        /// (`[a.b]`'s) is in another body and is passed over.
+        fn lastWrittenLeaf(self: *const Self, parsed: Document, node: AST.Node, flow: bool) !?AST.Node {
+            var last: ?AST.Node = null;
+            var cur = try parsed.ast.child(&node);
+            while (cur) |kv| : (cur = parsed.ast.next(&kv)) {
+                if (kv.kind != .keyvalue) continue;
+                if (!flow and self.outOfRegion(parsed, kv)) continue;
+                const leaf = if (dottedValue(parsed, kv)) |value|
+                    try self.lastWrittenLeaf(parsed, value, flow)
+                else
+                    kv;
+                if (leaf) |l| if (last == null or parsed.span(l).end > parsed.span(last.?).end) {
+                    last = l;
+                };
+            }
+            return last;
+        }
+
+        /// The first entry of the headerless table `node` written among its
+        /// holder's lines or braces, or null when none is.
+        fn firstWrittenChild(self: *const Self, parsed: Document, node: AST.Node, flow: bool) ?AST.Node {
+            var cur = parsed.ast.child(&node) catch return null;
+            while (cur) |kv| : (cur = parsed.ast.next(&kv)) {
+                if (kv.kind != .keyvalue) continue;
+                if (!flow and self.outOfRegion(parsed, kv)) continue;
+                return kv;
+            }
+            return null;
+        }
+
+        /// Where the dotted table `table`'s name begins the entry at `at`:
+        /// the last place it is written up to there, or its key's span for
+        /// a parser that records no such place (fig's), which is right for
+        /// the table's first entry.
+        fn dottedEntryStart(parsed: Document, table: AST.Node, at: usize) usize {
+            var start: ?usize = null;
+            var mentions = parsed.mentionsOf(table.id);
+            while (mentions.next()) |m| {
+                if (m.span.start > at) break;
+                start = m.span.start;
+            }
+            if (start) |s| return s;
+            const kv = parsed.ast.parentOf(table.id) orelse return at;
+            return switch (parsed.ast.kindOf(kv)) {
+                .keyvalue => |e| @min(at, parsed.span(parsed.ast.node(e.key)).start),
+                else => at,
+            };
+        }
+
+        /// Insert `key_text` and `value_text` into the table `node` at
+        /// `path`, which has no header of its own (`headerlessHolder`).
+        ///
+        /// Its entries are lines of the holder's body or entries of the
+        /// holder's braces, each a key path from the holder down (`a.b = 1`
+        /// for `a`), and a new one is written the same way: an entry `y`
+        /// spelled as a bare key there would be the holder's own. The key
+        /// path is copied from the table's first entry as written, up to
+        /// the key under the table, so its segments keep their quoting and
+        /// spacing, and the new entry goes after the line of the table's
+        /// last entry in a body, or after the last entry inside the braces
+        /// with the flow mapping's own separator. A table with no entry there (`a` made
+        /// by `[a.b]` alone) takes the path spelled as a header spells it,
+        /// in the holder's body as any of its entries goes (`a.y = 1` at
+        /// the root, above the first header): valid TOML, which a later
+        /// `[a.b]` may still extend. A format with no header spelling
+        /// leaves such a table to `insertBlockKey`, which refuses it
+        /// (`ImplicitSection`).
+        ///
+        /// The result must read back with the table grown and nothing else
+        /// changed, or nothing is written (`ImplicitSection`).
+        fn insertHeaderless(self: *Self, parsed: Document, path: []const AST.PathSegment, node: AST.Node, owner: Headerless, key_text: []const u8, value_text: []const u8) !void {
+            const source = self.source.items;
+            var key: std.ArrayList(u8) = .empty;
+            defer key.deinit(self.allocator);
+            const leaf = try self.lastWrittenLeaf(parsed, node, owner.flow);
+            if (self.firstWrittenChild(parsed, node, owner.flow)) |below| {
+                // From the place the top table's name begins the table's
+                // first entry to the key just under `node` on it.
+                const first = firstWrittenLeaf(parsed, below);
+                const from = dottedEntryStart(parsed, owner.top, parsed.span(first).start);
+                const to = if (dottedValue(parsed, below)) |table|
+                    dottedEntryStart(parsed, table, parsed.span(first).start)
+                else
+                    parsed.span(below).start;
+                try key.appendSlice(self.allocator, source[from..to]);
+            } else {
+                const hdr = self.syntax().section_header orelse return self.insertBlockKey(parsed, node, key_text, value_text);
+                if (owner.depth > path.len) return error.ImplicitSection;
+                const key_path = path[path.len - owner.depth ..];
+                for (key_path) |seg| if (seg != .key) return error.ImplicitSection;
+                try self.writeHeaderPath(&key, hdr, key_path);
+                try key.appendSlice(self.allocator, hdr.sep);
+            }
+            try key.appendSlice(self.allocator, key_text);
+
+            const backup = try self.allocator.dupe(u8, source);
+            defer self.allocator.free(backup);
+            if (owner.flow) {
+                try self.insertFlowMapEntry(parsed, owner.holder, parsed.span(owner.holder), true, key.items, value_text);
+            } else if (leaf) |l| {
+                var out: std.ArrayList(u8) = .empty;
+                defer out.deinit(self.allocator);
+                var val_buf: std.ArrayList(u8) = .empty;
+                defer val_buf.deinit(self.allocator);
+                const place = placeOf(parsed, node);
+                const rendered = try self.renderedValue(&val_buf, value_text, place);
+                var indent_buf: std.ArrayList(u8) = .empty;
+                defer indent_buf.deinit(self.allocator);
+                const indent = try self.indentAt(&indent_buf, dottedEntryStart(parsed, owner.top, parsed.span(l).start));
+                const insert_at = lineEndAfter(source, parsed.span(l).end -| 1);
+                if (insert_at > 0 and source[insert_at - 1] != '\n') try out.append(self.allocator, '\n');
+                try out.appendSlice(self.allocator, indent);
+                try self.writeEntry(&out, indent, key.items, rendered, place);
+                try out.append(self.allocator, '\n');
+                try self.replaceAtSpan(Span.init(insert_at, insert_at), out.items);
+            } else {
+                try self.insertBlockKey(parsed, owner.holder, key.items, value_text);
+            }
+
+            var parser: Language.Parser = .{ .allocator = self.allocator };
+            const before = Language.parse(&parser, backup, self.format) catch {
+                try self.restoreSource(backup);
+                return error.ImplicitSection;
+            };
+            defer before.deinit(self.allocator);
+            if (!changedOnlyAt(before, try self.getParsed(), path, .added)) {
+                try self.restoreSource(backup);
+                return error.ImplicitSection;
+            }
         }
 
         /// The comment ending the header line of the section sequence
@@ -4431,14 +4661,17 @@ pub fn Editor(comptime Language: type) type {
             try self.requireFlowValue(value_text);
             const source = self.source.items;
             if (non_empty) {
-                const last = (try parsed.ast.lastChild(&node)).?;
-                const last_end = parsed.span(last).end;
+                // The member written last, which a table made by dotted
+                // keys may be though it is not the last child.
+                var last_end: usize = 0;
+                var each = try parsed.ast.child(&node);
+                while (each) |kv| : (each = parsed.ast.next(&kv)) last_end = @max(last_end, try self.flowEntryEnd(parsed, kv));
                 // The separator: `kv_sep`, or the bytes the first entry
                 // writes between its key and value for a format whose flow
                 // objects fix their own mode. See
                 // `Syntax.flow_kv_sep_from_siblings`.
                 const sep: []const u8 = if (self.syntax().flow_kv_sep_from_siblings) blk: {
-                    const first = parsed.ast.node(node.kind.mapping.?);
+                    const first = firstWrittenLeaf(parsed, parsed.ast.node(node.kind.mapping.?));
                     const key_end = parsed.span(parsed.ast.node(first.kind.keyvalue.key)).end;
                     const value_start = parsed.span(parsed.ast.node(first.kind.keyvalue.value)).start;
                     break :blk source[key_end..value_start];
@@ -4506,8 +4739,8 @@ pub fn Editor(comptime Language: type) type {
             if (syn.flow_kv_sep_from_siblings) copy: {
                 const first = (try parsed.ast.child(&node)).?;
                 const second = parsed.ast.next(&first) orelse break :copy;
-                const from = parsed.span(first).end;
-                const to = parsed.span(second).start;
+                const from = parsed.span(firstWrittenLeaf(parsed, first)).end;
+                const to = flowEntryStart(parsed, second);
                 if (to <= from) break :copy;
                 const gap = source[from..to];
                 const joint = Joint.split(gap, false);
@@ -6330,20 +6563,14 @@ test "set rolls back a vivified ancestor when the leaf insert fails" {
     try testing.expectEqualStrings("title: t\n", ed.source.items);
 }
 
-test "an insert into a section with no own entries takes a header line of its own, or is refused" {
+test "an insert into a section with no own entries takes a header line of its own, or the nearest one up" {
     if (comptime build_options.lang_toml) {
         // `a` is implicit: its one header line is `[a.b]`'s, and an entry
-        // written after it would belong to `a.b`.
-        var ed: Editor(Toml) = .{ .allocator = testing.allocator, .format = .TOML_1_1 };
-        try ed.init("[a.b]\nx = 1\n");
-        defer ed.deinit();
-        try testing.expectError(error.ImplicitSection, ed.set(&.{ .{ .key = "a" }, .{ .key = "y" } }, "2"));
-        try testing.expectEqualStrings("[a.b]\nx = 1\n", ed.source.items);
+        // written after it would belong to `a.b`. The root's body takes
+        // it as a dotted key.
+        try expectSet(Toml, .TOML_1_1, "[a.b]\nx = 1\n", &.{ .{ .key = "a" }, .{ .key = "y" } }, "2", "a.y = 2\n[a.b]\nx = 1\n");
         // Deeper: `a` and `a.b` both pass through `[a.b.c]`.
-        var deep: Editor(Toml) = .{ .allocator = testing.allocator, .format = .TOML_1_1 };
-        try deep.init("[a.b.c]\nx = 1\n");
-        defer deep.deinit();
-        try testing.expectError(error.ImplicitSection, deep.set(&.{ .{ .key = "a" }, .{ .key = "b" }, .{ .key = "y" } }, "2"));
+        try expectSet(Toml, .TOML_1_1, "[a.b.c]\nx = 1\n", &.{ .{ .key = "a" }, .{ .key = "b" }, .{ .key = "y" } }, "2", "a.b.y = 2\n[a.b.c]\nx = 1\n");
         // A header of its own, before or after the child's, is the anchor.
         try expectSet(Toml, .TOML_1_1, "[a.b]\nx = 1\n[a]\n", &.{ .{ .key = "a" }, .{ .key = "y" } }, "2", "[a.b]\nx = 1\n[a]\ny = 2\n");
         try expectSet(Toml, .TOML_1_1, "[a]\n[a.b]\nx = 1\n", &.{ .{ .key = "a" }, .{ .key = "y" } }, "2", "[a]\ny = 2\n[a.b]\nx = 1\n");

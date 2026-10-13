@@ -324,6 +324,73 @@ test "toml insert into an empty inline table" {
     try expectTomlSource(&ed, "p = { x = 1 }\n");
 }
 
+/// `set` `path` to `value` in `input`, and expect `expected`.
+fn expectTomlSet(input: []const u8, path: []const AST.PathSegment, value: []const u8, expected: []const u8) !void {
+    var ed = try newTomlEditor(input);
+    defer ed.deinit();
+    try ed.set(path, value);
+    try expectTomlSource(&ed, expected);
+}
+
+test "toml insert into a dotted table writes a dotted key after its last line" {
+    // A bare `y = 1` here is the root's, or `[s]`'s, not `a`'s.
+    try expectTomlSet("a.b = 1\n", &.{ .{ .key = "a" }, .{ .key = "y" } }, "1", "a.b = 1\na.y = 1\n");
+    try expectTomlSet("a.b = 1\nz = 2\n", &.{ .{ .key = "a" }, .{ .key = "y" } }, "1", "a.b = 1\na.y = 1\nz = 2\n");
+    try expectTomlSet(
+        "[s]\n  a.b = 1 # c\n  z = 2\n",
+        &.{ .{ .key = "s" }, .{ .key = "a" }, .{ .key = "y" } },
+        "1",
+        "[s]\n  a.b = 1 # c\n  a.y = 1\n  z = 2\n",
+    );
+    try expectTomlSet(
+        "a.b.c = 1\nz = 2\na.d = 3\n",
+        &.{ .{ .key = "a" }, .{ .key = "b" }, .{ .key = "y" } },
+        "1",
+        "a.b.c = 1\na.b.y = 1\nz = 2\na.d = 3\n",
+    );
+    try expectTomlSet("a.b = [\n  1,\n]\nz = 2\n", &.{ .{ .key = "a" }, .{ .key = "y" } }, "1", "a.b = [\n  1,\n]\na.y = 1\nz = 2\n");
+    // The key path is copied as written, quotes and spaces kept.
+    try expectTomlSet("\"x y\" . b = 1\n", &.{ .{ .key = "x y" }, .{ .key = "k" } }, "1", "\"x y\" . b = 1\n\"x y\" . k = 1\n");
+    try expectTomlSet(
+        "[[arr]]\nt.k = 1\n[[arr]]\nt.k = 2\n",
+        &.{ .{ .key = "arr" }, .{ .index = 0 }, .{ .key = "t" }, .{ .key = "y" } },
+        "1",
+        "[[arr]]\nt.k = 1\nt.y = 1\n[[arr]]\nt.k = 2\n",
+    );
+    // A missing table under it is a dotted key with an inline table.
+    try expectTomlSet("a.b = 1\n", &.{ .{ .key = "a" }, .{ .key = "q" }, .{ .key = "r" } }, "1", "a.b = 1\na.q = { r = 1 }\n");
+}
+
+test "toml insert into a dotted table inside an inline table goes inside its braces" {
+    try expectTomlSet(
+        "it = { a.b = 1, c = 2, a.d = 3 }\n",
+        &.{ .{ .key = "it" }, .{ .key = "a" }, .{ .key = "e" } },
+        "5",
+        "it = { a.b = 1, c = 2, a.d = 3, a.e = 5 }\n",
+    );
+    try expectTomlSet("x.it = { a.b = 1 }\n", &.{ .{ .key = "x" }, .{ .key = "it" }, .{ .key = "a" }, .{ .key = "e" } }, "5", "x.it = { a.b = 1, a.e = 5 }\n");
+    try expectTomlSet(
+        "it = {\n  a.b = 1,\n  c = 2\n}\n",
+        &.{ .{ .key = "it" }, .{ .key = "a" }, .{ .key = "e" } },
+        "5",
+        "it = {\n  a.b = 1,\n  c = 2,\n  a.e = 5\n}\n",
+    );
+    // The inline table's own new entry goes after a dotted one that ends it,
+    // whose own span is only its name.
+    try expectTomlSet("it = { c = 2, a.b = 1 }\n", &.{ .{ .key = "it" }, .{ .key = "e" } }, "5", "it = { c = 2, a.b = 1, e = 5 }\n");
+    try expectTomlSet("it = { c = 2, a.b = 1 }\n", &.{ .{ .key = "it" }, .{ .key = "a" }, .{ .key = "e" } }, "5", "it = { c = 2, a.b = 1, a.e = 5 }\n");
+}
+
+test "toml insert into a table named only by headers below it writes a dotted key in the nearest body" {
+    // TOML has no `[a]` to write after `[a.b]` made `a`, without moving
+    // `[a.b]`; the root's `a.y = 1` is `a`'s.
+    try expectTomlSet("top = 0\n\n[a.b]\nx = 1\n", &.{ .{ .key = "a" }, .{ .key = "y" } }, "1", "top = 0\na.y = 1\n\n[a.b]\nx = 1\n");
+    try expectTomlSet("[s]\n[s.a.b]\nx = 1\n", &.{ .{ .key = "s" }, .{ .key = "a" }, .{ .key = "y" } }, "1", "[s]\na.y = 1\n[s.a.b]\nx = 1\n");
+    try expectTomlSet("[[t.x]]\nk = 1\n", &.{ .{ .key = "t" }, .{ .key = "y" } }, "1", "t.y = 1\n[[t.x]]\nk = 1\n");
+    // Dotted lines and a sub-header both: after the dotted lines.
+    try expectTomlSet("a.x = 1\n[a.b]\nx = 1\n", &.{ .{ .key = "a" }, .{ .key = "y" } }, "1", "a.x = 1\na.y = 1\n[a.b]\nx = 1\n");
+}
+
 test "toml insert duplicate key rolls back" {
     var ed = try newTomlEditor("a = 1\n");
     defer ed.deinit();

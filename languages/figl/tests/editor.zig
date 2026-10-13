@@ -293,6 +293,31 @@ test "fig insert key into a two-member JSON-mode flow mapping keeps its commas" 
     try expectFigSource(&ed, "p = {\"x\": 1, \"y\": 2, \"z\": 3}\n");
 }
 
+test "fig insert key into a dotted object in a flow mapping writes its key path inside the braces" {
+    var ed = try newFigEditor("p = {a.b=1 c=2 a.d=3}\n");
+    defer ed.deinit();
+    try ed.set(&.{ .{ .key = "p" }, .{ .key = "a" }, .{ .key = "e" } }, "5");
+    try expectFigSource(&ed, "p = {a.b=1 c=2 a.d=3 a.e=5}\n");
+    try ed.set(&.{ .{ .key = "p" }, .{ .key = "f" } }, "6");
+    try expectFigSource(&ed, "p = {a.b=1 c=2 a.d=3 a.e=5 f=6}\n");
+    // A dotted first entry: the separators are its leaf's.
+    var comma = try newFigEditor("p = {a.b=1, c=2}\n");
+    defer comma.deinit();
+    try comma.set(&.{ .{ .key = "p" }, .{ .key = "e" } }, "5");
+    try expectFigSource(&comma, "p = {a.b=1, c=2, e=5}\n");
+    var deep = try newFigEditor("p = {c=1 a.\"x y\".c=1}\n");
+    defer deep.deinit();
+    try deep.set(&.{ .{ .key = "p" }, .{ .key = "a" }, .{ .key = "x y" }, .{ .key = "e" } }, "5");
+    try expectFigSource(&deep, "p = {c=1 a.\"x y\".c=1 a.\"x y\".e=5}\n");
+}
+
+test "fig insert key into a dotted object among block lines writes its key path" {
+    var ed = try newFigEditor("s\n> a.b = 1\n> z = 2\n");
+    defer ed.deinit();
+    try ed.set(&.{ .{ .key = "s" }, .{ .key = "a" }, .{ .key = "y" } }, "1");
+    try expectFigSource(&ed, "s\n> a.b = 1\n> a.y = 1\n> z = 2\n");
+}
+
 test "fig insert into a flow array still writes commas" {
     var ed = try newFigEditor("p = {a=[1]}\n");
     defer ed.deinit();

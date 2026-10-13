@@ -8,6 +8,10 @@ part_of = [docs](/docs/docs.md)
 contents
 > * [Closed tasks](/docs/tasks/closed/closed.md)
 > * [The Rust helper reads JSON with fig's json format](/docs/tasks/helper-serde-json.md)
+> * [Deleting an item of a YAML list nested on its parent's marker line drops the parent](/docs/tasks/yaml-nested-item-delete-drops-parent.md)
+> * [An inline comment on a YAML block scalar lands on the next key's line](/docs/tasks/yaml-block-scalar-trailing-comment.md)
+> * [Deleting the only element of a figl list removes the key](/docs/tasks/figl-list-emptied-removes-key.md)
+> * [fig delete panics when its edit leaves the file unparseable](/docs/tasks/cli-delete-panics-on-unparseable-edit.md)
 ```
 
 # Tasks

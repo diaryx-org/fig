@@ -1064,7 +1064,9 @@ typedef struct FigClosedContainers {
 // `line_continuation`: the byte that, last on a line, carries it on to the
 // next (`\` for .properties), or 0. `empty_seq_literal` is the empty list
 // `set` seeds to start one that is absent ("[]"), or NULL for a format with
-// no spelling for one. `size` is sizeof(FigSyntax) as the language was built
+// no spelling for one. `opener_line_comment` puts a multi-line scalar's
+// trailing comment on the line it opens on (figl's `x = ''' # note`) rather
+// than after its close. `size` is sizeof(FigSyntax) as the language was built
 // against it; a field past it takes its default.
 typedef struct FigSyntax {
     uint32_t            size;
@@ -1095,6 +1097,7 @@ typedef struct FigSyntax {
     const char         *flow_map_entry_sep;
     uint8_t             line_continuation;
     const char         *empty_seq_literal;
+    bool                opener_line_comment;
 } FigSyntax;
 
 // FigLanguageVTable.lossless: whether the language takes the `$fig` lossless

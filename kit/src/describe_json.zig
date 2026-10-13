@@ -114,7 +114,7 @@ fn syntax(w: *Writer, s: *const abi.SyntaxDesc) Writer.Error!void {
         try w.writeAll(",\"" ++ name ++ "\":");
         try optStr(w, @field(s, name));
     }
-    inline for (.{ "flow_kv_sep_from_siblings", "block_seq_editable", "flow_containers", "single_line_block_mapping", "bare_document_mapping", "structural_indent", "flow_root", "flow_maps_only" }) |name| {
+    inline for (.{ "flow_kv_sep_from_siblings", "block_seq_editable", "flow_containers", "single_line_block_mapping", "bare_document_mapping", "structural_indent", "flow_root", "flow_maps_only", "opener_line_comment" }) |name| {
         try w.print(",\"" ++ name ++ "\":{}", .{@field(s, name)});
     }
     try w.print(",\"key_sigil\":{d}", .{s.key_sigil});

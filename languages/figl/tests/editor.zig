@@ -130,6 +130,82 @@ test "fig set trailing comment on a nested header line" {
     try expectFigSource(&ed, "database\n> pool # nested container\n> > size = 10\n");
 }
 
+/// Set the trailing comment at `path` in `input` and expect `expected`; then
+/// read it back as `text`, delete it, and expect `input` again.
+fn expectTrailingRoundTrip(input: []const u8, path: []const AST.PathSegment, text: []const u8, expected: []const u8) !void {
+    var ed = try newFigEditor(input);
+    defer ed.deinit();
+    try ed.setTrailingComment(path, text);
+    try expectFigSource(&ed, expected);
+    const got = (try ed.getTrailingComment(path)).?;
+    defer std.testing.allocator.free(got);
+    try std.testing.expectEqualStrings(text, got);
+    try ed.deleteTrailingComment(path);
+    try expectFigSource(&ed, input);
+    try std.testing.expectEqual(null, try ed.getTrailingComment(path));
+}
+
+// A multi-line string's comment lives on its opener line (spec § 4.6). The
+// window began after the closing quotes, so get missed `x = ''' # op` and set
+// wrote a second comment after the close.
+test "fig a multi-line string's trailing comment lives on its opener line" {
+    const x: []const AST.PathSegment = &.{.{ .key = "x" }};
+    const el: []const AST.PathSegment = &.{ .{ .key = "xs" }, .{ .index = 0 } };
+    for ([_][]const u8{ "'''", "\"\"\"" }) |q| {
+        var in_buf: [128]u8 = undefined;
+        var out_buf: [128]u8 = undefined;
+        // A map entry's value, LF and CRLF, and a sequence element.
+        try expectTrailingRoundTrip(
+            try std.fmt.bufPrint(&in_buf, "x = {s}\ntext\n{s}\ny = 1\n", .{ q, q }),
+            x,
+            "note",
+            try std.fmt.bufPrint(&out_buf, "x = {s} # note\ntext\n{s}\ny = 1\n", .{ q, q }),
+        );
+        try expectTrailingRoundTrip(
+            try std.fmt.bufPrint(&in_buf, "x = {s}\r\ntext\r\n{s}\r\ny = 1\r\n", .{ q, q }),
+            x,
+            "note",
+            try std.fmt.bufPrint(&out_buf, "x = {s} # note\r\ntext\r\n{s}\r\ny = 1\r\n", .{ q, q }),
+        );
+        try expectTrailingRoundTrip(
+            try std.fmt.bufPrint(&in_buf, "xs\n> * {s}\ntext\n{s}\n> * z\n", .{ q, q }),
+            el,
+            "note",
+            try std.fmt.bufPrint(&out_buf, "xs\n> * {s} # note\ntext\n{s}\n> * z\n", .{ q, q }),
+        );
+
+        // An opener comment is read, replaced in place, and deleted there.
+        {
+            var ed = try newFigEditor(try std.fmt.bufPrint(&in_buf, "x = {s}  # op\r\ntext\r\n{s}\r\n", .{ q, q }));
+            defer ed.deinit();
+            const got = (try ed.getTrailingComment(x)).?;
+            defer std.testing.allocator.free(got);
+            try std.testing.expectEqualStrings("op", got);
+            try ed.setTrailingComment(x, "new");
+            try expectFigSource(&ed, try std.fmt.bufPrint(&out_buf, "x = {s} # new\r\ntext\r\n{s}\r\n", .{ q, q }));
+            try ed.deleteTrailingComment(x);
+            try expectFigSource(&ed, try std.fmt.bufPrint(&out_buf, "x = {s}\r\ntext\r\n{s}\r\n", .{ q, q }));
+        }
+
+        // A comment after the closing quotes is not the string's: get does
+        // not report it, delete leaves it, and set writes beside the opener.
+        {
+            const input = try std.fmt.bufPrint(&in_buf, "x = {s}\ntext\n{s} # close\n", .{ q, q });
+            var ed = try newFigEditor(input);
+            defer ed.deinit();
+            try std.testing.expectEqual(null, try ed.getTrailingComment(x));
+            try ed.deleteTrailingComment(x);
+            try expectFigSource(&ed, input);
+            try ed.setTrailingComment(x, "op");
+            try expectFigSource(&ed, try std.fmt.bufPrint(&out_buf, "x = {s} # op\ntext\n{s} # close\n", .{ q, q }));
+        }
+    }
+    // An empty multi-line string still opens a line of its own; a quoted
+    // string on one line keeps its comment after the close.
+    try expectTrailingRoundTrip("x = '''\n'''\n", x, "note", "x = ''' # note\n'''\n");
+    try expectTrailingRoundTrip("x = 'a'\n", x, "note", "x = 'a' # note\n");
+}
+
 // --- insertKey (block) ---
 
 test "fig insert key into root" {

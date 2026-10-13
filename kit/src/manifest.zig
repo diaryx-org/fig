@@ -686,6 +686,23 @@ pub const Syntax = struct {
     /// is the inline `[]` its editor does not extend, so all four declare
     /// null and a list there must be written whole.
     empty_seq_literal: ?[]const u8 = null,
+
+    // ================
+    // MULTI-LINE SCALARS
+    // ================
+
+    /// Whether a scalar written over several lines takes its same-line
+    /// trailing comment on the line it OPENS on — figl's `x = ''' # note`,
+    /// whose opener line holds nothing but the delimiter and the comment —
+    /// rather than after its close.
+    ///
+    /// True for figl alone. A TOML `'''`/`"""` opener's line is string
+    /// content, and a quoted YAML or JSON5 string that spans lines takes its
+    /// comment after the closing quote, so every other format keeps the
+    /// default. With it, the trailing-comment ops read, write and remove the
+    /// comment on the opener line and never the one after the close, which is
+    /// not the value's. See `editor.Editor.trailingCommentWindow`.
+    opener_line_comment: bool = false,
 };
 
 /// The five fragment renderers a format may declare — `Decls.renderers` in

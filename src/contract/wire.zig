@@ -294,6 +294,7 @@ fn syntaxOf(a: Allocator, v: std.json.Value) !*const Runtime.SyntaxDesc {
         .flow_map_entry_sep = try optString(a, o, "flow_map_entry_sep"),
         .line_continuation = byteOr0(o, "line_continuation"),
         .empty_seq_literal = try optString(a, o, "empty_seq_literal"),
+        .opener_line_comment = boolOr(o, "opener_line_comment", false),
     };
     return s;
 }

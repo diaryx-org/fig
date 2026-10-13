@@ -851,7 +851,11 @@ the single-line quote rule:
 - The opener line is still **block-layer**: a trailing `# …` after the opening
   `'''`/`"""` is an ordinary same-line comment; content capture begins at the next
   newline and runs until the close. (Stored as a `trailing` comment on the value;
-  purely a lexer sequencing rule — see "AST fit".)
+  purely a lexer sequencing rule — see "AST fit".) That line is where the
+  value's comment lives: `fig fmt` prints it there and the editor's trailing
+  comment ops act there (`Syntax.opener_line_comment`). A comment after the
+  close is not the value's; it still parses as trailing when the opener has
+  none and migrates to the opener on the next fmt, as a stacked list's does.
 
 Multiline *comments* are intentionally **not** added (settled — see "Deferred /
 declined losslessness"). A `/* … */` block would fight the line-oriented model

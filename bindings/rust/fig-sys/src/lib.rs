@@ -936,6 +936,8 @@ pub struct FigSyntax {
     pub line_continuation: u8,
     /// Null for a format with no empty-sequence spelling.
     pub empty_seq_literal: *const c_char,
+    /// A multi-line scalar's trailing comment rides its opener line.
+    pub opener_line_comment: bool,
 }
 
 /// `FigLanguageVTable::lossless`: the language takes the `$fig` envelope.

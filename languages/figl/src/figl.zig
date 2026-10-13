@@ -97,6 +97,10 @@ pub const Language = struct {
             // header lines in `Document.regionsOf`. Its refusals say
             // "container".
             .section_noun = "container",
+            // A `'''`/`"""` string's opener line holds nothing but the
+            // delimiter and its comment (spec § 4.6), and that is where the
+            // comment lives: `x = ''' # note`. See `Syntax.opener_line_comment`.
+            .opener_line_comment = true,
         };
     }
 

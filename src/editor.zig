@@ -1263,10 +1263,13 @@ pub fn Editor(comptime Language: type) type {
         /// block sequence), so the window is the key line, starting just past the
         /// key. A scalar that ends with its last line's newline — a YAML block
         /// scalar — likewise takes it on its first line, the header's, since
-        /// the line its span ends on belongs to whatever follows. `start`
-        /// always sits before any comment marker and after the value (scalar)
-        /// or key (block), or at a block scalar's header, which holds no
-        /// marker of its own, so a `#`/`//` inside the value can't false-match.
+        /// the line its span ends on belongs to whatever follows; so does a
+        /// scalar over several lines in a format whose opener line is its
+        /// comment's (`Syntax.opener_line_comment`: figl's `x = ''' # note`),
+        /// and the comment after its close is not its own. `start` always
+        /// sits before any comment marker and after the value (scalar) or key
+        /// (block), or at a multi-line scalar's opener, which holds no marker
+        /// of its own, so a `#`/`//` inside the value can't false-match.
         ///
         /// `null` when the node has no such window at all: a flow element or
         /// entry sharing its parent's line, whose line-end comment is the
@@ -1292,9 +1295,18 @@ pub fn Editor(comptime Language: type) type {
             // on is the next entry's. Its comment rides the line it opens
             // on, after the header (`a: | # note`).
             const takes_line_end = val_span.end > val_span.start and source[val_span.end - 1] == '\n';
+            // A format may put a multi-line scalar's comment on its opener
+            // line instead of after its close (figl's `x = ''' # note`, whose
+            // opener line holds only the delimiter and the comment).
+            const is_scalar = switch (std.meta.activeTag(val.kind)) {
+                .mapping, .sequence => false,
+                else => true,
+            };
+            const on_opener_line = self.syntax().opener_line_comment and is_scalar and
+                std.mem.indexOfScalar(u8, source[val_span.start..val_span.end], '\n') != null;
             const start = if (is_block_collection)
                 parsed.span(try parsed.ast.getKeyByPath(path)).end
-            else if (takes_line_end)
+            else if (takes_line_end or on_opener_line)
                 val_span.start
             else
                 val_span.end;

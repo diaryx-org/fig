@@ -2229,6 +2229,9 @@ const language = {
     // node it holds.
     line_prefix_marks: ">+",
     section_noun: "container",
+    // A `'''`/`"""` string's comment lives on its opener line:
+    // `x = ''' # note`.
+    opener_line_comment: true,
   },
   // The extension the Zig language claims: a file by that name reaches
   // whichever of the two is registered.

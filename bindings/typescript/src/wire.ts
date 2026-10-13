@@ -123,6 +123,9 @@ export interface Syntax {
   /** The empty list `set` seeds to start one that is absent (`[]`); absent
    *  or null for a format with no spelling for one. */
   empty_seq_literal?: string | null;
+  /** A scalar written over several lines takes its trailing comment on the
+   *  line it opens on (figl's `x = ''' # note`) rather than after its close. */
+  opener_line_comment?: boolean;
 }
 
 /** Which kinds the format holds natively — what the `$fig` lossless

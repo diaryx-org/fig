@@ -703,6 +703,7 @@ fn syntaxOf(arena: Allocator, s: *const SyntaxDesc) Allocator.Error!manifest.Syn
         .flow_map_entry_sep = try dupeZstr(arena, s.flow_map_entry_sep) orelse defaults.flow_map_entry_sep,
         .line_continuation = if (s.line_continuation == 0) null else s.line_continuation,
         .empty_seq_literal = try dupeZstr(arena, s.empty_seq_literal),
+        .opener_line_comment = s.opener_line_comment,
     };
     if (s.closed_containers.map_open != null) {
         out.closed_containers = .{

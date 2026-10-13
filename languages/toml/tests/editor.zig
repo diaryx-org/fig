@@ -212,6 +212,28 @@ test "toml failed edit rolls back and keeps editor usable" {
     try expectTomlSource(&ed, "a = 9\nb = 2\n");
 }
 
+// A TOML multi-line string's opener line is string content, not a place for
+// its comment (figl's is, `Syntax.opener_line_comment`): a `#` there is text,
+// and the comment goes after the close.
+test "toml a multi-line string's trailing comment goes after its close" {
+    const a: []const AST.PathSegment = &.{.{ .key = "a" }};
+    for ([_][]const u8{ "'''", "\"\"\"" }) |q| {
+        var in_buf: [96]u8 = undefined;
+        var out_buf: [96]u8 = undefined;
+        const input = try std.fmt.bufPrint(&in_buf, "a = {s} # text\nmore{s}\r\nb = 1\r\n", .{ q, q });
+        var ed = try newTomlEditor(input);
+        defer ed.deinit();
+        try std.testing.expectEqual(null, try ed.getTrailingComment(a));
+        try ed.setTrailingComment(a, "note");
+        try expectTomlSource(&ed, try std.fmt.bufPrint(&out_buf, "a = {s} # text\nmore{s} # note\r\nb = 1\r\n", .{ q, q }));
+        const got = (try ed.getTrailingComment(a)).?;
+        defer std.testing.allocator.free(got);
+        try std.testing.expectEqualStrings("note", got);
+        try ed.deleteTrailingComment(a);
+        try expectTomlSource(&ed, input);
+    }
+}
+
 // --- TOML structural editing (insert/delete scalar keys, inline arrays, AoT append) ---
 //
 // Format-preserving via spans; the genuinely scattered cases (whole-table

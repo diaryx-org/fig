@@ -86,6 +86,7 @@ pub fn syntaxDesc(comptime s: manifest.Syntax) abi.SyntaxDesc {
         .flow_map_entry_sep = z(s.flow_map_entry_sep),
         .line_continuation = s.line_continuation orelse 0,
         .empty_seq_literal = zOpt(s.empty_seq_literal),
+        .opener_line_comment = s.opener_line_comment,
     };
 }
 

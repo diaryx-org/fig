@@ -290,6 +290,10 @@ pub struct Syntax {
     /// The empty list `set` seeds to start one that is absent (`[]`), or
     /// `None` for a format with no spelling for one.
     pub empty_seq_literal: Option<String>,
+    /// Whether a scalar written over several lines takes its trailing
+    /// comment on the line it opens on (figl's `x = ''' # note`) rather
+    /// than after its close.
+    pub opener_line_comment: bool,
 }
 
 impl Default for Syntax {
@@ -324,6 +328,7 @@ impl Default for Syntax {
             flow_map_entry_sep: String::new(),
             line_continuation: None,
             empty_seq_literal: None,
+            opener_line_comment: false,
         }
     }
 }
@@ -1327,6 +1332,7 @@ impl CSyntax {
             flow_map_entry_sep: opt_ptr(&mut strings, Some(&s.flow_map_entry_sep))?,
             line_continuation: s.line_continuation.unwrap_or(0),
             empty_seq_literal: opt_ptr(&mut strings, s.empty_seq_literal.as_deref())?,
+            opener_line_comment: s.opener_line_comment,
         };
         Ok(Box::new(CSyntax {
             c,

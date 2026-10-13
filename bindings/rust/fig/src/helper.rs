@@ -667,6 +667,7 @@ pub fn syntax_to_value(x: &Syntax) -> Value {
             x.line_continuation.map_or(Value::Null, Value::from),
         ),
         ("empty_seq_literal", opt_s(&x.empty_seq_literal)),
+        ("opener_line_comment", Value::Bool(x.opener_line_comment)),
     ])
 }
 
@@ -763,6 +764,7 @@ pub fn syntax_from_value(v: &Value) -> Result<Syntax, LanguageError> {
             .filter(|&n| n > 0 && n < 256)
             .map(|n| n as u8),
         empty_seq_literal: opt_str_of(v.get("empty_seq_literal")),
+        opener_line_comment: b("opener_line_comment", d.opener_line_comment),
     })
 }
 

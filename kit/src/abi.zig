@@ -246,6 +246,7 @@ pub const SyntaxDesc = extern struct {
     line_continuation: u8 = 0,
     /// Null for a format with no empty-sequence spelling.
     empty_seq_literal: ?[*:0]const u8 = null,
+    opener_line_comment: bool = false,
 };
 
 /// `VTable.lossless`: `manifest.NativeKinds` as bits. `lossless_envelope`

@@ -67,9 +67,11 @@ function relink(text, fromDir) {
 }
 
 writeFileSync(join(out, "wire.js"), stripTypeScriptTypes(readFileSync(join(lib, "src", "wire.ts"), "utf8")));
-for (const dir of ["kit", "languages"]) {
-  for (const f of readdirSync(join(lib, dir)).filter((f) => f.endsWith(".js"))) {
-    writeFileSync(join(out, dir, f), relink(readFileSync(join(lib, dir, f), "utf8"), dir));
+// The JavaScript languages are the library package's `js/`. The native
+// modules (`@diaryx/fig-<name>`) are not served to the CLI.
+for (const [from, dir] of [["kit", "kit"], ["js", "languages"]]) {
+  for (const f of readdirSync(join(lib, from)).filter((f) => f.endsWith(".js"))) {
+    writeFileSync(join(out, dir, f), relink(readFileSync(join(lib, from, f), "utf8"), dir));
   }
 }
 console.error("· wrote lib/ (the languages, the kit and the wire, from ../typescript)");

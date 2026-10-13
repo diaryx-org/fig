@@ -1,12 +1,21 @@
 ```fig
 title = Deleting the first element of a figl + chain is refused
-part_of = [Tasks](/docs/tasks/tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 description = Deleting `r[0]` from `r[]` … `+` … leaves the `+` with no append header to re-run, so the edit does not parse and is rolled back; the next element should take the header
-status = open
+status = done
 created = 2026-10-13
+updated = 2026-10-13
 ```
 
 # Deleting the first element of a figl + chain is refused
+
+**Status.** Done, in `fix(editor): a figl delete keeps the elements after
+it, renumbering indices and re-spelling a +` (6621ef0, 2026-10-13). Deleting
+the first element of a `+` chain writes its header over the next element's
+`+` (`r[]`, or the whole nested path such as `spec.containers[].ports[]`),
+keeping that element's comments, and later index-addressed elements are
+renumbered; the node table's new `index` and `append` mentions (07b3b1b) say
+where each is written.
 
 **Repro.** On `main` at dcc6617:
 

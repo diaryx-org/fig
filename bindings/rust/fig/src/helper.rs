@@ -898,6 +898,8 @@ pub fn table_to_value(t: &NodeTable) -> Value {
                     s(match m.kind {
                         MentionKind::Header => "header",
                         MentionKind::Entry => "entry",
+                        MentionKind::Index => "index",
+                        MentionKind::Append => "append",
                     }),
                 ),
             ])
@@ -1043,10 +1045,11 @@ pub fn table_from_value(v: &Value) -> Result<NodeTable, LanguageError> {
                 m.get("span")
                     .ok_or_else(|| LanguageError::new("mention: no span"))?,
             )?,
-            kind: if m.get("kind").and_then(Value::as_str) == Some("entry") {
-                MentionKind::Entry
-            } else {
-                MentionKind::Header
+            kind: match m.get("kind").and_then(Value::as_str) {
+                Some("entry") => MentionKind::Entry,
+                Some("index") => MentionKind::Index,
+                Some("append") => MentionKind::Append,
+                _ => MentionKind::Header,
             },
         });
     }

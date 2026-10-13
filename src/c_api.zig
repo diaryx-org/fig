@@ -403,11 +403,12 @@ pub export fn fig_table_region(t: ?*FigTable, node: u32, start: u32, end: u32) F
     return .ok;
 }
 
-/// A place the section `node`'s name is written: FIG_MENTION_HEADER or
-/// FIG_MENTION_ENTRY.
+/// A place the section `node`'s name is written, FIG_MENTION_HEADER or
+/// FIG_MENTION_ENTRY, or the sequence item `node`'s path, FIG_MENTION_INDEX
+/// or FIG_MENTION_APPEND.
 pub export fn fig_table_mention(t: ?*FigTable, node: u32, start: u32, end: u32, kind: u8) FigStatus {
     const tbl = tableNode(t, node) orelse return .invalid_argument;
-    if (kind > Runtime.table.mention_entry) return .invalid_argument;
+    if (kind > Runtime.table.mention_append) return .invalid_argument;
     tbl.mentions.append(tbl.allocator, .{ .node = node, .start = start, .end = end, .kind = kind }) catch return .out_of_memory;
     return .ok;
 }

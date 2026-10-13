@@ -303,11 +303,11 @@ export interface RegionRow {
   end: number;
 }
 
-/** One place a section node's name is written. */
+/** One place a section node's name, or a sequence item's path, is written. */
 export interface MentionRow {
   node: number;
   span: RowSpan;
-  kind: "header" | "entry";
+  kind: "header" | "entry" | "index" | "append";
 }
 
 /** One comment bound to a row. Grouped by node, in source order within a

@@ -144,9 +144,13 @@ pub const Comment = extern struct { node: u32, slot: u8, style: u8, reserved: u1
 
 pub const mention_header: u8 = 0;
 pub const mention_entry: u8 = 1;
+pub const mention_index: u8 = 2;
+pub const mention_append: u8 = 3;
 
 /// A place a section node's name is written: a header line of its own, or
-/// its parent's entry line (a dotted key).
+/// its parent's entry line (a dotted key). Or a place a sequence item's
+/// path is written: its index (`mention_index`), or the header that
+/// appended it (`mention_append`). See `Document.MentionKind`.
 pub const Mention = extern struct { node: u32, start: u32, end: u32, kind: u8, reserved: [3]u8 = .{ 0, 0, 0 } };
 
 /// A tag-handle declaration of the document (YAML's `%TAG`).

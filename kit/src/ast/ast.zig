@@ -736,7 +736,7 @@ fn check(t: *table.Table, spans_rule: Spans) TableError!void {
         try checkSpan(source, f.start, f.end);
     }
     for (t.mentions.items) |f| {
-        if (f.node >= n or f.kind > table.mention_entry) return error.MalformedTable;
+        if (f.node >= n or f.kind > table.mention_append) return error.MalformedTable;
         try checkSpan(source, f.start, f.end);
     }
     sortFacts(t);

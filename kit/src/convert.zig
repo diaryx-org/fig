@@ -155,7 +155,7 @@ fn write(t: *Table, ast: *const AST, doc: ?*const Document, root: Node.Id) Alloc
             .node = n,
             .start = @intCast(m.span.start),
             .end = @intCast(m.span.end),
-            .kind = if (m.kind == .header) table.mention_header else table.mention_entry,
+            .kind = m.kind.byte(),
         });
     }
 }

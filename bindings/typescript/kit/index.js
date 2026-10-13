@@ -96,7 +96,8 @@ export class Table {
   }
 
   /** Record one place section row `node`'s name is written; `kind` is
-   *  "header" or "entry". */
+   *  "header" or "entry", or, for a sequence item's path, "index" or
+   *  "append". */
   mention(node, span, kind) {
     this.mentions.push({ node, span, kind });
   }

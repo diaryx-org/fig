@@ -1041,7 +1041,7 @@ pub fn Editor(comptime Language: type) type {
             if (path.len > 0) {
                 if (parsed.ast.getValByPath(path)) |value| {
                     const mentions = parsed.mentionsOf(value.id);
-                    if (parsed.isSection(value) and mentions.count() > 0)
+                    if (parsed.isSection(value) and namesIn(mentions) > 0)
                         return self.rewriteMentions(mentions, replacement);
                 } else |_| {}
             }
@@ -3834,6 +3834,7 @@ pub fn Editor(comptime Language: type) type {
             var pos: usize = 0;
             var mentions = mentions_;
             while (mentions.next()) |m| {
+                if (!m.kind.isName()) continue; // an item's path, not a name
                 if (m.span.start < pos) continue; // the same token reached twice
                 try out.appendSlice(self.allocator, source[pos..m.span.start]);
                 try out.appendSlice(self.allocator, rendered);
@@ -3925,7 +3926,7 @@ pub fn Editor(comptime Language: type) type {
             const parsed = try self.getParsed();
             const node = try self.sectionAt(parsed, path);
             const mentions = parsed.mentionsOf(node.id);
-            if (mentions.count() == 0) return self.refuse(.not_a_section);
+            if (namesIn(mentions) == 0) return self.refuse(.not_a_section);
             const rendered = try self.formatInsertKey(new_leaf);
             defer self.allocator.free(rendered);
             try self.rewriteMentions(mentions, rendered);
@@ -4916,6 +4917,17 @@ fn readsEmpty(doc: Document, node: AST.Node) bool {
         .mapping, .sequence => (doc.ast.child(&node) catch return false) == null,
         else => false,
     };
+}
+
+/// How many of `mentions` are a section's name, which a rename rewrites;
+/// the rest are an item's path (`Document.MentionKind.isName`).
+fn namesIn(mentions: Document.MentionIterator) usize {
+    var n: usize = 0;
+    var it = mentions;
+    while (it.next()) |m| {
+        if (m.kind.isName()) n += 1;
+    }
+    return n;
 }
 
 /// Whether the entry `kv` of the parse before a delete names an IMPLICIT

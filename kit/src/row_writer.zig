@@ -189,13 +189,14 @@ pub fn region(self: RowWriter, id: Node.Id, start: usize, end: usize) Allocator.
     try self.t.regions.append(self.t.allocator, .{ .node = id, .start = @intCast(start), .end = @intCast(end) });
 }
 
-/// A place section `id`'s name is written (`Document.mentionsOf`).
+/// A place section `id`'s name, or item `id`'s path, is written
+/// (`Document.mentionsOf`).
 pub fn mention(self: RowWriter, id: Node.Id, span: Span, kind: Document.MentionKind) Allocator.Error!void {
     try self.t.mentions.append(self.t.allocator, .{
         .node = id,
         .start = @intCast(span.start),
         .end = @intCast(span.end),
-        .kind = if (kind == .header) table.mention_header else table.mention_entry,
+        .kind = kind.byte(),
     });
 }
 

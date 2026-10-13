@@ -654,6 +654,8 @@ pub const FIG_DEPTH_NONE: c_int = -1;
 
 pub const FIG_MENTION_HEADER: u8 = 0;
 pub const FIG_MENTION_ENTRY: u8 = 1;
+pub const FIG_MENTION_INDEX: u8 = 2;
+pub const FIG_MENTION_APPEND: u8 = 3;
 pub const FIG_COMMENT_LEADING: u8 = 0;
 pub const FIG_COMMENT_TRAILING: u8 = 1;
 pub const FIG_COMMENT_DANGLING: u8 = 2;

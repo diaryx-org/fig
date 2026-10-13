@@ -907,6 +907,11 @@ typedef struct FigTableDiagnostic { uint8_t severity, reserved[3]; uint32_t star
 
 #define FIG_MENTION_HEADER 0
 #define FIG_MENTION_ENTRY  1
+// A sequence item's index where a path spells it (figl's `1` in `xs[1]`),
+// and the header that appended it or the line repeating that header
+// (figl's `a.b[]`, `+`). A delete renumbers and re-spells them.
+#define FIG_MENTION_INDEX  2
+#define FIG_MENTION_APPEND 3
 #define FIG_COMMENT_LEADING  0
 #define FIG_COMMENT_TRAILING 1
 #define FIG_COMMENT_DANGLING 2

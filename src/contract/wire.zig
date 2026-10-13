@@ -29,6 +29,7 @@ const manifest = @import("kit").manifest;
 const Language = @import("language.zig");
 const AST = @import("kit").AST;
 const Span = @import("kit").Span;
+const Document = @import("kit").Document;
 
 /// Where a request line goes and a response line comes from. Embedded in
 /// whatever owns the connection — the CLI's `Helper`, the wasm host's
@@ -645,6 +646,14 @@ fn u32Of(v: ?std.json.Value) !u32 {
     return @intCast(s.integer);
 }
 
+/// A mention's `kind` as the table's byte: `header`, `entry`, `index` or
+/// `append`, and `header` for anything else, as the wire has always read
+/// a kind it does not name.
+fn mentionKind(v: std.json.Value) u8 {
+    const kind: Document.MentionKind = if (v == .string) std.meta.stringToEnum(Document.MentionKind, v.string) orelse .header else .header;
+    return kind.byte();
+}
+
 /// The table a helper answers `parse` with, decoded into `out` through
 /// fig's own calls. `error.MalformedTable` for a shape the wire does not
 /// document. The wire spells a row as it always has — a bool's text is
@@ -720,7 +729,7 @@ pub fn tableFromJson(v: std.json.Value, out: *Runtime.Table) !void {
                 .node = try u32Of(m.object.get("node")),
                 .start = sp.start,
                 .end = sp.end,
-                .kind = if (k == .string and std.mem.eql(u8, k.string, "entry")) T.mention_entry else T.mention_header,
+                .kind = mentionKind(k),
             });
         }
     };
@@ -829,7 +838,7 @@ pub fn tableToJson(w: *Io.Writer, v: *const T.View) !void {
     try w.writeAll("],\"mentions\":[");
     for (T.slice(T.Mention, v.mentions, v.mention_count), 0..) |m, i| {
         if (i > 0) try w.writeByte(',');
-        try w.print("{{\"node\":{d},\"span\":[{d},{d}],\"kind\":\"{s}\"}}", .{ m.node, m.start, m.end, if (m.kind == T.mention_entry) "entry" else "header" });
+        try w.print("{{\"node\":{d},\"span\":[{d},{d}],\"kind\":\"{s}\"}}", .{ m.node, m.start, m.end, @tagName(Document.MentionKind.of(m.kind)) });
     }
     try w.writeAll("],\"comments\":[");
     for (T.slice(T.Comment, v.comments, v.comment_count), 0..) |c, i| {

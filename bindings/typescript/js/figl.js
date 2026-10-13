@@ -27,6 +27,10 @@
 //     later header line that re-opened it by its final segment; its
 //     *mentions* are its key and each such re-opening's key, all of kind
 //     `entry` — a fig header sits on its parent's own lines;
+//   * an element's mentions are where its path is written: each literal
+//     index that addresses it on the line it is written (`index`), and the
+//     `[]` header path that appended it or the `+` that re-ran one
+//     (`append`);
 //   * a bare value is sniffed literal-else-string: `null`, `true`, `false`,
 //     a number with its lexeme kept verbatim, a datetime; a `: type =`
 //     annotation is checked and kept as a `tag` (`!!int`, `!!float`,
@@ -687,8 +691,9 @@ class Parser {
     while (this.pos < this.n && isDigit(this.at(this.pos))) this.pos += 1;
     if (this.pos === start || this.peek() !== 93) this.fail("FigBadKey");
     const n = parseInt(this.bin.slice(start, this.pos), 10);
+    const span = [start, this.pos];
     this.advance();
-    return { index: n };
+    return { index: n, span };
   }
 
   scanKeyPath() {
@@ -704,6 +709,13 @@ class Parser {
 
   // ── path navigation ──
 
+  // `span`, a literal index, as where element node `el` is addressed — on
+  // this line only: a `+` re-runs a header an earlier line wrote.
+  indexMention(el, span) {
+    if (span[0] < this.curLineStart) return;
+    (el.paths ??= []).push({ span, kind: "index" });
+  }
+
   getOrCreateMapContainer(m, seg) {
     const e = m.index.get(seg.name);
     if (e) {
@@ -717,7 +729,8 @@ class Parser {
     return child;
   }
 
-  getOrCreateSeqContainer(s, idx) {
+  getOrCreateSeqContainer(s, step) {
+    const idx = step.index;
     if (idx === "append") {
       if (s.elements.length === 0) this.fail("FigEmptyAppendTarget");
       const last = s.elements[s.elements.length - 1];
@@ -727,10 +740,14 @@ class Parser {
     if (idx < s.elements.length) {
       const el = s.elements[idx];
       if (el.value.kind !== "container") this.fail("FigKeyNotContainer");
-      return this.open(el.value.container);
+      const c = this.open(el.value.container);
+      this.indexMention(el, step.span);
+      return c;
     } else if (idx === s.elements.length) {
       const child = newContainer();
-      s.elements.push(newNode({ kind: "container", container: child }, [this.curLineStart, this.curLineStart]));
+      const el = newNode({ kind: "container", container: child }, [this.curLineStart, this.curLineStart]);
+      s.elements.push(el);
+      this.indexMention(el, step.span);
       return child;
     }
     this.fail("FigIndexSkipped");
@@ -744,7 +761,7 @@ class Parser {
       else {
         const s = this.asSequence(cur);
         this.markAddressed(s);
-        cur = this.getOrCreateSeqContainer(s, step.index);
+        cur = this.getOrCreateSeqContainer(s, step);
       }
     }
     return cur;
@@ -785,11 +802,13 @@ class Parser {
       if (el.value.kind !== "container") this.fail("FigKeyNotContainer");
       const c = this.open(el.value.container);
       c.reentries.push({ at: this.curLineStart });
+      this.indexMention(el, last.span);
       return [c, el, null];
     } else if (idx === s.elements.length) {
       const child = newContainer();
       const el = newNode({ kind: "container", container: child }, [this.curLineStart, this.curLineStart]);
       s.elements.push(el);
+      this.indexMention(el, last.span);
       return [child, el, null];
     }
     this.fail("FigIndexSkipped");
@@ -1205,12 +1224,13 @@ class Parser {
 
   // ── lines ──
 
-  finishHeader(target, steps, depth) {
+  finishHeader(target, steps, path, depth) {
     if (!this.atEndOfContent()) this.fail("FigTrailingContent");
     const leading = this.drainPending();
     const parent = this.navigateIntermediate(target, steps);
     const last = steps[steps.length - 1];
     const [container, owner, entry] = this.resolveHeaderFinal(parent, last);
+    if (last.index === "append") (owner.paths ??= []).push({ span: path, kind: "append" });
     if (entry) entry.keyLeading.push(...leading);
     else owner.leading.push(...leading);
     const cm = this.scanTrailingCommentOnly();
@@ -1243,6 +1263,7 @@ class Parser {
       if (idx < s.elements.length) this.fail("FigIndexAlreadySet");
       if (idx > s.elements.length) this.fail("FigIndexSkipped");
       s.elements.push(valueNode);
+      this.indexMention(valueNode, last.span);
     }
   }
 
@@ -1260,7 +1281,9 @@ class Parser {
   }
 
   parseKeyLine(target, depth) {
+    const pathStart = this.pos;
     const steps = this.scanKeyPath();
+    const path = [pathStart, this.pos];
     this.skipSpacesTabs();
     if (this.peek() === 58) {
       const typeName = this.scanTypeName();
@@ -1271,7 +1294,7 @@ class Parser {
       const eq = [this.pos, this.pos + 1];
       this.advance();
       this.finishAssignment(target, steps, null, eq);
-    } else this.finishHeader(target, steps, depth);
+    } else this.finishHeader(target, steps, path, depth);
   }
 
   parseElementLine(target, depth, star) {
@@ -1331,6 +1354,7 @@ class Parser {
   }
 
   parseContinuationLine(depth) {
+    const plus = [this.pos, this.pos + 1];
     this.advance(); // +
     if (depth !== 0) this.fail("FigDanglingContinuation");
     const steps = this.lastAppendSteps;
@@ -1340,6 +1364,7 @@ class Parser {
     const leading = this.drainPending();
     const parent = this.navigateIntermediate(this.root, steps);
     const [container, owner] = this.resolveHeaderFinal(parent, steps[steps.length - 1]);
+    (owner.paths ??= []).push({ span: plus, kind: "append" });
     owner.leading.push(...leading);
     const cm = this.scanTrailingCommentOnly();
     if (cm !== null) owner.trailing = cm;
@@ -1437,6 +1462,7 @@ function buildNode(S, node) {
           S.region(item, el.span[0]);
           reenter(S, item, el.value.container);
         }
+        for (const m of el.paths ?? []) S.mention(item, m.span, m.kind);
       }
     }
     if (end > node.span[1]) node.span[1] = end;

@@ -515,7 +515,8 @@ const Frame = struct {
     child_depth: u32,
 };
 
-const IndexKind = union(enum) { literal: usize, append_or_last };
+/// An index step: a literal `[n]`, with where `n` is written, or `[]`.
+const IndexKind = union(enum) { literal: struct { n: usize, span: Span }, append_or_last };
 /// A dotted-path key segment plus its own source span (quotes included when
 /// quoted) — carried through path navigation so every entry the path creates
 /// (intermediate dotted segments included) gets an accurate key span. `name`
@@ -856,6 +857,7 @@ fn isPlusLine(self: *Parser) bool {
 /// recent `[]` append header and re-anchor the baseline to it, exactly as if
 /// the header line had been written again.
 fn parseContinuationLine(self: *Parser, depth: u32) Error!void {
+    const plus = Span.init(self.pos, self.pos + 1);
     self.advance(); // '+'
     if (depth != 0) return error.FigDanglingContinuation;
     const steps = self.last_append_steps orelse return error.FigDanglingContinuation;
@@ -863,6 +865,9 @@ fn parseContinuationLine(self: *Parser, depth: u32) Error!void {
     if (!self.atEndOfContent()) return error.FigTrailingContent;
     const parent = try self.navigateIntermediate(self.root, steps);
     const resolved = try self.resolveHeaderFinal(parent, steps[steps.len - 1]);
+    // The `+` stands for the header it re-runs: should the element before
+    // go, with that header, the header is written here.
+    try self.w.mention(resolved.container, plus, .append);
     try self.flushLeading(resolved.leading);
     if (try self.scanTrailingCommentOnly()) |cm| try self.trailing(resolved.container, cm);
     self.consumeLineEnd();
@@ -976,7 +981,9 @@ fn scanMarkers(self: *Parser) Error!Markers {
 // ── Header / assignment lines ────────────────────────────────────────────────
 
 fn parseKeyLine(self: *Parser, target: Id, depth: u32) Error!void {
+    const path_start = self.pos;
     const steps = try self.scanKeyPath();
+    const path = Span.init(path_start, self.pos);
     self.skipSpacesTabs();
     if (self.peek() == ':') {
         const colon_pos = self.pos;
@@ -998,15 +1005,19 @@ fn parseKeyLine(self: *Parser, target: Id, depth: u32) Error!void {
         self.advance();
         try self.finishAssignment(target, steps, null, eq);
     } else {
-        try self.finishHeader(target, steps, depth);
+        try self.finishHeader(target, steps, path, depth);
     }
 }
 
-fn finishHeader(self: *Parser, target: Id, steps: []const Step, depth: u32) Error!void {
+/// A header line whose key path is `steps`, written at `path`.
+fn finishHeader(self: *Parser, target: Id, steps: []const Step, path: Span, depth: u32) Error!void {
     if (!self.atEndOfContent()) return error.FigTrailingContent;
     const parent = try self.navigateIntermediate(target, steps);
     const last = steps[steps.len - 1];
     const resolved = try self.resolveHeaderFinal(parent, last);
+    // The element a header-final `[]` appends is written by this path, which
+    // a `+` after it repeats (`Document.MentionKind.append`).
+    if (last == .index and last.index == .append_or_last) try self.w.mention(resolved.container, path, .append);
     try self.flushLeading(resolved.leading);
     if (try self.scanTrailingCommentOnly()) |cm| try self.trailing(resolved.container, cm);
     self.consumeLineEnd();
@@ -1048,12 +1059,13 @@ fn finishAssignment(self: *Parser, target: Id, steps: []const Step, type_name: ?
             try self.asSequence(parent);
             try self.markAddressed(parent);
             switch (idx) {
-                .literal => |n| {
+                .literal => |lit| {
                     const len = self.elementCount(parent);
-                    if (n < len) return error.FigIndexAlreadySet;
-                    if (n > len) return error.FigIndexSkipped;
+                    if (lit.n < len) return error.FigIndexAlreadySet;
+                    if (lit.n > len) return error.FigIndexSkipped;
                     try self.flushLeading(value);
                     try self.appendElement(parent, value);
+                    try self.indexMention(value, lit.span);
                 },
                 // `xs[] = v` is not assignable: `[]` appends only as a header
                 // (or as a mid-path "last element" step) — a `= value` on it
@@ -1186,8 +1198,9 @@ fn scanIndexSeg(self: *Parser) Error!IndexKind {
     while (self.pos < self.source.len and std.ascii.isDigit(self.source[self.pos])) self.pos += 1;
     if (self.pos == start or self.peek() != ']') return error.FigBadKey;
     const n = std.fmt.parseInt(usize, self.source[start..self.pos], 10) catch return error.FigBadKey;
+    const span = Span.init(start, self.pos);
     self.advance(); // ']'
-    return .{ .literal = n };
+    return .{ .literal = .{ .n = n, .span = span } };
 }
 
 // ── Rows and containers ──────────────────────────────────────────────────────
@@ -1223,6 +1236,14 @@ fn newBlockContainer(self: *Parser, span: Span, info: ContainerInfo) Error!Id {
 fn region(self: *Parser, id: Id, at: usize) Error!void {
     const line = Document.lineRegionAt(self.source, at);
     try self.w.region(id, line.start, line.end);
+}
+
+/// `span`, a literal index on this line, as where element `id` is addressed
+/// (`Document.MentionKind.index`). A `+` re-runs a header written on an
+/// earlier line, and that line recorded its indices.
+fn indexMention(self: *Parser, id: Id, span: Span) Error!void {
+    if (span.start < self.cur_line_start) return;
+    try self.w.mention(id, span, .index);
 }
 
 /// Container `id`, unless a flow value made it — those are closed to later
@@ -1363,13 +1384,16 @@ fn getOrCreateMapContainer(self: *Parser, m: Id, seg: KeySeg, flow: bool) Error!
 fn getOrCreateSeqContainer(self: *Parser, s: Id, idx: IndexKind) Error!Id {
     const els = self.elementsOf(s);
     switch (idx) {
-        .literal => |n| {
-            if (n < els.len) {
-                if (self.infoOf(els[n]) == null) return error.FigKeyNotContainer;
-                return self.open(els[n]);
-            } else if (n == els.len) {
+        .literal => |lit| {
+            if (lit.n < els.len) {
+                if (self.infoOf(els[lit.n]) == null) return error.FigKeyNotContainer;
+                const el = try self.open(els[lit.n]);
+                try self.indexMention(el, lit.span);
+                return el;
+            } else if (lit.n == els.len) {
                 const child = try self.newBlockContainer(Span.init(self.cur_line_start, self.cur_line_start), .{});
                 try self.appendElement(s, child);
+                try self.indexMention(child, lit.span);
                 return child;
             } else return error.FigIndexSkipped;
         },
@@ -1415,10 +1439,10 @@ fn resolveHeaderFinal(self: *Parser, parent: Id, last: Step) Error!Resolved {
             try self.asSequence(parent);
             try self.markAddressed(parent);
             switch (idx) {
-                .literal => |n| {
+                .literal => |lit| {
                     const els = self.elementsOf(parent);
-                    if (n < els.len) {
-                        const el = els[n];
+                    if (lit.n < els.len) {
+                        const el = els[lit.n];
                         if (self.infoOf(el) == null) return error.FigKeyNotContainer;
                         const c = try self.open(el);
                         // An `xs[i]` header re-opening an existing element —
@@ -1427,10 +1451,12 @@ fn resolveHeaderFinal(self: *Parser, parent: Id, last: Step) Error!Resolved {
                         // line start is the same-line anchor the region
                         // gather needs.
                         try self.region(c, self.cur_line_start);
+                        try self.indexMention(c, lit.span);
                         return .{ .container = c, .leading = c };
-                    } else if (n == els.len) {
+                    } else if (lit.n == els.len) {
                         const child = try self.newBlockContainer(Span.init(self.cur_line_start, self.cur_line_start), .{});
                         try self.appendElement(parent, child);
+                        try self.indexMention(child, lit.span);
                         return .{ .container = child, .leading = child };
                     } else return error.FigIndexSkipped;
                 },

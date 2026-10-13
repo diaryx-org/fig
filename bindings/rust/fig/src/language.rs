@@ -674,7 +674,7 @@ impl RegionRow {
     }
 }
 
-/// One place a section node's name is written.
+/// One place a section node's name, or a sequence item's path, is written.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct MentionRow {
@@ -698,6 +698,13 @@ pub enum MentionKind {
     Header,
     /// On one of the parent's own entry lines.
     Entry,
+    /// A sequence item's index, where a path addresses it by position
+    /// (figl's `1` in `xs[1]`). Deleting an earlier item renumbers it.
+    Index,
+    /// The header that appended a sequence item (figl's `a.b[]`), or the
+    /// line repeating the header before it (figl's `+`). Deleting the item
+    /// before writes its header here.
+    Append,
 }
 
 /// One comment bound to a row.
@@ -1711,6 +1718,8 @@ fn fill_table(t: *mut ffi::FigTable, table: &NodeTable) -> Result<(), LanguageEr
         let kind = match m.kind {
             MentionKind::Header => ffi::FIG_MENTION_HEADER,
             MentionKind::Entry => ffi::FIG_MENTION_ENTRY,
+            MentionKind::Index => ffi::FIG_MENTION_INDEX,
+            MentionKind::Append => ffi::FIG_MENTION_APPEND,
         };
         check(unsafe {
             ffi::fig_table_mention(t, m.node, m.span.start as u32, m.span.end as u32, kind)
@@ -1880,10 +1889,11 @@ pub(crate) fn table_from_c(v: &ffi::FigTableView) -> Result<NodeTable, LanguageE
             node: m.node,
             span: span_of(m.start, m.end)
                 .ok_or_else(|| LanguageError::new("a mention has no span"))?,
-            kind: if m.kind == ffi::FIG_MENTION_ENTRY {
-                MentionKind::Entry
-            } else {
-                MentionKind::Header
+            kind: match m.kind {
+                ffi::FIG_MENTION_ENTRY => MentionKind::Entry,
+                ffi::FIG_MENTION_INDEX => MentionKind::Index,
+                ffi::FIG_MENTION_APPEND => MentionKind::Append,
+                _ => MentionKind::Header,
             },
         });
     }

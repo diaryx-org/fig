@@ -76,16 +76,57 @@ pub const NodeMention = struct {
     kind: MentionKind,
 
     fn of(m: table.Mention) NodeMention {
-        return .{ .node_id = m.node, .span = Span.init(m.start, m.end), .kind = if (m.kind == table.mention_header) .header else .entry };
+        return .{ .node_id = m.node, .span = Span.init(m.start, m.end), .kind = .of(m.kind) };
     }
 };
 
 /// How a mention sits relative to the node's parent. See `NodeMention`.
+///
+/// The first two are a section's NAME. The other two are where a SEQUENCE
+/// ITEM's place in its path is written, which no span carries either: an
+/// item has no key, and the lines that address it may be anywhere. A
+/// delete renumbers an `index` mention and re-spells an `append` one so
+/// that the items after the deleted one stay the items they were.
 pub const MentionKind = enum {
     /// A header line of the node's own, outside its parent's lines.
     header,
     /// On one of the parent's own entry lines.
     entry,
+    /// The item's index, where a path addresses it by position: figl's `1`
+    /// in `xs[1] = b`, `xs[1]` and `xs[1].k = v`. Deleting an earlier item
+    /// writes the new one over it.
+    index,
+    /// The header that appended the item — figl's `a.b[]`, the whole path —
+    /// or the line that repeats the header before it, figl's `+`. When the
+    /// item before goes, taking its header, the next item's `append`
+    /// mention is written as that header, in case it repeated it.
+    append,
+
+    /// Whether this mention is a section's name, which a rename rewrites.
+    pub fn isName(k: MentionKind) bool {
+        return k == .header or k == .entry;
+    }
+
+    /// The node table's byte for this kind (`table.mention_*`).
+    pub fn byte(k: MentionKind) u8 {
+        return switch (k) {
+            .header => table.mention_header,
+            .entry => table.mention_entry,
+            .index => table.mention_index,
+            .append => table.mention_append,
+        };
+    }
+
+    /// The kind the node table's byte `b` stands for; a table is checked
+    /// for an unknown one when it is read.
+    pub fn of(b: u8) MentionKind {
+        return switch (b) {
+            table.mention_entry => .entry,
+            table.mention_index => .index,
+            table.mention_append => .append,
+            else => .header,
+        };
+    }
 };
 
 /// Free everything but the tree, and return the tree: for a caller that

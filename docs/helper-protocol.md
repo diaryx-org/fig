@@ -136,7 +136,10 @@ samples fail is refused.
   `null`, `bool`, `int`, `float`, `string`, `sequence`, `mapping`,
   `keyvalue` and `alias`.
 - A **region** is `{"node","start","end"}`.
-- A **mention** is `{"node","span":[s,e],"kind":"header|entry"}`.
+- A **mention** is `{"node","span":[s,e],"kind":"header|entry|index|append"}`;
+  `index` and `append` are where a sequence item's path is written (figl's
+  `1` in `xs[1]`, its `a.b[]` header or `+`), and any other kind reads as
+  `header`.
 - A **comment** is `{"node","slot":"leading|trailing|dangling","style":"line|block","text"}`.
 - A **directive** is `{"handle","prefix"}`; the array is omitted when empty.
 

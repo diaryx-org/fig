@@ -658,7 +658,7 @@ export class Sections {
   }
 
   /** `span`, where the name of `node` is written, as a mention of `kind`
-   *  ("header" or "entry"). */
+   *  ("header" or "entry"; "index" or "append" for an item's path). */
   mention(node, span, kind) {
     (node.mentions ??= []).push({ span, kind });
   }

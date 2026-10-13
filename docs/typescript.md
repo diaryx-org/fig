@@ -607,11 +607,15 @@ for your own formats too:
   its spans, comment binding and duplicate-key policy follow from it;
 - `@diaryx/fig/kit/xml`: the XML tokenizer;
 - `@diaryx/fig/kit/number` and `@diaryx/fig/kit/datetime`: how a number is
-  spelled for a format, and which datetime a bare token is.
+  spelled for a format, and which datetime a bare token is. These two are
+  the Zig kit's own rules, a 5 KB WebAssembly module the kit compiles the
+  first time one is asked, so a language written in JavaScript spells a
+  number and reads a datetime exactly as fig's own languages do.
 
-All of it is plain JavaScript that runs unchanged in Node, the browser, and
-the QuickJS that `fig-quickjs` embeds. `languages/json.js` in the package is
-the one to read first.
+The rest is plain JavaScript that runs unchanged in Node, the browser, and
+the QuickJS that `fig-quickjs` embeds. A host with no WebAssembly, as
+QuickJS has none, replaces `kit/zig.js`, the one file that loads the
+module. `js/json.js` in the package is the one to read first.
 
 **The same object is a CLI helper.** `serve(lang)` runs the wire over a
 process's stdin and stdout, which is what the `fig` command line speaks to a

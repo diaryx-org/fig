@@ -27,6 +27,21 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     }) });
     b.step("test", "Run the kit's tests").dependOn(&b.addRunArtifact(tests).step);
+
+    // The kit's rules as a WebAssembly module, `fig-kit.wasm`, which the
+    // JavaScript kit answers through (`src/js.zig`).
+    const wasm = b.addExecutable(.{
+        .name = "fig-kit",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/js.zig"),
+            .target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding }),
+            .optimize = .ReleaseSmall,
+            .strip = true,
+        }),
+    });
+    wasm.entry = .disabled;
+    wasm.rdynamic = true;
+    b.step("wasm", "Build the kit's WebAssembly module, for the JavaScript kit").dependOn(&b.addInstallArtifact(wasm, .{}).step);
 }
 
 pub const LanguageOptions = struct {

@@ -1,9 +1,9 @@
 ```fig
 title = The Rust helper reads JSON with fig's json format
 description = `fig::helper` parses and writes JSON-RPC through the `json` language, so a helper built without that feature cannot read a request; it should use serde_json behind a `helper` feature
-status = open
+status = in-progress
 created = 2026-10-12
-updated = 2026-10-12
+updated = 2026-10-13
 part_of = [Tasks](/docs/tasks/tasks.md)
 ```
 
@@ -30,3 +30,16 @@ the move changes their API too.
 functions trade `serde_json::Value`, `tinykv_helper` builds with
 `--no-default-features --features helper`, and fig-lua and fig-quickjs
 build against it.
+
+## Where it stands
+
+fig's half is done (495355e): the module reads and writes with
+`serde_json`, behind a `helper` feature that is off by default; `handle`,
+`decode`, `encode` and the `*_to_value` and `*_from_value` functions trade
+`serde_json::Value`; `tinykv_helper` requires the feature and registers no
+language.
+
+What remains is the runners'. fig-lua and fig-quickjs still build against
+the 5.x `fig::helper`, which traded `fig::Value`. Each turns on the
+`helper` feature and moves its calls to `serde_json::Value` as part of its
+port to fig 6, and this task closes when both build against it.

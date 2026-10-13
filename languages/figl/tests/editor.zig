@@ -166,14 +166,41 @@ test "fig insert key into a fig-inline flow mapping" {
     var ed = try newFigEditor("p = { x = 1 }\n");
     defer ed.deinit();
     try ed.insertKey(&.{.{ .key = "p" }}, "y", "2");
-    try expectFigSource(&ed, "p = { x = 1, y = 2 }\n");
+    try expectFigSource(&ed, "p = { x = 1 y = 2 }\n");
 }
 
-test "fig insert key into an empty flow mapping defaults to fig-inline" {
+// A compact object (`{a=1 b=2}`) stays in the form `fig fmt` writes: pairs
+// parted by a space, no spaces around `=`, no padding inside the braces.
+test "fig insert key into a compact flow mapping writes no comma" {
+    var ed = try newFigEditor("p = {a=1}\n");
+    defer ed.deinit();
+    try ed.insertKey(&.{.{ .key = "p" }}, "b", "2");
+    try expectFigSource(&ed, "p = {a=1 b=2}\n");
+    try ed.insertKey(&.{.{ .key = "p" }}, "c", "3");
+    try expectFigSource(&ed, "p = {a=1 b=2 c=3}\n");
+}
+
+test "fig insert key into an empty flow mapping writes it compact" {
     var ed = try newFigEditor("p = {}\n");
     defer ed.deinit();
     try ed.insertKey(&.{.{ .key = "p" }}, "x", "1");
-    try expectFigSource(&ed, "p = { x = 1 }\n");
+    try expectFigSource(&ed, "p = {x=1}\n");
+    try ed.insertKey(&.{.{ .key = "p" }}, "y", "2");
+    try expectFigSource(&ed, "p = {x=1 y=2}\n");
+}
+
+test "fig insert key into a comma-joined fig-inline flow mapping keeps its commas" {
+    var ed = try newFigEditor("p = {a=1, b=2}\n");
+    defer ed.deinit();
+    try ed.insertKey(&.{.{ .key = "p" }}, "c", "3");
+    try expectFigSource(&ed, "p = {a=1, b=2, c=3}\n");
+}
+
+test "fig insert key into a multi-line compact flow mapping writes no comma" {
+    var ed = try newFigEditor("p = {\n  a=1\n}\n");
+    defer ed.deinit();
+    try ed.insertKey(&.{.{ .key = "p" }}, "b", "2");
+    try expectFigSource(&ed, "p = {\n  a=1\n  b=2\n}\n");
 }
 
 test "fig insert key into a JSON-mode flow mapping matches its colon separator" {
@@ -181,6 +208,20 @@ test "fig insert key into a JSON-mode flow mapping matches its colon separator" 
     defer ed.deinit();
     try ed.insertKey(&.{.{ .key = "p" }}, "\"y\"", "2");
     try expectFigSource(&ed, "p = { \"x\": 1, \"y\": 2 }\n");
+}
+
+test "fig insert key into a two-member JSON-mode flow mapping keeps its commas" {
+    var ed = try newFigEditor("p = {\"x\": 1, \"y\": 2}\n");
+    defer ed.deinit();
+    try ed.insertKey(&.{.{ .key = "p" }}, "\"z\"", "3");
+    try expectFigSource(&ed, "p = {\"x\": 1, \"y\": 2, \"z\": 3}\n");
+}
+
+test "fig insert into a flow array still writes commas" {
+    var ed = try newFigEditor("p = {a=[1]}\n");
+    defer ed.deinit();
+    try ed.appendToSeq(&.{ .{ .key = "p" }, .{ .key = "a" } }, "2");
+    try expectFigSource(&ed, "p = {a=[1, 2]}\n");
 }
 
 test "fig insert duplicate key rolls back" {
@@ -229,6 +270,24 @@ test "fig delete key inside a packed flow mapping (regression)" {
     defer ed.deinit();
     try ed.deleteKey(&.{ .{ .key = "p" }, .{ .key = "y" } });
     try expectFigSource(&ed, "p = { x = 1 }\n");
+}
+
+test "fig delete key inside a compact flow mapping leaves it compact" {
+    var ed = try newFigEditor("p = {a=1 b=2 c=3}\n");
+    defer ed.deinit();
+    try ed.deleteKey(&.{ .{ .key = "p" }, .{ .key = "b" } });
+    try expectFigSource(&ed, "p = {a=1 c=3}\n");
+    try ed.deleteKey(&.{ .{ .key = "p" }, .{ .key = "a" } });
+    try expectFigSource(&ed, "p = {c=3}\n");
+    try ed.deleteKey(&.{ .{ .key = "p" }, .{ .key = "c" } });
+    try expectFigSource(&ed, "p = {}\n");
+}
+
+test "fig delete key inside a JSON-mode flow mapping keeps its commas" {
+    var ed = try newFigEditor("p = {\"x\": 1, \"y\": 2, \"z\": 3}\n");
+    defer ed.deinit();
+    try ed.deleteKey(&.{ .{ .key = "p" }, .{ .key = "y" } });
+    try expectFigSource(&ed, "p = {\"x\": 1, \"z\": 3}\n");
 }
 
 test "fig delete only key of a single-entry flow mapping (regression)" {

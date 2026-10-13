@@ -275,6 +275,14 @@ pub struct Syntax {
     /// Bytes besides whitespace and `seq_item_marker`'s that may stand
     /// before a node at the start of its line (figl's `>` and `+`).
     pub line_prefix_marks: String,
+    /// The key/value separator of a flow object's entries, where it differs
+    /// from a block entry's (figl's `=` in `{a=1}`): the first entry of an
+    /// empty flow object is written with it. Empty for none.
+    pub flow_map_kv_sep: String,
+    /// The bytes between two members of a flow object whose entries are
+    /// written with `flow_map_kv_sep` (figl's ` ` in `{a=1 b=2}`). Empty
+    /// for none: `flow_entry_sep` and a space.
+    pub flow_map_entry_sep: String,
 }
 
 impl Default for Syntax {
@@ -305,6 +313,8 @@ impl Default for Syntax {
             flow_root: false,
             flow_maps_only: false,
             line_prefix_marks: String::new(),
+            flow_map_kv_sep: String::new(),
+            flow_map_entry_sep: String::new(),
         }
     }
 }
@@ -1304,6 +1314,8 @@ impl CSyntax {
             flow_root: s.flow_root,
             flow_maps_only: s.flow_maps_only,
             line_prefix_marks: opt_ptr(&mut strings, Some(&s.line_prefix_marks))?,
+            flow_map_kv_sep: opt_ptr(&mut strings, Some(&s.flow_map_kv_sep))?,
+            flow_map_entry_sep: opt_ptr(&mut strings, Some(&s.flow_map_entry_sep))?,
         };
         Ok(Box::new(CSyntax {
             c,

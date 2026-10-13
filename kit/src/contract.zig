@@ -82,6 +82,8 @@ pub fn syntaxDesc(comptime s: manifest.Syntax) abi.SyntaxDesc {
         .flow_root = s.flow_root,
         .flow_maps_only = s.flow_maps_only,
         .line_prefix_marks = z(s.line_prefix_marks),
+        .flow_map_kv_sep = z(s.flow_map_kv_sep),
+        .flow_map_entry_sep = z(s.flow_map_entry_sep),
     };
 }
 

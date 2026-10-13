@@ -661,6 +661,8 @@ pub fn syntax_to_value(x: &Syntax) -> Value {
         ("flow_root", Value::Bool(x.flow_root)),
         ("flow_maps_only", Value::Bool(x.flow_maps_only)),
         ("line_prefix_marks", s(&x.line_prefix_marks)),
+        ("flow_map_kv_sep", s(&x.flow_map_kv_sep)),
+        ("flow_map_entry_sep", s(&x.flow_map_entry_sep)),
     ])
 }
 
@@ -749,6 +751,8 @@ pub fn syntax_from_value(v: &Value) -> Result<Syntax, LanguageError> {
         flow_root: b("flow_root", d.flow_root),
         flow_maps_only: b("flow_maps_only", d.flow_maps_only),
         line_prefix_marks: st("line_prefix_marks", &d.line_prefix_marks),
+        flow_map_kv_sep: st("flow_map_kv_sep", &d.flow_map_kv_sep),
+        flow_map_entry_sep: st("flow_map_entry_sep", &d.flow_map_entry_sep),
     })
 }
 

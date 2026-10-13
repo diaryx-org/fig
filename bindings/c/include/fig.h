@@ -1054,7 +1054,10 @@ typedef struct FigClosedContainers {
 // `style` attribute), and needs `flow_containers`; `flow_maps_only` stops a
 // `[` from opening a flow sequence; `line_prefix_marks` lists the bytes besides
 // whitespace and seq_item_marker's that may stand before a node at the start
-// of its line (NULL is none). `size` is sizeof(FigSyntax) as the
+// of its line (NULL is none). `flow_map_kv_sep` is the key/value separator
+// of a flow object's entries where it differs from a block entry's (figl's
+// "=" in `{a=1}`), and a flow object written with it joins its members with
+// `flow_map_entry_sep` (figl's " "); NULL for either is none. `size` is sizeof(FigSyntax) as the
 // language was built against it; a field past it takes its default.
 typedef struct FigSyntax {
     uint32_t            size;
@@ -1081,6 +1084,8 @@ typedef struct FigSyntax {
     bool                flow_root;
     bool                flow_maps_only;
     const char         *line_prefix_marks;
+    const char         *flow_map_kv_sep;
+    const char         *flow_map_entry_sep;
 } FigSyntax;
 
 // FigLanguageVTable.lossless: whether the language takes the `$fig` lossless

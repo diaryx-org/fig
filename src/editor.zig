@@ -188,7 +188,8 @@ pub fn Editor(comptime Language: type) type {
         /// after it (`, `); a separated sequence's is the one its parser
         /// named (`Document.itemSep`), split at its whitespace
         /// (` | ` is `|` with a space either side; ` ` is all whitespace and
-        /// no token, so a delete consumes only the run of whitespace).
+        /// no token, so a delete consumes only the run of whitespace). An
+        /// insert into a flow mapping is joined by one too (`flowMapJoint`).
         const Joint = struct {
             lead: []const u8,
             token: []const u8,
@@ -203,16 +204,22 @@ pub fn Editor(comptime Language: type) type {
             fn breaksLine(j: Joint) bool {
                 return std.mem.indexOfScalar(u8, j.lead, '\n') != null or std.mem.indexOfScalar(u8, j.trail, '\n') != null;
             }
+
+            /// `text` split at its whitespace: what comes before its first
+            /// other byte, those bytes, and what comes after.
+            fn split(text: []const u8, declared: bool) Joint {
+                const ws = " \t\r\n";
+                const start = std.mem.indexOfNone(u8, text, ws) orelse return .{ .lead = text, .token = "", .trail = "", .declared = declared };
+                const end = std.mem.lastIndexOfNone(u8, text, ws).? + 1;
+                return .{ .lead = text[0..start], .token = text[start..end], .trail = text[end..], .declared = declared };
+            }
         };
 
         fn jointOf(self: *const Self, parsed: Document, node: AST.Node) Joint {
             const dialect: Joint = .{ .lead = "", .token = self.syntax().flow_entry_sep, .trail = " ", .declared = false };
             const is = parsed.itemSep(node) orelse return dialect;
             const text = is.text orelse return .{ .lead = "", .token = dialect.token, .trail = " ", .declared = true };
-            const ws = " \t\r\n";
-            const start = std.mem.indexOfNone(u8, text, ws) orelse return .{ .lead = text, .token = "", .trail = "", .declared = true };
-            const end = std.mem.lastIndexOfNone(u8, text, ws).? + 1;
-            return .{ .lead = text[0..start], .token = text[start..end], .trail = text[end..], .declared = true };
+            return Joint.split(text, true);
         }
 
         /// Append the bytes that go between an item and the next one of the
@@ -3622,6 +3629,7 @@ pub fn Editor(comptime Language: type) type {
                     const value_start = parsed.span(parsed.ast.node(first.kind.keyvalue.value)).start;
                     break :blk source[key_end..value_start];
                 } else try self.kvSep();
+                const joint = try self.flowMapJoint(parsed, node, sep);
                 // Multi-line layout: the closing brace is separated from the last
                 // member by a newline (an open root, which has no brace: its
                 // first and last members are on different lines). Splice after
@@ -3638,7 +3646,7 @@ pub fn Editor(comptime Language: type) type {
                     const col = columnOf(source, firstNonSpace(source, lineStartBefore(source, parsed.span(key_node).start)));
                     var out: std.ArrayList(u8) = .empty;
                     defer out.deinit(self.allocator);
-                    try out.appendSlice(self.allocator, self.syntax().flow_entry_sep);
+                    try out.appendSlice(self.allocator, joint.token);
                     try out.append(self.allocator, '\n');
                     try out.appendNTimes(self.allocator, ' ', col);
                     try out.appendSlice(self.allocator, key_text);
@@ -3655,8 +3663,9 @@ pub fn Editor(comptime Language: type) type {
                 // padding after the new entry instead.
                 var out: std.ArrayList(u8) = .empty;
                 defer out.deinit(self.allocator);
-                try out.appendSlice(self.allocator, self.syntax().flow_entry_sep);
-                try out.append(self.allocator, ' ');
+                try out.appendSlice(self.allocator, joint.lead);
+                try out.appendSlice(self.allocator, joint.token);
+                try out.appendSlice(self.allocator, joint.trail);
                 try out.appendSlice(self.allocator, key_text);
                 try out.appendSlice(self.allocator, sep);
                 try out.appendSlice(self.allocator, value_text);
@@ -3664,6 +3673,39 @@ pub fn Editor(comptime Language: type) type {
                 return;
             }
             return self.insertFlowEntry(parsed, node, span, key_text, value_text);
+        }
+
+        /// The bytes an insert writes between the last member of the
+        /// non-empty flow mapping `node` and a new one on its line, the new
+        /// one's key and value parted by `kv`. A format that copies its flow
+        /// separators (`Syntax.flow_kv_sep_from_siblings`) takes the bytes
+        /// between the first two members when they share a line and hold
+        /// nothing but spaces and at most one `flow_entry_sep`, so
+        /// `{a=1, b=2}` stays comma-joined. Otherwise an object whose
+        /// entries are spelled with `flow_map_kv_sep` is joined by
+        /// `flow_map_entry_sep` (fig's `{a=1 b=2}`), and any other by
+        /// `flow_entry_sep` and a space. A multi-line insert writes only the
+        /// joint's token.
+        fn flowMapJoint(self: *const Self, parsed: Document, node: AST.Node, kv: []const u8) !Joint {
+            const source = self.source.items;
+            const syn = self.syntax();
+            if (syn.flow_kv_sep_from_siblings) copy: {
+                const first = (try parsed.ast.child(&node)).?;
+                const second = parsed.ast.next(&first) orelse break :copy;
+                const from = parsed.span(first).end;
+                const to = parsed.span(second).start;
+                if (to <= from) break :copy;
+                const gap = source[from..to];
+                const joint = Joint.split(gap, false);
+                if (std.mem.indexOfAny(u8, gap, "\r\n") != null) break :copy;
+                if (joint.token.len > 0 and !std.mem.eql(u8, joint.token, syn.flow_entry_sep)) break :copy;
+                return joint;
+            }
+            const trim = " \t";
+            if (syn.flow_map_entry_sep.len > 0 and syn.flow_map_kv_sep.len > 0 and
+                std.mem.eql(u8, std.mem.trim(u8, kv, trim), std.mem.trim(u8, syn.flow_map_kv_sep, trim)))
+                return Joint.split(syn.flow_map_entry_sep, false);
+            return .{ .lead = "", .token = syn.flow_entry_sep, .trail = " ", .declared = false };
         }
 
         /// Insert the first entry into an EMPTY flow mapping (`{}` / ZON's
@@ -3680,7 +3722,10 @@ pub fn Editor(comptime Language: type) type {
             const pad = if (open_root) "" else self.syntax().flow_map_pad;
             try out.appendSlice(self.allocator, pad);
             try out.appendSlice(self.allocator, key_text);
-            try out.appendSlice(self.allocator, try self.kvSep());
+            // A format that spells flow entries apart from block ones says
+            // how: `Syntax.flow_map_kv_sep`.
+            const kv = self.syntax().flow_map_kv_sep;
+            try out.appendSlice(self.allocator, if (kv.len > 0) kv else try self.kvSep());
             try out.appendSlice(self.allocator, value_text);
             try out.appendSlice(self.allocator, pad);
             // Just after '{' (or ZON's '.{'); an open root has no opener, and

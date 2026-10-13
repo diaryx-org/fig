@@ -240,6 +240,8 @@ pub const SyntaxDesc = extern struct {
     flow_root: bool = false,
     flow_maps_only: bool = false,
     line_prefix_marks: ?[*:0]const u8 = null,
+    flow_map_kv_sep: ?[*:0]const u8 = null,
+    flow_map_entry_sep: ?[*:0]const u8 = null,
 };
 
 /// `VTable.lossless`: `manifest.NativeKinds` as bits. `lossless_envelope`

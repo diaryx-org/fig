@@ -15,8 +15,8 @@ part_of = [proposals](proposals.md)
 > A language change: every input whose meaning moves either already warned
 > or now fails loudly, except `{a.b = 1}`, whose old reading (a key with a
 > dot in it) was a bug against § 5.1. It is a major; the C ABI does not
-> move. Still to follow: the editor's separators (§ 6, a task) and the fig
-> twins in fig-lua and fig-quickjs.
+> move. The editor's separators (§ 6) followed. Still
+> to follow: the fig twins in fig-lua and fig-quickjs.
 
 ## 1. The claim
 
@@ -148,12 +148,15 @@ object, so `fmt` breaks it to block form like any other object-in-object.
 
 ## 6. Editing
 
-The splice engine inserts into a flow object using `Syntax.flow_entry_sep`
-(`,`) and, for fig, the key/value separator copied from the first sibling
-(`flow_kv_sep_from_siblings`). After this change an insert into `{a=1}` writes
-`{a=1, b=2}` — valid, since commas are still accepted, but not canonical.
-Making the engine write `{a=1 b=2}` needs a per-object entry separator, which
-`Syntax` cannot say today; that is a follow-up, filed as [a task](/docs/tasks/compact-object-editor-separator.md).
+An insert into a fig-spelled object writes it compact, as `fmt` would: `{a=1}`
+takes `b` as `{a=1 b=2}`, and `{}` takes `a` as `{a=1}`. Two `Syntax` fields
+say how: `flow_map_kv_sep` (`=`) is the key/value separator of an empty
+object's first entry, and an object whose first entry is written with it,
+spaces aside, joins its members with `flow_map_entry_sep` (` `). An object
+whose first two members share a line is joined as they are, so `{a=1, b=2}`
+keeps its commas, and a JSON-spelled object is joined by `flow_entry_sep`
+(`,`) as before. A delete drops one adjoining separator, whichever it is, so
+it leaves either spelling as it was.
 
 ## 7. Compatibility
 

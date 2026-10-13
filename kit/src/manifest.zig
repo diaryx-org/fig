@@ -415,12 +415,14 @@ pub const Syntax = struct {
     /// rather than writing `kv_sep`. True for fig, whose flow objects are
     /// either `=`-mode or `:`-mode (JSON-embedded) and may not mix the two,
     /// so the right separator is whichever the object already uses. An
-    /// empty flow mapping has no first entry and takes `kv_sep`.
+    /// empty flow mapping has no first entry and takes `flow_map_kv_sep`,
+    /// or else `kv_sep`. With it, an insert into a flow object whose first
+    /// two members share a line also copies the bytes between them.
     flow_kv_sep_from_siblings: bool = false,
 
     /// Bytes written inside the braces around a freshly created single
-    /// member of an EMPTY flow mapping: `" "` for fig's `{ x = 1 }`, none
-    /// for JSON's and YAML's tight `{x: 1}`.
+    /// member of an EMPTY flow mapping: `" "` for TOML's `{ x = 1 }`, none
+    /// for JSON's and YAML's tight `{x: 1}` or fig's `{x=1}`.
     flow_map_pad: []const u8 = "",
 
     /// A sigil each key carries in the source that its AST key span EXCLUDES
@@ -640,6 +642,26 @@ pub const Syntax = struct {
     /// prefix holds anything else holds another node too, so the node does
     /// not own the line, and commenting it out is refused.
     line_prefix_marks: []const u8 = "",
+
+    // ================
+    // COMPACT OBJECTS
+    // ================
+
+    /// The key/value separator of a flow object whose entries are spelled
+    /// apart from block entries: fig's `=` in `{a=1}`, against ` = ` in
+    /// `a = 1`. The first entry of an empty flow object is written with it
+    /// rather than `kv_sep`, and a flow object whose first entry is written
+    /// with it, spaces aside, joins its members with `flow_map_entry_sep`.
+    /// Empty for a format whose flow and block entries are spelled alike.
+    flow_map_kv_sep: []const u8 = "",
+
+    /// The bytes between two members, on one line, of a flow object whose
+    /// first entry separates its key and value with `flow_map_kv_sep`:
+    /// fig's ` ` in `{a=1 b=2}`. Any other flow object (a JSON-spelled one
+    /// in fig) is joined by `flow_entry_sep` and a space. A flow object
+    /// that already has two members on one line is joined as those two
+    /// are, when `flow_kv_sep_from_siblings` is set. Empty for none.
+    flow_map_entry_sep: []const u8 = "",
 };
 
 /// The five fragment renderers a format may declare — `Decls.renderers` in

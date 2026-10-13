@@ -69,11 +69,13 @@ pub const Language = struct {
             .comments = .hash,
             // `key = value`. A flow object is `=`-mode or `:`-mode
             // (JSON-embedded) and may not mix, so an insert into a non-empty
-            // one copies the separator its first entry uses; an empty one
-            // takes this, padded fig-inline style: `{ x = 1 }`.
+            // one copies the separators it already uses. An `=`-mode one is
+            // compact, as `fig fmt` writes it — `{x=1 y=2}`, unpadded — and
+            // an empty one takes that form.
             .kv_sep = " = ",
             .flow_kv_sep_from_siblings = true,
-            .flow_map_pad = " ",
+            .flow_map_kv_sep = "=",
+            .flow_map_entry_sep = " ",
             // A dotted-key format: the flow chain is the idiomatic
             // intermediate form, and `fig fmt` canonicalizes it back.
             .empty_map_literal = "{}",

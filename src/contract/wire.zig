@@ -290,6 +290,8 @@ fn syntaxOf(a: Allocator, v: std.json.Value) !*const Runtime.SyntaxDesc {
         .flow_root = boolOr(o, "flow_root", false),
         .flow_maps_only = boolOr(o, "flow_maps_only", false),
         .line_prefix_marks = try optString(a, o, "line_prefix_marks"),
+        .flow_map_kv_sep = try optString(a, o, "flow_map_kv_sep"),
+        .flow_map_entry_sep = try optString(a, o, "flow_map_entry_sep"),
     };
     return s;
 }

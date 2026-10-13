@@ -110,7 +110,7 @@ fn syntax(w: *Writer, s: *const abi.SyntaxDesc) Writer.Error!void {
     try w.writeAll(",\"block\":");
     try delimiter(w, s.comments.block);
     try w.writeByte('}');
-    inline for (.{ "kv_sep", "flow_map_pad", "empty_map_literal", "indent_unit", "seq_item_marker", "flow_map_open", "flow_map_close", "section_noun", "merge_key", "flow_entry_sep", "line_prefix_marks" }) |name| {
+    inline for (.{ "kv_sep", "flow_map_pad", "empty_map_literal", "indent_unit", "seq_item_marker", "flow_map_open", "flow_map_close", "section_noun", "merge_key", "flow_entry_sep", "line_prefix_marks", "flow_map_kv_sep", "flow_map_entry_sep" }) |name| {
         try w.writeAll(",\"" ++ name ++ "\":");
         try optStr(w, @field(s, name));
     }

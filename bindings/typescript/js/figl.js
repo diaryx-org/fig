@@ -2197,8 +2197,10 @@ const language = {
   syntax: {
     comments: { line: { open: "#" }, trailing: { open: "#" } },
     kv_sep: " = ",
+    // An `=`-mode flow object is compact, as `fig fmt` writes it: `{x=1 y=2}`.
     flow_kv_sep_from_siblings: true,
-    flow_map_pad: " ",
+    flow_map_kv_sep: "=",
+    flow_map_entry_sep: " ",
     empty_map_literal: "{}",
     // The `>` run that opens a line is depth, not whitespace: a line the
     // engine writes repeats it; one level is one `> ` cell, an element `* `.

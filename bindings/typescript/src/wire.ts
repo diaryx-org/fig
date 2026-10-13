@@ -111,6 +111,12 @@ export interface Syntax {
   /** Bytes besides whitespace and `seq_item_marker`'s that may stand before
    *  a node at the start of its line; absent is none. */
   line_prefix_marks?: string | null;
+  /** The key/value separator of a flow object's entries where it differs
+   *  from a block entry's (figl's `=` in `{a=1}`); absent is none. */
+  flow_map_kv_sep?: string | null;
+  /** The bytes between two members of a flow object written with
+   *  `flow_map_kv_sep` (figl's ` `); absent is `flow_entry_sep` and a space. */
+  flow_map_entry_sep?: string | null;
 }
 
 /** Which kinds the format holds natively — what the `$fig` lossless

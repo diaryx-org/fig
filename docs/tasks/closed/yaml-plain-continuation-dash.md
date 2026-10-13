@@ -1,12 +1,21 @@
 ```fig
 title = A YAML plain scalar's continuation line that starts with a dash reads as a nested list
-part_of = [Tasks](/docs/tasks/tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 description = `- a` over `  - b` reads as `["a", ["b"]]`, where YAML folds the more-indented line into the plain scalar, `["a - b"]`
-status = open
+status = done
 created = 2026-10-13
+updated = 2026-10-13
 ```
 
 # A YAML plain scalar's continuation line that starts with a dash reads as a nested list
+
+**Status.** Done, in `fix(yaml): a plain scalar continues onto a
+more-indented line that starts with a dash` (df9edca, 2026-10-13). In both
+the Zig parser and the JavaScript twin, a plain scalar continues onto any
+line indented past its collection's column, a leading `- ` or `? ` read as
+text, and a line indented under an entry whose value is already complete is
+refused, as PyYAML refuses it. The yaml-test-suite expect score rose by one
+(AB8U) and no score dropped.
 
 **Repro.** On `main` at 0f784cb, against PyYAML 6.0.2:
 

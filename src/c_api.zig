@@ -2734,6 +2734,32 @@ test "traversal over a parsed mapping" {
     try std.testing.expectEqual(@as(usize, 2), fig_node_child_count(doc, tags_val));
 }
 
+test "a spec version is a dialect of its own, found by name" {
+    if (comptime !(build_options.lang_yaml and build_options.lang_toml)) return error.SkipZigTest;
+    // YAML 1.1 resolves `yes` as a boolean; the default, 1.2.2, as a string.
+    const yes = "a: yes\n";
+    for ([_]struct { [:0]const u8, FigNodeKind }{ .{ "yaml", .string }, .{ "yaml-1.2.2", .string }, .{ "yaml-1.1", .bool_ } }) |c| {
+        var out_doc: ?*FigDocument = null;
+        try std.testing.expectEqual(FigStatus.ok, fig_parse(yes.ptr, yes.len, fmtOf(c[0]), &out_doc));
+        defer fig_document_destroy(out_doc);
+        const doc: ?*const FigDocument = out_doc;
+        const value = fig_keyvalue_value(doc, fig_node_first_child(doc, fig_document_root(doc)));
+        try std.testing.expectEqual(@as(c_int, @backingInt(c[1])), fig_node_kind(doc, value));
+    }
+
+    // A trailing comma in an inline table is TOML 1.1's; 1.0 refuses it.
+    const trailing = "t = { a = 1, }\n";
+    for ([_]struct { [:0]const u8, FigStatus }{ .{ "toml", .ok }, .{ "toml-1.1", .ok }, .{ "toml-1.0", .parse_error }, .{ "toml-1.0.0", .parse_error } }) |c| {
+        var out_doc: ?*FigDocument = null;
+        try std.testing.expectEqual(c[1], fig_parse(trailing.ptr, trailing.len, fmtOf(c[0]), &out_doc));
+        fig_document_destroy(out_doc);
+    }
+
+    // A version neither language declares is no dialect.
+    try std.testing.expectEqual(@as(c_int, -1), fig_format_by_name("toml-2.0"));
+    try std.testing.expectEqual(@as(c_int, -1), fig_format_by_name("yaml-1.3"));
+}
+
 test "fig_document_diagnose reports a dropped null for TOML" {
     if (comptime !build_options.lang_json) return error.SkipZigTest;
     if (comptime !(build_options.lang_yaml and build_options.lang_toml)) return error.SkipZigTest;

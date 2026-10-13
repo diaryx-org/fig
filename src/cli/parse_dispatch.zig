@@ -384,6 +384,24 @@ test "resolveSpec selects a version's dialect row" {
     try t.expectError(error.UnsupportedSpec, resolveSpec(.canonical, "1.1"));
 }
 
+test "resolveSpec selects TOML 1.0, which refuses what 1.1 added" {
+    if (comptime !build_options.lang_toml) return error.SkipZigTest;
+    const t = std.testing;
+    const toml = args_mod.parseFormatName("toml").?;
+    const v1_0 = try resolveSpec(toml, "1.0");
+    try t.expectEqualStrings("toml-1.0", types.name(v1_0));
+    try t.expectEqualStrings("toml-1.0.0", types.name(try resolveSpec(toml, "1.0.0")));
+    try t.expectEqualStrings("toml-1.1", types.name(try resolveSpec(toml, "1.1")));
+    try t.expectError(error.UnsupportedSpec, resolveSpec(toml, "0.5"));
+    // A trailing comma in an inline table is 1.1's.
+    const src = "t = { a = 1, }\n";
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    var reports: Reports = .{};
+    try t.expectError(error.RuntimeParseFailed, parseSliceAs(v1_0, arena.allocator(), src, &reports));
+    _ = try parseSliceAs(toml, arena.allocator(), src, &reports);
+}
+
 // What the runtime printer in the test below was handed as the root row's tag.
 var seen_root_tag: [32]u8 = undefined;
 var seen_root_tag_len: usize = 0;

@@ -238,7 +238,9 @@ fn refused(e: LanguageError) -> Protocol {
 
 // ── JSON in and out, through fig ───────────────────────────────────────────
 
-fn decode(line: &str) -> Result<Value, LanguageError> {
+/// One line of JSON as a [`Value`], read as [`handle`] reads a request:
+/// [`encode`]'s counterpart, for a helper that answers a line itself.
+pub fn decode(line: &str) -> Result<Value, LanguageError> {
     let json = Format::require("json")
         .map_err(|e| LanguageError::new(format!("this build cannot read JSON: {e}")))?;
     let doc = Document::parse(line.as_bytes(), json)

@@ -1135,3 +1135,36 @@ unsafe extern "C" {
         out_format: *mut c_int,
     ) -> FigStatus;
 }
+
+// The kit's rules (`fig.h`, "The kit's rules"): how a number's lexeme is
+// spelled for a format and which datetime a bare token is, for a language
+// that is not Zig. Wrapped by `fig::kit`.
+pub const FIG_SPELL_HEX: u32 = 1 << 0;
+pub const FIG_SPELL_OCTAL: u32 = 1 << 1;
+pub const FIG_SPELL_BINARY: u32 = 1 << 2;
+pub const FIG_SPELL_UNDERSCORES: u32 = 1 << 3;
+pub const FIG_SPELL_LEADING_ZERO: u32 = 1 << 4;
+pub const FIG_SPELL_BARE_DOT: u32 = 1 << 5;
+pub const FIG_SPELL_PLUS: u32 = 1 << 6;
+pub const FIG_KIT_ANSWER_ROOM: usize = 520;
+pub const FIG_NON_FINITE_NONE: i32 = -1;
+pub const FIG_NON_FINITE_INF: i32 = 0;
+pub const FIG_NON_FINITE_NEG_INF: i32 = 1;
+pub const FIG_NON_FINITE_NAN: i32 = 2;
+pub const FIG_DATETIME_MINUTE_PRECISION: u32 = 1 << 0;
+pub const FIG_DATETIME_TIME_ONLY: u32 = 1 << 1;
+
+unsafe extern "C" {
+    pub fn fig_kit_number_spellable(raw: *const u8, len: usize, spelling: u32) -> bool;
+    pub fn fig_kit_number_canonical(
+        raw: *const u8,
+        len: usize,
+        out: *mut u8,
+        out_cap: usize,
+    ) -> usize;
+    pub fn fig_kit_number_non_finite(raw: *const u8, len: usize) -> i32;
+    pub fn fig_kit_datetime_classify(raw: *const u8, len: usize, flags: u32) -> i32;
+    pub fn fig_kit_datetime_valid_date(s: *const u8, len: usize) -> bool;
+    pub fn fig_kit_datetime_valid_time(s: *const u8, len: usize, flags: u32) -> bool;
+    pub fn fig_kit_datetime_valid_offset(s: *const u8, len: usize) -> bool;
+}

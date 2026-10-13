@@ -29,6 +29,9 @@ pub use editor::{Editor, Segment};
 /// read and written through the `json` language, which a helper registers
 /// (`fig_json::register()`).
 pub mod helper;
+/// The kit's number and datetime rules, which fig's own languages are
+/// written with.
+pub mod kit;
 pub mod language;
 #[cfg(test)]
 mod test_languages;

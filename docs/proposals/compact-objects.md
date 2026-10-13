@@ -15,9 +15,8 @@ part_of = [proposals](proposals.md)
 > A language change: every input whose meaning moves either already warned
 > or now fails loudly, except `{a.b = 1}`, whose old reading (a key with a
 > dot in it) was a bug against § 5.1. It is a major; the C ABI does not
-> move. Still to follow: the editor's separators (§ 6, a task), the
-> tree-sitter grammar (a task), and the fig twins in fig-lua and
-> fig-quickjs.
+> move. Still to follow: the editor's separators (§ 6, a task) and the fig
+> twins in fig-lua and fig-quickjs.
 
 ## 1. The claim
 

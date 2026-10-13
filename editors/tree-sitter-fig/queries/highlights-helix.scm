@@ -33,7 +33,7 @@
 ; draws exactly this distinction.
 (header key: (keypath (key) @type))
 (assignment key: (keypath (key) @variable.other.member))
-(flow_object key: (bare_key) @variable.other.member)
+(flow_object key: (keypath (key) @variable.other.member))
 (flow_object key: (string_single) @variable.other.member)
 (flow_object key: (string_double) @variable.other.member)
 

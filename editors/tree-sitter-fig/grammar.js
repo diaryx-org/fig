@@ -37,8 +37,10 @@
  * glob `[a-z]*.md`, BBCode `[b]x[/b]` — it was never flow, it's a bare string.
  * Telling those two shapes apart needs unbounded lookahead (find the matching
  * close, then check what follows), which isn't expressible as a plain token
- * regex — so `bracket_led_bare_string` (block RHS) and `flow_bracket_led_bare`
- * (flow element) are `externals`, resolved by `src/scanner.c` using the same
+ * regex — so `bracket_led_bare_string` (block RHS), `flow_bracket_led_bare`
+ * (array element or JSON object value) and `compact_bracket_led_bare` (fig
+ * object value, whose tail must be glued to the close and ends at whitespace)
+ * are `externals`, resolved by `src/scanner.c` using the same
  * shape as the Zig parser's `classifyBracketCommit`/`classifyFlowBracket`. The
  * scanner only ever *declines* (never partially consumes then fails) — when it
  * declines, the ordinary `[`/`{` token takes over and `flow` parses normally,
@@ -57,9 +59,17 @@ module.exports = grammar({
   // between the numeric-annotation branch and the open-type-set `bare_key`.
   word: $ => $.bare_key,
 
+  // A quoted key after `{` starts either a fig pair's key path or a JSON
+  // pair's key; only the separator after it (`=`/`.` or `:`) tells which, and
+  // a `_flow_gap` may come first, so the parser forks until it sees one.
+  conflicts: $ => [
+    [$.key, $._json_pair],
+  ],
+
   externals: $ => [
     $.bracket_led_bare_string,
     $.flow_bracket_led_bare,
+    $.compact_bracket_led_bare,
   ],
 
   rules: {
@@ -228,7 +238,8 @@ module.exports = grammar({
     // newline ends the `_line`.
     flow: $ => choice($.flow_array, $.flow_object),
     // NOTE: `_flow_gap` slots are placed so no two are ever directly adjacent
-    // (always separated by a mandatory `,` or the leading `_fvalue`/`_fpair`) —
+    // (always separated by a mandatory `,` or `_fig_sep`, or by a value or
+    // pair) —
     // two adjacent optional repeats of the same content is ambiguous (however
     // many ways to split one whitespace/comment run across the two slots). The
     // "no elements" body is its own branch for the same reason: an empty body
@@ -248,26 +259,75 @@ module.exports = grammar({
       )),
       ']',
     ),
-    flow_object: $ => seq(
+    // An object picks its spelling by its first pair's separator (§ 6.3): `=`
+    // is a fig object, `:` a JSON one. Both are one `flow_object` node, so the
+    // highlight queries see one shape; only the body differs.
+    flow_object: $ => choice($._fig_object, $._json_object),
+
+    // A fig object is compact: pairs are separated by whitespace (newlines
+    // included), a `,`, or both, and the empty object lives here. `_fig_sep`
+    // is always one of those, never empty, so it never sits next to a gap.
+    _fig_object: $ => seq(
       '{',
       optional(choice(
         $._flow_gap,
         seq(
           optional($._flow_gap),
-          $._fpair,
-          repeat(seq(optional($._flow_gap), ',', optional($._flow_gap), $._fpair)),
-          optional(seq(optional($._flow_gap), ',')),
-          optional($._flow_gap),
+          $._fig_pair,
+          repeat(seq($._fig_sep, $._fig_pair)),
+          optional($._fig_sep),
         ),
       )),
       '}',
     ),
-    _fpair: $ => seq(
-      field('key', choice($.bare_key, $.string_single, $.string_double)),
+    _fig_sep: $ => choice(
+      $._flow_gap,
+      seq(optional($._flow_gap), ',', optional($._flow_gap)),
+    ),
+    // A fig pair's key is a key path (`a.b` nests), but without index steps,
+    // which the parser rejects as `FigBadKey`. It aliases to `keypath` so a
+    // flow key has the same shape as a block one.
+    _fig_pair: $ => seq(
+      field('key', alias($._flow_keypath, $.keypath)),
       optional($._flow_gap),
-      choice('=', ':'),
+      '=',
+      optional($._flow_gap),
+      field('value', $._fig_value),
+    ),
+    _flow_keypath: $ => seq($.key, repeat(seq('.', $.key))),
+
+    // A JSON object keeps commas, a single quoted key per pair, and values
+    // that run to the next `,`/`}` like an array element's.
+    _json_object: $ => seq(
+      '{',
+      optional($._flow_gap),
+      $._json_pair,
+      repeat(seq(optional($._flow_gap), ',', optional($._flow_gap), $._json_pair)),
+      optional(seq(optional($._flow_gap), ',')),
+      optional($._flow_gap),
+      '}',
+    ),
+    _json_pair: $ => seq(
+      field('key', choice($.string_single, $.string_double)),
+      optional($._flow_gap),
+      ':',
       optional($._flow_gap),
       field('value', $._fvalue),
+    ),
+
+    // A fig object's value is one token: a bare one ends at whitespace, and a
+    // bracket-led bare string needs its trailing content glued to the close.
+    // Both alias to their array-element twins, which highlight the same.
+    _fig_value: $ => choice(
+      $.boolean,
+      $.null,
+      $.datetime,
+      $.number,
+      $.string_single,
+      $.string_double,
+      $.flow,
+      alias($.compact_bracket_led_bare, $.flow_bracket_led_bare),
+      alias($._compact_bare, $.flow_bare),
     ),
     _fvalue: $ => choice(
       $.boolean,
@@ -300,7 +360,7 @@ module.exports = grammar({
     null: _ => token('null'),
 
     datetime: _ => token(
-      /[0-9]{4}-[0-9]{2}-[0-9]{2}([Tt ][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})?)?/,
+      /[0-9]{4}-[0-9]{2}-[0-9]{2}([Tt ][0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]+)?)?([Zz]|[+-][0-9]{2}:[0-9]{2})?)?/,
     ),
 
     // Leading-zero ints intentionally excluded → they fall to bare_string (fig rule).
@@ -388,9 +448,17 @@ module.exports = grammar({
       seq(/[^\s,\[\]{}#"'][^\s,\[\]{}]*/, repeat(/[ \t]+[^\s,\[\]{}#][^\s,\[\]{}]*/)),
     ),
 
-    // `bracket_led_bare_string` / `flow_bracket_led_bare`: see the file-level
-    // comment and `src/scanner.c`. Declared above in `externals`; both are
-    // plain (childless) leaf tokens, same shape as `bare_string`/`flow_bare`.
+    // A fig object's bare value: one token, ending at whitespace or `,`/`]`/
+    // `}`, mirroring `scanCompactBare`. A `#` inside it is content, since
+    // whitespace has already ended the token before any comment could open.
+    // Its first char excludes the openers so quoted and flow values win. The
+    // date-space-time join needs no rule here: `datetime` already spans it.
+    _compact_bare: _ => token(/[^\s,\[\]{}#"'][^\s,\]}]*/),
+
+    // `bracket_led_bare_string` / `flow_bracket_led_bare` /
+    // `compact_bracket_led_bare`: see the file-level comment and
+    // `src/scanner.c`. Declared above in `externals`; all are plain
+    // (childless) leaf tokens, same shape as `bare_string`/`flow_bare`.
 
     // Bare key: letters, digits, `_`, `-` (fig's `isBareKeyChar`). A digit is
     // allowed as the FIRST char (`1_sig_fig`, `007zone`) — the leading-zero /

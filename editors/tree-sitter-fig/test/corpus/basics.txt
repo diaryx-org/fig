@@ -280,9 +280,13 @@ empty_map = {}
         (bare_key)))
     value: (flow
       (flow_object
-        key: (bare_key)
+        key: (keypath
+          (key
+            (bare_key)))
         value: (number)
-        key: (bare_key)
+        key: (keypath
+          (key
+            (bare_key)))
         value: (number))))
   (assignment
     key: (keypath
@@ -309,6 +313,148 @@ empty_map = {}
         (bare_key)))
     value: (flow
       (flow_object))))
+
+==================
+compact fig objects: whitespace separators, dotted keys, one-token values
+==================
+
+p = {x=1 y=2}
+q = {a.b=1 title="Hello world"}
+attrs = {lang=en data.count=3 tag=a#b 'a.b'=1}
+at = {when=2026-07-01 09:00 n=1}
+links = {href=[Blog](/x.md) xs=[1, 2] n=3}
+m = {
+  a=1  # first
+  b=two
+}
+
+---
+
+(document
+  (assignment
+    key: (keypath
+      (key
+        (bare_key)))
+    value: (flow
+      (flow_object
+        key: (keypath
+          (key
+            (bare_key)))
+        value: (number)
+        key: (keypath
+          (key
+            (bare_key)))
+        value: (number))))
+  (assignment
+    key: (keypath
+      (key
+        (bare_key)))
+    value: (flow
+      (flow_object
+        key: (keypath
+          (key
+            (bare_key))
+          (key
+            (bare_key)))
+        value: (number)
+        key: (keypath
+          (key
+            (bare_key)))
+        value: (string_double))))
+  (assignment
+    key: (keypath
+      (key
+        (bare_key)))
+    value: (flow
+      (flow_object
+        key: (keypath
+          (key
+            (bare_key)))
+        value: (flow_bare)
+        key: (keypath
+          (key
+            (bare_key))
+          (key
+            (bare_key)))
+        value: (number)
+        key: (keypath
+          (key
+            (bare_key)))
+        value: (flow_bare)
+        key: (keypath
+          (key
+            (string_single)))
+        value: (number))))
+  (assignment
+    key: (keypath
+      (key
+        (bare_key)))
+    value: (flow
+      (flow_object
+        key: (keypath
+          (key
+            (bare_key)))
+        value: (datetime)
+        key: (keypath
+          (key
+            (bare_key)))
+        value: (number))))
+  (assignment
+    key: (keypath
+      (key
+        (bare_key)))
+    value: (flow
+      (flow_object
+        key: (keypath
+          (key
+            (bare_key)))
+        value: (flow_bracket_led_bare)
+        key: (keypath
+          (key
+            (bare_key)))
+        value: (flow
+          (flow_array
+            (number)
+            (number)))
+        key: (keypath
+          (key
+            (bare_key)))
+        value: (number))))
+  (assignment
+    key: (keypath
+      (key
+        (bare_key)))
+    value: (flow
+      (flow_object
+        key: (keypath
+          (key
+            (bare_key)))
+        value: (number)
+        (comment)
+        key: (keypath
+          (key
+            (bare_key)))
+        value: (flow_bare)))))
+
+==================
+JSON objects keep commas and multi-word values
+==================
+
+pasted = { "name": Adam Harris, 'n': 1, }
+
+---
+
+(document
+  (assignment
+    key: (keypath
+      (key
+        (bare_key)))
+    value: (flow
+      (flow_object
+        key: (string_double)
+        value: (flow_bare)
+        key: (string_single)
+        value: (number)))))
 
 ==================
 comments

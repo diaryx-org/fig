@@ -292,7 +292,7 @@
         "required": false,
         "types": [
           {
-            "type": "bare_key",
+            "type": "keypath",
             "named": true
           },
           {

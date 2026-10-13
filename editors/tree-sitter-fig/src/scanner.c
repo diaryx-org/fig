@@ -8,7 +8,8 @@
 // from genuine flow (`[80, 443]`) needs unbounded lookahead — find the
 // matching close, then look at what follows — which mirrors the Zig parser's
 // `tok.classifyBracketCommit` (block RHS) / `tok.classifyFlowBracket` (flow
-// element) in src/fig/tokenizer.zig.
+// element, and with `ws_ends` a fig object's value) in
+// src/languages/figl/tokenizer.zig.
 //
 // Both external tokens below are DECLINE-only: if the input doesn't have the
 // balanced-then-trailing shape, `scan` returns false having committed no
@@ -24,6 +25,7 @@
 enum TokenType {
   BRACKET_LED_BARE_STRING,
   FLOW_BRACKET_LED_BARE,
+  COMPACT_BRACKET_LED_BARE,
 };
 
 void *tree_sitter_fig_external_scanner_create(void) { return NULL; }
@@ -161,10 +163,34 @@ static bool scan_tail(TSLexer *lexer, const char *stop, bool prev_space) {
   return any;
 }
 
+// A fig object's value is one token (`isCompactStop`): whitespace ends it as
+// `,`/`]`/`}` do.
+static bool is_compact_stop(int32_t c) {
+  return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == ',' ||
+         c == ']' || c == '}';
+}
+
+// Consume the tail glued to a fig object value's balanced close, up to the
+// next compact stop at depth 0. Brackets inside the tail nest the way
+// `scanFlowBareBracket` counts them, so `[a](b[c])` is one token. The caller
+// has seen the first tail byte is not a stop, so the tail is never empty.
+static void scan_compact_tail(TSLexer *lexer) {
+  uint32_t depth = 0;
+  while (!lexer->eof(lexer) && lexer->lookahead != '\n') {
+    int32_t c = lexer->lookahead;
+    if (depth == 0 && is_compact_stop(c)) break;
+    if (c == '[' || c == '{') depth++;
+    if (c == ']' || c == '}') depth--;
+    lexer->advance(lexer, false);
+  }
+  lexer->mark_end(lexer);
+}
+
 static bool scan(TSLexer *lexer, const bool *valid_symbols) {
   bool want_block = valid_symbols[BRACKET_LED_BARE_STRING];
   bool want_flow = valid_symbols[FLOW_BRACKET_LED_BARE];
-  if (!want_block && !want_flow) return false;
+  bool want_compact = valid_symbols[COMPACT_BRACKET_LED_BARE];
+  if (!want_block && !want_flow && !want_compact) return false;
 
   // Unlike the internal DFA, external tokens are tried BEFORE `extras` are
   // skipped — do that ourselves (space/tab only, matching the grammar's own
@@ -180,6 +206,17 @@ static bool scan(TSLexer *lexer, const bool *valid_symbols) {
   // Unclosed on this line → hand it to the `flow` grammar (multi-line flow
   // or a hard "unclosed" error), never a bare string.
   if (!scan_bracket_run(lexer)) return false;
+
+  // A fig object's value: only content glued to the close makes a bare
+  // string (`{href=[Blog](/x.md)}`); after whitespace the bracket group is a
+  // flow value and the rest is the next pair (`{xs=[1, 2] n=3}`). A block RHS
+  // takes precedence when both are valid, as during error recovery.
+  if (want_compact && !want_block) {
+    if (lexer->eof(lexer) || is_compact_stop(lexer->lookahead)) return false;
+    scan_compact_tail(lexer);
+    lexer->result_symbol = COMPACT_BRACKET_LED_BARE;
+    return true;
+  }
 
   // Horizontal whitespace after the close — track whether we saw any, for
   // the `#`-glued-vs-spaced distinction below (DESIGN.md "Committed values").

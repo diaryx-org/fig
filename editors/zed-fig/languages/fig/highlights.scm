@@ -12,7 +12,7 @@
 ; ── keys ──
 (assignment key: (keypath (key) @property))
 (header key: (keypath (key) @property))
-(flow_object key: (bare_key) @property)
+(flow_object key: (keypath (key) @property))
 (flow_object key: (string_single) @property)
 (flow_object key: (string_double) @property)
 

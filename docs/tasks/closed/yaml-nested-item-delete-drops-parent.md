@@ -1,12 +1,23 @@
 ```fig
 title = Deleting an item of a YAML list nested on its parent's marker line drops the parent
-part_of = [Tasks](/docs/tasks/tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 description = Deleting `[0][0]` from `- - a` / `  - c` writes `  - c`: the outer item's marker goes with the inner item, so `[[a, c]]` reads back as `[c]`, and the command reports success
-status = open
+status = done
 created = 2026-10-13
+updated = 2026-10-13
 ```
 
 # Deleting an item of a YAML list nested on its parent's marker line drops the parent
+
+**Status.** Done, in `fix(editor): a YAML delete on a parent's marker line
+keeps the parent` (346db34, 2026-10-13). Deleting the first item or key that
+sits on its parent's `-` line moves the next sibling up onto that line (`- -
+c`, `- j: w`), or leaves the bare `-` when a comment line comes first, at
+the root, under a key and deeper. `deleteKey` and `removeSeqItem` now
+compare the document before and after and refuse with
+`DeleteChangedOtherValues` when any other value changed, so a shape still
+mishandled (two-deep compact sequences, a parser bug filed apart) is refused
+rather than corrupted.
 
 **Repro.** On `main` at 5dfb6ab:
 

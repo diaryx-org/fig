@@ -5,12 +5,21 @@
 //! block builder (depth counts + header baselines), a recursive-descent flow
 //! sub-parser, and the literal-else-string value resolver (`tokenizer.zig`).
 //!
-//! Construction goes through an intermediate, mutable tree (`PendingContainer`
-//! et al.) allocated in a per-parse arena, then written bottom-up as rows of
-//! the node table fig hands the parse (`RowWriter`), which puts them in
-//! pre-order once the root is written. This makes "navigate to an arbitrary
-//! existing path and add a child" (dotted keys, index addressing, header
-//! re-entry) tractable without fighting rows written in source order.
+//! Construction writes rows of the node table fig hands the parse
+//! (`RowWriter`) as the lines are read: a value is its row, written when the
+//! value is met, and a container's row is written the moment the container
+//! exists — an undecided one as an empty mapping, turned into a sequence when
+//! a `*` or an index reaches it first. Children are linked through a
+//! `ChildIndex`, which also finds a mapping's entry by key, so "navigate to an
+//! arbitrary existing path and add a child" (dotted keys, index addressing,
+//! header re-entry) stays constant time per step. What a row cannot hold
+//! about a container — its shape before a child decides it, whether a flow
+//! value closed it, how a sequence is addressed, an addressed sequence's
+//! elements in order — sits in maps keyed by row that hold containers only.
+//! Comments, tags, markers, separators, header lines and name mentions are
+//! written as facts when they are met. A container's row starts at its
+//! opening position; once every line is read `finishSpans` widens each to
+//! its subtree, and `RowWriter.finish` puts the rows in pre-order.
 //!
 //! Scope cuts (documented, not silent):
 //!   * Of DESIGN.md's WARN diagnostics, the comment-depth-mismatch lint is not
@@ -27,13 +36,14 @@
 //!     EOF) is trivia everywhere — see `atCrlf` — so CRLF documents parse
 //!     identically to LF ones. A `\r` elsewhere stays ordinary content bytes.
 //!
-//! Every built node also carries a source `Span` (see "AST assembly" below) —
-//! the foundation `Editor(fig.Language.FIG)` needs to splice edits in place
+//! Every node also carries a source `Span` (see `finishSpans`) — the
+//! foundation `Editor(fig.Language.FIG)` needs to splice edits in place
 //! (`replace`/`rename`/`set`/`insert`/`delete`/`comment`; see `edit.zig` and `editor_test.zig`).
 //! Whole-container structural ops — the generic `deleteContainer`/
 //! `moveContainer`/`reorderContainers` in `editor.zig` — are built on those
 //! spans plus `Document.regionsOf`, which this parser fills with every
-//! block container's header lines (see `recordRegions`).
+//! block container's header lines (see `newBlockContainer` and
+//! `resolveHeaderFinal`).
 
 pub const Parser = @This();
 
@@ -42,6 +52,7 @@ const Allocator = std.mem.Allocator;
 const Document = @import("../../kit/document.zig");
 const AST = @import("../../kit/ast/ast.zig");
 const RowWriter = @import("../../kit/row_writer.zig");
+const ChildIndex = @import("../../kit/child_index.zig");
 const table = @import("../../kit/table.zig");
 const Table = table.Table;
 
@@ -387,19 +398,31 @@ pub const Report = struct {
     warnings: []const Warning = &.{},
 };
 
-/// Arena for the whole intermediate tree — freed in one shot after the final
-/// AST is built, so nothing here needs manual `deinit`.
+/// Arena for what must outlive a line: decoded key texts (`children` keys
+/// them), the warning and diagnostic lists. Freed in one shot when the parse
+/// ends; no node lives in it. (A `Parser` a caller makes as a language's
+/// handle sets this field alone; `parseImpl` makes the one that parses.)
 allocator: Allocator,
+/// Arena for one line's scratch — a key path's steps, a decoded value before
+/// its row copies it, a flow object's key paths. Reset at every line start
+/// (`scratch_state`); nothing read from it outlives the line.
+scratch: Allocator = undefined,
+scratch_state: ?*std.heap.ArenaAllocator = null,
+/// The table's allocator, for the per-container indexes below (freed by
+/// `deinit`).
+gpa: Allocator = undefined,
 source: []const u8 = "",
 pos: usize = 0,
-root: PendingContainer = .{},
-root_dangling: std.ArrayList(AST.Comment) = .empty,
+/// The root mapping's row, written first.
+root: Id = 0,
 pending_leading: std.ArrayList(PendingComment) = .empty,
 stack: std.ArrayList(Frame) = .empty,
 /// The path of the most recent zero-marker `[]` append header, kept while only
 /// deeper lines / comments / blanks / `+` lines follow — the target a `+`
 /// continuation line re-runs. Any other zero-marker structural line clears it.
+/// Points into `append_steps`.
 last_append_steps: ?[]const Step = null,
+append_steps: std.ArrayList(Step) = .empty,
 /// Overrides `pos` as the `Diagnostic` offset when set — for error sites where
 /// the cursor has already moved past the token that actually offends (set via
 /// `failAt`). `pos` is the right answer everywhere else.
@@ -432,20 +455,38 @@ recover: bool = false,
 /// caller's `Report.errors` by `parseImpl`). Populated only in `recover` mode;
 /// empty otherwise.
 diagnostics: std.ArrayList(Diagnostic) = .empty,
-/// The table the pending tree is written into once the line pass is clean
-/// (see "Row assembly"); set by `parseImpl`. Besides the rows it takes each
-/// block container's header lines (`Document.regionsOf`), each `*` marker,
-/// each assignment's `=`, and each block container's name mentions — its
-/// creating key and every `.key` re-entry; a fig header sits on its
-/// parent's own lines, so every mention is an `.entry`.
+/// The table the rows are written into as the lines are read; set by
+/// `parseImpl`. Besides the rows it takes each block container's header
+/// lines (`Document.regionsOf`), each `*` marker, each assignment's `=`, and
+/// each block container's name mentions — its creating key and every `.key`
+/// re-entry; a fig header sits on its parent's own lines, so every mention is
+/// an `.entry`.
 w: RowWriter = undefined,
+/// Each container's last child, and each mapping's entry by key.
+children: ChildIndex = .{},
+/// What a container's row cannot say about it, by row: only containers are
+/// here.
+containers: std.AutoHashMapUnmanaged(Id, ContainerInfo) = .empty,
+/// An index-addressed sequence's elements in order, by its row — `xs[i]`
+/// needs element i. Only sequences addressed that way are here.
+addressed: std.AutoHashMapUnmanaged(Id, std.ArrayList(Id)) = .empty,
 
-// ── Intermediate tree types ─────────────────────────────────────────────────
+// ── Construction state ──────────────────────────────────────────────────────
 
-/// A container whose shape (map vs. sequence) is frozen the moment its first
-/// child is added — root and every header/element-opener target start here.
-const PendingContainer = struct {
-    kind: enum { undecided, mapping, sequence } = .undecided,
+const Id = AST.Node.Id;
+const none = table.none;
+
+/// A container's shape is frozen the moment its first child is added — root
+/// and every header/element-opener target start undecided, written as an
+/// empty mapping row until a `*` or an index turns it into a sequence.
+const Shape = enum(u2) { undecided, mapping, sequence };
+
+/// How a sequence's elements are written: `*` lines, or `[]`/`[i]` paths.
+const Style = enum(u2) { undecided, element, addressed };
+
+const ContainerInfo = packed struct(u8) {
+    shape: Shape = .undecided,
+    style: Style = .undecided,
     /// Created by a flow value (`[…]`/`{…}`) — closed to later extension via
     /// dotted paths, headers, or indexing (the TOML inline-table rule).
     closed: bool = false,
@@ -454,144 +495,7 @@ const PendingContainer = struct {
     /// the `.undecided` → `FigEmptyContainer` check at frame close — this flag
     /// lets the close path apply the same "no empty block containers" rule.
     born_of_append: bool = false,
-    mapping: Mapping = .{},
-    sequence: Sequence = .{},
-    /// Byte offsets (source order) of every LATER header line whose final path
-    /// segment re-OPENED this container (DESIGN.md "re-entering a path to add
-    /// new keys is fine") — the header-line positions the owning `TNode.span`
-    /// cannot carry, since it is stamped once at creation. Only header-FINAL
-    /// re-opens are recorded: a header/assignment whose final segment CREATES
-    /// something new anchors its own line through that new node's span, and a
-    /// mid-path re-open always rides a line anchored by its final segment one
-    /// way or the other. Written to `Document.regionsOf` (keyed by its row,
-    /// alongside the creating line) during row assembly, so
-    /// the editor's region gather can remove/relocate every physical header
-    /// occurrence.
-    reentries: std.ArrayList(usize) = .empty,
-    /// The key token of each `.key` re-entry above (an `xs[i]` re-entry has
-    /// none), for `Document.mentionsOf`: every place this container's
-    /// name is written, so a rename reaches each.
-    reentry_names: std.ArrayList(Span) = .empty,
-
-    fn open(self: *PendingContainer) Error!*PendingContainer {
-        return if (self.closed) error.FigClosedFlowValue else self;
-    }
-
-    fn asMapping(self: *PendingContainer) Error!*Mapping {
-        switch (self.kind) {
-            .undecided => {
-                self.kind = .mapping;
-                return &self.mapping;
-            },
-            .mapping => return &self.mapping,
-            .sequence => return error.FigMixedContainerChildren,
-        }
-    }
-
-    fn asSequence(self: *PendingContainer) Error!*Sequence {
-        switch (self.kind) {
-            .undecided => {
-                self.kind = .sequence;
-                return &self.sequence;
-            },
-            .sequence => return &self.sequence,
-            .mapping => return error.FigMixedContainerChildren,
-        }
-    }
-};
-
-const Mapping = struct {
-    /// Entries in source order — the authoritative list the builder walks.
-    entries: std.ArrayList(*MEntry) = .empty,
-    /// Key → entry index, kept in sync with `entries` by `addEntry`, so
-    /// duplicate-key checks and dotted-path navigation are O(1) instead of a
-    /// linear scan of `entries` (which made building an n-key table O(n²)).
-    /// Arena-backed like the rest of the pending tree, so it needs no deinit.
-    index: std.StringHashMapUnmanaged(*MEntry) = .empty,
-
-    /// Append `entry` in source order and register it in `index`. Keys are
-    /// unique (duplicates are rejected before they reach here), so the put
-    /// never collides with a different entry.
-    fn addEntry(self: *Mapping, allocator: Allocator, entry: *MEntry) Error!void {
-        try self.entries.append(allocator, entry);
-        try self.index.put(allocator, entry.key, entry);
-    }
-};
-
-const MEntry = struct {
-    key: []const u8,
-    /// Source span of the key token itself (quotes included when quoted) —
-    /// mirrors every other parser's `keyvalue.key` span convention, so
-    /// `Editor(Fig)` can splice a rename in place.
-    key_span: Span = Span.init(0, 0),
-    /// The `=` of a `key = value` assignment, or null for an entry with no
-    /// separator of its own (a header line, an `x[] = v` element target).
-    /// Recorded as the entry's `Document.sepSpan` in `buildContainer`.
-    sep_span: ?Span = null,
-    /// Leading comments bind to the KEY (matches `AST.leadingCommentAnchor` for
-    /// a `keyvalue`).
-    key_leading: std.ArrayList(AST.Comment) = .empty,
-    value: TNode,
-};
-
-const Sequence = struct {
-    elements: std.ArrayList(*TNode) = .empty,
-    style: enum { undecided, element, addressed } = .undecided,
-
-    fn markElement(self: *Sequence) Error!void {
-        switch (self.style) {
-            .undecided => self.style = .element,
-            .element => {},
-            .addressed => return error.FigMixedSequenceAddressing,
-        }
-    }
-
-    fn markAddressed(self: *Sequence) Error!void {
-        switch (self.style) {
-            .undecided => self.style = .addressed,
-            .addressed => {},
-            .element => return error.FigMixedSequenceAddressing,
-        }
-    }
-};
-
-const TValue = union(enum) {
-    null_,
-    boolean: bool,
-    string: []const u8,
-    number: tok.NumberResult,
-    extended: struct { kind: tok.ExtKind, text: []const u8 },
-    container: *PendingContainer,
-};
-
-const TNode = struct {
-    value: TValue,
-    /// Source span of this value. For a scalar, the token's own tight span
-    /// (quotes/brackets included where the value opens with one). For a
-    /// container, the position right after its opening marker/bracket at
-    /// creation time (`buildNode` widens `.end` to the container's full
-    /// extent once every child's own span is known — see "AST assembly").
-    span: Span = Span.init(0, 0),
-    /// `AST.trailingCommentAnchor`-equivalent: the value itself for a
-    /// scalar/container, always applied directly to this node's built id.
-    trailing: ?AST.Comment = null,
-    /// The explicit `: type =` annotation, recorded as a cross-format type tag
-    /// (`ast.tagOf`) so the annotation round-trips through `fig fmt`. Set by
-    /// `applyKnownType`/`parseAssignedValue`; applied in `buildNode`. Null for an
-    /// untyped value (`key = value`).
-    tag: ?AST.Tag = null,
-    /// Own leading comments — meaningful only when this TNode is NOT a map
-    /// entry's value (sequence elements and root have no wrapping key to bind
-    /// to instead).
-    leading: std.ArrayList(AST.Comment) = .empty,
-    /// The `*` element marker that introduced this node as a block-sequence
-    /// element, or null (a map entry's value, the root, or an element that
-    /// arrived through an `x[] = v` append header, which has no marker of its
-    /// own). Recorded as the element's `Document.markerSpan` in
-    /// `buildContainer`.
-    marker: ?Span = null,
-    /// Orphan comments at the end of this node's body (container-only).
-    dangling: std.ArrayList(AST.Comment) = .empty,
+    _: u2 = 0,
 };
 
 /// A buffered comment line plus its own marker depth. The depth decides where
@@ -603,28 +507,27 @@ const TNode = struct {
 const PendingComment = struct { comment: AST.Comment, depth: u32 };
 
 const Frame = struct {
-    container: *PendingContainer,
+    /// The container row this frame's lines add to — where its trailing and
+    /// dangling comments land too.
+    container: Id,
     /// The depth (relative to the active baseline) that this frame's children
     /// must be written at.
     child_depth: u32,
-    /// The TNode wrapping `container` — where trailing/dangling comments land.
-    owner: *TNode,
 };
 
 const IndexKind = union(enum) { literal: usize, append_or_last };
 /// A dotted-path key segment plus its own source span (quotes included when
-/// quoted) — carried through path navigation so every container the path
-/// touches (intermediate dotted segments included) can stamp an accurate
-/// `key_span` on the `MEntry` it creates or reuses.
+/// quoted) — carried through path navigation so every entry the path creates
+/// (intermediate dotted segments included) gets an accurate key span. `name`
+/// is a source slice or a decoded copy in the parse arena: `children` keys it.
 const KeySeg = struct { name: []const u8, span: Span };
 const Step = union(enum) { key: KeySeg, index: IndexKind };
 
 /// The outcome of resolving a HEADER line's final path segment: the container
-/// to push as the next frame, its owner TNode (trailing/dangling target), and
-/// — when reached via a map key — the entry (leading-comment target; a
-/// sequence-index resolution has no entry, so leading binds to `owner` itself).
-const Resolved = struct { container: *PendingContainer, owner: *TNode, entry: ?*MEntry };
-
+/// to push as the next frame, and where the line's leading comments bind —
+/// the entry's key when reached via a map key, the container itself when
+/// reached via a sequence index (`AST.leadingCommentAnchor`).
+const Resolved = struct { container: Id, leading: Id };
 // ── Entry points ─────────────────────────────────────────────────────────────
 
 /// `input` as an `AST`, alone.
@@ -674,9 +577,9 @@ pub fn parseWithReportInto(t: *Table, input: []const u8, format: Type, out: *Rep
 /// file's diagnostics in one pass (`out.errors`, source order) rather than
 /// stopping at the first — the entry a language server wants, so every
 /// mistake squiggles at once. On any error the return value is still the
-/// first error code and no row is written (both consumers discard the
-/// table); a clean parse writes it exactly as `parseWithReportInto` would.
-/// `out.diag` mirrors `errors[0]`.
+/// first error code and the table holds whatever rows the lines before it
+/// wrote (both consumers discard it); a clean parse writes it exactly as
+/// `parseWithReportInto` would. `out.diag` mirrors `errors[0]`.
 pub fn parseCollectingInto(t: *Table, input: []const u8, format: Type, out: *Report) Error!void {
     return parseImpl(t, input, format, out, true);
 }
@@ -696,7 +599,22 @@ fn parseImpl(t: *Table, input: []const u8, format: Type, out: ?*Report, recover:
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
 
-    var self: Parser = .{ .allocator = arena_state.allocator(), .source = input, .recover = recover, .w = .init(t) };
+    var scratch_state = std.heap.ArenaAllocator.init(allocator);
+    defer scratch_state.deinit();
+
+    var self: Parser = .{
+        .allocator = arena_state.allocator(),
+        .scratch = scratch_state.allocator(),
+        .scratch_state = &scratch_state,
+        .gpa = allocator,
+        .source = input,
+        .recover = recover,
+        .w = .init(t),
+    };
+    defer self.deinit();
+    // The root: a mapping until a root `*` line makes it a sequence. Its span
+    // reaches its last child's end once the lines are read (`finishSpans`).
+    self.root = try self.newContainer(Span.init(0, 0), .{});
     // A leading UTF-8 BOM is permitted and ignored (mirrors TOML's tokenizer /
     // JSON's tokenizer) — skip it before any tokenizing/key parsing happens.
     if (std.mem.startsWith(u8, input, "\xEF\xBB\xBF")) self.pos = 3;
@@ -715,9 +633,9 @@ fn parseImpl(t: *Table, input: []const u8, format: Type, out: ?*Report, recover:
     };
 
     // Recover mode collected its errors into `self.diagnostics` instead of
-    // returning them. If any fired, the tree may be malformed, so skip building
-    // it: surface every diagnostic (source order) and return the first code, so
-    // callers that branch on "did it parse?" behave exactly as before.
+    // returning them. If any fired, the rows may be malformed, so leave them
+    // unfinished: surface every diagnostic (source order) and return the first
+    // code, so callers that branch on "did it parse?" behave exactly as before.
     if (self.diagnostics.items.len > 0) {
         if (out) |o| {
             o.diag = self.diagnostics.items[0];
@@ -726,11 +644,19 @@ fn parseImpl(t: *Table, input: []const u8, format: Type, out: ?*Report, recover:
         return self.diagnostics.items[0].code;
     }
 
-    // Every text the pending tree holds is a slice of `input` or an arena
-    // copy; `RowWriter.add` copies the latter into the table's buffer, so
-    // the arena may go once the rows are written.
-    const root_id = try self.buildRoot();
-    try self.w.finish(root_id);
+    try self.finishSpans();
+    try self.w.finish(self.root);
+}
+
+fn deinit(self: *Parser) void {
+    self.children.deinit(self.gpa);
+    self.containers.deinit(self.gpa);
+    var it = self.addressed.valueIterator();
+    while (it.next()) |list| list.deinit(self.gpa);
+    self.addressed.deinit(self.gpa);
+    self.append_steps.deinit(self.gpa);
+    self.pending_leading.deinit(self.gpa);
+    self.stack.deinit(self.gpa);
 }
 
 /// Return `err` with the diagnostic caret pinned to `offset` — for the sites
@@ -769,6 +695,7 @@ fn run(self: *Parser) Error!void {
     while (self.pos < self.source.len) {
         const line_start = self.pos;
         self.cur_line_start = line_start;
+        if (self.scratch_state) |s| _ = s.reset(.retain_capacity);
         self.processLine(line_start) catch |err| {
             // In recover mode, a per-line failure is recorded and the scanner
             // resyncs to the next line so the rest of the file still reports.
@@ -832,7 +759,7 @@ fn processLine(self: *Parser, line_start: usize) Error!void {
             var j = self.pos;
             while (j < self.source.len and self.source[j] != '\n') j += 1;
             const text = std.mem.trim(u8, self.source[self.pos..j], " \t\r");
-            try self.pending_leading.append(self.allocator, .{ .comment = .{ .text = text, .style = .line }, .depth = m.depth });
+            try self.pending_leading.append(self.gpa, .{ .comment = .{ .text = text, .style = .line }, .depth = m.depth });
             self.pos = j;
             self.skipToNextLine();
             return;
@@ -846,7 +773,7 @@ fn processLine(self: *Parser, line_start: usize) Error!void {
 fn finishRun(self: *Parser) Error!void {
     try self.closeFramesAbove(0);
     for (self.pending_leading.items) |pc| {
-        try self.root_dangling.append(self.allocator, pc.comment);
+        try self.w.comment(self.root, table.comment_dangling, pc.comment);
     }
     self.pending_leading.clearRetainingCapacity();
 }
@@ -891,7 +818,7 @@ fn processContentLine(self: *Parser, depth: u32, star_span: ?Span) Error!void {
     try self.closeFramesAbove(depth);
     const required: u32 = if (self.stack.items.len == 0) 0 else self.stack.items[self.stack.items.len - 1].child_depth;
     if (depth != required) return if (required == 0) error.FigRootMarker else error.FigSkippedLevel;
-    const target: *PendingContainer = if (self.stack.items.len == 0) &self.root else self.stack.items[self.stack.items.len - 1].container;
+    const target: Id = if (self.stack.items.len == 0) self.root else self.stack.items[self.stack.items.len - 1].container;
 
     // A lone `+` (optionally with a trailing comment) is a continuation line:
     // it re-runs the most recent zero-marker `[]` append header. Any other
@@ -934,13 +861,12 @@ fn parseContinuationLine(self: *Parser, depth: u32) Error!void {
     const steps = self.last_append_steps orelse return error.FigDanglingContinuation;
     self.skipSpacesTabs();
     if (!self.atEndOfContent()) return error.FigTrailingContent;
-    const leading = try self.drainPendingLeading();
-    const parent = try self.navigateIntermediate(&self.root, steps);
+    const parent = try self.navigateIntermediate(self.root, steps);
     const resolved = try self.resolveHeaderFinal(parent, steps[steps.len - 1]);
-    try self.appendComments(&resolved.owner.leading, leading);
-    if (try self.scanTrailingCommentOnly()) |cm| resolved.owner.trailing = .{ .text = cm };
+    try self.flushLeading(resolved.leading);
+    if (try self.scanTrailingCommentOnly()) |cm| try self.trailing(resolved.container, cm);
     self.consumeLineEnd();
-    try self.stack.append(self.allocator, .{ .container = resolved.container, .child_depth = 1, .owner = resolved.owner });
+    try self.stack.append(self.gpa, .{ .container = resolved.container, .child_depth = 1 });
 }
 
 /// Pop frames deeper than `depth`, validating each closes non-empty. Buffered
@@ -950,11 +876,12 @@ fn parseContinuationLine(self: *Parser, depth: u32) Error!void {
 fn closeFramesAbove(self: *Parser, depth: u32) Error!void {
     while (self.stack.items.len > 0 and self.stack.items[self.stack.items.len - 1].child_depth > depth) {
         const frame = self.stack.pop().?;
-        if (frame.container.kind == .undecided) return error.FigEmptyContainer;
+        const info = self.infoOf(frame.container).?.*;
+        if (info.shape == .undecided) return error.FigEmptyContainer;
         // A `[]`-appended element was pre-committed to map shape at birth, so
         // the `.undecided` check above never sees it — but one that closes
         // with zero entries is the same authoring mistake, and errors the same.
-        if (frame.container.born_of_append and frame.container.mapping.entries.items.len == 0) return error.FigEmptyContainer;
+        if (info.born_of_append and self.rows()[frame.container].first_child == none) return error.FigEmptyContainer;
         if (self.pending_leading.items.len > 0) {
             // Partition in place: comments at/below the closing frame's child
             // depth drain to its dangling run; the rest compact to the front of
@@ -962,7 +889,7 @@ fn closeFramesAbove(self: *Parser, depth: u32) Error!void {
             var write: usize = 0;
             for (self.pending_leading.items) |pc| {
                 if (pc.depth >= frame.child_depth) {
-                    try frame.owner.dangling.append(self.allocator, pc.comment);
+                    try self.w.comment(frame.container, table.comment_dangling, pc.comment);
                 } else {
                     self.pending_leading.items[write] = pc;
                     write += 1;
@@ -973,17 +900,17 @@ fn closeFramesAbove(self: *Parser, depth: u32) Error!void {
     }
 }
 
-fn drainPendingLeading(self: *Parser) Error!std.ArrayList(AST.Comment) {
-    var result: std.ArrayList(AST.Comment) = .empty;
-    try result.ensureTotalCapacityPrecise(self.allocator, self.pending_leading.items.len);
-    for (self.pending_leading.items) |pc| result.appendAssumeCapacity(pc.comment);
+/// Write the buffered comment lines as `id`'s leading comments, in source
+/// order, and empty the buffer.
+fn flushLeading(self: *Parser, id: Id) Error!void {
+    for (self.pending_leading.items) |pc| try self.w.comment(id, table.comment_leading, pc.comment);
     self.pending_leading.clearRetainingCapacity();
-    return result;
 }
 
-fn appendComments(self: *Parser, dst: *std.ArrayList(AST.Comment), src: std.ArrayList(AST.Comment)) Error!void {
-    if (src.items.len == 0) return;
-    try dst.appendSlice(self.allocator, src.items);
+/// `text` as `id`'s trailing comment, replacing any it had (`RowWriter.finish`
+/// keeps the last).
+fn trailing(self: *Parser, id: Id, text: []const u8) Error!void {
+    try self.w.comment(id, table.comment_trailing, .{ .text = text });
 }
 
 // ── Markers ──────────────────────────────────────────────────────────────────
@@ -1048,7 +975,7 @@ fn scanMarkers(self: *Parser) Error!Markers {
 
 // ── Header / assignment lines ────────────────────────────────────────────────
 
-fn parseKeyLine(self: *Parser, target: *PendingContainer, depth: u32) Error!void {
+fn parseKeyLine(self: *Parser, target: Id, depth: u32) Error!void {
     const steps = try self.scanKeyPath();
     self.skipSpacesTabs();
     if (self.peek() == ':') {
@@ -1075,60 +1002,58 @@ fn parseKeyLine(self: *Parser, target: *PendingContainer, depth: u32) Error!void
     }
 }
 
-fn finishHeader(self: *Parser, target: *PendingContainer, steps: []const Step, depth: u32) Error!void {
+fn finishHeader(self: *Parser, target: Id, steps: []const Step, depth: u32) Error!void {
     if (!self.atEndOfContent()) return error.FigTrailingContent;
-    const leading = try self.drainPendingLeading();
     const parent = try self.navigateIntermediate(target, steps);
     const last = steps[steps.len - 1];
     const resolved = try self.resolveHeaderFinal(parent, last);
-    if (resolved.entry) |e| {
-        try self.appendComments(&e.key_leading, leading);
-    } else {
-        try self.appendComments(&resolved.owner.leading, leading);
-    }
-    if (try self.scanTrailingCommentOnly()) |cm| resolved.owner.trailing = .{ .text = cm };
+    try self.flushLeading(resolved.leading);
+    if (try self.scanTrailingCommentOnly()) |cm| try self.trailing(resolved.container, cm);
     self.consumeLineEnd();
-    try self.stack.append(self.allocator, .{ .container = resolved.container, .child_depth = depth + 1, .owner = resolved.owner });
+    try self.stack.append(self.gpa, .{ .container = resolved.container, .child_depth = depth + 1 });
     // A zero-marker header whose FINAL step is `[]` arms the `+` continuation
     // (processContentLine already cleared any previous chain for this line).
+    // `steps` is this line's scratch, so the chain keeps its own copy.
     if (depth == 0) switch (last) {
         .index => |idx| {
-            if (idx == .append_or_last) self.last_append_steps = steps;
+            if (idx == .append_or_last) {
+                self.append_steps.clearRetainingCapacity();
+                try self.append_steps.appendSlice(self.gpa, steps);
+                self.last_append_steps = self.append_steps.items;
+            }
         },
         .key => {},
     };
 }
 
-fn finishAssignment(self: *Parser, target: *PendingContainer, steps: []const Step, type_name: ?[]const u8, sep: Span) Error!void {
+fn finishAssignment(self: *Parser, target: Id, steps: []const Step, type_name: ?[]const u8, sep: Span) Error!void {
     self.skipSpacesTabs();
-    const leading = try self.drainPendingLeading();
     const parent = try self.navigateIntermediate(target, steps);
     const last = steps[steps.len - 1];
-    var value_node = try self.parseAssignedValue(type_name);
+    const value = try self.parseAssignedValue(type_name);
     self.consumeLineEnd();
     switch (last) {
         .key => |k| {
-            const m = try parent.asMapping();
+            try self.asMapping(parent);
             // `consumeLineEnd` above has already advanced `self.pos` past this
             // line's newline (onto the START of the next line) — the default
             // "current cursor" anchor would misattribute the diagnostic to
             // whatever follows. Pin it to the actual conflicting key's own
             // span instead.
-            if (self.findEntry(m, k.name) != null) return self.failSpan(k.span.start, k.span.end, error.FigDuplicateKey);
-            const entry = try self.allocator.create(MEntry);
-            entry.* = .{ .key = k.name, .key_span = k.span, .sep_span = sep, .value = value_node };
-            try self.appendComments(&entry.key_leading, leading);
-            try m.addEntry(self.allocator, entry);
+            if (self.children.get(parent, k.name) != null) return self.failSpan(k.span.start, k.span.end, error.FigDuplicateKey);
+            const kv = try self.addEntry(parent, k, value, sep);
+            try self.flushLeading(self.keyOf(kv));
         },
         .index => |idx| {
-            const s = try parent.asSequence();
-            try s.markAddressed();
-            try self.appendComments(&value_node.leading, leading);
+            try self.asSequence(parent);
+            try self.markAddressed(parent);
             switch (idx) {
                 .literal => |n| {
-                    if (n < s.elements.items.len) return error.FigIndexAlreadySet;
-                    if (n > s.elements.items.len) return error.FigIndexSkipped;
-                    try s.elements.append(self.allocator, try self.boxNode(value_node));
+                    const len = self.elementCount(parent);
+                    if (n < len) return error.FigIndexAlreadySet;
+                    if (n > len) return error.FigIndexSkipped;
+                    try self.flushLeading(value);
+                    try self.appendElement(parent, value);
                 },
                 // `xs[] = v` is not assignable: `[]` appends only as a header
                 // (or as a mid-path "last element" step) — a `= value` on it
@@ -1145,7 +1070,7 @@ fn finishAssignment(self: *Parser, target: *PendingContainer, steps: []const Ste
 
 /// The element `*` marker (and its separator) has already been consumed by
 /// `scanMarkers`; `pos` sits on the element body (or a typing `:`).
-fn parseElementLine(self: *Parser, target: *PendingContainer, depth: u32, star: Span) Error!void {
+fn parseElementLine(self: *Parser, target: Id, depth: u32, star: Span) Error!void {
     // The position right after the `> *` marker prefix — before any trailing
     // whitespace is skipped — so a bare `*` opener (no value on its own line)
     // still anchors its container's span at a real, reconstructable position
@@ -1153,20 +1078,16 @@ fn parseElementLine(self: *Parser, target: *PendingContainer, depth: u32, star: 
     // sibling element).
     const body_start = self.pos;
     self.skipSpacesTabs();
-    const leading = try self.drainPendingLeading();
-    const seq = try target.asSequence();
-    try seq.markElement();
+    try self.asSequence(target);
+    try self.markElement(target);
 
     if (self.atEndOfContent()) {
-        const child = try self.allocator.create(PendingContainer);
-        child.* = .{};
-        const el = try self.allocator.create(TNode);
-        el.* = .{ .value = .{ .container = child }, .span = Span.init(body_start, body_start), .marker = star };
-        try self.appendComments(&el.leading, leading);
-        try seq.elements.append(self.allocator, el);
-        if (try self.scanTrailingCommentOnly()) |cm| el.trailing = .{ .text = cm };
+        const child = try self.newBlockContainer(Span.init(body_start, body_start), .{});
+        try self.flushLeading(child);
+        try self.addElement(target, child, star);
+        if (try self.scanTrailingCommentOnly()) |cm| try self.trailing(child, cm);
         self.consumeLineEnd();
-        try self.stack.append(self.allocator, .{ .container = child, .child_depth = depth + 1, .owner = el });
+        try self.stack.append(self.gpa, .{ .container = child, .child_depth = depth + 1 });
         return;
     }
 
@@ -1182,21 +1103,19 @@ fn parseElementLine(self: *Parser, target: *PendingContainer, depth: u32, star: 
         // Same caret pin as `parseKeyLine`: the `:` is the offending token.
         if (self.peek() != '=') return self.failAt(colon_pos, error.FigForeignSyntaxColon);
         self.advance();
-        var node = try self.parseAssignedValue(type_name);
-        node.marker = star;
+        const el = try self.parseAssignedValue(type_name);
         self.consumeLineEnd();
-        try self.appendComments(&node.leading, leading);
-        try seq.elements.append(self.allocator, try self.boxNode(node));
+        try self.flushLeading(el);
+        try self.addElement(target, el, star);
         return;
     }
 
     const c = self.peek().?;
     if (c == '\'' or c == '"' or c == '[' or c == '{') {
-        var node = try self.parseUntypedValue(false);
-        node.marker = star;
+        const el = try self.parseUntypedValue(false);
         self.consumeLineEnd();
-        try self.appendComments(&node.leading, leading);
-        try seq.elements.append(self.allocator, try self.boxNode(node));
+        try self.flushLeading(el);
+        try self.addElement(target, el, star);
         return;
     }
 
@@ -1207,25 +1126,25 @@ fn parseElementLine(self: *Parser, target: *PendingContainer, depth: u32, star: 
     while (k < self.source.len and self.source[k] != '\n') k += 1;
     if (std.mem.indexOf(u8, self.source[start..k], " = ") != null) return error.FigElementInlineField;
 
-    var node = try self.parseUntypedValue(false);
-    node.marker = star;
+    const el = try self.parseUntypedValue(false);
     self.consumeLineEnd();
-    try self.appendComments(&node.leading, leading);
-    try seq.elements.append(self.allocator, try self.boxNode(node));
+    try self.flushLeading(el);
+    try self.addElement(target, el, star);
 }
 
 // ── Key-path scanning (shared by headers and assignments) ───────────────────
 
 fn scanKeyPath(self: *Parser) Error![]Step {
+    // The line's scratch: the steps are read while the line is.
     var steps: std.ArrayList(Step) = .empty;
     // Paths are short (usually 1-3 segments); seed enough to skip the mid-loop
-    // growth reallocs before the final `toOwnedSlice` shrink.
-    try steps.ensureTotalCapacity(self.allocator, 4);
+    // growth reallocs.
+    try steps.ensureTotalCapacity(self.scratch, 4);
     while (true) {
         const key = try self.scanKeySeg();
-        try steps.append(self.allocator, .{ .key = key });
+        try steps.append(self.scratch, .{ .key = key });
         while (self.peek() == '[') {
-            try steps.append(self.allocator, .{ .index = try self.scanIndexSeg() });
+            try steps.append(self.scratch, .{ .index = try self.scanIndexSeg() });
         }
         if (self.peek() == '.') {
             self.advance();
@@ -1233,7 +1152,7 @@ fn scanKeyPath(self: *Parser) Error![]Step {
         }
         break;
     }
-    return steps.toOwnedSlice(self.allocator);
+    return steps.items;
 }
 
 fn scanKeySeg(self: *Parser) Error!KeySeg {
@@ -1271,76 +1190,194 @@ fn scanIndexSeg(self: *Parser) Error!IndexKind {
     return .{ .literal = n };
 }
 
-// ── Path navigation ──────────────────────────────────────────────────────────
+// ── Rows and containers ──────────────────────────────────────────────────────
 
-fn findEntry(self: *Parser, m: *Mapping, key: []const u8) ?*MEntry {
-    _ = self;
-    return m.index.get(key);
+fn rows(self: *Parser) []table.Row {
+    return self.w.t.rows.items;
 }
+
+/// Container `id`'s state, or null when `id` is not a container.
+fn infoOf(self: *Parser, id: Id) ?*ContainerInfo {
+    return self.containers.getPtr(id);
+}
+
+/// A new, childless container row over `span` — an empty mapping until its
+/// first child decides it, unless `info` already has.
+fn newContainer(self: *Parser, span: Span, info: ContainerInfo) Error!Id {
+    const id = try self.w.add(if (info.shape == .sequence) .{ .sequence = null } else .{ .mapping = null }, span);
+    try self.containers.put(self.gpa, id, info);
+    return id;
+}
+
+/// `newContainer` for a block container — one a header line, a `*` opener or
+/// a dotted path makes, as opposed to a flow value or the root — which also
+/// records the line holding `span.start` as its first header line
+/// (`Document.regionsOf`).
+fn newBlockContainer(self: *Parser, span: Span, info: ContainerInfo) Error!Id {
+    const id = try self.newContainer(span, info);
+    try self.region(id, span.start);
+    return id;
+}
+
+/// The line holding `at` as one of block container `id`'s header lines.
+fn region(self: *Parser, id: Id, at: usize) Error!void {
+    const line = Document.lineRegionAt(self.source, at);
+    try self.w.region(id, line.start, line.end);
+}
+
+/// Container `id`, unless a flow value made it — those are closed to later
+/// extension (dotted paths, headers, indexing).
+fn open(self: *Parser, id: Id) Error!Id {
+    return if (self.infoOf(id).?.closed) error.FigClosedFlowValue else id;
+}
+
+fn asMapping(self: *Parser, id: Id) Error!void {
+    const info = self.infoOf(id).?;
+    switch (info.shape) {
+        .undecided => info.shape = .mapping,
+        .mapping => {},
+        .sequence => return error.FigMixedContainerChildren,
+    }
+}
+
+fn asSequence(self: *Parser, id: Id) Error!void {
+    const info = self.infoOf(id).?;
+    switch (info.shape) {
+        .undecided => {
+            info.shape = .sequence;
+            try self.w.set(id, .{ .sequence = null });
+        },
+        .sequence => {},
+        .mapping => return error.FigMixedContainerChildren,
+    }
+}
+
+fn markElement(self: *Parser, id: Id) Error!void {
+    const info = self.infoOf(id).?;
+    switch (info.style) {
+        .undecided => info.style = .element,
+        .element => {},
+        .addressed => return error.FigMixedSequenceAddressing,
+    }
+}
+
+fn markAddressed(self: *Parser, id: Id) Error!void {
+    const info = self.infoOf(id).?;
+    switch (info.style) {
+        .undecided => {
+            info.style = .addressed;
+            // Only a flow array has elements before its style is decided, and
+            // a flow array is closed before it can be addressed.
+            std.debug.assert(self.rows()[id].first_child == none);
+            try self.addressed.put(self.gpa, id, .empty);
+        },
+        .addressed => {},
+        .element => return error.FigMixedSequenceAddressing,
+    }
+}
+
+/// Index-addressed sequence `id`'s elements so far, in order. Read it before
+/// appending: `appendElement` may move it.
+fn elementsOf(self: *Parser, id: Id) []const Id {
+    return self.addressed.getPtr(id).?.items;
+}
+
+fn elementCount(self: *Parser, id: Id) usize {
+    return self.elementsOf(id).len;
+}
+
+/// Link `el` as sequence `seq`'s last element.
+fn appendElement(self: *Parser, seq: Id, el: Id) Error!void {
+    try self.children.append(self.gpa, self.w, seq, el);
+    if (self.infoOf(seq).?.style == .addressed) try self.addressed.getPtr(seq).?.append(self.gpa, el);
+}
+
+/// `appendElement` for an element a `*` marker introduced.
+fn addElement(self: *Parser, seq: Id, el: Id, star: Span) Error!void {
+    try self.appendElement(seq, el);
+    try self.w.marker(el, star);
+}
+
+/// Link `key = value` as mapping `map`'s last entry, with `sep` its separator
+/// when it has one (`Document.sepSpan`), and return the entry's row. Its
+/// span reaches its value's final end in `finishSpans`.
+fn addEntry(self: *Parser, map: Id, key: KeySeg, value: Id, sep: ?Span) Error!Id {
+    const key_id = try self.w.add(.{ .string = key.name }, key.span);
+    const kv = try self.w.add(.{ .keyvalue = .{ .key = key_id, .value = value } }, Span.init(key.span.start, self.w.spanOf(value).end));
+    if (sep) |s| try self.w.sep(kv, s);
+    try self.children.append(self.gpa, self.w, map, kv);
+    try self.children.put(self.gpa, map, key.name, kv);
+    return kv;
+}
+
+/// Entry `kv`'s key row — where its leading comments bind.
+fn keyOf(self: *Parser, kv: Id) Id {
+    return self.rows()[kv].first_child;
+}
+
+fn valueOf(self: *Parser, kv: Id) Id {
+    return self.rows()[self.keyOf(kv)].next_sibling;
+}
+
+// ── Path navigation ──────────────────────────────────────────────────────────
 
 /// Resolve every step except the last, creating/reusing intermediate
 /// containers. `[]`/`[i]` here always mean "the last existing element" (never
 /// creates) — only a HEADER line's OVERALL final `[]` appends.
-fn navigateIntermediate(self: *Parser, start: *PendingContainer, steps: []const Step) Error!*PendingContainer {
+fn navigateIntermediate(self: *Parser, start: Id, steps: []const Step) Error!Id {
     var cur = start;
     for (steps[0 .. steps.len - 1]) |step| {
         switch (step) {
             .key => |k| {
-                const m = try cur.asMapping();
-                cur = try self.getOrCreateMapContainer(m, k);
+                try self.asMapping(cur);
+                cur = try self.getOrCreateMapContainer(cur, k, false);
             },
             .index => |idx| {
-                const s = try cur.asSequence();
-                try s.markAddressed();
-                cur = try self.getOrCreateSeqContainer(s, idx);
+                try self.asSequence(cur);
+                try self.markAddressed(cur);
+                cur = try self.getOrCreateSeqContainer(cur, idx);
             },
         }
     }
     return cur;
 }
 
-fn getOrCreateMapContainer(self: *Parser, m: *Mapping, seg: KeySeg) Error!*PendingContainer {
-    if (self.findEntry(m, seg.name)) |e| {
-        return switch (e.value.value) {
-            .container => |c| c.open(),
-            else => error.FigKeyNotContainer,
-        };
+/// Mapping `m`'s container under `seg`, made when there is none. One a block
+/// path makes is a block container named by `seg`; one a flow object's dotted
+/// key makes (`flow`) is closed with its object, and is neither.
+fn getOrCreateMapContainer(self: *Parser, m: Id, seg: KeySeg, flow: bool) Error!Id {
+    if (self.children.get(m, seg.name)) |kv| {
+        const v = self.valueOf(kv);
+        if (self.infoOf(v) == null) return error.FigKeyNotContainer;
+        return self.open(v);
     }
-    const child = try self.allocator.create(PendingContainer);
-    child.* = .{};
-    const entry = try self.allocator.create(MEntry);
+    const child = if (flow) try self.newContainer(seg.span, .{}) else try self.newBlockContainer(seg.span, .{});
     // A header has no `=`; its container's body hangs under the key, and a
     // replacement value is reframed from the key's end. A zero-width
-    // separator there says so (see `MEntry.sep_span`).
-    entry.* = .{ .key = seg.name, .key_span = seg.span, .sep_span = Span.init(seg.span.end, seg.span.end), .value = .{ .value = .{ .container = child }, .span = seg.span } };
-    try m.addEntry(self.allocator, entry);
+    // separator there says so.
+    _ = try self.addEntry(m, seg, child, Span.init(seg.span.end, seg.span.end));
+    if (!flow) try self.w.mention(child, seg.span, .entry);
     return child;
 }
 
-fn getOrCreateSeqContainer(self: *Parser, s: *Sequence, idx: IndexKind) Error!*PendingContainer {
+fn getOrCreateSeqContainer(self: *Parser, s: Id, idx: IndexKind) Error!Id {
+    const els = self.elementsOf(s);
     switch (idx) {
         .literal => |n| {
-            if (n < s.elements.items.len) {
-                return switch (s.elements.items[n].value) {
-                    .container => |c| c.open(),
-                    else => error.FigKeyNotContainer,
-                };
-            } else if (n == s.elements.items.len) {
-                const child = try self.allocator.create(PendingContainer);
-                child.* = .{};
-                const el = try self.allocator.create(TNode);
-                el.* = .{ .value = .{ .container = child }, .span = Span.init(self.cur_line_start, self.cur_line_start) };
-                try s.elements.append(self.allocator, el);
+            if (n < els.len) {
+                if (self.infoOf(els[n]) == null) return error.FigKeyNotContainer;
+                return self.open(els[n]);
+            } else if (n == els.len) {
+                const child = try self.newBlockContainer(Span.init(self.cur_line_start, self.cur_line_start), .{});
+                try self.appendElement(s, child);
                 return child;
             } else return error.FigIndexSkipped;
         },
         .append_or_last => {
-            if (s.elements.items.len == 0) return error.FigEmptyAppendTarget;
-            const last = s.elements.items[s.elements.items.len - 1];
-            return switch (last.value) {
-                .container => |c| c.open(),
-                else => error.FigKeyNotContainer,
-            };
+            if (els.len == 0) return error.FigEmptyAppendTarget;
+            const last = els[els.len - 1];
+            if (self.infoOf(last) == null) return error.FigKeyNotContainer;
+            return self.open(last);
         },
     }
 }
@@ -1349,89 +1386,79 @@ fn getOrCreateSeqContainer(self: *Parser, s: *Sequence, idx: IndexKind) Error!*P
 /// push as the next frame. A plain key may be re-entered (fine, per
 /// DESIGN.md); a header-final `[]` always appends a fresh, forced-mapping
 /// element.
-fn resolveHeaderFinal(self: *Parser, parent: *PendingContainer, last: Step) Error!Resolved {
+fn resolveHeaderFinal(self: *Parser, parent: Id, last: Step) Error!Resolved {
     switch (last) {
         .key => |k| {
-            const m = try parent.asMapping();
-            if (self.findEntry(m, k.name)) |e| {
-                const c = switch (e.value.value) {
-                    .container => |cc| try cc.open(),
-                    else => return error.FigDuplicateKey,
-                };
-                // A header re-opening an existing container: record this
-                // line's position on it (see `PendingContainer.reentries`).
-                try c.reentries.append(self.allocator, k.span.start);
-                try c.reentry_names.append(self.allocator, k.span);
-                return .{ .container = c, .owner = &e.value, .entry = e };
+            try self.asMapping(parent);
+            if (self.children.get(parent, k.name)) |kv| {
+                const v = self.valueOf(kv);
+                if (self.infoOf(v) == null) return error.FigDuplicateKey;
+                const c = try self.open(v);
+                // A header re-opening an existing container (DESIGN.md
+                // "re-entering a path to add new keys is fine"): this line is
+                // one of its header lines too, and its key one more place its
+                // name is written. Only header-FINAL re-opens count: a line
+                // whose final segment creates something anchors itself through
+                // that new node, and a mid-path re-open always rides such a line.
+                try self.region(c, k.span.start);
+                try self.w.mention(c, k.span, .entry);
+                return .{ .container = c, .leading = self.keyOf(kv) };
             }
-            const child = try self.allocator.create(PendingContainer);
-            child.* = .{};
-            const entry = try self.allocator.create(MEntry);
+            const child = try self.newBlockContainer(k.span, .{});
             // A header line's container hangs under the key; a replacement
-            // value reframes from the key's end (see `MEntry.sep_span`).
-            entry.* = .{ .key = k.name, .key_span = k.span, .sep_span = Span.init(k.span.end, k.span.end), .value = .{ .value = .{ .container = child }, .span = k.span } };
-            try m.addEntry(self.allocator, entry);
-            return .{ .container = child, .owner = &entry.value, .entry = entry };
+            // value reframes from the key's end (a zero-width separator).
+            const kv = try self.addEntry(parent, k, child, Span.init(k.span.end, k.span.end));
+            try self.w.mention(child, k.span, .entry);
+            return .{ .container = child, .leading = self.keyOf(kv) };
         },
         .index => |idx| {
-            const s = try parent.asSequence();
-            try s.markAddressed();
+            try self.asSequence(parent);
+            try self.markAddressed(parent);
             switch (idx) {
                 .literal => |n| {
-                    if (n < s.elements.items.len) {
-                        const el = s.elements.items[n];
-                        const c = switch (el.value) {
-                            .container => |cc| try cc.open(),
-                            else => return error.FigKeyNotContainer,
-                        };
+                    const els = self.elementsOf(parent);
+                    if (n < els.len) {
+                        const el = els[n];
+                        if (self.infoOf(el) == null) return error.FigKeyNotContainer;
+                        const c = try self.open(el);
                         // An `xs[i]` header re-opening an existing element —
                         // the index-addressed twin of the `.key` re-open
                         // above. No key span exists for an index step; the
                         // line start is the same-line anchor the region
                         // gather needs.
-                        try c.reentries.append(self.allocator, self.cur_line_start);
-                        return .{ .container = c, .owner = el, .entry = null };
-                    } else if (n == s.elements.items.len) {
-                        const child = try self.allocator.create(PendingContainer);
-                        child.* = .{};
-                        const el = try self.allocator.create(TNode);
-                        el.* = .{ .value = .{ .container = child }, .span = Span.init(self.cur_line_start, self.cur_line_start) };
-                        try s.elements.append(self.allocator, el);
-                        return .{ .container = child, .owner = el, .entry = null };
+                        try self.region(c, self.cur_line_start);
+                        return .{ .container = c, .leading = c };
+                    } else if (n == els.len) {
+                        const child = try self.newBlockContainer(Span.init(self.cur_line_start, self.cur_line_start), .{});
+                        try self.appendElement(parent, child);
+                        return .{ .container = child, .leading = child };
                     } else return error.FigIndexSkipped;
                 },
                 .append_or_last => {
-                    const child = try self.allocator.create(PendingContainer);
-                    child.* = .{ .born_of_append = true };
-                    _ = try child.asMapping(); // append-created elements are always map-shaped
-                    const el = try self.allocator.create(TNode);
-                    el.* = .{ .value = .{ .container = child }, .span = Span.init(self.cur_line_start, self.cur_line_start) };
-                    try s.elements.append(self.allocator, el);
-                    return .{ .container = child, .owner = el, .entry = null };
+                    // Append-created elements are always map-shaped.
+                    const child = try self.newBlockContainer(Span.init(self.cur_line_start, self.cur_line_start), .{ .shape = .mapping, .born_of_append = true });
+                    try self.appendElement(parent, child);
+                    return .{ .container = child, .leading = child };
                 },
             }
         },
     }
 }
 
-fn boxNode(self: *Parser, node: TNode) Error!*TNode {
-    const p = try self.allocator.create(TNode);
-    p.* = node;
-    return p;
-}
-
 // ── Values ───────────────────────────────────────────────────────────────────
 
-fn parseAssignedValue(self: *Parser, type_name: ?[]const u8) Error!TNode {
+/// A value's row, written with its trailing comment and type tag; each value
+/// parser below returns the row it wrote.
+fn parseAssignedValue(self: *Parser, type_name: ?[]const u8) Error!Id {
     self.skipSpacesTabs();
     if (type_name) |t| {
         if (std.mem.eql(u8, t, "string")) {
             // `: string =` selects the raw-text sub-parser AND records the tag, so
             // the annotation round-trips and `fig fmt` can re-emit the value bare
             // (the annotation turns sniffing off on re-read — no re-quoting needed).
-            var node = try self.parseUntypedValue(true);
-            node.tag = .{ .kind = .string };
-            return node;
+            const id = try self.parseUntypedValue(true);
+            try self.w.tag(id, .{ .kind = .string }, 0, true, null);
+            return id;
         }
         const res = self.scanBareRestOfLine();
         if (res.text.len == 0) return error.FigInvalidValue;
@@ -1440,12 +1467,20 @@ fn parseAssignedValue(self: *Parser, type_name: ?[]const u8) Error!TNode {
         // Pin the diagnostic to the value's own span instead — that is what
         // failed its annotation, and what an editor should squiggle.
         const vspan = self.spanOf(res.text);
-        var node = self.applyKnownType(t, res.text) catch |err| return self.failSpan(vspan.start, vspan.end, err);
-        node.span = vspan;
-        if (res.comment) |cm| node.trailing = .{ .text = cm };
-        return node;
+        const typed = self.applyKnownType(t, res.text) catch |err| return self.failSpan(vspan.start, vspan.end, err);
+        const id = try self.w.add(typed.kind, vspan);
+        if (typed.tag) |tag| try self.w.tag(id, tag, 0, true, null);
+        if (res.comment) |cm| try self.trailing(id, cm);
+        return id;
     }
     return self.parseUntypedValue(false);
+}
+
+/// A scalar row of `kind` over `span`, with `comment` as its trailing comment.
+fn scalar(self: *Parser, kind: AST.Node.Kind, span: Span, comment: ?[]const u8) Error!Id {
+    const id = try self.w.add(kind, span);
+    if (comment) |cm| try self.trailing(id, cm);
+    return id;
 }
 
 /// `force_string_bare`: set only for `: string =`, where the ENTIRE RHS is one
@@ -1458,7 +1493,7 @@ fn parseAssignedValue(self: *Parser, type_name: ?[]const u8) Error!TNode {
 /// and quotes normally. The trailing-`#`-comment rule is exactly the bare
 /// rule (`scanBareRestOfLine`): a quote-led RHS behaves identically to a bare
 /// one.
-fn parseUntypedValue(self: *Parser, force_string_bare: bool) Error!TNode {
+fn parseUntypedValue(self: *Parser, force_string_bare: bool) Error!Id {
     if (force_string_bare) {
         // So `x: string = [ 1 + 2 ]` is the string `[ 1 + 2 ]`, never a
         // sequence — the quote-free escape hatch that needs no interior
@@ -1466,9 +1501,7 @@ fn parseUntypedValue(self: *Parser, force_string_bare: bool) Error!TNode {
         // dropping the tag when the value has no bare spelling.)
         const res = self.scanBareRestOfLine();
         if (res.text.len == 0) return error.FigInvalidValue;
-        var node: TNode = .{ .value = .{ .string = res.text }, .span = self.spanOf(res.text) };
-        if (res.comment) |cm| node.trailing = .{ .text = cm };
-        return node;
+        return self.scalar(.{ .string = res.text }, self.spanOf(res.text), res.comment);
     }
     const c = self.peek() orelse return error.FigInvalidValue;
     switch (c) {
@@ -1487,9 +1520,7 @@ fn parseUntypedValue(self: *Parser, force_string_bare: bool) Error!TNode {
                 const res = self.scanBareRestOfLine();
                 if (res.text.len == 0) return error.FigInvalidValue;
                 // Opened with a delimiter → sniffing is off; it is a string.
-                var node: TNode = .{ .value = .{ .string = res.text }, .span = self.spanOf(res.text) };
-                if (res.comment) |cm| node.trailing = .{ .text = cm };
-                return node;
+                return self.scalar(.{ .string = res.text }, self.spanOf(res.text), res.comment);
             }
             // `.flow` (terminal close) and `.unclosed` (multi-line / truncation)
             // both commit: the flow parser succeeds or raises a hard error.
@@ -1502,28 +1533,22 @@ fn parseUntypedValue(self: *Parser, force_string_bare: bool) Error!TNode {
             // flow parser's `skipFlowWs` as interior trivia. An opener comment
             // wins over a close-line one, mirroring the `'''` rule.
             const opener_comment = self.scanFlowOpenerComment();
-            var node = try self.parseFlowValue();
-            const trailing = try self.scanTrailingCommentOnly();
-            node.trailing = if (opener_comment) |oc|
-                .{ .text = oc }
-            else if (trailing) |t|
-                .{ .text = t }
-            else
-                null;
-            return node;
+            const id = try self.parseFlowValue();
+            const close_comment = try self.scanTrailingCommentOnly();
+            if (opener_comment orelse close_comment) |cm| try self.trailing(id, cm);
+            return id;
         },
         else => {
             const vstart = self.pos;
             const res = self.scanBareRestOfLine();
             if (res.text.len == 0) return error.FigInvalidValue;
-            var node: TNode = try self.sniffToNodeWarned(res.text, vstart);
-            if (res.comment) |cm| node.trailing = .{ .text = cm };
-            return node;
+            const kind = try self.sniffToKindWarned(res.text, vstart);
+            return self.scalar(kind, self.spanOf(res.text), res.comment);
         },
     }
 }
 
-fn parseQuotedOrTriple(self: *Parser, q: u8) Error!TNode {
+fn parseQuotedOrTriple(self: *Parser, q: u8) Error!Id {
     const start = self.pos;
     if (self.isTripleAt(self.pos, q)) {
         // The opener line is still block-layer: only whitespace and an optional
@@ -1535,21 +1560,18 @@ fn parseQuotedOrTriple(self: *Parser, q: u8) Error!TNode {
         if (j < self.source.len and self.source[j] != '\n' and self.source[j] != '#' and !self.isCrlfAt(j))
             return self.failAt(j, error.FigMultilineOpenerContent);
         const r = if (q == '\'')
-            try tok.scanTripleSingle(self.allocator, self.source, self.pos)
+            try tok.scanTripleSingle(self.scratch, self.source, self.pos)
         else
-            try tok.scanTripleDouble(self.allocator, self.source, self.pos);
+            try tok.scanTripleDouble(self.scratch, self.source, self.pos);
         self.pos = r.end;
-        var node: TNode = .{ .value = .{ .string = r.text }, .span = Span.init(start, r.end) };
-        const trailing = try self.scanTrailingCommentOnly();
-        node.trailing = if (r.opener_comment) |oc| .{ .text = oc } else if (trailing) |t| .{ .text = t } else null;
-        return node;
+        const close_comment = try self.scanTrailingCommentOnly();
+        return self.scalar(.{ .string = r.text }, Span.init(start, r.end), r.opener_comment orelse close_comment);
     }
     const r = if (q == '\'')
-        try tok.scanSingleQuoted(self.allocator, self.source, self.pos)
+        try tok.scanSingleQuoted(self.scratch, self.source, self.pos)
     else
-        try tok.scanDoubleQuoted(self.allocator, self.source, self.pos);
+        try tok.scanDoubleQuoted(self.scratch, self.source, self.pos);
     self.pos = r.end;
-    var node: TNode = .{ .value = .{ .string = r.text }, .span = Span.init(start, r.end) };
     // A single-line quote that closed early with more content on the line is
     // almost always a bare string wrapped in unescaped quotes (`k = "a "b""`).
     // Remap the generic trailing-content error to the quote-specific message
@@ -1559,32 +1581,30 @@ fn parseQuotedOrTriple(self: *Parser, q: u8) Error!TNode {
         error.FigTrailingContent => return self.failAt(self.pos, error.FigQuotedTrailingContent),
         else => |e| return e,
     };
-    if (t) |c| node.trailing = .{ .text = c };
-    return node;
+    return self.scalar(.{ .string = r.text }, Span.init(start, r.end), t);
 }
 
-fn sniffToNode(self: *Parser, text: []const u8) TNode {
-    const span = self.spanOf(text);
+fn sniffToKind(text: []const u8) AST.Node.Kind {
     return switch (tok.sniffBare(text)) {
-        .null_ => .{ .value = .null_, .span = span },
-        .boolean => |b| .{ .value = .{ .boolean = b }, .span = span },
-        .number => |n| .{ .value = .{ .number = n }, .span = span },
-        .datetime => |d| .{ .value = .{ .extended = .{ .kind = switch (d.kind) {
+        .null_ => .null_,
+        .boolean => |b| .{ .boolean = b },
+        .number => |n| .{ .number = .{ .raw = n.raw, .kind = if (n.kind == .float) .float else .integer } },
+        .datetime => |d| .{ .extended = .{ .kind = switch (d.kind) {
             inline else => |k| @field(AST.Node.Kind.Extended.ExtKind, @tagName(k)),
-        }, .text = d.raw } }, .span = span },
-        .string => .{ .value = .{ .string = text }, .span = span },
+        }, .text = d.raw } },
+        .string => .{ .string = text },
     };
 }
 
-/// `sniffToNode` plus the coercion warns (DESIGN.md "Coercion diagnostics") —
+/// `sniffToKind` plus the coercion warns (DESIGN.md "Coercion diagnostics") —
 /// the sniffing cost surfaced rather than removed. `offset` anchors the warn
 /// at the value's first byte. Both bare-value positions (block RHS, flow
 /// element) route through here; explicitly typed values never do (the
 /// annotation is the author saying "I know").
-fn sniffToNodeWarned(self: *Parser, text: []const u8, offset: usize) Error!TNode {
-    const node = self.sniffToNode(text);
+fn sniffToKindWarned(self: *Parser, text: []const u8, offset: usize) Error!AST.Node.Kind {
+    const kind = sniffToKind(text);
     const end = offset + text.len; // the exact token extent, for a tight squiggle
-    switch (node.value) {
+    switch (kind) {
         .string => {
             if (looksLikeLiteral(text)) {
                 try self.warnAt(.string_looks_like_literal, offset, end);
@@ -1608,7 +1628,7 @@ fn sniffToNodeWarned(self: *Parser, text: []const u8, offset: usize) Error!TNode
         },
         else => {},
     }
-    return node;
+    return kind;
 }
 
 /// Case-variant bool/null spellings from other config languages (`Yes`, `ON`,
@@ -1634,15 +1654,18 @@ fn looksLikeLiteral(text: []const u8) bool {
 /// Returning the close index lets both call sites warn without recomputing it.
 /// Well-formedness is decided by a speculative sub-parse of the prefix alone
 /// (which reuses the real flow grammar rather than re-deriving it here); its
-/// containers land in the shared arena and its warnings are discarded with the
-/// sub-parser.
+/// rows land in a table of its own, discarded with the sub-parser and its
+/// warnings.
 fn flowLikePrefix(self: *Parser, start: usize) Error!?usize {
     const close = tok.bracketCloseIndex(self.source, start) orelse return null;
     if (close + 1 >= self.source.len) return null;
     const sep = self.source[close + 1];
     if (sep != ' ' and sep != '\t') return null; // glued trailing → intended string
     const prefix = self.source[start .. close + 1];
-    var sub: Parser = .{ .allocator = self.allocator, .source = prefix };
+    var scratch_table = Table.init(self.gpa, prefix);
+    defer scratch_table.deinit();
+    var sub: Parser = .{ .allocator = self.allocator, .scratch = self.scratch, .gpa = self.gpa, .source = prefix, .w = .init(&scratch_table) };
+    defer sub.deinit();
     _ = sub.parseFlowValue() catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => return null,
@@ -1698,7 +1721,10 @@ fn looksLikeLeadingDotNumber(text: []const u8) bool {
 /// to *validate* (a genuine mismatch still errors), never to rewrite the bytes,
 /// so `1.`/`09` survive exactly. `enum`/`datetime` map to distinct `extended`
 /// node kinds that self-annotate on print, so they carry no tag.
-fn applyKnownType(self: *Parser, type_name: []const u8, text: []const u8) Error!TNode {
+/// What `applyKnownType` makes of a value: its row's kind, and its type tag.
+const Typed = struct { kind: AST.Node.Kind, tag: ?AST.Tag = null };
+
+fn applyKnownType(self: *Parser, type_name: []const u8, text: []const u8) Error!Typed {
     // Resolve the annotation name once (an unknown name is `FigUnknownType`),
     // then switch — instead of a chain of `mem.eql` per candidate.
     const TypeName = enum { int, float, bool, @"enum", char, datetime, date, time };
@@ -1707,37 +1733,37 @@ fn applyKnownType(self: *Parser, type_name: []const u8, text: []const u8) Error!
         .int => {
             if (tok.sniffNumber(text)) |n| {
                 if (n.kind != .integer) return error.FigTypeMismatch;
-                return .{ .value = .{ .number = .{ .raw = text, .kind = .integer } }, .tag = .{ .kind = .integer } };
+                return .{ .kind = .{ .number = .{ .raw = text, .kind = .integer } }, .tag = .{ .kind = .integer } };
             }
             // Coercion opt-in: a leading-zero decimal (`09`, `007`) is a *string*
             // when bare (the Leading-zero rule), but `: int` is the author
             // overriding that default. Validate the shape (null → mismatch); keep
             // the authored lexeme verbatim so the padding round-trips.
             if ((try self.normalizeDecimal(text)) != null)
-                return .{ .value = .{ .number = .{ .raw = text, .kind = .integer } }, .tag = .{ .kind = .integer } };
+                return .{ .kind = .{ .number = .{ .raw = text, .kind = .integer } }, .tag = .{ .kind = .integer } };
             return error.FigTypeMismatch;
         },
         .float => {
             if (std.mem.eql(u8, text, "inf") or std.mem.eql(u8, text, "-inf") or std.mem.eql(u8, text, "nan")) {
-                return .{ .value = .{ .extended = .{ .kind = .number_special, .text = text } } };
+                return .{ .kind = .{ .extended = .{ .kind = .number_special, .text = text } } };
             }
             if (tok.sniffNumber(text)) |_|
-                return .{ .value = .{ .number = .{ .raw = text, .kind = .float } }, .tag = .{ .kind = .float } };
+                return .{ .kind = .{ .number = .{ .raw = text, .kind = .float } }, .tag = .{ .kind = .float } };
             // Coercion opt-in: a trailing-dot (`1.`) or leading-zero (`09`) token
             // is a string when bare, but `: float` overrides. Validate the shape
             // (null → mismatch); keep the authored lexeme verbatim (`1.` stays `1.`).
             if ((try self.normalizeCoercedFloat(text)) != null)
-                return .{ .value = .{ .number = .{ .raw = text, .kind = .float } }, .tag = .{ .kind = .float } };
+                return .{ .kind = .{ .number = .{ .raw = text, .kind = .float } }, .tag = .{ .kind = .float } };
             return error.FigTypeMismatch;
         },
         .bool => {
-            if (std.mem.eql(u8, text, "true")) return .{ .value = .{ .boolean = true }, .tag = .{ .kind = .boolean } };
-            if (std.mem.eql(u8, text, "false")) return .{ .value = .{ .boolean = false }, .tag = .{ .kind = .boolean } };
+            if (std.mem.eql(u8, text, "true")) return .{ .kind = .{ .boolean = true }, .tag = .{ .kind = .boolean } };
+            if (std.mem.eql(u8, text, "false")) return .{ .kind = .{ .boolean = false }, .tag = .{ .kind = .boolean } };
             return error.FigTypeMismatch;
         },
         .@"enum" => {
             if (text.len == 0) return error.FigTypeMismatch;
-            return .{ .value = .{ .extended = .{ .kind = .enum_literal, .text = text } } };
+            return .{ .kind = .{ .extended = .{ .kind = .enum_literal, .text = text } } };
         },
         .char => {
             // `: char = 'A'` — a single ZON-style char literal. The annotation is
@@ -1746,8 +1772,8 @@ fn applyKnownType(self: *Parser, type_name: []const u8, text: []const u8) Error!
             // Reusing the Zig char codec keeps escapes (`'\n'`, `'\u{1F600}'`)
             // working for free. Stored as the decimal codepoint — the cross-format
             // `char_literal` invariant (see AST `ExtKind.char_literal`) — allocated
-            // in the parse arena like `normalizeDecimal`, so the builder dupes it
-            // into the AST's strings.
+            // in the line's scratch like `normalizeDecimal`; its row copies it
+            // into the table's strings.
             // Only `'…'` is a char literal (§ 5.3): `"A"` is not one, and
             // `parseCharLiteral` asserts the single quotes rather than checking
             // them, so anything else must be refused before it is called.
@@ -1756,8 +1782,8 @@ fn applyKnownType(self: *Parser, type_name: []const u8, text: []const u8) Error!
                 .success => |c| c,
                 .failure => return error.FigTypeMismatch,
             };
-            const raw = try std.fmt.allocPrint(self.allocator, "{d}", .{cp});
-            return .{ .value = .{ .extended = .{ .kind = .char_literal, .text = raw } } };
+            const raw = try std.fmt.allocPrint(self.scratch, "{d}", .{cp});
+            return .{ .kind = .{ .extended = .{ .kind = .char_literal, .text = raw } } };
         },
         .datetime, .date, .time => {
             const k = datetime.classify(text, .{}) catch return error.FigTypeMismatch;
@@ -1773,7 +1799,7 @@ fn applyKnownType(self: *Parser, type_name: []const u8, text: []const u8) Error!
                 else => true, // "datetime" accepts any of the four shapes
             };
             if (!ok) return error.FigTypeMismatch;
-            return .{ .value = .{ .extended = .{ .kind = ext, .text = text } } };
+            return .{ .kind = .{ .extended = .{ .kind = ext, .text = text } } };
         },
     }
 }
@@ -1782,7 +1808,7 @@ fn applyKnownType(self: *Parser, type_name: []const u8, text: []const u8) Error!
 /// leading zero (`09`, `007`, `-00`) into a valid integer raw: sign preserved
 /// (`+` dropped), leading zeros stripped to at least one digit. Returns null if
 /// the post-sign body isn't purely decimal digits (so a genuine mismatch still
-/// errors). Arena-allocated; the builder dupes it into the AST's owned strings.
+/// errors). Allocated in the line's scratch.
 fn normalizeDecimal(self: *Parser, text: []const u8) Error!?[]const u8 {
     var i: usize = 0;
     const negative = text.len > 0 and text[0] == '-';
@@ -1793,7 +1819,7 @@ fn normalizeDecimal(self: *Parser, text: []const u8) Error!?[]const u8 {
     var start: usize = 0;
     while (start + 1 < body.len and body[start] == '0') start += 1; // keep ≥1 digit
     const digits = body[start..];
-    return try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ if (negative) "-" else "", digits });
+    return try std.fmt.allocPrint(self.scratch, "{s}{s}", .{ if (negative) "-" else "", digits });
 }
 
 /// Normalize a token `: float` accepts by coercion but `sniffNumber` rejects:
@@ -1803,12 +1829,12 @@ fn normalizeCoercedFloat(self: *Parser, text: []const u8) Error!?[]const u8 {
     // Trailing dot: `1.` — the head must be a clean decimal integer body.
     if (text.len >= 2 and text[text.len - 1] == '.') {
         if (try self.normalizeDecimal(text[0 .. text.len - 1])) |digits|
-            return try std.fmt.allocPrint(self.allocator, "{s}.0", .{digits});
+            return try std.fmt.allocPrint(self.scratch, "{s}.0", .{digits});
         return null;
     }
     // Leading-zero decimal in float position: `09` → `9.0`.
     if (try self.normalizeDecimal(text)) |digits|
-        return try std.fmt.allocPrint(self.allocator, "{s}.0", .{digits});
+        return try std.fmt.allocPrint(self.scratch, "{s}.0", .{digits});
     return null;
 }
 
@@ -1877,7 +1903,7 @@ fn scanFlowOpenerComment(self: *const Parser) ?[]const u8 {
     return std.mem.trim(u8, self.source[i + 1 .. j], " \t\r");
 }
 
-fn parseFlowValue(self: *Parser) Error!TNode {
+fn parseFlowValue(self: *Parser) Error!Id {
     return switch (self.peek().?) {
         '[' => self.parseFlowArray(),
         '{' => self.parseFlowObject(),
@@ -1916,21 +1942,21 @@ fn unclosedFlow(self: *Parser) Error {
 /// Content where a flow member should have ended: right after a quoted string
 /// it is stray text glued to the quote; a stray close bracket is a mismatched
 /// close; anything else is a second member with no separator before it.
-fn flowStray(self: *Parser, prev: TNode, comma_mode: bool) Error {
+fn flowStray(self: *Parser, prev: Id, comma_mode: bool) Error {
     const at = self.pos;
-    const quoted = prev.value == .string and prev.span.start < self.source.len and
-        (self.source[prev.span.start] == '"' or self.source[prev.span.start] == '\'');
-    if (quoted and at == prev.span.end) return self.failAt(at, error.FigQuotedTrailingContent);
+    const span = self.w.spanOf(prev);
+    const quoted = self.rows()[prev].kind == table.Kind.string and span.start < self.source.len and
+        (self.source[span.start] == '"' or self.source[span.start] == '\'');
+    if (quoted and at == span.end) return self.failAt(at, error.FigQuotedTrailingContent);
     if (self.source[at] == ']' or self.source[at] == '}') return self.failAt(at, error.FigUnclosedFlow);
     return self.failAt(at, if (comma_mode) error.FigFlowMissingComma else error.FigFlowMissingEquals);
 }
 
-fn parseFlowArray(self: *Parser) Error!TNode {
-    const open = self.pos;
+fn parseFlowArray(self: *Parser) Error!Id {
+    const start = self.pos;
     self.advance(); // '['
-    const seq = try self.allocator.create(PendingContainer);
-    seq.* = .{ .closed = true };
-    const s = try seq.asSequence();
+    // Its span ends at its close: set when the close is read.
+    const seq = try self.newContainer(Span.init(start, start), .{ .shape = .sequence, .closed = true });
     self.skipFlowWs();
     // Each pass starts at a member or the close. A `,` there is a member that
     // is nothing (`[a,,b]`); a trailing `,` before the close is allowed.
@@ -1942,7 +1968,7 @@ fn parseFlowArray(self: *Parser) Error!TNode {
         }
         if (c == ',') return self.failSpan(self.pos, self.pos + 1, error.FigFlowEmptyElement);
         const v = try self.parseFlowScalarOrNested(.list);
-        try s.elements.append(self.allocator, try self.boxNode(v));
+        try self.appendElement(seq, v);
         self.skipFlowWs();
         const p = self.peek() orelse return self.unclosedFlow();
         switch (p) {
@@ -1954,7 +1980,8 @@ fn parseFlowArray(self: *Parser) Error!TNode {
             else => return self.flowStray(v, true),
         }
     }
-    return .{ .value = .{ .container = seq }, .span = Span.init(open, self.pos) };
+    self.w.setSpan(seq, Span.init(start, self.pos));
+    return seq;
 }
 
 /// A flow object is EITHER fig-spelled (`=` pairs) OR JSON-spelled (`:` pairs,
@@ -1968,13 +1995,14 @@ fn parseFlowArray(self: *Parser) Error!TNode {
 /// through implicit sub-objects, which stay open to this object's later pairs
 /// and close with it. A JSON-spelled object keeps commas and values that run to
 /// the next `,`/`}`.
-fn parseFlowObject(self: *Parser) Error!TNode {
-    const open = self.pos;
+fn parseFlowObject(self: *Parser) Error!Id {
+    const start = self.pos;
     self.advance(); // '{'
-    const map = try self.allocator.create(PendingContainer);
-    map.* = .{ .closed = true };
-    const m = try map.asMapping();
-    var implicit: std.ArrayList(*PendingContainer) = .empty;
+    // Its span ends at its close: set when the close is read.
+    const map = try self.newContainer(Span.init(start, start), .{ .shape = .mapping, .closed = true });
+    // The implicit sub-objects its dotted keys make, closed with it. The
+    // line's scratch, like the key paths.
+    var implicit: std.ArrayList(Id) = .empty;
     var mode: ?enum { fig, json } = null;
     self.skipFlowWs();
     while (true) {
@@ -2006,18 +2034,17 @@ fn parseFlowObject(self: *Parser) Error!TNode {
         self.skipFlowWs();
         const v = try self.parseFlowScalarOrNested(if (this_mode == .fig) .compact else .list);
 
-        var target = m;
+        var target = map;
         for (path[0 .. path.len - 1]) |seg| {
-            const fresh = self.findEntry(target, seg.name) == null;
-            const child = self.getOrCreateMapContainer(target, seg) catch |err|
+            const fresh = self.children.get(target, seg.name) == null;
+            const child = self.getOrCreateMapContainer(target, seg, true) catch |err|
                 return self.failSpan(seg.span.start, seg.span.end, err);
-            if (fresh) try implicit.append(self.allocator, child);
-            target = child.asMapping() catch |err| return self.failSpan(seg.span.start, seg.span.end, err);
+            if (fresh) try implicit.append(self.scratch, child);
+            self.asMapping(child) catch |err| return self.failSpan(seg.span.start, seg.span.end, err);
+            target = child;
         }
-        if (self.findEntry(target, last.name) != null) return self.failSpan(last.span.start, last.span.end, error.FigDuplicateKey);
-        const entry = try self.allocator.create(MEntry);
-        entry.* = .{ .key = last.name, .key_span = last.span, .value = v };
-        try target.addEntry(self.allocator, entry);
+        if (self.children.get(target, last.name) != null) return self.failSpan(last.span.start, last.span.end, error.FigDuplicateKey);
+        _ = try self.addEntry(target, last, v, null);
 
         if (this_mode == .fig) {
             // Compact: the value must be followed by whitespace, `,`, or `}`.
@@ -2041,8 +2068,9 @@ fn parseFlowObject(self: *Parser) Error!TNode {
             }
         }
     }
-    for (implicit.items) |c| c.closed = true;
-    return .{ .value = .{ .container = map }, .span = Span.init(open, self.pos) };
+    for (implicit.items) |c| self.infoOf(c).?.closed = true;
+    self.w.setSpan(map, Span.init(start, self.pos));
+    return map;
 }
 
 fn isQuotedSeg(self: *const Parser, seg: KeySeg) bool {
@@ -2061,12 +2089,12 @@ fn scanFlowKeyPath(self: *Parser) Error![]KeySeg {
             error.FigBadKey => return self.failAt(start, error.FigBadKey),
             else => return err,
         };
-        try segs.append(self.allocator, seg);
+        try segs.append(self.scratch, seg);
         if (self.peek() != '.') break;
         self.advance();
     }
     if (self.peek()) |c| if (c == '[') return self.failAt(self.pos, error.FigBadKey);
-    return segs.toOwnedSlice(self.allocator);
+    return segs.items;
 }
 
 /// Where a flow member sits, which decides where an unquoted one ends: a
@@ -2075,7 +2103,7 @@ fn scanFlowKeyPath(self: *Parser) Error![]KeySeg {
 /// object's value) is one token, and whitespace ends it too.
 const FlowPos = enum { list, compact };
 
-fn parseFlowScalarOrNested(self: *Parser, pos: FlowPos) Error!TNode {
+fn parseFlowScalarOrNested(self: *Parser, pos: FlowPos) Error!Id {
     self.skipFlowWs();
     const c = self.peek() orelse return self.unclosedFlow();
     if (c == '[' or c == '{') {
@@ -2091,7 +2119,7 @@ fn parseFlowScalarOrNested(self: *Parser, pos: FlowPos) Error!TNode {
             const text = self.scanFlowBareBracket(pos);
             if (text.len == 0) return error.FigInvalidValue;
             // Opened with a delimiter → sniffing is off; it is a string.
-            return .{ .value = .{ .string = text }, .span = self.spanOf(text) };
+            return self.scalar(.{ .string = text }, self.spanOf(text), null);
         }
         return self.parseFlowValue();
     }
@@ -2100,15 +2128,15 @@ fn parseFlowScalarOrNested(self: *Parser, pos: FlowPos) Error!TNode {
         return self.failSpan(self.pos, self.pos + 3, error.FigFlowMultilineString);
     if (c == '"') {
         const start = self.pos;
-        const r = try tok.scanDoubleQuoted(self.allocator, self.source, self.pos);
+        const r = try tok.scanDoubleQuoted(self.scratch, self.source, self.pos);
         self.pos = r.end;
-        return .{ .value = .{ .string = r.text }, .span = Span.init(start, r.end) };
+        return self.scalar(.{ .string = r.text }, Span.init(start, r.end), null);
     }
     if (c == '\'') {
         const start = self.pos;
-        const r = try tok.scanSingleQuoted(self.allocator, self.source, self.pos);
+        const r = try tok.scanSingleQuoted(self.scratch, self.source, self.pos);
         self.pos = r.end;
-        return .{ .value = .{ .string = r.text }, .span = Span.init(start, r.end) };
+        return self.scalar(.{ .string = r.text }, Span.init(start, r.end), null);
     }
     const vstart = self.pos;
     const text = switch (pos) {
@@ -2123,7 +2151,7 @@ fn parseFlowScalarOrNested(self: *Parser, pos: FlowPos) Error!TNode {
     if (pos == .list) if (std.mem.indexOf(u8, text, " = ")) |i| try self.warnAt(.flow_missing_comma, vstart + i + 1, vstart + i + 2);
     // `Infinity`/`NaN` are NOT recognized here (JSON5 is dropped): they sniff to
     // plain strings, exactly as bare `inf`/`nan` do in the block layer.
-    return try self.sniffToNodeWarned(text, vstart);
+    return self.scalar(try self.sniffToKindWarned(text, vstart), self.spanOf(text), null);
 }
 
 /// A bare flow value runs to the next `,`/`]`/`}`/newline — spaces included, so
@@ -2204,112 +2232,43 @@ fn scanFlowBareBracket(self: *Parser, pos: FlowPos) []const u8 {
     return std.mem.trim(u8, self.source[start..self.pos], " \t\r");
 }
 
-// ── Row assembly (bottom-up, via RowWriter) ─────────────────────────────────
+// ── Spans ───────────────────────────────────────────────────────────────────
 
-fn buildRoot(self: *Parser) Error!AST.Node.Id {
-    // An empty (or comments-only) document leaves the root `undecided`. Fig has
-    // no bare-scalar root, and an empty mapping is the natural seed for a fresh
-    // file (`fig set new.figl k v` lands its first key into it), so coerce the
-    // root to an empty map rather than raising the `FigEmptyContainer` error a
-    // childless *nested* container still (correctly) does — the map/sequence
-    // ambiguity that error guards against only bites once a key or `*` names a
-    // real child, which the root here has none of.
-    if (self.root.kind == .undecided) self.root.kind = .mapping;
-    var root_wrap: TNode = .{ .value = .{ .container = &self.root }, .span = Span.init(0, 0) };
-    root_wrap.dangling = self.root_dangling;
-    return self.buildNode(&root_wrap);
-}
-
-/// Write `node`'s row (its subtree's first), returning its id. For a
-/// container, `node.span.end` is widened here to the full extent of its
-/// subtree — every child's own span is already final by the time it's read
-/// back (`buildNode` recurses bottom-up), so no separate position-tracking
-/// pass is needed during the original line scan; only each container's
-/// OPENING position (stamped at creation time — see `TNode.span`'s doc
-/// comment) had to be recorded there.
-fn buildNode(self: *Parser, node: *TNode) Error!AST.Node.Id {
-    const id: AST.Node.Id = switch (node.value) {
-        .null_ => try self.w.add(.null_, node.span),
-        .boolean => |v| try self.w.add(.{ .boolean = v }, node.span),
-        .string => |s| try self.w.add(.{ .string = s }, node.span),
-        .number => |n| try self.w.add(.{ .number = .{ .raw = n.raw, .kind = if (n.kind == .float) .float else .integer } }, node.span),
-        .extended => |e| try self.w.add(.{ .extended = .{ .kind = e.kind, .text = e.text } }, node.span),
-        .container => |c| blk: {
-            const built = try self.buildContainer(c);
-            node.span.end = @max(node.span.end, built.end);
-            // A BLOCK container (not a flow `{…}`/`[…]`, not the root) is a
-            // section node: its header line(s) go on the document's region
-            // table. `node.span.start` sits on the creating line (see
-            // `TNode.span`), which is all the line recovery needs.
-            if (!c.closed and c != &self.root) try self.recordRegions(c, built.id, node.span.start);
-            break :blk built.id;
-        },
-    };
-    self.w.setSpan(id, node.span);
-    if (node.tag) |tag| try self.w.tag(id, tag, 0, true, null);
-    if (node.trailing) |t| try self.w.comment(id, table.comment_trailing, t);
-    for (node.dangling.items) |c| try self.w.comment(id, table.comment_dangling, c);
-    return id;
-}
-
-const BuiltContainer = struct { id: AST.Node.Id, end: usize };
-
-/// Write container `c`'s children, then its own row heading them.
-fn buildContainer(self: *Parser, c: *PendingContainer) Error!BuiltContainer {
-    switch (c.kind) {
-        .undecided => return error.FigEmptyContainer,
-        .mapping => {
-            var first: ?AST.Node.Id = null;
-            var prev: ?AST.Node.Id = null;
-            var end: usize = 0;
-            for (c.mapping.entries.items) |e| {
-                const key_id = try self.w.add(.{ .string = e.key }, e.key_span);
-                for (e.key_leading.items) |lc| try self.w.comment(key_id, table.comment_leading, lc);
-                const value_id = try self.buildNode(&e.value);
-                if (e.value.value == .container and !e.value.value.container.closed) {
-                    try self.w.mention(value_id, e.key_span, .entry);
-                    for (e.value.value.container.reentry_names.items) |name|
-                        try self.w.mention(value_id, name, .entry);
-                }
-                const kv_id = try self.w.add(.{ .keyvalue = .{ .key = key_id, .value = value_id } }, Span.init(e.key_span.start, e.value.span.end));
-                if (e.sep_span) |sep| try self.w.sep(kv_id, sep);
-                end = @max(end, e.value.span.end);
-                if (prev) |p| self.w.setNext(p, kv_id) else first = kv_id;
-                prev = kv_id;
-            }
-            const id = try self.w.add(.{ .mapping = first }, Span.init(0, 0));
-            return .{ .id = id, .end = end };
-        },
-        .sequence => {
-            var first: ?AST.Node.Id = null;
-            var prev: ?AST.Node.Id = null;
-            var end: usize = 0;
-            for (c.sequence.elements.items) |el| {
-                const el_id = try self.buildNode(el);
-                end = @max(end, el.span.end);
-                if (el.marker) |m| try self.w.marker(el_id, m);
-                for (el.leading.items) |lc| try self.w.comment(el_id, table.comment_leading, lc);
-                if (prev) |p| self.w.setNext(p, el_id) else first = el_id;
-                prev = el_id;
-            }
-            const id = try self.w.add(.{ .sequence = first }, Span.init(0, 0));
-            return .{ .id = id, .end = end };
-        },
+/// Once every line is read: widen each container's span to reach its
+/// subtree's end, and end each entry where its value now ends. A container's
+/// row was written over its OPENING position (its key, its `*`, its line
+/// start, its bracket) and its children came later, so only now are the
+/// ends known. A post-order walk over the rows' own links, iterative —
+/// documents can nest deeply.
+///
+/// A nested block container still undecided here never had a child; the
+/// root alone may stay so (an empty document is an empty mapping, the seed
+/// a from-scratch `fig set` lands its first key in).
+fn finishSpans(self: *Parser) Error!void {
+    const Item = struct { id: Id, done: bool };
+    var stack: std.ArrayList(Item) = .empty;
+    defer stack.deinit(self.gpa);
+    try stack.append(self.gpa, .{ .id = self.root, .done = false });
+    while (stack.pop()) |item| {
+        const rs = self.rows();
+        const r = rs[item.id];
+        if (!table.Kind.isContainer(r.kind)) continue;
+        if (!item.done) {
+            try stack.append(self.gpa, .{ .id = item.id, .done = true });
+            var c = r.first_child;
+            while (c != none) : (c = self.rows()[c].next_sibling) try stack.append(self.gpa, .{ .id = c, .done = false });
+            continue;
+        }
+        if (r.kind == table.Kind.keyvalue) {
+            rs[item.id].end = rs[rs[r.first_child].next_sibling].end;
+            continue;
+        }
+        if (item.id != self.root and self.infoOf(item.id).?.shape == .undecided) return error.FigEmptyContainer;
+        var end = r.end;
+        var c = r.first_child;
+        while (c != none) : (c = rs[c].next_sibling) end = @max(end, rs[c].end);
+        rs[item.id].end = end;
     }
-}
-
-/// Record the header lines of the block container written as node `id`: the
-/// line holding `created_at` (its creating header — a key, a `*`, an `[i]`),
-/// then every later header that re-opened it (`PendingContainer.reentries`).
-/// The `PendingContainer` → `Document.regionsOf` bridge.
-fn recordRegions(self: *Parser, c: *const PendingContainer, id: AST.Node.Id, created_at: usize) Error!void {
-    try self.appendRegion(id, created_at);
-    for (c.reentries.items) |off| try self.appendRegion(id, off);
-}
-
-fn appendRegion(self: *Parser, id: AST.Node.Id, at: usize) Error!void {
-    const line = Document.lineRegionAt(self.source, at);
-    try self.w.region(id, line.start, line.end);
 }
 
 // ── Char-level helpers ───────────────────────────────────────────────────────

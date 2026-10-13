@@ -19,8 +19,6 @@ pub const xml = @import("xml.zig");
 /// node table (the contract) each is turned into and out of.
 pub const AST = @import("ast/ast.zig");
 pub const Document = @import("document.zig");
-/// A Zig parser's tree before it is rows, and its nodes.
-pub const ParseTree = @import("parse_tree.zig");
 /// How a Zig parser writes the node table: rows in any order, then
 /// `finish` into pre-order.
 pub const RowWriter = @import("row_writer.zig");
@@ -41,9 +39,7 @@ pub const number = @import("number.zig");
 test {
     _ = AST;
     _ = Document;
-    _ = ParseTree;
     _ = RowWriter;
-    _ = @import("parse_tree/nodes.zig");
     _ = table;
     _ = convert;
     _ = manifest;

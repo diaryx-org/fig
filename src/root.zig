@@ -23,9 +23,9 @@ pub const Document = @import("kit/document.zig");
 /// A `[start, end)` byte range — a node's place in its source.
 pub const Span = @import("kit/span.zig");
 pub const AST = @import("kit/ast/ast.zig");
-/// A Zig parser's tree before it is rows (`ParseTree.Nodes`), and its
-/// conversion to a `Document`.
-pub const ParseTree = @import("kit/parse_tree.zig");
+/// How a Zig parser writes the node table a parse hands it: rows in any
+/// order, put in pre-order by `finish`.
+pub const RowWriter = @import("kit/row_writer.zig");
 /// Rendering a tree as canonical or through a registered language.
 pub const Serialize = @import("serialize.zig");
 pub const Lossless = @import("lossless.zig");

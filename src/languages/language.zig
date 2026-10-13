@@ -84,8 +84,7 @@ const Decls = struct {
     /// it out.
     ///   * `parseTable(parser, input, t, out)` — a Zig parser writing its
     ///     rows into the table fig hands it; `parse` is that table adopted.
-    ///     `parseTree` is a parser that still builds its own tree.
-    const optional = [_][]const u8{ "printNode", "samples", "hasRenderer", "runtime", "splitStream", "parseTree", "parseTable" };
+    const optional = [_][]const u8{ "printNode", "samples", "hasRenderer", "runtime", "splitStream", "parseTable" };
 
     /// Editing hooks: none. A hook was a `pub` decl that took over an
     /// `editor.Editor` method wholesale, with the editor in hand. Twenty-five

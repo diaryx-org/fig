@@ -1,8 +1,8 @@
 //! Navigation helpers + opt-in YAML reference-layer resolution — the read-path
 //! surface of `AST` (the mirror of the write path in `builder.zig`). Every
-//! public function here takes a tree — an `AST`, or a parser's
-//! `ParseTree.Nodes` — and is re-exported as a method of each; a tree is
-//! read only through `node(id)`, `root`, `merge_key` and `anchorIterator`.
+//! public function here takes a tree and is re-exported as an `AST` method;
+//! a tree is read only through `node(id)`, `root`, `merge_key` and
+//! `anchorIterator`.
 //! The private `getIdByPath`/`getChildNodeId`/`mergedChildInner` helpers are
 //! called as free functions.
 

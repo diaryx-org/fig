@@ -135,13 +135,13 @@ a non-enumerable `format` onto the language object.
 | `doc.node_spans[id]` and the other `Document` span tables | `doc.spanOf(id)` / `doc.span(node)`, `anchorSpan`, `tagSpan`, `markerSpan`, `sepSpan`, `itemSep`, `regionsOf`, `mentionsOf` |
 | `AST{ .nodes = … }` built by hand | `AST.Builder`, or `AST.fromNodes(allocator, root, nodes)` |
 | `Runtime.tableToDocument(a, src, &t)` with `t` reused after | it adopts `t` as the document's storage and leaves it empty; `t.clone(a)` first to keep a copy |
+| `SerializeError` without `PrintRefused` | an exhaustive `switch` needs a `PrintRefused` arm |
 
 The `AST` is the node table a language's parse filled, adopted without a
 copy: rows, a string buffer, and side facts sorted by node. A Zig parser
-fig ships builds a `fig.ParseTree` and writes it as rows;
-its module's `parse` returns the adopted `Document`, and `parseTree` the
-tree.
-| `SerializeError` without `PrintRefused` | an exhaustive `switch` needs a `PrintRefused` arm |
+fig ships writes its rows into that table through `fig.RowWriter`; its
+module's `parse` returns the adopted `Document`, and `parseTable` writes
+into a table fig hands it.
 
 The languages a build bundles register on the first lookup; call
 `fig.bundle.registerAll(allocator)` first to choose the allocator, which

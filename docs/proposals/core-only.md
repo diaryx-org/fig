@@ -44,7 +44,7 @@ part_of = [proposals](proposals.md)
 > facts — read through `node(id)` and the accessors, and a parse's table is
 > checked and adopted with no copy; the compiled YAML resolves its own tags
 > and materialize reads the resolution. The Zig parsers still build a
-> `ParseTree` and emit it as rows ([task](/docs/tasks/zig-parsers-write-rows.md)).
+> `ParseTree` and emit it as rows ([task](/docs/tasks/closed/zig-parsers-write-rows.md)).
 > The lexeme's value (§4.2) is not built. Then step 9.
 >
 > §8 step 1's measurements are done (2026-10-12). They settled the third

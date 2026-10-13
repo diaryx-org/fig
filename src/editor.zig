@@ -2197,21 +2197,16 @@ pub fn Editor(comptime Language: type) type {
                     if (span.start > 0 and source[span.start - 1] == sigil) span.start - 1 else span.start
                 else
                     span.start;
-                // When the entry begins its own physical line, absorb any owned
-                // leading comment block above it — trivia `removeFlowItem` can't
-                // find on its own but the block path would have carried. A packed
-                // entry (a sibling or the opening brace shares its line) is not
-                // first-on-line, so this is skipped and `removeFlowItem`'s own
-                // whitespace scan handles the separator and indentation. The
-                // comment extension applies only when a block was actually found
-                // (`cbs` climbed above `line_start`); with none, splicing from
-                // the entry itself keeps the survivors' indentation intact.
-                const line_start = lineStartBefore(source, entry_start);
-                const on_own_line = firstNonSpace(source, line_start) == entry_start;
-                const cbs = if (on_own_line) commentBlockStart(source, line_start, self.syntax().comments) else line_start;
-                const del_start = if (cbs < line_start) cbs else entry_start;
-                return self.removeFlowItem(Span.init(del_start, span.end), prev == null, self.syntax().flow_entry_sep, Span.init(0, source.len));
+                return self.removeFlowEntry(Span.init(entry_start, span.end), prev == null);
             }
+            // An entry of a table made by dotted keys inside a flow mapping
+            // (TOML's `b` in `it = { a.b = 1 }`) is that flow mapping's
+            // entry `a.b = 1`, not a line: the table is a section, read as
+            // block, and the line delete took the whole `it` line.
+            if (parent.kind == .mapping) if (self.dottedInFlow(parsed, parent)) |owner| {
+                const entry = dottedEntrySpan(parsed, owner.top, node);
+                return self.removeFlowEntry(entry, entry.start <= flowFirstEntryStart(parsed, owner.flow));
+            };
             const line_start = lineStartBefore(source, span.start);
             // A block entry's lines are its own in every compiled format, but
             // a runtime one may put two on a line (a minified stylesheet's
@@ -2248,6 +2243,101 @@ pub fn Editor(comptime Language: type) type {
             const del_start = commentBlockStart(source, line_start, self.syntax().comments);
             const del_end = lineEndAfter(source, span.end -| 1);
             try self.replaceAtSpan(Span.init(del_start, del_end), "");
+        }
+
+        /// Delete the entry of a flow mapping that runs over `entry`, and
+        /// one separator beside it (`removeFlowItem`); `is_first` says
+        /// whether any entry stands before it.
+        ///
+        /// When the entry begins its own physical line, any owned leading
+        /// comment block above it goes too — trivia `removeFlowItem` can't
+        /// find on its own but the block path would have carried. A packed
+        /// entry (a sibling or the opening brace shares its line) is not
+        /// first-on-line, so this is skipped and `removeFlowItem`'s own
+        /// whitespace scan handles the separator and indentation. The
+        /// comment extension applies only when a block was actually found
+        /// (`cbs` climbed above `line_start`); with none, splicing from the
+        /// entry itself keeps the survivors' indentation intact.
+        fn removeFlowEntry(self: *Self, entry: Span, is_first: bool) !void {
+            const source = self.source.items;
+            const line_start = lineStartBefore(source, entry.start);
+            const on_own_line = firstNonSpace(source, line_start) == entry.start;
+            const cbs = if (on_own_line) commentBlockStart(source, line_start, self.syntax().comments) else line_start;
+            const del_start = if (cbs < line_start) cbs else entry.start;
+            return self.removeFlowItem(Span.init(del_start, entry.end), is_first, self.syntax().flow_entry_sep, Span.init(0, source.len));
+        }
+
+        /// A table made by dotted keys inside a flow mapping, as
+        /// `dottedInFlow` finds it: `flow` is the flow mapping, and `top`
+        /// the table among its children whose name begins each entry that
+        /// writes the table (`a` in `{ a.b.c = 1 }`, for `a` or `a.b`).
+        const DottedInFlow = struct { flow: AST.Node, top: AST.Node };
+
+        /// Whether the mapping `node` is a table made by dotted keys inside
+        /// a flow mapping — TOML's `a` in `it = { a.b = 1 }` — and which.
+        /// Such a table is a section, its name written on the flow
+        /// mapping's line as an `.entry` mention and never on a header of
+        /// its own, so it reads as block; but what writes it is entries of
+        /// the flow mapping, each a key path and a value, taken apart by
+        /// the flow splice. Null for any other node: a table with a header,
+        /// a dotted table among block lines (its chain reaches a block
+        /// table), a mapping that is not a section.
+        fn dottedInFlow(self: *const Self, parsed: Document, node: AST.Node) ?DottedInFlow {
+            var cur = node;
+            while (true) {
+                if (cur.kind != .mapping or !parsed.isSection(cur)) return null;
+                var mentions = parsed.mentionsOf(cur.id);
+                if (mentions.count() == 0) return null;
+                while (mentions.next()) |m| if (m.kind != .entry) return null;
+                const kv_id = parsed.ast.parentOf(cur.id) orelse return null;
+                if (parsed.ast.kindOf(kv_id) != .keyvalue) return null;
+                const up = parsed.ast.node(parsed.ast.parentOf(kv_id) orelse return null);
+                if (up.kind == .mapping and self.isFlowNode(parsed, up)) return .{ .flow = up, .top = cur };
+                cur = up;
+            }
+        }
+
+        /// The span of the flow mapping's entry that writes `leaf`, an entry
+        /// of a table under the dotted table `top` (`DottedInFlow`): from the
+        /// last place `top`'s name is written before `leaf`'s key, which
+        /// begins the entry's key path, to the end of `leaf`'s value.
+        fn dottedEntrySpan(parsed: Document, top: AST.Node, leaf: AST.Node) Span {
+            const span = parsed.span(leaf);
+            var start = span.start;
+            var mentions = parsed.mentionsOf(top.id);
+            while (mentions.next()) |m| {
+                if (m.span.start > span.start) break;
+                start = m.span.start;
+            }
+            return Span.init(start, span.end);
+        }
+
+        /// Where the first entry of the flow mapping `flow` begins: its
+        /// first child's span, or the first place its name is written when
+        /// it is a table made by dotted keys.
+        fn flowFirstEntryStart(parsed: Document, flow: AST.Node) usize {
+            const first = (parsed.ast.child(&flow) catch null) orelse return parsed.span(flow).end;
+            if (first.kind == .keyvalue) {
+                var mentions = parsed.mentionsOf(first.kind.keyvalue.value);
+                if (mentions.count() > 0) return @min(mentions.at(0).span.start, parsed.span(first).start);
+            }
+            return parsed.span(first).start;
+        }
+
+        /// Append the span of every entry of the flow mapping `owner.flow`
+        /// that writes the dotted table `node` to `out`, in the tree's
+        /// order rather than the source's: one per entry of the tables
+        /// under it that is not itself such a table.
+        fn dottedEntrySpans(self: *const Self, parsed: Document, owner: DottedInFlow, node: AST.Node, out: *std.ArrayList(Span)) !void {
+            var cur = try parsed.ast.child(&node);
+            while (cur) |kv| : (cur = parsed.ast.next(&kv)) {
+                if (kv.kind != .keyvalue) continue;
+                const value = parsed.ast.node(kv.kind.keyvalue.value);
+                if (value.kind == .mapping and parsed.isSection(value))
+                    try self.dottedEntrySpans(parsed, owner, value, out)
+                else
+                    try out.append(self.allocator, dottedEntrySpan(parsed, owner.top, kv));
+            }
         }
 
         /// Append `value_text` as a new item to the sequence at `path`.
@@ -3556,6 +3646,31 @@ pub fn Editor(comptime Language: type) type {
                 if (seq.kind == .sequence and seq.kind.sequence == node.id and parsed.ast.next(&node) == null) {
                     if (try self.emptiedSectionSeq(parsed, seq)) return;
                 }
+            }
+            // A table made by dotted keys inside a flow mapping is written
+            // by entries of that mapping, not by lines: its regions are the
+            // whole line the flow mapping stands on. Its entries go, each
+            // with a separator, and the delete is held to what one promises.
+            if (self.dottedInFlow(parsed, node)) |owner| {
+                var entries: std.ArrayList(Span) = .empty;
+                defer entries.deinit(self.allocator);
+                try self.dottedEntrySpans(parsed, owner, node, &entries);
+                std.mem.sort(Span, entries.items, {}, struct {
+                    fn later(_: void, a: Span, b: Span) bool {
+                        return a.start > b.start;
+                    }
+                }.later);
+                const first = flowFirstEntryStart(parsed, owner.flow);
+                const removed = self.entryIndex(path);
+                const backup = try self.allocator.dupe(u8, self.source.items);
+                defer self.allocator.free(backup);
+                // Last first, so the spans before each splice still stand.
+                for (entries.items) |entry| self.removeFlowEntry(entry, entry.start <= first) catch |err| {
+                    try self.restoreSource(backup);
+                    return err;
+                };
+                if (removed) |at| try self.keepOthers(backup, path[0 .. path.len - 1], at);
+                return;
             }
             var used = try self.gatherRegions(parsed, node, true);
             defer used.deinit(self.allocator);

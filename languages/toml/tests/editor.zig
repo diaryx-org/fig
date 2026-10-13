@@ -368,15 +368,64 @@ test "toml delete the only key under a dotted table takes the implicit table" {
     try expectTomlSource(&ed, "a.c = 2\n[t]\nd.e = 3\n[t.u]\n");
 }
 
-// An implicit table inside an inline table is read as block, and the line
-// delete would take the whole `it` line, `it.c` with it: the guard refuses
-// (docs/tasks/delete-splices-taking-other-values.md).
-test "toml delete under a dotted key in an inline table is refused, not a lost line" {
-    const source = "it = { a.b = 1, c = 2 }\nlst = 1\n";
-    var ed = try newTomlEditor(source);
+// An implicit table inside an inline table is written by the dotted entries
+// of the inline table, `a.b = 1` whole: deleting `it.a.b` takes that entry
+// and its separator, as deleting `it.c` takes `c = 2`, where the line delete
+// took the whole `it` line. The implicit table goes with its only entry.
+test "toml delete under a dotted key in an inline table takes only its entry" {
+    var ed = try newTomlEditor("it = { a.b = 1, c = { d = 2 } }\nlst = 1\n");
     defer ed.deinit();
-    try std.testing.expectError(error.DeleteChangedOtherValues, ed.deleteKey(&.{ .{ .key = "it" }, .{ .key = "a" }, .{ .key = "b" } }));
-    try expectTomlSource(&ed, source);
+    try ed.deleteKey(&.{ .{ .key = "it" }, .{ .key = "a" }, .{ .key = "b" } });
+    try expectTomlSource(&ed, "it = { c = { d = 2 } }\nlst = 1\n");
+    try ed.deleteKey(&.{ .{ .key = "it" }, .{ .key = "c" }, .{ .key = "d" } });
+    try expectTomlSource(&ed, "it = { c = { } }\nlst = 1\n");
+}
+
+test "toml delete a dotted key in an inline table, first, middle, last and only" {
+    const cases = [_]struct { source: []const u8, path: []const AST.PathSegment, expected: []const u8 }{
+        .{ .source = "it = { x = 1, a.b = 2 }\n", .path = &.{ .{ .key = "it" }, .{ .key = "a" }, .{ .key = "b" } }, .expected = "it = { x = 1 }\n" },
+        .{ .source = "it = { a.b.c = 1 }\n", .path = &.{ .{ .key = "it" }, .{ .key = "a" }, .{ .key = "b" }, .{ .key = "c" } }, .expected = "it = { }\n" },
+        .{ .source = "it = { a.b = 1, x = 2, a.c = 3 }\n", .path = &.{ .{ .key = "it" }, .{ .key = "a" }, .{ .key = "c" } }, .expected = "it = { a.b = 1, x = 2 }\n" },
+        .{ .source = "it = { a.b.c = 1, a.b.d = 2, a.e = 3 }\n", .path = &.{ .{ .key = "it" }, .{ .key = "a" }, .{ .key = "b" }, .{ .key = "d" } }, .expected = "it = { a.b.c = 1, a.e = 3 }\n" },
+        .{ .source = "it = { \"q.r\".b = 1, x = 2 }\n", .path = &.{ .{ .key = "it" }, .{ .key = "q.r" }, .{ .key = "b" } }, .expected = "it = { x = 2 }\n" },
+        .{ .source = "o = { i = { a.b = 1, c = 2 } }\n", .path = &.{ .{ .key = "o" }, .{ .key = "i" }, .{ .key = "a" }, .{ .key = "b" } }, .expected = "o = { i = { c = 2 } }\n" },
+        .{ .source = "[t]\nit = { a.b = 1, a.c = { d = 2 } }\n", .path = &.{ .{ .key = "t" }, .{ .key = "it" }, .{ .key = "a" }, .{ .key = "c" }, .{ .key = "d" } }, .expected = "[t]\nit = { a.b = 1, a.c = { } }\n" },
+        .{ .source = "x = [{ a.b = 1, c = 2 }]\n", .path = &.{ .{ .key = "x" }, .{ .index = 0 }, .{ .key = "a" }, .{ .key = "b" } }, .expected = "x = [{ c = 2 }]\n" },
+    };
+    for (cases) |c| {
+        var ed = try newTomlEditor(c.source);
+        defer ed.deinit();
+        try ed.deleteKey(c.path);
+        try expectTomlSource(&ed, c.expected);
+    }
+}
+
+// Deleting the first entry that writes `a` when another writes it after `x`
+// moves `a` after `x` among `it`'s keys, as `a.b = 1` over `x = 2` over
+// `a.c = 3` does among a block table's: the guard refuses both.
+test "toml delete the first of a dotted table's scattered entries is refused, inline and block" {
+    for ([_][]const u8{ "it = { a.b = 1, x = 2, a.c = 3 }\n", "[it]\na.b = 1\nx = 2\na.c = 3\n" }) |source| {
+        var ed = try newTomlEditor(source);
+        defer ed.deinit();
+        try std.testing.expectError(error.DeleteChangedOtherValues, ed.deleteKey(&.{ .{ .key = "it" }, .{ .key = "a" }, .{ .key = "b" } }));
+        try expectTomlSource(&ed, source);
+    }
+}
+
+// A whole implicit table inside an inline table is every entry that writes
+// it, wherever they stand among the others; `deleteContainer` takes those
+// and leaves the rest, where its line gather took the whole `it` line.
+test "toml deleteContainer of an implicit table in an inline table takes its entries" {
+    var ed = try newTomlEditor("it = { a.b = 1, c = { d = 2 }, a.e.f = 3 }\nz = 0\n");
+    defer ed.deinit();
+    try ed.deleteContainer(&.{ .{ .key = "it" }, .{ .key = "a" }, .{ .key = "e" } });
+    try expectTomlSource(&ed, "it = { a.b = 1, c = { d = 2 } }\nz = 0\n");
+    try ed.replaceAtSpan(Span.init(0, ed.source.items.len), "it = { a.b = 1, c = { d = 2 }, a.e.f = 3 }\nz = 0\n");
+    try ed.deleteContainer(&.{ .{ .key = "it" }, .{ .key = "a" } });
+    try expectTomlSource(&ed, "it = { c = { d = 2 } }\nz = 0\n");
+    try ed.replaceAtSpan(Span.init(0, ed.source.items.len), "it = { a.b = 1 }\n");
+    try ed.deleteContainer(&.{ .{ .key = "it" }, .{ .key = "a" } });
+    try expectTomlSource(&ed, "it = { }\n");
 }
 
 test "toml delete an inline-table-valued key" {

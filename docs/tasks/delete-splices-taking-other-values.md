@@ -26,9 +26,6 @@ a shape it misreads.
 - YAML, `n[0].a` in `n: [a: b, ? c, : d, "e":f]`: a single-pair flow
   mapping inside a flow sequence has no braces, and the delete takes the
   whole `n:` line.
-- TOML, `it.a.b` in `it = { a.b = 1, c = { d = 2 } }`: `it.a` is an
-  implicit table inside an inline table, not read as flow, and the line
-  delete takes the whole `it` line.
 - ZON, `c` in `.ml =\n    \\line two\n    ,\n    .c = 'A', .nl = '\n',`:
   the splice takes from the multi-line string's line end through `.c =
   'A'`, so the rest of `c`'s line joins the string.

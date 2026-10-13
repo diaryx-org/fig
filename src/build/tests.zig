@@ -11,7 +11,7 @@ const std = @import("std");
 const Context = @import("Context.zig");
 const Options = @import("Options.zig");
 const artifacts = @import("artifacts.zig");
-const list = @import("../languages/list.zig");
+const list = @import("../contract/list.zig");
 
 /// The step handles `checks` wires into the `check` gate.
 pub const Result = struct {

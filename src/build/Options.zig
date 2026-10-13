@@ -6,14 +6,14 @@
 //! package rather than knobs, so they are passed in via `Versions` rather than
 //! owned here.
 //!
-//! The per-format knobs are not written here either. `src/languages/list.zig`
+//! The per-format knobs are not written here either. `src/contract/list.zig`
 //! is the one list of formats, and this file declares one `-D<name>` option
 //! and one `build_options.lang_<name>` decl per row of it.
 //! The only knob spelled by hand below is `canonical`, which is not a format:
 //! it gates the AST's own oracle encoding.
 
 const std = @import("std");
-const list = @import("../languages/list.zig");
+const list = @import("../contract/list.zig");
 
 /// The package-identity numbers `addFigOptions` bakes into `build_options`.
 /// Passed in from `build.zig` (their canonical home) so this module owns only

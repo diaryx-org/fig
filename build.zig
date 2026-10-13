@@ -5,7 +5,7 @@ const artifacts = @import("src/build/artifacts.zig");
 const tools = @import("src/build/tools.zig");
 const tests = @import("src/build/tests.zig");
 const checks = @import("src/build/checks.zig");
-const list = @import("src/languages/list.zig");
+const list = @import("src/contract/list.zig");
 
 // The build graph lives in src/build/, split by role and wired together at the
 // bottom of `build`:

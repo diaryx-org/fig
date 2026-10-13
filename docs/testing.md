@@ -32,7 +32,7 @@ compiles, and the CLI is what instantiates the generic engines for every
 language. `check` depends on it.
 
 Between the unit tests and conformance sits one more layer:
-`src/languages/harness.zig`, the checks that hold for *any* format, run over
+`src/contract/harness.zig`, the checks that hold for *any* format, run over
 every compiled-in dialect. Each format declares a few `samples` in its own
 grammar; the harness parses each, prints it, and reparses it to the same
 tree, checks that `Document.regionsOf` is well-formed and that a section

@@ -40,7 +40,7 @@ pub const Language = struct {
     /// spelling, since dotenv has no nesting concept at all.
     pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true, .max_mapping_depth = 0 };
 
-    /// What `languages/harness.zig` round-trips and edits: bare and quoted
+    /// What fig's `src/contract/harness.zig` round-trips and edits: bare and quoted
     /// values.
     pub const samples: []const []const u8 = &.{
         "A=1\nB=\"two words\"\n",

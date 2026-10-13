@@ -42,7 +42,7 @@ pub const Language = struct {
         .lossless = .{ .null = true, .enum_literal = true, .char_literal = true },
     };
 
-    /// What `languages/harness.zig` round-trips and edits: a struct
+    /// What fig's `src/contract/harness.zig` round-trips and edits: a struct
     /// literal with a nested struct and a tuple.
     pub const samples: []const []const u8 = &.{
         ".{ .a = 1, .b = .{ .c = \"d\" }, .e = .{ 1, 2 } }\n",

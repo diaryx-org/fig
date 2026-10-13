@@ -5,7 +5,7 @@
 const std = @import("std");
 const Context = @import("Context.zig");
 const Options = @import("Options.zig");
-const list = @import("../languages/list.zig");
+const list = @import("../contract/list.zig");
 
 /// The handles later stages need to hang more graph off of:
 ///   * `fig_mod`  — the `fig` library module (the tests and the abi probes import it).
@@ -16,7 +16,7 @@ pub const Result = struct {
     fig_mod: *std.Build.Module,
     exe: *std.Build.Step.Compile,
     c_lib: *std.Build.Step.Compile,
-    /// Each language's own static library, in `languages/list.zig`'s order.
+    /// Each language's own static library, in `contract/list.zig`'s order.
     c_languages: [list.rows.len]*std.Build.Step.Compile,
 };
 

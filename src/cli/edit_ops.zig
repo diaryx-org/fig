@@ -302,7 +302,7 @@ pub fn renderEdit(allocator: std.mem.Allocator, text: []const u8, value: OpValue
 /// Every seed comes from the format registry's `empty_doc_seed`. The seeds themselves and the reasoning behind each
 /// (why an empty STRING is a valid seed for YAML/TOML/fig/INI/dotenv/
 /// `.properties`/NestedText but `{}`/`.{}` is needed for JSON/ZON) are
-/// documented on the entries in `languages/language.zig`.
+/// documented on the entries in `contract/language.zig`.
 ///
 /// Deliberately NOT gated on `d.Lang == void`: a seed is plain build-invariant
 /// data, and a gated-out language's from-scratch `set` still fails — with

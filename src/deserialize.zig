@@ -15,7 +15,7 @@ const std = @import("std");
 const AST = @import("kit").AST;
 const build_options = @import("build_options");
 
-const Runtime = @import("languages/runtime.zig");
+const Runtime = @import("contract/runtime.zig");
 
 pub const Options = struct {
     /// Mapping keys with no matching struct field are ignored when true (the

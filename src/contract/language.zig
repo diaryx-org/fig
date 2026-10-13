@@ -25,7 +25,7 @@ pub const SpliceStyle = manifest.SpliceStyle;
 pub const SpecName = manifest.SpecName;
 pub const Dialect = manifest.Dialect;
 
-/// The one list of the languages fig ships — `src/languages/list.zig` —
+/// The one list of the languages fig ships — `src/contract/list.zig` —
 /// re-exported for the consumers that are genuinely per-language (the
 /// build, `validate-check`, the bundle).
 pub const list = @import("list.zig");
@@ -67,11 +67,11 @@ const Decls = struct {
     ///   * `printNode` — every format but plist, whose `print` is
     ///     written inline.
     ///   * `samples` — a few small documents in the format's own grammar
-    ///     that `languages/harness.zig` parses, prints, reparses and edits
+    ///     that `contract/harness.zig` parses, prints, reparses and edits
     ///     to check what the engine assumes of every format. Every in-tree
     ///     format declares some; an out-of-tree one may.
     ///   * `hasRenderer` — a language whose renderers are resolved at
-    ///     runtime (`languages/runtime.zig`) answers `Editor.hasRenderer`
+    ///     runtime (`contract/runtime.zig`) answers `Editor.hasRenderer`
     ///     itself; a compiled format never declares it, since presence is
     ///     `@hasDecl` there.
     ///   * `runtime` — the same language's marker that its dialect table is

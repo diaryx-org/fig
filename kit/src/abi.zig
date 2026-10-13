@@ -3,7 +3,7 @@
 //! (`PrintOptions`, `RenderRequest`, `ErrorInfo`), and the bits and limits
 //! they carry. The kit's, so that a language built apart from core can fill
 //! them; `fig.h` states them under the `Fig` prefix, and core's registry
-//! (`languages/runtime.zig`) reads them.
+//! (fig's `src/contract/runtime.zig`) reads them.
 
 const std = @import("std");
 const Span = @import("span.zig");

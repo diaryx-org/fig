@@ -101,7 +101,7 @@ pub fn literalOf(text: []const u8) lang.Literal {
 }
 
 pub fn Editor(comptime Language: type) type {
-    @import("languages/language.zig").validate(Language);
+    @import("contract/language.zig").validate(Language);
     return struct {
         const Self = @This();
 
@@ -2977,7 +2977,7 @@ pub fn Editor(comptime Language: type) type {
         /// `section_noun` in any dialect. Comptime, so the generic ops and the
         /// line-splice rule can be compiled out for every other format.
         ///
-        /// A runtime language (`languages/runtime.zig`) has no comptime
+        /// A runtime language (`contract/runtime.zig`) has no comptime
         /// dialect table; it declares `runtime` and the answer is "may be",
         /// with `syntax()` deciding per entry at the call.
         pub const is_section_format = @hasDecl(Language, "runtime") or blk: {

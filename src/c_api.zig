@@ -43,7 +43,7 @@ const Diagnostics = @import("diagnostics.zig");
 /// registry hands out. The vtable and node-table shapes this file re-exports
 /// under their `Fig*` names are its, and so is the one `Language` every
 /// format is read, edited and printed through.
-const Runtime = @import("languages/runtime.zig");
+const Runtime = @import("contract/runtime.zig");
 const manifest = @import("kit").manifest;
 
 // The wasm module's half of the runtime-language carrier: a language
@@ -169,7 +169,7 @@ fn entryOf(format: c_int) ?*const Runtime.Entry {
 // ==================
 //
 // A format fig did not compile in, registered by a host as a vtable. The
-// shapes are `languages/runtime.zig`'s, stated in fig.h under these names
+// shapes are `contract/runtime.zig`'s, stated in fig.h under these names
 // and held to it by `zig build abi-check`; the registry, the validation and
 // the load-time harness are that file's too. This section is the two entry
 // points and the re-exports.

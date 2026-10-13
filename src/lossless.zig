@@ -42,7 +42,7 @@ const AST = @import("kit").AST;
 const table = @import("kit").table;
 const RowWriter = @import("kit").RowWriter;
 const Serialize = @import("serialize.zig");
-const Language = @import("languages/language.zig");
+const Language = @import("contract/language.zig");
 
 const Id = AST.Node.Id;
 const ExtKind = AST.Node.Kind.Extended.ExtKind;

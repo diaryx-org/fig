@@ -109,7 +109,7 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
 
     // Two languages' own libraries linked beside the core, which names
     // none: each registers, converts and edits through fig.h.
-    const list = @import("../languages/list.zig");
+    const list = @import("../contract/list.zig");
     const lang_archive_probe = b.addExecutable(.{
         .name = "lang_archive_probe",
         .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true }),

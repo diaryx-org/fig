@@ -157,7 +157,7 @@ A language is a contract: its declarations as fields of a
 style, empty-document seed and what its printer holds),
 syntax, samples — `parse` and `print` as function pointers, and the six
 renderers as pointers that may be null. `fig.Runtime.register(allocator,
-&vtable)` validates the record, runs the checks of `languages/harness.zig`
+&vtable)` validates the record, runs the checks of `contract/harness.zig`
 over the samples it declares (parse, print, reparse to the same tree, an
 `Editor` over each), and only then publishes it, handing back the handle of
 its first dialect; a record that fails either is refused with the reason in
@@ -202,7 +202,7 @@ fragment in a way no declaration covers, a *renderer*: `renderValue`,
 each a pure function from the dialect and a `RenderRequest` to a string
 that the engine splices under the same reparse net as any other edit. The
 renderers are documented on `Decls.renderers` in
-`src/languages/language.zig` and on the `Editor` methods that call them.
+`src/contract/language.zig` and on the `Editor` methods that call them.
 
 Every "Edit" ✅ above goes through the *same* `Editor(Runtime.Language)`
 engine (next section) — ZON included, splicing its `.key = value`

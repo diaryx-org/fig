@@ -37,7 +37,7 @@ pub const Language = struct {
     /// a flat environment map.
     pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true, .max_mapping_depth = 0 };
 
-    /// What `languages/harness.zig` round-trips and edits: the three
+    /// What fig's `src/contract/harness.zig` round-trips and edits: the three
     /// separators the grammar accepts.
     pub const samples: []const []const u8 = &.{
         "a=1\nb: two\nc three\n",

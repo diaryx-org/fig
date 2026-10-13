@@ -9,7 +9,7 @@
 
 const std = @import("std");
 const Options = @import("Options.zig");
-const list = @import("../languages/list.zig");
+const list = @import("../contract/list.zig");
 
 /// The build graph everything hangs off of.
 b: *std.Build,
@@ -36,7 +36,7 @@ options_mod: *std.Build.Module,
 ver: Options.Versions,
 /// The helper wire's JSON-RPC envelope, or null when the build leaves the
 /// wire out (`-Dhelper-wire=false`) or the lazy dependency is still being
-/// fetched. Every module that can reach `src/languages/wire.zig` imports it
+/// fetched. Every module that can reach `src/contract/wire.zig` imports it
 /// through `importWire`.
 zigjr: ?*std.Build.Module,
 /// The kit (`kit/`), a package of its own: what core and every language

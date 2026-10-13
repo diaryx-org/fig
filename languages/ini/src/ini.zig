@@ -39,7 +39,7 @@ pub const Language = struct {
     /// spelling (`printer.zig` hard-errors on both rather than degrading).
     pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true, .max_mapping_depth = 1 };
 
-    /// What `languages/harness.zig` round-trips and edits: a root key and a
+    /// What fig's `src/contract/harness.zig` round-trips and edits: a root key and a
     /// `[section]` (the shape the parser records regions for).
     pub const samples: []const []const u8 = &.{
         "a = 1\n\n[s]\nk = v\n",

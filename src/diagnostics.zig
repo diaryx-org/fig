@@ -25,8 +25,8 @@ const Allocator = std.mem.Allocator;
 const AST = @import("kit").AST;
 const Serialize = @import("serialize.zig");
 const Lossless = @import("lossless.zig");
-const Language = @import("languages/language.zig");
-const Runtime = @import("languages/runtime.zig");
+const Language = @import("contract/language.zig");
+const Runtime = @import("contract/runtime.zig");
 const Writer = std.Io.Writer;
 
 const ExtKind = AST.Node.Kind.Extended.ExtKind;

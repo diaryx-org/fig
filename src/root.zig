@@ -2,17 +2,17 @@
 const build_options = @import("build_options");
 /// The Zig language contract: what a Zig language module declares, and the
 /// comptime check that holds it to it.
-pub const Language = @import("languages/language.zig");
+pub const Language = @import("contract/language.zig");
 /// A format resolved when the program runs: the contract as a vtable, the
 /// registry, and the `Language` over it. `docs/proposals/runtime-languages.md`.
-pub const Runtime = @import("languages/runtime.zig");
+pub const Runtime = @import("contract/runtime.zig");
 /// The languages fig ships, as a consumer registers them.
-pub const bundle = @import("languages/bundle.zig");
+pub const bundle = @import("contract/bundle.zig");
 /// The helper wire — the contract as JSON-RPC 2.0 by the line — as a vtable
 /// over any transport: the CLI's child process, the wasm module's host call.
-pub const Wire = @import("languages/wire.zig");
+pub const Wire = @import("contract/wire.zig");
 /// A runtime language served by the wasm module's host (`fig_host.call`).
-pub const Host = @import("languages/host.zig");
+pub const Host = @import("contract/host.zig");
 
 pub const Editor = @import("editor.zig").Editor;
 /// The editor's module: `Editor`, and the source-coordinate helpers its
@@ -59,11 +59,11 @@ test {
     // `bundle.zig`'s test block references every language module, and each
     // module's `test {}` block pulls in its submodules' tests, so root names
     // no language.
-    _ = @import("languages/bundle.zig");
-    _ = @import("languages/language.zig");
-    _ = @import("languages/harness.zig");
-    _ = @import("languages/runtime.zig");
-    _ = @import("languages/wire.zig");
+    _ = @import("contract/bundle.zig");
+    _ = @import("contract/language.zig");
+    _ = @import("contract/harness.zig");
+    _ = @import("contract/runtime.zig");
+    _ = @import("contract/wire.zig");
     _ = @import("editor.zig");
     _ = @import("editor/regions.zig");
     _ = @import("patch.zig");
@@ -74,7 +74,7 @@ test {
     _ = @import("canonical/canonical.zig");
     _ = @import("deserialize.zig");
     _ = @import("c_api.zig");
-    _ = @import("languages/contract_test.zig");
+    _ = @import("contract/contract_test.zig");
     // The kit's tests are its own package's (`kit/build.zig`), which
     // `zig build test` runs as a compilation of their own.
     //

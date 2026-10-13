@@ -37,8 +37,8 @@
 const std = @import("std");
 
 const Canonical = @import("canonical/canonical.zig");
-const Runtime = @import("languages/runtime.zig");
-const bundle = @import("languages/bundle.zig");
+const Runtime = @import("contract/runtime.zig");
+const bundle = @import("contract/bundle.zig");
 
 /// Byte weights shaping random input into something the parsers will actually
 /// walk into rather than reject on the first token. The first entry must span

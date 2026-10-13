@@ -10,7 +10,7 @@ const AST = @import("kit").AST;
 pub const SerializeOptions = AST.SerializeOptions;
 pub const SerializeError = AST.SerializeError;
 const Node = AST.Node;
-const Runtime = @import("languages/runtime.zig");
+const Runtime = @import("contract/runtime.zig");
 
 // The canonical form is the AST's own 1:1 oracle encoding. It is not exposed
 // through the C ABI or any binding, so it is opt-in (`-Dcanonical=true`) —

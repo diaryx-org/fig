@@ -60,7 +60,7 @@ pub fn indexOf(comptime name: []const u8) usize {
     inline for (rows, 0..) |row, i| {
         if (comptime eql(row.name, name)) return i;
     }
-    @compileError("'" ++ name ++ "' is not a row of src/languages/list.zig");
+    @compileError("'" ++ name ++ "' is not a row of src/contract/list.zig");
 }
 
 /// Whether `name` is a row.
@@ -84,7 +84,7 @@ comptime {
     // twice.
     for (rows, 0..) |a, ai| {
         for (rows[ai + 1 ..]) |b| {
-            if (eql(a.name, b.name)) @compileError("two rows of src/languages/list.zig are named '" ++ a.name ++ "'");
+            if (eql(a.name, b.name)) @compileError("two rows of src/contract/list.zig are named '" ++ a.name ++ "'");
         }
     }
 }

@@ -4,7 +4,7 @@
 //!
 //! The binding cannot hand the module a C function pointer, so the vtable
 //! is `fig.Wire`'s over a wasm import, `fig_host.call` — the transport
-//! `languages/host.zig` builds, which the CLI's WASI build shares. A
+//! `contract/host.zig` builds, which the CLI's WASI build shares. A
 //! language written in JavaScript is therefore a helper in every respect
 //! but the pipe, and `fig-lua`'s scripts, the CLI's helpers and the
 //! binding's objects all speak one wire.
@@ -17,8 +17,8 @@
 
 const std = @import("std");
 const c_api = @import("c_api.zig");
-const Runtime = @import("languages/runtime.zig");
-const Host = @import("languages/host.zig");
+const Runtime = @import("contract/runtime.zig");
+const Host = @import("contract/host.zig");
 
 /// One request line in, one response line out, answered by the host — the
 /// shape `Host.Call` documents.

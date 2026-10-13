@@ -61,7 +61,7 @@ const AST = @import("kit").AST;
 const Serialize = @import("serialize.zig");
 const Document = @import("kit").Document;
 const editor_mod = @import("editor.zig");
-const Runtime = @import("languages/runtime.zig");
+const Runtime = @import("contract/runtime.zig");
 const Diagnostics = @import("diagnostics.zig");
 
 const Id = AST.Node.Id;

@@ -1,7 +1,7 @@
 //! A language's description as the helper wire carries it
 //! (docs/helper-protocol.md, "The description"): the JSON a helper answers
 //! `describe` with, written from the vtable records a Zig language builds
-//! (`contract.zig`). The inverse of `languages/wire.zig`'s
+//! (`contract.zig`). The inverse of fig's `src/contract/wire.zig`'s
 //! `vtableFromDescription`, field for field, so a Zig language built into a
 //! module of its own — a wasm module beside fig's — can describe itself to
 //! fig the way any helper does.

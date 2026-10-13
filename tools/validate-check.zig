@@ -341,7 +341,7 @@ fn buildDrivenProbe(allocator: std.mem.Allocator) ![]u8 {
 /// the gates off they resolve to `void` and the registry loop skips them,
 /// leaving the fixture as the only thing under test (and each probe fast).
 ///
-/// Written from `src/languages/list.zig` (the `languages` module) rather than
+/// Written from `src/contract/list.zig` (the `languages` module) rather than
 /// by hand, so a format added to the list is gated off here without an edit.
 /// `canonical` is not a format and is named by hand, as it is in
 /// `src/build/Options.zig`.

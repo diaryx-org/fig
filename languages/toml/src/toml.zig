@@ -53,7 +53,7 @@ pub const Language = struct {
         },
     };
 
-    /// What `languages/harness.zig` round-trips and edits: a root key, a
+    /// What fig's `src/contract/harness.zig` round-trips and edits: a root key, a
     /// `[table]` (the section shape the parser records regions for), an
     /// array, and an inline table.
     pub const samples: []const []const u8 = &.{

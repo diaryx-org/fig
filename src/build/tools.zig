@@ -43,7 +43,7 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "languages", .module = b.createModule(.{ .root_source_file = b.path("src/languages/list.zig") }) },
+                .{ .name = "languages", .module = b.createModule(.{ .root_source_file = b.path("src/contract/list.zig") }) },
             },
         }),
     });
@@ -158,7 +158,7 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "languages", .module = b.createModule(.{ .root_source_file = b.path("src/languages/list.zig") }) },
+                .{ .name = "languages", .module = b.createModule(.{ .root_source_file = b.path("src/contract/list.zig") }) },
             },
         }),
     });

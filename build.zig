@@ -72,6 +72,16 @@ pub fn build(b: *std.Build) void {
     const wasi_options_step = b.step("wasi-options", "Write build_options.zig for a build-system-free build");
     wasi_options_step.dependOn(&b.addInstallFileWithDir(fig_options.getOutput(), .prefix, "build_options.zig").step);
 
+    // The helper wire's JSON-RPC envelope. A lazy dependency, asked for only
+    // when the build carries the wire, so `-Dhelper-wire=false` (what the
+    // Rust crate's build script passes for the C library, which has none)
+    // builds offline from a vendored tree.
+    const helper_wire = b.option(bool, "helper-wire", "Carry the helper wire (the CLI's helpers, the wasm module's JavaScript languages); needs the zigjr dependency") orelse true;
+    const zigjr: ?*std.Build.Module = if (helper_wire)
+        if (b.lazyDependency("zigjr", .{})) |dep| dep.module("zigjr") else null
+    else
+        null;
+
     const ctx: Context = .{
         .b = b,
         .target = target,
@@ -80,6 +90,7 @@ pub fn build(b: *std.Build) void {
         .cfg = cfg,
         .options_mod = options_mod,
         .ver = ver,
+        .zigjr = zigjr,
     };
 
     // Order matters only for the data handed downstream, not the build graph:

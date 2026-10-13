@@ -110,7 +110,10 @@ fn build_from_source(cargo_target: &str, cargo_host: &str) {
         // GitHub's x86_64 Linux runner fleet is heterogeneous — where the first
         // wide-vector instruction faults with SIGILL. Baseline codegen runs
         // everywhere; the parser is not vector-bound, so the cost is negligible.
-        .arg("-Dcpu=baseline");
+        .arg("-Dcpu=baseline")
+        // The C library carries no helper wire, so the build needs none of
+        // its dependency (zigjr), and a vendored tree builds offline.
+        .arg("-Dhelper-wire=false");
 
     if let Some(zig_target) = zig_target_for_cargo_target(cargo_target, cargo_host) {
         command.arg(format!("-Dtarget={zig_target}"));

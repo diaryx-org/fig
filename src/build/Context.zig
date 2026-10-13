@@ -33,3 +33,13 @@ options_mod: *std.Build.Module,
 /// rebuilds a second `build_options` for the all-on run, and `checks`
 /// embeds the version into the abi/semver tool args.
 ver: Options.Versions,
+/// The helper wire's JSON-RPC envelope, or null when the build leaves the
+/// wire out (`-Dhelper-wire=false`) or the lazy dependency is still being
+/// fetched. Every module that can reach `src/languages/wire.zig` imports it
+/// through `importWire`.
+zigjr: ?*std.Build.Module,
+
+/// Give `m` the `zigjr` import, when the build carries the wire.
+pub fn importWire(self: @This(), m: *std.Build.Module) void {
+    if (self.zigjr) |z| m.addImport("zigjr", z);
+}

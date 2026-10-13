@@ -1,17 +1,19 @@
 //! The helper wire as a vtable over any transport.
 //!
-//! The out-of-process carrier of the runtime-language contract is
-//! newline-delimited JSON — `describe` once, then `parse`, `print` and
-//! `render` per call, one request line to one response line — documented
-//! once, on `bindings/rust/fig/src/helper.rs`. This module is fig's half of
-//! it: a `Runtime.VTable` whose functions write a request, hand it to a
+//! The out-of-process carrier of the runtime-language contract is JSON-RPC
+//! 2.0, one message per line — `describe` once, then `parse`, `print`,
+//! `render` and `split_stream` per call, one request to one response —
+//! specified in `docs/helper-protocol.md`. This module is fig's half of it:
+//! a `Runtime.VTable` whose functions write a request, hand it to a
 //! `Transport`, and read the response back into the C shapes the registry
-//! takes. What carries the line is the transport's business, and there are
-//! two: the CLI's helper runner (`src/cli/languages.zig`), where the line
-//! crosses a child process's stdin and stdout, and the wasm module's host
-//! call (`src/wasm_host.zig`), where it crosses into JavaScript and back.
-//! Both register through the same `Runtime.register` a host's own vtable
-//! does; there is no second way in.
+//! takes. The envelope is zigjr's (a fork kept for fig and twig); the
+//! methods and their payloads are fig's. What carries the line is the
+//! transport's business, and there are two: the CLI's helper runner
+//! (`src/cli/languages.zig`), where the line crosses a child process's
+//! stdin and stdout, and the wasm module's host call (`src/wasm_host.zig`),
+//! where it crosses into JavaScript and back. Both register through the
+//! same `Runtime.register` a host's own vtable does; there is no second way
+//! in.
 //!
 //! `tableToJson` and `tableFromJson` are the node table on the wire, and
 //! are also what `fig lang table` prints and `fig lang check` holds a twin
@@ -20,6 +22,7 @@
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
+const zigjr = @import("zigjr");
 
 const Runtime = @import("runtime.zig");
 const manifest = @import("../kit/manifest.zig");
@@ -30,81 +33,105 @@ const Span = @import("../kit/span.zig");
 /// Where a request line goes and a response line comes from. Embedded in
 /// whatever owns the connection — the CLI's `Helper`, the wasm host's
 /// language record — which recovers itself with `@fieldParentPtr` in
-/// `callFn`. The vtable's `ctx` is a pointer to this.
+/// `exchangeFn`. The vtable's `ctx` is a pointer to this.
 pub const Transport = struct {
     /// Every allocation the vtable makes per call — request buffers, the
     /// arena a table is decoded into, the bytes a print returns — comes
     /// from here, and `free_table` / `free_bytes` return it here.
     allocator: Allocator,
-    /// Send one request line and take one response line, parsed into a
-    /// `std.json.Value` tree in `out_arena`, which the caller owns. An
-    /// error is reported by name to whoever asked, so the set is the
-    /// transport's own; `error.HelperExited` and `error.HelperSpokeNoJson`
-    /// are the two every transport can raise.
-    callFn: *const fn (self: *Transport, out_arena: Allocator, request: []const u8) anyerror!std.json.Value,
+    /// Send one request line and take one response line, allocated in
+    /// `out_arena`, which the caller owns. Neither line carries its
+    /// newline. An error is reported by name to whoever asked, so the set
+    /// is the transport's own; `error.HelperExited` is the one every
+    /// transport can raise.
+    exchangeFn: *const fn (self: *Transport, out_arena: Allocator, request: []const u8) anyerror![]const u8,
+    /// The id the last request carried; each request takes the next, and
+    /// its response must carry the same.
+    last_id: i64 = 0,
+};
 
-    pub fn call(self: *Transport, out_arena: Allocator, request: []const u8) anyerror!std.json.Value {
-        return self.callFn(self, out_arena, request);
+/// What a helper answered a request with.
+pub const Answer = union(enum) {
+    /// The method's result, as a tree in the caller's arena. A number that
+    /// is not an integer is its text (`.number_string`): the wire carries no
+    /// floats, and reading one would link the float parser into every host.
+    result: std.json.Value,
+    /// The helper's error object.
+    refused: Refused,
+};
+
+/// A JSON-RPC error: `code` as `docs/helper-protocol.md` assigns them,
+/// `message` for a person, and `byte_offset` from `data` where the helper
+/// gave one.
+pub const Refused = struct {
+    code: i64,
+    message: []const u8,
+    byte_offset: usize = 0,
+
+    /// The message to report: the helper's own, or, for the codes JSON-RPC
+    /// reserves for a request the helper could not read, that said first.
+    pub fn text(self: Refused, arena: Allocator) []const u8 {
+        if (self.code >= -32768 and self.code <= -32100) {
+            return std.fmt.allocPrint(arena, "the helper could not handle fig's request (JSON-RPC error {d}): {s}", .{ self.code, self.message }) catch self.message;
+        }
+        return self.message;
     }
 };
 
-/// One response line as a `std.json.Value` tree in `arena`. The wire
-/// carries no floats — offsets, ids and depths are integers, everything
-/// else is a string — so this walks `std.json.Scanner` itself rather than
-/// going through `std.json.parseFromSlice`, whose number path links the
-/// float parser into every host; a non-integer number arrives as
-/// `.number_string` and is refused wherever an integer is read.
-/// `error.HelperSpokeNoJson` for a line that is not one JSON value.
-pub fn parseLine(arena: Allocator, line: []const u8) error{ HelperSpokeNoJson, OutOfMemory }!std.json.Value {
+/// The ways an answer can fail to be one, beyond the transport's own.
+pub const AnswerError = error{
+    /// The line is not a JSON-RPC response object.
+    HelperSpokeNoJson,
+    /// The line is a JSON object without `"jsonrpc":"2.0"`: a helper built
+    /// against fig 5, whose wire was `{"op":…}` / `{"ok":…}`.
+    HelperSpeaksOldWire,
+    /// The response's id is not the request's.
+    HelperOutOfStep,
+    OutOfMemory,
+};
+
+/// Send `method` with `params` (a JSON object's text, or null for none)
+/// and read the answer, every string of it in `out_arena`.
+pub fn call(t: *Transport, out_arena: Allocator, method: []const u8, params: ?[]const u8) anyerror!Answer {
+    t.last_id += 1;
+    const id = t.last_id;
+    var req: Io.Writer.Allocating = .init(out_arena);
+    try zigjr.composer.writeRequestJson(method, params, zigjr.RpcId.of(id), &req.writer);
+    const line = try t.exchangeFn(t, out_arena, req.written());
+    return readAnswer(out_arena, line, id);
+}
+
+/// One response line, checked against the request's `id`.
+pub fn readAnswer(arena: Allocator, line: []const u8, id: i64) AnswerError!Answer {
     var scanner = std.json.Scanner.initCompleteInput(arena, line);
-    defer scanner.deinit();
-    const value = parseValue(arena, &scanner, 0) catch |err| return switch (err) {
+    const first = scanner.peekNextTokenType() catch return error.HelperSpokeNoJson;
+    if (first != .object_begin) return error.HelperSpokeNoJson;
+    const resp = zigjr.RpcResponse.jsonParse(arena, &scanner, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch |err| return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         else => error.HelperSpokeNoJson,
     };
     const end = scanner.next() catch return error.HelperSpokeNoJson;
     if (end != .end_of_document) return error.HelperSpokeNoJson;
-    return value;
+    if (!std.mem.eql(u8, &resp.jsonrpc, "2.0")) return error.HelperSpeaksOldWire;
+    if (resp.id != .num or resp.id.num != id) return error.HelperOutOfStep;
+    const e = resp.@"error";
+    if (e.code != 0 or e.message.len != 0) {
+        var offset: usize = 0;
+        if (e.data) |d| if (d == .object) if (d.object.get("byte_offset")) |o| {
+            if (o == .integer and o.integer >= 0) offset = @intCast(o.integer);
+        };
+        return .{ .refused = .{ .code = e.code, .message = e.message, .byte_offset = offset } };
+    }
+    return .{ .result = resp.result };
 }
 
-/// The nesting a description or a table needs; a line deeper than this is
-/// not the wire's.
-const max_json_depth = 32;
-
-/// Every string and number is copied into `arena` (`.alloc_always`): the
-/// line itself is the transport's, and is gone once `call` returns.
-fn parseValue(arena: Allocator, scanner: *std.json.Scanner, depth: usize) anyerror!std.json.Value {
-    if (depth > max_json_depth) return error.TooDeep;
-    return switch (try scanner.nextAlloc(arena, .alloc_always)) {
-        .null => .null,
-        .true => .{ .bool = true },
-        .false => .{ .bool = false },
-        .number, .allocated_number => |n| if (std.fmt.parseInt(i64, n, 10)) |i| .{ .integer = i } else |_| .{ .number_string = n },
-        .string, .allocated_string => |str| .{ .string = str },
-        .array_begin => blk: {
-            var items: std.json.Array = .init(arena);
-            while (true) {
-                if (try scanner.peekNextTokenType() == .array_end) {
-                    _ = try scanner.next();
-                    break;
-                }
-                try items.append(try parseValue(arena, scanner, depth + 1));
-            }
-            break :blk .{ .array = items };
-        },
-        .object_begin => blk: {
-            var map: std.json.ObjectMap = .empty;
-            while (true) {
-                const key = switch (try scanner.nextAlloc(arena, .alloc_always)) {
-                    .object_end => break,
-                    .string, .allocated_string => |k| k,
-                    else => return error.UnexpectedToken,
-                };
-                try map.put(arena, key, try parseValue(arena, scanner, depth + 1));
-            }
-            break :blk .{ .object = map };
-        },
-        else => error.UnexpectedToken,
+/// A sentence for a failed call, where `@errorName` would be a Zig name.
+pub fn failureText(err: anyerror) []const u8 {
+    return switch (err) {
+        error.HelperSpeaksOldWire => "the helper speaks fig 5's wire, not JSON-RPC 2.0; rebuild it against fig 6",
+        error.HelperOutOfStep => "the helper answered a different request than the one fig sent",
+        error.HelperSpokeNoJson => "the helper's answer is not a JSON-RPC response",
+        else => @errorName(err),
     };
 }
 
@@ -124,37 +151,21 @@ pub const DescribeError = error{
 /// caller registers the result; the CLI checks the name against its
 /// configuration first.
 pub fn describe(t: *Transport, arena: Allocator) DescribeError!Runtime.VTable {
-    const resp = t.call(arena, "{\"op\":\"describe\"}") catch |err| {
-        Runtime.refuse("the helper did not describe itself: {s}", .{@errorName(err)});
+    const answer = call(t, arena, "describe", null) catch |err| {
+        Runtime.refuse("the helper did not describe itself: {s}", .{failureText(err)});
         return error.HelperRefused;
     };
-    const desc = okField(resp, "description") orelse {
-        Runtime.refuse("the helper refused to describe itself: {s}", .{failureMessage(resp)});
-        return error.HelperRefused;
+    const desc = switch (answer) {
+        .result => |r| r,
+        .refused => |r| {
+            Runtime.refuse("the helper refused to describe itself: {s}", .{r.text(arena)});
+            return error.HelperRefused;
+        },
     };
     return vtableFromDescription(arena, t, desc) catch |err| switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         else => error.HelperSpokeNoJson,
     };
-}
-
-pub fn okField(resp: std.json.Value, name: []const u8) ?std.json.Value {
-    if (resp != .object) return null;
-    const ok = resp.object.get("ok") orelse return null;
-    if (ok != .bool or !ok.bool) return null;
-    return resp.object.get(name);
-}
-
-pub fn failureMessage(resp: std.json.Value) []const u8 {
-    if (resp != .object) return "malformed response";
-    const m = resp.object.get("message") orelse return "no reason given";
-    return if (m == .string) m.string else "no reason given";
-}
-
-fn failureOffset(resp: std.json.Value) usize {
-    if (resp != .object) return 0;
-    const m = resp.object.get("byte_offset") orelse return 0;
-    return if (m == .integer and m.integer >= 0) @intCast(m.integer) else 0;
 }
 
 // ── description → vtable ───────────────────────────────────────────────────
@@ -406,24 +417,25 @@ fn parseThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Runtime.Str, out:
         setErr(err, "the input is not UTF-8, which the helper wire carries as text", 0);
         return 2;
     }
-    var req: Io.Writer.Allocating = .init(t.allocator);
-    defer req.deinit();
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    var req: Io.Writer.Allocating = .init(arena.allocator());
     const w = &req.writer;
-    w.writeAll("{\"op\":\"parse\",\"dialect\":") catch return 3;
+    w.writeAll("{\"dialect\":") catch return 3;
     jsonString(w, std.mem.span(dialect)) catch return 3;
     w.writeAll(",\"input\":") catch return 3;
     jsonString(w, src) catch return 3;
     w.writeAll("}") catch return 3;
 
-    var arena = std.heap.ArenaAllocator.init(t.allocator);
-    defer arena.deinit();
-    const resp = t.call(arena.allocator(), req.written()) catch |e| {
-        setErr(err, @errorName(e), 0);
+    const table_v = switch (call(t, arena.allocator(), "parse", req.written()) catch |e| {
+        setErr(err, failureText(e), 0);
         return 2;
-    };
-    const table_v = okField(resp, "table") orelse {
-        setErr(err, failureMessage(resp), failureOffset(resp));
-        return 2;
+    }) {
+        .result => |r| r,
+        .refused => |r| {
+            setErr(err, r.text(arena.allocator()), r.byte_offset);
+            return 2;
+        },
     };
     tableFromJson(table_v, out) catch |e| {
         setErr(err, switch (e) {
@@ -445,25 +457,30 @@ fn printThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, view: *const Runtime.tab
     var req: Io.Writer.Allocating = .init(t.allocator);
     defer req.deinit();
     const w = &req.writer;
-    w.writeAll("{\"op\":\"print\",\"dialect\":") catch return 3;
+    w.writeAll("{\"dialect\":") catch return 3;
     jsonString(w, std.mem.span(dialect)) catch return 3;
     w.writeAll(",\"table\":") catch return 3;
     tableToJson(w, view) catch return 3;
     w.print(",\"options\":{{\"pretty\":{},\"strip_comments\":{},\"indent\":{d},\"width\":{d},\"splice\":{},\"flow\":{}}}}}", .{ options.pretty, options.strip_comments, options.indent, options.width, options.splice, options.flow }) catch return 3;
-    return outputCall(t, req.written(), out, err);
+    return outputCall(t, "print", req.written(), out, err);
 }
 
-/// Send `request` and hand back its `output` string.
-fn outputCall(t: *Transport, request: []const u8, out: *Runtime.Str, err: *Runtime.ErrorInfo) c_int {
+/// Call `method` with `params` and hand back the string it answers. A
+/// refusal's code is `err.code` when it is one of `Runtime.Refusal`'s, so a
+/// printer's reason reaches the caller as the failure it names.
+fn outputCall(t: *Transport, method: []const u8, params: []const u8, out: *Runtime.Str, err: *Runtime.ErrorInfo) c_int {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
-    const resp = t.call(arena.allocator(), request) catch |e| {
-        setErr(err, @errorName(e), 0);
+    const output = switch (call(t, arena.allocator(), method, params) catch |e| {
+        setErr(err, failureText(e), 0);
         return 4;
-    };
-    const output = okField(resp, "output") orelse {
-        setErr(err, failureMessage(resp), 0);
-        return 4;
+    }) {
+        .result => |r| r,
+        .refused => |r| {
+            setErr(err, r.text(arena.allocator()), 0);
+            if (r.code > 0 and r.code <= std.math.maxInt(c_int)) err.code = @intCast(r.code);
+            return 4;
+        },
     };
     if (output != .string) {
         setErr(err, "the helper's output is not a string", 0);
@@ -479,7 +496,7 @@ fn renderCall(ctx: ?*anyopaque, which: []const u8, r: *const Runtime.RenderReque
     var req: Io.Writer.Allocating = .init(t.allocator);
     defer req.deinit();
     const w = &req.writer;
-    w.print("{{\"op\":\"render\",\"which\":\"{s}\",\"dialect\":", .{which}) catch return 3;
+    w.print("{{\"which\":\"{s}\",\"dialect\":", .{which}) catch return 3;
     jsonString(w, std.mem.span(r.dialect)) catch return 3;
     inline for (.{ "indent", "key", "value" }) |name| {
         w.print(",\"{s}\":", .{name}) catch return 3;
@@ -495,7 +512,7 @@ fn renderCall(ctx: ?*anyopaque, which: []const u8, r: *const Runtime.RenderReque
         jsonString(w, @field(r, name).slice() orelse "") catch return 3;
     }
     w.writeAll("}") catch return 3;
-    return outputCall(t, req.written(), out, err);
+    return outputCall(t, "render", req.written(), out, err);
 }
 
 fn renderValueThunk(ctx: ?*anyopaque, r: *const Runtime.RenderRequest, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
@@ -517,8 +534,8 @@ fn renderKeyNameThunk(ctx: ?*anyopaque, r: *const Runtime.RenderRequest, out: *R
     return renderCall(ctx, "key_name", r, out, err);
 }
 
-/// `{"op":"split_stream","dialect","input"}`, answered with
-/// `{"ok":true,"documents":[{"start","end","explicit"}]}` in byte offsets.
+/// `split_stream` with `{"dialect","input"}`, answered with
+/// `[{"start","end","explicit"}]` in byte offsets.
 fn splitStreamThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Runtime.Str, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
     const t = transportOf(ctx);
     const src = input.slice() orelse "";
@@ -526,24 +543,25 @@ fn splitStreamThunk(ctx: ?*anyopaque, dialect: [*:0]const u8, input: Runtime.Str
         setErr(err, "the input is not UTF-8, which the helper wire carries as text", 0);
         return 2;
     }
-    var req: Io.Writer.Allocating = .init(t.allocator);
-    defer req.deinit();
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    var req: Io.Writer.Allocating = .init(arena.allocator());
     const w = &req.writer;
-    w.writeAll("{\"op\":\"split_stream\",\"dialect\":") catch return 3;
+    w.writeAll("{\"dialect\":") catch return 3;
     jsonString(w, std.mem.span(dialect)) catch return 3;
     w.writeAll(",\"input\":") catch return 3;
     jsonString(w, src) catch return 3;
     w.writeAll("}") catch return 3;
 
-    var arena = std.heap.ArenaAllocator.init(t.allocator);
-    defer arena.deinit();
-    const resp = t.call(arena.allocator(), req.written()) catch |e| {
-        setErr(err, @errorName(e), 0);
+    const docs = switch (call(t, arena.allocator(), "split_stream", req.written()) catch |e| {
+        setErr(err, failureText(e), 0);
         return 2;
-    };
-    const docs = okField(resp, "documents") orelse {
-        setErr(err, failureMessage(resp), failureOffset(resp));
-        return 2;
+    }) {
+        .result => |r| r,
+        .refused => |r| {
+            setErr(err, r.text(arena.allocator()), r.byte_offset);
+            return 2;
+        },
     };
     if (docs != .array) {
         setErr(err, "the helper's documents are not an array", 0);
@@ -836,6 +854,9 @@ pub fn tableToJson(w: *Io.Writer, v: *const T.View) !void {
 
 /// A transport that answers from a fixed script — what a helper would say
 /// — so the vtable's half of the wire is tested with no process behind it.
+/// Each script is the member a response carries after its id: a
+/// `"result":…` or an `"error":…`, which `exchange` wraps in the envelope
+/// with the request's own id.
 const Scripted = struct {
     transport: Transport,
     describe_response: []const u8,
@@ -843,40 +864,52 @@ const Scripted = struct {
     print_response: []const u8,
     last_request: std.ArrayList(u8) = .empty,
 
-    fn call(t: *Transport, out_arena: Allocator, request: []const u8) anyerror!std.json.Value {
+    fn exchange(t: *Transport, out_arena: Allocator, request: []const u8) anyerror![]const u8 {
         const self: *Scripted = @fieldParentPtr("transport", t);
         self.last_request.clearRetainingCapacity();
         try self.last_request.appendSlice(t.allocator, request);
-        const line = if (std.mem.indexOf(u8, request, "\"op\":\"describe\"") != null)
+        const member = if (std.mem.indexOf(u8, request, "\"method\": \"describe\"") != null)
             self.describe_response
-        else if (std.mem.indexOf(u8, request, "\"op\":\"parse\"") != null)
+        else if (std.mem.indexOf(u8, request, "\"method\": \"parse\"") != null)
             self.parse_response
         else
             self.print_response;
-        return parseLine(out_arena, line);
+        return std.fmt.allocPrint(out_arena, "{{\"jsonrpc\":\"2.0\",\"id\":{d},{s}}}", .{ t.last_id, member });
+    }
+
+    /// The request's `params`, as the request spells them.
+    fn params(self: *const Scripted) []const u8 {
+        const req = self.last_request.items;
+        const at = std.mem.indexOf(u8, req, "\"params\": ") orelse return "";
+        const id_at = std.mem.lastIndexOf(u8, req, ", \"id\": ") orelse return "";
+        return req[at + "\"params\": ".len .. id_at];
     }
 };
 
-test "parseLine: the wire's JSON, integers as integers, no floats needed, nothing borrowed from the line" {
+test "readAnswer: a result, a refusal with its offset, and every way a line is not an answer" {
     const t = std.testing;
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
-    // The line is a transport's buffer, freed once the call returns: the
-    // tree must own every string it holds.
-    const line = try t.allocator.dupe(u8, "{\"ok\":true,\"n\":-3,\"f\":1.5,\"s\":\"a\\nb\",\"a\":[1,{}],\"z\":null}");
-    const v = try parseLine(arena.allocator(), line);
-    @memset(line, 'x');
-    t.allocator.free(line);
-    try t.expect(v.object.get("ok").?.bool);
-    try t.expectEqual(@as(i64, -3), v.object.get("n").?.integer);
-    try t.expectEqualStrings("1.5", v.object.get("f").?.number_string);
-    try t.expectEqualStrings("a\nb", v.object.get("s").?.string);
-    try t.expectEqual(@as(usize, 2), v.object.get("a").?.array.items.len);
-    try t.expectEqual(@as(usize, 0), v.object.get("a").?.array.items[1].object.count());
-    try t.expect(v.object.get("z").? == .null);
-    try t.expectError(error.HelperSpokeNoJson, parseLine(arena.allocator(), "{\"ok\":true} trailing"));
-    try t.expectError(error.HelperSpokeNoJson, parseLine(arena.allocator(), "not json"));
-    try t.expectError(error.HelperSpokeNoJson, parseLine(arena.allocator(), "{\"a\":[1,2"));
+    const a = arena.allocator();
+
+    const ok = try readAnswer(a, "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"n\":-3,\"f\":1.5,\"s\":\"a\\nb\"}}", 3);
+    try t.expectEqual(@as(i64, -3), ok.result.object.get("n").?.integer);
+    try t.expectEqualStrings("1.5", ok.result.object.get("f").?.number_string);
+    try t.expectEqualStrings("a\nb", ok.result.object.get("s").?.string);
+
+    const no = try readAnswer(a, "{\"jsonrpc\":\"2.0\",\"id\":4,\"error\":{\"code\":-32000,\"message\":\"bad\",\"data\":{\"byte_offset\":7}}}", 4);
+    try t.expectEqual(@as(i64, -32000), no.refused.code);
+    try t.expectEqualStrings("bad", no.refused.text(a));
+    try t.expectEqual(@as(usize, 7), no.refused.byte_offset);
+
+    const unknown = try readAnswer(a, "{\"jsonrpc\":\"2.0\",\"id\":5,\"error\":{\"code\":-32601,\"message\":\"no such method\"}}", 5);
+    try t.expect(std.mem.indexOf(u8, unknown.refused.text(a), "could not handle") != null);
+
+    try t.expectError(error.HelperSpeaksOldWire, readAnswer(a, "{\"ok\":true,\"output\":\"x\"}", 1));
+    try t.expectError(error.HelperOutOfStep, readAnswer(a, "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":1}", 1));
+    try t.expectError(error.HelperSpokeNoJson, readAnswer(a, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":1} trailing", 1));
+    try t.expectError(error.HelperSpokeNoJson, readAnswer(a, "not json", 1));
+    try t.expectError(error.HelperSpokeNoJson, readAnswer(a, "[]", 1));
 }
 
 test "describe builds a vtable the registry would accept" {
@@ -884,13 +917,13 @@ test "describe builds a vtable the registry would accept" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     var s: Scripted = .{
-        .transport = .{ .allocator = t.allocator, .callFn = Scripted.call },
+        .transport = .{ .allocator = t.allocator, .exchangeFn = Scripted.exchange },
         .describe_response =
-        \\{"ok":true,"description":{"name":"wire-kv","caps":{"read":true,"edit":true,"serialize":true},
+        \\"result":{"name":"wire-kv","caps":{"read":true,"edit":true,"serialize":true},
         \\"max_mapping_depth":0,"syntax":{"comments":{"line":{"open":"#"},"trailing":{"open":"#"}},
         \\"kv_sep":"=","empty_map_literal":"{}","flow_containers":false},
         \\"dialects":[{"name":"wire-kv","extensions":["wkv"],"splice":"raw","empty_doc_seed":""}],
-        \\"samples":["a=1\n"],"renderers":["value"]}}
+        \\"samples":["a=1\n"],"renderers":["value"]}
         ,
         .parse_response = "",
         .print_response = "",
@@ -914,10 +947,10 @@ test "describe builds a vtable the registry would accept" {
 test "a render request carries the container the fragment goes into" {
     const t = std.testing;
     var s: Scripted = .{
-        .transport = .{ .allocator = t.allocator, .callFn = Scripted.call },
+        .transport = .{ .allocator = t.allocator, .exchangeFn = Scripted.exchange },
         .describe_response = "",
         .parse_response = "",
-        .print_response = "{\"ok\":true,\"output\":\"<dependency>x</dependency>\"}",
+        .print_response = "\"result\":\"<dependency>x</dependency>\"",
     };
     defer s.last_request.deinit(t.allocator);
     const request: Runtime.RenderRequest = .{
@@ -933,9 +966,10 @@ test "a render request carries the container the fragment goes into" {
     try t.expectEqual(@as(c_int, 0), renderItemThunk(@ptrCast(&s.transport), &request, &out, &err));
     defer freeBytesThunk(@ptrCast(&s.transport), out);
     try t.expectEqualStrings("<dependency>x</dependency>", out.slice().?);
+    try t.expect(std.mem.indexOf(u8, s.last_request.items, "\"method\": \"render\"") != null);
     try t.expectEqualStrings(
-        \\{"op":"render","which":"item","dialect":"wire-kv","indent":"  ","key":"","value":"x","old_key":"","parent_key":"dependencies","parent_tag":"!dependency"}
-    , s.last_request.items);
+        \\{"which":"item","dialect":"wire-kv","indent":"  ","key":"","value":"x","old_key":"","parent_key":"dependencies","parent_tag":"!dependency"}
+    , s.params());
 }
 
 test "a refusal to describe is reported through Runtime.refuse" {
@@ -943,8 +977,8 @@ test "a refusal to describe is reported through Runtime.refuse" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     var s: Scripted = .{
-        .transport = .{ .allocator = t.allocator, .callFn = Scripted.call },
-        .describe_response = "{\"ok\":false,\"message\":\"no script given\"}",
+        .transport = .{ .allocator = t.allocator, .exchangeFn = Scripted.exchange },
+        .describe_response = "\"error\":{\"code\":-32000,\"message\":\"no script given\"}",
         .parse_response = "",
         .print_response = "",
     };
@@ -956,23 +990,23 @@ test "a refusal to describe is reported through Runtime.refuse" {
 test "parse crosses as a request line and comes back as a table; print gets the table back" {
     const t = std.testing;
     var s: Scripted = .{
-        .transport = .{ .allocator = t.allocator, .callFn = Scripted.call },
+        .transport = .{ .allocator = t.allocator, .exchangeFn = Scripted.exchange },
         .describe_response = "",
         .parse_response =
-        \\{"ok":true,"table":{"rows":[{"kind":"mapping","parent":null,"span":[0,4]},
+        \\"result":{"rows":[{"kind":"mapping","parent":null,"span":[0,4]},
         \\{"kind":"keyvalue","parent":0,"span":[0,3],"sep":[1,2]},{"kind":"string","parent":1,"span":[0,1],"text":"a"},
         \\{"kind":"string","parent":1,"span":[2,3],"text":"1"}],"regions":[],"mentions":[],
         \\"comments":[{"node":2,"slot":"leading","style":"line","text":"hi"}],
-        \\"directives":[{"handle":"!e!","prefix":"tag:x/"}]}}
+        \\"directives":[{"handle":"!e!","prefix":"tag:x/"}]}
         ,
-        .print_response = "{\"ok\":true,\"output\":\"a=1\\n\"}",
+        .print_response = "\"result\":\"a=1\\n\"",
     };
     defer s.last_request.deinit(t.allocator);
     var table = Runtime.Table.init(t.allocator, "a=1\n");
     defer table.deinit();
     var err: Runtime.ErrorInfo = .empty;
     try t.expectEqual(@as(c_int, 0), parseThunk(&s.transport, "wire-kv", Runtime.Str.of("a=1\n"), &table, &err));
-    try t.expectEqualStrings("{\"op\":\"parse\",\"dialect\":\"wire-kv\",\"input\":\"a=1\\n\"}", s.last_request.items);
+    try t.expectEqualStrings("{\"jsonrpc\": \"2.0\", \"method\": \"parse\", \"params\": {\"dialect\":\"wire-kv\",\"input\":\"a=1\\n\"}, \"id\": 1}", s.last_request.items);
     try t.expectEqual(@as(usize, 4), table.rows.items.len);
     try t.expectEqual(@as(usize, 1), table.comments.items.len);
     try t.expectEqual(@as(usize, 1), table.directives.items.len);
@@ -998,9 +1032,9 @@ test "parse crosses as a request line and comes back as a table; print gets the 
 test "a parse refusal carries the helper's message and offset" {
     const t = std.testing;
     var s: Scripted = .{
-        .transport = .{ .allocator = t.allocator, .callFn = Scripted.call },
+        .transport = .{ .allocator = t.allocator, .exchangeFn = Scripted.exchange },
         .describe_response = "",
-        .parse_response = "{\"ok\":false,\"message\":\"expected `=` here\",\"byte_offset\":3}",
+        .parse_response = "\"error\":{\"code\":-32000,\"message\":\"expected `=` here\",\"data\":{\"byte_offset\":3}}",
         .print_response = "",
     };
     defer s.last_request.deinit(t.allocator);

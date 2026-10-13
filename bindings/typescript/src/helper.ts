@@ -1,8 +1,9 @@
 // A `Language` served to a `fig` command line as a helper process.
 //
 // The CLI spawns a helper from its `languages.figl`, asks it `describe`
-// once, then sends a `parse`, `print` or `render` per call, one JSON line
-// each way over stdin and stdout, and the helper answers each on one line.
+// once, then sends a `parse`, `print` or `render` per call, one JSON-RPC
+// 2.0 message per line each way over stdin and stdout
+// (docs/helper-protocol.md), and the helper answers each on one line.
 // `serve` is that loop over `handle` — the same function the wasm module
 // calls for a registered language — so a format written for
 // `registerLanguage` is a CLI helper with no further code:
@@ -39,6 +40,8 @@ export {
   handle,
   describe,
   LanguageError,
+  Refusal,
+  LANGUAGE_REFUSED,
   type Language,
   type Dialect,
   type Syntax,

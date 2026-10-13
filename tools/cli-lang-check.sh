@@ -157,6 +157,19 @@ set -e
 [ "$status" -eq 1 ] || fail "lang check of a broken helper exited $status"
 case "$out" in "broken: refused: could not start \`/nonexistent/helper\`: "*) ;; *) fail "broken helper not reported: $out" ;; esac
 
+# A helper built against fig 5 answers `{"ok":…}`, not JSON-RPC: it is told
+# to rebuild, not reported as a parse failure.
+cat > old-helper <<'HELPER'
+#!/bin/sh
+while read -r line; do echo '{"ok":true,"description":{}}'; done
+HELPER
+chmod +x old-helper
+printf 'language[]\n> name = old\n> command = [%s/old-helper]\n' "$tmp" > old.figl
+set +e
+out="$(FIG_LANGUAGES="$tmp/old.figl" "$fig" lang check old 2>/dev/null)"
+set -e
+case "$out" in *"speaks fig 5's wire"*) ;; *) fail "a fig 5 helper not reported as one: $out" ;; esac
+
 # A helper named after a format this build does not bundle is that format:
 # its name and extension reach it, as input and as output. plist is off in
 # a default build; a build with it on has nothing to show.

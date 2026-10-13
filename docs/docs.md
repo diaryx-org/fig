@@ -17,6 +17,7 @@ contents
 > * [fig in Rust](rust.md)
 > * [fig in Typescript](typescript.md)
 > * [fig in Zig](zig.md)
+> * [Helper protocol](/docs/helper-protocol.md)
 ```
 
 # `fig` docs

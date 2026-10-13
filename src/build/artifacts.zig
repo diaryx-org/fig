@@ -29,6 +29,7 @@ pub fn add(ctx: Context) Result {
         .target = target,
     });
     mod.addImport("build_options", options_mod);
+    ctx.importWire(mod);
     // `root.zig`'s `test {}` block pulls in `c_api.zig`, which uses
     // `std.heap.c_allocator` on non-wasm targets — that allocator is only
     // available when linking libc. macOS links libc implicitly, so the test
@@ -123,6 +124,7 @@ pub fn add(ctx: Context) Result {
         }),
     });
     wasm.root_module.addImport("build_options", options_mod);
+    ctx.importWire(wasm.root_module);
     wasm.entry = .disabled;
     wasm.rdynamic = true;
     const install_wasm = b.addInstallArtifact(wasm, .{});
@@ -139,6 +141,7 @@ pub fn add(ctx: Context) Result {
         .target = wasi_target,
     });
     wasi_mod.addImport("build_options", options_mod);
+    ctx.importWire(wasi_mod);
     const wasi_cli = b.addExecutable(.{
         .name = "fig-wasi",
         .root_module = b.createModule(.{

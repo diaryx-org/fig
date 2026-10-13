@@ -15,9 +15,9 @@
 //! not something the CLI can resolve itself either: its name and extension
 //! reach the configured language of that name.
 //!
-//! The helper runner is a `fig.Wire.Transport` — the wire
-//! `bindings/rust/fig/src/helper.rs` documents, newline-delimited JSON, one
-//! request line to one response line, `describe` once at load, then
+//! The helper runner is a `fig.Wire.Transport` — the protocol
+//! `docs/helper-protocol.md` specifies, JSON-RPC 2.0, one request line to
+//! one response line, `describe` once at load, then
 //! `parse`, `print` and `render` per call — whose lines cross a child
 //! process's stdin and stdout. `fig.Wire` builds the `Runtime.VTable` over
 //! it, so the runner is a vtable like any other, and it registers through
@@ -357,19 +357,17 @@ const Helper = struct {
     /// Filled from `describe`: what the vtable's description pointers reach.
     arena: std.heap.ArenaAllocator,
 
-    /// `Wire.Transport.callFn`: send one request line and take one
-    /// response line, parsed into a `std.json.Value` tree in `out_arena`,
-    /// which the caller owns.
-    fn call(t: *Wire.Transport, out_arena: Allocator, request: []const u8) anyerror!std.json.Value {
+    /// `Wire.Transport.exchangeFn`: send one request line and take one
+    /// response line, in `out_arena`, which the caller owns.
+    fn exchange(t: *Wire.Transport, out_arena: Allocator, request: []const u8) anyerror![]const u8 {
         const self: *Helper = @alignCast(@fieldParentPtr("transport", t));
         try self.writer.interface.writeAll(request);
         try self.writer.interface.writeByte('\n');
         try self.writer.interface.flush();
         var line: std.ArrayList(u8) = .empty;
-        defer line.deinit(t.allocator);
-        try readLine(&self.reader.interface, t.allocator, &line);
+        try readLine(&self.reader.interface, out_arena, &line);
         if (line.items.len == 0) return error.HelperExited;
-        return Wire.parseLine(out_arena, line.items);
+        return line.items;
     }
 };
 
@@ -416,7 +414,7 @@ fn register(c: *const Configured) RegisterError!*const Runtime.Entry {
     const a = state.allocator;
     const helper = a.create(Helper) catch return error.OutOfMemory;
     helper.* = .{
-        .transport = .{ .allocator = a, .callFn = Helper.call },
+        .transport = .{ .allocator = a, .exchangeFn = Helper.exchange },
         .io = io,
         .name = c.name,
         .child = undefined,

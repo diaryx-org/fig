@@ -31,8 +31,9 @@ const registered = new Map<Language, Format>();
  *  re-derived afterwards because the allocation may have grown memory. */
 function hostCall(lang: number, requestPtr: number, requestLen: number, outPtr: number, outLen: number): number {
   const language = languages.get(lang);
+  if (!language) return 1;
   const request = decoder.decode(u8().subarray(requestPtr, requestPtr + requestLen));
-  const response = language ? handle(language, request) : JSON.stringify({ ok: false, message: `no language registered as ${lang}` });
+  const response = handle(language, request);
   const bytes = encoder.encode(response);
   const ptr = fig.fig_alloc(bytes.length);
   if (ptr === 0) return 1;

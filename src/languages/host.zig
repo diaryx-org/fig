@@ -1,5 +1,5 @@
 //! A runtime language whose functions live in the wasm module's host: the
-//! vtable is `fig.Wire`'s — the helper wire, newline-delimited JSON — over a
+//! vtable is `fig.Wire`'s — the helper wire, JSON-RPC 2.0 by the line — over a
 //! transport whose one call is a wasm import, `fig_host.call`, answered by
 //! the same `handle` a helper process runs over stdin and stdout.
 //!
@@ -20,7 +20,7 @@ const Wire = @import("wire.zig");
 /// the host allocated through the module's `fig_alloc`, written to
 /// `*out_ptr`/`*out_len`, which this side reads and frees with
 /// `std.heap.wasm_allocator`. A nonzero return is a host that could not
-/// answer at all — a refusal is an ordinary `{"ok":false,…}` response.
+/// answer at all — a refusal is an ordinary JSON-RPC error response.
 pub const Call = *const fn (lang: u32, request: [*]const u8, request_len: usize, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) c_int;
 
 /// What `fig_alloc` allocates with, and a response is freed with.
@@ -35,14 +35,14 @@ const HostLanguage = struct {
     /// What the vtable's description pointers reach.
     arena: std.heap.ArenaAllocator,
 
-    fn callHost(t: *Wire.Transport, out_arena: std.mem.Allocator, request: []const u8) anyerror!std.json.Value {
+    fn exchange(t: *Wire.Transport, out_arena: std.mem.Allocator, request: []const u8) anyerror![]const u8 {
         const self: *HostLanguage = @fieldParentPtr("transport", t);
         var ptr: ?[*]u8 = null;
         var len: usize = 0;
         if (self.call(self.lang, request.ptr, request.len, &ptr, &len) != 0) return error.HelperExited;
         const line = (ptr orelse return error.HelperExited)[0..len];
         defer t.allocator.free(line);
-        return Wire.parseLine(out_arena, line);
+        return out_arena.dupe(u8, line);
     }
 };
 
@@ -65,7 +65,7 @@ pub const RegisterError = error{
 pub fn register(call: Call, lang: u32) RegisterError!c_int {
     const host = try allocator.create(HostLanguage);
     host.* = .{
-        .transport = .{ .allocator = allocator, .callFn = HostLanguage.callHost },
+        .transport = .{ .allocator = allocator, .exchangeFn = HostLanguage.exchange },
         .call = call,
         .lang = lang,
         .arena = std.heap.ArenaAllocator.init(allocator),

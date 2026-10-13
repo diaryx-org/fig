@@ -1,5 +1,7 @@
 .zig-cache
 zig-out
+# Zig 0.17 unpacks fetched packages (zigjr) beside build.zig.zon.
+zig-pkg
 .zed
 **/.DS_STORE
 *.wasm

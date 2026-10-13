@@ -13,6 +13,7 @@ import {
   Editor,
   FigError,
   LanguageError,
+  LANGUAGE_REFUSED,
   Status,
   capabilities,
   convert,
@@ -52,10 +53,15 @@ const fixtures = readdirSync(FIXTURES)
     table: JSON.parse(readFileSync(join(FIXTURES, f.replace(/\.env$/, ".table.json")), "utf8")) as NodeTable,
   }));
 
+/** One JSON-RPC request line, id 7. */
+function rpc(method: string, params?: Record<string, unknown>): string {
+  return JSON.stringify(params === undefined ? { jsonrpc: "2.0", id: 7, method } : { jsonrpc: "2.0", id: 7, method, params });
+}
+
 function parsedThroughWire(lang: Language, input: string): NodeTable {
-  const resp = JSON.parse(handle(lang, JSON.stringify({ op: "parse", dialect: lang.name, input }))) as { ok: boolean; table?: NodeTable; message?: string };
-  assert.ok(resp.ok, resp.message);
-  return resp.table!;
+  const resp = JSON.parse(handle(lang, rpc("parse", { dialect: lang.name, input }))) as { result?: NodeTable; error?: { message: string } };
+  assert.ok(resp.result, resp.error?.message);
+  return resp.result!;
 }
 
 test("the JavaScript twin gives the compiled parser's table, row for row", () => {
@@ -202,26 +208,27 @@ test("a language's parse may throw anything; the core sees a refusal, not a cras
 });
 
 test("handle: the wire, one line to one line", () => {
-  const d = JSON.parse(handle(dotenv, '{"op":"describe"}')) as { ok: boolean; description: Record<string, unknown> };
-  assert.equal(d.ok, true);
-  assert.deepEqual(d.description, describe(dotenv));
-  assert.equal(d.description.name, "js-dotenv");
-  assert.deepEqual(d.description.renderers, []);
-  assert.deepEqual((d.description.dialects as unknown[])[0], { name: "js-dotenv", extensions: ["env"], splice: "raw", empty_doc_seed: "", syntax: null, prints: null });
+  const d = JSON.parse(handle(dotenv, rpc("describe"))) as { jsonrpc: string; id: number; result: Record<string, unknown> };
+  assert.equal(d.jsonrpc, "2.0");
+  assert.equal(d.id, 7);
+  assert.deepEqual(d.result, describe(dotenv));
+  assert.equal(d.result.name, "js-dotenv");
+  assert.deepEqual(d.result.renderers, []);
+  assert.deepEqual((d.result.dialects as unknown[])[0], { name: "js-dotenv", extensions: ["env"], splice: "raw", empty_doc_seed: "", syntax: null, prints: null });
 
-  const refused = JSON.parse(handle(dotenv, JSON.stringify({ op: "parse", dialect: "js-dotenv", input: "A" }))) as Record<string, unknown>;
-  assert.equal(refused.ok, false);
-  assert.match(refused.message as string, /expected `=`/);
-  assert.equal(refused.byte_offset, 0);
+  const refused = JSON.parse(handle(dotenv, rpc("parse", { dialect: "js-dotenv", input: "A" }))) as { id: number; error: { code: number; message: string; data?: { byte_offset: number } } };
+  assert.equal(refused.id, 7);
+  assert.equal(refused.error.code, LANGUAGE_REFUSED);
+  assert.match(refused.error.message, /expected `=`/);
+  assert.equal(refused.error.data?.byte_offset, 0);
 
-  const printed = JSON.parse(
-    handle(dotenv, JSON.stringify({ op: "print", dialect: "js-dotenv", table: parsedThroughWire(dotenv, "A=1 # c\n"), options: { pretty: true } })),
-  ) as Record<string, unknown>;
-  assert.deepEqual(printed, { ok: true, output: "A=1 # c\n" });
+  const printed = JSON.parse(handle(dotenv, rpc("print", { dialect: "js-dotenv", table: parsedThroughWire(dotenv, "A=1 # c\n"), options: { pretty: true } })));
+  assert.deepEqual(printed, { jsonrpc: "2.0", id: 7, result: "A=1 # c\n" });
 
-  assert.deepEqual(JSON.parse(handle(dotenv, '{"op":"nope"}')), { ok: false, message: 'unknown op "nope"' });
-  assert.deepEqual(JSON.parse(handle(dotenv, "not json")).ok, false);
-  assert.deepEqual(JSON.parse(handle(dotenv, JSON.stringify({ op: "render", which: "value", dialect: "js-dotenv", value: "x" }))).ok, false);
+  assert.deepEqual(JSON.parse(handle(dotenv, rpc("nope"))), { jsonrpc: "2.0", id: 7, error: { code: -32601, message: 'unknown method "nope"' } });
+  assert.equal(JSON.parse(handle(dotenv, "not json")).error.code, -32700);
+  assert.equal(JSON.parse(handle(dotenv, '{"op":"describe"}')).error.code, -32600);
+  assert.equal(JSON.parse(handle(dotenv, rpc("render", { which: "value", dialect: "js-dotenv", value: "x" }))).error.code, -32601);
 });
 
 test("a renderer is told the container its fragment goes into", () => {
@@ -245,10 +252,8 @@ test("a renderer is told the container its fragment goes into", () => {
   ed.insertValue([], "B", "two");
   assert.equal(ed.source(), "A=!env||ten\nB=!env||two\n");
 
-  const wire = JSON.parse(
-    handle(tagged, JSON.stringify({ op: "render", which: "item", dialect: "js-tagged-env", value: "v", parent_key: "deps", parent_tag: "!dep" })),
-  ) as Record<string, unknown>;
-  assert.deepEqual(wire, { ok: true, output: "!dep|deps|v" });
+  const wire = JSON.parse(handle(tagged, rpc("render", { which: "item", dialect: "js-tagged-env", value: "v", parent_key: "deps", parent_tag: "!dep" })));
+  assert.deepEqual(wire, { jsonrpc: "2.0", id: 7, result: "!dep|deps|v" });
 });
 
 test("a sequence its parser gives a separator of its own is edited item by item", () => {
@@ -308,17 +313,17 @@ test("a sequence its parser gives a separator of its own is edited item by item"
 
 test("serve: the same wire over any line source", async () => {
   async function* lines() {
-    yield '{"op":"describe"}\n';
+    yield '{"jsonrpc":"2.0","id":1,"method":"describe"}\n';
     yield "\n";
-    yield '{"op":"parse","dialect":"js-dot'; // a request split across chunks
-    yield 'env","input":"A=1\\n"}\n{"op":"nope"}';
+    yield '{"jsonrpc":"2.0","id":2,"method":"parse","params":{"dialect":"js-dot'; // a request split across chunks
+    yield 'env","input":"A=1\\n"}}\n{"jsonrpc":"2.0","id":3,"method":"nope"}';
   }
   const out: string[] = [];
   await serve(dotenv, { input: lines(), output: (line) => void out.push(line) });
   assert.equal(out.length, 3);
-  assert.equal((JSON.parse(out[0]!) as { description: { name: string } }).description.name, "js-dotenv");
-  assert.deepEqual((JSON.parse(out[1]!) as { table: NodeTable }).table.rows.length, 4);
-  assert.equal((JSON.parse(out[2]!) as { ok: boolean }).ok, false);
+  assert.equal((JSON.parse(out[0]!) as { result: { name: string } }).result.name, "js-dotenv");
+  assert.deepEqual((JSON.parse(out[1]!) as { id: number; result: NodeTable }).result.rows.length, 4);
+  assert.deepEqual((JSON.parse(out[2]!) as { id: number; error: { code: number } }).error.code, -32601);
 });
 
 test("the helper subpath loads the wire and nothing the wasm module is needed for", () => {

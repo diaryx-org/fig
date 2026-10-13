@@ -348,23 +348,19 @@ fn the_helper_wire_round_trips_describe_parse_print_and_render() {
     let lang = TinyKv;
 
     // describe: what comes back decodes to what was declared.
-    let resp = helper::handle(&lang, r#"{"op":"describe"}"#);
-    assert_eq!(resp.get("ok").and_then(Value::as_bool), Some(true));
-    let desc = helper::description_from_value(resp.get("description").unwrap()).unwrap();
+    let resp = helper::handle(&lang, r#"{"jsonrpc":"2.0","id":1,"method":"describe"}"#);
+    assert_eq!(resp.get("jsonrpc").and_then(Value::as_str), Some("2.0"));
+    assert_eq!(resp.get("id").and_then(Value::as_u64), Some(1));
+    let desc = helper::description_from_value(resp.get("result").unwrap()).unwrap();
     assert_eq!(desc, lang.describe());
 
     // parse: the table comes back and decodes to what parse gave.
     let resp = helper::handle(
         &lang,
-        r##"{"op":"parse","dialect":"tinykv","input":"# c\nk=v\n"}"##,
+        r##"{"jsonrpc":"2.0","id":2,"method":"parse","params":{"dialect":"tinykv","input":"# c\nk=v\n"}}"##,
     );
-    assert_eq!(
-        resp.get("ok").and_then(Value::as_bool),
-        Some(true),
-        "{}",
-        helper::encode(&resp)
-    );
-    let table = helper::table_from_value(resp.get("table").unwrap()).unwrap();
+    assert!(resp.get("result").is_some(), "{}", helper::encode(&resp));
+    let table = helper::table_from_value(resp.get("result").unwrap()).unwrap();
     assert_eq!(table, lang.parse("tinykv", b"# c\nk=v\n").unwrap());
     assert_eq!(table.comments[0].text, "c");
     assert_eq!(table.rows[1].sep, Some(Span { start: 5, end: 6 }));
@@ -385,52 +381,91 @@ fn the_helper_wire_round_trips_describe_parse_print_and_render() {
 
     // print: the same table goes out and the text comes back.
     let req = Value::Map(vec![
-        ("op".into(), "print".into()),
-        ("dialect".into(), "tinykv".into()),
-        ("table".into(), helper::table_to_value(&table)),
+        ("jsonrpc".into(), "2.0".into()),
+        ("id".into(), Value::Int(3)),
+        ("method".into(), "print".into()),
+        (
+            "params".into(),
+            Value::Map(vec![
+                ("dialect".into(), "tinykv".into()),
+                ("table".into(), helper::table_to_value(&table)),
+            ]),
+        ),
     ]);
     let resp = helper::handle(&lang, &helper::encode(&req));
     assert_eq!(
-        resp.get("output").and_then(Value::as_str),
+        resp.get("result").and_then(Value::as_str),
         Some("# c\nk=v\n")
     );
 
     // render, and a failure.
     let resp = helper::handle(
         &lang,
-        r#"{"op":"render","which":"value","dialect":"tinykv","value":"abc"}"#,
+        r#"{"jsonrpc":"2.0","id":4,"method":"render","params":{"which":"value","dialect":"tinykv","value":"abc"}}"#,
     );
-    assert_eq!(resp.get("output").and_then(Value::as_str), Some("ABC"));
+    assert_eq!(resp.get("result").and_then(Value::as_str), Some("ABC"));
     // `literal` rides the request; absent, it is a string.
     let resp = helper::handle(
         &lang,
-        r#"{"op":"render","which":"value","dialect":"tinykv","value":"42","literal":"int"}"#,
+        r#"{"jsonrpc":"2.0","id":5,"method":"render","params":{"which":"value","dialect":"tinykv","value":"42","literal":"int"}}"#,
     );
-    assert_eq!(resp.get("output").and_then(Value::as_str), Some("#42"));
+    assert_eq!(resp.get("result").and_then(Value::as_str), Some("#42"));
     // The container rides it too.
     let resp = helper::handle(
         &TaggedKv,
-        r#"{"op":"render","which":"item","dialect":"taggedkv","value":"v","parent_key":"deps","parent_tag":"!dep"}"#,
+        r#"{"jsonrpc":"2.0","id":6,"method":"render","params":{"which":"item","dialect":"taggedkv","value":"v","parent_key":"deps","parent_tag":"!dep"}}"#,
     );
     assert_eq!(
-        resp.get("output").and_then(Value::as_str),
+        resp.get("result").and_then(Value::as_str),
         Some("!dep|deps|v")
     );
-    let resp = helper::handle(&lang, r#"{"op":"parse","dialect":"tinykv","input":"nope"}"#);
-    assert_eq!(resp.get("ok").and_then(Value::as_bool), Some(false));
+    let resp = helper::handle(
+        &lang,
+        r#"{"jsonrpc":"2.0","id":"seven","method":"parse","params":{"dialect":"tinykv","input":"nope"}}"#,
+    );
+    assert_eq!(resp.get("id").and_then(Value::as_str), Some("seven"));
+    let error = resp.get("error").unwrap();
     assert_eq!(
-        resp.get("message").and_then(Value::as_str),
+        error.get("code").and_then(Value::as_i64),
+        Some(helper::LANGUAGE_REFUSED)
+    );
+    assert_eq!(
+        error.get("message").and_then(Value::as_str),
         Some("expected key=value")
     );
-    assert_eq!(resp.get("byte_offset").and_then(Value::as_u64), Some(0));
+    assert_eq!(
+        error
+            .get("data")
+            .and_then(|d| d.get("byte_offset"))
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    // A request the helper cannot read, or a method it lacks, is one of the
+    // codes JSON-RPC reserves.
+    let code = |line: &str| {
+        helper::handle(&lang, line)
+            .get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(Value::as_i64)
+    };
+    assert_eq!(code("not json"), Some(-32700));
+    assert_eq!(code(r#"{"op":"describe"}"#), Some(-32600));
+    assert_eq!(
+        code(r#"{"jsonrpc":"2.0","id":8,"method":"nope"}"#),
+        Some(-32601)
+    );
+    assert_eq!(
+        code(r#"{"jsonrpc":"2.0","id":9,"method":"parse","params":{"dialect":"tinykv"}}"#),
+        Some(-32602)
+    );
 
     // The loop itself, over a buffer.
-    let input = b"{\"op\":\"describe\"}\n\n{\"op\":\"parse\",\"dialect\":\"tinykv\",\"input\":\"a=b\\n\"}\n";
+    let input = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"describe\"}\n\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"parse\",\"params\":{\"dialect\":\"tinykv\",\"input\":\"a=b\\n\"}}\n";
     let mut out = Vec::new();
     helper::serve_io(&lang, &input[..], &mut out).unwrap();
     let lines: Vec<&str> = std::str::from_utf8(&out).unwrap().lines().collect();
     assert_eq!(lines.len(), 2);
-    assert!(lines[0].starts_with("{\"ok\":true,\"description\":"));
+    assert!(lines[0].starts_with("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":"));
     assert!(lines[1].contains("\"rows\":["));
 }
 

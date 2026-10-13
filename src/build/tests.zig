@@ -82,6 +82,7 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
         .target = target,
     });
     all_on_mod.addImport("build_options", all_on_options_mod);
+    ctx.importWire(all_on_mod);
     // Same libc reasoning as `mod` in artifacts.zig: root.zig's test block pulls
     // in c_api.zig, which reaches for `std.heap.c_allocator` on every non-wasm
     // target.

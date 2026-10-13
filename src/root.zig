@@ -8,7 +8,7 @@ pub const Language = @import("languages/language.zig");
 pub const Runtime = @import("languages/runtime.zig");
 /// The languages fig ships, as a consumer registers them.
 pub const bundle = @import("languages/bundle.zig");
-/// The helper wire — the contract as newline-delimited JSON — as a vtable
+/// The helper wire — the contract as JSON-RPC 2.0 by the line — as a vtable
 /// over any transport: the CLI's child process, the wasm module's host call.
 pub const Wire = @import("languages/wire.zig");
 /// A runtime language served by the wasm module's host (`fig_host.call`).

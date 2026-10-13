@@ -1,7 +1,6 @@
-//! The out-of-process carrier: a [`Language`] served to a `fig` binary as
-//! JSON over stdin and stdout. [`serve`] is the request loop a helper
-//! executable runs; the wire format below is what the `fig` CLI's helper
-//! runner speaks, and what a helper in any other language implements.
+//! The out-of-process carrier: a [`Language`] served to a `fig` binary
+//! over stdin and stdout. [`serve`] is the request loop a helper
+//! executable runs, and [`handle`] answers one request.
 //!
 //! This is the git remote-helper model. The CLI spawns the helper, asks it
 //! `describe` once, and then sends it a `parse`, `print` or `render` per
@@ -9,53 +8,14 @@
 //! that speaks this; a helper written against this crate is [`serve`] over
 //! an implementation of [`Language`].
 //!
-//! # The wire
+//! The protocol is JSON-RPC 2.0, one message per line, with fig's methods
+//! and their payloads: `docs/helper-protocol.md` in the fig repository is
+//! its specification, and what a helper in another language implements. A
+//! language's [`LanguageError`] is answered as the error
+//! [`LANGUAGE_REFUSED`], its byte offset in the error's `data`.
 //!
-//! Newline-delimited JSON, one request per line on stdin, one response per
-//! line on stdout, in order. Every string is UTF-8 — a document a helper is
-//! asked to parse arrives as a JSON string, so a helper never sees bytes
-//! that are not text.
-//!
-//! Requests:
-//!
-//! ```json
-//! {"op":"describe"}
-//! {"op":"parse","dialect":"hcl","input":"…"}
-//! {"op":"print","dialect":"hcl","table":{…},"options":{"pretty":true,"strip_comments":false,"indent":2,"width":80,"splice":false,"flow":false}}
-//! {"op":"render","which":"item","dialect":"hcl","indent":"  ","key":"","value":"…","old_key":"","parent_key":"deps","parent_tag":"!dep"}
-//! ```
-//!
-//! A render request carries the fields of [`RenderArgs`] by name, every
-//! one a string; `literal` only for `"which":"value"`, and absent means a
-//! string. `parent_key` and `parent_tag` are the container the fragment
-//! is written into, and fig sends them to every renderer.
-//!
-//! Responses:
-//!
-//! ```json
-//! {"ok":true,"description":{…}}
-//! {"ok":true,"table":{…}}
-//! {"ok":true,"output":"…"}
-//! {"ok":false,"message":"…","byte_offset":12}
-//! ```
-//!
-//! A description is `{"name","caps":{"read","edit","serialize","references"},
-//! "max_mapping_depth":n|null,"lossless":{…}|null,"syntax":{…}|null,
-//! "dialects":[{"name","extensions":[…],"splice":"literal|escaped|raw",
-//! "empty_doc_seed":"…"|null,"syntax":{…}|null,"prints":{…}|null}],
-//! "samples":[…],"renderers":["value",…],"split_stream":bool}`; a syntax is the fields of
-//! [`Syntax`] by name, and a prints the fields of [`Prints`], with enums as
-//! their lower-case names and absent optionals as `null`. A table is `{"rows":[…],"regions":[…],"mentions":[…],
-//! "comments":[…],"directives":[…]}`: a row is `{"kind":"mapping","parent":0,
-//! "span":[s,e],"text":"…"}` plus `ext_kind`, `anchor`, `anchor_span`, `tag`,
-//! `tag_span`, `marker`, `sep`, `item_sep` and `open` where present (an
-//! absent optional is omitted, not `null`, and `open` only when true); a region `{"node","start","end"}`; a mention
-//! `{"node","span":[s,e],"kind":"header|entry"}`; a comment `{"node",
-//! "slot":"leading|trailing|dangling","style":"line|block","text"}`; a
-//! directive `{"handle","prefix"}`, and the array is omitted when empty.
-//!
-//! The JSON is read and written by fig itself; this module needs no JSON
-//! library and adds none.
+//! The JSON is read and written by fig itself, through the `json` format,
+//! which this module therefore needs registered; it adds no JSON library.
 
 use std::io::{BufRead, Write};
 
@@ -95,34 +55,101 @@ pub fn serve_io(
     Ok(())
 }
 
-/// One request, as a line of JSON, to one response.
-pub fn handle(lang: &dyn Language, request: &str) -> Value {
-    match handle_inner(lang, request) {
-        Ok(v) => v,
-        Err(e) => failure(&e),
+/// The code of an error a language raises — a parse it refuses, a printer
+/// or renderer that cannot spell what it was given. JSON-RPC leaves -32000
+/// to -32099 to the server.
+pub const LANGUAGE_REFUSED: i64 = -32000;
+
+/// A JSON-RPC error object: a code JSON-RPC reserves, for a request that
+/// could not be read, or [`LANGUAGE_REFUSED`] with the language's offset.
+struct Protocol {
+    code: i64,
+    message: String,
+    byte_offset: Option<usize>,
+}
+
+/// A request field `answer` could not read: invalid params. A language's own
+/// refusal goes through [`refused`] instead.
+impl From<LanguageError> for Protocol {
+    fn from(e: LanguageError) -> Self {
+        Protocol::new(-32602, e.message)
     }
 }
 
-fn handle_inner(lang: &dyn Language, request: &str) -> Result<Value, LanguageError> {
-    let req = decode(request)?;
-    let op = str_field(&req, "op")?;
-    match op {
-        "describe" => Ok(ok(vec![(
-            "description",
-            description_to_value(&lang.describe()),
-        )])),
+impl Protocol {
+    fn new(code: i64, message: impl Into<String>) -> Self {
+        Protocol {
+            code,
+            message: message.into(),
+            byte_offset: None,
+        }
+    }
+}
+
+/// One request, as a line of JSON-RPC 2.0, to one response. Never fails: a
+/// refusal, a malformed request and a request for a method the language
+/// lacks alike come back as an `error` response carrying the request's id.
+pub fn handle(lang: &dyn Language, request: &str) -> Value {
+    let mut id = Value::Null;
+    let outcome = decode(request)
+        .map_err(|e| Protocol::new(-32700, e.message))
+        .and_then(|req| {
+            if let Some(v @ (Value::Int(_) | Value::Uint(_) | Value::Str(_))) = req.get("id") {
+                id = v.clone();
+            }
+            if req.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+                return Err(Protocol::new(
+                    -32600,
+                    r#"a request carries "jsonrpc":"2.0""#,
+                ));
+            }
+            let method = req
+                .get("method")
+                .and_then(Value::as_str)
+                .ok_or_else(|| Protocol::new(-32600, "a request names its method"))?
+                .to_owned();
+            let params = match req.get("params") {
+                None => Value::Map(Vec::new()),
+                Some(p @ Value::Map(_)) => p.clone(),
+                Some(_) => return Err(Protocol::new(-32602, "params is an object")),
+            };
+            Ok((method, params))
+        });
+    let answered = outcome.and_then(|(method, params)| answer(lang, &method, &params));
+    let mut entries = vec![(s("jsonrpc"), s("2.0")), (s("id"), id)];
+    match answered {
+        Ok(result) => entries.push((s("result"), result)),
+        Err(e) => {
+            let mut error = vec![
+                ("code", Value::Int(e.code)),
+                ("message", Value::Str(e.message)),
+            ];
+            if let Some(off) = e.byte_offset {
+                error.push(("data", map(vec![("byte_offset", Value::Uint(off as u64))])));
+            }
+            entries.push((s("error"), map(error)));
+        }
+    }
+    Value::Map(entries)
+}
+
+fn answer(lang: &dyn Language, method: &str, req: &Value) -> Result<Value, Protocol> {
+    match method {
+        "describe" => Ok(description_to_value(&lang.describe())),
         "parse" => {
-            let dialect = str_field(&req, "dialect")?;
-            let input = str_field(&req, "input")?;
-            let table = lang.parse(dialect, input.as_bytes())?;
-            Ok(ok(vec![("table", table_to_value(&table))]))
+            let dialect = str_field(req, "dialect")?;
+            let input = str_field(req, "input")?;
+            lang.parse(dialect, input.as_bytes())
+                .map(|table| table_to_value(&table))
+                .map_err(refused)
         }
         "print" => {
-            let dialect = str_field(&req, "dialect")?;
+            let dialect = str_field(req, "dialect")?;
             let table = table_from_value(
                 req.get("table")
-                    .ok_or_else(|| LanguageError::new("print: no table"))?,
-            )?;
+                    .ok_or_else(|| Protocol::new(-32602, "print: no table"))?,
+            )
+            .map_err(|e| Protocol::new(-32602, e.message))?;
             let options = match req.get("options") {
                 Some(o) => PrintOptions {
                     pretty: o.get("pretty").and_then(Value::as_bool).unwrap_or(true),
@@ -137,33 +164,33 @@ fn handle_inner(lang: &dyn Language, request: &str) -> Result<Value, LanguageErr
                 },
                 None => PrintOptions::default(),
             };
-            let out = lang.print(dialect, &table, &options)?;
-            let out = String::from_utf8(out)
-                .map_err(|_| LanguageError::new("print returned bytes that are not UTF-8"))?;
-            Ok(ok(vec![("output", Value::Str(out))]))
+            let out = lang.print(dialect, &table, &options).map_err(refused)?;
+            let out = String::from_utf8(out).map_err(|_| {
+                Protocol::new(LANGUAGE_REFUSED, "print returned bytes that are not UTF-8")
+            })?;
+            Ok(Value::Str(out))
         }
         "split_stream" => {
-            let dialect = str_field(&req, "dialect")?;
-            let input = str_field(&req, "input")?;
-            let docs = lang.split_stream(dialect, input.as_bytes())?;
-            Ok(ok(vec![(
-                "documents",
-                Value::Seq(
-                    docs.iter()
-                        .map(|d| {
-                            map(vec![
-                                ("start", Value::Int(d.start as i64)),
-                                ("end", Value::Int(d.end as i64)),
-                                ("explicit", Value::Bool(d.explicit)),
-                            ])
-                        })
-                        .collect(),
-                ),
-            )]))
+            let dialect = str_field(req, "dialect")?;
+            let input = str_field(req, "input")?;
+            let docs = lang
+                .split_stream(dialect, input.as_bytes())
+                .map_err(refused)?;
+            Ok(Value::Seq(
+                docs.iter()
+                    .map(|d| {
+                        map(vec![
+                            ("start", Value::Int(d.start as i64)),
+                            ("end", Value::Int(d.end as i64)),
+                            ("explicit", Value::Bool(d.explicit)),
+                        ])
+                    })
+                    .collect(),
+            ))
         }
         "render" => {
-            let dialect = str_field(&req, "dialect")?;
-            let which = match str_field(&req, "which")? {
+            let dialect = str_field(req, "dialect")?;
+            let which = match str_field(req, "which")? {
                 "value" => Renderer::Value,
                 "entry" => Renderer::Entry,
                 "item" => Renderer::Item,
@@ -171,9 +198,10 @@ fn handle_inner(lang: &dyn Language, request: &str) -> Result<Value, LanguageErr
                 "key" => Renderer::Key,
                 "key_name" => Renderer::KeyName,
                 other => {
-                    return Err(LanguageError::new(format!(
-                        "render: unknown renderer {other:?}"
-                    )));
+                    return Err(Protocol::new(
+                        -32602,
+                        format!("render: unknown renderer {other:?}"),
+                    ));
                 }
             };
             let field = |name: &str| req.get(name).and_then(Value::as_str).unwrap_or("");
@@ -189,12 +217,22 @@ fn handle_inner(lang: &dyn Language, request: &str) -> Result<Value, LanguageErr
                 parent_key: field("parent_key").as_bytes(),
                 parent_tag: field("parent_tag").as_bytes(),
             };
-            let out = lang.render(which, args)?;
-            let out = String::from_utf8(out)
-                .map_err(|_| LanguageError::new("render returned bytes that are not UTF-8"))?;
-            Ok(ok(vec![("output", Value::Str(out))]))
+            let out = lang.render(which, args).map_err(refused)?;
+            let out = String::from_utf8(out).map_err(|_| {
+                Protocol::new(LANGUAGE_REFUSED, "render returned bytes that are not UTF-8")
+            })?;
+            Ok(Value::Str(out))
         }
-        other => Err(LanguageError::new(format!("unknown op {other:?}"))),
+        other => Err(Protocol::new(-32601, format!("unknown method {other:?}"))),
+    }
+}
+
+/// A language's refusal, its offset kept for the error's `data`.
+fn refused(e: LanguageError) -> Protocol {
+    Protocol {
+        code: LANGUAGE_REFUSED,
+        message: e.message,
+        byte_offset: e.byte_offset,
     }
 }
 
@@ -222,25 +260,6 @@ pub fn encode(value: &Value) -> String {
         s.pop();
     }
     s
-}
-
-fn ok(fields: Vec<(&str, Value)>) -> Value {
-    let mut entries = vec![(Value::Str("ok".into()), Value::Bool(true))];
-    for (k, v) in fields {
-        entries.push((Value::Str(k.into()), v));
-    }
-    Value::Map(entries)
-}
-
-fn failure(e: &LanguageError) -> Value {
-    let mut entries = vec![
-        (Value::Str("ok".into()), Value::Bool(false)),
-        (Value::Str("message".into()), Value::Str(e.message.clone())),
-    ];
-    if let Some(off) = e.byte_offset {
-        entries.push((Value::Str("byte_offset".into()), Value::Uint(off as u64)));
-    }
-    Value::Map(entries)
 }
 
 fn str_field<'a>(v: &'a Value, name: &str) -> Result<&'a str, LanguageError> {

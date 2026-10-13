@@ -29,6 +29,8 @@ export {
   handle,
   describe,
   LanguageError,
+  Refusal,
+  LANGUAGE_REFUSED,
   type Language,
   type Dialect,
   type Syntax,

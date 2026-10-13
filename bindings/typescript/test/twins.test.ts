@@ -106,9 +106,9 @@ function canonicalTable(v: unknown): unknown {
 }
 
 function parsedThroughWire(lang: Language, dialect: string, input: string): NodeTable {
-  const resp = JSON.parse(handle(lang, JSON.stringify({ op: "parse", dialect, input }))) as { ok: boolean; table?: NodeTable; message?: string };
-  assert.ok(resp.ok, resp.message);
-  return resp.table!;
+  const resp = JSON.parse(handle(lang, JSON.stringify({ jsonrpc: "2.0", id: 1, method: "parse", params: { dialect, input } }))) as { result?: NodeTable; error?: { message: string } };
+  assert.ok(resp.result, resp.error?.message);
+  return resp.result!;
 }
 
 test("each language gives the compiled format's table for every fixture, row for row", () => {

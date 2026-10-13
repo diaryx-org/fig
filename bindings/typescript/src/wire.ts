@@ -1,9 +1,9 @@
 // The helper wire, in JavaScript: what a format written in JavaScript is
 // (`Language`), and one request line to one response line (`handle`).
 //
-// The contract is fig's helper wire — the newline-delimited JSON a `fig`
-// command line speaks to a helper process, documented once on the `helper`
-// module of the Rust crate (bindings/rust/fig/src/helper.rs). A `Language`
+// The contract is fig's helper wire — JSON-RPC 2.0, one message per line,
+// which a `fig` command line speaks to a helper process, specified in
+// docs/helper-protocol.md. A `Language`
 // here is that wire's `description`, with the functions the format is:
 // `parse` answers the wire's node table, `print` is handed one back, and
 // `render` spells the fragments the editor needs. Field names are the wire's
@@ -392,37 +392,72 @@ export interface Language {
   split_stream?(dialect: string, input: string): StreamRange[];
 }
 
-/** How a language refuses its input: the message a caller sees, and the
- *  byte offset it points at, if any. */
+/** How a language refuses its input: the message a caller sees, the byte
+ *  offset it points at, if any, and, for a printer, which refusal it is —
+ *  one of {@link Refusal}'s codes, so fig reports the failure it names. */
 export class LanguageError extends Error {
   readonly byteOffset: number | undefined;
-  constructor(message: string, byteOffset?: number) {
+  readonly code: number | undefined;
+  constructor(message: string, byteOffset?: number, code?: number) {
     super(message);
     this.name = "LanguageError";
     this.byteOffset = byteOffset;
+    this.code = code;
   }
 }
 
+/** The reasons a printer gives for refusing a table, as the codes of a
+ *  JSON-RPC error (docs/helper-protocol.md). `LanguageError`'s third
+ *  argument. */
+export const Refusal = {
+  NullUnsupported: 1,
+  NonStringKey: 2,
+  UnrepresentableRoot: 3,
+  UnsupportedValue: 4,
+  InvalidKey: 5,
+  NonFiniteNumber: 6,
+  UnresolvedAlias: 7,
+  NestingTooDeep: 8,
+  UnexpectedNodeKind: 9,
+} as const;
+
+/** The code of an error a language raises with no more specific one — a
+ *  parse it refuses, a renderer that cannot spell a fragment. JSON-RPC
+ *  leaves -32000 to -32099 to the server. */
+export const LANGUAGE_REFUSED = -32000;
+
 // ── the wire ───────────────────────────────────────────────────────────────
 
-/** A request as the wire spells it — what `handle` reads. */
-type Request =
-  | { op: "describe" }
-  | { op: "parse"; dialect: string; input: string }
-  | { op: "split_stream"; dialect: string; input: string }
-  | { op: "print"; dialect: string; table: NodeTable; options?: Partial<PrintOptions> }
+/** A request's `params`, by method — what `handle` reads. */
+type Params =
+  | { method: "describe" }
+  | { method: "parse"; params: { dialect: string; input: string } }
+  | { method: "split_stream"; params: { dialect: string; input: string } }
+  | { method: "print"; params: { dialect: string; table: NodeTable; options?: Partial<PrintOptions> } }
   | {
-      op: "render";
-      which: Renderer;
-      dialect: string;
-      indent?: string;
-      key?: string;
-      value?: string;
-      literal?: string;
-      old_key?: string;
-      parent_key?: string;
-      parent_tag?: string;
+      method: "render";
+      params: {
+        which: Renderer;
+        dialect: string;
+        indent?: string;
+        key?: string;
+        value?: string;
+        literal?: string;
+        old_key?: string;
+        parent_key?: string;
+        parent_tag?: string;
+      };
     };
+
+/** A JSON-RPC error raised while reading a request, before any language
+ *  code runs: its code is one JSON-RPC reserves. */
+class ProtocolError extends Error {
+  readonly code: number;
+  constructor(code: number, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
 
 /** The wire's `description` of `lang`: every declared field, spelled as the
  *  wire spells it. What `handle` answers `describe` with. */
@@ -450,49 +485,67 @@ export function describe(lang: Language): Record<string, unknown> {
 const RENDERERS: readonly Renderer[] = ["value", "entry", "item", "tail", "key", "key_name"];
 const LITERALS: readonly Literal[] = ["null", "bool", "int", "float", "datetime", "string"];
 
-/** One request line to one response line — the helper wire, in
- *  JavaScript. What the wasm module calls for a registered language, and
- *  what {@link serve} runs over stdin and stdout. Never throws: a refusal,
- *  a malformed request and a bug in the language alike come back as
- *  `{"ok":false,"message":…}`. */
+/** One request line to one response line — the helper wire, JSON-RPC
+ *  2.0, in JavaScript. What the wasm module calls for a registered
+ *  language, and what {@link serve} runs over stdin and stdout. Never
+ *  throws: a refusal, a malformed request and a bug in the language alike
+ *  come back as an `error` response carrying the request's id. */
 export function handle(lang: Language, requestLine: string): string {
+  let id: number | string | null = null;
   try {
-    return JSON.stringify(handleInner(lang, requestLine));
+    let req: unknown;
+    try {
+      req = JSON.parse(requestLine);
+    } catch (err) {
+      throw new ProtocolError(-32700, `request is not JSON: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (typeof req !== "object" || req === null || Array.isArray(req)) throw new ProtocolError(-32600, "a request is one JSON object");
+    const r = req as { jsonrpc?: unknown; id?: unknown; method?: unknown; params?: unknown };
+    if (typeof r.id === "number" || typeof r.id === "string") id = r.id;
+    if (r.jsonrpc !== "2.0") throw new ProtocolError(-32600, 'a request carries "jsonrpc":"2.0"');
+    if (typeof r.method !== "string") throw new ProtocolError(-32600, "a request names its method");
+    if (r.params !== undefined && (typeof r.params !== "object" || r.params === null || Array.isArray(r.params))) {
+      throw new ProtocolError(-32602, "params is an object");
+    }
+    const result = answer(lang, { method: r.method, params: r.params ?? {} } as Params);
+    return JSON.stringify({ jsonrpc: "2.0", id, result });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const byteOffset = err instanceof LanguageError ? err.byteOffset : undefined;
-    return JSON.stringify(byteOffset === undefined ? { ok: false, message } : { ok: false, message, byte_offset: byteOffset });
+    let code = LANGUAGE_REFUSED;
+    let data: Record<string, unknown> | undefined;
+    if (err instanceof ProtocolError) code = err.code;
+    else if (err instanceof LanguageError) {
+      if (err.code !== undefined) code = err.code;
+      if (err.byteOffset !== undefined) data = { byte_offset: err.byteOffset };
+    }
+    const error = data === undefined ? { code, message } : { code, message, data };
+    return JSON.stringify({ jsonrpc: "2.0", id, error });
   }
 }
 
-function handleInner(lang: Language, requestLine: string): Record<string, unknown> {
-  let req: Request;
-  try {
-    req = JSON.parse(requestLine) as Request;
-  } catch (err) {
-    throw new LanguageError(`request is not JSON: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  if (typeof req !== "object" || req === null || typeof req.op !== "string") {
-    throw new LanguageError("request has no op");
-  }
-  switch (req.op) {
+function invalidParams(message: string): never {
+  throw new ProtocolError(-32602, message);
+}
+
+function answer(lang: Language, req: Params): unknown {
+  switch (req.method) {
     case "describe":
-      return { ok: true, description: describe(lang) };
+      return describe(lang);
     case "parse": {
-      if (typeof req.dialect !== "string" || typeof req.input !== "string") {
-        throw new LanguageError("parse: dialect and input are strings");
-      }
-      const table = lang.parse(req.dialect, req.input);
+      const p = req.params;
+      if (typeof p.dialect !== "string" || typeof p.input !== "string") invalidParams("parse: dialect and input are strings");
+      const table = lang.parse(p.dialect, p.input);
       const out: Record<string, unknown> = { rows: table.rows, regions: table.regions ?? [], mentions: table.mentions ?? [], comments: table.comments ?? [] };
       if (table.directives && table.directives.length > 0) out.directives = table.directives;
-      return { ok: true, table: out };
+      return out;
     }
     case "print": {
-      if (!lang.print) throw new LanguageError(`${lang.name} does not serialize`);
-      if (typeof req.dialect !== "string" || typeof req.table !== "object" || req.table === null || !Array.isArray(req.table.rows)) {
-        throw new LanguageError("print: dialect is a string and table a node table");
+      const p = req.params;
+      if (!lang.print) throw new ProtocolError(-32601, `${lang.name} does not serialize`);
+      if (typeof p.dialect !== "string" || typeof p.table !== "object" || p.table === null || !Array.isArray(p.table.rows)) {
+        invalidParams("print: dialect is a string and table a node table");
       }
-      const o = req.options ?? {};
+      const o = p.options ?? {};
       const options: PrintOptions = {
         pretty: o.pretty ?? true,
         strip_comments: o.strip_comments ?? false,
@@ -501,33 +554,34 @@ function handleInner(lang: Language, requestLine: string): Record<string, unknow
         splice: o.splice ?? false,
         flow: o.flow ?? false,
       };
-      return { ok: true, output: lang.print(req.dialect, req.table, options) };
+      return lang.print(p.dialect, p.table, options);
     }
     case "split_stream": {
-      if (!lang.split_stream) throw new LanguageError(`${lang.name} has no multi-document streams`);
-      if (typeof req.dialect !== "string" || typeof req.input !== "string") throw new LanguageError("split_stream: dialect and input are strings");
-      return { ok: true, documents: lang.split_stream(req.dialect, req.input) };
+      const p = req.params;
+      if (!lang.split_stream) throw new ProtocolError(-32601, `${lang.name} has no multi-document streams`);
+      if (typeof p.dialect !== "string" || typeof p.input !== "string") invalidParams("split_stream: dialect and input are strings");
+      return lang.split_stream(p.dialect, p.input);
     }
     case "render": {
-      if (!lang.render) throw new LanguageError(`${lang.name} declares no renderers`);
-      if (!RENDERERS.includes(req.which)) throw new LanguageError(`render: unknown renderer ${JSON.stringify(req.which)}`);
-      if (typeof req.dialect !== "string") throw new LanguageError("render: dialect is a string");
+      const p = req.params;
+      if (!lang.render) throw new ProtocolError(-32601, `${lang.name} declares no renderers`);
+      if (!RENDERERS.includes(p.which)) invalidParams(`render: unknown renderer ${JSON.stringify(p.which)}`);
+      if (typeof p.dialect !== "string") invalidParams("render: dialect is a string");
       // Absent or unknown: a string, which is what a renderer does with any
       // text it cannot type.
-      const literal = LITERALS.includes(req.literal as Literal) ? (req.literal as Literal) : "string";
-      const output = lang.render(req.which, {
-        dialect: req.dialect,
-        indent: req.indent ?? "",
-        key: req.key ?? "",
-        value: req.value ?? "",
+      const literal = LITERALS.includes(p.literal as Literal) ? (p.literal as Literal) : "string";
+      return lang.render(p.which, {
+        dialect: p.dialect,
+        indent: p.indent ?? "",
+        key: p.key ?? "",
+        value: p.value ?? "",
         literal,
-        old_key: req.old_key ?? "",
-        parent_key: req.parent_key ?? "",
-        parent_tag: req.parent_tag ?? "",
+        old_key: p.old_key ?? "",
+        parent_key: p.parent_key ?? "",
+        parent_tag: p.parent_tag ?? "",
       });
-      return { ok: true, output };
     }
     default:
-      throw new LanguageError(`unknown op ${JSON.stringify((req as { op: string }).op)}`);
+      throw new ProtocolError(-32601, `unknown method ${JSON.stringify((req as { method: string }).method)}`);
   }
 }

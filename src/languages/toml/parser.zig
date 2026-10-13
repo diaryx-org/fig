@@ -16,6 +16,7 @@ const testing = std.testing;
 const Document = @import("../../kit/document.zig");
 const AST = @import("../../kit/ast/ast.zig");
 const RowWriter = @import("../../kit/row_writer.zig");
+const ChildIndex = @import("../../kit/child_index.zig");
 const table = @import("../../kit/table.zig");
 const Table = table.Table;
 
@@ -55,6 +56,9 @@ current_table: AST.Node.Id = 0,
 /// Per-mapping provenance, used to enforce TOML's table/key conflict rules.
 /// Absent ⇒ a value node or the root.
 table_meta: std.AutoHashMapUnmanaged(AST.Node.Id, TableMeta) = .empty,
+/// Each mapping's last entry and its entries by key, so appending to a
+/// table and asking whether it has a key are constant time.
+children: ChildIndex = .{},
 
 /// Error-recovery mode: when set, a failed top-level statement is recorded
 /// into `diagnostics` and the parser resyncs to the next statement boundary
@@ -341,6 +345,7 @@ fn deinit(self: *Parser) void {
     self.diagnostics.deinit(a);
     self.warnings.deinit(a);
     self.table_meta.deinit(a);
+    self.children.deinit(a);
     self.pending_leading.deinit(a);
     self.pending_trailing.deinit(a);
     for (self.owned_strings.items) |s| a.free(s);
@@ -825,12 +830,8 @@ fn parseKeyPath(self: *Parser, segs: *std.ArrayList(KeySeg)) ParserError!void {
 /// Value node id of a child of `map_id` keyed `key`, or null. A key's
 /// text is read from its row as it is compared, never kept.
 fn lookupChild(self: *Parser, map_id: AST.Node.Id, key: []const u8) ?AST.Node.Id {
-    var cur = self.w.kindOf(map_id).mapping;
-    while (cur) |id| : (cur = self.w.node(id).next_sibling) {
-        const kv = self.w.kindOf(id).keyvalue;
-        if (std.mem.eql(u8, self.w.kindOf(kv.key).string, key)) return kv.value;
-    }
-    return null;
+    const entry = self.children.get(map_id, key) orelse return null;
+    return self.w.kindOf(entry).keyvalue.value;
 }
 
 /// Append a `key = value` entry to mapping `map_id`.
@@ -844,13 +845,10 @@ fn appendKeyValue(self: *Parser, map_id: AST.Node.Id, key: KeySeg, value_id: AST
         .{ .keyvalue = .{ .key = key_id, .value = value_id } },
         Span.init(key.span.start, value_end),
     );
-    if (self.w.kindOf(map_id).mapping) |first| {
-        var last = first;
-        while (self.w.node(last).next_sibling) |n| last = n;
-        self.w.setNext(last, kv_id);
-    } else {
-        try self.w.set(map_id, .{ .mapping = kv_id });
-    }
+    try self.children.append(self.allocator, self.w, map_id, kv_id);
+    // `key.str` is a slice of the source or one of `owned_strings`, which
+    // live as long as the parser.
+    try self.children.put(self.allocator, map_id, key.str, kv_id);
 }
 
 /// Create an empty child table under `parent` keyed `key`, record its origin,

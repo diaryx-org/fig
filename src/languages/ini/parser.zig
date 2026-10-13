@@ -196,6 +196,7 @@ pub fn parseCollectingInto(t: *Table, input: []const u8, format: Type, out: *Rep
 fn parseImpl(t: *Table, input: []const u8, format: Type, out: ?*Report, recover: bool) ParserError!void {
     const allocator = t.allocator;
     var parser: Parser = .{ .allocator = allocator, .arena = .init(t), .recover = recover };
+    defer parser.arena.deinit();
     defer parser.diagnostics.deinit(allocator);
     defer parser.warnings.deinit(allocator);
     const result = parser.parseOnce(input, format);
@@ -353,7 +354,7 @@ fn parseSectionHeader(self: *Parser) ParserError!void {
     if (name.len == 0) return self.failSpan(name_tok.span.start, name_tok.span.end, error.InvalidKey);
 
     const w = self.arena.w;
-    if (flat_map.lookupChild(w, self.root_id, name)) |existing_kv| {
+    if (flat_map.lookupChild(&self.arena, self.root_id, name)) |existing_kv| {
         const kv = w.kindOf(existing_kv).keyvalue;
         if (w.kindOf(kv.value) != .mapping)
             return self.failSpan(name_tok.span.start, name_tok.span.end, error.DuplicateKey);

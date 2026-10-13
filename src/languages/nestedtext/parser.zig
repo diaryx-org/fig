@@ -190,6 +190,7 @@ pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Ty
 fn parseImpl(t: *Table, input: []const u8, format: Type, out: ?*Report) ParserError!void {
     const allocator = t.allocator;
     var parser: Parser = .{ .allocator = allocator, .arena = .init(t) };
+    defer parser.arena.deinit();
     defer {
         for (parser.owned_strings.items) |s| allocator.free(s);
         parser.owned_strings.deinit(allocator);

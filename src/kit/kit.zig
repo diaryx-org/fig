@@ -22,6 +22,8 @@ pub const Document = @import("document.zig");
 /// How a Zig parser writes the node table: rows in any order, then
 /// `finish` into pre-order.
 pub const RowWriter = @import("row_writer.zig");
+/// A mapping's last child and its entries by key, for a parser that appends.
+pub const ChildIndex = @import("child_index.zig");
 pub const table = @import("table.zig");
 pub const convert = @import("convert.zig");
 /// The contract's declarations and C shapes, which a language fills.
@@ -40,6 +42,7 @@ test {
     _ = AST;
     _ = Document;
     _ = RowWriter;
+    _ = ChildIndex;
     _ = table;
     _ = convert;
     _ = manifest;

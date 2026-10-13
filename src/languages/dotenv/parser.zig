@@ -183,6 +183,7 @@ pub fn parseCollectingInto(t: *Table, input: []const u8, format: Type, out: *Rep
 fn parseImpl(t: *Table, input: []const u8, format: Type, out: ?*Report, recover: bool) ParserError!void {
     const allocator = t.allocator;
     var parser: Parser = .{ .allocator = allocator, .arena = .init(t), .recover = recover };
+    defer parser.arena.deinit();
     defer parser.diagnostics.deinit(allocator);
     defer parser.warnings.deinit(allocator);
     defer {

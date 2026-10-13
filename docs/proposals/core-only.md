@@ -597,7 +597,7 @@ Parity cannot see a fault that both sides share, and three exist. The
 recorder checks that a comment edit changes no value, which needs no
 reference, and six recorded answers fail it. They come down to three
 faults in core's editor, filed as tasks:
-[CRLF](/docs/tasks/trailing-comment-splits-crlf.md),
+CRLF (since fixed),
 [ZON multiline strings](/docs/tasks/zon-trailing-comment-in-multiline-string.md)
 and [.properties continuations](/docs/tasks/properties-comment-after-continuation.md).
 

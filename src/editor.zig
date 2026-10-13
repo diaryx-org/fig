@@ -1215,7 +1215,11 @@ pub fn Editor(comptime Language: type) type {
                 parsed.span(try parsed.ast.getKeyByPath(path)).end
             else
                 val_span.end;
-            const line_end = std.mem.indexOfScalarPos(u8, source, start, '\n') orelse source.len;
+            var line_end = std.mem.indexOfScalarPos(u8, source, start, '\n') orelse source.len;
+            // The line's content ends before a CRLF's CR, which stays with the
+            // LF: a comment appended after it would leave a bare CR in the
+            // value (YAML reads `a: 1\r # x` as the string "1\r").
+            if (line_end > start and source[line_end - 1] == '\r') line_end -= 1;
             return .{ .start = start, .line_end = line_end };
         }
 
@@ -1249,6 +1253,7 @@ pub fn Editor(comptime Language: type) type {
             try renderComment(self.allocator, &buf, marker, text);
             try self.replaceAtSpan(Span.init(cut, win.line_end), buf.items);
         }
+
 
         /// Remove the run of own-line comments immediately ABOVE the node at
         /// `path` — its owned leading block (contiguous comment lines with no
@@ -4238,6 +4243,19 @@ test "setTrailingComment appends and then replaces a YAML same-line comment" {
     try expectCommentEdit(Yaml, .v1_2_2, "a: 1\n", "a: 1 # done\n", .trailing, &.{.{ .key = "a" }}, "done");
     // Re-setting replaces the existing trailing comment rather than nesting it.
     try expectCommentEdit(Yaml, .v1_2_2, "a: 1 # old\n", "a: 1 # new\n", .trailing, &.{.{ .key = "a" }}, "new");
+}
+
+// A CRLF line's content ends before its CR: a new trailing comment goes there,
+// and the line keeps its CRLF. Spliced after the CR, it read back in YAML as
+// the string "1\r".
+test "setTrailingComment on a CRLF line goes before the CR" {
+    if (comptime build_options.lang_yaml) {
+        try expectCommentEdit(Yaml, .v1_2_2, "a: 1\r\nb: 2\r\n", "a: 1 # note\r\nb: 2\r\n", .trailing, &.{.{ .key = "a" }}, "note");
+        try expectCommentEdit(Yaml, .v1_2_2, "a: 1 # old\r\nb: 2\r\n", "a: 1 # new\r\nb: 2\r\n", .trailing, &.{.{ .key = "a" }}, "new");
+        try expectCommentDelete(Yaml, .v1_2_2, "a: 1 # gone\r\nb: 2\r\n", "a: 1\r\nb: 2\r\n", .trailing, &.{.{ .key = "a" }});
+    }
+    if (comptime build_options.lang_zon)
+        try expectCommentEdit(Zon, .ZON, ".{\r\n    .a = 1,\r\n}\r\n", ".{\r\n    .a = 1, // note\r\n}\r\n", .trailing, &.{.{ .key = "a" }}, "note");
 }
 
 test "addLeadingComment on TOML uses #" {

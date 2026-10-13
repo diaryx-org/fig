@@ -87,7 +87,7 @@ pub fn printNodec(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usiz
 }
 
 fn node(self: *Printer, id: AST.Node.Id, depth: usize) Error!void {
-    const n = self.ast.nodes[id];
+    const n = self.ast.node(id);
     switch (n.kind) {
         .null_ => try self.writer.writeAll("null"),
         .boolean => |value| try self.writer.writeAll(if (value) "true" else "false"),
@@ -146,7 +146,7 @@ fn node(self: *Printer, id: AST.Node.Id, depth: usize) Error!void {
 /// dialect, so the spelling of a converted key does not depend on which JSON
 /// came out.
 fn key(self: *Printer, id: AST.Node.Id) Error!void {
-    switch (self.ast.nodes[id].kind) {
+    switch (self.ast.node(id).kind) {
         .string => |s| {
             if (self.dialect == .json5 and isBareIdentifier(s)) {
                 try self.writer.writeAll(s);
@@ -230,7 +230,7 @@ fn container(self: *Printer, node_id: AST.Node.Id, open: u8, close: u8, first_ch
         try self.leadingComments(self.ast.leadingCommentAnchor(id), depth + 1);
         if (pretty) try self.writeIndent(depth + 1);
         try self.node(id, depth + 1);
-        current_id = self.ast.nodes[id].next_sibling;
+        current_id = self.ast.node(id).next_sibling;
         if (current_id != null) try self.writer.writeByte(',');
         // A scalar child's trailing prints here; a container child emits its own
         // (beside its opener, above), so skip it to avoid a double / misplacement.
@@ -247,7 +247,7 @@ fn container(self: *Printer, node_id: AST.Node.Id, open: u8, close: u8, first_ch
 /// Whether `id` is a container node (whose own trailing comment is emitted beside
 /// its opening delimiter, not by its parent).
 fn isContainer(self: *const Printer, id: AST.Node.Id) bool {
-    return switch (self.ast.nodes[id].kind) {
+    return switch (self.ast.node(id).kind) {
         .sequence, .mapping => true,
         else => false,
     };
@@ -593,21 +593,22 @@ test "honors custom indent width" {
 
 /// `{ <key node> : "v" }`, given the key node's kind. Node 0 is the mapping,
 /// 1 the entry, 2 the key, 3 the value.
-fn keyKindAst(kind: AST.Node.Kind, nodes: *[4]AST.Node) AST {
+fn keyKindAst(kind: AST.Node.Kind, nodes: *[4]AST.Node) !AST {
     nodes.* = .{
         .{ .id = 0, .kind = .{ .mapping = 1 } },
         .{ .id = 1, .kind = .{ .keyvalue = .{ .key = 2, .value = 3 } } },
         .{ .id = 2, .kind = kind },
         .{ .id = 3, .kind = .{ .string = "v" } },
     };
-    return .{ .allocator = std.testing.allocator, .root = 0, .nodes = nodes };
+    return AST.fromNodes(std.testing.allocator, 0, nodes);
 }
 
 /// Print `{ <key> : "v" }` compactly in `dialect` and return the bytes (owned by
 /// `out`), or the printer's error.
 fn printKeyKind(kind: AST.Node.Kind, dialect: Dialect, out: *Writer.Allocating) Error![]const u8 {
     var nodes: [4]AST.Node = undefined;
-    const ast = keyKindAst(kind, &nodes);
+    var ast = keyKindAst(kind, &nodes) catch return error.WriteFailed;
+    defer ast.deinit();
     switch (dialect) {
         .json => try print(&out.writer, &ast, .{ .pretty = false }),
         .jsonc => try printc(&out.writer, &ast, .{ .pretty = false }),

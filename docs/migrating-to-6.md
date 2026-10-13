@@ -129,6 +129,18 @@ a non-enumerable `format` onto the language object.
 | `fig.Language.detect`, `Detected`, `sniff_order` | `fig.Runtime.detectAmong(a, input, order)` in your own order |
 | `fig.Diagnostics.analyze(…, .toml, …)`, `analyzeFor` | `analyze(…, target, …)`; `Warning.render(w, target.name())` |
 | `fig.Fig`, `fig.Language.of`, `dialects`, `compiled`, `moduleFor` | `fig.bundle.Language(name)` / `fig.bundle.module(name)` for a shipped language's Zig module |
+| `ast.nodes[id]`, `ast.nodes.len` | `ast.node(id)` (a `Node` view, its `kind` switchable as before), `ast.nodeCount()` |
+| `ast.node_tags[id]`, `ast.node_anchors[id]`, `ast.node_comments[id]` | `ast.tagOf(id)`, `ast.anchorOf(id)`, `ast.comments(id)`; `ast.tagFact(id)` for a tag's resolution |
+| `ast.anchors`, `ast.owned_strings` | `ast.anchorIterator()`; the AST owns its strings |
+| `doc.node_spans[id]` and the other `Document` span tables | `doc.spanOf(id)` / `doc.span(node)`, `anchorSpan`, `tagSpan`, `markerSpan`, `sepSpan`, `itemSep`, `regionsOf`, `mentionsOf` |
+| `AST{ .nodes = … }` built by hand | `AST.Builder`, or `AST.fromNodes(allocator, root, nodes)` |
+| `Runtime.tableToDocument(a, src, &t)` with `t` reused after | it adopts `t` as the document's storage and leaves it empty; `t.clone(a)` first to keep a copy |
+
+The `AST` is the node table a language's parse filled, adopted without a
+copy: rows, a string buffer, and side facts sorted by node. A Zig parser
+fig ships builds a `fig.ParseTree` and writes it as rows;
+its module's `parse` returns the adopted `Document`, and `parseTree` the
+tree.
 | `SerializeError` without `PrintRefused` | an exhaustive `switch` needs a `PrintRefused` arm |
 
 The languages a build bundles register on the first lookup; call

@@ -285,6 +285,16 @@ pub const Table = struct {
         self.* = undefined;
     }
 
+    /// A copy of every list, in `allocator`.
+    pub fn clone(self: *const Table, allocator: Allocator) Allocator.Error!Table {
+        var out = Table.init(allocator, self.source);
+        errdefer out.deinit();
+        inline for (.{ "rows", "strings", "anchors", "tags", "markers", "seps", "item_seps", "comments", "regions", "mentions", "directives", "diagnostics" }) |name| {
+            try @field(out, name).appendSlice(allocator, @field(self, name).items);
+        }
+        return out;
+    }
+
     /// `n` new rows, each a null with no parent, span or text, to be filled
     /// in place. Valid until the next `addRows`.
     pub fn addRows(self: *Table, n: usize) Allocator.Error![]Row {

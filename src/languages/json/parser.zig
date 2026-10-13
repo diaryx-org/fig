@@ -16,8 +16,9 @@ const builtin = @import("builtin");
 const testing = std.testing;
 const log = std.log.scoped(.parser);
 const Unicode = @import("../../kit/kit.zig").Unicode;
-const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/document.zig");
+const Document = @import("../../kit/parse_tree.zig");
+const AST = Document.Nodes;
+
 const Tokenizer = @import("tokenizer.zig").Tokenizer;
 const Token = @import("../../kit/token.zig").Token(Tokenizer.Kind);
 const Type = @import("json.zig").Type;
@@ -383,10 +384,9 @@ pub fn getNumber(slice: []const u8) ParseError!AST.Node.Kind.Number {
 }
 
 /// Main entry function
-pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) !AST {
-    const parsed = try parse(allocator, input, format);
-    allocator.free(parsed.node_spans);
-    return parsed.ast;
+pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) !Document.RowAst {
+    var tree = try parse(allocator, input, format);
+    return tree.intoAst(allocator);
 }
 
 pub fn parse(allocator: std.mem.Allocator, input: []const u8, format: Type) !Document {
@@ -1091,9 +1091,9 @@ fn closeContainer(self: *Parser, span_end: usize) !AST.Node.Id {
 // =======
 
 fn testParser(input: []const u8, expected: AST) !void {
-    var ast = try Parser.parseAbstract(testing.allocator, input, .JSON);
-    defer ast.deinit();
-    try testing.expect(expected.eql(ast));
+    var tree = try Parser.parse(testing.allocator, input, .JSON);
+    defer tree.deinit(testing.allocator);
+    try testing.expect(expected.eql(tree.ast));
 }
 
 fn testParserError(input: []const u8, expected_error: anyerror) !void {
@@ -1138,7 +1138,7 @@ test "decodes JSON string escapes" {
     var ast = try Parser.parseAbstract(testing.allocator, "\"quote: \\\" slash: \\\\ newline: \\n tab: \\t backspace: \\b formfeed: \\f slash: \\/\"", .JSON);
     defer ast.deinit();
 
-    const value = switch (ast.nodes[ast.root].kind) {
+    const value = switch (ast.node(ast.root).kind) {
         .string => |string| string,
         else => return error.TestUnexpectedResult,
     };
@@ -1150,7 +1150,7 @@ test "decodes JSON unicode escapes" {
     var ast = try Parser.parseAbstract(testing.allocator, "\"A: \\u0041 latin: \\u00E9 clef: \\uD834\\uDD1E\"", .JSON);
     defer ast.deinit();
 
-    const value = switch (ast.nodes[ast.root].kind) {
+    const value = switch (ast.node(ast.root).kind) {
         .string => |string| string,
         else => return error.TestUnexpectedResult,
     };
@@ -1213,7 +1213,7 @@ test "object trailing comma is rejected" {
 
 // ── JSON5 ────────────────────────────────────────────────────────────────────
 
-fn parseJson5(input: []const u8) !AST {
+fn parseJson5(input: []const u8) !Document.RowAst {
     return Parser.parseAbstract(testing.allocator, input, .JSON5);
 }
 
@@ -1248,18 +1248,18 @@ test "json5: unquoted and keyword object keys" {
 test "json5: single-quoted strings, escapes, and line continuation" {
     var a = try parseJson5("'I can\\'t'");
     defer a.deinit();
-    try testing.expectEqualSlices(u8, "I can't", a.nodes[a.root].kind.string);
+    try testing.expectEqualSlices(u8, "I can't", a.node(a.root).kind.string);
 
     var b = try parseJson5("'line 1 \\\nline 2'");
     defer b.deinit();
-    try testing.expectEqualSlices(u8, "line 1 line 2", b.nodes[b.root].kind.string);
+    try testing.expectEqualSlices(u8, "line 1 line 2", b.node(b.root).kind.string);
 }
 
 test "json5: Infinity and NaN become extended number_special" {
     inline for (.{ "Infinity", "-Infinity", "+Infinity", "NaN" }) |lit| {
         var ast = try parseJson5(lit);
         defer ast.deinit();
-        const k = ast.nodes[ast.root].kind;
+        const k = ast.node(ast.root).kind;
         try testing.expect(k == .extended and k.extended.kind == .number_special);
         try testing.expectEqualSlices(u8, lit, k.extended.text);
     }
@@ -1276,7 +1276,7 @@ test "json5: hexadecimal, leading/trailing point, and signed numbers" {
     inline for (cases) |c| {
         var ast = try parseJson5(c[0]);
         defer ast.deinit();
-        const n = ast.nodes[ast.root].kind.number;
+        const n = ast.node(ast.root).kind.number;
         try testing.expectEqual(c[1].kind, n.kind);
         try testing.expectEqualSlices(u8, c[1].raw, n.raw);
     }
@@ -1313,19 +1313,19 @@ test "json5: captures leading, trailing, line and block comments" {
     );
     defer ast.deinit();
 
-    const root = ast.nodes[ast.root];
-    const kv_a = ast.nodes[root.kind.mapping.?].kind.keyvalue;
+    const root = ast.node(ast.root);
+    const kv_a = ast.node(root.kind.mapping.?).kind.keyvalue;
     // Leading binds to the key, trailing to the value.
     try testing.expectEqualStrings("leading on a", ast.comments(kv_a.key).leading[0].text);
     try testing.expectEqualStrings("trailing on a", ast.comments(kv_a.value).trailing.?.text);
 
-    const kv_b = ast.nodes[ast.nodes[root.kind.mapping.?].next_sibling.?].kind.keyvalue;
+    const kv_b = ast.node(ast.node(root.kind.mapping.?).next_sibling.?).kind.keyvalue;
     try testing.expectEqualStrings("block before b", ast.comments(kv_b.key).leading[0].text);
     try testing.expect(ast.comments(kv_b.key).leading[0].style == .block);
 
-    const seq = ast.nodes[kv_b.value];
-    const e2 = ast.nodes[seq.kind.sequence.?];
-    const e3 = ast.nodes[e2.next_sibling.?];
+    const seq = ast.node(kv_b.value);
+    const e2 = ast.node(seq.kind.sequence.?);
+    const e3 = ast.node(e2.next_sibling.?);
     try testing.expectEqualStrings("trailing block on 2", ast.comments(e2.id).trailing.?.text);
     try testing.expect(ast.comments(e2.id).trailing.?.style == .block);
     try testing.expectEqualStrings("trailing on 3", ast.comments(e3.id).trailing.?.text);
@@ -1336,9 +1336,9 @@ test "json5: post-comma comment leads the next entry, not trails the previous" {
     // so `c` must lead `b`.
     var ast = try parseJson5("{ a: 1, /* c */ b: 2 }");
     defer ast.deinit();
-    const root = ast.nodes[ast.root];
-    const kv_a = ast.nodes[root.kind.mapping.?].kind.keyvalue;
-    const kv_b = ast.nodes[ast.nodes[root.kind.mapping.?].next_sibling.?].kind.keyvalue;
+    const root = ast.node(ast.root);
+    const kv_a = ast.node(root.kind.mapping.?).kind.keyvalue;
+    const kv_b = ast.node(ast.node(root.kind.mapping.?).next_sibling.?).kind.keyvalue;
     try testing.expect(ast.comments(kv_a.value).trailing == null);
     try testing.expectEqualStrings("c", ast.comments(kv_b.key).leading[0].text);
 }
@@ -1346,7 +1346,7 @@ test "json5: post-comma comment leads the next entry, not trails the previous" {
 test "json5: comment-free document carries no comment table" {
     var ast = try parseJson5("{ a: 1, b: [2, 3] }");
     defer ast.deinit();
-    try testing.expectEqual(@as(usize, 0), ast.node_comments.len);
+    try testing.expect(!ast.hasComments());
 }
 
 // ── diagnostics ──────────────────────────────────────────────────────────────
@@ -1452,12 +1452,12 @@ test "describe and shortLabel cover every Error variant" {
     try testing.expect(shortLabel(error.LeadingZero).len > 0);
 }
 
-fn countItems(ast: AST, container: AST.Node.Id) usize {
+fn countItems(ast: Document.RowAst, container: AST.Node.Id) usize {
     var n: usize = 0;
-    var cur = switch (ast.nodes[container].kind) {
+    var cur = switch (ast.node(container).kind) {
         .sequence, .mapping => |first| first,
         else => return 0,
     };
-    while (cur) |id| : (cur = ast.nodes[id].next_sibling) n += 1;
+    while (cur) |id| : (cur = ast.node(id).next_sibling) n += 1;
     return n;
 }

@@ -1,6 +1,6 @@
 const yaml = @This();
 const std = @import("std");
-const Document = @import("../../kit/document.zig");
+const Document = @import("../../kit/parse_tree.zig");
 const AST = @import("../../kit/ast/ast.zig");
 const lang = @import("../../kit/manifest.zig");
 
@@ -25,8 +25,14 @@ pub const Language = struct {
     pub const Parser = yaml.Parser;
     pub const Printer = yaml.Printer;
     pub const default_type: yaml.Type = .v1_2_2;
-    pub fn parse(parser: *yaml.Parser, input: []const u8, format: yaml.Type) !Document {
+    /// The parser's tree, which the contract writes into fig's table.
+    pub fn parseTree(parser: *yaml.Parser, input: []const u8, format: yaml.Type) !Document {
         return yaml.Parser.parse(parser.allocator, input, format);
+    }
+    /// The document fig would adopt from a parse.
+    pub fn parse(parser: *yaml.Parser, input: []const u8, format: yaml.Type) !Document.RowDocument {
+        var tree = try parseTree(parser, input, format);
+        return tree.intoDocument(parser.allocator);
     }
     pub const print = yaml.Printer.print;
     pub const printNode = yaml.Printer.printNode;
@@ -102,7 +108,7 @@ pub const Language = struct {
     // detection are the engine's, the latter switched on by `merge_key`
     // above. The value reframe that lets a block collection replace an
     // inline one is the engine's too: the parser records every entry's `:`
-    // (`Document.node_sep_spans`) and the engine rewrites everything after
+    // (`Document.sepSpan`) and the engine rewrites everything after
     // the key. `editor_test.zig` holds this format's editor tests.
 };
 

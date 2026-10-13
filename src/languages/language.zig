@@ -82,7 +82,9 @@ const Decls = struct {
     /// documents of a multi-document stream (YAML's `---`/`...`), each one's
     /// byte range for a parse of its own; a language without streams leaves
     /// it out.
-    const optional = [_][]const u8{ "printNode", "samples", "hasRenderer", "runtime", "splitStream" };
+    ///   * `parseTree` — a Zig parser's own tree (`ParseTree`), which the
+    ///     contract writes into fig's table; `parse` is that tree adopted.
+    const optional = [_][]const u8{ "printNode", "samples", "hasRenderer", "runtime", "splitStream", "parseTree" };
 
     /// Editing hooks: none. A hook was a `pub` decl that took over an
     /// `editor.Editor` method wholesale, with the editor in hand. Twenty-five
@@ -99,7 +101,7 @@ const Decls = struct {
     /// (`deleteKeyGuard`, `replaceValGuard`, `moveKeyGuard`,
     /// `reorderKeysGuard`) each refused a generic op on a SCATTERED container
     /// (a TOML `[header]` table, an INI `[section]`, a fig block container),
-    /// and that is one engine rule over `Document.node_regions` — a section
+    /// and that is one engine rule over `Document.regionsOf` — a section
     /// node cannot be line-spliced — spelled in the format's vocabulary
     /// through `Syntax.section_noun`. See
     /// `docs/proposals/derived-regions.md`.

@@ -58,11 +58,11 @@ const Ctx = struct {
 
 pub fn print(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Error!void {
     var ctx = Ctx{ .w = writer, .opts = options };
-    switch (ast.nodes[ast.root].kind) {
+    switch (ast.node(ast.root).kind) {
         .mapping => |first| {
             var cur = first;
-            while (cur) |id| : (cur = ast.nodes[id].next_sibling) {
-                const kv = ast.nodes[id].kind.keyvalue;
+            while (cur) |id| : (cur = ast.node(id).next_sibling) {
+                const kv = ast.node(id).kind.keyvalue;
                 try ctx.kvLine(ast, kv.key, kv.value);
             }
             try ctx.dangling(ast, ast.root);
@@ -79,7 +79,7 @@ pub fn print(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Er
 /// full document rooted there, anything else prints as a bare value line.
 pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize, options: AST.SerializeOptions) Error!void {
     _ = depth;
-    switch (ast.nodes[id].kind) {
+    switch (ast.node(id).kind) {
         .mapping => {
             var fragment = ast.*;
             fragment.root = id;
@@ -113,7 +113,7 @@ fn writeEscapedByte(w: *Writer, c: u8) Writer.Error!void {
 }
 
 fn writeKey(w: *Writer, ast: *const AST, key_id: AST.Node.Id) Error!void {
-    const name = switch (ast.nodes[key_id].kind) {
+    const name = switch (ast.node(key_id).kind) {
         .string => |s| s,
         else => return error.NonStringKey,
     };
@@ -132,7 +132,7 @@ fn writeKey(w: *Writer, ast: *const AST, key_id: AST.Node.Id) Error!void {
 /// (from a cross-format conversion) stringifies to its canonical text; a
 /// sequence/mapping has no `.properties` value form at all.
 fn writeValue(w: *Writer, ast: *const AST, id: AST.Node.Id) Error!void {
-    switch (ast.nodes[id].kind) {
+    switch (ast.node(id).kind) {
         .string => |s| try writeValueText(w, s),
         .number => |n| try w.writeAll(n.raw),
         .boolean => |b| try w.writeAll(if (b) "true" else "false"),

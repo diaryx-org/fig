@@ -29,7 +29,7 @@
 //!      value` is parsed as the LITERAL string `"key: value"`, never a
 //!      nested mapping — see `parser.zig`'s module doc, "region" algorithm).
 //!      So an item's OWN span can start on a later line than its `-`. The
-//!      parser records every item's `-` in `Document.node_marker_spans`, and
+//!      parser records every item's `-` in `Document.markerSpan`, and
 //!      the engine's block-sequence ops — append/prepend's prefix, remove and
 //!      reorder's block boundaries, the leading-comment ops when `path` ends
 //!      in `.index` — read it, so none of those is NestedText's any more.
@@ -123,7 +123,7 @@ fn nestedBlock(allocator: std.mem.Allocator, text: []const u8) ?[]const u8 {
     if (block.len == 0) return null;
     const doc = Parser.parse(allocator, block, .NESTEDTEXT) catch return null;
     defer doc.deinit(allocator);
-    return if (doc.ast.nodes[doc.ast.root].kind == .null_) null else block;
+    return if (doc.ast.node(doc.ast.root).kind == .null_) null else block;
 }
 
 /// Render `text` as a ROOT document value: a `>`-block at column 0, no

@@ -53,8 +53,9 @@
 const Parser = @This();
 
 const std = @import("std");
-const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/document.zig");
+const Document = @import("../../kit/parse_tree.zig");
+const AST = Document.Nodes;
+
 const Type = @import("plist.zig").Type;
 const Span = @import("../../kit/span.zig");
 const Tokenizer = @import("../../kit/xml.zig");
@@ -618,11 +619,12 @@ const build_options = @import("build_options");
 
 fn expectJson(src: []const u8, expected: []const u8) !void {
     if (comptime !build_options.lang_json) return error.SkipZigTest;
-    var doc = try parse(testing.allocator, src, .XML);
-    defer doc.deinit(testing.allocator);
+    var tree = try parse(testing.allocator, src, .XML);
+    var ast = try tree.intoAst(testing.allocator);
+    defer ast.deinit();
     var buf: [2048]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try @import("../json/printer.zig").print(&w, &doc.ast, .{});
+    try @import("../json/printer.zig").print(&w, &ast, .{});
     try testing.expectEqualStrings(expected, w.buffered());
 }
 
@@ -776,7 +778,7 @@ test "node spans cover full element extents (edit-grade, not just the opening '<
     try testing.expectEqualStrings("<key>k</key>", sliceSpan(src, doc.node_spans[key.id]));
 
     // the keyvalue entry: `<key>…</key>` through the value's close, as a unit
-    const entry_id = doc.ast.nodes[doc.ast.root].kind.mapping.?;
+    const entry_id = doc.ast.node(doc.ast.root).kind.mapping.?;
     try testing.expectEqualStrings("<key>k</key><integer>42</integer>", sliceSpan(src, doc.node_spans[entry_id]));
 }
 

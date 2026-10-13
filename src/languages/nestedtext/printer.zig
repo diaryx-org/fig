@@ -40,7 +40,7 @@ pub const Error = Writer.Error || error{ NullUnsupported, NonStringKey, Unresolv
 const indent_width: usize = 4;
 
 pub fn print(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Error!void {
-    switch (ast.nodes[ast.root].kind) {
+    switch (ast.node(ast.root).kind) {
         .null_ => {},
         .mapping => try printMapping(writer, ast, ast.root, 0),
         .sequence => try printSequence(writer, ast, ast.root, 0),
@@ -58,7 +58,7 @@ pub fn print(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Er
 /// renderers re-indent under the key rather than block as a string. See
 /// `AST.SerializeOptions.splice` and `edit.zig`'s `nestedBlock`.
 pub fn printSplice(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Error!void {
-    switch (ast.nodes[ast.root].kind) {
+    switch (ast.node(ast.root).kind) {
         .null_ => return print(writer, ast, options),
         .mapping, .sequence => {
             try writer.writeByte('\n');
@@ -89,10 +89,10 @@ pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize
 fn printMapping(w: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize) Error!void {
     // An empty mapping has no block spelling — `key:` over nothing reads as
     // the empty string — so it takes the inline `{}` on a line of its own.
-    if (ast.nodes[id].kind.mapping == null) return printEmpty(w, ast, id, depth, "{}");
-    var cur = ast.nodes[id].kind.mapping;
-    while (cur) |kv_id| : (cur = ast.nodes[kv_id].next_sibling) {
-        const kv = ast.nodes[kv_id].kind.keyvalue;
+    if (ast.node(id).kind.mapping == null) return printEmpty(w, ast, id, depth, "{}");
+    var cur = ast.node(id).kind.mapping;
+    while (cur) |kv_id| : (cur = ast.node(kv_id).next_sibling) {
+        const kv = ast.node(kv_id).kind.keyvalue;
         try printLeadingComments(w, ast, ast.leadingCommentAnchor(kv_id), depth);
         const key_text = try keyText(ast, kv.key);
         const multiline_key = needsMultilineKey(key_text);
@@ -110,9 +110,9 @@ fn printMapping(w: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize) Erro
 }
 
 fn printSequence(w: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize) Error!void {
-    if (ast.nodes[id].kind.sequence == null) return printEmpty(w, ast, id, depth, "[]");
-    var cur = ast.nodes[id].kind.sequence;
-    while (cur) |item_id| : (cur = ast.nodes[item_id].next_sibling) {
+    if (ast.node(id).kind.sequence == null) return printEmpty(w, ast, id, depth, "[]");
+    var cur = ast.node(id).kind.sequence;
+    while (cur) |item_id| : (cur = ast.node(item_id).next_sibling) {
         try printLeadingComments(w, ast, ast.leadingCommentAnchor(item_id), depth);
         try writeIndent(w, depth);
         try w.writeByte('-');
@@ -139,7 +139,7 @@ fn printItemValue(w: *Writer, ast: *const AST, value_id: AST.Node.Id, depth: usi
     // ended with its own `\n` — the nested block starts writing indented
     // lines immediately. Otherwise the current line (`key:`/`-`) is still
     // open and needs closing with `\n` before anything nested can start.
-    switch (ast.nodes[value_id].kind) {
+    switch (ast.node(value_id).kind) {
         .mapping => {
             if (!force_nested) try w.writeByte('\n');
             try printMapping(w, ast, value_id, depth + 1);
@@ -167,14 +167,14 @@ fn printItemValue(w: *Writer, ast: *const AST, value_id: AST.Node.Id, depth: usi
 // ── Keys and scalars ─────────────────────────────────────────────────────────
 
 fn keyText(ast: *const AST, key_id: AST.Node.Id) Error![]const u8 {
-    return switch (ast.nodes[key_id].kind) {
+    return switch (ast.node(key_id).kind) {
         .string => |s| s,
         else => error.NonStringKey,
     };
 }
 
 fn scalarText(ast: *const AST, id: AST.Node.Id) Error![]const u8 {
-    return switch (ast.nodes[id].kind) {
+    return switch (ast.node(id).kind) {
         .string => |s| s,
         .number => |n| n.raw,
         .boolean => |b| if (b) "true" else "false",

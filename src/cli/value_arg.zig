@@ -82,7 +82,7 @@ fn readFig(allocator: std.mem.Allocator, term: *Io.Terminal, text: []const u8) !
         std.process.exit(2);
     };
     // A `#` the dialect took as a comment start was part of the argument.
-    if (doc.ast.node_comments.len > 0) return .{ .tree = try stringTree(allocator, text) };
+    if (doc.ast.hasComments()) return .{ .tree = try stringTree(allocator, text) };
 
     for (reports.warnings.items) |w|
         try diag_report.printDiag(term, text, "<value>", shift(w.offset, text), if (w.end) |e| shift(e, text) else null, "warning", .yellow, w.message, w.short_label);

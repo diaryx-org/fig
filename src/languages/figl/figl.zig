@@ -9,7 +9,7 @@
 //! ZON's `Type = enum { ZON }` pattern.
 
 const fig = @This();
-const Document = @import("../../kit/document.zig");
+const Document = @import("../../kit/parse_tree.zig");
 const lang = @import("../../kit/manifest.zig");
 
 pub const Parser = @import("parser.zig");
@@ -24,8 +24,14 @@ pub const Language = struct {
     pub const Parser = fig.Parser;
     pub const Printer = fig.Printer;
     pub const default_type: fig.Type = .Fig;
-    pub fn parse(parser: *fig.Parser, input: []const u8, format: fig.Type) !Document {
+    /// The parser's tree, which the contract writes into fig's table.
+    pub fn parseTree(parser: *fig.Parser, input: []const u8, format: fig.Type) !Document {
         return fig.Parser.parse(parser.allocator, input, format);
+    }
+    /// The document fig would adopt from a parse.
+    pub fn parse(parser: *fig.Parser, input: []const u8, format: fig.Type) !Document.RowDocument {
+        var tree = try parseTree(parser, input, format);
+        return tree.intoDocument(parser.allocator);
     }
     pub const print = fig.Printer.print;
     pub const printNode = fig.Printer.printNode;
@@ -82,7 +88,7 @@ pub const Language = struct {
             .line_prefix_marks = ">+",
             // A section format: a block container may be re-entered and
             // scattered, and `parser.zig` records every block container's
-            // header lines in `Document.node_regions`. Its refusals say
+            // header lines in `Document.regionsOf`. Its refusals say
             // "container".
             .section_noun = "container",
         };
@@ -107,7 +113,7 @@ pub const Language = struct {
     pub const renderTail = edit.renderTail;
 
     // No delete guard: the engine's section rule covers it. Every block
-    // container is a section node (`Document.node_regions`), and a section
+    // container is a section node (`Document.regionsOf`), and a section
     // node cannot be line-spliced — `deleteKey`, `moveKey` and `reorderKeys`
     // refuse it (`CannotDeleteSection`, …) and point at the
     // whole-container ops. A block container's VALUE is still replaceable:
@@ -119,7 +125,7 @@ pub const Language = struct {
     // All generic (see `editor.Editor`'s block of the same name): a fig block
     // container may be re-entered and scattered, and `deleteContainer`/
     // `moveContainer`/`reorderContainers` derive its disjoint regions from
-    // `Document.node_regions` — re-entered header lines included — with no
+    // `Document.regionsOf` — re-entered header lines included — with no
     // fig code at all. No `insertContainer`/`appendContainerToSeq` — `set`
     // already vivifies a path — and no `renameContainer`, since a fig header
     // carries its key in one tight span the generic `replaceKeyAtPath`

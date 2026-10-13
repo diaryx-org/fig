@@ -6,8 +6,9 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const testing = std.testing;
-const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/document.zig");
+const Document = @import("../../kit/parse_tree.zig");
+const AST = Document.Nodes;
+
 const Span = @import("../../kit/span.zig");
 const Parser = @import("parser.zig");
 const lang = @import("../../kit/manifest.zig");
@@ -205,7 +206,7 @@ fn lineEnd(source: []const u8, from: usize) usize {
 // =======
 
 fn rootKind(doc: Document) AST.Node.Kind {
-    return doc.ast.nodes[doc.ast.root].kind;
+    return doc.ast.node(doc.ast.root).kind;
 }
 
 test "stream: two explicit documents in a stream (JHB9)" {
@@ -332,7 +333,7 @@ test "stream: outerSpan lifts node spans into outer coordinates" {
     defer stream.deinit(testing.allocator);
     try testing.expectEqual(@as(usize, 2), stream.documents.len);
     const d1 = stream.documents[1];
-    const node = d1.document.ast.nodes[d1.document.ast.root];
+    const node = d1.document.ast.node(d1.document.ast.root);
     const outer = d1.outerSpan(d1.document.span(node));
     try testing.expectEqualSlices(u8, "bar", src[outer.start..outer.end]);
 }

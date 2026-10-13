@@ -505,7 +505,7 @@ pub const Syntax = struct {
     /// What introduces a block-sequence item, separator included: `- ` for
     /// YAML and NestedText, `* ` for fig, `""` for plist, whose item is a
     /// bare element. The engine writes a new item as the first item's line
-    /// prefix (the bytes before its marker — see `Document.node_marker_spans`)
+    /// prefix (the bytes before its marker — see `Document.markerSpan`)
     /// followed by this. Used to be a `"- "` literal in the engine.
     seq_item_marker: []const u8 = "- ",
 
@@ -573,7 +573,7 @@ pub const Syntax = struct {
     ///
     /// Two things hang off a non-null value, both in `editor.zig`:
     ///
-    ///   * the parser is expected to fill `Document.node_regions` with the
+    ///   * the parser is expected to fill `Document.regionsOf` with the
     ///     header lines of every such container (see that field), which is
     ///     what the generic whole-container ops and the line-splice guards
     ///     read — nothing here can check that the parser does, so the two

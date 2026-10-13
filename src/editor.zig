@@ -131,7 +131,7 @@ pub fn Editor(comptime Language: type) type {
         /// The one place the engine asks. Four answers, in order:
         ///
         ///   0. A sequence the parser gave a separator of its own
-        ///      (`Document.node_item_seps`) is flow: the language has said
+        ///      (`Document.itemSep`) is flow: the language has said
         ///      how its items are joined, which is all the flow arm needs,
         ///      and its first byte may be an item's (an open sequence) or
         ///      any delimiter the language likes.
@@ -186,7 +186,7 @@ pub fn Editor(comptime Language: type) type {
         /// written between two of them on one line, split around the token
         /// a delete consumes. The dialect's is `flow_entry_sep` and a space
         /// after it (`, `); a separated sequence's is the one its parser
-        /// named (`Document.node_item_seps`), split at its whitespace
+        /// named (`Document.itemSep`), split at its whitespace
         /// (` | ` is `|` with a space either side; ` ` is all whitespace and
         /// no token, so a delete consumes only the run of whitespace).
         const Joint = struct {
@@ -242,7 +242,7 @@ pub fn Editor(comptime Language: type) type {
         }
 
         /// Where `node` BEGINS on its own line: its item marker's start when
-        /// the parser recorded one (`Document.node_marker_spans`), else its
+        /// the parser recorded one (`Document.markerSpan`), else its
         /// span's. This is the byte every line-anchored computation starts
         /// from — the line an item lives on, the prefix a sibling copies, the
         /// block a delete or reorder takes — because a nested or empty item's
@@ -329,11 +329,12 @@ pub fn Editor(comptime Language: type) type {
         /// empty at the root and for a sequence item — and its tag.
         fn placeOf(parsed: Document, container: AST.Node) Place {
             const ast = &parsed.ast;
+            const key: []const u8 = if (ast.parentOf(container.id)) |p| switch (ast.kindOf(p)) {
+                .keyvalue => |kv| if (kv.value == container.id) keyName(ast.node(kv.key)) else "",
+                else => "",
+            } else "";
             return .{
-                .key = for (ast.nodes) |n| {
-                    if (n.kind == .keyvalue and n.kind.keyvalue.value == container.id)
-                        break keyName(ast.nodes[n.kind.keyvalue.key]);
-                } else "",
+                .key = key,
                 .tag = if (ast.tagOf(container.id)) |t| t.spelling() else "",
             };
         }
@@ -342,21 +343,14 @@ pub fn Editor(comptime Language: type) type {
         /// item, an entry or its key — or the empty place for the root.
         fn placeOfChild(parsed: Document, id: AST.Node.Id) Place {
             const ast = &parsed.ast;
-            for (ast.nodes) |n| {
-                const first = switch (n.kind) {
-                    .mapping, .sequence => |f| f,
-                    else => continue,
-                };
-                var cur = first;
-                while (cur) |c| : (cur = ast.nodes[c].next_sibling) {
-                    if (c == id) return placeOf(parsed, n);
-                    if (ast.nodes[c].kind == .keyvalue) {
-                        const kv = ast.nodes[c].kind.keyvalue;
-                        if (kv.key == id or kv.value == id) return placeOf(parsed, n);
-                    }
-                }
-            }
-            return .{};
+            // The container is the parent, or — for an entry's key or
+            // value — the entry's parent.
+            var p = ast.parentOf(id) orelse return .{};
+            if (ast.kindOf(p) == .keyvalue) p = ast.parentOf(p) orelse return .{};
+            return switch (ast.kindOf(p)) {
+                .mapping, .sequence => placeOf(parsed, ast.node(p)),
+                else => .{},
+            };
         }
 
         /// A key's name, decoded: what a path segment names it by.
@@ -429,14 +423,15 @@ pub fn Editor(comptime Language: type) type {
         /// mapping's own lines: its value is a section whose name on that
         /// line is a `.header` mention — the line opens the child's own
         /// region rather than sitting on the parent's. See
-        /// `Document.node_mentions` and `insertBlockKey`.
+        /// `Document.mentionsOf` and `insertBlockKey`.
         fn outOfRegion(self: *const Self, parsed: Document, kv: AST.Node) bool {
             if (kv.kind != .keyvalue) return false;
-            const val = parsed.ast.nodes[kv.kind.keyvalue.value];
+            const val = parsed.ast.node(kv.kind.keyvalue.value);
             if (!parsed.isSection(val)) return false;
             const source = self.source.items;
             const line = lineStartBefore(source, parsed.span(kv).start);
-            for (parsed.mentionsOf(val.id)) |m| {
+            var mentions = parsed.mentionsOf(val.id);
+            while (mentions.next()) |m| {
                 if (m.kind == .header and lineStartBefore(source, m.span.start) == line) return true;
             }
             return false;
@@ -572,7 +567,7 @@ pub fn Editor(comptime Language: type) type {
         ///     typed element (`<integer>42</integer>`), so the text is
         ///     RENDERED through the format's `renderValue` first.
         ///   * The slot's shape can change. Where the parser recorded the
-        ///     entry's separator (`Document.node_sep_spans` — YAML, fig,
+        ///     entry's separator (`Document.sepSpan` — YAML, fig,
         ///     NestedText), everything after the key is rewritten through
         ///     `writeTail`, so a block collection can descend onto the
         ///     following lines where the old value was inline (`k: []` → a
@@ -581,7 +576,7 @@ pub fn Editor(comptime Language: type) type {
         ///     renders items.
         ///
         /// **Engine rule**: a SECTION node — one the parser recorded header
-        /// lines for (`Document.node_regions`) — is refused before the generic
+        /// lines for (`Document.regionsOf`) — is refused before the generic
         /// splice runs (`CannotReplaceSection` / `CannotReplaceSection` /
         /// `CannotReplaceSection`, in the format's own vocabulary). In TOML
         /// and INI a container's node span is only its KEY segment inside a
@@ -632,11 +627,11 @@ pub fn Editor(comptime Language: type) type {
             // ahead of the section veto because a format whose block
             // container hangs under a bare header (fig) records a zero-width
             // separator there, and its reframe rewrites the container's body
-            // in place. See `Document.node_sep_spans`.
+            // in place. See `Document.sepSpan`.
             if (std.meta.activeTag(path[path.len - 1]) == .key) {
                 const kv = try parsed.ast.getNodeByPath(path);
                 if (parsed.sepSpan(kv)) |sep| {
-                    const key_span = parsed.span(parsed.ast.nodes[kv.kind.keyvalue.key]);
+                    const key_span = parsed.span(parsed.ast.node(kv.kind.keyvalue.key));
                     const indent = try self.indentAt(&indent_buf, key_span.start);
                     try self.writeTail(&out, indent, source[key_span.start..key_span.end], rendered, place);
                     // A null value is a zero-width span at the separator.
@@ -655,7 +650,7 @@ pub fn Editor(comptime Language: type) type {
             // with it, as an insert would write it.
             if (span.start == span.end and std.meta.activeTag(path[path.len - 1]) == .key) {
                 const kv = try parsed.ast.getNodeByPath(path);
-                const key_span = parsed.span(parsed.ast.nodes[kv.kind.keyvalue.key]);
+                const key_span = parsed.span(parsed.ast.node(kv.kind.keyvalue.key));
                 if (span.start == key_span.end) {
                     if (self.syntax().kv_sep) |sep| {
                         try out.appendSlice(self.allocator, sep);
@@ -861,7 +856,7 @@ pub fn Editor(comptime Language: type) type {
                 const node = parsed.ast.getValByPath(path[0..len]) catch continue;
                 return node.kind == .null_;
             }
-            return parsed.ast.nodes[parsed.ast.root].kind == .null_;
+            return parsed.ast.node(parsed.ast.root).kind == .null_;
         }
 
         /// Restore the source to `backup` and reparse, undoing a compound
@@ -908,7 +903,7 @@ pub fn Editor(comptime Language: type) type {
                 return self.replaceValAtPath(path, replacement);
             };
             if (node.kind == .alias) {
-                const target = parsed.ast.nodes[try parsed.ast.resolveAlias(node)];
+                const target = parsed.ast.node(try parsed.ast.resolveAlias(node));
                 var buf: std.ArrayList(u8) = .empty;
                 defer buf.deinit(self.allocator);
                 return self.replaceAtSpan(self.valueSpanWithoutProps(parsed, target), try self.renderedValue(&buf, replacement, placeOfChild(parsed, target.id)));
@@ -968,7 +963,7 @@ pub fn Editor(comptime Language: type) type {
             if (path.len > 0) {
                 if (parsed.ast.getValByPath(path)) |value| {
                     const mentions = parsed.mentionsOf(value.id);
-                    if (parsed.isSection(value) and mentions.len > 0)
+                    if (parsed.isSection(value) and mentions.count() > 0)
                         return self.rewriteMentions(mentions, replacement);
                 } else |_| {}
             }
@@ -1402,7 +1397,7 @@ pub fn Editor(comptime Language: type) type {
             var last: ?AST.Node = null;
             var maybe = try parsed.ast.child(&node);
             while (maybe) |c| {
-                const val = if (c.kind == .keyvalue) parsed.ast.nodes[c.kind.keyvalue.value] else c;
+                const val = if (c.kind == .keyvalue) parsed.ast.node(c.kind.keyvalue.value) else c;
                 if (!parsed.isSection(val)) last = c;
                 maybe = parsed.ast.next(&c);
             }
@@ -1617,7 +1612,7 @@ pub fn Editor(comptime Language: type) type {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getNodeByPath(path);
             const source = self.source.items;
-            const val = if (node.kind == .keyvalue) parsed.ast.nodes[node.kind.keyvalue.value] else node;
+            const val = if (node.kind == .keyvalue) parsed.ast.node(node.kind.keyvalue.value) else node;
             if (parsed.isSection(val)) return self.refuse(.delete);
 
             const span = parsed.span(node);
@@ -1848,12 +1843,12 @@ pub fn Editor(comptime Language: type) type {
             defer seen.deinit(self.allocator);
             var repeated: usize = 0;
             var entry = first;
-            while (entry) |id| : (entry = ast.nodes[id].next_sibling) {
-                const kv = switch (ast.nodes[id].kind) {
+            while (entry) |id| : (entry = ast.node(id).next_sibling) {
+                const kv = switch (ast.node(id).kind) {
                     .keyvalue => |kv| kv,
                     else => continue,
                 };
-                const name = switch (ast.nodes[kv.key].kind) {
+                const name = switch (ast.node(kv.key).kind) {
                     .string => |s| s,
                     else => continue,
                 };
@@ -1870,12 +1865,12 @@ pub fn Editor(comptime Language: type) type {
                 else => return false,
             };
             const want = std.mem.trim(u8, key_text, " \t");
-            while (entry) |id| : (entry = ast.nodes[id].next_sibling) {
-                const kv = switch (ast.nodes[id].kind) {
+            while (entry) |id| : (entry = ast.node(id).next_sibling) {
+                const kv = switch (ast.node(id).kind) {
                     .keyvalue => |kv| kv,
                     else => continue,
                 };
-                const name = switch (ast.nodes[kv.key].kind) {
+                const name = switch (ast.node(kv.key).kind) {
                     .string => |s| s,
                     else => continue,
                 };
@@ -1894,13 +1889,13 @@ pub fn Editor(comptime Language: type) type {
                 .mapping => |first| first,
                 else => return false,
             };
-            while (entry) |id| : (entry = ast.nodes[id].next_sibling) {
+            while (entry) |id| : (entry = ast.node(id).next_sibling) {
                 if (except) |e| if (id == e) continue;
-                const kv = switch (ast.nodes[id].kind) {
+                const kv = switch (ast.node(id).kind) {
                     .keyvalue => |kv| kv,
                     else => continue,
                 };
-                switch (ast.nodes[kv.key].kind) {
+                switch (ast.node(kv.key).kind) {
                     .string => |s| if (std.mem.eql(u8, s, name)) return true,
                     else => {},
                 }
@@ -1960,7 +1955,7 @@ pub fn Editor(comptime Language: type) type {
             // file, so the line-based delete below would remove only the piece
             // it can see and orphan or misparse the rest. `deleteContainer`
             // is the op for it. See "Whole-container structural editing".
-            if (parsed.isSection(parsed.ast.nodes[node.kind.keyvalue.value])) return self.refuse(.delete);
+            if (parsed.isSection(parsed.ast.node(node.kind.keyvalue.value))) return self.refuse(.delete);
             // A flow (`{...}`) mapping stores its entries comma-separated, not
             // one-per-line, so the line-based delete below (sized for a *block*
             // mapping's one-entry-per-line shape) mishandles it in three ways:
@@ -2052,7 +2047,7 @@ pub fn Editor(comptime Language: type) type {
         /// Append `value_text` as a new item to the sequence at `path`.
         ///
         /// A flow sequence — `[…]`, an open root, or a sequence its parser
-        /// gave a separator of its own (`Document.node_item_seps`) — takes
+        /// gave a separator of its own (`Document.itemSep`) — takes
         /// the separator-aware splice after its last item; a block item is
         /// spelled through `writeItem` (a `renderItem` where the format
         /// declares one) after the first item's line prefix.
@@ -2284,7 +2279,7 @@ pub fn Editor(comptime Language: type) type {
             for (items) |text| {
                 var parser: Language.Parser = .{ .allocator = self.allocator };
                 const d = Language.parse(&parser, text, self.format) catch return error.UnsupportedShape;
-                const k = d.ast.nodes[d.ast.root].kind;
+                const k = d.ast.node(d.ast.root).kind;
                 if (!isScalarKind(k)) {
                     d.deinit(self.allocator);
                     return error.UnsupportedShape;
@@ -2444,8 +2439,8 @@ pub fn Editor(comptime Language: type) type {
             if (src.kind != .keyvalue) return error.NotAMapping;
             const dest = try parsed.ast.getNodeByPath(dest_path);
             if (dest.kind != .keyvalue) return error.NotAMapping;
-            if (parsed.isSection(parsed.ast.nodes[src.kind.keyvalue.value]) or
-                parsed.isSection(parsed.ast.nodes[dest.kind.keyvalue.value]))
+            if (parsed.isSection(parsed.ast.node(src.kind.keyvalue.value)) or
+                parsed.isSection(parsed.ast.node(dest.kind.keyvalue.value)))
                 return self.refuse(.move);
             // A flow mapping's members are not one per line and are joined by
             // separators, the last having none: moving lines would strand a
@@ -2547,10 +2542,10 @@ pub fn Editor(comptime Language: type) type {
             var entries: std.ArrayList(AST.Node) = .empty;
             defer entries.deinit(self.allocator);
 
-            var cur = parsed.ast.nodes[first_id];
+            var cur = parsed.ast.node(first_id);
             while (true) {
                 if (cur.kind != .keyvalue) return error.InvalidDocument;
-                const key_node = parsed.ast.nodes[cur.kind.keyvalue.key];
+                const key_node = parsed.ast.node(cur.kind.keyvalue.key);
                 const key = switch (key_node.kind) {
                     .string => |s| s,
                     else => return error.InvalidDocument,
@@ -2598,10 +2593,10 @@ pub fn Editor(comptime Language: type) type {
                     final_pos[i] = pos;
                     pos += 1;
                 };
-                var entry = parsed.ast.nodes[first_id];
+                var entry = parsed.ast.node(first_id);
                 var idx: usize = 0;
                 while (true) : (idx += 1) {
-                    if (final_pos[idx] != idx and parsed.isSection(parsed.ast.nodes[entry.kind.keyvalue.value]))
+                    if (final_pos[idx] != idx and parsed.isSection(parsed.ast.node(entry.kind.keyvalue.value)))
                         return self.refuse(.reorder);
                     entry = parsed.ast.next(&entry) orelse break;
                 }
@@ -2855,7 +2850,7 @@ pub fn Editor(comptime Language: type) type {
             // entry spliced after it would be silently reparented; a dotted
             // child (`b.c = 1`) or a fig header at the parent's depth is on
             // the parent's lines and anchors the insert like any scalar. See
-            // `Document.node_mentions`.
+            // `Document.mentionsOf`.
             var maybe_last: ?AST.Node = null;
             var first_key: ?AST.Node = null;
             var skipped = false;
@@ -2865,7 +2860,7 @@ pub fn Editor(comptime Language: type) type {
                     skipped = true;
                     continue;
                 }
-                if (first_key == null) first_key = if (kv.kind == .keyvalue) parsed.ast.nodes[kv.kind.keyvalue.key] else kv;
+                if (first_key == null) first_key = if (kv.kind == .keyvalue) parsed.ast.node(kv.kind.keyvalue.key) else kv;
                 maybe_last = kv;
             }
             var out: std.ArrayList(u8) = .empty;
@@ -2947,7 +2942,7 @@ pub fn Editor(comptime Language: type) type {
         // no single `[min,max)` range to splice. What there is instead is a
         // DERIVED region set — `editor/regions.zig`'s `gather` — built from
         // the one fact the parser records that spans cannot carry: each
-        // section node's header lines (`Document.node_regions`). Everything
+        // section node's header lines (`Document.regionsOf`). Everything
         // that only needs "where are this node's regions" is generic here, for
         // every format whose `syntax().section_noun` is non-null:
         //
@@ -2964,7 +2959,7 @@ pub fn Editor(comptime Language: type) type {
         // `appendContainerToSeq` write a new `[header]` line, which
         // `Syntax.section_header` now declares; `renameContainer` rewrites
         // every place a table's name is spelled (its headers AND its dotted
-        // lines), which `Document.node_mentions` now records. Both are
+        // lines), which `Document.mentionsOf` now records. Both are
         // generic below, with a comptime refusal for a format that declares
         // no header syntax. See `docs/proposals/derived-regions.md` and
         // `docs/proposals/runtime-languages.md` §4.4.
@@ -3068,12 +3063,13 @@ pub fn Editor(comptime Language: type) type {
         /// Splice `rendered` over every one of `mentions` (sorted by start,
         /// as `Document.mentionsOf` returns them) in one whole-document
         /// rewrite, so a rename either lands everywhere or rolls back.
-        fn rewriteMentions(self: *Self, mentions: []const Document.NodeMention, rendered: []const u8) !void {
+        fn rewriteMentions(self: *Self, mentions_: Document.MentionIterator, rendered: []const u8) !void {
             const source = self.source.items;
             var out: std.ArrayList(u8) = .empty;
             defer out.deinit(self.allocator);
             var pos: usize = 0;
-            for (mentions) |m| {
+            var mentions = mentions_;
+            while (mentions.next()) |m| {
                 if (m.span.start < pos) continue; // the same token reached twice
                 try out.appendSlice(self.allocator, source[pos..m.span.start]);
                 try out.appendSlice(self.allocator, rendered);
@@ -3154,7 +3150,7 @@ pub fn Editor(comptime Language: type) type {
 
         /// Rename the leaf segment of the container at `path` to the logical
         /// key `new_leaf`, spelled by `formatInsertKey` and written over every
-        /// place the format spells the name (`Document.node_mentions`): the
+        /// place the format spells the name (`Document.mentionsOf`): the
         /// container's own header, every descendant header sharing the
         /// prefix, every dotted line, every reopening. Refuses a target that
         /// is not a section, or whose format recorded no mentions, in the
@@ -3165,7 +3161,7 @@ pub fn Editor(comptime Language: type) type {
             const parsed = try self.getParsed();
             const node = try self.sectionAt(parsed, path);
             const mentions = parsed.mentionsOf(node.id);
-            if (mentions.len == 0) return self.refuse(.not_a_section);
+            if (mentions.count() == 0) return self.refuse(.not_a_section);
             const rendered = try self.formatInsertKey(new_leaf);
             defer self.allocator.free(rendered);
             try self.rewriteMentions(mentions, rendered);
@@ -3243,13 +3239,13 @@ pub fn Editor(comptime Language: type) type {
             var elem = node.kind.sequence orelse return error.NotAnArrayOfTables;
             var last_elem = elem;
             while (true) {
-                if (parsed.ast.nodes[elem].kind != .mapping) return error.NotAnArrayOfTables;
+                if (parsed.ast.node(elem).kind != .mapping) return error.NotAnArrayOfTables;
                 last_elem = elem;
-                elem = parsed.ast.nodes[elem].next_sibling orelse break;
+                elem = parsed.ast.node(elem).next_sibling orelse break;
             }
             const hdr = self.syntax().section_header.?;
             const seq_open = hdr.seq_open orelse return error.NotAnArrayOfTables;
-            const insert_at = try self.sectionExtentEnd(parsed, parsed.ast.nodes[last_elem]);
+            const insert_at = try self.sectionExtentEnd(parsed, parsed.ast.node(last_elem));
             try self.spliceHeader(insert_at, seq_open, hdr.seq_close.?, path, body_text);
         }
 
@@ -3384,7 +3380,7 @@ pub fn Editor(comptime Language: type) type {
             var parser: Language.Parser = .{ .allocator = self.allocator };
             var doc = Language.parse(&parser, text, self.format) catch return false;
             defer doc.deinit(self.allocator);
-            return doc.ast.nodes[doc.ast.root].kind == .mapping;
+            return doc.ast.node(doc.ast.root).kind == .mapping;
         }
 
         /// Append `: value` for a mapping entry whose key is already written at
@@ -3545,9 +3541,9 @@ pub fn Editor(comptime Language: type) type {
                 // objects fix their own mode. See
                 // `Syntax.flow_kv_sep_from_siblings`.
                 const sep: []const u8 = if (self.syntax().flow_kv_sep_from_siblings) blk: {
-                    const first = parsed.ast.nodes[node.kind.mapping.?];
-                    const key_end = parsed.span(parsed.ast.nodes[first.kind.keyvalue.key]).end;
-                    const value_start = parsed.span(parsed.ast.nodes[first.kind.keyvalue.value]).start;
+                    const first = parsed.ast.node(node.kind.mapping.?);
+                    const key_end = parsed.span(parsed.ast.node(first.kind.keyvalue.key)).end;
+                    const value_start = parsed.span(parsed.ast.node(first.kind.keyvalue.value)).start;
                     break :blk source[key_end..value_start];
                 } else try self.kvSep();
                 // Multi-line layout: the closing brace is separated from the last
@@ -3942,8 +3938,8 @@ fn childrenOnlyGrew(b: Document, bn: AST.Node, a: Document, an: AST.Node) bool {
 /// two documents, so `AST.Node.Kind.eql` (which compares child ids) cannot be
 /// used for containers — only for the leaves.
 fn nodesEqualDeep(b: Document, bid: AST.Node.Id, a: Document, aid: AST.Node.Id) bool {
-    const bn = b.ast.nodes[bid];
-    const an = a.ast.nodes[aid];
+    const bn = b.ast.node(bid);
+    const an = a.ast.node(aid);
     if (std.meta.activeTag(bn.kind) != std.meta.activeTag(an.kind)) return false;
     switch (bn.kind) {
         .mapping, .sequence => {
@@ -3978,8 +3974,8 @@ fn addedOnlyUnder(
     aid: AST.Node.Id,
     path: []const AST.PathSegment,
 ) bool {
-    const bn = b.ast.nodes[bid];
-    const an = a.ast.nodes[aid];
+    const bn = b.ast.node(bid);
+    const an = a.ast.node(aid);
     if (std.meta.activeTag(bn.kind) != std.meta.activeTag(an.kind)) return false;
     if (path.len == 0) return childrenOnlyGrew(b, bn, a, an);
 
@@ -4013,7 +4009,7 @@ fn addedOnlyUnder(
 /// Whether the key node `id` is the string `name` — the physical spelling a
 /// path segment matches against while walking two parses side by side.
 fn keyNodeIs(doc: Document, id: AST.Node.Id, name: []const u8) bool {
-    const k = doc.ast.nodes[id].kind;
+    const k = doc.ast.node(id).kind;
     return k == .string and std.mem.eql(u8, k.string, name);
 }
 

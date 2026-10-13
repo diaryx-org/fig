@@ -1,7 +1,7 @@
 const toml = @This();
 const std = @import("std");
 const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/document.zig");
+const Document = @import("../../kit/parse_tree.zig");
 const lang = @import("../../kit/manifest.zig");
 
 pub const Parser = @import("parser.zig");
@@ -21,8 +21,14 @@ pub const Language = struct {
     pub const Parser = toml.Parser;
     pub const Printer = toml.Printer;
     pub const default_type: toml.Type = .TOML_1_1;
-    pub fn parse(parser: *toml.Parser, input: []const u8, format: toml.Type) !Document {
+    /// The parser's tree, which the contract writes into fig's table.
+    pub fn parseTree(parser: *toml.Parser, input: []const u8, format: toml.Type) !Document {
         return toml.Parser.parse(parser.allocator, input, format);
+    }
+    /// The document fig would adopt from a parse.
+    pub fn parse(parser: *toml.Parser, input: []const u8, format: toml.Type) !Document.RowDocument {
+        var tree = try parseTree(parser, input, format);
+        return tree.intoDocument(parser.allocator);
     }
     pub const print = toml.Printer.print;
     pub const printNode = toml.Printer.printNode;
@@ -97,7 +103,7 @@ pub const Language = struct {
             .block_seq_editable = false,
             // A section format: a `[table]`, `[[array]]` or dotted table is
             // assembled from scattered lines, which `parser.zig` records in
-            // `Document.node_regions`. Its refusals say "table".
+            // `Document.regionsOf`. Its refusals say "table".
             .section_noun = "table",
             // `[a.b]` opens a table, `[[a.b]]` an element of an array of
             // tables; an index segment is implied and left out.
@@ -109,9 +115,9 @@ pub const Language = struct {
     //
     // No hooks. Every edit is the generic engine's, driven by `syntax` above
     // and by what `parser.zig` records: a table's header lines
-    // (`Document.node_regions`, which the whole-container delete, move and
+    // (`Document.regionsOf`, which the whole-container delete, move and
     // reorder gather) and every place a table's name is spelled
-    // (`Document.node_mentions`). The engine keeps an inserted entry inside
+    // (`Document.mentionsOf`). The engine keeps an inserted entry inside
     // the intended table by skipping children that sit under a header of
     // their own, spells a new `[a.b]` or `[[a.b]]` from `section_header`,
     // and renames a table by rewriting each mention — its own header,

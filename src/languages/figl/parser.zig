@@ -39,8 +39,9 @@ pub const Parser = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/document.zig");
+const Document = @import("../../kit/parse_tree.zig");
+const AST = Document.Nodes;
+
 const Span = @import("../../kit/span.zig");
 const datetime = @import("../../kit/datetime.zig");
 const tok = @import("tokenizer.zig");
@@ -631,14 +632,9 @@ const Resolved = struct { container: *PendingContainer, owner: *TNode, entry: ?*
 
 // ── Entry points ─────────────────────────────────────────────────────────────
 
-pub fn parseAbstract(allocator: Allocator, input: []const u8, format: Type) !AST {
-    const parsed = try parse(allocator, input, format);
-    allocator.free(parsed.node_spans);
-    allocator.free(parsed.node_marker_spans);
-    allocator.free(parsed.node_sep_spans);
-    allocator.free(parsed.node_regions);
-    allocator.free(parsed.node_mentions);
-    return parsed.ast;
+pub fn parseAbstract(allocator: Allocator, input: []const u8, format: Type) !Document.RowAst {
+    var tree = try parse(allocator, input, format);
+    return tree.intoAst(allocator);
 }
 
 pub fn parse(allocator: Allocator, input: []const u8, format: Type) Error!Document {
@@ -2378,9 +2374,9 @@ fn isTripleAt(self: *Parser, pos: usize, q: u8) bool {
 const testing = std.testing;
 
 fn expectParse(input: []const u8, expected: AST) !void {
-    var ast = try parseAbstract(testing.allocator, input, .Fig);
-    defer ast.deinit();
-    try testing.expect(expected.eql(ast));
+    var tree = try parse(testing.allocator, input, .Fig);
+    defer tree.deinit(testing.allocator);
+    try testing.expect(expected.eql(tree.ast));
 }
 
 test "empty document is an empty root map (seedable for a from-scratch `set`)" {
@@ -2450,7 +2446,7 @@ test "node_regions records every header line of a re-entered container, keyed by
     try testing.expectEqual(std.mem.lastIndexOf(u8, src, "database").?, regs[1].start);
     try testing.expectEqual(std.mem.lastIndexOf(u8, src, "database").? + "database\n".len, regs[1].end);
     // A scalar is never a section; the root never is either.
-    try testing.expect(!parsed.isSection(parsed.ast.nodes[parsed.ast.root]));
+    try testing.expect(!parsed.isSection(parsed.ast.node(parsed.ast.root)));
     try testing.expect(!parsed.isSection(try parsed.ast.getValByPath(&.{.{ .key = "other" }})));
 }
 
@@ -2608,17 +2604,17 @@ test "explicit typing coerces number lookalikes but keeps the verbatim lexeme + 
     const a = try ast.getValByPath(&.{.{ .key = "a" }});
     try testing.expect(a.kind.number.kind == .float);
     try testing.expectEqualStrings("1.", a.kind.number.raw);
-    try testing.expect(ast.node_tags[a.id].?.kind == .float);
+    try testing.expect(ast.tagOf(a.id).?.kind == .float);
     const b = try ast.getValByPath(&.{.{ .key = "b" }});
     try testing.expect(b.kind.number.kind == .integer);
     try testing.expectEqualStrings("09", b.kind.number.raw);
-    try testing.expect(ast.node_tags[b.id].?.kind == .integer);
+    try testing.expect(ast.tagOf(b.id).?.kind == .integer);
     try testing.expectEqualStrings("09", (try ast.getValByPath(&.{.{ .key = "c" }})).kind.number.raw);
     try testing.expectEqualStrings("-007", (try ast.getValByPath(&.{.{ .key = "d" }})).kind.number.raw);
     // `: string` is a total sink: the bracketed RHS is verbatim text, not flow.
     const e = try ast.getValByPath(&.{.{ .key = "e" }});
     try testing.expectEqualStrings("[ 1 + 2 ]", e.kind.string);
-    try testing.expect(ast.node_tags[e.id].?.kind == .string);
+    try testing.expect(ast.tagOf(e.id).?.kind == .string);
 }
 
 test ": string takes the ENTIRE RHS as raw text — quotes, backslashes, triple-quotes are content" {
@@ -2646,7 +2642,7 @@ test ": string takes the ENTIRE RHS as raw text — quotes, backslashes, triple-
     // Every one still records the `: string` tag.
     inline for (.{ "a", "b", "c", "d", "e", "f" }) |k| {
         const n = try ast.getValByPath(&.{.{ .key = k }});
-        try testing.expect(ast.node_tags[n.id].?.kind == .string);
+        try testing.expect(ast.tagOf(n.id).?.kind == .string);
     }
 }
 

@@ -409,7 +409,7 @@ test "fig deleteContainer on a flow-valued key is refused" {
 test "fig delete a verbatim re-entered header removes every occurrence" {
     // The exact same header (`database`, not a deeper dotted path) written
     // twice — the shape spans alone can't discover; found via the parser's
-    // `Document.node_regions` record (see the module doc comment). Both
+    // `Document.regionsOf` record (see the module doc comment). Both
     // header lines and every child go; the foreign sibling stays put.
     var ed = try newFigEditor("database\n> x = 1\nother = 1\ndatabase\n> y = 2\n");
     defer ed.deinit();
@@ -489,7 +489,7 @@ test "fig move a dotted-re-entry-scattered container collapses fragments contigu
 
 test "fig move a verbatim re-entered container relocates both occurrences" {
     // Both physical `database` blocks (the creating header and the verbatim
-    // re-entry, found via `Document.node_regions`) move contiguously; the
+    // re-entry, found via `Document.regionsOf`) move contiguously; the
     // re-entered spelling itself is preserved — still-valid fig that parses
     // to the same merged mapping.
     var ed = try newFigEditor("database\n> x = 1\nother = 1\ndatabase\n> y = 2\n");

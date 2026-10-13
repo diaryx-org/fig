@@ -76,7 +76,7 @@ pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize
 }
 
 fn value(self: *Printer, id: AST.Node.Id, depth: usize) Error!void {
-    const n = self.ast.nodes[id];
+    const n = self.ast.node(id);
     switch (n.kind) {
         .null_ => return error.NullUnsupported,
         .boolean => |b| try self.writer.writeAll(if (b) "<true/>" else "<false/>"),
@@ -111,9 +111,9 @@ fn dict(self: *Printer, first_entry: ?AST.Node.Id, depth: usize) Error!void {
     try self.writer.writeAll("<dict>");
     try self.nl();
     var cur = first_entry;
-    while (cur) |eid| : (cur = self.ast.nodes[eid].next_sibling) {
-        const kv = self.ast.nodes[eid].kind.keyvalue;
-        const key = switch (self.ast.nodes[kv.key].kind) {
+    while (cur) |eid| : (cur = self.ast.node(eid).next_sibling) {
+        const kv = self.ast.node(eid).kind.keyvalue;
+        const key = switch (self.ast.node(kv.key).kind) {
             .string => |s| s,
             else => return error.NonStringKey,
         };
@@ -136,7 +136,7 @@ fn array(self: *Printer, first_item: ?AST.Node.Id, depth: usize) Error!void {
     try self.writer.writeAll("<array>");
     try self.nl();
     var cur = first_item;
-    while (cur) |iid| : (cur = self.ast.nodes[iid].next_sibling) {
+    while (cur) |iid| : (cur = self.ast.node(iid).next_sibling) {
         try self.indent(depth);
         try self.value(iid, depth + 1);
         try self.nl();
@@ -171,8 +171,14 @@ fn indent(self: *Printer, depth: usize) Writer.Error!void {
 const testing = std.testing;
 const Parser = @import("parser.zig");
 
+/// `src` as fig adopts it from the plist parser.
+fn parseDoc(src: []const u8) !@import("../../kit/document.zig") {
+    var tree = try Parser.parse(testing.allocator, src, .XML);
+    return tree.intoDocument(testing.allocator);
+}
+
 fn expectPrint(src: []const u8, expected: []const u8) !void {
-    var doc = try Parser.parse(testing.allocator, src, .XML);
+    var doc = try parseDoc(src);
     defer doc.deinit(testing.allocator);
     var output: Writer.Allocating = .init(testing.allocator);
     defer output.deinit();
@@ -183,13 +189,13 @@ fn expectPrint(src: []const u8, expected: []const u8) !void {
 /// Parse `src`, print it, reparse the printed bytes, and assert the two ASTs
 /// are equal — the round-trip property this design exists for.
 fn expectRoundTrip(src: []const u8) !void {
-    var doc = try Parser.parse(testing.allocator, src, .XML);
+    var doc = try parseDoc(src);
     defer doc.deinit(testing.allocator);
     var output: Writer.Allocating = .init(testing.allocator);
     defer output.deinit();
     try print(&output.writer, &doc.ast, .{});
 
-    var reparsed = try Parser.parse(testing.allocator, output.written(), .XML);
+    var reparsed = try parseDoc(output.written());
     defer reparsed.deinit(testing.allocator);
     try testing.expect(doc.ast.eql(reparsed.ast));
 }
@@ -259,7 +265,7 @@ test "escapes & < > in text" {
 }
 
 test "compact (non-pretty) output has no inserted whitespace" {
-    var doc = try Parser.parse(testing.allocator, "<dict><key>a</key><integer>1</integer></dict>", .XML);
+    var doc = try parseDoc("<dict><key>a</key><integer>1</integer></dict>");
     defer doc.deinit(testing.allocator);
     var output: Writer.Allocating = .init(testing.allocator);
     defer output.deinit();
@@ -290,7 +296,8 @@ test "round-trip through parse -> print -> parse for every reader fixture shape"
 
 test "error: null is unsupported" {
     var nodes = [_]AST.Node{.{ .id = 0, .kind = .null_ }};
-    const ast = AST{ .allocator = testing.allocator, .root = 0, .nodes = &nodes };
+    var ast = try AST.fromNodes(testing.allocator, 0, &nodes);
+    defer ast.deinit();
     var output: Writer.Allocating = .init(testing.allocator);
     defer output.deinit();
     try testing.expectError(error.NullUnsupported, print(&output.writer, &ast, .{}));
@@ -303,7 +310,8 @@ test "error: non-string key" {
         .{ .id = 2, .kind = .{ .number = .{ .raw = "1", .kind = .integer } } },
         .{ .id = 3, .kind = .{ .string = "x" } },
     };
-    const ast = AST{ .allocator = testing.allocator, .root = 0, .nodes = &nodes };
+    var ast = try AST.fromNodes(testing.allocator, 0, &nodes);
+    defer ast.deinit();
     var output: Writer.Allocating = .init(testing.allocator);
     defer output.deinit();
     try testing.expectError(error.NonStringKey, print(&output.writer, &ast, .{}));
@@ -311,7 +319,8 @@ test "error: non-string key" {
 
 test "error: unresolved alias" {
     var nodes = [_]AST.Node{.{ .id = 0, .kind = .{ .alias = "anchor" } }};
-    const ast = AST{ .allocator = testing.allocator, .root = 0, .nodes = &nodes };
+    var ast = try AST.fromNodes(testing.allocator, 0, &nodes);
+    defer ast.deinit();
     var output: Writer.Allocating = .init(testing.allocator);
     defer output.deinit();
     try testing.expectError(error.UnresolvedAlias, print(&output.writer, &ast, .{}));
@@ -319,7 +328,8 @@ test "error: unresolved alias" {
 
 test "foreign extended kind degrades to <string>" {
     var nodes = [_]AST.Node{.{ .id = 0, .kind = .{ .extended = .{ .kind = .enum_literal, .text = "fast" } } }};
-    const ast = AST{ .allocator = testing.allocator, .root = 0, .nodes = &nodes };
+    var ast = try AST.fromNodes(testing.allocator, 0, &nodes);
+    defer ast.deinit();
     var output: Writer.Allocating = .init(testing.allocator);
     defer output.deinit();
     try print(&output.writer, &ast, .{});
@@ -327,7 +337,7 @@ test "foreign extended kind degrades to <string>" {
 }
 
 test "splice text is the bare element, and a container's lines sit at the top level" {
-    var doc = try Parser.parse(testing.allocator, "<dict><key>q</key><array><integer>1</integer></array></dict>", .XML);
+    var doc = try parseDoc("<dict><key>q</key><array><integer>1</integer></array></dict>");
     defer doc.deinit(testing.allocator);
     var output: Writer.Allocating = .init(testing.allocator);
     defer output.deinit();

@@ -19,6 +19,8 @@ pub const xml = @import("xml.zig");
 /// node table (the contract) each is turned into and out of.
 pub const AST = @import("ast/ast.zig");
 pub const Document = @import("document.zig");
+/// A Zig parser's tree before it is rows, and its nodes.
+pub const ParseTree = @import("parse_tree.zig");
 pub const table = @import("table.zig");
 pub const convert = @import("convert.zig");
 /// The contract's declarations and C shapes, which a language fills.
@@ -36,6 +38,8 @@ pub const number = @import("number.zig");
 test {
     _ = AST;
     _ = Document;
+    _ = ParseTree;
+    _ = @import("parse_tree/nodes.zig");
     _ = table;
     _ = convert;
     _ = manifest;

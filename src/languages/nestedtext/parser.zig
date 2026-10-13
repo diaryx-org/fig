@@ -41,8 +41,9 @@ const Parser = @This();
 
 const std = @import("std");
 const testing = std.testing;
-const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/document.zig");
+const Document = @import("../../kit/parse_tree.zig");
+const AST = Document.Nodes;
+
 const Type = @import("nestedtext.zig").Type;
 const Span = @import("../../kit/span.zig");
 const flat_map = @import("../shared/flat_map.zig");
@@ -156,12 +157,9 @@ pub fn parseWithReport(allocator: std.mem.Allocator, input: []const u8, format: 
     return parseImpl(allocator, input, format, out);
 }
 
-pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!AST {
-    const doc = try parse(allocator, input, format);
-    allocator.free(doc.node_spans);
-    allocator.free(doc.node_marker_spans);
-    allocator.free(doc.node_sep_spans);
-    return doc.ast;
+pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!Document.RowAst {
+    var tree = try parse(allocator, input, format);
+    return tree.intoAst(allocator);
 }
 
 fn parseImpl(allocator: std.mem.Allocator, input: []const u8, format: Type, out: ?*Report) ParserError!Document {
@@ -748,23 +746,23 @@ test "rest-of-line value is 100% literal, even one that looks like an inline lis
 test "empty document is null" {
     var ast = try parseAbstract(testing.allocator, "", .NESTEDTEXT);
     defer ast.deinit();
-    try testing.expectEqual(AST.Node.Kind.null_, ast.nodes[ast.root].kind);
+    try testing.expectEqual(AST.Node.Kind.null_, ast.node(ast.root).kind);
 
     var ast2 = try parseAbstract(testing.allocator, "# just a comment\n\n", .NESTEDTEXT);
     defer ast2.deinit();
-    try testing.expectEqual(AST.Node.Kind.null_, ast2.nodes[ast2.root].kind);
+    try testing.expectEqual(AST.Node.Kind.null_, ast2.node(ast2.root).kind);
 }
 
 test "single string item" {
     var ast = try parseAbstract(testing.allocator, "> hello\n", .NESTEDTEXT);
     defer ast.deinit();
-    try testing.expectEqualStrings("hello", ast.nodes[ast.root].kind.string);
+    try testing.expectEqualStrings("hello", ast.node(ast.root).kind.string);
 }
 
 test "two blank string items join with a newline" {
     var ast = try parseAbstract(testing.allocator, ">\n>\n", .NESTEDTEXT);
     defer ast.deinit();
-    try testing.expectEqualStrings("\n", ast.nodes[ast.root].kind.string);
+    try testing.expectEqualStrings("\n", ast.node(ast.root).kind.string);
 }
 
 test "list of scalars" {
@@ -821,11 +819,11 @@ test "top-level inline dict/list" {
 test "empty inline dict and list" {
     var ast = try parseAbstract(testing.allocator, "{}", .NESTEDTEXT);
     defer ast.deinit();
-    try testing.expectEqual(@as(?AST.Node.Id, null), ast.nodes[ast.root].kind.mapping);
+    try testing.expectEqual(@as(?AST.Node.Id, null), ast.node(ast.root).kind.mapping);
 
     var ast2 = try parseAbstract(testing.allocator, "[]", .NESTEDTEXT);
     defer ast2.deinit();
-    try testing.expectEqual(@as(?AST.Node.Id, null), ast2.nodes[ast2.root].kind.sequence);
+    try testing.expectEqual(@as(?AST.Node.Id, null), ast2.node(ast2.root).kind.sequence);
 }
 
 test "`[ ]` (space inside) is a single-element list containing one empty string" {
@@ -833,7 +831,7 @@ test "`[ ]` (space inside) is a single-element list containing one empty string"
     defer ast.deinit();
     const v = try AST.getValByPath(&ast, &.{.{ .index = 0 }});
     try testing.expectEqualStrings("", v.kind.string);
-    try testing.expectEqual(@as(?AST.Node.Id, null), ast.nodes[ast.nodes[ast.root].kind.sequence.?].next_sibling);
+    try testing.expectEqual(@as(?AST.Node.Id, null), ast.node(ast.node(ast.root).kind.sequence.?).next_sibling);
 }
 
 test "`{:}` is a single entry with an empty key and empty value" {
@@ -898,7 +896,7 @@ test "top-level singleton bracket line followed by more content is extra content
 test "leading comment attaches to the following key" {
     var ast = try parseAbstract(testing.allocator, "# a header comment\nname: fig\n", .NESTEDTEXT);
     defer ast.deinit();
-    const key_node = (try AST.firstChildKey(&ast, &ast.nodes[ast.root])).?;
+    const key_node = (try ast.firstChildKey(&ast.node(ast.root))).?;
     const cs = ast.comments(key_node.id);
     try testing.expectEqual(@as(usize, 1), cs.leading.len);
     try testing.expectEqualStrings(" a header comment", cs.leading[0].text);

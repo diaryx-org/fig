@@ -39,10 +39,13 @@ part_of = [proposals](proposals.md)
 > `SerializeFormat` or `Detected`; a language's `--spec` versions are dialect
 > rows (`yaml-1.1`); the authoring dialect is `figl`, with no alias.
 > Embedding, its preset containers and §4.5 with it, is no longer fig's: it
-> moved to twig. Left in step 8: the closed `KeyStyle`/`CommentStyle`
-> leftovers and the §6 check. Then step 9, and step 6's last
-> stage (adopting the table as the Document). Tag resolution and the
-> lexeme's value land with §4.9's rows.
+> moved to twig. Left in step 8: the §6 check. Step 6's last stage is
+> built: the `AST` is the table — rows, a string buffer and sparse
+> facts — read through `node(id)` and the accessors, and a parse's table is
+> checked and adopted with no copy; the compiled YAML resolves its own tags
+> and materialize reads the resolution. The Zig parsers still build a
+> `ParseTree` and emit it as rows ([task](/docs/tasks/zig-parsers-write-rows.md)).
+> The lexeme's value (§4.2) is not built. Then step 9.
 >
 > §8 step 1's measurements are done (2026-10-12). They settled the third
 > revision: the contract's node table becomes the `Document`'s own

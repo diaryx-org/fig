@@ -16,7 +16,7 @@
 //! whose span anchors only the FIRST header's name token — so its bytes are
 //! scattered exactly the way a TOML table's or a fig container's are.
 //! `parser.zig` records every header line of every section in
-//! `Document.node_regions`, and from that the engine derives the section's
+//! `Document.regionsOf`, and from that the engine derives the section's
 //! region set (`editor/regions.zig`): `deleteContainer`, `moveContainer` and
 //! `reorderContainers` gather it and rebuild the source once, and the four
 //! line-splice ops (`deleteKey`, `replaceValAtPath`, `moveKey`, `reorderKeys`)
@@ -129,7 +129,7 @@ test "ini deleteContainer removes a whole section" {
 test "ini deleteContainer removes EVERY occurrence of a reopened section" {
     // The case the engine's section rule refuses a line-delete for: `[a]` is
     // scattered, and its second header is in no node's span. Without
-    // `Document.node_regions` the trailing `[a]` would survive and adopt
+    // `Document.regionsOf` the trailing `[a]` would survive and adopt
     // whatever followed it.
     var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
     try ed.init("[a]\nx = 1\n[b]\ny = 2\n[a]\nz = 3\n");

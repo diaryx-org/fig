@@ -301,7 +301,8 @@ fn buildDrivenProbe(allocator: std.mem.Allocator) ![]u8 {
         \\    pub const Printer = borrowed.Printer;
         \\    pub const default_type: Type = borrowed.Language.default_type;
         \\    pub fn parse(parser: *Parser, input: []const u8, format: Type) !fig.Document {
-        \\        return Parser.parse(parser.allocator, input, format);
+        \\        var tree = try Parser.parse(parser.allocator, input, format);
+        \\        return tree.intoDocument(parser.allocator);
         \\    }
         \\    pub const print = Printer.print;
         \\    pub const printNode = Printer.printNode;

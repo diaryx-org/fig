@@ -85,21 +85,21 @@ const Ctx = struct {
         var last_inline: ?AST.Node.Id = null;
         {
             var cur = first_child;
-            while (cur) |id| : (cur = ast.nodes[id].next_sibling) {
+            while (cur) |id| : (cur = ast.node(id).next_sibling) {
                 if (classify(ctx, ast, id) == .inline_) last_inline = id;
             }
         }
         // Pass 1: body lines, in document order.
         var cur = first_child;
         var in_body_zone = (last_inline != null);
-        while (cur) |id| : (cur = ast.nodes[id].next_sibling) {
+        while (cur) |id| : (cur = ast.node(id).next_sibling) {
             if (!in_body_zone) break;
-            const kv = ast.nodes[id].kind.keyvalue;
+            const kv = ast.node(id).kind.keyvalue;
             switch (classify(ctx, ast, id)) {
                 .inline_ => try ctx.kvLine(ast, kv.key, kv.value),
                 .section => if (demotable(ast, id)) {
                     const seg = Path{ .key = try keyText(ast, kv.key), .parent = null };
-                    try ctx.dottedBody(ast, &seg, ast.nodes[kv.value].kind.mapping);
+                    try ctx.dottedBody(ast, &seg, ast.node(kv.value).kind.mapping);
                 },
                 .aot => if (demotable(ast, id)) try ctx.kvLine(ast, kv.key, kv.value),
             }
@@ -119,8 +119,8 @@ const Ctx = struct {
         // plus any commented mid-position child that could not demote.
         cur = first_child;
         var in_demote_zone = (last_inline != null);
-        while (cur) |id| : (cur = ast.nodes[id].next_sibling) {
-            const kv = ast.nodes[id].kind.keyvalue;
+        while (cur) |id| : (cur = ast.node(id).next_sibling) {
+            const kv = ast.node(id).kind.keyvalue;
             const demoted = in_demote_zone and demotable(ast, id);
             switch (classify(ctx, ast, id)) {
                 .inline_ => {},
@@ -139,10 +139,10 @@ const Ctx = struct {
     /// tables — is one `prefix.key = value` line.
     fn dottedBody(ctx: *Ctx, ast: *const AST, prefix: *const Path, first_child: ?AST.Node.Id) Error!void {
         var cur = first_child;
-        while (cur) |id| : (cur = ast.nodes[id].next_sibling) {
-            const kv = ast.nodes[id].kind.keyvalue;
+        while (cur) |id| : (cur = ast.node(id).next_sibling) {
+            const kv = ast.node(id).kind.keyvalue;
             const seg = Path{ .key = try keyText(ast, kv.key), .parent = prefix };
-            switch (ast.nodes[kv.value].kind) {
+            switch (ast.node(kv.value).kind) {
                 .mapping => |first| if (first != null) {
                     try ctx.dottedBody(ast, &seg, first);
                     continue;
@@ -174,7 +174,7 @@ const Ctx = struct {
     /// everything else renders inline. (Mappings and array-of-tables that reach
     /// here already fit by construction — see `classify`.)
     fn writeValue(ctx: *Ctx, ast: *const AST, value_id: AST.Node.Id, col: usize) Error!void {
-        switch (ast.nodes[value_id].kind) {
+        switch (ast.node(value_id).kind) {
             .sequence => |first| {
                 if (ctx.opts.pretty and first != null) {
                     // A null/alias inside makes the array un-measurable; fall
@@ -195,7 +195,7 @@ const Ctx = struct {
         const w = ctx.w;
         try w.writeAll("[\n");
         var cur = first;
-        while (cur) |id| : (cur = ast.nodes[id].next_sibling) {
+        while (cur) |id| : (cur = ast.node(id).next_sibling) {
             try w.splatByteAll(' ', ctx.opts.indent);
             try writeInline(w, ast, id);
             try w.writeAll(",\n");
@@ -205,7 +205,7 @@ const Ctx = struct {
 
     fn section(ctx: *Ctx, ast: *const AST, key_id: AST.Node.Id, value_id: AST.Node.Id, parent: ?*const Path) Error!void {
         const seg = Path{ .key = try keyText(ast, key_id), .parent = parent };
-        const first = ast.nodes[value_id].kind.mapping;
+        const first = ast.node(value_id).kind.mapping;
         if (needsHeader(ctx, ast, first)) {
             if (ctx.wrote) try ctx.w.writeByte('\n');
             try ctx.leading(ast, key_id); // comments above the `[header]` line
@@ -246,14 +246,14 @@ const Ctx = struct {
 
     fn aot(ctx: *Ctx, ast: *const AST, key_id: AST.Node.Id, value_id: AST.Node.Id, parent: ?*const Path) Error!void {
         const seg = Path{ .key = try keyText(ast, key_id), .parent = parent };
-        var elem = ast.nodes[value_id].kind.sequence;
-        while (elem) |eid| : (elem = ast.nodes[eid].next_sibling) {
+        var elem = ast.node(value_id).kind.sequence;
+        while (elem) |eid| : (elem = ast.node(eid).next_sibling) {
             if (ctx.wrote) try ctx.w.writeByte('\n');
             try ctx.w.writeAll("[[");
             try writePath(ctx.w, &seg);
             try ctx.w.writeAll("]]\n");
             ctx.wrote = true;
-            try ctx.body(ast, eid, ast.nodes[eid].kind.mapping, &seg);
+            try ctx.body(ast, eid, ast.node(eid).kind.mapping, &seg);
         }
     }
 };
@@ -267,7 +267,7 @@ fn needsHeader(ctx: *Ctx, ast: *const AST, first_child: ?AST.Node.Id) bool {
     var cur = first_child orelse return true; // empty table
     while (true) {
         if (classify(ctx, ast, cur) == .inline_) return true;
-        cur = ast.nodes[cur].next_sibling orelse return false;
+        cur = ast.node(cur).next_sibling orelse return false;
     }
 }
 
@@ -278,8 +278,8 @@ fn needsHeader(ctx: *Ctx, ast: *const AST, first_child: ?AST.Node.Id) bool {
 /// it even when it would fit). Scalars and scalar/mixed arrays are always
 /// `inline_` (the array may still *wrap*, but it stays in place).
 fn classify(ctx: *Ctx, ast: *const AST, kv_id: AST.Node.Id) Class {
-    const kv = ast.nodes[kv_id].kind.keyvalue;
-    return switch (ast.nodes[kv.value].kind) {
+    const kv = ast.node(kv_id).kind.keyvalue;
+    return switch (ast.node(kv.value).kind) {
         .mapping => if (fitsInline(ctx, ast, kv_id)) .inline_ else .section,
         .sequence => |first| if (allMappings(ast, first)) .aot else .inline_,
         else => .inline_,
@@ -292,9 +292,9 @@ fn classify(ctx: *Ctx, ast: *const AST, kv_id: AST.Node.Id) Class {
 /// — they'd be silently dropped), and the value isn't an empty mapping (kept as
 /// `[header]` so the table's existence round-trips).
 fn fitsInline(ctx: *Ctx, ast: *const AST, kv_id: AST.Node.Id) bool {
-    const kv = ast.nodes[kv_id].kind.keyvalue;
+    const kv = ast.node(kv_id).kind.keyvalue;
     const value_id = kv.value;
-    switch (ast.nodes[value_id].kind) {
+    switch (ast.node(value_id).kind) {
         .mapping => |first| if (first == null) return false,
         else => {},
     }
@@ -328,7 +328,7 @@ fn keyByteLen(ast: *const AST, key_id: AST.Node.Id) ?usize {
 /// re-anchor a key's leading run. Comments outrank order, so a commented
 /// child keeps the trailing-section form instead.
 fn demotable(ast: *const AST, kv_id: AST.Node.Id) bool {
-    const kv = ast.nodes[kv_id].kind.keyvalue;
+    const kv = ast.node(kv_id).kind.keyvalue;
     if (nodeHasComments(ast, kv_id)) return false;
     if (subtreeHasComments(ast, kv.key)) return false;
     if (subtreeHasComments(ast, kv.value)) return false;
@@ -350,17 +350,17 @@ fn nodeHasComments(ast: *const AST, id: AST.Node.Id) bool {
 /// emit the comments (the inline `{ ... }` / `[ ... ]` forms cannot).
 fn subtreeHasComments(ast: *const AST, id: AST.Node.Id) bool {
     if (nodeHasComments(ast, id)) return true;
-    switch (ast.nodes[id].kind) {
+    switch (ast.node(id).kind) {
         .sequence => |first| {
             var cur = first;
-            while (cur) |e| : (cur = ast.nodes[e].next_sibling)
+            while (cur) |e| : (cur = ast.node(e).next_sibling)
                 if (subtreeHasComments(ast, e)) return true;
         },
         .mapping => |first| {
             var cur = first;
-            while (cur) |kvid| : (cur = ast.nodes[kvid].next_sibling) {
+            while (cur) |kvid| : (cur = ast.node(kvid).next_sibling) {
                 if (nodeHasComments(ast, kvid)) return true;
-                const kv = ast.nodes[kvid].kind.keyvalue;
+                const kv = ast.node(kvid).kind.keyvalue;
                 if (subtreeHasComments(ast, kv.key)) return true;
                 if (subtreeHasComments(ast, kv.value)) return true;
             }
@@ -375,15 +375,15 @@ fn subtreeHasComments(ast: *const AST, id: AST.Node.Id) bool {
 fn allMappings(ast: *const AST, first: ?AST.Node.Id) bool {
     var cur = first orelse return false;
     while (true) {
-        if (ast.nodes[cur].kind != .mapping) return false;
-        cur = ast.nodes[cur].next_sibling orelse return true;
+        if (ast.node(cur).kind != .mapping) return false;
+        cur = ast.node(cur).next_sibling orelse return true;
     }
 }
 
 // ── Inline value rendering ──────────────────────────────────────────────────
 
 fn writeInline(w: *Writer, ast: *const AST, id: AST.Node.Id) Error!void {
-    switch (ast.nodes[id].kind) {
+    switch (ast.node(id).kind) {
         .null_ => return error.NullUnsupported,
         .boolean => |b| try w.writeAll(if (b) "true" else "false"),
         // A non-finite float arrives in its source's spelling (YAML's `.inf`,
@@ -407,7 +407,7 @@ fn writeInlineArray(w: *Writer, ast: *const AST, first: ?AST.Node.Id) Error!void
     var cur = first;
     while (cur) |id| {
         try writeInline(w, ast, id);
-        cur = ast.nodes[id].next_sibling;
+        cur = ast.node(id).next_sibling;
         if (cur != null) try w.writeAll(", ");
     }
     try w.writeByte(']');
@@ -421,11 +421,11 @@ fn writeInlineTable(w: *Writer, ast: *const AST, first: ?AST.Node.Id) Error!void
     try w.writeAll("{ ");
     var cur = first;
     while (cur) |id| {
-        const kv = ast.nodes[id].kind.keyvalue;
+        const kv = ast.node(id).kind.keyvalue;
         try writeKey(w, ast, kv.key);
         try w.writeAll(" = ");
         try writeInline(w, ast, kv.value);
-        cur = ast.nodes[id].next_sibling;
+        cur = ast.node(id).next_sibling;
         if (cur != null) try w.writeAll(", ");
     }
     try w.writeAll(" }");
@@ -461,7 +461,7 @@ fn tomlSpecial(text: []const u8) []const u8 {
 // ── Keys and strings ────────────────────────────────────────────────────────
 
 fn keyText(ast: *const AST, key_id: AST.Node.Id) Error![]const u8 {
-    return switch (ast.nodes[key_id].kind) {
+    return switch (ast.node(key_id).kind) {
         .string => |s| s,
         else => error.NonStringKey,
     };
@@ -542,7 +542,7 @@ fn writeUnicodeEscape(w: *Writer, char: u8) Writer.Error!void {
 
 pub fn print(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Error!void {
     var ctx = Ctx{ .w = writer, .opts = options };
-    switch (ast.nodes[ast.root].kind) {
+    switch (ast.node(ast.root).kind) {
         .mapping => |first| try ctx.body(ast, ast.root, first, null),
         // A non-table root (e.g. converting a JSON array) has no valid TOML
         // document form; emit the inline value as a best-effort fragment.
@@ -573,7 +573,7 @@ pub fn printSplice(writer: *Writer, ast: *const AST, options: AST.SerializeOptio
 pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize, options: AST.SerializeOptions) Error!void {
     _ = depth;
     var ctx = Ctx{ .w = writer, .opts = options };
-    switch (ast.nodes[id].kind) {
+    switch (ast.node(id).kind) {
         .mapping => |first| try ctx.body(ast, id, first, null),
         else => {
             try writeInline(writer, ast, id);
@@ -898,7 +898,8 @@ test "null value is unsupported" {
         .{ .id = 2, .kind = .{ .string = "k" } },
         .{ .id = 3, .kind = .null_ },
     };
-    const ast = AST{ .allocator = std.testing.allocator, .root = 0, .nodes = &nodes };
+    var ast = try AST.fromNodes(std.testing.allocator, 0, &nodes);
+    defer ast.deinit();
     var output: Writer.Allocating = .init(std.testing.allocator);
     defer output.deinit();
     try std.testing.expectError(error.NullUnsupported, print(&output.writer, &ast, .{}));

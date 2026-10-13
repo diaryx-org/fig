@@ -35,7 +35,7 @@ Between the unit tests and conformance sits one more layer:
 `src/languages/harness.zig`, the checks that hold for *any* format, run over
 every compiled-in dialect. Each format declares a few `samples` in its own
 grammar; the harness parses each, prints it, and reparses it to the same
-tree, checks that `Document.node_regions` is well-formed and that a section
+tree, checks that `Document.regionsOf` is well-formed and that a section
 format's parser fills it, and constructs an `Editor` over it with a no-op
 splice. It also parses every registry row's `empty_doc_seed`. A new format is
 covered by declaring `samples`.

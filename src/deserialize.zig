@@ -97,7 +97,7 @@ fn parseToAst(allocator: std.mem.Allocator, source: []const u8, format: []const 
 
 fn parseValue(comptime T: type, allocator: std.mem.Allocator, ast: *const AST, id: AST.Node.Id, options: Options) Error!T {
     // Resolve a YAML alias to its target (a no-op for every other node/format).
-    const node = ast.nodes[try ast.resolveDeep(ast.nodes[id])];
+    const node = ast.node(try ast.resolveDeep(ast.node(id)));
     return switch (@typeInfo(T)) {
         .bool => switch (node.kind) {
             .boolean => |b| b,
@@ -168,9 +168,9 @@ fn parseStruct(comptime T: type, allocator: std.mem.Allocator, ast: *const AST, 
     var seen: [info.field_names.len]bool = @splat(false);
 
     var cur = first;
-    while (cur) |kvid| : (cur = ast.nodes[kvid].next_sibling) {
-        const kv = ast.nodes[kvid].kind.keyvalue;
-        const key = switch (ast.nodes[kv.key].kind) {
+    while (cur) |kvid| : (cur = ast.node(kvid).next_sibling) {
+        const kv = ast.node(kvid).kind.keyvalue;
+        const key = switch (ast.node(kv.key).kind) {
             .string => |s| s,
             else => continue, // non-string keys can't name a Zig field
         };
@@ -221,12 +221,12 @@ fn parseSlice(comptime T: type, allocator: std.mem.Allocator, ast: *const AST, n
     };
     var count: usize = 0;
     var c = first;
-    while (c) |cid| : (c = ast.nodes[cid].next_sibling) count += 1;
+    while (c) |cid| : (c = ast.node(cid).next_sibling) count += 1;
 
     const out = try allocator.alloc(ptr.child, count);
     c = first;
     var i: usize = 0;
-    while (c) |cid| : (c = ast.nodes[cid].next_sibling) {
+    while (c) |cid| : (c = ast.node(cid).next_sibling) {
         out[i] = try parseValue(ptr.child, allocator, ast, cid, options);
         i += 1;
     }
@@ -242,7 +242,7 @@ fn parseArray(comptime T: type, allocator: std.mem.Allocator, ast: *const AST, n
     var result: T = undefined;
     var c = first;
     var i: usize = 0;
-    while (c) |cid| : (c = ast.nodes[cid].next_sibling) {
+    while (c) |cid| : (c = ast.node(cid).next_sibling) {
         if (i >= arr.len) return error.UnexpectedType; // too many elements
         result[i] = try parseValue(arr.child, allocator, ast, cid, options);
         i += 1;

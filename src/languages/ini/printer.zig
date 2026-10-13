@@ -78,34 +78,34 @@ const Ctx = struct {
         try ctx.w.writeAll("]\n");
         ctx.wrote = true;
         var cur = first_child;
-        while (cur) |id| : (cur = ast.nodes[id].next_sibling) {
-            const kv = ast.nodes[id].kind.keyvalue;
-            if (ast.nodes[kv.value].kind == .mapping) return error.UnsupportedValue; // no nested sections
+        while (cur) |id| : (cur = ast.node(id).next_sibling) {
+            const kv = ast.node(id).kind.keyvalue;
+            if (ast.node(kv.value).kind == .mapping) return error.UnsupportedValue; // no nested sections
             try ctx.kvLine(ast, kv.key, kv.value);
         }
     }
 };
 
 fn isMappingValue(ast: *const AST, kv_id: AST.Node.Id) bool {
-    const kv = ast.nodes[kv_id].kind.keyvalue;
-    return ast.nodes[kv.value].kind == .mapping;
+    const kv = ast.node(kv_id).kind.keyvalue;
+    return ast.node(kv.value).kind == .mapping;
 }
 
 pub fn print(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Error!void {
     var ctx = Ctx{ .w = writer, .opts = options };
-    switch (ast.nodes[ast.root].kind) {
+    switch (ast.node(ast.root).kind) {
         .mapping => |first| {
             var cur = first;
-            while (cur) |id| : (cur = ast.nodes[id].next_sibling) {
+            while (cur) |id| : (cur = ast.node(id).next_sibling) {
                 if (isMappingValue(ast, id)) continue;
-                const kv = ast.nodes[id].kind.keyvalue;
+                const kv = ast.node(id).kind.keyvalue;
                 try ctx.kvLine(ast, kv.key, kv.value);
             }
             cur = first;
-            while (cur) |id| : (cur = ast.nodes[id].next_sibling) {
+            while (cur) |id| : (cur = ast.node(id).next_sibling) {
                 if (!isMappingValue(ast, id)) continue;
-                const kv = ast.nodes[id].kind.keyvalue;
-                try ctx.section(ast, kv.key, ast.nodes[kv.value].kind.mapping);
+                const kv = ast.node(id).kind.keyvalue;
+                try ctx.section(ast, kv.key, ast.node(kv.value).kind.mapping);
                 try ctx.dangling(ast, kv.value);
             }
             try ctx.dangling(ast, ast.root);
@@ -122,7 +122,7 @@ pub fn print(writer: *Writer, ast: *const AST, options: AST.SerializeOptions) Er
 /// full document rooted there, anything else prints as a bare value line.
 pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize, options: AST.SerializeOptions) Error!void {
     _ = depth;
-    switch (ast.nodes[id].kind) {
+    switch (ast.node(id).kind) {
         .mapping => {
             var fragment = ast.*;
             fragment.root = id;
@@ -149,7 +149,7 @@ pub fn printSplice(writer: *Writer, ast: *const AST, options: AST.SerializeOptio
 // ── Keys and values ─────────────────────────────────────────────────────────
 
 fn keyText(ast: *const AST, key_id: AST.Node.Id) Error![]const u8 {
-    return switch (ast.nodes[key_id].kind) {
+    return switch (ast.node(key_id).kind) {
         .string => |s| s,
         else => error.NonStringKey,
     };
@@ -163,7 +163,7 @@ fn writeKey(w: *Writer, ast: *const AST, key_id: AST.Node.Id) Error!void {
 /// cross-format conversion) stringifies to its canonical text; a
 /// sequence/mapping has no INI value form.
 fn writeValue(w: *Writer, ast: *const AST, id: AST.Node.Id) Error!void {
-    switch (ast.nodes[id].kind) {
+    switch (ast.node(id).kind) {
         .string => |s| try writeText(w, s),
         .number => |n| try w.writeAll(n.raw),
         .boolean => |b| try w.writeAll(if (b) "true" else "false"),

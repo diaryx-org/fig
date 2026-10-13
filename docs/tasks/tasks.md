@@ -18,6 +18,7 @@ contents
 > * [Deleting the last item of a YAML block list leaves the key null](/docs/tasks/yaml-block-list-emptied-to-null.md)
 > * [Closed tasks](/docs/tasks/closed/closed.md)
 > * [The Rust helper reads JSON with fig's json format](/docs/tasks/helper-serde-json.md)
+> * [The Zig parsers write rows](/docs/tasks/zig-parsers-write-rows.md)
 ```
 
 # Tasks

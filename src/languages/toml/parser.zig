@@ -13,8 +13,9 @@ const Parser = @This();
 
 const std = @import("std");
 const testing = std.testing;
-const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/document.zig");
+const Document = @import("../../kit/parse_tree.zig");
+const AST = Document.Nodes;
+
 const Type = @import("toml.zig").Type;
 const util = @import("../../kit/kit.zig");
 const Span = @import("../../kit/span.zig");
@@ -318,12 +319,9 @@ fn parseImpl(allocator: std.mem.Allocator, input: []const u8, format: Type, out:
     };
 }
 
-pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!AST {
-    const doc = try parse(allocator, input, format);
-    allocator.free(doc.node_spans);
-    allocator.free(doc.node_regions);
-    allocator.free(doc.node_mentions);
-    return doc.ast;
+pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!Document.RowAst {
+    var tree = try parse(allocator, input, format);
+    return tree.intoAst(allocator);
 }
 
 /// One top-level statement (`key = value` / `[table]` / `[[array.of.tables]]`)
@@ -1345,7 +1343,7 @@ test "parses empty / comment-only documents" {
     for (inputs) |input| {
         var doc = try parse(testing.allocator, input, .TOML_1_0);
         defer doc.deinit(testing.allocator);
-        try testing.expect(doc.ast.nodes[doc.ast.root].kind == .mapping);
+        try testing.expect(doc.ast.node(doc.ast.root).kind == .mapping);
     }
 }
 

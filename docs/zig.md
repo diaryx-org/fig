@@ -211,10 +211,10 @@ answer the whole-container operations listed near the end of that section.
 
 ## Reading data
 
-`Runtime.Language.Parser.parse` gives you a `Document`: the parsed `AST`
-plus a `node_spans` table mapping each node back to its byte range in
-`source`. `source` is *borrowed* — keep it alive as long as the `Document`
-is:
+`Runtime.Language.Parser.parse` gives you a `Document`: the source and the
+parsed `AST`, which is the node table the language filled — one row per
+node, with its span — adopted as it stands. `source` is *borrowed* — keep it
+alive as long as the `Document` is:
 
 ```zig
 const toml = fig.Runtime.entryByName("toml").?;
@@ -240,8 +240,10 @@ high-level accessors; `getValByPath` unwraps a `keyvalue` entry to its value,
 `getKeyByPath` to its key, `getNodeByPath` returns the raw entry node
 unwrapped either way. Lower-level walking is also available for hand-rolled
 traversal: `ast.child(&node)`/`ast.next(&node)`/`ast.lastChild(&node)` follow
-a container's first child and sibling chain; `doc.ast.nodes[id]` indexes any
-node by id; `doc.span(node)` recovers its source byte range.
+a container's first child and sibling chain; `doc.ast.node(id)` reads any
+node by id, as a `Node` whose `kind` you can switch on, and
+`doc.ast.nodeCount()` says how many there are; `doc.ast.parentOf(id)` goes
+up; `doc.span(node)` recovers its source byte range.
 
 YAML's reference layer (anchors/aliases/`<<` merges) is opt-in and separate
 from default navigation, which treats an alias as an opaque leaf:
@@ -676,7 +678,7 @@ almost always paired with `defer` right after construction:
 ```zig
 const yaml = fig.Runtime.entryByName("yaml").?;
 const doc = try fig.Runtime.Language.Parser.parse(allocator, source, yaml.typeOf());
-defer doc.deinit(allocator); // frees ast, node_spans, and friends
+defer doc.deinit(allocator); // frees the AST's rows, buffer and side facts
 
 var ed: fig.Editor(fig.Runtime.Language) = .{ .allocator = allocator, .format = yaml.typeOf() };
 defer ed.deinit(); // frees its internal Document + source buffer
@@ -693,8 +695,7 @@ defer b.deinit(); // harmless no-op after a successful `finish()`
 ```
 
 `AST.deinit()` (called via `Document.deinit`, or directly on an AST you built/
-decoded yourself) frees `nodes`, `owned_strings`, and the tag/anchor/comment
-side-tables. A registration lives as long as the process: the registry
+decoded yourself) frees its rows, its string buffer and its side facts. A registration lives as long as the process: the registry
 frees nothing until it ends. A `Document`'s `source` is always borrowed — freeing it, if it
 was heap-allocated in the first place, is the caller's responsibility, done
 only *after* the `Document` that borrows it is itself freed.
@@ -711,9 +712,11 @@ only *after* the `Document` that borrows it is itself freed.
   `Language`/`module` (a language's Zig module), `dialect_names`.
 - `Language` — the Zig language contract: `validate`, and the declaration
   types (`Caps`, `Syntax`, `Dialect`, `Prints`, …).
-- `Document` — `{ source, ast, node_spans, ... }`; `deinit`, `span`,
-  `anchorSpan`, `tagSpan`.
-- `AST` — the value tree: `Node`/`Node.Kind`, path navigation
+- `Document` — `{ source, ast }`; `deinit`, `span`/`spanOf`,
+  `anchorSpan`, `tagSpan`, `markerSpan`, `sepSpan`, `itemSep`, `regionsOf`,
+  `mentionsOf`.
+- `AST` — the value tree, stored as the node table: `node(id)`/`kindOf`/
+  `nodeCount`/`parentOf`, `tagOf`/`tagFact`, `anchorOf`, `comments`, path navigation
   (`getValByPath`/`getKeyByPath`/`getNodeByPath`/`child`/`next`/`lastChild`),
   reference-layer resolution (`resolveAlias`/`resolveDeep`/`mergedChild`),
   `SerializeOptions`, and `AST.Builder` (the write path).

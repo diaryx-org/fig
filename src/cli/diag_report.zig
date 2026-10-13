@@ -334,8 +334,8 @@ fn reportMaterializeErrorImpl(term: *Io.Terminal, err: fig.Materialize.Error, do
     // The span to point at: the tag for a tag failure, the alias itself for
     // a cycle. Null when there is nothing to point into.
     const span: ?fig.Span = if (node) |id| switch (err) {
-        error.AliasCycle => if (id < doc.node_spans.len) doc.node_spans[id] else null,
-        else => doc.tagSpan(doc.ast.nodes[id]),
+        error.AliasCycle => if (id < doc.ast.nodeCount()) doc.spanOf(id) else null,
+        else => doc.tagSpan(doc.ast.node(id)),
     } else null;
     const tag: ?[]const u8 = if (span) |s| (if (err != error.AliasCycle and s.end <= source.len) source[s.start..s.end] else null) else null;
 

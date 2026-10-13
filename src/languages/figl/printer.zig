@@ -62,7 +62,7 @@ const WidthMemo = struct { done: bool = false, width: ?usize = null };
 writer: *Writer,
 ast: *const AST,
 options: AST.SerializeOptions,
-/// Per-node-id `inlineWidth` cache, sized to `ast.nodes.len` by the entry
+/// Per-node-id `inlineWidth` cache, sized to `ast.nodeCount()` by the entry
 /// points. Empty (`&.{}`) if the one-time allocation failed — the width
 /// helpers fall back to recomputing, so the cache is a pure speedup, never a
 /// correctness dependency.
@@ -106,7 +106,7 @@ pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize
     var p: Printer = .{ .writer = writer, .ast = ast, .options = options };
     const memo = p.initWidthMemo();
     defer if (memo) |m| ast.allocator.free(m);
-    switch (ast.nodes[id].kind) {
+    switch (ast.node(id).kind) {
         .mapping => if (depth == 0) {
             try p.emitSections(id);
             for (p.danglingOf(id)) |c| try p.commentLines(c, 0);
@@ -143,7 +143,7 @@ fn root(self: *Printer, id: AST.Node.Id, mode: RootMode) Error!void {
     // spelling that survives the round-trip; scalar fragments fall through
     // unchanged.
     if (mode == .fragment and self.options.flow) {
-        switch (self.ast.nodes[id].kind) {
+        switch (self.ast.node(id).kind) {
             .mapping, .sequence => {
                 try self.flowValue(id);
                 try self.writer.writeByte('\n');
@@ -152,7 +152,7 @@ fn root(self: *Printer, id: AST.Node.Id, mode: RootMode) Error!void {
             else => {},
         }
     }
-    switch (self.ast.nodes[id].kind) {
+    switch (self.ast.node(id).kind) {
         .mapping => {
             try self.emitSections(id);
             for (self.danglingOf(id)) |c| try self.commentLines(c, 0);
@@ -181,8 +181,8 @@ fn root(self: *Printer, id: AST.Node.Id, mode: RootMode) Error!void {
 // ── Section emission (document root) ────────────────────────────────────────
 
 fn emitSections(self: *Printer, map_id: AST.Node.Id) Error!void {
-    var cur = self.ast.nodes[map_id].kind.mapping;
-    while (cur) |kv_id| : (cur = self.ast.nodes[kv_id].next_sibling) {
+    var cur = self.ast.node(map_id).kind.mapping;
+    while (cur) |kv_id| : (cur = self.ast.node(kv_id).next_sibling) {
         try self.emitSection(kv_id);
     }
 }
@@ -190,7 +190,7 @@ fn emitSections(self: *Printer, map_id: AST.Node.Id) Error!void {
 /// Emit one map entry at section level: the current dotted `path` plus this
 /// entry's key names the target, and the value's shape picks the spelling.
 fn emitSection(self: *Printer, kv_id: AST.Node.Id) Error!void {
-    const kv = self.ast.nodes[kv_id].kind.keyvalue;
+    const kv = self.ast.node(kv_id).kind.keyvalue;
     self.path[self.path_len] = kv.key;
     self.path_len += 1;
     defer self.path_len -= 1;
@@ -200,7 +200,7 @@ fn emitSection(self: *Printer, kv_id: AST.Node.Id) Error!void {
     if (can_extend) if (self.collapseChild(kv_id)) |child| return self.emitSection(child);
 
     const v = kv.value;
-    switch (self.ast.nodes[v].kind) {
+    switch (self.ast.node(v).kind) {
         .mapping => |first_opt| {
             if (self.fitsInline(v, self.pathWidth() + assign_op_width, .allow_trailing))
                 return self.sectionAssign(kv.key, v);
@@ -223,26 +223,26 @@ fn emitSection(self: *Printer, kv_id: AST.Node.Id) Error!void {
                     // Measure the run of consecutive flat children at `cur`.
                     var run_len: usize = 0;
                     var scan = cur;
-                    while (scan) |child| : (scan = self.ast.nodes[child].next_sibling) {
+                    while (scan) |child| : (scan = self.ast.node(child).next_sibling) {
                         if (!self.isFlatChild(child)) break;
                         run_len += 1;
                     }
                     if (run_len == 1) {
                         try self.emitSection(cur.?);
-                        cur = self.ast.nodes[cur.?].next_sibling;
+                        cur = self.ast.node(cur.?).next_sibling;
                     } else if (run_len >= 2) {
                         try self.beginSection(true, null);
                         try self.writePath();
                         try self.writer.writeByte('\n');
                         for (0..run_len) |_| {
                             try self.mapEntryLine(cur.?, 1);
-                            cur = self.ast.nodes[cur.?].next_sibling;
+                            cur = self.ast.node(cur.?).next_sibling;
                         }
                     }
                     // `cur` now sits on a deep child (or the end).
                     if (cur) |deep| {
                         try self.emitSection(deep);
-                        cur = self.ast.nodes[deep].next_sibling;
+                        cur = self.ast.node(deep).next_sibling;
                     }
                 }
                 return;
@@ -284,7 +284,7 @@ fn emitSection(self: *Printer, kv_id: AST.Node.Id) Error!void {
 fn sectionAssign(self: *Printer, anchor_key: AST.Node.Id, v: AST.Node.Id) Error!void {
     try self.beginSection(false, anchor_key);
     try self.writePath();
-    switch (self.ast.nodes[v].kind) {
+    switch (self.ast.node(v).kind) {
         .mapping, .sequence => {
             try self.writer.writeAll(" = ");
             try self.flowValue(v);
@@ -315,10 +315,10 @@ fn sectionMultilineFlowSeq(self: *Printer, anchor_key: AST.Node.Id, v: AST.Node.
 /// `path[]` for the first element, `+` for each further one. Emitted as ONE
 /// section (blank lines around the group, none inside it).
 fn emitAppendGroup(self: *Printer, seq_id: AST.Node.Id) Error!void {
-    var cur = self.ast.nodes[seq_id].kind.sequence;
+    var cur = self.ast.node(seq_id).kind.sequence;
     var i: usize = 0;
     while (cur) |el| : ({
-        cur = self.ast.nodes[el].next_sibling;
+        cur = self.ast.node(el).next_sibling;
         i += 1;
     }) {
         if (i == 0) try self.beginSection(true, null);
@@ -364,8 +364,8 @@ fn pathWidth(self: *const Printer) usize {
 /// its own nested body — get hoisted to their own sections instead.
 fn isFlatChild(self: *const Printer, kv_id: AST.Node.Id) bool {
     const chain = self.resolveChain(kv_id);
-    const end = self.ast.nodes[chain.end_kv].kind.keyvalue;
-    return switch (self.ast.nodes[end.value].kind) {
+    const end = self.ast.node(chain.end_kv).kind.keyvalue;
+    return switch (self.ast.node(end.value).kind) {
         .mapping => self.fitsInline(end.value, mapEntryPrefixWidth(1, chain.key_width), .allow_trailing),
         // Past the item-count threshold a sequence stacks (multiple lines), so
         // it is not flat — `seqFitsInline` is the shared rule mapEntryLine uses.
@@ -375,17 +375,17 @@ fn isFlatChild(self: *const Printer, kv_id: AST.Node.Id) bool {
 }
 
 fn allElementsMappings(self: *const Printer, seq_id: AST.Node.Id) bool {
-    var cur = self.ast.nodes[seq_id].kind.sequence;
-    while (cur) |el| : (cur = self.ast.nodes[el].next_sibling) {
-        if (self.ast.nodes[el].kind != .mapping) return false;
+    var cur = self.ast.node(seq_id).kind.sequence;
+    while (cur) |el| : (cur = self.ast.node(el).next_sibling) {
+        if (self.ast.node(el).kind != .mapping) return false;
     }
     return true;
 }
 
 fn seqLen(self: *const Printer, seq_id: AST.Node.Id) usize {
     var n: usize = 0;
-    var cur = self.ast.nodes[seq_id].kind.sequence;
-    while (cur) |el| : (cur = self.ast.nodes[el].next_sibling) n += 1;
+    var cur = self.ast.node(seq_id).kind.sequence;
+    while (cur) |el| : (cur = self.ast.node(el).next_sibling) n += 1;
     return n;
 }
 
@@ -404,9 +404,9 @@ fn mapEntryPrefixWidth(depth: usize, key_width: usize) usize {
 }
 
 fn hasMappingElement(self: *const Printer, seq_id: AST.Node.Id) bool {
-    var cur = self.ast.nodes[seq_id].kind.sequence;
-    while (cur) |el| : (cur = self.ast.nodes[el].next_sibling) {
-        if (self.ast.nodes[el].kind == .mapping) return true;
+    var cur = self.ast.node(seq_id).kind.sequence;
+    while (cur) |el| : (cur = self.ast.node(el).next_sibling) {
+        if (self.ast.node(el).kind == .mapping) return true;
     }
     return false;
 }
@@ -422,7 +422,7 @@ fn hasMappingElement(self: *const Printer, seq_id: AST.Node.Id) bool {
 /// here only after the inline form was rejected for width or the item-count
 /// threshold.
 fn multilineFlowEligible(self: *const Printer, seq_id: AST.Node.Id, policy: CommentPolicy) bool {
-    if (self.ast.nodes[seq_id].kind.sequence == null) return false; // empty → `= []`
+    if (self.ast.node(seq_id).kind.sequence == null) return false; // empty → `= []`
     if (self.hasMappingElement(seq_id)) return false;
     if (self.flowQuotesWhatBlockLeavesBare(seq_id)) return false;
     return self.inlineWidth(seq_id, policy) != null;
@@ -439,11 +439,11 @@ fn multilineFlowEligible(self: *const Printer, seq_id: AST.Node.Id, policy: Comm
 /// flow-quoted too when the outer value stays flow); map elements never reach
 /// here (excluded by `multilineFlowEligible`).
 fn flowQuotesWhatBlockLeavesBare(self: *const Printer, id: AST.Node.Id) bool {
-    switch (self.ast.nodes[id].kind) {
+    switch (self.ast.node(id).kind) {
         .string => |s| return !isBareSafe(s, false, .list) and isBareSafe(s, false, .block),
         .sequence => |first_opt| {
             var cur = first_opt;
-            while (cur) |el| : (cur = self.ast.nodes[el].next_sibling) {
+            while (cur) |el| : (cur = self.ast.node(el).next_sibling) {
                 if (self.flowQuotesWhatBlockLeavesBare(el)) return true;
             }
             return false;
@@ -468,10 +468,10 @@ fn multilineFlowSeq(self: *Printer, seq_id: AST.Node.Id, indent: usize, comment_
     if (comment_anchor) |a| try self.trailingComment(a);
     try self.writer.writeByte('\n');
     const inner = indent + 2;
-    var cur = self.ast.nodes[seq_id].kind.sequence;
-    while (cur) |el| : (cur = self.ast.nodes[el].next_sibling) {
+    var cur = self.ast.node(seq_id).kind.sequence;
+    while (cur) |el| : (cur = self.ast.node(el).next_sibling) {
         for (0..inner) |_| try self.writer.writeByte(' ');
-        const el_node = self.ast.nodes[el];
+        const el_node = self.ast.node(el);
         if (el_node.kind == .sequence and el_node.kind.sequence != null and
             !self.seqFitsInline(el, inner + 1, .strict)) // +1: the trailing comma
         {
@@ -488,7 +488,7 @@ fn multilineFlowSeq(self: *Printer, seq_id: AST.Node.Id, indent: usize, comment_
 // ── Block bodies ─────────────────────────────────────────────────────────────
 
 fn body(self: *Printer, id: AST.Node.Id, depth: usize) Error!void {
-    switch (self.ast.nodes[id].kind) {
+    switch (self.ast.node(id).kind) {
         .mapping => try self.mapBody(id, depth),
         .sequence => try self.seqBody(id, depth),
         // `body` is only reached for containers today, but it is on the
@@ -501,8 +501,8 @@ fn body(self: *Printer, id: AST.Node.Id, depth: usize) Error!void {
 /// Emit every entry of map `id` as block lines at `depth` (then the map's own
 /// dangling comment run).
 fn mapBody(self: *Printer, map_id: AST.Node.Id, depth: usize) Error!void {
-    var cur = self.ast.nodes[map_id].kind.mapping;
-    while (cur) |kv_id| : (cur = self.ast.nodes[kv_id].next_sibling) {
+    var cur = self.ast.node(map_id).kind.mapping;
+    while (cur) |kv_id| : (cur = self.ast.node(kv_id).next_sibling) {
         try self.mapEntryLine(kv_id, depth);
     }
     for (self.danglingOf(map_id)) |c| try self.commentLines(c, depth);
@@ -512,13 +512,13 @@ fn mapBody(self: *Printer, map_id: AST.Node.Id, depth: usize) Error!void {
 /// (collapsed) dotted key, then value — inline, nested body, or scalar.
 fn mapEntryLine(self: *Printer, kv_id: AST.Node.Id, depth: usize) Error!void {
     const chain = self.resolveChain(kv_id);
-    const end = self.ast.nodes[chain.end_kv].kind.keyvalue;
+    const end = self.ast.node(chain.end_kv).kind.keyvalue;
     try self.leadingComments(end.key, depth);
     try self.writeMarkers(depth);
     try self.writeChainKeys(kv_id, chain.end_kv);
     const v = end.value;
     const prefix_width = mapEntryPrefixWidth(depth, chain.key_width);
-    switch (self.ast.nodes[v].kind) {
+    switch (self.ast.node(v).kind) {
         .mapping => {
             if (self.fitsInline(v, prefix_width, .allow_trailing)) {
                 try self.writer.writeAll(" = ");
@@ -562,11 +562,11 @@ fn mapEntryLine(self: *Printer, kv_id: AST.Node.Id, depth: usize) Error!void {
 /// Emit every element of sequence `id` as `> *` lines at `depth` (bare `*` at
 /// the root), then the sequence's own dangling comment run.
 fn seqBody(self: *Printer, seq_id: AST.Node.Id, depth: usize) Error!void {
-    var cur = self.ast.nodes[seq_id].kind.sequence;
-    while (cur) |el| : (cur = self.ast.nodes[el].next_sibling) {
+    var cur = self.ast.node(seq_id).kind.sequence;
+    while (cur) |el| : (cur = self.ast.node(el).next_sibling) {
         try self.leadingComments(el, depth);
         try self.writeElementMarkers(depth);
-        switch (self.ast.nodes[el].kind) {
+        switch (self.ast.node(el).kind) {
             .mapping => {
                 // Element leading comments are already printed, so they don't
                 // block the inline form.
@@ -628,7 +628,7 @@ fn budget(self: *const Printer) usize {
 /// on `self`. Returns the owned slice for the caller to free (or null if the
 /// allocation failed — the width helpers degrade to recomputing).
 fn initWidthMemo(self: *Printer) ?[]WidthMemo {
-    const memo = self.ast.allocator.alloc(WidthMemo, self.ast.nodes.len) catch return null;
+    const memo = self.ast.allocator.alloc(WidthMemo, self.ast.nodeCount()) catch return null;
     @memset(memo, .{});
     self.width_memo = memo;
     return memo;
@@ -680,7 +680,7 @@ fn computeInlineWidth(self: *const Printer, id: AST.Node.Id) ?usize {
     // doesn't count: the emitted document is untagged, so treating the node as
     // tagged here would break fmt idempotence.
     if (self.emittableKindTag(id) != null) return null;
-    switch (self.ast.nodes[id].kind) {
+    switch (self.ast.node(id).kind) {
         .null_ => return 4,
         .boolean => |b| return @as(usize, if (b) 4 else 5),
         .number => |n| return n.raw.len,
@@ -699,7 +699,7 @@ fn computeInlineWidth(self: *const Printer, id: AST.Node.Id) ?usize {
             var cur = first_opt;
             var i: usize = 0;
             while (cur) |el| : ({
-                cur = self.ast.nodes[el].next_sibling;
+                cur = self.ast.node(el).next_sibling;
                 i += 1;
             }) {
                 const ew = self.inlineWidth(el, .strict) orelse return null;
@@ -713,12 +713,12 @@ fn computeInlineWidth(self: *const Printer, id: AST.Node.Id) ?usize {
             var cur = first_opt;
             var i: usize = 0;
             while (cur) |kv_id| : ({
-                cur = self.ast.nodes[kv_id].next_sibling;
+                cur = self.ast.node(kv_id).next_sibling;
                 i += 1;
             }) {
-                const kv = self.ast.nodes[kv_id].kind.keyvalue;
+                const kv = self.ast.node(kv_id).kind.keyvalue;
                 if (self.commentsOn() and self.ast.comments(kv.key).leading.len > 0) return null;
-                if (self.ast.nodes[kv.value].kind == .mapping) return null; // object-in-object
+                if (self.ast.node(kv.value).kind == .mapping) return null; // object-in-object
                 const vw = self.compactValueWidth(kv.value) orelse return null;
                 w += self.keyWidth(kv.key) + 1 + vw + (if (i > 0) @as(usize, 1) else 0); // "=", " "
             }
@@ -731,7 +731,7 @@ fn computeInlineWidth(self: *const Printer, id: AST.Node.Id) ?usize {
 /// its bare-or-quoted width is the compact one (`isBareSafe(.compact)`).
 fn compactValueWidth(self: *const Printer, id: AST.Node.Id) ?usize {
     const w = self.inlineWidth(id, .strict) orelse return null;
-    return switch (self.ast.nodes[id].kind) {
+    return switch (self.ast.node(id).kind) {
         .string => |s| scalarStringWidth(s, false, .compact),
         else => w,
     };
@@ -741,11 +741,11 @@ fn compactValueWidth(self: *const Printer, id: AST.Node.Id) ?usize {
 /// header-vs-hoist at section level. Mirrors mapBody's decisions exactly.
 fn blockDepthMap(self: *const Printer, map_id: AST.Node.Id, depth: usize) usize {
     var maxd = depth;
-    var cur = self.ast.nodes[map_id].kind.mapping;
-    while (cur) |kv_id| : (cur = self.ast.nodes[kv_id].next_sibling) {
+    var cur = self.ast.node(map_id).kind.mapping;
+    while (cur) |kv_id| : (cur = self.ast.node(kv_id).next_sibling) {
         const chain = self.resolveChain(kv_id);
-        const end = self.ast.nodes[chain.end_kv].kind.keyvalue;
-        switch (self.ast.nodes[end.value].kind) {
+        const end = self.ast.node(chain.end_kv).kind.keyvalue;
+        switch (self.ast.node(end.value).kind) {
             .mapping => {
                 if (self.fitsInline(end.value, mapEntryPrefixWidth(depth, chain.key_width), .allow_trailing)) continue;
                 maxd = @max(maxd, self.blockDepthMap(end.value, depth + 1));
@@ -763,9 +763,9 @@ fn blockDepthMap(self: *const Printer, map_id: AST.Node.Id, depth: usize) usize 
 
 fn blockDepthSeq(self: *const Printer, seq_id: AST.Node.Id, depth: usize) usize {
     var maxd = depth;
-    var cur = self.ast.nodes[seq_id].kind.sequence;
-    while (cur) |el| : (cur = self.ast.nodes[el].next_sibling) {
-        switch (self.ast.nodes[el].kind) {
+    var cur = self.ast.node(seq_id).kind.sequence;
+    while (cur) |el| : (cur = self.ast.node(el).next_sibling) {
+        switch (self.ast.node(el).kind) {
             .mapping => {
                 if (self.fitsInline(el, elementPrefixWidth(depth), .allow_leading_trailing)) continue;
                 maxd = @max(maxd, self.blockDepthMap(el, depth + 1));
@@ -793,10 +793,10 @@ const Chain = struct { end_kv: AST.Node.Id, key_width: usize };
 /// maps as far as comment anchors allow, accumulating the dotted key width.
 fn resolveChain(self: *const Printer, kv_id: AST.Node.Id) Chain {
     var cur = kv_id;
-    var w = self.keyWidth(self.ast.nodes[cur].kind.keyvalue.key);
+    var w = self.keyWidth(self.ast.node(cur).kind.keyvalue.key);
     while (self.collapseChild(cur)) |child| {
         cur = child;
-        w += 1 + self.keyWidth(self.ast.nodes[cur].kind.keyvalue.key);
+        w += 1 + self.keyWidth(self.ast.node(cur).kind.keyvalue.key);
     }
     return .{ .end_kv = cur, .key_width = w };
 }
@@ -807,11 +807,11 @@ fn resolveChain(self: *const Printer, kv_id: AST.Node.Id) Chain {
 /// leading run (it would re-anchor onto the chain's final key) and the
 /// intermediate map's own comments (its line disappears entirely).
 fn collapseChild(self: *const Printer, kv_id: AST.Node.Id) ?AST.Node.Id {
-    const kv = self.ast.nodes[kv_id].kind.keyvalue;
-    switch (self.ast.nodes[kv.value].kind) {
+    const kv = self.ast.node(kv_id).kind.keyvalue;
+    switch (self.ast.node(kv.value).kind) {
         .mapping => |first_opt| {
             const first = first_opt orelse return null;
-            if (self.ast.nodes[first].next_sibling != null) return null;
+            if (self.ast.node(first).next_sibling != null) return null;
             if (self.commentsOn()) {
                 if (self.ast.comments(kv.key).leading.len > 0) return null;
                 const vc = self.ast.comments(kv.value);
@@ -827,11 +827,11 @@ fn collapseChild(self: *const Printer, kv_id: AST.Node.Id) ?AST.Node.Id {
 /// `end_kv`'s, joined by `.`.
 fn writeChainKeys(self: *Printer, kv_id: AST.Node.Id, end_kv: AST.Node.Id) Error!void {
     var cur = kv_id;
-    try self.writeKey(self.ast.nodes[cur].kind.keyvalue.key);
+    try self.writeKey(self.ast.node(cur).kind.keyvalue.key);
     while (cur != end_kv) {
         cur = self.collapseChild(cur).?;
         try self.writer.writeByte('.');
-        try self.writeKey(self.ast.nodes[cur].kind.keyvalue.key);
+        try self.writeKey(self.ast.node(cur).kind.keyvalue.key);
     }
 }
 
@@ -882,7 +882,7 @@ fn writeElementMarkers(self: *Printer, depth: usize) Error!void {
 }
 
 fn writeKey(self: *Printer, key_id: AST.Node.Id) Error!void {
-    const name = switch (self.ast.nodes[key_id].kind) {
+    const name = switch (self.ast.node(key_id).kind) {
         .string => |s| s,
         else => return error.NonStringKey,
     };
@@ -890,17 +890,17 @@ fn writeKey(self: *Printer, key_id: AST.Node.Id) Error!void {
 }
 
 fn keyWidth(self: *const Printer, key_id: AST.Node.Id) usize {
-    return switch (self.ast.nodes[key_id].kind) {
+    return switch (self.ast.node(key_id).kind) {
         .string => |s| scalarStringWidth(s, true, .block),
         else => 0, // fails with NonStringKey at write time regardless
     };
 }
 
-/// The `.kind` type tag on `id` (`ast.node_tags`), or null when the node is
+/// The `.kind` type tag on `id` (`ast.tagOf`), or null when the node is
 /// untagged or carries a verbatim `.text` tag (a YAML custom tag fig can't
 /// spell). This is how a fig `: type =` annotation round-trips.
 fn kindTagOf(self: *const Printer, id: AST.Node.Id) ?AST.Tag.KindTag {
-    if (id < self.ast.node_tags.len) if (self.ast.node_tags[id]) |t| switch (t) {
+    if (self.ast.tagOf(id)) |t| switch (t) {
         .kind => |k| return k,
         .text => {},
     };
@@ -920,7 +920,7 @@ fn isStringTagged(self: *const Printer, id: AST.Node.Id) bool {
 /// ordinary untagged quoted/multiline form instead of corrupting the value.
 fn emittableKindTag(self: *const Printer, id: AST.Node.Id) ?AST.Tag.KindTag {
     const k = self.kindTagOf(id) orelse return null;
-    if (k == .string) switch (self.ast.nodes[id].kind) {
+    if (k == .string) switch (self.ast.node(id).kind) {
         .string => |s| if (!isTotalSinkSafe(s)) return null,
         else => {},
     };
@@ -929,7 +929,7 @@ fn emittableKindTag(self: *const Printer, id: AST.Node.Id) ?AST.Tag.KindTag {
 
 /// Write an explicit `: type` annotation for `id`, if it needs one. Two sources:
 /// a stored `.kind` type tag (a fig `: int/float/string/bool =` that round-trips
-/// via `ast.node_tags`), or an `extended` scalar with no bare spelling
+/// via `ast.tagOf`), or an `extended` scalar with no bare spelling
 /// (`enum_literal`/`number_special`, DESIGN.md "Enum: explicit-only"). Returns
 /// whether an annotation was written (an annotated line needs ` = ` where a
 /// plain one has a space).
@@ -954,7 +954,7 @@ fn writeTypeAnnotation(self: *Printer, id: AST.Node.Id) Error!bool {
         // null/seq/map carry no fig `: type =` spelling — emit no annotation.
         .null_, .sequence, .mapping => {},
     };
-    switch (self.ast.nodes[id].kind) {
+    switch (self.ast.node(id).kind) {
         .extended => |e| switch (e.kind) {
             .enum_literal => {
                 try self.writer.writeAll(": enum");
@@ -983,7 +983,7 @@ const Pos = enum { block, list, compact };
 /// A scalar (or, in flow position, any) value.
 fn value(self: *Printer, id: AST.Node.Id, pos: Pos) Error!void {
     const in_flow = pos != .block;
-    switch (self.ast.nodes[id].kind) {
+    switch (self.ast.node(id).kind) {
         .null_ => try self.writer.writeAll("null"),
         .boolean => |b| try self.writer.writeAll(if (b) "true" else "false"),
         .number => |n| try self.writer.writeAll(n.raw),
@@ -1009,13 +1009,13 @@ fn value(self: *Printer, id: AST.Node.Id, pos: Pos) Error!void {
 
 /// A container in flow spelling: `[a, b]` / `{x=1 y=2}` (compact pairs).
 fn flowValue(self: *Printer, id: AST.Node.Id) Error!void {
-    switch (self.ast.nodes[id].kind) {
+    switch (self.ast.node(id).kind) {
         .sequence => |first_opt| {
             try self.writer.writeByte('[');
             var cur = first_opt;
             var i: usize = 0;
             while (cur) |el| : ({
-                cur = self.ast.nodes[el].next_sibling;
+                cur = self.ast.node(el).next_sibling;
                 i += 1;
             }) {
                 if (i > 0) try self.writer.writeAll(", ");
@@ -1032,11 +1032,11 @@ fn flowValue(self: *Printer, id: AST.Node.Id) Error!void {
             var cur = first_opt;
             var i: usize = 0;
             while (cur) |kv_id| : ({
-                cur = self.ast.nodes[kv_id].next_sibling;
+                cur = self.ast.node(kv_id).next_sibling;
                 i += 1;
             }) {
                 if (i > 0) try self.writer.writeByte(' ');
-                const kv = self.ast.nodes[kv_id].kind.keyvalue;
+                const kv = self.ast.node(kv_id).kind.keyvalue;
                 try self.writeKey(kv.key);
                 try self.writer.writeByte('=');
                 try self.value(kv.value, .compact);
@@ -2034,11 +2034,7 @@ test "a : string value containing quote characters round-trips bare" {
 /// produce for this value (a YAML `!!str`, a builder API), so the printer's
 /// drop-the-tag guard can be pinned.
 fn injectStringTag(ast: *AST, id: AST.Node.Id) !void {
-    const tags = try std.testing.allocator.alloc(?AST.Tag, ast.nodes.len);
-    @memset(tags, null);
-    tags[id] = .{ .kind = .string };
-    std.testing.allocator.free(ast.node_tags);
-    ast.node_tags = tags;
+    try ast.setTag(id, .{ .kind = .string });
 }
 
 /// Print `ast`, assert the exact bytes, then re-parse and assert the value at
@@ -2055,7 +2051,7 @@ fn expectTagDropped(ast: *AST, expected: []const u8, want_value: []const u8) !vo
     defer ast2.deinit();
     const v = try ast2.getValByPath(&.{.{ .key = "s" }});
     try std.testing.expectEqualStrings(want_value, v.kind.string);
-    if (v.id < ast2.node_tags.len) try std.testing.expect(ast2.node_tags[v.id] == null);
+    try std.testing.expect(ast2.tagOf(v.id) == null);
     var out2: Writer.Allocating = .init(std.testing.allocator);
     defer out2.deinit();
     try print(&out2.writer, &ast2, .{});

@@ -2,8 +2,8 @@
 //!
 //! No YAML-specific editing logic is left. The generic span-splice engine in
 //! `../../editor.zig` does every edit, driven by `yaml.zig`'s `syntax` and by
-//! what `parser.zig` records — every entry's `:` in `Document.node_sep_spans`,
-//! every item's `-` in `node_marker_spans`, the anchor and tag spans — and by
+//! what `parser.zig` records — every entry's `:` in `Document.sepSpan`,
+//! every item's `-` in `Document.markerSpan`, the anchor and tag spans — and by
 //! the reference layer that is core: the alias node kind, `AST.resolveAlias`
 //! and `AST.mergedChild`. This module used to hold three hooks: the value
 //! reframe (re-emitting `: value` so a block collection can replace an inline

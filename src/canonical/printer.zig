@@ -80,7 +80,7 @@ pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize
 
 fn node(self: *Printer, id: AST.Node.Id, depth: usize) Error!void {
     try self.prefixes(id);
-    const n = self.ast.nodes[id];
+    const n = self.ast.node(id);
     switch (n.kind) {
         .null_ => try self.writer.writeAll("null"),
         .boolean => |value| try self.writer.writeAll(if (value) "true" else "false"),
@@ -126,14 +126,14 @@ fn node(self: *Printer, id: AST.Node.Id, depth: usize) Error!void {
 /// empty for non-YAML documents, so the length guard short-circuits there.
 fn prefixes(self: *Printer, id: AST.Node.Id) Error!void {
     const a = self.ast;
-    if (id < a.node_anchors.len) if (a.node_anchors[id]) |name| {
+    if (a.anchorOf(id)) |name| {
         try self.writer.writeByte('&');
         try self.writer.writeAll(name);
         try self.writer.writeByte(' ');
-    };
+    }
     // A `.text` tag prints verbatim (leading `!` included, e.g. `!!str`); a
     // normalized `.kind` tag (fig/builder origin) prints as its core shorthand.
-    if (id < a.node_tags.len) if (a.node_tags[id]) |tag| {
+    if (a.tagOf(id)) |tag| {
         try self.writer.writeAll(switch (tag) {
             .text => |t| t,
             .kind => |k| switch (k) {
@@ -147,7 +147,7 @@ fn prefixes(self: *Printer, id: AST.Node.Id) Error!void {
             },
         });
         try self.writer.writeByte(' ');
-    };
+    }
 }
 
 /// Render a number's raw lexeme verbatim. If the lexeme's implied kind disagrees
@@ -200,7 +200,7 @@ fn container(self: *Printer, node_id: AST.Node.Id, open: u8, close: u8, first_ch
         try self.leadingComments(self.ast.leadingCommentAnchor(id), depth + 1);
         try self.writeIndent(depth + 1);
         try self.node(id, depth + 1);
-        current_id = self.ast.nodes[id].next_sibling;
+        current_id = self.ast.node(id).next_sibling;
         if (current_id != null) try self.writer.writeByte(',');
         // A block container child emitted its own trailing beside its opener;
         // a scalar's or an inline container's goes here, after the comma.
@@ -221,7 +221,7 @@ fn container(self: *Printer, node_id: AST.Node.Id, open: u8, close: u8, first_ch
 
 /// Whether `id` is a container node.
 fn isContainer(self: *const Printer, id: AST.Node.Id) bool {
-    return switch (self.ast.nodes[id].kind) {
+    return switch (self.ast.node(id).kind) {
         .sequence, .mapping => true,
         else => false,
     };
@@ -232,7 +232,7 @@ fn isContainer(self: *const Printer, id: AST.Node.Id) bool {
 /// opening delimiter, rather than leaving it to whoever writes its line.
 fn isBlockContainer(self: *const Printer, id: AST.Node.Id) bool {
     if (!self.isContainer(id)) return false;
-    const first_child = switch (self.ast.nodes[id].kind) {
+    const first_child = switch (self.ast.node(id).kind) {
         .sequence => |first| first,
         .mapping => |first| first,
         else => unreachable,

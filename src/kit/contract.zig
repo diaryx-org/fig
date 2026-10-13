@@ -198,9 +198,9 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
             const src = input.slice() orelse "";
             if (comptime !reports) {
                 var p: L.Parser = .{ .allocator = out.allocator };
-                var doc = L.parse(&p, src, t) catch |e| return fail(err, @errorName(e));
+                var doc = L.parseTree(&p, src, t) catch |e| return fail(err, @errorName(e));
                 defer doc.deinit(out.allocator);
-                convert.emitDocument(out, &doc) catch return 3;
+                doc.emit(out) catch return 3;
                 return 0;
             }
             // A parser with a report says why it refused, where, and what it
@@ -232,7 +232,7 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
                 return fail(err, @errorName(e));
             };
             defer doc.deinit(out.allocator);
-            convert.emitDocument(out, &doc) catch return 3;
+            doc.emit(out) catch return 3;
             if (comptime @hasField(P.Report, "warnings") and @hasDecl(P, "Warning")) {
                 for (report.warnings) |w| addDiagnostic(out, table.diagnostic_warning, w.offset, w.end, P.Warning.describeWarning(w.code), P.Warning.shortLabel(w.code)) catch return 3;
             }
@@ -254,7 +254,7 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
             const t = typeOf(dialect) orelse return fail(err, "no such dialect");
             var arena = std.heap.ArenaAllocator.init(gpa);
             defer arena.deinit();
-            const doc = convert.viewToDocument(arena.allocator(), "", view, .absent) catch return fail(err, "a malformed table");
+            const doc = convert.viewToDocument(arena.allocator(), "", view) catch return fail(err, "a malformed table");
             const opts: AST.SerializeOptions = .{
                 .pretty = options.pretty,
                 .strip_comments = options.strip_comments,
@@ -303,7 +303,7 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
                     // `flow`, which only a fragment reads), or a root a whole
                     // document cannot have.
                     if (comptime d.print_fragment_name) |fragment| {
-                        const scalar_root = switch (ast.nodes[ast.root].kind) {
+                        const scalar_root = switch (ast.node(ast.root).kind) {
                             .mapping, .sequence => false,
                             else => true,
                         };

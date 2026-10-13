@@ -2,245 +2,193 @@
 //! read-path navigation helpers in `reader.zig`. This file IS the `Builder`
 //! type (re-exported as `AST.Builder` from `ast.zig`).
 //!
-//! Formalizes the node-construction pattern the parsers share (id = array index,
-//! children linked via `next_sibling`, decoded strings collected for
-//! `owned_strings`).
+//! It writes rows: id is row index, a container's children are linked
+//! through `first_child` and `next_sibling`, and every string is copied into
+//! the table's buffer, since a built tree has no source to borrow from.
 //!
 //! Construction is bottom-up: add the children, then add the container from
 //! their ids. `finish` freezes the result into an owned `AST`.
 //!
-//! Two contracts:
-//!   * Every string handed to the builder is *copied* into the AST's
-//!     `owned_strings` — a built AST has no `source` to borrow from, so caller
-//!     buffers need not outlive the builder.
-//!   * Each node id must be placed in exactly one container. A node carries a
-//!     single `next_sibling`, so reusing an id in two containers corrupts the
-//!     tree (asserted in safe builds via the link helpers' single-owner walk).
+//! Each node id must be placed in exactly one container. A row carries a
+//! single parent and `next_sibling`, so reusing an id in two containers
+//! corrupts the tree.
 
 const Builder = @This();
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Writer = std.Io.Writer;
 
 const AST = @import("ast.zig");
+const table = @import("../table.zig");
 const Node = AST.Node;
 const Comment = AST.Comment;
 const NodeComments = AST.NodeComments;
 const Span = @import("../span.zig");
+const none = table.none;
 
 allocator: Allocator,
-nodes: std.ArrayList(Node) = .empty,
-owned_strings: std.ArrayList([]const u8) = .empty,
-/// Parallel to `nodes` (one zero-span entry appended per node by `append`).
-/// Opt-in: a build that never calls `setSpan` just carries zero spans, which
-/// `takeSpans` still returns (so a `Document` built from them has the right
-/// length, if a caller wants one). Only the fig parser populates this today —
-/// every other parser tracks spans itself alongside its own direct node
-/// construction (see each parser's `node_spans`/`addNode`).
-spans: std.ArrayList(Span) = .empty,
-/// Parallel to `nodes` (one entry appended per node, default-empty). Only
-/// materialized into the finished AST when `any_comments` is set, so a build
-/// that never touches comments carries the AST's `&.{}` default. The runs are
-/// growable lists (not plain slices) so the incremental comment helpers
-/// amortize their appends instead of reallocating one element at a time;
-/// `finish` freezes them into the AST's plain-slice `NodeComments`.
+t: table.Table,
+/// Indexed by node id, grown per node: the comments set on it, kept apart
+/// until `finish` so that `setComments` can replace them.
 comments: std.ArrayList(PendingComments) = .empty,
-/// Scratch `[]NodeComments` that `view` rebuilds on each call (borrowing the
-/// pending runs' `.items`), reused so `view` only allocates when it must grow.
-/// Not part of any finished AST.
-view_comments: std.ArrayList(NodeComments) = .empty,
 any_comments: bool = false,
-/// Type tags by node id (`ast.node_tags`). Unlike `comments`/`spans` this is
-/// NOT grown per-node in `append` — tags are rare, so `setTag` grows it to the
-/// tagged id on demand (null-filling the gap). A build that never tags a node
-/// carries the AST's `&.{}` default; readers length-guard the table, so a short
-/// slice is fine. Frozen into the AST's plain slice by `finish` when `any_tags`.
-node_tags: std.ArrayList(?AST.Tag) = .empty,
+/// Type tags by node id, grown on demand: tags are rare.
+node_tags: std.ArrayList(?PendingTag) = .empty,
 any_tags: bool = false,
+/// What `view` last made, freed by the next `view` or `deinit`.
+snapshot: ?AST = null,
 
 pub const Entry = struct { key: Node.Id, value: Node.Id };
 
-/// Builder-side mutable form of `NodeComments`: the `leading`/`dangling` runs
-/// are growable `ArrayList`s (an empty list allocates nothing) so incremental
-/// appends amortize. Frozen into plain-slice `NodeComments` by `finish`, or
-/// borrowed via the `view_comments` scratch table by `view`.
+/// A node's comments, as growable runs, their texts in the build's buffer.
 const PendingComments = struct {
-    leading: std.ArrayList(Comment) = .empty,
-    trailing: ?Comment = null,
-    dangling: std.ArrayList(Comment) = .empty,
+    leading: std.ArrayList(PendingComment) = .empty,
+    trailing: ?PendingComment = null,
+    dangling: std.ArrayList(PendingComment) = .empty,
 };
 
+const PendingComment = struct { text: table.Text, style: Comment.Style };
+
+const PendingTag = union(enum) { kind: AST.Tag.KindTag, text: table.Text };
+
 pub fn init(allocator: Allocator) Builder {
-    return .{ .allocator = allocator };
+    return .{ .allocator = allocator, .t = table.Table.init(allocator, "") };
 }
 
 pub fn deinit(self: *Builder) void {
-    for (self.owned_strings.items) |s| self.allocator.free(s);
-    self.owned_strings.deinit(self.allocator);
-    self.nodes.deinit(self.allocator);
+    self.t.deinit();
     for (self.comments.items) |*nc| {
         nc.leading.deinit(self.allocator);
         nc.dangling.deinit(self.allocator);
     }
     self.comments.deinit(self.allocator);
-    self.view_comments.deinit(self.allocator);
-    self.spans.deinit(self.allocator);
-    // Only the outer list is ours; any `.text` tag payload aliases owned_strings
-    // (freed above) — same discipline as the AST's own `node_tags` free.
     self.node_tags.deinit(self.allocator);
+    if (self.snapshot) |*s| s.deinit();
 }
 
-/// Set `id`'s source span (a byte range into the input `id` was parsed from).
-/// Only meaningful for a builder whose caller tracks source positions (fig's
-/// parser does; a hand-assembled AST with no source text leaves every span at
-/// its `append`-time default of `Span.init(0, 0)`).
+/// How many nodes have been added.
+pub fn nodeCount(self: *const Builder) usize {
+    return self.t.rows.items.len;
+}
+
+/// Set `id`'s source span (a byte range into the input `id` was read from).
 pub fn setSpan(self: *Builder, id: Node.Id, span: Span) void {
-    self.spans.items[id] = span;
-}
-
-/// Move out the per-node span table built via `setSpan` (parallel to `nodes`,
-/// one entry per node in id order — the same length as `ast.nodes` after
-/// `finish`). Call any time after the ids of interest were minted (`finish`
-/// does not consume `spans`, so this may run before or after it). The caller
-/// owns the returned slice.
-pub fn takeSpans(self: *Builder) Allocator.Error![]Span {
-    const spans = try self.spans.toOwnedSlice(self.allocator);
-    self.spans = .empty;
-    return spans;
+    self.t.rows.items[id].start = @intCast(span.start);
+    self.t.rows.items[id].end = @intCast(span.end);
 }
 
 /// Attach comments to an already-added node, REPLACING any previously set on
-/// `id` (pass `.{}` to clear). Every comment's text is copied into
-/// `owned_strings` (so the finished AST owns it). For attaching comments one
-/// at a time, prefer the amortized `addLeadingComment`/`addDanglingComment`/
-/// `setTrailingComment` helpers.
+/// `id` (pass `.{}` to clear). Every comment's text is copied. For attaching
+/// comments one at a time, prefer `addLeadingComment`/`addDanglingComment`/
+/// `setTrailingComment`.
 pub fn setComments(self: *Builder, id: Node.Id, node_comments: NodeComments) Allocator.Error!void {
     const slot = &self.comments.items[id];
     slot.leading.clearRetainingCapacity();
     slot.dangling.clearRetainingCapacity();
-    try slot.leading.ensureTotalCapacity(self.allocator, node_comments.leading.len);
-    for (node_comments.leading) |c|
-        slot.leading.appendAssumeCapacity(.{ .text = try self.dupe(c.text), .style = c.style });
-    try slot.dangling.ensureTotalCapacity(self.allocator, node_comments.dangling.len);
-    for (node_comments.dangling) |c|
-        slot.dangling.appendAssumeCapacity(.{ .text = try self.dupe(c.text), .style = c.style });
-    slot.trailing = if (node_comments.trailing) |t|
-        .{ .text = try self.dupe(t.text), .style = t.style }
-    else
-        null;
+    for (node_comments.leading) |c| try slot.leading.append(self.allocator, try self.ownComment(c));
+    for (node_comments.dangling) |c| try slot.dangling.append(self.allocator, try self.ownComment(c));
+    slot.trailing = if (node_comments.trailing) |c| try self.ownComment(c) else null;
     self.any_comments = true;
 }
 
 /// Append one comment to the run rendered ABOVE `id` (its `leading` run), in
-/// call order. The text is copied into owned storage. This is the incremental
-/// counterpart to `setComments` (which replaces a node's whole comment set) —
-/// reach for it when attaching comments one at a time; the backing run is a
-/// growable list, so repeated appends amortize.
+/// call order. The text is copied.
 ///
 /// Comments are format-agnostic: a target format without comment syntax here
 /// (plain JSON, or compact JSON5/JSONC/ZON) drops them on serialize. That is a
 /// reported loss, not an error — see `fig.Diagnostics.analyze` — so this never
 /// rejects based on a format.
 pub fn addLeadingComment(self: *Builder, id: Node.Id, comment: Comment) Allocator.Error!void {
-    const text = try self.dupe(comment.text);
-    try self.comments.items[id].leading.append(self.allocator, .{ .text = text, .style = comment.style });
+    try self.comments.items[id].leading.append(self.allocator, try self.ownComment(comment));
     self.any_comments = true;
 }
 
 /// Append one comment to `id`'s `dangling` run — comments at the END of a
-/// container's body, after its last child (an orphan in an empty container, or
-/// comments sitting before its closing delimiter / at end of document). Only
-/// meaningful on a container node; see `NodeComments`.
+/// container's body, after its last child. Only meaningful on a container
+/// node; see `NodeComments`.
 pub fn addDanglingComment(self: *Builder, id: Node.Id, comment: Comment) Allocator.Error!void {
-    const text = try self.dupe(comment.text);
-    try self.comments.items[id].dangling.append(self.allocator, .{ .text = text, .style = comment.style });
+    try self.comments.items[id].dangling.append(self.allocator, try self.ownComment(comment));
     self.any_comments = true;
 }
 
-/// Set `id`'s single same-line `trailing` comment (rendered to the right of
-/// the value). Replaces any previous trailing comment on the node. The text is
-/// copied into owned storage.
+/// Set `id`'s single same-line `trailing` comment, replacing any previous
+/// one. The text is copied.
 pub fn setTrailingComment(self: *Builder, id: Node.Id, comment: Comment) Allocator.Error!void {
-    const text = try self.dupe(comment.text);
-    self.comments.items[id].trailing = .{ .text = text, .style = comment.style };
+    self.comments.items[id].trailing = try self.ownComment(comment);
     self.any_comments = true;
 }
 
-/// Attach a cross-format type tag to an already-added node (`ast.node_tags`),
-/// replacing any tag previously set on `id`. A `.text` tag is copied into owned
-/// storage; a `.kind` tag owns nothing. The table grows to `id` on demand
-/// (null-filling any gap), so tagging is pay-per-use.
+/// Attach a cross-format type tag to an already-added node, replacing any
+/// tag previously set on `id`.
 pub fn setTag(self: *Builder, id: Node.Id, tag: AST.Tag) Allocator.Error!void {
     while (self.node_tags.items.len <= id) try self.node_tags.append(self.allocator, null);
     self.node_tags.items[id] = switch (tag) {
-        .kind => tag,
-        .text => |t| .{ .text = try self.dupe(t) },
+        .kind => |k| .{ .kind = k },
+        .text => |x| .{ .text = try self.t.addString(x) },
     };
     self.any_tags = true;
 }
 
 pub fn addNull(self: *Builder) Allocator.Error!Node.Id {
-    return self.append(.null_);
+    return self.append(.{ .kind = table.Kind.null_ });
 }
 
 pub fn addBool(self: *Builder, value: bool) Allocator.Error!Node.Id {
-    return self.append(.{ .boolean = value });
+    return self.append(.{ .kind = if (value) table.Kind.true_ else table.Kind.false_ });
 }
 
-/// Add a signed integer scalar (rendered as decimal text in `number.raw`).
+/// Add a signed integer scalar (rendered as decimal text).
 pub fn addInt(self: *Builder, value: i64) Allocator.Error!Node.Id {
-    const raw = try std.fmt.allocPrint(self.allocator, "{d}", .{value});
-    return self.append(.{ .number = .{ .raw = try self.own(raw), .kind = .integer } });
+    var buf: [24]u8 = undefined;
+    const raw = std.fmt.bufPrint(&buf, "{d}", .{value}) catch unreachable;
+    return self.addNumberRaw(raw, false);
 }
 
 /// Add an unsigned integer scalar (decimal text). Separate from `addInt` so
 /// values above `maxInt(i64)` round-trip without overflow.
 pub fn addUint(self: *Builder, value: u64) Allocator.Error!Node.Id {
-    const raw = try std.fmt.allocPrint(self.allocator, "{d}", .{value});
-    return self.append(.{ .number = .{ .raw = try self.own(raw), .kind = .integer } });
+    var buf: [24]u8 = undefined;
+    const raw = std.fmt.bufPrint(&buf, "{d}", .{value}) catch unreachable;
+    return self.addNumberRaw(raw, false);
 }
 
 /// Add a numeric scalar from already-formatted text (copied). `is_float`
-/// records which `number.kind` it is. This is the escape hatch for floats
-/// (whose canonical text policy is the caller's until the binding work pins
-/// it) and for integers outside the i64/u64 range.
+/// records which number kind it is. This is the escape hatch for floats and
+/// for integers outside the i64/u64 range.
 pub fn addNumberRaw(self: *Builder, raw: []const u8, is_float: bool) Allocator.Error!Node.Id {
-    return self.append(.{ .number = .{ .raw = try self.dupe(raw), .kind = if (is_float) .float else .integer } });
+    return self.append(.{ .kind = if (is_float) table.Kind.float else table.Kind.int, .text = try self.t.addString(raw) });
 }
 
 /// Add a string scalar (copied).
 pub fn addString(self: *Builder, value: []const u8) Allocator.Error!Node.Id {
-    return self.append(.{ .string = try self.dupe(value) });
+    return self.append(.{ .kind = table.Kind.string, .text = try self.t.addString(value) });
 }
 
 /// Add a format-specific scalar (TOML datetime, ZON enum/char literal).
 /// See `Node.Kind.Extended`.
 pub fn addExtended(self: *Builder, kind: Node.Kind.Extended.ExtKind, text: []const u8) Allocator.Error!Node.Id {
-    return self.append(.{ .extended = .{ .kind = kind, .text = try self.dupe(text) } });
+    return self.append(.{ .kind = table.Kind.ext + @as(u8, @intCast(@backingInt(kind))), .text = try self.t.addString(text) });
+}
+
+/// Add an alias to the anchor `name` (copied).
+pub fn addAlias(self: *Builder, name: []const u8) Allocator.Error!Node.Id {
+    return self.append(.{ .kind = table.Kind.alias, .text = try self.t.addString(name) });
 }
 
 /// Add a sequence whose elements are the given node ids, in order.
 /// Empty is allowed (`&.{}`), yielding a node with no children.
 pub fn addSequence(self: *Builder, items: []const Node.Id) Allocator.Error!Node.Id {
-    self.link(items);
-    return self.append(.{ .sequence = if (items.len == 0) null else items[0] });
+    const id = try self.append(.{ .kind = table.Kind.sequence });
+    self.adopt(id, items);
+    return id;
 }
 
 /// Add a mapping from the given entries, in order. A `keyvalue` node is
-/// minted for each entry, and the wrappers are linked as siblings.
+/// minted for each entry.
 pub fn addMapping(self: *Builder, entries: []const Entry) Allocator.Error!Node.Id {
-    var first: ?Node.Id = null;
-    var prev: ?Node.Id = null;
-    for (entries) |entry| {
-        const kv = try self.append(.{ .keyvalue = .{ .key = entry.key, .value = entry.value } });
-        if (prev) |p| {
-            self.nodes.items[p].next_sibling = kv;
-        } else {
-            first = kv;
-        }
-        prev = kv;
-    }
-    return self.append(.{ .mapping = first });
+    const kvs = try self.allocator.alloc(Node.Id, entries.len);
+    defer self.allocator.free(kvs);
+    for (entries, kvs) |e, *kv| kv.* = try self.addKeyValue(e.key, e.value);
+    return self.addMappingFromEntries(kvs);
 }
 
 /// Add one `keyvalue` node wrapping `key`/`value`, returning its own id —
@@ -248,124 +196,96 @@ pub fn addMapping(self: *Builder, entries: []const Entry) Allocator.Error!Node.I
 /// id before assembling the mapping (e.g. to `setSpan` it). Pair with
 /// `addMappingFromEntries`.
 pub fn addKeyValue(self: *Builder, key: Node.Id, value: Node.Id) Allocator.Error!Node.Id {
-    return self.append(.{ .keyvalue = .{ .key = key, .value = value } });
+    const id = try self.append(.{ .kind = table.Kind.keyvalue });
+    self.adopt(id, &.{ key, value });
+    return id;
 }
 
 /// Add a mapping from already-built `keyvalue` node ids (as returned by
-/// `addKeyValue`), in order. Siblings are linked exactly like `addMapping`;
-/// this just skips minting the `keyvalue` wrappers itself.
+/// `addKeyValue`), in order.
 pub fn addMappingFromEntries(self: *Builder, kv_ids: []const Node.Id) Allocator.Error!Node.Id {
-    self.link(kv_ids);
-    return self.append(.{ .mapping = if (kv_ids.len == 0) null else kv_ids[0] });
+    const id = try self.append(.{ .kind = table.Kind.mapping });
+    self.adopt(id, kv_ids);
+    return id;
 }
 
 /// Freeze the builder into an owned `AST` rooted at `root`. The builder is
-/// reset to empty, so a subsequent `deinit` is harmless. The returned AST
-/// owns its nodes and strings; free it with `ast.deinit()`. It carries the type
-/// tags set via `setTag` (the AST's `node_tags`); the YAML anchor/alias
-/// reference layer stays empty (no builder API populates it).
+/// reset to empty, so a subsequent `deinit` is harmless. The AST carries the
+/// comments and type tags set; the anchor/alias layer stays empty (no
+/// builder API defines an anchor).
 pub fn finish(self: *Builder, root: Node.Id) Allocator.Error!AST {
-    const nodes = try self.nodes.toOwnedSlice(self.allocator);
-    self.nodes = .empty;
-    const owned_strings = try self.owned_strings.toOwnedSlice(self.allocator);
-    self.owned_strings = .empty;
-    var ast: AST = .{
-        .allocator = self.allocator,
-        .owned_strings = owned_strings,
-        .root = root,
-        .nodes = nodes,
-    };
-    if (self.any_comments) {
-        // Freeze each growable pending run into the AST's plain-slice form.
-        const table = try self.allocator.alloc(NodeComments, self.comments.items.len);
-        errdefer self.allocator.free(table);
-        var done: usize = 0;
-        errdefer for (table[0..done]) |nc| {
-            self.allocator.free(nc.leading);
-            self.allocator.free(nc.dangling);
-        };
-        for (self.comments.items, table) |*src, *dst| {
-            const leading = try src.leading.toOwnedSlice(self.allocator);
-            errdefer self.allocator.free(leading);
-            const dangling = try src.dangling.toOwnedSlice(self.allocator);
-            dst.* = .{ .leading = leading, .trailing = src.trailing, .dangling = dangling };
-            done += 1;
-        }
-        ast.node_comments = table;
-    }
-    if (self.any_tags) {
-        ast.node_tags = try self.node_tags.toOwnedSlice(self.allocator);
-        self.node_tags = .empty;
-    }
+    try self.flush(&self.t);
+    const ast = try AST.own(self.allocator, &self.t, root, null);
+    self.reset();
     return ast;
 }
 
-/// A non-owning `AST` over the builder's current nodes, rooted at `root`.
-/// The returned AST *borrows* the builder's storage: it is valid only while
-/// the builder lives and stays unmodified, and must NOT be `deinit`ed (the
-/// builder owns the memory). Use it to serialize or inspect an in-progress
-/// build without consuming it; use `finish` when you want an owned AST.
-///
-/// Takes `*Builder` (not `*const`) and may fail: when the build carries
-/// comments it rebuilds the `view_comments` scratch table (borrowing each
-/// pending run's `.items`) so the AST sees plain `[]const NodeComments`.
+/// An `AST` of the builder's current nodes, rooted at `root`, without
+/// consuming the build: a copy the builder owns, valid until the next
+/// `view` or the builder's `deinit`, and never to be `deinit`ed by the
+/// caller.
 pub fn view(self: *Builder, root: Node.Id) Allocator.Error!AST {
-    var node_comments: []const NodeComments = &.{};
-    if (self.any_comments) {
-        self.view_comments.clearRetainingCapacity();
-        try self.view_comments.ensureTotalCapacity(self.allocator, self.comments.items.len);
-        for (self.comments.items) |*c|
-            self.view_comments.appendAssumeCapacity(.{
-                .leading = c.leading.items,
-                .trailing = c.trailing,
-                .dangling = c.dangling.items,
-            });
-        node_comments = self.view_comments.items;
-    }
-    const node_tags: []const ?AST.Tag = if (self.any_tags) self.node_tags.items else &.{};
-    return .{
-        .allocator = self.allocator,
-        .owned_strings = self.owned_strings.items,
-        .root = root,
-        .nodes = self.nodes.items,
-        .node_comments = node_comments,
-        .node_tags = node_tags,
-    };
+    if (self.snapshot) |*s| s.deinit();
+    self.snapshot = null;
+    var copy = table.Table.init(self.allocator, "");
+    errdefer copy.deinit();
+    try copy.rows.appendSlice(self.allocator, self.t.rows.items);
+    try copy.strings.appendSlice(self.allocator, self.t.strings.items);
+    try self.flush(&copy);
+    self.snapshot = try AST.own(self.allocator, &copy, root, null);
+    return self.snapshot.?;
 }
 
 // ── internals ───────────────────────────────────────────────────────────────
 
-fn append(self: *Builder, kind: Node.Kind) Allocator.Error!Node.Id {
-    const id: Node.Id = @intCast(self.nodes.items.len);
-    try self.nodes.append(self.allocator, .{ .id = id, .kind = kind, .next_sibling = null });
-    errdefer _ = self.nodes.pop();
-    // Keep the comment/span tables the same length as `nodes` so `setComments`/
-    // `setSpan` can index them directly. Costs one empty struct + one zero span
-    // per node on every build.
+fn append(self: *Builder, row: table.Row) Allocator.Error!Node.Id {
+    const id = try self.t.addRow(row);
+    errdefer self.t.rows.items.len -= 1;
     try self.comments.append(self.allocator, .{});
-    try self.spans.append(self.allocator, Span.init(0, 0));
     return id;
 }
 
-/// Take ownership of an already-allocated string so the AST frees it on
-/// `deinit`. On registration failure the string is freed, not leaked.
-fn own(self: *Builder, owned: []const u8) Allocator.Error![]const u8 {
-    errdefer self.allocator.free(owned);
-    try self.owned_strings.append(self.allocator, owned);
-    return owned;
-}
-
-/// Copy `s` into owned storage.
-fn dupe(self: *Builder, s: []const u8) Allocator.Error![]const u8 {
-    return self.own(try self.allocator.dupe(u8, s));
-}
-
-/// Chain `ids` as siblings (each `next_sibling` points to the next; the last
-/// is terminated). The ids must already be in `nodes`.
-fn link(self: *Builder, ids: []const Node.Id) void {
-    if (ids.len == 0) return;
-    for (ids[0 .. ids.len - 1], ids[1..]) |cur, next_id| {
-        self.nodes.items[cur].next_sibling = next_id;
+/// Make `ids` the children of `parent`, in order.
+fn adopt(self: *Builder, parent: Node.Id, ids: []const Node.Id) void {
+    const rows = self.t.rows.items;
+    rows[parent].first_child = if (ids.len == 0) none else ids[0];
+    for (ids, 0..) |c, i| {
+        rows[c].parent = parent;
+        rows[c].next_sibling = if (i + 1 < ids.len) ids[i + 1] else none;
     }
-    self.nodes.items[ids[ids.len - 1]].next_sibling = null;
+}
+
+/// Write the pending comments and tags into `t`'s fact lists.
+fn flush(self: *Builder, t: *table.Table) Allocator.Error!void {
+    const a = self.allocator;
+    // The texts are offsets into the build's buffer, which `t` has (it is
+    // the build's table, or a copy of its rows and buffer).
+    if (self.any_tags) for (self.node_tags.items, 0..) |tag, i| if (tag) |x| {
+        try t.tags.append(a, switch (x) {
+            .text => |s| .{ .node = @intCast(i), .text = s },
+            .kind => |k| .{ .node = @intCast(i), .text = try t.addString((AST.Tag{ .kind = k }).spelling()), .resolved = table.tag_kind + @as(u8, @intCast(@backingInt(k))) },
+        });
+    };
+    if (self.any_comments) for (self.comments.items, 0..) |nc, i| {
+        const n: u32 = @intCast(i);
+        for (nc.leading.items) |c| try t.comments.append(a, .{ .node = n, .slot = table.comment_leading, .style = @intCast(@backingInt(c.style)), .text = c.text });
+        if (nc.trailing) |c| try t.comments.append(a, .{ .node = n, .slot = table.comment_trailing, .style = @intCast(@backingInt(c.style)), .text = c.text });
+        for (nc.dangling.items) |c| try t.comments.append(a, .{ .node = n, .slot = table.comment_dangling, .style = @intCast(@backingInt(c.style)), .text = c.text });
+    };
+}
+
+fn reset(self: *Builder) void {
+    for (self.comments.items) |*nc| {
+        nc.leading.deinit(self.allocator);
+        nc.dangling.deinit(self.allocator);
+    }
+    self.comments.clearRetainingCapacity();
+    self.node_tags.clearRetainingCapacity();
+    self.any_comments = false;
+    self.any_tags = false;
+}
+
+/// A comment whose text is copied into the build's buffer.
+fn ownComment(self: *Builder, c: Comment) Allocator.Error!PendingComment {
+    return .{ .text = try self.t.addString(c.text), .style = c.style };
 }

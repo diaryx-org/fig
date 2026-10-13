@@ -3,10 +3,10 @@
 //! No TOML-specific editing logic is left. The generic span-splice engine in
 //! `../../editor.zig` does every edit, driven by `toml.zig`'s `syntax` and by
 //! what `parser.zig` records: a table's header lines in
-//! `Document.node_regions` — a TOML table is assembled from scattered
+//! `Document.regionsOf` — a TOML table is assembled from scattered
 //! `[header]`, `[[array]]` and dotted lines, and `../../editor/regions.zig`
 //! derives its whole region set from those — and every place a table's name
-//! is written in `Document.node_mentions`. This module used to hold the ops
+//! is written in `Document.mentionsOf`. This module used to hold the ops
 //! that had to SPELL something TOML: a `[header]`/`[[header]]` line, which
 //! `Syntax.section_header` now declares; every mention of a table's name,
 //! which the parser now records and the engine's `renameContainer` rewrites
@@ -831,7 +831,7 @@ test "toml reorderKeys still reorders scalars around a sub-table that stays put"
 // guards let the line ops through — correct for a one-line table, and a silent
 // partial edit for one spread over several lines (`a.b = 1` … `a.c = 2`),
 // since a line op sees only the line the node's span is on. The parser records
-// every line that creates or extends a dotted table (`Document.node_regions`),
+// every line that creates or extends a dotted table (`Document.regionsOf`),
 // so the engine's rule now refuses the line ops for it and the container ops
 // take every line.
 

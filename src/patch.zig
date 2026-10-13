@@ -209,7 +209,7 @@ fn Walker(comptime Language: type) type {
         }
 
         fn mergeValue(self: *Self, patch: *const AST, id: Id) !void {
-            const kind = patch.nodes[id].kind;
+            const kind = patch.node(id).kind;
             const target = try self.targetValue();
 
             // A `*name` in the TARGET is a reference to a node defined
@@ -240,9 +240,9 @@ fn Walker(comptime Language: type) type {
         /// here carries an inferred set of its own, whose members vary with
         /// `Language`.
         fn mergeMapping(self: *Self, patch: *const AST, id: Id) anyerror!void {
-            var next: ?Id = patch.nodes[id].kind.mapping;
+            var next: ?Id = patch.node(id).kind.mapping;
             while (next) |entry_id| {
-                const entry = patch.nodes[entry_id];
+                const entry = patch.node(entry_id);
                 next = entry.next_sibling;
                 const kv = switch (entry.kind) {
                     .keyvalue => |kv| kv,
@@ -250,7 +250,7 @@ fn Walker(comptime Language: type) type {
                     // document any reader in this library produces.
                     else => return error.InvalidPatchDocument,
                 };
-                const key = switch (patch.nodes[kv.key].kind) {
+                const key = switch (patch.node(kv.key).kind) {
                     .string => |s| s,
                     else => return error.NonStringPatchKey,
                 };
@@ -263,9 +263,9 @@ fn Walker(comptime Language: type) type {
         }
 
         fn mergeSequence(self: *Self, patch: *const AST, id: Id) !void {
-            var next: ?Id = patch.nodes[id].kind.sequence;
+            var next: ?Id = patch.node(id).kind.sequence;
             while (next) |item_id| {
-                next = patch.nodes[item_id].next_sibling;
+                next = patch.node(item_id).next_sibling;
                 if (self.options.seq == .unite and try self.targetHasItem(patch, item_id)) {
                     self.stats.unchanged += 1;
                     continue;
@@ -288,7 +288,7 @@ fn Walker(comptime Language: type) type {
             var next = seq.kind.sequence;
             while (next) |id| {
                 if (nodesEqual(patch, item_id, &parsed.ast, id)) return true;
-                next = parsed.ast.nodes[id].next_sibling;
+                next = parsed.ast.node(id).next_sibling;
             }
             return false;
         }
@@ -469,8 +469,8 @@ fn Walker(comptime Language: type) type {
 /// are different bytes, so splicing one over the other IS a change, and
 /// reporting them equal would silently drop an edit the caller asked for.
 pub fn nodesEqual(a: *const AST, a_id: Id, b: *const AST, b_id: Id) bool {
-    const x = a.nodes[a_id].kind;
-    const y = b.nodes[b_id].kind;
+    const x = a.node(a_id).kind;
+    const y = b.node(b_id).kind;
     if (std.meta.activeTag(x) != std.meta.activeTag(y)) return false;
     return switch (x) {
         .null_ => true,
@@ -496,8 +496,8 @@ fn childrenEqual(a: *const AST, a_first: ?Id, b: *const AST, b_first: ?Id) bool 
     var q = b_first;
     while (p != null and q != null) {
         if (!nodesEqual(a, p.?, b, q.?)) return false;
-        p = a.nodes[p.?].next_sibling;
-        q = b.nodes[q.?].next_sibling;
+        p = a.node(p.?).next_sibling;
+        q = b.node(q.?).next_sibling;
     }
     return p == null and q == null;
 }

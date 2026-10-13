@@ -164,7 +164,7 @@ fn parseConfigFile(a: Allocator, path: []const u8, content: []const u8) !void {
     if (seq.kind != .sequence) return error.NoLanguageList;
     var next = seq.kind.sequence;
     while (next) |id| {
-        const item = ast.nodes[id];
+        const item = ast.node(id);
         next = item.next_sibling;
         if (item.kind != .mapping) return error.MalformedLanguage;
         const name = stringField(ast, item, "name") orelse return error.MalformedLanguage;
@@ -184,11 +184,11 @@ fn parseConfigFile(a: Allocator, path: []const u8, content: []const u8) !void {
 fn stringField(ast: *const fig.AST, mapping: fig.AST.Node, key: []const u8) ?[]const u8 {
     var next = mapping.kind.mapping;
     while (next) |id| {
-        const kv = ast.nodes[id];
+        const kv = ast.node(id);
         next = kv.next_sibling;
-        const k = ast.nodes[kv.kind.keyvalue.key];
+        const k = ast.node(kv.kind.keyvalue.key);
         if (k.kind == .string and std.mem.eql(u8, k.kind.string, key)) {
-            const v = ast.nodes[kv.kind.keyvalue.value];
+            const v = ast.node(kv.kind.keyvalue.value);
             return switch (v.kind) {
                 .string => |s| s,
                 .number => |n| n.raw,
@@ -202,18 +202,18 @@ fn stringField(ast: *const fig.AST, mapping: fig.AST.Node, key: []const u8) ?[]c
 fn stringList(a: Allocator, ast: *const fig.AST, mapping: fig.AST.Node, key: []const u8) !?[]const []const u8 {
     var next = mapping.kind.mapping;
     while (next) |id| {
-        const kv = ast.nodes[id];
+        const kv = ast.node(id);
         next = kv.next_sibling;
-        const k = ast.nodes[kv.kind.keyvalue.key];
+        const k = ast.node(kv.kind.keyvalue.key);
         if (k.kind == .string and std.mem.eql(u8, k.kind.string, key)) {
-            const v = ast.nodes[kv.kind.keyvalue.value];
+            const v = ast.node(kv.kind.keyvalue.value);
             var out: std.ArrayList([]const u8) = .empty;
             switch (v.kind) {
                 .string => |s| try out.append(a, s),
                 .sequence => |first| {
                     var item = first;
                     while (item) |iid| {
-                        const n = ast.nodes[iid];
+                        const n = ast.node(iid);
                         item = n.next_sibling;
                         switch (n.kind) {
                             .string => |s| try out.append(a, s),
@@ -583,7 +583,7 @@ pub fn check(io: Io, a: Allocator, out: *Io.Terminal, err_term: *Io.Terminal, na
                 try err_term.writer.flush();
                 std.process.exit(1);
             }
-            try out.writer.print("{s}: same table as `{s}` ({d} rows)\n", .{ in.label, sibling_name, mine.ast.nodes.len });
+            try out.writer.print("{s}: same table as `{s}` ({d} rows)\n", .{ in.label, sibling_name, mine.ast.nodeCount() });
         }
     }
     try out.writer.flush();

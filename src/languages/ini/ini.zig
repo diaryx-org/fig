@@ -1,5 +1,5 @@
 const ini = @This();
-const Document = @import("../../kit/document.zig");
+const Document = @import("../../kit/parse_tree.zig");
 const lang = @import("../../kit/manifest.zig");
 
 pub const Parser = @import("parser.zig");
@@ -19,8 +19,14 @@ pub const Language = struct {
     pub const Parser = ini.Parser;
     pub const Printer = ini.Printer;
     pub const default_type: ini.Type = .INI;
-    pub fn parse(parser: *ini.Parser, input: []const u8, format: ini.Type) !Document {
+    /// The parser's tree, which the contract writes into fig's table.
+    pub fn parseTree(parser: *ini.Parser, input: []const u8, format: ini.Type) !Document {
         return ini.Parser.parse(parser.allocator, input, format);
+    }
+    /// The document fig would adopt from a parse.
+    pub fn parse(parser: *ini.Parser, input: []const u8, format: ini.Type) !Document.RowDocument {
+        var tree = try parseTree(parser, input, format);
+        return tree.intoDocument(parser.allocator);
     }
     pub const print = ini.Printer.print;
     pub const printNode = ini.Printer.printNode;
@@ -67,7 +73,7 @@ pub const Language = struct {
             .flow_containers = false,
             // A section format: a `[section]` may be reopened and so
             // scattered, and `parser.zig` records every section's header
-            // lines in `Document.node_regions`. Its refusals say "section".
+            // lines in `Document.regionsOf`. Its refusals say "section".
             .section_noun = "section",
         };
     }
@@ -81,7 +87,7 @@ pub const Language = struct {
     // section format's root is block (`editor.Editor.isFlowNode`).
     //
     // No delete/replace/move/reorder guards either: the engine's section rule
-    // covers them. A `[section]` is a section node (`Document.node_regions`)
+    // covers them. A `[section]` is a section node (`Document.regionsOf`)
     // — its span is anchored at its first header's name token alone — and a
     // section node cannot be line-spliced: `deleteKey`, `replaceValAtPath`,
     // `moveKey` and `reorderKeys` refuse it (`CannotDeleteSection`, …) and
@@ -93,7 +99,7 @@ pub const Language = struct {
     // `[section]` is scattered through the file exactly as a TOML table or fig
     // container is, and `deleteContainer`/`moveContainer`/`reorderContainers`
     // derive its regions — every header occurrence plus its entries — from
-    // `Document.node_regions`, with no INI code at all. No `insertContainer`
+    // `Document.regionsOf`, with no INI code at all. No `insertContainer`
     // (INI cannot auto-vivify at all — `syntax().empty_map_literal` is null)
     // and no `renameContainer` (a header's key is one tight span the generic
     // `replaceKeyAtPath` rewrites, with no dotted descendants to follow).

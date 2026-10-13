@@ -42,13 +42,14 @@ pub const Target = union(enum) {
 };
 
 /// `self`, or a comment-stripped *view* of it when `options.strip_comments` is
-/// set. The view is a shallow struct copy that shares all node/string storage and
-/// only blanks `node_comments`, so stripping costs no allocation. `buf` provides
+/// set. The view is a shallow struct copy that shares all row/string storage and
+/// only blanks the comment lists, so stripping costs no allocation. `buf` provides
 /// the view's stack storage; the returned pointer is valid for `buf`'s lifetime.
 fn commentView(self: *const AST, options: SerializeOptions, buf: *AST) *const AST {
     if (!options.strip_comments) return self;
     buf.* = self.*;
-    buf.node_comments = &.{};
+    buf.comment_runs = &.{};
+    buf.comment_list = &.{};
     return buf;
 }
 
@@ -162,7 +163,7 @@ test "Builder.setTag surfaces a normalized kind tag as a YAML core tag" {
     const root = try b.addMapping(&.{.{ .key = k, .value = v }});
     var ast = try b.finish(root);
     defer ast.deinit();
-    try testing.expect(ast.node_tags[v].?.kind == .integer);
+    try testing.expect(ast.tagOf(v).?.kind == .integer);
 
     var buf: [64]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);

@@ -2,9 +2,11 @@
 //! Depends on the tokenizer and the abstract Document struct.
 
 const std = @import("std");
-const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/document.zig");
+const Document = @import("../../kit/parse_tree.zig");
+const AST = Document.Nodes;
+
 const util = @import("../../kit/kit.zig");
+const table = @import("../../kit/table.zig");
 const Span = @import("../../kit/span.zig");
 const Unicode = util.Unicode;
 const ascii = util.ascii;
@@ -366,16 +368,9 @@ pub fn parseWithReport(allocator: std.mem.Allocator, input: []const u8, format: 
 
 /// Primary entry point
 /// Pass allocator, input, and type, and get a Document.
-pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) !AST {
-    const parsed = try parse(allocator, input, format);
-    // Drop the Document-side span tables; the abstract AST keeps the decoded
-    // tag/anchor strings it carries itself.
-    allocator.free(parsed.node_spans);
-    allocator.free(parsed.node_tag_spans);
-    allocator.free(parsed.node_anchor_spans);
-    allocator.free(parsed.node_marker_spans);
-    allocator.free(parsed.node_sep_spans);
-    return parsed.ast;
+pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) !Document.RowAst {
+    var tree = try parse(allocator, input, format);
+    return tree.intoAst(allocator);
 }
 
 pub fn parse(allocator: std.mem.Allocator, input: []const u8, format: Type) !Document {
@@ -815,12 +810,18 @@ fn parseTokens(self: *Parser, input: []const u8) ParserError!Document {
     self.tag_directives = .empty;
     const owned_strings = try self.owned_strings.toOwnedSlice(self.allocator);
     self.owned_strings = .empty;
+    const resolutions = try self.allocator.alloc(AST.TagResolution, if (anyTag(node_tags)) nodes.len else 0);
+    errdefer self.allocator.free(resolutions);
+    if (resolutions.len > 0) for (resolutions, node_tags, nodes) |*r, tag, n| {
+        r.* = if (tag) |x| resolveTag(tag_directives, x.text, n.kind) else .{};
+    };
     var ast: AST = .{
         .allocator = self.allocator,
         .owned_strings = owned_strings,
         .root = root,
         .nodes = nodes,
         .node_tags = node_tags,
+        .node_tag_resolutions = resolutions,
         .node_anchors = node_anchors,
         .anchors = anchors,
         .tag_directives = tag_directives,
@@ -2073,6 +2074,96 @@ fn digitRun(s: []const u8, comptime pred: fn (u8) bool) bool {
     return any;
 }
 
+fn anyTag(tags: []const ?AST.Tag) bool {
+    for (tags) |t| if (t != null) return true;
+    return false;
+}
+
+// ── Tag resolution ──────────────────────────────────────────────────────────
+// YAML resolves its own tags (docs/proposals/core-only.md §4.3): each row's
+// tag carries its text as written, what it names under the document's
+// `%TAG` directives — a core type, custom, or YAML's non-specific `!` — and
+// whether the node's text agrees with the type. Materialize reads that and
+// never the text.
+
+/// What the tag `text` on a node of `kind` resolves to under `directives`.
+pub fn resolveTag(directives: []const AST.TagDirective, text: []const u8, kind: AST.Node.Kind) AST.TagResolution {
+    if (std.mem.eql(u8, text, "!")) return .{ .resolved = table.tag_non_specific };
+    const name = coreTagName(directives, text) orelse return .{ .resolved = table.tag_custom };
+    const k: AST.Tag.KindTag = if (std.mem.eql(u8, name, "str")) .string else if (std.mem.eql(u8, name, "null")) .null_ else if (std.mem.eql(u8, name, "bool")) .boolean else if (std.mem.eql(u8, name, "int")) .integer else if (std.mem.eql(u8, name, "float")) .float else if (std.mem.eql(u8, name, "seq")) .sequence else if (std.mem.eql(u8, name, "map")) .mapping else
+        // A `!!`-secondary tag with a name the core schema does not have
+        // (`!!binary`, `!!timestamp`) is custom.
+        return .{ .resolved = table.tag_custom };
+    return .{ .resolved = table.tag_kind + @as(u8, @intCast(@backingInt(k))), .agrees = agrees(k, kind) };
+}
+
+/// Whether a node of `kind` can be what the core type `k` says: a
+/// collection type on a collection of that kind, a scalar type on a scalar
+/// whose text reads as one — a `!!bool` as `true` or `false`, a `!!int` or
+/// `!!float` by the 1.2 core schema or 1.1's, since a tag does not say
+/// which.
+fn agrees(k: AST.Tag.KindTag, kind: AST.Node.Kind) bool {
+    const collection = kind == .sequence or kind == .mapping;
+    switch (k) {
+        .sequence => return kind == .sequence,
+        .mapping => return kind == .mapping,
+        else => if (collection) return false,
+    }
+    const t: []const u8 = switch (kind) {
+        .string => |x| x,
+        .number => |n| n.raw,
+        .boolean => |b| if (b) "true" else "false",
+        .null_ => "null",
+        else => "",
+    };
+    return switch (k) {
+        .string, .null_ => true,
+        .boolean => util.eqlAny(t, &.{ "true", "True", "TRUE", "false", "False", "FALSE" }),
+        .integer => classifyNumber(t) == .integer or classify1_1Number(t) == .integer,
+        .float => (classifyNumber(t) != .not_number and !hasRadixPrefix(t)) or classify1_1Number(t) == .float,
+        .sequence, .mapping => unreachable,
+    };
+}
+
+/// If `tag` names a YAML core-schema type, returns the bare name (`str`, `int`,
+/// `bool`, `null`, `seq`, `map`, …). Accepts the `!!name` shorthand and the
+/// verbose `tag:yaml.org,2002:name` form (with or without `!<>`).
+pub fn coreTagName(directives: []const AST.TagDirective, tag: []const u8) ?[]const u8 {
+    const core = "tag:yaml.org,2002:";
+    if (tag.len >= 3 and tag[0] == '!' and tag[1] == '<' and tag[tag.len - 1] == '>') {
+        const inner = tag[2 .. tag.len - 1];
+        if (std.mem.startsWith(u8, inner, core)) return inner[core.len..];
+        return null;
+    }
+    if (std.mem.startsWith(u8, tag, core)) return tag[core.len..];
+    if (tag.len == 0 or tag[0] != '!') return null;
+    // A shorthand `handle` + `suffix`: `!!int`, `!e!int`, or the primary
+    // `!int`. A `%TAG` directive in the document can bind any handle,
+    // `!!` and `!` included, to a prefix of its own; unbound, `!!` is the
+    // core schema's and `!` a local tag's.
+    const close = if (tag.len > 1) std.mem.indexOfScalarPos(u8, tag, 1, '!') else null;
+    const handle = if (close) |c| tag[0 .. c + 1] else "!";
+    const suffix = tag[handle.len..];
+    const prefix = for (directives) |d| {
+        if (std.mem.eql(u8, d.handle, handle)) break d.prefix;
+    } else if (std.mem.eql(u8, handle, "!!")) core else return null;
+    // `prefix ++ suffix` names a core type when it is `core ++ name`. A
+    // prefix that runs past `core` into the name is not a spelling anyone
+    // writes, and is read as custom.
+    if (prefix.len > core.len or !std.mem.startsWith(u8, core, prefix)) return null;
+    const rest = core[prefix.len..];
+    if (!std.mem.startsWith(u8, suffix, rest)) return null;
+    const name = suffix[rest.len..];
+    return if (name.len == 0) null else name;
+}
+
+/// Whether `t` spells an integer by radix (`0x1A`, `0o17`, `0b101`), which a
+/// `!!float` does not take.
+pub fn hasRadixPrefix(t: []const u8) bool {
+    const s = if (t.len > 0 and (t[0] == '+' or t[0] == '-')) t[1..] else t;
+    return s.len > 2 and s[0] == '0' and std.mem.indexOfScalar(u8, "xXoObB", s[1]) != null;
+}
+
 /// Classify a plain scalar against the YAML 1.1 int/float tags. Order matters:
 /// `.inf`/`.nan` and sexagesimal are checked before the radix prefixes, and the
 /// radix prefixes before the decimal/octal/float fork.
@@ -2828,7 +2919,7 @@ test "yaml tag: attaches to mapping value and extends span left" {
     const value = try doc.ast.getValByPath(&.{.{ .key = "k" }});
     // At parse the value is still classified structurally (tags apply at
     // materialize), but the tag string is recorded on the side-table...
-    try testing.expectEqualSlices(u8, "!!int", doc.ast.node_tags[value.id].?.text);
+    try testing.expectEqualSlices(u8, "!!int", doc.ast.tagOf(value.id).?.text);
     // ...and the node's span was extended leftward to cover the `!!int ` prefix.
     try testing.expectEqualSlices(u8, "!!int 5", Span.of(u8, doc.span(value), doc.source));
     try testing.expectEqualSlices(u8, "!!int", Span.of(u8, doc.tagSpan(value).?, doc.source));
@@ -2837,17 +2928,17 @@ test "yaml tag: attaches to mapping value and extends span left" {
 test "yaml tag: on root scalar" {
     const doc = try Parser.parse(testing.allocator, "!!str foo\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
-    const root = doc.ast.nodes[doc.ast.root];
+    const root = doc.ast.node(doc.ast.root);
     try testing.expectEqualSlices(u8, "foo", root.kind.string);
-    try testing.expectEqualSlices(u8, "!!str", doc.ast.node_tags[root.id].?.text);
+    try testing.expectEqualSlices(u8, "!!str", doc.ast.tagOf(root.id).?.text);
 }
 
 test "yaml tag: bare bang is a tagged null root" {
     const doc = try Parser.parse(testing.allocator, "!\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
-    const root = doc.ast.nodes[doc.ast.root];
+    const root = doc.ast.node(doc.ast.root);
     try testing.expect(root.kind == .null_);
-    try testing.expectEqualSlices(u8, "!", doc.ast.node_tags[root.id].?.text);
+    try testing.expectEqualSlices(u8, "!", doc.ast.tagOf(root.id).?.text);
 }
 
 test "yaml tag: empty value is a tagged null" {
@@ -2855,7 +2946,7 @@ test "yaml tag: empty value is a tagged null" {
     defer doc.deinit(testing.allocator);
     const value = try doc.ast.getValByPath(&.{.{ .key = "t" }});
     try testing.expect(value.kind == .null_);
-    try testing.expectEqualSlices(u8, "!!str", doc.ast.node_tags[value.id].?.text);
+    try testing.expectEqualSlices(u8, "!!str", doc.ast.tagOf(value.id).?.text);
 }
 
 test "yaml tag: two tags on one node is rejected" {
@@ -2865,21 +2956,21 @@ test "yaml tag: two tags on one node is rejected" {
 test "yaml directive: %YAML before document is consumed" {
     const doc = try Parser.parse(testing.allocator, "%YAML 1.2\n---\nfoo\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
-    try testing.expectEqualSlices(u8, "foo", doc.ast.nodes[doc.ast.root].kind.string);
+    try testing.expectEqualSlices(u8, "foo", doc.ast.node(doc.ast.root).kind.string);
 }
 
 test "yaml directive: %TAG declares a handle used by a tag" {
     const doc = try Parser.parse(testing.allocator, "%TAG !e! tag:example.com,2000:app/\n---\n!e!foo bar\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
-    const root = doc.ast.nodes[doc.ast.root];
+    const root = doc.ast.node(doc.ast.root);
     try testing.expectEqualSlices(u8, "bar", root.kind.string);
-    try testing.expectEqualSlices(u8, "!e!foo", doc.ast.node_tags[root.id].?.text);
+    try testing.expectEqualSlices(u8, "!e!foo", doc.ast.tagOf(root.id).?.text);
 }
 
 test "yaml directive: a reserved directive is ignored" {
     const doc = try Parser.parse(testing.allocator, "%FOO bar baz # ignored\n---\n\"x\"\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
-    try testing.expectEqualSlices(u8, "x", doc.ast.nodes[doc.ast.root].kind.string);
+    try testing.expectEqualSlices(u8, "x", doc.ast.node(doc.ast.root).kind.string);
 }
 
 test "yaml directive: %YAML without a following marker is rejected" {
@@ -2910,7 +3001,7 @@ test "yaml directive: a multiline plain scalar may absorb a %-line (XLQ9)" {
     // `%YAML 1.2` here is a plain-scalar continuation, not a directive.
     const doc = try Parser.parse(testing.allocator, "---\nscalar\n%YAML 1.2\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
-    try testing.expectEqualSlices(u8, "scalar %YAML 1.2", doc.ast.nodes[doc.ast.root].kind.string);
+    try testing.expectEqualSlices(u8, "scalar %YAML 1.2", doc.ast.node(doc.ast.root).kind.string);
 }
 
 test "yaml tag: flow tagged-null value" {
@@ -2918,17 +3009,17 @@ test "yaml tag: flow tagged-null value" {
     defer doc.deinit(testing.allocator);
     const a_val = try doc.ast.getValByPath(&.{.{ .key = "a" }});
     try testing.expect(a_val.kind == .null_);
-    try testing.expectEqualSlices(u8, "!!str", doc.ast.node_tags[a_val.id].?.text);
+    try testing.expectEqualSlices(u8, "!!str", doc.ast.tagOf(a_val.id).?.text);
 }
 
 test "yaml tag: flow tagged-null key" {
     const doc = try Parser.parse(testing.allocator, "{!!str : bar}\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
-    const root = doc.ast.nodes[doc.ast.root];
-    const kv = doc.ast.nodes[root.kind.mapping.?];
-    const key = doc.ast.nodes[kv.kind.keyvalue.key];
+    const root = doc.ast.node(doc.ast.root);
+    const kv = doc.ast.node(root.kind.mapping.?);
+    const key = doc.ast.node(kv.kind.keyvalue.key);
     try testing.expect(key.kind == .null_);
-    try testing.expectEqualSlices(u8, "!!str", doc.ast.node_tags[key.id].?.text);
+    try testing.expectEqualSlices(u8, "!!str", doc.ast.tagOf(key.id).?.text);
 }
 
 test "yaml tag: deferred null sequence item keeps its tag and the next item" {
@@ -2939,7 +3030,7 @@ test "yaml tag: deferred null sequence item keeps its tag and the next item" {
     const item0 = try doc.ast.getValByPath(&.{.{ .index = 0 }});
     const item1 = try doc.ast.getValByPath(&.{.{ .index = 1 }});
     try testing.expect(item0.kind == .null_);
-    try testing.expectEqualSlices(u8, "!!str", doc.ast.node_tags[item0.id].?.text);
+    try testing.expectEqualSlices(u8, "!!str", doc.ast.tagOf(item0.id).?.text);
     try testing.expectEqualSlices(u8, "y", item1.kind.string);
     try testing.expect(doc.ast.node_tags[item1.id] == null);
 }
@@ -2993,10 +3084,10 @@ test "yaml merge: << pulls keys, host overrides, sequence earlier-wins" {
     const derived = try doc.ast.getValByPath(&.{.{ .key = "derived" }});
     // y: host wins (3)
     const y = (try doc.ast.mergedChild(derived, "y")).?;
-    try testing.expectEqualSlices(u8, "3", doc.ast.nodes[y].kind.number.raw);
+    try testing.expectEqualSlices(u8, "3", doc.ast.node(y).kind.number.raw);
     // x: not local → from merge; earlier source (*o) wins over *b → 9
     const x = (try doc.ast.mergedChild(derived, "x")).?;
-    try testing.expectEqualSlices(u8, "9", doc.ast.nodes[x].kind.number.raw);
+    try testing.expectEqualSlices(u8, "9", doc.ast.node(x).kind.number.raw);
     // absent key → null
     try testing.expect((try doc.ast.mergedChild(derived, "nope")) == null);
 }
@@ -3026,24 +3117,24 @@ test "yaml: captures leading/trailing comments; block-scalar # stays content" {
     , .v1_2_2);
     defer doc.deinit(testing.allocator);
     const ast = doc.ast;
-    const root = ast.nodes[ast.root];
+    const root = ast.node(ast.root);
 
-    const kv_name = ast.nodes[root.kind.mapping.?].kind.keyvalue;
+    const kv_name = ast.node(root.kind.mapping.?).kind.keyvalue;
     // The document header leads the first key (renders at column 0 above it).
     try testing.expectEqualStrings("document header", ast.comments(kv_name.key).leading[0].text);
     try testing.expectEqualStrings("the project", ast.comments(kv_name.value).trailing.?.text);
 
-    const kv_nums = ast.nodes[ast.nodes[root.kind.mapping.?].next_sibling.?].kind.keyvalue;
-    const seq = ast.nodes[kv_nums.value];
-    const item1 = ast.nodes[seq.kind.sequence.?];
-    const item2 = ast.nodes[item1.next_sibling.?];
+    const kv_nums = ast.node(ast.node(root.kind.mapping.?).next_sibling.?).kind.keyvalue;
+    const seq = ast.node(kv_nums.value);
+    const item1 = ast.node(seq.kind.sequence.?);
+    const item2 = ast.node(item1.next_sibling.?);
     try testing.expectEqualStrings("first item", ast.comments(item1.id).leading[0].text);
     try testing.expectEqualStrings("second", ast.comments(item2.id).trailing.?.text);
 
     // The `#` line inside the `|` block scalar is content, not a comment: it
     // lives in the string value and produces no trailing comment.
-    const kv_text = ast.nodes[ast.nodes[ast.nodes[root.kind.mapping.?].next_sibling.?].next_sibling.?].kind.keyvalue;
-    const text_val = ast.nodes[kv_text.value];
+    const kv_text = ast.node(ast.node(ast.node(root.kind.mapping.?).next_sibling.?).next_sibling.?).kind.keyvalue;
+    const text_val = ast.node(kv_text.value);
     try testing.expect(text_val.kind == .string);
     try testing.expect(std.mem.indexOf(u8, text_val.kind.string, "# not a comment") != null);
     try testing.expect(ast.comments(kv_text.value).trailing == null);
@@ -3064,23 +3155,23 @@ test "yaml: comment after a block-collection value leads the next sibling, not t
     , .v1_2_2);
     defer doc.deinit(testing.allocator);
     const ast = doc.ast;
-    const root = ast.nodes[ast.root];
+    const root = ast.node(ast.root);
 
     // steps -> sequence of two item mappings.
-    const kv_steps = ast.nodes[root.kind.mapping.?].kind.keyvalue;
-    const seq = ast.nodes[kv_steps.value];
-    const item1 = ast.nodes[seq.kind.sequence.?];
-    const item2 = ast.nodes[item1.next_sibling.?];
+    const kv_steps = ast.node(root.kind.mapping.?).kind.keyvalue;
+    const seq = ast.node(kv_steps.value);
+    const item1 = ast.node(seq.kind.sequence.?);
+    const item2 = ast.node(item1.next_sibling.?);
 
     // The comment leads the `run` key of the second item — its rightful home.
-    const run_pair = ast.nodes[item2.kind.mapping.?].kind.keyvalue;
+    const run_pair = ast.node(item2.kind.mapping.?).kind.keyvalue;
     const run_leading = ast.comments(run_pair.key).leading;
     try testing.expect(run_leading.len == 1);
     try testing.expectEqualStrings("leads run", run_leading[0].text);
 
     // And it was NOT stolen by the `with` pair inside the first item.
-    const uses_pair = ast.nodes[item1.kind.mapping.?].kind.keyvalue;
-    const with_pair_id = ast.nodes[uses_pair.value].next_sibling; // uses -> with
+    const uses_pair = ast.node(item1.kind.mapping.?).kind.keyvalue;
+    const with_pair_id = ast.node(uses_pair.value).next_sibling; // uses -> with
     if (with_pair_id) |wid| try testing.expect(ast.comments(wid).leading.len == 0);
 }
 
@@ -3140,7 +3231,7 @@ test "yaml: a property-only line at a different column than its node" {
     defer doc.deinit(testing.allocator);
     const v = try doc.ast.getValByPath(&.{.{ .key = "folded" }});
     try testing.expect(v.kind == .string);
-    try testing.expectEqualSlices(u8, "!foo", doc.ast.node_tags[v.id].?.text);
+    try testing.expectEqualSlices(u8, "!foo", doc.ast.tagOf(v.id).?.text);
 }
 
 test "yaml block scalar: next-line header with explicit indent over the owner column" {
@@ -3249,14 +3340,14 @@ test "yaml sequence item mapping continuation" {
     try testing.expect(std.meta.activeTag(build.kind) == .mapping);
 
     var args_pair_id = build.kind.mapping.?;
-    while (!std.mem.eql(u8, "args", doc.ast.nodes[doc.ast.nodes[args_pair_id].kind.keyvalue.key].kind.string)) {
-        args_pair_id = doc.ast.nodes[args_pair_id].next_sibling orelse return error.NotFound;
+    while (!std.mem.eql(u8, "args", doc.ast.node(doc.ast.node(args_pair_id).kind.keyvalue.key).kind.string)) {
+        args_pair_id = doc.ast.node(args_pair_id).next_sibling orelse return error.NotFound;
     }
 
-    const args = doc.ast.nodes[doc.ast.nodes[args_pair_id].kind.keyvalue.value];
+    const args = doc.ast.node(doc.ast.node(args_pair_id).kind.keyvalue.value);
     try testing.expect(std.meta.activeTag(args.kind) == .sequence);
     const first_arg_id = args.kind.sequence.?;
-    const second_arg = doc.ast.nodes[doc.ast.nodes[first_arg_id].next_sibling.?];
+    const second_arg = doc.ast.node(doc.ast.node(first_arg_id).next_sibling.?);
     try testing.expectEqualSlices(u8, "install-tests", second_arg.kind.string);
 }
 
@@ -3371,15 +3462,15 @@ test "yaml core schema type resolution" {
 test "yaml root scalar documents" {
     const plain = try Parser.parse(testing.allocator, "hello world\n", .v1_2_2);
     defer plain.deinit(testing.allocator);
-    try testing.expectEqualSlices(u8, "hello world", plain.ast.nodes[plain.ast.root].kind.string);
+    try testing.expectEqualSlices(u8, "hello world", plain.ast.node(plain.ast.root).kind.string);
 
     const number = try Parser.parse(testing.allocator, "42\n", .v1_2_2);
     defer number.deinit(testing.allocator);
-    try testing.expect(std.meta.activeTag(number.ast.nodes[number.ast.root].kind) == .number);
+    try testing.expect(std.meta.activeTag(number.ast.node(number.ast.root).kind) == .number);
 
     const quoted = try Parser.parse(testing.allocator, "\"quoted\"\n", .v1_2_2);
     defer quoted.deinit(testing.allocator);
-    try testing.expectEqualSlices(u8, "quoted", quoted.ast.nodes[quoted.ast.root].kind.string);
+    try testing.expectEqualSlices(u8, "quoted", quoted.ast.node(quoted.ast.root).kind.string);
 }
 
 test "yaml empty documents have a null root" {
@@ -3388,7 +3479,7 @@ test "yaml empty documents have a null root" {
     for ([_][]const u8{ "", "# just a comment\n", "\n\n", "...\n", "---\n" }) |input| {
         const doc = try Parser.parse(testing.allocator, input, .v1_2_2);
         defer doc.deinit(testing.allocator);
-        try testing.expect(std.meta.activeTag(doc.ast.nodes[doc.ast.root].kind) == .null_);
+        try testing.expect(std.meta.activeTag(doc.ast.node(doc.ast.root).kind) == .null_);
     }
 }
 
@@ -3396,16 +3487,16 @@ test "yaml block-context empty keys" {
     // `: value` is a mapping entry with a null key.
     const doc = try Parser.parse(testing.allocator, ": a\n: b\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
-    const map = doc.ast.nodes[doc.ast.root];
+    const map = doc.ast.node(doc.ast.root);
     try testing.expect(std.meta.activeTag(map.kind) == .mapping);
-    const first = doc.ast.nodes[map.kind.mapping.?];
-    try testing.expect(std.meta.activeTag(doc.ast.nodes[first.kind.keyvalue.key].kind) == .null_);
-    try testing.expectEqualSlices(u8, "a", doc.ast.nodes[first.kind.keyvalue.value].kind.string);
+    const first = doc.ast.node(map.kind.mapping.?);
+    try testing.expect(std.meta.activeTag(doc.ast.node(first.kind.keyvalue.key).kind) == .null_);
+    try testing.expectEqualSlices(u8, "a", doc.ast.node(first.kind.keyvalue.value).kind.string);
 
     // A bare `:` is the entry {null: null}.
     const bare = try Parser.parse(testing.allocator, ":\n", .v1_2_2);
     defer bare.deinit(testing.allocator);
-    try testing.expect(std.meta.activeTag(bare.ast.nodes[bare.ast.root].kind) == .mapping);
+    try testing.expect(std.meta.activeTag(bare.ast.node(bare.ast.root).kind) == .mapping);
 
     // `- :` is a sequence entry whose value is an empty-key mapping.
     const seq = try Parser.parse(testing.allocator, "- :\n", .v1_2_2);
@@ -3528,7 +3619,7 @@ test "yaml multi-line plain scalar blank line becomes newline" {
 test "yaml CRLF root scalar drops the trailing \\r" {
     const doc = try Parser.parse(testing.allocator, "Root\r\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
-    try testing.expectEqualSlices(u8, "Root", doc.ast.nodes[doc.ast.root].kind.string);
+    try testing.expectEqualSlices(u8, "Root", doc.ast.node(doc.ast.root).kind.string);
 }
 
 test "yaml CRLF multi-line plain scalar folds without a stray \\r" {
@@ -3716,19 +3807,19 @@ test "yaml empty block scalar is an empty string" {
 test "yaml root block scalar document" {
     const doc = try Parser.parse(testing.allocator, "|\n  hello\n  world\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
-    try testing.expectEqualSlices(u8, "hello\nworld\n", doc.ast.nodes[doc.ast.root].kind.string);
+    try testing.expectEqualSlices(u8, "hello\nworld\n", doc.ast.node(doc.ast.root).kind.string);
 }
 
 test "yaml root block scalar with column-0 content" {
     // `--- >` (or bare `>`): the body may sit at column 0.
     const doc = try Parser.parse(testing.allocator, "--- >\nline1\nline2\nline3\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
-    try testing.expectEqualSlices(u8, "line1 line2 line3\n", doc.ast.nodes[doc.ast.root].kind.string);
+    try testing.expectEqualSlices(u8, "line1 line2 line3\n", doc.ast.node(doc.ast.root).kind.string);
 
     // A `#` line is content inside a block scalar, not a comment.
     const hash = try Parser.parse(testing.allocator, "--- |\nline1\n# kept\nline3\n", .v1_2_2);
     defer hash.deinit(testing.allocator);
-    try testing.expectEqualSlices(u8, "line1\n# kept\nline3\n", hash.ast.nodes[hash.ast.root].kind.string);
+    try testing.expectEqualSlices(u8, "line1\n# kept\nline3\n", hash.ast.node(hash.ast.root).kind.string);
 }
 
 test "yaml next-line plain value folds same-indent continuations" {
@@ -3816,11 +3907,11 @@ test "yaml flow JSON-style adjacent colons" {
 test "yaml flow collection as a block mapping key" {
     const doc = try Parser.parse(testing.allocator, "[a, b]: value\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
-    const map = doc.ast.nodes[doc.ast.root];
+    const map = doc.ast.node(doc.ast.root);
     try testing.expect(std.meta.activeTag(map.kind) == .mapping);
-    const pair = doc.ast.nodes[map.kind.mapping.?];
-    try testing.expect(std.meta.activeTag(doc.ast.nodes[pair.kind.keyvalue.key].kind) == .sequence);
-    try testing.expectEqualSlices(u8, "value", doc.ast.nodes[pair.kind.keyvalue.value].kind.string);
+    const pair = doc.ast.node(map.kind.mapping.?);
+    try testing.expect(std.meta.activeTag(doc.ast.node(pair.kind.keyvalue.key).kind) == .sequence);
+    try testing.expectEqualSlices(u8, "value", doc.ast.node(pair.kind.keyvalue.value).kind.string);
 
     // A flow collection key spanning lines is not a valid implicit key.
     try testParserError("[1\n]: x\n", error.UnexpectedToken);
@@ -3951,13 +4042,13 @@ test "yaml complex block keys (block sequence as key)" {
     const multi = try Parser.parse(testing.allocator, "? - a\n  - b\n: c\n", .v1_2_2);
     defer multi.deinit(testing.allocator);
     {
-        const map = multi.ast.nodes[multi.ast.root];
+        const map = multi.ast.node(multi.ast.root);
         try testing.expect(std.meta.activeTag(map.kind) == .mapping);
-        const pair = multi.ast.nodes[map.kind.mapping.?];
-        const key = multi.ast.nodes[pair.kind.keyvalue.key];
+        const pair = multi.ast.node(map.kind.mapping.?);
+        const key = multi.ast.node(pair.kind.keyvalue.key);
         try testing.expect(std.meta.activeTag(key.kind) == .sequence);
-        try testing.expectEqualSlices(u8, "a", multi.ast.nodes[key.kind.sequence.?].kind.string);
-        try testing.expectEqualSlices(u8, "c", multi.ast.nodes[pair.kind.keyvalue.value].kind.string);
+        try testing.expectEqualSlices(u8, "a", multi.ast.node(key.kind.sequence.?).kind.string);
+        try testing.expectEqualSlices(u8, "c", multi.ast.node(pair.kind.keyvalue.value).kind.string);
     }
 
     // Key and `:` on adjacent lines at the same indent (no dedent between):
@@ -3983,7 +4074,7 @@ fn shape(alloc: std.mem.Allocator, src: []const u8) ![]u8 {
     defer doc.deinit(alloc);
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(alloc);
-    try shapeNode(alloc, &doc.ast, doc.ast.nodes[doc.ast.root], &out);
+    try shapeNode(alloc, &doc.ast, doc.ast.node(doc.ast.root), &out);
     return out.toOwnedSlice(alloc);
 }
 
@@ -3993,16 +4084,16 @@ fn shapeNode(alloc: std.mem.Allocator, ast: *const AST, node: AST.Node, out: *st
         .sequence => |first| {
             try shapePush(alloc, out, "[");
             var child = first;
-            while (child) |cid| : (child = ast.nodes[cid].next_sibling) try shapeNode(alloc, ast, ast.nodes[cid], out);
+            while (child) |cid| : (child = ast.node(cid).next_sibling) try shapeNode(alloc, ast, ast.node(cid), out);
             try shapePush(alloc, out, "]");
         },
         .mapping => |first| {
             try shapePush(alloc, out, "{");
             var child = first;
-            while (child) |cid| : (child = ast.nodes[cid].next_sibling) {
-                const kv = ast.nodes[cid].kind.keyvalue;
-                try shapeNode(alloc, ast, ast.nodes[kv.key], out);
-                try shapeNode(alloc, ast, ast.nodes[kv.value], out);
+            while (child) |cid| : (child = ast.node(cid).next_sibling) {
+                const kv = ast.node(cid).kind.keyvalue;
+                try shapeNode(alloc, ast, ast.node(kv.key), out);
+                try shapeNode(alloc, ast, ast.node(kv.value), out);
             }
             try shapePush(alloc, out, "}");
         },
@@ -4185,11 +4276,11 @@ test "yaml mapping as an explicit key" {
     // `? earth: blue\n: moon: white` — the key and value are each a mapping.
     const doc = try Parser.parse(testing.allocator, "? earth: blue\n: moon: white\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
-    const map = doc.ast.nodes[doc.ast.root];
+    const map = doc.ast.node(doc.ast.root);
     try testing.expect(std.meta.activeTag(map.kind) == .mapping);
-    const pair = doc.ast.nodes[map.kind.mapping.?];
-    try testing.expect(std.meta.activeTag(doc.ast.nodes[pair.kind.keyvalue.key].kind) == .mapping);
-    try testing.expect(std.meta.activeTag(doc.ast.nodes[pair.kind.keyvalue.value].kind) == .mapping);
+    const pair = doc.ast.node(map.kind.mapping.?);
+    try testing.expect(std.meta.activeTag(doc.ast.node(pair.kind.keyvalue.key).kind) == .mapping);
+    try testing.expect(std.meta.activeTag(doc.ast.node(pair.kind.keyvalue.value).kind) == .mapping);
 
     // A tab standing in for the nested mapping's indentation is invalid.
     try testParserError("?\tkey:\n", error.UnexpectedToken);
@@ -4201,19 +4292,19 @@ test "yaml explicit key nested in a deferred explicit key" {
     // value; only a `:` back at the `?`'s column closes the outer key.
     const doc = try Parser.parse(testing.allocator, "?\n  ? earth\n  : blue\n: x\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
-    const pair = doc.ast.nodes[doc.ast.nodes[doc.ast.root].kind.mapping.?];
-    const key = doc.ast.nodes[pair.kind.keyvalue.key];
+    const pair = doc.ast.node(doc.ast.node(doc.ast.root).kind.mapping.?);
+    const key = doc.ast.node(pair.kind.keyvalue.key);
     try testing.expect(std.meta.activeTag(key.kind) == .mapping);
-    const inner = doc.ast.nodes[key.kind.mapping.?].kind.keyvalue;
-    try testing.expectEqualStrings("earth", doc.ast.nodes[inner.key].kind.string);
-    try testing.expectEqualStrings("blue", doc.ast.nodes[inner.value].kind.string);
-    try testing.expectEqualStrings("x", doc.ast.nodes[pair.kind.keyvalue.value].kind.string);
+    const inner = doc.ast.node(key.kind.mapping.?).kind.keyvalue;
+    try testing.expectEqualStrings("earth", doc.ast.node(inner.key).kind.string);
+    try testing.expectEqualStrings("blue", doc.ast.node(inner.value).kind.string);
+    try testing.expectEqualStrings("x", doc.ast.node(pair.kind.keyvalue.value).kind.string);
     // An indentless block key still closes on the `:` at its own column.
     const flat = try Parser.parse(testing.allocator, "?\n- a\n- b\n: c\n", .v1_2_2);
     defer flat.deinit(testing.allocator);
-    const flat_pair = flat.ast.nodes[flat.ast.nodes[flat.ast.root].kind.mapping.?];
-    try testing.expect(std.meta.activeTag(flat.ast.nodes[flat_pair.kind.keyvalue.key].kind) == .sequence);
-    try testing.expectEqualStrings("c", flat.ast.nodes[flat_pair.kind.keyvalue.value].kind.string);
+    const flat_pair = flat.ast.node(flat.ast.node(flat.ast.root).kind.mapping.?);
+    try testing.expect(std.meta.activeTag(flat.ast.node(flat_pair.kind.keyvalue.key).kind) == .sequence);
+    try testing.expectEqualStrings("c", flat.ast.node(flat_pair.kind.keyvalue.value).kind.string);
 }
 
 test "yaml explicit key: a property on the `?` line decorates the block key" {
@@ -4221,16 +4312,16 @@ test "yaml explicit key: a property on the `?` line decorates the block key" {
     // then a block sequence anchors the value.
     const doc = try Parser.parse(testing.allocator, "? &a\n  - a\n  - b\n: *a\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
-    const pair = doc.ast.nodes[doc.ast.nodes[doc.ast.root].kind.mapping.?];
-    const key = doc.ast.nodes[pair.kind.keyvalue.key];
+    const pair = doc.ast.node(doc.ast.node(doc.ast.root).kind.mapping.?);
+    const key = doc.ast.node(pair.kind.keyvalue.key);
     try testing.expect(std.meta.activeTag(key.kind) == .sequence);
     try testing.expectEqualSlices(u8, "a", doc.ast.node_anchors[key.id].?);
-    try testing.expectEqual(key.id, try doc.ast.resolveAlias(doc.ast.nodes[pair.kind.keyvalue.value]));
+    try testing.expectEqual(key.id, try doc.ast.resolveAlias(doc.ast.node(pair.kind.keyvalue.value)));
     // With no key content, the `:` makes an (anchored) null key.
     const empty = try Parser.parse(testing.allocator, "? &a\n: x\n", .v1_2_2);
     defer empty.deinit(testing.allocator);
-    const empty_pair = empty.ast.nodes[empty.ast.nodes[empty.ast.root].kind.mapping.?];
-    const empty_key = empty.ast.nodes[empty_pair.kind.keyvalue.key];
+    const empty_pair = empty.ast.node(empty.ast.node(empty.ast.root).kind.mapping.?);
+    const empty_key = empty.ast.node(empty_pair.kind.keyvalue.key);
     try testing.expect(empty_key.kind == .null_);
     try testing.expectEqualSlices(u8, "a", empty.ast.node_anchors[empty_key.id].?);
 }
@@ -4257,9 +4348,9 @@ test "yaml anchor: a property on an implicit key's own line is the key's" {
     // A tag the same way (`!!str a: b` tags the key).
     const tagged = try Parser.parse(testing.allocator, "!!str a: b\n", .v1_2_2);
     defer tagged.deinit(testing.allocator);
-    const pair = tagged.ast.nodes[tagged.ast.nodes[tagged.ast.root].kind.mapping.?];
+    const pair = tagged.ast.node(tagged.ast.node(tagged.ast.root).kind.mapping.?);
     try testing.expect(tagged.ast.node_tags[tagged.ast.root] == null);
-    try testing.expectEqualStrings("!!str", tagged.ast.node_tags[pair.kind.keyvalue.key].?.text);
+    try testing.expectEqualStrings("!!str", tagged.ast.tagOf(pair.kind.keyvalue.key).?.text);
     // One on an earlier line is still the mapping's.
     const above = try Parser.parse(testing.allocator, "k: &m\n  a: b\n", .v1_2_2);
     defer above.deinit(testing.allocator);

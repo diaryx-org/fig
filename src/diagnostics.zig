@@ -188,11 +188,11 @@ const Collector = struct {
     fn walk(self: *Collector, id: AST.Node.Id, path: []const u8, depth: usize) Allocator.Error!void {
         try self.checkComments(id, path);
         try self.checkValue(id, path, depth);
-        switch (self.ast.nodes[id].kind) {
+        switch (self.ast.node(id).kind) {
             .mapping => |first| {
                 var child = first;
-                while (child) |cid| : (child = self.ast.nodes[cid].next_sibling) {
-                    const kv = self.ast.nodes[cid].kind.keyvalue;
+                while (child) |cid| : (child = self.ast.node(cid).next_sibling) {
+                    const kv = self.ast.node(cid).kind.keyvalue;
                     const child_path = try self.keyPath(path, kv.key);
                     // A mapping entry's leading comment binds to its KEY node; its
                     // trailing/value losses ride the value node (checked in walk).
@@ -203,7 +203,7 @@ const Collector = struct {
             .sequence => |first| {
                 var child = first;
                 var i: usize = 0;
-                while (child) |cid| : (child = self.ast.nodes[cid].next_sibling) {
+                while (child) |cid| : (child = self.ast.node(cid).next_sibling) {
                     const child_path = try indexPath(self.arena, path, i);
                     i += 1;
                     try self.walk(cid, child_path, depth + 1);
@@ -214,7 +214,7 @@ const Collector = struct {
     }
 
     fn checkValue(self: *Collector, id: AST.Node.Id, path: []const u8, depth: usize) Allocator.Error!void {
-        const kind = self.ast.nodes[id].kind;
+        const kind = self.ast.node(id).kind;
         const loss = switch (self.target) {
             .canonical => null,
             .language => |e| valueLoss(e, kind, depth),
@@ -255,7 +255,7 @@ const Collector = struct {
     /// `parent.key` (or `key` at the root). A non-string key shows as `?` (only
     /// its value can be a loss target, so the key text is a hint).
     fn keyPath(self: *Collector, parent: []const u8, key_id: AST.Node.Id) Allocator.Error![]const u8 {
-        const name = switch (self.ast.nodes[key_id].kind) {
+        const name = switch (self.ast.node(key_id).kind) {
             .string => |s| s,
             else => "?",
         };

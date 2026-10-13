@@ -20,9 +20,12 @@ pub const Editor = @import("editor.zig").Editor;
 /// byte-identical. See its module doc for the merge rule and what it refuses.
 pub const Patch = @import("patch.zig");
 pub const Document = @import("kit/document.zig");
-/// A `[start, end)` byte range — what `Document`'s span tables hold.
+/// A `[start, end)` byte range — a node's place in its source.
 pub const Span = @import("kit/span.zig");
 pub const AST = @import("kit/ast/ast.zig");
+/// A Zig parser's tree before it is rows (`ParseTree.Nodes`), and its
+/// conversion to a `Document`.
+pub const ParseTree = @import("kit/parse_tree.zig");
 /// Rendering a tree as canonical or through a registered language.
 pub const Serialize = @import("serialize.zig");
 pub const Lossless = @import("lossless.zig");

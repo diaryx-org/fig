@@ -15,7 +15,7 @@
 //!   * every sample a format declares parses, prints, and reparses to the
 //!     same tree — the round trip the CLI's `fmt` and every cross-format
 //!     `convert` assume;
-//!   * `Document.node_regions` is well-formed — whole lines, container nodes,
+//!   * `Document.regionsOf` is well-formed — whole lines, container nodes,
 //!     sorted — and a section format's parser actually fills it (the check
 //!     `derived-regions.md` §10 asked for: `validate` cannot see inside a
 //!     parser, so this is where a parser that stopped recording headers is
@@ -93,19 +93,19 @@ fn expectRoundTrip(comptime d: anytype, allocator: std.mem.Allocator, sample: []
     }
 }
 
-/// `Document.node_regions` well-formedness: each row is a whole physical
+/// `Document.regionsOf` well-formedness: each row is a whole physical
 /// line of a container node, and the table is sorted by `(node_id, start)`.
 fn expectRegionsWellFormed(doc: Document, source: []const u8) !void {
     var prev: ?Document.NodeRegion = null;
-    for (doc.node_regions) |r| {
-        try testing.expect(r.node_id < doc.ast.nodes.len);
-        const kind = doc.ast.nodes[r.node_id].kind;
+    for (doc.ast.region_facts) |r| {
+        try testing.expect(r.node < doc.ast.nodeCount());
+        const kind = doc.ast.node(r.node).kind;
         try testing.expect(kind == .mapping or kind == .sequence);
         try testing.expect(r.start < r.end and r.end <= source.len);
         try testing.expect(r.start == 0 or source[r.start - 1] == '\n');
         try testing.expect(r.end == source.len or source[r.end - 1] == '\n');
         if (prev) |p| {
-            try testing.expect(p.node_id < r.node_id or (p.node_id == r.node_id and p.start < r.start));
+            try testing.expect(p.node < r.node or (p.node == r.node and p.start < r.start));
         }
         prev = r;
     }
@@ -146,7 +146,7 @@ test "harness: every declared sample parses, prints, and reparses to the same tr
     }
 }
 
-test "harness: node_regions is well-formed, and a section format's parser fills it" {
+test "harness: the region list is well-formed, and a section format's parser fills it" {
     inline for (list.rows) |row| {
         if (comptime !bundle.bundles(row.name)) continue;
         inline for (bundle.Language(row.name).dialects) |d| {
@@ -156,14 +156,14 @@ test "harness: node_regions is well-formed, and a section format's parser fills 
                     const doc = try parseWith(d, testing.allocator, sample);
                     defer doc.deinit(testing.allocator);
                     try expectRegionsWellFormed(doc, sample);
-                    if (doc.node_regions.len > 0) any_regions = true;
+                    if (doc.ast.region_facts.len > 0) any_regions = true;
                 }
                 if (comptime isSectionFormat(d.Lang)) {
                     // A section format whose samples produce no section is either
                     // a parser that stopped recording headers or a sample set
                     // that never opens one; both are the format's to fix.
                     if (!any_regions) {
-                        std.debug.print("\n{s}: declares section_noun but no sample produced a node_regions row\n", .{d.name});
+                        std.debug.print("\n{s}: declares section_noun but no sample produced a header region\n", .{d.name});
                         return error.SectionFormatRecordsNoRegions;
                     }
                 } else {

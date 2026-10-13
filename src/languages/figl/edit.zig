@@ -18,7 +18,7 @@
 //!
 //! Nothing of these lives here any more: they are the generic ops in
 //! `../../editor.zig`, over the derived region set `../../editor/regions.zig`
-//! builds from `Document.node_regions`. What fig contributes is the parser's
+//! builds from `Document.regionsOf`. What fig contributes is the parser's
 //! half — `fig/parser.zig` records every BLOCK (non-flow) container's header
 //! lines: the line that created it, plus every LATER header that re-entered
 //! it verbatim (`database` written a second time, `> pool` reopened later in
@@ -96,7 +96,7 @@ fn blockBody(allocator: std.mem.Allocator, depth: usize, value_text: []const u8)
     var parser: Fig.Parser = .{ .allocator = allocator };
     var frag = Fig.parse(&parser, value_text, Fig.default_type) catch return null;
     defer frag.deinit(allocator);
-    switch (frag.ast.nodes[frag.ast.root].kind) {
+    switch (frag.ast.node(frag.ast.root).kind) {
         .mapping, .sequence => {},
         else => return null, // a multi-line scalar is still an inline value
     }

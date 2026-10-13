@@ -823,15 +823,15 @@ fn checkRegistration(allocator: Allocator, reg: *const Registered) !void {
 
 fn expectRegionsWellFormed(doc: Document, source: []const u8) !void {
     var prev: ?Document.NodeRegion = null;
-    for (doc.node_regions) |r| {
-        if (r.node_id >= doc.ast.nodes.len) return error.MalformedRegion;
-        const kind = doc.ast.nodes[r.node_id].kind;
+    for (doc.ast.region_facts) |r| {
+        if (r.node >= doc.ast.nodeCount()) return error.MalformedRegion;
+        const kind = doc.ast.node(r.node).kind;
         if (kind != .mapping and kind != .sequence) return error.MalformedRegion;
         if (!(r.start < r.end and r.end <= source.len)) return error.MalformedRegion;
         if (!(r.start == 0 or source[r.start - 1] == '\n')) return error.MalformedRegion;
         if (!(r.end == source.len or source[r.end - 1] == '\n')) return error.MalformedRegion;
         if (prev) |p| {
-            if (!(p.node_id < r.node_id or (p.node_id == r.node_id and p.start < r.start))) return error.MalformedRegion;
+            if (!(p.node < r.node or (p.node == r.node and p.start < r.start))) return error.MalformedRegion;
         }
         prev = r;
     }
@@ -866,7 +866,10 @@ pub fn printNodeWith(e: *const Entry, writer: *std.Io.Writer, ast: *const AST, r
     // Stripping is core's, as it is for a compiled printer: the language
     // is handed a table with no comments rather than asked to drop them.
     var stripped: AST = ast.*;
-    if (options.strip_comments) stripped.node_comments = &.{};
+    if (options.strip_comments) {
+        stripped.comment_runs = &.{};
+        stripped.comment_list = &.{};
+    }
     const built = try documentToTable(arena_state.allocator(), &stripped, root);
     const view = built.view();
     const opts: PrintOptions = .{
@@ -1139,15 +1142,23 @@ fn testTable(src: []const u8, rows: []const TestRow) !Table {
 
 const TK = table.Kind;
 
+/// `t` adopted as a document, from a copy, so that a test can go on to
+/// change `t`.
+fn adoptCopy(src: []const u8, t: *const Table) TableError!Document {
+    var copy = try t.clone(testing.allocator);
+    defer copy.deinit();
+    return tableToDocument(testing.allocator, src, &copy);
+}
+
 test "a null-row table is the empty document and an empty one is refused" {
     var empty = Table.init(testing.allocator, "");
     defer empty.deinit();
-    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, "", &empty));
+    try testing.expectError(error.MalformedTable, adoptCopy("", &empty));
     var t = try testTable("", &.{.{ .kind = TK.null_, .start = 0, .end = 0 }});
     defer t.deinit();
-    const doc = try tableToDocument(testing.allocator, "", &t);
+    const doc = try adoptCopy("", &t);
     defer doc.deinit(testing.allocator);
-    try testing.expect(doc.ast.nodes[doc.ast.root].kind == .null_);
+    try testing.expect(doc.ast.node(doc.ast.root).kind == .null_);
 }
 
 test "a mapping table round-trips through Document and back" {
@@ -1170,7 +1181,7 @@ test "a mapping table round-trips through Document and back" {
     defer t.deinit();
     try t.seps.appendSlice(testing.allocator, &.{ .{ .node = 1, .start = 1, .end = 2 }, .{ .node = 4, .start = 6, .end = 7 } });
     try t.comments.append(testing.allocator, .{ .node = 2, .slot = table.comment_leading, .style = table.comment_line, .text = try t.addString("hello") });
-    const doc = try tableToDocument(testing.allocator, src, &t);
+    const doc = try adoptCopy(src, &t);
     defer doc.deinit(testing.allocator);
 
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
@@ -1178,8 +1189,8 @@ test "a mapping table round-trips through Document and back" {
     try Serialize.serializeWith(&doc.ast, &out.writer, Serialize.Target.named("json").?, .{ .pretty = false });
     try testing.expectEqualStrings("{\"a\":1,\"b\":[true,\"x\"]}\n", out.written());
     try testing.expectEqualStrings("hello", doc.ast.comments(2).leading[0].text);
-    try testing.expect(doc.sepSpan(doc.ast.nodes[1]) != null);
-    try testing.expectEqual(@as(usize, 6), doc.sepSpan(doc.ast.nodes[4]).?.start);
+    try testing.expect(doc.sepSpan(doc.ast.node(1)) != null);
+    try testing.expectEqual(@as(usize, 6), doc.sepSpan(doc.ast.node(4)).?.start);
 
     // And back: the same rows, minus the spans, plus nothing.
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -1233,11 +1244,14 @@ test "a tag is read by its resolution, or by its text when the language left it 
     try t.tags.append(testing.allocator, .{ .node = 3, .text = try t.addString("!!int") });
     try t.tags.append(testing.allocator, .{ .node = 6, .text = try t.addString("!custom"), .resolved = table.tag_custom });
     try t.tags.append(testing.allocator, .{ .node = 9, .text = try t.addString("tag:yaml.org,2002:int"), .resolved = table.tag_kind + 3 });
-    const doc = try tableToDocument(testing.allocator, src, &t);
+    const doc = try adoptCopy(src, &t);
     defer doc.deinit(testing.allocator);
     try testing.expectEqual(AST.Tag{ .kind = .integer }, doc.ast.tagOf(3).?);
     try testing.expectEqualStrings("!custom", doc.ast.tagOf(6).?.text);
-    try testing.expectEqual(AST.Tag{ .kind = .integer }, doc.ast.tagOf(9).?);
+    // Resolved to a core type but spelled otherwise, it keeps its spelling
+    // for a printer to write back, and its resolution for materialize.
+    try testing.expectEqualStrings("tag:yaml.org,2002:int", doc.ast.tagOf(9).?.text);
+    try testing.expectEqual(table.tag_kind + 3, doc.ast.tagFact(9).?.resolved);
 
     // And back out: a kind tag resolved and spelled as the core schema does.
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -1257,7 +1271,7 @@ test "a tag directive travels with the rows, and only a whole document's print g
     defer t.deinit();
     try t.tags.append(testing.allocator, .{ .node = 0, .text = try t.addString("!e!foo") });
     try t.directives.append(testing.allocator, .{ .handle = try t.addString("!e!"), .prefix = try t.addString("tag:x/") });
-    const doc = try tableToDocument(testing.allocator, src, &t);
+    const doc = try adoptCopy(src, &t);
     defer doc.deinit(testing.allocator);
     try testing.expectEqual(@as(usize, 1), doc.ast.tag_directives.len);
     try testing.expectEqualStrings("!e!", doc.ast.tag_directives[0].handle);
@@ -1271,7 +1285,7 @@ test "a tag directive travels with the rows, and only a whole document's print g
 
     // A directive with no prefix is not one.
     t.directives.items[0].prefix = .absent;
-    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &t));
+    try testing.expectError(error.MalformedTable, adoptCopy(src, &t));
 }
 
 test "a malformed table is refused, not read" {
@@ -1284,29 +1298,29 @@ test "a malformed table is refused, not read" {
     });
     defer t.deinit();
     const rows = t.rows.items;
-    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &t));
+    try testing.expectError(error.MalformedTable, adoptCopy(src, &t));
     // A mapping child that is not a keyvalue.
     rows[0].kind = TK.mapping;
     rows[1].parent = 0;
-    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &t));
+    try testing.expectError(error.MalformedTable, adoptCopy(src, &t));
     // An unknown kind.
     rows[0].kind = 99;
-    try testing.expectError(error.UnknownKind, tableToDocument(testing.allocator, src, &t));
+    try testing.expectError(error.UnknownKind, adoptCopy(src, &t));
     // A row with no span, and one past the source.
     rows[0].kind = TK.sequence;
     rows[1].start = table.none;
-    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &t));
+    try testing.expectError(error.MalformedTable, adoptCopy(src, &t));
     rows[1].start = 0;
     rows[1].end = 2;
-    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &t));
+    try testing.expectError(error.MalformedTable, adoptCopy(src, &t));
     // A text past the buffer.
     rows[1].end = 1;
     rows[1].text = .{ .off = 0, .len = 99 | table.Text.buffer_bit };
-    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &t));
+    try testing.expectError(error.MalformedTable, adoptCopy(src, &t));
     // The open flag on a row that is not a sequence.
     rows[1].text = .absent;
     rows[1].flags = table.row_open;
-    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &t));
+    try testing.expectError(error.MalformedTable, adoptCopy(src, &t));
 }
 
 // ── a format in Zig, through the vtable ─────────────────────────────────────
@@ -1962,12 +1976,12 @@ test "an item separator is a sequence's, and an empty one is none" {
     defer t.deinit();
     try t.item_seps.append(testing.allocator, .{ .node = 0, .text = try t.addString(" ") });
     {
-        const doc = try tableToDocument(testing.allocator, src, &t);
+        const doc = try adoptCopy(src, &t);
         defer doc.deinit(testing.allocator);
-        const is = doc.itemSep(doc.ast.nodes[0]).?;
+        const is = doc.itemSep(doc.ast.node(0)).?;
         try testing.expectEqualStrings(" ", is.text.?);
         try testing.expect(is.open);
-        try testing.expect(doc.itemSep(doc.ast.nodes[1]) == null);
+        try testing.expect(doc.itemSep(doc.ast.node(1)) == null);
         // And back, as `fullTable` answers for the parse.
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
@@ -1981,16 +1995,16 @@ test "an item separator is a sequence's, and an empty one is none" {
     t.item_seps.items[0].text = try t.addString("");
     t.rows.items[0].flags = 0;
     {
-        const doc = try tableToDocument(testing.allocator, src, &t);
+        const doc = try adoptCopy(src, &t);
         defer doc.deinit(testing.allocator);
-        try testing.expect(doc.itemSep(doc.ast.nodes[0]) == null);
+        try testing.expect(doc.itemSep(doc.ast.node(0)) == null);
     }
     // A separator or the open flag on a row that is not a sequence.
     t.item_seps.items[0] = .{ .node = 1, .text = try t.addString(",") };
-    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &t));
+    try testing.expectError(error.MalformedTable, adoptCopy(src, &t));
     t.item_seps.clearRetainingCapacity();
     t.rows.items[1].flags = table.row_open;
-    try testing.expectError(error.MalformedTable, tableToDocument(testing.allocator, src, &t));
+    try testing.expectError(error.MalformedTable, adoptCopy(src, &t));
 }
 
 test "registration refuses a record that fails validation or the harness" {

@@ -25,6 +25,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const AST = @import("kit/ast/ast.zig");
+const Nodes = @import("kit/parse_tree/nodes.zig");
 const Lossless = @import("lossless.zig");
 const Id = AST.Node.Id;
 
@@ -58,14 +59,14 @@ pub const StripResult = struct {
 /// can't represent at all. Dropped paths are reported relative to `root_id`.
 pub fn lossyStrip(arena: Allocator, ast: *const AST, root_id: Id, max_depth: usize) Error!StripResult {
     var s = Stripper{ .src = ast, .arena = arena, .max_mapping_depth = max_depth };
-    if (isUnrepresentable(ast.nodes[root_id].kind, 0, max_depth)) {
+    if (isUnrepresentable(ast.node(root_id).kind, 0, max_depth)) {
         try s.dropped.append(arena, "(value)");
         return .{ .ast = null, .dropped = try s.dropped.toOwnedSlice(arena) };
     }
-    const root = try s.copy(ast.nodes[root_id], "", 0);
-    var stripped: AST = .{ .allocator = arena, .root = root, .nodes = try s.out.toOwnedSlice(arena) };
+    const root = try s.copy(ast.node(root_id), "", 0);
+    var stripped: Nodes = .{ .allocator = arena, .root = root, .nodes = try s.out.toOwnedSlice(arena) };
     try Lossless.finish(&s, &stripped);
-    return .{ .ast = stripped, .dropped = try s.dropped.toOwnedSlice(arena) };
+    return .{ .ast = try Lossless.toAst(arena, &stripped, ast), .dropped = try s.dropped.toOwnedSlice(arena) };
 }
 
 const Stripper = struct {
@@ -101,15 +102,15 @@ const Stripper = struct {
         try Lossless.carry(self, src_node.id, id);
         var last: ?Id = null;
         var c = src_node.kind.mapping;
-        while (c) |cid| : (c = self.src.nodes[cid].next_sibling) {
-            const kv = self.src.nodes[cid].kind.keyvalue;
+        while (c) |cid| : (c = self.src.node(cid).next_sibling) {
+            const kv = self.src.node(cid).kind.keyvalue;
             const child_path = try self.keyPath(path, kv.key);
-            if (isUnrepresentable(self.src.nodes[kv.value].kind, depth + 1, self.max_mapping_depth)) {
+            if (isUnrepresentable(self.src.node(kv.value).kind, depth + 1, self.max_mapping_depth)) {
                 try self.dropped.append(self.arena, child_path);
                 continue;
             }
-            const new_key = try self.copy(self.src.nodes[kv.key], path, depth);
-            const new_val = try self.copy(self.src.nodes[kv.value], child_path, depth + 1);
+            const new_key = try self.copy(self.src.node(kv.key), path, depth);
+            const new_val = try self.copy(self.src.node(kv.value), child_path, depth + 1);
             const kvid = try Lossless.emit(self, .{ .keyvalue = .{ .key = new_key, .value = new_val } });
             Lossless.link(&self.out, id, &last, kvid, .mapping);
         }
@@ -117,7 +118,7 @@ const Stripper = struct {
     }
 
     fn keyPath(self: *Stripper, parent: []const u8, key_id: Id) Error![]const u8 {
-        const name = switch (self.src.nodes[key_id].kind) {
+        const name = switch (self.src.node(key_id).kind) {
             .string => |s| s,
             else => "?",
         };

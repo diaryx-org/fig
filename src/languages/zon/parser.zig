@@ -27,8 +27,9 @@ const Parser = @This();
 const std = @import("std");
 const testing = std.testing;
 const Ast = std.zig.Ast;
-const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/document.zig");
+const Document = @import("../../kit/parse_tree.zig");
+const AST = Document.Nodes;
+
 const Type = @import("zon.zig").Type;
 const Span = @import("../../kit/span.zig");
 
@@ -58,10 +59,9 @@ pub const Error = error{ InvalidZon, UnsupportedZon } || std.mem.Allocator.Error
 
 /// Parse `input` into an `AST` only, discarding source spans. Mirrors the other
 /// languages' `parseAbstract` so tests can compare abstract shape.
-pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) !AST {
-    const parsed = try parse(allocator, input, format);
-    allocator.free(parsed.node_spans);
-    return parsed.ast;
+pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) !Document.RowAst {
+    var tree = try parse(allocator, input, format);
+    return tree.intoAst(allocator);
 }
 
 pub fn parse(allocator: std.mem.Allocator, input: []const u8, format: Type) Error!Document {
@@ -525,9 +525,9 @@ fn classifyNumber(raw: []const u8) @FieldType(AST.Node.Kind.Number, "kind") {
 // =========
 
 fn expectParse(input: []const u8, expected: AST) !void {
-    var ast = try parseAbstract(testing.allocator, input, .ZON);
-    defer ast.deinit();
-    try testing.expect(expected.eql(ast));
+    var tree = try parse(testing.allocator, input, .ZON);
+    defer tree.deinit(testing.allocator);
+    try testing.expect(expected.eql(tree.ast));
 }
 
 test "scalar literals" {
@@ -577,7 +577,7 @@ test "empty .{} is an empty mapping" {
 test "string escapes are decoded" {
     var ast = try parseAbstract(testing.allocator, "\"tab:\\tnl:\\n\"", .ZON);
     defer ast.deinit();
-    try testing.expectEqualStrings("tab:\tnl:\n", ast.nodes[ast.root].kind.string);
+    try testing.expectEqualStrings("tab:\tnl:\n", ast.node(ast.root).kind.string);
 }
 
 test "multiline string literal is joined" {

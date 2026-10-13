@@ -1,7 +1,7 @@
 const json = @This();
 const std = @import("std");
 const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/document.zig");
+const Document = @import("../../kit/parse_tree.zig");
 const lang = @import("../../kit/manifest.zig");
 const json_string = @import("../../kit/json_string.zig");
 
@@ -19,8 +19,14 @@ pub const Language = struct {
     pub const Parser = json.Parser;
     pub const Printer = json.Printer;
     pub const default_type: json.Type = .JSON;
-    pub fn parse(parser: *json.Parser, input: []const u8, format: json.Type) !Document {
+    /// The parser's tree, which the contract writes into fig's table.
+    pub fn parseTree(parser: *json.Parser, input: []const u8, format: json.Type) !Document {
         return json.Parser.parse(parser.allocator, input, format);
+    }
+    /// The document fig would adopt from a parse.
+    pub fn parse(parser: *json.Parser, input: []const u8, format: json.Type) !Document.RowDocument {
+        var tree = try parseTree(parser, input, format);
+        return tree.intoDocument(parser.allocator);
     }
     pub const print = json.Printer.print;
     pub const printNode = json.Printer.printNode;

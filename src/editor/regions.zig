@@ -16,7 +16,7 @@
 //! section membership) and handed the result to what was then
 //! `languages/shared/sections.zig`. `gather` below is that step made generic:
 //! the parser records each section node's HEADER LINES in
-//! `Document.node_regions` (the one fact spans cannot carry — see that field),
+//! `Document.regionsOf` (the one fact spans cannot carry — see that field),
 //! and everything else about the extent falls out of the tree. A child that is
 //! itself a section recurses; any other child is one contiguous entry whose
 //! line comes from its span. No format is named, and no source is sniffed.
@@ -65,7 +65,7 @@ pub fn headerLineRegion(source: []const u8, header: Document.NodeRegion, comment
 }
 
 /// Append every line-region belonging to the subtree of the section node
-/// `node`: its own recorded header lines (`Document.node_regions` — the
+/// `node`: its own recorded header lines (`Document.regionsOf` — the
 /// creating line and every re-entry), then each child's contribution. A child
 /// whose value is itself a section recurses; any other child (a scalar, a flow
 /// container, a multi-line string) is one contiguous entry, taken as its own
@@ -82,9 +82,9 @@ pub fn gather(parsed: Document, source: []const u8, allocator: std.mem.Allocator
     switch (node.kind) {
         .mapping => |first| {
             var cur = first;
-            while (cur) |id| : (cur = parsed.ast.nodes[id].next_sibling) {
-                const kv = parsed.ast.nodes[id];
-                const val = parsed.ast.nodes[kv.kind.keyvalue.value];
+            while (cur) |id| : (cur = parsed.ast.node(id).next_sibling) {
+                const kv = parsed.ast.node(id);
+                const val = parsed.ast.node(kv.kind.keyvalue.value);
                 if (parsed.isSection(val)) {
                     try gather(parsed, source, allocator, val, comments, out);
                 } else {
@@ -94,8 +94,8 @@ pub fn gather(parsed: Document, source: []const u8, allocator: std.mem.Allocator
         },
         .sequence => |first| {
             var cur = first;
-            while (cur) |id| : (cur = parsed.ast.nodes[id].next_sibling) {
-                const el = parsed.ast.nodes[id];
+            while (cur) |id| : (cur = parsed.ast.node(id).next_sibling) {
+                const el = parsed.ast.node(id);
                 if (parsed.isSection(el)) {
                     try gather(parsed, source, allocator, el, comments, out);
                 } else {

@@ -26,13 +26,14 @@
 //! (`fig_document_resolve_aliases`), which follows an alias but has never
 //! applied a tag.
 //!
-//! String slices in the result borrow from the source AST (source text or its
-//! `owned_strings`); the result must not outlive them. With an arena that holds
-//! both, this is automatic.
+//! The result owns its strings: every text is copied into its own buffer, so
+//! it outlives `ast` and the source `ast` was read from.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const AST = @import("kit/ast/ast.zig");
+const table = @import("kit/table.zig");
+const Nodes = @import("kit/parse_tree/nodes.zig");
 // The core schema's number grammar, as the compiled YAML reads a plain
 // scalar — pure functions of a lexeme, so a runtime twin's AST is judged by
 // the same rules.
@@ -59,11 +60,11 @@ pub fn materialize(arena: Allocator, ast: *const AST, mode: TagMode) Error!AST {
 /// success.
 pub fn materializeReporting(arena: Allocator, ast: *const AST, mode: TagMode, culprit: *?AST.Node.Id) Error!AST {
     var m: Materializer = .{ .src = ast, .arena = arena, .mode = mode };
-    const root = m.copy(ast.nodes[ast.root]) catch |err| {
+    const root = m.copy(ast.node(ast.root)) catch |err| {
         culprit.* = m.culprit;
         return err;
     };
-    var result: AST = .{
+    var result: Nodes = .{
         .allocator = arena,
         .owned_strings = &.{},
         .root = root,
@@ -76,7 +77,9 @@ pub fn materializeReporting(arena: Allocator, ast: *const AST, mode: TagMode, cu
     // A kept tag may be spelled through a `%TAG` handle, so its declaration
     // rides along too.
     if (mode == .keep) result.tag_directives = ast.tag_directives;
-    return result;
+    var out = try result.toAst(arena);
+    out.merge_key = ast.merge_key;
+    return out;
 }
 
 const Materializer = struct {
@@ -143,7 +146,7 @@ const Materializer = struct {
                 const target = try self.src.resolveDeep(node);
                 try self.enter(target);
                 defer self.leave();
-                return self.copy(self.src.nodes[target]);
+                return self.copy(self.src.node(target));
             },
             // `.extended` never appears in a YAML AST, but the switch must be
             // exhaustive; treat it as a plain scalar for completeness.
@@ -160,8 +163,8 @@ const Materializer = struct {
                 self.keepTag(node.id, id);
                 var last: ?AST.Node.Id = null;
                 var child = first;
-                while (child) |cid| : (child = self.src.nodes[cid].next_sibling) {
-                    const new_id = try self.copy(self.src.nodes[cid]);
+                while (child) |cid| : (child = self.src.node(cid).next_sibling) {
+                    const new_id = try self.copy(self.src.node(cid));
                     self.link(id, &last, new_id, .sequence);
                 }
                 return id;
@@ -195,8 +198,8 @@ const Materializer = struct {
         // Local entries first (they win); remember any `<<` merge value.
         var merge_value: ?AST.Node.Id = null;
         var entry = node.kind.mapping;
-        while (entry) |eid| : (entry = self.src.nodes[eid].next_sibling) {
-            const kv = self.src.nodes[eid].kind.keyvalue;
+        while (entry) |eid| : (entry = self.src.node(eid).next_sibling) {
+            const kv = self.src.node(eid).kind.keyvalue;
             if (self.stringKey(kv.key)) |ks| if (self.isMergeKey(ks)) {
                 merge_value = kv.value;
                 continue;
@@ -210,8 +213,8 @@ const Materializer = struct {
     /// Copy a key/value pair into mapping `map_id` and record the (string) key.
     fn appendEntry(self: *Materializer, map_id: AST.Node.Id, last: *?AST.Node.Id, seen: *std.ArrayList([]const u8), key: AST.Node.Id, value: AST.Node.Id) Error!void {
         const key_str = self.stringKey(key);
-        const new_key = try self.copy(self.src.nodes[key]);
-        const new_val = try self.copy(self.src.nodes[value]);
+        const new_key = try self.copy(self.src.node(key));
+        const new_val = try self.copy(self.src.node(value));
         const kvid = try self.emit(.{ .keyvalue = .{ .key = new_key, .value = new_val } });
         self.link(map_id, last, kvid, .mapping);
         if (key_str) |ks| try seen.append(self.arena, ks);
@@ -221,12 +224,12 @@ const Materializer = struct {
     /// keys already present (`seen`). Handles a single alias/mapping or a sequence
     /// of them (earlier sources win because they are processed first).
     fn mergeInto(self: *Materializer, map_id: AST.Node.Id, last: *?AST.Node.Id, seen: *std.ArrayList([]const u8), mv: AST.Node.Id) Error!void {
-        const mvn = self.src.nodes[mv];
+        const mvn = self.src.node(mv);
         switch (mvn.kind) {
             .sequence => |first| {
                 var e = first;
-                while (e) |eid| : (e = self.src.nodes[eid].next_sibling) {
-                    try self.mergeOneSource(map_id, last, seen, self.src.nodes[eid]);
+                while (e) |eid| : (e = self.src.node(eid).next_sibling) {
+                    try self.mergeOneSource(map_id, last, seen, self.src.node(eid));
                 }
             },
             else => try self.mergeOneSource(map_id, last, seen, mvn),
@@ -237,12 +240,12 @@ const Materializer = struct {
         const target_id = try self.src.resolveDeep(source);
         try self.enter(target_id); // guards a self-referential merge
         defer self.leave();
-        const target = self.src.nodes[target_id];
+        const target = self.src.node(target_id);
         if (target.kind != .mapping) return; // a non-mapping merge source is ignored
 
         var entry = target.kind.mapping;
-        while (entry) |eid| : (entry = self.src.nodes[eid].next_sibling) {
-            const kv = self.src.nodes[eid].kind.keyvalue;
+        while (entry) |eid| : (entry = self.src.node(eid).next_sibling) {
+            const kv = self.src.node(eid).kind.keyvalue;
             const key_str = self.stringKey(kv.key);
             if (key_str) |ks| {
                 if (self.isMergeKey(ks)) {
@@ -261,7 +264,7 @@ const Materializer = struct {
     }
 
     fn stringKey(self: *const Materializer, key: AST.Node.Id) ?[]const u8 {
-        return switch (self.src.nodes[key].kind) {
+        return switch (self.src.node(key).kind) {
             .string => |s| s,
             else => null,
         };
@@ -269,30 +272,63 @@ const Materializer = struct {
 
     // ── tags ──────────────────────────────────────────────────────────────
 
+    /// What node `id`'s tag says, as the language resolved it (§4.3 of
+    /// docs/proposals/core-only.md): a core type, and whether the node
+    /// agrees with it, or custom, or YAML's non-specific `!`. A tag its
+    /// language left unstated — a runtime twin's — is read by its text,
+    /// with the document's `%TAG` directives, and its agreement is
+    /// judged here.
+    const Resolved = union(enum) {
+        none,
+        non_specific,
+        custom,
+        core: struct { kind: AST.Tag.KindTag, agrees: ?bool },
+    };
+
+    fn resolve(self: *const Materializer, id: AST.Node.Id) Resolved {
+        const f = self.src.tagFact(id) orelse return .none;
+        if (f.resolved >= table.tag_kind) return .{ .core = .{ .kind = @fromBackingInt(@intCast(f.resolved - table.tag_kind)), .agrees = f.agrees != 0 } };
+        if (f.resolved == table.tag_custom) return .custom;
+        if (f.resolved == table.tag_non_specific) return .non_specific;
+        return switch (self.src.tagOfFact(f)) {
+            .kind => |k| .{ .core = .{ .kind = k, .agrees = null } },
+            .text => |t| blk: {
+                if (std.mem.eql(u8, t, "!")) break :blk .non_specific;
+                const name = yaml_scalar.coreTagName(self.src.tag_directives, t) orelse break :blk .custom;
+                const k = AST.Tag.ofCoreName(name) orelse break :blk .custom;
+                break :blk .{ .core = .{ .kind = k, .agrees = null } };
+            },
+        };
+    }
+
     fn applyScalarTag(self: *const Materializer, node: AST.Node) Error!AST.Node.Kind {
         if (self.mode == .keep) return node.kind;
-        const name = self.coreName(self.src.tagOf(node.id) orelse return node.kind) orelse
-            return self.customTag(node.id, node.kind);
-        if (std.mem.eql(u8, name, "str")) return .{ .string = self.scalarText(node) };
-        if (std.mem.eql(u8, name, "null")) return .null_;
-        if (std.mem.eql(u8, name, "bool")) return self.asBool(node);
-        if (std.mem.eql(u8, name, "int")) return self.asNumber(node, .integer);
-        if (std.mem.eql(u8, name, "float")) return self.asNumber(node, .float);
-        if (std.mem.eql(u8, name, "seq") or std.mem.eql(u8, name, "map")) return error.TagTypeMismatch;
-        // a `!!`-secondary tag with an unrecognized core name is custom.
-        return self.customTag(node.id, node.kind);
+        const c = switch (self.resolve(node.id)) {
+            .none, .non_specific => return node.kind,
+            .custom => return self.customTag(node.kind),
+            .core => |c| c,
+        };
+        if (c.agrees) |ok| if (!ok) return error.TagTypeMismatch;
+        return switch (c.kind) {
+            .string => .{ .string = self.scalarText(node) },
+            .null_ => .null_,
+            .boolean => self.asBool(node),
+            .integer => self.asNumber(node, .integer, c.agrees),
+            .float => self.asNumber(node, .float, c.agrees),
+            .sequence, .mapping => error.TagTypeMismatch,
+        };
     }
 
     fn checkCollectionTag(self: *const Materializer, node: AST.Node, comptime want: enum { seq, map }) Error!void {
         if (self.mode == .keep) return;
-        const tag = self.src.tagOf(node.id) orelse return;
-        if (self.coreName(tag)) |name| {
-            const ok = if (want == .seq) "seq" else "map";
-            if (std.mem.eql(u8, name, ok)) return;
-            if (eqlAny(name, &.{ "seq", "map", "str", "int", "float", "bool", "null" }))
-                return error.TagTypeMismatch;
+        switch (self.resolve(node.id)) {
+            .none, .non_specific => {},
+            .custom => _ = try self.customTag(node.kind), // strict-errors on unknown; lax no-op
+            .core => |c| {
+                const ok: AST.Tag.KindTag = if (want == .seq) .sequence else .mapping;
+                if (c.kind != ok) return error.TagTypeMismatch;
+            },
         }
-        _ = try self.customTag(node.id, node.kind); // strict-errors on unknown; lax no-op
     }
 
     /// Keep an applied core SCALAR tag on the output node as a normalized `.kind`
@@ -301,10 +337,15 @@ const Materializer = struct {
     /// (collections) or errored/dropped (custom) by `applyScalarTag`.
     fn carryScalarTag(self: *Materializer, src_id: AST.Node.Id, new_id: AST.Node.Id) Error!void {
         if (self.mode == .keep) return self.keepTag(src_id, new_id);
-        const name = self.coreName(self.src.tagOf(src_id) orelse return) orelse return;
-        const kind: AST.Tag.KindTag =
-            if (std.mem.eql(u8, name, "str")) .string else if (std.mem.eql(u8, name, "int")) .integer else if (std.mem.eql(u8, name, "float")) .float else if (std.mem.eql(u8, name, "bool")) .boolean else if (std.mem.eql(u8, name, "null")) .null_ else return; // seq/map (collection) or unrecognized — nothing to carry
-        self.out_tags.items[new_id] = .{ .kind = kind };
+        const c = switch (self.resolve(src_id)) {
+            .core => |c| c,
+            else => return,
+        };
+        switch (c.kind) {
+            .sequence, .mapping => return,
+            else => {},
+        }
+        self.out_tags.items[new_id] = .{ .kind = c.kind };
         self.any_tags = true;
     }
 
@@ -316,32 +357,9 @@ const Materializer = struct {
         self.any_tags = true;
     }
 
-    /// The core-schema type name (`str`, `int`, …) a `Tag` denotes, or null when
-    /// it is a genuinely custom tag. A `.kind` tag names its type directly; a
-    /// `.text` tag is decoded from its YAML spelling via `coreTagName`.
-    fn coreName(self: *const Materializer, tag: AST.Tag) ?[]const u8 {
-        return switch (tag) {
-            .text => |t| coreTagName(self.src.tag_directives, t),
-            .kind => |k| switch (k) {
-                .null_ => "null",
-                .boolean => "bool",
-                .string => "str",
-                .integer => "int",
-                .float => "float",
-                .sequence => "seq",
-                .mapping => "map",
-            },
-        };
-    }
-
-    /// A non-core tag on node `id`: a normalized `.kind` tag is always valid; a
-    /// verbatim non-specific `!` is a no-op; any other custom tag is rejected in
-    /// strict mode and dropped (node kept as parsed) in lax mode.
-    fn customTag(self: *const Materializer, id: AST.Node.Id, kind: AST.Node.Kind) Error!AST.Node.Kind {
-        switch (self.src.tagOf(id) orelse return kind) {
-            .kind => return kind,
-            .text => |t| if (std.mem.eql(u8, t, "!")) return kind,
-        }
+    /// A custom tag, which strict mode refuses and lax mode drops, keeping
+    /// the node as parsed.
+    fn customTag(self: *const Materializer, kind: AST.Node.Kind) Error!AST.Node.Kind {
         if (self.mode == .strict) return error.UnknownTag;
         return kind;
     }
@@ -352,11 +370,11 @@ const Materializer = struct {
     /// 1.1's, since the AST does not say which the document was: `!!int
     /// 0x1A` and `!!int 1_000` both pass. A `!!float` also takes a decimal
     /// integer's text (`!!float 1`), as the core schema's float does.
-    fn asNumber(self: *const Materializer, node: AST.Node, comptime want: @FieldType(AST.Node.Kind.Number, "kind")) Error!AST.Node.Kind {
+    fn asNumber(self: *const Materializer, node: AST.Node, comptime want: @FieldType(AST.Node.Kind.Number, "kind"), stated: ?bool) Error!AST.Node.Kind {
         const t = self.scalarText(node);
-        const ok = switch (want) {
+        const ok = if (stated) |x| x else switch (want) {
             .integer => yaml_scalar.classifyNumber(t) == .integer or yaml_scalar.classify1_1Number(t) == .integer,
-            .float => (yaml_scalar.classifyNumber(t) != .not_number and !hasRadixPrefix(t)) or
+            .float => (yaml_scalar.classifyNumber(t) != .not_number and !yaml_scalar.hasRadixPrefix(t)) or
                 yaml_scalar.classify1_1Number(t) == .float,
         };
         if (!ok) return error.TagTypeMismatch;
@@ -385,45 +403,6 @@ const Materializer = struct {
     }
 };
 
-/// If `tag` names a YAML core-schema type, returns the bare name (`str`, `int`,
-/// `bool`, `null`, `seq`, `map`, …). Accepts the `!!name` shorthand and the
-/// verbose `tag:yaml.org,2002:name` form (with or without `!<>`).
-fn coreTagName(directives: []const AST.TagDirective, tag: []const u8) ?[]const u8 {
-    const core = "tag:yaml.org,2002:";
-    if (tag.len >= 3 and tag[0] == '!' and tag[1] == '<' and tag[tag.len - 1] == '>') {
-        const inner = tag[2 .. tag.len - 1];
-        if (std.mem.startsWith(u8, inner, core)) return inner[core.len..];
-        return null;
-    }
-    if (std.mem.startsWith(u8, tag, core)) return tag[core.len..];
-    if (tag.len == 0 or tag[0] != '!') return null;
-    // A shorthand `handle` + `suffix`: `!!int`, `!e!int`, or the primary
-    // `!int`. A `%TAG` directive in the document can bind any handle,
-    // `!!` and `!` included, to a prefix of its own; unbound, `!!` is the
-    // core schema's and `!` a local tag's.
-    const close = if (tag.len > 1) std.mem.indexOfScalarPos(u8, tag, 1, '!') else null;
-    const handle = if (close) |c| tag[0 .. c + 1] else "!";
-    const suffix = tag[handle.len..];
-    const prefix = for (directives) |d| {
-        if (std.mem.eql(u8, d.handle, handle)) break d.prefix;
-    } else if (std.mem.eql(u8, handle, "!!")) core else return null;
-    // `prefix ++ suffix` names a core type when it is `core ++ name`. A
-    // prefix that runs past `core` into the name is not a spelling anyone
-    // writes, and is read as custom.
-    if (prefix.len > core.len or !std.mem.startsWith(u8, core, prefix)) return null;
-    const rest = core[prefix.len..];
-    if (!std.mem.startsWith(u8, suffix, rest)) return null;
-    const name = suffix[rest.len..];
-    return if (name.len == 0) null else name;
-}
-
-/// Whether `t` spells an integer by radix (`0x1A`, `0o17`, `0b101`), which a
-/// `!!float` does not take.
-fn hasRadixPrefix(t: []const u8) bool {
-    const s = if (t.len > 0 and (t[0] == '+' or t[0] == '-')) t[1..] else t;
-    return s.len > 2 and s[0] == '0' and std.mem.indexOfScalar(u8, "xXoObB", s[1]) != null;
-}
-
 fn contains(haystack: []const []const u8, needle: []const u8) bool {
     for (haystack) |s| if (std.mem.eql(u8, s, needle)) return true;
     return false;
@@ -441,13 +420,19 @@ const build_options = @import("build_options");
 const Parser = @import("languages/yaml/parser.zig");
 
 fn hasAlias(ast: AST) bool {
-    for (ast.nodes) |n| if (n.kind == .alias) return true;
+    for (0..ast.nodeCount()) |i| if (ast.kindOf(@intCast(i)) == .alias) return true;
     return false;
+}
+
+/// `src` as the compiled YAML reads it, as fig adopts it.
+fn parseYaml(src: []const u8) !@import("kit/document.zig") {
+    var tree = try Parser.parse(testing.allocator, src, .v1_2_2);
+    return tree.intoDocument(testing.allocator);
 }
 
 test "materialize: alias expands to a copied subtree" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
-    const doc = try Parser.parse(testing.allocator, "a: &x [1, 2]\nb: *x\n", .v1_2_2);
+    const doc = try parseYaml("a: &x [1, 2]\nb: *x\n");
     defer doc.deinit(testing.allocator);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -476,7 +461,7 @@ test "materialize: merge flattens with host and earlier-source precedence" {
         \\  y: 3
         \\
     ;
-    const doc = try Parser.parse(testing.allocator, src, .v1_2_2);
+    const doc = try parseYaml(src);
     defer doc.deinit(testing.allocator);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -490,7 +475,7 @@ test "materialize: merge flattens with host and earlier-source precedence" {
 
 test "materialize: core tags applied AND kept as normalized kind tags" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
-    const doc = try Parser.parse(testing.allocator, "a: !!str 123\nb: !!int \"42\"\nc: !!null x\nd: 7\n", .v1_2_2);
+    const doc = try parseYaml("a: !!str 123\nb: !!int \"42\"\nc: !!null x\nd: 7\n");
     defer doc.deinit(testing.allocator);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -504,16 +489,15 @@ test "materialize: core tags applied AND kept as normalized kind tags" {
     try testing.expect((try mat.getValByPath(&.{.{ .key = "c" }})).kind == .null_);
     // … and its type identity is KEPT as a normalized `.kind` tag, so a tag-aware
     // target (fig `: type =`, canonical `!!type`) can re-surface it.
-    try testing.expect(mat.node_tags[a.id].?.kind == .string);
-    try testing.expect(mat.node_tags[b.id].?.kind == .integer);
+    try testing.expect(mat.tagOf(a.id).?.kind == .string);
+    try testing.expect(mat.tagOf(b.id).?.kind == .integer);
     // An untagged scalar carries no tag.
-    try testing.expect((try mat.getValByPath(&.{.{ .key = "d" }})).id >= mat.node_tags.len or
-        mat.node_tags[(try mat.getValByPath(&.{.{ .key = "d" }})).id] == null);
+    try testing.expect(mat.tagOf((try mat.getValByPath(&.{.{ .key = "d" }})).id) == null);
 }
 
 test "materialize: unknown tag strict errors, lax drops" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
-    const doc = try Parser.parse(testing.allocator, "x: !custom 1\n", .v1_2_2);
+    const doc = try parseYaml("x: !custom 1\n");
     defer doc.deinit(testing.allocator);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -525,7 +509,7 @@ test "materialize: unknown tag strict errors, lax drops" {
 test "materializeReporting names the node a tag failure is about" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     const src = "ok: 1\nlist:\n  - 2\n  - !custom 3\n";
-    const doc = try Parser.parse(testing.allocator, src, .v1_2_2);
+    const doc = try parseYaml(src);
     defer doc.deinit(testing.allocator);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -533,31 +517,31 @@ test "materializeReporting names the node a tag failure is about" {
     try testing.expectError(error.UnknownTag, materializeReporting(arena.allocator(), &doc.ast, .strict, &culprit));
     // The tagged item itself, not the sequence or mapping around it: its tag
     // span is what a report underlines.
-    const span = doc.node_tag_spans[culprit.?].?;
+    const span = doc.tagSpan(doc.ast.node(culprit.?)).?;
     try testing.expectEqualStrings("!custom", src[span.start..span.end]);
 
     // Reached through an alias, the failure is still about the anchored node
     // that carries the tag.
     const aliased = "a: &x !custom 1\nb: *x\n";
-    const doc2 = try Parser.parse(testing.allocator, aliased, .v1_2_2);
+    const doc2 = try parseYaml(aliased);
     defer doc2.deinit(testing.allocator);
     culprit = null;
     try testing.expectError(error.UnknownTag, materializeReporting(arena.allocator(), &doc2.ast, .strict, &culprit));
-    const span2 = doc2.node_tag_spans[culprit.?].?;
+    const span2 = doc2.tagSpan(doc2.ast.node(culprit.?)).?;
     try testing.expectEqualStrings("!custom", aliased[span2.start..span2.end]);
 }
 
 test "materialize: collection-tag mismatch and cyclic alias error" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     {
-        const doc = try Parser.parse(testing.allocator, "x: !!str [1, 2]\n", .v1_2_2);
+        const doc = try parseYaml("x: !!str [1, 2]\n");
         defer doc.deinit(testing.allocator);
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
         try testing.expectError(error.TagTypeMismatch, materialize(arena.allocator(), &doc.ast, .strict));
     }
     {
-        const doc = try Parser.parse(testing.allocator, "- &a [*a]\n", .v1_2_2);
+        const doc = try parseYaml("- &a [*a]\n");
         defer doc.deinit(testing.allocator);
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
@@ -579,7 +563,7 @@ test "materialize: a numeric tag refuses a payload that is not that kind of numb
         .{ .src = "x: !!float -.inf\n", .ok = true },
     };
     for (cases) |c| {
-        const doc = try Parser.parse(testing.allocator, c.src, .v1_2_2);
+        const doc = try parseYaml(c.src);
         defer doc.deinit(testing.allocator);
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
@@ -592,7 +576,7 @@ test "materialize: a %TAG directive that rebinds `!!` or `!` decides whether a t
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
     {
         // P76L: `!!` bound elsewhere makes `!!int` a custom tag.
-        const doc = try Parser.parse(testing.allocator, "%TAG !! tag:example.com,2000:app/\n---\n!!int 1 - 3\n", .v1_2_2);
+        const doc = try parseYaml("%TAG !! tag:example.com,2000:app/\n---\n!!int 1 - 3\n");
         defer doc.deinit(testing.allocator);
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
@@ -600,7 +584,7 @@ test "materialize: a %TAG directive that rebinds `!!` or `!` decides whether a t
     }
     {
         // `!` bound to the core prefix makes `!int` the core int.
-        const doc = try Parser.parse(testing.allocator, "%TAG ! tag:yaml.org,2002:\n---\nx: !int \"7\"\n", .v1_2_2);
+        const doc = try parseYaml("%TAG ! tag:yaml.org,2002:\n---\nx: !int \"7\"\n");
         defer doc.deinit(testing.allocator);
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
@@ -620,7 +604,7 @@ test "materialize: keep collapses aliases and merges and leaves every tag as wri
         \\e: *b
         \\
     ;
-    const doc = try Parser.parse(testing.allocator, src, .v1_2_2);
+    const doc = try parseYaml(src);
     defer doc.deinit(testing.allocator);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -635,7 +619,7 @@ test "materialize: keep collapses aliases and merges and leaves every tag as wri
     for ([_][]const u8{ "d", "e" }) |host| {
         const x = try mat.getValByPath(&.{ .{ .key = host }, .{ .key = "x" } });
         try testing.expectEqualSlices(u8, "1", x.kind.number.raw);
-        try testing.expectEqualStrings("!!str", mat.tagOf(x.id).?.text);
+        try testing.expectEqualStrings("!!str", mat.tagOf(x.id).?.spelling());
     }
     // A custom tag is neither refused nor dropped.
     const ey = try mat.getValByPath(&.{ .{ .key = "e" }, .{ .key = "y" } });
@@ -644,7 +628,7 @@ test "materialize: keep collapses aliases and merges and leaves every tag as wri
 
 test "materialize: a `<<` key merges only where the language declares it as its merge key" {
     if (comptime !build_options.lang_yaml) return error.SkipZigTest;
-    var doc = try Parser.parse(testing.allocator, "base: &b {x: 1}\nd: {<<: *b}\n", .v1_2_2);
+    var doc = try parseYaml("base: &b {x: 1}\nd: {<<: *b}\n");
     defer doc.deinit(testing.allocator);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

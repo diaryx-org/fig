@@ -359,7 +359,7 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
             };
             const text = out.written();
             try stdout_term.writer.writeAll(text);
-            const is_container = switch (ast.nodes[node_id].kind) {
+            const is_container = switch (ast.node(node_id).kind) {
                 .mapping, .sequence => true,
                 else => false,
             };
@@ -372,7 +372,7 @@ pub fn runGet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
 /// The text `get` prints for the scalar at `id`, or null for a container
 /// (and for an unresolved alias, which prints as the format writes it).
 fn scalarText(a: std.mem.Allocator, ast: *const fig.AST, id: fig.AST.Node.Id) !?[]const u8 {
-    switch (ast.nodes[id].kind) {
+    switch (ast.node(id).kind) {
         .string => |s| return s,
         .null_, .boolean, .number, .extended => {},
         .sequence, .mapping, .keyvalue, .alias => return null,
@@ -386,7 +386,7 @@ fn scalarText(a: std.mem.Allocator, ast: *const fig.AST, id: fig.AST.Node.Id) !?
     var w: std.Io.Writer.Allocating = .init(a);
     try fig.Serialize.serializeFragmentWith(&view, &w.writer, target, .{});
     const text = std.mem.trimEnd(u8, w.written(), "\n");
-    if (!has_fig) if (ast.nodes[id].kind == .extended and text.len > 0 and text[0] == '"') return ast.nodes[id].kind.extended.text;
+    if (!has_fig) if (ast.node(id).kind == .extended and text.len > 0 and text[0] == '"') return ast.node(id).kind.extended.text;
     return text;
 }
 
@@ -658,7 +658,7 @@ fn loadPatch(
     try reports.reportWarnings(stderr_term, content, opts.patch_file, opts.quiet, opts.strict);
 
     var ast: *const fig.AST = &doc.ast;
-    if (doc.ast.anchors.len > 0) {
+    if (doc.ast.hasAnchors()) {
         // A patch must not carry unresolved aliases (see `patch.zig`).
         // Whichever language produced the anchors, the target has not seen
         // them, so the pass runs on the fact rather than the declaration.

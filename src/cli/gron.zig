@@ -102,7 +102,7 @@ pub fn printNode(writer: *Writer, ast: *const AST, node_id: Node.Id, proj: Proje
 }
 
 fn emit(writer: *Writer, ast: *const AST, id: Node.Id, path: Path, proj: Projection) Error!void {
-    switch (ast.nodes[id].kind) {
+    switch (ast.node(id).kind) {
         // A container emits its own `= {}` / `= []` line first (so ungron can
         // create the empty container before its children populate it), then
         // recurses with the child's path appended.
@@ -110,9 +110,9 @@ fn emit(writer: *Writer, ast: *const AST, id: Node.Id, path: Path, proj: Project
             try emitLine(writer, ast, &path, "{}", proj);
             var cur = first;
             while (cur) |kv_id| {
-                const kv = ast.nodes[kv_id].kind.keyvalue;
+                const kv = ast.node(kv_id).kind.keyvalue;
                 try emit(writer, ast, kv.value, .{ .seg = .{ .key = kv.key }, .parent = &path }, proj);
-                cur = ast.nodes[kv_id].next_sibling;
+                cur = ast.node(kv_id).next_sibling;
             }
         },
         .sequence => |first| {
@@ -121,7 +121,7 @@ fn emit(writer: *Writer, ast: *const AST, id: Node.Id, path: Path, proj: Project
             var cur = first;
             while (cur) |el_id| : (index += 1) {
                 try emit(writer, ast, el_id, .{ .seg = .{ .index = index }, .parent = &path }, proj);
-                cur = ast.nodes[el_id].next_sibling;
+                cur = ast.node(el_id).next_sibling;
             }
         },
         // Any leaf (scalar, extended, alias) renders its RHS via the JSON
@@ -163,7 +163,7 @@ fn renderPath(writer: *Writer, ast: *const AST, path: *const Path, proj: Project
 /// (a key needing escapes, or a non-string key) prints as a bracketed,
 /// JSON-quoted `["key"]` — the inverse of what `parsePath` accepts.
 fn keySegment(writer: *Writer, ast: *const AST, key_id: Node.Id) Error!void {
-    const k = ast.nodes[key_id].kind;
+    const k = ast.node(key_id).kind;
     if (k == .string and isBareIdentifier(k.string)) {
         try writer.writeByte('.');
         try writer.writeAll(k.string);
@@ -222,13 +222,8 @@ pub fn parseDocument(allocator: std.mem.Allocator, input: []const u8) !Document 
     defer b.deinit();
     const root_id = try buildNode(&b, allocator, &root);
     const ast = try b.finish(root_id);
-
-    // gron carries no source spans; hand back a zeroed table sized to the AST so
-    // any span lookup stays in bounds and `Document.deinit` frees a real slice.
-    const Span = std.meta.Elem(@FieldType(Document, "node_spans"));
-    const spans = try allocator.alloc(Span, ast.nodes.len);
-    @memset(spans, .{ .start = 0, .end = 0 });
-    return .{ .source = input, .ast = ast, .node_spans = spans };
+    // gron carries no source spans: every node's is the empty span at 0.
+    return .{ .source = input, .ast = ast };
 }
 
 /// The intermediate tree node. `unset` is a container slot created while
@@ -324,7 +319,7 @@ fn parsePath(allocator: std.mem.Allocator, lhs: []const u8, out: *std.ArrayList(
 fn decodeJsonString(allocator: std.mem.Allocator, literal: []const u8) ![]const u8 {
     if (comptime !build_options.lang_json) unreachable;
     const doc = try JSON.Parser.parse(allocator, literal, .JSON);
-    return switch (doc.ast.nodes[doc.ast.root].kind) {
+    return switch (doc.ast.node(doc.ast.root).kind) {
         .string => |s| s,
         else => ParseError.InvalidGron,
     };
@@ -399,12 +394,12 @@ fn buildNode(b: *Builder, allocator: std.mem.Allocator, node: *const GNode) !Nod
 /// hand-written or non-exploding gron stream still ungrons.
 fn buildLeaf(b: *Builder, allocator: std.mem.Allocator, text: []const u8) !Node.Id {
     if (comptime !build_options.lang_json) unreachable;
-    const doc = try JSON.Parser.parse(allocator, text, .JSON);
-    return copyNode(b, allocator, &doc.ast, doc.ast.root);
+    const ast = try JSON.Parser.parseAbstract(allocator, text, .JSON);
+    return copyNode(b, allocator, &ast, ast.root);
 }
 
 fn copyNode(b: *Builder, allocator: std.mem.Allocator, src: *const AST, id: Node.Id) !Node.Id {
-    switch (src.nodes[id].kind) {
+    switch (src.node(id).kind) {
         .null_ => return b.addNull(),
         .boolean => |v| return b.addBool(v),
         .number => |n| return b.addNumberRaw(n.raw, n.kind == .float),
@@ -416,7 +411,7 @@ fn copyNode(b: *Builder, allocator: std.mem.Allocator, src: *const AST, id: Node
             var cur = first;
             while (cur) |c| {
                 try ids.append(allocator, try copyNode(b, allocator, src, c));
-                cur = src.nodes[c].next_sibling;
+                cur = src.node(c).next_sibling;
             }
             return b.addSequence(ids.items);
         },
@@ -425,11 +420,11 @@ fn copyNode(b: *Builder, allocator: std.mem.Allocator, src: *const AST, id: Node
             defer entries.deinit(allocator);
             var cur = first;
             while (cur) |kv_id| {
-                const kv = src.nodes[kv_id].kind.keyvalue;
+                const kv = src.node(kv_id).kind.keyvalue;
                 const key_id = try copyNode(b, allocator, src, kv.key);
                 const val_id = try copyNode(b, allocator, src, kv.value);
                 try entries.append(allocator, .{ .key = key_id, .value = val_id });
-                cur = src.nodes[kv_id].next_sibling;
+                cur = src.node(kv_id).next_sibling;
             }
             return b.addMapping(entries.items);
         },

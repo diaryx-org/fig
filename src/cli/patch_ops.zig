@@ -138,7 +138,10 @@ test "applyToSlice merges one YAML document into another, touching only what cha
 
 test "applyToSlice refuses the two formats with no in-place editor" {
     const t = std.testing;
-    var ast: fig.AST = .{ .allocator = t.allocator, .root = 0, .nodes = &.{} };
+    var b = fig.AST.Builder.init(t.allocator);
+    defer b.deinit();
+    var ast = try b.finish(try b.addNull());
+    defer ast.deinit();
     const req: Request = .{ .patch = &ast, .from = 0 };
     try t.expectError(error.UnsupportedCanonicalEdit, applyToSlice(t.allocator, "", .canonical, req));
     try t.expectError(error.UnsupportedGronEdit, applyToSlice(t.allocator, "", .gron, req));

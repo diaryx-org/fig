@@ -16,8 +16,9 @@
 const Parser = @This();
 
 const std = @import("std");
-const AST = @import("../kit/ast/ast.zig");
-const Document = @import("../kit/document.zig");
+const ParseTree = @import("../kit/parse_tree.zig");
+const AST = ParseTree.Nodes;
+const Document = ParseTree.RowDocument;
 const Span = @import("../kit/span.zig");
 const Printer = @import("printer.zig");
 
@@ -66,15 +67,20 @@ pub const ParseError = error{
 pub const ParserError = ParseError || std.mem.Allocator.Error;
 
 /// Parse `input` into an owned `AST`. Free with `ast.deinit()`.
-pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8) ParserError!AST {
-    const doc = try parse(allocator, input);
-    allocator.free(doc.node_spans);
-    return doc.ast;
+pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8) ParserError!ParseTree.RowAst {
+    var tree = try parseTree(allocator, input);
+    return tree.intoAst(allocator);
 }
 
 /// Parse `input` into a `Document` (AST + source spans). Free with
 /// `doc.deinit(allocator)`.
 pub fn parse(allocator: std.mem.Allocator, input: []const u8) ParserError!Document {
+    var tree = try parseTree(allocator, input);
+    return tree.intoDocument(allocator);
+}
+
+/// Parse `input` into the parser's own tree.
+pub fn parseTree(allocator: std.mem.Allocator, input: []const u8) ParserError!ParseTree {
     var parser: Parser = .{ .allocator = allocator, .src = input };
     defer parser.deinit();
     return parser.parseOnce();
@@ -99,7 +105,7 @@ pub fn deinit(self: *Parser) void {
     self.pending_leading.deinit(self.allocator);
 }
 
-fn parseOnce(self: *Parser) ParserError!Document {
+fn parseOnce(self: *Parser) ParserError!ParseTree {
     const root = try self.parseNode();
     try self.claimLeading(root);
     // A trailing comment on the same line as the root, then the document's final
@@ -763,15 +769,15 @@ test "captures comment attachment onto the right nodes" {
     );
     defer ast.deinit();
 
-    const root = ast.nodes[ast.root];
-    const kv_a = ast.nodes[root.kind.mapping.?].kind.keyvalue;
+    const root = ast.node(ast.root);
+    const kv_a = ast.node(root.kind.mapping.?).kind.keyvalue;
     // Leading binds to the key node, trailing to the value node.
     try testing.expectEqualStrings("c1", ast.comments(kv_a.key).leading[0].text);
     try testing.expect(ast.comments(kv_a.key).leading[0].style == .line);
     try testing.expectEqualStrings("c2", ast.comments(kv_a.value).trailing.?.text);
 
-    const kv_b = ast.nodes[ast.nodes[root.kind.mapping.?].next_sibling.?].kind.keyvalue;
-    const elem = ast.nodes[ast.nodes[kv_b.value].kind.sequence.?];
+    const kv_b = ast.node(ast.node(root.kind.mapping.?).next_sibling.?).kind.keyvalue;
+    const elem = ast.node(ast.node(kv_b.value).kind.sequence.?);
     try testing.expectEqualStrings("c3", ast.comments(elem.id).trailing.?.text);
     try testing.expect(ast.comments(elem.id).trailing.?.style == .block);
 }
@@ -779,7 +785,7 @@ test "captures comment attachment onto the right nodes" {
 test "comment-free document carries no comment table" {
     var ast = try parseAbstract(testing.allocator, "[1, 2, 3]");
     defer ast.deinit();
-    try testing.expectEqual(@as(usize, 0), ast.node_comments.len);
+    try testing.expect(!ast.hasComments());
 }
 
 test "a kind override with no actual digits is rejected, not silently accepted" {
@@ -875,20 +881,20 @@ test "round-trips anchors, aliases, and tags" {
 test "string escapes decode and re-encode" {
     var ast = try parseAbstract(testing.allocator, "\"tab:\\t quote:\\\" backslash:\\\\ ctrl:\\u0007\"");
     defer ast.deinit();
-    try testing.expectEqualStrings("tab:\t quote:\" backslash:\\ ctrl:\x07", ast.nodes[ast.root].kind.string);
+    try testing.expectEqualStrings("tab:\t quote:\" backslash:\\ ctrl:\x07", ast.node(ast.root).kind.string);
 }
 
 test "non-string mapping keys" {
     var ast = try parseAbstract(testing.allocator, "{ [1, 2]: \"tuple\" }");
     defer ast.deinit();
-    const root = ast.nodes[ast.root];
-    const kv = ast.nodes[root.kind.mapping.?].kind.keyvalue;
-    try testing.expect(ast.nodes[kv.key].kind == .sequence);
+    const root = ast.node(ast.root);
+    const kv = ast.node(root.kind.mapping.?).kind.keyvalue;
+    try testing.expect(ast.node(kv.key).kind == .sequence);
 }
 
 test "kind override survives a lexeme/kind mismatch" {
     // A float whose lexeme reads as an integer: only `~f` preserves it.
-    var b = AST.Builder.init(testing.allocator);
+    var b = ParseTree.RowAst.Builder.init(testing.allocator);
     defer b.deinit();
     const root = try b.addNumberRaw("1", true); // raw "1", but kind=float
     var ast = try b.finish(root);
@@ -901,17 +907,17 @@ test "kind override survives a lexeme/kind mismatch" {
 
     var reparsed = try parseAbstract(testing.allocator, out.written());
     defer reparsed.deinit();
-    try testing.expect(reparsed.nodes[reparsed.root].kind.number.kind == .float);
+    try testing.expect(reparsed.node(reparsed.root).kind.number.kind == .float);
 }
 
 test "alias resolves to its anchor" {
     var ast = try parseAbstract(testing.allocator, "[&a 1, *a]");
     defer ast.deinit();
-    const seq = ast.nodes[ast.root];
-    const alias_node = ast.nodes[ast.nodes[seq.kind.sequence.?].next_sibling.?];
+    const seq = ast.node(ast.root);
+    const alias_node = ast.node(ast.node(seq.kind.sequence.?).next_sibling.?);
     try testing.expect(alias_node.kind == .alias);
     const target = try ast.resolveAlias(alias_node);
-    try testing.expectEqualStrings("1", ast.nodes[target].kind.number.raw);
+    try testing.expectEqualStrings("1", ast.node(target).kind.number.raw);
 }
 
 test "rejects trailing garbage" {

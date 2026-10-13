@@ -39,6 +39,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const AST = @import("kit/ast/ast.zig");
+const Nodes = @import("kit/parse_tree/nodes.zig");
 const Serialize = @import("serialize.zig");
 const Language = @import("languages/language.zig");
 
@@ -120,14 +121,14 @@ comptime {
 // ── Public entry points ─────────────────────────────────────────────────────
 
 /// Build a fresh AST in `arena` where every node a format holding `native`
-/// can't represent is wrapped in a `$fig` envelope. Strings borrow from `ast`
-/// (and its source), so the result must not outlive them.
+/// can't represent is wrapped in a `$fig` envelope. The result owns its
+/// strings.
 pub fn encode(arena: Allocator, ast: *const AST, native: NativeKinds) Error!AST {
     var e = Encoder{ .src = ast, .arena = arena, .native = native };
-    const root = try e.copy(ast.nodes[ast.root]);
-    var result: AST = .{ .allocator = arena, .root = root, .nodes = try e.out.toOwnedSlice(arena) };
+    const root = try e.copy(ast.node(ast.root));
+    var result: Nodes = .{ .allocator = arena, .root = root, .nodes = try e.out.toOwnedSlice(arena) };
     try finish(&e, &result);
-    return result;
+    return toAst(arena, &result, ast);
 }
 
 /// Build a fresh AST in `arena` where every `$fig` envelope is reconstructed to
@@ -135,10 +136,10 @@ pub fn encode(arena: Allocator, ast: *const AST, native: NativeKinds) Error!AST 
 /// carries an unknown type tag) is copied through as ordinary data.
 pub fn decode(arena: Allocator, ast: *const AST) Error!AST {
     var d = Decoder{ .src = ast, .arena = arena };
-    const root = try d.copy(ast.nodes[ast.root]);
-    var result: AST = .{ .allocator = arena, .root = root, .nodes = try d.out.toOwnedSlice(arena) };
+    const root = try d.copy(ast.node(ast.root));
+    var result: Nodes = .{ .allocator = arena, .root = root, .nodes = try d.out.toOwnedSlice(arena) };
     try finish(&d, &result);
-    return result;
+    return toAst(arena, &result, ast);
 }
 
 /// The result of a `lossyStrip`: a new AST with every node the target can't
@@ -157,15 +158,15 @@ pub const StripResult = struct {
 /// partway through. Dropped paths are reported relative to `root_id`.
 pub fn lossyStrip(arena: Allocator, ast: *const AST, root_id: Id, native: NativeKinds) Error!StripResult {
     var s = Stripper{ .src = ast, .arena = arena, .native = native };
-    if (isUnrepresentable(native, ast.nodes[root_id].kind)) {
+    if (isUnrepresentable(native, ast.node(root_id).kind)) {
         try s.dropped.append(arena, "(value)");
         return .{ .ast = null, .dropped = try s.dropped.toOwnedSlice(arena) };
     }
-    const root = try s.copy(ast.nodes[root_id], "");
-    var stripped: AST = .{ .allocator = arena, .root = root, .nodes = try s.out.toOwnedSlice(arena) };
+    const root = try s.copy(ast.node(root_id), "");
+    var stripped: Nodes = .{ .allocator = arena, .root = root, .nodes = try s.out.toOwnedSlice(arena) };
     try finish(&s, &stripped);
     return .{
-        .ast = stripped,
+        .ast = try toAst(arena, &stripped, ast),
         .dropped = try s.dropped.toOwnedSlice(arena),
     };
 }
@@ -268,22 +269,22 @@ const Decoder = struct {
     /// an inner mapping carrying a string `t` (and, for extended scalars, `v`).
     fn envelopeKind(self: *Decoder, node: AST.Node) ?AST.Node.Kind {
         const first = node.kind.mapping orelse return null;
-        const entry = self.src.nodes[first];
+        const entry = self.src.node(first);
         if (entry.next_sibling != null) return null; // more than one key → not an envelope
         const kv = entry.kind.keyvalue;
-        const key = self.src.nodes[kv.key];
+        const key = self.src.node(kv.key);
         if (key.kind != .string or !std.mem.eql(u8, key.kind.string, sentinel)) return null;
-        const inner = self.src.nodes[kv.value];
+        const inner = self.src.node(kv.value);
         if (inner.kind != .mapping) return null;
 
         var type_name: ?[]const u8 = null;
         var text: ?[]const u8 = null;
         var c = inner.kind.mapping;
-        while (c) |cid| : (c = self.src.nodes[cid].next_sibling) {
-            const ikv = self.src.nodes[cid].kind.keyvalue;
-            const ik = self.src.nodes[ikv.key];
+        while (c) |cid| : (c = self.src.node(cid).next_sibling) {
+            const ikv = self.src.node(cid).kind.keyvalue;
+            const ik = self.src.node(ikv.key);
             if (ik.kind != .string) continue;
-            const val: ?[]const u8 = switch (self.src.nodes[ikv.value].kind) {
+            const val: ?[]const u8 = switch (self.src.node(ikv.value).kind) {
                 .string => |s| s,
                 else => null,
             };
@@ -332,15 +333,15 @@ const Stripper = struct {
         try carry(self, src_node.id, id);
         var last: ?Id = null;
         var c = src_node.kind.mapping;
-        while (c) |cid| : (c = self.src.nodes[cid].next_sibling) {
-            const kv = self.src.nodes[cid].kind.keyvalue;
+        while (c) |cid| : (c = self.src.node(cid).next_sibling) {
+            const kv = self.src.node(cid).kind.keyvalue;
             const child_path = try self.keyPath(path, kv.key);
-            if (isUnrepresentable(self.native, self.src.nodes[kv.value].kind)) {
+            if (isUnrepresentable(self.native, self.src.node(kv.value).kind)) {
                 try self.dropped.append(self.arena, child_path);
                 continue;
             }
-            const new_key = try self.copy(self.src.nodes[kv.key], path);
-            const new_val = try self.copy(self.src.nodes[kv.value], child_path);
+            const new_key = try self.copy(self.src.node(kv.key), path);
+            const new_val = try self.copy(self.src.node(kv.value), child_path);
             const kvid = try emit(self, .{ .keyvalue = .{ .key = new_key, .value = new_val } });
             link(&self.out, id, &last, kvid, .mapping);
         }
@@ -353,14 +354,14 @@ const Stripper = struct {
         var last: ?Id = null;
         var c = src_node.kind.sequence;
         var i: usize = 0;
-        while (c) |cid| : (c = self.src.nodes[cid].next_sibling) {
+        while (c) |cid| : (c = self.src.node(cid).next_sibling) {
             const child_path = try indexPath(self.arena, path, i);
             i += 1;
-            if (isUnrepresentable(self.native, self.src.nodes[cid].kind)) {
+            if (isUnrepresentable(self.native, self.src.node(cid).kind)) {
                 try self.dropped.append(self.arena, child_path);
                 continue;
             }
-            const new_id = try self.copy(self.src.nodes[cid], child_path);
+            const new_id = try self.copy(self.src.node(cid), child_path);
             link(&self.out, id, &last, new_id, .sequence);
         }
         return id;
@@ -369,7 +370,7 @@ const Stripper = struct {
     /// `parent.key` (or just `key` at the root). A non-string key shows as `?`
     /// (it can't be a drop target — only its value can — so this is purely a hint).
     fn keyPath(self: *Stripper, parent: []const u8, key_id: Id) Error![]const u8 {
-        const name = switch (self.src.nodes[key_id].kind) {
+        const name = switch (self.src.node(key_id).kind) {
             .string => |s| s,
             else => "?",
         };
@@ -427,11 +428,11 @@ pub fn carry(self: anytype, src_id: Id, new_id: Id) Error!void {
         self.side.tags.items[new_id] = tag;
         self.side.any_tags = true;
     }
-    if (src_id < self.src.node_anchors.len) if (self.src.node_anchors[src_id]) |name| {
+    if (self.src.anchorOf(src_id)) |name| {
         self.side.anchors.items[new_id] = name;
         try self.side.anchor_defs.append(self.arena, .{ .name = name, .node = new_id });
         self.side.any_anchors = true;
-    };
+    }
     const c = self.src.comments(src_id);
     if (c.isEmpty()) return;
     self.out_comments.items[new_id] = .{
@@ -446,7 +447,14 @@ pub fn carry(self: anytype, src_id: Id, new_id: Id) Error!void {
 /// uses it (an empty table is the AST's "none"). The `%TAG` directives are
 /// the document's, not a node's, and are copied whole: a tag spelled with a
 /// named handle is only printable beside its declaration.
-pub fn finish(self: anytype, result: *AST) Error!void {
+/// A pass's output nodes as an AST, keeping `src`'s merge key.
+pub fn toAst(arena: Allocator, nodes: *const Nodes, src: *const AST) Error!AST {
+    var out = try nodes.toAst(arena);
+    out.merge_key = src.merge_key;
+    return out;
+}
+
+pub fn finish(self: anytype, result: *Nodes) Error!void {
     if (self.any_comments) result.node_comments = try self.out_comments.toOwnedSlice(self.arena);
     if (self.side.any_tags) result.node_tags = try self.side.tags.toOwnedSlice(self.arena);
     if (self.side.any_anchors) {
@@ -462,8 +470,8 @@ fn copySeq(self: anytype, src_node: AST.Node) Error!Id {
     try carry(self, src_node.id, id);
     var last: ?Id = null;
     var c = src_node.kind.sequence;
-    while (c) |cid| : (c = self.src.nodes[cid].next_sibling) {
-        const new_id = try self.copy(self.src.nodes[cid]);
+    while (c) |cid| : (c = self.src.node(cid).next_sibling) {
+        const new_id = try self.copy(self.src.node(cid));
         link(&self.out, id, &last, new_id, .sequence);
     }
     return id;
@@ -474,10 +482,10 @@ fn copyMap(self: anytype, src_node: AST.Node) Error!Id {
     try carry(self, src_node.id, id);
     var last: ?Id = null;
     var c = src_node.kind.mapping;
-    while (c) |cid| : (c = self.src.nodes[cid].next_sibling) {
-        const kv = self.src.nodes[cid].kind.keyvalue;
-        const new_key = try self.copy(self.src.nodes[kv.key]);
-        const new_val = try self.copy(self.src.nodes[kv.value]);
+    while (c) |cid| : (c = self.src.node(cid).next_sibling) {
+        const kv = self.src.node(cid).kind.keyvalue;
+        const new_key = try self.copy(self.src.node(kv.key));
+        const new_val = try self.copy(self.src.node(kv.value));
         const kvid = try emit(self, .{ .keyvalue = .{ .key = new_key, .value = new_val } });
         link(&self.out, id, &last, kvid, .mapping);
     }
@@ -684,8 +692,8 @@ test "an envelope carries no tag of the scalar it wraps" {
     // already records the kind in its `t`.
     var ast = try YamlParser.parseAbstract(arena, "k: !!null null\n", .v1_2_2);
     const encoded = try encode(arena, &ast, toml_native);
-    const kv = encoded.nodes[encoded.nodes[encoded.root].kind.mapping.?].kind.keyvalue;
-    try testing.expect(encoded.nodes[kv.value].kind == .mapping);
+    const kv = encoded.node(encoded.node(encoded.root).kind.mapping.?).kind.keyvalue;
+    try testing.expect(encoded.node(kv.value).kind == .mapping);
     try testing.expect(encoded.tagOf(kv.value) == null);
 }
 

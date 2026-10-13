@@ -666,15 +666,15 @@ fn handleFrom(doc: ?*const FigDocument) ?*const DocumentHandle {
 /// Returns the node at `id`, or null if `doc` is null or `id` is out of range.
 fn nodeAt(doc: ?*const FigDocument, id: FigNodeId) ?AST.Node {
     const handle = handleFrom(doc) orelse return null;
-    const nodes = handle.document.ast.nodes;
-    if (id >= nodes.len) return null;
-    return nodes[id];
+    const ast = &handle.document.ast;
+    if (id >= ast.nodeCount()) return null;
+    return ast.node(id);
 }
 
 pub export fn fig_document_root(doc: ?*const FigDocument) FigNodeId {
     const handle = handleFrom(doc) orelse return fig_node_none;
     const ast = handle.document.ast;
-    if (ast.root >= ast.nodes.len) return fig_node_none;
+    if (ast.root >= ast.nodeCount()) return fig_node_none;
     return ast.root;
 }
 
@@ -718,17 +718,17 @@ pub export fn fig_node_next_sibling(doc: ?*const FigDocument, node: FigNodeId) F
 
 pub export fn fig_node_child_count(doc: ?*const FigDocument, node: FigNodeId) usize {
     const handle = handleFrom(doc) orelse return 0;
-    const nodes = handle.document.ast.nodes;
-    if (node >= nodes.len) return 0;
-    var current: ?FigNodeId = switch (nodes[node].kind) {
+    const ast = &handle.document.ast;
+    if (node >= ast.nodeCount()) return 0;
+    var current: ?FigNodeId = switch (ast.kindOf(node)) {
         .sequence, .mapping => |first| first,
         else => return 0,
     };
     var count: usize = 0;
     while (current) |id| {
-        if (id >= nodes.len) break;
+        if (id >= ast.nodeCount()) break;
         count += 1;
-        current = nodes[id].next_sibling;
+        current = ast.node(id).next_sibling;
     }
     return count;
 }
@@ -907,7 +907,7 @@ pub export fn fig_document_resolve_aliases(
     handle.* = .{
         .allocator = allocator,
         .source = &.{},
-        .document = .{ .source = "", .ast = ast, .node_spans = &.{} },
+        .document = .{ .source = "", .ast = ast },
         .entry = src.entry,
         .rendered = std.Io.Writer.Allocating.init(allocator),
         .diag_arena = std.heap.ArenaAllocator.init(allocator),
@@ -918,19 +918,18 @@ pub export fn fig_document_resolve_aliases(
 }
 
 /// `ast` with its aliases and merges collapsed and its tags kept, built in
-/// `arena` and owning its strings there.
+/// `arena` and owning its strings there: a materialized tree's texts are
+/// all in its own buffer.
 fn resolvedAst(arena: std.mem.Allocator, ast: *const AST, culprit: *?AST.Node.Id) Materialize.Error!AST {
-    var mat = try Materialize.materializeReporting(arena, ast, .keep, culprit);
-    try ownStrings(arena, &mat);
-    return mat;
+    return Materialize.materializeReporting(arena, ast, .keep, culprit);
 }
 
 /// Whether `ast` holds anything `fig_document_resolve_aliases` would
 /// collapse: an alias node, or an entry keyed with the language's merge key.
 fn hasAliasOrMerge(ast: *const AST) bool {
-    for (ast.nodes) |n| switch (n.kind) {
+    for (0..ast.nodeCount()) |i| switch (ast.kindOf(@intCast(i))) {
         .alias => return true,
-        .keyvalue => |kv| switch (ast.nodes[kv.key].kind) {
+        .keyvalue => |kv| switch (ast.node(kv.key).kind) {
             .string => |k| if (ast.merge_key) |mk| if (std.mem.eql(u8, k, mk)) return true,
             else => {},
         },
@@ -939,35 +938,10 @@ fn hasAliasOrMerge(ast: *const AST) bool {
     return false;
 }
 
-/// Copy every string `ast` borrows — scalar text, comment text, a kept tag
-/// and the `%TAG` directives — into `arena`, so the AST outlives the source
-/// it was materialized from. `ast` was built in `arena`, so its tables are
-/// writable.
-fn ownStrings(arena: std.mem.Allocator, ast: *AST) std.mem.Allocator.Error!void {
-    for (@constCast(ast.nodes)) |*n| switch (n.kind) {
-        .string => |t| n.kind = .{ .string = try arena.dupe(u8, t) },
-        .number => |*num| num.raw = try arena.dupe(u8, num.raw),
-        .extended => |*ext| ext.text = try arena.dupe(u8, ext.text),
-        .null_, .boolean, .sequence, .mapping, .keyvalue, .alias => {},
-    };
-    for (@constCast(ast.node_comments)) |*nc| {
-        for (@constCast(nc.leading)) |*c| c.text = try arena.dupe(u8, c.text);
-        for (@constCast(nc.dangling)) |*c| c.text = try arena.dupe(u8, c.text);
-        if (nc.trailing) |*c| c.text = try arena.dupe(u8, c.text);
-    }
-    for (@constCast(ast.node_tags)) |*slot| if (slot.*) |*tag| switch (tag.*) {
-        .text => |text| tag.* = .{ .text = try arena.dupe(u8, text) },
-        .kind => {},
-    };
-    const directives = try arena.dupe(AST.TagDirective, ast.tag_directives);
-    for (directives) |*d| d.* = .{ .handle = try arena.dupe(u8, d.handle), .prefix = try arena.dupe(u8, d.prefix) };
-    ast.tag_directives = directives;
-}
-
 /// Report an alias `Materialize` could not resolve as a `parse_error` at the
 /// node it failed on: the alias itself, or the mapping whose `<<` merge it is.
 fn aliasFailed(out_err: ?*FigError, err: anyerror, doc: *const Document, culprit: ?AST.Node.Id) FigStatus {
-    const alias: ?[]const u8 = if (culprit) |id| switch (doc.ast.nodes[id].kind) {
+    const alias: ?[]const u8 = if (culprit) |id| switch (doc.ast.node(id).kind) {
         .alias => |name| name,
         else => null,
     } else null;
@@ -987,8 +961,8 @@ fn aliasFailed(out_err: ?*FigError, err: anyerror, doc: *const Document, culprit
     const status = fillError(out_err, .parse_error, message);
     const e = out_err orelse return status;
     const id = culprit orelse return status;
-    if (id >= doc.node_spans.len) return status;
-    const offset = doc.node_spans[id].start;
+    if (id >= doc.ast.nodeCount()) return status;
+    const offset = doc.spanOf(id).start;
     if (offset > doc.source.len) return status;
     const before = doc.source[0..offset];
     const line_start = if (std.mem.lastIndexOfScalar(u8, before, '\n')) |nl| nl + 1 else 0;
@@ -2167,7 +2141,7 @@ pub export fn fig_value_seq(
     // FigNodeId, AST.Node.Id are both u32, so the C array is already the Zig
     // slice the builder wants — no copy. Every id must name an existing node.
     const items: []const FigNodeId = if (items_len == 0) &.{} else (items_ptr orelse return .invalid_argument)[0..items_len];
-    const count = handle.builder.nodes.items.len;
+    const count = handle.builder.nodeCount();
     for (items) |id| if (id >= count) return .invalid_argument;
     return emitNode(out_id, handle.builder.addSequence(items));
 }
@@ -2181,7 +2155,7 @@ pub export fn fig_value_map(
     const handle = valueFrom(value) orelse return .invalid_argument;
     if (entries_len == 0) return emitNode(out_id, handle.builder.addMapping(&.{}));
     const c_entries = (entries_ptr orelse return .invalid_argument)[0..entries_len];
-    const count = handle.builder.nodes.items.len;
+    const count = handle.builder.nodeCount();
     // FigKeyValue is extern, Builder.Entry is not, so decode rather than cast.
     const entries = handle.allocator.alloc(AST.Builder.Entry, entries_len) catch return .out_of_memory;
     defer handle.allocator.free(entries);
@@ -2312,7 +2286,7 @@ pub export fn fig_value_serialize_opts(
     const l = out_len orelse return .invalid_argument;
     const handle = valueFrom(value) orelse return .invalid_argument;
     const target = targetOf(format) orelse return .unsupported_format;
-    if (root >= handle.builder.nodes.items.len) return .invalid_argument;
+    if (root >= handle.builder.nodeCount()) return .invalid_argument;
 
     handle.rendered.clearRetainingCapacity();
     const ast = handle.builder.view(root) catch return .out_of_memory; // borrows the builder; never deinit'd
@@ -2618,7 +2592,7 @@ pub export fn fig_value_diagnose(
     oc.* = 0;
     const handle = valueFrom(value) orelse return .invalid_argument;
     const target = targetOf(format) orelse return .unsupported_format; // as fig_document_diagnose
-    if (root >= handle.builder.nodes.items.len) return .invalid_argument;
+    if (root >= handle.builder.nodeCount()) return .invalid_argument;
 
     _ = handle.diag_arena.reset(.retain_capacity);
     handle.diag_warnings = &.{};
@@ -3686,7 +3660,7 @@ test "fig_document_resolve_aliases reads an alias and a merge key as values" {
     try std.testing.expectError(error.NotFound, ast.getValByPath(&.{ .{ .key = "d" }, .{ .key = "<<" } }));
     const d = fig_node_kind(resolved, (try ast.getValByPath(&.{.{ .key = "d" }})).id);
     try std.testing.expectEqual(@backingInt(FigNodeKind.mapping), d);
-    for (ast.nodes) |n| try std.testing.expect(n.kind != .alias);
+    for (0..ast.nodeCount()) |i| try std.testing.expect(ast.kindOf(@intCast(i)) != .alias);
 
     // It is a document like any other: it serializes, with no `*` or `&` left.
     var ptr: [*c]const u8 = undefined;

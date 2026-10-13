@@ -50,7 +50,7 @@ pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize
 }
 
 fn node(self: *Printer, id: AST.Node.Id, depth: usize) Error!void {
-    const n = self.ast.nodes[id];
+    const n = self.ast.node(id);
     switch (n.kind) {
         .null_ => try self.writer.writeAll("null"),
         .boolean => |value| try self.writer.writeAll(if (value) "true" else "false"),
@@ -90,7 +90,7 @@ fn container(self: *Printer, node_id: AST.Node.Id, first_child: ?AST.Node.Id, de
         var current = first_child;
         while (current) |id| {
             try self.node(id, depth + 1);
-            current = self.ast.nodes[id].next_sibling;
+            current = self.ast.node(id).next_sibling;
             if (current != null) try self.writer.writeAll(", ");
         }
         try self.writer.writeAll(" }");
@@ -111,7 +111,7 @@ fn container(self: *Printer, node_id: AST.Node.Id, first_child: ?AST.Node.Id, de
         const anchor = self.ast.trailingCommentAnchor(id);
         if (!self.isContainer(anchor)) try self.trailingComment(anchor);
         try self.writer.writeByte('\n');
-        current = self.ast.nodes[id].next_sibling;
+        current = self.ast.node(id).next_sibling;
     }
     // Comments dangling at the end of the body (after the last element, or the
     // entire body of an otherwise-empty container).
@@ -140,7 +140,7 @@ fn commentsOn(self: *const Printer) bool {
 /// Whether `id` is a container node (whose own trailing comment is emitted beside
 /// its `.{`, not by its parent).
 fn isContainer(self: *const Printer, id: AST.Node.Id) bool {
-    return switch (self.ast.nodes[id].kind) {
+    return switch (self.ast.node(id).kind) {
         .sequence, .mapping => true,
         else => false,
     };
@@ -181,7 +181,7 @@ fn writeSlashLine(w: *Writer, text: []const u8) Writer.Error!void {
 
 /// Emit a struct field name: `.name` if it's a bare identifier, else `.@"..."`.
 fn writeFieldName(writer: *Writer, ast: *const AST, key_id: AST.Node.Id) Error!void {
-    const name = switch (ast.nodes[key_id].kind) {
+    const name = switch (ast.node(key_id).kind) {
         .string => |s| s,
         else => return error.NonStringKey, // ZON field names must derive from a string key
     };

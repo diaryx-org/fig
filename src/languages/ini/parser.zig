@@ -20,8 +20,9 @@ const Parser = @This();
 
 const std = @import("std");
 const testing = std.testing;
-const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/document.zig");
+const Document = @import("../../kit/parse_tree.zig");
+const AST = Document.Nodes;
+
 const Type = @import("ini.zig").Type;
 const Span = @import("../../kit/span.zig");
 const flat_map = @import("../shared/flat_map.zig");
@@ -188,12 +189,9 @@ fn parseImpl(allocator: std.mem.Allocator, input: []const u8, format: Type, out:
     };
 }
 
-pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!AST {
-    const doc = try parse(allocator, input, format);
-    allocator.free(doc.node_spans);
-    allocator.free(doc.node_regions);
-    allocator.free(doc.node_mentions);
-    return doc.ast;
+pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!Document.RowAst {
+    var tree = try parse(allocator, input, format);
+    return tree.intoAst(allocator);
 }
 
 fn dispatchStatement(self: *Parser) ParserError!void {
@@ -508,7 +506,7 @@ test "comments: full-line only, leading run attaches to the next key" {
         \\
     , .INI);
     defer ast.deinit();
-    const key_node = (try AST.firstChildKey(&ast, &ast.nodes[ast.root])).?;
+    const key_node = (try ast.firstChildKey(&ast.node(ast.root))).?;
     const cs = ast.comments(key_node.id);
     try testing.expectEqual(@as(usize, 2), cs.leading.len);
     try testing.expectEqualStrings("a header comment", cs.leading[0].text);
@@ -570,7 +568,7 @@ test "node_regions records every [section] header line, reopenings included, key
     const b = try parsed.ast.getValByPath(&.{.{ .key = "b" }});
     try testing.expectEqual(@as(usize, 1), parsed.regionsOf(b.id).len);
     // Neither the root nor an entry is a section.
-    try testing.expect(!parsed.isSection(parsed.ast.nodes[parsed.ast.root]));
+    try testing.expect(!parsed.isSection(parsed.ast.node(parsed.ast.root)));
     try testing.expect(!parsed.isSection(try parsed.ast.getValByPath(&.{ .{ .key = "a" }, .{ .key = "x" } })));
 }
 

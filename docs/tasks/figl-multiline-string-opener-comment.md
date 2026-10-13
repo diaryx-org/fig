@@ -26,6 +26,10 @@ language allows a value's comment is not something `Syntax` says: YAML's
 block scalar takes it on the header line only because its span ends in a
 newline (e6ca1eb), which a figl string's does not.
 
+**Decided** (2026-10-13): a figl multi-line string's comment lives on its
+opener line, `x = ''' # note`, as a YAML block scalar's lives on its header
+line (e6ca1eb). A comment after the closing quotes is not the string's.
+
 **Done when** it is decided where a figl multi-line string's comment
 lives (the opener, the closer, or both, and which one `comment --inline`
 writes), the spec says so, the parser and editor agree on it, and a test

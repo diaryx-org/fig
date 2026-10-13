@@ -431,6 +431,10 @@ Both getters return allocator-owned memory — free what you get back. Not every
 format has both halves: INI and NestedText have real leading comments but no
 trailing-comment syntax at all, so `setTrailingComment` there returns
 `error.CommentsUnsupported` the way strict JSON does for every comment op.
+A value that runs to the end of its line has no room after it either — a ZON
+`\\` string is string text up to its newline — so a trailing comment there
+would be read back as part of the value, and `setTrailingComment` rolls the
+edit back with `error.CommentInsideValue`.
 
 The comment marker (`#`, `//`) is chosen for the language; strict JSON has no
 comments and every comment op returns `error.CommentsUnsupported`.

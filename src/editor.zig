@@ -1227,9 +1227,12 @@ pub fn Editor(comptime Language: type) type {
         /// existing trailing comment on that line, or append one if there is none.
         /// `text` must be a single line. Returns `CommentsUnsupported` for a
         /// dialect without comment syntax (strict JSON), `MultilineComment` if
-        /// `text` contains a newline, and `CommentsUnanchored` for a node that
+        /// `text` contains a newline, `CommentsUnanchored` for a node that
         /// shares its parent's line inside a flow collection (see
-        /// `commentsUnanchored`) — the end of that line is the parent's.
+        /// `commentsUnanchored`) — the end of that line is the parent's — and
+        /// `CommentInsideValue` for a value that runs to the end of its line,
+        /// where the comment would be read back as value text (see
+        /// `replaceKeepingValues`).
         pub fn setTrailingComment(self: *Self, path: []const AST.PathSegment, text: []const u8) !void {
             const marker = self.trailingCommentMarker() orelse return error.CommentsUnsupported;
             if (std.mem.indexOfScalar(u8, text, '\n') != null) return error.MultilineComment;
@@ -1251,9 +1254,37 @@ pub fn Editor(comptime Language: type) type {
             defer buf.deinit(self.allocator);
             try buf.appendSlice(self.allocator, " ");
             try renderComment(self.allocator, &buf, marker, text);
-            try self.replaceAtSpan(Span.init(cut, win.line_end), buf.items);
+            try self.replaceKeepingValues(Span.init(cut, win.line_end), buf.items);
         }
 
+        /// The trailing-comment splice, held to what a comment edit promises:
+        /// the document's values are the same after it as before. The window
+        /// ends at the line's end, and a value with no end delimiter of its
+        /// own runs to exactly there — a ZON `\\` line is string text up to
+        /// its newline — so a comment appended to that line parses, as part of
+        /// the value. Nothing in the splice can see that; the two parses can.
+        /// A splice that changed any value is rolled back byte-for-byte with
+        /// `CommentInsideValue`. Comments are outside the AST and so outside
+        /// the check, which is right: changing one is what the op does.
+        fn replaceKeepingValues(self: *Self, span: Span, replacement: []const u8) !void {
+            const backup = try self.allocator.dupe(u8, self.source.items);
+            defer self.allocator.free(backup);
+            // A splice that doesn't parse rolls itself back (`replaceAtSpan`).
+            try self.replaceAtSpan(span, replacement);
+
+            var parser: Language.Parser = .{ .allocator = self.allocator };
+            const before = Language.parse(&parser, backup, self.format) catch {
+                // `backup` parsed before the splice, as in `uncommentBlock`.
+                try self.restoreSource(backup);
+                return error.CommentInsideValue;
+            };
+            defer before.deinit(self.allocator);
+            const after = try self.getParsed();
+            if (!nodesEqualDeep(before, before.ast.root, after, after.ast.root)) {
+                try self.restoreSource(backup);
+                return error.CommentInsideValue;
+            }
+        }
 
         /// Remove the run of own-line comments immediately ABOVE the node at
         /// `path` — its owned leading block (contiguous comment lines with no
@@ -4256,6 +4287,30 @@ test "setTrailingComment on a CRLF line goes before the CR" {
     }
     if (comptime build_options.lang_zon)
         try expectCommentEdit(Zon, .ZON, ".{\r\n    .a = 1,\r\n}\r\n", ".{\r\n    .a = 1, // note\r\n}\r\n", .trailing, &.{.{ .key = "a" }}, "note");
+}
+
+// A ZON `\\` line is string text up to its newline, so there is no place on it
+// for a comment: one appended there parsed, as part of the string. The edit is
+// refused and rolled back, LF or CRLF.
+test "setTrailingComment refuses a ZON multiline string's line" {
+    if (comptime !build_options.lang_zon) return error.SkipZigTest;
+    const inputs = [_][]const u8{
+        ".{\n    .ml =\n        \\\\two\n    ,\n}\n",
+        ".{\r\n    .ml =\r\n        \\\\two\r\n    ,\r\n}\r\n",
+        ".{\n    .ml =\n        \\\\two // kept\n    ,\n}\n",
+    };
+    for (inputs) |input| {
+        var ed: Editor(Zon) = .{ .allocator = testing.allocator, .format = .ZON };
+        try ed.init(input);
+        defer ed.deinit();
+        try testing.expectError(error.CommentInsideValue, ed.setTrailingComment(&.{.{ .key = "ml" }}, "note"));
+        try testing.expectEqualStrings(input, ed.source.items);
+    }
+    // The `// kept` is the string's own text, inside its span: not a
+    // trailing comment to delete.
+    try expectCommentDelete(Zon, .ZON, inputs[2], inputs[2], .trailing, &.{.{ .key = "ml" }});
+    // A one-line string on the same document still takes one.
+    try expectCommentEdit(Zon, .ZON, ".{\n    .s = \"two\",\n}\n", ".{\n    .s = \"two\", // note\n}\n", .trailing, &.{.{ .key = "s" }}, "note");
 }
 
 test "addLeadingComment on TOML uses #" {

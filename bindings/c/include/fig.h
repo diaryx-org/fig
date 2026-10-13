@@ -381,6 +381,9 @@ FigStatus fig_editor_set(FigEditor *editor, const FigPathSegment *path,
 // `nested: {k: v}`) shares its parent's line and so owns neither the block above
 // it nor its end: the two add/set ops return FIG_STATUS_INVALID_ARGUMENT there,
 // the deletes are a no-op, and the reads below answer FIG_STATUS_NOT_FOUND.
+// A value that runs to the end of its line (a ZON `\\` string) has no room for
+// a trailing comment, which would read back as value text: `set_trailing` rolls
+// the edit back and returns FIG_STATUS_UNSUPPORTED_OPERATION there.
 FigStatus fig_editor_add_leading_comment(FigEditor *editor, const FigPathSegment *path,
                                          size_t path_len, const uint8_t *text, size_t text_len);
 FigStatus fig_editor_set_trailing_comment(FigEditor *editor, const FigPathSegment *path,

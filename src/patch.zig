@@ -431,7 +431,8 @@ fn Walker(comptime Language: type) type {
             defer if (existing) |e| self.allocator.free(e);
             if (self.options.comments == .ours and existing != null) return;
             self.editor.setTrailingComment(self.path.items, comment.text) catch |err| {
-                if (err == error.CommentsUnsupported or err == error.MultilineComment or err == error.CommentsUnanchored) return self.dropComment();
+                if (err == error.CommentsUnsupported or err == error.MultilineComment or
+                    err == error.CommentsUnanchored or err == error.CommentInsideValue) return self.dropComment();
                 return err;
             };
         }

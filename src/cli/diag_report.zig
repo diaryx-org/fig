@@ -274,6 +274,19 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
             try term.setColor(.reset);
             try term.writer.writeAll(": nothing was written — the edit was rolled back, and the file is byte-for-byte as it was.\n");
         },
+        // `fig comment --inline` on a value with no end delimiter of its own
+        // (a ZON `\\` string): its line is value text to the newline.
+        error.CommentInsideValue => {
+            try term.writer.writeAll(": that value runs to the end of its line, so a comment there would be read back as part of the value\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("note");
+            try term.setColor(.reset);
+            try term.writer.writeAll(": nothing was written — the edit was rolled back, and the file is byte-for-byte as it was.\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("help");
+            try term.setColor(.reset);
+            try term.writer.print(": put the comment on its own line above the entry instead — `{s} comment <file> <path> <text>`.\n", .{binary_name});
+        },
         // The refusals `fig.Patch` makes rather than guessing (see its module
         // doc). Each names a shape the caller has to resolve in one of the two
         // documents; a bare error name reads like a parse error in two files

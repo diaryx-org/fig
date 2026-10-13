@@ -598,7 +598,7 @@ recorder checks that a comment edit changes no value, which needs no
 reference, and six recorded answers fail it. They come down to three
 faults in core's editor, filed as tasks:
 CRLF (since fixed),
-[ZON multiline strings](/docs/tasks/zon-trailing-comment-in-multiline-string.md)
+ZON multiline strings (since fixed)
 and [.properties continuations](/docs/tasks/properties-comment-after-continuation.md).
 
 So for the twins, §8's gate stands at: parse and print parity on the

@@ -1181,6 +1181,10 @@ fn editStatus(err: anyerror) FigStatus {
         // back. Every argument was individually valid, which is what
         // `unsupported_operation` says and `invalid_argument` would not.
         error.CommentNotAnEntry => .unsupported_operation,
+        // A trailing comment on a value that runs to its line's end (a ZON
+        // `\\` string) parsed back as part of the value, and the splice was
+        // rolled back — the same kind of answer as `CommentNotAnEntry`.
+        error.CommentInsideValue => .unsupported_operation,
         // A value the format cannot represent at all — plist has no null. Same
         // answer `serializeStatus` gives it, since it is the same fact about the
         // format either way. Infinity or NaN into strict JSON is the same kind
@@ -4242,6 +4246,7 @@ test "editStatus: every editor refusal is a caller error, not parse_error" {
         error.CommentsUnanchored,       error.RendererRefused,
         error.ImplicitSection,          error.ContainerClosesOnItsLine,
         error.NotAKey,                  error.NonFiniteNumber,
+        error.CommentInsideValue,
     };
     for (refusals) |err| {
         const status = editStatus(err);

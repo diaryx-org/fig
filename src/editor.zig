@@ -1885,7 +1885,7 @@ pub fn Editor(comptime Language: type) type {
                 return error.CommentNotAnEntry;
             };
             defer before.deinit(self.allocator);
-            if (!addedOnlyAt(before, try self.getParsed(), container_path)) {
+            if (!changedOnlyAt(before, try self.getParsed(), container_path, .added)) {
                 try self.restoreSource(backup);
                 return error.CommentNotAnEntry;
             }
@@ -2061,7 +2061,64 @@ pub fn Editor(comptime Language: type) type {
         /// since a flow mapping's entries are comma-separated rather than
         /// one-per-line and the block path's line delete cannot handle them
         /// safely at any arity or position.
+        ///
+        /// Whatever the arm, the result is held to what a delete promises
+        /// (`keepOthers`): a document that reads back with that entry gone
+        /// and nothing else changed, or `DeleteChangedOtherValues` and the
+        /// source as it was.
         pub fn deleteKey(self: *Self, path: []const AST.PathSegment) !void {
+            const removed = self.entryIndex(path);
+            const backup = try self.allocator.dupe(u8, self.source.items);
+            defer self.allocator.free(backup);
+            try self.spliceOutEntry(path);
+            if (removed) |at| try self.keepOthers(backup, path[0 .. path.len - 1], at);
+        }
+
+        /// Where the entry at `path` stands among its container's children,
+        /// for `keepOthers` — or null when `path` names no physical entry of
+        /// a container the path also reaches, which leaves the check nothing
+        /// to compare.
+        fn entryIndex(self: *Self, path: []const AST.PathSegment) ?usize {
+            if (path.len == 0) return null;
+            const parsed = self.getParsed() catch return null;
+            const node = parsed.ast.getNodeByPath(path) catch return null;
+            const parent = parsed.ast.getValByPath(path[0 .. path.len - 1]) catch return null;
+            var i: usize = 0;
+            var sib = parsed.ast.child(&parent) catch return null;
+            while (sib) |c| : (sib = parsed.ast.next(&c)) {
+                if (c.id == node.id) return i;
+                i += 1;
+            }
+            return null;
+        }
+
+        /// The delete guard. A delete is a splice chosen by reading the
+        /// source around an entry, and a wrong reading still parses: the
+        /// line delete that removed `a` from `- - a` over `  - c` took the
+        /// parent's marker with it, and `[[a, c]]` read back as `[c]`. So
+        /// the two parses are compared, as the uncomment guard compares
+        /// them (`changedOnlyAt`): the container at `container_path` must
+        /// have lost its child at `removed` and nothing else, every other
+        /// node must be as it was, and otherwise the splice is rolled back
+        /// byte-for-byte with `DeleteChangedOtherValues`. A container whose
+        /// only child went may read back as null (`k:` over `  a: 1`
+        /// becomes `k:`), the one shape a block container has once it is
+        /// empty.
+        fn keepOthers(self: *Self, backup: []const u8, container_path: []const AST.PathSegment, removed: usize) !void {
+            var parser: Language.Parser = .{ .allocator = self.allocator };
+            const before = Language.parse(&parser, backup, self.format) catch {
+                // `backup` parsed before the splice, as in `uncommentBlock`.
+                try self.restoreSource(backup);
+                return error.DeleteChangedOtherValues;
+            };
+            defer before.deinit(self.allocator);
+            if (!changedOnlyAt(before, try self.getParsed(), container_path, .{ .removed = removed })) {
+                try self.restoreSource(backup);
+                return error.DeleteChangedOtherValues;
+            }
+        }
+
+        fn spliceOutEntry(self: *Self, path: []const AST.PathSegment) !void {
             const parsed = try self.getParsed();
             const node = parsed.ast.getNodeByPath(path) catch |err| {
                 // A key with no physical entry of its own — inherited through
@@ -2164,6 +2221,10 @@ pub fn Editor(comptime Language: type) type {
                     while (s > 0 and (source[s - 1] == ' ' or source[s - 1] == '\t')) s -= 1;
                 }
                 return self.replaceAtSpan(Span.init(s, e), "");
+            }
+            if (prev_end == null) {
+                if (self.sharedLineDelete(parsed, parent, span.start, span.end, next_start)) |shared|
+                    return self.replaceAtSpan(shared, "");
             }
             const del_start = commentBlockStart(source, line_start, self.syntax().comments);
             const del_end = lineEndAfter(source, span.end -| 1);
@@ -2292,7 +2353,24 @@ pub fn Editor(comptime Language: type) type {
         /// the comment that ends its last line when the next item is on a
         /// later one: a `.tune` block, a blank line from the next, goes with
         /// its comments.
+        ///
+        /// The first item of a block sequence that shares its line with the
+        /// sequence's own item marker (`- - a`) takes only its own text
+        /// (`sharedLineDelete`). Every arm is held to `keepOthers`, as
+        /// `deleteKey` is.
         pub fn removeSeqItem(self: *Self, path: []const AST.PathSegment, index: usize) !void {
+            const parsed = try self.getParsed();
+            const node = try parsed.ast.getValByPath(path);
+            if (node.kind != .sequence) return error.NotASequence;
+            const n = try seqLen(parsed, node);
+            const removed = if (index == std.math.maxInt(usize)) n -| 1 else index;
+            const backup = try self.allocator.dupe(u8, self.source.items);
+            defer self.allocator.free(backup);
+            try self.spliceOutItem(path, index);
+            try self.keepOthers(backup, path, removed);
+        }
+
+        fn spliceOutItem(self: *Self, path: []const AST.PathSegment, index: usize) !void {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
             if (node.kind != .sequence) return error.NotASequence;
@@ -2341,13 +2419,54 @@ pub fn Editor(comptime Language: type) type {
             if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
             const line_start = commentBlockStart(source, lineStartBefore(source, markerStart(parsed, item)), self.syntax().comments);
             const del_end = lineEndAfter(source, item_span.end -| 1);
-            if (is_first and parsed.ast.next(&item) == null) {
+            const next = parsed.ast.next(&item);
+            if (is_first and next == null) {
                 var out: std.ArrayList(u8) = .empty;
                 defer out.deinit(self.allocator);
                 if (try self.emptiedBlockSeq(&out, parsed, node, item, line_start, del_end)) |span|
                     return self.replaceAtSpan(span, out.items);
             }
+            if (is_first) {
+                const next_start = if (next) |n| markerStart(parsed, n) else null;
+                if (self.sharedLineDelete(parsed, node, markerStart(parsed, item), item_span.end, next_start)) |span|
+                    return self.replaceAtSpan(span, "");
+            }
             try self.replaceAtSpan(Span.init(line_start, del_end), "");
+        }
+
+        /// The span to delete to remove the first entry or item of the
+        /// block container `node`, running from `start` to `end`, when it
+        /// shares its line with `node`'s own item marker — `- - a`, `- k: v`
+        /// — or null when it begins its line and the line delete is right.
+        /// `next` is where the sibling after it starts, if there is one.
+        ///
+        /// The line is not the entry's to delete: the parent item's marker
+        /// is on it, and deleting the line took the parent with it, so
+        /// `[[a, c]]` read back as `[c]`. Only the entry's own text goes.
+        /// The sibling after it moves up into its place, at the column it
+        /// already stands at (`- - c`, `- j: w`), when nothing but the
+        /// entry's trailing comment and blank lines stand between them;
+        /// with a comment line between, which is the sibling's, the
+        /// sibling stays where it is and the parent's marker ends its line
+        /// (`-` over `  - c`), as it does when there is no sibling.
+        fn sharedLineDelete(self: *const Self, parsed: Document, node: AST.Node, start: usize, end: usize, next: ?usize) ?Span {
+            const source = self.source.items;
+            const marker = parsed.markerSpan(node) orelse return null;
+            const line_start = lineStartBefore(source, start);
+            if (marker.end > start or lineStartBefore(source, marker.start) != line_start) return null;
+            if (next) |n| lift: {
+                const next_line = lineStartBefore(source, n);
+                if (next_line <= line_start or n - next_line != start - line_start) break :lift;
+                var gap = if (self.lineEndComment(end, "")) |c| c.end else end;
+                while (gap < n and std.ascii.isWhitespace(source[gap])) gap += 1;
+                if (gap == n) return Span.init(start, n);
+            }
+            var s = start;
+            while (s > line_start and (source[s - 1] == ' ' or source[s - 1] == '\t')) s -= 1;
+            var e = lineEndAfter(source, end -| 1);
+            if (e > 0 and source[e - 1] == '\n') e -= 1;
+            if (e > 0 and source[e - 1] == '\r') e -= 1;
+            return Span.init(s, e);
         }
 
         /// The span to splice `out` over to remove the ONLY item of the
@@ -4152,7 +4271,7 @@ fn seqLen(parsed: Document, node: AST.Node) !usize {
     return n;
 }
 
-// ── "nothing else moved": the uncomment guard ───────────────────────────────
+// ── "nothing else moved": the uncomment and delete guards ───────────────────
 //
 // `uncommentLeading`/`uncommentDangling` strip a marker off lines the CALLER
 // judged to be an entry, so the editor's half of the bargain is to prove the
@@ -4162,12 +4281,16 @@ fn seqLen(parsed: Document, node: AST.Node) !usize {
 // a line that re-opened a section and reparented the entries below it — is
 // rolled back byte-for-byte with `CommentNotAnEntry`.
 //
+// A delete makes the same promise the other way round (`keepOthers`): the
+// document differs only by the one child REMOVED from its container, or the
+// splice is rolled back with `DeleteChangedOtherValues`.
+//
 // The comparison is over the two parses, not their bytes: the after-tree is
 // walked to the target container along the same path the caller named, every
 // node passed on the way compared whole, and only that container is allowed
-// to have grown. Comments and layout are outside the AST and so outside the
-// check, which is right — a comment run losing a line is exactly what the op
-// does.
+// to have changed, and only in the one way. Comments and layout are outside
+// the AST and so outside the check, which is right — a comment run losing a
+// line is exactly what the op does.
 
 /// Whether every child of `bn` still appears, in order and unchanged, among
 /// the children of `an` — i.e. `an` differs from `bn` only by insertions.
@@ -4190,6 +4313,28 @@ fn childrenOnlyGrew(b: Document, bn: AST.Node, a: Document, an: AST.Node) bool {
         b_cur = b.ast.next(&bc);
     }
     return true;
+}
+
+/// Whether the children of `an` are those of `bn` with the one at `removed`
+/// left out, each of the rest unchanged and in its order.
+fn childrenLostOne(b: Document, bn: AST.Node, a: Document, an: AST.Node, removed: usize) bool {
+    var b_cur = (b.ast.child(&bn) catch return false);
+    var a_cur = (a.ast.child(&an) catch return false);
+    var index: usize = 0;
+    var lost = false;
+    while (b_cur) |bc| : ({
+        b_cur = b.ast.next(&bc);
+        index += 1;
+    }) {
+        if (index == removed) {
+            lost = true;
+            continue;
+        }
+        const ac = a_cur orelse return false;
+        if (!nodesEqualDeep(b, bc.id, a, ac.id)) return false;
+        a_cur = a.ast.next(&ac);
+    }
+    return lost and a_cur == null;
 }
 
 /// Structural equality of two subtrees across two parses: same kinds, same
@@ -4218,25 +4363,39 @@ fn nodesEqualDeep(b: Document, bid: AST.Node.Id, a: Document, aid: AST.Node.Id) 
     }
 }
 
-/// Whether `after` differs from `before` only by nodes added to the container
+/// The one change a guarded op may make to its container: nodes added
+/// (uncomment), or the child at an index removed (delete).
+const Change = union(enum) {
+    added,
+    removed: usize,
+};
+
+/// Whether `after` differs from `before` only by `change` to the container
 /// at `path` (the root for an empty path). Every other node — including every
 /// container passed through on the way down, and every sibling of the ones
 /// that are — must be structurally identical.
-fn addedOnlyAt(before: Document, after: Document, path: []const AST.PathSegment) bool {
-    return addedOnlyUnder(before, before.ast.root, after, after.ast.root, path);
+fn changedOnlyAt(before: Document, after: Document, path: []const AST.PathSegment, change: Change) bool {
+    return changedOnlyUnder(before, before.ast.root, after, after.ast.root, path, change);
 }
 
-fn addedOnlyUnder(
+fn changedOnlyUnder(
     b: Document,
     bid: AST.Node.Id,
     a: Document,
     aid: AST.Node.Id,
     path: []const AST.PathSegment,
+    change: Change,
 ) bool {
     const bn = b.ast.node(bid);
     const an = a.ast.node(aid);
+    // A block container emptied of its only child reads back as null.
+    if (path.len == 0 and change == .removed and an.kind == .null_)
+        return change.removed == 0 and (seqLen(b, bn) catch return false) == 1;
     if (std.meta.activeTag(bn.kind) != std.meta.activeTag(an.kind)) return false;
-    if (path.len == 0) return childrenOnlyGrew(b, bn, a, an);
+    if (path.len == 0) return switch (change) {
+        .added => childrenOnlyGrew(b, bn, a, an),
+        .removed => |at| childrenLostOne(b, bn, a, an, at),
+    };
 
     // Not the target yet: walk the two child lists in lockstep. They must have
     // the same length and pair up, with only the child the next path segment
@@ -4256,7 +4415,7 @@ fn addedOnlyUnder(
         if (on_path) {
             if (bc.kind == .keyvalue and !nodesEqualDeep(b, bc.kind.keyvalue.key, a, ac.kind.keyvalue.key))
                 return false;
-            if (!addedOnlyUnder(b, b_next, a, a_next, path[1..])) return false;
+            if (!changedOnlyUnder(b, b_next, a, a_next, path[1..], change)) return false;
         } else if (!nodesEqualDeep(b, bc.id, a, ac.id)) return false;
         b_cur = b.ast.next(&bc);
         a_cur = a.ast.next(&ac);

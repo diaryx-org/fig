@@ -410,6 +410,13 @@ try ed.setSequence(&.{.{ .key = "tags" }}, &.{ "c", "a" });
 // - a # keep me
 ```
 
+`deleteKey` and `removeSeqItem` hold their result to what a delete promises:
+the document reads back with that one entry or item gone and every other value
+as it was. A splice that changed anything else — a YAML entry whose line it
+shares with a parent's marker, read wrongly — is rolled back with
+`error.DeleteChangedOtherValues`. A block container emptied of its only child
+may read back as null (`k:`), the one shape some formats have for it.
+
 `replaceAtSpan(span, text)` is the escape hatch underneath all of them: splice
 an arbitrary byte range you located yourself (via `getParsed()` and
 `doc.span(node)`), with the same reparse-or-roll-back guarantee.

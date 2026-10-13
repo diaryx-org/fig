@@ -1185,6 +1185,9 @@ fn editStatus(err: anyerror) FigStatus {
         // `\\` string) parsed back as part of the value, and the splice was
         // rolled back — the same kind of answer as `CommentNotAnEntry`.
         error.CommentInsideValue => .unsupported_operation,
+        // A delete whose splice parsed to a document with more than the one
+        // entry or item changed, rolled back: the same kind of answer again.
+        error.DeleteChangedOtherValues => .unsupported_operation,
         // A value the format cannot represent at all — plist has no null. Same
         // answer `serializeStatus` gives it, since it is the same fact about the
         // format either way. Infinity or NaN into strict JSON is the same kind
@@ -4246,7 +4249,7 @@ test "editStatus: every editor refusal is a caller error, not parse_error" {
         error.CommentsUnanchored,       error.RendererRefused,
         error.ImplicitSection,          error.ContainerClosesOnItsLine,
         error.NotAKey,                  error.NonFiniteNumber,
-        error.CommentInsideValue,
+        error.CommentInsideValue,       error.DeleteChangedOtherValues,
     };
     for (refusals) |err| {
         const status = editStatus(err);

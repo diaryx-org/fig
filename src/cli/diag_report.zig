@@ -274,6 +274,16 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
             try term.setColor(.reset);
             try term.writer.writeAll(": nothing was written — the edit was rolled back, and the file is byte-for-byte as it was.\n");
         },
+        // A delete the editor rolled back because its result read back with
+        // more changed than the one entry (`Editor.keepOthers`): a shape the
+        // splice could not take apart, such as a YAML explicit `? key`.
+        error.DeleteChangedOtherValues => {
+            try term.writer.writeAll(": deleting that would change other values in the document, so it was not done\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("note");
+            try term.setColor(.reset);
+            try term.writer.writeAll(": nothing was written — the edit was rolled back, and the file is byte-for-byte as it was.\n");
+        },
         // `fig comment --inline` on a value with no end delimiter of its own
         // (a ZON `\\` string): its line is value text to the newline.
         error.CommentInsideValue => {

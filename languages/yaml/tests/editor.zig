@@ -531,6 +531,60 @@ test "yaml remove the only item of a block seq inside a block seq" {
     try expectSource(&shared, "- []\n- b\n");
 }
 
+test "yaml remove the first item of a block seq on its parent's marker line keeps the parent" {
+    // The line delete took the outer `-` with the item: `[[a, c]]` read
+    // back as `[c]`. The next item moves up onto the marker line instead.
+    var root = try newYamlEditor("- - a\n  - c\n");
+    defer root.deinit();
+    try root.removeSeqItem(&.{.{ .index = 0 }}, 0);
+    try expectSource(&root, "- - c\n");
+
+    var keyed = try newYamlEditor("k:\n  - - a\n    - c\nj: 1\n");
+    defer keyed.deinit();
+    try keyed.removeSeqItem(&.{ .{ .key = "k" }, .{ .index = 0 } }, 0);
+    try expectSource(&keyed, "k:\n  - - c\nj: 1\n");
+
+    var deep = try newYamlEditor("- - - a # gone\n\n    - c\n- d\n");
+    defer deep.deinit();
+    try deep.removeSeqItem(&.{ .{ .index = 0 }, .{ .index = 0 } }, 0);
+    try expectSource(&deep, "- - - c\n- d\n");
+
+    // A comment line above the next item is the next item's: it stays, and
+    // the parent's marker ends its line.
+    var commented = try newYamlEditor("- - a # gone\n  # c's\n  - c\n");
+    defer commented.deinit();
+    try commented.removeSeqItem(&.{.{ .index = 0 }}, 0);
+    try expectSource(&commented, "-\n  # c's\n  - c\n");
+}
+
+test "yaml delete the first key of a mapping on its item's marker line keeps the item" {
+    var ed = try newYamlEditor("- k: v\n  j: w\n- x\n");
+    defer ed.deinit();
+    try ed.deleteKey(&.{ .{ .index = 0 }, .{ .key = "k" } });
+    try expectSource(&ed, "- j: w\n- x\n");
+
+    var nested = try newYamlEditor("- k:\n    - a\n  j: w\n");
+    defer nested.deinit();
+    try nested.deleteKey(&.{ .{ .index = 0 }, .{ .key = "k" } });
+    try expectSource(&nested, "- j: w\n");
+
+    // The only key: the item stays, emptied to null as `k:` is.
+    var only = try newYamlEditor("- k: v\n- x\n");
+    defer only.deinit();
+    try only.deleteKey(&.{ .{ .index = 0 }, .{ .key = "k" } });
+    try expectSource(&only, "-\n- x\n");
+}
+
+test "yaml a delete that would change another value is rolled back" {
+    // An explicit key's span starts at `k`, past its `?`, so no splice of
+    // it reads back as `{j: w}`; the guard refuses whatever it would write.
+    const source = "- ? k\n  : v\n  j: w\n";
+    var ed = try newYamlEditor(source);
+    defer ed.deinit();
+    try std.testing.expectError(error.DeleteChangedOtherValues, ed.deleteKey(&.{ .{ .index = 0 }, .{ .key = "k" } }));
+    try expectSource(&ed, source);
+}
+
 test "yaml remove the only item of a root block seq" {
     var ed = try newYamlEditor("---\n- a\n");
     defer ed.deinit();

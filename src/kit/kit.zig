@@ -24,6 +24,8 @@ pub const Document = @import("document.zig");
 pub const RowWriter = @import("row_writer.zig");
 /// A mapping's last child and its entries by key, for a parser that appends.
 pub const ChildIndex = @import("child_index.zig");
+/// The node glue a line-oriented `key = value` parser shares.
+pub const flat_map = @import("flat_map.zig");
 pub const table = @import("table.zig");
 pub const convert = @import("convert.zig");
 /// The contract's declarations and C shapes, which a language fills.
@@ -37,12 +39,15 @@ pub const ascii = @import("ascii.zig");
 pub const datetime = @import("datetime.zig");
 pub const width = @import("width.zig");
 pub const number = @import("number.zig");
+/// The YAML core schema's numbers and tags, which core reads too.
+pub const yaml_schema = @import("yaml_schema.zig");
 
 test {
     _ = AST;
     _ = Document;
     _ = RowWriter;
     _ = ChildIndex;
+    _ = flat_map;
     _ = @import("wasm_language.zig");
     _ = @import("describe_json.zig");
     _ = table;
@@ -58,6 +63,7 @@ test {
     _ = json_string;
     _ = ascii;
     _ = datetime;
+    _ = yaml_schema;
     _ = Unicode;
     _ = width;
     _ = number;

@@ -5,6 +5,8 @@ const Document = @import("../../kit/document.zig");
 const Table = @import("../../kit/table.zig").Table;
 const lang = @import("../../kit/manifest.zig");
 const json_string = @import("../../kit/json_string.zig");
+const abi = @import("../../kit/abi.zig");
+const contract = @import("../../kit/contract.zig");
 
 pub const Parser = @import("parser.zig");
 pub const Tokenizer = @import("tokenizer.zig");
@@ -121,4 +123,23 @@ test {
     _ = @import("parser.zig");
     _ = @import("printer.zig");
     _ = @import("editor_test.zig");
+}
+
+// What the TypeScript binding does with a language module's parse: copies
+// its table's lists into the table fig handed it (`kit/wasm_language.zig`).
+test "a module's table, copied byte for byte into a fresh one, is adopted" {
+    const V = contract.VTable(json.Language, "");
+    const src = "{\"a\": 1, \"b\": [true, null, \"s\"]}";
+    var a = Table.init(std.testing.allocator, src);
+    defer a.deinit();
+    var err: abi.ErrorInfo = .empty;
+    try std.testing.expectEqual(@as(c_int, 0), V.vtable.parse(null, "json", abi.Str.of(src), &a, &err));
+    var b = Table.init(std.testing.allocator, src);
+    defer b.deinit();
+    try b.rows.appendSlice(std.testing.allocator, a.rows.items);
+    try b.strings.appendSlice(std.testing.allocator, a.strings.items);
+    try b.seps.appendSlice(std.testing.allocator, a.seps.items);
+    try b.comments.appendSlice(std.testing.allocator, a.comments.items);
+    var ast = try AST.adopt(std.testing.allocator, src, &b, .required);
+    ast.deinit();
 }

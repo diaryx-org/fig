@@ -625,10 +625,8 @@ fn skipInsignificantWhitespace(self: *Parser) ParseError!void {
 // ── tests ────────────────────────────────────────────────────────────────────
 
 const testing = std.testing;
-const build_options = @import("build_options");
 
 fn expectJson(src: []const u8, expected: []const u8) !void {
-    if (comptime !build_options.lang_json) return error.SkipZigTest;
     var ast = try parseAbstract(testing.allocator, src, .XML);
     defer ast.deinit();
     var buf: [2048]u8 = undefined;

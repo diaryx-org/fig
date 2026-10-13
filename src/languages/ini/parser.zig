@@ -1,5 +1,5 @@
 //! The parser turns an INI-formatted []const u8 into the node table fig
-//! hands it, a row per node (`RowWriter`, through `shared/flat_map.zig`).
+//! hands it, a row per node (`RowWriter`, through `kit/flat_map.zig`).
 //!
 //! Shape: the root mapping holds any keys that appear before the first
 //! `[section]`, plus one child mapping per section (keyed by section name).
@@ -13,7 +13,7 @@
 //! A repeated `[section]` header reopens (merges into) the existing section
 //! rather than erroring — the common lenient behavior (git-config, many INI
 //! libraries). A repeated key anywhere silently keeps the LAST value at the
-//! FIRST-seen position (see `shared/flat_map.zig`'s `putEntry`) and raises a
+//! FIRST-seen position (see `kit/flat_map.zig`'s `putEntry`) and raises a
 //! `duplicate_key`/`duplicate_section` warning — real, parseable content, but
 //! likely an authoring mistake, so it's a lint rather than a parse error.
 
@@ -29,7 +29,7 @@ const Table = table.Table;
 
 const Type = @import("ini.zig").Type;
 const Span = @import("../../kit/span.zig");
-const flat_map = @import("../shared/flat_map.zig");
+const flat_map = @import("../../kit/flat_map.zig");
 const Tokenizer = @import("tokenizer.zig");
 const Token = Tokenizer.Token;
 

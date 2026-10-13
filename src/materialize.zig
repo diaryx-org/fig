@@ -38,7 +38,7 @@ const RowWriter = @import("kit/row_writer.zig");
 // The core schema's number grammar, as the compiled YAML reads a plain
 // scalar — pure functions of a lexeme, so a runtime twin's AST is judged by
 // the same rules.
-const yaml_scalar = @import("languages/yaml/parser.zig");
+const yaml_scalar = @import("kit/yaml_schema.zig");
 
 pub const TagMode = enum { strict, lax, keep };
 

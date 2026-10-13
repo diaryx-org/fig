@@ -61,7 +61,7 @@ test {
     _ = @import("languages/harness.zig");
     _ = @import("languages/runtime.zig");
     _ = @import("languages/wire.zig");
-    _ = @import("languages/shared/flat_map.zig");
+    _ = @import("kit/flat_map.zig");
     _ = @import("kit/document.zig");
     _ = @import("editor.zig");
     _ = @import("editor/regions.zig");

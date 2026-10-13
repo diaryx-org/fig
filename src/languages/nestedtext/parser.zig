@@ -1,5 +1,5 @@
 //! The parser turns a NestedText-formatted `[]const u8` into the node table
-//! fig hands it, a row per node (`RowWriter`, through `shared/flat_map.zig`).
+//! fig hands it, a row per node (`RowWriter`, through `kit/flat_map.zig`).
 //!
 //! Every scalar is an untyped `.string` — NestedText, like INI, never
 //! coerces a value's type at the format layer (see `nestedtext.org`'s design
@@ -50,7 +50,7 @@ const Table = table.Table;
 
 const Type = @import("nestedtext.zig").Type;
 const Span = @import("../../kit/span.zig");
-const flat_map = @import("../shared/flat_map.zig");
+const flat_map = @import("../../kit/flat_map.zig");
 const Tokenizer = @import("tokenizer.zig");
 const Line = Tokenizer.Line;
 const parse_diagnostic = @import("../../kit/parse_diagnostic.zig");

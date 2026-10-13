@@ -887,11 +887,16 @@ test "a comment on a key: line with a block value rides the key line" {
 }
 
 test "prints YAML document" {
-    // Native is the AST-literal syntax here — this test's subject is YAML
-    // printing, not JSON reading.
-    const Parser = @import("../../canonical/parser.zig");
-    const input = "{\"name\":\"Ada\",\"tags\":[\"zig\",true,null]}";
-    var doc = try Parser.parseAbstract(std.testing.allocator, input);
+    // Built rather than read, so the tree carries no spelling of its own —
+    // this test's subject is YAML printing, not reading.
+    var b = AST.Builder.init(std.testing.allocator);
+    defer b.deinit();
+    const tags = try b.addSequence(&.{ try b.addString("zig"), try b.addBool(true), try b.addNull() });
+    const root = try b.addMapping(&.{
+        .{ .key = try b.addString("name"), .value = try b.addString("Ada") },
+        .{ .key = try b.addString("tags"), .value = tags },
+    });
+    var doc = try b.finish(root);
     defer doc.deinit();
 
     var output: Writer.Allocating = .init(std.testing.allocator);

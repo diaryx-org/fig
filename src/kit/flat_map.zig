@@ -14,11 +14,11 @@
 //! formats). Only the tree-shape plumbing is shared.
 
 const std = @import("std");
-const AST = @import("../../kit/ast/ast.zig");
-const RowWriter = @import("../../kit/row_writer.zig");
-const ChildIndex = @import("../../kit/child_index.zig");
-const table = @import("../../kit/table.zig");
-const Span = @import("../../kit/span.zig");
+const AST = @import("ast/ast.zig");
+const RowWriter = @import("row_writer.zig");
+const ChildIndex = @import("child_index.zig");
+const table = @import("table.zig");
+const Span = @import("span.zig");
 
 /// The rows of the table a parse is writing (`RowWriter`), the one
 /// operation that adds a node, and an index of each mapping's entries by key

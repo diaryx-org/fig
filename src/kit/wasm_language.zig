@@ -244,22 +244,3 @@ const Request = struct {
         return out;
     }
 };
-
-test "a module's table, copied byte for byte into a fresh one, is adopted" {
-    const AST = @import("ast/ast.zig");
-    const L = @import("../languages/json/json.zig").Language;
-    const V = contract.VTable(L, "");
-    const src = "{\"a\": 1, \"b\": [true, null, \"s\"]}";
-    var a = table.Table.init(std.testing.allocator, src);
-    defer a.deinit();
-    var err: abi.ErrorInfo = .empty;
-    try std.testing.expectEqual(@as(c_int, 0), V.vtable.parse(null, "json", abi.Str.of(src), &a, &err));
-    var b = table.Table.init(std.testing.allocator, src);
-    defer b.deinit();
-    try b.rows.appendSlice(std.testing.allocator, a.rows.items);
-    try b.strings.appendSlice(std.testing.allocator, a.strings.items);
-    try b.seps.appendSlice(std.testing.allocator, a.seps.items);
-    try b.comments.appendSlice(std.testing.allocator, a.comments.items);
-    var ast = try AST.adopt(std.testing.allocator, src, &b, .required);
-    ast.deinit();
-}

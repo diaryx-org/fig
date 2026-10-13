@@ -1,5 +1,5 @@
 //! The parser turns a `.properties`-formatted []const u8 into the node table
-//! fig hands it, a row per node (`RowWriter`, through `shared/flat_map.zig`).
+//! fig hands it, a row per node (`RowWriter`, through `kit/flat_map.zig`).
 //!
 //! Shape: a single flat root mapping, `key<sep>value` per entry — like
 //! dotenv, no sections/nesting; unlike dotenv, keys are NOT restricted to
@@ -13,7 +13,7 @@
 //! text.
 //!
 //! A repeated key silently keeps the LAST value at the FIRST-seen position
-//! (see `shared/flat_map.zig`'s `putEntry`, `.overwrite`) and raises a
+//! (see `kit/flat_map.zig`'s `putEntry`, `.overwrite`) and raises a
 //! `duplicate_key` warning, exactly like INI/dotenv.
 
 const Parser = @This();
@@ -29,7 +29,7 @@ const Table = table.Table;
 const Type = @import("properties.zig").Type;
 const Span = @import("../../kit/span.zig");
 const Unicode = @import("../../kit/kit.zig").Unicode;
-const flat_map = @import("../shared/flat_map.zig");
+const flat_map = @import("../../kit/flat_map.zig");
 const Tokenizer = @import("tokenizer.zig");
 const Token = Tokenizer.Token;
 

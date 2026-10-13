@@ -3,9 +3,8 @@
 //! entry under a key, to tell a repeat. Without it both are a walk of the
 //! sibling chain, and a table of n keys costs n² — TOML's, INI's, dotenv's.
 //!
-//! The index holds key texts, not copies: a caller passes a slice that
-//! outlives the parse (the source, or a decoded string it keeps), never one
-//! `RowWriter.node` handed back, which points into a buffer that moves.
+//! The index holds row ids, not key texts: an entry's parent and key are
+//! read from the rows each time it is hashed or compared.
 
 const ChildIndex = @This();
 const std = @import("std");
@@ -15,21 +14,55 @@ const Node = @import("ast/ast.zig").Node;
 
 /// A container's last child.
 last: std.AutoHashMapUnmanaged(Node.Id, Node.Id) = .empty,
-/// A mapping's entry under a key.
-keyed: std.HashMapUnmanaged(Key, Node.Id, KeyContext, std.hash_map.default_max_load_percentage) = .empty,
+/// A mapping's entries, by the entry's row alone: its parent and key are
+/// read from the rows when it is hashed or compared, so an entry costs the
+/// index four bytes and no copy of its key.
+keyed: std.HashMapUnmanaged(Node.Id, void, EntryContext, std.hash_map.default_max_load_percentage) = .empty,
+
+/// Hashes and compares entries by the rows `w` has written.
+const EntryContext = struct {
+    w: RowWriter,
+
+    /// Entry `id`'s parent and key text, as the rows hold them.
+    fn keyOf(self: EntryContext, id: Node.Id) Key {
+        const rows = self.w.t.rows.items;
+        const key = self.w.kindOf(id).keyvalue.key;
+        return .{ .parent = rows[id].parent, .text = self.w.kindOf(key).string };
+    }
+
+    pub fn hash(self: EntryContext, id: Node.Id) u64 {
+        return hashKey(self.keyOf(id));
+    }
+
+    pub fn eql(self: EntryContext, a: Node.Id, b: Node.Id) bool {
+        return eqlKey(self.keyOf(a), self.keyOf(b));
+    }
+};
+
+/// Looks an entry up by a parent and a key text.
+const KeyAdapter = struct {
+    ctx: EntryContext,
+
+    pub fn hash(_: KeyAdapter, k: Key) u64 {
+        return hashKey(k);
+    }
+
+    pub fn eql(self: KeyAdapter, k: Key, id: Node.Id) bool {
+        return eqlKey(k, self.ctx.keyOf(id));
+    }
+};
 
 const Key = struct { parent: Node.Id, text: []const u8 };
 
-const KeyContext = struct {
-    pub fn hash(_: KeyContext, k: Key) u64 {
-        var h = std.hash.Wyhash.init(k.parent);
-        h.update(k.text);
-        return h.final();
-    }
-    pub fn eql(_: KeyContext, a: Key, b: Key) bool {
-        return a.parent == b.parent and std.mem.eql(u8, a.text, b.text);
-    }
-};
+fn hashKey(k: Key) u64 {
+    var h = std.hash.Wyhash.init(k.parent);
+    h.update(k.text);
+    return h.final();
+}
+
+fn eqlKey(a: Key, b: Key) bool {
+    return a.parent == b.parent and std.mem.eql(u8, a.text, b.text);
+}
 
 pub fn deinit(self: *ChildIndex, allocator: Allocator) void {
     self.last.deinit(allocator);
@@ -37,8 +70,8 @@ pub fn deinit(self: *ChildIndex, allocator: Allocator) void {
 }
 
 /// Link `child` as `parent`'s last child: after the one before it, or as
-/// its first. `parent` is a mapping or a sequence whose children are all
-/// linked through here.
+/// its first, naming `parent` as its parent. `parent` is a mapping or a
+/// sequence whose children are all linked through here.
 pub fn append(self: *ChildIndex, allocator: Allocator, w: RowWriter, parent: Node.Id, child: Node.Id) Allocator.Error!void {
     const slot = try self.last.getOrPut(allocator, parent);
     if (slot.found_existing) {
@@ -50,17 +83,22 @@ pub fn append(self: *ChildIndex, allocator: Allocator, w: RowWriter, parent: Nod
         });
     }
     w.setNext(child, null);
+    w.t.rows.items[child].parent = parent;
     slot.value_ptr.* = child;
 }
 
-/// Record `entry` as mapping `parent`'s entry under `key`, replacing any.
-pub fn put(self: *ChildIndex, allocator: Allocator, parent: Node.Id, key: []const u8, entry: Node.Id) Allocator.Error!void {
-    try self.keyed.put(allocator, .{ .parent = parent, .text = key }, entry);
+/// Record keyvalue `entry`, already appended to its mapping, under its key,
+/// replacing an entry with the same key.
+pub fn put(self: *ChildIndex, allocator: Allocator, w: RowWriter, entry: Node.Id) Allocator.Error!void {
+    const ctx: EntryContext = .{ .w = w };
+    const slot = try self.keyed.getOrPutContextAdapted(allocator, ctx.keyOf(entry), KeyAdapter{ .ctx = ctx }, ctx);
+    slot.key_ptr.* = entry;
 }
 
 /// Mapping `parent`'s entry under `key`, or null.
-pub fn get(self: *const ChildIndex, parent: Node.Id, key: []const u8) ?Node.Id {
-    return self.keyed.get(.{ .parent = parent, .text = key });
+pub fn get(self: *const ChildIndex, w: RowWriter, parent: Node.Id, key: []const u8) ?Node.Id {
+    const ctx: EntryContext = .{ .w = w };
+    return self.keyed.getKeyAdapted(Key{ .parent = parent, .text = key }, KeyAdapter{ .ctx = ctx });
 }
 
 test "append links in order, and get finds an entry by its key" {
@@ -78,11 +116,11 @@ test "append links in order, and get finds an entry by its key" {
         const val = try w.add(.null_, Span.init(0, 0));
         e.* = try w.add(.{ .keyvalue = .{ .key = key, .value = val } }, Span.init(0, 0));
         try ix.append(std.testing.allocator, w, map, e.*);
-        try ix.put(std.testing.allocator, map, k, e.*);
+        try ix.put(std.testing.allocator, w, e.*);
     }
     try std.testing.expectEqual(entries[0], w.kindOf(map).mapping.?);
     try std.testing.expectEqual(entries[1], w.node(entries[0]).next_sibling.?);
     try std.testing.expectEqual(entries[2], w.node(entries[1]).next_sibling.?);
-    try std.testing.expectEqual(@as(?Node.Id, entries[1]), ix.get(map, "b"));
-    try std.testing.expectEqual(@as(?Node.Id, null), ix.get(map, "d"));
+    try std.testing.expectEqual(@as(?Node.Id, entries[1]), ix.get(w, map, "b"));
+    try std.testing.expectEqual(@as(?Node.Id, null), ix.get(w, map, "d"));
 }

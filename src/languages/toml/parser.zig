@@ -830,7 +830,7 @@ fn parseKeyPath(self: *Parser, segs: *std.ArrayList(KeySeg)) ParserError!void {
 /// Value node id of a child of `map_id` keyed `key`, or null. A key's
 /// text is read from its row as it is compared, never kept.
 fn lookupChild(self: *Parser, map_id: AST.Node.Id, key: []const u8) ?AST.Node.Id {
-    const entry = self.children.get(map_id, key) orelse return null;
+    const entry = self.children.get(self.w, map_id, key) orelse return null;
     return self.w.kindOf(entry).keyvalue.value;
 }
 
@@ -846,9 +846,7 @@ fn appendKeyValue(self: *Parser, map_id: AST.Node.Id, key: KeySeg, value_id: AST
         Span.init(key.span.start, value_end),
     );
     try self.children.append(self.allocator, self.w, map_id, kv_id);
-    // `key.str` is a slice of the source or one of `owned_strings`, which
-    // live as long as the parser.
-    try self.children.put(self.allocator, map_id, key.str, kv_id);
+    try self.children.put(self.allocator, self.w, kv_id);
 }
 
 /// Create an empty child table under `parent` keyed `key`, record its origin,

@@ -28,37 +28,23 @@ const Span = @import("../../kit/span.zig");
 pub const NodeArena = struct {
     w: RowWriter,
     index: ChildIndex = .{},
-    /// Copies of key texts that are not slices of the source, which the
-    /// index holds on to.
-    keys: std.heap.ArenaAllocator,
 
     pub fn init(t: *table.Table) NodeArena {
-        return .{ .w = .init(t), .keys = .init(t.allocator) };
+        return .{ .w = .init(t) };
     }
 
     pub fn deinit(self: *NodeArena) void {
         self.index.deinit(self.w.allocator());
-        self.keys.deinit();
     }
 
     pub fn addNode(self: *NodeArena, kind: AST.Node.Kind, span: Span) std.mem.Allocator.Error!AST.Node.Id {
         return self.w.add(kind, span);
     }
-
-    /// `text` as the index may keep it: a slice of the source as it is,
-    /// anything else copied.
-    fn stable(self: *NodeArena, text: []const u8) std.mem.Allocator.Error![]const u8 {
-        const src = self.w.t.source;
-        const base = @intFromPtr(src.ptr);
-        const at = @intFromPtr(text.ptr);
-        if (text.len == 0 or (at >= base and at + text.len <= base + src.len)) return text;
-        return self.keys.allocator().dupe(u8, text);
-    }
 };
 
 /// The keyvalue child of `map_id` keyed `key`, or null.
 pub fn lookupChild(arena: *const NodeArena, map_id: AST.Node.Id, key: []const u8) ?AST.Node.Id {
-    return arena.index.get(map_id, key);
+    return arena.index.get(arena.w, map_id, key);
 }
 
 /// How a repeated key is handled. Every INI/dotenv/`.properties` implementation
@@ -95,10 +81,9 @@ pub fn putEntry(
     policy: DuplicatePolicy,
 ) (DuplicateError || std.mem.Allocator.Error)!Put {
     const w = arena.w;
-    // Read from the row and copied if need be: the buffer it may point into
-    // moves when the table grows.
-    const key = try arena.stable(w.kindOf(key_id).string);
-    if (arena.index.get(map_id, key)) |existing_kv| {
+    // Read from the row; the buffer it may point into moves when the table
+    // grows, so it is not kept past the lookup.
+    if (arena.index.get(w, map_id, w.kindOf(key_id).string)) |existing_kv| {
         switch (policy) {
             .err => return error.DuplicateKey,
             .overwrite => {
@@ -113,7 +98,7 @@ pub fn putEntry(
         Span.init(w.spanOf(key_id).start, w.spanOf(value_id).end),
     );
     try arena.index.append(w.allocator(), w, map_id, kv_id);
-    try arena.index.put(w.allocator(), map_id, key, kv_id);
+    try arena.index.put(w.allocator(), w, kv_id);
     return .{ .result = .added, .kv = kv_id };
 }
 

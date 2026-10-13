@@ -1040,7 +1040,7 @@ fn finishAssignment(self: *Parser, target: Id, steps: []const Step, type_name: ?
             // "current cursor" anchor would misattribute the diagnostic to
             // whatever follows. Pin it to the actual conflicting key's own
             // span instead.
-            if (self.children.get(parent, k.name) != null) return self.failSpan(k.span.start, k.span.end, error.FigDuplicateKey);
+            if (self.children.get(self.w, parent, k.name) != null) return self.failSpan(k.span.start, k.span.end, error.FigDuplicateKey);
             const kv = try self.addEntry(parent, k, value, sep);
             try self.flushLeading(self.keyOf(kv));
         },
@@ -1306,7 +1306,7 @@ fn addEntry(self: *Parser, map: Id, key: KeySeg, value: Id, sep: ?Span) Error!Id
     const kv = try self.w.add(.{ .keyvalue = .{ .key = key_id, .value = value } }, Span.init(key.span.start, self.w.spanOf(value).end));
     if (sep) |s| try self.w.sep(kv, s);
     try self.children.append(self.gpa, self.w, map, kv);
-    try self.children.put(self.gpa, map, key.name, kv);
+    try self.children.put(self.gpa, self.w, kv);
     return kv;
 }
 
@@ -1346,7 +1346,7 @@ fn navigateIntermediate(self: *Parser, start: Id, steps: []const Step) Error!Id 
 /// path makes is a block container named by `seg`; one a flow object's dotted
 /// key makes (`flow`) is closed with its object, and is neither.
 fn getOrCreateMapContainer(self: *Parser, m: Id, seg: KeySeg, flow: bool) Error!Id {
-    if (self.children.get(m, seg.name)) |kv| {
+    if (self.children.get(self.w, m, seg.name)) |kv| {
         const v = self.valueOf(kv);
         if (self.infoOf(v) == null) return error.FigKeyNotContainer;
         return self.open(v);
@@ -1390,7 +1390,7 @@ fn resolveHeaderFinal(self: *Parser, parent: Id, last: Step) Error!Resolved {
     switch (last) {
         .key => |k| {
             try self.asMapping(parent);
-            if (self.children.get(parent, k.name)) |kv| {
+            if (self.children.get(self.w, parent, k.name)) |kv| {
                 const v = self.valueOf(kv);
                 if (self.infoOf(v) == null) return error.FigDuplicateKey;
                 const c = try self.open(v);
@@ -2036,14 +2036,14 @@ fn parseFlowObject(self: *Parser) Error!Id {
 
         var target = map;
         for (path[0 .. path.len - 1]) |seg| {
-            const fresh = self.children.get(target, seg.name) == null;
+            const fresh = self.children.get(self.w, target, seg.name) == null;
             const child = self.getOrCreateMapContainer(target, seg, true) catch |err|
                 return self.failSpan(seg.span.start, seg.span.end, err);
             if (fresh) try implicit.append(self.scratch, child);
             self.asMapping(child) catch |err| return self.failSpan(seg.span.start, seg.span.end, err);
             target = child;
         }
-        if (self.children.get(target, last.name) != null) return self.failSpan(last.span.start, last.span.end, error.FigDuplicateKey);
+        if (self.children.get(self.w, target, last.name) != null) return self.failSpan(last.span.start, last.span.end, error.FigDuplicateKey);
         _ = try self.addEntry(target, last, v, null);
 
         if (this_mode == .fig) {

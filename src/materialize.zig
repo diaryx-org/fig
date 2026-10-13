@@ -426,8 +426,7 @@ fn hasAlias(ast: AST) bool {
 
 /// `src` as the compiled YAML reads it, as fig adopts it.
 fn parseYaml(src: []const u8) !@import("kit/document.zig") {
-    var tree = try Parser.parse(testing.allocator, src, .v1_2_2);
-    return tree.intoDocument(testing.allocator);
+    return Parser.parse(testing.allocator, src, .v1_2_2);
 }
 
 test "materialize: alias expands to a copied subtree" {

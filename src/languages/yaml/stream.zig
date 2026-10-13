@@ -6,8 +6,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const testing = std.testing;
-const Document = @import("../../kit/parse_tree.zig");
-const AST = Document.Nodes;
+const Document = @import("../../kit/document.zig");
+const AST = @import("../../kit/ast/ast.zig");
 
 const Span = @import("../../kit/span.zig");
 const Parser = @import("parser.zig");

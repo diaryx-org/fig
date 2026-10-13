@@ -1223,6 +1223,5 @@ test "yaml printer: reprinted root/item props re-parse onto the same nodes" {
 
 /// `src` as fig adopts it from the compiled YAML parser.
 fn testDoc(src: []const u8, t: @import("yaml.zig").Type) !@import("../../kit/document.zig") {
-    var tree = try @import("parser.zig").parse(std.testing.allocator, src, t);
-    return tree.intoDocument(std.testing.allocator);
+    return @import("parser.zig").parse(std.testing.allocator, src, t);
 }

@@ -1,9 +1,17 @@
-//! The parser turns YAML tokens into a concrete syntax tree.
-//! Depends on the tokenizer and the abstract Document struct.
+//! The parser turns YAML tokens into the node table fig hands it. It writes
+//! a row per node as it meets it (`RowWriter`) — a container when it opens,
+//! its children as they complete — with each node's tag, anchor, item
+//! marker, entry separator and comments beside it, and puts the rows in
+//! pre-order once the root is done.
+//!
+//! A decoded string (a quoted or folded scalar) is copied into the table's
+//! buffer; the parser frees its own copy.
 
 const std = @import("std");
-const Document = @import("../../kit/parse_tree.zig");
-const AST = Document.Nodes;
+const Document = @import("../../kit/document.zig");
+const AST = @import("../../kit/ast/ast.zig");
+const RowWriter = @import("../../kit/row_writer.zig");
+const Table = table.Table;
 
 const util = @import("../../kit/kit.zig");
 const table = @import("../../kit/table.zig");
@@ -35,14 +43,14 @@ const OpenContainer = struct {
     pending_sequence_item: bool = false,
     /// The `-` that introduced the item currently being parsed into this
     /// sequence, recorded against the item's node when `finishValue` attaches
-    /// it (`Document.node_marker_spans`). Set by `parseSequenceEntry` once the
+    /// it (`Document.markerSpan`). Set by `parseSequenceEntry` once the
     /// previous dash's pending value is closed, so a deferred value — a
     /// container on the following lines, or the null a bare `-` becomes — is
     /// attached under its own dash, not the next one.
     current_marker: ?Span = null,
     /// The `:` value indicator of the entry being parsed into this mapping,
     /// recorded against the `keyvalue` node when `finishValue` builds it
-    /// (`Document.node_sep_spans`). Null for an explicit key that took no
+    /// (`Document.sepSpan`). Null for an explicit key that took no
     /// indicator.
     pending_sep_span: ?Span = null,
     continues_sequence_item: bool = false,
@@ -65,22 +73,12 @@ const OpenContainer = struct {
     explicit_key_col: usize = 0,
 };
 
-nodes: std.ArrayList(AST.Node) = .empty,
-node_spans: std.ArrayList(Span) = .empty,
-// YAML reference/annotation side-tables, kept length-synced with `nodes` by
-// `addNode`. Decoded strings (node_tags/node_anchors) hand off to the AST; spans
-// hand off to the Document. `anchors` is the name→id table (filled in a later
-// phase; empty for tag-only documents).
-node_tags: std.ArrayList(?AST.Tag) = .empty,
-/// Every block-sequence item's `-` token, by item node id; becomes
-/// `Document.node_marker_spans`.
-markers: std.ArrayList(Document.SpanEntry) = .empty,
-/// Every block-mapping entry's `:` indicator, by `keyvalue` node id; becomes
-/// `Document.node_sep_spans`.
-seps: std.ArrayList(Document.SpanEntry) = .empty,
-node_anchors: std.ArrayList(?[]const u8) = .empty,
-node_tag_spans: std.ArrayList(?Span) = .empty,
-node_anchor_spans: std.ArrayList(?Span) = .empty,
+/// The table being written; set by `parseInto` and `parseWithReportInto`.
+/// A node's id is its row until `finish` puts the rows in pre-order, so ids
+/// are in the order the parser met the nodes.
+w: RowWriter = undefined,
+/// Every anchor defined, in node-id order: the name→id table the alias
+/// check reads (`resolveAliasesOrError`). Names borrow `source`.
 anchors: std.ArrayList(AST.Anchor) = .empty,
 // Node properties (`!tag`, `&anchor`) seen but not yet attached to the node they
 // decorate. Consumed by the next `addNode`.
@@ -93,6 +91,7 @@ pending_anchor: ?PendingAnchor = null,
 container_tag: ?PendingTag = null,
 container_anchor: ?PendingAnchor = null,
 container_stack: std.ArrayList(OpenContainer) = .empty,
+/// Decoded strings, alive until the parser is; the table holds its own copy.
 owned_strings: std.ArrayList([]const u8) = .empty,
 // Tag handles (`!e!`, `!prefix!`, or a redefined `!`/`!!`) declared by `%TAG`
 // directives in this document, with the prefix each expands to. A NAMED handle
@@ -100,8 +99,9 @@ owned_strings: std.ArrayList([]const u8) = .empty,
 // available, so a tag may use one whether or not it appears here). Per-document
 // by construction: a stream is parsed one document at a time, each with a fresh
 // Parser, so a handle declared for one document is not visible to the next.
-// Handed to the AST so the printer can re-emit the declaration above a document
-// whose tags use it (`ast.tag_directives`); the strings alias `source`.
+// Each is also written into the table (`RowWriter.directive`), so the printer
+// can re-emit the declaration above a document whose tags use it
+// (`ast.tag_directives`); the strings alias `source`.
 tag_directives: std.ArrayList(AST.TagDirective) = .empty,
 tokens: []const Token = &.{},
 index: usize = 0,
@@ -109,11 +109,14 @@ index: usize = 0,
 // token is consumed) and reset on each `.newline`. `pending_leading` buffers
 // own-line comments until the next non-container node claims them (`addNode`,
 // unless `parking_container`). Comment text borrows `source`. `pending_leading`
-// is reserved to `tokens.len` once so `advance` can append without failing.
-node_comments: std.ArrayList(AST.NodeComments) = .empty,
+// and `trailing` are reserved to `tokens.len` once so `advance` can append
+// without failing.
 pending_leading: std.ArrayList(AST.Comment) = .empty,
+/// Trailing comments in the order they were bound, written into the table
+/// when the document is done: `advance` binds one and cannot fail, and a
+/// later one on the same node replaces an earlier.
+trailing: std.ArrayList(TrailingComment) = .empty,
 last_value_id: ?AST.Node.Id = null,
-comments_seen: bool = false,
 /// True between a value-indicator `:` and the line's end. A comment seen while
 /// set, with no inline value built yet, is the entry's trailing comment (its
 /// value is a block collection below), not leading of that value's first child.
@@ -158,6 +161,7 @@ version: Type = .v1_2_2,
 failure: ?Diagnostic = null,
 
 const PendingTag = struct { text: []const u8, span: Span };
+const TrailingComment = struct { id: AST.Node.Id, comment: AST.Comment };
 const PendingAnchor = struct { name: []const u8, span: Span };
 
 const ParseError = error{ UnexpectedToken, EmptyDocument, UnclosedString, InvalidUnicodeEscape, MultipleDocuments, DuplicateProperty, UndefinedAlias, InvalidDirective, UndefinedTagHandle };
@@ -358,7 +362,38 @@ pub const Report = struct { diag: ?Diagnostic = null };
 /// and why. The error returned is the one `parse` returns — the diagnostic
 /// adds to it, it never changes it.
 pub fn parseWithReport(allocator: std.mem.Allocator, input: []const u8, format: Type, out: *Report) Error!Document {
-    var parser: Parser = .{ .allocator = allocator };
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseWithReportInto(&t, input, format, out);
+    return adopt(allocator, input, &t);
+}
+
+/// `input` as an `AST`, alone.
+pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) Error!AST {
+    const doc = try parse(allocator, input, format);
+    return doc.ast;
+}
+
+/// `input` as a `Document`: its table written and adopted, with YAML's
+/// `<<` merge key.
+pub fn parse(allocator: std.mem.Allocator, input: []const u8, format: Type) Error!Document {
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseInto(&t, input, format);
+    return adopt(allocator, input, &t);
+}
+
+/// Write `input`'s rows into `t`, the table fig hands a parse.
+pub fn parseInto(t: *Table, input: []const u8, format: Type) Error!void {
+    var parser: Parser = .{ .allocator = t.allocator, .w = .init(t) };
+    defer parser.deinit();
+    return parser.parseOnce(input, format);
+}
+
+/// `parseInto`, but on failure also fills `out.diag` with where the parse
+/// failed and why, as `parseWithReport` does.
+pub fn parseWithReportInto(t: *Table, input: []const u8, format: Type, out: *Report) Error!void {
+    var parser: Parser = .{ .allocator = t.allocator, .w = .init(t) };
     defer parser.deinit();
     return parser.parseOnce(input, format) catch |err| {
         out.diag = parser.failure;
@@ -366,22 +401,17 @@ pub fn parseWithReport(allocator: std.mem.Allocator, input: []const u8, format: 
     };
 }
 
-/// Primary entry point
-/// Pass allocator, input, and type, and get a Document.
-pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) !Document.RowAst {
-    var tree = try parse(allocator, input, format);
-    return tree.intoAst(allocator);
+/// The finished table `t` as a `Document`, with YAML's merge key, as fig
+/// would read it through the language's syntax.
+fn adopt(allocator: std.mem.Allocator, input: []const u8, t: *Table) Error!Document {
+    var doc = try RowWriter.adopt(allocator, input, t);
+    doc.ast.merge_key = @import("yaml.zig").Language.syntax(.v1_2_2).merge_key;
+    return doc;
 }
 
-pub fn parse(allocator: std.mem.Allocator, input: []const u8, format: Type) !Document {
-    var parser: Parser = .{ .allocator = allocator };
-    defer parser.deinit();
-    return parser.parseOnce(input, format);
-}
-
-/// Secondary entry point, called on a parser object.
+/// Write `input` into the table `self.w` writes, on a parser made with one.
 /// Caller must handle memory by calling `defer deinit` or similar.
-pub fn parseOnce(self: *Parser, input: []const u8, format: Type) Error!Document {
+pub fn parseOnce(self: *Parser, input: []const u8, format: Type) Error!void {
     self.source = input;
     self.version = format;
     self.failure = null;
@@ -403,7 +433,7 @@ pub fn parseOnce(self: *Parser, input: []const u8, format: Type) Error!Document 
     };
     defer self.allocator.free(self.tokens);
 
-    return self.parseTokens(input) catch |err| {
+    return self.parseTokens() catch |err| {
         // A site that knew better already said where; everything else is
         // pinned on the token the cursor rests on, which for a token that
         // does not fit is the token itself.
@@ -466,11 +496,12 @@ fn sourceOffsetOf(self: *const Parser, slice: []const u8) ?usize {
 
 /// The statement loop and document assembly, over the tokens `parseOnce`
 /// produced.
-fn parseTokens(self: *Parser, input: []const u8) ParserError!Document {
+fn parseTokens(self: *Parser) ParserError!void {
 
-    // Reserve once so `advance` (non-fallible) can buffer leading comments with
+    // Reserve once so `advance` (non-fallible) can buffer comments with
     // `appendAssumeCapacity`. There can be at most one comment per token.
     try self.pending_leading.ensureTotalCapacity(self.allocator, self.tokens.len);
+    try self.trailing.ensureTotalCapacity(self.allocator, self.tokens.len);
 
     while (true) {
         self.skipTriviaNoNewline();
@@ -570,7 +601,7 @@ fn parseTokens(self: *Parser, input: []const u8) ParserError!Document {
                     if (self.container_stack.items.len > 0) {
                         const c = self.currentContainer();
                         if (c.continues_sequence_item and c.kind == .mapping and
-                            self.columnOf(self.node_spans.items[c.id].start) == dedent_col)
+                            self.columnOf(self.w.spanOf(c.id).start) == dedent_col)
                             c.continues_sequence_item = false;
                     }
                 }
@@ -582,7 +613,7 @@ fn parseTokens(self: *Parser, input: []const u8) ParserError!Document {
             .doc_start => {
                 // A second document start (or one after content) is multi-doc,
                 // which is out of scope.
-                if (self.doc_started or self.nodes.items.len > 0) return ParseError.MultipleDocuments;
+                if (self.doc_started or self.w.count() > 0) return ParseError.MultipleDocuments;
                 self.doc_started = true;
                 self.on_doc_start_line = true;
                 // The `---` ends any directives prefix and resolves it.
@@ -594,7 +625,7 @@ fn parseTokens(self: *Parser, input: []const u8) ParserError!Document {
                 // no content yet. A directive after content (`foo\n%YAML`) or after
                 // the `---`/content of this single document is invalid.
                 if (self.doc_started or self.doc_ended or self.root != null or
-                    self.nodes.items.len > 0 or self.container_stack.items.len > 0)
+                    self.w.count() > 0 or self.container_stack.items.len > 0)
                     return ParseError.InvalidDirective;
                 const tok = self.advance();
                 self.parseDirective(tok.source(self.source)) catch |err| switch (err) {
@@ -719,7 +750,7 @@ fn parseTokens(self: *Parser, input: []const u8) ParserError!Document {
                 if (self.peek().kind == .colon) {
                     // An implicit key must be a single line; a flow collection
                     // spanning lines cannot be a block mapping key.
-                    const span = self.node_spans.items[node_id];
+                    const span = self.w.spanOf(node_id);
                     if (std.mem.indexOfScalar(u8, self.source[span.start..span.end], '\n') != null)
                         return ParseError.UnexpectedToken;
                     const mapping_id = try self.ensureContainer(.mapping);
@@ -780,66 +811,8 @@ fn parseTokens(self: *Parser, input: []const u8) ParserError!Document {
     const root = self.root orelse try self.addNode(.null_, self.peek().span);
     // End-of-document orphan comments dangle off the root.
     try self.claimDangling(root);
-    const nodes = try self.nodes.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(nodes);
-    self.nodes = .empty;
-    const node_spans = try self.node_spans.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(node_spans);
-    self.node_spans = .empty;
-    const node_tags = try self.node_tags.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(node_tags);
-    self.node_tags = .empty;
-    const node_anchors = try self.node_anchors.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(node_anchors);
-    self.node_anchors = .empty;
-    const anchors = try self.anchors.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(anchors);
-    self.anchors = .empty;
-    const node_tag_spans = try self.node_tag_spans.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(node_tag_spans);
-    self.node_tag_spans = .empty;
-    const node_anchor_spans = try self.node_anchor_spans.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(node_anchor_spans);
-    self.node_anchor_spans = .empty;
-    const node_marker_spans = try Document.buildSpanTable(self.allocator, nodes.len, self.markers.items);
-    errdefer self.allocator.free(node_marker_spans);
-    const node_sep_spans = try Document.buildSpanTable(self.allocator, nodes.len, self.seps.items);
-    errdefer self.allocator.free(node_sep_spans);
-    const tag_directives = try self.tag_directives.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(tag_directives);
-    self.tag_directives = .empty;
-    const owned_strings = try self.owned_strings.toOwnedSlice(self.allocator);
-    self.owned_strings = .empty;
-    const resolutions = try self.allocator.alloc(AST.TagResolution, if (anyTag(node_tags)) nodes.len else 0);
-    errdefer self.allocator.free(resolutions);
-    if (resolutions.len > 0) for (resolutions, node_tags, nodes) |*r, tag, n| {
-        r.* = if (tag) |x| resolveTag(tag_directives, x.text, n.kind) else .{};
-    };
-    var ast: AST = .{
-        .allocator = self.allocator,
-        .owned_strings = owned_strings,
-        .root = root,
-        .nodes = nodes,
-        .node_tags = node_tags,
-        .node_tag_resolutions = resolutions,
-        .node_anchors = node_anchors,
-        .anchors = anchors,
-        .tag_directives = tag_directives,
-        .merge_key = @import("yaml.zig").Language.syntax(.v1_2_2).merge_key,
-    };
-    if (self.comments_seen) {
-        ast.node_comments = try self.node_comments.toOwnedSlice(self.allocator);
-        self.node_comments = .empty;
-    }
-    return .{
-        .source = input,
-        .ast = ast,
-        .node_spans = node_spans,
-        .node_tag_spans = node_tag_spans,
-        .node_anchor_spans = node_anchor_spans,
-        .node_marker_spans = node_marker_spans,
-        .node_sep_spans = node_sep_spans,
-    };
+    for (self.trailing.items) |t| try self.w.comment(t.id, table.comment_trailing, t.comment);
+    try self.w.finish(root);
 }
 
 /// Validate a directive line (`line` is the token text, starting with `%`).
@@ -880,6 +853,7 @@ fn parseDirective(self: *Parser, line: []const u8) ParserError!void {
         // `!`/`!!` default handles need no declaration, but a document may
         // redefine them, and then the declaration is just as load-bearing.
         try self.tag_directives.append(self.allocator, .{ .handle = handle, .prefix = line[prefix_start..i] });
+        try self.w.directive(handle, line[prefix_start..i]);
     }
     // else: a reserved directive — accepted and ignored (params unrestricted).
 }
@@ -915,25 +889,14 @@ fn requireDirectiveEnd(line: []const u8, i: usize) ParseError!void {
 
 pub fn deinit(self: *Parser) void {
     self.container_stack.deinit(self.allocator);
-    self.nodes.deinit(self.allocator);
-    self.node_spans.deinit(self.allocator);
-    self.node_tags.deinit(self.allocator);
-    self.node_anchors.deinit(self.allocator);
-    self.node_tag_spans.deinit(self.allocator);
-    self.node_anchor_spans.deinit(self.allocator);
-    self.markers.deinit(self.allocator);
-    self.seps.deinit(self.allocator);
     self.anchors.deinit(self.allocator);
     for (self.owned_strings.items) |string| {
         self.allocator.free(string);
     }
     self.owned_strings.deinit(self.allocator);
     self.tag_directives.deinit(self.allocator);
-    // After a successful parse these `leading` slices moved to the AST and the
-    // list is empty; on an error path they are freed here. Text borrows `source`.
-    for (self.node_comments.items) |nc| self.allocator.free(nc.leading);
-    self.node_comments.deinit(self.allocator);
     self.pending_leading.deinit(self.allocator);
+    self.trailing.deinit(self.allocator);
 }
 
 fn parseSequenceEntry(self: *Parser) ParserError!void {
@@ -1087,7 +1050,7 @@ fn parseMappingValue(self: *Parser, allow_compact: bool) ParserError!void {
                     return ParseError.UnexpectedToken;
                 const child_id = try self.openContainer(.mapping, self.peek().span.start);
                 try self.parseMappingEntry();
-                const id = try self.closeContainer(self.node_spans.items[child_id].end);
+                const id = try self.closeContainer(self.w.spanOf(child_id).end);
                 try self.finishValue(id);
             } else {
                 // An inline value is a single scalar; it cannot itself be a block
@@ -1211,7 +1174,7 @@ fn parseExplicitKey(self: *Parser) ParserError!void {
                 // key, mirroring the block-mapping key path.
                 self.containerById(mapping_id).building_explicit_key = true;
                 self.containerById(mapping_id).explicit_key_col = self.columnOf(marker.span.start);
-                const key_map_id = try self.openContainer(.mapping, self.node_spans.items[node_id].start);
+                const key_map_id = try self.openContainer(.mapping, self.w.spanOf(node_id).start);
                 self.containerById(key_map_id).continues_sequence_item = true;
                 const colon = self.advance();
                 const km = self.containerById(key_map_id);
@@ -1257,7 +1220,7 @@ fn parseExplicitKey(self: *Parser) ParserError!void {
 
     const parent = self.containerById(mapping_id);
     parent.pending_key = key_id;
-    parent.pending_value_span = self.node_spans.items[key_id].end;
+    parent.pending_value_span = self.w.spanOf(key_id).end;
     parent.pending_sep_span = null;
     parent.explicit_awaiting_value = true;
 }
@@ -1298,17 +1261,20 @@ fn parseScalar(self: *Parser) ParserError!AST.Node.Id {
 /// node-id order, so an alias resolves to the nearest preceding anchor of the
 /// same name; an alias with none is `error.UndefinedAlias`.
 fn resolveAliasesOrError(self: *Parser) ParserError!void {
-    for (self.nodes.items) |node| {
-        const name = switch (node.kind) {
+    for (0..self.w.count()) |i| {
+        const id: AST.Node.Id = @intCast(i);
+        // An alias's name is a slice of the source, read before any further
+        // write can move the table's buffer.
+        const name = switch (self.w.kindOf(id)) {
             .alias => |n| n,
             else => continue,
         };
         var found = false;
         for (self.anchors.items) |a| {
-            if (a.node >= node.id) break; // sorted by id; no anchor at/after the alias
+            if (a.node >= id) break; // sorted by id; no anchor at/after the alias
             if (std.mem.eql(u8, a.name, name)) found = true;
         }
-        if (!found) return self.failAt(ParseError.UndefinedAlias, .undefined_alias, self.node_spans.items[node.id]);
+        if (!found) return self.failAt(ParseError.UndefinedAlias, .undefined_alias, self.w.spanOf(id));
     }
 }
 
@@ -1457,7 +1423,7 @@ fn decodeBlockScalar(self: *Parser, header: []const u8, parent_indent: usize, bo
 fn currentContainerIndent(self: *const Parser) usize {
     if (self.container_stack.items.len == 0) return 0;
     const id = self.container_stack.items[self.container_stack.items.len - 1].id;
-    return self.columnOf(self.node_spans.items[id].start);
+    return self.columnOf(self.w.spanOf(id).start);
 }
 
 /// The source column (offset from the start of its line) of byte position `pos`.
@@ -1583,9 +1549,9 @@ fn parseFlowSequence(self: *Parser) ParserError!AST.Node.Id {
 
         const item = try self.parseFlowSequenceItem();
         if (last) |prev| {
-            self.nodes.items[prev].next_sibling = item;
+            self.w.setNext(prev, item);
         } else {
-            self.nodes.items[seq_id].kind = .{ .sequence = item };
+            try self.w.set(seq_id, .{ .sequence = item });
         }
         last = item;
 
@@ -1602,7 +1568,7 @@ fn parseFlowSequence(self: *Parser) ParserError!AST.Node.Id {
     }
 
     const close = self.advance(); // flow_seq_end
-    self.node_spans.items[seq_id].end = close.span.end;
+    self.setEnd(seq_id, close.span.end);
     return seq_id;
 }
 
@@ -1632,7 +1598,7 @@ fn parseFlowSequenceItem(self: *Parser) ParserError!AST.Node.Id {
     // Without a `:` it is a plain element — unless `?` already forced a pair.
     if (self.peek().kind != .colon) {
         if (!explicit) return key_id;
-        const at = self.node_spans.items[key_id].end;
+        const at = self.w.spanOf(key_id).end;
         return self.wrapFlowPair(key_id, try self.addNode(.null_, .init(at, at)));
     }
 
@@ -1640,7 +1606,7 @@ fn parseFlowSequenceItem(self: *Parser) ParserError!AST.Node.Id {
     self.skipFlowTrivia();
     const value_id: AST.Node.Id = switch (self.peek().kind) {
         .comma, .flow_seq_end => empty: {
-            const at = self.node_spans.items[key_id].end;
+            const at = self.w.spanOf(key_id).end;
             break :empty try self.addNode(.null_, .init(at, at));
         },
         else => try self.parseFlowNode(),
@@ -1651,8 +1617,8 @@ fn parseFlowSequenceItem(self: *Parser) ParserError!AST.Node.Id {
 /// Wraps a key/value pair as a standalone single-entry mapping node (used for a
 /// flow pair that appears as a flow-sequence element).
 fn wrapFlowPair(self: *Parser, key_id: AST.Node.Id, value_id: AST.Node.Id) ParserError!AST.Node.Id {
-    const key_span = self.node_spans.items[key_id];
-    const value_span = self.node_spans.items[value_id];
+    const key_span = self.w.spanOf(key_id);
+    const value_span = self.w.spanOf(value_id);
     const pair_id = try self.addNode(.{ .keyvalue = .{
         .key = key_id,
         .value = value_id,
@@ -1690,28 +1656,28 @@ fn parseFlowMapping(self: *Parser) ParserError!AST.Node.Id {
             value_id = switch (self.peek().kind) {
                 // `{a: , b}` / `{a:}` — an explicit but empty value is null.
                 .comma, .flow_map_end => empty: {
-                    const at = self.node_spans.items[key_id].end;
+                    const at = self.w.spanOf(key_id).end;
                     break :empty try self.addNode(.null_, .init(at, at));
                 },
                 else => try self.parseFlowNode(),
             };
         } else {
             // `{a, b}` — a bare key has an implicit null value.
-            const at = self.node_spans.items[key_id].end;
+            const at = self.w.spanOf(key_id).end;
             value_id = try self.addNode(.null_, .init(at, at));
         }
 
-        const key_span = self.node_spans.items[key_id];
-        const value_span = self.node_spans.items[value_id];
+        const key_span = self.w.spanOf(key_id);
+        const value_span = self.w.spanOf(value_id);
         const pair_id = try self.addNode(.{ .keyvalue = .{
             .key = key_id,
             .value = value_id,
         } }, .{ .start = key_span.start, .end = value_span.end });
 
         if (last) |prev| {
-            self.nodes.items[prev].next_sibling = pair_id;
+            self.w.setNext(prev, pair_id);
         } else {
-            self.nodes.items[map_id].kind = .{ .mapping = pair_id };
+            try self.w.set(map_id, .{ .mapping = pair_id });
         }
         last = pair_id;
 
@@ -1728,7 +1694,7 @@ fn parseFlowMapping(self: *Parser) ParserError!AST.Node.Id {
     }
 
     const close = self.advance(); // flow_map_end
-    self.node_spans.items[map_id].end = close.span.end;
+    self.setEnd(map_id, close.span.end);
     return map_id;
 }
 
@@ -1768,7 +1734,7 @@ fn ensureContainer(self: *Parser, kind: ContainerKind) ParserError!AST.Node.Id {
             if (!has_enclosing_mapping) return self.failHere(ParseError.UnexpectedToken, .key_beside_sequence);
 
             try self.closePendingEmptyValue();
-            const id = try self.closeContainer(self.node_spans.items[current.id].end);
+            const id = try self.closeContainer(self.w.spanOf(current.id).end);
             try self.finishValue(id);
             // The sequence's parent is now current; recurse to land in the
             // enclosing mapping (closing further indentless sequences if nested).
@@ -1827,7 +1793,7 @@ fn closeContainer(self: *Parser, span_end: usize) ParserError!AST.Node.Id {
     if (self.container_stack.items.len == 0) return ParseError.UnexpectedToken;
     const container = self.container_stack.pop().?;
     if (container.first_child == null) {
-        self.node_spans.items[container.id].end = span_end;
+        self.setEnd(container.id, span_end);
     }
     return container.id;
 }
@@ -1869,11 +1835,11 @@ fn finishValue(self: *Parser, value_id: AST.Node.Id) ParserError!void {
     const parent = self.currentContainer();
     switch (parent.kind) {
         .sequence => {
-            self.attachChild(parent, value_id);
+            try self.attachChild(parent, value_id);
             parent.pending_sequence_item = false;
             parent.pending_sequence_item_span = null;
             if (parent.current_marker) |m| {
-                try self.markers.append(self.allocator, .{ .node_id = value_id, .span = m });
+                try self.w.marker(value_id, m);
                 parent.current_marker = null;
             }
         },
@@ -1883,13 +1849,13 @@ fn finishValue(self: *Parser, value_id: AST.Node.Id) ParserError!void {
             if (parent.building_explicit_key) {
                 parent.building_explicit_key = false;
                 parent.pending_key = value_id;
-                parent.pending_value_span = self.node_spans.items[value_id].end;
+                parent.pending_value_span = self.w.spanOf(value_id).end;
                 parent.explicit_awaiting_value = true;
                 return;
             }
 
             const key_id = parent.pending_key orelse {
-                const at = self.node_spans.items[value_id].start;
+                const at = self.w.spanOf(value_id).start;
                 return self.failAt(ParseError.UnexpectedToken, .continuation_after_value, .init(at, at));
             };
             parent.pending_key = null;
@@ -1898,13 +1864,12 @@ fn finishValue(self: *Parser, value_id: AST.Node.Id) ParserError!void {
             // A comment parked on the `key:` line binds to this value as its
             // trailing comment (it rides the `key:` line, above the block value).
             if (parent.pending_value_trailing) |c| {
-                self.node_comments.items[value_id].trailing = c;
+                try self.trailing.append(self.allocator, .{ .id = value_id, .comment = c });
                 parent.pending_value_trailing = null;
-                self.comments_seen = true;
             }
 
-            const key_span = self.node_spans.items[key_id];
-            const value_span = self.node_spans.items[value_id];
+            const key_span = self.w.spanOf(key_id);
+            const value_span = self.w.spanOf(value_id);
             // The `keyvalue` pair is a synthetic wrapper, not a node that any
             // comment leads: its key already claimed the entry's leading
             // comments when it was built. When the value is a block collection,
@@ -1925,10 +1890,10 @@ fn finishValue(self: *Parser, value_id: AST.Node.Id) ParserError!void {
             self.parking_container = prev_parking;
 
             if (parent.pending_sep_span) |sep| {
-                try self.seps.append(self.allocator, .{ .node_id = pair_id, .span = sep });
+                try self.w.sep(pair_id, sep);
                 parent.pending_sep_span = null;
             }
-            self.attachChild(parent, pair_id);
+            try self.attachChild(parent, pair_id);
         },
     }
 }
@@ -1967,7 +1932,7 @@ fn closeSequenceItemContinuation(self: *Parser) ParserError!void {
     while (self.container_stack.items.len > 0 and self.currentContainer().continues_sequence_item) {
         self.currentContainer().continues_sequence_item = false;
         try self.closePendingEmptyValue();
-        const id = try self.closeContainer(self.node_spans.items[self.currentContainer().id].end);
+        const id = try self.closeContainer(self.w.spanOf(self.currentContainer().id).end);
         try self.finishValue(id);
     }
 }
@@ -1989,7 +1954,7 @@ fn closeOpenComplexKey(self: *Parser) ParserError!void {
 
     self.currentContainer().continues_sequence_item = false;
     try self.closePendingEmptyValue();
-    const id = try self.closeContainer(self.node_spans.items[self.currentContainer().id].end);
+    const id = try self.closeContainer(self.w.spanOf(self.currentContainer().id).end);
     try self.finishValue(id);
 }
 
@@ -1999,19 +1964,24 @@ fn clearPendingSequenceItem(self: *Parser, sequence_id: AST.Node.Id) void {
     parent.pending_sequence_item_span = null;
 }
 
-fn attachChild(self: *Parser, parent: *OpenContainer, child_id: AST.Node.Id) void {
+fn attachChild(self: *Parser, parent: *OpenContainer, child_id: AST.Node.Id) ParserError!void {
     if (parent.first_child) |_| {
-        self.nodes.items[parent.last_child.?].next_sibling = child_id;
+        self.w.setNext(parent.last_child.?, child_id);
     } else {
         parent.first_child = child_id;
         switch (parent.kind) {
-            .sequence => self.nodes.items[parent.id].kind = .{ .sequence = child_id },
-            .mapping => self.nodes.items[parent.id].kind = .{ .mapping = child_id },
+            .sequence => try self.w.set(parent.id, .{ .sequence = child_id }),
+            .mapping => try self.w.set(parent.id, .{ .mapping = child_id }),
         }
     }
 
     parent.last_child = child_id;
-    self.node_spans.items[parent.id].end = self.node_spans.items[child_id].end;
+    self.setEnd(parent.id, self.w.spanOf(child_id).end);
+}
+
+/// Move node `id`'s span to end at `end`.
+fn setEnd(self: *Parser, id: AST.Node.Id, end: usize) void {
+    self.w.setSpan(id, .init(self.w.spanOf(id).start, end));
 }
 
 fn scalarKind(self: *Parser, source: []const u8) ParserError!AST.Node.Kind {
@@ -2074,11 +2044,6 @@ fn digitRun(s: []const u8, comptime pred: fn (u8) bool) bool {
     return any;
 }
 
-fn anyTag(tags: []const ?AST.Tag) bool {
-    for (tags) |t| if (t != null) return true;
-    return false;
-}
-
 // ── Tag resolution ──────────────────────────────────────────────────────────
 // YAML resolves its own tags (docs/proposals/core-only.md §4.3): each row's
 // tag carries its text as written, what it names under the document's
@@ -2086,8 +2051,12 @@ fn anyTag(tags: []const ?AST.Tag) bool {
 // whether the node's text agrees with the type. Materialize reads that and
 // never the text.
 
+/// What a language made of a text tag: `table.tag_*`, and whether the
+/// node's text agrees with the kind it names (`!!int` on `1 - 3` does not).
+pub const TagResolution = struct { resolved: u8 = table.tag_unstated, agrees: bool = true };
+
 /// What the tag `text` on a node of `kind` resolves to under `directives`.
-pub fn resolveTag(directives: []const AST.TagDirective, text: []const u8, kind: AST.Node.Kind) AST.TagResolution {
+pub fn resolveTag(directives: []const AST.TagDirective, text: []const u8, kind: AST.Node.Kind) TagResolution {
     if (std.mem.eql(u8, text, "!")) return .{ .resolved = table.tag_non_specific };
     const name = coreTagName(directives, text) orelse return .{ .resolved = table.tag_custom };
     const k: AST.Tag.KindTag = if (std.mem.eql(u8, name, "str")) .string else if (std.mem.eql(u8, name, "null")) .null_ else if (std.mem.eql(u8, name, "bool")) .boolean else if (std.mem.eql(u8, name, "int")) .integer else if (std.mem.eql(u8, name, "float")) .float else if (std.mem.eql(u8, name, "seq")) .sequence else if (std.mem.eql(u8, name, "map")) .mapping else
@@ -2584,14 +2553,7 @@ fn isMappingStart(self: *const Parser) bool {
 }
 
 fn addNode(self: *Parser, kind: AST.Node.Kind, span: Span) ParserError!AST.Node.Id {
-    const id: AST.Node.Id = @intCast(self.nodes.items.len);
-    try self.nodes.append(self.allocator, .{
-        .id = id,
-        .kind = kind,
-        .next_sibling = null,
-    });
-    // Consume any pending node properties onto this node and keep all side-tables
-    // length-synced with `nodes`.
+    // Consume any pending node properties onto this node.
     const tag = self.pending_tag;
     const anchor = self.pending_anchor;
     self.pending_tag = null;
@@ -2601,15 +2563,19 @@ fn addNode(self: *Parser, kind: AST.Node.Kind, span: Span) ParserError!AST.Node.
     // sees `&a !tag value` as one editable unit (a replace can't orphan `&a `).
     if (tag) |t| node_span.start = @min(node_span.start, t.span.start);
     if (anchor) |a| node_span.start = @min(node_span.start, a.span.start);
-    try self.node_spans.append(self.allocator, node_span);
+    const id = try self.w.add(kind, node_span);
     // YAML stores the tag VERBATIM (leading `!` kept) in the `.text` arm — its
-    // exact spelling round-trips, and the materializer decodes core tags from it.
-    try self.node_tags.append(self.allocator, if (tag) |t| AST.Tag{ .text = t.text } else null);
-    try self.node_tag_spans.append(self.allocator, if (tag) |t| t.span else null);
-    try self.node_anchors.append(self.allocator, if (anchor) |a| a.name else null);
-    try self.node_anchor_spans.append(self.allocator, if (anchor) |a| a.span else null);
-    if (anchor) |a| try self.anchors.append(self.allocator, .{ .name = a.name, .node = id });
-    try self.node_comments.append(self.allocator, .{});
+    // exact spelling round-trips — resolved here under the document's `%TAG`
+    // directives, which all precede the body. A container's kind is final
+    // (sequence or mapping) when it opens, which is all a resolution reads.
+    if (tag) |t| {
+        const res = resolveTag(self.tag_directives.items, t.text, kind);
+        try self.w.tag(id, .{ .text = t.text }, res.resolved, res.agrees, t.span);
+    }
+    if (anchor) |a| {
+        try self.w.anchor(id, a.name, a.span);
+        try self.anchors.append(self.allocator, .{ .name = a.name, .node = id });
+    }
     // Buffered leading comments bind to the first non-container node built after
     // them — a key, a scalar/flow value, or a sequence item. A container node
     // (`parking_container`) is skipped so the comment falls through to its first
@@ -2753,16 +2719,15 @@ fn advance(self: *Parser) Token {
 fn captureComment(self: *Parser, token: Token) void {
     const c: AST.Comment = .{ .text = commentText(token.source(self.source)), .style = .line };
     if (self.last_value_id) |id| {
-        self.node_comments.items[id].trailing = c;
-        self.comments_seen = true;
+        // Capacity reserved in `parseTokens`, so this cannot fail.
+        self.trailing.appendAssumeCapacity(.{ .id = id, .comment = c });
         self.last_value_id = null; // one trailing per value
     } else if (self.colon_line and self.awaitsBlockValue()) {
         // `key: # note` with the value on following lines — the comment trails the
         // entry. Parked on the mapping entry; bound to the value in `finishValue`.
         self.currentContainer().pending_value_trailing = c;
-        self.comments_seen = true;
     } else {
-        // Capacity reserved in `parseOnce`, so this cannot fail.
+        // Capacity reserved in `parseTokens`, so this cannot fail.
         self.pending_leading.appendAssumeCapacity(c);
     }
 }
@@ -2782,35 +2747,36 @@ fn commentText(raw: []const u8) []const u8 {
     return std.mem.trim(u8, body, " \t\r");
 }
 
-/// Hand the buffered leading comments to node `id` as an owned slice, then clear
-/// the buffer (retaining its reserved capacity). No-op when nothing is buffered.
+/// Hand the buffered leading comments to node `id`, then clear the buffer
+/// (retaining its reserved capacity). No-op when nothing is buffered.
 fn claimLeading(self: *Parser, id: AST.Node.Id) ParserError!void {
-    if (self.pending_leading.items.len == 0) return;
-    const owned = try self.allocator.dupe(AST.Comment, self.pending_leading.items);
+    for (self.pending_leading.items) |c| try self.w.comment(id, table.comment_leading, c);
     self.pending_leading.clearRetainingCapacity();
-    self.node_comments.items[id].leading = owned;
-    self.comments_seen = true;
 }
 
 /// Hand buffered orphan comments (no node followed them — at end of document) to
 /// container `id` as its `dangling` run. Mid-document orphans are instead claimed
 /// as the next sibling's leading by indentation, so this only fires at EOF.
 fn claimDangling(self: *Parser, id: AST.Node.Id) ParserError!void {
-    if (self.pending_leading.items.len == 0) return;
-    const owned = try self.allocator.dupe(AST.Comment, self.pending_leading.items);
+    for (self.pending_leading.items) |c| try self.w.comment(id, table.comment_dangling, c);
     self.pending_leading.clearRetainingCapacity();
-    self.node_comments.items[id].dangling = owned;
-    self.comments_seen = true;
 }
 
 // =======
 // Testing
 // =======
 
-fn testParser(input: []const u8, expected: AST) !void {
+fn testParser(input: []const u8, expected: AST.Literal) !void {
     const doc = try Parser.parse(testing.allocator, input, .v1_2_2);
     defer doc.deinit(testing.allocator);
-    try testing.expect(expected.eql(doc.ast));
+    try testing.expect(expected.matches(doc.ast));
+}
+
+/// The text node `id`'s tag was written as, whatever it resolved to — `tagOf`
+/// reads a core tag spelled `!!int` as the kind it names.
+fn tagText(ast: *const AST, id: AST.Node.Id) ?[]const u8 {
+    const f = ast.tagFact(id) orelse return null;
+    return ast.textOf(f.text);
 }
 
 fn testParserError(input: []const u8, expected_error: anyerror) !void {
@@ -2919,7 +2885,7 @@ test "yaml tag: attaches to mapping value and extends span left" {
     const value = try doc.ast.getValByPath(&.{.{ .key = "k" }});
     // At parse the value is still classified structurally (tags apply at
     // materialize), but the tag string is recorded on the side-table...
-    try testing.expectEqualSlices(u8, "!!int", doc.ast.tagOf(value.id).?.text);
+    try testing.expectEqualSlices(u8, "!!int", tagText(&doc.ast, value.id).?);
     // ...and the node's span was extended leftward to cover the `!!int ` prefix.
     try testing.expectEqualSlices(u8, "!!int 5", Span.of(u8, doc.span(value), doc.source));
     try testing.expectEqualSlices(u8, "!!int", Span.of(u8, doc.tagSpan(value).?, doc.source));
@@ -2930,7 +2896,7 @@ test "yaml tag: on root scalar" {
     defer doc.deinit(testing.allocator);
     const root = doc.ast.node(doc.ast.root);
     try testing.expectEqualSlices(u8, "foo", root.kind.string);
-    try testing.expectEqualSlices(u8, "!!str", doc.ast.tagOf(root.id).?.text);
+    try testing.expectEqualSlices(u8, "!!str", tagText(&doc.ast, root.id).?);
 }
 
 test "yaml tag: bare bang is a tagged null root" {
@@ -2938,7 +2904,7 @@ test "yaml tag: bare bang is a tagged null root" {
     defer doc.deinit(testing.allocator);
     const root = doc.ast.node(doc.ast.root);
     try testing.expect(root.kind == .null_);
-    try testing.expectEqualSlices(u8, "!", doc.ast.tagOf(root.id).?.text);
+    try testing.expectEqualSlices(u8, "!", tagText(&doc.ast, root.id).?);
 }
 
 test "yaml tag: empty value is a tagged null" {
@@ -2946,7 +2912,7 @@ test "yaml tag: empty value is a tagged null" {
     defer doc.deinit(testing.allocator);
     const value = try doc.ast.getValByPath(&.{.{ .key = "t" }});
     try testing.expect(value.kind == .null_);
-    try testing.expectEqualSlices(u8, "!!str", doc.ast.tagOf(value.id).?.text);
+    try testing.expectEqualSlices(u8, "!!str", tagText(&doc.ast, value.id).?);
 }
 
 test "yaml tag: two tags on one node is rejected" {
@@ -2964,7 +2930,7 @@ test "yaml directive: %TAG declares a handle used by a tag" {
     defer doc.deinit(testing.allocator);
     const root = doc.ast.node(doc.ast.root);
     try testing.expectEqualSlices(u8, "bar", root.kind.string);
-    try testing.expectEqualSlices(u8, "!e!foo", doc.ast.tagOf(root.id).?.text);
+    try testing.expectEqualSlices(u8, "!e!foo", tagText(&doc.ast, root.id).?);
 }
 
 test "yaml directive: a reserved directive is ignored" {
@@ -3009,7 +2975,7 @@ test "yaml tag: flow tagged-null value" {
     defer doc.deinit(testing.allocator);
     const a_val = try doc.ast.getValByPath(&.{.{ .key = "a" }});
     try testing.expect(a_val.kind == .null_);
-    try testing.expectEqualSlices(u8, "!!str", doc.ast.tagOf(a_val.id).?.text);
+    try testing.expectEqualSlices(u8, "!!str", tagText(&doc.ast, a_val.id).?);
 }
 
 test "yaml tag: flow tagged-null key" {
@@ -3019,7 +2985,7 @@ test "yaml tag: flow tagged-null key" {
     const kv = doc.ast.node(root.kind.mapping.?);
     const key = doc.ast.node(kv.kind.keyvalue.key);
     try testing.expect(key.kind == .null_);
-    try testing.expectEqualSlices(u8, "!!str", doc.ast.tagOf(key.id).?.text);
+    try testing.expectEqualSlices(u8, "!!str", tagText(&doc.ast, key.id).?);
 }
 
 test "yaml tag: deferred null sequence item keeps its tag and the next item" {
@@ -3030,16 +2996,16 @@ test "yaml tag: deferred null sequence item keeps its tag and the next item" {
     const item0 = try doc.ast.getValByPath(&.{.{ .index = 0 }});
     const item1 = try doc.ast.getValByPath(&.{.{ .index = 1 }});
     try testing.expect(item0.kind == .null_);
-    try testing.expectEqualSlices(u8, "!!str", doc.ast.tagOf(item0.id).?.text);
+    try testing.expectEqualSlices(u8, "!!str", tagText(&doc.ast, item0.id).?);
     try testing.expectEqualSlices(u8, "y", item1.kind.string);
-    try testing.expect(doc.ast.node_tags[item1.id] == null);
+    try testing.expect(doc.ast.tagOf(item1.id) == null);
 }
 
 test "yaml anchor/alias: anchor recorded, alias resolves to it" {
     const doc = try Parser.parse(testing.allocator, "a: &x 1\nb: *x\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
     const a_val = try doc.ast.getValByPath(&.{.{ .key = "a" }});
-    try testing.expectEqualSlices(u8, "x", doc.ast.node_anchors[a_val.id].?);
+    try testing.expectEqualSlices(u8, "x", doc.ast.anchorOf(a_val.id).?);
     const b_val = try doc.ast.getValByPath(&.{.{ .key = "b" }});
     try testing.expectEqualSlices(u8, "x", b_val.kind.alias);
     try testing.expectEqual(a_val.id, try doc.ast.resolveAlias(b_val));
@@ -3050,7 +3016,7 @@ test "yaml anchor/alias: anchor on a collection" {
     defer doc.deinit(testing.allocator);
     const a_val = try doc.ast.getValByPath(&.{.{ .key = "a" }});
     try testing.expect(a_val.kind == .sequence);
-    try testing.expectEqualSlices(u8, "x", doc.ast.node_anchors[a_val.id].?);
+    try testing.expectEqualSlices(u8, "x", doc.ast.anchorOf(a_val.id).?);
     const b_val = try doc.ast.getValByPath(&.{.{ .key = "b" }});
     try testing.expectEqual(a_val.id, try doc.ast.resolveAlias(b_val));
 }
@@ -3178,7 +3144,7 @@ test "yaml: comment after a block-collection value leads the next sibling, not t
 test "yaml: comment-free document carries no comment table" {
     const doc = try Parser.parse(testing.allocator, "a: 1\nb: [2, 3]\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
-    try testing.expectEqual(@as(usize, 0), doc.ast.node_comments.len);
+    try testing.expect(!doc.ast.hasComments());
 }
 
 test "yaml anchor: collection and its first key both anchored" {
@@ -3188,7 +3154,7 @@ test "yaml anchor: collection and its first key both anchored" {
     defer doc.deinit(testing.allocator);
     const top = try doc.ast.getValByPath(&.{.{ .key = "top" }});
     try testing.expect(top.kind == .mapping);
-    try testing.expectEqualSlices(u8, "node", doc.ast.node_anchors[top.id].?);
+    try testing.expectEqualSlices(u8, "node", doc.ast.anchorOf(top.id).?);
 }
 
 test "yaml anchor: next-line value must out-indent its key" {
@@ -3198,7 +3164,7 @@ test "yaml anchor: next-line value must out-indent its key" {
         defer doc.deinit(testing.allocator);
         const seq = try doc.ast.getValByPath(&.{.{ .key = "seq" }});
         try testing.expect(seq.kind == .sequence);
-        try testing.expectEqualSlices(u8, "a", doc.ast.node_anchors[seq.id].?);
+        try testing.expectEqualSlices(u8, "a", doc.ast.anchorOf(seq.id).?);
     }
     try testParserError("seq:\n&a\n- x\n", error.UnexpectedToken); // G9HC
 }
@@ -3231,7 +3197,7 @@ test "yaml: a property-only line at a different column than its node" {
     defer doc.deinit(testing.allocator);
     const v = try doc.ast.getValByPath(&.{.{ .key = "folded" }});
     try testing.expect(v.kind == .string);
-    try testing.expectEqualSlices(u8, "!foo", doc.ast.tagOf(v.id).?.text);
+    try testing.expectEqualSlices(u8, "!foo", tagText(&doc.ast, v.id).?);
 }
 
 test "yaml block scalar: next-line header with explicit indent over the owner column" {
@@ -3247,7 +3213,7 @@ test "yaml tag: untagged node has null side-table entry" {
     const doc = try Parser.parse(testing.allocator, "a: 1\n", .v1_2_2);
     defer doc.deinit(testing.allocator);
     const value = try doc.ast.getValByPath(&.{.{ .key = "a" }});
-    try testing.expect(doc.ast.node_tags[value.id] == null);
+    try testing.expect(doc.ast.tagOf(value.id) == null);
     try testing.expect(doc.tagSpan(value) == null);
 }
 
@@ -4315,7 +4281,7 @@ test "yaml explicit key: a property on the `?` line decorates the block key" {
     const pair = doc.ast.node(doc.ast.node(doc.ast.root).kind.mapping.?);
     const key = doc.ast.node(pair.kind.keyvalue.key);
     try testing.expect(std.meta.activeTag(key.kind) == .sequence);
-    try testing.expectEqualSlices(u8, "a", doc.ast.node_anchors[key.id].?);
+    try testing.expectEqualSlices(u8, "a", doc.ast.anchorOf(key.id).?);
     try testing.expectEqual(key.id, try doc.ast.resolveAlias(doc.ast.node(pair.kind.keyvalue.value)));
     // With no key content, the `:` makes an (anchored) null key.
     const empty = try Parser.parse(testing.allocator, "? &a\n: x\n", .v1_2_2);
@@ -4323,7 +4289,7 @@ test "yaml explicit key: a property on the `?` line decorates the block key" {
     const empty_pair = empty.ast.node(empty.ast.node(empty.ast.root).kind.mapping.?);
     const empty_key = empty.ast.node(empty_pair.kind.keyvalue.key);
     try testing.expect(empty_key.kind == .null_);
-    try testing.expectEqualSlices(u8, "a", empty.ast.node_anchors[empty_key.id].?);
+    try testing.expectEqualSlices(u8, "a", empty.ast.anchorOf(empty_key.id).?);
 }
 
 test "yaml anchor: a property on an implicit key's own line is the key's" {
@@ -4338,9 +4304,9 @@ test "yaml anchor: a property on an implicit key's own line is the key's" {
         const doc = try Parser.parse(testing.allocator, src, .v1_2_2);
         defer doc.deinit(testing.allocator);
         var seen = false;
-        for (doc.ast.nodes, 0..) |node, i| {
-            if (doc.ast.node_anchors[i] == null) continue;
-            try testing.expectEqualStrings("a", node.kind.string);
+        for (0..doc.ast.nodeCount()) |i| {
+            if (doc.ast.anchorOf(@intCast(i)) == null) continue;
+            try testing.expectEqualStrings("a", doc.ast.kindOf(@intCast(i)).string);
             seen = true;
         }
         try testing.expect(seen);
@@ -4349,13 +4315,13 @@ test "yaml anchor: a property on an implicit key's own line is the key's" {
     const tagged = try Parser.parse(testing.allocator, "!!str a: b\n", .v1_2_2);
     defer tagged.deinit(testing.allocator);
     const pair = tagged.ast.node(tagged.ast.node(tagged.ast.root).kind.mapping.?);
-    try testing.expect(tagged.ast.node_tags[tagged.ast.root] == null);
-    try testing.expectEqualStrings("!!str", tagged.ast.tagOf(pair.kind.keyvalue.key).?.text);
+    try testing.expect(tagged.ast.tagOf(tagged.ast.root) == null);
+    try testing.expectEqualStrings("!!str", tagText(&tagged.ast, pair.kind.keyvalue.key).?);
     // One on an earlier line is still the mapping's.
     const above = try Parser.parse(testing.allocator, "k: &m\n  a: b\n", .v1_2_2);
     defer above.deinit(testing.allocator);
     const k = try above.ast.getValByPath(&.{.{ .key = "k" }});
-    try testing.expectEqualSlices(u8, "m", above.ast.node_anchors[k.id].?);
+    try testing.expectEqualSlices(u8, "m", above.ast.anchorOf(k.id).?);
 }
 
 test "yaml plain scalar continuation may start with an indicator" {

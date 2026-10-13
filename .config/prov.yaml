@@ -15,7 +15,7 @@ fixity: on
 recycle_bin: false
 history: off
 about: off
-workspace_id: fig
+workspace_id: dx70bkt7z
 root: README.md
 # Build output under the Rust bindings carries copies of docs/ that
 # cargo-semver-checks unpacks; they are not this workspace's documents.

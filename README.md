@@ -1,5 +1,5 @@
 ```fig
-part_of = id:org/kv2bv2m
+part_of = id:dx4hxn744/kv2bv2m
 title = fig
 version = 6.0.0
 author = adammharris
@@ -9,6 +9,7 @@ contents = [[fig docs](docs/docs.md), [Fig Banner Dark](/assets/fig-banner-dark.
 config = .config/prov.yaml
 registry = registry.yaml
 id = b9j9zgk
+slug = fig
 ```
 
 <h1 align="center">

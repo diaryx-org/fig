@@ -39,9 +39,9 @@ everything else byte-for-byte identical.
 
 ## Where it fits
 
-fig is the metadata layer of [Diaryx](id:org/80k72t9) —
+fig is the metadata layer of [Diaryx](id:dx4hxn744/80k72t9) —
 frontmatter in every entry goes through it, and
-[flower](id:flower/v817zvg) is a structural editor built on
+[flower](id:dx3b9h4j0/v817zvg) is a structural editor built on
 its tree. Standalone, it's a library (crates.io, npm) and a CLI
 for anyone who scripts against config files.
 

@@ -57,9 +57,9 @@
 //!     is string-keyed, so there is nowhere to address such an entry.
 
 const std = @import("std");
-const AST = @import("kit/ast/ast.zig");
+const AST = @import("kit").AST;
 const Serialize = @import("serialize.zig");
-const Document = @import("kit/document.zig");
+const Document = @import("kit").Document;
 const editor_mod = @import("editor.zig");
 const Runtime = @import("languages/runtime.zig");
 const Diagnostics = @import("diagnostics.zig");

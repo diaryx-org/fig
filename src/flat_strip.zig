@@ -24,7 +24,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const AST = @import("kit/ast/ast.zig");
+const AST = @import("kit").AST;
 const Lossless = @import("lossless.zig");
 const Id = AST.Node.Id;
 

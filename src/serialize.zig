@@ -6,7 +6,7 @@ const std = @import("std");
 const Writer = std.Io.Writer;
 const build_options = @import("build_options");
 
-const AST = @import("kit/ast/ast.zig");
+const AST = @import("kit").AST;
 pub const SerializeOptions = AST.SerializeOptions;
 pub const SerializeError = AST.SerializeError;
 const Node = AST.Node;

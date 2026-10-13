@@ -1,12 +1,12 @@
 const json = @This();
 const std = @import("std");
-const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/document.zig");
-const Table = @import("../../kit/table.zig").Table;
-const lang = @import("../../kit/manifest.zig");
-const json_string = @import("../../kit/json_string.zig");
-const abi = @import("../../kit/abi.zig");
-const contract = @import("../../kit/contract.zig");
+const AST = @import("kit").AST;
+const Document = @import("kit").Document;
+const Table = @import("kit").table.Table;
+const lang = @import("kit").manifest;
+const json_string = @import("kit").json_string;
+const abi = @import("kit").abi;
+const contract = @import("kit").contract;
 
 pub const Parser = @import("parser.zig");
 pub const Tokenizer = @import("tokenizer.zig");

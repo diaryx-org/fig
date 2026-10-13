@@ -27,7 +27,7 @@
 
 const Printer = @This();
 const std = @import("std");
-const AST = @import("../../kit/ast/ast.zig");
+const AST = @import("kit").AST;
 const tok = @import("tokenizer.zig");
 const Writer = std.Io.Writer;
 

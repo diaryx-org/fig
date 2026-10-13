@@ -82,6 +82,8 @@ pub fn build(b: *std.Build) void {
     else
         null;
 
+    const kit_dep = b.dependency("fig_kit", .{});
+
     const ctx: Context = .{
         .b = b,
         .target = target,
@@ -91,6 +93,8 @@ pub fn build(b: *std.Build) void {
         .options_mod = options_mod,
         .ver = ver,
         .zigjr = zigjr,
+        .kit = kit_dep.module("kit"),
+        .kit_dep = kit_dep,
     };
 
     // Order matters only for the data handed downstream, not the build graph:

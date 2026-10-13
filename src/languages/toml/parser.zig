@@ -13,16 +13,16 @@ const Parser = @This();
 
 const std = @import("std");
 const testing = std.testing;
-const Document = @import("../../kit/document.zig");
-const AST = @import("../../kit/ast/ast.zig");
-const RowWriter = @import("../../kit/row_writer.zig");
-const ChildIndex = @import("../../kit/child_index.zig");
-const table = @import("../../kit/table.zig");
+const Document = @import("kit").Document;
+const AST = @import("kit").AST;
+const RowWriter = @import("kit").RowWriter;
+const ChildIndex = @import("kit").ChildIndex;
+const table = @import("kit").table;
 const Table = table.Table;
 
 const Type = @import("toml.zig").Type;
-const util = @import("../../kit/kit.zig");
-const Span = @import("../../kit/span.zig");
+const util = @import("kit");
+const Span = @import("kit").Span;
 const ascii = util.ascii;
 const datetime = util.datetime;
 const Unicode = util.Unicode;
@@ -135,7 +135,7 @@ pub const ParseError = error{
 };
 pub const ParserError = ParseError || Tokenizer.TokenizeError || std.mem.Allocator.Error;
 
-const parse_diagnostic = @import("../../kit/parse_diagnostic.zig");
+const parse_diagnostic = @import("kit").parse_diagnostic;
 
 /// Every error this parser can produce — both the tokenizer (which runs to
 /// completion before the statement loop starts, so its failures need

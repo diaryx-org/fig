@@ -17,11 +17,11 @@
 const Parser = @This();
 
 const std = @import("std");
-const AST = @import("../kit/ast/ast.zig");
-const Document = @import("../kit/document.zig");
-const table = @import("../kit/table.zig");
-const RowWriter = @import("../kit/row_writer.zig");
-const Span = @import("../kit/span.zig");
+const AST = @import("kit").AST;
+const Document = @import("kit").Document;
+const table = @import("kit").table;
+const RowWriter = @import("kit").RowWriter;
+const Span = @import("kit").Span;
 const Printer = @import("printer.zig");
 
 const ExtKind = AST.Node.Kind.Extended.ExtKind;

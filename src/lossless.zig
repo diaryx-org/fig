@@ -38,9 +38,9 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const AST = @import("kit/ast/ast.zig");
-const table = @import("kit/table.zig");
-const RowWriter = @import("kit/row_writer.zig");
+const AST = @import("kit").AST;
+const table = @import("kit").table;
+const RowWriter = @import("kit").RowWriter;
 const Serialize = @import("serialize.zig");
 const Language = @import("languages/language.zig");
 

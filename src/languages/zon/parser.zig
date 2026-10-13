@@ -27,14 +27,14 @@ const Parser = @This();
 const std = @import("std");
 const testing = std.testing;
 const Ast = std.zig.Ast;
-const Document = @import("../../kit/document.zig");
-const AST = @import("../../kit/ast/ast.zig");
-const RowWriter = @import("../../kit/row_writer.zig");
-const table = @import("../../kit/table.zig");
+const Document = @import("kit").Document;
+const AST = @import("kit").AST;
+const RowWriter = @import("kit").RowWriter;
+const table = @import("kit").table;
 const Table = table.Table;
 
 const Type = @import("zon.zig").Type;
-const Span = @import("../../kit/span.zig");
+const Span = @import("kit").Span;
 
 allocator: std.mem.Allocator,
 /// Borrowed: the original (non-sentinel) input. AST string/number payloads that

@@ -53,11 +53,11 @@
 
 const std = @import("std");
 
-const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/document.zig");
-const Span = @import("../../kit/span.zig");
-const lang = @import("../../kit/manifest.zig");
-const splice = @import("../../kit/lines.zig");
+const AST = @import("kit").AST;
+const Document = @import("kit").Document;
+const Span = @import("kit").Span;
+const lang = @import("kit").manifest;
+const splice = @import("kit").lines;
 const NestedText = @import("nestedtext.zig").Language;
 const Parser = @import("parser.zig");
 

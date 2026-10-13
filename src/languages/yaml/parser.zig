@@ -8,17 +8,17 @@
 //! buffer; the parser frees its own copy.
 
 const std = @import("std");
-const Document = @import("../../kit/document.zig");
-const AST = @import("../../kit/ast/ast.zig");
-const RowWriter = @import("../../kit/row_writer.zig");
+const Document = @import("kit").Document;
+const AST = @import("kit").AST;
+const RowWriter = @import("kit").RowWriter;
 const Table = table.Table;
 
-const util = @import("../../kit/kit.zig");
-const table = @import("../../kit/table.zig");
-const Span = @import("../../kit/span.zig");
+const util = @import("kit");
+const table = @import("kit").table;
+const Span = @import("kit").Span;
 const Unicode = util.Unicode;
 const ascii = util.ascii;
-const schema = @import("../../kit/yaml_schema.zig");
+const schema = @import("kit").yaml_schema;
 const classifyNumber = schema.classifyNumber;
 const classify1_1Number = schema.classify1_1Number;
 const coreTagName = schema.coreTagName;
@@ -172,7 +172,7 @@ const PendingAnchor = struct { name: []const u8, span: Span };
 const ParseError = error{ UnexpectedToken, EmptyDocument, UnclosedString, InvalidUnicodeEscape, MultipleDocuments, DuplicateProperty, UndefinedAlias, InvalidDirective, UndefinedTagHandle };
 const ParserError = ParseError || std.mem.Allocator.Error;
 
-const parse_diagnostic = @import("../../kit/parse_diagnostic.zig");
+const parse_diagnostic = @import("kit").parse_diagnostic;
 
 /// Every error a YAML parse can return: the tokenizer's (it runs to completion
 /// before the parser starts, and rejects indentation, tabs, and malformed

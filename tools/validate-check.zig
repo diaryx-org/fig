@@ -380,6 +380,7 @@ pub fn main(init: std.process.Init) !void {
     }
     const root_arg = try std.fmt.allocPrint(arena, "-Mroot={s}", .{probe_path});
     const lang_arg = try std.fmt.allocPrint(arena, "-Mfig={s}/src/root.zig", .{root});
+    const kit_arg = try std.fmt.allocPrint(arena, "-Mkit={s}/kit/src/kit.zig", .{root});
     const opts_arg = try std.fmt.allocPrint(arena, "-Mbuild_options={s}", .{opts_path});
     const emit_arg = try std.fmt.allocPrint(arena, "-femit-bin={s}", .{
         try std.fs.path.join(arena, &.{ work, "probe.o" }),
@@ -404,16 +405,19 @@ pub fn main(init: std.process.Init) !void {
                 "--dep",         "build_options",
                 "--dep",         "fig",
                 root_arg,        "--dep",
-                "build_options", lang_arg,
-                opts_arg,
+                "build_options", "--dep",
+                "kit",           lang_arg,
+                opts_arg,        kit_arg,
             } else &.{
                 zig_exe,         "build-obj",
-                // root: depends on both; language: depends on build_options.
+                // root: depends on both; fig: on build_options and the kit.
                 "--dep",         "build_options",
                 "--dep",         "fig",
                 root_arg,        "--dep",
-                "build_options", lang_arg,
-                opts_arg,        emit_arg,
+                "build_options", "--dep",
+                "kit",           lang_arg,
+                opts_arg,        kit_arg,
+                emit_arg,
             },
         }) catch |err| {
             std.debug.print("validate-check: could not run `{s} build-obj`: {s}\n", .{ zig_exe, @errorName(err) });

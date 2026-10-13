@@ -9,7 +9,7 @@ const testing = std.testing;
 const bundle = @import("bundle.zig");
 const list = @import("list.zig");
 const Runtime = @import("runtime.zig");
-const contract = @import("../kit/contract.zig");
+const contract = @import("kit").contract;
 const Wire = @import("wire.zig");
 
 /// The table of `doc` as the wire spells it, for comparing two.
@@ -68,7 +68,7 @@ test "a language's diagnostics cross the contract: a refusal's message and offse
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    var errors: std.ArrayList(@import("../kit/parse_diagnostic.zig").Rendered) = .empty;
+    var errors: std.ArrayList(@import("kit").parse_diagnostic.Rendered) = .empty;
     var warnings: @TypeOf(errors) = .empty;
 
     var p: Runtime.Language.Parser = .{ .allocator = a, .errors = &errors, .warnings = &warnings };

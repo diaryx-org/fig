@@ -10,8 +10,8 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const AST = @import("../../kit/ast/ast.zig");
-const literal = @import("../../kit/literal.zig");
+const AST = @import("kit").AST;
+const literal = @import("kit").literal;
 
 pub const ExtKind = AST.Node.Kind.Extended.ExtKind;
 

@@ -1,6 +1,6 @@
 # fig language design
 
-Two text surfaces sit over one AST (`src/kit/ast/ast.zig`). They optimize for
+Two text surfaces sit over one AST (`kit/src/ast/ast.zig`). They optimize for
 opposite things, so they are kept as separate surfaces rather than one
 compromise format.
 
@@ -1228,7 +1228,7 @@ and the `type` set.
 
 ## AST fit
 
-Checked against `src/kit/ast/ast.zig`: the authoring dialect is a **subset of what
+Checked against `kit/src/ast/ast.zig`: the authoring dialect is a **subset of what
 the AST already represents** — no new `Node.Kind` is required to hold a fig
 document. (Expected — canonical is a total bijection with the AST, and fig is a
 friendlier surface over the same tree.)

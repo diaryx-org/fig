@@ -1,8 +1,8 @@
 const Printer = @This();
 const std = @import("std");
-const AST = @import("../../kit/ast/ast.zig");
-const json_string = @import("../../kit/json_string.zig");
-const num = @import("../../kit/number.zig");
+const AST = @import("kit").AST;
+const json_string = @import("kit").json_string;
+const num = @import("kit").number;
 const Writer = std.Io.Writer;
 
 /// `UnresolvedAlias`: JSON cannot represent a YAML alias. A materialized AST

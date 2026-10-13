@@ -32,13 +32,13 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const AST = @import("kit/ast/ast.zig");
-const table = @import("kit/table.zig");
-const RowWriter = @import("kit/row_writer.zig");
+const AST = @import("kit").AST;
+const table = @import("kit").table;
+const RowWriter = @import("kit").RowWriter;
 // The core schema's number grammar, as the compiled YAML reads a plain
 // scalar — pure functions of a lexeme, so a runtime twin's AST is judged by
 // the same rules.
-const yaml_scalar = @import("kit/yaml_schema.zig");
+const yaml_scalar = @import("kit").yaml_schema;
 
 pub const TagMode = enum { strict, lax, keep };
 
@@ -399,7 +399,7 @@ fn hasAlias(ast: AST) bool {
 }
 
 /// `src` as the compiled YAML reads it, as fig adopts it.
-fn parseYaml(src: []const u8) !@import("kit/document.zig") {
+fn parseYaml(src: []const u8) !@import("kit").Document {
     return Parser.parse(testing.allocator, src, .v1_2_2);
 }
 

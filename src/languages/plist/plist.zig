@@ -1,10 +1,10 @@
 const plist = @This();
 const std = @import("std");
-const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/document.zig");
-const Table = @import("../../kit/table.zig").Table;
+const AST = @import("kit").AST;
+const Document = @import("kit").Document;
+const Table = @import("kit").table.Table;
 const Writer = std.Io.Writer;
-const lang = @import("../../kit/manifest.zig");
+const lang = @import("kit").manifest;
 
 pub const Parser = @import("parser.zig");
 pub const Printer = @import("printer.zig");
@@ -144,5 +144,5 @@ test {
     // The shared XML lexing substrate has no entry module of its own since
     // generic XML stopped being a format (core 3.0); plist is its one consumer
     // in tree, so plist discovers its tests.
-    _ = @import("../../kit/xml.zig");
+    _ = @import("kit").xml;
 }

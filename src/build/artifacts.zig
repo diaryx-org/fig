@@ -32,6 +32,7 @@ pub fn add(ctx: Context) Result {
         .target = target,
     });
     mod.addImport("build_options", options_mod);
+    ctx.importKit(mod);
     ctx.importWire(mod);
     // `root.zig`'s `test {}` block pulls in `c_api.zig`, which uses
     // `std.heap.c_allocator` on non-wasm targets — that allocator is only
@@ -91,7 +92,7 @@ pub fn add(ctx: Context) Result {
     // Rust program links each language's own library beside them
     // (`c-languages` below), and registers it.
     const lib_options_mod = Options.addFigOptions(b, .{ .langs = @splat(false), .lang_canonical = false }, ctx.ver).createModule();
-    const c_lib = addCApiLibrary(b, .static, target, optimize, strip, lib_options_mod);
+    const c_lib = addCApiLibrary(ctx, .static, lib_options_mod);
     const install_c_lib = b.addInstallArtifact(c_lib, .{});
     b.getInstallStep().dependOn(&install_c_lib.step);
 
@@ -110,7 +111,7 @@ pub fn add(ctx: Context) Result {
     // needed: the Android build links no libc at all (see `addCApiLibrary`'s
     // `link_libc` gate and `activeAllocator` in c_api.zig), producing a
     // self-contained `static-pie` `.so`.
-    const c_shared = addCApiLibrary(b, .dynamic, target, optimize, strip, lib_options_mod);
+    const c_shared = addCApiLibrary(ctx, .dynamic, lib_options_mod);
     const install_c_shared = b.addInstallArtifact(c_shared, .{});
     const shared_step = b.step("shared", "Build the C ABI as a shared library (.so/.dylib/.dll) — for Android/iOS/dlopen consumers");
     shared_step.dependOn(&install_c_shared.step);
@@ -138,6 +139,7 @@ pub fn add(ctx: Context) Result {
         });
         lang.root_module.addImport("build_options", lib_options_mod);
         lang.root_module.addImport("c_language_options", lang_options.createModule());
+        ctx.importKit(lang.root_module);
         c_languages[i] = lang;
         // `c-language-<name>`: the one library, what its Rust crate builds.
         const one = b.step(b.fmt("c-language-{s}", .{row.name}), b.fmt("Build {s}'s own static library", .{row.name}));
@@ -164,6 +166,7 @@ pub fn add(ctx: Context) Result {
         }),
     });
     wasm.root_module.addImport("build_options", options_mod);
+    ctx.importKit(wasm.root_module);
     ctx.importWire(wasm.root_module);
     wasm.entry = .disabled;
     wasm.rdynamic = true;
@@ -190,6 +193,7 @@ pub fn add(ctx: Context) Result {
         });
         lang.root_module.addImport("build_options", options_mod);
         lang.root_module.addImport("wasm_language_options", lang_options.createModule());
+        ctx.importKit(lang.root_module);
         lang.entry = .disabled;
         lang.rdynamic = true;
         wasm_languages_step.dependOn(&b.addInstallArtifact(lang, .{}).step);
@@ -205,6 +209,7 @@ pub fn add(ctx: Context) Result {
         .target = wasi_target,
     });
     wasi_mod.addImport("build_options", options_mod);
+    ctx.importKit(wasi_mod);
     ctx.importWire(wasi_mod);
     const wasi_cli = b.addExecutable(.{
         .name = "fig-wasi",
@@ -250,21 +255,20 @@ pub fn add(ctx: Context) Result {
 /// which can link a `.a`. Keeping both behind one function is what stops the
 /// two from drifting as `c_api.zig`'s build config changes.
 fn addCApiLibrary(
-    b: *std.Build,
+    ctx: Context,
     linkage: std.lang.LinkMode,
-    target: std.Build.ResolvedTarget,
-    optimize: std.lang.Optimize,
-    strip: bool,
     options_mod: *std.Build.Module,
 ) *std.Build.Step.Compile {
+    const b = ctx.b;
+    const target = ctx.target;
     const lib = b.addLibrary(.{
         .linkage = linkage,
         .name = "fig",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/c_api.zig"),
             .target = target,
-            .optimize = optimize,
-            .strip = strip,
+            .optimize = ctx.optimize,
+            .strip = ctx.strip,
             // `c_api.zig` reaches for `std.heap.c_allocator` on every target
             // that links libc, so libc must be linked there — EXCEPT two cases
             // that have no libc to link and select a different allocator (see
@@ -282,5 +286,6 @@ fn addCApiLibrary(
         }),
     });
     lib.root_module.addImport("build_options", options_mod);
+    ctx.importKit(lib.root_module);
     return lib;
 }

@@ -25,7 +25,7 @@
 
 const Printer = @This();
 const std = @import("std");
-const AST = @import("../../kit/ast/ast.zig");
+const AST = @import("kit").AST;
 const Writer = std.Io.Writer;
 
 pub const Error = Writer.Error || error{
@@ -172,7 +172,7 @@ const testing = std.testing;
 const Parser = @import("parser.zig");
 
 /// `src` as fig adopts it from the plist parser.
-fn parseDoc(src: []const u8) !@import("../../kit/document.zig") {
+fn parseDoc(src: []const u8) !@import("kit").Document {
     return Parser.parse(testing.allocator, src, .XML);
 }
 

@@ -38,6 +38,17 @@ ver: Options.Versions,
 /// fetched. Every module that can reach `src/languages/wire.zig` imports it
 /// through `importWire`.
 zigjr: ?*std.Build.Module,
+/// The kit (`kit/`), a package of its own: what core and every language
+/// import as `kit`. One module, so core and a bundled language agree on
+/// every type in it.
+kit: *std.Build.Module,
+/// The kit package itself, for its tests.
+kit_dep: *std.Build.Dependency,
+
+/// Give `m` the `kit` import.
+pub fn importKit(self: @This(), m: *std.Build.Module) void {
+    m.addImport("kit", self.kit);
+}
 
 /// Give `m` the `zigjr` import, when the build carries the wire.
 pub fn importWire(self: @This(), m: *std.Build.Module) void {

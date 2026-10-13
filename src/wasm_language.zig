@@ -19,5 +19,5 @@ const modules = .{
 };
 
 comptime {
-    _ = @import("kit/wasm_language.zig").Exports(@field(modules, options.name).Language);
+    _ = @import("kit").wasm_language.Exports(@field(modules, options.name).Language);
 }

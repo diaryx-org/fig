@@ -11,4 +11,7 @@ dependencies.zigjr
 > url = https://github.com/adammharris/zigjr/archive/a577cf0886822391a8f4915fa0579dca70b8a82d.tar.gz
 > hash = zigjr-1.9.0-bESYopXUBgBsYrT_05pyx-gIFpa_lT-Ixb4j2yRCIczk
 > lazy = true
-paths = [build.zig, build.zig.zon, src, README.md, LICENSE-MIT, LICENSE-APACHE]
+# The kit, a package of its own: what core and every language share.
+dependencies.fig_kit
+> path = kit
+paths = [build.zig, build.zig.zon, src, kit, README.md, LICENSE-MIT, LICENSE-APACHE]

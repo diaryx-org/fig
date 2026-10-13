@@ -1,4 +1,4 @@
-// src/kit/token.zig
+// kit/src/token.zig
 const token = @This();
 const Span = @import("span.zig");
 

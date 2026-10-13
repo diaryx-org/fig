@@ -6,12 +6,12 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const testing = std.testing;
-const Document = @import("../../kit/document.zig");
-const AST = @import("../../kit/ast/ast.zig");
+const Document = @import("kit").Document;
+const AST = @import("kit").AST;
 
-const Span = @import("../../kit/span.zig");
+const Span = @import("kit").Span;
 const Parser = @import("parser.zig");
-const lang = @import("../../kit/manifest.zig");
+const lang = @import("kit").manifest;
 
 /// One document within a multi-document YAML stream, located in *outer-source*
 /// byte coordinates. `content` is the exact slice handed to the single-document

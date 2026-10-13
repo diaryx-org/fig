@@ -42,16 +42,16 @@
 
 const std = @import("std");
 
-const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/document.zig");
-const Span = @import("../../kit/span.zig");
-const splice = @import("../../kit/lines.zig");
+const AST = @import("kit").AST;
+const Document = @import("kit").Document;
+const Span = @import("kit").Span;
+const splice = @import("kit").lines;
 const Plist = @import("plist.zig").Language;
 // The `.fig` dialect's bare-token classifier — reused so plist value typing
 // obeys the exact same literal-else-string rules the fig language documents
 // (Norway-safe booleans, leading-zero-stays-string, datetime sniffing). Pure
 // functions on caller-owned slices; compiles regardless of `-Dfigl`.
-const lang = @import("../../kit/manifest.zig");
+const lang = @import("kit").manifest;
 
 // ── value rendering ────────────────────────────────────────────────────────────
 

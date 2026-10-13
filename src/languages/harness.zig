@@ -33,10 +33,10 @@
 const std = @import("std");
 const list = @import("list.zig");
 const bundle = @import("bundle.zig");
-const AST = @import("../kit/ast/ast.zig");
+const AST = @import("kit").AST;
 const Serialize = @import("../serialize.zig");
-const Document = @import("../kit/document.zig");
-const Span = @import("../kit/span.zig");
+const Document = @import("kit").Document;
+const Span = @import("kit").Span;
 const Editor = @import("../editor.zig").Editor;
 
 const testing = std.testing;

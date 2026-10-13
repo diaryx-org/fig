@@ -1,9 +1,9 @@
 const zon = @This();
 const std = @import("std");
-const Document = @import("../../kit/document.zig");
-const Table = @import("../../kit/table.zig").Table;
-const AST = @import("../../kit/ast/ast.zig");
-const lang = @import("../../kit/manifest.zig");
+const Document = @import("kit").Document;
+const Table = @import("kit").table.Table;
+const AST = @import("kit").AST;
+const lang = @import("kit").manifest;
 
 pub const Parser = @import("parser.zig");
 pub const Printer = @import("printer.zig");

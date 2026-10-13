@@ -4,10 +4,10 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const Document = @import("kit/document.zig");
-const AST = @import("kit/ast/ast.zig");
+const Document = @import("kit").Document;
+const AST = @import("kit").AST;
 const Serialize = @import("serialize.zig");
-const Span = @import("kit/span.zig");
+const Span = @import("kit").Span;
 const Editor = @import("editor.zig").Editor;
 const build_options = @import("build_options");
 
@@ -44,7 +44,7 @@ const Diagnostics = @import("diagnostics.zig");
 /// under their `Fig*` names are its, and so is the one `Language` every
 /// format is read, edited and printed through.
 const Runtime = @import("languages/runtime.zig");
-const manifest = @import("kit/manifest.zig");
+const manifest = @import("kit").manifest;
 
 // The wasm module's half of the runtime-language carrier: a language
 // whose functions are JavaScript, reached through a wasm import. Exported

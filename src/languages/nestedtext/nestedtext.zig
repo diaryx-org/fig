@@ -1,7 +1,7 @@
 const nestedtext = @This();
-const Document = @import("../../kit/document.zig");
-const Table = @import("../../kit/table.zig").Table;
-const lang = @import("../../kit/manifest.zig");
+const Document = @import("kit").Document;
+const Table = @import("kit").table.Table;
+const lang = @import("kit").manifest;
 
 pub const Parser = @import("parser.zig");
 pub const Tokenizer = @import("tokenizer.zig");

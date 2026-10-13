@@ -19,5 +19,5 @@ const modules = .{
 };
 
 comptime {
-    _ = @import("kit/c_language.zig").Exports(@field(modules, options.name).Language, options.name);
+    _ = @import("kit").c_language.Exports(@field(modules, options.name).Language, options.name);
 }

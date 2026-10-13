@@ -31,9 +31,9 @@
 
 const Printer = @This();
 const std = @import("std");
-const AST = @import("../../kit/ast/ast.zig");
-const width = @import("../../kit/kit.zig").width;
-const num = @import("../../kit/number.zig");
+const AST = @import("kit").AST;
+const width = @import("kit").width;
+const num = @import("kit").number;
 const Writer = std.Io.Writer;
 
 /// TOML cannot represent a YAML alias (materialize expands them first), a null,

@@ -14,7 +14,7 @@
 
 const std = @import("std");
 
-const AST = @import("../../kit/ast/ast.zig");
+const AST = @import("kit").AST;
 const editor = @import("../../editor.zig");
 const Zon = @import("zon.zig").Language;
 const log = std.log.scoped(.editor);

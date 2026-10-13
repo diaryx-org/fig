@@ -6,7 +6,7 @@
 //! `bundle.zig`.
 
 const std = @import("std");
-const manifest = @import("../kit/manifest.zig");
+const manifest = @import("kit").manifest;
 
 pub const Language = @This();
 

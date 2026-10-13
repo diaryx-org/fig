@@ -3,13 +3,13 @@
 
 const std = @import("std");
 const testing = std.testing;
-const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/document.zig");
-const Span = @import("../../kit/span.zig");
+const AST = @import("kit").AST;
+const Document = @import("kit").Document;
+const Span = @import("kit").Span;
 const editor = @import("../../editor.zig");
 const splice = @import("../../editor/splice.zig");
 const Plist = @import("plist.zig").Language;
-const lang = @import("../../kit/manifest.zig");
+const lang = @import("kit").manifest;
 const PlistEditor = editor.Editor(Plist);
 const edit = @import("edit.zig");
 const renderValue = edit.renderValue;

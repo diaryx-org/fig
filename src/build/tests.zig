@@ -64,7 +64,20 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     });
     const run_version_sync_tests = b.addRunArtifact(version_sync_tests);
 
+    // The kit's own tests: a package of its own, so its tests are a
+    // compilation of their own.
+    const kit_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = ctx.kit_dep.path("src/kit.zig"),
+            .target = target,
+            .optimize = ctx.optimize,
+        }),
+        .filters = test_filters,
+    });
+    const run_kit_tests = b.addRunArtifact(kit_tests);
+
     const test_step = b.step("test", "Run tests");
+    test_step.dependOn(&run_kit_tests.step);
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_version_sync_tests.step);
@@ -82,6 +95,7 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
         .target = target,
     });
     all_on_mod.addImport("build_options", all_on_options_mod);
+    ctx.importKit(all_on_mod);
     ctx.importWire(all_on_mod);
     // Same libc reasoning as `mod` in artifacts.zig: root.zig's test block pulls
     // in c_api.zig, which reaches for `std.heap.c_allocator` on every non-wasm

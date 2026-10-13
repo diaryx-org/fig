@@ -20,16 +20,16 @@ const Parser = @This();
 
 const std = @import("std");
 const testing = std.testing;
-const Document = @import("../../kit/document.zig");
-const AST = @import("../../kit/ast/ast.zig");
-const RowWriter = @import("../../kit/row_writer.zig");
-const table = @import("../../kit/table.zig");
+const Document = @import("kit").Document;
+const AST = @import("kit").AST;
+const RowWriter = @import("kit").RowWriter;
+const table = @import("kit").table;
 const Table = table.Table;
 
 const Type = @import("properties.zig").Type;
-const Span = @import("../../kit/span.zig");
-const Unicode = @import("../../kit/kit.zig").Unicode;
-const flat_map = @import("../../kit/flat_map.zig");
+const Span = @import("kit").Span;
+const Unicode = @import("kit").Unicode;
+const flat_map = @import("kit").flat_map;
 const Tokenizer = @import("tokenizer.zig");
 const Token = Tokenizer.Token;
 
@@ -85,7 +85,7 @@ pub fn shortLabel(code: Error) []const u8 {
     };
 }
 
-const parse_diagnostic = @import("../../kit/parse_diagnostic.zig");
+const parse_diagnostic = @import("kit").parse_diagnostic;
 
 pub const Diagnostic = struct {
     code: Error,

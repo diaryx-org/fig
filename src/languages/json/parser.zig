@@ -13,19 +13,19 @@ const std = @import("std");
 const builtin = @import("builtin");
 const testing = std.testing;
 const log = std.log.scoped(.parser);
-const Unicode = @import("../../kit/kit.zig").Unicode;
-const Document = @import("../../kit/document.zig");
-const AST = @import("../../kit/ast/ast.zig");
-const RowWriter = @import("../../kit/row_writer.zig");
-const table = @import("../../kit/table.zig");
+const Unicode = @import("kit").Unicode;
+const Document = @import("kit").Document;
+const AST = @import("kit").AST;
+const RowWriter = @import("kit").RowWriter;
+const table = @import("kit").table;
 const Table = table.Table;
 
 const Tokenizer = @import("tokenizer.zig").Tokenizer;
-const Token = @import("../../kit/token.zig").Token(Tokenizer.Kind);
+const Token = @import("kit").token.Token(Tokenizer.Kind);
 const Type = @import("json.zig").Type;
-const Span = @import("../../kit/span.zig");
+const Span = @import("kit").Span;
 
-const parse_diagnostic = @import("../../kit/parse_diagnostic.zig");
+const parse_diagnostic = @import("kit").parse_diagnostic;
 
 const ContainerKind = enum { array, object };
 /// Either an array or object in the process of being parsed.

@@ -22,7 +22,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const AST = @import("kit/ast/ast.zig");
+const AST = @import("kit").AST;
 const Serialize = @import("serialize.zig");
 const Lossless = @import("lossless.zig");
 const Language = @import("languages/language.zig");
@@ -624,7 +624,7 @@ test "a registered target is warned about comments by what it declares" {
     try b.setComments(k, .{ .leading = &.{.{ .text = "note", .style = .line }} });
     var ast = try b.finish(m);
 
-    const manifest = @import("kit/manifest.zig");
+    const manifest = @import("kit").manifest;
     var reg: Runtime.Registered = .{ .vt = undefined, .name = "t", .caps = .{ .serialize = true }, .syntax = null, .samples = &.{}, .entries = &.{} };
     var entry: Runtime.Entry = .{ .index = 0, .abi = 0, .language = &reg, .name = "t", .extensions = &.{}, .splice = .literal, .empty_doc_seed = null, .syntax = null };
 

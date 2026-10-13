@@ -33,9 +33,9 @@
 pub const Tokenizer = @This();
 
 const std = @import("std");
-const Span = @import("../../kit/span.zig");
+const Span = @import("kit").Span;
 const Type = @import("dotenv.zig").Type;
-pub const Token = @import("../../kit/token.zig").Token(Kind);
+pub const Token = @import("kit").token.Token(Kind);
 
 pub const Kind = enum {
     /// =

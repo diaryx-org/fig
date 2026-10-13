@@ -3,11 +3,11 @@
 
 const std = @import("std");
 const testing = std.testing;
-const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/document.zig");
-const Span = @import("../../kit/span.zig");
+const AST = @import("kit").AST;
+const Document = @import("kit").Document;
+const Span = @import("kit").Span;
 const editor = @import("../../editor.zig");
-const lang = @import("../../kit/manifest.zig");
+const lang = @import("kit").manifest;
 const splice = @import("../../editor/splice.zig");
 const NestedText = @import("nestedtext.zig").Language;
 const Parser = @import("parser.zig");

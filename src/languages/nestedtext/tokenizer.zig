@@ -36,7 +36,7 @@
 const Tokenizer = @This();
 
 const std = @import("std");
-const Span = @import("../../kit/span.zig");
+const Span = @import("kit").Span;
 
 pub const Kind = enum { blank, comment, dash, colon, gt, other, end_of_file };
 

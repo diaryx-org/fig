@@ -142,6 +142,10 @@ fn build_from_source(cargo_target: &str, cargo_host: &str) {
     );
     println!(
         "cargo:rerun-if-changed={}",
+        source_root.join("kit").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
         source_root.join("bindings/c/include/fig.h").display()
     );
 }

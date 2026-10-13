@@ -25,10 +25,10 @@ const Allocator = std.mem.Allocator;
 const zigjr = @import("zigjr");
 
 const Runtime = @import("runtime.zig");
-const manifest = @import("../kit/manifest.zig");
+const manifest = @import("kit").manifest;
 const Language = @import("language.zig");
-const AST = @import("../kit/ast/ast.zig");
-const Span = @import("../kit/span.zig");
+const AST = @import("kit").AST;
+const Span = @import("kit").Span;
 
 /// Where a request line goes and a response line comes from. Embedded in
 /// whatever owns the connection — the CLI's `Helper`, the wasm host's

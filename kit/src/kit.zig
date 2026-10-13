@@ -10,7 +10,8 @@
 const std = @import("std");
 
 pub const Span = @import("span.zig");
-pub const Token = @import("token.zig").Token;
+pub const token = @import("token.zig");
+pub const Token = token.Token;
 pub const literal = @import("literal.zig");
 pub const lines = @import("lines.zig");
 pub const parse_diagnostic = @import("parse_diagnostic.zig");
@@ -33,6 +34,10 @@ pub const manifest = @import("manifest.zig");
 pub const abi = @import("abi.zig");
 /// A Zig language's contract vtable, built from its module.
 pub const contract = @import("contract.zig");
+/// The exports that make a Zig language a C library of its own
+/// (`libfig_<name>.a`) or a WebAssembly module of its own.
+pub const c_language = @import("c_language.zig");
+pub const wasm_language = @import("wasm_language.zig");
 pub const Unicode = @import("unicode.zig");
 pub const json_string = @import("json_string.zig");
 pub const ascii = @import("ascii.zig");

@@ -33,9 +33,9 @@
 
 const std = @import("std");
 
-const AST = @import("../kit/ast/ast.zig");
-const Document = @import("../kit/document.zig");
-const Span = @import("../kit/span.zig");
+const AST = @import("kit").AST;
+const Document = @import("kit").Document;
+const Span = @import("kit").Span;
 const splice = @import("splice.zig");
 
 const lineStartBefore = splice.lineStartBefore;

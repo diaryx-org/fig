@@ -19,13 +19,13 @@ pub const Editor = @import("editor.zig").Editor;
 /// editor's span splices, so everything the patch does not name stays
 /// byte-identical. See its module doc for the merge rule and what it refuses.
 pub const Patch = @import("patch.zig");
-pub const Document = @import("kit/document.zig");
+pub const Document = @import("kit").Document;
 /// A `[start, end)` byte range — a node's place in its source.
-pub const Span = @import("kit/span.zig");
-pub const AST = @import("kit/ast/ast.zig");
+pub const Span = @import("kit").Span;
+pub const AST = @import("kit").AST;
 /// How a Zig parser writes the node table a parse hands it: rows in any
 /// order, put in pre-order by `finish`.
-pub const RowWriter = @import("kit/row_writer.zig");
+pub const RowWriter = @import("kit").RowWriter;
 /// Rendering a tree as canonical or through a registered language.
 pub const Serialize = @import("serialize.zig");
 pub const Lossless = @import("lossless.zig");
@@ -44,7 +44,7 @@ pub const Diagnostics = @import("diagnostics.zig");
 /// shape). Each language keeps its own error/warning codes and teaching
 /// messages; only the offset/rendering machinery is shared — see the module
 /// doc comment.
-pub const ParseDiagnostic = @import("kit/parse_diagnostic.zig");
+pub const ParseDiagnostic = @import("kit").parse_diagnostic;
 /// The canonical form: the AST's own 1:1, total, bijective text encoding — the
 /// comparison oracle and lossless serialization.
 pub const Canonical = @import("canonical/canonical.zig");
@@ -61,8 +61,6 @@ test {
     _ = @import("languages/harness.zig");
     _ = @import("languages/runtime.zig");
     _ = @import("languages/wire.zig");
-    _ = @import("kit/flat_map.zig");
-    _ = @import("kit/document.zig");
     _ = @import("editor.zig");
     _ = @import("editor/regions.zig");
     _ = @import("patch.zig");
@@ -70,12 +68,13 @@ test {
     _ = @import("materialize.zig");
     _ = @import("flat_strip.zig");
     _ = @import("diagnostics.zig");
-    _ = @import("kit/parse_diagnostic.zig");
     _ = @import("canonical/canonical.zig");
     _ = @import("deserialize.zig");
     _ = @import("c_api.zig");
-    _ = @import("kit/kit.zig");
     _ = @import("languages/contract_test.zig");
+    // The kit's tests are its own package's (`kit/build.zig`), which
+    // `zig build test` runs as a compilation of their own.
+    //
     // The fuzz targets double as deterministic smoke tests under a plain
     // `zig build test` (Zig runs each one over an empty Smith tape when the
     // binary is not built in fuzz mode), so they should never need a flag to

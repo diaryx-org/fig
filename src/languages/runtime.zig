@@ -45,12 +45,12 @@ const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
-const AST = @import("../kit/ast/ast.zig");
+const AST = @import("kit").AST;
 const Serialize = @import("../serialize.zig");
-const Document = @import("../kit/document.zig");
-const Span = @import("../kit/span.zig");
-pub const manifest = @import("../kit/manifest.zig");
-const ParseDiagnostic = @import("../kit/parse_diagnostic.zig");
+const Document = @import("kit").Document;
+const Span = @import("kit").Span;
+pub const manifest = @import("kit").manifest;
+const ParseDiagnostic = @import("kit").parse_diagnostic;
 const Languages = @import("language.zig");
 const editor = @import("../editor.zig");
 
@@ -58,8 +58,8 @@ const Node = AST.Node;
 const ExtKind = Node.Kind.Extended.ExtKind;
 
 // The C shapes are the kit's (`kit/abi.zig`), re-exported.
-const C = @import("../kit/abi.zig");
-const convert = @import("../kit/convert.zig");
+const C = @import("kit").abi;
+const convert = @import("kit").convert;
 pub const Str = C.Str;
 pub const CSpan = C.CSpan;
 pub const table = C.table;

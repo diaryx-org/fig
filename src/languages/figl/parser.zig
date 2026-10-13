@@ -49,15 +49,15 @@ pub const Parser = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Document = @import("../../kit/document.zig");
-const AST = @import("../../kit/ast/ast.zig");
-const RowWriter = @import("../../kit/row_writer.zig");
-const ChildIndex = @import("../../kit/child_index.zig");
-const table = @import("../../kit/table.zig");
+const Document = @import("kit").Document;
+const AST = @import("kit").AST;
+const RowWriter = @import("kit").RowWriter;
+const ChildIndex = @import("kit").ChildIndex;
+const table = @import("kit").table;
 const Table = table.Table;
 
-const Span = @import("../../kit/span.zig");
-const datetime = @import("../../kit/datetime.zig");
+const Span = @import("kit").Span;
+const datetime = @import("kit").datetime;
 const tok = @import("tokenizer.zig");
 const Type = @import("figl.zig").Type;
 
@@ -245,11 +245,11 @@ pub fn shortLabel(code: Error) []const u8 {
 /// half of the diagnostic system that has nothing to do with fig's own error
 /// codes. Every other language's parser (`json`, and `toml`/`yaml` to come)
 /// reuses this same module rather than each growing its own copy — see
-/// `src/kit/parse_diagnostic.zig`'s doc comment. `Location`/`locateOffset` are
+/// `kit/src/parse_diagnostic.zig`'s doc comment. `Location`/`locateOffset` are
 /// re-exported under their original names so existing call sites
 /// (`Parser.locateOffset`, `Parser.Location`, in `main.zig`/`lsp/main.zig`)
 /// keep working unchanged.
-const parse_diagnostic = @import("../../kit/parse_diagnostic.zig");
+const parse_diagnostic = @import("kit").parse_diagnostic;
 pub const Location = parse_diagnostic.Location;
 pub const locateOffset = parse_diagnostic.locateOffset;
 

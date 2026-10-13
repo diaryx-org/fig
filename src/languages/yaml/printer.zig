@@ -1,8 +1,8 @@
 const Printer = @This();
 const std = @import("std");
-const AST = @import("../../kit/ast/ast.zig");
-const width = @import("../../kit/kit.zig").width;
-const num = @import("../../kit/number.zig");
+const AST = @import("kit").AST;
+const width = @import("kit").width;
+const num = @import("kit").number;
 const Writer = std.Io.Writer;
 
 /// Prints a document in YAML block style, using default serialize options.
@@ -1227,6 +1227,6 @@ test "yaml printer: reprinted root/item props re-parse onto the same nodes" {
 }
 
 /// `src` as fig adopts it from the compiled YAML parser.
-fn testDoc(src: []const u8, t: @import("yaml.zig").Type) !@import("../../kit/document.zig") {
+fn testDoc(src: []const u8, t: @import("yaml.zig").Type) !@import("kit").Document {
     return @import("parser.zig").parse(std.testing.allocator, src, t);
 }

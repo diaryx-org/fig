@@ -17,11 +17,11 @@
 //! arithmetic, shared by the engine and `editor/regions.zig`.
 
 const std = @import("std");
-const Span = @import("../kit/span.zig");
-const lang = @import("../kit/manifest.zig");
+const Span = @import("kit").Span;
+const lang = @import("kit").manifest;
 
 // The line helpers languages share are the kit's (`kit/lines.zig`).
-const lines = @import("../kit/lines.zig");
+const lines = @import("kit").lines;
 pub const lineStartBefore = lines.lineStartBefore;
 pub const lineEndAfter = lines.lineEndAfter;
 pub const firstNonSpace = lines.firstNonSpace;

@@ -11,7 +11,7 @@ const std = @import("std");
 const build_options = @import("build_options");
 const list = @import("list.zig");
 const Runtime = @import("runtime.zig");
-const contract = @import("../kit/contract.zig");
+const contract = @import("kit").contract;
 
 const modules = .{
     .json = @import("json/json.zig"),

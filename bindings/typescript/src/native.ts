@@ -6,7 +6,7 @@
 // its table in the language's memory, and this copies each list of it into
 // the table the core handed the parse, byte for byte, since every offset
 // in it is into the input or the table's own buffer, which both sides
-// hold. A print copies the other way. See `src/kit/wasm_language.zig` in
+// hold. A print copies the other way. See `kit/src/wasm_language.zig` in
 // the core.
 import { decodeBase64, dv, fig, init as initCore, setHostNative, u8, FIG_ERROR_SIZE } from "./ffi.ts";
 import type { Format } from "./types.ts";

@@ -26,8 +26,8 @@
 
 const Printer = @This();
 const std = @import("std");
-const AST = @import("../kit/ast/ast.zig");
-const json_string = @import("../kit/json_string.zig");
+const AST = @import("kit").AST;
+const json_string = @import("kit").json_string;
 const Writer = std.Io.Writer;
 
 /// The canonical encoding is total over every AST *node kind* — it rejects no

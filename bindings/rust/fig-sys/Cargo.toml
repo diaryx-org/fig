@@ -28,6 +28,7 @@ include = [
     "zig/build.zig",
     "zig/build.zig.zon",
     "zig/src/**/*",
+    "zig/kit/**/*",
     "zig/bindings/c/include/**/*",
 ]
 

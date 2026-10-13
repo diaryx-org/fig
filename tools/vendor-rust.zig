@@ -26,10 +26,11 @@ const Dir = std.Io.Dir;
 
 // The set `zig build install-c-lib` actually reads: the build scripts (build.zig
 // plus its src/build/ helper tree, which rides along inside `src`), the whole Zig
-// source rooted at src/c_api.zig, and the public header. testdata/, tools/, and
-// the other bindings are not needed to build the static library.
+// source rooted at src/c_api.zig, the kit it imports (a package of its own, at
+// kit/), and the public header. testdata/, tools/, and the other bindings are
+// not needed to build the static library.
 const files = [_][]const u8{ "build.zig", "build.zig.zon" };
-const trees = [_][]const u8{ "src", "bindings/c/include" };
+const trees = [_][]const u8{ "src", "kit", "bindings/c/include" };
 
 // Dual license, single source of truth at the repo root. crates.io takes the
 // SPDX `license` field, but a published crate should also carry the license

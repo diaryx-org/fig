@@ -1,5 +1,5 @@
 //! The fig authoring dialect: a memorable, typeable, whitespace-insensitive
-//! surface over the AST (`src/kit/ast/ast.zig`), parsed by `fig fmt` into the same
+//! surface over the AST (`kit/src/ast/ast.zig`), parsed by `fig fmt` into the same
 //! tree the lossless `canonical` form encodes. It is NOT the oracle — it is
 //! allowed to be lossy at the edges (the canonical form and `$fig-envelope`
 //! are the faithful fallback). See `DESIGN.md` (this directory) for the full
@@ -9,9 +9,9 @@
 //! ZON's `Type = enum { ZON }` pattern.
 
 const fig = @This();
-const Document = @import("../../kit/document.zig");
-const Table = @import("../../kit/table.zig").Table;
-const lang = @import("../../kit/manifest.zig");
+const Document = @import("kit").Document;
+const Table = @import("kit").table.Table;
+const lang = @import("kit").manifest;
 
 pub const Parser = @import("parser.zig");
 pub const Printer = @import("printer.zig");

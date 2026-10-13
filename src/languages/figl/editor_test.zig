@@ -2,11 +2,11 @@
 //! over this language, with its renderers (`edit.zig`).
 
 const std = @import("std");
-const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/document.zig");
-const Span = @import("../../kit/span.zig");
+const AST = @import("kit").AST;
+const Document = @import("kit").Document;
+const Span = @import("kit").Span;
 const editor = @import("../../editor.zig");
-const lang = @import("../../kit/manifest.zig");
+const lang = @import("kit").manifest;
 const splice = @import("../../editor/splice.zig");
 const Fig = @import("figl.zig").Language;
 const Printer = @import("printer.zig");

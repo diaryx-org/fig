@@ -53,14 +53,14 @@
 const Parser = @This();
 
 const std = @import("std");
-const Document = @import("../../kit/document.zig");
-const AST = @import("../../kit/ast/ast.zig");
-const RowWriter = @import("../../kit/row_writer.zig");
-const Table = @import("../../kit/table.zig").Table;
+const Document = @import("kit").Document;
+const AST = @import("kit").AST;
+const RowWriter = @import("kit").RowWriter;
+const Table = @import("kit").table.Table;
 
 const Type = @import("plist.zig").Type;
-const Span = @import("../../kit/span.zig");
-const Tokenizer = @import("../../kit/xml.zig");
+const Span = @import("kit").Span;
+const Tokenizer = @import("kit").xml;
 
 const Id = AST.Node.Id;
 const ExtKind = AST.Node.Kind.Extended.ExtKind;

@@ -3,9 +3,9 @@
 const std = @import("std");
 const build_options = @import("build_options");
 
-const AST = @import("kit/ast/ast.zig");
-const Document = @import("kit/document.zig");
-const Span = @import("kit/span.zig");
+const AST = @import("kit").AST;
+const Document = @import("kit").Document;
+const Span = @import("kit").Span;
 const json = @import("languages/json/json.zig");
 const regions = @import("editor/regions.zig");
 /// The source-coordinate utilities the engine and the regions module share.
@@ -33,8 +33,8 @@ const log = std.log.scoped(.editor);
 // instead; see `languages/manifest.zig` and
 // `docs/proposals/language-interface.md`. A leaf module, so importing it here
 // (and from every `<lang>/<lang>.zig`) pulls in nothing else.
-const lang = @import("kit/manifest.zig");
-const bare_literal = @import("kit/literal.zig");
+const lang = @import("kit").manifest;
+const bare_literal = @import("kit").literal;
 
 // The RENDERING half of the interface — the part `syntax` can't express.
 //

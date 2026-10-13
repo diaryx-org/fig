@@ -627,18 +627,7 @@ fn handlePlain(self: *Tokenizer, start: usize, line: *Line, cursor: *usize, at_c
     // or flow indicator (e.g. a malformed `> text` header) is not plain text, so
     // gathering it would mask the error.
     if (!flow and end == line.end and plainContinuationStart(self.source[start])) {
-        const indent = line.content_start - line.start;
-        // A root scalar (the whole document) has no indentation floor; an inline
-        // value's continuation must out-indent the key line it sits on; a value
-        // written on its own line (`key:\n  v`) may have continuation lines at
-        // its own indent, so the floor is one less.
-        const floor: ?usize = if (self.precededOnlyByTrivia() and start == line.content_start)
-            null
-        else if (start == line.content_start)
-            (if (indent > 0) indent - 1 else 0)
-        else
-            indent;
-        if (try self.gatherPlainContinuation(line.*, floor)) |g| {
+        if (try self.gatherPlainContinuation(line.*, self.plainFloor(line.*))) |g| {
             try self.addToken(.init(.scalar, .init(start, g.content_end)));
             line.* = g.last_line;
             cursor.* = g.last_line.end;
@@ -683,13 +672,19 @@ fn gatherPlainContinuation(self: *Tokenizer, line: Line, floor: ?usize) Tokenize
         if (floor) |f| if (spaces - line_start <= f) break;
         const fc = self.source[ws];
         if (!plainContinuationLineStart(fc)) break;
-        // A leading sequence/explicit-key/value indicator starts a structure.
+        // Past the floor a line is the scalar's whatever it begins with: a `- `
+        // or `? ` is text (`- a\n  - b` is `["a - b"]`). A `: ` is not plain
+        // text anywhere, so the scalar ends before it, and the parser refuses
+        // the line, which has no entry to belong to. A tab before `- `/`? ` is
+        // left to `tabIndentedStructure`, which refuses it as PyYAML does.
         if ((fc == '-' or fc == '?' or fc == ':') and
-            (ws + 1 >= end or isBlank(self.source[ws + 1]))) break;
+            (ws + 1 >= end or isBlank(self.source[ws + 1])) and
+            (fc == ':' or ws != spaces)) break;
         const se = scalarEnd(self.source, ws, end, false);
         if (se != end) {
-            // Stopped early: a `:` value indicator means this line is a mapping
-            // entry, not a continuation — stop without consuming it. A trailing
+            // Stopped early: a `:` value indicator ends the scalar, and a key
+            // cannot span lines, so the line is left for the parser to refuse
+            // (`- a\n  b: c`) — stop without consuming it. A trailing
             // `#` comment still leaves a valid final continuation line, so gather
             // its content up to the comment, then stop.
             if (self.source[se] == '#') result = .{
@@ -1220,6 +1215,42 @@ fn deferredOwnerIndent(self: *const Tokenizer) ?usize {
         },
         .dash => return self.columnOf(self.tokens.items[idx - 1].span.start),
         else => return null,
+    };
+    return null;
+}
+
+/// The column a block plain scalar about to be emitted must out-indent on its
+/// continuation lines: the column of the innermost block collection it is a
+/// node of — the `-` of its sequence entry, the `?` or `:` of an explicit
+/// entry, or the start of the key before an implicit `:` (`- k: a` continues
+/// past column 2, not column 0). Found by scanning back past trivia and node
+/// properties, so a scalar on the line below its `key:` or `-` gets the same
+/// floor as one beside it. Null for the document's root node, which continues
+/// onto every line.
+fn plainFloor(self: *const Tokenizer, line: Line) ?usize {
+    const tokens = self.tokens.items;
+    var idx = tokens.len;
+    while (idx > 0) : (idx -= 1) switch (tokens[idx - 1].kind) {
+        .whitespace, .newline, .comment, .indent, .dedent, .tag, .anchor => {},
+        .doc_start, .directive => return null,
+        .dash, .explicit_key => return self.columnOf(tokens[idx - 1].span.start),
+        .colon => {
+            // The key begins at the first token after the indicator or line
+            // start before it; a `:` that begins its line has no key.
+            const colon = tokens[idx - 1].span.start;
+            const line_start = colon - self.columnOf(colon);
+            var key = colon;
+            var k = idx - 1;
+            while (k > 0 and tokens[k - 1].span.start >= line_start) : (k -= 1) switch (tokens[k - 1].kind) {
+                .dash, .explicit_key, .colon, .newline, .indent, .dedent, .doc_start => break,
+                .whitespace => {},
+                else => key = tokens[k - 1].span.start,
+            };
+            return self.columnOf(key);
+        },
+        // A scalar after a node that is not its introducer is refused by the
+        // parser; the line's own indent stands in until then.
+        else => return line.content_start - line.start,
     };
     return null;
 }

@@ -307,6 +307,35 @@ class Tokenizer {
     return true;
   }
 
+  // The column a block plain scalar about to be emitted must out-indent on
+  // its continuation lines: that of the innermost block collection it is a
+  // node of — the `-` of its entry, the `?` or `:` of an explicit entry, or
+  // the start of the key before an implicit `:`. Null for the root node.
+  plainFloor(line) {
+    const toks = this.tokens;
+    for (let idx = toks.length; idx > 0; idx -= 1) {
+      const k = toks[idx - 1].kind;
+      if (k === "whitespace" || k === "newline" || k === "comment" || k === "indent" || k === "dedent" ||
+        k === "tag" || k === "anchor") continue;
+      if (k === "doc_start" || k === "directive") return null;
+      if (k === "dash" || k === "explicit_key") return this.columnOf(toks[idx - 1].s);
+      if (k !== "colon") return line.contentStart - line.start;
+      // The key begins at the first token after the indicator or line
+      // start before the `:`; a `:` that begins its line has no key.
+      const colon = toks[idx - 1].s;
+      const lineStart = colon - this.columnOf(colon);
+      let key = colon;
+      for (let j = idx - 1; j > 0 && toks[j - 1].s >= lineStart; j -= 1) {
+        const kk = toks[j - 1].kind;
+        if (kk === "dash" || kk === "explicit_key" || kk === "colon" || kk === "newline" ||
+          kk === "indent" || kk === "dedent" || kk === "doc_start") break;
+        if (kk !== "whitespace") key = toks[j - 1].s;
+      }
+      return this.columnOf(key);
+    }
+    return null;
+  }
+
   deferredOwnerIndent() {
     const toks = this.tokens;
     let idx = toks.length;
@@ -412,7 +441,12 @@ class Tokenizer {
       if (floor !== null && spaces - lineStart <= floor) break;
       const fc = at(src, ws);
       if (fc === HASH) break;
-      if ((fc === DASH || fc === QUEST || fc === COLON) && (ws + 1 >= e || isBlank(at(src, ws + 1)))) break;
+      // Past the floor a line is the scalar's whatever it begins with: a
+      // `- ` or `? ` is text. A `: ` is not plain text anywhere, so the
+      // scalar ends before it, and the parser refuses the line. A tab
+      // before `- `/`? ` is left to the tab-indentation check.
+      if ((fc === DASH || fc === QUEST || fc === COLON) && (ws + 1 >= e || isBlank(at(src, ws + 1))) &&
+        (fc === COLON || ws !== spaces)) break;
       const se = scalarEnd(src, ws, e, false);
       if (se !== e) {
         if (at(src, se) === HASH) {
@@ -443,12 +477,7 @@ class Tokenizer {
     }
     const e = scalarEnd(src, start, line.e, false);
     if (e === line.e && plainContinuationStart(at(src, start))) {
-      const indent = line.contentStart - line.start;
-      let floor;
-      if (this.precededOnlyByTrivia() && start === line.contentStart) floor = null;
-      else if (start === line.contentStart) floor = indent > 0 ? indent - 1 : 0;
-      else floor = indent;
-      const g = this.gatherPlainContinuation(line, floor);
+      const g = this.gatherPlainContinuation(line, this.plainFloor(line));
       if (g) {
         this.add("scalar", start, g.contentEnd);
         return [g.lastLine, g.lastLine.e];
@@ -2021,6 +2050,16 @@ class Parser {
           if (this.columnOf(this.peek().e) > this.currentContainerIndent()) this.forceNewContainer = true;
           else this.current().continuesSequenceItem = false;
         } else {
+          // An entry whose node is already whole takes nothing more
+          // indented: a sequence item with its value, or an explicit key
+          // with its key, whose `:` sits at the `?` column.
+          if (this.stack.length > 0) {
+            const c = this.current();
+            if (c.kind === "sequence" ? !c.pendingSequenceItem : c.explicitAwaitingValue) {
+              this.advance();
+              fail("this is indented under an entry that already has a value, so it has no key to belong to; dedent it to be a sibling", this.peek().s);
+            }
+          }
           this.forceNewContainer = true;
         }
         this.advance();

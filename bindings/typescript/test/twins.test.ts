@@ -186,6 +186,18 @@ test("splitStream locates a YAML stream's documents through the twin", () => {
   assert.throws(() => splitStream("{}", json.format!));
 });
 
+test("the YAML twin refuses a line indented under an entry whose node is whole, as the compiled format does", () => {
+  // A plain value takes such a line as its continuation
+  // (fixtures/yaml/plain-continuation.yaml); any other value cannot, and
+  // a `: ` is not plain text. PyYAML refuses each of these.
+  for (const src of [
+    "- a\n  : b\n", "- a\n  b: c\n", "- a\n  - b: c\n", "- a\n  # c\n  - b\n", "- a # c\n  - b\n",
+    "- \"a\"\n  - b\n", "- 'a'\n  - b\n", "? a\n  : b\n", "? a\n  b: c\n", "- k: a\n  b\n",
+  ]) {
+    assert.throws(() => convert(src, yaml.format!, json.format!), Error, JSON.stringify(src));
+  }
+});
+
 test("each language prints every fixture as the compiled printer did", () => {
   for (const t of TWINS) {
     for (const d of t.dialects) {

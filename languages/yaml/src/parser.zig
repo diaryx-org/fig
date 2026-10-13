@@ -550,6 +550,22 @@ fn parseTokens(self: *Parser) ParserError!void {
                             return self.failHere(ParseError.UnexpectedToken, .invalid_indent);
                     }
                 } else {
+                    // An entry whose node is already whole takes nothing more
+                    // indented: a sequence item with its value (`- "a"\n  - b`,
+                    // `- a # c\n  - b`, `- a\n  b: c`), or an explicit key with
+                    // its key, whose `:` sits at the `?` column (`? a\n  : b`). A
+                    // plain value would have taken the line as its continuation.
+                    if (self.container_stack.items.len > 0) {
+                        const c = self.currentContainer();
+                        const whole = switch (c.kind) {
+                            .sequence => !c.pending_sequence_item,
+                            .mapping => c.explicit_awaiting_value,
+                        };
+                        if (whole) {
+                            _ = self.advance();
+                            return self.failHere(ParseError.UnexpectedToken, .continuation_after_value);
+                        }
+                    }
                     self.force_new_container = true;
                 }
                 _ = self.advance();
@@ -3969,6 +3985,122 @@ test "yaml compact nested items keep their values" {
         const node = try doc.ast.getValByPath(c.path);
         try testing.expectEqualStrings(c.want, node.kind.string);
     }
+}
+
+test "yaml a plain scalar continues onto a more-indented line that starts with an indicator" {
+    // A plain scalar continues onto every line indented past the collection
+    // it is a node of, and there `- ` and `? ` are text. Expectations are
+    // PyYAML's.
+    const Case = struct { src: []const u8, path: []const AST.PathSegment, want: []const u8 };
+    const cases = [_]Case{
+        .{ .src = "- a\n  - b\n", .path = &.{.{ .index = 0 }}, .want = "a - b" },
+        .{ .src = "- a\n - b\n", .path = &.{.{ .index = 0 }}, .want = "a - b" },
+        .{ .src = "- a\n    - b\n", .path = &.{.{ .index = 0 }}, .want = "a - b" },
+        .{ .src = "- a\n  ? b\n", .path = &.{.{ .index = 0 }}, .want = "a ? b" },
+        .{ .src = "- a\n  -\n", .path = &.{.{ .index = 0 }}, .want = "a -" },
+        .{ .src = "- a\n  -  b\n", .path = &.{.{ .index = 0 }}, .want = "a -  b" },
+        .{ .src = "- a\n  - - b\n", .path = &.{.{ .index = 0 }}, .want = "a - - b" },
+        .{ .src = "- a\n  - b\n  - c\n", .path = &.{.{ .index = 0 }}, .want = "a - b - c" },
+        .{ .src = "- a\n  - b\n- c\n", .path = &.{.{ .index = 1 }}, .want = "c" },
+        .{ .src = "- a\n  b\n  - c\n", .path = &.{.{ .index = 0 }}, .want = "a b - c" },
+        .{ .src = "- a\n  - b # c\n", .path = &.{.{ .index = 0 }}, .want = "a - b" },
+        .{ .src = "- a\n  - b\n  # c\n- d\n", .path = &.{.{ .index = 0 }}, .want = "a - b" },
+        .{ .src = "- &x a\n  - b\n", .path = &.{.{ .index = 0 }}, .want = "a - b" },
+        .{ .src = "- !!str a\n  - b\n", .path = &.{.{ .index = 0 }}, .want = "a - b" },
+        // Blank lines between fold to line breaks.
+        .{ .src = "- a\n\n  - b\n", .path = &.{.{ .index = 0 }}, .want = "a\n- b" },
+        .{ .src = "- a\n\n\n  - b\n- c\n", .path = &.{.{ .index = 0 }}, .want = "a\n\n- b" },
+        // Under a key: the floor is the key's column, not the line's.
+        .{ .src = "k: a\n  - b\n", .path = &.{.{ .key = "k" }}, .want = "a - b" },
+        .{ .src = "k: a\n - b\n", .path = &.{.{ .key = "k" }}, .want = "a - b" },
+        .{ .src = "k: a\n  ? b\n", .path = &.{.{ .key = "k" }}, .want = "a ? b" },
+        .{ .src = "k: a\n  -\n", .path = &.{.{ .key = "k" }}, .want = "a -" },
+        .{ .src = "k: a\n  - b\nj: c\n", .path = &.{.{ .key = "k" }}, .want = "a - b" },
+        .{ .src = "k: a\n  - b # c\nj: d\n", .path = &.{.{ .key = "j" }}, .want = "d" },
+        .{ .src = "- k: a\n   - b\n", .path = &.{ .{ .index = 0 }, .{ .key = "k" } }, .want = "a - b" },
+        .{ .src = "- &a k: v\n   - b\n", .path = &.{ .{ .index = 0 }, .{ .key = "k" } }, .want = "v - b" },
+        .{ .src = "- k: a\n\n    - b\n", .path = &.{ .{ .index = 0 }, .{ .key = "k" } }, .want = "a\n- b" },
+        .{ .src = "- k: a\n      - b\n  j: c\n", .path = &.{ .{ .index = 0 }, .{ .key = "j" } }, .want = "c" },
+        // A value on the line below its key or dash continues past the same floor.
+        .{ .src = "k:\n  a\n  - b\n", .path = &.{.{ .key = "k" }}, .want = "a - b" },
+        .{ .src = "k:\n    a\n  - b\n", .path = &.{.{ .key = "k" }}, .want = "a - b" },
+        .{ .src = "k:\n  a\n b\n", .path = &.{.{ .key = "k" }}, .want = "a b" },
+        .{ .src = "- k:\n    a\n   - b\n", .path = &.{ .{ .index = 0 }, .{ .key = "k" } }, .want = "a - b" },
+        .{ .src = "-\n  a\n  - b\n", .path = &.{.{ .index = 0 }}, .want = "a - b" },
+        .{ .src = "k:\n- a\n  - b\n", .path = &.{ .{ .key = "k" }, .{ .index = 0 } }, .want = "a - b" },
+        .{ .src = "k:\n  - a\n    - b\n  - c\n", .path = &.{ .{ .key = "k" }, .{ .index = 0 } }, .want = "a - b" },
+        .{ .src = "? x\n: a\n  - b\n", .path = &.{.{ .key = "x" }}, .want = "a - b" },
+        // Compact nested items: the floor is the innermost dash.
+        .{ .src = "- - a\n    - b\n", .path = &.{ .{ .index = 0 }, .{ .index = 0 } }, .want = "a - b" },
+        .{ .src = "- - a\n   - b\n", .path = &.{ .{ .index = 0 }, .{ .index = 0 } }, .want = "a - b" },
+        .{ .src = "- - a\n    ? b\n", .path = &.{ .{ .index = 0 }, .{ .index = 0 } }, .want = "a ? b" },
+        .{ .src = "- - - a\n      - b\n", .path = &.{ .{ .index = 0 }, .{ .index = 0 }, .{ .index = 0 } }, .want = "a - b" },
+        .{ .src = "- - a\n    - b\n  - c\n", .path = &.{ .{ .index = 0 }, .{ .index = 1 } }, .want = "c" },
+        // The document's root continues onto every line.
+        .{ .src = "a\n- b\n", .path = &.{}, .want = "a - b" },
+        .{ .src = "a\n  - b\n", .path = &.{}, .want = "a - b" },
+        .{ .src = "&x a\n- b\n", .path = &.{}, .want = "a - b" },
+        .{ .src = "--- a\n- b\n", .path = &.{}, .want = "a - b" },
+    };
+    for (cases) |c| {
+        const doc = Parser.parse(testing.allocator, c.src, .v1_2_2) catch |err| {
+            std.debug.print("{s}: {}\n", .{ c.src, err });
+            return err;
+        };
+        defer doc.deinit(testing.allocator);
+        const node = try doc.ast.getValByPath(c.path);
+        try testing.expectEqualStrings(c.want, node.kind.string);
+    }
+    // A `? ` line under an explicit key is part of the key; the dash at
+    // the item column is the next item, as before.
+    try expectShape("? a\n  - b\n: c\n", "{ S S }");
+    try expectShape("- ? a\n    - b\n", "[ { S S } ]");
+    try expectShape("? - a\n    - b\n", "{ [ S ] S }");
+    try expectShape("- - a\n  - b\n", "[ [ S S ] ]");
+    // Where the line opens a node, the dash still begins a sequence.
+    try expectShape("k:\n  - b\n", "{ S [ S ] }");
+    try expectShape("k:\n- b\n", "{ S [ S ] }");
+    try expectShape("-\n  - b\n", "[ [ S ] ]");
+    // A flow collection is no plain scalar of the block.
+    try expectShape("- [a\n  - b]\n", "[ [ S ] ]");
+}
+
+test "yaml a line indented under an entry whose node is whole is refused" {
+    // A plain value takes such a line as its continuation; any other value
+    // cannot, and a `: ` is not plain text. PyYAML refuses each of these.
+    for ([_][]const u8{
+        "- a\n  : b\n",
+        "- a\n  : b\n  c\n",
+        "- a\n  b: c\n",
+        "- a\n  - b: c\n",
+        "- a\n  - b:\n",
+        "- a\n  - b\n  - c: d\n",
+        "- a\n  ? b\n  : c\n",
+        "- a\n  # c\n  - b\n",
+        "- a # x\n  - b\n",
+        "- \"a\"\n  - b\n",
+        "- 'a'\n  - b\n",
+        "? a\n  : b\n",
+        "? a\n  b: c\n",
+        "- k: a\n  b\n",
+        "- k: a\n  - b\n",
+        "k: a\n  : b\n",
+        "k: a\n- b\n",
+        "k: \"a\"\n  - b\n",
+        "k: a # x\n  - b\n",
+        "k: [a]\n  - b\n",
+        "k: a\n  - b\n  : c\n",
+        "- a\n  \t- b\n",
+        "k: a\n  \t- b\n",
+    }) |src| {
+        if (Parser.parse(testing.allocator, src, .v1_2_2)) |doc| {
+            doc.deinit(testing.allocator);
+            std.debug.print("accepted: {s}\n", .{src});
+            return error.TestUnexpectedResult;
+        } else |_| {}
+    }
+    try expectReport("- \"a\"\n  - b\n", error.UnexpectedToken, .continuation_after_value, 2, 3);
+    try expectReport("- a\n  b: c\n", error.UnexpectedToken, .continuation_after_value, 2, 3);
 }
 
 test "yaml key after a nested block sequence is a sibling, not absorbed" {

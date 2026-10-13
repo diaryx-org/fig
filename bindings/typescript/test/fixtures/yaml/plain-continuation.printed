@@ -1,0 +1,16 @@
+# A plain scalar continues onto every line indented past its collection;
+# a `- ` or `? ` that begins such a line is text.
+- a - b
+- c ? d - e -
+-
+  - f - g
+  - h
+- k: v - w
+  j: x - y
+- z - z
+- p - q: r
+- |-
+  s
+  - t
+- u # ends here
+- &n v - w

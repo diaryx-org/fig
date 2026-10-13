@@ -10,6 +10,7 @@ contents
 > * [The Rust helper reads JSON with fig's json format](/docs/tasks/helper-serde-json.md)
 > * [Deleting an item of a YAML list nested on its parent's marker line drops the parent](/docs/tasks/yaml-nested-item-delete-drops-parent.md)
 > * [Deleting the only element of a figl list removes the key](/docs/tasks/figl-list-emptied-removes-key.md)
+> * [A comment after a figl multi-line string's opening quotes is invisible to the editor](/docs/tasks/figl-multiline-string-opener-comment.md)
 ```
 
 # Tasks

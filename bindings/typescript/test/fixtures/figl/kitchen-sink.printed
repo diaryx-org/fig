@@ -67,10 +67,10 @@ values
 # === Quotes:  '' raw/literal   ""  escaped ===
 strings
 > raw = C:\Users\me\no-escapes # single quotes: backslashes stay literal
-> esc = '''
+> esc = ''' # double quotes: \n \t \uXXXX honored
 line1
 line2	tabbed
-''' # double quotes: \n \t \uXXXX honored
+'''
 > snowman = frozen ☃
 > 'my.key' = present # key with a literal dot MUST be quoted
 
@@ -163,16 +163,16 @@ random
 
 # === Multiline strings — two flavors ===
 docs
-> license = '''
+> license = ''' # '' raw/verbatim: no escapes, whitespace exact
 Copyright (c) 2026
 All rights reserved. \n is literal here.
-''' # '' raw/verbatim: no escapes, whitespace exact
+'''
 > # ^ raw content is flush-left ON PURPOSE: in a raw block leading indentation
 > # becomes part of the value, so it opts out of the file's spaced-marker style.
-> banner = '''
+> banner = ''' # "" escaped + smart-dedent
 Welcome!
 Enjoy your ☃ stay.
-''' # "" escaped + smart-dedent
+'''
 
 # ^ escaped content CAN be indented: the common leading indent (6 spaces here,
 # including the closing """) is stripped, so the value is "Welcome!\nEnjoy…".

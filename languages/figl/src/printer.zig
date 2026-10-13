@@ -300,7 +300,9 @@ fn sectionAssign(self: *Printer, anchor_key: AST.Node.Id, v: AST.Node.Id) Error!
         else => {
             _ = try self.writeTypeAnnotation(v);
             try self.writer.writeAll(" = ");
-            try self.value(v, .block);
+            try self.scalarAndComment(v);
+            try self.writer.writeByte('\n');
+            return;
         },
     }
     try self.trailingComment(v);
@@ -560,8 +562,7 @@ fn mapEntryLine(self: *Printer, kv_id: AST.Node.Id, depth: usize) Error!void {
         else => {
             _ = try self.writeTypeAnnotation(v);
             try self.writer.writeAll(" = ");
-            try self.value(v, .block);
-            try self.trailingComment(v);
+            try self.scalarAndComment(v);
             try self.writer.writeByte('\n');
         },
     }
@@ -608,8 +609,7 @@ fn seqBody(self: *Printer, seq_id: AST.Node.Id, depth: usize) Error!void {
             else => {
                 const annotated = try self.writeTypeAnnotation(el);
                 try self.writer.writeAll(if (annotated) " = " else " ");
-                try self.value(el, .block);
-                try self.trailingComment(el);
+                try self.scalarAndComment(el);
                 try self.writer.writeByte('\n');
             },
         }
@@ -1019,7 +1019,7 @@ fn value(self: *Printer, id: AST.Node.Id, pos: Pos) Error!void {
             try self.writer.writeAll(num.plain_non_finite.of(v));
         } else try self.writer.writeAll(n.raw),
         .string => |s| if (!in_flow and std.mem.indexOfScalar(u8, s, '\n') != null) {
-            try self.writeMultilineString(s);
+            try self.writeMultilineString(s, null);
         } else if (!in_flow and self.isStringTagged(id)) {
             // A `: string =`-tagged value re-emits BARE: the annotated RHS is
             // read verbatim (the total sink), so no quotes are needed even for
@@ -1117,6 +1117,19 @@ fn writeCharLiteral(writer: *Writer, text: []const u8) Error!void {
     try writer.writeByte('\'');
 }
 
+/// A block-position scalar and its trailing comment: after the value, or for a
+/// multi-line string on its opener line (`x = ''' # note`), the one place
+/// spec § 4.6 gives it.
+fn scalarAndComment(self: *Printer, id: AST.Node.Id) Error!void {
+    switch (self.ast.node(id).kind) {
+        .string => |s| if (std.mem.indexOfScalar(u8, s, '\n') != null)
+            return self.writeMultilineString(s, id),
+        else => {},
+    }
+    try self.value(id, .block);
+    try self.trailingComment(id);
+}
+
 /// A string containing newlines, in block value position: `'''` raw when the
 /// content round-trips verbatim, else `"""` with `\`, `"`, and `\r` escaped
 /// (escaping every `"` also rules out an accidental `"""` terminator).
@@ -1125,16 +1138,22 @@ fn writeCharLiteral(writer: *Writer, text: []const u8) Error!void {
 /// escaped flavor's smart-dedent at zero so leading whitespace in the value
 /// survives. The tokenizer drops the newline before the closer's line, so a
 /// value's own trailing newline (or lack of one) round-trips exactly.
-fn writeMultilineString(self: *Printer, s: []const u8) Error!void {
+/// `comment_anchor`'s trailing comment, if any, goes on the opener line, where
+/// the value's comment lives (spec § 4.6).
+fn writeMultilineString(self: *Printer, s: []const u8, comment_anchor: ?AST.Node.Id) Error!void {
     const raw_ok = std.mem.indexOf(u8, s, "'''") == null and
         std.mem.indexOfScalar(u8, s, '\r') == null;
     if (raw_ok) {
-        try self.writer.writeAll("'''\n");
+        try self.writer.writeAll("'''");
+        if (comment_anchor) |a| try self.trailingComment(a);
+        try self.writer.writeByte('\n');
         try self.writer.writeAll(s);
         try self.writer.writeAll("\n'''");
         return;
     }
-    try self.writer.writeAll("\"\"\"\n");
+    try self.writer.writeAll("\"\"\"");
+    if (comment_anchor) |a| try self.trailingComment(a);
+    try self.writer.writeByte('\n');
     for (s) |c| switch (c) {
         '\\' => try self.writer.writeAll("\\\\"),
         '"' => try self.writer.writeAll("\\\""),
@@ -2002,6 +2021,42 @@ test "multi-line strings print as ''' raw blocks (escaped \"\"\" when needed)" {
         \\has '''
         \\quotes
         \\"""
+        \\
+    );
+}
+
+// The comment went after the closing quotes, where neither the spec nor the
+// editor looks for it. It prints on the opener line, as an entry's value at
+// the root and nested, and as a sequence element; one the source wrote after
+// the close moves there too.
+test "a multi-line string's trailing comment prints on its opener line" {
+    try expectPrint("a = ''' # raw\nx\ny\n'''\nb = \"\"\" # escaped\n  has '''\n  more\n  \"\"\"\n",
+        \\a = ''' # raw
+        \\x
+        \\y
+        \\'''
+        \\b = """ # escaped
+        \\has '''
+        \\more
+        \\"""
+        \\
+    );
+    try expectPrint("s\n> long.k = '''\nx\ny\n''' # after\n> n = 1\n",
+        \\s
+        \\> long.k = ''' # after
+        \\x
+        \\y
+        \\'''
+        \\> n = 1
+        \\
+    );
+    try expectPrint("xs\n> * ''' # el\nx\ny\n'''\n> * z\n",
+        \\xs
+        \\> * ''' # el
+        \\x
+        \\y
+        \\'''
+        \\> * z
         \\
     );
 }

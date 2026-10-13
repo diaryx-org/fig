@@ -1568,9 +1568,11 @@ function bareOrQuoted(s, isKey, inFlow) {
   return '"' + s.replace(/["\\\n\r\t]/g, (ch) => ESCAPES[ch]) + '"';
 }
 
-function multilineString(s) {
-  if (!s.includes("'''") && !s.includes("\r")) return "'''\n" + s + "\n'''";
-  return '"""\n' + s.replace(/[\\"\r]/g, (ch) => (ch === "\\" ? "\\\\" : ch === '"' ? '\\"' : "\\r")) + '\n"""';
+// `comment` (the value's ` # …`, or "") goes on the opener line, where the
+// value's comment lives (spec § 4.6).
+function multilineString(s, comment = "") {
+  if (!s.includes("'''") && !s.includes("\r")) return "'''" + comment + "\n" + s + "\n'''";
+  return '"""' + comment + "\n" + s.replace(/[\\"\r]/g, (ch) => (ch === "\\" ? "\\\\" : ch === '"' ? '\\"' : "\\r")) + '\n"""';
 }
 
 function charLiteral(text) {
@@ -1785,10 +1787,25 @@ class Printer {
   }
 
   trailingComment(row) {
+    this.put(this.trailingText(row));
+  }
+
+  // The ` # …` a value's trailing comment prints as, or "".
+  trailingText(row) {
     const c = this.trailingOf(row);
-    if (!c) return;
-    this.put(" #");
-    if (c.text !== "") this.put(" ", c.text.replace(/\n/g, " "));
+    if (!c) return "";
+    return c.text === "" ? " #" : " # " + c.text.replace(/\n/g, " ");
+  }
+
+  // A block-position scalar and its trailing comment: after the value, or for
+  // a multi-line string on its opener line (`x = ''' # note`).
+  scalarAndComment(row) {
+    if (row.kind === "string" && !row.ext_kind && isMultiline(row)) {
+      this.put(multilineString(row.text, this.trailingText(row)));
+      return;
+    }
+    this.value(row, false);
+    this.trailingComment(row);
   }
 
   typeAnnotation(row) {
@@ -1928,8 +1945,7 @@ class Printer {
     } else {
       this.typeAnnotation(v);
       this.put(" = ");
-      this.value(v, false);
-      this.trailingComment(v);
+      this.scalarAndComment(v);
       this.put("\n");
     }
   }
@@ -1968,8 +1984,7 @@ class Printer {
       } else {
         const annotated = this.typeAnnotation(el);
         this.put(annotated ? " = " : " ");
-        this.value(el, false);
-        this.trailingComment(el);
+        this.scalarAndComment(el);
         this.put("\n");
       }
     }
@@ -2013,7 +2028,9 @@ class Printer {
     } else {
       this.typeAnnotation(v);
       this.put(" = ");
-      this.value(v, false);
+      this.scalarAndComment(v);
+      this.put("\n");
+      return;
     }
     this.trailingComment(v);
     this.put("\n");

@@ -8,11 +8,11 @@ part_of = [docs](/docs/docs.md)
 contents
 > * [Closed tasks](/docs/tasks/closed/closed.md)
 > * [The Rust helper reads JSON with fig's json format](/docs/tasks/helper-serde-json.md)
-> * [A comment after a figl multi-line string's opening quotes is invisible to the editor](/docs/tasks/figl-multiline-string-opener-comment.md)
 > * [Deleting the first element of a figl + chain is refused](/docs/tasks/figl-continuation-chain-first-delete.md)
 > * [Deleting the only table of a TOML array of tables removes the key](/docs/tasks/toml-array-of-tables-emptied-removes-key.md)
 > * [Six deletes are refused because their splice takes another value](/docs/tasks/delete-splices-taking-other-values.md)
 > * [The JavaScript YAML twin misreads compact sequences two deep](/docs/tasks/yaml-twin-deep-compact-sequences.md)
+> * [A comment after a figl multi-line list's opening bracket is invisible to the editor](/docs/tasks/figl-multiline-list-opener-comment.md)
 ```
 
 # Tasks

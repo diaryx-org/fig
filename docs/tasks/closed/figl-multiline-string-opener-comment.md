@@ -1,12 +1,23 @@
 ```fig
 title = A comment after a figl multi-line string's opening quotes is invisible to the editor
-part_of = [Tasks](/docs/tasks/tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 description = figl reads a comment after an opening `'''` or `"""`, but the editor looks for a value's trailing comment only after the closing quotes, so get misses it and set writes a second comment beside it
-status = open
+status = done
 created = 2026-10-13
+updated = 2026-10-13
 ```
 
 # A comment after a figl multi-line string's opening quotes is invisible to the editor
+
+**Status.** Done, in `fix(editor): a figl multi-line string's trailing
+comment lives on its opener line` (ce65966, 2026-10-13). A new
+`Syntax.opener_line_comment`, which figl sets, makes the editor's
+trailing-comment window start at a multi-line scalar's opener, so get, set
+and delete act on `x = ''' # note`; the printer (8a1c8e4) and the JavaScript
+twin write it there too, and TOML, whose opener line is string content, is
+unchanged. A comment after the closing quotes is still read as the string's
+when the opener has none, for files the old printer wrote, and the editor
+never touches it.
 
 **Repro.** Found while fixing the YAML block-scalar comment (e6ca1eb):
 

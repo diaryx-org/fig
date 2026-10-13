@@ -301,8 +301,9 @@ accepts, by extension or by `--lang <name>`; `fig lang list` shows what
 loaded and `fig lang check <name> --against <format>` holds it to a
 bundled twin. A helper may take the name of a language the build leaves
 out, and is then reached by that name and its extensions. `examples/tinykv_helper.rs` is a complete helper, and
-`tools/cli-lang-check.sh` in the core drives the CLI through it. The wire
-is documented on the `helper` module; see
+`tools/cli-lang-check.sh` in the core drives the CLI through it. The
+protocol, JSON-RPC 2.0 by the line, is specified in
+[the helper protocol](helper-protocol.md); see
 `docs/proposals/runtime-languages.md` in the core for the design.
 
 ## Reading data

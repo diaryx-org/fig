@@ -54,6 +54,32 @@ and fenced or HTML blocks: a Markdown `metadata` node's byte spans, through
 twig's query API. Open fig's `Editor` over the block's contents, edit, and
 splice its source back between those spans.
 
+## Helpers speak JSON-RPC 2.0
+
+The helper wire is [JSON-RPC 2.0](helper-protocol.md), one message per
+line. A helper built against 5.x is refused with a message saying it
+needs rebuilding.
+
+| 5.x | 6.0 |
+| --- | --- |
+| `{"op":"parse","dialect":…,"input":…}` | `{"jsonrpc":"2.0","id":n,"method":"parse","params":{"dialect":…,"input":…}}` |
+| `{"ok":true,"table":{…}}` (`description`, `output`, `documents`) | `{"jsonrpc":"2.0","id":n,"result":{…}}`, the result itself |
+| `{"ok":false,"message":m,"byte_offset":o}` | `{"jsonrpc":"2.0","id":n,"error":{"code":-32000,"message":m,"data":{"byte_offset":o}}}` |
+| `"op":"render","which":…` | `"method":"render"`, `which` in `params` |
+
+A helper written with `fig::helper::serve` or `@diaryx/fig/helper`'s
+`serve` needs a rebuild and nothing else. One that answers by hand echoes
+the request's `id`, and answers a method it does not have with -32601.
+`fig::helper::handle` and TypeScript's `handle` answer the new envelope;
+TypeScript's `LanguageError` takes a third argument, a `Refusal` code, for
+a printer to say why it refuses.
+
+The Zig `fig.Wire.Transport` trades lines: `exchangeFn` returns the
+response line, where `callFn` returned a parsed `std.json.Value`, and
+`fig.Wire.call(transport, arena, method, params)` sends one request. The
+wire needs the `zigjr` package, which `build.zig.zon` names; a build that
+does not carry the wire passes `-Dhelper-wire=false` and fetches nothing.
+
 ## Rust
 
 | 5.x | 6.0 |

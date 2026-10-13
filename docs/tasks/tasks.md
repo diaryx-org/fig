@@ -17,6 +17,7 @@ contents
 > * [Compiled TOML 1.0, YAML 1.1 and YAML streams cannot be scored by fig-conformance](/docs/tasks/compiled-dialects-unreachable-by-conformance.md)
 > * [Deleting the last item of a YAML block list leaves the key null](/docs/tasks/yaml-block-list-emptied-to-null.md)
 > * [Closed tasks](/docs/tasks/closed/closed.md)
+> * [The Rust helper reads JSON with fig's json format](/docs/tasks/helper-serde-json.md)
 ```
 
 # Tasks

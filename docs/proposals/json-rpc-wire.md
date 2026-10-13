@@ -4,15 +4,18 @@ description = fig and twig speak one helper protocol, JSON-RPC 2.0 over newline-
 author = adammharris
 created = 2026-10-12
 updated = 2026-10-12
-status = draft
+status = accepted
 part_of = [Proposals](/docs/proposals/proposals.md)
 ```
 
 # JSON-RPC wire
 
-> **Status: DRAFT.** Written against `main` at 4f348cb (6.0 in progress,
-> ABI 4) and twig 4.1.0. Nothing here is built. It lands in fig 6.0 and in
-> twig's next major, which breaks the same helpers.
+> **Status: ACCEPTED; fig's half is built.** Written against `main` at
+> 4f348cb (6.0 in progress, ABI 4) and twig 4.1.0. fig speaks the protocol
+> [docs/helper-protocol.md](/docs/helper-protocol.md) specifies, on
+> zigjr; where what was built differs from what is argued below, the
+> protocol page is right and the difference is noted here. Left: §6 steps
+> 4 and 5 (fig-quickjs, fig-lua, twig), and the Rust helper's JSON (§4).
 
 ## 1. Two wires, one shape
 
@@ -60,7 +63,7 @@ What it gives up is everything around them.
 | --- | --- |
 | `"op":"parse"` | `"method":"parse"` |
 | every other request field | a member of `params` (always an object) |
-| `{"ok":true,…}` | `result`, holding what the response held besides `ok` |
+| `{"ok":true,…}` | `result`: the value itself — the description, the table, the text — not an object around it |
 | `{"ok":false,"message":m}` | `error: {code, message: m}` |
 | `byte_offset` on a failure | `error.data.byte_offset` |
 | — | `id`: an integer the caller counts up per transport |
@@ -74,11 +77,12 @@ not a fixed set.
 
 The spec reserves −32768…−32000. A helper answers −32700 for a line that is
 not JSON, −32600 for a message that is not a request, −32601 for a method it
-does not have and −32602 for params it cannot read; fig maps all four to
-"the helper does not speak the wire". A language's own refusal is a positive
-code: fig's `abi.Refusal` values as they are (the codes `FigError.code`
-already carries, `0` being `unspecified`), and twig's status codes the same
-way.
+does not have and −32602 for params it cannot read; fig reports all four as
+the helper not handling its request. A language's own refusal is −32000, the
+first of the codes JSON-RPC leaves to the server; a printer's refusal with a
+reason is that reason's `abi.Refusal` value, 1–9 (the codes `FigError.code`
+already carries). `0` is never an error code, so an error object is never
+mistaken for its absence. twig's status codes go the same way.
 
 ### 2.3 Ids and order
 
@@ -128,10 +132,17 @@ fig's wire reads a response with its own walk over `std.json.Scanner`
 (`parseLine`) because `std.json.parseFromSlice`'s number path links the
 float parser into every host, and the wire carries no floats. zigjr parses
 a message into `std.json.Value` with `parseFromSlice`, which links it back.
-That matters for the wasm module and not for the CLI. Step 1 measures it;
-if it costs more than a few kilobytes, the fork takes an option to parse
-`params` and `result` as integer-only values, which is a change upstream
-would not need to take.
+That matters for the wasm module and not for the CLI. Step 1 measured it.
+
+**Measured (2026-10-12).** In the language-free `fig.wasm` (704,735 bytes
+stripped), reading a response through upstream zigjr added 25 KB of code;
+through `std.json.parseFromSlice` into a `Value`, 2 KB. A first stripped
+build looked 134 KB larger, but that was debug sections: zigjr's module set
+`strip = false` and the host's target, so it overrode the importing wasm
+build. The fork now leaves those to its importer, and reads every message
+with a token walk that keeps integers as integers and other numbers as
+text (`jsonrpc/wire_value.zig`). Reading a response through the fork costs
+5.3 KB in all.
 
 zigjr's own line count (about 8.7k, much of it the dispatcher's reflection)
 is not a cost: Zig compiles what is referenced, and the calling end
@@ -149,7 +160,11 @@ only what is fig's or twig's:
   adds no JSON dependency. In 6.0 that means a helper silently needs the
   `json` language built in, which a build may leave out. The helper module
   moves to `serde_json`, behind the `helper` feature, so the crate's default
-  graph is unchanged. twig's `twig::helper` does the same.
+  graph is unchanged. twig's `twig::helper` does the same. *Not done in
+  the first pass:* the module's public functions (`table_to_value`,
+  `description_to_value`, `handle`) trade `fig::Value`, which fig-lua and
+  fig-quickjs build on, so the move is its own change
+  ([task](/docs/tasks/helper-serde-json.md)).
 - **Anything else.** A helper in Python, Go or Lua implements `describe`,
   `parse`, `print` and `render` against whatever JSON-RPC library its
   language has. That is the point of the change.
@@ -180,8 +195,9 @@ the node table, which keeps its shape.
    host), `Transport` as `exchange`; the old-wire detection of §2.4.
 3. fig's answering ends: `fig::helper` on `serde_json`, `@diaryx/fig/helper`,
    `tinykv_helper`, the checks. The spec of the wire moves from
-   `helper.rs`'s doc comment to `docs/spec.md`, where a helper author in
-   another language finds it.
+   `helper.rs`'s doc comment to its own page (`docs/helper-protocol.md`;
+   `docs/spec.md` is figl's), where a helper author in another language
+   finds it.
 4. fig-quickjs and fig-lua.
 5. twig, the same three steps, with its own methods (§2.1).
 

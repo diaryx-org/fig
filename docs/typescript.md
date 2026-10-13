@@ -537,8 +537,8 @@ answers, spelled with the wire's own field names — `max_mapping_depth`,
 what makes it one contract across hosts: a `.lua` script for `fig-lua`, a
 Rust `Language`, and this object all declare the same fields, and what
 `fig lang table <file>` prints for any file the CLI can read is exactly what
-your `parse` must return for it. The shapes are documented once, on the
-`helper` module of the [Rust crate](https://docs.rs/fig) (`bindings/rust/fig/src/helper.rs`);
+your `parse` must return for it. The shapes are specified once, in
+[the helper protocol](helper-protocol.md);
 the TypeScript types `Language`, `NodeTable`, `NodeRow`, `Syntax` and the
 rest mirror them field for field, and `docs/proposals/runtime-languages.md`
 in the core is the design.
@@ -554,7 +554,10 @@ a language takes it: to set your own YAML beside the package's, name it
 apart (`js-yaml`). Refuse
 input from `parse` by throwing a
 `LanguageError` with a message and byte offset; anything else you throw is
-reported as a parse error without one. A registered language lives for the
+reported as a parse error without one. A `print` that refuses a table can
+say why with a third argument, one of `Refusal`'s codes
+(`new LanguageError("JSON has no null key", undefined, Refusal.NonStringKey)`),
+and fig reports the failure that names. A registered language lives for the
 rest of the process, and its `Format` is assigned per process — persist
 the **name** and resolve it with `formatByName(name)`.
 

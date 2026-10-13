@@ -53,7 +53,7 @@ function hostCall(lang: number, requestPtr: number, requestLen: number, outPtr: 
 setHostCall(hostCall);
 
 /** Register `lang`, the way a caller brings a format into the module: the
- *  package compiles none in, so `@diaryx/fig/languages/yaml` and its peers
+ *  package compiles none in, so `@diaryx/fig-yaml` and its peers
  *  are registered here, each the caller imports, and the rest cost nothing.
  *  Returns the `Format` of the language's first dialect, and from then on
  *  `lang.format` is that `Format` too (`yaml.format`); the other dialects

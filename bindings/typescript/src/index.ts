@@ -1,8 +1,8 @@
 // fig — parsing, comment-preserving editing, and cross-format serialization
 // of every format a registered language brings — the package ships JSON,
 // JSONC, JSON5, YAML, TOML, ZON, INI, dotenv, .properties, plist, NestedText
-// and fig as `@diaryx/fig/languages/*` — backed by the fig core compiled to
-// WebAssembly.
+// and fig as packages of their own, `@diaryx/fig-<name>` — backed by the fig
+// core compiled to WebAssembly.
 //
 // The module loads synchronously and imports nothing host-specific, so it works
 // identically in Node and the browser.

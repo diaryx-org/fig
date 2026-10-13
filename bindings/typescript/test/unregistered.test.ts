@@ -6,9 +6,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { Document, FigError, Status, convert, formatByName, formatName, registerLanguage, requireFormat, stringify } from "../src/index.ts";
-import json from "@diaryx/fig/languages/json";
-import json5 from "@diaryx/fig/languages/json5";
-import yaml from "@diaryx/fig/languages/yaml";
+import json from "@diaryx/fig-json";
+import yaml from "@diaryx/fig-yaml";
 
 /** `f` throws the unregistered-format error naming `module`. */
 function refusesFor(f: () => unknown, module: string): void {
@@ -16,7 +15,7 @@ function refusesFor(f: () => unknown, module: string): void {
     assert.ok(err instanceof FigError, String(err));
     assert.equal(err.status, Status.UnsupportedFormat);
     assert.ok(
-      err.message.includes(`import ${module} from "@diaryx/fig/languages/${module}"`) && err.message.includes("registerLanguage"),
+      err.message.includes(`import ${module} from "@diaryx/fig-${module}"`) && err.message.includes("registerLanguage"),
       err.message,
     );
     return true;
@@ -26,13 +25,13 @@ function refusesFor(f: () => unknown, module: string): void {
 test("a format no language is registered for says which one to import", () => {
   assert.equal(formatByName("toml"), null);
   refusesFor(() => requireFormat("toml"), "toml");
-  // JSONC is a dialect of the JSON5 language, and YAML 1.1 of YAML's.
-  refusesFor(() => requireFormat("jsonc"), "json5");
+  // JSONC is a dialect of the JSON language, and YAML 1.1 of YAML's.
+  refusesFor(() => requireFormat("jsonc"), "json");
   refusesFor(() => requireFormat("yaml-1.1"), "yaml");
   // A name no package language has gets no module to import.
   assert.throws(
     () => requireFormat("no-such"),
-    (err: unknown) => err instanceof FigError && err.status === Status.UnsupportedFormat && !err.message.includes("@diaryx/fig/languages") && /registerLanguage/.test(err.message),
+    (err: unknown) => err instanceof FigError && err.status === Status.UnsupportedFormat && !err.message.includes("@diaryx/fig-") && /registerLanguage/.test(err.message),
   );
   // A number no registration handed out is not a format.
   assert.throws(
@@ -51,7 +50,6 @@ test("registering a language brings in its format, and registering it again is t
   assert.equal(formatName(first), "yaml");
   assert.equal(registerLanguage(yaml), first);
   const Json = registerLanguage(json);
-  registerLanguage(json5);
   assert.equal(json.format, Json);
   assert.equal(convert("a: [1, 2]\n", first, Json), '{\n  "a": [\n    1,\n    2\n  ]\n}\n');
   assert.equal(convert("// c\n{\"a\": 1}\n", requireFormat("jsonc"), first), "# c\na: 1\n");

@@ -1,13 +1,13 @@
 // The languages compiled from fig's own Zig, each a WebAssembly module of
-// its own (`@diaryx/fig/languages/*`, `src/native.ts`): registered, they
+// its own (`@diaryx/fig-<name>`, `src/native.ts`): registered, they
 // parse and print through their module with the node table crossing as
 // its rows, and describe, render and split over the helper wire.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Document, Editor, FigError, convert, formatByName, init, registerLanguage, splitStream } from "../src/index.ts";
-import yaml from "@diaryx/fig/languages/yaml";
-import json from "@diaryx/fig/languages/json";
-import dotenv from "@diaryx/fig/languages/dotenv";
+import yaml from "@diaryx/fig-yaml";
+import json from "@diaryx/fig-json";
+import dotenv from "@diaryx/fig-dotenv";
 
 await init(yaml, json, dotenv);
 const Yaml = registerLanguage(yaml);

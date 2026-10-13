@@ -1,7 +1,7 @@
-//! The XML property list for fig, as a package of its own, which depends on the kit
-//! and on nothing else of fig's. `zig build test` runs its tests, `zig
-//! build c` builds its C library and `zig build wasm` its WebAssembly
-//! module: see `language` in the kit's `build.zig`.
+//! The XML property list for fig, as a package of its own, which depends on the
+//! kit and on nothing else of fig's. `zig build test` runs its tests, `zig
+//! build c` builds its C library and `zig build wasm` its WebAssembly module:
+//! see `language` in the kit's `build.zig`.
 
 const std = @import("std");
 

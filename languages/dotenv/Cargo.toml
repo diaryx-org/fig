@@ -10,6 +10,7 @@ description = "dotenv for fig: fig's own parser, printer and editing rules for t
 repository = "https://github.com/diaryx-org/fig"
 homepage = "https://github.com/diaryx-org/fig"
 documentation = "https://docs.rs/fig-dotenv"
+readme = "README.md"
 keywords = ["config", "fig", "dotenv", "parser"]
 categories = ["config", "parser-implementations"]
 # The language's own library, `libfig_dotenv.a`, which the build script
@@ -22,6 +23,7 @@ include = [
     "src/**/*",
     "include/**/*",
     "rust/**/*",
+    "README.md",
     "LICENSE-MIT",
     "LICENSE-APACHE",
 ]

@@ -1,7 +1,7 @@
 {
   "name": "@diaryx/fig",
   "version": "6.0.0",
-  "description": "JSON, JSONC, JSON5, YAML, TOML, INI, dotenv, .properties, NestedText, ZON, plist and fig parsing, comment-preserving editing, and cross-format serialization: a Zig core compiled to WebAssembly, with each format a WebAssembly module of its own you import only if you use it.",
+  "description": "JSON, JSONC, JSON5, YAML, TOML, INI, dotenv, .properties, NestedText, ZON, plist and fig parsing, comment-preserving editing, and cross-format serialization: a Zig core compiled to WebAssembly, with each format a WebAssembly module of its own, a package of its own (@diaryx/fig-yaml, …) you install only if you use it.",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -29,10 +29,6 @@
       "types": "./dist/kit/*.d.ts",
       "default": "./kit/*.js"
     },
-    "./languages/*": {
-      "types": "./languages/*.d.ts",
-      "default": "./languages/*.js"
-    },
     "./js/*": {
       "fig-source": "./js/*.js",
       "types": "./dist/js/*.d.ts",
@@ -44,7 +40,6 @@
     "dist",
     "kit",
     "js",
-    "languages",
     "src",
     "!src/wasm-bytes.ts",
     "!dist/wasm-bytes.js.map",
@@ -91,6 +86,16 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
+    "@diaryx/fig-json": "file:../../languages/json",
+    "@diaryx/fig-yaml": "file:../../languages/yaml",
+    "@diaryx/fig-toml": "file:../../languages/toml",
+    "@diaryx/fig-zon": "file:../../languages/zon",
+    "@diaryx/fig-figl": "file:../../languages/figl",
+    "@diaryx/fig-ini": "file:../../languages/ini",
+    "@diaryx/fig-dotenv": "file:../../languages/dotenv",
+    "@diaryx/fig-properties": "file:../../languages/properties",
+    "@diaryx/fig-plist": "file:../../languages/plist",
+    "@diaryx/fig-nestedtext": "file:../../languages/nestedtext",
     "@types/node": "^24.13.3",
     "typescript": "^5.8.0"
   },

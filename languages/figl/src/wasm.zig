@@ -1,5 +1,5 @@
-//! Figl as a WebAssembly module of its own, `fig-figl.wasm`: the exports
-//! the TypeScript binding registers it into fig's module through.
+//! The figl language as a WebAssembly module of its own, `fig-figl.wasm`: the
+//! exports the TypeScript binding registers it into fig's module through.
 
 comptime {
     _ = @import("kit").wasm_language.Exports(@import("figl.zig").Language);

@@ -1,0 +1,53 @@
+{
+  "name": "@diaryx/fig-json",
+  "version": "6.0.0",
+  "description": "JSON, JSONC and JSON5 for @diaryx/fig: fig's own parser, printer and editing rules for the language, written in Zig and compiled to a WebAssembly module of its own. Pass it to registerLanguage.",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./js/json.d.ts",
+      "default": "./js/json.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "js/json.js",
+    "js/json.d.ts",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "peerDependencies": {
+    "@diaryx/fig": "6.0.0"
+  },
+  "scripts": {
+    "build": "zig build wasm && node js/build.mjs",
+    "prepack": "npm run build"
+  },
+  "keywords": [
+    "fig",
+    "json",
+    "jsonc",
+    "json5",
+    "config",
+    "parser",
+    "comment-preserving",
+    "webassembly",
+    "wasm"
+  ],
+  "author": "Adam Harris <amh421@icloud.com>",
+  "license": "MIT OR Apache-2.0",
+  "homepage": "https://github.com/diaryx-org/fig/tree/main/languages/json",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/diaryx-org/fig.git",
+    "directory": "languages/json"
+  },
+  "bugs": {
+    "url": "https://github.com/diaryx-org/fig/issues"
+  },
+  "sideEffects": false
+}

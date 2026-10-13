@@ -1,5 +1,6 @@
 // Languages compiled from fig's own Zig, each a WebAssembly module of its
-// own beside the core's: `@diaryx/fig/languages/<name>`. The core reaches
+// own beside the core's, each a package of its own: `@diaryx/fig-<name>`,
+// built from fig's `languages/<name>/`. The core reaches
 // one the way it reaches a language written in JavaScript — described,
 // and asked for renderings and stream splits, over the helper wire — but
 // parses and prints through it as the node table's rows: a parse writes

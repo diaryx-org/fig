@@ -10,6 +10,7 @@ description = "TOML for fig: fig's own parser, printer and editing rules for the
 repository = "https://github.com/diaryx-org/fig"
 homepage = "https://github.com/diaryx-org/fig"
 documentation = "https://docs.rs/fig-toml"
+readme = "README.md"
 keywords = ["config", "fig", "toml", "parser"]
 categories = ["config", "parser-implementations"]
 # The language's own library, `libfig_toml.a`, which the build script
@@ -22,6 +23,7 @@ include = [
     "src/**/*",
     "include/**/*",
     "rust/**/*",
+    "README.md",
     "LICENSE-MIT",
     "LICENSE-APACHE",
 ]

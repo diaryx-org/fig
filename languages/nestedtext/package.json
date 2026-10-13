@@ -1,0 +1,51 @@
+{
+  "name": "@diaryx/fig-nestedtext",
+  "version": "6.0.0",
+  "description": "NestedText for @diaryx/fig: fig's own parser, printer and editing rules for the language, written in Zig and compiled to a WebAssembly module of its own. Pass it to registerLanguage.",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./js/nestedtext.d.ts",
+      "default": "./js/nestedtext.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "js/nestedtext.js",
+    "js/nestedtext.d.ts",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "peerDependencies": {
+    "@diaryx/fig": "6.0.0"
+  },
+  "scripts": {
+    "build": "zig build wasm && node js/build.mjs",
+    "prepack": "npm run build"
+  },
+  "keywords": [
+    "fig",
+    "nestedtext",
+    "config",
+    "parser",
+    "comment-preserving",
+    "webassembly",
+    "wasm"
+  ],
+  "author": "Adam Harris <amh421@icloud.com>",
+  "license": "MIT OR Apache-2.0",
+  "homepage": "https://github.com/diaryx-org/fig/tree/main/languages/nestedtext",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/diaryx-org/fig.git",
+    "directory": "languages/nestedtext"
+  },
+  "bugs": {
+    "url": "https://github.com/diaryx-org/fig/issues"
+  },
+  "sideEffects": false
+}

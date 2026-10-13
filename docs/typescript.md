@@ -56,7 +56,7 @@ call any API directly:
 
 ```ts
 import { parse, registerLanguage } from "@diaryx/fig";
-import json from "@diaryx/fig/languages/json";
+import json from "@diaryx/fig-json";
 
 const Json = registerLanguage(json);
 parse('{"ok":true}', Json); // → { ok: true }
@@ -69,7 +69,7 @@ of its own, and `init` compiles them too:
 
 ```ts
 import { init, parse, registerLanguage } from "@diaryx/fig";
-import json from "@diaryx/fig/languages/json";
+import json from "@diaryx/fig-json";
 
 await init(json);                   // do this once, e.g. during app bootstrap
 const Json = registerLanguage(json);
@@ -84,9 +84,9 @@ call throws a clear error telling you to `await init()`.
 
 ```ts
 import { parse, stringify, convert, registerLanguage } from "@diaryx/fig";
-import json from "@diaryx/fig/languages/json";
-import toml from "@diaryx/fig/languages/toml";
-import yaml from "@diaryx/fig/languages/yaml";
+import json from "@diaryx/fig-json";
+import toml from "@diaryx/fig-toml";
+import yaml from "@diaryx/fig-yaml";
 
 // Bring in the formats you use, once, at startup. Each registration hands
 // back the language's `Format`.
@@ -123,34 +123,34 @@ cfg.port; // typed as number
 
 ## Formats
 
-Every format is a language you import from `@diaryx/fig/languages/<name>` and
-pass to `registerLanguage`, which returns its `Format`: an opaque handle that
+Every format is a language of its own package, `@diaryx/fig-<name>`, which
+you install beside `@diaryx/fig`, import, and pass to `registerLanguage`, which returns its `Format`: an opaque handle that
 `parse`, `Editor`, `convert` and the rest take. The language object holds it
 from then on too (`yaml.format`), and every dialect is found by its name
 (`formatByName("jsonc")`).
 A format you don't import costs nothing.
 
 Each is fig's own Zig parser and printer — the code the `fig` command line,
-the Rust crates and the C library run — compiled to a WebAssembly module of
-its own, 28 to 69 KB gzipped. A parse writes its node table in the
+the Rust crates and the C library run, in fig's `languages/<name>/` —
+compiled to a WebAssembly module of its own, 28 to 69 KB gzipped. A parse writes its node table in the
 language's module and the table crosses into fig's as its rows, so a
 document parses at native speed. The same formats written in JavaScript are
 at `@diaryx/fig/js/<name>` ([Runtime languages](#runtime-languages)).
 
-| Dialect      | Import                          | Notes |
-| ------------ | ------------------------------- | ----- |
-| `json`       | `@diaryx/fig/languages/json`    | Strict JSON (no comments). |
-| `jsonc`      | `@diaryx/fig/languages/json`    | JSON with `//` and `/* */` comments; a dialect JSON's module serves. |
-| `json5`      | `@diaryx/fig/languages/json`    | Unquoted keys, trailing commas, etc.; `formatByName("json5")`. `@diaryx/fig/languages/json5` is the same module. |
-| `yaml`       | `@diaryx/fig/languages/yaml`    | YAML 1.2.2; its `yaml-1.1` dialect resolves scalars as 1.1. |
-| `toml`       | `@diaryx/fig/languages/toml`    | TOML 1.0 / 1.1, incl. datetimes. |
-| `figl`       | `@diaryx/fig/languages/figl`    | The native `figl` authoring dialect. |
-| `ini`        | `@diaryx/fig/languages/ini`     | `[section]` + `key = value`. Untyped scalars — `port = 8080` reads back as the string `"8080"`. |
-| `dotenv`     | `@diaryx/fig/languages/dotenv`  | Flat `KEY=value`: no nesting, untyped scalars. |
-| `properties` | `@diaryx/fig/languages/properties` | Java `.properties`; same flat, untyped limits as dotenv. |
-| `nestedtext` | `@diaryx/fig/languages/nestedtext` | [NestedText](https://nestedtext.org) — nested (dict/list) but deliberately untyped. |
-| `zon`        | `@diaryx/fig/languages/zon`     | Zig Object Notation. |
-| `plist`      | `@diaryx/fig/languages/plist`   | Apple XML property list; typed and nested. |
+| Dialect      | Import                   | Notes |
+| ------------ | ------------------------ | ----- |
+| `json`       | `@diaryx/fig-json`       | Strict JSON (no comments). |
+| `jsonc`      | `@diaryx/fig-json`       | JSON with `//` and `/* */` comments; a dialect JSON's module serves. |
+| `json5`      | `@diaryx/fig-json`       | Unquoted keys, trailing commas, etc.; `formatByName("json5")`. |
+| `yaml`       | `@diaryx/fig-yaml`       | YAML 1.2.2; its `yaml-1.1` dialect resolves scalars as 1.1. |
+| `toml`       | `@diaryx/fig-toml`       | TOML 1.0 / 1.1, incl. datetimes. |
+| `figl`       | `@diaryx/fig-figl`       | The native `figl` authoring dialect. |
+| `ini`        | `@diaryx/fig-ini`        | `[section]` + `key = value`. Untyped scalars — `port = 8080` reads back as the string `"8080"`. |
+| `dotenv`     | `@diaryx/fig-dotenv`     | Flat `KEY=value`: no nesting, untyped scalars. |
+| `properties` | `@diaryx/fig-properties` | Java `.properties`; same flat, untyped limits as dotenv. |
+| `nestedtext` | `@diaryx/fig-nestedtext` | [NestedText](https://nestedtext.org) — nested (dict/list) but deliberately untyped. |
+| `zon`        | `@diaryx/fig-zon`        | Zig Object Notation. |
+| `plist`      | `@diaryx/fig-plist`      | Apple XML property list; typed and nested. |
 
 A format is a handle assigned per process, in registration order: persist
 its **name**, never the number, and resolve it with `formatByName(name)`
@@ -170,7 +170,7 @@ module to import:
 ```ts
 requireFormat("toml");
 // FigError: requireFormat("toml"): no language is registered for the format
-// "toml" — import toml from "@diaryx/fig/languages/toml" and pass it to
+// "toml" — import toml from "@diaryx/fig-toml" and pass it to
 // registerLanguage()
 ```
 
@@ -179,7 +179,7 @@ language declared:
 
 ```ts
 import { capabilities, registerLanguage } from "@diaryx/fig";
-import yaml from "@diaryx/fig/languages/yaml";
+import yaml from "@diaryx/fig-yaml";
 
 capabilities(registerLanguage(yaml)); // → { read: true, edit: true, serialize: true, references: true }
 ```

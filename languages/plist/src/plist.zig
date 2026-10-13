@@ -57,8 +57,8 @@ pub const Language = struct {
     pub const extensions: []const []const u8 = &.{"plist"};
     pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
 
-    /// What fig's `src/contract/harness.zig` round-trips and edits: a dict with a
-    /// string, an integer and an array.
+    /// What fig's `src/contract/harness.zig` round-trips and edits: a dict with
+    /// a string, an integer and an array.
     pub const samples: []const []const u8 = &.{
         "<plist version=\"1.0\"><dict><key>a</key><string>b</string><key>n</key><integer>1</integer><key>l</key><array><true/><false/></array></dict></plist>\n",
     };

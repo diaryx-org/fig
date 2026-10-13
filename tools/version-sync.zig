@@ -17,7 +17,9 @@
 //!   * `bindings/rust/Cargo.toml`     `[workspace.package] version` and every
 //!                                     internal `{ path, version }` pin
 //!   * `bindings/typescript/package.json` and `bindings/wasi/package.json`
-//!   * both `package-lock.json` files — the root `version` and `packages[""]`
+//!   * both `package-lock.json` files — the root `version` and `packages[""]`,
+//!     and in the TypeScript binding's, each language package it links for its
+//!     tests (`../../languages/<name>`): its `version` and its `@diaryx/fig` pin
 //!   * `bindings/nushell/Cargo.toml`  the `fig = { path, version }` pin: the
 //!                                     plugin is its own workspace on its own
 //!                                     version, and depends on fig by path
@@ -25,6 +27,8 @@
 //!                                     reaches by path, so `--locked` still builds
 //!   * `kit/build.zig.zon` and each `languages/<name>/build.zig.zon`, the
 //!     Zig packages of the kit and of every language
+//!   * each `languages/<name>/package.json`, its `version` and its exact pin
+//!     on `@diaryx/fig`, whose module its own must match
 //!
 //! `FIG_ABI_VERSION` / `abi_version` is deliberately not here: it is the C ABI's
 //! own contract integer, bumped only on a breaking ABI change, and it has no tag.
@@ -58,7 +62,7 @@ const targets = [_][]const u8{
     "bindings/nushell/Cargo.toml",
     "bindings/nushell/Cargo.lock",
     "kit/build.zig.zon",
-} ++ languageFiles("build.zig.zon");
+} ++ languageFiles("build.zig.zon") ++ languageFiles("package.json");
 
 /// `languages/<name>/<file>` for every language fig ships.
 fn languageFiles(comptime file: []const u8) [list.rows.len][]const u8 {
@@ -180,10 +184,15 @@ pub fn plan(
         const lock = packageLockVersionRanges(text) orelse return error.FieldNotFound;
         try out.append(arena, .{ .range = lock[0], .value = version_str, .what = "version" });
         try out.append(arena, .{ .range = lock[1], .value = version_str, .what = "packages[\"\"].version" });
+        var linked: std.ArrayList(Range) = .empty;
+        try packageLockLinkedRanges(text, arena, &linked);
+        for (linked.items) |r| try out.append(arena, .{ .range = r, .value = version_str, .what = "a linked language package's version or pin" });
     } else if (std.mem.endsWith(u8, rel, "build.zig.zon")) {
         try out.append(arena, .{ .range = zonVersionRange(text) orelse return error.FieldNotFound, .value = version_str, .what = ".version" });
     } else if (std.mem.endsWith(u8, rel, "package.json")) {
         try out.append(arena, .{ .range = jsonVersionRange(text, 0) orelse return error.FieldNotFound, .value = version_str, .what = "version" });
+        if (std.mem.startsWith(u8, rel, "languages/"))
+            try out.append(arena, .{ .range = jsonPinRange(text, "@diaryx/fig") orelse return error.FieldNotFound, .value = version_str, .what = "the @diaryx/fig pin" });
     } else unreachable;
     return out.items;
 }
@@ -367,6 +376,18 @@ pub fn cargoLockFigRanges(text: []const u8, arena: std.mem.Allocator, out: *std.
 }
 
 /// The string after the first `"version"` key at or after `from` in a JSON file.
+/// `"<name>": "…"` in a package.json's dependencies, the first key spelled
+/// exactly so.
+pub fn jsonPinRange(text: []const u8, name: []const u8) ?Range {
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, text, from, name)) |at| : (from = at + name.len) {
+        if (at == 0 or text[at - 1] != '"' or at + name.len >= text.len or text[at + name.len] != '"') continue;
+        const colon = std.mem.indexOfScalarPos(u8, text, at + name.len, ':') orelse return null;
+        return quotedRangeAfter(text, colon + 1);
+    }
+    return null;
+}
+
 pub fn jsonVersionRange(text: []const u8, from: usize) ?Range {
     const at = std.mem.indexOfPos(u8, text, from, "\"version\"") orelse return null;
     const colon = std.mem.indexOfScalarPos(u8, text, at + "\"version\"".len, ':') orelse return null;
@@ -376,6 +397,25 @@ pub fn jsonVersionRange(text: []const u8, from: usize) ?Range {
 /// A package-lock.json's two copies of the package's own version: the root
 /// `version`, and the one under `packages[""]` — the first `"version"` after
 /// the `""` key opens.
+/// In a package-lock.json, each language package linked from the repository
+/// (`"../../languages/<name>": { … }`): its `version`, and its pin on
+/// `@diaryx/fig`. None is not an error: only the TypeScript binding links any.
+pub fn packageLockLinkedRanges(text: []const u8, arena: std.mem.Allocator, out: *std.ArrayList(Range)) !void {
+    const key = "\"../../languages/";
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, text, from, key)) |at| {
+        from = at + key.len;
+        const close = std.mem.indexOfScalarPos(u8, text, from, '"') orelse return;
+        // A key, not a `"resolved"` value: a `:` and a `{` follow it.
+        const rest = std.mem.trimStart(u8, text[close + 1 ..], " ");
+        if (!std.mem.startsWith(u8, rest, ": {")) continue;
+        const end = std.mem.indexOfPos(u8, text, close, "\n    }") orelse text.len;
+        const entry = text[at..end];
+        if (jsonVersionRange(entry, 0)) |r| try out.append(arena, .{ .start = at + r.start, .end = at + r.end });
+        if (jsonPinRange(entry, "@diaryx/fig")) |r| try out.append(arena, .{ .start = at + r.start, .end = at + r.end });
+    }
+}
+
 pub fn packageLockVersionRanges(text: []const u8) ?[2]Range {
     const root = jsonVersionRange(text, 0) orelse return null;
     const packages = std.mem.indexOf(u8, text, "\"packages\"") orelse return null;
@@ -544,4 +584,51 @@ test "Cargo.lock: fig's path crates, not the root or a registry package" {
     try std.testing.expectEqual(@as(usize, 2), std.mem.count(u8, got, "version = \"5.1.0\""));
     try std.testing.expect(std.mem.indexOf(u8, got, "name = \"figment\"\nversion = \"5.0.0\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, got, "version = \"0.1.0\"") != null);
+}
+
+test "a language package's version and its @diaryx/fig pin" {
+    const text =
+        \\{
+        \\  "name": "@diaryx/fig-yaml",
+        \\  "version": "6.0.0",
+        \\  "homepage": "https://github.com/diaryx-org/fig",
+        \\  "peerDependencies": {
+        \\    "@diaryx/fig": "6.0.0"
+        \\  }
+        \\}
+    ;
+    const got = try applied("languages/yaml/package.json", text, "6.1.0");
+    defer std.testing.allocator.free(got);
+    try std.testing.expect(std.mem.indexOf(u8, got, "\"version\": \"6.1.0\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, got, "\"@diaryx/fig\": \"6.1.0\"") != null);
+}
+
+test "the language packages a package-lock.json links" {
+    const text =
+        \\{
+        \\  "name": "@diaryx/fig",
+        \\  "version": "6.0.0",
+        \\  "packages": {
+        \\    "": {
+        \\      "name": "@diaryx/fig",
+        \\      "version": "6.0.0"
+        \\    },
+        \\    "../../languages/yaml": {
+        \\      "name": "@diaryx/fig-yaml",
+        \\      "version": "6.0.0",
+        \\      "peerDependencies": {
+        \\        "@diaryx/fig": "6.0.0"
+        \\      }
+        \\    },
+        \\    "node_modules/@diaryx/fig-yaml": {
+        \\      "resolved": "../../languages/yaml",
+        \\      "link": true
+        \\    }
+        \\  }
+        \\}
+    ;
+    const got = try applied("bindings/typescript/package-lock.json", text, "6.1.0");
+    defer std.testing.allocator.free(got);
+    try std.testing.expectEqual(@as(usize, 0), std.mem.count(u8, got, "6.0.0"));
+    try std.testing.expectEqual(@as(usize, 4), std.mem.count(u8, got, "6.1.0"));
 }

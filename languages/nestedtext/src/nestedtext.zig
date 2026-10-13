@@ -37,8 +37,8 @@ pub const Language = struct {
     pub const extensions: []const []const u8 = &.{"nt"};
     pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
 
-    /// What fig's `src/contract/harness.zig` round-trips and edits: a dict with a
-    /// nested list.
+    /// What fig's `src/contract/harness.zig` round-trips and edits: a dict with
+    /// a nested list.
     pub const samples: []const []const u8 = &.{
         "a: 1\nb:\n  - x\n  - y\n",
     };

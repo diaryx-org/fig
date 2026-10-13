@@ -1,7 +1,7 @@
 // `import * as fig from "@diaryx/fig/kit"`: the kit a format written in
 // JavaScript is built from, with `@diaryx/fig/kit/grammar`, `/xml`,
 // `/number` and `/datetime` — the modules built beside it. The formats in
-// `@diaryx/fig/languages/*` are written with it, and fig-quickjs serves
+// `@diaryx/fig/js/*` are written with it, and fig-quickjs serves
 // the same files to a language it runs.
 //
 // Three layers, each written in terms of the one below:

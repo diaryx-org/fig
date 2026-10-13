@@ -10,6 +10,7 @@ description = "JSON, JSONC and JSON5 for fig: fig's own parser, printer and edit
 repository = "https://github.com/diaryx-org/fig"
 homepage = "https://github.com/diaryx-org/fig"
 documentation = "https://docs.rs/fig-json"
+readme = "README.md"
 keywords = ["config", "fig", "json", "parser"]
 categories = ["config", "parser-implementations"]
 # The language's own library, `libfig_json.a`, which the build script
@@ -22,6 +23,7 @@ include = [
     "src/**/*",
     "include/**/*",
     "rust/**/*",
+    "README.md",
     "LICENSE-MIT",
     "LICENSE-APACHE",
 ]

@@ -1,0 +1,52 @@
+{
+  "name": "@diaryx/fig-dotenv",
+  "version": "6.0.0",
+  "description": "Dotenv for @diaryx/fig: fig's own parser, printer and editing rules for the language, written in Zig and compiled to a WebAssembly module of its own. Pass it to registerLanguage.",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./js/dotenv.d.ts",
+      "default": "./js/dotenv.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "js/dotenv.js",
+    "js/dotenv.d.ts",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "peerDependencies": {
+    "@diaryx/fig": "6.0.0"
+  },
+  "scripts": {
+    "build": "zig build wasm && node js/build.mjs",
+    "prepack": "npm run build"
+  },
+  "keywords": [
+    "fig",
+    "dotenv",
+    "env",
+    "config",
+    "parser",
+    "comment-preserving",
+    "webassembly",
+    "wasm"
+  ],
+  "author": "Adam Harris <amh421@icloud.com>",
+  "license": "MIT OR Apache-2.0",
+  "homepage": "https://github.com/diaryx-org/fig/tree/main/languages/dotenv",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/diaryx-org/fig.git",
+    "directory": "languages/dotenv"
+  },
+  "bugs": {
+    "url": "https://github.com/diaryx-org/fig/issues"
+  },
+  "sideEffects": false
+}

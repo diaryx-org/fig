@@ -1,5 +1,5 @@
 // The module under test compiles no format in, as the published one does
-// not: every format here is a language of `@diaryx/fig/languages`,
+// not: every format here is a language package (`@diaryx/fig-<name>`),
 // registered first, and `Format` is the table of what registration handed
 // out.
 import { Format } from "./register-all.ts";

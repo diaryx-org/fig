@@ -45,8 +45,8 @@ pub const Language = struct {
     pub const extensions: []const []const u8 = &.{"figl"};
     pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true };
 
-    /// What fig's `src/contract/harness.zig` round-trips and edits: a root key, a
-    /// block container (the section shape the parser records regions for)
+    /// What fig's `src/contract/harness.zig` round-trips and edits: a root key,
+    /// a block container (the section shape the parser records regions for)
     /// with a `>` child, and a list.
     pub const samples: []const []const u8 = &.{
         "a = 1\ndatabase\n> host = localhost\n> port = 5432\n",

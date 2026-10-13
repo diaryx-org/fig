@@ -52,13 +52,13 @@ export function capabilities(format: Format): Capabilities {
   };
 }
 
-/** The module of `@diaryx/fig/languages` that registers each dialect the
- *  package's languages name: JSONC is a dialect of the JSON5 language, and
- *  YAML 1.1 one of YAML's. */
+/** The language package (`@diaryx/fig-<name>`) that registers each dialect
+ *  fig's languages name: JSONC and JSON5 are dialects of the JSON language,
+ *  and YAML 1.1 one of YAML's. */
 const LANGUAGE_MODULE: Readonly<Record<string, string>> = {
   json: "json",
-  jsonc: "json5",
-  json5: "json5",
+  jsonc: "json",
+  json5: "json",
   yaml: "yaml",
   "yaml-1.1": "yaml",
   toml: "toml",
@@ -71,15 +71,15 @@ const LANGUAGE_MODULE: Readonly<Record<string, string>> = {
   nestedtext: "nestedtext",
 };
 
-/** The error for a dialect `name` no registered language has: which module
- *  to import, where the package ships one. */
+/** The error for a dialect `name` no registered language has: which
+ *  package to import, where fig has one. */
 export function unregisteredError(name: string, op: string): FigError {
   const module = Object.hasOwn(LANGUAGE_MODULE, name) ? LANGUAGE_MODULE[name] : undefined;
   return new FigError(Status.UnsupportedFormat, op, {
     message:
       module === undefined
         ? `no language is registered for the format ${JSON.stringify(name)} — pass the language that has it to registerLanguage()`
-        : `no language is registered for the format ${JSON.stringify(name)} — import ${module} from "@diaryx/fig/languages/${module}" and pass it to registerLanguage()`,
+        : `no language is registered for the format ${JSON.stringify(name)} — import ${module} from "@diaryx/fig-${module}" and pass it to registerLanguage()`,
   });
 }
 
@@ -106,8 +106,8 @@ export function formatByName(name: string): Format | null {
 
 /** {@link formatByName}, throwing a {@link FigError} with
  *  `Status.UnsupportedFormat` where it would answer `null` — whose message,
- *  for a dialect one of the package's languages has, names the
- *  `@diaryx/fig/languages/<module>` to import and register. */
+ *  for a dialect one of fig's languages has, names the
+ *  `@diaryx/fig-<name>` to import and register. */
 export function requireFormat(name: string): Format {
   const format = formatByName(name);
   if (format === null) throw unregisteredError(name, `requireFormat(${JSON.stringify(name)})`);

@@ -10,6 +10,7 @@ description = "NestedText for fig: fig's own parser, printer and editing rules f
 repository = "https://github.com/diaryx-org/fig"
 homepage = "https://github.com/diaryx-org/fig"
 documentation = "https://docs.rs/fig-nestedtext"
+readme = "README.md"
 keywords = ["config", "fig", "nestedtext", "parser"]
 categories = ["config", "parser-implementations"]
 # The language's own library, `libfig_nestedtext.a`, which the build script
@@ -22,6 +23,7 @@ include = [
     "src/**/*",
     "include/**/*",
     "rust/**/*",
+    "README.md",
     "LICENSE-MIT",
     "LICENSE-APACHE",
 ]

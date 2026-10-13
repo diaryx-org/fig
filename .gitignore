@@ -16,3 +16,6 @@ history/
 # A language package's licence texts, copied in from the repo root by
 # `zig build vendor-rust` for its crate and its npm package.
 languages/*/LICENSE-*
+# A language package's JavaScript module, wrapped from its WebAssembly by
+# its js/build.mjs.
+languages/*/js/*.js

@@ -2037,7 +2037,6 @@ fn bool1_1(source: []const u8) ?bool {
     return null;
 }
 
-
 // ── Tag resolution ──────────────────────────────────────────────────────────
 // YAML resolves its own tags (docs/proposals/core-only.md §4.3): each row's
 // tag carries its text as written, what it names under the document's
@@ -2087,11 +2086,6 @@ fn agrees(k: AST.Tag.KindTag, kind: AST.Node.Kind) bool {
         .sequence, .mapping => unreachable,
     };
 }
-
-
-
-
-
 
 /// YAML 1.1 `!!timestamp`: a `YYYY-MM-DD` date or a full date-time with an
 /// optional `Z`/`±HH:MM` zone, via the shared datetime validator. Time-only and
@@ -2326,9 +2320,6 @@ fn appendCodepoint(decoded: *std.ArrayList(u8), allocator: std.mem.Allocator, co
         error.OutOfMemory => return error.OutOfMemory,
     };
 }
-
-
-
 
 /// True when a plain scalar token cannot legally begin a YAML plain scalar.
 /// Flow collections are now tokenized as their own tokens, so the only forms

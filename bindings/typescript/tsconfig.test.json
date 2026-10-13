@@ -11,11 +11,15 @@
     "rootDir": ".",
     "declaration": false,
     "declarationMap": false,
-    // `@diaryx/fig/helper`, `/kit` and `/languages/*` resolve to the
-    // sources rather than `dist/` (the `fig-source` rows of package.json's
-    // exports, which `npm test` passes to Node as well), and the kit and
-    // the languages are JavaScript, typed as written.
+    // `@diaryx/fig/helper` and `/kit` resolve to the sources rather than
+    // `dist/` (the `fig-source` rows of package.json's exports, which
+    // `npm test` passes to Node as well), and the kit and the JavaScript
+    // languages are JavaScript, typed as written.
     "customConditions": ["fig-source"],
+    // The language packages (`@diaryx/fig-<name>`, linked from the
+    // repository's languages/) type themselves against `@diaryx/fig`, which
+    // nothing above them in the tree installs: it is these sources.
+    "paths": { "@diaryx/fig": ["./src/index.ts"] },
     "allowJs": true,
     "checkJs": false
   },

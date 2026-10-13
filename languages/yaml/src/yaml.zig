@@ -60,8 +60,8 @@ pub const Language = struct {
         .lossless = .{ .null = true },
     };
 
-    /// What fig's `src/contract/harness.zig` round-trips and edits: block and flow
-    /// shapes, a sequence, a nested mapping.
+    /// What fig's `src/contract/harness.zig` round-trips and edits: block and
+    /// flow shapes, a sequence, a nested mapping.
     pub const samples: []const []const u8 = &.{
         "a: 1\nb:\n  - x\n  - y\nc:\n  d: true\n",
         "{a: 1, b: [2, 3]}\n",

@@ -7,19 +7,18 @@
 // export: core has no format members since 6.0.
 import { formatByName, registerLanguage, type Format as Handle } from "../src/index.ts";
 import canonical from "@diaryx/fig/js/canonical";
-import dotenv from "@diaryx/fig/languages/dotenv";
-import fig from "@diaryx/fig/languages/figl";
-import ini from "@diaryx/fig/languages/ini";
-import json from "@diaryx/fig/languages/json";
-import json5 from "@diaryx/fig/languages/json5";
-import nestedtext from "@diaryx/fig/languages/nestedtext";
-import plist from "@diaryx/fig/languages/plist";
-import properties from "@diaryx/fig/languages/properties";
-import toml from "@diaryx/fig/languages/toml";
-import yaml from "@diaryx/fig/languages/yaml";
-import zon from "@diaryx/fig/languages/zon";
+import dotenv from "@diaryx/fig-dotenv";
+import fig from "@diaryx/fig-figl";
+import ini from "@diaryx/fig-ini";
+import json from "@diaryx/fig-json";
+import nestedtext from "@diaryx/fig-nestedtext";
+import plist from "@diaryx/fig-plist";
+import properties from "@diaryx/fig-properties";
+import toml from "@diaryx/fig-toml";
+import yaml from "@diaryx/fig-yaml";
+import zon from "@diaryx/fig-zon";
 
-for (const lang of [json, json5, yaml, toml, zon, fig, ini, dotenv, properties, plist, nestedtext, canonical]) registerLanguage(lang);
+for (const lang of [json, yaml, toml, zon, fig, ini, dotenv, properties, plist, nestedtext, canonical]) registerLanguage(lang);
 
 function byName(name: string): Handle {
   const format = formatByName(name);

@@ -1,6 +1,7 @@
 name: Release (npm)
 # Publish @diaryx/fig (bindings/typescript), a JS *library* (parse/edit/
-# serialize as an API) backed by a freestanding wasm reactor module. Split out
+# serialize as an API) backed by a freestanding wasm reactor module, and then
+# each language's package (@diaryx/fig-yaml, …, from languages/<name>/). Split out
 # from release.figl (crates.io: fig + fig-macros) and release-npm-wasi.figl
 # (the npx-able fig-wasi CLI package) so each publish, with its own required
 # secret, can run (and be re-triggered) independently of the others.
@@ -15,7 +16,8 @@ name: Release (npm)
 # Required repository secret:
 # NPM_TOKEN  — npm automation token with publish rights (not yet set — this
 # job will fail at the publish step until it's added: `gh secret
-# set NPM_TOKEN`); needs publish rights to @diaryx/fig.
+# set NPM_TOKEN`); needs publish rights to @diaryx/fig and
+# each @diaryx/fig-<name>.
 on:
   workflow_dispatch: {}
   push: { tags: [v*.*.*] }
@@ -77,3 +79,24 @@ jobs:
             exit 1
           fi
         fi
+    # Then each language's package, which pins @diaryx/fig at this version, so
+    # it goes after it. Its prepack builds its module (`zig build wasm`, then
+    # js/build.mjs); the licence text is the repository's. Idempotent the same
+    # way.
+    - name: Publish the language packages to npm
+      env: { NODE_AUTH_TOKEN: '${{ secrets.NPM_TOKEN }}' }
+      run: |
+        set -u
+        for dir in languages/*/; do
+          cp LICENSE-MIT LICENSE-APACHE "$dir"
+          if out=$(cd "$dir" && npm publish --access public 2>&1); then
+            echo "$out"
+          else
+            echo "$out"
+            if echo "$out" | grep -qiE 'cannot publish over|previously published|EPUBLISHCONFLICT'; then
+              echo "::notice::$dir: npm version already published — skipping"
+            else
+              exit 1
+            fi
+          fi
+        done

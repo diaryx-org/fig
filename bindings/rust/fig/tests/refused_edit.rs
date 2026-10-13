@@ -129,6 +129,39 @@ fn serializing_an_infinite_float_to_json_says_why() {
 }
 
 #[test]
+fn figl_refuses_an_infinite_or_nan_float_in_an_edit_and_says_why() {
+    // figl spells one only as `version: float = inf`; the edit splices after
+    // `version = `, where `inf` would read back as a string.
+    const FIGL: &str = "name = music\nversion = 1\n";
+    for (typed_text, word, what) in [
+        ("1e999999", "inf", "an infinite number"),
+        ("-1e999999", "-inf", "an infinite number"),
+        ("nan", "nan", "NaN"),
+    ] {
+        let mut ed = Editor::open(FIGL.as_bytes(), by_name("figl")).unwrap();
+        let err = ed
+            .replace_value(&[Segment::Key("version")], typed(typed_text))
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!("figl writes {what} only as `key: float = {word}`, which has no place here")
+        );
+        assert_said_once(&err.to_string());
+        assert_eq!(ed.source().unwrap(), FIGL);
+    }
+}
+
+#[test]
+fn figl_writes_an_infinite_float_in_a_document_under_its_annotation() {
+    let v = Value::Map(vec![(
+        Value::Str("version".into()),
+        Value::Float(f64::NEG_INFINITY),
+    )]);
+    let out = v.serialize(by_name("figl")).unwrap();
+    assert_eq!(out, "version: float = -inf\n");
+}
+
+#[test]
 fn a_value_the_document_would_not_parse_with_is_one_sentence() {
     // Text fig cannot vouch for: an extended scalar's text is spliced as is.
     let bad = Value::Extended {

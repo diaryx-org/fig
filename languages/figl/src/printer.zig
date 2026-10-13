@@ -29,9 +29,14 @@ const Printer = @This();
 const std = @import("std");
 const AST = @import("kit").AST;
 const tok = @import("tokenizer.zig");
+const num = @import("kit").number;
 const Writer = std.Io.Writer;
 
-pub const Error = Writer.Error || error{ UnresolvedAlias, NonStringKey, UnexpectedNodeKind, UnrepresentableRoot };
+/// `NonFiniteNumber`: an infinite or NaN float where no `: float =`
+/// annotation can go — a scalar fragment, or inside a flow container a
+/// fragment was asked to keep in flow. figl spells one only as `key: float =
+/// inf` (`-inf`, `nan`); bare, `inf` reads back as a string.
+pub const Error = Writer.Error || error{ UnresolvedAlias, NonStringKey, UnexpectedNodeKind, UnrepresentableRoot, NonFiniteNumber };
 
 /// Deepest `>` count a section header's block body may reach before the map is
 /// hoisted into per-child sections instead.
@@ -160,6 +165,9 @@ fn root(self: *Printer, id: AST.Node.Id, mode: RootMode) Error!void {
         .sequence => try self.seqBody(id, 0), // prints its own dangling run
         else => switch (mode) {
             .fragment => {
+                // The splice lands after `key = `, where the annotation a
+                // non-finite float needs cannot go.
+                if (self.isNonFinite(id)) return error.NonFiniteNumber;
                 try self.value(id, .block);
                 try self.writer.writeByte('\n');
             },
@@ -683,7 +691,8 @@ fn computeInlineWidth(self: *const Printer, id: AST.Node.Id) ?usize {
     switch (self.ast.node(id).kind) {
         .null_ => return 4,
         .boolean => |b| return @as(usize, if (b) 4 else 5),
-        .number => |n| return n.raw.len,
+        // A non-finite float needs `: float =`, like `number_special` below.
+        .number => |n| return if (num.nonFinite(n.raw) != null) null else n.raw.len,
         // A multi-line string deserves a real `'''`/`"""` block, which only
         // exists in block position — so it forces its container out of flow.
         .string => |s| return if (std.mem.indexOfScalar(u8, s, '\n') != null) null else scalarStringWidth(s, false, .list),
@@ -907,6 +916,17 @@ fn kindTagOf(self: *const Printer, id: AST.Node.Id) ?AST.Tag.KindTag {
     return null;
 }
 
+/// Whether `id` is an infinite or NaN float, which figl spells only after a
+/// `: float =` annotation: a `number_special`, or a number whose lexeme is
+/// another format's spelling of one.
+fn isNonFinite(self: *const Printer, id: AST.Node.Id) bool {
+    return switch (self.ast.node(id).kind) {
+        .number => |n| num.nonFinite(n.raw) != null,
+        .extended => |e| e.kind == .number_special,
+        else => false,
+    };
+}
+
 fn isStringTagged(self: *const Printer, id: AST.Node.Id) bool {
     return if (self.emittableKindTag(id)) |k| k == .string else false;
 }
@@ -955,6 +975,12 @@ fn writeTypeAnnotation(self: *Printer, id: AST.Node.Id) Error!bool {
         .null_, .sequence, .mapping => {},
     };
     switch (self.ast.node(id).kind) {
+        // A non-finite float from another format (`.inf`, `Infinity`): bare,
+        // figl reads every spelling of it as a string.
+        .number => |n| if (num.nonFinite(n.raw) != null) {
+            try self.writer.writeAll(": float");
+            return true;
+        } else return false,
         .extended => |e| switch (e.kind) {
             .enum_literal => {
                 try self.writer.writeAll(": enum");
@@ -986,7 +1012,12 @@ fn value(self: *Printer, id: AST.Node.Id, pos: Pos) Error!void {
     switch (self.ast.node(id).kind) {
         .null_ => try self.writer.writeAll("null"),
         .boolean => |b| try self.writer.writeAll(if (b) "true" else "false"),
-        .number => |n| try self.writer.writeAll(n.raw),
+        // A non-finite float takes the annotated parser's own words, after
+        // the `: float` `writeTypeAnnotation` wrote. Flow has no annotation.
+        .number => |n| if (num.nonFinite(n.raw)) |v| {
+            if (in_flow) return error.NonFiniteNumber;
+            try self.writer.writeAll(num.plain_non_finite.of(v));
+        } else try self.writer.writeAll(n.raw),
         .string => |s| if (!in_flow and std.mem.indexOfScalar(u8, s, '\n') != null) {
             try self.writeMultilineString(s);
         } else if (!in_flow and self.isStringTagged(id)) {
@@ -1000,7 +1031,9 @@ fn value(self: *Printer, id: AST.Node.Id, pos: Pos) Error!void {
         } else {
             try self.writeBareOrQuoted(s, false, pos);
         },
-        .extended => |e| try self.writeExtended(e),
+        .extended => |e| if (in_flow and e.kind == .number_special) {
+            return error.NonFiniteNumber;
+        } else try self.writeExtended(e),
         .mapping, .sequence => try self.flowValue(id),
         .keyvalue => unreachable,
         .alias => return error.UnresolvedAlias,
@@ -2113,4 +2146,83 @@ test "a splice fragment keeps a container in block unless the caller asks for fl
     defer flow.deinit();
     try printFragment(&flow.writer, &ast, .{ .splice = true, .flow = true });
     try std.testing.expect(std.mem.startsWith(u8, flow.written(), "{"));
+}
+
+test "a non-finite float from another format prints under : float" {
+    // `.inf` from YAML, `Infinity` from JSON5: figl has no bare spelling for
+    // either, and reads `inf` bare as a string, so each takes the annotation.
+    var b = AST.Builder.init(std.testing.allocator);
+    defer b.deinit();
+    const a = try b.addMapping(&.{
+        .{ .key = try b.addString("up"), .value = try b.addNumberRaw(".inf", true) },
+        .{ .key = try b.addString("down"), .value = try b.addNumberRaw("-Infinity", true) },
+        .{ .key = try b.addString("odd"), .value = try b.addNumberRaw(".NaN", true) },
+    });
+    const xs = try b.addSequence(&.{ try b.addNumberRaw("1", false), try b.addNumberRaw("+.inf", true) });
+    const doc = try b.addMapping(&.{
+        .{ .key = try b.addString("x"), .value = try b.addNumberRaw("-.inf", true) },
+        .{ .key = try b.addString("a"), .value = a },
+        .{ .key = try b.addString("xs"), .value = xs },
+    });
+    var ast = try b.finish(doc);
+    defer ast.deinit();
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try print(&out.writer, &ast, .{});
+    // The map and the list leave flow, which has no annotation.
+    const want =
+        \\x: float = -inf
+        \\
+        \\a
+        \\> up: float = inf
+        \\> down: float = -inf
+        \\> odd: float = nan
+        \\
+        \\xs
+        \\> * 1
+        \\> *: float = inf
+        \\
+    ;
+    try std.testing.expectEqualStrings(want, out.written());
+
+    // Each reads back as the float it was, not a string.
+    var back = try Parser.parseAbstract(std.testing.allocator, want, .Fig);
+    defer back.deinit();
+    const first = back.node(back.root).kind.mapping.?;
+    const x = back.node(back.node(first).kind.keyvalue.value).kind;
+    try std.testing.expectEqual(AST.Node.Kind.Extended.ExtKind.number_special, x.extended.kind);
+    try std.testing.expectEqualStrings("-inf", x.extended.text);
+    try expectRoundTrip(want);
+}
+
+test "a fragment refuses a non-finite float where no annotation can go" {
+    // The editor splices a fragment after `key = `, where `inf` reads back as
+    // a string; the annotation goes before the `=`.
+    var out: Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    var b = AST.Builder.init(std.testing.allocator);
+    defer b.deinit();
+    const inf = try b.addNumberRaw(".inf", true);
+    var scalar = try b.finish(inf);
+    defer scalar.deinit();
+    try std.testing.expectError(error.NonFiniteNumber, printFragment(&out.writer, &scalar, .{ .splice = true }));
+
+    // A `number_special` the figl parser made is refused the same way.
+    var b2 = AST.Builder.init(std.testing.allocator);
+    defer b2.deinit();
+    const special = try b2.addExtended(.number_special, "nan");
+    var ext = try b2.finish(special);
+    defer ext.deinit();
+    try std.testing.expectError(error.NonFiniteNumber, printFragment(&out.writer, &ext, .{ .splice = true }));
+
+    // And so is one inside a container the caller asked to keep in flow.
+    var ast = try Parser.parseAbstract(std.testing.allocator, "xs\n> * 1\n> *: float = inf\n", .Fig);
+    defer ast.deinit();
+    try std.testing.expectError(error.NonFiniteNumber, printFragment(&out.writer, &ast, .{ .splice = true, .flow = true }));
+
+    // In block, the same container keeps its annotation.
+    var block: Writer.Allocating = .init(std.testing.allocator);
+    defer block.deinit();
+    try printFragment(&block.writer, &ast, .{ .splice = true });
+    try std.testing.expectEqualStrings("xs\n> * 1\n> *: float = inf\n", block.written());
 }

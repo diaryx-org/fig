@@ -56,6 +56,7 @@
 import * as fig from "@diaryx/fig/kit";
 import * as G from "@diaryx/fig/kit/grammar";
 import * as DT from "@diaryx/fig/kit/datetime";
+import * as N from "@diaryx/fig/kit/number";
 
 // ── refusals ──────────────────────────────────────────────────────────────
 
@@ -1654,7 +1655,8 @@ class Printer {
     const k = row.kind;
     if (k === "null") return 4;
     if (k === "bool") return row.text === "true" ? 4 : 5;
-    if (k === "int" || k === "float") return row.ext_kind ? null : blen(row.text);
+    // A non-finite float needs `: float =`, as a `number_special` does.
+    if (k === "int" || k === "float") return row.ext_kind || isNonFinite(row) ? null : blen(row.text);
     if (k === "string") {
       const e = row.ext_kind;
       if (e) return DT.KINDS.has(e) ? blen(row.text) : null;
@@ -1816,7 +1818,7 @@ class Printer {
       this.put(": char");
       return true;
     }
-    if (e === "number_special") {
+    if (e === "number_special" || isNonFinite(row)) {
       this.put(": float");
       return true;
     }
@@ -1827,9 +1829,16 @@ class Printer {
     const k = row.kind;
     if (k === "null") this.put("null");
     else if (k === "bool") this.put(row.text);
-    else if (k === "int" || k === "float") this.put(row.ext_kind === "char_literal" ? charLiteral(row.text) : row.text);
-    else if (k === "string") {
-      if (row.ext_kind) this.put(row.text);
+    else if (k === "int" || k === "float") {
+      // A non-finite float takes the annotated parser's own words, after the
+      // `: float` `typeAnnotation` wrote. Flow has no annotation.
+      if (isNonFinite(row)) {
+        if (inFlow) throw new Error(NON_FINITE);
+        this.put(N.nonFinite(row.text));
+      } else this.put(row.ext_kind === "char_literal" ? charLiteral(row.text) : row.text);
+    } else if (k === "string") {
+      if (row.ext_kind === "number_special" && inFlow) throw new Error(NON_FINITE);
+      else if (row.ext_kind) this.put(row.text);
       else if (!inFlow && isMultiline(row)) this.put(multilineString(row.text));
       else if (!inFlow && this.kindTag(row) === "string") this.put(row.text);
       else this.put(bareOrQuoted(row.text ?? "", false, inFlow));
@@ -2115,6 +2124,13 @@ function flowQuotesWhatBlockLeavesBare(row) {
   return false;
 }
 
+// An infinite or NaN float where no `: float =` annotation can go.
+const NON_FINITE = "figl writes an infinite number or NaN only as `key: float = inf`, which has no place here";
+
+// Whether `row` is a number another format spelled non-finite (`.inf`,
+// `Infinity`), which figl reads bare as a string.
+const isNonFinite = (row) => (row.kind === "int" || row.kind === "float") && !row.ext_kind && N.nonFinite(row.text ?? "") !== null;
+
 function print(_dialect, t, options) {
   fig.index(t);
   const root = t.byid(0);
@@ -2134,7 +2150,8 @@ function print(_dialect, t, options) {
   else {
     // A scalar root is a fragment — a value the editor will splice after
     // `key = ` — and takes its ordinary spelling; a whole document is never
-    // a scalar.
+    // a scalar. The annotation a non-finite float needs cannot go there.
+    if (root.ext_kind === "number_special" || isNonFinite(root)) throw new Error(NON_FINITE);
     p.value(root, false);
     p.put("\n");
   }

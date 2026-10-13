@@ -6,7 +6,6 @@ created = 2026-09-04
 updated = 2026-10-12
 part_of = [docs](/docs/docs.md)
 contents
-> * [An infinite or NaN float written to the fig dialect reads back as a string](/docs/tasks/fig-dialect-non-finite-floats.md)
 > * [Closed tasks](/docs/tasks/closed/closed.md)
 > * [The Rust helper reads JSON with fig's json format](/docs/tasks/helper-serde-json.md)
 ```

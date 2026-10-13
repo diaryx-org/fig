@@ -668,20 +668,31 @@ impl<I: Index> std::ops::Index<I> for Value {
 }
 
 /// Why `format` refused `value`, when the reason is a float it has no way to
-/// write: `json` and `jsonc` have no infinity or NaN. The core's status says
-/// only that the format cannot hold the value, which for these two dialects and
-/// a value holding such a float can only be this.
+/// write: `json` and `jsonc` have no infinity or NaN, and `figl` spells one
+/// only after a `: float` annotation, which a value spliced after `key = ` or
+/// written in flow has no place for. The core's status says only that the
+/// format cannot hold the value, which for these dialects and a value holding
+/// such a float can only be this.
 fn non_finite_refusal(value: &Value, format: Format) -> Option<String> {
     let name = format.name();
-    if !matches!(name, "json" | "jsonc") {
+    if !matches!(name, "json" | "jsonc" | "figl") {
         return None;
     }
     let f = first_non_finite(value)?;
-    Some(if f.is_nan() {
-        format!("{name} has no way to write NaN")
-    } else {
-        format!("{name} has no way to write an infinite number")
-    })
+    let what = if f.is_nan() { "NaN" } else { "an infinite number" };
+    if name == "figl" {
+        let word = if f.is_nan() {
+            "nan"
+        } else if f < 0.0 {
+            "-inf"
+        } else {
+            "inf"
+        };
+        return Some(format!(
+            "figl writes {what} only as `key: float = {word}`, which has no place here"
+        ));
+    }
+    Some(format!("{name} has no way to write {what}"))
 }
 
 /// The first infinite or NaN float in `value`, depth first.

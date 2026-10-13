@@ -211,3 +211,9 @@ test("each language converts every fixture to the JSON the compiled format did",
     }
   }
 });
+
+test("figl writes a non-finite float from another format under : float, as the compiled printer does", () => {
+  // Bare, figl reads `inf` as a string; the compiled printer wrote this.
+  const figl = formatByName("figl")!;
+  assert.equal(convert("a: .inf\nb: [1, -.inf]\nc: .nan\n", yaml.format!, figl), "a: float = inf\n\nb\n> * 1\n> *: float = -inf\n\nc: float = nan\n");
+});

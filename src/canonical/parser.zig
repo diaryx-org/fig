@@ -3,22 +3,24 @@
 //! the human-facing `fig` authoring dialect is a separate surface — see src/languages/figl/DESIGN.md.)
 //!
 //! Recursive-descent over the byte stream (the grammar is small enough that the
-//! token framework the format parsers share would be overkill). It reconstructs
-//! every `Node.Kind` arm and the YAML reference layer (anchors `&name`, tags
-//! `!tag`, aliases `*name`) into the same side-tables the format parsers
-//! populate, so `print` ∘ `parse` is the identity on any AST.
+//! token framework the format parsers share would be overkill). It writes
+//! every `Node.Kind` arm as a row of fig's node table (through a `RowWriter`,
+//! in the order it meets them), with the YAML reference layer (anchors
+//! `&name`, tags `!tag`, aliases `*name`) and the comments as the table's
+//! side facts, so `print` ∘ `parse` is the identity on any AST.
 //!
-//! Strings, numbers, anchor names and tag text borrow `input` where possible
-//! (only escaped strings allocate, landing in the AST's `owned_strings`), so the
-//! returned AST is valid only while `input` outlives it — same contract as the
-//! JSON parser.
+//! Strings, numbers, anchor names, tag and comment text name `input` where
+//! they can (only an escaped string is copied, into the table's buffer), so
+//! the returned AST is valid only while `input` outlives it — same contract as
+//! the JSON parser.
 
 const Parser = @This();
 
 const std = @import("std");
-const ParseTree = @import("../kit/parse_tree.zig");
-const AST = ParseTree.Nodes;
-const Document = ParseTree.RowDocument;
+const AST = @import("../kit/ast/ast.zig");
+const Document = @import("../kit/document.zig");
+const table = @import("../kit/table.zig");
+const RowWriter = @import("../kit/row_writer.zig");
 const Span = @import("../kit/span.zig");
 const Printer = @import("printer.zig");
 
@@ -31,23 +33,14 @@ pos: usize = 0,
 /// pathologically nested input can't overflow the recursive descent's stack.
 depth: usize = 0,
 
-nodes: std.ArrayList(AST.Node) = .empty,
-spans: std.ArrayList(Span) = .empty,
-owned_strings: std.ArrayList([]const u8) = .empty,
-// Reference layer, grown in lockstep with `nodes` (a null per node) and patched
-// when a prefix is seen. Only materialized into the AST when `ref_seen`.
-node_anchors: std.ArrayList(?[]const u8) = .empty,
-node_tags: std.ArrayList(?AST.Tag) = .empty,
-anchors: std.ArrayList(AST.Anchor) = .empty,
-ref_seen: bool = false,
-// Comment layer, also grown in lockstep with `nodes`. `pending_leading` buffers
-// own-line comments seen while skipping trivia until the next node claims them;
-// trailing comments are set directly. Materialized only when `comments_seen`.
-// Comment text borrows `src` (comments never contain escapes), so nothing here
-// is owned except the per-node `leading` slices handed off at `claimLeading`.
-node_comments: std.ArrayList(AST.NodeComments) = .empty,
+/// The rows written so far, over `src`; anchors, tags and comments are its
+/// side facts, appended as they are met.
+t: table.Table,
+/// An escaped string's decoded bytes, until its row copies them.
+scratch: std.ArrayList(u8) = .empty,
+/// Own-line comments seen while skipping trivia, until the next node claims
+/// them. Their text borrows `src` (comments never contain escapes).
 pending_leading: std.ArrayList(AST.Comment) = .empty,
-comments_seen: bool = false,
 
 pub const ParseError = error{
     UnexpectedToken,
@@ -67,114 +60,56 @@ pub const ParseError = error{
 pub const ParserError = ParseError || std.mem.Allocator.Error;
 
 /// Parse `input` into an owned `AST`. Free with `ast.deinit()`.
-pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8) ParserError!ParseTree.RowAst {
-    var tree = try parseTree(allocator, input);
-    return tree.intoAst(allocator);
+pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8) ParserError!AST {
+    const doc = try parse(allocator, input);
+    return doc.ast;
 }
 
 /// Parse `input` into a `Document` (AST + source spans). Free with
 /// `doc.deinit(allocator)`.
 pub fn parse(allocator: std.mem.Allocator, input: []const u8) ParserError!Document {
-    var tree = try parseTree(allocator, input);
-    return tree.intoDocument(allocator);
-}
-
-/// Parse `input` into the parser's own tree.
-pub fn parseTree(allocator: std.mem.Allocator, input: []const u8) ParserError!ParseTree {
-    var parser: Parser = .{ .allocator = allocator, .src = input };
+    var parser: Parser = .{ .allocator = allocator, .src = input, .t = .init(allocator, input) };
     defer parser.deinit();
-    return parser.parseOnce();
+    const root = try parser.parseOnce();
+    try parser.writer().finish(root);
+    return RowWriter.adopt(allocator, input, &parser.t);
 }
 
 pub fn deinit(self: *Parser) void {
-    self.nodes.deinit(self.allocator);
-    self.spans.deinit(self.allocator);
-    for (self.owned_strings.items) |s| self.allocator.free(s);
-    self.owned_strings.deinit(self.allocator);
-    self.node_anchors.deinit(self.allocator);
-    self.node_tags.deinit(self.allocator);
-    self.anchors.deinit(self.allocator);
-    // Free any `leading`/`dangling` slices still owned here. After a successful
-    // `parseOnce` these moved to the AST and the list is empty; on an error
-    // path they are freed here. Comment text borrows `src`, so it is not freed.
-    for (self.node_comments.items) |nc| {
-        self.allocator.free(nc.leading);
-        self.allocator.free(nc.dangling);
-    }
-    self.node_comments.deinit(self.allocator);
+    self.t.deinit();
+    self.scratch.deinit(self.allocator);
     self.pending_leading.deinit(self.allocator);
 }
 
-fn parseOnce(self: *Parser) ParserError!ParseTree {
+fn writer(self: *Parser) RowWriter {
+    return RowWriter.init(&self.t);
+}
+
+/// Parse the document, returning its root's row.
+fn parseOnce(self: *Parser) ParserError!AST.Node.Id {
     const root = try self.parseNode();
     try self.claimLeading(root);
     // A trailing comment on the same line as the root, then the document's final
     // trivia; any end-of-file orphan comments become the root's dangling run.
     self.skipInline();
-    if (try self.tryComment()) |c| self.setTrailing(root, c);
+    if (try self.tryComment()) |c| try self.setTrailing(root, c);
     try self.collectLeading();
     try self.claimDangling(root);
     if (self.peek() != null) return error.TrailingGarbage;
-
-    const nodes = try self.nodes.toOwnedSlice(self.allocator);
-    self.nodes = .empty;
-    errdefer self.allocator.free(nodes);
-
-    const spans = try self.spans.toOwnedSlice(self.allocator);
-    self.spans = .empty;
-    errdefer self.allocator.free(spans);
-
-    const owned_strings = try self.owned_strings.toOwnedSlice(self.allocator);
-    self.owned_strings = .empty;
-    errdefer self.allocator.free(owned_strings);
-
-    var ast: AST = .{
-        .allocator = self.allocator,
-        .owned_strings = owned_strings,
-        .root = root,
-        .nodes = nodes,
-    };
-
-    // Only documents that actually used the reference layer carry the
-    // side-tables; everything else leaves the AST's `&.{}` defaults.
-    if (self.ref_seen) {
-        ast.node_anchors = try self.node_anchors.toOwnedSlice(self.allocator);
-        self.node_anchors = .empty;
-        ast.node_tags = try self.node_tags.toOwnedSlice(self.allocator);
-        self.node_tags = .empty;
-    }
-    if (self.anchors.items.len > 0) {
-        // `resolveAlias` requires anchors sorted by node id (it walks until it
-        // passes the alias). Inner anchors finish before outer ones, so sort.
-        std.mem.sort(AST.Anchor, self.anchors.items, {}, anchorLess);
-        ast.anchors = try self.anchors.toOwnedSlice(self.allocator);
-        self.anchors = .empty;
-    }
-    // Materialized last so no fallible step follows it: hands the owned `leading`
-    // slices to the AST in one move. Done only when comments were actually seen,
-    // leaving the AST's `&.{}` default otherwise.
-    if (self.comments_seen) {
-        ast.node_comments = try self.node_comments.toOwnedSlice(self.allocator);
-        self.node_comments = .empty;
-    }
-
-    return .{ .source = self.src, .ast = ast, .node_spans = spans };
-}
-
-fn anchorLess(_: void, a: AST.Anchor, b: AST.Anchor) bool {
-    return a.node < b.node;
+    return root;
 }
 
 // ── node construction ───────────────────────────────────────────────────────
 
+/// A new row of `kind`, spanning `start` to the current position.
 fn addNode(self: *Parser, kind: AST.Node.Kind, start: usize) ParserError!AST.Node.Id {
-    const id: AST.Node.Id = @intCast(self.nodes.items.len);
-    try self.nodes.append(self.allocator, .{ .id = id, .kind = kind, .next_sibling = null });
-    try self.spans.append(self.allocator, .{ .start = start, .end = self.pos });
-    try self.node_anchors.append(self.allocator, null);
-    try self.node_tags.append(self.allocator, null);
-    try self.node_comments.append(self.allocator, .{});
-    return id;
+    return self.writer().add(kind, Span.init(start, self.pos));
+}
+
+/// End node `id`'s span at the current position.
+fn endSpan(self: *Parser, id: AST.Node.Id) void {
+    const w = self.writer();
+    w.setSpan(id, Span.init(w.spanOf(id).start, self.pos));
 }
 
 // ── grammar ─────────────────────────────────────────────────────────────────
@@ -205,17 +140,12 @@ fn parseNode(self: *Parser) ParserError!AST.Node.Id {
 
     const id = try self.parseValue();
 
-    if (anchor) |name| {
-        self.ref_seen = true;
-        self.node_anchors.items[id] = name;
-        try self.anchors.append(self.allocator, .{ .name = name, .node = id });
-    }
+    if (anchor) |name| try self.writer().anchor(id, name, null);
     if (tag) |text| {
-        self.ref_seen = true;
         // Canonical is the exact-byte oracle: keep the tag VERBATIM in `.text`
         // so its spelling round-trips (a `.kind` tag appears in canonical output
         // only for a fig/builder-origin AST — see the printer).
-        self.node_tags.items[id] = .{ .text = text };
+        try self.writer().tag(id, .{ .text = text }, table.tag_unstated, true, null);
     }
     return id;
 }
@@ -337,7 +267,7 @@ fn parseSequence(self: *Parser) ParserError!AST.Node.Id {
     if (self.peek() == ']') {
         self.pos += 1;
         try self.claimDangling(id); // orphan comments inside an empty `[ … ]`
-        self.spans.items[id].end = self.pos;
+        self.endSpan(id);
         return id;
     }
     var first: ?AST.Node.Id = null;
@@ -347,15 +277,15 @@ fn parseSequence(self: *Parser) ParserError!AST.Node.Id {
         // A sequence element is its own value node: leading and trailing
         // comments both bind directly to it.
         try self.claimLeading(child);
-        if (prev) |p| self.nodes.items[p].next_sibling = child else first = child;
+        if (prev) |p| self.writer().setNext(p, child) else first = child;
         prev = child;
         if (try self.finishElement(']', error.UnclosedArray, child)) {
             try self.claimDangling(id); // orphan comments before the `]`
             break;
         }
     }
-    self.nodes.items[id].kind = .{ .sequence = first };
-    self.spans.items[id].end = self.pos;
+    try self.writer().set(id, .{ .sequence = first });
+    self.endSpan(id);
     return id;
 }
 
@@ -371,7 +301,7 @@ fn parseMapping(self: *Parser) ParserError!AST.Node.Id {
     if (self.peek() == '}') {
         self.pos += 1;
         try self.claimDangling(id); // orphan comments inside an empty `{ … }`
-        self.spans.items[id].end = self.pos;
+        self.endSpan(id);
         return id;
     }
     var first: ?AST.Node.Id = null;
@@ -388,16 +318,16 @@ fn parseMapping(self: *Parser) ParserError!AST.Node.Id {
         // Normally empty; claims any (non-canonical) comment between `:` and the
         // value so it can't leak onto the next entry's key.
         try self.claimLeading(value);
-        const kv = try self.addNode(.{ .keyvalue = .{ .key = key, .value = value } }, self.spans.items[key].start);
-        if (prev) |p| self.nodes.items[p].next_sibling = kv else first = kv;
+        const kv = try self.addNode(.{ .keyvalue = .{ .key = key, .value = value } }, self.writer().spanOf(key).start);
+        if (prev) |p| self.writer().setNext(p, kv) else first = kv;
         prev = kv;
         if (try self.finishElement('}', error.UnclosedObject, value)) {
             try self.claimDangling(id); // orphan comments before the `}`
             break;
         }
     }
-    self.nodes.items[id].kind = .{ .mapping = first };
-    self.spans.items[id].end = self.pos;
+    try self.writer().set(id, .{ .mapping = first });
+    self.endSpan(id);
     return id;
 }
 
@@ -449,9 +379,11 @@ fn parseStringValue(self: *Parser) ParserError![]const u8 {
     return self.decodeEscapes(inner);
 }
 
+/// `inner` with its escapes decoded, in `scratch`: valid until the next
+/// decode, so the caller's row copies it at once.
 fn decodeEscapes(self: *Parser, inner: []const u8) ParserError![]const u8 {
-    var decoded: std.ArrayList(u8) = .empty;
-    errdefer decoded.deinit(self.allocator);
+    const decoded = &self.scratch;
+    decoded.clearRetainingCapacity();
     var i: usize = 0;
     while (i < inner.len) {
         const c = inner[i];
@@ -483,10 +415,7 @@ fn decodeEscapes(self: *Parser, inner: []const u8) ParserError![]const u8 {
         }
         i += 1;
     }
-    const owned = try decoded.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(owned);
-    try self.owned_strings.append(self.allocator, owned);
-    return owned;
+    return decoded.items;
 }
 
 fn skipWs(self: *Parser) void {
@@ -514,8 +443,8 @@ fn collectLeading(self: *Parser) ParserError!void {
         self.skipWs();
         const c = try self.tryComment() orelse return;
         try self.pending_leading.append(self.allocator, c);
-        // `comments_seen` is set only once a comment actually binds to a node
-        // (in `claimLeading`/`setTrailing`), so a buffered-then-dropped orphan
+        // A comment is written only once it binds to a node (in
+        // `claimLeading`/`setTrailing`), so a buffered-then-dropped orphan
         // leaves the document comment-free.
     }
 }
@@ -546,20 +475,22 @@ fn tryComment(self: *Parser) ParserError!?AST.Comment {
     }
 }
 
-/// Hand the buffered leading comments to node `id`, transferring ownership of
-/// the slice to the comment table. No-op when nothing is buffered.
+/// Hand the buffered leading comments to node `id`, after any it has. No-op
+/// when nothing is buffered.
 fn claimLeading(self: *Parser, id: AST.Node.Id) ParserError!void {
-    if (self.pending_leading.items.len == 0) return;
-    const owned = try self.pending_leading.toOwnedSlice(self.allocator);
-    self.pending_leading = .empty;
-    self.node_comments.items[id].leading = owned;
-    self.comments_seen = true;
+    try self.claimPending(id, table.comment_leading);
 }
 
-/// Bind a same-line trailing comment to node `id`.
-fn setTrailing(self: *Parser, id: AST.Node.Id, c: AST.Comment) void {
-    self.node_comments.items[id].trailing = c;
-    self.comments_seen = true;
+/// Write the buffered comments onto node `id` in `slot`, after any already
+/// there, and empty the buffer.
+fn claimPending(self: *Parser, id: AST.Node.Id, slot: u8) ParserError!void {
+    for (self.pending_leading.items) |c| try self.writer().comment(id, slot, c);
+    self.pending_leading.clearRetainingCapacity();
+}
+
+/// Bind a same-line trailing comment to node `id`, replacing any it had.
+fn setTrailing(self: *Parser, id: AST.Node.Id, c: AST.Comment) ParserError!void {
+    try self.writer().comment(id, table.comment_trailing, c);
 }
 
 /// Capture a line comment immediately after an opening delimiter that ends its
@@ -568,56 +499,36 @@ fn setTrailing(self: *Parser, id: AST.Node.Id, c: AST.Comment) void {
 fn captureOpenTrailing(self: *Parser, id: AST.Node.Id) ParserError!void {
     self.skipInline();
     if (self.peek() == '/' and self.pos + 1 < self.src.len and self.src[self.pos + 1] == '/') {
-        if (try self.tryComment()) |c| self.setTrailing(id, c);
+        if (try self.tryComment()) |c| try self.setTrailing(id, c);
     }
 }
 
 /// Whether `id` is a container whose opening delimiter precedes `cpos` on an
 /// earlier line — a multi-line `[ … ]`/`{ … }` whose close is on `cpos`'s line.
 fn multilineContainer(self: *Parser, id: AST.Node.Id, cpos: usize) bool {
-    switch (self.nodes.items[id].kind) {
+    switch (self.writer().kindOf(id)) {
         .sequence, .mapping => {},
         else => return false,
     }
-    const open = self.spans.items[id].start;
+    const open = self.writer().spanOf(id).start;
     if (cpos <= open) return false;
     return std.mem.indexOfScalar(u8, self.src[open..cpos], '\n') != null;
 }
 
-/// Append one comment to `id`'s `dangling` run (reallocating onto any orphans
-/// already claimed at the close).
+/// Append one comment to `id`'s `dangling` run, after any orphans already
+/// claimed at the close.
 fn appendDangling(self: *Parser, id: AST.Node.Id, c: AST.Comment) ParserError!void {
-    const old = self.node_comments.items[id].dangling;
-    const grown = try self.allocator.alloc(AST.Comment, old.len + 1);
-    @memcpy(grown[0..old.len], old);
-    grown[old.len] = c;
-    self.allocator.free(old);
-    self.node_comments.items[id].dangling = grown;
-    self.comments_seen = true;
+    try self.writer().comment(id, table.comment_dangling, c);
 }
 
 /// Hand buffered orphan comments (no node followed them) to container `id` as its
 /// `dangling` run — they sit at the end of its body. No-op when nothing buffered.
 /// `id` may already carry a `dangling` run (e.g. the document root, claimed once
 /// for orphans before its closing bracket and again for trailing EOF orphans), so
-/// this appends rather than overwrites — otherwise the earlier run would leak and
+/// this appends rather than overwrites — otherwise the earlier run would
 /// silently drop from the AST.
 fn claimDangling(self: *Parser, id: AST.Node.Id) ParserError!void {
-    if (self.pending_leading.items.len == 0) return;
-    const owned = try self.pending_leading.toOwnedSlice(self.allocator);
-    self.pending_leading = .empty;
-    const old = self.node_comments.items[id].dangling;
-    if (old.len == 0) {
-        self.node_comments.items[id].dangling = owned;
-    } else {
-        const grown = try self.allocator.alloc(AST.Comment, old.len + owned.len);
-        @memcpy(grown[0..old.len], old);
-        @memcpy(grown[old.len..], owned);
-        self.allocator.free(old);
-        self.allocator.free(owned);
-        self.node_comments.items[id].dangling = grown;
-    }
-    self.comments_seen = true;
+    try self.claimPending(id, table.comment_dangling);
 }
 
 /// After an element's value is parsed (and its leading claimed), consume an
@@ -641,7 +552,7 @@ fn finishElement(self: *Parser, close: u8, unclosed: ParseError, trailing_target
         if (self.multilineContainer(trailing_target, cpos)) {
             try self.appendDangling(trailing_target, c);
         } else {
-            self.setTrailing(trailing_target, c);
+            try self.setTrailing(trailing_target, c);
         }
     }
     try self.collectLeading();
@@ -894,7 +805,7 @@ test "non-string mapping keys" {
 
 test "kind override survives a lexeme/kind mismatch" {
     // A float whose lexeme reads as an integer: only `~f` preserves it.
-    var b = ParseTree.RowAst.Builder.init(testing.allocator);
+    var b = AST.Builder.init(testing.allocator);
     defer b.deinit();
     const root = try b.addNumberRaw("1", true); // raw "1", but kind=float
     var ast = try b.finish(root);
@@ -939,9 +850,9 @@ test "a non-container root's trailing EOF orphan comments round-trip as dangling
 
 test "a claimed dangling run doesn't leak when a later error unwinds the parser" {
     // The `]` closes with an orphan comment claimed as dangling, then trailing
-    // garbage after it fails the parse. `parseOnce` never reaches the AST
-    // handoff, so `Parser.deinit`'s error-path cleanup owns that `dangling`
-    // slice — it must free it, the same as it already does for `leading`.
+    // garbage after it fails the parse. `parseOnce` never reaches the
+    // adoption, so `Parser.deinit`'s error-path cleanup owns the table that
+    // comment was written into — it must free it.
     try testing.expectError(error.TrailingGarbage, parseAbstract(testing.allocator, "[\n  // c\n]x"));
 }
 

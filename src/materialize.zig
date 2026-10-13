@@ -26,14 +26,15 @@
 //! (`fig_document_resolve_aliases`), which follows an alias but has never
 //! applied a tag.
 //!
-//! The result owns its strings: every text is copied into its own buffer, so
-//! it outlives `ast` and the source `ast` was read from.
+//! The pass writes its tree as rows, into a table with no source, so the
+//! result owns its strings: every text is copied into its own buffer, and it
+//! outlives `ast` and the source `ast` was read from.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const AST = @import("kit/ast/ast.zig");
 const table = @import("kit/table.zig");
-const Nodes = @import("kit/parse_tree/nodes.zig");
+const RowWriter = @import("kit/row_writer.zig");
 // The core schema's number grammar, as the compiled YAML reads a plain
 // scalar — pure functions of a lexeme, so a runtime twin's AST is judged by
 // the same rules.
@@ -59,45 +60,27 @@ pub fn materialize(arena: Allocator, ast: *const AST, mode: TagMode) Error!AST {
 /// so a caller holding the node's source span can point at it. Untouched on
 /// success.
 pub fn materializeReporting(arena: Allocator, ast: *const AST, mode: TagMode, culprit: *?AST.Node.Id) Error!AST {
-    var m: Materializer = .{ .src = ast, .arena = arena, .mode = mode };
+    var m: Materializer = .{ .src = ast, .arena = arena, .mode = mode, .t = .init(arena, "") };
+    defer m.path.deinit(arena);
+    errdefer m.t.deinit();
     const root = m.copy(ast.node(ast.root)) catch |err| {
         culprit.* = m.culprit;
         return err;
     };
-    var result: Nodes = .{
-        .allocator = arena,
-        .owned_strings = &.{},
-        .root = root,
-        .nodes = try m.out.toOwnedSlice(arena),
-    };
-    // Comments ride along: `copy` carried each source node's comments onto its
-    // new id, so the parallel table just hands off (only if any were present).
-    if (m.any_comments) result.node_comments = try m.out_comments.toOwnedSlice(arena);
-    if (m.any_tags) result.node_tags = try m.out_tags.toOwnedSlice(arena);
     // A kept tag may be spelled through a `%TAG` handle, so its declaration
     // rides along too.
-    if (mode == .keep) result.tag_directives = ast.tag_directives;
-    var out = try result.toAst(arena);
-    out.merge_key = ast.merge_key;
-    return out;
+    if (mode == .keep) for (ast.tag_directives) |d| try m.writer().directive(d.handle, d.prefix);
+    return AST.own(arena, &m.t, root, ast.merge_key);
 }
 
 const Materializer = struct {
     src: *const AST,
     arena: Allocator,
     mode: TagMode,
-    out: std.ArrayList(AST.Node) = .empty,
-    /// Parallel to `out`: comments carried from each source node onto its copy.
-    /// Default-empty per node; materialized only when `any_comments`.
-    out_comments: std.ArrayList(AST.NodeComments) = .empty,
-    any_comments: bool = false,
-    /// Parallel to `out`: the NORMALIZED type tag kept from an applied core `!!`
-    /// scalar tag. Applying the tag coerces the node's kind; keeping the identity
-    /// here (as a cross-format `.kind` tag) lets a tag-aware target re-surface it
-    /// — a fig `: int =`, a canonical `!!int` — while JSON/TOML/ZON ignore it (the
-    /// value is already concrete). Null per node; materialized only when `any_tags`.
-    out_tags: std.ArrayList(?AST.Tag) = .empty,
-    any_tags: bool = false,
+    /// The rows of the tree being written, a row per node as `copy` emits it,
+    /// with the comments and tags carried onto them. Every text is copied
+    /// into its buffer: it has no source.
+    t: table.Table,
     /// Anchor target ids currently being expanded, to catch structural cycles
     /// (`&a [*a]`) and self-merges (`&m { <<: *m }`).
     path: std.ArrayList(AST.Node.Id) = .empty,
@@ -105,26 +88,22 @@ const Materializer = struct {
     /// an error unwinds through. See `materializeReporting`.
     culprit: ?AST.Node.Id = null,
 
+    fn writer(self: *Materializer) RowWriter {
+        return RowWriter.init(&self.t);
+    }
+
+    /// A new row of `kind`, with no span: a keyvalue's key and value linked
+    /// to it, a container's children added by `link`.
     fn emit(self: *Materializer, kind: AST.Node.Kind) Error!AST.Node.Id {
-        const id: AST.Node.Id = @intCast(self.out.items.len);
-        try self.out.append(self.arena, .{ .id = id, .kind = kind, .next_sibling = null });
-        try self.out_comments.append(self.arena, .{});
-        try self.out_tags.append(self.arena, null);
+        const id = try self.t.addRow(.{});
+        try self.writer().set(id, kind);
         return id;
     }
 
     /// Copy the comments bound to source node `src_id` onto the freshly emitted
-    /// node `new_id`. The `leading` slice is re-duped into the arena; comment
-    /// text borrows the source AST, which the arena outlives.
+    /// node `new_id`, their texts into the table's buffer.
     fn carry(self: *Materializer, src_id: AST.Node.Id, new_id: AST.Node.Id) Error!void {
-        const c = self.src.comments(src_id);
-        if (c.isEmpty()) return;
-        self.out_comments.items[new_id] = .{
-            .leading = try self.arena.dupe(AST.Comment, c.leading),
-            .trailing = c.trailing,
-            .dangling = try self.arena.dupe(AST.Comment, c.dangling),
-        };
-        self.any_comments = true;
+        try self.writer().comments(new_id, self.src.comments(src_id));
     }
 
     fn enter(self: *Materializer, id: AST.Node.Id) Error!void {
@@ -160,12 +139,12 @@ const Materializer = struct {
                 try self.checkCollectionTag(node, .seq);
                 const id = try self.emit(.{ .sequence = null });
                 try self.carry(node.id, id);
-                self.keepTag(node.id, id);
+                try self.keepTag(node.id, id);
                 var last: ?AST.Node.Id = null;
                 var child = first;
                 while (child) |cid| : (child = self.src.node(cid).next_sibling) {
                     const new_id = try self.copy(self.src.node(cid));
-                    self.link(id, &last, new_id, .sequence);
+                    self.link(id, &last, new_id);
                 }
                 return id;
             },
@@ -174,16 +153,11 @@ const Materializer = struct {
         }
     }
 
-    /// Append `child_id` to container `container_id`, threading siblings.
-    fn link(self: *Materializer, container_id: AST.Node.Id, last: *?AST.Node.Id, child_id: AST.Node.Id, comptime kind: enum { sequence, mapping }) void {
-        if (last.*) |p| {
-            self.out.items[p].next_sibling = child_id;
-        } else {
-            self.out.items[container_id].kind = switch (kind) {
-                .sequence => .{ .sequence = child_id },
-                .mapping => .{ .mapping = child_id },
-            };
-        }
+    /// Append `child_id` to container `container_id`, after `last`.
+    fn link(self: *Materializer, container_id: AST.Node.Id, last: *?AST.Node.Id, child_id: AST.Node.Id) void {
+        const rows = self.t.rows.items;
+        rows[child_id].parent = container_id;
+        if (last.*) |p| rows[p].next_sibling = child_id else rows[container_id].first_child = child_id;
         last.* = child_id;
     }
 
@@ -191,7 +165,7 @@ const Materializer = struct {
         try self.checkCollectionTag(node, .map);
         const id = try self.emit(.{ .mapping = null });
         try self.carry(node.id, id);
-        self.keepTag(node.id, id);
+        try self.keepTag(node.id, id);
         var last: ?AST.Node.Id = null;
         var seen: std.ArrayList([]const u8) = .empty;
 
@@ -216,7 +190,7 @@ const Materializer = struct {
         const new_key = try self.copy(self.src.node(key));
         const new_val = try self.copy(self.src.node(value));
         const kvid = try self.emit(.{ .keyvalue = .{ .key = new_key, .value = new_val } });
-        self.link(map_id, last, kvid, .mapping);
+        self.link(map_id, last, kvid);
         if (key_str) |ks| try seen.append(self.arena, ks);
     }
 
@@ -333,7 +307,8 @@ const Materializer = struct {
 
     /// Keep an applied core SCALAR tag on the output node as a normalized `.kind`
     /// type tag, so a tag-aware target re-surfaces it (fig `: int =`, canonical
-    /// `!!int`). A custom/collection tag is not carried — it was already applied
+    /// `!!int`), while JSON/TOML/ZON ignore it (the value is already concrete).
+    /// A custom/collection tag is not carried — it was already applied
     /// (collections) or errored/dropped (custom) by `applyScalarTag`.
     fn carryScalarTag(self: *Materializer, src_id: AST.Node.Id, new_id: AST.Node.Id) Error!void {
         if (self.mode == .keep) return self.keepTag(src_id, new_id);
@@ -345,16 +320,15 @@ const Materializer = struct {
             .sequence, .mapping => return,
             else => {},
         }
-        self.out_tags.items[new_id] = .{ .kind = c.kind };
-        self.any_tags = true;
+        try self.writer().tag(new_id, .{ .kind = c.kind }, table.tag_unstated, true, null);
     }
 
     /// Under `keep`, put source node `src_id`'s tag, whatever it is, on its
     /// copy `new_id`. A no-op in the other modes, which apply or drop it.
-    fn keepTag(self: *Materializer, src_id: AST.Node.Id, new_id: AST.Node.Id) void {
+    fn keepTag(self: *Materializer, src_id: AST.Node.Id, new_id: AST.Node.Id) Error!void {
         if (self.mode != .keep) return;
-        self.out_tags.items[new_id] = self.src.tagOf(src_id) orelse return;
-        self.any_tags = true;
+        const tag = self.src.tagOf(src_id) orelse return;
+        try self.writer().tag(new_id, tag, table.tag_unstated, true, null);
     }
 
     /// A custom tag, which strict mode refuses and lax mode drops, keeping

@@ -11,9 +11,9 @@
 //! nested past some per-format limit) rather than scalar-kind-based —
 //! bolting a depth parameter onto `Lossless.isUnrepresentable` for the sake of
 //! three formats would complicate it for the other four (json/yaml/toml/zon),
-//! which have no nesting-depth limit at all. Reuses `lossless.zig`'s
-//! `emit`/`carry`/`link` node-building primitives (`pub` there for exactly
-//! this) rather than a third copy of that plumbing.
+//! which have no nesting-depth limit at all. Reuses `lossless.zig`'s `Rows`
+//! — the table a rebuilding pass writes, with its `emit`/`carry`/`link` —
+//! rather than a third copy of that plumbing.
 //!
 //! The depth limit is the format's own declaration — `Caps.max_mapping_depth`
 //! — and the caller passes it in (`cli/parse_dispatch.zig`'s `flatStripDepth`
@@ -25,7 +25,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const AST = @import("kit/ast/ast.zig");
-const Nodes = @import("kit/parse_tree/nodes.zig");
 const Lossless = @import("lossless.zig");
 const Id = AST.Node.Id;
 
@@ -58,25 +57,21 @@ pub const StripResult = struct {
 /// `max_depth` levels of mapping nesting (its `Caps.max_mapping_depth`)
 /// can't represent at all. Dropped paths are reported relative to `root_id`.
 pub fn lossyStrip(arena: Allocator, ast: *const AST, root_id: Id, max_depth: usize) Error!StripResult {
-    var s = Stripper{ .src = ast, .arena = arena, .max_mapping_depth = max_depth };
+    var s = Stripper{ .src = ast, .arena = arena, .max_mapping_depth = max_depth, .out = .init(arena) };
+    errdefer s.out.deinit();
     if (isUnrepresentable(ast.node(root_id).kind, 0, max_depth)) {
         try s.dropped.append(arena, "(value)");
         return .{ .ast = null, .dropped = try s.dropped.toOwnedSlice(arena) };
     }
     const root = try s.copy(ast.node(root_id), "", 0);
-    var stripped: Nodes = .{ .allocator = arena, .root = root, .nodes = try s.out.toOwnedSlice(arena) };
-    try Lossless.finish(&s, &stripped);
-    return .{ .ast = try Lossless.toAst(arena, &stripped, ast), .dropped = try s.dropped.toOwnedSlice(arena) };
+    return .{ .ast = try s.out.finish(ast, root), .dropped = try s.dropped.toOwnedSlice(arena) };
 }
 
 const Stripper = struct {
     src: *const AST,
     arena: Allocator,
     max_mapping_depth: usize,
-    out: std.ArrayList(AST.Node) = .empty,
-    out_comments: std.ArrayList(AST.NodeComments) = .empty,
-    any_comments: bool = false,
-    side: Lossless.SideTables = .{},
+    out: Lossless.Rows,
     dropped: std.ArrayList([]const u8) = .empty,
 
     /// `node` is never itself unrepresentable here — the caller (`lossyStrip`
@@ -90,16 +85,16 @@ const Stripper = struct {
             .sequence => unreachable, // always unrepresentable — see the doc above
             .keyvalue => unreachable, // never a value position
             else => {
-                const id = try Lossless.emit(self, node.kind);
-                try Lossless.carry(self, node.id, id);
+                const id = try self.out.emit(node.kind);
+                try self.out.carry(self.src, node.id, id, .{});
                 return id;
             },
         }
     }
 
     fn copyMap(self: *Stripper, src_node: AST.Node, path: []const u8, depth: usize) Error!Id {
-        const id = try Lossless.emit(self, .{ .mapping = null });
-        try Lossless.carry(self, src_node.id, id);
+        const id = try self.out.emit(.{ .mapping = null });
+        try self.out.carry(self.src, src_node.id, id, .{});
         var last: ?Id = null;
         var c = src_node.kind.mapping;
         while (c) |cid| : (c = self.src.node(cid).next_sibling) {
@@ -111,8 +106,8 @@ const Stripper = struct {
             }
             const new_key = try self.copy(self.src.node(kv.key), path, depth);
             const new_val = try self.copy(self.src.node(kv.value), child_path, depth + 1);
-            const kvid = try Lossless.emit(self, .{ .keyvalue = .{ .key = new_key, .value = new_val } });
-            Lossless.link(&self.out, id, &last, kvid, .mapping);
+            const kvid = try self.out.emit(.{ .keyvalue = .{ .key = new_key, .value = new_val } });
+            self.out.link(id, &last, kvid);
         }
         return id;
     }

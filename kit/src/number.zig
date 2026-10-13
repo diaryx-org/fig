@@ -161,20 +161,19 @@ pub fn writeCanonical(writer: anytype, raw: []const u8) !void {
         s = s[1..];
     }
 
-    // Radix integers convert; a lexeme too long or too wide for u128 falls back
-    // to the sign-stripped source rather than emitting nothing.
+    // Radix integers convert; a lexeme that is not one, or whose decimal
+    // would outgrow `buf`, falls back to the sign-stripped source rather
+    // than emitting nothing.
     if (s.len >= 2 and s[0] == '0' and (s[1] | 0x20 == 'x' or s[1] | 0x20 == 'o' or s[1] | 0x20 == 'b')) {
         const base: u8 = switch (s[1] | 0x20) {
             'x' => 16,
             'o' => 8,
             else => 2,
         };
-        var buf: [128]u8 = undefined;
-        if (stripUnderscores(s[2..], &buf)) |digits| {
-            if (std.fmt.parseInt(u128, digits, base)) |v| {
-                try writer.print("{d}", .{v});
-                return;
-            } else |_| {}
+        var buf: [512]u8 = undefined;
+        if (radixToDecimal(s[2..], base, &buf)) |digits| {
+            try writer.writeAll(digits);
+            return;
         }
         try writer.writeAll(s);
         return;
@@ -212,16 +211,47 @@ pub fn writeCanonical(writer: anytype, raw: []const u8) !void {
     }
 }
 
-/// Copy `s` into `buf` without `_` digit separators; null if it would overflow.
-fn stripUnderscores(s: []const u8, buf: []u8) ?[]const u8 {
-    var n: usize = 0;
-    for (s) |c| {
+/// `digits`, in `base` with `_` separators, as decimal digits at the end of
+/// `buf`; null when a digit is not one of `base`'s, there is none, or the
+/// decimal outgrows `buf`. Digit by digit rather than through an integer
+/// type, so no width bounds it but `buf`'s.
+fn radixToDecimal(digits: []const u8, base: u8, buf: []u8) ?[]const u8 {
+    // `buf[start..]` holds the decimal so far, most significant first,
+    // each byte a digit's value until the end.
+    var start = buf.len;
+    var any = false;
+    for (digits) |c| {
         if (c == '_') continue;
-        if (n >= buf.len) return null;
-        buf[n] = c;
-        n += 1;
+        const d: u8 = switch (c) {
+            '0'...'9' => c - '0',
+            'a'...'f' => c - 'a' + 10,
+            'A'...'F' => c - 'A' + 10,
+            else => return null,
+        };
+        if (d >= base) return null;
+        any = true;
+        var carry: u16 = d;
+        var i = buf.len;
+        while (i > start) {
+            i -= 1;
+            const x = @as(u16, buf[i]) * base + carry;
+            buf[i] = @intCast(x % 10);
+            carry = x / 10;
+        }
+        while (carry > 0) {
+            if (start == 0) return null;
+            start -= 1;
+            buf[start] = @intCast(carry % 10);
+            carry /= 10;
+        }
     }
-    return buf[0..n];
+    if (!any) return null;
+    if (start == buf.len) {
+        start -= 1;
+        buf[start] = 0;
+    }
+    for (buf[start..]) |*b| b.* += '0';
+    return buf[start..];
 }
 
 test "spellable: strict JSON takes only plain decimal" {
@@ -331,4 +361,12 @@ test "writeCanonical" {
         "123456789012345678901234567890",
         try canon(&buf, "123456789012345678901234567890"),
     );
+
+    // Past 128 bits, and the edges of the radix path.
+    try t.expectEqualStrings("340282366920938463463374607431768211456", try canon(&buf, "0x1_0000_0000_0000_0000_0000_0000_0000_0000"));
+    try t.expectEqualStrings("0", try canon(&buf, "0x0"));
+    try t.expectEqualStrings("0", try canon(&buf, "0b000"));
+    try t.expectEqualStrings("0x", try canon(&buf, "0x"));
+    try t.expectEqualStrings("0o89", try canon(&buf, "0o89"));
+    try t.expectEqualStrings("0xg", try canon(&buf, "0xg"));
 }

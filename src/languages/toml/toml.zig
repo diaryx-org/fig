@@ -1,7 +1,8 @@
 const toml = @This();
 const std = @import("std");
 const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/parse_tree.zig");
+const Document = @import("../../kit/document.zig");
+const Table = @import("../../kit/table.zig").Table;
 const lang = @import("../../kit/manifest.zig");
 
 pub const Parser = @import("parser.zig");
@@ -21,14 +22,14 @@ pub const Language = struct {
     pub const Parser = toml.Parser;
     pub const Printer = toml.Printer;
     pub const default_type: toml.Type = .TOML_1_1;
-    /// The parser's tree, which the contract writes into fig's table.
-    pub fn parseTree(parser: *toml.Parser, input: []const u8, format: toml.Type) !Document {
-        return toml.Parser.parse(parser.allocator, input, format);
+    /// Write `input`'s rows into `out`, the table fig hands a parse.
+    pub fn parseTable(parser: *toml.Parser, input: []const u8, format: toml.Type, out: *Table) !void {
+        _ = parser;
+        return toml.Parser.parseInto(out, input, format);
     }
     /// The document fig would adopt from a parse.
-    pub fn parse(parser: *toml.Parser, input: []const u8, format: toml.Type) !Document.RowDocument {
-        var tree = try parseTree(parser, input, format);
-        return tree.intoDocument(parser.allocator);
+    pub fn parse(parser: *toml.Parser, input: []const u8, format: toml.Type) !Document {
+        return toml.Parser.parse(parser.allocator, input, format);
     }
     pub const print = toml.Printer.print;
     pub const printNode = toml.Printer.printNode;

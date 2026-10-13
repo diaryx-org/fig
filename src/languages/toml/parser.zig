@@ -1,20 +1,23 @@
-//! The parser turns a TOML-formatted []const u8 into an AST.
+//! The parser turns a TOML-formatted []const u8 into the node table fig
+//! hands it, a row per node written through a `RowWriter`. A table is
+//! reopened by a later header or dotted line, so rows are written in the
+//! order the statements meet them, not in pre-order; `RowWriter.finish`
+//! puts them in pre-order once the document is done.
 //!
-//! Phase 1: root-level `key = value` statements with scalar values (strings,
-//! integers, floats, booleans, datetimes). Dotted keys and `[table]` headers
-//! (Phase 2) and arrays / inline tables (Phase 3) are not assembled yet — a
-//! statement that needs them returns error.NotImplemented.
-//!
-//! Scalars keep their source text verbatim (numbers/datetimes store `raw`;
-//! decoded strings live in `owned_strings`). Number/datetime *normalization*
-//! (e.g. 0xFF → 255 for JSON) is a print/convert concern, not done here.
+//! Strings and datetimes keep their source text where they can; a decoded
+//! string (one with escapes) or a canonical number is the parser's own
+//! allocation (`owned_strings`), copied into the table's buffer when its
+//! row is written and freed with the parser.
 
 const Parser = @This();
 
 const std = @import("std");
 const testing = std.testing;
-const Document = @import("../../kit/parse_tree.zig");
-const AST = Document.Nodes;
+const Document = @import("../../kit/document.zig");
+const AST = @import("../../kit/ast/ast.zig");
+const RowWriter = @import("../../kit/row_writer.zig");
+const table = @import("../../kit/table.zig");
+const Table = table.Table;
 
 const Type = @import("toml.zig").Type;
 const util = @import("../../kit/kit.zig");
@@ -31,37 +34,27 @@ version: Type = .TOML_1_0,
 source: []const u8 = "",
 tokens: []const Token = &.{},
 pos: usize = 0,
-nodes: std.ArrayList(AST.Node) = .empty,
-spans: std.ArrayList(Span) = .empty,
+/// The table being written; set by `parseImpl`.
+w: RowWriter = undefined,
+/// Decoded strings and canonical numbers, alive until the parser is: a key
+/// segment's text may be one, and is compared after its row is written.
 owned_strings: std.ArrayList([]const u8) = .empty,
 // Comment layer. Comments are captured in `skipInline`/`skipBlank` (the trivia
 // skippers): a comment on the same line as a just-parsed value (`last_value_id`
 // set) trails it; one on its own line buffers as `pending_leading`, claimed onto
 // the next entry's key in `appendKeyValue`. A newline resets the trailing
-// window. Text borrows `source`. `pending_leading` is reserved to `tokens.len`
-// once so capture cannot fail. Materialized only when `comments_seen`.
-node_comments: std.ArrayList(AST.NodeComments) = .empty,
+// window. Text borrows `source`. Both buffers are reserved to `tokens.len`
+// so capture cannot fail; trailing comments reach the table when the
+// document is done.
 pending_leading: std.ArrayList(AST.Comment) = .empty,
+pending_trailing: std.ArrayList(Trailing) = .empty,
 last_value_id: ?AST.Node.Id = null,
-comments_seen: bool = false,
 /// The mapping that bare/dotted `key = value` lines attach to. Starts at root,
 /// repointed by each `[table]` header.
 current_table: AST.Node.Id = 0,
 /// Per-mapping provenance, used to enforce TOML's table/key conflict rules.
 /// Absent ⇒ a value node or the root.
 table_meta: std.AutoHashMapUnmanaged(AST.Node.Id, TableMeta) = .empty,
-/// Every header line of every BLOCK table, keyed by the table's node id: the
-/// `[a]`/`[[a]]` line that created or re-opened it, or — for a dotted table —
-/// each `a.b = 1` line that created or extended it. A block table's node span
-/// is only its key segment, so these lines are what let the editor's region
-/// gather (`editor/regions.zig`) find the table's physical extent; an inline
-/// table `{…}` and a static array span their own text and are not recorded.
-/// Threaded out to `Document.node_regions`.
-built_regions: std.ArrayList(Document.NodeRegion) = .empty,
-/// Every place a table's name is spelled — each segment of every `[header]`,
-/// `[[header]]` and dotted line, on the node that segment names. Becomes
-/// `Document.node_mentions`.
-built_mentions: std.ArrayList(Document.NodeMention) = .empty,
 
 /// Error-recovery mode: when set, a failed top-level statement is recorded
 /// into `diagnostics` and the parser resyncs to the next statement boundary
@@ -109,7 +102,12 @@ const TableMeta = struct {
     inline_table: bool = false,
 };
 
+/// A key segment: its text is a slice of the source or one of
+/// `owned_strings`, never the table's buffer, which moves as it grows.
 const KeySeg = struct { str: []const u8, span: Span };
+
+/// A same-line comment and the value it trails.
+const Trailing = struct { id: AST.Node.Id, c: AST.Comment };
 
 pub const ParseError = error{
     NotImplemented,
@@ -271,36 +269,61 @@ pub const Report = struct {
     warnings: []const Warning = &.{},
 };
 
+/// `input` as a `Document`: its table written and adopted.
 pub fn parse(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!Document {
-    return parseImpl(allocator, input, format, null, false);
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseInto(&t, input, format);
+    return RowWriter.adopt(allocator, input, &t);
 }
 
-/// `parse`, but also fills `out`: `diag` on failure (error code + byte span,
-/// for `file:line:col` teaching messages), `warnings` always (currently
-/// always empty — see `Warning`'s doc comment). Mirrors fig's
-/// `Parser.parseWithReport` — the hook the CLI renders reports from.
+/// `parse`, reporting as `parseWithReportInto` does.
 pub fn parseWithReport(allocator: std.mem.Allocator, input: []const u8, format: Type, out: *Report) ParserError!Document {
-    return parseImpl(allocator, input, format, out, false);
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseWithReportInto(&t, input, format, out);
+    return RowWriter.adopt(allocator, input, &t);
 }
 
-/// `parseWithReport`, but recovers past each failed top-level statement
+/// `parse`, collecting as `parseCollectingInto` does.
+pub fn parseCollecting(allocator: std.mem.Allocator, input: []const u8, format: Type, out: *Report) ParserError!Document {
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseCollectingInto(&t, input, format, out);
+    return RowWriter.adopt(allocator, input, &t);
+}
+
+/// Write `input`'s rows into `t`, the table fig hands a parse.
+pub fn parseInto(t: *Table, input: []const u8, format: Type) ParserError!void {
+    return parseImpl(t, input, format, null, false);
+}
+
+/// `parseInto`, but also fills `out`: `diag` on failure (error code + byte
+/// span, for `file:line:col` teaching messages), `warnings` always
+/// (currently always empty — see `Warning`'s doc comment). Mirrors fig's
+/// `Parser.parseWithReport` — the hook the CLI renders reports from.
+pub fn parseWithReportInto(t: *Table, input: []const u8, format: Type, out: *Report) ParserError!void {
+    return parseImpl(t, input, format, out, false);
+}
+
+/// `parseWithReportInto`, but recovers past each failed top-level statement
 /// (resyncing to the next statement boundary — see `resync`) to collect the
 /// WHOLE file's diagnostics in one pass (`out.errors`, source order) rather
 /// than stopping at the first. On any error the return value is still the
-/// first error code and the tree is NOT built (both consumers discard it); a
-/// clean parse returns the Document exactly as `parseWithReport` would.
-/// `out.diag` mirrors `errors[0]`. Mirrors fig's `Parser.parseCollecting`.
-pub fn parseCollecting(allocator: std.mem.Allocator, input: []const u8, format: Type, out: *Report) ParserError!Document {
-    return parseImpl(allocator, input, format, out, true);
+/// first error code and the table is not finished; a clean parse writes it
+/// exactly as `parseWithReportInto` would. `out.diag` mirrors `errors[0]`.
+/// Mirrors fig's `Parser.parseCollecting`.
+pub fn parseCollectingInto(t: *Table, input: []const u8, format: Type, out: *Report) ParserError!void {
+    return parseImpl(t, input, format, out, true);
 }
 
-fn parseImpl(allocator: std.mem.Allocator, input: []const u8, format: Type, out: ?*Report, recover: bool) ParserError!Document {
-    var parser: Parser = .{ .allocator = allocator, .recover = recover };
-    defer parser.diagnostics.deinit(allocator);
-    defer parser.warnings.deinit(allocator);
+fn parseImpl(t: *Table, input: []const u8, format: Type, out: ?*Report, recover: bool) ParserError!void {
+    const allocator = t.allocator;
+    var parser: Parser = .{ .allocator = allocator, .recover = recover, .w = .init(t) };
+    defer parser.deinit();
     const result = parser.parseOnce(input, format);
     // Warnings are duped out on every exit path (valid alongside a failure
-    // too), before the list above is freed.
+    // too), before the parser's list is freed.
     if (out) |o| o.warnings = allocator.dupe(Warning, parser.warnings.items) catch &.{};
     return result catch |err| {
         if (out) |o| {
@@ -309,19 +332,25 @@ fn parseImpl(allocator: std.mem.Allocator, input: []const u8, format: Type, out:
                 if (recover) o.errors = allocator.dupe(Diagnostic, parser.diagnostics.items) catch &.{};
             }
         }
-        parser.nodes.deinit(allocator);
-        parser.spans.deinit(allocator);
-        parser.built_regions.deinit(allocator);
-        parser.built_mentions.deinit(allocator);
-        for (parser.owned_strings.items) |s| allocator.free(s);
-        parser.owned_strings.deinit(allocator);
         return err;
     };
 }
 
-pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!Document.RowAst {
-    var tree = try parse(allocator, input, format);
-    return tree.intoAst(allocator);
+fn deinit(self: *Parser) void {
+    const a = self.allocator;
+    self.diagnostics.deinit(a);
+    self.warnings.deinit(a);
+    self.table_meta.deinit(a);
+    self.pending_leading.deinit(a);
+    self.pending_trailing.deinit(a);
+    for (self.owned_strings.items) |s| a.free(s);
+    self.owned_strings.deinit(a);
+}
+
+/// `input` as an `AST`, alone.
+pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) ParserError!AST {
+    const doc = try parse(allocator, input, format);
+    return doc.ast;
 }
 
 /// One top-level statement (`key = value` / `[table]` / `[[array.of.tables]]`)
@@ -405,6 +434,9 @@ fn resyncAndRetokenize(self: *Parser) ParserError!bool {
     self.allocator.free(self.tokens);
     self.tokens = fresh;
     self.pos = 0;
+    // Comment capture cannot fail: keep room for every comment ahead.
+    try self.pending_leading.ensureUnusedCapacity(self.allocator, fresh.len);
+    try self.pending_trailing.ensureUnusedCapacity(self.allocator, fresh.len);
     return true;
 }
 
@@ -424,7 +456,7 @@ fn failSpan(self: *Parser, start: usize, end: usize, err: Error) Error {
     return err;
 }
 
-fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Document {
+fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!void {
     self.version = format;
     self.source = input;
 
@@ -442,21 +474,11 @@ fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Documen
         return err;
     };
     defer self.allocator.free(self.tokens);
-    defer self.table_meta.deinit(self.allocator);
-    // Reserve so trivia-skipping can buffer leading comments without failing.
+    // Reserve so trivia-skipping can buffer comments without failing.
     try self.pending_leading.ensureTotalCapacity(self.allocator, self.tokens.len);
-    defer self.pending_leading.deinit(self.allocator);
-    // On success the table is moved into the AST and this list emptied; on any
-    // error path it (and any owned comment slices) are freed here.
-    defer {
-        for (self.node_comments.items) |nc| {
-            self.allocator.free(nc.leading);
-            self.allocator.free(nc.dangling);
-        }
-        self.node_comments.deinit(self.allocator);
-    }
+    try self.pending_trailing.ensureTotalCapacity(self.allocator, self.tokens.len);
 
-    // Root mapping is node 0.
+    // The root mapping's row is written first.
     const root_id = try self.addNode(.{ .mapping = null }, Span.init(0, input.len));
     self.current_table = root_id;
 
@@ -494,44 +516,14 @@ fn parseOnce(self: *Parser, input: []const u8, format: Type) ParserError!Documen
         return self.diagnostics.items[0].code;
     }
 
-    const nodes = try self.nodes.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(nodes);
-    const spans = try self.spans.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(spans);
-    const node_regions = try self.built_regions.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(node_regions);
-    const node_mentions = try self.built_mentions.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(node_mentions);
-    Document.sortMentions(node_mentions);
-    Document.sortRegions(node_regions);
-    const owned = try self.owned_strings.toOwnedSlice(self.allocator);
-
-    var ast: AST = .{
-        .allocator = self.allocator,
-        .root = root_id,
-        .nodes = nodes,
-        .owned_strings = owned,
-    };
-    if (self.comments_seen) {
-        ast.node_comments = try self.node_comments.toOwnedSlice(self.allocator);
-        self.node_comments = .empty;
-    }
-
-    return .{
-        .source = input,
-        .ast = ast,
-        .node_spans = spans,
-        .node_regions = node_regions,
-        .node_mentions = node_mentions,
-    };
+    // A value's same-line comment, in source order: a later one on the
+    // same value replaces an earlier, as `RowWriter.comment` says.
+    for (self.pending_trailing.items) |tc| try self.w.comment(tc.id, table.comment_trailing, tc.c);
+    try self.w.finish(root_id);
 }
 
 fn addNode(self: *Parser, kind: AST.Node.Kind, span: Span) ParserError!AST.Node.Id {
-    const id: AST.Node.Id = @intCast(self.nodes.items.len);
-    try self.nodes.append(self.allocator, .{ .id = id, .kind = kind });
-    try self.spans.append(self.allocator, span);
-    try self.node_comments.append(self.allocator, .{});
-    return id;
+    return self.w.add(kind, span);
 }
 
 // ── Token cursor ────────────────────────────────────────────────────────────
@@ -587,8 +579,7 @@ fn skipBlank(self: *Parser) void {
 fn captureComment(self: *Parser, tok: Token) void {
     const c: AST.Comment = .{ .text = commentText(self.tokenText(tok)), .style = .line };
     if (self.last_value_id) |id| {
-        self.node_comments.items[id].trailing = c;
-        self.comments_seen = true;
+        self.pending_trailing.appendAssumeCapacity(.{ .id = id, .c = c }); // capacity reserved in parseOnce
         self.last_value_id = null; // one trailing per value
     } else {
         self.pending_leading.appendAssumeCapacity(c); // capacity reserved in parseOnce
@@ -602,25 +593,19 @@ fn commentText(raw: []const u8) []const u8 {
     return std.mem.trim(u8, body, " \t\r");
 }
 
-/// Hand the buffered leading comments to node `id` as an owned slice, then clear
-/// the buffer (retaining its reserved capacity). No-op when nothing is buffered.
+/// Hand the buffered leading comments to node `id`, then clear the buffer
+/// (retaining its reserved capacity). No-op when nothing is buffered.
 fn claimLeading(self: *Parser, id: AST.Node.Id) ParserError!void {
-    if (self.pending_leading.items.len == 0) return;
-    const owned = try self.allocator.dupe(AST.Comment, self.pending_leading.items);
+    for (self.pending_leading.items) |c| try self.w.comment(id, table.comment_leading, c);
     self.pending_leading.clearRetainingCapacity();
-    self.node_comments.items[id].leading = owned;
-    self.comments_seen = true;
 }
 
 /// Hand buffered orphan comments (no key/header followed them — at end of file)
 /// to table `id` as its `dangling` run. Mid-file orphans instead lead the next
 /// key/header, so this only fires at EOF.
 fn claimDangling(self: *Parser, id: AST.Node.Id) ParserError!void {
-    if (self.pending_leading.items.len == 0) return;
-    const owned = try self.allocator.dupe(AST.Comment, self.pending_leading.items);
+    for (self.pending_leading.items) |c| try self.w.comment(id, table.comment_dangling, c);
     self.pending_leading.clearRetainingCapacity();
-    self.node_comments.items[id].dangling = owned;
-    self.comments_seen = true;
 }
 
 /// After a statement, only trivia then a newline or EOF may follow.
@@ -660,7 +645,7 @@ fn parseTableHeader(self: *Parser) ParserError!void {
         // point, so the default "current token" anchor would land on the NEXT
         // line's content — pin it to the conflicting final path segment
         // instead.
-        if (self.nodes.items[child].kind != .mapping) return self.failSpan(final.span.start, final.span.end, error.DuplicateKey);
+        if (self.w.kindOf(child) != .mapping) return self.failSpan(final.span.start, final.span.end, error.DuplicateKey);
         const m = self.table_meta.get(child) orelse TableMeta{};
         if (m.explicit or m.dotted or m.inline_table) return self.failSpan(final.span.start, final.span.end, error.DuplicateKey);
         try self.table_meta.put(self.allocator, child, .{ .explicit = true });
@@ -693,7 +678,7 @@ fn parseArrayTable(self: *Parser) ParserError!void {
         const m = self.table_meta.get(child) orelse TableMeta{};
         // See `parseTableHeader`: the `[[header]]` line is fully consumed
         // already, so pin the caret to the conflicting final segment.
-        if (self.nodes.items[child].kind != .sequence or !m.aot) return self.failSpan(final.span.start, final.span.end, error.DuplicateKey);
+        if (self.w.kindOf(child) != .sequence or !m.aot) return self.failSpan(final.span.start, final.span.end, error.DuplicateKey);
         try self.recordHeader(child, final.span.start);
         try self.recordMention(child, final.span, .header);
         self.current_table = try self.appendArrayElement(child);
@@ -738,7 +723,7 @@ fn navigateHeaderPath(self: *Parser, start: AST.Node.Id, intermediates: []const 
 /// directly, an array-of-tables to its last element. A non-table value, a
 /// static array, or a closed inline table is an error.
 fn descend(self: *Parser, child: AST.Node.Id) ParserError!AST.Node.Id {
-    return switch (self.nodes.items[child].kind) {
+    return switch (self.w.kindOf(child)) {
         .mapping => blk: {
             const m = self.table_meta.get(child) orelse TableMeta{};
             if (m.inline_table) return error.DuplicateKey;
@@ -759,12 +744,12 @@ fn lastElement(self: *Parser, seq_id: AST.Node.Id) ParserError!AST.Node.Id {
 }
 
 fn appendArrayElement(self: *Parser, seq_id: AST.Node.Id) ParserError!AST.Node.Id {
-    const elem = try self.addNode(.{ .mapping = null }, self.spans.items[seq_id]);
+    const elem = try self.addNode(.{ .mapping = null }, self.w.spanOf(seq_id));
     const m = self.table_meta.getPtr(seq_id).?;
     if (m.last) |last| {
-        self.nodes.items[last].next_sibling = elem;
+        self.w.setNext(last, elem);
     } else {
-        self.nodes.items[seq_id].kind = .{ .sequence = elem };
+        try self.w.set(seq_id, .{ .sequence = elem });
     }
     m.last = elem;
     return elem;
@@ -806,7 +791,7 @@ fn navigateDottedPath(self: *Parser, start: AST.Node.Id, intermediates: []const 
             // The cursor is already past this whole dotted key (and its `=`)
             // by the time either check below can fire — pin the caret to the
             // conflicting intermediate segment itself.
-            if (self.nodes.items[child].kind != .mapping) return self.failSpan(seg.span.start, seg.span.end, error.DuplicateKey);
+            if (self.w.kindOf(child) != .mapping) return self.failSpan(seg.span.start, seg.span.end, error.DuplicateKey);
             const m = self.table_meta.get(child) orelse TableMeta{};
             if (m.explicit or m.inline_table) return self.failSpan(seg.span.start, seg.span.end, error.DuplicateKey);
             // A dotted line extending an existing dotted/implicit table is a
@@ -837,12 +822,13 @@ fn parseKeyPath(self: *Parser, segs: *std.ArrayList(KeySeg)) ParserError!void {
     }
 }
 
-/// Value node id of a child of `map_id` keyed `key`, or null.
+/// Value node id of a child of `map_id` keyed `key`, or null. A key's
+/// text is read from its row as it is compared, never kept.
 fn lookupChild(self: *Parser, map_id: AST.Node.Id, key: []const u8) ?AST.Node.Id {
-    var cur = self.nodes.items[map_id].kind.mapping;
-    while (cur) |id| : (cur = self.nodes.items[id].next_sibling) {
-        const kv = self.nodes.items[id].kind.keyvalue;
-        if (std.mem.eql(u8, self.nodes.items[kv.key].kind.string, key)) return kv.value;
+    var cur = self.w.kindOf(map_id).mapping;
+    while (cur) |id| : (cur = self.w.node(id).next_sibling) {
+        const kv = self.w.kindOf(id).keyvalue;
+        if (std.mem.eql(u8, self.w.kindOf(kv.key).string, key)) return kv.value;
     }
     return null;
 }
@@ -853,17 +839,17 @@ fn appendKeyValue(self: *Parser, map_id: AST.Node.Id, key: KeySeg, value_id: AST
     // A leading comment block above this line (or above a `[header]`, since
     // headers also route through here) binds to the key node.
     try self.claimLeading(key_id);
-    const value_end = self.spans.items[value_id].end;
+    const value_end = self.w.spanOf(value_id).end;
     const kv_id = try self.addNode(
         .{ .keyvalue = .{ .key = key_id, .value = value_id } },
         Span.init(key.span.start, value_end),
     );
-    if (self.nodes.items[map_id].kind.mapping) |first| {
+    if (self.w.kindOf(map_id).mapping) |first| {
         var last = first;
-        while (self.nodes.items[last].next_sibling) |n| last = n;
-        self.nodes.items[last].next_sibling = kv_id;
+        while (self.w.node(last).next_sibling) |n| last = n;
+        self.w.setNext(last, kv_id);
     } else {
-        self.nodes.items[map_id].kind = .{ .mapping = kv_id };
+        try self.w.set(map_id, .{ .mapping = kv_id });
     }
 }
 
@@ -880,15 +866,23 @@ fn createTable(self: *Parser, parent: AST.Node.Id, key: KeySeg, meta: TableMeta)
 }
 
 /// Record the header line holding `at` as one of block table `id`'s regions
-/// — see `built_regions`.
+/// (`Document.regionsOf`). Every header line of every BLOCK table is one:
+/// the `[a]`/`[[a]]` line that created or re-opened it, or — for a dotted
+/// table — each `a.b = 1` line that created or extended it. A block table's
+/// node span is only its key segment, so these lines are what let the
+/// editor's region gather (`editor/regions.zig`) find the table's physical
+/// extent; an inline table `{…}` and a static array span their own text and
+/// are not recorded.
 fn recordHeader(self: *Parser, id: AST.Node.Id, at: usize) ParserError!void {
     const line = Document.lineRegionAt(self.source, at);
-    try self.built_regions.append(self.allocator, .{ .node_id = id, .start = line.start, .end = line.end });
+    try self.w.region(id, line.start, line.end);
 }
 
-/// Record that the key token `span` names table `id` — see `built_mentions`.
+/// Record that the key token `span` names table `id`
+/// (`Document.mentionsOf`): each segment of every `[header]`, `[[header]]`
+/// and dotted line, on the node that segment names.
 fn recordMention(self: *Parser, id: AST.Node.Id, span: Span, kind: Document.MentionKind) ParserError!void {
-    try self.built_mentions.append(self.allocator, .{ .node_id = id, .span = span, .kind = kind });
+    try self.w.mention(id, span, kind);
 }
 
 fn parseValue(self: *Parser) ParserError!AST.Node.Id {
@@ -958,9 +952,9 @@ fn parseArray(self: *Parser) ParserError!AST.Node.Id {
         if (self.peek().kind == .close_bracket) break;
         const elem = try self.parseValue();
         if (last) |l| {
-            self.nodes.items[l].next_sibling = elem;
+            self.w.setNext(l, elem);
         } else {
-            self.nodes.items[seq_id].kind = .{ .sequence = elem };
+            try self.w.set(seq_id, .{ .sequence = elem });
         }
         last = elem;
         self.skipBlankFlow();
@@ -972,7 +966,7 @@ fn parseArray(self: *Parser) ParserError!AST.Node.Id {
     }
     const end = self.peek().span.end;
     _ = self.advance(); // ']'
-    self.spans.items[seq_id] = Span.init(start, end);
+    self.w.setSpan(seq_id, Span.init(start, end));
     return seq_id;
 }
 
@@ -1009,7 +1003,7 @@ fn parseInlineTable(self: *Parser) ParserError!AST.Node.Id {
     const end = self.peek().span.end;
     if (self.peek().kind != .close_brace) return error.UnexpectedToken;
     _ = self.advance(); // '}'
-    self.spans.items[map_id] = Span.init(start, end);
+    self.w.setSpan(map_id, Span.init(start, end));
     return map_id;
 }
 
@@ -1080,8 +1074,7 @@ fn decodeKey(self: *Parser, tok: Token) ParserError![]const u8 {
 }
 
 /// Decode any of the four TOML string forms to its byte value. Returns a slice
-/// of `source` when no transformation is needed, else an owned (freed via the
-/// AST) allocation.
+/// of `source` when no transformation is needed, else one of `owned_strings`.
 fn decodeString(self: *Parser, raw: []const u8) ParserError![]const u8 {
     if (raw.len < 2) return error.UnclosedString;
     const q = raw[0];
@@ -1307,7 +1300,7 @@ fn canonicalFloat(self: *Parser, raw: []const u8) ParserError![]const u8 {
     return self.intern(buf[0..n]);
 }
 
-/// Copy `s` into an AST-owned allocation.
+/// Copy `s` into one of `owned_strings`.
 fn intern(self: *Parser, s: []const u8) ParserError![]const u8 {
     const owned = try self.allocator.dupe(u8, s);
     errdefer self.allocator.free(owned);

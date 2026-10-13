@@ -173,8 +173,7 @@ const Parser = @import("parser.zig");
 
 /// `src` as fig adopts it from the plist parser.
 fn parseDoc(src: []const u8) !@import("../../kit/document.zig") {
-    var tree = try Parser.parse(testing.allocator, src, .XML);
-    return tree.intoDocument(testing.allocator);
+    return Parser.parse(testing.allocator, src, .XML);
 }
 
 fn expectPrint(src: []const u8, expected: []const u8) !void {

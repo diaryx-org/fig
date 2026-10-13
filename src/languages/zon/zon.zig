@@ -1,6 +1,7 @@
 const zon = @This();
 const std = @import("std");
-const Document = @import("../../kit/parse_tree.zig");
+const Document = @import("../../kit/document.zig");
+const Table = @import("../../kit/table.zig").Table;
 const AST = @import("../../kit/ast/ast.zig");
 const lang = @import("../../kit/manifest.zig");
 
@@ -18,14 +19,14 @@ pub const Language = struct {
     pub const Parser = zon.Parser;
     pub const Printer = zon.Printer;
     pub const default_type: zon.Type = .ZON;
-    /// The parser's tree, which the contract writes into fig's table.
-    pub fn parseTree(parser: *zon.Parser, input: []const u8, format: zon.Type) !Document {
-        return zon.Parser.parse(parser.allocator, input, format);
+    /// Write `input`'s rows into `out`, the table fig hands a parse.
+    pub fn parseTable(parser: *zon.Parser, input: []const u8, format: zon.Type, out: *Table) !void {
+        _ = parser;
+        return zon.Parser.parseInto(out, input, format);
     }
     /// The document fig would adopt from a parse.
-    pub fn parse(parser: *zon.Parser, input: []const u8, format: zon.Type) !Document.RowDocument {
-        var tree = try parseTree(parser, input, format);
-        return tree.intoDocument(parser.allocator);
+    pub fn parse(parser: *zon.Parser, input: []const u8, format: zon.Type) !Document {
+        return zon.Parser.parse(parser.allocator, input, format);
     }
     pub const print = zon.Printer.print;
     pub const printNode = zon.Printer.printNode;

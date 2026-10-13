@@ -53,8 +53,10 @@
 const Parser = @This();
 
 const std = @import("std");
-const Document = @import("../../kit/parse_tree.zig");
-const AST = Document.Nodes;
+const Document = @import("../../kit/document.zig");
+const AST = @import("../../kit/ast/ast.zig");
+const RowWriter = @import("../../kit/row_writer.zig");
+const Table = @import("../../kit/table.zig").Table;
 
 const Type = @import("plist.zig").Type;
 const Span = @import("../../kit/span.zig");
@@ -69,8 +71,10 @@ version: Type = .XML,
 source: []const u8 = "",
 tokens: []const Tokenizer.Token = &.{},
 pos: usize = 0,
-nodes: std.ArrayList(AST.Node) = .empty,
-spans: std.ArrayList(Span) = .empty,
+/// The table being written; set by `parseInto`.
+w: RowWriter = undefined,
+/// Decoded texts, alive until the parse ends: a dict's keys are compared
+/// against them, and `w.add` copies what a row keeps.
 owned_strings: std.ArrayList([]const u8) = .empty,
 
 pub const ParseError = error{
@@ -111,13 +115,27 @@ pub const ParseError = error{
     UnsupportedEntity,
 } || Tokenizer.TokenizeError;
 
+/// `input` as an `AST`, alone.
+pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) ParseError!AST {
+    const doc = try parse(allocator, input, format);
+    return doc.ast;
+}
+
+/// `input` as a `Document`: its table written and adopted.
 pub fn parse(allocator: std.mem.Allocator, input: []const u8, format: Type) ParseError!Document {
-    var self: Parser = .{ .allocator = allocator, .version = format, .source = input };
-    errdefer {
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseInto(&t, input, format);
+    return RowWriter.adopt(allocator, input, &t);
+}
+
+/// Write `input`'s rows into `t`, the table fig hands a parse.
+pub fn parseInto(t: *Table, input: []const u8, format: Type) ParseError!void {
+    const allocator = t.allocator;
+    var self: Parser = .{ .allocator = allocator, .version = format, .source = input, .w = .init(t) };
+    defer {
         for (self.owned_strings.items) |s| allocator.free(s);
         self.owned_strings.deinit(allocator);
-        self.nodes.deinit(allocator);
-        self.spans.deinit(allocator);
     }
 
     var tokenizer: Tokenizer = .{ .allocator = allocator, .str = input };
@@ -136,14 +154,7 @@ pub fn parse(allocator: std.mem.Allocator, input: []const u8, format: Type) Pars
         else => return error.UnexpectedToken,
     }
 
-    const nodes = try self.nodes.toOwnedSlice(allocator);
-    const spans = try self.spans.toOwnedSlice(allocator);
-    const owned = try self.owned_strings.toOwnedSlice(allocator);
-    return .{
-        .source = input,
-        .ast = .{ .allocator = allocator, .owned_strings = owned, .root = root_id, .nodes = nodes },
-        .node_spans = spans,
-    };
+    try self.w.finish(root_id);
 }
 
 /// Positioned at the root `lt`. Either a `<plist>` wrapper around exactly one
@@ -269,7 +280,9 @@ fn parseDict(self: *Parser, sp: Span) ParseError!Id {
         var replaced = false;
         for (entries.items, keys.items) |eid, existing_key| {
             if (std.mem.eql(u8, existing_key, key_text)) {
-                self.nodes.items[eid].kind.keyvalue.value = value_id;
+                // The earlier value's row is left unlinked; `finish` drops it.
+                const key_id = self.w.kindOf(eid).keyvalue.key;
+                try self.w.set(eid, .{ .keyvalue = .{ .key = key_id, .value = value_id } });
                 replaced = true;
                 break;
             }
@@ -279,7 +292,7 @@ fn parseDict(self: *Parser, sp: Span) ParseError!Id {
             // The entry span covers the whole `<key>…</key> … <value…>` pair
             // (both lines) so `Editor(Plist)` deletes/moves an entry as a unit;
             // the value's own end was recorded full-extent by `parseValue`.
-            const entry_span = Span.init(key_sp.start, self.spans.items[value_id].end);
+            const entry_span = Span.init(key_sp.start, self.w.spanOf(value_id).end);
             const kv_id = try self.addNode(.{ .keyvalue = .{ .key = key_id, .value = value_id } }, entry_span);
             try entries.append(self.allocator, kv_id);
             try keys.append(self.allocator, key_text);
@@ -544,10 +557,7 @@ fn extent(self: *const Parser, start_sp: Span) Span {
 }
 
 fn addNode(self: *Parser, kind: AST.Node.Kind, span: Span) ParseError!Id {
-    const id: Id = @intCast(self.nodes.items.len);
-    try self.nodes.append(self.allocator, .{ .id = id, .kind = kind, .next_sibling = null });
-    try self.spans.append(self.allocator, span);
-    return id;
+    return self.w.add(kind, span);
 }
 
 fn stringNode(self: *Parser, owned: []const u8, span: Span) ParseError!Id {
@@ -567,9 +577,9 @@ fn buildMapping(self: *Parser, entries: []const Id, span: Span) ParseError!Id {
 fn link(self: *Parser, ids: []const Id) void {
     if (ids.len == 0) return;
     for (ids[0 .. ids.len - 1], ids[1..]) |cur_id, next_id| {
-        self.nodes.items[cur_id].next_sibling = next_id;
+        self.w.setNext(cur_id, next_id);
     }
-    self.nodes.items[ids[ids.len - 1]].next_sibling = null;
+    self.w.setNext(ids[ids.len - 1], null);
 }
 
 fn intern(self: *Parser, owned: []u8) ParseError![]const u8 {
@@ -619,8 +629,7 @@ const build_options = @import("build_options");
 
 fn expectJson(src: []const u8, expected: []const u8) !void {
     if (comptime !build_options.lang_json) return error.SkipZigTest;
-    var tree = try parse(testing.allocator, src, .XML);
-    var ast = try tree.intoAst(testing.allocator);
+    var ast = try parseAbstract(testing.allocator, src, .XML);
     defer ast.deinit();
     var buf: [2048]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
@@ -767,19 +776,19 @@ test "node spans cover full element extents (edit-grade, not just the opening '<
     const src = "<dict><key>k</key><integer>42</integer></dict>";
 
     // root dict: whole document
-    try testing.expectEqualStrings(src, sliceSpan(src, doc.node_spans[doc.ast.root]));
+    try testing.expectEqualStrings(src, sliceSpan(src, doc.spanOf(doc.ast.root)));
 
     // the value node: the full `<integer>42</integer>`
     const val = try doc.ast.getValByPath(&.{.{ .key = "k" }});
-    try testing.expectEqualStrings("<integer>42</integer>", sliceSpan(src, doc.node_spans[val.id]));
+    try testing.expectEqualStrings("<integer>42</integer>", sliceSpan(src, doc.spanOf(val.id)));
 
     // the key node: the full `<key>k</key>`
     const key = try doc.ast.getKeyByPath(&.{.{ .key = "k" }});
-    try testing.expectEqualStrings("<key>k</key>", sliceSpan(src, doc.node_spans[key.id]));
+    try testing.expectEqualStrings("<key>k</key>", sliceSpan(src, doc.spanOf(key.id)));
 
     // the keyvalue entry: `<key>…</key>` through the value's close, as a unit
     const entry_id = doc.ast.node(doc.ast.root).kind.mapping.?;
-    try testing.expectEqualStrings("<key>k</key><integer>42</integer>", sliceSpan(src, doc.node_spans[entry_id]));
+    try testing.expectEqualStrings("<key>k</key><integer>42</integer>", sliceSpan(src, doc.spanOf(entry_id)));
 }
 
 fn sliceSpan(src: []const u8, sp: Span) []const u8 {

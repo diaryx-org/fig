@@ -27,8 +27,11 @@ const Parser = @This();
 const std = @import("std");
 const testing = std.testing;
 const Ast = std.zig.Ast;
-const Document = @import("../../kit/parse_tree.zig");
-const AST = Document.Nodes;
+const Document = @import("../../kit/document.zig");
+const AST = @import("../../kit/ast/ast.zig");
+const RowWriter = @import("../../kit/row_writer.zig");
+const table = @import("../../kit/table.zig");
+const Table = table.Table;
 
 const Type = @import("zon.zig").Type;
 const Span = @import("../../kit/span.zig");
@@ -40,9 +43,9 @@ allocator: std.mem.Allocator,
 /// two, so spans from the tree index this slice unchanged.
 source: []const u8 = "",
 tree: *const Ast = undefined,
-nodes: std.ArrayList(AST.Node) = .empty,
-node_spans: std.ArrayList(Span) = .empty,
-owned_strings: std.ArrayList([]const u8) = .empty,
+/// The table being written; set by `parseInto`. A decoded string is copied
+/// into it by `w.add`, and the parser frees its own copy at once.
+w: RowWriter = undefined,
 // Comment layer. `std.zig.Ast` discards `//` comments (its tokenizer treats them
 // as whitespace), so they're recovered by byte-scanning the source *gaps*
 // between nodes — `absorbCommentsUpTo(pos)` scans `[scan_pos, pos)`, which holds
@@ -50,22 +53,29 @@ owned_strings: std.ArrayList([]const u8) = .empty,
 // those are values the walk jumps `scan_pos` over). A comment on the same line
 // as a just-finished value trails it; one on its own line buffers as leading.
 scan_pos: usize = 0,
-node_comments: std.ArrayList(AST.NodeComments) = .empty,
 pending_leading: std.ArrayList(AST.Comment) = .empty,
 last_value_id: ?AST.Node.Id = null,
-comments_seen: bool = false,
 
 pub const Error = error{ InvalidZon, UnsupportedZon } || std.mem.Allocator.Error;
 
-/// Parse `input` into an `AST` only, discarding source spans. Mirrors the other
-/// languages' `parseAbstract` so tests can compare abstract shape.
-pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) !Document.RowAst {
-    var tree = try parse(allocator, input, format);
-    return tree.intoAst(allocator);
+/// `input` as an `AST`, alone.
+pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) !AST {
+    const doc = try parse(allocator, input, format);
+    return doc.ast;
 }
 
+/// `input` as a `Document`: its table written and adopted.
 pub fn parse(allocator: std.mem.Allocator, input: []const u8, format: Type) Error!Document {
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseInto(&t, input, format);
+    return RowWriter.adopt(allocator, input, &t);
+}
+
+/// Write `input`'s rows into `t`, the table fig hands a parse.
+pub fn parseInto(t: *Table, input: []const u8, format: Type) Error!void {
     _ = format;
+    const allocator = t.allocator;
 
     // `std.zig.Ast.parse` requires a null-terminated source. The dup is byte
     // identical to `input`, so all token offsets line up with `input`.
@@ -79,8 +89,8 @@ pub fn parse(allocator: std.mem.Allocator, input: []const u8, format: Type) Erro
     const root_decls = tree.rootDecls();
     if (root_decls.len == 0) return error.InvalidZon;
 
-    var self: Parser = .{ .allocator = allocator, .source = input, .tree = &tree };
-    errdefer self.deinit();
+    var self: Parser = .{ .allocator = allocator, .source = input, .tree = &tree, .w = .init(t) };
+    defer self.deinit();
 
     // A leading comment block above the whole document binds to the root (a
     // container root passes it through to its first key inside `walk`).
@@ -88,54 +98,14 @@ pub fn parse(allocator: std.mem.Allocator, input: []const u8, format: Type) Erro
     const root = try self.walk(root_decls[0]);
     try self.claimLeading(root);
     self.last_value_id = root;
-    self.scan_pos = self.node_spans.items[root].end;
+    self.scan_pos = self.w.spanOf(root).end;
     try self.absorbCommentsUpTo(input.len); // a trailing comment after the root
 
-    const nodes = try self.nodes.toOwnedSlice(allocator);
-    errdefer allocator.free(nodes);
-    self.nodes = .empty;
-
-    const node_spans = try self.node_spans.toOwnedSlice(allocator);
-    errdefer allocator.free(node_spans);
-    self.node_spans = .empty;
-
-    const owned_strings = try self.owned_strings.toOwnedSlice(allocator);
-    self.owned_strings = .empty;
-
-    var result: AST = .{
-        .allocator = allocator,
-        .owned_strings = owned_strings,
-        .root = root,
-        .nodes = nodes,
-    };
-    if (self.comments_seen) {
-        result.node_comments = try self.node_comments.toOwnedSlice(allocator);
-        self.node_comments = .empty;
-    }
-
-    // Success path: `errdefer self.deinit()` won't run, so free the comment
-    // scratch lists here (the owned `leading` slices, if any, moved into the AST
-    // above and left `node_comments` empty).
-    for (self.node_comments.items) |nc| allocator.free(nc.leading);
-    self.node_comments.deinit(allocator);
-    self.pending_leading.deinit(allocator);
-
-    return .{
-        .source = input,
-        .ast = result,
-        .node_spans = node_spans,
-    };
+    try self.w.finish(root);
 }
 
 pub fn deinit(self: *Parser) void {
-    self.nodes.deinit(self.allocator);
-    self.node_spans.deinit(self.allocator);
-    for (self.owned_strings.items) |s| self.allocator.free(s);
-    self.owned_strings.deinit(self.allocator);
-    // After a successful parse the `leading` slices moved to the AST and the list
-    // is empty; on an error path they are freed here. Text borrows `source`.
-    for (self.node_comments.items) |nc| self.allocator.free(nc.leading);
-    self.node_comments.deinit(self.allocator);
+    // Comment text borrows `source`.
     self.pending_leading.deinit(self.allocator);
 }
 
@@ -203,13 +173,13 @@ fn sequence(self: *Parser, node: Ast.Node.Index, elements: []const Ast.Node.Inde
         // through to its first key inside `walk` (so this is then a no-op).
         try self.claimLeading(child_id);
         self.last_value_id = child_id;
-        self.scan_pos = self.node_spans.items[child_id].end;
-        if (prev) |p| self.nodes.items[p].next_sibling = child_id else first = child_id;
+        self.scan_pos = self.w.spanOf(child_id).end;
+        if (prev) |p| self.w.setNext(p, child_id) else first = child_id;
         prev = child_id;
     }
     try self.absorbCommentsUpTo(self.nodeSpan(node).end); // trailing on the last element
     try self.claimDangling(seq_id); // own-line orphans before the closing brace
-    self.nodes.items[seq_id].kind = .{ .sequence = first };
+    try self.w.set(seq_id, .{ .sequence = first });
     return seq_id;
 }
 
@@ -228,22 +198,22 @@ fn mapping(self: *Parser, node: Ast.Node.Index, fields: []const Ast.Node.Index) 
         const key_id = try self.fieldName(name_token);
         try self.claimLeading(key_id);
         // Don't re-scan the key name / `=` while walking the value.
-        self.scan_pos = self.node_spans.items[key_id].end;
+        self.scan_pos = self.w.spanOf(key_id).end;
         const value_id = try self.walk(field);
         self.last_value_id = value_id;
-        self.scan_pos = self.node_spans.items[value_id].end;
-        const key_span = self.node_spans.items[key_id];
-        const value_span = self.node_spans.items[value_id];
+        self.scan_pos = self.w.spanOf(value_id).end;
+        const key_span = self.w.spanOf(key_id);
+        const value_span = self.w.spanOf(value_id);
         const kv_id = try self.addNode(
             .{ .keyvalue = .{ .key = key_id, .value = value_id } },
             .{ .start = key_span.start, .end = value_span.end },
         );
-        if (prev) |p| self.nodes.items[p].next_sibling = kv_id else first = kv_id;
+        if (prev) |p| self.w.setNext(p, kv_id) else first = kv_id;
         prev = kv_id;
     }
     try self.absorbCommentsUpTo(self.nodeSpan(node).end); // trailing on the last entry
     try self.claimDangling(map_id); // own-line orphans before the closing brace
-    self.nodes.items[map_id].kind = .{ .mapping = first };
+    try self.w.set(map_id, .{ .mapping = first });
     return map_id;
 }
 
@@ -303,8 +273,7 @@ fn enumLiteral(self: *Parser, node: Ast.Node.Index) Error!AST.Node.Id {
             error.OutOfMemory => return error.OutOfMemory,
             error.InvalidLiteral => return error.InvalidZon,
         };
-        errdefer self.allocator.free(decoded);
-        try self.owned_strings.append(self.allocator, decoded);
+        defer self.allocator.free(decoded);
         return self.addNode(.{ .extended = .{ .kind = .enum_literal, .text = decoded } }, span);
     }
     return self.addNode(.{ .extended = .{ .kind = .enum_literal, .text = self.sourceSlice(span) } }, span);
@@ -315,7 +284,7 @@ fn stringLiteral(self: *Parser, node: Ast.Node.Index) Error!AST.Node.Id {
 
     // Let stdlib decode escapes and join multiline `\\` lines for us.
     var aw: std.Io.Writer.Allocating = .init(self.allocator);
-    errdefer aw.deinit();
+    defer aw.deinit();
     const result = std.zig.ZonGen.parseStrLit(self.tree, node, &aw.writer) catch
         return error.OutOfMemory;
     switch (result) {
@@ -325,10 +294,7 @@ fn stringLiteral(self: *Parser, node: Ast.Node.Index) Error!AST.Node.Id {
         .failure => return error.InvalidZon,
     }
 
-    const owned = try aw.toOwnedSlice();
-    errdefer self.allocator.free(owned);
-    try self.owned_strings.append(self.allocator, owned);
-    return self.addNode(.{ .string = owned }, span);
+    return self.addNode(.{ .string = aw.written() }, span);
 }
 
 /// `'a'` char literal → `extended` char_literal whose text is the decimal
@@ -342,9 +308,8 @@ fn charLiteral(self: *Parser, node: Ast.Node.Index) Error!AST.Node.Id {
         .success => |c| c,
         .failure => return error.InvalidZon,
     };
-    const raw = try std.fmt.allocPrint(self.allocator, "{d}", .{codepoint});
-    errdefer self.allocator.free(raw);
-    try self.owned_strings.append(self.allocator, raw);
+    var buf: [8]u8 = undefined;
+    const raw = std.fmt.bufPrint(&buf, "{d}", .{codepoint}) catch unreachable; // a u21 has at most 7 digits
     return self.addNode(.{ .extended = .{ .kind = .char_literal, .text = raw } }, span);
 }
 
@@ -357,8 +322,7 @@ fn fieldName(self: *Parser, token: Ast.TokenIndex) Error!AST.Node.Id {
             error.OutOfMemory => return error.OutOfMemory,
             error.InvalidLiteral => return error.InvalidZon,
         };
-        errdefer self.allocator.free(decoded);
-        try self.owned_strings.append(self.allocator, decoded);
+        defer self.allocator.free(decoded);
         return self.addNode(.{ .string = decoded }, span);
     }
     return self.addNode(.{ .string = self.sourceSlice(span) }, span);
@@ -369,11 +333,7 @@ fn fieldName(self: *Parser, token: Ast.TokenIndex) Error!AST.Node.Id {
 // =========
 
 fn addNode(self: *Parser, kind: AST.Node.Kind, span: Span) Error!AST.Node.Id {
-    const id: AST.Node.Id = @intCast(self.nodes.items.len);
-    try self.nodes.append(self.allocator, .{ .id = id, .kind = kind, .next_sibling = null });
-    try self.node_spans.append(self.allocator, span);
-    try self.node_comments.append(self.allocator, .{});
-    return id;
+    return self.w.add(kind, span);
 }
 
 // ── Comments ─────────────────────────────────────────────────────────────────
@@ -401,8 +361,7 @@ fn absorbCommentsUpTo(self: *Parser, pos: usize) Error!void {
                 if (self.multilineContainer(id, i)) {
                     try self.appendDangling(id, comment);
                 } else {
-                    self.node_comments.items[id].trailing = comment;
-                    self.comments_seen = true;
+                    try self.w.comment(id, table.comment_trailing, comment);
                 }
                 self.last_value_id = null;
             } else {
@@ -416,14 +375,11 @@ fn absorbCommentsUpTo(self: *Parser, pos: usize) Error!void {
     if (i > self.scan_pos) self.scan_pos = i;
 }
 
-/// Hand the buffered leading comments to node `id` as an owned slice, then clear
-/// the buffer. No-op when nothing is buffered.
+/// Hand the buffered leading comments to node `id`, then clear the buffer.
+/// No-op when nothing is buffered.
 fn claimLeading(self: *Parser, id: AST.Node.Id) Error!void {
-    if (self.pending_leading.items.len == 0) return;
-    const owned = try self.allocator.dupe(AST.Comment, self.pending_leading.items);
+    for (self.pending_leading.items) |c| try self.w.comment(id, table.comment_leading, c);
     self.pending_leading.clearRetainingCapacity();
-    self.node_comments.items[id].leading = owned;
-    self.comments_seen = true;
 }
 
 /// Capture a line comment immediately after a container's `.{` that ends its
@@ -442,8 +398,7 @@ fn captureOpenTrailing(self: *Parser, id: AST.Node.Id, node: Ast.Node.Index) Err
                 const start = i + 2;
                 var j = start;
                 while (j < self.source.len and self.source[j] != '\n') j += 1;
-                self.node_comments.items[id].trailing = .{ .text = std.mem.trim(u8, self.source[start..j], " \t\r"), .style = .line };
-                self.comments_seen = true;
+                try self.w.comment(id, table.comment_trailing, .{ .text = std.mem.trim(u8, self.source[start..j], " \t\r"), .style = .line });
                 if (j > self.scan_pos) self.scan_pos = j; // skip it in later absorbs
                 return;
             },
@@ -455,35 +410,26 @@ fn captureOpenTrailing(self: *Parser, id: AST.Node.Id, node: Ast.Node.Index) Err
 /// Whether `id` is a container whose `.{` precedes `cpos` on an earlier line — a
 /// multi-line container whose close is on `cpos`'s line.
 fn multilineContainer(self: *Parser, id: AST.Node.Id, cpos: usize) bool {
-    switch (self.nodes.items[id].kind) {
+    switch (self.w.kindOf(id)) {
         .sequence, .mapping => {},
         else => return false,
     }
-    const open = self.node_spans.items[id].start;
+    const open = self.w.spanOf(id).start;
     if (cpos <= open) return false;
     return std.mem.indexOfScalar(u8, self.source[open..cpos], '\n') != null;
 }
 
-/// Append one comment to `id`'s `dangling` run (reallocating onto any orphans
-/// already claimed at the close).
+/// Append one comment to `id`'s `dangling` run, after any orphans already
+/// claimed at the close.
 fn appendDangling(self: *Parser, id: AST.Node.Id, c: AST.Comment) Error!void {
-    const old = self.node_comments.items[id].dangling;
-    const grown = try self.allocator.alloc(AST.Comment, old.len + 1);
-    @memcpy(grown[0..old.len], old);
-    grown[old.len] = c;
-    self.allocator.free(old);
-    self.node_comments.items[id].dangling = grown;
-    self.comments_seen = true;
+    try self.w.comment(id, table.comment_dangling, c);
 }
 
 /// Hand buffered orphan comments (own-line comments at the end of a container's
 /// body, before its closing brace) to container `id` as its `dangling` run.
 fn claimDangling(self: *Parser, id: AST.Node.Id) Error!void {
-    if (self.pending_leading.items.len == 0) return;
-    const owned = try self.allocator.dupe(AST.Comment, self.pending_leading.items);
+    for (self.pending_leading.items) |c| try self.w.comment(id, table.comment_dangling, c);
     self.pending_leading.clearRetainingCapacity();
-    self.node_comments.items[id].dangling = owned;
-    self.comments_seen = true;
 }
 
 fn nodeSpan(self: *Parser, node: Ast.Node.Index) Span {
@@ -524,10 +470,10 @@ fn classifyNumber(raw: []const u8) @FieldType(AST.Node.Kind.Number, "kind") {
 // TESTS
 // =========
 
-fn expectParse(input: []const u8, expected: AST) !void {
-    var tree = try parse(testing.allocator, input, .ZON);
-    defer tree.deinit(testing.allocator);
-    try testing.expect(expected.eql(tree.ast));
+fn expectParse(input: []const u8, expected: AST.Literal) !void {
+    var ast = try parseAbstract(testing.allocator, input, .ZON);
+    defer ast.deinit();
+    try testing.expect(expected.matches(ast));
 }
 
 test "scalar literals" {

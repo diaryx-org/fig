@@ -1,7 +1,8 @@
 const plist = @This();
 const std = @import("std");
 const AST = @import("../../kit/ast/ast.zig");
-const Document = @import("../../kit/parse_tree.zig");
+const Document = @import("../../kit/document.zig");
+const Table = @import("../../kit/table.zig").Table;
 const Writer = std.Io.Writer;
 const lang = @import("../../kit/manifest.zig");
 
@@ -36,14 +37,14 @@ pub const Language = struct {
     pub const Printer = plist.Printer;
     pub const default_type: plist.Type = .XML;
 
-    /// The parser's tree, which the contract writes into fig's table.
-    pub fn parseTree(parser: *plist.Parser, input: []const u8, format: plist.Type) !Document {
-        return plist.Parser.parse(parser.allocator, input, format);
+    /// Write `input`'s rows into `out`, the table fig hands a parse.
+    pub fn parseTable(parser: *plist.Parser, input: []const u8, format: plist.Type, out: *Table) !void {
+        _ = parser;
+        return plist.Parser.parseInto(out, input, format);
     }
     /// The document fig would adopt from a parse.
-    pub fn parse(parser: *plist.Parser, input: []const u8, format: plist.Type) !Document.RowDocument {
-        var tree = try parseTree(parser, input, format);
-        return tree.intoDocument(parser.allocator);
+    pub fn parse(parser: *plist.Parser, input: []const u8, format: plist.Type) !Document {
+        return plist.Parser.parse(parser.allocator, input, format);
     }
 
     pub fn print(writer: *Writer, ast: *const AST) !void {

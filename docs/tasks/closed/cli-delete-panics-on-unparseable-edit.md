@@ -1,12 +1,20 @@
 ```fig
 title = fig delete panics when its edit leaves the file unparseable
-part_of = [Tasks](/docs/tasks/tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 description = The CLI unwraps `splicedText(config).?` on `InvalidEditText`, which is null for an edit with no text of the caller's, such as a delete, so such an edit crashes instead of reporting
-status = open
+status = done
 created = 2026-10-13
+updated = 2026-10-13
 ```
 
 # fig delete panics when its edit leaves the file unparseable
+
+**Status.** Done, in `fix(cli): an edit with no text of the caller's that
+leaves the file unparseable is reported, not a panic` (08fa574, 2026-10-13).
+When an edit splices no text of the caller's, `main` reports through
+`diag_report.reportUnparseableEdit`: it names the path and file, says
+nothing was written, and exits 1. `tools/cli-args-check.sh` holds it with a
+YAML delete of an anchor an alias still names, which panicked before.
 
 **Where.** `src/cli/main.zig`, in the `dispatch` error switch: both
 `error.InvalidEditText` and the arm below it call

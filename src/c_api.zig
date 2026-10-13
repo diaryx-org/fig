@@ -157,6 +157,44 @@ pub export fn fig_format_name(format: c_int) ?[*:0]const u8 {
     return e.name.ptr;
 }
 
+// ==================
+// THE KIT'S RULES
+// ==================
+//
+// The kit's number and datetime rules, for a runner whose languages are
+// not Zig (`fig.h`, "The kit's rules"). `kit/src/rules.zig` defines them,
+// and `fig-kit.wasm` exports the same functions under the same names.
+
+const rules = @import("kit").rules;
+
+pub export fn fig_kit_number_spellable(raw: [*]const u8, len: usize, spelling: u32) bool {
+    return rules.numberSpellable(raw, len, spelling);
+}
+
+pub export fn fig_kit_number_canonical(raw: [*]const u8, len: usize, out: [*]u8, out_cap: usize) usize {
+    return rules.numberCanonical(raw, len, out, out_cap);
+}
+
+pub export fn fig_kit_number_non_finite(raw: [*]const u8, len: usize) i32 {
+    return rules.numberNonFinite(raw, len);
+}
+
+pub export fn fig_kit_datetime_classify(raw: [*]const u8, len: usize, flags: u32) i32 {
+    return rules.datetimeClassify(raw, len, flags);
+}
+
+pub export fn fig_kit_datetime_valid_date(s: [*]const u8, len: usize) bool {
+    return rules.datetimeValidDate(s, len);
+}
+
+pub export fn fig_kit_datetime_valid_time(s: [*]const u8, len: usize, flags: u32) bool {
+    return rules.datetimeValidTime(s, len, flags);
+}
+
+pub export fn fig_kit_datetime_valid_offset(s: [*]const u8, len: usize) bool {
+    return rules.datetimeValidOffset(s, len);
+}
+
 /// The registered dialect a format handle names, or null for one never
 /// handed out. The checked lookup every entry point taking `int format`
 /// opens with.

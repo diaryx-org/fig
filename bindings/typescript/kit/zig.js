@@ -1,12 +1,12 @@
 // The Zig kit's rules, for the JavaScript kit: `fig-kit.wasm` (the fig
-// repository's `kit/src/js.zig`), inlined as base64 by
-// scripts/build-wasm.mjs into `zig-bytes.js` and compiled synchronously the
-// first time a rule is asked. At under 5 KB it is far inside what a
+// repository's `kit/src/js.zig`, whose functions `fig.h` declares as
+// `fig_kit_*`), inlined as base64 by scripts/build-wasm.mjs into
+// `zig-bytes.js` and compiled synchronously the first time a rule is asked. At under 5 KB it is far inside what a
 // browser's main thread compiles synchronously.
 //
 // `number.js` and `datetime.js` are written on these functions, and
 // nothing else here touches the module, so a host with no WebAssembly
-// (fig-quickjs) answers the same functions from fig's own library by
+// (fig-quickjs) answers the same functions from `libfig`'s `fig_kit_*` by
 // replacing this file alone.
 import { BYTES } from "./zig-bytes.js";
 
@@ -19,7 +19,7 @@ function exports() {
   return kit;
 }
 
-// How much longer than its input an answer can be (`answer_room` in js.zig).
+// How much longer than its input an answer can be (`FIG_KIT_ANSWER_ROOM`).
 const ANSWER_ROOM = 520;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -43,12 +43,13 @@ function put(s) {
   return [at, n];
 }
 
-/** A number spelling (`number.js`) as `js.zig`'s bits. */
+/** A number spelling (`number.js`) as `fig.h`'s `FIG_SPELL_*` bits. */
 function spellingBits(s) {
   return (s.hex ? 1 : 0) | (s.octal ? 2 : 0) | (s.binary ? 4 : 0) | (s.underscores ? 8 : 0) | (s.leadingZero ? 16 : 0) | (s.bareDot ? 32 : 0) | (s.plus ? 64 : 0);
 }
 
-/** Datetime options (`datetime.js`) as `js.zig`'s bits; both default on. */
+/** Datetime options (`datetime.js`) as `fig.h`'s `FIG_DATETIME_*` bits;
+ *  both default on. */
 function optionBits(opts) {
   return (opts?.minutePrecision !== false ? 1 : 0) | (opts?.timeOnly !== false ? 2 : 0);
 }
@@ -61,7 +62,7 @@ export function numberSpellable(raw, s) {
 export function numberCanonical(raw) {
   const [at, len] = put(raw);
   const k = exports();
-  const n = k.fig_kit_number_canonical(at, len, at + len);
+  const n = k.fig_kit_number_canonical(at, len, at + len, len + ANSWER_ROOM);
   return decoder.decode(new Uint8Array(k.memory.buffer, at + len, n));
 }
 

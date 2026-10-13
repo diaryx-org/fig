@@ -1290,6 +1290,69 @@ FigStatus fig_value_diagnose(FigValue *value, FigNodeId root, int format,
 // Out-of-range `index` or no prior diagnose returns FIG_STATUS_INVALID_ARGUMENT.
 FigStatus fig_value_warning(FigValue *value, size_t index, FigWarning *out);
 
+// ============================================================================
+// The kit's rules
+//
+// How a number's lexeme is spelled for a format and which datetime a bare
+// token is: the rules fig's own languages are written with, for a language
+// that is not Zig (a runner's, written in JavaScript or Lua). The same
+// functions, under the same names, are the exports of the kit's WebAssembly
+// module (`fig-kit.wasm`), which the TypeScript binding's kit answers
+// through. Each reads `len` bytes at `raw` and keeps nothing.
+// ============================================================================
+
+// The spellings a format reads back as a number, for `spelling`. A bit left
+// clear means that spelling is canonicalized to decimal before it is written.
+#define FIG_SPELL_HEX          (1u << 0)  // 0x1F
+#define FIG_SPELL_OCTAL        (1u << 1)  // 0o17
+#define FIG_SPELL_BINARY       (1u << 2)  // 0b1010
+#define FIG_SPELL_UNDERSCORES  (1u << 3)  // 1_000
+#define FIG_SPELL_LEADING_ZERO (1u << 4)  // 0755
+#define FIG_SPELL_BARE_DOT     (1u << 5)  // .5, 5.
+#define FIG_SPELL_PLUS         (1u << 6)  // a leading +
+
+// Whether a format that spells `spelling` reads `raw` back as the same number.
+bool fig_kit_number_spellable(const uint8_t *raw, size_t len, uint32_t spelling);
+
+// How much longer than its input fig_kit_number_canonical's answer can be.
+#define FIG_KIT_ANSWER_ROOM 520
+
+// Write `raw` as the decimal lexeme every format reads (a radix converted,
+// `_` and a leading `+` dropped, a bare dot padded, leading zeros stripped;
+// a lexeme that is not a number as it was) to `out`, and return its length.
+// Returns SIZE_MAX, having written nothing a caller should read, when
+// `out_cap` is too small; `len + FIG_KIT_ANSWER_ROOM` never is.
+size_t fig_kit_number_canonical(const uint8_t *raw, size_t len,
+                                uint8_t *out, size_t out_cap);
+
+// Which non-finite float `raw` spells, in any format's words (`inf`, `.inf`,
+// `Infinity`, `nan`, ..., with an optional sign).
+#define FIG_NON_FINITE_NONE    (-1)
+#define FIG_NON_FINITE_INF     0
+#define FIG_NON_FINITE_NEG_INF 1
+#define FIG_NON_FINITE_NAN     2
+int32_t fig_kit_number_non_finite(const uint8_t *raw, size_t len);
+
+// What a datetime may leave out, for `flags`.
+#define FIG_DATETIME_MINUTE_PRECISION (1u << 0)  // HH:MM, no seconds
+#define FIG_DATETIME_TIME_ONLY        (1u << 1)  // a time with no date
+
+// The datetime `raw` is, as its FigExtKind (FIG_EXT_OFFSET_DATETIME,
+// FIG_EXT_LOCAL_DATETIME, FIG_EXT_LOCAL_DATE or FIG_EXT_LOCAL_TIME), or -1
+// when it is none. The date and time are joined by `T`, `t` or a space; an
+// offset is `Z`, `z` or `+HH:MM`/`-HH:MM`.
+int32_t fig_kit_datetime_classify(const uint8_t *raw, size_t len, uint32_t flags);
+
+// Whether `s` is `YYYY-MM-DD` and a day that exists.
+bool fig_kit_datetime_valid_date(const uint8_t *s, size_t len);
+
+// Whether `s` is `HH:MM:SS[.frac]`, or `HH:MM` with
+// FIG_DATETIME_MINUTE_PRECISION. A second of 60 is a leap second.
+bool fig_kit_datetime_valid_time(const uint8_t *s, size_t len, uint32_t flags);
+
+// Whether `s` is `+HH:MM` or `-HH:MM`, an offset within a day.
+bool fig_kit_datetime_valid_offset(const uint8_t *s, size_t len);
+
 #ifdef __cplusplus
 }
 #endif

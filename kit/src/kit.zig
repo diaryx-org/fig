@@ -44,6 +44,9 @@ pub const ascii = @import("ascii.zig");
 pub const datetime = @import("datetime.zig");
 pub const width = @import("width.zig");
 pub const number = @import("number.zig");
+/// `number` and `datetime` as C functions, which `libfig` and `fig-kit.wasm`
+/// export as `fig_kit_*`.
+pub const rules = @import("rules.zig");
 /// The YAML core schema's numbers and tags, which core reads too.
 pub const yaml_schema = @import("yaml_schema.zig");
 
@@ -72,6 +75,7 @@ test {
     _ = Unicode;
     _ = width;
     _ = number;
+    _ = rules;
 }
 
 /// Like std.mem.eql, but also works if type has a `.eql` function defined.

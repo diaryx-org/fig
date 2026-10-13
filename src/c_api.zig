@@ -1188,6 +1188,11 @@ fn editStatus(err: anyerror) FigStatus {
         // A delete whose splice parsed to a document with more than the one
         // entry or item changed, rolled back: the same kind of answer again.
         error.DeleteChangedOtherValues => .unsupported_operation,
+        // Deleting the only item of a root list in a format whose empty
+        // document is an empty mapping (figl), which has no spelling of an
+        // empty root list: the request names a valid item, so not
+        // `invalid_argument`.
+        error.NoEmptyRootList => .unsupported_operation,
         // A value the format cannot represent at all — plist has no null. Same
         // answer `serializeStatus` gives it, since it is the same fact about the
         // format either way. Infinity or NaN into strict JSON is the same kind
@@ -4250,6 +4255,7 @@ test "editStatus: every editor refusal is a caller error, not parse_error" {
         error.ImplicitSection,          error.ContainerClosesOnItsLine,
         error.NotAKey,                  error.NonFiniteNumber,
         error.CommentInsideValue,       error.DeleteChangedOtherValues,
+        error.NoEmptyRootList,
     };
     for (refusals) |err| {
         const status = editStatus(err);

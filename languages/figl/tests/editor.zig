@@ -324,6 +324,91 @@ test "fig remove a map-shaped sequence element carries its whole body" {
     try expectFigSource(&ed, "servers\n> *\n>> host = b.com\n");
 }
 
+// Deleting a list's only item leaves `key = []`, as a flow list and a YAML
+// block list are left, keeping the key's comments; the key used to go with
+// the item's lines.
+
+test "fig remove the only `*` item leaves the key and an empty list" {
+    var ed = try newFigEditor("a = 1\n# lead\nports  # tail\n> * 25565\nb = 2\n");
+    defer ed.deinit();
+    try ed.removeSeqItem(&.{.{ .key = "ports" }}, 0);
+    try expectFigSource(&ed, "a = 1\n# lead\nports = []  # tail\nb = 2\n");
+    try ed.appendToSeq(&.{.{ .key = "ports" }}, "80");
+    try expectFigSource(&ed, "a = 1\n# lead\nports = [80]  # tail\nb = 2\n");
+}
+
+test "fig remove the only map element under a header leaves an empty list" {
+    var ed = try newFigEditor("servers\n> *  # first\n> > host = a\n");
+    defer ed.deinit();
+    try ed.removeSeqItem(&.{.{ .key = "servers" }}, 0);
+    try expectFigSource(&ed, "servers = []\n");
+}
+
+test "fig remove the only append-header element keeps its key's line and comments" {
+    var ed = try newFigEditor("a = 1\n# lead\nreplacements[]  # tail\n> file = README.md\n");
+    defer ed.deinit();
+    try ed.removeSeqItem(&.{.{ .key = "replacements" }}, 0);
+    try expectFigSource(&ed, "a = 1\n# lead\nreplacements = []  # tail\n");
+}
+
+test "fig delete the only append-header element as a container leaves an empty list" {
+    // The CLI's `delete xs[0]` takes a block element whole, through
+    // `deleteContainer`.
+    var ed = try newFigEditor("a = 1\nreplacements[]\n> file = README.md\n> exactly = 0\n");
+    defer ed.deinit();
+    try ed.deleteContainer(&.{ .{ .key = "replacements" }, .{ .index = 0 } });
+    try expectFigSource(&ed, "a = 1\nreplacements = []\n");
+}
+
+test "fig remove the only element of a nested append header keeps the path to it" {
+    var ed = try newFigEditor("a[]\n> x = 1\na[].b[]\n> y = 2\n");
+    defer ed.deinit();
+    try ed.removeSeqItem(&.{ .{ .key = "a" }, .{ .index = 0 }, .{ .key = "b" } }, 0);
+    try expectFigSource(&ed, "a[]\n> x = 1\na[].b = []\n");
+
+    var nested = try newFigEditor("a[]\n> x = 1\n> b[]\n> > y = 2\n");
+    defer nested.deinit();
+    try nested.deleteContainer(&.{ .{ .key = "a" }, .{ .index = 0 }, .{ .key = "b" }, .{ .index = 0 } });
+    try expectFigSource(&nested, "a[]\n> x = 1\n> b = []\n");
+}
+
+test "fig emptying a `+` chain one element at a time ends at an empty list" {
+    var ed = try newFigEditor("r[]\n> f = 1\n+\n> f = 2\nb = 2\n");
+    defer ed.deinit();
+    try ed.removeSeqItem(&.{.{ .key = "r" }}, 1);
+    try expectFigSource(&ed, "r[]\n> f = 1\nb = 2\n");
+    try ed.removeSeqItem(&.{.{ .key = "r" }}, 0);
+    try expectFigSource(&ed, "r = []\nb = 2\n");
+}
+
+test "fig remove the only index-addressed element takes every line of it" {
+    // The comment ends an assignment to the element, so it goes with it.
+    var ed = try newFigEditor("c[0].name = x  # the name\nother = 1\nc[0].size = 3\n");
+    defer ed.deinit();
+    try ed.removeSeqItem(&.{.{ .key = "c" }}, 0);
+    try expectFigSource(&ed, "c = []\nother = 1\n");
+
+    var scattered = try newFigEditor("a[]\n> x = 1\nb = 2\na[0].y = 3\n");
+    defer scattered.deinit();
+    try scattered.deleteContainer(&.{ .{ .key = "a" }, .{ .index = 0 } });
+    try expectFigSource(&scattered, "a = []\nb = 2\n");
+}
+
+test "fig removing the only item of a root list is refused" {
+    // figl reads an empty document as an empty mapping, and `[]` at a
+    // line's start is TOML's header, not a list.
+    var ed = try newFigEditor("# c\n* a\n");
+    defer ed.deinit();
+    try std.testing.expectError(error.NoEmptyRootList, ed.removeSeqItem(&.{}, 0));
+    try expectFigSource(&ed, "# c\n* a\n");
+    try std.testing.expect(!ed.splice_rejected);
+
+    var map = try newFigEditor("*\n> a = 1\n");
+    defer map.deinit();
+    try std.testing.expectError(error.NoEmptyRootList, map.deleteContainer(&.{.{ .index = 0 }}));
+    try expectFigSource(&map, "*\n> a = 1\n");
+}
+
 test "fig inline array append/prepend/remove (flow)" {
     var ed = try newFigEditor("ports = [1, 2]\n");
     defer ed.deinit();

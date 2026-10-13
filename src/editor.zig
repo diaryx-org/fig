@@ -2421,6 +2421,7 @@ pub fn Editor(comptime Language: type) type {
             const del_end = lineEndAfter(source, item_span.end -| 1);
             const next = parsed.ast.next(&item);
             if (is_first and next == null) {
+                if (try self.emptiedSectionSeq(parsed, node)) return;
                 var out: std.ArrayList(u8) = .empty;
                 defer out.deinit(self.allocator);
                 if (try self.emptiedBlockSeq(&out, parsed, node, item, line_start, del_end)) |span|
@@ -2537,6 +2538,140 @@ pub fn Editor(comptime Language: type) type {
             if (node.id != parsed.ast.root) return null;
             try out.appendSlice(self.allocator, if (ends_line) "[]\n" else "[]");
             return Span.init(line_start, del_end);
+        }
+
+        /// Delete the only item of the sequence `node` when the sequence
+        /// hangs under a header key, leaving the key and the format's empty
+        /// list after it — `xs = []` — and return whether it did; false
+        /// leaves the delete to the caller.
+        ///
+        /// A list under a header is a section: figl's `xs` over `> * a`, or
+        /// the `xs[]` that appends an element and is that element's header
+        /// too. Its key stands on a line of the sequence's own, or of its
+        /// only item's, so deleting the item's lines took the key with them,
+        /// where every flow list and a YAML block list keep the key and
+        /// empty it. The parser says a value hangs under its key by
+        /// recording a zero-width separator at the key's end
+        /// (`Document.sepSpan`), and `Syntax.empty_seq_literal` goes there
+        /// through `writeTail`, as a replace reframes a value.
+        ///
+        /// The key's line keeps what stands before the key's end — its
+        /// marker run, a dotted or indexed path into the parent (`a[].b[]`
+        /// becomes `a[].b = []`) — the comment block above it, and the
+        /// comment ending it when that is the sequence's or its item's,
+        /// the line being their header. The path past the key named the
+        /// item, and an assignment's value there was the item's, so they
+        /// go. Every other line of the sequence — the item's, wherever they
+        /// are scattered, and any re-entry of the key — goes as
+        /// `deleteContainer` takes them.
+        ///
+        /// The document root has no key. A format that renders its own
+        /// tails, which `emptiedBlockSeq` leaves alone, writes the empty
+        /// list in place of the item, and refuses with `NoEmptyRootList`
+        /// when it does not read that back: figl reads an empty document as
+        /// an empty mapping, and has no other spelling of an empty root list.
+        fn emptiedSectionSeq(self: *Self, parsed: Document, node: AST.Node) !bool {
+            const empty = self.syntax().empty_seq_literal orelse return false;
+            const source = self.source.items;
+            var out: std.ArrayList(u8) = .empty;
+            defer out.deinit(self.allocator);
+            if (node.id == parsed.ast.root) {
+                if (!self.hasRenderer(.tail)) return false;
+                var used = try self.gatherRegions(parsed, node, true);
+                defer used.deinit(self.allocator);
+                if (used.items.len == 0) return false;
+                var pos: usize = 0;
+                for (used.items, 0..) |r, i| {
+                    try out.appendSlice(self.allocator, source[pos..r.start]);
+                    if (i == 0) {
+                        try out.appendSlice(self.allocator, empty);
+                        try out.append(self.allocator, '\n');
+                    }
+                    pos = r.end;
+                }
+                try out.appendSlice(self.allocator, source[pos..]);
+                self.replaceAtSpan(Span.init(0, source.len), out.items) catch |err| {
+                    if (err == error.OutOfMemory) return err;
+                    // The text was the engine's, not a caller's.
+                    self.splice_rejected = false;
+                    return error.NoEmptyRootList;
+                };
+                return true;
+            }
+            if (!parsed.isSection(node)) return false;
+            const kv_id = parsed.ast.parentOf(node.id) orelse return false;
+            if (parsed.ast.kindOf(kv_id) != .keyvalue) return false;
+            const kv = parsed.ast.node(kv_id);
+            const sep = parsed.sepSpan(kv) orelse return false;
+            const key_span = parsed.span(parsed.ast.node(kv.kind.keyvalue.key));
+            if (sep.start != key_span.end or sep.end != sep.start) return false;
+
+            const key_line = lineStartBefore(source, key_span.start);
+            const key_line_end = lineEndAfter(source, key_span.end);
+            var content_end = key_line_end;
+            if (content_end > key_line and source[content_end - 1] == '\n') content_end -= 1;
+            if (content_end > key_line and source[content_end - 1] == '\r') content_end -= 1;
+
+            var line: std.ArrayList(u8) = .empty;
+            defer line.deinit(self.allocator);
+            var buf: std.ArrayList(u8) = .empty;
+            defer buf.deinit(self.allocator);
+            const place = placeOfChild(parsed, node.id);
+            const indent = try self.indentAt(&buf, key_span.start);
+            const rendered = try self.renderedValue(&buf, empty, place);
+            try line.appendSlice(self.allocator, source[key_line..key_span.end]);
+            try self.writeTail(&line, indent, source[key_span.start..key_span.end], rendered, place);
+            if (self.headerComment(parsed, node, key_span.end, content_end)) |c|
+                try line.appendSlice(self.allocator, source[c.start..c.end]);
+            try line.appendSlice(self.allocator, source[content_end..key_line_end]);
+
+            var used = try self.gatherRegions(parsed, node, true);
+            defer used.deinit(self.allocator);
+            var pos: usize = 0;
+            var written = false;
+            for (used.items) |r| {
+                if (!written and r.start <= key_line and key_line < r.end) {
+                    // The comment block above the key's line is the key's.
+                    try out.appendSlice(self.allocator, source[pos..key_line]);
+                    try out.appendSlice(self.allocator, line.items);
+                    written = true;
+                } else {
+                    try out.appendSlice(self.allocator, source[pos..r.start]);
+                }
+                pos = r.end;
+            }
+            if (!written) return false;
+            try out.appendSlice(self.allocator, source[pos..]);
+            try self.replaceAtSpan(Span.init(0, source.len), out.items);
+            return true;
+        }
+
+        /// The comment ending the header line of the section sequence
+        /// `node` between `from` and `to` — the sequence's own trailing
+        /// comment, or its only item's when the item's first header line is
+        /// that line — as the span from the spaces before it; null when
+        /// neither has one there.
+        fn headerComment(self: *const Self, parsed: Document, node: AST.Node, from: usize, to: usize) ?Span {
+            const marker = self.trailingCommentMarker() orelse return null;
+            const source = self.source.items;
+            const line = lineStartBefore(source, from);
+            var text = parsed.ast.comments(node.id).trailing;
+            if (text == null) if (parsed.ast.child(&node) catch null) |item| {
+                const heads = parsed.regionsOf(item.id);
+                if (heads.len > 0 and heads[0].start == line) text = parsed.ast.comments(item.id).trailing;
+            };
+            const want = (text orelse return null).text;
+            var i = from;
+            while (std.mem.indexOfPos(u8, source[0..to], i, marker.open)) |at| : (i = at + 1) {
+                if (at == from or (source[at - 1] != ' ' and source[at - 1] != '\t')) continue;
+                const c = self.lineEndComment(at, "") orelse continue;
+                const body = std.mem.trim(u8, source[at + marker.open.len .. c.end], " \t");
+                if (!std.mem.eql(u8, body, want)) continue;
+                var start = at;
+                while (start > from and (source[start - 1] == ' ' or source[start - 1] == '\t')) start -= 1;
+                return Span.init(start, c.end);
+            }
+            return null;
         }
 
         /// Reconcile the sequence at `path` so its items are exactly `items` —
@@ -3395,6 +3530,14 @@ pub fn Editor(comptime Language: type) type {
             comptime requireSectionFormat("deleteContainer");
             const parsed = try self.getParsed();
             const node = try self.sectionAt(parsed, path);
+            // A list's only item leaves the list, emptied, as
+            // `removeSeqItem` leaves it.
+            if (parsed.ast.parentOf(node.id)) |p| {
+                const seq = parsed.ast.node(p);
+                if (seq.kind == .sequence and seq.kind.sequence == node.id and parsed.ast.next(&node) == null) {
+                    if (try self.emptiedSectionSeq(parsed, seq)) return;
+                }
+            }
             var used = try self.gatherRegions(parsed, node, true);
             defer used.deinit(self.allocator);
             try regions.spliceOut(self, used.items);

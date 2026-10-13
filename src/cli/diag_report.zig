@@ -297,6 +297,16 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
             try term.setColor(.reset);
             try term.writer.print(": put the comment on its own line above the entry instead — `{s} comment <file> <path> <text>`.\n", .{binary_name});
         },
+        // A delete that would leave the document root an empty list, in a
+        // format that has no spelling for one (figl reads an empty document
+        // as an empty mapping).
+        error.NoEmptyRootList => {
+            try term.writer.writeAll(": that is the only item of the document's root list, and this format has no spelling for an empty root list — an empty document reads back as an empty mapping\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("note");
+            try term.setColor(.reset);
+            try term.writer.writeAll(": nothing was written — the file is byte-for-byte as it was.\n");
+        },
         // The refusals `fig.Patch` makes rather than guessing (see its module
         // doc). Each names a shape the caller has to resolve in one of the two
         // documents; a bare error name reads like a parse error in two files

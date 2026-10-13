@@ -557,6 +557,35 @@ test "yaml remove the first item of a block seq on its parent's marker line keep
     try expectSource(&commented, "-\n  # c's\n  - c\n");
 }
 
+test "yaml delete inside compact items two deep" {
+    // These were refused with DeleteChangedOtherValues while the parser
+    // misread the shapes (`[[[a, c], d]]` as `[[[a, c]], d]`).
+    var first = try newYamlEditor("- - - a\n    - c\n  - d\n");
+    defer first.deinit();
+    try first.removeSeqItem(&.{ .{ .index = 0 }, .{ .index = 0 } }, 0);
+    try expectSource(&first, "- - - c\n  - d\n");
+
+    var after = try newYamlEditor("- - - a\n    - c\n  - d\n");
+    defer after.deinit();
+    try after.removeSeqItem(&.{.{ .index = 0 }}, 1);
+    try expectSource(&after, "- - - a\n    - c\n");
+
+    var only = try newYamlEditor("- - - a\n  - d\n");
+    defer only.deinit();
+    try only.removeSeqItem(&.{ .{ .index = 0 }, .{ .index = 0 } }, 0);
+    try expectSource(&only, "- - []\n  - d\n");
+
+    var key = try newYamlEditor("- - k: v\n    j: w\n  - c\n");
+    defer key.deinit();
+    try key.deleteKey(&.{ .{ .index = 0 }, .{ .index = 0 }, .{ .key = "k" } });
+    try expectSource(&key, "- - j: w\n  - c\n");
+
+    var mapping = try newYamlEditor("- - k: v\n  - c\n");
+    defer mapping.deinit();
+    try mapping.removeSeqItem(&.{.{ .index = 0 }}, 0);
+    try expectSource(&mapping, "- - c\n");
+}
+
 test "yaml delete the first key of a mapping on its item's marker line keeps the item" {
     var ed = try newYamlEditor("- k: v\n  j: w\n- x\n");
     defer ed.deinit();

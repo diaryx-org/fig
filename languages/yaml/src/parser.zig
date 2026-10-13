@@ -530,16 +530,24 @@ fn parseTokens(self: *Parser) ParserError!void {
                     // A compact item container (`- key:` / `- -`) shares its
                     // sequence's dash level and opened no indent of its own. An
                     // indent landing AT the item's own column is its content — a
-                    // sibling key (`- a: 1\n  b: 2`): absorb it by clearing the
-                    // flag. One landing DEEPER is the pending key's block value
-                    // (`- key:\n    nested: v`): open a fresh container for it,
-                    // keeping the flag so the next sibling dash (or EOF) still
-                    // closes the item — otherwise the value's children flatten
-                    // into the item mapping (`{key: null, nested: v}`).
-                    if (self.columnOf(self.peek().span.end) > self.currentContainerIndent()) {
+                    // sibling key (`- a: 1\n  b: 2`) or item (`- - a\n  - b`):
+                    // absorb it by clearing the flag. Compact items nest (`- - -
+                    // a`), so the line is handed to the one that begins at its
+                    // column, closing the deeper ones (`landContinuations`). One
+                    // landing DEEPER than the innermost is the pending key's
+                    // block value (`- key:\n    nested: v`): open a fresh
+                    // container for it, keeping the flag so the next sibling
+                    // dash (or EOF) still closes the item — otherwise the
+                    // value's children flatten into the item mapping (`{key:
+                    // null, nested: v}`).
+                    const col = self.columnOf(self.peek().span.end);
+                    if (col > self.currentContainerIndent()) {
                         self.force_new_container = true;
                     } else {
-                        self.currentContainer().continues_sequence_item = false;
+                        // A column between two nested compact items (`   - d`
+                        // under `- - - a`) begins no node.
+                        if (!try self.landContinuations(col))
+                            return self.failHere(ParseError.UnexpectedToken, .invalid_indent);
                     }
                 } else {
                     self.force_new_container = true;
@@ -595,20 +603,15 @@ fn parseTokens(self: *Parser) ParserError!void {
                         if (!close_parent_too) break;
                         try self.closePendingEmptyValue();
                     }
-                    // A dedent landing exactly at an open compact item mapping's
-                    // own column returns to a SIBLING key within that item (`- k:\n
-                    // v: 1\n  sib: 2`): the first key's block value just closed, and
-                    // the next key belongs to the same item mapping. Clear the
-                    // continuation flag so it is treated as a sibling rather than
-                    // closing the item. (The tokenizer admits this column via a
-                    // sequence-entry content level; a dedent BELOW the item column
-                    // leaves the flag set, so the item still closes there.)
-                    if (self.container_stack.items.len > 0) {
-                        const c = self.currentContainer();
-                        if (c.continues_sequence_item and c.kind == .mapping and
-                            self.columnOf(self.w.spanOf(c.id).start) == dedent_col)
-                            c.continues_sequence_item = false;
-                    }
+                    // A dedent landing exactly at an open compact item's own
+                    // column returns to a SIBLING within that item: the next key
+                    // of an item mapping after the first key's block value (`- k:\n
+                    // v: 1\n  sib: 2`), or the next item of a nested compact
+                    // sequence (`- - - a\n    - b\n  - c`). The tokenizer admits
+                    // this column via a sequence-entry content level. A dedent
+                    // BELOW every open item column leaves their flags set, so
+                    // they still close at the line's first token.
+                    _ = try self.landContinuations(dedent_col);
                 }
             },
             .newline => {
@@ -1940,6 +1943,28 @@ fn closeSequenceItemContinuation(self: *Parser) ParserError!void {
         const id = try self.closeContainer(self.w.spanOf(self.currentContainer().id).end);
         try self.finishValue(id);
     }
+}
+
+/// Hands a line beginning at column `col` to the open compact item container
+/// (`continues_sequence_item`) that begins at that column, closing the ones
+/// nested deeper than it on its dash line: in `- - - a\n  - d` the `- d` is
+/// an item of the middle sequence, so the innermost closes, and the middle one
+/// takes the line as its own content by clearing its flag. Containers left of
+/// `col`, and any container that is not a compact item, are left open. True
+/// when a compact item begins at `col`.
+fn landContinuations(self: *Parser, col: usize) ParserError!bool {
+    while (self.container_stack.items.len > 0) {
+        const c = self.currentContainer();
+        if (!c.continues_sequence_item) return false;
+        const c_col = self.columnOf(self.w.spanOf(c.id).start);
+        if (c_col < col) return false;
+        c.continues_sequence_item = false;
+        if (c_col == col) return true;
+        try self.closePendingEmptyValue();
+        const id = try self.closeContainer(self.w.spanOf(self.currentContainer().id).end);
+        try self.finishValue(id);
+    }
+    return false;
 }
 
 /// If a complex explicit key's container (a block sequence opened after `?`) is
@@ -3886,6 +3911,64 @@ test "yaml compact nested sequences keep their nesting" {
     // column is a sibling, and three dashes nest three deep.
     try expectShape("- - s1\n  - s2\n- s3\n", "[ [ S S ] S ]");
     try expectShape("- - - x\n- - - y\n", "[ [ [ S ] ] [ [ S ] ] ]");
+}
+
+test "yaml a line under compact nested items belongs to the item at its column" {
+    // Each `- ` on a compact line begins an item at its own column, and a later
+    // line belongs to the one it lines up with: `  - d` is an item of the middle
+    // sequence, not of the innermost, and `- e` of the outermost. Expectations
+    // are PyYAML's.
+    try expectShape("- - - a\n  - d\n", "[ [ [ S ] S ] ]");
+    try expectShape("- - - a\n    - c\n  - d\n", "[ [ [ S S ] S ] ]");
+    try expectShape("- - - a\n    - b\n  - d\n- e\n", "[ [ [ S S ] S ] S ]");
+    try expectShape("- - - a\n  - - b\n    - c\n", "[ [ [ S ] [ S S ] ] ]");
+    // Three deep, returning one level per line.
+    try expectShape("- - - - a\n      - b\n    - c\n  - d\n- e\n", "[ [ [ [ S S ] S ] S ] S ]");
+    // A compact mapping inside a compact sequence: a key at the mapping's
+    // column is its sibling, a dash at the sequence's column the next item.
+    try expectShape("- - k: v\n  - c\n", "[ [ { S S } S ] ]");
+    try expectShape("- - k: v\n  - c\n- d\n", "[ [ { S S } S ] S ]");
+    try expectShape("- - k: v\n    j: w\n  - c\n", "[ [ { S S S S } S ] ]");
+    try expectShape("- - k: v\n    j: w\n- e\n", "[ [ { S S S S } ] S ]");
+    try expectShape("- - - k: v\n    - c\n- d\n", "[ [ [ { S S } S ] ] S ]");
+    try expectShape("- - - k: v\n      j: w\n    - c\n  - d\n", "[ [ [ { S S S S } S ] S ] ]");
+    try expectShape("- - ? a\n    : b\n  - c\n", "[ [ { S S } S ] ]");
+    // A key's block value under a compact mapping closes before the next item.
+    try expectShape("- - k:\n      x: 1\n  - c\n", "[ [ { S { S S } } S ] ]");
+    try expectShape("- - k:\n    - x\n  - c\n", "[ [ { S [ S ] } S ] ]");
+    try expectShape("- - k: v\n    j:\n      - z\n  - c\n", "[ [ { S S S [ S ] } S ] ]");
+    // A compact sequence as a mapping's value.
+    try expectShape("- k:\n  - - a\n    - b\n  - c\n  j: 1\n", "[ { S [ [ S S ] S ] S S } ]");
+    try expectShape("- k: v\n  j:\n  - - a\n    - b\n", "[ { S S S [ [ S S ] ] } ]");
+    // Comments and blank lines between the lines change nothing.
+    try expectShape("- - - a\n\n    # note\n    - b\n  # other\n\n  - d\n", "[ [ [ S S ] S ] ]");
+    try expectShape("- - - a # one\n    - b # two\n  - d # three\n", "[ [ [ S S ] S ] ]");
+    // A block scalar as a compact item ends where the next item begins.
+    try expectShape("- - |\n    text\n  - d\n", "[ [ S S ] ]");
+    try expectShape("- - - |\n      text\n    - c\n  - d\n", "[ [ [ S S ] S ] ]");
+    try expectShape("- - >\n    folded\n    text\n  - d\n- e\n", "[ [ S S ] S ]");
+    try expectShape("- - k: |\n      text\n    j: w\n  - c\n", "[ [ { S S S S } S ] ]");
+    // A column between two nested items begins nothing.
+    try testParserError("- - - a\n   - d\n", error.UnexpectedToken);
+    try testParserError("- - a\n - d\n", error.UnexpectedToken);
+}
+
+test "yaml compact nested items keep their values" {
+    // The task's table, against PyYAML: the item after the inner one is the
+    // middle sequence's.
+    const cases = [_]struct { src: []const u8, path: []const AST.PathSegment, want: []const u8 }{
+        .{ .src = "- - - a\n  - d\n", .path = &.{ .{ .index = 0 }, .{ .index = 1 } }, .want = "d" },
+        .{ .src = "- - - a\n    - c\n  - d\n", .path = &.{ .{ .index = 0 }, .{ .index = 1 } }, .want = "d" },
+        .{ .src = "- - - a\n    - b\n  - d\n- e\n", .path = &.{.{ .index = 1 }}, .want = "e" },
+        .{ .src = "- - k: v\n  - c\n", .path = &.{ .{ .index = 0 }, .{ .index = 1 } }, .want = "c" },
+        .{ .src = "- - k: v\n    j: w\n  - c\n", .path = &.{ .{ .index = 0 }, .{ .index = 1 } }, .want = "c" },
+    };
+    for (cases) |c| {
+        const doc = try Parser.parse(testing.allocator, c.src, .v1_2_2);
+        defer doc.deinit(testing.allocator);
+        const node = try doc.ast.getValByPath(c.path);
+        try testing.expectEqualStrings(c.want, node.kind.string);
+    }
 }
 
 test "yaml key after a nested block sequence is a sibling, not absorbed" {

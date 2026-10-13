@@ -107,14 +107,15 @@ pub fn tokenize(self: *Tokenizer) ![]const Token {
     // structure: the node it decorates sits on a following line, possibly at a
     // different column. Such an indent level is marked `prop_only` so a dedent
     // into it lets the node take that shallower column instead of erroring.
-    // `seq_content` is the column where a block-sequence entry's content begins
-    // on this level (the column just past the entry's `- `). A `-` establishes an
-    // indent context for its entry's mapping that it never pushes (the dash line's
-    // own indent is the dash column), so a later line returning to that column —
-    // a sibling key after the first key's block value (`- k:\n    v: 1\n  s: 2`)
+    // `entry_dash` is where the last block-sequence entry on this level begins
+    // (its first `-`). Each `- ` on that line establishes an indent context for
+    // the content after it that it never pushes (the dash line's own indent is
+    // the dash column), so a later line returning to one of those columns — a
+    // sibling key after the first key's block value (`- k:\n    v: 1\n  s: 2`),
+    // or the next item of a compact nested sequence (`- - - a\n    - b\n  - c`)
     // — would otherwise look like an unmatched dedent. Recording it lets the
-    // dedent handler admit that column.
-    const Level = struct { indent: usize, prop_only: bool, seq_content: ?usize = null };
+    // dedent handler admit those columns (`entryContentColumn`).
+    const Level = struct { indent: usize, prop_only: bool, entry_dash: ?usize = null };
     var current_indent: usize = 0;
     var indent_stack: std.ArrayList(Level) = .empty;
     defer indent_stack.deinit(self.allocator);
@@ -196,10 +197,12 @@ pub fn tokenize(self: *Tokenizer) ![]const Token {
             // The dedent may land between two levels at a block-sequence entry's
             // content column — a sibling key returning to the item mapping's own
             // column after the first key's deeper block value (`- k:\n    v: 1\n
-            // sib: 2`). The `-` established that column but never pushed it; admit
-            // it as a fresh level. The parser reopens the item mapping there.
+            // sib: 2`), or an item returning to a compact nested sequence (`- -
+            // - a\n    - b\n  - c`). The `-` established that column but never
+            // pushed it; admit it as a fresh level. The parser hands the line to
+            // the item container that begins there.
             if (indent != current_indent and indent > current_indent and
-                indent_stack.getLast().seq_content == indent)
+                entryContentColumn(self.source, indent_stack.getLast().entry_dash, indent_stack.getLast().indent, indent))
             {
                 try indent_stack.append(self.allocator, .{ .indent = indent, .prop_only = prop_only });
                 current_indent = indent;
@@ -207,18 +210,13 @@ pub fn tokenize(self: *Tokenizer) ![]const Token {
             if (indent != current_indent) return self.fail(TokenizeError.InvalidIndent, line.content_start, null);
         }
 
-        // Record the content column of a block-sequence entry on its level, so a
-        // later dedent can return to a sibling key inside the entry's mapping (see
-        // the dedent handler). Only the first `- ` matters: that is the entry
-        // mapping's key column. A nested `- -` keeps the outer entry's column,
-        // which is the one a shallower sibling returns to.
+        // Record where a block-sequence entry begins on its level, so a later
+        // dedent can return to the content column of any `- ` on its line (see
+        // the dedent handler).
         if (self.source[line.content_start] == '-' and
             followedByBlank(self.source, line.content_start, line.end))
         {
-            var c = line.content_start + 1;
-            while (c < line.end and self.source[c] == ' ') c += 1;
-            if (c < line.end)
-                indent_stack.items[indent_stack.items.len - 1].seq_content = c - line.start;
+            indent_stack.items[indent_stack.items.len - 1].entry_dash = line.content_start;
         }
 
         // Document markers (`---`, `...`) are only recognized at column 0.
@@ -929,6 +927,23 @@ fn docMarker(self: *const Tokenizer, line: Line) ?Kind {
 /// True when the byte after `i` is whitespace or `i` is the last byte on the line.
 fn followedByBlank(source: []const u8, i: usize, line_end: usize) bool {
     return i + 1 >= line_end or isBlank(source[i + 1]);
+}
+
+/// True when `col` is the content column of one of the `- ` that begin the
+/// line whose first dash is at `entry_dash`, in column `dash_col`: the column
+/// just past the first dash, and for a compact nested sequence (`- - - a`)
+/// past each later one. Content after the last dash ends the walk.
+fn entryContentColumn(source: []const u8, entry_dash: ?usize, dash_col: usize, col: usize) bool {
+    var c = entry_dash orelse return false;
+    const line_start = c - dash_col;
+    const line_end = std.mem.indexOfScalarPos(u8, source, c, '\n') orelse source.len;
+    while (c < line_end and source[c] == '-' and followedByBlank(source, c, line_end)) {
+        c += 1;
+        while (c < line_end and source[c] == ' ') c += 1;
+        if (c == line_end) return false;
+        if (c - line_start == col) return true;
+    }
+    return false;
 }
 
 /// If a block-scalar header (`|`/`>` plus optional chomping/indent indicators)

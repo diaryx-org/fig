@@ -83,6 +83,9 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
             .root_source_file = b.path("tools/version-sync.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "languages", .module = b.createModule(.{ .root_source_file = b.path("src/contract/list.zig") }) },
+            },
         }),
     });
     const version_sync_run = b.addRunArtifact(version_sync);

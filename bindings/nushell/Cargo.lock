@@ -652,8 +652,13 @@ name = "fig-figl"
 version = "6.0.0"
 dependencies = [
  "fig",
+ "fig-language-build",
  "fig-sys",
 ]
+
+[[package]]
+name = "fig-language-build"
+version = "6.0.0"
 
 [[package]]
 name = "fig-sys"

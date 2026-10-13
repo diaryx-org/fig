@@ -62,16 +62,16 @@ serde = { version = "1", features = ["derive"] }
 # own library (`tests/common`, `src/test_languages.rs`). By path alone, so
 # `cargo publish` drops them: each depends on this crate, and is published
 # after it.
-fig-json = { path = "../fig-json" }
-fig-yaml = { path = "../fig-yaml", features = ["serde"] }
-fig-toml = { path = "../fig-toml" }
-fig-zon = { path = "../fig-zon" }
-fig-figl = { path = "../fig-figl" }
-fig-ini = { path = "../fig-ini" }
-fig-dotenv = { path = "../fig-dotenv" }
-fig-properties = { path = "../fig-properties" }
-fig-plist = { path = "../fig-plist" }
-fig-nestedtext = { path = "../fig-nestedtext" }
+fig-json = { path = "../../../languages/json" }
+fig-yaml = { path = "../../../languages/yaml", features = ["serde"] }
+fig-toml = { path = "../../../languages/toml" }
+fig-zon = { path = "../../../languages/zon" }
+fig-figl = { path = "../../../languages/figl" }
+fig-ini = { path = "../../../languages/ini" }
+fig-dotenv = { path = "../../../languages/dotenv" }
+fig-properties = { path = "../../../languages/properties" }
+fig-plist = { path = "../../../languages/plist" }
+fig-nestedtext = { path = "../../../languages/nestedtext" }
 
 # The helper executable `tools/cli-lang-check.sh` spawns from the CLI. The
 # wire is JSON-RPC 2.0, which the `helper` module reads with the json

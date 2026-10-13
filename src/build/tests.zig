@@ -60,6 +60,9 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
             .root_source_file = b.path("tools/version-sync.zig"),
             .target = target,
             .optimize = ctx.optimize,
+            .imports = &.{
+                .{ .name = "languages", .module = b.createModule(.{ .root_source_file = b.path("src/contract/list.zig") }) },
+            },
         }),
         .filters = test_filters,
     });

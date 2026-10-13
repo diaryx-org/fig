@@ -40,7 +40,7 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 # The native binding, which carries no language, and the figl language, which
 # links its own library beside it.
 fig = { path = "../rust/fig", version = "6.0.0" }
-fig-figl = { path = "../rust/fig-figl", version = "6.0.0" }
+fig-figl = { path = "../../languages/figl", version = "6.0.0" }
 
 [dev-dependencies]
 nu-plugin-test-support = "=0.115.1"

@@ -1,0 +1,37 @@
+[package]
+name = "fig-nestedtext"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# fig's Rust workspace; this crate sits with its language's Zig.
+workspace = "../../bindings/rust"
+description = "NestedText for fig: fig's own parser, printer and editing rules for the language, as a library linked beside fig's."
+repository = "https://github.com/diaryx-org/fig"
+homepage = "https://github.com/diaryx-org/fig"
+documentation = "https://docs.rs/fig-nestedtext"
+keywords = ["config", "fig", "nestedtext", "parser"]
+categories = ["config", "parser-implementations"]
+# The language's own library, `libfig_nestedtext.a`, which the build script
+# compiles from the Zig beside this file.
+links = "fig_nestedtext"
+include = [
+    "build.rs",
+    "build.zig",
+    "build.zig.zon",
+    "src/**/*",
+    "include/**/*",
+    "rust/**/*",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[lib]
+path = "rust/lib.rs"
+
+[dependencies]
+fig = { workspace = true }
+fig-sys = { workspace = true }
+
+[build-dependencies]
+fig-language-build = { workspace = true }

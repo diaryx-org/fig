@@ -1,0 +1,17 @@
+[package]
+name = "fig-language-build"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Compiles a fig language written in Zig into the static library its Rust crate links: the build-dependency of fig-yaml and the other language crates."
+repository = "https://github.com/diaryx-org/fig"
+homepage = "https://github.com/diaryx-org/fig"
+documentation = "https://docs.rs/fig-language-build"
+keywords = ["fig", "zig", "build"]
+categories = ["development-tools::build-utils"]
+include = [
+    "src/**/*",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]

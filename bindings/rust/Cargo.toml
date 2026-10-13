@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["fig", "fig-macros", "fig-sys", "fig-sys-*", "fig-json", "fig-yaml", "fig-toml", "fig-zon", "fig-figl", "fig-ini", "fig-dotenv", "fig-properties", "fig-plist", "fig-nestedtext"]
+# Each language's crate sits with its Zig, in languages/<name>/.
+members = ["fig", "fig-macros", "fig-sys", "fig-sys-*", "fig-language-build", "../../languages/*"]
 
 [workspace.package]
 version = "6.0.0"
@@ -19,18 +20,20 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 fig-macros = { path = "fig-macros", version = "6.0.0" }
 fig = { path = "fig", version = "6.0.0" }
-# fig-sys carries no language: each is a crate of its own (`fig-yaml`, …).
+# fig-sys carries no language: each is a crate of its own (`fig-yaml`, …),
+# in its language's package, built with `fig-language-build`.
 fig-sys = { path = "fig-sys", version = "6.0.0" }
-fig-json = { path = "fig-json", version = "6.0.0" }
-fig-yaml = { path = "fig-yaml", version = "6.0.0" }
-fig-toml = { path = "fig-toml", version = "6.0.0" }
-fig-zon = { path = "fig-zon", version = "6.0.0" }
-fig-figl = { path = "fig-figl", version = "6.0.0" }
-fig-ini = { path = "fig-ini", version = "6.0.0" }
-fig-dotenv = { path = "fig-dotenv", version = "6.0.0" }
-fig-properties = { path = "fig-properties", version = "6.0.0" }
-fig-plist = { path = "fig-plist", version = "6.0.0" }
-fig-nestedtext = { path = "fig-nestedtext", version = "6.0.0" }
+fig-language-build = { path = "fig-language-build", version = "6.0.0" }
+fig-json = { path = "../../languages/json", version = "6.0.0" }
+fig-yaml = { path = "../../languages/yaml", version = "6.0.0" }
+fig-toml = { path = "../../languages/toml", version = "6.0.0" }
+fig-zon = { path = "../../languages/zon", version = "6.0.0" }
+fig-figl = { path = "../../languages/figl", version = "6.0.0" }
+fig-ini = { path = "../../languages/ini", version = "6.0.0" }
+fig-dotenv = { path = "../../languages/dotenv", version = "6.0.0" }
+fig-properties = { path = "../../languages/properties", version = "6.0.0" }
+fig-plist = { path = "../../languages/plist", version = "6.0.0" }
+fig-nestedtext = { path = "../../languages/nestedtext", version = "6.0.0" }
 fig-sys-macos-arm64 = { path = "fig-sys-macos-arm64", version = "6.0.0" }
 fig-sys-linux-x64-gnu = { path = "fig-sys-linux-x64-gnu", version = "6.0.0" }
 fig-sys-linux-arm64-gnu = { path = "fig-sys-linux-arm64-gnu", version = "6.0.0" }

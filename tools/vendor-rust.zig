@@ -41,7 +41,7 @@ const trees = [_][]const u8{ "src", "kit", "bindings/c/include" } ++ languagePat
 fn languagePaths(comptime names: []const []const u8) [list.rows.len * names.len][]const u8 {
     var out: [list.rows.len * names.len][]const u8 = undefined;
     for (list.rows, 0..) |row, i| {
-        for (names, 0..) |name, j| out[i * names.len + j] = "languages/" ++ row.name ++ "/" ++ name;
+        for (names, 0..) |name, j| out[i * names.len + j] = "languages/" ++ row.name ++ (if (name.len == 0) "" else "/" ++ name);
     }
     return out;
 }
@@ -51,7 +51,7 @@ fn languagePaths(comptime names: []const []const u8) [list.rows.len * names.len]
 // *text*; copy it into each crate dir (git-ignored, `include`-added for fig,
 // default-packaged for fig-macros) so neither has to vendor its own copy.
 const license_files = [_][]const u8{ "LICENSE-MIT", "LICENSE-APACHE" };
-const crate_dirs = [_][]const u8{ "bindings/rust/fig", "bindings/rust/fig-sys", "bindings/rust/fig-macros" };
+const crate_dirs = [_][]const u8{ "bindings/rust/fig", "bindings/rust/fig-sys", "bindings/rust/fig-macros", "bindings/rust/fig-language-build" } ++ languagePaths(&.{""});
 
 /// The repo-root README, which the `fig` crate carries as its own so crates.io
 /// has a page to render. Named once here because it is the file this tool is

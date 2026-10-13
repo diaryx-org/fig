@@ -33,6 +33,7 @@ name = "fig-dotenv"
 version = "6.0.0"
 dependencies = [
  "fig",
+ "fig-language-build",
  "fig-sys",
 ]
 
@@ -41,6 +42,7 @@ name = "fig-figl"
 version = "6.0.0"
 dependencies = [
  "fig",
+ "fig-language-build",
  "fig-sys",
 ]
 
@@ -49,6 +51,7 @@ name = "fig-ini"
 version = "6.0.0"
 dependencies = [
  "fig",
+ "fig-language-build",
  "fig-sys",
 ]
 
@@ -57,8 +60,13 @@ name = "fig-json"
 version = "6.0.0"
 dependencies = [
  "fig",
+ "fig-language-build",
  "fig-sys",
 ]
+
+[[package]]
+name = "fig-language-build"
+version = "6.0.0"
 
 [[package]]
 name = "fig-macros"
@@ -74,6 +82,7 @@ name = "fig-nestedtext"
 version = "6.0.0"
 dependencies = [
  "fig",
+ "fig-language-build",
  "fig-sys",
 ]
 
@@ -82,6 +91,7 @@ name = "fig-plist"
 version = "6.0.0"
 dependencies = [
  "fig",
+ "fig-language-build",
  "fig-sys",
 ]
 
@@ -90,6 +100,7 @@ name = "fig-properties"
 version = "6.0.0"
 dependencies = [
  "fig",
+ "fig-language-build",
  "fig-sys",
 ]
 
@@ -139,6 +150,7 @@ name = "fig-toml"
 version = "6.0.0"
 dependencies = [
  "fig",
+ "fig-language-build",
  "fig-sys",
 ]
 
@@ -147,6 +159,7 @@ name = "fig-yaml"
 version = "6.0.0"
 dependencies = [
  "fig",
+ "fig-language-build",
  "fig-sys",
  "serde",
 ]
@@ -156,6 +169,7 @@ name = "fig-zon"
 version = "6.0.0"
 dependencies = [
  "fig",
+ "fig-language-build",
  "fig-sys",
 ]
 

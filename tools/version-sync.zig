@@ -23,6 +23,8 @@
 //!                                     version, and depends on fig by path
 //!   * `bindings/nushell/Cargo.lock`  the locked version of each fig crate it
 //!                                     reaches by path, so `--locked` still builds
+//!   * `kit/build.zig.zon` and each `languages/<name>/build.zig.zon`, the
+//!     Zig packages of the kit and of every language
 //!
 //! `FIG_ABI_VERSION` / `abi_version` is deliberately not here: it is the C ABI's
 //! own contract integer, bumped only on a breaking ABI change, and it has no tag.
@@ -36,6 +38,7 @@
 
 const std = @import("std");
 const Dir = std.Io.Dir;
+const list = @import("languages");
 
 const max_file = 4 * 1024 * 1024;
 
@@ -54,7 +57,15 @@ const targets = [_][]const u8{
     "bindings/wasi/package-lock.json",
     "bindings/nushell/Cargo.toml",
     "bindings/nushell/Cargo.lock",
-};
+    "kit/build.zig.zon",
+} ++ languageFiles("build.zig.zon");
+
+/// `languages/<name>/<file>` for every language fig ships.
+fn languageFiles(comptime file: []const u8) [list.rows.len][]const u8 {
+    var out: [list.rows.len][]const u8 = undefined;
+    for (list.rows, &out) |row, *path| path.* = "languages/" ++ row.name ++ "/" ++ file;
+    return out;
+}
 
 /// A half-open `[start, end)` byte range into the text a locator was given.
 pub const Range = struct { start: usize, end: usize };
@@ -169,6 +180,8 @@ pub fn plan(
         const lock = packageLockVersionRanges(text) orelse return error.FieldNotFound;
         try out.append(arena, .{ .range = lock[0], .value = version_str, .what = "version" });
         try out.append(arena, .{ .range = lock[1], .value = version_str, .what = "packages[\"\"].version" });
+    } else if (std.mem.endsWith(u8, rel, "build.zig.zon")) {
+        try out.append(arena, .{ .range = zonVersionRange(text) orelse return error.FieldNotFound, .value = version_str, .what = ".version" });
     } else if (std.mem.endsWith(u8, rel, "package.json")) {
         try out.append(arena, .{ .range = jsonVersionRange(text, 0) orelse return error.FieldNotFound, .value = version_str, .what = "version" });
     } else unreachable;

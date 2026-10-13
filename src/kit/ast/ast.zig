@@ -150,19 +150,26 @@ fn siblingOfRow(self: *const AST, r: Row) ?Node.Id {
 }
 
 fn kindOfRow(self: *const AST, r: Row) Node.Kind {
+    return rowKind(self.source, self.strings, self.rows, r);
+}
+
+/// Row `r`'s kind, its texts in `source` or `strings` and its children in
+/// `rows`: what `node(id).kind` reads, for a table still being written.
+pub fn rowKind(source: []const u8, strings: []const u8, rows: []const Row, r: Row) Node.Kind {
     const K = table.Kind;
+    const text = table.viewText(source, strings, r.text) orelse "";
     return switch (r.kind) {
         K.null_ => .null_,
         K.false_ => .{ .boolean = false },
         K.true_ => .{ .boolean = true },
-        K.string => .{ .string = self.textOr(r.text, "") },
-        K.int => .{ .number = .{ .raw = self.textOr(r.text, ""), .kind = .integer } },
-        K.float => .{ .number = .{ .raw = self.textOr(r.text, ""), .kind = .float } },
+        K.string => .{ .string = text },
+        K.int => .{ .number = .{ .raw = text, .kind = .integer } },
+        K.float => .{ .number = .{ .raw = text, .kind = .float } },
         K.sequence => .{ .sequence = opt(r.first_child) },
         K.mapping => .{ .mapping = opt(r.first_child) },
-        K.keyvalue => .{ .keyvalue = .{ .key = r.first_child, .value = self.rows[r.first_child].next_sibling } },
-        K.alias => .{ .alias = self.textOr(r.text, "") },
-        else => .{ .extended = .{ .kind = @fromBackingInt(@intCast(r.kind - K.ext)), .text = self.textOr(r.text, "") } },
+        K.keyvalue => .{ .keyvalue = .{ .key = r.first_child, .value = rows[r.first_child].next_sibling } },
+        K.alias => .{ .alias = text },
+        else => .{ .extended = .{ .kind = @fromBackingInt(@intCast(r.kind - K.ext)), .text = text } },
     };
 }
 
@@ -312,8 +319,107 @@ pub fn trailingCommentAnchor(self: *const AST, id: Node.Id) Node.Id {
 /// at `root`: for a test or a caller that spells a small tree out by hand.
 /// The nodes' strings are copied.
 pub fn fromNodes(allocator: Allocator, root: Node.Id, nodes: []const Node) Allocator.Error!AST {
-    const tree: @import("../parse_tree/nodes.zig") = .{ .allocator = allocator, .root = root, .nodes = nodes };
-    return tree.toAst(allocator);
+    var t = table.Table.init(allocator, "");
+    errdefer t.deinit();
+    const K = table.Kind;
+    const rows = try t.addRows(nodes.len);
+    for (nodes, 0..) |n, i| {
+        var r: Row = .{};
+        switch (n.kind) {
+            .null_ => r.kind = K.null_,
+            .boolean => |b| r.kind = if (b) K.true_ else K.false_,
+            .string => |x| {
+                r.kind = K.string;
+                r.text = try t.addString(x);
+            },
+            .number => |num| {
+                r.kind = if (num.kind == .float) K.float else K.int;
+                r.text = try t.addString(num.raw);
+            },
+            .extended => |e| {
+                r.kind = K.ext + @as(u8, @intCast(@backingInt(e.kind)));
+                r.text = try t.addString(e.text);
+            },
+            .alias => |x| {
+                r.kind = K.alias;
+                r.text = try t.addString(x);
+            },
+            .sequence => |first| {
+                r.kind = K.sequence;
+                r.first_child = first orelse none;
+            },
+            .mapping => |first| {
+                r.kind = K.mapping;
+                r.first_child = first orelse none;
+            },
+            .keyvalue => |kv| {
+                r.kind = K.keyvalue;
+                r.first_child = kv.key;
+            },
+        }
+        rows[i] = r;
+    }
+    for (nodes, 0..) |n, i| switch (n.kind) {
+        .sequence, .mapping => |first| {
+            var c = first;
+            while (c) |id| : (c = nodes[id].next_sibling) {
+                rows[id].parent = @intCast(i);
+                rows[id].next_sibling = nodes[id].next_sibling orelse none;
+            }
+        },
+        .keyvalue => |kv| {
+            rows[kv.key].parent = @intCast(i);
+            rows[kv.key].next_sibling = kv.value;
+            rows[kv.value].parent = @intCast(i);
+            rows[kv.value].next_sibling = none;
+        },
+        else => {},
+    };
+    return own(allocator, &t, root, null);
+}
+
+/// A tree spelled out as `Node` values, as a test writes the one it
+/// expects: `nodes[i].id == i`, rooted at `root`.
+pub const Literal = struct {
+    allocator: Allocator,
+    root: Node.Id,
+    nodes: []const Node,
+
+    /// Whether `ast` is this tree, node for node from the root, whatever
+    /// ids either gives its nodes.
+    pub fn matches(self: Literal, ast: AST) bool {
+        var want = fromNodes(self.allocator, self.root, self.nodes) catch return false;
+        defer want.deinit();
+        return want.sameTree(want.root, &ast, ast.root);
+    }
+};
+
+/// Whether the subtree at `id` here and the one at `other_id` in `other`
+/// hold the same values in the same shape — kinds, scalar payloads,
+/// children in order — whatever their ids. Tags, anchors and comments are
+/// not compared.
+pub fn sameTree(self: *const AST, id: Node.Id, other: *const AST, other_id: Node.Id) bool {
+    const a = self.kindOf(id);
+    const b = other.kindOf(other_id);
+    if (activeTag(a) != activeTag(b)) return false;
+    switch (a) {
+        .sequence, .mapping => |first| {
+            var x = first;
+            var y = switch (b) {
+                .sequence, .mapping => |f| f,
+                else => unreachable,
+            };
+            while (x != null and y != null) : ({
+                x = self.node(x.?).next_sibling;
+                y = other.node(y.?).next_sibling;
+            }) {
+                if (!self.sameTree(x.?, other, y.?)) return false;
+            }
+            return x == null and y == null;
+        },
+        .keyvalue => |kv| return self.sameTree(kv.key, other, b.keyvalue.key) and self.sameTree(kv.value, other, b.keyvalue.value),
+        else => return a.eql(b),
+    }
 }
 
 /// Set node `id`'s type tag, replacing any it had. Only for an AST that

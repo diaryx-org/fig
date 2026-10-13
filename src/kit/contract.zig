@@ -198,6 +198,10 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
             const src = input.slice() orelse "";
             if (comptime !reports) {
                 var p: L.Parser = .{ .allocator = out.allocator };
+                if (comptime @hasDecl(L, "parseTable")) {
+                    L.parseTable(&p, src, t, out) catch |e| return fail(err, @errorName(e));
+                    return 0;
+                }
                 var doc = L.parseTree(&p, src, t) catch |e| return fail(err, @errorName(e));
                 defer doc.deinit(out.allocator);
                 doc.emit(out) catch return 3;
@@ -207,15 +211,23 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
             // would warn about on input it reads: each goes into the table's
             // diagnostics, and a refusal's into `err` as well.
             // A parser that can keep going past an error does, so that every
-            // error in the input crosses, not only the first.
+            // error in the input crosses, not only the first. A parser that
+            // writes rows writes them into `out` (`…Into`); one that builds a
+            // tree has it emitted.
             var report: P.Report = .{};
-            const parsed = if (comptime @hasDecl(P, "parseCollecting"))
+            const into = comptime @hasDecl(P, "parseWithReportInto");
+            const parsed = if (comptime into)
+                (if (comptime @hasDecl(P, "parseCollectingInto"))
+                    P.parseCollectingInto(out, src, t, &report)
+                else
+                    P.parseWithReportInto(out, src, t, &report))
+            else if (comptime @hasDecl(P, "parseCollecting"))
                 P.parseCollecting(out.allocator, src, t, &report)
             else
                 P.parseWithReport(out.allocator, src, t, &report);
             defer if (comptime @hasField(P.Report, "warnings")) out.allocator.free(report.warnings);
             defer if (comptime @hasField(P.Report, "errors")) out.allocator.free(report.errors);
-            var doc = parsed catch |e| {
+            const doc = parsed catch |e| {
                 if (comptime @hasField(P.Report, "errors")) if (report.errors.len > 1) {
                     for (report.errors) |d| addDiagnostic(out, table.diagnostic_error, d.offset, d.end, P.describe(d.code), P.shortLabel(d.code)) catch return 3;
                     const first = report.errors[0];
@@ -231,8 +243,10 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
                 }
                 return fail(err, @errorName(e));
             };
-            defer doc.deinit(out.allocator);
-            doc.emit(out) catch return 3;
+            if (comptime !into) {
+                defer doc.deinit(out.allocator);
+                doc.emit(out) catch return 3;
+            }
             if (comptime @hasField(P.Report, "warnings") and @hasDecl(P, "Warning")) {
                 for (report.warnings) |w| addDiagnostic(out, table.diagnostic_warning, w.offset, w.end, P.Warning.describeWarning(w.code), P.Warning.shortLabel(w.code)) catch return 3;
             }

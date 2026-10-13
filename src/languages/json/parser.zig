@@ -1,13 +1,11 @@
-//! The parser turns a JSON-formatted []const u8 into an AST.
-//! It uses the Tokenizer to tokenize the string, and then converts
-//! the token slice into an AST incrementally.
+//! The parser turns a JSON-formatted []const u8 into the node table fig
+//! hands it. It uses the Tokenizer to tokenize the string, and then writes
+//! a row per node from the token slice incrementally (`RowWriter`): a
+//! container when it opens, its children as they complete, and the rows in
+//! pre-order once the root is done.
 //!
-//! This parser temporarily allocates and frees memory for the tokenizer
-//! and for the in-progress containers, including three ArrayLists
-//! for `node`s, `Span`s, and `OpenContainer`s.
-//!
-//! Decoded string escape allocations are transferred into the returned AST's
-//! `owned_strings` slice and must be freed with `ast.deinit();`
+//! A decoded string (one with escapes) is copied into the table's buffer;
+//! the parser frees its own copy.
 
 const Parser = @This();
 
@@ -16,8 +14,11 @@ const builtin = @import("builtin");
 const testing = std.testing;
 const log = std.log.scoped(.parser);
 const Unicode = @import("../../kit/kit.zig").Unicode;
-const Document = @import("../../kit/parse_tree.zig");
-const AST = Document.Nodes;
+const Document = @import("../../kit/document.zig");
+const AST = @import("../../kit/ast/ast.zig");
+const RowWriter = @import("../../kit/row_writer.zig");
+const table = @import("../../kit/table.zig");
+const Table = table.Table;
 
 const Tokenizer = @import("tokenizer.zig").Tokenizer;
 const Token = @import("../../kit/token.zig").Token(Tokenizer.Kind);
@@ -34,6 +35,9 @@ const OpenContainer = struct {
     first_child: ?AST.Node.Id = null,
     last_child: ?AST.Node.Id = null,
     pending_key: ?AST.Node.Id = null,
+    /// The pending key's text: a slice of the input, or one of the
+    /// parser's decoded strings — not the table's buffer, which moves.
+    pending_key_text: []const u8 = "",
     /// Object only: every key text seen so far, to warn on a repeat (see
     /// `Warning.Code.duplicate_key`). Freed when the container closes
     /// (`closeContainer`) or, on an aborted parse, in `Parser.deinit`.
@@ -42,23 +46,22 @@ const OpenContainer = struct {
 
 // State
 state: State = .ExpectValue,
-nodes: std.ArrayList(AST.Node) = .empty,
-node_spans: std.ArrayList(Span) = .empty,
+/// The table being written; set by `parseImpl`.
+w: RowWriter = undefined,
 container_stack: std.ArrayList(OpenContainer) = .empty,
+/// Decoded strings, alive until the parser is: a pending key's text may be
+/// one.
 owned_strings: std.ArrayList([]const u8) = .empty,
 
 // Comment layer (JSON5/JSONC only — strict JSON never tokenizes a comment).
-// `node_comments` grows in lockstep with `nodes`. `pending_leading` buffers
-// own-line comments until the next node claims them (in `addNode`). Comment text
-// borrows `input` (comments carry no escapes). Materialized only when
-// `comments_seen`.
-node_comments: std.ArrayList(AST.NodeComments) = .empty,
+// `pending_leading` buffers own-line comments until the next node claims
+// them (in `addNode`). Comment text borrows `input` (comments carry no
+// escapes).
 pending_leading: std.ArrayList(AST.Comment) = .empty,
 /// The most recently completed value node — the candidate a same-line trailing
 /// comment binds to. Reset to null by a newline or a comma (both close the
 /// trailing window), so a post-comma/own-line comment becomes leading instead.
 last_value_id: ?AST.Node.Id = null,
-comments_seen: bool = false,
 
 root: ?AST.Node.Id = null,
 
@@ -251,7 +254,7 @@ pub fn getBool(slice: []const u8) ParseError!bool {
 }
 
 /// Removes double quotes. If the string contains escape codes,
-/// decodes and stores the allocated string in the AST's `owned_strings`.
+/// decodes and keeps the allocated string in `owned_strings`.
 pub fn getString(self: *Parser, slice: []const u8) ParserError![]const u8 {
     const json5 = self.format == .JSON5;
     // JSON5 strings may also be single-quoted; the closing quote must match.
@@ -383,39 +386,64 @@ pub fn getNumber(slice: []const u8) ParseError!AST.Node.Kind.Number {
     } };
 }
 
-/// Main entry function
-pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) !Document.RowAst {
-    var tree = try parse(allocator, input, format);
-    return tree.intoAst(allocator);
+/// `input` as an `AST`, alone.
+pub fn parseAbstract(allocator: std.mem.Allocator, input: []const u8, format: Type) !AST {
+    const doc = try parse(allocator, input, format);
+    return doc.ast;
 }
 
+/// `input` as a `Document`: its table written and adopted.
 pub fn parse(allocator: std.mem.Allocator, input: []const u8, format: Type) !Document {
-    return parseImpl(allocator, input, format, null, false);
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseInto(&t, input, format);
+    return RowWriter.adopt(allocator, input, &t);
 }
 
-/// `parse`, but also fills `out`: `diag` on failure (error code + byte span,
-/// for `file:line:col` teaching messages), `warnings` always (authoring-time
-/// lints — currently just `duplicate_key`). Mirrors fig's
-/// `Parser.parseWithReport` — the hook the CLI renders reports from.
+/// `parse`, reporting as `parseWithReportInto` does.
 pub fn parseWithReport(allocator: std.mem.Allocator, input: []const u8, format: Type, out: *Report) !Document {
-    return parseImpl(allocator, input, format, out, false);
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseWithReportInto(&t, input, format, out);
+    return RowWriter.adopt(allocator, input, &t);
 }
 
-/// `parseWithReport`, but recovers past each parser-level error (resyncing to
-/// the next safe token — see `resync`) to collect the WHOLE file's diagnostics
-/// in one pass (`out.errors`, source order) rather than stopping at the first.
-/// A TOKENIZER failure (before the token loop even starts) is never
-/// recoverable — it still stops the parse after exactly one diagnostic. On any
-/// error the return value is still the first error code and the tree is NOT
-/// built (both consumers discard it); a clean parse returns the Document
-/// exactly as `parseWithReport` would. `out.diag` mirrors `errors[0]`. Mirrors
-/// fig's `Parser.parseCollecting`.
+/// `parse`, collecting as `parseCollectingInto` does.
 pub fn parseCollecting(allocator: std.mem.Allocator, input: []const u8, format: Type, out: *Report) !Document {
-    return parseImpl(allocator, input, format, out, true);
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseCollectingInto(&t, input, format, out);
+    return RowWriter.adopt(allocator, input, &t);
 }
 
-fn parseImpl(allocator: std.mem.Allocator, input: []const u8, format: Type, out: ?*Report, recover: bool) !Document {
-    var parser: Parser = .{ .allocator = allocator, .recover = recover };
+/// Write `input`'s rows into `t`, the table fig hands a parse.
+pub fn parseInto(t: *Table, input: []const u8, format: Type) !void {
+    return parseImpl(t, input, format, null, false);
+}
+
+/// `parseInto`, but also fills `out`: `diag` on failure (error code + byte
+/// span, for `file:line:col` teaching messages), `warnings` always
+/// (authoring-time lints — currently just `duplicate_key`). Mirrors fig's
+/// `Parser.parseWithReport` — the hook the CLI renders reports from.
+pub fn parseWithReportInto(t: *Table, input: []const u8, format: Type, out: *Report) !void {
+    return parseImpl(t, input, format, out, false);
+}
+
+/// `parseWithReportInto`, but recovers past each parser-level error
+/// (resyncing to the next safe token — see `resync`) to collect the WHOLE
+/// file's diagnostics in one pass (`out.errors`, source order) rather than
+/// stopping at the first. A TOKENIZER failure (before the token loop even
+/// starts) is never recoverable — it still stops the parse after exactly one
+/// diagnostic. On any error the return value is still the first error code
+/// and the table is not finished; a clean parse writes it exactly as
+/// `parseWithReportInto` would. `out.diag` mirrors `errors[0]`.
+pub fn parseCollectingInto(t: *Table, input: []const u8, format: Type, out: *Report) !void {
+    return parseImpl(t, input, format, out, true);
+}
+
+fn parseImpl(t: *Table, input: []const u8, format: Type, out: ?*Report, recover: bool) !void {
+    const allocator = t.allocator;
+    var parser: Parser = .{ .allocator = allocator, .recover = recover, .w = .init(t) };
     defer parser.deinit();
     const result = parser.parse_once(input, format);
     // Warnings are duped out on every exit path (they are valid alongside a
@@ -432,7 +460,7 @@ fn parseImpl(allocator: std.mem.Allocator, input: []const u8, format: Type, out:
     };
 }
 
-fn parse_once(self: *Parser, input: []const u8, kind: Type) !Document {
+fn parse_once(self: *Parser, input: []const u8, kind: Type) !void {
     self.format = kind;
     var tokenizer: Tokenizer = .{
         .allocator = self.allocator,
@@ -450,8 +478,8 @@ fn parse_once(self: *Parser, input: []const u8, kind: Type) !Document {
     };
     defer self.allocator.free(tokens);
 
-    // Each Document.Node has an id, a kind, and a next_sibling ID.
-    // We produce them from the tokens.
+    // Each node is a row, linked to its children and siblings; the rows
+    // are put in pre-order once the root is done.
 
     var i: usize = 0;
     while (i < tokens.len) {
@@ -530,38 +558,8 @@ fn parse_once(self: *Parser, input: []const u8, kind: Type) !Document {
         return self.diagnostics.items[0].code;
     }
 
-    // Ready to return a Document!
     const root = self.root orelse return ParseError.UnexpectedToken;
-
-    const nodes = try self.nodes.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(nodes);
-    self.nodes = .empty;
-
-    const node_spans = try self.node_spans.toOwnedSlice(self.allocator);
-    errdefer self.allocator.free(node_spans);
-    self.node_spans = .empty;
-
-    const owned_strings = try self.owned_strings.toOwnedSlice(self.allocator);
-    self.owned_strings = .empty;
-
-    var ast: AST = .{
-        .allocator = self.allocator,
-        .owned_strings = owned_strings,
-        .root = root,
-        .nodes = nodes,
-    };
-    // Materialized last (no fallible step follows): hand the owned `leading`
-    // slices to the AST. Only when comments were actually attached.
-    if (self.comments_seen) {
-        ast.node_comments = try self.node_comments.toOwnedSlice(self.allocator);
-        self.node_comments = .empty;
-    }
-
-    return .{
-        .source = input,
-        .ast = ast,
-        .node_spans = node_spans,
-    };
+    try self.w.finish(root);
 }
 
 /// One token's worth of the state machine — extracted from `parse_once`'s
@@ -783,16 +781,10 @@ pub fn deinit(self: *Parser) void {
     // was never freed by a normal `closeContainer` — do it here instead.
     for (self.container_stack.items) |*c| c.seen_keys.deinit(self.allocator);
     self.container_stack.deinit(self.allocator);
-    self.nodes.deinit(self.allocator);
-    self.node_spans.deinit(self.allocator);
     for (self.owned_strings.items) |string| {
         self.allocator.free(string);
     }
     self.owned_strings.deinit(self.allocator);
-    // After a successful parse these `leading` slices moved to the AST and the
-    // list is empty; on an error path they are freed here. Text borrows `input`.
-    for (self.node_comments.items) |nc| self.allocator.free(nc.leading);
-    self.node_comments.deinit(self.allocator);
     self.pending_leading.deinit(self.allocator);
     self.diagnostics.deinit(self.allocator);
     self.warnings.deinit(self.allocator);
@@ -802,16 +794,10 @@ pub fn deinit(self: *Parser) void {
 // PARSING HELPERS
 // ===============
 
-/// Add an incomplete node to self.nodes. Called as soon as `[` or `{` is found.
+/// Write a node's row. A container's is written as soon as `[` or `{` is
+/// found, and gains its children as they complete.
 fn addNode(self: *Parser, kind: AST.Node.Kind, span: Span) !AST.Node.Id {
-    const id: AST.Node.Id = @intCast(self.nodes.items.len);
-    try self.nodes.append(self.allocator, .{
-        .id = id,
-        .kind = kind,
-        .next_sibling = null, // Update if there is a next sibling
-    });
-    try self.node_spans.append(self.allocator, span);
-    try self.node_comments.append(self.allocator, .{});
+    const id = try self.w.add(kind, span);
     // Buffered leading comments bind to the first node opened for the next
     // child — a key (object entry), a value (array element / root), or a
     // container. The keyvalue *pair* node (minted in `finishValue`) sees an
@@ -851,32 +837,33 @@ fn specialNumber(raw: []const u8) ?AST.Node.Kind {
 fn beginKey(self: *Parser, input: []const u8, token: Token) ParserError!void {
     // Only quoted strings are legal keys in strict JSON; the rest are JSON5.
     if (token.kind != .string and self.format != .JSON5) return ParseError.UnexpectedToken;
-    const key_id = try self.addKeyNode(input, token);
+    const key = try self.addKeyNode(input, token);
     const parent = &self.container_stack.items[self.container_stack.items.len - 1];
-    parent.pending_key = key_id;
+    parent.pending_key = key.id;
+    parent.pending_key_text = key.text;
     self.state = .ExpectObjectColon;
 }
 
 /// Build a string-valued key node. A quoted string is decoded; an identifier or
 /// keyword key is its verbatim source text.
-fn addKeyNode(self: *Parser, input: []const u8, token: Token) ParserError!AST.Node.Id {
-    const kind: AST.Node.Kind = switch (token.kind) {
-        .string => .{ .string = try self.getString(token.source(input)) },
-        .identifier, .true_, .false_, .null_ => .{ .string = token.source(input) },
+fn addKeyNode(self: *Parser, input: []const u8, token: Token) ParserError!struct { id: AST.Node.Id, text: []const u8 } {
+    const text = switch (token.kind) {
+        .string => try self.getString(token.source(input)),
+        .identifier, .true_, .false_, .null_ => token.source(input),
         else => return ParseError.UnexpectedToken,
     };
-    return self.addNode(kind, token.span);
+    return .{ .id = try self.addNode(.{ .string = text }, token.span), .text = text };
 }
 
 /// Attaches a completed child to the current open container.
-fn attachChild(self: *Parser, parent: *OpenContainer, child_id: AST.Node.Id) void {
+fn attachChild(self: *Parser, parent: *OpenContainer, child_id: AST.Node.Id) !void {
     if (parent.first_child != null) {
-        self.nodes.items[parent.last_child.?].next_sibling = child_id;
+        self.w.setNext(parent.last_child.?, child_id);
     } else {
         parent.first_child = child_id;
         switch (parent.kind) {
-            .array => self.nodes.items[parent.id].kind = .{ .sequence = child_id },
-            .object => self.nodes.items[parent.id].kind = .{ .mapping = child_id },
+            .array => try self.w.set(parent.id, .{ .sequence = child_id }),
+            .object => try self.w.set(parent.id, .{ .mapping = child_id }),
         }
     }
     parent.last_child = child_id;
@@ -897,11 +884,12 @@ fn finishValue(self: *Parser, value_id: AST.Node.Id) !void {
 
     switch (parent.kind) {
         .array => {
-            self.attachChild(parent, value_id);
+            try self.attachChild(parent, value_id);
             self.state = .ExpectArrayCommaOrEnd;
         },
         .object => {
             const key_id = parent.pending_key orelse return ParseError.UnexpectedToken;
+            const key_text = parent.pending_key_text;
             parent.pending_key = null;
 
             // Authoring-time lint: JSON permits duplicate keys within one
@@ -909,15 +897,14 @@ fn finishValue(self: *Parser, value_id: AST.Node.Id) !void {
             // parser keeps only the LAST value, so an earlier duplicate is
             // silently discarded — warn rather than stay silent about it (see
             // `Warning.Code.duplicate_key`).
-            const key_span = self.node_spans.items[key_id];
-            const key_text = self.nodes.items[key_id].kind.string;
+            const key_span = self.w.spanOf(key_id);
             if (parent.seen_keys.contains(key_text)) {
                 try self.warnings.append(self.allocator, .{ .code = .duplicate_key, .offset = key_span.start, .end = key_span.end });
             } else {
                 try parent.seen_keys.put(self.allocator, key_text, {});
             }
 
-            const value_span = self.node_spans.items[value_id];
+            const value_span = self.w.spanOf(value_id);
             const pair_id = try self.addNode(.{ .keyvalue = .{
                 .key = key_id,
                 .value = value_id,
@@ -926,7 +913,7 @@ fn finishValue(self: *Parser, value_id: AST.Node.Id) !void {
                 .end = value_span.end,
             });
 
-            self.attachChild(parent, pair_id);
+            try self.attachChild(parent, pair_id);
             self.state = .ExpectObjectCommaOrEnd;
         },
     }
@@ -954,14 +941,14 @@ fn handleComment(self: *Parser, input: []const u8, tokens: []const Token, i: usi
         if (self.multilineContainer(input, id, comment_start)) {
             try self.appendDangling(id, c);
         } else {
-            self.setTrailing(id, c);
+            try self.setTrailing(id, c);
         }
     } else if (endsLine(input, tokens, i) and self.container_stack.items.len > 0 and
         afterOpenDelimiter(input, tokens, i))
     {
         // `[ // note` / `{ // note` — the comment rides the line the container
         // opened on, so it trails the container value (mirrors YAML's `key: #`).
-        self.setTrailing(self.container_stack.items[self.container_stack.items.len - 1].id, c);
+        try self.setTrailing(self.container_stack.items[self.container_stack.items.len - 1].id, c);
     } else {
         try self.pending_leading.append(self.allocator, c);
     }
@@ -1016,57 +1003,44 @@ fn parseComment(raw: []const u8) AST.Comment {
     return .{ .text = std.mem.trim(u8, raw[2..], " \t\r"), .style = .line };
 }
 
-/// Hand the buffered leading comments to node `id`, transferring ownership of
-/// the slice. No-op when nothing is buffered.
+/// Hand the buffered leading comments to node `id`. No-op when nothing is
+/// buffered.
 fn claimLeading(self: *Parser, id: AST.Node.Id) !void {
-    if (self.pending_leading.items.len == 0) return;
-    const owned = try self.pending_leading.toOwnedSlice(self.allocator);
-    self.pending_leading = .empty;
-    self.node_comments.items[id].leading = owned;
-    self.comments_seen = true;
+    for (self.pending_leading.items) |c| try self.w.comment(id, table.comment_leading, c);
+    self.pending_leading.clearRetainingCapacity();
 }
 
-fn setTrailing(self: *Parser, id: AST.Node.Id, c: AST.Comment) void {
-    self.node_comments.items[id].trailing = c;
-    self.comments_seen = true;
+fn setTrailing(self: *Parser, id: AST.Node.Id, c: AST.Comment) !void {
+    try self.w.comment(id, table.comment_trailing, c);
 }
 
 /// Whether `id` is a container whose opening delimiter is on an earlier line than
 /// `comment_start` — i.e. a multi-line `[ … ]`/`{ … }` whose close is on the
 /// comment's line. (An inline, single-line container returns false.)
 fn multilineContainer(self: *Parser, input: []const u8, id: AST.Node.Id, comment_start: usize) bool {
-    switch (self.nodes.items[id].kind) {
+    switch (self.w.kindOf(id)) {
         .sequence, .mapping => {},
         else => return false,
     }
-    const open = self.node_spans.items[id].start;
+    const open = self.w.spanOf(id).start;
     if (comment_start <= open) return false;
     return std.mem.indexOfScalar(u8, input[open..comment_start], '\n') != null;
 }
 
-/// Append one comment to `id`'s existing `dangling` run (reallocating). Used for
-/// a closing-line comment that follows the orphans already claimed at the close.
+/// Append one comment to `id`'s `dangling` run. Used for a closing-line
+/// comment that follows the orphans already claimed at the close.
 fn appendDangling(self: *Parser, id: AST.Node.Id, c: AST.Comment) !void {
-    const old = self.node_comments.items[id].dangling;
-    const grown = try self.allocator.alloc(AST.Comment, old.len + 1);
-    @memcpy(grown[0..old.len], old);
-    grown[old.len] = c;
-    self.allocator.free(old);
-    self.node_comments.items[id].dangling = grown;
-    self.comments_seen = true;
+    try self.w.comment(id, table.comment_dangling, c);
 }
 
 /// Hand buffered orphan comments (no node followed them, e.g. before a closing
 /// delimiter or at EOF) to container `id` as its `dangling` run.
 fn claimDangling(self: *Parser, id: AST.Node.Id) !void {
-    if (self.pending_leading.items.len == 0) return;
-    const owned = try self.pending_leading.toOwnedSlice(self.allocator);
-    self.pending_leading = .empty;
-    self.node_comments.items[id].dangling = owned;
-    self.comments_seen = true;
+    for (self.pending_leading.items) |c| try self.w.comment(id, table.comment_dangling, c);
+    self.pending_leading.clearRetainingCapacity();
 }
 
-/// Pushes stack metadata for a container node that already exists in self.nodes
+/// Pushes stack metadata for a container node whose row is written
 fn openContainer(self: *Parser, kind: ContainerKind, node_id: AST.Node.Id) !void {
     try self.container_stack.append(self.allocator, .{
         .id = node_id,
@@ -1081,7 +1055,7 @@ fn closeContainer(self: *Parser, span_end: usize) !AST.Node.Id {
     if (self.container_stack.items.len == 0) return ParseError.UnexpectedToken;
     var container = self.container_stack.pop().?;
     container.seen_keys.deinit(self.allocator);
-    self.node_spans.items[container.id].end = span_end;
+    self.w.setSpan(container.id, Span.init(self.w.spanOf(container.id).start, span_end));
     try self.claimDangling(container.id);
     return container.id;
 }
@@ -1090,10 +1064,10 @@ fn closeContainer(self: *Parser, span_end: usize) !AST.Node.Id {
 // Testing
 // =======
 
-fn testParser(input: []const u8, expected: AST) !void {
-    var tree = try Parser.parse(testing.allocator, input, .JSON);
-    defer tree.deinit(testing.allocator);
-    try testing.expect(expected.eql(tree.ast));
+fn testParser(input: []const u8, expected: AST.Literal) !void {
+    var ast = try Parser.parseAbstract(testing.allocator, input, .JSON);
+    defer ast.deinit();
+    try testing.expect(expected.matches(ast));
 }
 
 fn testParserError(input: []const u8, expected_error: anyerror) !void {
@@ -1213,7 +1187,7 @@ test "object trailing comma is rejected" {
 
 // ── JSON5 ────────────────────────────────────────────────────────────────────
 
-fn parseJson5(input: []const u8) !Document.RowAst {
+fn parseJson5(input: []const u8) !AST {
     return Parser.parseAbstract(testing.allocator, input, .JSON5);
 }
 
@@ -1452,7 +1426,7 @@ test "describe and shortLabel cover every Error variant" {
     try testing.expect(shortLabel(error.LeadingZero).len > 0);
 }
 
-fn countItems(ast: Document.RowAst, container: AST.Node.Id) usize {
+fn countItems(ast: AST, container: AST.Node.Id) usize {
     var n: usize = 0;
     var cur = switch (ast.node(container).kind) {
         .sequence, .mapping => |first| first,

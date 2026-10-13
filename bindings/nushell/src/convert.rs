@@ -159,7 +159,8 @@ fn key_to_column(key: &FigValue) -> String {
         // A collection as a key: no sensible flat spelling, and no format fig
         // reads produces one. Render it as its fig source so the column is at
         // least identifiable rather than empty.
-        other => fig::Format::by_name("figl")
+        other => fig_figl::register()
+            .ok()
             .and_then(|figl| other.serialize(figl).ok())
             .unwrap_or_default()
             .trim()

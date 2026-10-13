@@ -648,6 +648,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fig-figl"
+version = "6.0.0"
+dependencies = [
+ "fig",
+ "fig-sys",
+]
+
+[[package]]
 name = "fig-sys"
 version = "6.0.0"
 dependencies = [
@@ -1544,6 +1552,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "fig",
+ "fig-figl",
  "nu-plugin",
  "nu-plugin-engine",
  "nu-plugin-test-support",

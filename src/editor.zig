@@ -608,7 +608,22 @@ pub fn Editor(comptime Language: type) type {
         /// container's body in place. The whole-container ops
         /// (`deleteContainer`, `renameContainer`, …) are what handle a section
         /// otherwise.
+        ///
+        /// The result is held to what a replace promises (`readsBack`): the
+        /// value reads back as `replacement` reads, and nothing else changed,
+        /// or `EditReadsBackWrong` and the source as it was.
         pub fn replaceValAtPath(self: *Self, path: []const AST.PathSegment, replacement: []const u8) !void {
+            const parsed = try self.getParsed();
+            // A path that resolves to nothing is the splice's to report, or
+            // an inherited key's insert, which is checked as an insert.
+            const node = parsed.ast.getValByPath(path) catch return self.spliceValue(path, replacement);
+            var guard = try self.replaceGuard(parsed, node, path.len == 0, replacement);
+            defer guard.deinit(self.allocator);
+            try self.spliceValue(path, replacement);
+            try self.readsBack(&guard);
+        }
+
+        fn spliceValue(self: *Self, path: []const AST.PathSegment, replacement: []const u8) !void {
             const parsed = try self.getParsed();
             const node = parsed.ast.getValByPath(path) catch |err| {
                 // An inherited key surfaces as NotFound (path nav doesn't follow
@@ -793,8 +808,10 @@ pub fn Editor(comptime Language: type) type {
                     // `NotFound` there would send the caller looking for a
                     // missing key that isn't the problem.
                     // `ImplicitSection` is the same: the parent is there,
-                    // with no line of its own to take the entry under.
-                    if (insert_err == error.BlockValueIntoFlow or insert_err == error.ImplicitSection) return insert_err;
+                    // with no line of its own to take the entry under, and
+                    // `EditReadsBackWrong`: the entry went in and read wrong.
+                    if (insert_err == error.BlockValueIntoFlow or insert_err == error.ImplicitSection or
+                        insert_err == error.EditReadsBackWrong) return insert_err;
                     // The parent mapping itself is missing (an intermediate key
                     // is absent — `NotFound`, NOT the `NotAMapping` of a scalar
                     // standing where a map should be, which must never be
@@ -999,9 +1016,14 @@ pub fn Editor(comptime Language: type) type {
             };
             if (node.kind == .alias) {
                 const target = parsed.ast.node(try parsed.ast.resolveAlias(node));
+                // Held to `readsBack` at the anchored node, as a replace
+                // is at its own: the aliases read as they did, by name.
+                var guard = try self.replaceGuard(parsed, target, target.id == parsed.ast.root, replacement);
+                defer guard.deinit(self.allocator);
                 var buf: std.ArrayList(u8) = .empty;
                 defer buf.deinit(self.allocator);
-                return self.replaceAtSpan(self.valueSpanWithoutProps(parsed, target), try self.renderedValue(&buf, replacement, placeOfChild(parsed, target.id)));
+                try self.replaceAtSpan(self.valueSpanWithoutProps(parsed, target), try self.renderedValue(&buf, replacement, placeOfChild(parsed, target.id)));
+                return self.readsBack(&guard);
             }
             try self.replaceValAtPath(path, replacement);
         }
@@ -1953,7 +1975,21 @@ pub fn Editor(comptime Language: type) type {
         /// what lets this work from key SYNTAX, whose name only the reparse
         /// knows; a document that already repeated a name is not refused an
         /// unrelated insert. `insertNamedKey` refuses up front, by name.
+        ///
+        /// The result is held to what an insert promises (`readsBack`): the
+        /// mapping gained one entry, reading as `key_text` and `value_text`
+        /// read, and nothing else changed, or `EditReadsBackWrong` and the
+        /// source as it was.
         pub fn insertKey(self: *Self, path: []const AST.PathSegment, key_text: []const u8, value_text: []const u8) !void {
+            const parsed = try self.getParsed();
+            const node = try parsed.ast.getValByPath(path);
+            var guard = try self.addGuard(parsed, node, null, key_text, value_text);
+            defer guard.deinit(self.allocator);
+            try self.spliceEntry(path, key_text, value_text);
+            try self.readsBack(&guard);
+        }
+
+        fn spliceEntry(self: *Self, path: []const AST.PathSegment, key_text: []const u8, value_text: []const u8) !void {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
             const span = parsed.span(node);
@@ -2156,6 +2192,194 @@ pub fn Editor(comptime Language: type) type {
             if (!changedOnlyAt(before, try self.getParsed(), container_path, .{ .removed = removal })) {
                 try self.restoreSource(backup);
                 return error.DeleteChangedOtherValues;
+            }
+        }
+
+        /// What a write, move or reorder is checked against once its splice
+        /// is in: the source before it, the container it changes (`route`,
+        /// from the root), and the one change it may make there.
+        const Guard = struct {
+            backup: []u8,
+            route: []usize,
+            write: Write,
+
+            fn deinit(g: *Guard, allocator: std.mem.Allocator) void {
+                allocator.free(g.backup);
+                allocator.free(g.route);
+                switch (g.write) {
+                    .whole => |w| if (w) |r| r.deinit(allocator),
+                    .replaced => |r| if (r.want) |w| w.deinit(allocator),
+                    .added => |r| if (r.want) |w| w.deinit(allocator),
+                    .moved => |order| allocator.free(order),
+                    .regrouped => {},
+                }
+            }
+        };
+
+        /// A `Guard` for `write` to `container`, taking ownership of what
+        /// `write` holds.
+        fn guardAt(self: *Self, parsed: Document, container: AST.Node, write: Write) !Guard {
+            var held: Guard = .{ .backup = &.{}, .route = &.{}, .write = write };
+            errdefer held.deinit(self.allocator);
+            held.route = try routeTo(self.allocator, parsed, container.id);
+            held.backup = try self.allocator.dupe(u8, self.source.items);
+            return held;
+        }
+
+        /// The guard for replacing the value `node` with `replacement`: the
+        /// node reads back as the replacement reads (`readingOf`). `root`
+        /// says the node is the document, whose replacement is a document.
+        fn replaceGuard(self: *Self, parsed: Document, node: AST.Node, root: bool, replacement: []const u8) !Guard {
+            const place = placeOfChild(parsed, node.id);
+            var buf: std.ArrayList(u8) = .empty;
+            defer buf.deinit(self.allocator);
+            const in: WriteSlot = if (root) .root else if (parsed.ast.parentOf(node.id)) |p|
+                (if (parsed.ast.kindOf(p) == .sequence) self.itemSlot(parsed, parsed.ast.node(p)) else .entry)
+            else
+                .entry;
+            const want = try self.readingOf(null, try self.renderedValue(&buf, replacement, place), place, in);
+            const slot = slotOf(parsed, node.id) orelse return self.guardAt(parsed, node, .{ .whole = want });
+            return self.guardAt(parsed, parsed.ast.node(slot.container), .{ .replaced = .{ .at = slot.at, .want = want } });
+        }
+
+        /// The guard for adding one child to `container`: an item at `at`,
+        /// or an entry (`at` null) reading as `key_text` and `value_text`
+        /// read.
+        fn addGuard(self: *Self, parsed: Document, container: AST.Node, at: ?usize, key_text: ?[]const u8, value_text: []const u8) !Guard {
+            const place = placeOf(parsed, container);
+            var buf: std.ArrayList(u8) = .empty;
+            defer buf.deinit(self.allocator);
+            const in: WriteSlot = if (container.kind == .sequence) self.itemSlot(parsed, container) else .entry;
+            const want = try self.readingOf(key_text, try self.renderedValue(&buf, value_text, place), place, in);
+            return self.guardAt(parsed, container, .{ .added = .{ .at = at, .want = want } });
+        }
+
+        /// Where a write puts its value, as `readingOf` reads it: the
+        /// document, a mapping entry, an item of a block list (one per line,
+        /// after `seq_item_marker`), or an item of any other list.
+        const WriteSlot = enum { root, entry, block_item, flow_item };
+
+        /// The `WriteSlot` of an item of the sequence `seq`. A format whose
+        /// line prefix is structure (figl) writes an item's later lines as
+        /// its own, not under `writeItem`'s indent, so it has no block item
+        /// to read one in.
+        fn itemSlot(self: *const Self, parsed: Document, seq: AST.Node) WriteSlot {
+            if (self.syntax().structural_indent) return .flow_item;
+            return if (self.isFlowNode(parsed, seq)) .flow_item else .block_item;
+        }
+
+        /// How `rendered` reads in this format, or null when that is not
+        /// known. It is read in an otherwise empty document, in the slot the
+        /// write put it in — one entry under `key_text` (or `k`, when only
+        /// the value is wanted), the one item of a root block list — through
+        /// the renderers that spelled it there, with the least around it to
+        /// misread; and on its own, as a document, which is all there is for
+        /// the root and for an item of a flow list. A reading is only known
+        /// when every one of these that reads as one value reads as the same
+        /// value: a slot a format cannot write at the root reads as something
+        /// else (a `.properties` value `a b` read alone is the entry `a` =
+        /// `b`, a list item of a language whose list needs a header above it
+        /// is no item at all), and two readings that disagree say only that
+        /// one of them is not the slot's. Null leaves the value unchecked and
+        /// the rest of the document checked still.
+        fn readingOf(self: *Self, key_text: ?[]const u8, rendered: []const u8, place: Place, in: WriteSlot) !?Reading {
+            var found: ?Reading = null;
+            errdefer if (found) |r| r.deinit(self.allocator);
+            inline for (.{ ReadSlot.item, ReadSlot.entry, ReadSlot.alone }) |slot| {
+                const wanted = switch (slot) {
+                    .item => in == .block_item,
+                    .entry => in == .entry,
+                    .alone => true,
+                };
+                if (wanted) if (try self.readingIn(slot, key_text, rendered, place)) |c| {
+                    if (found) |f| {
+                        const agree = readsAs(f.value(), c.doc, c.value().id);
+                        c.deinit(self.allocator);
+                        if (!agree) {
+                            f.deinit(self.allocator);
+                            found = null;
+                            return null;
+                        }
+                    } else found = c;
+                };
+            }
+            return found;
+        }
+
+        const ReadSlot = enum { item, entry, alone };
+
+        /// `readingOf` in one slot: a document of one `item`, of one `entry`,
+        /// or of the text `alone`; null when it does not read as that.
+        fn readingIn(self: *Self, comptime slot: ReadSlot, key_text: ?[]const u8, rendered: []const u8, place: Place) !?Reading {
+            var text: std.ArrayList(u8) = .empty;
+            errdefer text.deinit(self.allocator);
+            switch (slot) {
+                .item => try self.writeItem(&text, "", rendered, place),
+                .entry => try self.writeEntry(&text, "", key_text orelse "k", rendered, place),
+                .alone => try text.appendSlice(self.allocator, rendered),
+            }
+            if (slot != .alone) try text.append(self.allocator, '\n');
+            const source = try text.toOwnedSlice(self.allocator);
+            var parser: Language.Parser = .{ .allocator = self.allocator };
+            const doc = Language.parse(&parser, source, self.format) catch {
+                self.allocator.free(source);
+                return null;
+            };
+            const top = doc.ast.node(doc.ast.root);
+            const only: ?AST.Node = if (top.kind == .mapping or top.kind == .sequence) only: {
+                const child = (doc.ast.child(&top) catch null) orelse break :only null;
+                break :only if (doc.ast.next(&child) == null) child else null;
+            } else null;
+            const read: ?Reading = switch (slot) {
+                .item => if (top.kind == .sequence and only != null)
+                    .{ .source = source, .doc = doc, .id = only.?.id, .entry = false }
+                else
+                    null,
+                .entry => if (top.kind == .mapping and only != null and only.?.kind == .keyvalue)
+                    (if (key_text != null)
+                        .{ .source = source, .doc = doc, .id = only.?.id, .entry = true }
+                    else
+                        .{ .source = source, .doc = doc, .id = only.?.kind.keyvalue.value, .entry = false })
+                else
+                    null,
+                // A root container with nothing of its own around its one
+                // child — a TOML or `.properties` document of one entry, a
+                // bar list's open root of one item — is the format reading
+                // the text as an entry or an item of the root, not as the
+                // value: no reading.
+                .alone => if (only != null and onlyBlankAround(source, doc.span(only.?)))
+                    null
+                else
+                    .{ .source = source, .doc = doc, .id = doc.ast.root, .entry = false },
+            };
+            if (read == null) {
+                doc.deinit(self.allocator);
+                self.allocator.free(source);
+            }
+            return read;
+        }
+
+        /// The write guard. A write is a splice chosen by reading the source
+        /// around its slot, and a wrong reading still parses: a map written
+        /// over a YAML item's scalar with its second line at column 0 put
+        /// `y: two` in the mapping around the list, and the replace reported
+        /// success. So the two parses are compared, as `keepOthers` compares
+        /// them for a delete (`writtenOnlyAt`): the container on
+        /// `guard.route` must have changed only as `guard.write` says, every
+        /// other node must be as it was, and otherwise the splice is rolled
+        /// back byte-for-byte with `EditReadsBackWrong`.
+        fn readsBack(self: *Self, guard: *const Guard) !void {
+            var parser: Language.Parser = .{ .allocator = self.allocator };
+            const before = Language.parse(&parser, guard.backup, self.format) catch {
+                // `backup` parsed before the splice, as in `keepOthers`.
+                try self.restoreSource(guard.backup);
+                return error.EditReadsBackWrong;
+            };
+            defer before.deinit(self.allocator);
+            const after = try self.getParsed();
+            if (!writtenOnlyAt(before, before.ast.root, after, after.ast.root, guard.route, guard.write)) {
+                try self.restoreSource(guard.backup);
+                return error.EditReadsBackWrong;
             }
         }
 
@@ -2411,7 +2635,16 @@ pub fn Editor(comptime Language: type) type {
         /// the separator-aware splice after its last item; a block item is
         /// spelled through `writeItem` (a `renderItem` where the format
         /// declares one) after the first item's line prefix.
+        ///
+        /// The result is held to what an insert promises (`readsBack`): the
+        /// sequence gained one item, last, reading as `value_text` reads, and
+        /// nothing else changed, or `EditReadsBackWrong` and the source as it
+        /// was. `prependToSeq` and `insertItem` are held to the same.
         pub fn appendToSeq(self: *Self, path: []const AST.PathSegment, value_text: []const u8) !void {
+            return self.addItem(path, std.math.maxInt(usize), value_text, .append);
+        }
+
+        fn spliceAppend(self: *Self, path: []const AST.PathSegment, value_text: []const u8) !void {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
             if (node.kind != .sequence) return error.NotASequence;
@@ -2462,6 +2695,10 @@ pub fn Editor(comptime Language: type) type {
         ///
         /// The twin of `appendToSeq`, on the same terms; `insertItem` at 0.
         pub fn prependToSeq(self: *Self, path: []const AST.PathSegment, value_text: []const u8) !void {
+            return self.addItem(path, 0, value_text, .prepend);
+        }
+
+        fn splicePrepend(self: *Self, path: []const AST.PathSegment, value_text: []const u8) !void {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
             if (node.kind != .sequence) return error.NotASequence;
@@ -2490,13 +2727,35 @@ pub fn Editor(comptime Language: type) type {
         /// goes on a line of its own above the item at `index` and the
         /// comment block that item owns, which stays with it.
         pub fn insertItem(self: *Self, path: []const AST.PathSegment, index: usize, value_text: []const u8) !void {
+            return self.addItem(path, index, value_text, .insert);
+        }
+
+        /// An item insert by `op`, at `index`, held to `readsBack`. A path
+        /// that names no sequence is the splice's to report.
+        fn addItem(self: *Self, path: []const AST.PathSegment, index: usize, value_text: []const u8, comptime op: enum { append, prepend, insert }) !void {
+            const parsed = try self.getParsed();
+            const node = parsed.ast.getValByPath(path) catch null;
+            var guard = if (node != null and node.?.kind == .sequence)
+                try self.addGuard(parsed, node.?, @min(index, try seqLen(parsed, node.?)), null, value_text)
+            else
+                null;
+            defer if (guard) |*g| g.deinit(self.allocator);
+            switch (op) {
+                .append => try self.spliceAppend(path, value_text),
+                .prepend => try self.splicePrepend(path, value_text),
+                .insert => try self.spliceItem(path, index, value_text),
+            }
+            if (guard) |*g| try self.readsBack(g);
+        }
+
+        fn spliceItem(self: *Self, path: []const AST.PathSegment, index: usize, value_text: []const u8) !void {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
             if (node.kind != .sequence) return error.NotASequence;
             const n = try seqLen(parsed, node);
-            if (index == std.math.maxInt(usize) or index == n) return self.appendToSeq(path, value_text);
+            if (index == std.math.maxInt(usize) or index == n) return self.spliceAppend(path, value_text);
             if (index > n) return error.NotFound;
-            if (index == 0) return self.prependToSeq(path, value_text);
+            if (index == 0) return self.splicePrepend(path, value_text);
             var item = (try parsed.ast.child(&node)).?;
             for (0..index) |_| item = parsed.ast.next(&item).?;
             if (self.isFlowNode(parsed, node)) {
@@ -3526,7 +3785,47 @@ pub fn Editor(comptime Language: type) type {
         /// else to sit before such a header lands it at the tail of the
         /// *preceding* table's body, silently reparenting it. `moveContainer`
         /// is the op that relocates a scattered container whole.
+        ///
+        /// Every move and reorder is held to what it promises (`readsBack`):
+        /// the container's children read back as they were, in the order
+        /// asked for, and nothing else changed, or `EditReadsBackWrong` and
+        /// the source as it was.
         pub fn moveKey(self: *Self, src_path: []const AST.PathSegment, dest_path: []const AST.PathSegment) !void {
+            var guard = try self.moveGuard(src_path, dest_path);
+            defer if (guard) |*g| g.deinit(self.allocator);
+            try self.spliceMoveKey(src_path, dest_path);
+            if (guard) |*g| try self.readsBack(g);
+        }
+
+        /// `moveKey`'s guard: the entry at `src_path` lifted out of its
+        /// mapping and set down before the one at `dest_path`. A `dest` that
+        /// is not its sibling leaves the order as it was, which is what a
+        /// move out of the mapping must not change. Null when either path
+        /// names no entry, which the splice reports.
+        fn moveGuard(self: *Self, src_path: []const AST.PathSegment, dest_path: []const AST.PathSegment) !?Guard {
+            const parsed = try self.getParsed();
+            const src = parsed.ast.getNodeByPath(src_path) catch return null;
+            const dest = parsed.ast.getNodeByPath(dest_path) catch return null;
+            const from = slotOf(parsed, src.id) orelse return null;
+            const to = slotOf(parsed, dest.id) orelse return null;
+            const before = if (to.container == from.container) to.at else from.at;
+            const container = parsed.ast.node(from.container);
+            const n = try seqLen(parsed, container);
+            const order = try self.allocator.alloc(usize, n);
+            var i: usize = 0;
+            for (0..n) |j| {
+                if (before != from.at and j == from.at) continue;
+                if (before != from.at and j == before) {
+                    order[i] = from.at;
+                    i += 1;
+                }
+                order[i] = j;
+                i += 1;
+            }
+            return try self.guardAt(parsed, container, .{ .moved = order });
+        }
+
+        fn spliceMoveKey(self: *Self, src_path: []const AST.PathSegment, dest_path: []const AST.PathSegment) !void {
             const parsed = try self.getParsed();
             const src = try parsed.ast.getNodeByPath(src_path);
             if (src.kind != .keyvalue) return error.NotAMapping;
@@ -3598,7 +3897,10 @@ pub fn Editor(comptime Language: type) type {
                 while (i > to) : (i -= 1) order[i] = order[i - 1];
             }
             order[to] = val;
+            var guard = try self.guardAt(parsed, node, .{ .moved = try self.allocator.dupe(usize, order) });
+            defer guard.deinit(self.allocator);
             try self.reorderSeqNode(parsed, node, order);
+            try self.readsBack(&guard);
         }
 
         /// Reorder the entries of the block mapping at `path` (empty path =
@@ -3623,6 +3925,38 @@ pub fn Editor(comptime Language: type) type {
         /// inner mapping's scalar keys around a sub-table that stays put is
         /// unaffected, which is why only the MOVED entries are checked.
         pub fn reorderKeys(self: *Self, path: []const AST.PathSegment, keys: []const []const u8) !void {
+            const parsed = try self.getParsed();
+            const node = parsed.ast.getValByPath(path) catch return self.spliceKeyOrder(path, keys);
+            if (node.kind != .mapping) return self.spliceKeyOrder(path, keys);
+            // The order asked for: the listed keys first, each its first
+            // entry not yet taken, then the rest as they stand.
+            var listed: std.ArrayList(usize) = .empty;
+            defer listed.deinit(self.allocator);
+            const n = try seqLen(parsed, node);
+            const taken = try self.allocator.alloc(bool, n);
+            defer self.allocator.free(taken);
+            @memset(taken, false);
+            for (keys) |k| {
+                var maybe = try parsed.ast.child(&node);
+                var i: usize = 0;
+                while (maybe) |entry| : ({
+                    maybe = parsed.ast.next(&entry);
+                    i += 1;
+                }) {
+                    if (!taken[i] and entry.kind == .keyvalue and keyNodeIs(parsed, entry.kind.keyvalue.key, k)) {
+                        taken[i] = true;
+                        try listed.append(self.allocator, i);
+                        break;
+                    }
+                }
+            }
+            var guard = try self.guardAt(parsed, node, .{ .moved = try fullOrder(self.allocator, listed.items, n) });
+            defer guard.deinit(self.allocator);
+            try self.spliceKeyOrder(path, keys);
+            try self.readsBack(&guard);
+        }
+
+        fn spliceKeyOrder(self: *Self, path: []const AST.PathSegment, keys: []const []const u8) !void {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
             if (node.kind != .mapping) return error.NotAMapping;
@@ -3714,7 +4048,10 @@ pub fn Editor(comptime Language: type) type {
             const parsed = try self.getParsed();
             const node = try parsed.ast.getValByPath(path);
             if (node.kind != .sequence) return error.NotASequence;
+            var guard = try self.guardAt(parsed, node, .{ .moved = try fullOrder(self.allocator, indices, try seqLen(parsed, node)) });
+            defer guard.deinit(self.allocator);
             try self.reorderSeqNode(parsed, node, indices);
+            try self.readsBack(&guard);
         }
 
         // --- move / reorder internals ---
@@ -4333,7 +4670,10 @@ pub fn Editor(comptime Language: type) type {
                 }
                 break :blk self.source.items.len;
             };
+            var guard = try self.guardAt(parsed, parsed.ast.node(parsed.ast.root), .regrouped);
+            defer guard.deinit(self.allocator);
             try regions.relocate(self, used.items, dest_at);
+            try self.readsBack(&guard);
         }
 
         /// Reorder top-level containers to the order given by `order` (their
@@ -4365,7 +4705,10 @@ pub fn Editor(comptime Language: type) type {
                 try bundles.append(self.allocator, owned);
             }
             const total = regions.normalize(all.items, true);
+            var guard = try self.guardAt(parsed, parsed.ast.node(parsed.ast.root), .regrouped);
+            defer guard.deinit(self.allocator);
             try regions.reorderBundles(self, all.items[0..total], bundles.items, self.syntax());
+            try self.readsBack(&guard);
         }
 
         /// Append a new element (body `body_text`) to the container sequence at
@@ -5398,6 +5741,296 @@ fn duplicateSurfaced(b: Document, bn: AST.Node, a: Document, an: AST.Node, r: Re
 fn keyNodeIs(doc: Document, id: AST.Node.Id, name: []const u8) bool {
     const k = doc.ast.node(id).kind;
     return k == .string and std.mem.eql(u8, k.string, name);
+}
+
+// ── "only what was asked": the write guard ──────────────────────────────────
+//
+// A replace, an insert, a move and a reorder make the delete's promise in
+// their own terms (`readsBack`): the document after the splice reads as the
+// one before with one change to one container, and that change is what was
+// asked for. The value written must read as the value asked for, which is
+// its text read in the same format (`readingOf`), so nothing a format cannot
+// spell is held against it: the text already says what the format makes of
+// the value, a float written as an integer included. The container is named
+// by a route of child indices rather than by the caller's path, so a key
+// written twice on the way down is passed as the one the edit reached.
+
+/// How the value or entry a write asked for reads: node `id` of `doc`, the
+/// parse of `source`, an entry (key and value) when `entry`, else a value.
+const Reading = struct {
+    source: []u8,
+    doc: Document,
+    id: AST.Node.Id,
+    entry: bool,
+
+    fn deinit(r: Reading, allocator: std.mem.Allocator) void {
+        r.doc.deinit(allocator);
+        allocator.free(r.source);
+    }
+
+    /// The value read: the entry's, for an entry.
+    fn value(r: Reading) Reading {
+        if (!r.entry) return r;
+        return .{ .source = r.source, .doc = r.doc, .id = r.doc.ast.node(r.id).kind.keyvalue.value, .entry = false };
+    }
+};
+
+/// The one change a guarded write may make to the container its route
+/// reaches. A `null` reading is a value that does not read on its own, an
+/// alias say, and is taken as written.
+const Write = union(enum) {
+    /// The container is the node written, the document root.
+    whole: ?Reading,
+    /// The child at `at` now reads as `want`; an entry keeps its key.
+    replaced: struct { at: usize, want: ?Reading },
+    /// One child was added, reading as `want`: at `at` for an item, and
+    /// anywhere for an entry, which a format may place where it sorts.
+    added: struct { at: ?usize, want: ?Reading },
+    /// The children are those before, child `i` the one that stood at
+    /// `order[i]`.
+    moved: []usize,
+    /// Every mapping reads with the entries it had, in any order: a section
+    /// moved whole, whose fragments the format gathers.
+    regrouped,
+};
+
+/// Where a node stands: child `at` of `container`, the child being the
+/// node's entry when it is an entry's value.
+const ChildSlot = struct { container: AST.Node.Id, at: usize };
+
+/// The `ChildSlot` of node `id`, or null for the root.
+fn slotOf(doc: Document, id: AST.Node.Id) ?ChildSlot {
+    const ast = &doc.ast;
+    var child = id;
+    var parent = ast.parentOf(id) orelse return null;
+    if (ast.kindOf(parent) == .keyvalue) {
+        child = parent;
+        parent = ast.parentOf(parent) orelse return null;
+    }
+    const container = ast.node(parent);
+    var cur = ast.child(&container) catch return null;
+    var at: usize = 0;
+    while (cur) |c| : (cur = ast.next(&c)) {
+        if (c.id == child) return .{ .container = parent, .at = at };
+        at += 1;
+    }
+    return null;
+}
+
+/// The child indices from the root down to node `id`, each a child of the
+/// container the ones before reach (an entry's value, for an entry).
+/// Caller owns the slice.
+fn routeTo(allocator: std.mem.Allocator, doc: Document, id: AST.Node.Id) ![]usize {
+    var route: std.ArrayList(usize) = .empty;
+    errdefer route.deinit(allocator);
+    var cur = id;
+    while (slotOf(doc, cur)) |slot| {
+        try route.append(allocator, slot.at);
+        cur = slot.container;
+    }
+    if (cur != doc.ast.root) return error.NotFound;
+    std.mem.reverse(usize, route.items);
+    return route.toOwnedSlice(allocator);
+}
+
+/// Whether `after` (node `aid`) is `before` (node `bid`) with only `write`
+/// made to the container at the end of `route`: every node the route passes
+/// on the way down, and every sibling of those, must be as it was.
+fn writtenOnlyAt(b: Document, bid: AST.Node.Id, a: Document, aid: AST.Node.Id, route: []const usize, write: Write) bool {
+    const bn = b.ast.node(bid);
+    const an = a.ast.node(aid);
+    if (route.len == 0) return containerWritten(b, bn, a, an, write);
+    if (std.meta.activeTag(bn.kind) != std.meta.activeTag(an.kind)) return false;
+    var b_cur = (b.ast.child(&bn) catch return false);
+    var a_cur = (a.ast.child(&an) catch return false);
+    var index: usize = 0;
+    while (b_cur) |bc| : ({
+        b_cur = b.ast.next(&bc);
+        index += 1;
+    }) {
+        const ac = a_cur orelse return false;
+        a_cur = a.ast.next(&ac);
+        if (index != route[0]) {
+            if (!nodesEqualDeep(b, bc.id, a, ac.id)) return false;
+        } else if (bc.kind == .keyvalue) {
+            if (ac.kind != .keyvalue or !nodesEqualDeep(b, bc.kind.keyvalue.key, a, ac.kind.keyvalue.key)) return false;
+            if (!writtenOnlyAt(b, bc.kind.keyvalue.value, a, ac.kind.keyvalue.value, route[1..], write)) return false;
+        } else if (!writtenOnlyAt(b, bc.id, a, ac.id, route[1..], write)) return false;
+    }
+    return a_cur == null;
+}
+
+/// Whether the container `an` is `bn` with `write` made to it.
+fn containerWritten(b: Document, bn: AST.Node, a: Document, an: AST.Node, write: Write) bool {
+    switch (write) {
+        .whole => |want| return if (want) |w| readsAs(w, a, an.id) else true,
+        .regrouped => return nodesEqualUnordered(b, bn.id, a, an.id),
+        .replaced => |r| {
+            if (std.meta.activeTag(bn.kind) != std.meta.activeTag(an.kind)) return false;
+            var b_cur = (b.ast.child(&bn) catch return false);
+            var a_cur = (a.ast.child(&an) catch return false);
+            var index: usize = 0;
+            while (b_cur) |bc| : ({
+                b_cur = b.ast.next(&bc);
+                index += 1;
+            }) {
+                const ac = a_cur orelse return false;
+                a_cur = a.ast.next(&ac);
+                if (index != r.at) {
+                    if (!nodesEqualDeep(b, bc.id, a, ac.id)) return false;
+                    continue;
+                }
+                if (bc.kind == .keyvalue and (ac.kind != .keyvalue or
+                    !nodesEqualDeep(b, bc.kind.keyvalue.key, a, ac.kind.keyvalue.key))) return false;
+                if (r.want) |w| if (!readsAs(w, a, ac.id)) return false;
+            }
+            return a_cur == null;
+        },
+        .added => |r| return childrenGainedOne(b, bn, a, an, r.at, r.want),
+        .moved => |order| {
+            if (std.meta.activeTag(bn.kind) != std.meta.activeTag(an.kind)) return false;
+            if ((seqLen(b, bn) catch return false) != order.len) return false;
+            var a_cur = (a.ast.child(&an) catch return false);
+            for (order) |from| {
+                const ac = a_cur orelse return false;
+                a_cur = a.ast.next(&ac);
+                var bc = (b.ast.child(&bn) catch return false) orelse return false;
+                for (0..from) |_| bc = b.ast.next(&bc) orelse return false;
+                if (!nodesEqualDeep(b, bc.id, a, ac.id)) return false;
+            }
+            return a_cur == null;
+        },
+    }
+}
+
+/// Whether the children of `an` are those of `bn`, each unchanged and in
+/// its order, with one more: at `at`, or (null) anywhere, reading as `want`.
+/// A container that read as empty (`readsEmpty`) may come back as the
+/// container its first child makes of it: YAML's `k:` given an entry is a
+/// mapping, ZON's `.{}` given an item a tuple.
+fn childrenGainedOne(b: Document, bn: AST.Node, a: Document, an: AST.Node, at: ?usize, want: ?Reading) bool {
+    if (an.kind != .mapping and an.kind != .sequence) return false;
+    const same = std.meta.activeTag(bn.kind) == std.meta.activeTag(an.kind);
+    if (!same and !readsEmpty(b, bn)) return false;
+    if (same and at == null and (seqLen(b, bn) catch return false) == (seqLen(a, an) catch return false))
+        return if (want) |w| entryMerged(b, bn, a, an, w) else false;
+    var b_cur = if (same) (b.ast.child(&bn) catch return false) else null;
+    var a_cur = (a.ast.child(&an) catch return false);
+    var index: usize = 0;
+    var extra: ?AST.Node = null;
+    while (a_cur) |ac| : ({
+        a_cur = a.ast.next(&ac);
+        index += 1;
+    }) {
+        // The first child that is not the next one before is the new one;
+        // one equal to its neighbour is either, and reads the same.
+        if (extra == null) {
+            const new = if (at) |i| index == i else if (b_cur) |bc| !nodesEqualDeep(b, bc.id, a, ac.id) else true;
+            if (new) {
+                extra = ac;
+                continue;
+            }
+        }
+        const bc = b_cur orelse return false;
+        if (!nodesEqualDeep(b, bc.id, a, ac.id)) return false;
+        b_cur = b.ast.next(&bc);
+    }
+    const added = extra orelse return false;
+    if (b_cur != null) return false;
+    return if (want) |w| readsAs(w, a, added.id) else true;
+}
+
+/// Whether the mapping `an` is `bn` with the entry `want` written into an
+/// entry it already has: a dotted key names tables it passes through, and
+/// TOML's `t.x = []` beside `t.k = 1` adds `x` to the table `t`, which
+/// gains it as `childrenGainedOne` says. Every other entry is unchanged.
+fn entryMerged(b: Document, bn: AST.Node, a: Document, an: AST.Node, want: Reading) bool {
+    if (!want.entry or bn.kind != .mapping) return false;
+    const wkv = want.doc.ast.node(want.id);
+    if (wkv.kind != .keyvalue) return false;
+    const inner = want.doc.ast.node(wkv.kind.keyvalue.value);
+    if (inner.kind != .mapping) return false;
+    const only = (want.doc.ast.child(&inner) catch return false) orelse return false;
+    if (want.doc.ast.next(&only) != null) return false;
+    var b_cur = (b.ast.child(&bn) catch return false);
+    var a_cur = (a.ast.child(&an) catch return false);
+    var merged = false;
+    while (b_cur) |bc| : (b_cur = b.ast.next(&bc)) {
+        const ac = a_cur orelse return false;
+        a_cur = a.ast.next(&ac);
+        if (nodesEqualDeep(b, bc.id, a, ac.id)) continue;
+        if (merged or bc.kind != .keyvalue or ac.kind != .keyvalue) return false;
+        if (!nodesEqualDeep(b, bc.kind.keyvalue.key, a, ac.kind.keyvalue.key) or
+            !nodesEqualDeep(want.doc, wkv.kind.keyvalue.key, a, ac.kind.keyvalue.key)) return false;
+        const deeper: Reading = .{ .source = want.source, .doc = want.doc, .id = only.id, .entry = true };
+        if (!childrenGainedOne(b, b.ast.node(bc.kind.keyvalue.value), a, a.ast.node(ac.kind.keyvalue.value), null, deeper)) return false;
+        merged = true;
+    }
+    return merged and a_cur == null;
+}
+
+/// Whether node `aid` of `a` reads as `want`: the whole entry, or the value
+/// (an entry's value, for an entry). Two values that each read as empty
+/// (`readsEmpty`) are equal: the format reads an empty container one way
+/// wherever it is written.
+fn readsAs(want: Reading, a: Document, aid: AST.Node.Id) bool {
+    const node = a.ast.node(aid);
+    if (want.entry) return nodesEqualDeep(want.doc, want.id, a, aid);
+    const value = if (node.kind == .keyvalue) a.ast.node(node.kind.keyvalue.value) else node;
+    if (readsEmpty(want.doc, want.doc.ast.node(want.id)) and readsEmpty(a, value)) return true;
+    return nodesEqualDeep(want.doc, want.id, a, value.id);
+}
+
+/// Whether nothing but whitespace stands in `source` outside `span`.
+fn onlyBlankAround(source: []const u8, span: Span) bool {
+    const ws = " \t\r\n";
+    return std.mem.trim(u8, source[0..span.start], ws).len == 0 and
+        std.mem.trim(u8, source[span.end..], ws).len == 0;
+}
+
+/// `nodesEqualDeep`, with a mapping's entries matched in any order, each
+/// to one of the other's: the reading a section move must leave alone.
+fn nodesEqualUnordered(b: Document, bid: AST.Node.Id, a: Document, aid: AST.Node.Id) bool {
+    const bn = b.ast.node(bid);
+    const an = a.ast.node(aid);
+    if (std.meta.activeTag(bn.kind) != std.meta.activeTag(an.kind)) return false;
+    switch (bn.kind) {
+        .sequence => {
+            var b_cur = (b.ast.child(&bn) catch return false);
+            var a_cur = (a.ast.child(&an) catch return false);
+            while (b_cur) |bc| {
+                const ac = a_cur orelse return false;
+                if (!nodesEqualUnordered(b, bc.id, a, ac.id)) return false;
+                b_cur = b.ast.next(&bc);
+                a_cur = a.ast.next(&ac);
+            }
+            return a_cur == null;
+        },
+        .mapping => {
+            if ((seqLen(b, bn) catch return false) != (seqLen(a, an) catch return false)) return false;
+            // Each entry as many times on either side: with the counts equal,
+            // the entries pair up one to one.
+            var b_cur = (b.ast.child(&bn) catch return false);
+            while (b_cur) |bc| : (b_cur = b.ast.next(&bc)) {
+                if (countEqual(b, bn, bc.id, b) != countEqual(a, an, bc.id, b)) return false;
+            }
+            return true;
+        },
+        .keyvalue => |kv| return nodesEqualUnordered(b, kv.key, a, an.kind.keyvalue.key) and
+            nodesEqualUnordered(b, kv.value, a, an.kind.keyvalue.value),
+        else => return bn.kind.eql(an.kind),
+    }
+}
+
+/// How many children of `container` (in `doc`) equal node `id` of `of`, as
+/// `nodesEqualUnordered` compares.
+fn countEqual(doc: Document, container: AST.Node, id: AST.Node.Id, of: Document) usize {
+    var n: usize = 0;
+    var cur = doc.ast.child(&container) catch return 0;
+    while (cur) |c| : (cur = doc.ast.next(&c)) {
+        if (nodesEqualUnordered(of, id, doc, c.id)) n += 1;
+    }
+    return n;
 }
 
 /// Drop a single trailing '\n' (the serializer ends every value with one).

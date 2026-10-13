@@ -750,6 +750,18 @@ test "yaml replace an item with a block value indents it under the item" {
     }
 }
 
+// The write guard (`readsBack`): the reframe writes an explicit key's new
+// value after the `? k` it reads as the key, and `? k:` over `  x: 1` is a
+// key that is itself a mapping, with `v` gone; the replace is refused and
+// nothing is written.
+test "yaml a replace that would not read back as asked is rolled back" {
+    const source = "? k\n: v\nz: 1\n";
+    var ed = try newYamlEditor(source);
+    defer ed.deinit();
+    try std.testing.expectError(error.EditReadsBackWrong, ed.replaceValAtPath(&.{.{ .key = "k" }}, "x: 1\ny: two"));
+    try expectSource(&ed, source);
+}
+
 test "yaml replace preserves a trailing line comment" {
     var ed = try newYamlEditor("title: Hello # note\n");
     defer ed.deinit();

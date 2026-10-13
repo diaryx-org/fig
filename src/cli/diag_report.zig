@@ -284,6 +284,16 @@ fn reportUnhandledImpl(term: *Io.Terminal, err: anyerror, file: ?[]const u8, bin
             try term.setColor(.reset);
             try term.writer.writeAll(": nothing was written — the edit was rolled back, and the file is byte-for-byte as it was.\n");
         },
+        // A replace, insert, move or reorder the editor rolled back because
+        // its result read back as something other than what was asked
+        // (`Editor.readsBack`): a shape the splice could not write into.
+        error.EditReadsBackWrong => {
+            try term.writer.writeAll(": the file would not read back as that edit asks — other values would change, or the value written would read as another — so it was not done\n");
+            try term.setColor(.blue);
+            try term.writer.writeAll("note");
+            try term.setColor(.reset);
+            try term.writer.writeAll(": nothing was written — the edit was rolled back, and the file is byte-for-byte as it was.\n");
+        },
         // `fig comment --inline` on a value with no end delimiter of its own
         // (a ZON `\\` string): its line is value text to the newline.
         error.CommentInsideValue => {

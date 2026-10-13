@@ -584,6 +584,17 @@ test "fig delete the first element of a nested `+` chain keeps the next in its c
     try expectFigSource(&whole, "spec.containers[]\n> name = app\nspec.containers[].ports[]  # tls\n> port = 443\nspec.containers[]\n> name = sidecar\n");
 }
 
+// The move took `c[].p[]`'s lines past the `+` that re-runs it, and the `+`
+// would read as a second `c` element: the move guard (`readsBack`) refuses
+// (docs/tasks/figl-move-chains-and-indices.md).
+test "fig moving the first element of a nested `+` chain is refused, not a new container" {
+    const source = "c[]\n> n = a\nc[].p[]\n> x = 1\n+\n> x = 2\n";
+    var ed = try newFigEditor(source);
+    defer ed.deinit();
+    try std.testing.expectError(error.EditReadsBackWrong, ed.moveItem(&.{ .{ .key = "c" }, .{ .index = 0 }, .{ .key = "p" } }, 0, 1));
+    try expectFigSource(&ed, source);
+}
+
 test "fig an element's index and header are not names a rename rewrites" {
     var ed = try newFigEditor("ys[0]\n> k = 1\n");
     defer ed.deinit();

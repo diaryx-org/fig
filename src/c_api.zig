@@ -1189,6 +1189,10 @@ fn editStatus(err: anyerror) FigStatus {
         // A delete whose splice parsed to a document with more than the one
         // entry or item changed, rolled back: the same kind of answer again.
         error.DeleteChangedOtherValues => .unsupported_operation,
+        // A replace, insert, move or reorder whose splice parsed to a
+        // document with more changed than asked, or with the value written
+        // reading as another, rolled back: the same kind of answer again.
+        error.EditReadsBackWrong => .unsupported_operation,
         // Deleting the only item of a root list in a format whose empty
         // document is an empty mapping (figl), which has no spelling of an
         // empty root list: the request names a valid item, so not
@@ -4256,7 +4260,7 @@ test "editStatus: every editor refusal is a caller error, not parse_error" {
         error.ImplicitSection,          error.ContainerClosesOnItsLine,
         error.NotAKey,                  error.NonFiniteNumber,
         error.CommentInsideValue,       error.DeleteChangedOtherValues,
-        error.NoEmptyRootList,
+        error.NoEmptyRootList,          error.EditReadsBackWrong,
     };
     for (refusals) |err| {
         const status = editStatus(err);

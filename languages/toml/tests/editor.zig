@@ -1068,14 +1068,16 @@ test "toml deleteContainer of a header table takes a multi-line dotted child who
     try expectTomlSource(&ed, "[b]\nw = 3\n");
 }
 
-test "toml moveContainer accepts a dotted table as the destination" {
+test "toml moveContainer to before a root dotted table is refused, not a reparented table" {
     var ed = try newTomlEditor("[a]\nx = 1\n[b]\ny = 2\n");
     defer ed.deinit();
     // A dotted-only table has no `[` line, which the old header-line sniff
-    // refused as a destination; it is a section node like any other.
+    // refused as a destination; it is a section node like any other. But
+    // `[b]` set down above the root's `d.k = 0` takes that line into `b`,
+    // where `d` reads back as `b.d`: the move guard refuses.
     try ed.replaceAtSpan(Span.init(0, 0), "d.k = 0\n");
-    try ed.moveContainer(&.{.{ .key = "b" }}, &.{.{ .key = "d" }});
-    try expectTomlSource(&ed, "[b]\ny = 2\nd.k = 0\n[a]\nx = 1\n");
+    try std.testing.expectError(error.EditReadsBackWrong, ed.moveContainer(&.{.{ .key = "b" }}, &.{.{ .key = "d" }}));
+    try expectTomlSource(&ed, "d.k = 0\n[a]\nx = 1\n[b]\ny = 2\n");
 }
 
 test "toml reorderKeys reorders an inline table" {

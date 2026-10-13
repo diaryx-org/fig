@@ -417,6 +417,13 @@ shares with a parent's marker, read wrongly — is rolled back with
 `error.DeleteChangedOtherValues`. A block container emptied of its only child
 may read back as null (`k:`), the one shape some formats have for it.
 
+The writes make the same promise in their own terms. A replace, an insert
+(`insertKey`, `appendToSeq`, `prependToSeq`, `insertItem`), a move and a
+reorder must read back as the document before with only that change made: the
+value written reading as its text reads in the format, the moved entries
+unchanged and in the order asked for. Anything else is rolled back with
+`error.EditReadsBackWrong`.
+
 `replaceAtSpan(span, text)` is the escape hatch underneath all of them: splice
 an arbitrary byte range you located yourself (via `getParsed()` and
 `doc.span(node)`), with the same reparse-or-roll-back guarantee.

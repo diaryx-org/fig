@@ -28,7 +28,7 @@ indent and dedent arms of `parseTokens` decide which of the stacked ones a
 line at an intermediate column belongs to.
 
 **Found** while fixing
-[the nested-item delete](/docs/tasks/yaml-nested-item-delete-drops-parent.md):
+[the nested-item delete](/docs/tasks/closed/yaml-nested-item-delete-drops-parent.md):
 deleting `[0][0][0]` from `- - - a` / `    - c` / `  - d` is refused with
 `DeleteChangedOtherValues`, because both parses are wrong in different ways.
 

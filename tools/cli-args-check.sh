@@ -318,6 +318,17 @@ cmp -s run/post.md fixtures/post.md || fail "set on a Markdown file touched it"
 row 0 delete ok.yaml a
 row 1 delete ok.yaml zz
 row 2 delete ok.yaml a b
+# A delete that would leave the file unparseable — an anchor an alias still
+# names — is refused against its path, and writes nothing. It has no text of
+# the caller's to blame, and once panicked looking for some.
+printf 'a: &x 1\nc: *x\n' >fixtures/anchor.yaml
+row 1 delete anchor.yaml a
+cmp -s run/anchor.yaml fixtures/anchor.yaml || fail "a refused delete changed the file"
+err="$(cd fixtures && "$fig" delete anchor.yaml a 2>&1 >/dev/null || true)"
+case "$err" in
+*'edit at `a` in anchor.yaml was refused'*'nothing was written'*) ;;
+*) fail "a delete that leaves the file unparseable: $err" ;;
+esac
 row 0 comment ok.yaml a hi
 row 1 comment --get ok.yaml a
 row 1 comment bad.yaml a hi

@@ -510,8 +510,10 @@ pub const EditTextKind = enum {
 };
 
 /// The spliced text `config`'s action carries, or null for the actions that
-/// splice none (`delete`, and the read-only ones) — those can't produce an
-/// `InvalidEditText` in the first place.
+/// splice none of the caller's (`delete`, `comment --delete`, and the
+/// read-only ones). One of those can still return `InvalidEditText`, when
+/// what it leaves behind does not parse; `main` reports that against the
+/// path instead (`diag_report.reportUnparseableEdit`).
 pub fn splicedText(config: CliConfig) ?SplicedText {
     return switch (config.options) {
         .replace, .rename => |o| .{
@@ -533,7 +535,7 @@ pub fn splicedText(config: CliConfig) ?SplicedText {
             .kind = valueKind(o.value_mode),
             .text = o.value,
         },
-        .comment => |o| .{
+        .comment => |o| if (o.delete or o.get) null else .{
             .file = o.file,
             .format = if (o.detect) null else o.format,
             .kind = .comment,
@@ -584,6 +586,19 @@ pub fn targetFile(config: CliConfig) ?[]const u8 {
         // arguments is the other binary's business, and its failures are its
         // own to report.
         .help, .version, .check, .lang, .external => null,
+    };
+}
+
+/// The path `config`'s action edits at, for a report that has no text of
+/// the caller's to quote. Null for the actions that edit nothing.
+pub fn editPath(config: CliConfig) ?[]const fig.AST.PathSegment {
+    return switch (config.options) {
+        .replace, .rename => |o| o.path,
+        .set => |o| o.path,
+        .insert => |o| o.path,
+        .delete => |o| o.path,
+        .comment => |o| o.path,
+        else => null,
     };
 }
 

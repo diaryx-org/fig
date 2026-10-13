@@ -226,16 +226,18 @@ pub fn main(init: std.process.Init) !void {
     // TOML parser can only read as a malformed number). `edit_ops.applyEdit`
     // tags that case; this is the only place that knows which argument the
     // text came from, so it is where the report is written. See
-    // `diag_report.reportBadEditText`.
+    // `diag_report.reportBadEditText`. An edit with no text of the caller's
+    // (a delete) can fail the same way, when what it leaves does not parse;
+    // that is reported against the path instead.
     dispatch(a, io, &stdout_terminal, &stderr_terminal, config) catch |err| switch (err) {
         error.InvalidEditText => {
-            const spliced = types.splicedText(config).?;
+            const spliced = types.splicedText(config) orelse unparseableEdit(&stderr_terminal, config);
             diag_report.reportBadEditText(&stderr_terminal, spliced.file, spliced.format, spliced.kind, spliced.text, edit_ops.refused_rendering);
         },
         // The document took `0` no better than the value, so the KEY is what
         // it refused (`edit_ops.applyValueEdit`): the user typed it wrong.
         error.InvalidEditKey => {
-            const spliced = types.splicedText(config).?;
+            const spliced = types.splicedText(config) orelse unparseableEdit(&stderr_terminal, config);
             diag_report.reportBadEditText(&stderr_terminal, spliced.file, spliced.format, .key, types.createdKey(config), null);
         },
         // A value argument the file's format cannot hold, from rendering it
@@ -263,6 +265,13 @@ pub fn main(init: std.process.Init) !void {
             diag_report.reportUnhandled(&stderr_terminal, err, types.targetFile(config), config.binary_name);
         },
     };
+}
+
+/// `diag_report.reportUnparseableEdit` for `config`'s file and path. Every
+/// action that edits has both, so the fallbacks only keep a report from
+/// panicking.
+fn unparseableEdit(term: *Io.Terminal, config: types.CliConfig) noreturn {
+    diag_report.reportUnparseableEdit(term, types.targetFile(config) orelse "the file", types.editPath(config) orelse &.{});
 }
 
 /// Re-parse `t.file` as `check` would and print every located parse error it

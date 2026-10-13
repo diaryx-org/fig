@@ -510,6 +510,60 @@ fn reportBadEditTextImpl(term: *Io.Terminal, file: []const u8, format: ?Format, 
     };
 }
 
+/// Report an edit that splices no text of the caller's — a delete, a comment
+/// taken out — whose result does not parse, and exit(1). `reportBadEditText`
+/// blames the argument; here there is none to blame, only what the edit left
+/// behind (deleting a YAML anchor an alias still names), so the report names
+/// the path and the file, and that nothing was written: the editor rolls a
+/// splice that fails its reparse back.
+pub fn reportUnparseableEdit(term: *Io.Terminal, file: []const u8, path: []const fig.AST.PathSegment) noreturn {
+    reportUnparseableEditImpl(term, file, path) catch {};
+    term.writer.flush() catch {};
+    std.process.exit(1);
+}
+
+fn reportUnparseableEditImpl(term: *Io.Terminal, file: []const u8, path: []const fig.AST.PathSegment) !void {
+    try term.setColor(.red);
+    try term.writer.writeAll("error");
+    try term.setColor(.reset);
+    try term.writer.writeAll(": the edit at ");
+    try writePath(term.writer, path);
+    try term.writer.print(" in {s} was refused: the file would not parse after it\n", .{file});
+    try term.setColor(.blue);
+    try term.writer.writeAll("note");
+    try term.setColor(.reset);
+    try term.writer.writeAll(": nothing was written — the edit was rolled back, and the file is byte-for-byte as it was.\n");
+}
+
+/// `path` as the command line spells it, in backticks — the inverse of
+/// `args.parsePath`: a backslash carries a key's `.`, `[`, quote or
+/// backslash, and the end token prints as `[-]`. The empty path is the root.
+fn writePath(w: *Io.Writer, path: []const fig.AST.PathSegment) !void {
+    if (path.len == 0) return w.writeAll("the root");
+    try w.writeByte('`');
+    for (path, 0..) |seg, i| switch (seg) {
+        .key => |k| {
+            if (i > 0) try w.writeByte('.');
+            for (k) |c| {
+                if (std.mem.indexOfScalar(u8, ".[\\\"'", c) != null) try w.writeByte('\\');
+                try w.writeByte(c);
+            }
+        },
+        .index => |n| if (n == types.append_index) try w.writeAll("[-]") else try w.print("[{d}]", .{n}),
+    };
+    try w.writeByte('`');
+}
+
+test "writePath spells a path the way the command line reads it" {
+    var buf: [64]u8 = undefined;
+    var w: Io.Writer = .fixed(&buf);
+    try writePath(&w, &.{ .{ .key = "a" }, .{ .index = 0 }, .{ .key = "b.c" }, .{ .index = types.append_index } });
+    try std.testing.expectEqualStrings("`a[0].b\\.c[-]`", w.buffered());
+    w = .fixed(&buf);
+    try writePath(&w, &.{});
+    try std.testing.expectEqualStrings("the root", w.buffered());
+}
+
 /// A value argument the file's format has no spelling for — `null` into
 /// TOML, a sequence into dotenv — refused before anything was written, and
 /// exit(1): the command line was fine, the document cannot hold it.

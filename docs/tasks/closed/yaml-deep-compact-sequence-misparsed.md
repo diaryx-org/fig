@@ -1,12 +1,22 @@
 ```fig
 title = YAML compact sequences two deep misplace the item after the inner one
-part_of = [Tasks](/docs/tasks/tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 description = `- - - a` over `  - d` reads as `[[[a, d]]]`, where YAML reads `[[[a], d]]`; with more lines it fails to parse
-status = open
+status = done
 created = 2026-10-13
+updated = 2026-10-13
 ```
 
 # YAML compact sequences two deep misplace the item after the inner one
+
+**Status.** Done, in `fix(yaml): a line under compact nested items belongs
+to the item at its column` (0f784cb, 2026-10-13). Each source in the table
+now reads as PyYAML reads it: a line under compact nested items goes to the
+item that begins at its column, and an indent between two nested items is a
+parse error, as PyYAML's is. Tests beside `yaml compact nested sequences
+keep their nesting` cover three-deep and mixed nesting, and the two-deep
+deletes the editor used to refuse with `DeleteChangedOtherValues` now
+succeed.
 
 **Repro.** On `main` at 88ec60e, against PyYAML:
 

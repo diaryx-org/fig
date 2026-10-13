@@ -61,34 +61,3 @@ pub export fn fig_host_native_register(lang: u32, out_format: ?*c_int, out_err: 
     };
     return .ok;
 }
-
-/// Append `n` zeroed elements to list `which` of `t` and return them, for
-/// the host to copy a language module's table into: 0 rows, 1 the string
-/// buffer (bytes), 2 anchors, 3 tags, 4 markers, 5 separators, 6 item
-/// separators, 7 comments, 8 regions, 9 mentions, 10 directives, 11
-/// diagnostics. Null when `which` is not a list or there is no memory.
-pub export fn fig_host_table_extend(t: ?*Runtime.Table, which: u32, n: usize) ?*anyopaque {
-    const tbl = t orelse return null;
-    const a = tbl.allocator;
-    return switch (which) {
-        0 => extend(Runtime.table.Row, &tbl.rows, a, n),
-        1 => extend(u8, &tbl.strings, a, n),
-        2 => extend(Runtime.table.Anchor, &tbl.anchors, a, n),
-        3 => extend(Runtime.table.Tag, &tbl.tags, a, n),
-        4 => extend(Runtime.table.SpanFact, &tbl.markers, a, n),
-        5 => extend(Runtime.table.SpanFact, &tbl.seps, a, n),
-        6 => extend(Runtime.table.ItemSep, &tbl.item_seps, a, n),
-        7 => extend(Runtime.table.Comment, &tbl.comments, a, n),
-        8 => extend(Runtime.table.SpanFact, &tbl.regions, a, n),
-        9 => extend(Runtime.table.Mention, &tbl.mentions, a, n),
-        10 => extend(Runtime.table.Directive, &tbl.directives, a, n),
-        11 => extend(Runtime.table.Diagnostic, &tbl.diagnostics, a, n),
-        else => null,
-    };
-}
-
-fn extend(comptime T: type, list: *std.ArrayList(T), a: std.mem.Allocator, n: usize) ?*anyopaque {
-    const out = list.addManyAsSlice(a, n) catch return null;
-    @memset(std.mem.sliceAsBytes(out), 0);
-    return if (n == 0) @ptrCast(list.items.ptr) else @ptrCast(out.ptr);
-}

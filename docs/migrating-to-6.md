@@ -90,11 +90,15 @@ does not carry the wire passes `-Dhelper-wire=false` and fetches nothing.
 | `Debug` printing `Yaml` | `Format(<n>)`; use `name()` |
 | the crate feature `fig` | `figl` |
 | `fig_sys::FigFormat`, `FIG_FORMAT_RUNTIME_BASE` | gone; formats are `c_int` handles; `fig_sys::fig_format_name` names one |
+| the crate features `json`, `yaml`, `toml`, `zon`, `figl`, `ini`, `dotenv`, `properties`, `plist`, `nestedtext` | gone: depend on the language's crate, `fig-yaml` and the rest, and call its `register()` before using its format |
+| a language there by default | nothing is: `fig-sys` carries no language, and `Format::by_name("yaml")` is `None` until `fig_yaml::register()` |
+| `fig::from_yaml_str`, `fig::to_yaml_string` | `fig_yaml::from_str`, `fig_yaml::to_string`, with `fig-yaml`'s `serde` feature |
+| `fig::helper` working by itself | it reads the wire through the json language: call `fig_json::register()` first |
 
 Error text names the dialect ("would not parse
 as toml"). `ParseError::byte_offset` is filled where the language reports
-one. Registering a language under a name already taken — a bundled one
-included — is refused with `Error::Language`.
+one. Registering a language under a name already taken is refused with
+`Error::Language`.
 
 ## TypeScript — `@diaryx/fig`
 
@@ -151,6 +155,11 @@ The languages a build bundles register on the first lookup; call
 every later `Runtime.register` must share.
 
 ## The C ABI
+
+`libfig` carries no language. Link a language's own library beside it —
+`libfig_yaml.a`, from `zig build c-languages` — include its header,
+`<fig/yaml.h>`, and call `fig_yaml_register(&format, &err)` before using
+the format. `fig_table_extend` appends a whole list to a table at once.
 
 | 5.x | 6.0 |
 | --- | --- |

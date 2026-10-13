@@ -1,6 +1,7 @@
 //! Reading values through YAML's aliases and `<<` merge keys: `to_value` and
 //! serde both give the anchored node's value wherever an alias stands.
-#![cfg(feature = "yaml")]
+
+mod common;
 
 use fig::{Document, Error, Value};
 
@@ -79,7 +80,7 @@ fn serde_reads_an_alias_and_a_merge_key() {
         site: Server,
         also: String,
     }
-    let cfg: Config = fig::from_yaml_str(SRC).unwrap();
+    let cfg: Config = fig_yaml::from_str(SRC).unwrap();
     assert_eq!(
         cfg,
         Config {
@@ -95,7 +96,7 @@ fn serde_reads_an_alias_and_a_merge_key() {
         }
     );
 
-    let err = fig::from_yaml_str::<Value>("loop: &a [*a]\n").unwrap_err();
+    let err = fig_yaml::from_str::<Value>("loop: &a [*a]\n").unwrap_err();
     assert!(matches!(err, Error::Parse(_)), "{err:?}");
 }
 
@@ -103,5 +104,5 @@ fn serde_reads_an_alias_and_a_merge_key() {
 /// does not carry is a test bug.
 #[allow(dead_code)]
 fn by_name(name: &str) -> fig::Format {
-    fig::Format::by_name(name).unwrap_or_else(|| panic!("no format named {name:?}"))
+    common::by_name(name)
 }

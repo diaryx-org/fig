@@ -3,6 +3,8 @@
 //! out of and into, and edited. The language is `tinykv` — `key=value`
 //! lines and `#` comments — the same one the core's C probe hosts.
 
+mod common;
+
 use fig::language::{
     CommentForm, CommentRow, CommentSlot, Description, Dialect, Language, LanguageError, Literal,
     NodeKind, NodeRow, NodeTable, PrintOptions, RenderArgs, Renderer, Renderers, Splice, Syntax,
@@ -340,11 +342,11 @@ fn a_declared_string_with_a_nul_is_refused_at_the_nul() {
 }
 
 // ── the helper wire ────────────────────────────────────────────────────────
-
-#[cfg(feature = "json")]
 #[test]
 fn the_helper_wire_round_trips_describe_parse_print_and_render() {
     use fig::helper;
+    // The helper reads and writes the wire through the json language.
+    common::register_all();
     let lang = TinyKv;
 
     // describe: what comes back decodes to what was declared.
@@ -580,5 +582,5 @@ fn a_language_named_after_a_format_left_out_stands_in_for_it() {
 /// does not carry is a test bug.
 #[allow(dead_code)]
 fn by_name(name: &str) -> fig::Format {
-    fig::Format::by_name(name).unwrap_or_else(|| panic!("no format named {name:?}"))
+    common::by_name(name)
 }

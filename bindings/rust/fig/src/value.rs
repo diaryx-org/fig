@@ -924,10 +924,7 @@ impl<'de> serde::Deserialize<'de> for Value {
 mod tests {
     use super::*;
 
-    /// The registered format named `name`.
-    fn by_name(name: &str) -> Format {
-        Format::by_name(name).unwrap_or_else(|| panic!("no format named {name:?}"))
-    }
+    use crate::test_languages::by_name;
 
     // Exercises the whole build+serialize path with no serde involvement, so it
     // runs under `--no-default-features` too.
@@ -1025,7 +1022,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "toml")]
     fn null_value_is_unsupported_in_toml() {
         let v = Value::Map(vec![(Value::Str("k".into()), Value::Null)]);
         assert!(matches!(
@@ -1059,7 +1055,6 @@ mod tests {
     // TOML datetimes read into `Value::Extended` and serialize back verbatim,
     // instead of degrading to strings.
     #[test]
-    #[cfg(feature = "toml")]
     fn toml_datetimes_round_trip_as_extended() {
         use crate::{Document, ExtKind};
         let src = "d = 2026-06-18\nt = 07:32:00\n";
@@ -1092,7 +1087,6 @@ mod tests {
     // ZON enum and char literals read into `Value::Extended` (the char literal
     // surfaces as an `int` kind at the ABI, but is recovered faithfully).
     #[test]
-    #[cfg(feature = "zon")]
     fn zon_literals_round_trip_as_extended() {
         use crate::{Document, ExtKind};
         let v = Document::parse(b".{ .mode = .fast, .c = 'a' }", by_name("zon"))
@@ -1142,7 +1136,6 @@ mod tests {
 
     // A directly-constructed extended value serializes via the existing write ABI.
     #[test]
-    #[cfg(feature = "toml")]
     fn constructed_extended_serializes() {
         let v = Value::Map(vec![(
             "when".into(),
@@ -1412,7 +1405,6 @@ mod tests {
     // The parser has always produced `Int` for a small number; the constructors
     // now agree with it.
     #[test]
-    #[cfg(feature = "yaml")]
     fn parsed_and_constructed_integers_agree() {
         use crate::Document;
         let parsed = Document::parse(b"n: 3\n", by_name("yaml"))

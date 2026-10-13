@@ -54,7 +54,7 @@ interface Exports {
    *  Exported by the wasm module alone; not a C ABI entry point. */
   fig_host_language_register(lang: number, out_format: number, out_err: number): number;
   fig_host_native_register(lang: number, out_format: number, out_err: number): number;
-  fig_host_table_extend(table: number, which: number, n: number): number;
+  fig_table_extend(table: number, which: number, n: number): number;
 
   fig_parse(input: number, input_len: number, format: number, out_doc: number): number;
   fig_parse_ex(input: number, input_len: number, format: number, out_doc: number, out_err: number): number;

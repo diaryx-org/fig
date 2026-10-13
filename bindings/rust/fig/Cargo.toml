@@ -32,9 +32,9 @@ path = "src/lib.rs"
 # parses, edits, and serializes through the `Value` tree (and `#[derive]`) with
 # no serde at all.
 [features]
-default = ["json", "yaml", "toml", "figl", "ini", "dotenv", "properties", "nestedtext"]
-# Typed (de)serialization: `from_slice`/`to_value` (and, with `yaml`,
-# `from_yaml_str`/`to_yaml_string`), and serde impls for `Value`. Opt-in (not in
+default = []
+# Typed (de)serialization: `from_slice`/`to_value`, and serde impls for
+# `Value` (`fig-yaml`'s `serde` feature adds `from_str`/`to_string`). Opt-in (not in
 # `default`); without it, the binding still parses, edits, and serializes via the
 # `Value` tree directly, and `#[derive(ToValue, FromValue)]` covers typed struct
 # mapping.
@@ -46,28 +46,11 @@ derive = ["dep:fig-macros"]
 # `ToValue`/`FromValue` impls for `indexmap::IndexMap<String, T>`, preserving
 # insertion order (unlike the std map impls). Opt-in to keep the dep optional.
 indexmap = ["dep:indexmap"]
-# Per-language gates, mirroring `build.zig`'s `-D<lang>` options. Each forwards
-# to the like-named `fig-sys` feature, which `fig-sys`'s build script reads to
-# compile that format's parser/printer in or out of `libfig.a` (the `default`
-# set links a prebuilt archive with no Zig toolchain; any other combination
-# builds from source). A language whose feature is off is not registered:
-# `Format::by_name` returns `None` for its names.
-# `json` gates the shared JSON/JSONC/JSON5 core.
-json = ["fig-sys/json"]
-yaml = ["fig-sys/yaml"]
-toml = ["fig-sys/toml"]
-zon = ["fig-sys/zon"]
-figl = ["fig-sys/figl"]
-ini = ["fig-sys/ini"]
-dotenv = ["fig-sys/dotenv"]
-properties = ["fig-sys/properties"]
-plist = ["fig-sys/plist"]
-nestedtext = ["fig-sys/nestedtext"]
 
 [dependencies]
 # The `-sys` layer: raw FFI + the `links = "fig"` build script that provides
-# `libfig.a`. The workspace entry sets `default-features = false` so this
-# crate's own per-language features are the sole driver of what fig-sys compiles.
+# `libfig.a`, which carries no language: a program adds the language crates
+# it uses (`fig-yaml`, …) and registers each.
 fig-sys = { workspace = true }
 serde = { version = "1", optional = true }
 fig-macros = { workspace = true, optional = true }
@@ -75,9 +58,23 @@ indexmap = { version = "2", optional = true }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
+# Every language, for the tests to read and write: each registers from its
+# own library (`tests/common`, `src/test_languages.rs`). By path alone, so
+# `cargo publish` drops them: each depends on this crate, and is published
+# after it.
+fig-json = { path = "../fig-json" }
+fig-yaml = { path = "../fig-yaml", features = ["serde"] }
+fig-toml = { path = "../fig-toml" }
+fig-zon = { path = "../fig-zon" }
+fig-figl = { path = "../fig-figl" }
+fig-ini = { path = "../fig-ini" }
+fig-dotenv = { path = "../fig-dotenv" }
+fig-properties = { path = "../fig-properties" }
+fig-plist = { path = "../fig-plist" }
+fig-nestedtext = { path = "../fig-nestedtext" }
 
 # The helper executable `tools/cli-lang-check.sh` spawns from the CLI. The
-# wire is JSON-RPC 2.0, which the `helper` module reads with fig's own json format.
+# wire is JSON-RPC 2.0, which the `helper` module reads with the json
+# language, registered from `fig-json`.
 [[example]]
 name = "tinykv_helper"
-required-features = ["json"]

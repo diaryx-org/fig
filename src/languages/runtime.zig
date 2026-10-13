@@ -430,11 +430,12 @@ pub fn count() usize {
 
 // ── the bundle, registered on first use ────────────────────────────────────
 //
-// INTERIM (docs/proposals/core-only.md §8, step 9): the languages a build
-// bundles (`bundle.zig`, `-D<name>`) are registered the first time anything
-// looks a format up, so that a C or binding caller reaches one by name
-// without registering it. Deleted when each language ships as an archive of
-// its own and a consumer registers what it uses.
+// The languages a build compiles in (`bundle.zig`, `-D<name>`) are
+// registered the first time anything looks a format up: the CLI's, the
+// LSP's, the tests' and a conformance reference module's. The libraries —
+// `libfig`, the npm module, fig-sys — compile none in, so there it finds
+// nothing to register, and a consumer registers each language it links
+// (`docs/proposals/core-only.md` §5.2).
 
 /// 0 not yet, 1 registering (a lookup the registration itself makes
 /// returns), 2 done.

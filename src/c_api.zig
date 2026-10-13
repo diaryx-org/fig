@@ -264,6 +264,39 @@ pub export fn fig_table_rows(t: ?*FigTable, n: usize) ?[*]FigRow {
     return rows.ptr;
 }
 
+/// `n` zeroed elements appended to list `which` of `t` (`FigTableList`),
+/// returned for the caller to fill in place — the whole of a list a
+/// language wrote elsewhere, copied in at once. The string buffer's
+/// elements are bytes, so a buffer copied into an empty table keeps every
+/// `FigText` in it. Null when `which` is not a list or out of memory; valid
+/// until the next call on `t`.
+pub export fn fig_table_extend(t: ?*FigTable, which: c_int, n: usize) ?*anyopaque {
+    const tbl = t orelse return null;
+    const a = tbl.allocator;
+    const T = Runtime.table;
+    return switch (which) {
+        0 => extendList(T.Row, &tbl.rows, a, n),
+        1 => extendList(u8, &tbl.strings, a, n),
+        2 => extendList(T.Anchor, &tbl.anchors, a, n),
+        3 => extendList(T.Tag, &tbl.tags, a, n),
+        4 => extendList(T.SpanFact, &tbl.markers, a, n),
+        5 => extendList(T.SpanFact, &tbl.seps, a, n),
+        6 => extendList(T.ItemSep, &tbl.item_seps, a, n),
+        7 => extendList(T.Comment, &tbl.comments, a, n),
+        8 => extendList(T.SpanFact, &tbl.regions, a, n),
+        9 => extendList(T.Mention, &tbl.mentions, a, n),
+        10 => extendList(T.Directive, &tbl.directives, a, n),
+        11 => extendList(T.Diagnostic, &tbl.diagnostics, a, n),
+        else => null,
+    };
+}
+
+fn extendList(comptime E: type, list: *std.ArrayList(E), a: std.mem.Allocator, n: usize) ?*anyopaque {
+    const out = list.addManyAsSlice(a, n) catch return null;
+    @memset(std.mem.sliceAsBytes(out), 0);
+    return if (n == 0) @ptrCast(list.items.ptr) else @ptrCast(out.ptr);
+}
+
 /// `bytes` copied into the table's string buffer, its `FigText` to `out`.
 pub export fn fig_table_string(t: ?*FigTable, bytes: ?[*]const u8, len: usize, out: ?*FigText) FigStatus {
     const tbl = t orelse return .invalid_argument;

@@ -37,7 +37,6 @@ build_one() {
         -Doptimize=ReleaseFast \
         -Dstrip=true \
         -Dcpu=baseline \
-        -Dzon=false \
         -Dtarget="$zig_target" \
         --prefix "$prefix" \
         --build-file "$zig_root/build.zig"

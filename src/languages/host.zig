@@ -25,7 +25,7 @@ pub const Call = *const fn (lang: u32, request: [*]const u8, request_len: usize,
 
 /// A language in a WebAssembly module of its own (`kit/wasm_language.zig`):
 /// the host parses `input` in `dialect` there and writes the table into
-/// `out` (`wasm_host.zig`'s `fig_host_table_extend`), or fills `err`;
+/// `out` (`wasm_host.zig`'s `fig_table_extend`), or fills `err`;
 /// returns the vtable's status.
 pub const Parse = *const fn (lang: u32, dialect: [*]const u8, dialect_len: usize, input: ?[*]const u8, input_len: usize, out: *Runtime.Table, err: *Runtime.ErrorInfo) callconv(.c) c_int;
 /// The host prints the table `view` shows in `dialect` there, handing the

@@ -16,7 +16,9 @@ style elsewhere stays byte-for-byte identical. It also converts losslessly
 between formats.
 
 The core is a Zig library statically linked into your crate — as a prebuilt
-archive for the default feature set, so the common case needs no Zig toolchain.
+archive, so it needs no Zig toolchain — and it carries no language: each
+format is a crate of its own (`fig-yaml`, `fig-toml`, …) that links its
+language's library beside the core's, and you register the ones you use.
 It carries an optional `serde` layer, or you can use its own
 `serde`-independent `Value` tree and `#[derive(ToValue, FromValue)]` macros —
 `fig` can replace `serde` in your project entirely. Diaryx uses `fig` in
@@ -24,7 +26,7 @@ production as a `serde` replacement.
 
 - [Install](#install)
 - [Quick start](#quick-start)
-- [Cargo features](#cargo-features)
+- [Languages and features](#languages-and-features)
 - [Formats](#formats)
 - [Reading data](#reading-data)
 - [The value tree](#the-value-tree)
@@ -43,20 +45,19 @@ production as a `serde` replacement.
 ```toml
 [dependencies]
 fig = "6"
+fig-yaml = "6"   # one crate per language you read or write
+fig-json = "6"
 ```
 
-For the **default feature set** on a tier-1 target, `fig-sys` links a prebuilt
-`libfig.a` shipped by a per-target payload crate — Cargo downloads exactly the
-one matching your target, and **no Zig toolchain is required**. A source build
-(which does need Zig 0.17+) kicks in only when:
+On a tier-1 target `fig-sys` links a prebuilt `libfig.a` shipped by a
+per-target payload crate — Cargo downloads exactly the one matching your
+target, and **no Zig toolchain is required** — unless the target has no
+payload crate or `FIG_SYS_FORCE_SOURCE=1` is set. The core carries no
+language, so there is one build of it. A language crate compiles its
+library from fig's Zig source, which for now needs Zig 0.17+.
 
-- the target has no prebuilt payload crate,
-- a **non-default** language feature set is selected — adding or removing a
-  format changes the compiled library, so the prebuilt no longer matches, or
-- `FIG_SYS_FORCE_SOURCE=1` is set.
-
-Either way there is no separate native library to ship: the core is linked
-straight into your binary.
+Either way there is no separate native library to ship: the core and each
+language are linked straight into your binary.
 
 ## Quick start
 
@@ -64,10 +65,10 @@ straight into your binary.
 use fig::{Document, Format};
 
 fn main() -> Result<(), fig::Error> {
-    // A format is looked up by its name; `None` means this build has no such
-    // language.
-    let json = Format::by_name("json").ok_or(fig::Error::UnsupportedFormat)?;
-    let yaml = Format::by_name("yaml").ok_or(fig::Error::UnsupportedFormat)?;
+    // Register each language you use; each hands back its format. A
+    // dialect is found by name after (`Format::by_name("json5")`).
+    let json = fig_json::register()?;
+    let yaml = fig_yaml::register()?;
 
     // `Document::serialize` is the cross-format primitive: it preserves comments
     // where the target allows and collapses YAML's reference layer on the way out.
@@ -83,65 +84,60 @@ fn main() -> Result<(), fig::Error> {
 }
 ```
 
-With the optional `serde` feature (see [Cargo features](#cargo-features)) you also
-get `serde_json`-style helpers:
+With the optional `serde` feature (see [Languages and features](#languages-and-features))
+you also get `serde_json`-style helpers:
 
 ```rust
-use fig::Format;
-
-let toml = Format::by_name("toml").expect("the toml feature is on");
-let json = Format::by_name("json").expect("the json feature is on");
+let toml = fig_toml::register()?;
+let json = fig_json::register()?;
 
 // Parse straight into a typed value, in any format…
 let cfg: MyConfig = fig::from_slice(input, toml)?;
-// …or YAML text, with the `yaml` feature.
-let cfg: MyConfig = fig::from_yaml_str(yaml)?;
+// …or YAML text, with `fig-yaml`'s `serde` feature.
+let cfg: MyConfig = fig_yaml::from_str(yaml)?;
 
 // Serialize any `Serialize` type: to any format through a `Value`…
 let json = fig::to_value(&cfg)?.serialize(json)?;
 // …or straight to YAML.
-let yaml = fig::to_yaml_string(&cfg)?;
+let yaml = fig_yaml::to_string(&cfg)?;
 ```
 
-## Cargo features
+## Languages and features
 
-Each format and the two typed-mapping layers are Cargo features. The defaults
-cover the common case; trim them to shrink the linked core — at the cost of
-falling off the prebuilt-archive path (see [Install](#install)), since any
-change to the language set means the library has to be rebuilt from Zig source.
+Each language is a crate of its own, which links its library beside the
+core's and registers it with `register()`, returning the format of its
+first dialect; registering one again returns the format it already has.
+A language you don't depend on costs nothing.
 
-| Feature    | Default | What it adds                                                              |
-| ---------- | :-----: | ------------------------------------------------------------------------- |
-| `serde`    |         | `from_slice`/`to_value` (and `from_yaml_str`/`to_yaml_string` with `yaml`) and `serde` impls on `Value`. |
-| `derive`   |         | `#[derive(fig::ToValue, fig::FromValue)]` — typed mapping without serde.   |
-| `indexmap` |         | `ToValue`/`FromValue` for `IndexMap<String, T>` (insertion order kept).    |
-| `json`     |   ✅    | The shared JSON/JSONC/JSON5 core.                                         |
-| `yaml`     |   ✅    | YAML parser/printer in the linked core.                                   |
-| `toml`     |   ✅    | TOML parser/printer/editor.                                              |
-| `zon`      |         | ZON parser/printer/editor.                                              |
-| `figl`     |   ✅    | The native `figl` authoring dialect.                                     |
-| `ini`      |   ✅    | INI parser/printer/editor.                                              |
-| `dotenv`   |   ✅    | dotenv / `.env` parser/printer/editor.                                  |
-| `properties` | ✅    | Java `.properties` parser/printer/editor.                               |
-| `plist`    |         | Apple XML property list parser/printer/editor.                          |
-| `nestedtext` | ✅    | NestedText parser/printer/editor.                                       |
+| Crate            | Registers |
+| ---------------- | --------- |
+| `fig-json`       | `json`, `jsonc`, `json5` |
+| `fig-yaml`       | `yaml`, `yaml-1.1`, `yaml-1.2` (`serde` feature: `from_str`, `to_string`) |
+| `fig-toml`       | `toml`, `toml-1.0`, `toml-1.1` |
+| `fig-zon`        | `zon` |
+| `fig-figl`       | `figl` |
+| `fig-ini`        | `ini` |
+| `fig-dotenv`     | `dotenv` |
+| `fig-properties` | `properties` |
+| `fig-plist`      | `plist` |
+| `fig-nestedtext` | `nestedtext` |
 
-The default set is `json`, `yaml`, `toml`, `figl`, `ini`, `dotenv`, `properties`,
-`nestedtext` — the core's own defaults, which is also what the prebuilt archive is
-compiled with. Enable the rest explicitly — `serde` for the `serde_json`-style
-helpers (otherwise the `Value` tree and `derive` cover typed mapping with no serde
-dependency), and `zon` / `plist` when you need those formats. JSON/JSONC/JSON5
-share one core behind the `json` gate: on by
-default but, like every language, removable (`--no-default-features`). A
-language whose feature is off is simply not registered: [`Format::by_name`]
-returns `None` for its names, so a build without TOML finds out at the lookup
-rather than at the first parse. Once you hold a `Format`, [`capabilities`]
-says what it can do:
+The `fig` crate's features are the typed-mapping layers alone:
+
+| Feature    | What it adds                                                              |
+| ---------- | ------------------------------------------------------------------------- |
+| `serde`    | `from_slice`/`to_value` and `serde` impls on `Value`.                     |
+| `derive`   | `#[derive(fig::ToValue, fig::FromValue)]` — typed mapping without serde.   |
+| `indexmap` | `ToValue`/`FromValue` for `IndexMap<String, T>` (insertion order kept).    |
+
+A language nobody registered is not there: [`Format::by_name`] returns
+`None` for its names. Once you hold a `Format`, [`capabilities`] says what
+it can do:
 
 ```rust
-use fig::{capabilities, Format};
+use fig::capabilities;
 
-let toml = Format::by_name("toml").expect("the toml feature is on");
+let toml = fig_toml::register()?;
 let caps = capabilities(toml);
 // caps.read, caps.edit, caps.serialize, caps.references — all bools; the
 // last says the format has a reference layer (anchors, aliases, tags —
@@ -151,10 +147,11 @@ let caps = capabilities(toml);
 ## Formats
 
 A [`Format`] is an opaque, `Copy` handle naming a dialect registered with
-the linked core. You get one by name — `Format::by_name("toml")` — or from
+the linked core. You get one from a language crate's `register()`, by name
+once registered — `Format::by_name("toml")` — or from
 [runtime registration](#runtime-languages) or `Format::detect`;
-[`Format::name`] gives the name back. The
-languages the bundled core carries, by the name `by_name` takes:
+[`Format::name`] gives the name back. The languages fig ships, by the name
+`by_name` takes:
 
 | Name         | Parse | Edit | Serialize | Notes                                |
 | ------------ | :---: | :--: | :-------: | ------------------------------------ |
@@ -163,19 +160,17 @@ languages the bundled core carries, by the name `by_name` takes:
 | `json5`      |  ✅   |  ✅  |    ✅     | Unquoted keys, trailing commas, etc. |
 | `yaml`       |  ✅   |  ✅  |    ✅     | YAML 1.2.2 / 1.1.                    |
 | `toml`       |  ✅   |  ✅  |    ✅     | TOML 1.0 / 1.1, incl. datetimes.     |
-| `zon`        |  ⚠️   |  ⚠️  |    ⚠️     | Zig Object Notation — **not** in `default`; enable the `zon` feature. |
+| `zon`        |  ✅   |  ✅  |    ✅     | Zig Object Notation. |
 | `figl`       |  ✅   |  ✅  |    ✅     | The native `figl` authoring dialect. |
 | `ini`        |  ✅   |  ✅  |    ✅     | `[section]` + `key = value`; untyped-string scalars, one level of sections. |
 | `dotenv`     |  ✅   |  ✅  |    ✅     | Flat `KEY=value`; a flat string map.  |
 | `properties` |  ✅   |  ✅  |    ✅     | Java `.properties`; same flat, untyped limits as dotenv. |
-| `plist`      |  ⚠️   |  ⚠️  |    ⚠️     | Apple XML property list, typed and nested — **not** in `default`; enable the `plist` feature. |
+| `plist`      |  ✅   |  ✅  |    ✅     | Apple XML property list, typed and nested. |
 | `nestedtext` |  ✅   |  ✅  |    ✅     | NestedText; nested but every leaf is a string. |
 
 A language's versions are dialects of their own, each with its own handle:
 `yaml-1.1`, `yaml-1.2`, `toml-1.0`, `toml-1.1`, and the full `yaml-1.2.2`-style
-spellings. `zon` and `plist` are not in the default feature set, so on a stock
-build `Format::by_name("zon")` is `None`. Ask at runtime rather than
-hard-coding the table.
+spellings.
 
 Handles are assigned per process, in the order languages register, so a
 `Format` is something to compare and pass around, never to persist: store
@@ -186,7 +181,7 @@ a language the core gains later is a **minor** release.
 ```rust
 use fig::Format;
 
-let yaml = Format::by_name("yaml").expect("the yaml feature is on");
+let yaml = fig_yaml::register()?;
 assert_eq!(yaml.name(), "yaml");
 assert_ne!(Format::by_name("yaml-1.1"), Some(yaml));
 assert_eq!(Format::by_name("no-such-language"), None);
@@ -194,7 +189,7 @@ assert_eq!(Format::by_name("no-such-language"), None);
 
 ### Runtime languages
 
-The bundled languages are not special: a language registered while the
+The languages fig ships are not special: a language registered while the
 program runs is a `Format` like any other. Implement
 [`language::Language`](https://docs.rs/fig/latest/fig/language/trait.Language.html)
 — a [`Description`](https://docs.rs/fig/latest/fig/language/struct.Description.html)
@@ -299,7 +294,7 @@ The CLI spawns it from a `languages.figl` — `name`, the `extensions` it
 owns, and the `command` to run — and it is then a format every action
 accepts, by extension or by `--lang <name>`; `fig lang list` shows what
 loaded and `fig lang check <name> --against <format>` holds it to a
-bundled twin. A helper may take the name of a language the build leaves
+compiled twin. A helper may take the name of a language the build leaves
 out, and is then reached by that name and its extensions. `examples/tinykv_helper.rs` is a complete helper, and
 `tools/cli-lang-check.sh` in the core drives the CLI through it. The
 protocol, JSON-RPC 2.0 by the line, is specified in
@@ -418,24 +413,22 @@ needs no serde, and neither is more capable than the other.
 
 ```rust
 use serde::{Deserialize, Serialize};
-use fig::Format;
 
 #[derive(Serialize, Deserialize)]
 struct Config { name: String, port: u16 }
 
-let toml = Format::by_name("toml").ok_or(fig::Error::UnsupportedFormat)?;
-let json = Format::by_name("json").ok_or(fig::Error::UnsupportedFormat)?;
+let toml = fig_toml::register()?;
+let json = fig_json::register()?;
 
 let cfg: Config = fig::from_slice(b"name = \"fig\"\nport = 8080\n", toml)?;
 let json = fig::to_value(&cfg)?.serialize(json)?;         // to any format
-let yaml = fig::to_yaml_string(&cfg)?;                     // to YAML (`yaml` feature)
+let yaml = fig_yaml::to_string(&cfg)?;                     // to YAML (`fig-yaml`'s `serde` feature)
 ```
 
-`from_slice` takes any [`Format`] — a bundled language whose feature is on,
-or one registered at runtime — and `to_value(&x)?.serialize(format)`
-writes any of them. `from_yaml_str` and `to_yaml_string` are the YAML
-shorthands, and exist only with the `yaml` feature, so a build without YAML
-cannot call them and fail at runtime. `Value` itself implements
+`from_slice` takes any registered [`Format`], and
+`to_value(&x)?.serialize(format)` writes any of them. `fig_yaml::from_str`
+and `fig_yaml::to_string` are the YAML shorthands, with `fig-yaml`'s
+`serde` feature. `Value` itself implements
 `Serialize`/`Deserialize`, so `from_slice::<Value>` gives you a dynamic tree
 the way `serde_json::Value` does.
 
@@ -784,8 +777,8 @@ text to outlive the next edit — the borrow checker enforces this for you.
 - `version() -> Version` / `version_string() -> &'static str` — linked core version.
 - *(serde)* `from_slice<T>(bytes, format) -> Result<T>` — deserialize any format.
 - *(serde)* `to_value<T>(&value) -> Result<Value>` — build a `Value` from any `Serialize`.
-- *(serde + yaml)* `from_yaml_str<T>(s) -> Result<T>` — deserialize a YAML string.
-- *(serde + yaml)* `to_yaml_string<T>(&value) -> Result<String>` — serialize to YAML.
+- `language::register_library(fig_<name>_register)` — what each language crate's `register()` is.
+- *(fig-yaml, serde)* `fig_yaml::from_str<T>(s)` / `fig_yaml::to_string(&value)` — YAML text.
 
 **Types**
 

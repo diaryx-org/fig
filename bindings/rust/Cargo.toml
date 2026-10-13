@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["fig", "fig-macros", "fig-sys", "fig-sys-*"]
+members = ["fig", "fig-macros", "fig-sys", "fig-sys-*", "fig-json", "fig-yaml", "fig-toml", "fig-zon", "fig-figl", "fig-ini", "fig-dotenv", "fig-properties", "fig-plist", "fig-nestedtext"]
 
 [workspace.package]
 version = "6.0.0"
@@ -18,9 +18,19 @@ license = "MIT OR Apache-2.0"
 # in lockstep, and `zig build version-check` fails on drift.
 [workspace.dependencies]
 fig-macros = { path = "fig-macros", version = "6.0.0" }
-# default-features = false so `fig`'s own per-language features are the sole
-# driver of which formats fig-sys compiles (fig forwards json/yaml/… -> fig-sys).
-fig-sys = { path = "fig-sys", version = "6.0.0", default-features = false }
+fig = { path = "fig", version = "6.0.0" }
+# fig-sys carries no language: each is a crate of its own (`fig-yaml`, …).
+fig-sys = { path = "fig-sys", version = "6.0.0" }
+fig-json = { path = "fig-json", version = "6.0.0" }
+fig-yaml = { path = "fig-yaml", version = "6.0.0" }
+fig-toml = { path = "fig-toml", version = "6.0.0" }
+fig-zon = { path = "fig-zon", version = "6.0.0" }
+fig-figl = { path = "fig-figl", version = "6.0.0" }
+fig-ini = { path = "fig-ini", version = "6.0.0" }
+fig-dotenv = { path = "fig-dotenv", version = "6.0.0" }
+fig-properties = { path = "fig-properties", version = "6.0.0" }
+fig-plist = { path = "fig-plist", version = "6.0.0" }
+fig-nestedtext = { path = "fig-nestedtext", version = "6.0.0" }
 fig-sys-macos-arm64 = { path = "fig-sys-macos-arm64", version = "6.0.0" }
 fig-sys-linux-x64-gnu = { path = "fig-sys-linux-x64-gnu", version = "6.0.0" }
 fig-sys-linux-arm64-gnu = { path = "fig-sys-linux-arm64-gnu", version = "6.0.0" }

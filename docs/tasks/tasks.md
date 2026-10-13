@@ -6,7 +6,6 @@ created = 2026-09-04
 updated = 2026-10-12
 part_of = [docs](/docs/docs.md)
 contents
-> * [A source build of fig-sys on a Mac targets the build machine's macOS](/docs/tasks/source-build-deployment-target.md)
 > * [An infinite or NaN float written to the fig dialect reads back as a string](/docs/tasks/fig-dialect-non-finite-floats.md)
 > * [An edit to a compact fig object writes commas and spaced `=`](/docs/tasks/compact-object-editor-separator.md)
 > * [The tree-sitter grammar reads a fig object as comma-separated](/docs/tasks/tree-sitter-compact-objects.md)
@@ -18,6 +17,7 @@ contents
 > * [Deleting the last item of a YAML block list leaves the key null](/docs/tasks/yaml-block-list-emptied-to-null.md)
 > * [Closed tasks](/docs/tasks/closed/closed.md)
 > * [The Rust helper reads JSON with fig's json format](/docs/tasks/helper-serde-json.md)
+> * [The language crates can be published](/docs/tasks/language-crates-publish.md)
 ```
 
 # Tasks

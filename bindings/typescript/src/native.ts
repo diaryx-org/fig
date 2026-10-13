@@ -36,7 +36,7 @@ interface ModuleExports {
   fig_lang_view_size(): number;
 }
 
-/** Each list of a table, in the order `fig_host_table_extend` numbers them,
+/** Each list of a table, in the order `fig_table_extend` numbers them,
  *  by its element's size in bytes — `list_sizes` in the core. */
 const LIST_SIZES: readonly number[] = [32, 1, 20, 24, 12, 12, 12, 16, 12, 16, 16, 28];
 const sizeOf = (list: number): number => LIST_SIZES[list] ?? 1;
@@ -140,7 +140,7 @@ function parse(id: number, dialect: number, dialectLen: number, input: number, i
       const ptr = mv.getUint32(view + 4 + 8 * pair, true);
       const count = mv.getUint32(view + 4 + 8 * pair + 4, true);
       if (count === 0) continue;
-      const at = fig.fig_host_table_extend(table, list, count);
+      const at = fig.fig_table_extend(table, list, count);
       if (at === 0) return 3;
       const bytes = count * sizeOf(list);
       u8().set(new Uint8Array(m.memory.buffer, ptr, bytes), at);

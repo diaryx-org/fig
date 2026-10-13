@@ -171,5 +171,7 @@ fn is_scalar(kind: NodeKind) -> bool {
 
 fn main() -> std::io::Result<()> {
     let name = std::env::args().nth(1).unwrap_or_else(|| "tinykv".into());
+    // The wire is JSON, which fig reads and writes through the json language.
+    fig_json::register().expect("json registers");
     fig::helper::serve(TinyKv { name })
 }

@@ -16,15 +16,6 @@ pub fn to_value<T: Serialize + ?Sized>(value: &T) -> Result<Value, Error> {
     value.serialize(ValueSerializer)
 }
 
-/// Serialize a value to a YAML string: [`to_value`], then [`Value::serialize`]
-/// to the format named `yaml`. Needs the `yaml` feature, since it names the
-/// format; any other format goes through [`to_value`] and [`Value::serialize`].
-#[cfg(feature = "yaml")]
-pub fn to_yaml_string<T: Serialize + ?Sized>(value: &T) -> Result<String, Error> {
-    let format = crate::Format::require("yaml")?;
-    to_value(value)?.serialize(format)
-}
-
 struct ValueSerializer;
 
 impl Serializer for ValueSerializer {

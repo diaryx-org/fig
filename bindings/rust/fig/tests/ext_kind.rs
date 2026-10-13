@@ -4,7 +4,8 @@
 //! release, since nothing held the three mirrors of `FigExtKind` together.
 //!
 //! Run with `cargo test -p fig --features plist`: the two kinds are plist's.
-#![cfg(feature = "plist")]
+
+mod common;
 
 use fig::{Document, ExtKind, Value};
 
@@ -47,5 +48,5 @@ fn plist_date_and_data_reach_the_wrapper() {
 /// does not carry is a test bug.
 #[allow(dead_code)]
 fn by_name(name: &str) -> fig::Format {
-    fig::Format::by_name(name).unwrap_or_else(|| panic!("no format named {name:?}"))
+    common::by_name(name)
 }

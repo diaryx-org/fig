@@ -12,10 +12,52 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 name = "fig"
 version = "6.0.0"
 dependencies = [
+ "fig-dotenv",
+ "fig-figl",
+ "fig-ini",
+ "fig-json",
  "fig-macros",
+ "fig-nestedtext",
+ "fig-plist",
+ "fig-properties",
  "fig-sys",
+ "fig-toml",
+ "fig-yaml",
+ "fig-zon",
  "indexmap",
  "serde",
+]
+
+[[package]]
+name = "fig-dotenv"
+version = "6.0.0"
+dependencies = [
+ "fig",
+ "fig-sys",
+]
+
+[[package]]
+name = "fig-figl"
+version = "6.0.0"
+dependencies = [
+ "fig",
+ "fig-sys",
+]
+
+[[package]]
+name = "fig-ini"
+version = "6.0.0"
+dependencies = [
+ "fig",
+ "fig-sys",
+]
+
+[[package]]
+name = "fig-json"
+version = "6.0.0"
+dependencies = [
+ "fig",
+ "fig-sys",
 ]
 
 [[package]]
@@ -25,6 +67,30 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "fig-nestedtext"
+version = "6.0.0"
+dependencies = [
+ "fig",
+ "fig-sys",
+]
+
+[[package]]
+name = "fig-plist"
+version = "6.0.0"
+dependencies = [
+ "fig",
+ "fig-sys",
+]
+
+[[package]]
+name = "fig-properties"
+version = "6.0.0"
+dependencies = [
+ "fig",
+ "fig-sys",
 ]
 
 [[package]]
@@ -67,6 +133,31 @@ version = "6.0.0"
 [[package]]
 name = "fig-sys-windows-x64-msvc"
 version = "6.0.0"
+
+[[package]]
+name = "fig-toml"
+version = "6.0.0"
+dependencies = [
+ "fig",
+ "fig-sys",
+]
+
+[[package]]
+name = "fig-yaml"
+version = "6.0.0"
+dependencies = [
+ "fig",
+ "fig-sys",
+ "serde",
+]
+
+[[package]]
+name = "fig-zon"
+version = "6.0.0"
+dependencies = [
+ "fig",
+ "fig-sys",
+]
 
 [[package]]
 name = "hashbrown"

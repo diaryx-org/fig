@@ -12,14 +12,6 @@ use crate::error::Error;
 use crate::ffi::{FigNodeId, FigNodeKind};
 use crate::{Document, Format};
 
-/// Deserialize a YAML string into a typed value: [`from_slice`] with the
-/// format named `yaml`. Needs the `yaml` feature, since it names the format;
-/// any other format goes through [`from_slice`].
-#[cfg(feature = "yaml")]
-pub fn from_yaml_str<T: DeserializeOwned>(s: &str) -> Result<T, Error> {
-    from_slice(s.as_bytes(), Format::require("yaml")?)
-}
-
 /// Deserialize `input`, written in `format`, into a typed value. Every
 /// registered [`Format`] reads — a bundled language whose crate feature is on,
 /// and a language registered through [`crate::language::register`].

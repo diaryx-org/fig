@@ -1,9 +1,11 @@
 //! Comment-preserving write-path tests: edits must change only the targeted
 //! node's bytes and leave comments, key order and formatting intact. The edits are the `*_value` methods, which need no serde; the file
-//! is serde-gated because it reads results back with `from_yaml_str` and builds a
+//! is serde-gated because it reads results back with `fig_yaml::from_str` and builds a
 //! typed struct's value with `fig::to_value`. Run with
 //! `cargo test -p fig --features serde`.
-#![cfg(all(feature = "serde", feature = "yaml"))]
+#![cfg(feature = "serde")]
+
+mod common;
 
 use fig::{Editor, Segment};
 
@@ -36,7 +38,7 @@ fn editor_replace_quotes_when_needed() {
     .unwrap();
     // Reads back as the same logical value.
     let value: std::collections::BTreeMap<String, String> =
-        fig::from_yaml_str(ed.source().unwrap()).unwrap();
+        fig_yaml::from_str(ed.source().unwrap()).unwrap();
     assert_eq!(value["title"], "has: colon");
 }
 
@@ -292,7 +294,6 @@ fn editor_set_sequence_declines_empty_target() {
 }
 
 #[test]
-#[cfg(feature = "figl")]
 fn fig_dialect_container_splices_render_flow_and_round_trip() {
     // A container value spliced into a figl document must render as flow
     // (`[a, b]` / `{k=v}`): the block spellings only parse as standalone
@@ -338,7 +339,6 @@ fn fig_dialect_container_splices_render_flow_and_round_trip() {
 }
 
 #[test]
-#[cfg(feature = "figl")]
 fn fig_dialect_block_map_splices_with_the_width_knob() {
     // The `*_with` twin honors the layout knob: a block map value lands as a
     // nested section under its key — the prov case
@@ -420,7 +420,6 @@ fn json_editor_rejects_json5_only_syntax() {
 }
 
 #[test]
-#[cfg(feature = "figl")]
 fn fig_dialect_editor_edits_in_place() {
     let mut ed = Editor::open(b"title = old\nport = 8080\n", by_name("figl")).unwrap();
     ed.replace_value(&[Segment::Key("port")], 9090).unwrap();
@@ -430,7 +429,6 @@ fn fig_dialect_editor_edits_in_place() {
 // ── YAML container splices (regressions from downstream `set_meta_in_text`) ──
 
 #[test]
-#[cfg(feature = "yaml")]
 fn yaml_single_entry_map_sets_like_a_multi_entry_one() {
     // A one-entry map renders `k: v`, which is shaped exactly like a scalar —
     // so every splice path used to read it as one and fail, while the same call
@@ -470,7 +468,6 @@ fn yaml_single_entry_map_sets_like_a_multi_entry_one() {
 }
 
 #[test]
-#[cfg(feature = "yaml")]
 fn yaml_block_value_into_a_flow_container_errs_instead_of_corrupting() {
     // `a: {b: - a}` is not the sequence that was written — a lenient reader
     // takes it as the string "- a", so returning `Ok` here loses data silently.
@@ -497,7 +494,6 @@ fn yaml_block_value_into_a_flow_container_errs_instead_of_corrupting() {
 }
 
 #[test]
-#[cfg(feature = "yaml")]
 fn yaml_set_vivifies_a_fresh_nested_path_as_block_containers() {
     // Ancestors `set` creates are block mappings, so a fresh nested path reads
     // like hand-written YAML — and, unlike a flow seed, can hold a block value.
@@ -529,7 +525,6 @@ fn yaml_set_vivifies_a_fresh_nested_path_as_block_containers() {
 }
 
 #[test]
-#[cfg(feature = "yaml")]
 fn yaml_flow_mapping_with_a_block_scalar_member_is_not_accepted_on_reparse() {
     // The reparse safety net's own regression: `{b: - a}` must not parse as a
     // string, or every flow splice loses its rollback.
@@ -540,7 +535,6 @@ fn yaml_flow_mapping_with_a_block_scalar_member_is_not_accepted_on_reparse() {
 }
 
 #[test]
-#[cfg(feature = "yaml")]
 fn yaml_set_seeds_a_nested_path_into_an_empty_document() {
     // A fresh, empty file is the `mkdir -p for config` case: a null root is a
     // container waiting to exist, not data standing in the way.
@@ -566,7 +560,6 @@ fn yaml_set_seeds_a_nested_path_into_an_empty_document() {
 // six are the route for those shapes.
 
 #[test]
-#[cfg(feature = "toml")]
 fn toml_container_ops_reach_a_table_the_key_ops_refuse() {
     let src = b"[a]\nx = 1\n[b]\ny = 2\n";
 
@@ -604,7 +597,6 @@ fn toml_container_ops_reach_a_table_the_key_ops_refuse() {
 }
 
 #[test]
-#[cfg(feature = "toml")]
 fn toml_move_and_reorder_containers_where_the_key_ops_refuse() {
     let src = b"[a]\nx = 1\n[b]\ny = 2\n";
 
@@ -636,7 +628,6 @@ fn toml_move_and_reorder_containers_where_the_key_ops_refuse() {
 }
 
 #[test]
-#[cfg(feature = "yaml")]
 fn container_ops_are_unsupported_where_the_key_ops_already_suffice() {
     // YAML nests a container in one contiguous region, so it declares none of
     // the six — and `delete_key` handles the same shape directly.
@@ -674,16 +665,12 @@ fn editor_replace_key_takes_the_keys_name_and_spells_it_as_the_format_does() {
     nt.rename_key(&[Segment::Key("a")], "k").unwrap();
     assert_eq!(nt.source().unwrap(), "k: 1\n");
 }
-
-#[cfg(feature = "zon")]
 #[test]
 fn editor_replace_key_spells_a_zon_field() {
     let mut ed = Editor::open(b".{ .a = 1 }", by_name("zon")).unwrap();
     ed.rename_key(&[Segment::Key("a")], "k").unwrap();
     assert_eq!(ed.source().unwrap(), ".{ .k = 1 }");
 }
-
-#[cfg(feature = "plist")]
 #[test]
 fn editor_plist_keys_are_names_on_insert_and_replace() {
     let src = b"<dict>\n  <key>a</key>\n  <string>x</string>\n</dict>\n";
@@ -719,8 +706,6 @@ fn serialize_is_still_a_whole_document_where_splice_text_is_not() {
     let v = fig::Value::Str("h2".into());
     assert_eq!(v.serialize(by_name("nestedtext")).unwrap(), "> h2\n");
 }
-
-#[cfg(feature = "plist")]
 #[test]
 fn serialize_keeps_the_plist_wrapper() {
     let out = fig::Value::Int(42).serialize(by_name("plist")).unwrap();
@@ -783,5 +768,5 @@ fn json_reorder_keys_keeps_the_object_valid() {
 /// does not carry is a test bug.
 #[allow(dead_code)]
 fn by_name(name: &str) -> fig::Format {
-    fig::Format::by_name(name).unwrap_or_else(|| panic!("no format named {name:?}"))
+    common::by_name(name)
 }

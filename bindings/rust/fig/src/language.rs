@@ -1092,24 +1092,54 @@ pub fn register(lang: impl Language) -> Result<Vec<Format>, Error> {
     let mut format: c_int = -1;
     let mut err = ffi::FigError::new();
     let status = unsafe { ffi::fig_language_register(&vt, &mut format, &mut err) };
-    if status != ffi::FigStatus::OK {
-        let len = err.message_len.min(err.message.len());
-        let message = String::from_utf8_lossy(&err.message[..len]).into_owned();
-        if message.is_empty() {
-            Error::from_status(status)?;
-            return Err(Error::Internal);
-        }
-        return Err(Error::Language(LanguageFailure {
-            message,
-            byte_offset: (err.byte_offset != 0).then_some(err.byte_offset),
-        }));
-    }
+    registration(status, &err)?;
     // By name, not by counting up from `format`: the core promises each row
     // a handle of its own, not that the handles are consecutive.
     dialect_names
         .iter()
         .map(|name| Format::by_name(name).ok_or(Error::Internal))
         .collect()
+}
+
+/// A registration's status as a `Result`: the core's reason, when it gave
+/// one, as [`Error::Language`].
+fn registration(status: ffi::FigStatus, err: &ffi::FigError) -> Result<(), Error> {
+    if status == ffi::FigStatus::OK {
+        return Ok(());
+    }
+    let len = err.message_len.min(err.message.len());
+    let message = String::from_utf8_lossy(&err.message[..len]).into_owned();
+    if message.is_empty() {
+        Error::from_status(status)?;
+        return Err(Error::Internal);
+    }
+    Err(Error::Language(LanguageFailure {
+        message,
+        byte_offset: (err.byte_offset != 0).then_some(err.byte_offset),
+    }))
+}
+
+/// The C call a language's own library registers it through,
+/// `fig_<name>_register` (`<fig/<name>.h>`).
+pub type LibraryRegister =
+    unsafe extern "C" fn(out_format: *mut c_int, out_err: *mut ffi::FigError) -> ffi::FigStatus;
+
+/// Register a language whose library is linked beside fig's, through its
+/// `fig_<name>_register`, and return the format of its first dialect. What
+/// each language crate's `register` is (`fig_yaml::register()`): a crate
+/// links its language's library and hands its function here. Registering
+/// one again returns the format it already has.
+///
+/// # Safety
+///
+/// `register` must be a language library's `fig_<name>_register`, whose
+/// library is linked into the program.
+pub unsafe fn register_library(register: LibraryRegister) -> Result<Format, Error> {
+    let mut format: c_int = -1;
+    let mut err = ffi::FigError::new();
+    let status = unsafe { register(&mut format, &mut err) };
+    registration(status, &err)?;
+    Ok(Format(format))
 }
 
 /// Everything the vtable points at, owned for the life of the process, plus

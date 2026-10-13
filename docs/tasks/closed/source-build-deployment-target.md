@@ -1,10 +1,10 @@
 ```fig
 title = A source build of fig-sys on a Mac targets the build machine's macOS
 description = With any non-default language feature (`zon`, `plist`) fig-sys builds libfig from Zig source, passes no `-Dtarget` when target equals host, and the archive comes out with minos set to the build machine's OS — so whatever links it refuses to launch on an older macOS than that machine
-status = open
+status = done
 created = 2026-09-30
 updated = 2026-09-30
-part_of = [Tasks](/docs/tasks/tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 ```
 
 # A source build of fig-sys on a Mac targets the build machine's macOS
@@ -40,3 +40,15 @@ as the prebuilt archive. Either of these would do it:
   `MACOSX_DEPLOYMENT_TARGET` / `IPHONEOS_DEPLOYMENT_TARGET` where they are set;
 - or put `zon` in the prebuilt archive's feature set, so that flower's
   feature set gets the prebuilt archive. This fixes flower's case and no other.
+
+## Done
+
+Fixed 2026-10-13, when `libfig` stopped carrying languages and each language
+became a crate of its own that always builds its library from source: every
+build script that compiles Zig for an Apple target now names it with a
+minimum OS even on the host — `aarch64-macos.<MACOSX_DEPLOYMENT_TARGET>`,
+11.0 when unset (Rust's own floor for the target), and
+`aarch64-ios.<IPHONEOS_DEPLOYMENT_TARGET>`, 14.0 when unset, as the prebuilt
+iOS archives do — in `fig-sys/build.rs` and the language crates' shared
+`scripts/language-crate/build.rs`. The language crates replace the `zon`
+feature that started this.

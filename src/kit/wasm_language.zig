@@ -23,7 +23,7 @@ const describe_json = @import("describe_json.zig");
 const gpa = std.heap.wasm_allocator;
 
 /// The byte sizes the binding copies each list by (`native.ts`), in the
-/// order `fig_host_table_extend` numbers them, and the size of the view it
+/// order `fig_table_extend` numbers them, and the size of the view it
 /// lays out: a change here is a change there.
 pub const list_sizes = [_]usize{ 32, 1, 20, 24, 12, 12, 12, 16, 12, 16, 16, 28 };
 comptime {

@@ -7,6 +7,8 @@
 //! If a future field/variant has no way to reach it from here, this test is where
 //! that shows up.
 
+mod common;
+
 use fig::{Document, SerializeOptions, Value};
 
 #[test]
@@ -277,5 +279,5 @@ fn a_language_failure_is_readable() {
 /// does not carry is a test bug.
 #[allow(dead_code)]
 fn by_name(name: &str) -> fig::Format {
-    fig::Format::by_name(name).unwrap_or_else(|| panic!("no format named {name:?}"))
+    common::by_name(name)
 }

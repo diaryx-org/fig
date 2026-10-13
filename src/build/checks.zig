@@ -107,11 +107,26 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     abi_runtime_probe.root_module.linkLibrary(c_lib);
     const abi_runtime_probe_run = b.addRunArtifact(abi_runtime_probe);
 
-    const abi_check_step = b.step("abi-check", "Check the C ABI surface: symbol diff + C/C++ header probe + a C-hosted runtime language");
+    // Two languages' own libraries linked beside the core, which names
+    // none: each registers, converts and edits through fig.h.
+    const list = @import("../languages/list.zig");
+    const lang_archive_probe = b.addExecutable(.{
+        .name = "lang_archive_probe",
+        .root_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true }),
+    });
+    lang_archive_probe.root_module.addCSourceFile(.{ .file = b.path("tools/lang_archive_probe.c") });
+    lang_archive_probe.root_module.addIncludePath(b.path("bindings/c/include"));
+    lang_archive_probe.root_module.linkLibrary(arts.c_languages[list.indexOf("yaml")]);
+    lang_archive_probe.root_module.linkLibrary(arts.c_languages[list.indexOf("json")]);
+    lang_archive_probe.root_module.linkLibrary(c_lib);
+    const lang_archive_probe_run = b.addRunArtifact(lang_archive_probe);
+
+    const abi_check_step = b.step("abi-check", "Check the C ABI surface: symbol diff + C/C++ header probe + a C-hosted runtime language + languages' own libraries");
     abi_check_step.dependOn(&abi_check_run.step);
     abi_check_step.dependOn(&abi_probe_c.step);
     abi_check_step.dependOn(&abi_probe_cpp.step);
     abi_check_step.dependOn(&abi_runtime_probe_run.step);
+    abi_check_step.dependOn(&lang_archive_probe_run.step);
 
     // SemVer gate: diff the current C ABI against the most recent release tag
     // (`v*`, or the old `core/v*` line before the first one-version tag) and

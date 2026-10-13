@@ -24,11 +24,14 @@ use std::ptr::NonNull;
 
 pub use diagnostics::{Warning, WarningCause, WarningCode};
 pub use editor::{Editor, Segment};
-/// The out-of-process carrier of a runtime language: JSON over stdio. Needs
-/// the `json` feature, since fig reads and writes the wire itself.
-#[cfg(feature = "json")]
+
+/// The out-of-process carrier of a runtime language: JSON-RPC over stdio,
+/// read and written through the `json` language, which a helper registers
+/// (`fig_json::register()`).
 pub mod helper;
 pub mod language;
+#[cfg(test)]
+mod test_languages;
 pub use error::{Error, LanguageFailure, ParseError};
 pub use value::{ExtKind, Value};
 
@@ -46,12 +49,8 @@ pub use fig_macros::{FromValue, ToValue};
 
 #[cfg(feature = "serde")]
 pub use de::from_slice;
-#[cfg(all(feature = "serde", feature = "yaml"))]
-pub use de::from_yaml_str;
 #[cfg(feature = "serde")]
 pub use ser::to_value;
-#[cfg(all(feature = "serde", feature = "yaml"))]
-pub use ser::to_yaml_string;
 
 use ffi::{FIG_NODE_NONE, FigNodeId, FigNodeKind};
 
@@ -89,13 +88,11 @@ impl From<Span> for std::ops::Range<usize> {
 /// order and differ between processes: persist [`Format::name`] and resolve it
 /// again with [`Format::by_name`], never the handle.
 ///
-/// The bundled native library carries the languages its crate features
-/// select: `json` (`json`, `jsonc`, `json5`), `yaml`, `toml`, `fig`, `ini`,
-/// `dotenv`, `properties` and `nestedtext` are on by default; `zon` and
-/// `plist` are opt-in. A language whose feature is off is not registered, so
-/// [`Format::by_name`] returns `None` for its names. Besides the dialect names,
-/// a language's `--spec` versions are dialects of their own (`yaml-1.1`,
-/// `yaml-1.2.2`, `toml-1.0`, …).
+/// The native library carries no language: each is a crate of its own
+/// (`fig-yaml`, …) whose `register()` returns its first dialect's format, and
+/// until a language is registered [`Format::by_name`] returns `None` for its
+/// names. Besides the dialect names, a language's `--spec` versions are
+/// dialects of their own (`yaml-1.1`, `yaml-1.2.2`, `toml-1.0`, …).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Format(c_int);
 
@@ -739,12 +736,8 @@ fn normalize(id: FigNodeId) -> Option<FigNodeId> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Document, Error, Format};
-
-    /// The registered format named `name`.
-    fn by_name(name: &str) -> Format {
-        Format::by_name(name).unwrap_or_else(|| panic!("no format named {name:?}"))
-    }
+    use super::{Document, Error};
+    use crate::test_languages::by_name;
 
     #[test]
     fn parses_json_document() {
@@ -788,7 +781,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "toml")]
     fn document_diagnose_reports_dropped_null() {
         use super::{SerializeOptions, WarningCause, WarningCode};
         let doc = Document::parse(b"a: null\nb: 1\n", by_name("yaml")).unwrap();

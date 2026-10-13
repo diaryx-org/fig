@@ -931,6 +931,29 @@ FigStatus fig_table_mention(FigTable *t, uint32_t node, uint32_t start, uint32_t
 FigStatus fig_table_directive(FigTable *t, FigText handle, FigText prefix);
 FigStatus fig_table_diagnostic(FigTable *t, uint8_t severity, uint32_t start, uint32_t end, FigText message, FigText label);
 
+// A table's lists, as fig_table_extend names them.
+typedef enum FigTableList {
+    FIG_TABLE_ROWS = 0,
+    FIG_TABLE_STRINGS = 1,
+    FIG_TABLE_ANCHORS = 2,
+    FIG_TABLE_TAGS = 3,
+    FIG_TABLE_MARKERS = 4,
+    FIG_TABLE_SEPS = 5,
+    FIG_TABLE_ITEM_SEPS = 6,
+    FIG_TABLE_COMMENTS = 7,
+    FIG_TABLE_REGIONS = 8,
+    FIG_TABLE_MENTIONS = 9,
+    FIG_TABLE_DIRECTIVES = 10,
+    FIG_TABLE_DIAGNOSTICS = 11
+} FigTableList;
+
+// `n` zeroed elements appended to list `which` of `t`, returned to fill in
+// place: a whole list a language wrote elsewhere, copied in at once. The
+// string buffer's elements are bytes, so a buffer copied into an empty table
+// keeps every FigText in it. NULL when `which` is not a list or out of
+// memory; valid until the next call on `t`.
+void *fig_table_extend(FigTable *t, int which, size_t n);
+
 // What print is handed: every list of a table fig filled. A text names
 // `source` (empty on the print side) or `strings`. A print may be handed a
 // table whose root is a scalar — a value on its own (fig_value_serialize of a

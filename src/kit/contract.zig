@@ -28,7 +28,7 @@ const AST = @import("ast/ast.zig");
 
 /// The working memory of a thunk that has no table to borrow from, and of
 /// the bytes it hands back through `free_bytes`.
-const gpa = if (builtin.cpu.arch.isWasm()) std.heap.wasm_allocator else std.heap.page_allocator;
+pub const gpa = if (builtin.cpu.arch.isWasm()) std.heap.wasm_allocator else if (builtin.link_libc) std.heap.c_allocator else std.heap.page_allocator;
 
 /// `s` with a NUL after it, at comptime.
 fn z(comptime s: []const u8) [*:0]const u8 {

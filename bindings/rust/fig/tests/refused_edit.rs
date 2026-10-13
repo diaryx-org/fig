@@ -7,7 +7,8 @@
 //! JSON5 `Infinity`/`NaN`, and JSON not at all. The splice used to carry YAML's
 //! `.inf` into every format, and the refusal read
 //! `failed to parse input: failed to parse input`.
-#![cfg(all(feature = "toml", feature = "json", feature = "yaml"))]
+
+mod common;
 
 use fig::{Document, Editor, ExtKind, Format, Segment, Value};
 
@@ -166,5 +167,5 @@ fn opening_a_document_that_does_not_parse_names_the_failure_once() {
 /// does not carry is a test bug.
 #[allow(dead_code)]
 fn by_name(name: &str) -> fig::Format {
-    fig::Format::by_name(name).unwrap_or_else(|| panic!("no format named {name:?}"))
+    common::by_name(name)
 }

@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const Context = @import("Context.zig");
+const Options = @import("Options.zig");
 
 /// The handles later stages need to hang more graph off of:
 ///   * `fig_mod`  — the `fig` library module (the tests and the abi probes import it).
@@ -14,6 +15,8 @@ pub const Result = struct {
     fig_mod: *std.Build.Module,
     exe: *std.Build.Step.Compile,
     c_lib: *std.Build.Step.Compile,
+    /// Each language's own static library, in `languages/list.zig`'s order.
+    c_languages: [@import("../languages/list.zig").rows.len]*std.Build.Step.Compile,
 };
 
 pub fn add(ctx: Context) Result {
@@ -84,7 +87,11 @@ pub fn add(ctx: Context) Result {
         lsp_run_step.dependOn(&lsp_run.step);
     }
 
-    const c_lib = addCApiLibrary(b, .static, target, optimize, strip, options_mod);
+    // The libraries carry no language, whatever the `-D` flags say: a C or
+    // Rust program links each language's own library beside them
+    // (`c-languages` below), and registers it.
+    const lib_options_mod = Options.addFigOptions(b, .{ .langs = @splat(false), .lang_canonical = false }, ctx.ver).createModule();
+    const c_lib = addCApiLibrary(b, .static, target, optimize, strip, lib_options_mod);
     const install_c_lib = b.addInstallArtifact(c_lib, .{});
     b.getInstallStep().dependOn(&install_c_lib.step);
 
@@ -103,10 +110,43 @@ pub fn add(ctx: Context) Result {
     // needed: the Android build links no libc at all (see `addCApiLibrary`'s
     // `link_libc` gate and `activeAllocator` in c_api.zig), producing a
     // self-contained `static-pie` `.so`.
-    const c_shared = addCApiLibrary(b, .dynamic, target, optimize, strip, options_mod);
+    const c_shared = addCApiLibrary(b, .dynamic, target, optimize, strip, lib_options_mod);
     const install_c_shared = b.addInstallArtifact(c_shared, .{});
     const shared_step = b.step("shared", "Build the C ABI as a shared library (.so/.dylib/.dll) — for Android/iOS/dlopen consumers");
     shared_step.dependOn(&install_c_shared.step);
+
+    // One static library per language (`libfig_<name>.a`), linked beside
+    // `libfig.a`, with its header (`<fig/<name>.h>`): the language and its
+    // own copy of the kit, exporting `fig_<name>_register`
+    // (`kit/c_language.zig`).
+    const c_languages_step = b.step("c-languages", "Build one static library per language, linked beside the C ABI library");
+    var c_languages: [@import("../languages/list.zig").rows.len]*std.Build.Step.Compile = undefined;
+    for (@import("../languages/list.zig").rows, 0..) |row, i| {
+        const lang_options = b.addOptions();
+        lang_options.addOption([]const u8, "name", row.name);
+        const lang = b.addLibrary(.{
+            .linkage = .static,
+            .name = b.fmt("fig_{s}", .{row.name}),
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/c_language.zig"),
+                .target = target,
+                .optimize = optimize,
+                .strip = strip,
+                .link_libc = !target.result.cpu.arch.isWasm() and !target.result.abi.isAndroid(),
+                .pic = if (target.result.abi.isAndroid()) true else null,
+            }),
+        });
+        lang.root_module.addImport("build_options", lib_options_mod);
+        lang.root_module.addImport("c_language_options", lang_options.createModule());
+        c_languages[i] = lang;
+        // `c-language-<name>`: the one library, what its Rust crate builds.
+        const one = b.step(b.fmt("c-language-{s}", .{row.name}), b.fmt("Build {s}'s own static library", .{row.name}));
+        const install_lang = b.addInstallArtifact(lang, .{});
+        const install_header = b.addInstallHeaderFile(b.path(b.fmt("bindings/c/include/fig/{s}.h", .{row.name})), b.fmt("fig/{s}.h", .{row.name}));
+        one.dependOn(&install_lang.step);
+        one.dependOn(&install_header.step);
+        c_languages_step.dependOn(one);
+    }
 
     // WebAssembly build for the TypeScript bindings: compile the same C ABI to a
     // freestanding `reactor` module (no `_start`; `rdynamic` keeps every
@@ -196,7 +236,7 @@ pub fn add(ctx: Context) Result {
 
     run_cmd.addPassthruArgs();
 
-    return .{ .fig_mod = mod, .exe = exe, .c_lib = c_lib };
+    return .{ .fig_mod = mod, .exe = exe, .c_lib = c_lib, .c_languages = c_languages };
 }
 
 /// Build one C ABI library artifact (`src/c_api.zig`) at the given `linkage`.

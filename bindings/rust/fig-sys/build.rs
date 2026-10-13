@@ -19,42 +19,19 @@ fn main() {
 
     // Preferred path: link the prebuilt `libfig.a` shipped by the
     // `fig-sys-<target>` payload crate for this target — no Zig toolchain
-    // required. Only usable when the active language features match the set the
-    // prebuilt was compiled with (fig's `default`); any other combination
-    // (extra or missing languages) needs a source build. Cargo reruns this
-    // script when the feature set changes. Set FIG_SYS_FORCE_SOURCE=1 to always
-    // build from source.
-    if env::var_os("FIG_SYS_FORCE_SOURCE").is_none() && features_match_prebuilt() {
-        if let Some(libdir) = prebuilt_libdir(&cargo_target) {
-            println!("cargo:rustc-link-search=native={}", libdir.display());
-            println!("cargo:rustc-link-lib=static=fig");
-            println!("cargo:rerun-if-changed={}", libdir.display());
-            return;
-        }
+    // required. The library carries no language, so there is one build of it
+    // and the prebuilt is always it. Set FIG_SYS_FORCE_SOURCE=1 to build from
+    // source anyway.
+    if env::var_os("FIG_SYS_FORCE_SOURCE").is_none()
+        && let Some(libdir) = prebuilt_libdir(&cargo_target)
+    {
+        println!("cargo:rustc-link-search=native={}", libdir.display());
+        println!("cargo:rustc-link-lib=static=fig");
+        println!("cargo:rerun-if-changed={}", libdir.display());
+        return;
     }
 
     build_from_source(&cargo_target, &cargo_host);
-}
-
-/// Whether the active cargo feature set matches the prebuilt `libfig.a`, which
-/// is compiled with fig's **default** language set: `json`, `yaml`, `toml`,
-/// `figl`, `ini`, `dotenv`, `properties`, `nestedtext` on; `zon`, `plist` off.
-/// Any other combination — an extra language or a disabled default — requires
-/// compiling the core from source so the linked archive matches.
-/// (serde/derive/indexmap are Rust-only and don't affect this; they aren't
-/// fig-sys features.)
-fn features_match_prebuilt() -> bool {
-    let on = |name: &str| env::var_os(format!("CARGO_FEATURE_{name}")).is_some();
-    on("JSON")
-        && on("YAML")
-        && on("TOML")
-        && on("FIGL")
-        && on("INI")
-        && on("DOTENV")
-        && on("PROPERTIES")
-        && on("NESTEDTEXT")
-        && !on("ZON")
-        && !on("PLIST")
 }
 
 /// Directory holding the prebuilt `libfig.a`/`fig.lib` for `target`, if a
@@ -87,8 +64,7 @@ fn payload_env_key(target: &str) -> Option<&'static str> {
 }
 
 /// Compile `libfig.a` from the vendored/repo Zig source with the `zig`
-/// toolchain, honoring the per-language cargo features. The fallback for
-/// targets without a prebuilt payload, non-default feature sets, or
+/// toolchain. The fallback for targets without a prebuilt payload, or
 /// `FIG_SYS_FORCE_SOURCE`.
 fn build_from_source(cargo_target: &str, cargo_host: &str) {
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
@@ -119,28 +95,6 @@ fn build_from_source(cargo_target: &str, cargo_host: &str) {
         command.arg(format!("-Dtarget={zig_target}"));
     }
 
-    // Mirror the per-language cargo features onto `build.zig`'s `-D<lang>` gates,
-    // each stated explicitly rather than leaning on the core's own default: the
-    // core has `plist` off and `zon` on, and the cargo feature is the whole
-    // truth here either way. Cargo sets `CARGO_FEATURE_<NAME>` for every enabled
-    // feature and reruns this script when the set changes. `json` gates the
-    // shared JSON/JSONC/JSON5 core.
-    for (feature, lang) in [
-        ("CARGO_FEATURE_JSON", "json"),
-        ("CARGO_FEATURE_YAML", "yaml"),
-        ("CARGO_FEATURE_TOML", "toml"),
-        ("CARGO_FEATURE_ZON", "zon"),
-        ("CARGO_FEATURE_FIGL", "figl"),
-        ("CARGO_FEATURE_INI", "ini"),
-        ("CARGO_FEATURE_DOTENV", "dotenv"),
-        ("CARGO_FEATURE_PROPERTIES", "properties"),
-        ("CARGO_FEATURE_PLIST", "plist"),
-        ("CARGO_FEATURE_NESTEDTEXT", "nestedtext"),
-    ] {
-        let on = env::var_os(feature).is_some();
-        command.arg(format!("-D{lang}={on}"));
-    }
-
     let status = command
         .arg("--prefix")
         .arg(&prefix)
@@ -149,10 +103,9 @@ fn build_from_source(cargo_target: &str, cargo_host: &str) {
         .unwrap_or_else(|e| {
             panic!(
                 "fig-sys: this build needs to compile the fig core from source \
-                 (target `{cargo_target}` has no prebuilt library, a non-default \
-                 language feature set is active, or FIG_SYS_FORCE_SOURCE is set), \
-                 but running `zig` failed: {e}.\n\
-                 Default-feature builds for these targets need no Zig: \
+                 (target `{cargo_target}` has no prebuilt library, or \
+                 FIG_SYS_FORCE_SOURCE is set), but running `zig` failed: {e}.\n\
+                 These targets need no Zig: \
                  aarch64-apple-darwin, x86_64-unknown-linux-gnu, \
                  aarch64-unknown-linux-gnu, x86_64-pc-windows-msvc, \
                  wasm32-unknown-unknown, aarch64-apple-ios, \
@@ -303,6 +256,48 @@ fn zig_target_for_cargo_target(target: &str, host: &str) -> Option<&'static str>
     match target {
         "x86_64-pc-windows-msvc" => return Some("x86_64-windows-msvc"),
         "aarch64-pc-windows-msvc" => return Some("aarch64-windows-msvc"),
+        _ => {}
+    }
+
+    // A macOS build names its target even on the host, with the deployment
+    // target Rust links against: a host build without one stamps the
+    // archive with the build machine's own macOS version, and whatever links
+    // it then refuses to launch on an older one.
+    match target {
+        "aarch64-apple-darwin" | "x86_64-apple-darwin" => {
+            println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
+            let arch = if target.starts_with("aarch64") {
+                "aarch64"
+            } else {
+                "x86_64"
+            };
+            let default = if arch == "aarch64" { "11.0" } else { "10.12" };
+            let version =
+                env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| default.to_string());
+            return Some(Box::leak(
+                format!("{arch}-macos.{version}").into_boxed_str(),
+            ));
+        }
+        // iOS too: Zig's own default is newer than the 14.0 the prebuilt
+        // archives name (`prebuilt-targets.tsv`).
+        "aarch64-apple-ios" | "aarch64-apple-ios-sim" | "x86_64-apple-ios" => {
+            println!("cargo:rerun-if-env-changed=IPHONEOS_DEPLOYMENT_TARGET");
+            let arch = if target.starts_with("aarch64") {
+                "aarch64"
+            } else {
+                "x86_64"
+            };
+            let version =
+                env::var("IPHONEOS_DEPLOYMENT_TARGET").unwrap_or_else(|_| "14.0".to_string());
+            let sim = if target == "aarch64-apple-ios" {
+                ""
+            } else {
+                "-simulator"
+            };
+            return Some(Box::leak(
+                format!("{arch}-ios.{version}{sim}").into_boxed_str(),
+            ));
+        }
         _ => {}
     }
 

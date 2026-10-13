@@ -35,24 +35,8 @@ include = [
 name = "fig_sys"
 path = "src/lib.rs"
 
-# Per-language gates, mirroring `build.zig`'s `-D<lang>` options. `fig` forwards
-# its own like-named features here (see fig/Cargo.toml); `build.rs` reads these
-# to decide both the prebuilt-vs-source path and, on the source path, which
-# `-D<lang>=false` flags to pass. The prebuilt `libfig.a` is compiled with this
-# exact `default` set, so a default-feature build links it with no Zig toolchain;
-# any other language combination triggers a source build.
-[features]
-default = ["json", "yaml", "toml", "figl", "ini", "dotenv", "properties", "nestedtext"]
-json = []
-yaml = []
-toml = []
-zon = []
-figl = []
-ini = []
-dotenv = []
-properties = []
-plist = []
-nestedtext = []
+# No features: `libfig` carries no language, whatever is built. A language
+# is a crate of its own (`fig-yaml`, …) whose library links beside this one.
 
 # Prebuilt-library payload crates, one per tier-1 target. Each is a target-gated
 # dependency: Cargo activates (and downloads) only the one whose `cfg` matches

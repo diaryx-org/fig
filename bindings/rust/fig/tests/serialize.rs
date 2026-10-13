@@ -1,5 +1,7 @@
 //! Serde serialization tests. Run with `cargo test -p fig --features serde`.
-#![cfg(all(feature = "serde", feature = "yaml"))]
+#![cfg(feature = "serde")]
+
+mod common;
 
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +16,7 @@ fn map(pairs: Vec<(&str, Value)>) -> Value {
 /// parity with serde_yaml_ng is no longer the contract (core uses `|` block
 /// scalars and its own nested-sequence layout). The contract is round-trip
 /// fidelity, exercised here against fig's own dynamic `Value`:
-/// `from_yaml_str(value.serialize()) == value`.
+/// `fig_yaml::from_str(value.serialize()) == value`.
 #[test]
 fn generic_values_round_trip() {
     let cases = [
@@ -74,7 +76,7 @@ fn generic_values_round_trip() {
     ];
     for case in cases {
         let yaml = case.serialize(by_name("yaml")).unwrap();
-        let back: Value = fig::from_yaml_str(&yaml).unwrap();
+        let back: Value = fig_yaml::from_str(&yaml).unwrap();
         assert_eq!(back, case, "round-trip mismatch (yaml:\n{yaml})");
     }
 }
@@ -118,12 +120,12 @@ fn typed_config_round_trips() {
         audiences: vec!["friends".to_string(), "family".to_string()],
         subdomain: None,
     };
-    let yaml = fig::to_yaml_string(&cfg).unwrap();
-    let back: Config = fig::from_yaml_str(&yaml).unwrap();
+    let yaml = fig_yaml::to_string(&cfg).unwrap();
+    let back: Config = fig_yaml::from_str(&yaml).unwrap();
     assert_eq!(cfg, back);
 }
 
-/// The whole point: `from_yaml_str(to_yaml_string(x)) == x`. Exercises both halves of the
+/// The whole point: `fig_yaml::from_str(fig_yaml::to_string(x)) == x`. Exercises both halves of the
 /// bookmatter::yaml seam together.
 #[test]
 fn round_trips_through_fig() {
@@ -156,8 +158,8 @@ fn round_trips_through_fig() {
         },
     };
 
-    let yaml = fig::to_yaml_string(&fm).unwrap();
-    let back: Frontmatter = fig::from_yaml_str(&yaml).unwrap();
+    let yaml = fig_yaml::to_string(&fm).unwrap();
+    let back: Frontmatter = fig_yaml::from_str(&yaml).unwrap();
     assert_eq!(fm, back);
 }
 
@@ -178,8 +180,8 @@ fn round_trips_tricky_strings() {
         "tab\there",
     ];
     for s in inputs {
-        let yaml = fig::to_yaml_string(&s).unwrap();
-        let back: String = fig::from_yaml_str(&yaml).unwrap();
+        let yaml = fig_yaml::to_string(&s).unwrap();
+        let back: String = fig_yaml::from_str(&yaml).unwrap();
         assert_eq!(back, s, "round-trip failed for {s:?} (yaml: {yaml:?})");
     }
 }
@@ -187,13 +189,13 @@ fn round_trips_tricky_strings() {
 #[test]
 fn special_floats_round_trip() {
     for f in [f64::INFINITY, f64::NEG_INFINITY, 0.0, -2.5, 1000.0] {
-        let yaml = fig::to_yaml_string(&f).unwrap();
-        let back: f64 = fig::from_yaml_str(&yaml).unwrap();
+        let yaml = fig_yaml::to_string(&f).unwrap();
+        let back: f64 = fig_yaml::from_str(&yaml).unwrap();
         assert_eq!(back, f, "round-trip failed for {f} (yaml: {yaml:?})");
     }
     // NaN is not equal to itself; check the classification survives.
-    let yaml = fig::to_yaml_string(&f64::NAN).unwrap();
-    let back: f64 = fig::from_yaml_str(&yaml).unwrap();
+    let yaml = fig_yaml::to_string(&f64::NAN).unwrap();
+    let back: f64 = fig_yaml::from_str(&yaml).unwrap();
     assert!(back.is_nan());
 }
 
@@ -258,7 +260,6 @@ fn toml_width_controls_inline_vs_section() {
 }
 
 #[test]
-#[cfg(feature = "zon")]
 fn zon_compact_vs_pretty() {
     use fig::SerializeOptions;
     let value = map(vec![
@@ -305,7 +306,6 @@ fn json5_serializes_and_parses_back() {
 }
 
 #[test]
-#[cfg(feature = "figl")]
 fn fig_dialect_serializes_and_parses_back() {
     // Proves `by_name("figl")` (the native authoring dialect) is wired through both
     // the writer and the reader: serialize emits `key = value` fig syntax, and
@@ -331,7 +331,6 @@ fn fig_dialect_serializes_and_parses_back() {
 }
 
 #[test]
-#[cfg(feature = "yaml")]
 fn yaml_width_controls_nested_flow_vs_block_and_zero_means_unset() {
     // Pins what the `width` docs promise for YAML, since all three claims are
     // easy to mistake for "width does nothing here".
@@ -405,15 +404,15 @@ fn unsigned_fields_serialize_to_the_canonical_integer_variant() {
 
     // The read side agrees with the parser, so a struct round-trips to a value
     // equal to the one parsed from its own output.
-    let text = fig::to_yaml_string(&ports).unwrap();
-    let parsed: Value = fig::from_yaml_str(&text).unwrap();
+    let text = fig_yaml::to_string(&ports).unwrap();
+    let parsed: Value = fig_yaml::from_str(&text).unwrap();
     assert_eq!(parsed, fig::to_value(&ports).unwrap());
-    assert_eq!(fig::from_yaml_str::<Ports>(&text).unwrap(), ports);
+    assert_eq!(fig_yaml::from_str::<Ports>(&text).unwrap(), ports);
 }
 
 /// The registered format named `name`; a test that names one this build
 /// does not carry is a test bug.
 #[allow(dead_code)]
 fn by_name(name: &str) -> fig::Format {
-    fig::Format::by_name(name).unwrap_or_else(|| panic!("no format named {name:?}"))
+    common::by_name(name)
 }

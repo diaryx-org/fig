@@ -11,6 +11,7 @@
 import { Frame, allocFigError, fig, readFigError, readU32, setHostCall, u8, dv, encoder, decoder } from "./ffi.ts";
 import { FigError, Status, type Format } from "./types.ts";
 import { handle, type Language } from "./wire.ts";
+import { callNative, forgetNative, isNative, isNativeId, loadNative, type NativeLanguage } from "./native.ts";
 
 // ── registration ───────────────────────────────────────────────────────────
 
@@ -21,7 +22,7 @@ import { handle, type Language } from "./wire.ts";
 const languages = new Map<number, Language>();
 let nextId = 1;
 /** Each language registered, and the format it was given. */
-const registered = new Map<Language, Format>();
+const registered = new Map<Language | NativeLanguage, Format>();
 
 /** The `fig_host.call` import: read the request line out of linear memory,
  *  answer it with {@link handle}, and hand the response back in memory the
@@ -30,11 +31,17 @@ const registered = new Map<Language, Format>();
  *  WebAssembly allows and the allocator does not mind; the views are
  *  re-derived afterwards because the allocation may have grown memory. */
 function hostCall(lang: number, requestPtr: number, requestLen: number, outPtr: number, outLen: number): number {
-  const language = languages.get(lang);
-  if (!language) return 1;
-  const request = decoder.decode(u8().subarray(requestPtr, requestPtr + requestLen));
-  const response = handle(language, request);
-  const bytes = encoder.encode(response);
+  let bytes: Uint8Array;
+  if (isNativeId(lang)) {
+    const answer = callNative(lang, u8().slice(requestPtr, requestPtr + requestLen));
+    if (!answer) return 1;
+    bytes = answer;
+  } else {
+    const language = languages.get(lang);
+    if (!language) return 1;
+    const request = decoder.decode(u8().subarray(requestPtr, requestPtr + requestLen));
+    bytes = encoder.encode(handle(language, request));
+  }
   const ptr = fig.fig_alloc(bytes.length);
   if (ptr === 0) return 1;
   u8().set(bytes, ptr);
@@ -64,20 +71,23 @@ setHostCall(hostCall);
  *
  *  Formats are handles assigned per process in registration order, from 1:
  *  persist a format's NAME and resolve it with {@link formatByName}. */
-export function registerLanguage(lang: Language): Format {
+export function registerLanguage(lang: Language | NativeLanguage): Format {
   // The same language again — a library and the application using it each
   // registering the YAML they import — is the format it already is.
   const known = registered.get(lang);
   if (known !== undefined) return known;
   const id = nextId++;
-  languages.set(id, lang);
+  const native = isNative(lang);
+  if (native) loadNative(id, lang);
+  else languages.set(id, lang);
   const frame = new Frame();
   try {
     const outFormat = frame.alloc(4);
     const err = allocFigError(frame);
-    const status = fig.fig_host_language_register(id, outFormat, err);
+    const status = native ? fig.fig_host_native_register(id, outFormat, err) : fig.fig_host_language_register(id, outFormat, err);
     if (status !== Status.Ok) {
       languages.delete(id);
+      forgetNative(id);
       const detail = readFigError(err);
       throw new FigError(status, `registerLanguage(${lang.name})`, { message: detail.message, byteOffset: detail.byteOffset });
     }

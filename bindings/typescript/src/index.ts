@@ -23,8 +23,10 @@ export { Editor } from "./editor.ts";
 export { type Segment } from "./edit-ops.ts";
 export { V, fromJS, toJS, stringify, diagnose, type Value, type JsValue, type JsInput } from "./value.ts";
 export { version, versionString, capabilities, formatByName, formatName, requireFormat, type Version, type Capabilities } from "./meta.ts";
-export { init, isReady } from "./ffi.ts";
+export { isReady } from "./ffi.ts";
+export { init } from "./native.ts";
 export { registerLanguage, detectFormat, splitStream, type StreamDocument } from "./language.ts";
+export type { NativeLanguage } from "./native.ts";
 export {
   handle,
   describe,

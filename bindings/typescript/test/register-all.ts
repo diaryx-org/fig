@@ -6,7 +6,7 @@
 // out, by the names the binding's members had through 5.x — not a package
 // export: core has no format members since 6.0.
 import { formatByName, registerLanguage, type Format as Handle } from "../src/index.ts";
-import canonical from "@diaryx/fig/languages/canonical";
+import canonical from "@diaryx/fig/js/canonical";
 import dotenv from "@diaryx/fig/languages/dotenv";
 import fig from "@diaryx/fig/languages/figl";
 import ini from "@diaryx/fig/languages/ini";
@@ -30,7 +30,7 @@ function byName(name: string): Handle {
 export const Format = {
   Json: json.format!,
   Jsonc: byName("jsonc"),
-  Json5: json5.format!,
+  Json5: byName("json5"),
   Yaml: yaml.format!,
   Toml: toml.format!,
   Zon: zon.format!,

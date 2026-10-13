@@ -131,6 +131,30 @@ pub fn add(ctx: Context) Result {
     const wasm_step = b.step("wasm", "Build the WebAssembly module for the TypeScript bindings");
     wasm_step.dependOn(&install_wasm.step);
 
+    // One WebAssembly module per language (`fig-<name>.wasm`), beside
+    // `fig.wasm`: the language and its own copy of the kit, which the
+    // TypeScript binding loads and registers into `fig.wasm`
+    // (`kit/wasm_language.zig`).
+    const wasm_languages_step = b.step("wasm-languages", "Build one WebAssembly module per language for the TypeScript bindings");
+    for (@import("../languages/list.zig").rows) |row| {
+        const lang_options = b.addOptions();
+        lang_options.addOption([]const u8, "name", row.name);
+        const lang = b.addExecutable(.{
+            .name = b.fmt("fig-{s}", .{row.name}),
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/wasm_language.zig"),
+                .target = wasm_target,
+                .optimize = .small,
+                .strip = true,
+            }),
+        });
+        lang.root_module.addImport("build_options", options_mod);
+        lang.root_module.addImport("wasm_language_options", lang_options.createModule());
+        lang.entry = .disabled;
+        lang.rdynamic = true;
+        wasm_languages_step.dependOn(&b.addInstallArtifact(lang, .{}).step);
+    }
+
     // WASI build of the *CLI* (`main.zig`), distinct from the freestanding
     // `fig.wasm` above. This is a real `_start` command module: run it with a
     // WASI runtime, e.g. `wasmtime run --dir=.::. zig-out/bin/fig-wasi.wasm get foo.yaml`.

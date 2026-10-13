@@ -113,6 +113,9 @@ formatByName("yaml") === yamlFormat;       // true
 | `Format.Json`, `Format.Yaml`, … | `registerLanguage(json)`'s return, `json.format`, `formatByName("json")` or `requireFormat("json")` |
 | a raw number as a `Format` | does not type-check; a number nobody registered throws `UnsupportedFormat` |
 | `@diaryx/fig/languages/fig` | `@diaryx/fig/languages/figl` |
+| `@diaryx/fig/languages/<name>`, a format written in JavaScript | the same import is fig's own Zig, compiled to a WebAssembly module of its own; the JavaScript is at `@diaryx/fig/js/<name>` |
+| `registerLanguage(json5)` returning JSON5's format | `@diaryx/fig/languages/json5` is JSON's module, so it returns JSON's; `formatByName("json5")` |
+| `await init()` in a browser | `await init(json, yaml, …)` with the languages you register, so their modules compile asynchronously too |
 
 `formatName(format)` names a handle, and `requireFormat(name)` throws
 `UnsupportedFormat` naming the module to import. `registerLanguage` writes

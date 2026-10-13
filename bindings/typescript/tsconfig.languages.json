@@ -1,6 +1,6 @@
 // The declarations for the JavaScript the package ships as it is written:
 // the kit (`kit/`, `@diaryx/fig/kit`) and the languages written with it
-// (`languages/`, `@diaryx/fig/languages/*`). Their types are read off the
+// (`js/`, `@diaryx/fig/js/*`). Their types are read off the
 // JavaScript — each language's default export is annotated as a
 // `Language` — and emitted beside the compiled sources' in `dist/`. Run
 // after tsconfig.json, whose `dist/helper.d.ts` the kit's import of
@@ -19,5 +19,5 @@
     "outDir": "dist",
     "skipLibCheck": true
   },
-  "include": ["kit/*.js", "languages/*.js"]
+  "include": ["kit/*.js", "js/*.js"]
 }

@@ -1,0 +1,61 @@
+// The languages compiled from fig's own Zig, each a WebAssembly module of
+// its own (`@diaryx/fig/languages/*`, `src/native.ts`): registered, they
+// parse and print through their module with the node table crossing as
+// its rows, and describe, render and split over the helper wire.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { Document, Editor, FigError, convert, formatByName, init, registerLanguage, splitStream } from "../src/index.ts";
+import yaml from "@diaryx/fig/languages/yaml";
+import json from "@diaryx/fig/languages/json";
+import dotenv from "@diaryx/fig/languages/dotenv";
+
+await init(yaml, json, dotenv);
+const Yaml = registerLanguage(yaml);
+const Json = registerLanguage(json);
+const Dotenv = registerLanguage(dotenv);
+
+test("a native language registers once, with every dialect its module serves", () => {
+  assert.equal(registerLanguage(yaml), Yaml);
+  assert.equal(yaml.format, Yaml);
+  assert.notEqual(formatByName("yaml-1.1"), null);
+  assert.notEqual(formatByName("jsonc"), null);
+  assert.notEqual(formatByName("json5"), null);
+});
+
+test("the table crosses both ways: parse, read, print", () => {
+  const src = "# top\nname: fig # trailing\nlist:\n  - &a 1\n  - *a\nnested: {x: [1, 2], y: q}\n";
+  const doc = Document.parse(src, Yaml);
+  try {
+    assert.equal(doc.get(["name"]), "fig");
+    assert.deepEqual(doc.get(["nested", "x"]), [1, 2]);
+    assert.equal(doc.serialize(Yaml), "# top\nname: fig # trailing\nlist:\n- &a 1\n- *a\nnested: { x: [1, 2], y: q }\n");
+  } finally {
+    doc.dispose();
+  }
+  assert.equal(convert("{\"a\": [1, true, null]}", Json, Yaml), "a: [1, true, null]\n");
+});
+
+test("an edit through a native language splices and reparses", () => {
+  using ed = Editor.open("a: 1 # keep\nb: [x, y]\n", Yaml);
+  ed.replaceValue(["a"], 2);
+  assert.equal(ed.source(), "a: 2 # keep\nb: [x, y]\n");
+});
+
+test("a refusal says why and where", () => {
+  assert.throws(
+    () => Document.parse("a: [1, 2\n", Yaml),
+    (e: unknown) => e instanceof FigError && typeof e.byteOffset === "number",
+  );
+});
+
+test("a stream splits through the language's module", () => {
+  const docs = splitStream("a: 1\n---\nb: 2\n", Yaml);
+  assert.deepEqual(docs.map((d) => d.text), ["a: 1\n", "---\nb: 2\n"]);
+  assert.deepEqual(docs.map((d) => d.explicit), [false, true]);
+});
+
+test("an empty print crosses as an empty string", () => {
+  using ed = Editor.open("A=1\n", Dotenv);
+  ed.replaceValue(["A"], {});
+  assert.equal(ed.source(), "A=\n");
+});

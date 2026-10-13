@@ -53,6 +53,8 @@ interface Exports {
    *  registers the result as `fig_language_register` would a C vtable.
    *  Exported by the wasm module alone; not a C ABI entry point. */
   fig_host_language_register(lang: number, out_format: number, out_err: number): number;
+  fig_host_native_register(lang: number, out_format: number, out_err: number): number;
+  fig_host_table_extend(table: number, which: number, n: number): number;
 
   fig_parse(input: number, input_len: number, format: number, out_doc: number): number;
   fig_parse_ex(input: number, input_len: number, format: number, out_doc: number, out_err: number): number;
@@ -130,7 +132,7 @@ interface Exports {
   fig_value_serialize_opts(value: number, root: number, format: number, options: number, out_ptr: number, out_len: number): number;
 }
 
-function decodeBase64(b64: string): Uint8Array<ArrayBuffer> {
+export function decodeBase64(b64: string): Uint8Array<ArrayBuffer> {
   // `Buffer` under Node; `atob` in the browser. Either way, copy into a fresh
   // ArrayBuffer-backed view so the bytes satisfy `BufferSource` exactly.
   const g = globalThis as { Buffer?: { from(s: string, enc: string): Uint8Array }; atob?(s: string): string };
@@ -152,8 +154,25 @@ let hostCall: HostCall = () => 1;
 export function setHostCall(fn: HostCall): void {
   hostCall = fn;
 }
+/** The imports a language in a WebAssembly module of its own parses and
+ *  prints through (`native.ts`): the table crosses as its rows, not as
+ *  JSON. Until `native.ts` loads, both answer "cannot". */
+export interface HostNative {
+  parse(lang: number, dialect: number, dialectLen: number, input: number, inputLen: number, table: number, err: number): number;
+  print(lang: number, dialect: number, dialectLen: number, view: number, options: number, out: number, err: number): number;
+}
+let hostNative: HostNative = { parse: () => 4, print: () => 4 };
+export function setHostNative(native: HostNative): void {
+  hostNative = native;
+}
 function imports(): WebAssembly.Imports {
-  return { fig_host: { call: (lang: number, ptr: number, len: number, outPtr: number, outLen: number) => hostCall(lang, ptr, len, outPtr, outLen) } };
+  return {
+    fig_host: {
+      call: (lang: number, ptr: number, len: number, outPtr: number, outLen: number) => hostCall(lang, ptr, len, outPtr, outLen),
+      parse: (lang: number, d: number, dl: number, i: number, il: number, t: number, e: number) => hostNative.parse(lang, d, dl, i, il, t, e),
+      print: (lang: number, d: number, dl: number, v: number, o: number, out: number, e: number) => hostNative.print(lang, d, dl, v, o, out, e),
+    },
+  };
 }
 
 // The instance is created lazily so that merely importing the package never

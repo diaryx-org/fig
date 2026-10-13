@@ -30,9 +30,9 @@ import {
   type NodeTable,
 } from "../src/index.ts";
 import { dotenv } from "./languages/dotenv.ts";
-import dotenvLanguage from "@diaryx/fig/languages/dotenv";
-import json from "@diaryx/fig/languages/json";
-import json5 from "@diaryx/fig/languages/json5";
+import dotenvLanguage from "@diaryx/fig/js/dotenv";
+import json from "@diaryx/fig/js/json";
+import json5 from "@diaryx/fig/js/json5";
 
 // The module compiles no format in. The formats these tests hold the test
 // twin to are the package's own languages, registered as a caller would;

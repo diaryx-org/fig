@@ -43,6 +43,8 @@ test {
     _ = Document;
     _ = RowWriter;
     _ = ChildIndex;
+    _ = @import("wasm_language.zig");
+    _ = @import("describe_json.zig");
     _ = table;
     _ = convert;
     _ = manifest;

@@ -1,7 +1,7 @@
 {
   "name": "@diaryx/fig",
   "version": "6.0.0",
-  "description": "JSON, JSONC, JSON5, YAML, TOML, INI, dotenv, .properties, NestedText, ZON, plist and fig parsing, comment-preserving editing, and cross-format serialization: a Zig core compiled to WebAssembly, with each format a JavaScript language you import only if you use it.",
+  "description": "JSON, JSONC, JSON5, YAML, TOML, INI, dotenv, .properties, NestedText, ZON, plist and fig parsing, comment-preserving editing, and cross-format serialization: a Zig core compiled to WebAssembly, with each format a WebAssembly module of its own you import only if you use it.",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -10,6 +10,7 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "fig-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
@@ -29,15 +30,20 @@
       "default": "./kit/*.js"
     },
     "./languages/*": {
-      "fig-source": "./languages/*.js",
-      "types": "./dist/languages/*.d.ts",
+      "types": "./languages/*.d.ts",
       "default": "./languages/*.js"
+    },
+    "./js/*": {
+      "fig-source": "./js/*.js",
+      "types": "./dist/js/*.d.ts",
+      "default": "./js/*.js"
     },
     "./package.json": "./package.json"
   },
   "files": [
     "dist",
     "kit",
+    "js",
     "languages",
     "src",
     "!src/wasm-bytes.ts",
@@ -78,7 +84,7 @@
   },
   "scripts": {
     "build:wasm": "node scripts/build-wasm.mjs",
-    "build": "npm run build:wasm && tsc -p tsconfig.json && tsc -p tsconfig.languages.json && node scripts/drop-wasm-bytes-maps.mjs",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && npm run build:wasm && tsc -p tsconfig.json && tsc -p tsconfig.languages.json && node scripts/drop-wasm-bytes-maps.mjs",
     "prepack": "node scripts/vendor-publish-files.mjs",
     "prepublishOnly": "npm run build && npm test",
     "test": "tsc -p tsconfig.test.json && node --conditions=fig-source --test 'test/**/*.test.ts'",

@@ -1,4 +1,4 @@
-// The formats in `languages/` (`@diaryx/fig/languages/*`), each held to
+// The formats in `js/` (`@diaryx/fig/js/*`), each held to
 // the Zig language of the same name. The contract is the format and the
 // tree, not the compiled parser's code or its messages:
 //
@@ -24,18 +24,18 @@ import { join } from "node:path";
 
 import { capabilities, convert, detectFormat, formatByName, formatName, handle, splitStream, registerLanguage, type Language, type NodeTable } from "../src/index.ts";
 
-import canonical from "@diaryx/fig/languages/canonical";
-import dotenv from "@diaryx/fig/languages/dotenv";
-import fig from "@diaryx/fig/languages/figl";
-import ini from "@diaryx/fig/languages/ini";
-import json from "@diaryx/fig/languages/json";
-import json5 from "@diaryx/fig/languages/json5";
-import nestedtext from "@diaryx/fig/languages/nestedtext";
-import plist from "@diaryx/fig/languages/plist";
-import properties from "@diaryx/fig/languages/properties";
-import toml from "@diaryx/fig/languages/toml";
-import yaml from "@diaryx/fig/languages/yaml";
-import zon from "@diaryx/fig/languages/zon";
+import canonical from "@diaryx/fig/js/canonical";
+import dotenv from "@diaryx/fig/js/dotenv";
+import fig from "@diaryx/fig/js/figl";
+import ini from "@diaryx/fig/js/ini";
+import json from "@diaryx/fig/js/json";
+import json5 from "@diaryx/fig/js/json5";
+import nestedtext from "@diaryx/fig/js/nestedtext";
+import plist from "@diaryx/fig/js/plist";
+import properties from "@diaryx/fig/js/properties";
+import toml from "@diaryx/fig/js/toml";
+import yaml from "@diaryx/fig/js/yaml";
+import zon from "@diaryx/fig/js/zon";
 
 /** A language, and its dialects' fixture directories and file extensions. */
 interface Twin {

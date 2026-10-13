@@ -64,13 +64,14 @@ parse('{"ok":true}', Json); // → { ok: true }
 
 In the **browser main thread**, synchronous compilation of a module larger than
 4 KB is disallowed by the platform, so call `init()` once at startup before any
-other fig API:
+other fig API, passing it the languages you will register — each is a module
+of its own, and `init` compiles them too:
 
 ```ts
 import { init, parse, registerLanguage } from "@diaryx/fig";
 import json from "@diaryx/fig/languages/json";
 
-await init();                       // do this once, e.g. during app bootstrap
+await init(json);                   // do this once, e.g. during app bootstrap
 const Json = registerLanguage(json);
 parse('{"ok":true}', Json);         // now synchronous everywhere
 ```
@@ -129,11 +130,18 @@ from then on too (`yaml.format`), and every dialect is found by its name
 (`formatByName("jsonc")`).
 A format you don't import costs nothing.
 
+Each is fig's own Zig parser and printer — the code the `fig` command line,
+the Rust crates and the C library run — compiled to a WebAssembly module of
+its own, 28 to 69 KB gzipped. A parse writes its node table in the
+language's module and the table crosses into fig's as its rows, so a
+document parses at native speed. The same formats written in JavaScript are
+at `@diaryx/fig/js/<name>` ([Runtime languages](#runtime-languages)).
+
 | Dialect      | Import                          | Notes |
 | ------------ | ------------------------------- | ----- |
 | `json`       | `@diaryx/fig/languages/json`    | Strict JSON (no comments). |
-| `jsonc`      | `@diaryx/fig/languages/json5`   | JSON with `//` and `/* */` comments; a dialect of the JSON5 language. |
-| `json5`      | `@diaryx/fig/languages/json5`   | Unquoted keys, trailing commas, etc. |
+| `jsonc`      | `@diaryx/fig/languages/json`    | JSON with `//` and `/* */` comments; a dialect JSON's module serves. |
+| `json5`      | `@diaryx/fig/languages/json`    | Unquoted keys, trailing commas, etc.; `formatByName("json5")`. `@diaryx/fig/languages/json5` is the same module. |
 | `yaml`       | `@diaryx/fig/languages/yaml`    | YAML 1.2.2; its `yaml-1.1` dialect resolves scalars as 1.1. |
 | `toml`       | `@diaryx/fig/languages/toml`    | TOML 1.0 / 1.1, incl. datetimes. |
 | `figl`       | `@diaryx/fig/languages/figl`    | The native `figl` authoring dialect. |
@@ -582,9 +590,13 @@ takes one item and the separator beside it, and an append splices after the
 last item, so a trailing separator (`1 | 2 |`) stays trailing. The kit's
 `sequence(span)` takes the same two fields.
 
-**The package's own languages** are written this way: every format in
-[Formats](#formats) is a `Language` at `@diaryx/fig/languages/<name>`, named
-after the format it serves. `canonical`, fig's canonical form, is one more.
+**Every format in [Formats](#formats) is also written this way**, at
+`@diaryx/fig/js/<name>`: a `Language` named after the format it serves,
+held to the compiled format's node table row for row, as worked examples of
+a language in JavaScript and as a second implementation of each. `canonical`,
+fig's canonical form, is one more. Register one in place of
+`@diaryx/fig/languages/<name>`, not beside it: both answer to the format's
+name.
 
 The languages are written with `@diaryx/fig/kit`, which the package ships
 for your own formats too:

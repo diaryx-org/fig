@@ -70,6 +70,14 @@ test "toml replace root scalar value" {
     try expectTomlSource(&ed, "title = \"old\"\nport = 9090\n");
 }
 
+test "toml setAppend starts an absent inline array" {
+    var ed = try newTomlEditor("a = 1\n");
+    defer ed.deinit();
+    try ed.setAppend(&.{.{ .key = "tags" }}, "\"x\"");
+    try ed.setAppend(&.{.{ .key = "tags" }}, "\"y\"");
+    try expectTomlSource(&ed, "a = 1\ntags = [\"x\", \"y\"]\n");
+}
+
 test "toml replace string value keeps quoting verbatim" {
     var ed = try newTomlEditor("title = \"old\"\n");
     defer ed.deinit();

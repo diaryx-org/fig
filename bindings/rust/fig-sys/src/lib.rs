@@ -934,6 +934,8 @@ pub struct FigSyntax {
     pub flow_map_entry_sep: *const c_char,
     /// 0 for none.
     pub line_continuation: u8,
+    /// Null for a format with no empty-sequence spelling.
+    pub empty_seq_literal: *const c_char,
 }
 
 /// `FigLanguageVTable::lossless`: the language takes the `$fig` envelope.

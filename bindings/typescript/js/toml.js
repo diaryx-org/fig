@@ -911,6 +911,7 @@ const language = {
     kv_sep: " = ",
     flow_map_pad: " ",
     empty_map_literal: "{}",
+    empty_seq_literal: "[]",
     block_seq_editable: false,
     section_noun: "table",
     section_header: { open: "[", close: "]", seq_open: "[[", seq_close: "]]" },

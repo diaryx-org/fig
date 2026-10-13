@@ -202,8 +202,9 @@ pub const Help = struct {
             \\    are auto-created (`mkdir -p`); a segment that is an existing
             \\    non-map scalar is a type error and left untouched.
             \\  A path ending in an index sets a sequence item: list[2] replaces
-            \\    the item that is there, and list[-] (or list[$]) appends one.
-            \\    An index past the end is refused.
+            \\    the item that is there, and list[-] (or list[$]) appends one,
+            \\    starting the list when it is absent or null. An index past the
+            \\    end is refused. INI, dotenv and .properties have no list to start.
             \\  When <file> itself does not exist, it is CREATED and seeded with
             \\    <path>: <value>; `fig get <file>` then prints what was written.
             \\    The format comes from the extension, so a new file needs a known
@@ -212,6 +213,7 @@ pub const Help = struct {
             \\  --seq: reconcile the sequence at <path> to exactly <item>..., keeping
             \\    the comments on items that survive (only new items are inserted,
             \\    only dropped ones removed; result order matches the arguments).
+            \\    An absent or null <path> is started as a list of the <item>s.
             \\
         ++ value_reading ++
             \\    A created key is written in the file's syntax too, so new keys

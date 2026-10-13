@@ -320,6 +320,7 @@ const language = {
     comments: {},
     kv_sep: ": ",
     empty_map_literal: "{}",
+    empty_seq_literal: "[]",
   },
   // The extension the Zig language claims: a file by that name reaches
   // whichever of the two is registered.

@@ -2202,6 +2202,7 @@ const language = {
     flow_map_kv_sep: "=",
     flow_map_entry_sep: " ",
     empty_map_literal: "{}",
+    empty_seq_literal: "[]",
     // The `>` run that opens a line is depth, not whitespace: a line the
     // engine writes repeats it; one level is one `> ` cell, an element `* `.
     structural_indent: true,

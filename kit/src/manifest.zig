@@ -670,6 +670,22 @@ pub const Syntax = struct {
     /// the rest of it, so the engine ends the continuation first with a
     /// blank line, which continues it onto nothing.
     line_continuation: ?u8 = null,
+
+    // ================
+    // EMPTY SEQUENCES
+    // ================
+
+    /// The empty-sequence seed `setAppend` and `setSequence` splice to start
+    /// a list that is not there yet, or null for a format with no spelling
+    /// for an empty one — `empty_map_literal`'s twin, with one consumer.
+    ///
+    /// `[]` for JSON, TOML, YAML and fig; `.{}` for ZON, whose empty tuple
+    /// and empty struct are the one literal; `<array/>` for plist, whose
+    /// closed containers expand around their first item. INI, dotenv and
+    /// `.properties` have no list at all, and NestedText's only empty list
+    /// is the inline `[]` its editor does not extend, so all four declare
+    /// null and a list there must be written whole.
+    empty_seq_literal: ?[]const u8 = null,
 };
 
 /// The five fragment renderers a format may declare — `Decls.renderers` in

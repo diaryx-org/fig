@@ -79,6 +79,7 @@ pub const Language = struct {
             // A dotted-key format: the flow chain is the idiomatic
             // intermediate form, and `fig fmt` canonicalizes it back.
             .empty_map_literal = "{}",
+            .empty_seq_literal = "[]",
             // The `>` marker run that opens a line is section depth, not
             // whitespace — a comment inserted above a line must repeat it or
             // it detaches. See `Syntax.structural_indent`.

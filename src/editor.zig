@@ -859,6 +859,65 @@ pub fn Editor(comptime Language: type) type {
             };
         }
 
+        /// Append `value_text` to the sequence at `path`, starting the
+        /// sequence first when it is not there: `set`'s upsert for a list,
+        /// as `set` is `insertKey`'s. A sequence that is there takes the item
+        /// exactly as `appendToSeq` would place it.
+        ///
+        /// An absent key or a null stands in for the list, and is replaced
+        /// by `Syntax.empty_seq_literal` through `set` — so any missing
+        /// parent mapping is vivified with it — before the item lands. A
+        /// scalar or a mapping there is real data, refused as `appendToSeq`
+        /// refuses it (`NotASequence`), and never clobbered. A format with
+        /// no empty-sequence spelling cannot start one, and reports the
+        /// lookup's own `NotFound`.
+        ///
+        /// Seed-then-append is atomic as a whole, as `set`'s vivify-then-land
+        /// is: an item the new sequence refuses takes the seed with it.
+        pub fn setAppend(self: *Self, path: []const AST.PathSegment, value_text: []const u8) !void {
+            if (!self.seqMissing(path)) return self.appendToSeq(path, value_text);
+            const backup = try self.allocator.dupe(u8, self.source.items);
+            defer self.allocator.free(backup);
+            if (!try self.seedSeq(path)) return self.appendToSeq(path, value_text);
+            self.appendToSeed(path, value_text) catch |err| {
+                try self.restoreSource(backup);
+                return err;
+            };
+        }
+
+        /// Whether the sequence at `path` is yet to exist: the path does not
+        /// resolve, or resolves to a null. What blocks it may still be a
+        /// scalar further up, which `set` refuses when `seedSeq` asks it.
+        fn seqMissing(self: *Self, path: []const AST.PathSegment) bool {
+            const parsed = self.getParsed() catch return false;
+            const node = parsed.ast.getValByPath(path) catch return true;
+            return node.kind == .null_;
+        }
+
+        /// Write `Syntax.empty_seq_literal` at `path` with `set`, returning
+        /// whether there was one to write. A path `set` cannot create — the
+        /// root, or one ending in an index — is left for the caller's op to
+        /// refuse, as is a format with no literal.
+        fn seedSeq(self: *Self, path: []const AST.PathSegment) !bool {
+            const seed = self.syntax().empty_seq_literal orelse return false;
+            if (path.len == 0 or std.meta.activeTag(path[path.len - 1]) != .key) return false;
+            try self.set(path, seed);
+            return true;
+        }
+
+        /// `appendToSeq` into a sequence `seedSeq` started. ZON's `.{}` is
+        /// its empty tuple and its empty struct at once, and parses as the
+        /// struct; the seed is a list by declaration, so an empty flow
+        /// mapping in its place takes the item as a list's first, and parses
+        /// as a list from then on.
+        fn appendToSeed(self: *Self, path: []const AST.PathSegment, value_text: []const u8) !void {
+            const parsed = try self.getParsed();
+            const node = try parsed.ast.getValByPath(path);
+            if (node.kind == .mapping and node.kind.mapping == null and self.isFlowNode(parsed, node))
+                return self.insertFlowItem(parsed, node, parsed.span(node), false, value_text);
+            return self.appendToSeq(path, value_text);
+        }
+
         /// Whether what blocks navigation to `path` is an EMPTY node — a null —
         /// rather than real data. Walks back from `path` to the deepest prefix
         /// that still resolves and reports whether that node is a null; an
@@ -2375,8 +2434,24 @@ pub fn Editor(comptime Language: type) type {
         /// A format whose scalars cannot stand alone as a document (TOML) also
         /// surfaces as `UnsupportedShape`; reconciling a TOML inline array buys
         /// nothing anyway, as it carries no per-element comments.
+        ///
+        /// A sequence that is not there — an absent key or a null — is
+        /// started as `setAppend` starts one, and `items` appended to it in
+        /// order, there being no item to keep; atomic as the rest is.
         pub fn setSequence(self: *Self, path: []const AST.PathSegment, items: []const []const u8) !void {
             if (items.len == 0) return error.UnsupportedShape;
+
+            if (self.seqMissing(path)) {
+                const backup = try self.allocator.dupe(u8, self.source.items);
+                defer self.allocator.free(backup);
+                if (try self.seedSeq(path)) {
+                    for (items) |text| self.appendToSeed(path, text) catch |err| {
+                        try self.restoreSource(backup);
+                        return err;
+                    };
+                    return;
+                }
+            }
 
             // ---- plan against the current parse (no mutation yet) ----
             // Current item kinds. These borrow `self.document`, so the plan must

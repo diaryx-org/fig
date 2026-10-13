@@ -252,8 +252,21 @@ row 0 replace seq.yaml 'l[-]' z
 row 0 set objs.yaml 'o[-].m' 1
 [ "$(cat run/objs.yaml)" = "$(printf 'o:\n  - n: a\n  - n: b\n    m: 1')" ] || fail "set o[-].m: $(cat run/objs.yaml)"
 row 1 get seq.yaml 'nosuch[-]'
-row 1 set seq.yaml 'nosuch[-]' z
-cmp -s run/seq.yaml fixtures/seq.yaml || fail "a refused append to a missing list changed the file"
+# `set` starts a list that is not there, as it starts a missing map, in a
+# format that spells an empty one; `insert` adds only to a list that is.
+row 0 set seq.yaml 'nosuch[-]' z
+[ "$(cat run/seq.yaml)" = "$(printf 'l: [a, b, c]\nnosuch: [z]')" ] || fail "set nosuch[-]: $(cat run/seq.yaml)"
+row 0 set --seq seq.yaml nosuch y z
+[ "$(cat run/seq.yaml)" = "$(printf 'l: [a, b, c]\nnosuch: [y, z]')" ] || fail "set --seq nosuch: $(cat run/seq.yaml)"
+row 1 insert seq.yaml 'nosuch[-]' z
+cmp -s run/seq.yaml fixtures/seq.yaml || fail "a refused insert into a missing list changed the file"
+(cd run && "$fig" set new.json 'l[-]' 1 2>/dev/null) || fail "set l[-] did not create new.json"
+[ "$(cat run/new.json)" = '{"l": [1]}' ] || fail "set l[-] on a new file: $(cat run/new.json)"
+# A format with no list says so, and writes nothing.
+printf 'a=1\n' >fixtures/flat.env
+row 1 set flat.env 'l[-]' z
+cmp -s run/flat.env fixtures/flat.env || fail "a refused list in dotenv changed the file"
+(cd run && "$fig" set flat.env 'l[-]' z 2>&1 >/dev/null | grep -q 'no spelling for an empty list') || fail "set l[-] in dotenv does not say it has no list"
 # `help --oneline` is one line on stdout.
 [ "$("$fig" help --oneline 2>/dev/null | wc -l | tr -d ' ')" = 1 ] || fail "help --oneline is not one line"
 row 0 help --oneline

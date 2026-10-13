@@ -2746,6 +2746,7 @@ const language = {
     merge_key: "<<",
     kv_sep: ": ",
     empty_map_literal: "",
+    empty_seq_literal: "[]",
     single_line_block_mapping: true,
   },
   // The extensions the Zig language claims. The 1.1 dialect differs only

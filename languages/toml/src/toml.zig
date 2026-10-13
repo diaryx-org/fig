@@ -98,6 +98,7 @@ pub const Language = struct {
             // idiomatic intermediate form — `fig fmt` canonicalizes
             // `a = { b = { c = v }}` back to `a.b.c = v`.
             .empty_map_literal = "{}",
+            .empty_seq_literal = "[]",
             // A non-flow TOML sequence is an array-of-tables (use
             // `appendTableToArray`), and TOML has no block scalar array — so
             // the generic block-sequence edits refuse with `NotAnInlineArray`.

@@ -94,6 +94,23 @@ test "zon appendToSeq on an empty .{} is NotASequence (ZON has no way to tell an
     try std.testing.expectError(error.NotASequence, ed.appendToSeq(&.{}, "1"));
 }
 
+test "zon setAppend starts an absent list as .{}, which its first item makes a tuple" {
+    // The seed is the same `.{}` the test above cannot append to; what
+    // `setAppend` wrote it as is a list, and the item goes in as one.
+    var ed = try newZonEditor(".{ .a = 1 }");
+    defer ed.deinit();
+    try ed.setAppend(&.{.{ .key = "tags" }}, "\"x\"");
+    try expectZonSource(&ed, ".{ .a = 1, .tags = .{\"x\"} }");
+    try ed.setAppend(&.{.{ .key = "tags" }}, "\"y\"");
+    try expectZonSource(&ed, ".{ .a = 1, .tags = .{\"x\", \"y\"} }");
+    try ed.setSequence(&.{.{ .key = "l" }}, &.{ "1", "2" });
+    try expectZonSource(&ed, ".{ .a = 1, .tags = .{\"x\", \"y\"}, .l = .{1, 2} }");
+    // An empty struct that was there is real data, and is not taken for one.
+    var empty = try newZonEditor(".{ .m = .{} }");
+    defer empty.deinit();
+    try std.testing.expectError(error.NotASequence, empty.setAppend(&.{.{ .key = "m" }}, "1"));
+}
+
 test "zon append onto a multi-line one-item-per-line array" {
     var ed = try newZonEditor(
         \\.{

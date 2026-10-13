@@ -110,6 +110,7 @@ pub const Language = struct {
             .comments = .{ .line = marker, .trailing = marker, .block = block },
             .kv_sep = ": ",
             .empty_map_literal = "{}",
+            .empty_seq_literal = "[]",
         };
     }
 };

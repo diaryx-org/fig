@@ -85,6 +85,22 @@ test "an empty dict after its key on one line expands under the line's indent, n
     );
 }
 
+test "setAppend starts an absent array as <array/>, expanded around its first item" {
+    try expectEdit("setAppend", wrapper ++ "\n<dict>\n  <key>a</key>\n  <integer>1</integer>\n</dict>\n</plist>\n", .{ &[_]AST.PathSegment{.{ .key = "tags" }}, "x" }, wrapper ++
+        \\
+        \\<dict>
+        \\  <key>a</key>
+        \\  <integer>1</integer>
+        \\  <key>tags</key>
+        \\  <array>
+        \\    <string>x</string>
+        \\  </array>
+        \\</dict>
+        \\</plist>
+        \\
+    );
+}
+
 test "insertKey refuses a dict that closes on its last entry's line" {
     // Appending after the line would land the entry in the outer dict.
     var ed: PlistEditor = .{ .allocator = testing.allocator, .format = .XML };

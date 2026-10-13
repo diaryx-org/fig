@@ -110,6 +110,9 @@ pub const Language = struct {
             },
             // An item is a bare element on its own line.
             .seq_item_marker = "",
+            // An empty array is an element too, which the closed-container
+            // insert expands around its first item.
+            .empty_seq_literal = "<array/>",
         };
     }
 

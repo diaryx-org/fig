@@ -1062,8 +1062,10 @@ typedef struct FigClosedContainers {
 // "=" in `{a=1}`), and a flow object written with it joins its members with
 // `flow_map_entry_sep` (figl's " "); NULL for either is none.
 // `line_continuation`: the byte that, last on a line, carries it on to the
-// next (`\` for .properties), or 0. `size` is sizeof(FigSyntax) as the
-// language was built against it; a field past it takes its default.
+// next (`\` for .properties), or 0. `empty_seq_literal` is the empty list
+// `set` seeds to start one that is absent ("[]"), or NULL for a format with
+// no spelling for one. `size` is sizeof(FigSyntax) as the language was built
+// against it; a field past it takes its default.
 typedef struct FigSyntax {
     uint32_t            size;
     FigComments         comments;
@@ -1092,6 +1094,7 @@ typedef struct FigSyntax {
     const char         *flow_map_kv_sep;
     const char         *flow_map_entry_sep;
     uint8_t             line_continuation;
+    const char         *empty_seq_literal;
 } FigSyntax;
 
 // FigLanguageVTable.lossless: whether the language takes the `$fig` lossless

@@ -924,6 +924,64 @@ test "yaml setSequence declines a non-sequence target" {
     try std.testing.expectError(error.NotASequence, ed.setSequence(&.{.{ .key = "a" }}, &.{"x"}));
 }
 
+test "yaml setSequence starts a list that is absent or null" {
+    var ed = try newYamlEditor("a: 1\n");
+    defer ed.deinit();
+    try ed.setSequence(&.{.{ .key = "tags" }}, &.{ "x", "y" });
+    try expectSource(&ed, "a: 1\ntags: [x, y]\n");
+    var null_ed = try newYamlEditor("tags:\n");
+    defer null_ed.deinit();
+    try null_ed.setSequence(&.{.{ .key = "tags" }}, &.{"x"});
+    try expectSource(&null_ed, "tags: [x]\n");
+}
+
+// --- setAppend: `set`'s `[-]`, which starts a missing list ---
+
+test "yaml setAppend appends to a list that is there" {
+    var ed = try newYamlEditor("tags:\n  - a\n");
+    defer ed.deinit();
+    try ed.setAppend(&.{.{ .key = "tags" }}, "b");
+    try expectSource(&ed, "tags:\n  - a\n  - b\n");
+}
+
+test "yaml setAppend starts an absent list, and its missing parents" {
+    var ed = try newYamlEditor("a: 1\n");
+    defer ed.deinit();
+    try ed.setAppend(&.{.{ .key = "tags" }}, "x");
+    try ed.setAppend(&.{.{ .key = "tags" }}, "y");
+    try expectSource(&ed, "a: 1\ntags: [x, y]\n");
+    try ed.setAppend(&.{ .{ .key = "p" }, .{ .key = "q" } }, "z");
+    try expectSource(&ed, "a: 1\ntags: [x, y]\np:\n  q: [z]\n");
+}
+
+test "yaml setAppend starts a list where a null stands, and in an empty document" {
+    var ed = try newYamlEditor("tags:\n");
+    defer ed.deinit();
+    try ed.setAppend(&.{.{ .key = "tags" }}, "x");
+    try expectSource(&ed, "tags: [x]\n");
+    var empty = try newYamlEditor("");
+    defer empty.deinit();
+    try empty.setAppend(&.{.{ .key = "tags" }}, "x");
+    try expectSource(&empty, "tags: [x]\n");
+}
+
+test "yaml setAppend never clobbers a scalar or a mapping" {
+    var ed = try newYamlEditor("a: 1\nm:\n  k: v\n");
+    defer ed.deinit();
+    try std.testing.expectError(error.NotASequence, ed.setAppend(&.{.{ .key = "a" }}, "x"));
+    try std.testing.expectError(error.NotASequence, ed.setAppend(&.{.{ .key = "m" }}, "x"));
+    try std.testing.expectError(error.NotAMapping, ed.setAppend(&.{ .{ .key = "a" }, .{ .key = "l" } }, "x"));
+    try expectSource(&ed, "a: 1\nm:\n  k: v\n");
+}
+
+test "yaml setAppend takes its seed back when the item is refused" {
+    var ed = try newYamlEditor("a: 1\n");
+    defer ed.deinit();
+    // A block mapping cannot go into the flow `[]` the seed is.
+    try std.testing.expectError(error.BlockValueIntoFlow, ed.setAppend(&.{.{ .key = "tags" }}, "k: v\nj: w"));
+    try expectSource(&ed, "a: 1\n");
+}
+
 test "a key inserted into an item's mapping aligns under the item's keys, past each marker" {
     var ed = try newYamlEditor("x:\n  - k: v\n    j: w\n");
     defer ed.deinit();

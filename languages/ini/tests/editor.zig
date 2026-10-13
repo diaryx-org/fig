@@ -80,6 +80,16 @@ test "ini set does NOT auto-vivify a missing section; surfaces NotFound" {
     try testing.expectEqualStrings("name = fig\n", ed.source.items);
 }
 
+test "ini setAppend and setSequence cannot start a list; surface NotFound" {
+    // INI has no list, so no `empty_seq_literal` to start one with.
+    var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
+    try ed.init("[s]\na = 1\n");
+    defer ed.deinit();
+    try testing.expectError(error.NotFound, ed.setAppend(&.{ .{ .key = "s" }, .{ .key = "tags" } }, "x"));
+    try testing.expectError(error.NotFound, ed.setSequence(&.{ .{ .key = "s" }, .{ .key = "tags" } }, &.{"x"}));
+    try testing.expectEqualStrings("[s]\na = 1\n", ed.source.items);
+}
+
 test "ini deleteKey refuses to delete a whole [section] header" {
     var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
     try ed.init("[server]\nhost = localhost\n");

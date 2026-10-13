@@ -554,6 +554,7 @@ const language = {
     // `.` (the wire carries a sigil as its byte).
     key_sigil: 46,
     empty_map_literal: ".{}",
+    empty_seq_literal: ".{}",
     bare_document_mapping: false,
     flow_map_open: ".{",
     flow_map_close: "}",

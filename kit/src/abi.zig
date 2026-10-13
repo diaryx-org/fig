@@ -244,6 +244,8 @@ pub const SyntaxDesc = extern struct {
     flow_map_entry_sep: ?[*:0]const u8 = null,
     /// 0 for none.
     line_continuation: u8 = 0,
+    /// Null for a format with no empty-sequence spelling.
+    empty_seq_literal: ?[*:0]const u8 = null,
 };
 
 /// `VTable.lossless`: `manifest.NativeKinds` as bits. `lossless_envelope`

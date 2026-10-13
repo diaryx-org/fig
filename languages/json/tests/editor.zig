@@ -435,3 +435,14 @@ test "json moveKey moves the last member before the first" {
     try ed.moveKey(&.{.{ .key = "c" }}, &.{.{ .key = "b" }});
     try std.testing.expectEqualStrings("{\n  \"a\": 1,\n  \"c\": 3,\n  \"b\": 2\n}", ed.source.items);
 }
+
+test "json setAppend starts an absent list, and its missing parents" {
+    var ed: editor.Editor(json.Language) = .{ .allocator = std.testing.allocator, .format = .JSON };
+    try ed.init("{\"a\": 1}");
+    defer ed.deinit();
+    try ed.setAppend(&.{.{ .key = "tags" }}, "\"x\"");
+    try ed.setAppend(&.{.{ .key = "tags" }}, "\"y\"");
+    try std.testing.expectEqualStrings("{\"a\": 1, \"tags\": [\"x\", \"y\"]}", ed.source.items);
+    try ed.setAppend(&.{ .{ .key = "p" }, .{ .key = "q" } }, "true");
+    try std.testing.expectEqualStrings("{\"a\": 1, \"tags\": [\"x\", \"y\"], \"p\": {\"q\": [true]}}", ed.source.items);
+}

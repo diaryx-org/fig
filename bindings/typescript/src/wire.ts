@@ -120,6 +120,9 @@ export interface Syntax {
   /** The byte that, last on a line, carries it on to the next (92 for
    *  `.properties`' `\`), as its code, or 0 for none. */
   line_continuation?: number;
+  /** The empty list `set` seeds to start one that is absent (`[]`); absent
+   *  or null for a format with no spelling for one. */
+  empty_seq_literal?: string | null;
 }
 
 /** Which kinds the format holds natively — what the `$fig` lossless

@@ -74,6 +74,7 @@ fn applyOp(
         .set => try editor.set(path, text),
         .set_sequence => |items| try editor.setSequence(path, items),
         .append_seq => try editor.appendToSeq(path, text),
+        .set_append => try editor.setAppend(path, text),
         .prepend_seq => try editor.prependToSeq(path, text),
         .insert_seq_item => |index| try editor.insertItem(path, index, text),
         .delete_key => if (!try deleteIfSection(Lang, editor, path)) try editor.deleteKey(path),
@@ -196,7 +197,7 @@ pub fn applyValueEdit(
     // How deep the value lands: at `path` for a replacement or an upsert,
     // one level below it for a new key or a sequence item.
     const depth = path.len + @as(usize, switch (op) {
-        .insert_key, .append_seq, .prepend_seq, .insert_seq_item, .set_sequence => 1,
+        .insert_key, .append_seq, .set_append, .prepend_seq, .insert_seq_item, .set_sequence => 1,
         else => 0,
     });
     if (value.one) |v| try value_arg.refuseDropped(allocator, v, format, depth);

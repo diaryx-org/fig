@@ -134,7 +134,8 @@ pub fn runSet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
     // `--seq` reconciles the sequence at `path`; otherwise upsert a scalar.
     // Both flow through the shared structural-edit router.
     // A path ending in an index upserts a sequence item: `[-]` appends, the
-    // way it does for `insert`, and an index that is there is replaced.
+    // way it does for `insert`, starting the list when it is not there as
+    // `set` starts a missing map, and an index that is there is replaced.
     // An index past the end is refused below, since there is no item
     // between the last and it to fill.
     var path = opts.path;
@@ -146,7 +147,7 @@ pub fn runSet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
         .{ .set_sequence = opts.values }
     else if (item == append_index) blk: {
         path = path[0 .. path.len - 1];
-        break :blk .append_seq;
+        break :blk .set_append;
     } else if (item != null) .replace_value else .set;
     const text: []const u8 = if (opts.seq) "" else opts.value;
     // On a from-scratch create, roll the new file back if the edit fails
@@ -162,16 +163,23 @@ pub fn runSet(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_te
             try stderr_term.writer.flush();
             std.process.exit(1);
         }
-        // `set` makes missing maps but not a missing list, so an append to
-        // one has nothing to land in; say how to start it, rather than the
-        // "no such path" or "not a mapping" the lookup gives.
-        if ((err == error.NotFound or err == error.NotAMapping) and op == .append_seq) {
-            try stderr_term.writer.print("error: there is no list to append to, so nothing was written; start one with `{s} set {s} <path> '[<value>]'`.\n", .{ binary_name, opts.file });
+        // `set` starts a missing list from the format's empty one; a format
+        // with none has nothing to start it with, which the lookup's "no
+        // such path" would not say.
+        if (err == error.NotFound and (op == .set_append or op == .set_sequence) and !startsLists(resolved)) {
+            try stderr_term.writer.print("error: {s} has no spelling for an empty list, so set cannot start one; nothing was written.\n", .{types.name(resolved)});
             try stderr_term.writer.flush();
             std.process.exit(1);
         }
         return err;
     };
+}
+
+/// Whether `format` spells an empty sequence (`Syntax.empty_seq_literal`),
+/// so that `set` can start a list that is not there.
+fn startsLists(format: Format) bool {
+    const e = types.runtimeEntry(format) orelse return false;
+    return fig.Runtime.Language.syntax(e.typeOf()).empty_seq_literal != null;
 }
 
 pub fn runInsert(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr_term: *Io.Terminal, binary_name: []const u8, opts: types.InsertOptions) !void {
@@ -206,7 +214,16 @@ pub fn runInsert(a: std.mem.Allocator, io: Io, stdout_term: *Io.Terminal, stderr
                 .append_seq
             else
                 .{ .insert_seq_item = index };
-            try edit_ops.applyToFileAs(a, io, input, resolved, parent, opts.value, value, op);
+            edit_ops.applyToFileAs(a, io, input, resolved, parent, opts.value, value, op) catch |err| {
+                // `insert` adds to a list that is there, as it adds a key to
+                // a map that is; `set` is the verb that starts one.
+                if (err == error.NotFound and op != .insert_seq_item) {
+                    try stderr_term.writer.print("error: there is no list to insert into, so nothing was written; `{s} set` starts one: `{s} set {s} <path>[-] <value>`.\n", .{ binary_name, binary_name, opts.file });
+                    try stderr_term.writer.flush();
+                    std.process.exit(1);
+                }
+                return err;
+            };
         },
     }
 }

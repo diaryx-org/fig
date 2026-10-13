@@ -287,6 +287,9 @@ pub struct Syntax {
     /// (`.properties`' `\`). The engine ends a continued line with a
     /// blank one before writing a line after it.
     pub line_continuation: Option<u8>,
+    /// The empty list `set` seeds to start one that is absent (`[]`), or
+    /// `None` for a format with no spelling for one.
+    pub empty_seq_literal: Option<String>,
 }
 
 impl Default for Syntax {
@@ -320,6 +323,7 @@ impl Default for Syntax {
             flow_map_kv_sep: String::new(),
             flow_map_entry_sep: String::new(),
             line_continuation: None,
+            empty_seq_literal: None,
         }
     }
 }
@@ -1322,6 +1326,7 @@ impl CSyntax {
             flow_map_kv_sep: opt_ptr(&mut strings, Some(&s.flow_map_kv_sep))?,
             flow_map_entry_sep: opt_ptr(&mut strings, Some(&s.flow_map_entry_sep))?,
             line_continuation: s.line_continuation.unwrap_or(0),
+            empty_seq_literal: opt_ptr(&mut strings, s.empty_seq_literal.as_deref())?,
         };
         Ok(Box::new(CSyntax {
             c,

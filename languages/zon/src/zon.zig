@@ -81,6 +81,8 @@ pub const Language = struct {
             // delete or the splice strands it beside a survivor.
             .key_sigil = '.',
             .empty_map_literal = ".{}",
+            // The same `.{}`: ZON's empty tuple is its empty struct.
+            .empty_seq_literal = ".{}",
             // No bare `key: value` document form (unlike YAML/JSON5, whose
             // root can be a keyless top-level mapping), so a null promotes in
             // place to `.{ key = value }` — root or nested, no distinction.

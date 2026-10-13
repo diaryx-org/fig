@@ -666,6 +666,7 @@ pub fn syntax_to_value(x: &Syntax) -> Value {
             "line_continuation",
             x.line_continuation.map_or(Value::Null, Value::from),
         ),
+        ("empty_seq_literal", opt_s(&x.empty_seq_literal)),
     ])
 }
 
@@ -761,6 +762,7 @@ pub fn syntax_from_value(v: &Value) -> Result<Syntax, LanguageError> {
             .and_then(Value::as_u64)
             .filter(|&n| n > 0 && n < 256)
             .map(|n| n as u8),
+        empty_seq_literal: opt_str_of(v.get("empty_seq_literal")),
     })
 }
 

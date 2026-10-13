@@ -450,6 +450,9 @@ pub const EditOp = union(enum) {
     set_sequence: []const []const u8,
     /// Append `text` as a new last item to the sequence at `path`.
     append_seq,
+    /// `append_seq`, starting the sequence at `path` first when it is absent
+    /// or null: `set`'s `[-]`.
+    set_append,
     /// Insert `text` as the new first item of the sequence at `path`.
     prepend_seq,
     /// Insert `text` into the sequence at `path` as the item at this index,

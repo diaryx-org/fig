@@ -538,6 +538,7 @@ const language = {
     comments: { line: { open: "//" }, trailing: { open: "//" }, block: { open: "/*", close: "*/" } },
     kv_sep: ": ",
     empty_map_literal: "{}",
+    empty_seq_literal: "[]",
   },
   // The language's own name goes on its first dialect; each takes the
   // extension of the Zig dialect of its name.

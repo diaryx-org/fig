@@ -97,6 +97,9 @@ pub const Language = struct {
             // The empty seed rather than `{}` — see `Syntax.empty_map_literal`
             // for why the two are not interchangeable here.
             .empty_map_literal = "",
+            // A flow `[]`: a null cannot become a block list as it becomes
+            // a block mapping, so the list a `set` starts is a flow one.
+            .empty_seq_literal = "[]",
             // The only editable format whose block mapping has a single-line
             // spelling (`k: v`) that reaches the splice paths.
             .single_line_block_mapping = true,

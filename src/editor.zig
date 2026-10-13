@@ -2215,7 +2215,83 @@ pub fn Editor(comptime Language: type) type {
             if (!self.syntax().block_seq_editable) return error.NotAnInlineArray;
             const line_start = commentBlockStart(source, lineStartBefore(source, markerStart(parsed, item)), self.syntax().comments);
             const del_end = lineEndAfter(source, item_span.end -| 1);
+            if (is_first and parsed.ast.next(&item) == null) {
+                var out: std.ArrayList(u8) = .empty;
+                defer out.deinit(self.allocator);
+                if (try self.emptiedBlockSeq(&out, parsed, node, item, line_start, del_end)) |span|
+                    return self.replaceAtSpan(span, out.items);
+            }
             try self.replaceAtSpan(Span.init(line_start, del_end), "");
+        }
+
+        /// The span to splice `out` over to remove the ONLY item of the
+        /// block sequence `node`, whose lines run from `line_start` to
+        /// `del_end`, and leave `[]` in its place — or null when the plain
+        /// line delete is right.
+        ///
+        /// A block sequence is nothing but its items, so deleting the lines
+        /// of the last one deletes the sequence too: `links:` over `- a`
+        /// would read back as `links:`, a null, where a flow list, JSON and
+        /// TOML all keep the list and empty it. A format with flow syntax
+        /// spells the empty list `[]`, and it goes where the value began:
+        ///
+        ///   * in place of the item when something else shares its marker's
+        ///     line — a parent item's `-` in `- - a` — since that line is
+        ///     not the item's to delete;
+        ///   * after the entry's separator, or the parent item's marker, and
+        ///     any anchor or tag the sequence carries (`links: &x`), with
+        ///     the rest of that line — the key's trailing comment — and
+        ///     anything between it and the item's block kept;
+        ///   * alone, for the document root.
+        ///
+        /// A sequence whose span outlives its items' lines has delimiters of
+        /// its own (plist's `<array>`) and empties without help; a format
+        /// with no flow syntax has no `[]` to write, and one that renders
+        /// its own tails does not write it after `: ` (NestedText reads
+        /// `links: []` as the text `[]`). These take the line delete, as
+        /// does a sequence with no recorded place to write into.
+        fn emptiedBlockSeq(self: *const Self, out: *std.ArrayList(u8), parsed: Document, node: AST.Node, item: AST.Node, line_start: usize, del_end: usize) !?Span {
+            if (!self.syntax().flow_containers or self.hasRenderer(.tail)) return null;
+            const source = self.source.items;
+            // The sequence's own text starts past its anchor and tag, which
+            // stand on the line the value began on, and past the comment
+            // that may end that line.
+            const seq_span = parsed.span(node);
+            if (seq_span.end > del_end) return null;
+            var body = seq_span.start;
+            for ([_]?Span{ parsed.anchorSpan(node), parsed.tagSpan(node) }) |prop| {
+                if (prop) |p| body = @max(body, p.end);
+            }
+            if (self.lineEndComment(body, "")) |c| body = c.end;
+            const ends_line = del_end > 0 and source[del_end - 1] == '\n';
+            const marker = markerStart(parsed, item);
+            if (firstNonSpace(source, lineStartBefore(source, marker)) != marker) {
+                if (body < marker) return null;
+                try out.appendSlice(self.allocator, if (ends_line) "[]\n" else "[]");
+                return Span.init(marker, del_end);
+            }
+            if (body < line_start and std.mem.trim(u8, source[body..line_start], " \t\r\n").len > 0) return null;
+            var point: ?usize = null;
+            if (parsed.ast.parentOf(node.id)) |p| switch (parsed.ast.kindOf(p)) {
+                .keyvalue => if (parsed.sepSpan(parsed.ast.node(p))) |sep| {
+                    if (sep.end > sep.start) point = sep.end;
+                },
+                else => {},
+            };
+            for ([_]?Span{ parsed.markerSpan(node), parsed.anchorSpan(node), parsed.tagSpan(node) }) |prop| {
+                if (prop) |p| point = @max(point orelse p.end, p.end);
+            }
+            if (point) |at| {
+                if (at > line_start) return null;
+                try out.appendSlice(self.allocator, " []");
+                // A file that ended without a newline still does.
+                const kept = source[at..line_start];
+                try out.appendSlice(self.allocator, if (ends_line) kept else std.mem.trimEnd(u8, kept, "\r\n"));
+                return Span.init(at, del_end);
+            }
+            if (node.id != parsed.ast.root) return null;
+            try out.appendSlice(self.allocator, if (ends_line) "[]\n" else "[]");
+            return Span.init(line_start, del_end);
         }
 
         /// Reconcile the sequence at `path` so its items are exactly `items` —

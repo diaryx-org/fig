@@ -469,6 +469,84 @@ test "yaml remove middle item of a multi-line one-item-per-line flow seq" {
     try expectSource(&ed, "t: [\n  a,\n  c,\n]\n");
 }
 
+// A block sequence is nothing but its items, so the line delete of its last
+// one used to leave the key null (`links:`). It leaves `[]`, as a flow list
+// does.
+
+test "yaml remove the only item of a block seq leaves an empty flow seq" {
+    var ed = try newYamlEditor("links:\n  - a\nother: 1\n");
+    defer ed.deinit();
+    try ed.removeSeqItem(&.{.{ .key = "links" }}, 0);
+    try expectSource(&ed, "links: []\nother: 1\n");
+    const parsed = try ed.getParsed();
+    const node = try parsed.ast.getValByPath(&.{.{ .key = "links" }});
+    try std.testing.expect(node.kind == .sequence);
+}
+
+test "yaml remove the only item of a block seq keeps the key's comments" {
+    var ed = try newYamlEditor("# links\nlinks: # keep\n  # the item's\n  - a # its own\nother: 1\n");
+    defer ed.deinit();
+    try ed.removeSeqItem(&.{.{ .key = "links" }}, 0);
+    try expectSource(&ed, "# links\nlinks: [] # keep\nother: 1\n");
+}
+
+test "yaml remove the only item of a nested, indentless or last block seq" {
+    var nested = try newYamlEditor("x:\n  links:\n    - a\n  y: 2\n");
+    defer nested.deinit();
+    try nested.removeSeqItem(&.{ .{ .key = "x" }, .{ .key = "links" } }, 0);
+    try expectSource(&nested, "x:\n  links: []\n  y: 2\n");
+
+    var indentless = try newYamlEditor("links:\n- a\nother: 1\n");
+    defer indentless.deinit();
+    try indentless.removeSeqItem(&.{.{ .key = "links" }}, 0);
+    try expectSource(&indentless, "links: []\nother: 1\n");
+
+    var last = try newYamlEditor("title: x\nlinks:\n  - k: 1\n    j: 2");
+    defer last.deinit();
+    try last.removeSeqItem(&.{.{ .key = "links" }}, std.math.maxInt(usize));
+    try expectSource(&last, "title: x\nlinks: []");
+}
+
+test "yaml remove the only item of a block seq keeps its anchor and tag" {
+    var anchored = try newYamlEditor("links: &x\n  - a\nother: *x\n");
+    defer anchored.deinit();
+    try anchored.removeSeqItem(&.{.{ .key = "links" }}, 0);
+    try expectSource(&anchored, "links: &x []\nother: *x\n");
+
+    var tagged = try newYamlEditor("links: !!seq\n  - a\n");
+    defer tagged.deinit();
+    try tagged.removeSeqItem(&.{.{ .key = "links" }}, 0);
+    try expectSource(&tagged, "links: !!seq []\n");
+}
+
+test "yaml remove the only item of a block seq inside a block seq" {
+    var own_line = try newYamlEditor("-\n  - a\n- b\n");
+    defer own_line.deinit();
+    try own_line.removeSeqItem(&.{.{ .index = 0 }}, 0);
+    try expectSource(&own_line, "- []\n- b\n");
+
+    var shared = try newYamlEditor("- - a\n- b\n");
+    defer shared.deinit();
+    try shared.removeSeqItem(&.{.{ .index = 0 }}, 0);
+    try expectSource(&shared, "- []\n- b\n");
+}
+
+test "yaml remove the only item of a root block seq" {
+    var ed = try newYamlEditor("---\n- a\n");
+    defer ed.deinit();
+    try ed.removeSeqItem(&.{}, 0);
+    try expectSource(&ed, "---\n[]\n");
+}
+
+test "yaml remove the only item of a frontmatter block seq" {
+    // What a Markdown host hands the editor: the block between the fences.
+    var ed = try newYamlEditor("title: Note\ntags:\n  - draft\nlinks:\n  - \"[a](/a.md)\"\n");
+    defer ed.deinit();
+    try ed.removeSeqItem(&.{.{ .key = "links" }}, 0);
+    try ed.removeSeqItem(&.{.{ .key = "tags" }}, 0);
+    try expectSource(&ed, "title: Note\ntags: []\nlinks: []\n");
+}
+
 // --- atomicity ---
 
 test "yaml failed edit rolls back source and keeps editor usable" {

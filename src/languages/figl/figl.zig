@@ -9,7 +9,8 @@
 //! ZON's `Type = enum { ZON }` pattern.
 
 const fig = @This();
-const Document = @import("../../kit/parse_tree.zig");
+const Document = @import("../../kit/document.zig");
+const Table = @import("../../kit/table.zig").Table;
 const lang = @import("../../kit/manifest.zig");
 
 pub const Parser = @import("parser.zig");
@@ -24,14 +25,14 @@ pub const Language = struct {
     pub const Parser = fig.Parser;
     pub const Printer = fig.Printer;
     pub const default_type: fig.Type = .Fig;
-    /// The parser's tree, which the contract writes into fig's table.
-    pub fn parseTree(parser: *fig.Parser, input: []const u8, format: fig.Type) !Document {
-        return fig.Parser.parse(parser.allocator, input, format);
+    /// Write `input`'s rows into `out`, the table fig hands a parse.
+    pub fn parseTable(parser: *fig.Parser, input: []const u8, format: fig.Type, out: *Table) !void {
+        _ = parser;
+        return fig.Parser.parseInto(out, input, format);
     }
     /// The document fig would adopt from a parse.
-    pub fn parse(parser: *fig.Parser, input: []const u8, format: fig.Type) !Document.RowDocument {
-        var tree = try parseTree(parser, input, format);
-        return tree.intoDocument(parser.allocator);
+    pub fn parse(parser: *fig.Parser, input: []const u8, format: fig.Type) !Document {
+        return fig.Parser.parse(parser.allocator, input, format);
     }
     pub const print = fig.Printer.print;
     pub const printNode = fig.Printer.printNode;

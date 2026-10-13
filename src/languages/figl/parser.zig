@@ -6,11 +6,11 @@
 //! sub-parser, and the literal-else-string value resolver (`tokenizer.zig`).
 //!
 //! Construction goes through an intermediate, mutable tree (`PendingContainer`
-//! et al.) allocated in a per-parse arena, then converted bottom-up into the
-//! immutable `AST` via `AST.Builder` at the end. This makes "navigate to an
-//! arbitrary existing path and add a child" (dotted keys, index addressing,
-//! header re-entry) tractable without fighting the frozen `Node` array other
-//! parsers build directly into.
+//! et al.) allocated in a per-parse arena, then written bottom-up as rows of
+//! the node table fig hands the parse (`RowWriter`), which puts them in
+//! pre-order once the root is written. This makes "navigate to an arbitrary
+//! existing path and add a child" (dotted keys, index addressing, header
+//! re-entry) tractable without fighting rows written in source order.
 //!
 //! Scope cuts (documented, not silent):
 //!   * Of DESIGN.md's WARN diagnostics, the comment-depth-mismatch lint is not
@@ -32,15 +32,18 @@
 //! (`replace`/`rename`/`set`/`insert`/`delete`/`comment`; see `edit.zig` and `editor_test.zig`).
 //! Whole-container structural ops — the generic `deleteContainer`/
 //! `moveContainer`/`reorderContainers` in `editor.zig` — are built on those
-//! spans plus `Document.node_regions`, which this parser fills with every
+//! spans plus `Document.regionsOf`, which this parser fills with every
 //! block container's header lines (see `recordRegions`).
 
 pub const Parser = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Document = @import("../../kit/parse_tree.zig");
-const AST = Document.Nodes;
+const Document = @import("../../kit/document.zig");
+const AST = @import("../../kit/ast/ast.zig");
+const RowWriter = @import("../../kit/row_writer.zig");
+const table = @import("../../kit/table.zig");
+const Table = table.Table;
 
 const Span = @import("../../kit/span.zig");
 const datetime = @import("../../kit/datetime.zig");
@@ -429,22 +432,13 @@ recover: bool = false,
 /// caller's `Report.errors` by `parseImpl`). Populated only in `recover` mode;
 /// empty otherwise.
 diagnostics: std.ArrayList(Diagnostic) = .empty,
-/// Every block container's header lines, keyed by built node id — the line
-/// that created it plus every `PendingContainer.reentries` entry — filled
-/// during AST assembly (arena-backed; duped out to `Document.node_regions`).
-/// Empty for a document with no block container.
-built_regions: std.ArrayList(Document.NodeRegion) = .empty,
-/// Every `*` element marker by built element id (arena-backed; becomes
-/// `Document.node_marker_spans`). See `TNode.marker`.
-markers: std.ArrayList(Document.SpanEntry) = .empty,
-/// Every assignment's `=` by built `keyvalue` id (arena-backed; becomes
-/// `Document.node_sep_spans`). See `MEntry.sep_span`.
-seps: std.ArrayList(Document.SpanEntry) = .empty,
-/// Every block container's name mentions (arena-backed; becomes
-/// `Document.node_mentions`): its creating key and each `.key` re-entry.
-/// A fig header sits on its parent's own lines, so every mention is an
-/// `.entry`.
-built_mentions: std.ArrayList(Document.NodeMention) = .empty,
+/// The table the pending tree is written into once the line pass is clean
+/// (see "Row assembly"); set by `parseImpl`. Besides the rows it takes each
+/// block container's header lines (`Document.regionsOf`), each `*` marker,
+/// each assignment's `=`, and each block container's name mentions — its
+/// creating key and every `.key` re-entry; a fig header sits on its
+/// parent's own lines, so every mention is an `.entry`.
+w: RowWriter = undefined,
 
 // ── Intermediate tree types ─────────────────────────────────────────────────
 
@@ -469,13 +463,13 @@ const PendingContainer = struct {
     /// re-opens are recorded: a header/assignment whose final segment CREATES
     /// something new anchors its own line through that new node's span, and a
     /// mid-path re-open always rides a line anchored by its final segment one
-    /// way or the other. Threaded out to `Document.node_regions` (keyed by
-    /// built node id, alongside the creating line) during AST assembly, so
+    /// way or the other. Written to `Document.regionsOf` (keyed by its row,
+    /// alongside the creating line) during row assembly, so
     /// the editor's region gather can remove/relocate every physical header
     /// occurrence.
     reentries: std.ArrayList(usize) = .empty,
     /// The key token of each `.key` re-entry above (an `xs[i]` re-entry has
-    /// none), for `Document.node_mentions`: every place this container's
+    /// none), for `Document.mentionsOf`: every place this container's
     /// name is written, so a rename reaches each.
     reentry_names: std.ArrayList(Span) = .empty,
 
@@ -532,7 +526,7 @@ const MEntry = struct {
     key_span: Span = Span.init(0, 0),
     /// The `=` of a `key = value` assignment, or null for an entry with no
     /// separator of its own (a header line, an `x[] = v` element target).
-    /// Recorded to `Document.node_sep_spans` in `buildContainer`.
+    /// Recorded as the entry's `Document.sepSpan` in `buildContainer`.
     sep_span: ?Span = null,
     /// Leading comments bind to the KEY (matches `AST.leadingCommentAnchor` for
     /// a `keyvalue`).
@@ -582,7 +576,7 @@ const TNode = struct {
     /// scalar/container, always applied directly to this node's built id.
     trailing: ?AST.Comment = null,
     /// The explicit `: type =` annotation, recorded as a cross-format type tag
-    /// (`ast.node_tags`) so the annotation round-trips through `fig fmt`. Set by
+    /// (`ast.tagOf`) so the annotation round-trips through `fig fmt`. Set by
     /// `applyKnownType`/`parseAssignedValue`; applied in `buildNode`. Null for an
     /// untyped value (`key = value`).
     tag: ?AST.Tag = null,
@@ -593,7 +587,8 @@ const TNode = struct {
     /// The `*` element marker that introduced this node as a block-sequence
     /// element, or null (a map entry's value, the root, or an element that
     /// arrived through an `x[] = v` append header, which has no marker of its
-    /// own). Recorded to `Document.node_marker_spans` in `buildNode`.
+    /// own). Recorded as the element's `Document.markerSpan` in
+    /// `buildContainer`.
     marker: ?Span = null,
     /// Orphan comments at the end of this node's body (container-only).
     dangling: std.ArrayList(AST.Comment) = .empty,
@@ -632,34 +627,62 @@ const Resolved = struct { container: *PendingContainer, owner: *TNode, entry: ?*
 
 // ── Entry points ─────────────────────────────────────────────────────────────
 
-pub fn parseAbstract(allocator: Allocator, input: []const u8, format: Type) !Document.RowAst {
-    var tree = try parse(allocator, input, format);
-    return tree.intoAst(allocator);
+/// `input` as an `AST`, alone.
+pub fn parseAbstract(allocator: Allocator, input: []const u8, format: Type) Error!AST {
+    const doc = try parse(allocator, input, format);
+    return doc.ast;
 }
 
+/// `input` as a `Document`: its table written and adopted.
 pub fn parse(allocator: Allocator, input: []const u8, format: Type) Error!Document {
-    return parseImpl(allocator, input, format, null, false);
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseInto(&t, input, format);
+    return RowWriter.adopt(allocator, input, &t);
 }
 
-/// `parse`, but also fills `out`: `diag` on failure (error code + byte offset,
-/// for `file:line:col` teaching messages), `warnings` always (authoring-time
-/// lints, allocated with `allocator` — the caller owns/frees them). The hook
-/// the CLI (and eventually the C ABI) renders reports from.
+/// `parse`, reporting as `parseWithReportInto` does.
 pub fn parseWithReport(allocator: Allocator, input: []const u8, format: Type, out: *Report) Error!Document {
-    return parseImpl(allocator, input, format, out, false);
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseWithReportInto(&t, input, format, out);
+    return RowWriter.adopt(allocator, input, &t);
 }
 
-/// `parseWithReport`, but recovers past each error to collect the WHOLE file's
-/// diagnostics in one pass (`out.errors`, source order) rather than stopping at
-/// the first — the entry a language server wants, so every mistake squiggles at
-/// once. On any error the return value is still the first error code and the
-/// tree is NOT built (both consumers discard it); a clean parse returns the
-/// Document exactly as `parseWithReport` would. `out.diag` mirrors `errors[0]`.
+/// `parse`, collecting as `parseCollectingInto` does.
 pub fn parseCollecting(allocator: Allocator, input: []const u8, format: Type, out: *Report) Error!Document {
-    return parseImpl(allocator, input, format, out, true);
+    var t = Table.init(allocator, input);
+    defer t.deinit();
+    try parseCollectingInto(&t, input, format, out);
+    return RowWriter.adopt(allocator, input, &t);
 }
 
-fn parseImpl(allocator: Allocator, input: []const u8, format: Type, out: ?*Report, recover: bool) Error!Document {
+/// Write `input`'s rows into `t`, the table fig hands a parse.
+pub fn parseInto(t: *Table, input: []const u8, format: Type) Error!void {
+    return parseImpl(t, input, format, null, false);
+}
+
+/// `parseInto`, but also fills `out`: `diag` on failure (error code + byte
+/// offset, for `file:line:col` teaching messages), `warnings` always
+/// (authoring-time lints, allocated with the table's allocator — the caller
+/// owns/frees them). The hook the CLI (and the C ABI) renders reports from.
+pub fn parseWithReportInto(t: *Table, input: []const u8, format: Type, out: *Report) Error!void {
+    return parseImpl(t, input, format, out, false);
+}
+
+/// `parseWithReportInto`, but recovers past each error to collect the WHOLE
+/// file's diagnostics in one pass (`out.errors`, source order) rather than
+/// stopping at the first — the entry a language server wants, so every
+/// mistake squiggles at once. On any error the return value is still the
+/// first error code and no row is written (both consumers discard the
+/// table); a clean parse writes it exactly as `parseWithReportInto` would.
+/// `out.diag` mirrors `errors[0]`.
+pub fn parseCollectingInto(t: *Table, input: []const u8, format: Type, out: *Report) Error!void {
+    return parseImpl(t, input, format, out, true);
+}
+
+fn parseImpl(t: *Table, input: []const u8, format: Type, out: ?*Report, recover: bool) Error!void {
+    const allocator = t.allocator;
     // `Type` has a single member (`.Fig`) — the fig dialect is unversioned — so
     // there is nothing to branch on. The parameter is kept only so this parser
     // matches the uniform `Language.parse(parser, input, format)` signature the
@@ -673,7 +696,7 @@ fn parseImpl(allocator: Allocator, input: []const u8, format: Type, out: ?*Repor
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
 
-    var self: Parser = .{ .allocator = arena_state.allocator(), .source = input, .recover = recover };
+    var self: Parser = .{ .allocator = arena_state.allocator(), .source = input, .recover = recover, .w = .init(t) };
     // A leading UTF-8 BOM is permitted and ignored (mirrors TOML's tokenizer /
     // JSON's tokenizer) — skip it before any tokenizing/key parsing happens.
     if (std.mem.startsWith(u8, input, "\xEF\xBB\xBF")) self.pos = 3;
@@ -703,28 +726,11 @@ fn parseImpl(allocator: Allocator, input: []const u8, format: Type, out: ?*Repor
         return self.diagnostics.items[0].code;
     }
 
-    var b = AST.Builder.init(allocator);
-    // `finish` only moves `nodes`/`owned_strings` out; the comment side-table's
-    // outer spines (`comments`/`view_comments`) are never consumed by it, so
-    // `deinit` is still required on the success path too (mirrors every
-    // `Builder` call site, including its own tests).
-    defer b.deinit();
-    const root_id = try self.buildRoot(&b);
-    var ast = try b.finish(root_id);
-    errdefer ast.deinit();
-    const node_spans = try b.takeSpans();
-    errdefer allocator.free(node_spans);
-    const node_marker_spans = try Document.buildSpanTable(allocator, node_spans.len, self.markers.items);
-    errdefer allocator.free(node_marker_spans);
-    const node_sep_spans = try Document.buildSpanTable(allocator, node_spans.len, self.seps.items);
-    errdefer allocator.free(node_sep_spans);
-    const node_regions = try allocator.dupe(Document.NodeRegion, self.built_regions.items);
-    Document.sortRegions(node_regions);
-    errdefer allocator.free(node_regions);
-    const node_mentions = try allocator.dupe(Document.NodeMention, self.built_mentions.items);
-    Document.sortMentions(node_mentions);
-
-    return .{ .source = input, .ast = ast, .node_spans = node_spans, .node_marker_spans = node_marker_spans, .node_sep_spans = node_sep_spans, .node_regions = node_regions, .node_mentions = node_mentions };
+    // Every text the pending tree holds is a slice of `input` or an arena
+    // copy; `RowWriter.add` copies the latter into the table's buffer, so
+    // the arena may go once the rows are written.
+    const root_id = try self.buildRoot();
+    try self.w.finish(root_id);
 }
 
 /// Return `err` with the diagnostic caret pinned to `offset` — for the sites
@@ -1686,7 +1692,7 @@ fn looksLikeLeadingDotNumber(text: []const u8) bool {
 }
 
 /// Explicit typing (`key: type = value`): the annotation is checked and
-/// coercing, and now also STORED as a cross-format type tag (`ast.node_tags`)
+/// coercing, and now also STORED as a cross-format type tag (`ast.tagOf`)
 /// so it round-trips (DESIGN.md "Explicit typing"). The value's VERBATIM lexeme
 /// is kept as the node's `raw`/`text` — the coercion normalizers below run only
 /// to *validate* (a genuine mismatch still errors), never to rewrite the bytes,
@@ -2198,9 +2204,9 @@ fn scanFlowBareBracket(self: *Parser, pos: FlowPos) []const u8 {
     return std.mem.trim(u8, self.source[start..self.pos], " \t\r");
 }
 
-// ── AST assembly (bottom-up, via AST.Builder) ────────────────────────────────
+// ── Row assembly (bottom-up, via RowWriter) ─────────────────────────────────
 
-fn buildRoot(self: *Parser, b: *AST.Builder) Error!AST.Node.Id {
+fn buildRoot(self: *Parser) Error!AST.Node.Id {
     // An empty (or comments-only) document leaves the root `undecided`. Fig has
     // no bare-scalar root, and an empty mapping is the natural seed for a fresh
     // file (`fig set new.figl k v` lands its first key into it), so coerce the
@@ -2211,24 +2217,25 @@ fn buildRoot(self: *Parser, b: *AST.Builder) Error!AST.Node.Id {
     if (self.root.kind == .undecided) self.root.kind = .mapping;
     var root_wrap: TNode = .{ .value = .{ .container = &self.root }, .span = Span.init(0, 0) };
     root_wrap.dangling = self.root_dangling;
-    return self.buildNode(b, &root_wrap);
+    return self.buildNode(&root_wrap);
 }
 
-/// Build `node` into `b`, returning its id. For a container, `node.span.end`
-/// is widened here to the full extent of its subtree — every child's own span
-/// is already final by the time it's read back (`buildNode` recurses
-/// bottom-up), so no separate position-tracking pass is needed during the
-/// original line scan; only each container's OPENING position (stamped at
-/// creation time — see `TNode.span`'s doc comment) had to be recorded there.
-fn buildNode(self: *Parser, b: *AST.Builder, node: *TNode) Error!AST.Node.Id {
+/// Write `node`'s row (its subtree's first), returning its id. For a
+/// container, `node.span.end` is widened here to the full extent of its
+/// subtree — every child's own span is already final by the time it's read
+/// back (`buildNode` recurses bottom-up), so no separate position-tracking
+/// pass is needed during the original line scan; only each container's
+/// OPENING position (stamped at creation time — see `TNode.span`'s doc
+/// comment) had to be recorded there.
+fn buildNode(self: *Parser, node: *TNode) Error!AST.Node.Id {
     const id: AST.Node.Id = switch (node.value) {
-        .null_ => try b.addNull(),
-        .boolean => |v| try b.addBool(v),
-        .string => |s| try b.addString(s),
-        .number => |n| try b.addNumberRaw(n.raw, n.kind == .float),
-        .extended => |e| try b.addExtended(e.kind, e.text),
+        .null_ => try self.w.add(.null_, node.span),
+        .boolean => |v| try self.w.add(.{ .boolean = v }, node.span),
+        .string => |s| try self.w.add(.{ .string = s }, node.span),
+        .number => |n| try self.w.add(.{ .number = .{ .raw = n.raw, .kind = if (n.kind == .float) .float else .integer } }, node.span),
+        .extended => |e| try self.w.add(.{ .extended = .{ .kind = e.kind, .text = e.text } }, node.span),
         .container => |c| blk: {
-            const built = try self.buildContainer(b, c);
+            const built = try self.buildContainer(c);
             node.span.end = @max(node.span.end, built.end);
             // A BLOCK container (not a flow `{…}`/`[…]`, not the root) is a
             // section node: its header line(s) go on the document's region
@@ -2238,62 +2245,63 @@ fn buildNode(self: *Parser, b: *AST.Builder, node: *TNode) Error!AST.Node.Id {
             break :blk built.id;
         },
     };
-    b.setSpan(id, node.span);
-    if (node.tag) |tag| try b.setTag(id, tag);
-    if (node.trailing) |t| try b.setTrailingComment(id, t);
-    for (node.dangling.items) |c| try b.addDanglingComment(id, c);
+    self.w.setSpan(id, node.span);
+    if (node.tag) |tag| try self.w.tag(id, tag, 0, true, null);
+    if (node.trailing) |t| try self.w.comment(id, table.comment_trailing, t);
+    for (node.dangling.items) |c| try self.w.comment(id, table.comment_dangling, c);
     return id;
 }
 
 const BuiltContainer = struct { id: AST.Node.Id, end: usize };
 
-fn buildContainer(self: *Parser, b: *AST.Builder, c: *PendingContainer) Error!BuiltContainer {
+/// Write container `c`'s children, then its own row heading them.
+fn buildContainer(self: *Parser, c: *PendingContainer) Error!BuiltContainer {
     switch (c.kind) {
         .undecided => return error.FigEmptyContainer,
         .mapping => {
-            var kv_ids: std.ArrayList(AST.Node.Id) = .empty;
-            try kv_ids.ensureTotalCapacityPrecise(self.allocator, c.mapping.entries.items.len);
+            var first: ?AST.Node.Id = null;
+            var prev: ?AST.Node.Id = null;
             var end: usize = 0;
             for (c.mapping.entries.items) |e| {
-                const key_id = try b.addString(e.key);
-                b.setSpan(key_id, e.key_span);
-                if (e.key_leading.items.len > 0) try b.setComments(key_id, .{ .leading = e.key_leading.items });
-                const value_id = try self.buildNode(b, &e.value);
+                const key_id = try self.w.add(.{ .string = e.key }, e.key_span);
+                for (e.key_leading.items) |lc| try self.w.comment(key_id, table.comment_leading, lc);
+                const value_id = try self.buildNode(&e.value);
                 if (e.value.value == .container and !e.value.value.container.closed) {
-                    try self.built_mentions.append(self.allocator, .{ .node_id = value_id, .span = e.key_span, .kind = .entry });
+                    try self.w.mention(value_id, e.key_span, .entry);
                     for (e.value.value.container.reentry_names.items) |name|
-                        try self.built_mentions.append(self.allocator, .{ .node_id = value_id, .span = name, .kind = .entry });
+                        try self.w.mention(value_id, name, .entry);
                 }
-                const kv_id = try b.addKeyValue(key_id, value_id);
-                b.setSpan(kv_id, Span.init(e.key_span.start, e.value.span.end));
-                if (e.sep_span) |sep| try self.seps.append(self.allocator, .{ .node_id = kv_id, .span = sep });
+                const kv_id = try self.w.add(.{ .keyvalue = .{ .key = key_id, .value = value_id } }, Span.init(e.key_span.start, e.value.span.end));
+                if (e.sep_span) |sep| try self.w.sep(kv_id, sep);
                 end = @max(end, e.value.span.end);
-                kv_ids.appendAssumeCapacity(kv_id);
+                if (prev) |p| self.w.setNext(p, kv_id) else first = kv_id;
+                prev = kv_id;
             }
-            const id = try b.addMappingFromEntries(kv_ids.items);
+            const id = try self.w.add(.{ .mapping = first }, Span.init(0, 0));
             return .{ .id = id, .end = end };
         },
         .sequence => {
-            var ids: std.ArrayList(AST.Node.Id) = .empty;
-            try ids.ensureTotalCapacityPrecise(self.allocator, c.sequence.elements.items.len);
+            var first: ?AST.Node.Id = null;
+            var prev: ?AST.Node.Id = null;
             var end: usize = 0;
             for (c.sequence.elements.items) |el| {
-                const el_id = try self.buildNode(b, el);
+                const el_id = try self.buildNode(el);
                 end = @max(end, el.span.end);
-                if (el.marker) |m| try self.markers.append(self.allocator, .{ .node_id = el_id, .span = m });
-                for (el.leading.items) |lc| try b.addLeadingComment(el_id, lc);
-                ids.appendAssumeCapacity(el_id);
+                if (el.marker) |m| try self.w.marker(el_id, m);
+                for (el.leading.items) |lc| try self.w.comment(el_id, table.comment_leading, lc);
+                if (prev) |p| self.w.setNext(p, el_id) else first = el_id;
+                prev = el_id;
             }
-            const id = try b.addSequence(ids.items);
+            const id = try self.w.add(.{ .sequence = first }, Span.init(0, 0));
             return .{ .id = id, .end = end };
         },
     }
 }
 
-/// Record the header lines of the block container built as node `id`: the
+/// Record the header lines of the block container written as node `id`: the
 /// line holding `created_at` (its creating header — a key, a `*`, an `[i]`),
 /// then every later header that re-opened it (`PendingContainer.reentries`).
-/// The `PendingContainer` → `Document.node_regions` bridge.
+/// The `PendingContainer` → `Document.regionsOf` bridge.
 fn recordRegions(self: *Parser, c: *const PendingContainer, id: AST.Node.Id, created_at: usize) Error!void {
     try self.appendRegion(id, created_at);
     for (c.reentries.items) |off| try self.appendRegion(id, off);
@@ -2301,7 +2309,7 @@ fn recordRegions(self: *Parser, c: *const PendingContainer, id: AST.Node.Id, cre
 
 fn appendRegion(self: *Parser, id: AST.Node.Id, at: usize) Error!void {
     const line = Document.lineRegionAt(self.source, at);
-    try self.built_regions.append(self.allocator, .{ .node_id = id, .start = line.start, .end = line.end });
+    try self.w.region(id, line.start, line.end);
 }
 
 // ── Char-level helpers ───────────────────────────────────────────────────────
@@ -2373,10 +2381,10 @@ fn isTripleAt(self: *Parser, pos: usize, q: u8) bool {
 
 const testing = std.testing;
 
-fn expectParse(input: []const u8, expected: AST) !void {
-    var tree = try parse(testing.allocator, input, .Fig);
-    defer tree.deinit(testing.allocator);
-    try testing.expect(expected.eql(tree.ast));
+fn expectParse(input: []const u8, expected: AST.Literal) !void {
+    var ast = try parseAbstract(testing.allocator, input, .Fig);
+    defer ast.deinit();
+    try testing.expect(expected.matches(ast));
 }
 
 test "empty document is an empty root map (seedable for a from-scratch `set`)" {

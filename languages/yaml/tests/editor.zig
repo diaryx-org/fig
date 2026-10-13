@@ -719,6 +719,37 @@ test "yaml replace scalar with scalar keeps it inline" {
     try expectSource(&ed, "title: Hi\n");
 }
 
+// A block value written over an item goes under the item's content column,
+// as the printer writes a map in a list. Its second line at column 0 put `y`
+// in the mapping around the list, and the replace reported success.
+test "yaml replace an item with a block value indents it under the item" {
+    const cases = [_]struct { source: []const u8, path: []const AST.PathSegment, value: []const u8, expected: []const u8 }{
+        // scalar → map, under a key
+        .{ .source = "k:\n  - x\n", .path = &.{ .{ .key = "k" }, .{ .index = 0 } }, .value = "x: 1\ny: two", .expected = "k:\n  - x: 1\n    y: two\n" },
+        // scalar → list, at the root
+        .{ .source = "- x\n- z\n", .path = &.{.{ .index = 0 }}, .value = "- 1\n- 2", .expected = "- - 1\n  - 2\n- z\n" },
+        // map → map
+        .{ .source = "k:\n  - a: 1\n    b: 2\n  - z\n", .path = &.{ .{ .key = "k" }, .{ .index = 0 } }, .value = "x: 1\ny: two", .expected = "k:\n  - x: 1\n    y: two\n  - z\n" },
+        // list → list, nested in a compact item
+        .{ .source = "- - - a\n    - b\n  - c\n", .path = &.{ .{ .index = 0 }, .{ .index = 0 } }, .value = "- 1\n- 2", .expected = "- - - 1\n    - 2\n  - c\n" },
+        // a compact item's scalar
+        .{ .source = "- - x\n  - z\n", .path = &.{ .{ .index = 0 }, .{ .index = 0 } }, .value = "x: 1\ny: two", .expected = "- - x: 1\n    y: two\n  - z\n" },
+        // the item's comments stay
+        .{ .source = "# lead\n- x # tail\n- z\n", .path = &.{.{ .index = 0 }}, .value = "x: 1\ny: two", .expected = "# lead\n- x: 1\n  y: two # tail\n- z\n" },
+        .{ .source = "- # c\n  a: 1\n  b: 2\n- z\n", .path = &.{.{ .index = 0 }}, .value = "x: 1\ny: two", .expected = "- # c\n  x: 1\n  y: two\n- z\n" },
+        // CRLF: the value's own lines are written as the editor writes lines
+        .{ .source = "a: 1\r\nb:\r\n  - x\r\n  - y\r\n", .path = &.{ .{ .key = "b" }, .{ .index = 0 } }, .value = "x: 1\ny: two", .expected = "a: 1\r\nb:\r\n  - x: 1\n    y: two\r\n  - y\r\n" },
+        // a block scalar's item keeps the line break its span took
+        .{ .source = "- >-\n  folded\n- |\n  lit\n", .path = &.{.{ .index = 0 }}, .value = "42", .expected = "- 42\n- |\n  lit\n" },
+    };
+    for (cases) |c| {
+        var ed = try newYamlEditor(c.source);
+        defer ed.deinit();
+        try ed.replaceValAtPath(c.path, c.value);
+        try expectSource(&ed, c.expected);
+    }
+}
+
 test "yaml replace preserves a trailing line comment" {
     var ed = try newYamlEditor("title: Hello # note\n");
     defer ed.deinit();

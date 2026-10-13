@@ -689,6 +689,23 @@ pub fn Editor(comptime Language: type) type {
                     return self.replaceAtSpan(Span.init(m.start, span.end), out.items);
                 }
             }
+            // A block item spliced in place keeps its marker and what stands
+            // between that and the value (a comment, an anchor's line), and
+            // a block value's later lines go under the item's content column
+            // (`- x: 1` over `  y: two`). At column 0 they would leave the
+            // item: `y` read as a key of the mapping around the list. A
+            // block scalar's span takes its last newline, which the item
+            // gives back (`terminateLine`). Where a line's prefix is
+            // structure (figl's `>`), a value's later lines are its own: a
+            // `'''` string's text stays as written.
+            if (std.meta.activeTag(path[path.len - 1]) == .index and parsed.markerSpan(node) != null and
+                !self.syntax().structural_indent)
+            {
+                const indent = try self.indentAt(&indent_buf, span.start);
+                try reindentInto(&out, self.allocator, rendered, indent);
+                try self.terminateLine(&out, span.end);
+                return self.replaceAtSpan(span, out.items);
+            }
             try self.replaceAtSpan(span, rendered);
         }
 

@@ -66,6 +66,10 @@ pub const Language = struct {
             // Flat, same reasoning as dotenv.
             .empty_map_literal = "{}",
             .flow_containers = false,
+            // A `\` before a line ending carries the line on (`tokenizer.zig`),
+            // so a line written after `k=v\` would be read as the rest of
+            // `k`'s value.
+            .line_continuation = '\\',
         };
     }
 };

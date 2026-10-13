@@ -932,6 +932,8 @@ pub struct FigSyntax {
     pub flow_map_kv_sep: *const c_char,
     /// Null for none.
     pub flow_map_entry_sep: *const c_char,
+    /// 0 for none.
+    pub line_continuation: u8,
 }
 
 /// `FigLanguageVTable::lossless`: the language takes the `$fig` envelope.

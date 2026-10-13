@@ -662,6 +662,14 @@ pub const Syntax = struct {
     /// that already has two members on one line is joined as those two
     /// are, when `flow_kv_sep_from_siblings` is set. Empty for none.
     flow_map_entry_sep: []const u8 = "",
+    /// The byte that, as the last on a line and not itself escaped, carries
+    /// the line on to the next physical one — `.properties`' `\` — or null
+    /// for a format whose lines never continue. A line ends in it when it
+    /// ends in an odd run of it; a comment line (`comments.line`) never
+    /// does. A line written directly after a continued one would be read as
+    /// the rest of it, so the engine ends the continuation first with a
+    /// blank line, which continues it onto nothing.
+    line_continuation: ?u8 = null,
 };
 
 /// The five fragment renderers a format may declare — `Decls.renderers` in

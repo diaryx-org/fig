@@ -283,6 +283,10 @@ pub struct Syntax {
     /// written with `flow_map_kv_sep` (figl's ` ` in `{a=1 b=2}`). Empty
     /// for none: `flow_entry_sep` and a space.
     pub flow_map_entry_sep: String,
+    /// The byte that, last on a line, carries it on to the next
+    /// (`.properties`' `\`). The engine ends a continued line with a
+    /// blank one before writing a line after it.
+    pub line_continuation: Option<u8>,
 }
 
 impl Default for Syntax {
@@ -315,6 +319,7 @@ impl Default for Syntax {
             line_prefix_marks: String::new(),
             flow_map_kv_sep: String::new(),
             flow_map_entry_sep: String::new(),
+            line_continuation: None,
         }
     }
 }
@@ -1316,6 +1321,7 @@ impl CSyntax {
             line_prefix_marks: opt_ptr(&mut strings, Some(&s.line_prefix_marks))?,
             flow_map_kv_sep: opt_ptr(&mut strings, Some(&s.flow_map_kv_sep))?,
             flow_map_entry_sep: opt_ptr(&mut strings, Some(&s.flow_map_entry_sep))?,
+            line_continuation: s.line_continuation.unwrap_or(0),
         };
         Ok(Box::new(CSyntax {
             c,

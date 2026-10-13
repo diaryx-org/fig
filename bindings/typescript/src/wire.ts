@@ -117,6 +117,9 @@ export interface Syntax {
   /** The bytes between two members of a flow object written with
    *  `flow_map_kv_sep` (figl's ` `); absent is `flow_entry_sep` and a space. */
   flow_map_entry_sep?: string | null;
+  /** The byte that, last on a line, carries it on to the next (92 for
+   *  `.properties`' `\`), as its code, or 0 for none. */
+  line_continuation?: number;
 }
 
 /** Which kinds the format holds natively — what the `$fig` lossless

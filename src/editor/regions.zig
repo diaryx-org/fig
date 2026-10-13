@@ -36,6 +36,7 @@ const std = @import("std");
 const AST = @import("kit").AST;
 const Document = @import("kit").Document;
 const Span = @import("kit").Span;
+const lang = @import("kit").manifest;
 const splice = @import("splice.zig");
 
 const lineStartBefore = splice.lineStartBefore;
@@ -246,8 +247,9 @@ pub fn relocate(self: anytype, used: []const Region, dest_at: usize) !void {
 ///
 /// Separation is `appendBlockSep`'s (tight) rather than `relocate`'s blank
 /// line: these were already siblings in one region of the file, so reordering
-/// them should not introduce spacing that was not there.
-pub fn reorderBundles(self: anytype, used: []const Region, bundles: []const []const u8) !void {
+/// them should not introduce spacing that was not there — except the blank
+/// line that ends a continued line before a bundle follows it (`syn`).
+pub fn reorderBundles(self: anytype, used: []const Region, bundles: []const []const u8, syn: lang.Syntax) !void {
     if (used.len == 0) return;
     const source = self.source.items;
     const anchor = used[0].start;
@@ -259,7 +261,7 @@ pub fn reorderBundles(self: anytype, used: []const Region, bundles: []const []co
         if (anchor >= pos and anchor <= r.start) {
             try out.appendSlice(self.allocator, source[pos..anchor]);
             for (bundles) |b| {
-                try splice.appendBlockSep(&out, self.allocator, b);
+                try splice.appendBlockSep(&out, self.allocator, b, syn);
                 if (b.len > 0 and b[b.len - 1] != '\n') try out.append(self.allocator, '\n');
             }
             try out.appendSlice(self.allocator, source[anchor..r.start]);

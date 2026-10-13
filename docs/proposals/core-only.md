@@ -599,7 +599,8 @@ reference, and six recorded answers fail it. They come down to three
 faults in core's editor, filed as tasks:
 CRLF (since fixed),
 ZON multiline strings (since fixed)
-and [.properties continuations](/docs/tasks/properties-comment-after-continuation.md).
+and .properties continuations (since fixed: the editor ends a continued
+line with a blank one before writing a line after it).
 
 So for the twins, §8's gate stands at: parse and print parity on the
 corpora, edit parity on the edit corpus, and the four differences above.

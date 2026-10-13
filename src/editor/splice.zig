@@ -79,14 +79,47 @@ pub fn commentBlockStart(source: []const u8, line_start: usize, comments: Commen
     return ls;
 }
 
+/// Whether the line that ends at `end` — `text[0..end]`'s last line, its
+/// line ending included — carries on to the next physical line: it ends in
+/// an odd run of `syn.line_continuation`, and is not a comment line. Always
+/// false for a format whose lines never continue.
+pub fn continuesOnto(text: []const u8, end: usize, syn: lang.Syntax) bool {
+    const byte = syn.line_continuation orelse return false;
+    if (end == 0 or text[end - 1] != '\n') return false;
+    const start = lineStartBefore(text, end - 1);
+    const line = std.mem.trimEnd(u8, text[start..end], "\r\n");
+    if (syn.comments.line) |l| {
+        if (l.open.len > 0 and std.mem.startsWith(u8, std.mem.trimStart(u8, line, " \t"), l.open)) return false;
+    }
+    var run: usize = 0;
+    while (run < line.len and line[line.len - 1 - run] == byte) run += 1;
+    return run % 2 == 1;
+}
+
+/// Whether `text` opens on a blank line, which ends a continuation the line
+/// before it left open.
+fn opensBlank(text: []const u8) bool {
+    return std.mem.startsWith(u8, text, "\n") or std.mem.startsWith(u8, text, "\r\n");
+}
+
+/// The blank line, or none, that must stand between `before` — the bytes
+/// up to a line start — and a line `next` written there, so that `next` is
+/// not read as the rest of a line `before` leaves continued.
+pub fn continuationEnd(before: []const u8, next: []const u8, syn: lang.Syntax) []const u8 {
+    if (next.len == 0 or opensBlank(next) or !continuesOnto(before, before.len, syn)) return "";
+    return "\n";
+}
+
 /// Append a relocated entry `block` to `out`, guaranteeing a single '\n'
 /// separator from whatever precedes it. The block's own bytes are appended
 /// verbatim (its trailing newline, if any, is preserved), so concatenating
-/// blocks in a new order never welds two entries onto one line.
-pub fn appendBlockSep(out: *std.ArrayList(u8), allocator: std.mem.Allocator, block: []const u8) !void {
+/// blocks in a new order never welds two entries onto one line, nor writes
+/// one after a line that continues (`continuationEnd`).
+pub fn appendBlockSep(out: *std.ArrayList(u8), allocator: std.mem.Allocator, block: []const u8, syn: lang.Syntax) !void {
     if (out.items.len > 0 and out.items[out.items.len - 1] != '\n') {
         try out.append(allocator, '\n');
     }
+    try out.appendSlice(allocator, continuationEnd(out.items, block, syn));
     try out.appendSlice(allocator, block);
 }
 

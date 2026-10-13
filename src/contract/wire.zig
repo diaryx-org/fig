@@ -265,7 +265,7 @@ fn syntaxOf(a: Allocator, v: std.json.Value) !*const Runtime.SyntaxDesc {
             .skip_index = boolOr(h.object, "skip_index", true),
         };
     };
-    const sigil: u8 = if (o.get("key_sigil")) |k| (if (k == .integer and k.integer > 0 and k.integer < 256) @intCast(k.integer) else 0) else 0;
+    const sigil = byteOr0(o, "key_sigil");
     s.* = .{
         .comments = comments,
         .kv_sep = try optString(a, o, "kv_sep"),
@@ -292,8 +292,16 @@ fn syntaxOf(a: Allocator, v: std.json.Value) !*const Runtime.SyntaxDesc {
         .line_prefix_marks = try optString(a, o, "line_prefix_marks"),
         .flow_map_kv_sep = try optString(a, o, "flow_map_kv_sep"),
         .flow_map_entry_sep = try optString(a, o, "flow_map_entry_sep"),
+        .line_continuation = byteOr0(o, "line_continuation"),
     };
     return s;
+}
+
+/// The byte `o[name]` states as an integer, or 0 — the C record's "none" —
+/// when it is absent or not a byte.
+fn byteOr0(o: std.json.ObjectMap, name: []const u8) u8 {
+    const v = o.get(name) orelse return 0;
+    return if (v == .integer and v.integer > 0 and v.integer < 256) @intCast(v.integer) else 0;
 }
 
 fn vtableFromDescription(a: Allocator, t: *Transport, desc: std.json.Value) !Runtime.VTable {

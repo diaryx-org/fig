@@ -210,6 +210,9 @@ const language = {
     kv_sep: "=",
     empty_map_literal: "{}",
     flow_containers: false,
+    // A `\` before a line ending carries the line on, so the editor ends
+    // the continuation before writing a line after one.
+    line_continuation: 92,
   },
   // The extension the Zig language claims: a file by that name reaches
   // whichever of the two is registered.

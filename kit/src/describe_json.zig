@@ -118,6 +118,7 @@ fn syntax(w: *Writer, s: *const abi.SyntaxDesc) Writer.Error!void {
         try w.print(",\"" ++ name ++ "\":{}", .{@field(s, name)});
     }
     try w.print(",\"key_sigil\":{d}", .{s.key_sigil});
+    try w.print(",\"line_continuation\":{d}", .{s.line_continuation});
     const c = s.closed_containers;
     if (c.map_open != null) {
         try w.writeAll(",\"closed_containers\":{");

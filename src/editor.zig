@@ -21,6 +21,7 @@ const flowOpenEnd = splice.flowOpenEnd;
 const Comments = splice.Comments;
 const commentBlockStart = splice.commentBlockStart;
 const appendBlockSep = splice.appendBlockSep;
+const continuationEnd = splice.continuationEnd;
 const Block = splice.Block;
 const tileBlocks = splice.tileBlocks;
 const fullOrder = splice.fullOrder;
@@ -539,6 +540,12 @@ pub fn Editor(comptime Language: type) type {
         /// the reparse of the edited source; if the edit produces source that no
         /// longer parses, the source is rolled back and the prior `self.document`
         /// stays valid, so a failed edit leaves the editor exactly as it was.
+        ///
+        /// A line inserted where the line before it continues
+        /// (`Syntax.line_continuation`) is written after a blank line, which
+        /// ends the continuation; written straight after it, the new line
+        /// would be read as the rest of it. Every op that adds a line — an
+        /// entry, a dangling or leading comment — inserts it here.
         pub fn replaceAtSpan(self: *Self, span: Span, replacement: []const u8) !void {
             // Snapshot the whole source so a failed reparse can be undone. The
             // edit already costs a full reparse, so an O(n) copy is negligible.
@@ -546,7 +553,12 @@ pub fn Editor(comptime Language: type) type {
             defer self.allocator.free(backup);
 
             self.splice_rejected = false;
+            const end_continuation = if (span.len() == 0)
+                continuationEnd(self.source.items[0..span.start], replacement, self.syntax())
+            else
+                "";
             try self.replaceSource(span, replacement);
+            try self.replaceSource(Span.init(span.start, span.start), end_continuation);
             self.reparse() catch |err| {
                 // Restore byte-for-byte. Capacity is retained from before the
                 // edit (>= backup.len), so the refill cannot fail.
@@ -2798,7 +2810,7 @@ pub fn Editor(comptime Language: type) type {
             const source = self.source.items;
             var out: std.ArrayList(u8) = .empty;
             defer out.deinit(self.allocator);
-            for (perm) |i| try appendBlockSep(&out, self.allocator, source[blocks[i].start..blocks[i].end]);
+            for (perm) |i| try appendBlockSep(&out, self.allocator, source[blocks[i].start..blocks[i].end], self.syntax());
             try self.replaceAtSpan(Span.init(region_start, region_end), out.items);
         }
 
@@ -2928,17 +2940,20 @@ pub fn Editor(comptime Language: type) type {
             if (dest_start >= src_start and dest_start <= src_end) return;
             const source = self.source.items;
             const moved = source[src_start..src_end];
+            const syn = self.syntax();
             var out: std.ArrayList(u8) = .empty;
             defer out.deinit(self.allocator);
             if (src_end <= dest_start) {
                 // src precedes dest: [src][between][dest..] -> [between][src][dest..]
-                try appendBlockSep(&out, self.allocator, source[src_end..dest_start]);
-                try appendBlockSep(&out, self.allocator, moved);
+                try appendBlockSep(&out, self.allocator, source[src_end..dest_start], syn);
+                try appendBlockSep(&out, self.allocator, moved, syn);
+                // `dest` is not spliced, but now follows `src`'s last line.
+                try out.appendSlice(self.allocator, continuationEnd(out.items, source[dest_start..], syn));
                 try self.replaceAtSpan(Span.init(src_start, dest_start), out.items);
             } else {
                 // dest precedes src: [dest..][between][src] -> [src][dest..][between]
-                try appendBlockSep(&out, self.allocator, moved);
-                try appendBlockSep(&out, self.allocator, source[dest_start..src_start]);
+                try appendBlockSep(&out, self.allocator, moved, syn);
+                try appendBlockSep(&out, self.allocator, source[dest_start..src_start], syn);
                 try self.replaceAtSpan(Span.init(dest_start, src_end), out.items);
             }
         }
@@ -3340,7 +3355,7 @@ pub fn Editor(comptime Language: type) type {
                 try bundles.append(self.allocator, owned);
             }
             const total = regions.normalize(all.items, true);
-            try regions.reorderBundles(self, all.items[0..total], bundles.items);
+            try regions.reorderBundles(self, all.items[0..total], bundles.items, self.syntax());
         }
 
         /// Append a new element (body `body_text`) to the container sequence at
@@ -5654,6 +5669,87 @@ test "properties comment ops: leading works with '#', trailing is unsupported" {
     try testing.expectError(error.CommentsUnsupported, ed.setTrailingComment(&.{.{ .key = "flag" }}, "note"));
     try testing.expectError(error.CommentsUnsupported, ed.setTrailingComment(&.{.{ .key = "k" }}, "note"));
     try testing.expectEqualStrings("flag\n# note\nk=v\n", ed.source.items);
+}
+
+/// `ed`'s `.properties` value at `key`, as the document now reads it.
+fn expectPropertiesValue(ed: *Editor(Properties), key: []const u8, expected: []const u8) !void {
+    const parsed = try ed.getParsed();
+    const node = try parsed.ast.getValByPath(&.{.{ .key = key }});
+    try testing.expectEqualStrings(expected, node.kind.string);
+}
+
+test "properties: a comment or entry written after a continued last line ends the continuation first" {
+    if (comptime !build_options.lang_properties) return error.SkipZigTest;
+    // `trail=v\` continues onto the next line, so a line written straight
+    // after it would be read as the rest of `trail`'s value.
+    {
+        var ed: Editor(Properties) = .{ .allocator = testing.allocator, .format = .PROPERTIES };
+        try ed.init("trail=v\\\n");
+        defer ed.deinit();
+        try ed.addDanglingComment(&.{}, "note");
+        try testing.expectEqualStrings("trail=v\\\n\n# note\n", ed.source.items);
+        try expectPropertiesValue(&ed, "trail", "v");
+    }
+    {
+        var ed: Editor(Properties) = .{ .allocator = testing.allocator, .format = .PROPERTIES };
+        try ed.init("a=1\ntrail=v\\\r\n");
+        defer ed.deinit();
+        try ed.set(&.{.{ .key = "n" }}, "1");
+        try testing.expectEqualStrings("a=1\ntrail=v\\\r\n\nn=1\n", ed.source.items);
+        try expectPropertiesValue(&ed, "trail", "v");
+        try expectPropertiesValue(&ed, "n", "1");
+    }
+    // A blank line already ends it, but the entry's span stops before that
+    // line, so the insert lands between the two.
+    {
+        var ed: Editor(Properties) = .{ .allocator = testing.allocator, .format = .PROPERTIES };
+        try ed.init("x=1\ntrail=v\\\n\n");
+        defer ed.deinit();
+        try ed.set(&.{.{ .key = "n" }}, "1");
+        try testing.expectEqualStrings("x=1\ntrail=v\\\n\nn=1\n\n", ed.source.items);
+        try expectPropertiesValue(&ed, "trail", "v");
+    }
+    // An even run of `\` is an escaped one, and a comment never continues:
+    // neither takes a blank line.
+    try expectSet(Properties, .PROPERTIES, "a=v\\\\\n", &.{.{ .key = "n" }}, "1", "a=v\\\\\nn=1\n");
+    {
+        var ed: Editor(Properties) = .{ .allocator = testing.allocator, .format = .PROPERTIES };
+        try ed.init("a=1\n# c\\\n");
+        defer ed.deinit();
+        try ed.addDanglingComment(&.{}, "note");
+        try testing.expectEqualStrings("a=1\n# c\\\n# note\n", ed.source.items);
+    }
+}
+
+test "properties: an entry moved after a continued line does not join it" {
+    if (comptime !build_options.lang_properties) return error.SkipZigTest;
+    {
+        var ed: Editor(Properties) = .{ .allocator = testing.allocator, .format = .PROPERTIES };
+        try ed.init("a=1\ntrail=v\\\n");
+        defer ed.deinit();
+        try ed.reorderKeys(&.{}, &.{"trail"});
+        try testing.expectEqualStrings("trail=v\\\n\na=1\n", ed.source.items);
+        try expectPropertiesValue(&ed, "trail", "v");
+        try expectPropertiesValue(&ed, "a", "1");
+    }
+    // `moveKey` sets `trail` down before `b`, whose line is not spliced.
+    {
+        var ed: Editor(Properties) = .{ .allocator = testing.allocator, .format = .PROPERTIES };
+        try ed.init("trail=v\\\n\na=1\nb=2\n");
+        defer ed.deinit();
+        try ed.moveKey(&.{.{ .key = "trail" }}, &.{.{ .key = "b" }});
+        try testing.expectEqualStrings("\na=1\ntrail=v\\\n\nb=2\n", ed.source.items);
+        try expectPropertiesValue(&ed, "trail", "v");
+        try expectPropertiesValue(&ed, "b", "2");
+    }
+    {
+        var ed: Editor(Properties) = .{ .allocator = testing.allocator, .format = .PROPERTIES };
+        try ed.init("a=1\ntrail=v\\\n");
+        defer ed.deinit();
+        try ed.moveKey(&.{.{ .key = "trail" }}, &.{.{ .key = "a" }});
+        try testing.expectEqualStrings("trail=v\\\n\na=1\n", ed.source.items);
+        try expectPropertiesValue(&ed, "a", "1");
+    }
 }
 
 // ── INI (`[section]` + flat `key = value`) ──────────────────────────────────

@@ -663,6 +663,11 @@ pub fn syntax_to_value(x: &Syntax) -> Value {
         ("line_prefix_marks", s(&x.line_prefix_marks)),
         ("flow_map_kv_sep", s(&x.flow_map_kv_sep)),
         ("flow_map_entry_sep", s(&x.flow_map_entry_sep)),
+        (
+            "line_continuation",
+            x.line_continuation
+                .map_or(Value::Null, |b| Value::Uint(b as u64)),
+        ),
     ])
 }
 
@@ -753,6 +758,11 @@ pub fn syntax_from_value(v: &Value) -> Result<Syntax, LanguageError> {
         line_prefix_marks: st("line_prefix_marks", &d.line_prefix_marks),
         flow_map_kv_sep: st("flow_map_kv_sep", &d.flow_map_kv_sep),
         flow_map_entry_sep: st("flow_map_entry_sep", &d.flow_map_entry_sep),
+        line_continuation: v
+            .get("line_continuation")
+            .and_then(Value::as_u64)
+            .filter(|&n| n > 0 && n < 256)
+            .map(|n| n as u8),
     })
 }
 

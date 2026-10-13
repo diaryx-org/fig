@@ -7,7 +7,6 @@ updated = 2026-10-12
 part_of = [docs](/docs/docs.md)
 contents
 > * [An infinite or NaN float written to the fig dialect reads back as a string](/docs/tasks/fig-dialect-non-finite-floats.md)
-> * [A comment appended after a .properties continuation joins the value](/docs/tasks/properties-comment-after-continuation.md)
 > * [`set` cannot append to a sequence that is not there yet](/docs/tasks/set-creates-a-missing-sequence.md)
 > * [Closed tasks](/docs/tasks/closed/closed.md)
 > * [The Rust helper reads JSON with fig's json format](/docs/tasks/helper-serde-json.md)

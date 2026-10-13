@@ -242,6 +242,8 @@ pub const SyntaxDesc = extern struct {
     line_prefix_marks: ?[*:0]const u8 = null,
     flow_map_kv_sep: ?[*:0]const u8 = null,
     flow_map_entry_sep: ?[*:0]const u8 = null,
+    /// 0 for none.
+    line_continuation: u8 = 0,
 };
 
 /// `VTable.lossless`: `manifest.NativeKinds` as bits. `lossless_envelope`

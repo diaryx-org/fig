@@ -334,15 +334,43 @@ test "fig delete a dotted key takes the maps only it made" {
     try expectFigSource(&ed, "a.b.c = 1\nv = 2\n");
 }
 
-// `ys[0]` is written in two places, and the delete would take every `ys`
-// line, `ys[1]` with them: the guard refuses
-// (docs/tasks/delete-splices-taking-other-values.md).
-test "fig delete an element written in two places is refused, not a lost sibling" {
-    const source = "ys[0]\n> k = 1\nys[1]\n> k = 2\nys[0]\n> j = 3\n";
+// `ys[0]` is written in two places, with `ys[1]` between them: the delete
+// takes both, and not the lines between, and `ys[1]` is renumbered, an
+// index being a position (spec § 7.4).
+test "fig delete an element written in two places takes both, and renumbers the next" {
+    const source = "ys[0]\n> k = 1\nys[1]  # one\n> k = 2\nys[0]\n> j = 3\n";
     var ed = try newFigEditor(source);
     defer ed.deinit();
-    try std.testing.expectError(error.DeleteChangedOtherValues, ed.removeSeqItem(&.{.{ .key = "ys" }}, 0));
-    try expectFigSource(&ed, source);
+    try ed.removeSeqItem(&.{.{ .key = "ys" }}, 0);
+    try expectFigSource(&ed, "ys[0]  # one\n> k = 2\n");
+
+    var whole = try newFigEditor(source);
+    defer whole.deinit();
+    try whole.deleteContainer(&.{ .{ .key = "ys" }, .{ .index = 0 } });
+    try expectFigSource(&whole, "ys[0]  # one\n> k = 2\n");
+}
+
+test "fig delete an index-addressed element renumbers every line after it" {
+    var ed = try newFigEditor("xs[0] = a\nxs[1] = b  # b\nxs[2] = c\n");
+    defer ed.deinit();
+    try ed.removeSeqItem(&.{.{ .key = "xs" }}, 0);
+    try expectFigSource(&ed, "xs[0] = b  # b\nxs[1] = c\n");
+    try ed.removeSeqItem(&.{.{ .key = "xs" }}, 0);
+    try expectFigSource(&ed, "xs[0] = c\n");
+
+    // Dotted lines through the index, and an index deeper in the path,
+    // which is another sequence's and stays.
+    var dotted = try newFigEditor("c[0].name = x\nc[1].name = y\nc[0].size = 1\nc[1].p[0] = 2\nc[2].name = z\n");
+    defer dotted.deinit();
+    try dotted.deleteContainer(&.{ .{ .key = "c" }, .{ .index = 0 } });
+    try expectFigSource(&dotted, "c[0].name = y\nc[0].p[0] = 2\nc[1].name = z\n");
+}
+
+test "fig delete the middle index-addressed element leaves the first alone" {
+    var ed = try newFigEditor("ys[0]\n> k = 1\nys[1]\n> k = 2\nys[2]\n> k = 3\n");
+    defer ed.deinit();
+    try ed.removeSeqItem(&.{.{ .key = "ys" }}, 1);
+    try expectFigSource(&ed, "ys[0]\n> k = 1\nys[1]\n> k = 3\n");
 }
 
 test "fig delete a nested scalar key" {
@@ -477,6 +505,65 @@ test "fig emptying a `+` chain one element at a time ends at an empty list" {
     try expectFigSource(&ed, "r[]\n> f = 1\nb = 2\n");
     try ed.removeSeqItem(&.{.{ .key = "r" }}, 0);
     try expectFigSource(&ed, "r = []\nb = 2\n");
+}
+
+// Deleting the first element of a `+` chain takes its `r[]` line, and the
+// `+` after it, which re-ran that header, takes its text (spec § 8).
+// Each element keeps its own comments.
+test "fig delete the first element of a two-element `+` chain moves the header onto the next" {
+    const source = "# r\nr[]  # first\n> file = a\n# b's\n+  # second\n> file = b\nafter = 1\n";
+    var ed = try newFigEditor(source);
+    defer ed.deinit();
+    try ed.removeSeqItem(&.{.{ .key = "r" }}, 0);
+    try expectFigSource(&ed, "# b's\nr[]  # second\n> file = b\nafter = 1\n");
+
+    var whole = try newFigEditor(source);
+    defer whole.deinit();
+    try whole.deleteContainer(&.{ .{ .key = "r" }, .{ .index = 0 } });
+    try expectFigSource(&whole, "# b's\nr[]  # second\n> file = b\nafter = 1\n");
+
+    // A comment set in a column stays in it.
+    var aligned = try newFigEditor("rows[]    # a\n> f = 1\n+         # b\n> f = 2\n");
+    defer aligned.deinit();
+    try aligned.removeSeqItem(&.{.{ .key = "rows" }}, 0);
+    try expectFigSource(&aligned, "rows[]    # b\n> f = 2\n");
+}
+
+test "fig delete from a three-element `+` chain" {
+    const source = "r[]\n> f = 1\n+\n> f = 2\n+\n> f = 3\n";
+    var first = try newFigEditor(source);
+    defer first.deinit();
+    try first.removeSeqItem(&.{.{ .key = "r" }}, 0);
+    try expectFigSource(&first, "r[]\n> f = 2\n+\n> f = 3\n");
+    try first.removeSeqItem(&.{.{ .key = "r" }}, 0);
+    try expectFigSource(&first, "r[]\n> f = 3\n");
+
+    var middle = try newFigEditor(source);
+    defer middle.deinit();
+    try middle.removeSeqItem(&.{.{ .key = "r" }}, 1);
+    try expectFigSource(&middle, "r[]\n> f = 1\n+\n> f = 3\n");
+}
+
+// A `+` under a nested header re-runs the whole path; with the header gone
+// it would re-run `spec.containers[]` and append a container.
+test "fig delete the first element of a nested `+` chain keeps the next in its container" {
+    const source = "spec.containers[]\n> name = app\nspec.containers[].ports[]  # web\n> port = 80\n+  # tls\n> port = 443\nspec.containers[]\n> name = sidecar\n";
+    var ed = try newFigEditor(source);
+    defer ed.deinit();
+    try ed.removeSeqItem(&.{ .{ .key = "spec" }, .{ .key = "containers" }, .{ .index = 0 }, .{ .key = "ports" } }, 0);
+    try expectFigSource(&ed, "spec.containers[]\n> name = app\nspec.containers[].ports[]  # tls\n> port = 443\nspec.containers[]\n> name = sidecar\n");
+
+    var whole = try newFigEditor(source);
+    defer whole.deinit();
+    try whole.deleteContainer(&.{ .{ .key = "spec" }, .{ .key = "containers" }, .{ .index = 0 }, .{ .key = "ports" }, .{ .index = 0 } });
+    try expectFigSource(&whole, "spec.containers[]\n> name = app\nspec.containers[].ports[]  # tls\n> port = 443\nspec.containers[]\n> name = sidecar\n");
+}
+
+test "fig an element's index and header are not names a rename rewrites" {
+    var ed = try newFigEditor("ys[0]\n> k = 1\n");
+    defer ed.deinit();
+    try std.testing.expectError(error.NotASection, ed.renameContainer(&.{ .{ .key = "ys" }, .{ .index = 0 } }, "z"));
+    try expectFigSource(&ed, "ys[0]\n> k = 1\n");
 }
 
 test "fig remove the only index-addressed element takes every line of it" {

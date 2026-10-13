@@ -2489,10 +2489,13 @@ pub fn Editor(comptime Language: type) type {
             // path's `is_first` needs it.
             var item = (try parsed.ast.child(&node)) orelse return error.NotFound;
             var prev: ?AST.Node = null;
+            var at = index;
             if (index == std.math.maxInt(usize)) {
+                at = 0;
                 while (parsed.ast.next(&item)) |nxt| {
                     prev = item;
                     item = nxt;
+                    at += 1;
                 }
             } else {
                 for (0..index) |_| {
@@ -2541,7 +2544,123 @@ pub fn Editor(comptime Language: type) type {
                 if (self.sharedLineDelete(parsed, node, markerStart(parsed, item), item_span.end, next_start)) |span|
                     return self.replaceAtSpan(span, "");
             }
-            try self.replaceAtSpan(Span.init(line_start, del_end), "");
+            // A section item may be written in several places (figl's `ys[0]`
+            // over `ys[1]` over `ys[0]` again), and its span runs from its
+            // first line to its last, over the items between: its own lines
+            // are its gathered regions, as `deleteContainer` takes them.
+            var arena: std.heap.ArenaAllocator = .init(self.allocator);
+            defer arena.deinit();
+            const edits = try self.followingEdits(arena.allocator(), parsed, item, at);
+            if (parsed.isSection(item)) {
+                var used = try self.gatherRegions(parsed, item, true);
+                defer used.deinit(self.allocator);
+                return self.spliceOutEdited(used.items, edits);
+            }
+            try self.spliceOutEdited(&.{.{ .start = line_start, .end = del_end }}, edits);
+        }
+
+        /// One rewrite `followingEdits` asks for: `text` over `span`.
+        const PathEdit = struct { span: Span, text: []const u8 };
+
+        /// What keeps each item after `item`, which stands at `index` in its
+        /// block sequence, the item it was once `item`'s lines are deleted,
+        /// as rewrites in source order, their text in `arena`. Every other
+        /// format records no item path and gets none.
+        ///
+        /// An item addressed by its index is renumbered: figl's index is a
+        /// position (spec § 7.4), so the lines saying `ys[1]` said "the
+        /// second item", and once the first is gone that item is `ys[0]`;
+        /// left alone they would address one past the end, or the item
+        /// after. Each `index` mention of a later item takes its new index
+        /// (`Document.MentionKind`).
+        ///
+        /// The next item's `append` mention takes `item`'s, when the two
+        /// differ: a line that repeats the header before it (figl's `+`,
+        /// spec § 8) repeated `item`'s, which goes with `item`, and left
+        /// alone it would repeat an earlier header or none — a `+` under
+        /// `a[].b[]` re-running `a[]` appends to `a`. Written out it means
+        /// what it meant. Two headers spelled alike are left as they are.
+        fn followingEdits(self: *const Self, arena: std.mem.Allocator, parsed: Document, item: AST.Node, index: usize) ![]PathEdit {
+            const source = self.source.items;
+            var edits: std.ArrayList(PathEdit) = .empty;
+            var header: ?[]const u8 = null;
+            var own = parsed.mentionsOf(item.id);
+            while (own.next()) |m| if (m.kind == .append) {
+                header = source[m.span.start..m.span.end];
+            };
+            var at = index + 1;
+            var later = parsed.ast.next(&item);
+            while (later) |n| : ({
+                later = parsed.ast.next(&n);
+                at += 1;
+            }) {
+                var mentions = parsed.mentionsOf(n.id);
+                while (mentions.next()) |m| switch (m.kind) {
+                    .index => try edits.append(arena, .{ .span = m.span, .text = try std.fmt.allocPrint(arena, "{d}", .{at - 1}) }),
+                    .append => if (at == index + 1) if (header) |h| {
+                        if (!std.mem.eql(u8, source[m.span.start..m.span.end], h))
+                            try edits.append(arena, try padded(arena, source, m.span, h));
+                    },
+                    .header, .entry => {},
+                };
+            }
+            std.mem.sortUnstable(PathEdit, edits.items, {}, struct {
+                fn lessThan(_: void, a: PathEdit, b: PathEdit) bool {
+                    return a.span.start < b.span.start;
+                }
+            }.lessThan);
+            return edits.items;
+        }
+
+        /// `text` over `span`, and over the spaces after it when something
+        /// follows them on the line — a trailing comment — so that it stays
+        /// at the column it stood at, or as many spaces after `text` as were
+        /// after `span` when `text` reaches it.
+        fn padded(arena: std.mem.Allocator, source: []const u8, span: Span, text: []const u8) !PathEdit {
+            var end = span.end;
+            while (end < source.len and source[end] == ' ') end += 1;
+            if (end == span.end or end == source.len or source[end] == '\n' or source[end] == '\r')
+                return .{ .span = span, .text = text };
+            const width = end - span.start;
+            const pad = if (width > text.len) width - text.len else end - span.end;
+            const out = try arena.alloc(u8, text.len + pad);
+            @memcpy(out[0..text.len], text);
+            @memset(out[text.len..], ' ');
+            return .{ .span = Span.init(span.start, end), .text = out };
+        }
+
+        /// Delete `removed` (ascending, disjoint, as `regions.normalize`
+        /// leaves them) and write each of `edits` (ascending, from
+        /// `followingEdits`) over its span, in one splice. An edit inside a
+        /// removed region goes with it.
+        fn spliceOutEdited(self: *Self, removed: []const Region, edits: []const PathEdit) !void {
+            if (edits.len == 0) {
+                if (removed.len == 1) return self.replaceAtSpan(Span.init(removed[0].start, removed[0].end), "");
+                return regions.spliceOut(self, removed);
+            }
+            const source = self.source.items;
+            var out: std.ArrayList(u8) = .empty;
+            defer out.deinit(self.allocator);
+            var pos: usize = 0;
+            var e: usize = 0;
+            for (removed) |r| {
+                while (e < edits.len and edits[e].span.start < r.start) : (e += 1) {
+                    if (edits[e].span.start < pos) continue;
+                    try out.appendSlice(self.allocator, source[pos..edits[e].span.start]);
+                    try out.appendSlice(self.allocator, edits[e].text);
+                    pos = edits[e].span.end;
+                }
+                try out.appendSlice(self.allocator, source[pos..r.start]);
+                pos = r.end;
+            }
+            for (edits[e..]) |edit| {
+                if (edit.span.start < pos) continue;
+                try out.appendSlice(self.allocator, source[pos..edit.span.start]);
+                try out.appendSlice(self.allocator, edit.text);
+                pos = edit.span.end;
+            }
+            try out.appendSlice(self.allocator, source[pos..]);
+            try self.replaceAtSpan(Span.init(0, source.len), out.items);
         }
 
         /// The span to delete to remove the first entry or item of the
@@ -3786,12 +3905,25 @@ pub fn Editor(comptime Language: type) type {
             const parsed = try self.getParsed();
             const node = try self.sectionAt(parsed, path);
             // A list's only item leaves the list, emptied, as
-            // `removeSeqItem` leaves it.
+            // `removeSeqItem` leaves it; the items after any other keep
+            // what addresses them (`followingEdits`).
+            var arena: std.heap.ArenaAllocator = .init(self.allocator);
+            defer arena.deinit();
+            var edits: []PathEdit = &.{};
             if (parsed.ast.parentOf(node.id)) |p| {
                 const seq = parsed.ast.node(p);
                 if (seq.kind == .sequence and seq.kind.sequence == node.id and parsed.ast.next(&node) == null) {
                     if (try self.emptiedSectionSeq(parsed, seq)) return;
                     if (try self.emptiedHeaderSeq(parsed, seq, path[0 .. path.len - 1])) return;
+                }
+                if (seq.kind == .sequence) {
+                    var at: usize = 0;
+                    var sib = try parsed.ast.child(&seq);
+                    while (sib) |c| : (sib = parsed.ast.next(&c)) {
+                        if (c.id == node.id) break;
+                        at += 1;
+                    }
+                    edits = try self.followingEdits(arena.allocator(), parsed, node, at);
                 }
             }
             // A table made by dotted keys inside a flow mapping is written
@@ -3821,7 +3953,7 @@ pub fn Editor(comptime Language: type) type {
             }
             var used = try self.gatherRegions(parsed, node, true);
             defer used.deinit(self.allocator);
-            try regions.spliceOut(self, used.items);
+            try self.spliceOutEdited(used.items, edits);
         }
 
         /// Splice `rendered` over every one of `mentions` (sorted by start,

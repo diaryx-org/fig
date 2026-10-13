@@ -1,12 +1,12 @@
 ```fig
-title = Six deletes are refused because their splice takes another value
+title = Four deletes are refused because their splice takes another value
 part_of = [Tasks](/docs/tasks/tasks.md)
-description = The delete guard refuses six shapes whose splice reads the source wrongly and takes values beside the deleted one; each should delete only its entry or item
+description = The delete guard refuses four shapes whose splice reads the source wrongly and takes values beside the deleted one; each should delete only its entry or item
 status = open
 created = 2026-10-13
 ```
 
-# Six deletes are refused because their splice takes another value
+# Four deletes are refused because their splice takes another value
 
 The delete guard (`keepOthers` in `src/editor.zig`) rolls these back with
 `DeleteChangedOtherValues`, or the reparse fails. Before 346db34 each was
@@ -29,13 +29,6 @@ a shape it misreads.
 - ZON, `c` in `.ml =\n    \\line two\n    ,\n    .c = 'A', .nl = '\n',`:
   the splice takes from the multi-line string's line end through `.c =
   'A'`, so the rest of `c`'s line joins the string.
-- figl, `ys[0]` in `ys[0]` / `> k = 1` / `ys[1]` / `> k = 2` / `ys[0]` /
-  `> j = 3`: the element is written in two places, and the delete takes
-  every `ys` line, `ys[1]` with them.
-
-(Deleting the first port of `spec.containers[].ports[]` … `+` is
-[the + chain task](/docs/tasks/figl-continuation-chain-first-delete.md):
-the `+` re-runs the header above it and appends a container.)
 
 **Done when** each deletes only its entry or item, leaving every other
 value as it was, with a test beside the guard's in each language's

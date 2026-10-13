@@ -9,7 +9,7 @@ contents
 > * [Closed tasks](/docs/tasks/closed/closed.md)
 > * [The Rust helper reads JSON with fig's json format](/docs/tasks/helper-serde-json.md)
 > * [Deleting the first element of a figl + chain is refused](/docs/tasks/figl-continuation-chain-first-delete.md)
-> * [Six deletes are refused because their splice takes another value](/docs/tasks/delete-splices-taking-other-values.md)
+> * [Four deletes are refused because their splice takes another value](/docs/tasks/delete-splices-taking-other-values.md)
 > * [The JavaScript YAML twin misreads compact sequences two deep](/docs/tasks/yaml-twin-deep-compact-sequences.md)
 > * [A comment after a figl multi-line list's opening bracket is invisible to the editor](/docs/tasks/figl-multiline-list-opener-comment.md)
 ```

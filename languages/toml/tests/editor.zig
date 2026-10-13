@@ -638,6 +638,46 @@ test "toml delete single AoT element" {
     try expectTomlSource(&ed, "[[f]]\nn = \"b\"\n");
 }
 
+// The only element of an array of tables leaves the array, emptied, as the
+// last item of an inline array does: `x = []`, written in the body of the
+// table that holds `x` — the root's entries above the first header, `[t]`'s
+// under its header, an element's under its `[[a]]` — where an entry
+// inserted into that table goes. A table with no header of its own (`t`
+// made by `[[t.x]]` alone, or by a dotted line) has no body, so the key
+// path from the nearest table that has one is written as a dotted key
+// there. The comment block above `[[x]]` and the comment ending its line
+// stay, around `x = []`.
+test "toml delete the only AoT element leaves an empty array in the parent's body" {
+    const cases = [_]struct { source: []const u8, path: []const AST.PathSegment, expected: []const u8 }{
+        .{ .source = "a = 1\n[[x]]\nb = 2\n[y]\nc = 3\n", .path = &.{ .{ .key = "x" }, .{ .index = 0 } }, .expected = "a = 1\nx = []\n[y]\nc = 3\n" },
+        .{ .source = "[y]\nc = 3\n[[x]]\nb = 2\n", .path = &.{ .{ .key = "x" }, .{ .index = 0 } }, .expected = "x = []\n[y]\nc = 3\n" },
+        .{ .source = "[[x]]\nb = 2\n", .path = &.{ .{ .key = "x" }, .{ .index = 0 } }, .expected = "x = []\n" },
+        .{ .source = "[[x]]\n[x.sub]\nk = 1\n", .path = &.{ .{ .key = "x" }, .{ .index = 0 } }, .expected = "x = []\n" },
+        .{ .source = "[[\"x y\"]]\nb = 2\n", .path = &.{ .{ .key = "x y" }, .{ .index = 0 } }, .expected = "\"x y\" = []\n" },
+        .{ .source = "[t]\na = 1\n[[t.x]]\nb = 2\n", .path = &.{ .{ .key = "t" }, .{ .key = "x" }, .{ .index = 0 } }, .expected = "[t]\na = 1\nx = []\n" },
+        .{ .source = "[t]\n[t.u]\nc = 1\n[[t.x]]\nb = 2\n", .path = &.{ .{ .key = "t" }, .{ .key = "x" }, .{ .index = 0 } }, .expected = "[t]\nx = []\n[t.u]\nc = 1\n" },
+        .{ .source = "a = 1\n[[t.x]]\nb = 2\n[t.u]\nc = 1\n", .path = &.{ .{ .key = "t" }, .{ .key = "x" }, .{ .index = 0 } }, .expected = "a = 1\nt.x = []\n[t.u]\nc = 1\n" },
+        .{ .source = "[[p.q.x]]\nb = 2\n", .path = &.{ .{ .key = "p" }, .{ .key = "q" }, .{ .key = "x" }, .{ .index = 0 } }, .expected = "p.q.x = []\n" },
+        .{ .source = "[a]\nt.k = 1\n[[a.t.x]]\nb = 2\n", .path = &.{ .{ .key = "a" }, .{ .key = "t" }, .{ .key = "x" }, .{ .index = 0 } }, .expected = "[a]\nt.k = 1\nt.x = []\n" },
+        .{ .source = "[[a]]\nn = 1\n[[a.x]]\nb = 2\n[[a]]\nn = 2\n", .path = &.{ .{ .key = "a" }, .{ .index = 0 }, .{ .key = "x" }, .{ .index = 0 } }, .expected = "[[a]]\nn = 1\nx = []\n[[a]]\nn = 2\n" },
+        .{ .source = "[[a]]\n[[a.x]]\nb = 2\n", .path = &.{ .{ .key = "a" }, .{ .index = 0 }, .{ .key = "x" }, .{ .index = 0 } }, .expected = "[[a]]\nx = []\n" },
+        .{ .source = "a = 1\n\n# the xs\n[[x]] # first\nb = 2\n\n[y]\n", .path = &.{ .{ .key = "x" }, .{ .index = 0 } }, .expected = "a = 1\n# the xs\nx = [] # first\n\n[y]\n" },
+        .{ .source = "a = 1\n\n[[x]]\nb = 2\n", .path = &.{ .{ .key = "x" }, .{ .index = 0 } }, .expected = "a = 1\nx = []\n" },
+        .{ .source = "[y]\nc = 3\n\n[[x]]\nb = 2\n\n[z]\n", .path = &.{ .{ .key = "x" }, .{ .index = 0 } }, .expected = "x = []\n[y]\nc = 3\n\n[z]\n" },
+        .{ .source = "# the xs\n[[x]] # first\nb = 2\n", .path = &.{ .{ .key = "x" }, .{ .index = 0 } }, .expected = "# the xs\nx = [] # first\n" },
+        .{ .source = "[t]\na = 1 # one\n# the xs\n[[t.x]]\nb = 2\n", .path = &.{ .{ .key = "t" }, .{ .key = "x" }, .{ .index = 0 } }, .expected = "[t]\na = 1 # one\n# the xs\nx = []\n" },
+    };
+    for (cases) |c| {
+        var ed = try newTomlEditor(c.source);
+        defer ed.deinit();
+        try ed.deleteContainer(c.path);
+        try expectTomlSource(&ed, c.expected);
+        const parsed = try ed.getParsed();
+        const seq = try parsed.ast.getValByPath(c.path[0 .. c.path.len - 1]);
+        try std.testing.expect(seq.kind == .sequence and seq.kind.sequence == null);
+    }
+}
+
 test "toml delete AoT element with nested sub-table" {
     var ed = try newTomlEditor("[[f]]\nn = \"a\"\n[f.sub]\nk = 1\n[[f]]\nn = \"b\"\n");
     defer ed.deinit();

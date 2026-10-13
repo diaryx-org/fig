@@ -2755,6 +2755,152 @@ pub fn Editor(comptime Language: type) type {
             return true;
         }
 
+        /// Delete the only element of the sequence `node`, at `path`, when
+        /// each element is a header of its own (TOML's `[[x]]`), leaving
+        /// the format's empty list in the body of the table that holds the
+        /// sequence — `x = []` — and return whether it did; false leaves the
+        /// delete to the caller.
+        ///
+        /// Such a sequence has no line of its own to empty: every element
+        /// is a `[[x]]` header, and taking the only one took the key, where
+        /// an inline array emptied the same way keeps it. Nor does its key
+        /// stand where the header did: `x = []` there would be an entry of
+        /// the table above it. It goes in the body of the table that holds
+        /// `x`, through `insertKey`, as any new entry of that table does —
+        /// the root's entries above the first header, `[t]`'s under its own
+        /// header, an element's under its `[[a]]`.
+        ///
+        /// A table with no header of its own has no body to take it: `t`
+        /// made by `[[t.x]]` alone, or by a dotted line `t.k = 1`, whose
+        /// lines are its parent's. `insertKey` refuses such a table
+        /// (`ImplicitSection`), so the nearest table up that has a body
+        /// takes the key path from there, spelled as a header spells it
+        /// (`t.x = []`): a dotted key, as `t.k = 1` is, which a later
+        /// `[t.u]` may still extend.
+        ///
+        /// The comment block above the element's header and the comment
+        /// ending its line were the list's, and stay with `x = []`. The
+        /// element's lines go as `deleteContainer` takes them, with the
+        /// blank lines that set its header apart when a blank line or the
+        /// end of the file follows it. The result must read back with an
+        /// empty list at `path`, or nothing is written
+        /// (`DeleteChangedOtherValues`).
+        fn emptiedHeaderSeq(self: *Self, parsed: Document, node: AST.Node, path: []const AST.PathSegment) !bool {
+            const empty = self.syntax().empty_seq_literal orelse return false;
+            const hdr = self.syntax().section_header orelse return false;
+            if (path.len == 0 or !parsed.isSection(node)) return false;
+            const kv_id = parsed.ast.parentOf(node.id) orelse return false;
+            if (parsed.ast.kindOf(kv_id) != .keyvalue) return false;
+            var holder = parsed.ast.node(parsed.ast.parentOf(kv_id) orelse return false);
+            var depth: usize = 1;
+            while (!self.ownsHeaderLine(parsed, holder)) : (depth += 1) {
+                const up = parsed.ast.parentOf(holder.id) orelse return false;
+                if (parsed.ast.kindOf(up) != .keyvalue) return false;
+                holder = parsed.ast.node(parsed.ast.parentOf(up) orelse return false);
+            }
+            if (depth > path.len) return false;
+            const key_path = path[path.len - depth ..];
+            for (key_path) |seg| if (seg != .key) return false;
+
+            const source = self.source.items;
+            const heads = parsed.regionsOf(node.id);
+            const line = lineStartBefore(source, heads[0].start);
+            const above = try self.allocator.dupe(u8, source[commentBlockStart(source, line, self.syntax().comments)..line]);
+            defer self.allocator.free(above);
+            const trail = try self.allocator.dupe(u8, if (self.headerLineComment(parsed, node, hdr, line)) |c| source[c.start..c.end] else "");
+            defer self.allocator.free(trail);
+            var key_text: std.ArrayList(u8) = .empty;
+            defer key_text.deinit(self.allocator);
+            try self.writeHeaderPath(&key_text, hdr, key_path);
+
+            const backup = try self.allocator.dupe(u8, source);
+            defer self.allocator.free(backup);
+            var used = try self.gatherRegions(parsed, node, true);
+            defer used.deinit(self.allocator);
+            // The blank lines that set the element's header apart go with
+            // it when a blank line or the end of the file follows it, so
+            // the header's going does not leave two runs of them together.
+            var prev_end: usize = 0;
+            for (used.items) |*r| {
+                if (r.end == source.len or source[r.end] == '\n') {
+                    while (r.start >= prev_end + 2 and source[r.start - 1] == '\n' and source[r.start - 2] == '\n') r.start -= 1;
+                }
+                prev_end = r.end;
+            }
+            try regions.spliceOut(self, used.items);
+            self.writeEmptied(path, path[0 .. path.len - depth], key_text.items, empty, above, trail) catch |err| {
+                try self.restoreSource(backup);
+                if (err == error.OutOfMemory) return err;
+                self.splice_rejected = false;
+                return error.DeleteChangedOtherValues;
+            };
+            return true;
+        }
+
+        /// The comment ending the element header of the section sequence
+        /// `node` that stands on the line at `line` — `# c` in `[[x]] # c`
+        /// — as the span from the spaces before it, or null. A parser may
+        /// hand that comment to the next entry as a leading one (TOML's
+        /// does), so it is found where it is written: past the sequence's
+        /// name on that line and the header's close.
+        fn headerLineComment(self: *const Self, parsed: Document, node: AST.Node, hdr: lang.SectionHeader, line: usize) ?Span {
+            const source = self.source.items;
+            const close = hdr.seq_close orelse hdr.close;
+            var mentions = parsed.mentionsOf(node.id);
+            while (mentions.next()) |m| {
+                if (lineStartBefore(source, m.span.start) != line) continue;
+                var i = firstNonSpace(source, m.span.end);
+                if (!std.mem.startsWith(u8, source[i..], close)) return null;
+                i += close.len;
+                return self.lineEndComment(i, "");
+            }
+            return null;
+        }
+
+        /// Write `key_text = empty` into the table at `holder`, with `above`
+        /// over its line and `trail` after it, and check that the list at
+        /// `path` reads back empty. `emptiedHeaderSeq`'s second half.
+        fn writeEmptied(self: *Self, path: []const AST.PathSegment, holder: []const AST.PathSegment, key_text: []const u8, empty: []const u8, above: []const u8, trail: []const u8) !void {
+            try self.insertKey(holder, key_text, empty);
+            const parsed = try self.getParsed();
+            const seq = try parsed.ast.getValByPath(path);
+            if (seq.kind != .sequence or seq.kind.sequence != null) return error.DeleteChangedOtherValues;
+            if (above.len == 0 and trail.len == 0) return;
+            const source = self.source.items;
+            const span = parsed.span(try parsed.ast.getNodeByPath(path));
+            const line = lineStartBefore(source, span.start);
+            var out: std.ArrayList(u8) = .empty;
+            defer out.deinit(self.allocator);
+            try out.appendSlice(self.allocator, above);
+            try out.appendSlice(self.allocator, source[line..span.end]);
+            try out.appendSlice(self.allocator, trail);
+            try self.replaceAtSpan(Span.init(line, span.end), out.items);
+        }
+
+        /// Whether the mapping `mapping` has a body of its own to take a
+        /// new entry: it is the root, an element of a sequence of sections
+        /// (its `[[a]]` line), or a section with a header line that is its
+        /// own rather than one of its children's (`[t]`, not the `t` in
+        /// `[t.u]` or `[[t.x]]`). A dotted table's lines are its parent's.
+        fn ownsHeaderLine(self: *const Self, parsed: Document, mapping: AST.Node) bool {
+            if (mapping.kind != .mapping) return false;
+            const parent = parsed.ast.parentOf(mapping.id) orelse return true;
+            if (parsed.ast.kindOf(parent) == .sequence) return true;
+            const source = self.source.items;
+            var mentions = parsed.mentionsOf(mapping.id);
+            header: while (mentions.next()) |m| {
+                if (m.kind != .header) continue;
+                const line = lineStartBefore(source, m.span.start);
+                var cur = parsed.ast.child(&mapping) catch return false;
+                while (cur) |kv| : (cur = parsed.ast.next(&kv)) {
+                    if (self.outOfRegion(parsed, kv) and lineStartBefore(source, parsed.span(kv).start) == line)
+                        continue :header;
+                }
+                return true;
+            }
+            return false;
+        }
+
         /// The comment ending the header line of the section sequence
         /// `node` between `from` and `to` — the sequence's own trailing
         /// comment, or its only item's when the item's first header line is
@@ -3645,6 +3791,7 @@ pub fn Editor(comptime Language: type) type {
                 const seq = parsed.ast.node(p);
                 if (seq.kind == .sequence and seq.kind.sequence == node.id and parsed.ast.next(&node) == null) {
                     if (try self.emptiedSectionSeq(parsed, seq)) return;
+                    if (try self.emptiedHeaderSeq(parsed, seq, path[0 .. path.len - 1])) return;
                 }
             }
             // A table made by dotted keys inside a flow mapping is written

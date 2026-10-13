@@ -330,6 +330,33 @@ test "toml delete key inside a table" {
     try expectTomlSource(&ed, "[t]\ny = 2\n");
 }
 
+// `a.b.c = 1` is all there is of the table `a.b`: deleting `c` takes `a.b`
+// too, and the delete guard counts that as the deleted entry's
+// (`impliedOnlyBy` in editor.zig). A table with a header of its own stays,
+// empty. A dotted table that holds anything else is not taken.
+test "toml delete the only key under a dotted table takes the implicit table" {
+    const source = "a.b.c = 1\na.c = 2\n\"quoted\".k = 3\n[t]\nd.e = 3\n[t.u]\nv.w = 5\n";
+    var ed = try newTomlEditor(source);
+    defer ed.deinit();
+    try ed.deleteKey(&.{ .{ .key = "a" }, .{ .key = "b" }, .{ .key = "c" } });
+    try expectTomlSource(&ed, "a.c = 2\n\"quoted\".k = 3\n[t]\nd.e = 3\n[t.u]\nv.w = 5\n");
+    try ed.deleteKey(&.{ .{ .key = "quoted" }, .{ .key = "k" } });
+    try expectTomlSource(&ed, "a.c = 2\n[t]\nd.e = 3\n[t.u]\nv.w = 5\n");
+    try ed.deleteKey(&.{ .{ .key = "t" }, .{ .key = "u" }, .{ .key = "v" }, .{ .key = "w" } });
+    try expectTomlSource(&ed, "a.c = 2\n[t]\nd.e = 3\n[t.u]\n");
+}
+
+// An implicit table inside an inline table is read as block, and the line
+// delete would take the whole `it` line, `it.c` with it: the guard refuses
+// (docs/tasks/delete-splices-taking-other-values.md).
+test "toml delete under a dotted key in an inline table is refused, not a lost line" {
+    const source = "it = { a.b = 1, c = 2 }\nlst = 1\n";
+    var ed = try newTomlEditor(source);
+    defer ed.deinit();
+    try std.testing.expectError(error.DeleteChangedOtherValues, ed.deleteKey(&.{ .{ .key = "it" }, .{ .key = "a" }, .{ .key = "b" } }));
+    try expectTomlSource(&ed, source);
+}
+
 test "toml delete an inline-table-valued key" {
     var ed = try newTomlEditor("a = 1\np = { x = 1, y = 2 }\nb = 2\n");
     defer ed.deinit();

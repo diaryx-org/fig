@@ -103,6 +103,27 @@ test "ini deleteKey refuses to delete a whole [section] header" {
     try testing.expectEqualStrings("[server]\n", ed.source.items);
 }
 
+// A repeated key reads as one entry, its value the last spelling's. Deleting
+// it takes the first spelling, and the next shows through at its own place:
+// the delete guard counts that as the deleted entry's, not as another value
+// changing (`duplicateSurfaced` in editor.zig).
+test "ini deleteKey on a repeated key lets the next spelling show through" {
+    var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
+    try ed.init("a = 1\nb = 2\na = 3\n[s]\nx = 1\nx = 2\n");
+    defer ed.deinit();
+    try ed.deleteKey(&.{.{ .key = "a" }});
+    try testing.expectEqualStrings("b = 2\na = 3\n[s]\nx = 1\nx = 2\n", ed.source.items);
+    try ed.deleteKey(&.{ .{ .key = "s" }, .{ .key = "x" } });
+    try testing.expectEqualStrings("b = 2\na = 3\n[s]\nx = 2\n", ed.source.items);
+
+    // A reopened section's repeat, the same way.
+    var reopened: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
+    try reopened.init("k = v\n[s]\na = 1\n[t]\nb = 2\n[s]\nc = 3\na = 4\n");
+    defer reopened.deinit();
+    try reopened.deleteKey(&.{ .{ .key = "s" }, .{ .key = "a" } });
+    try testing.expectEqualStrings("k = v\n[s]\n[t]\nb = 2\n[s]\nc = 3\na = 4\n", reopened.source.items);
+}
+
 test "ini replaceValAtPath refuses a whole [section] (would rename the header)" {
     var ed: IniEditor = .{ .allocator = testing.allocator, .format = .INI };
     try ed.init("[server]\nhost = localhost\n");

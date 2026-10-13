@@ -614,6 +614,33 @@ test "yaml a delete that would change another value is rolled back" {
     try expectSource(&ed, source);
 }
 
+test "yaml a flow mapping delete passes the guard, and the line delete of a flow pair does not" {
+    var ed = try newYamlEditor("o: {a: 1, b: NaN}\np: x\n");
+    defer ed.deinit();
+    try ed.deleteKey(&.{ .{ .key = "o" }, .{ .key = "a" } });
+    try expectSource(&ed, "o: {b: NaN}\np: x\n");
+    try ed.deleteKey(&.{ .{ .key = "o" }, .{ .key = "b" } });
+    try expectSource(&ed, "o: {}\np: x\n");
+
+    // A single-pair mapping in a flow sequence has no braces of its own, and
+    // the delete would take the whole `n:` line; the guard refuses
+    // (docs/tasks/delete-splices-taking-other-values.md).
+    const pairs = "n: [a: b, c: d]\nm: 1\n";
+    var flow = try newYamlEditor(pairs);
+    defer flow.deinit();
+    try std.testing.expectError(error.DeleteChangedOtherValues, flow.deleteKey(&.{ .{ .key = "n" }, .{ .index = 0 }, .{ .key = "a" } }));
+    try expectSource(&flow, pairs);
+}
+
+test "yaml a delete does not take an implicit mapping's parent" {
+    // A YAML block mapping is never implicit: the key that holds it stays,
+    // null, when its only entry goes.
+    var ed = try newYamlEditor("k:\n  a: 1\nj: 2\n");
+    defer ed.deinit();
+    try ed.deleteKey(&.{ .{ .key = "k" }, .{ .key = "a" } });
+    try expectSource(&ed, "k:\nj: 2\n");
+}
+
 test "yaml remove the only item of a root block seq" {
     var ed = try newYamlEditor("---\n- a\n");
     defer ed.deinit();

@@ -2100,10 +2100,16 @@ pub fn Editor(comptime Language: type) type {
         /// them (`changedOnlyAt`): the container at `container_path` must
         /// have lost its child at `removed` and nothing else, every other
         /// node must be as it was, and otherwise the splice is rolled back
-        /// byte-for-byte with `DeleteChangedOtherValues`. A container whose
-        /// only child went may read back as null (`k:` over `  a: 1`
-        /// becomes `k:`), the one shape a block container has once it is
-        /// empty.
+        /// byte-for-byte with `DeleteChangedOtherValues`.
+        ///
+        /// What the entry's going takes with it is the entry's, not another
+        /// value: a container whose only child went may read back as the
+        /// format reads an empty value (`k:` over `  a: 1` becomes `k:`,
+        /// null; ZON's emptied tuple is `.{}`, a struct); an implicit table
+        /// that held only the entry goes too (TOML's `a.b.c = 1` is all of
+        /// `a.b`); and a duplicate of its key shows through (dotenv's `A=1`
+        /// over `A=3`). Scalars compare by their lexemes, so a `NaN` is
+        /// equal to itself.
         fn keepOthers(self: *Self, backup: []const u8, container_path: []const AST.PathSegment, removed: usize) !void {
             var parser: Language.Parser = .{ .allocator = self.allocator };
             const before = Language.parse(&parser, backup, self.format) catch {
@@ -2112,7 +2118,8 @@ pub fn Editor(comptime Language: type) type {
                 return error.DeleteChangedOtherValues;
             };
             defer before.deinit(self.allocator);
-            if (!changedOnlyAt(before, try self.getParsed(), container_path, .{ .removed = removed })) {
+            const removal: Removal = .{ .at = removed, .edit = .between(backup, self.source.items) };
+            if (!changedOnlyAt(before, try self.getParsed(), container_path, .{ .removed = removal })) {
                 try self.restoreSource(backup);
                 return error.DeleteChangedOtherValues;
             }
@@ -4426,7 +4433,10 @@ fn seqLen(parsed: Document, node: AST.Node) !usize {
 //
 // A delete makes the same promise the other way round (`keepOthers`): the
 // document differs only by the one child REMOVED from its container, or the
-// splice is rolled back with `DeleteChangedOtherValues`.
+// splice is rolled back with `DeleteChangedOtherValues`. What reads back
+// differently only because that child is gone counts as the child: its
+// container read as empty (`readsEmpty`), an implicit table that held only it
+// (`impliedOnlyBy`), a duplicate of its key (`duplicateSurfaced`).
 //
 // The comparison is over the two parses, not their bytes: the after-tree is
 // walked to the target container along the same path the caller named, every
@@ -4510,7 +4520,51 @@ fn nodesEqualDeep(b: Document, bid: AST.Node.Id, a: Document, aid: AST.Node.Id) 
 /// (uncomment), or the child at an index removed (delete).
 const Change = union(enum) {
     added,
-    removed: usize,
+    removed: Removal,
+};
+
+/// What a delete took: the child at `at` of its container, by a splice that
+/// changed `edit`'s bytes.
+const Removal = struct {
+    at: usize,
+    edit: Edit,
+};
+
+/// The one run of bytes two sources differ in: `before[start..before_end]`
+/// became `after[start..after_end]`, everything either side of it the same
+/// bytes in both. The run starts at a line's start, which is where a delete's
+/// splice starts unless it shares a line: a run found byte by byte would
+/// start wherever the text the splice took happens to repeat the text after
+/// it (`A=1` over `A=2` is a run from `1` to `2`), and say a duplicate's
+/// surviving spelling is the deleted one's.
+const Edit = struct {
+    start: usize,
+    before_end: usize,
+    after_end: usize,
+
+    fn between(before: []const u8, after: []const u8) Edit {
+        const shorter = @min(before.len, after.len);
+        var head: usize = 0;
+        while (head < shorter and before[head] == after[head]) head += 1;
+        const start = lineStartBefore(before, head);
+        var tail: usize = 0;
+        while (tail < shorter - start and before[before.len - 1 - tail] == after[after.len - 1 - tail]) tail += 1;
+        return .{ .start = start, .before_end = before.len - tail, .after_end = after.len - tail };
+    }
+
+    /// Whether the splice took or rewrote the bytes `span` names in the
+    /// source before.
+    fn took(self: Edit, span: Span) bool {
+        return span.start >= self.start and span.end <= self.before_end;
+    }
+
+    /// Where the byte at `at` in the source after stood in the source
+    /// before, or null for a byte the splice wrote.
+    fn beforeOffset(self: Edit, at: usize) ?usize {
+        if (at < self.start) return at;
+        if (at >= self.after_end) return at - self.after_end + self.before_end;
+        return null;
+    }
 };
 
 /// Whether `after` differs from `before` only by `change` to the container
@@ -4531,28 +4585,43 @@ fn changedOnlyUnder(
 ) bool {
     const bn = b.ast.node(bid);
     const an = a.ast.node(aid);
-    // A block container emptied of its only child reads back as null.
-    if (path.len == 0 and change == .removed and an.kind == .null_)
-        return change.removed == 0 and (seqLen(b, bn) catch return false) == 1;
+    // A container emptied of its only child reads back as the format reads
+    // an empty value: null (a block container, `k:`), an empty string
+    // (NestedText's `-` or `k:`), or an empty container of either kind
+    // (ZON's `.{}` is the one literal for both).
+    if (path.len == 0 and change == .removed and readsEmpty(a, an) and
+        std.meta.activeTag(bn.kind) != std.meta.activeTag(an.kind))
+        return change.removed.at == 0 and (seqLen(b, bn) catch return false) == 1;
     if (std.meta.activeTag(bn.kind) != std.meta.activeTag(an.kind)) return false;
     if (path.len == 0) return switch (change) {
         .added => childrenOnlyGrew(b, bn, a, an),
-        .removed => |at| childrenLostOne(b, bn, a, an, at),
+        .removed => |r| childrenLostOne(b, bn, a, an, r.at) or duplicateSurfaced(b, bn, a, an, r),
     };
 
     // Not the target yet: walk the two child lists in lockstep. They must have
     // the same length and pair up, with only the child the next path segment
-    // names allowed to differ — and only by what is added deeper down.
+    // names allowed to differ — and only by what is added deeper down, or
+    // taken: an implicit table that held nothing but the deleted entry goes
+    // with it (`impliedOnlyBy`).
     var b_cur = (b.ast.child(&bn) catch return false);
     var a_cur = (a.ast.child(&an) catch return false);
     var index: usize = 0;
-    while (b_cur) |bc| {
-        const ac = a_cur orelse return false;
+    while (b_cur) |bc| : ({
+        b_cur = b.ast.next(&bc);
+        index += 1;
+    }) {
         const on_path = switch (path[0]) {
-            .key => bc.kind == .keyvalue and ac.kind == .keyvalue and
-                keyNodeIs(b, bc.kind.keyvalue.key, path[0].key),
+            .key => bc.kind == .keyvalue and keyNodeIs(b, bc.kind.keyvalue.key, path[0].key),
             .index => index == path[0].index,
         };
+        const paired = if (a_cur) |ac| !on_path or path[0] == .index or
+            (ac.kind == .keyvalue and keyNodeIs(a, ac.kind.keyvalue.key, path[0].key)) else false;
+        if (!paired) {
+            if (on_path and change == .removed and impliedOnlyBy(b, bc, path[1..], change.removed.at)) continue;
+            return false;
+        }
+        const ac = a_cur.?;
+        a_cur = a.ast.next(&ac);
         const b_next = if (bc.kind == .keyvalue) bc.kind.keyvalue.value else bc.id;
         const a_next = if (ac.kind == .keyvalue) ac.kind.keyvalue.value else ac.id;
         if (on_path) {
@@ -4560,11 +4629,100 @@ fn changedOnlyUnder(
                 return false;
             if (!changedOnlyUnder(b, b_next, a, a_next, path[1..], change)) return false;
         } else if (!nodesEqualDeep(b, bc.id, a, ac.id)) return false;
+    }
+    return a_cur == null;
+}
+
+/// Whether `node` is what an emptied container may read back as: null, an
+/// empty string, or a container with no children.
+fn readsEmpty(doc: Document, node: AST.Node) bool {
+    return switch (node.kind) {
+        .null_ => true,
+        .string => |s| s.len == 0,
+        .mapping, .sequence => (doc.ast.child(&node) catch return false) == null,
+        else => false,
+    };
+}
+
+/// Whether the entry `kv` of the parse before a delete names an IMPLICIT
+/// table that held nothing but the path down to the deleted entry, so that
+/// the entry's going takes it too: TOML's `a.b.c = 1` is the only thing
+/// that makes `a.b` a table, and with that line gone `a.b` is not empty but
+/// absent, as it would be had it never been written. A table is implicit
+/// when every place its name is written is on an entry line (a `.entry`
+/// mention: a dotted key, a fig header at its parent's depth), none of them
+/// a header of its own (`[a.b]`, an INI `[section]`, which stays and reads
+/// back empty) — and a container whose format records no mentions, a YAML
+/// block mapping, is never implicit: `k:` stays when its last entry goes.
+/// `rest` is the path below `kv`, and `at` the deleted child's index in the
+/// container at its end.
+fn impliedOnlyBy(b: Document, kv: AST.Node, rest: []const AST.PathSegment, at: usize) bool {
+    if (kv.kind != .keyvalue) return false;
+    const table = b.ast.node(kv.kind.keyvalue.value);
+    if (table.kind != .mapping) return false;
+    var mentions = b.mentionsOf(table.id);
+    if (mentions.count() == 0) return false;
+    while (mentions.next()) |m| if (m.kind != .entry) return false;
+    const only = (b.ast.child(&table) catch return false) orelse return false;
+    if (b.ast.next(&only) != null) return false;
+    if (rest.len == 0) return at == 0;
+    return rest[0] == .key and only.kind == .keyvalue and
+        keyNodeIs(b, only.kind.keyvalue.key, rest[0].key) and
+        impliedOnlyBy(b, only, rest[1..], at);
+}
+
+/// Whether the mapping `an` is `bn` with the entry at `r.at` deleted and a
+/// DUPLICATE of its key showing through: a format that lets a key repeat
+/// (dotenv, INI, `.properties`, plist) reads `A=1` … `A=3` as one `A` whose
+/// value is the last, so deleting the first spelling leaves `A` there, with
+/// the value its other spelling gives it and at that spelling's place.
+/// Every other entry must be as it was and in its order. The deleted key must
+/// be one the splice took, and the `A` after it one the splice did not
+/// write — a spelling that stood elsewhere before — so a splice that left the
+/// key it was meant to take is not mistaken for a duplicate.
+fn duplicateSurfaced(b: Document, bn: AST.Node, a: Document, an: AST.Node, r: Removal) bool {
+    if (bn.kind != .mapping) return false;
+    var b_cur = (b.ast.child(&bn) catch return false);
+    var gone: ?AST.Node = null;
+    var index: usize = 0;
+    while (b_cur) |bc| : (b_cur = b.ast.next(&bc)) {
+        if (index == r.at) gone = bc;
+        index += 1;
+    }
+    const kv = (gone orelse return false).kind;
+    if (kv != .keyvalue) return false;
+    const key = switch (b.ast.node(kv.keyvalue.key).kind) {
+        .string => |s| s,
+        else => return false,
+    };
+    if (!r.edit.took(b.spanOf(kv.keyvalue.key))) return false;
+
+    b_cur = (b.ast.child(&bn) catch return false);
+    var a_cur = (a.ast.child(&an) catch return false);
+    var surfaced = false;
+    index = 0;
+    while (true) {
+        if (b_cur != null and index == r.at) {
+            b_cur = b.ast.next(&b_cur.?);
+            index += 1;
+            continue;
+        }
+        if (a_cur) |ac| {
+            if (ac.kind == .keyvalue and keyNodeIs(a, ac.kind.keyvalue.key, key)) {
+                // A spelling the splice wrote is not one that stood before.
+                if (surfaced or r.edit.beforeOffset(a.spanOf(ac.kind.keyvalue.key).start) == null) return false;
+                surfaced = true;
+                a_cur = a.ast.next(&ac);
+                continue;
+            }
+        }
+        const bc = b_cur orelse return surfaced and a_cur == null;
+        const ac = a_cur orelse return false;
+        if (!nodesEqualDeep(b, bc.id, a, ac.id)) return false;
         b_cur = b.ast.next(&bc);
         a_cur = a.ast.next(&ac);
         index += 1;
     }
-    return a_cur == null;
 }
 
 /// Whether the key node `id` is the string `name` — the physical spelling a

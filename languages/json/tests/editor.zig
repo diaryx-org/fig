@@ -104,6 +104,29 @@ test "json5 delete key carries its owned // comment" {
     );
 }
 
+// The delete guard compares the parses before and after, and a `NaN` is
+// compared by its lexeme, so it is equal to itself: deleting beside it, or
+// deleting it, is not refused as a value having changed.
+test "json5 delete beside and of a NaN" {
+    var ed = try newJson5Editor("{ a: NaN, b: 1, c: -Infinity }");
+    defer ed.deinit();
+    try ed.deleteKey(&.{.{ .key = "b" }});
+    try expectJson5Source(&ed, "{ a: NaN, c: -Infinity }");
+    try ed.deleteKey(&.{.{ .key = "a" }});
+    try expectJson5Source(&ed, "{ c: -Infinity }");
+}
+
+// The splice took `\n  n: NaN`, and the rest of `n`'s line joined the `// t`
+// comment above it, `i` with it: the guard refuses
+// (docs/tasks/delete-splices-taking-other-values.md).
+test "json5 delete that would join a line to a comment is refused" {
+    const source = "{\n  a: 1, // t\n  n: NaN, i: 2,\n}\n";
+    var ed = try newJson5Editor(source);
+    defer ed.deinit();
+    try std.testing.expectError(error.DeleteChangedOtherValues, ed.deleteKey(&.{.{ .key = "n" }}));
+    try expectJson5Source(&ed, source);
+}
+
 test "json5 delete key carries an owned /* */ block comment" {
     var ed = try newJson5Editor(
         \\{

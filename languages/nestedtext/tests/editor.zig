@@ -175,6 +175,18 @@ test "removeSeqItem removes a nested/empty-valued item cleanly, leaving siblings
     );
 }
 
+// NestedText has no null: a dictionary emptied of its only key reads back
+// as the empty string `-` is, which the delete guard counts as the
+// dictionary emptied, not as a value changing kind.
+test "deleteKey of a dictionary's only key leaves an empty item" {
+    try expectEdit(
+        "deleteKey",
+        "- a\n-\n    k: v\n",
+        .{&[_]AST.PathSegment{ .{ .index = 1 }, .{ .key = "k" } }},
+        "- a\n-\n",
+    );
+}
+
 test "removeSeqItem carries a leading comment above a nested item" {
     try expectEdit(
         "removeSeqItem",

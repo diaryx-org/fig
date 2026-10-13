@@ -247,6 +247,28 @@ test "fig delete key with owned comment" {
     try expectFigSource(&ed, "a = 1\n");
 }
 
+// A dotted line is all there is of the maps it names: deleting its key takes
+// them too, as the delete guard allows (`impliedOnlyBy` in editor.zig).
+test "fig delete a dotted key takes the maps only it made" {
+    var ed = try newFigEditor("a.b.c = 1\ndeep.nested.value = 42 # c\n'q k'.sub = 1\nv = 2\n");
+    defer ed.deinit();
+    try ed.deleteKey(&.{ .{ .key = "q k" }, .{ .key = "sub" } });
+    try expectFigSource(&ed, "a.b.c = 1\ndeep.nested.value = 42 # c\nv = 2\n");
+    try ed.deleteKey(&.{ .{ .key = "deep" }, .{ .key = "nested" }, .{ .key = "value" } });
+    try expectFigSource(&ed, "a.b.c = 1\nv = 2\n");
+}
+
+// `ys[0]` is written in two places, and the delete would take every `ys`
+// line, `ys[1]` with them: the guard refuses
+// (docs/tasks/delete-splices-taking-other-values.md).
+test "fig delete an element written in two places is refused, not a lost sibling" {
+    const source = "ys[0]\n> k = 1\nys[1]\n> k = 2\nys[0]\n> j = 3\n";
+    var ed = try newFigEditor(source);
+    defer ed.deinit();
+    try std.testing.expectError(error.DeleteChangedOtherValues, ed.removeSeqItem(&.{.{ .key = "ys" }}, 0));
+    try expectFigSource(&ed, source);
+}
+
 test "fig delete a nested scalar key" {
     var ed = try newFigEditor("database\n> host = localhost\n> port = 5432\n");
     defer ed.deinit();

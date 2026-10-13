@@ -52,6 +52,29 @@ test "zon delete first key of a packed single-line struct" {
     try expectZonSource(&ed, ".{ .b = 2 }");
 }
 
+// An emptied tuple is `.{}`, which ZON reads as an empty struct, the one
+// literal for both: the delete guard counts that as the tuple emptied, not
+// as a value changing kind.
+test "zon remove the only item of a tuple leaves .{}" {
+    var ed = try newZonEditor(".{\n    .x = .{\n        1,\n    },\n    .b = .{ 1 },\n}\n");
+    defer ed.deinit();
+    try ed.removeSeqItem(&.{.{ .key = "b" }}, 0);
+    try expectZonSource(&ed, ".{\n    .x = .{\n        1,\n    },\n    .b = .{ },\n}\n");
+    try ed.removeSeqItem(&.{.{ .key = "x" }}, 0);
+    try expectZonSource(&ed, ".{\n    .x = .{\n        },\n    .b = .{ },\n}\n");
+}
+
+// The line after a multi-line string's last `\\` line belongs to the string,
+// and the splice that deleted `.c` joined `c`'s line onto it: the guard
+// refuses (docs/tasks/delete-splices-taking-other-values.md).
+test "zon delete a field after a multi-line string is refused, not joined to it" {
+    const source = ".{\n    .ml =\n        \\\\line\n    ,\n    .c = 'A', .nl = '\\n',\n}\n";
+    var ed = try newZonEditor(source);
+    defer ed.deinit();
+    try std.testing.expectError(error.DeleteChangedOtherValues, ed.deleteKey(&.{.{ .key = "c" }}));
+    try expectZonSource(&ed, source);
+}
+
 // Regression: deleting the *only* field of a single-field struct must leave an
 // empty struct `.{}`, not delete the braces with the line. The `.`-backup of the
 // flow splice must still fire so no bare `.` is stranded.

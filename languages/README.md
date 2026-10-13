@@ -140,11 +140,21 @@ language's own tests too.
 
 ## A language outside fig
 
-The kit is reached by path today (`../../kit`), so a language builds
-inside fig's tree. Making the kit a package a language elsewhere fetches,
-and so publishing the crates, is
-[a task](../docs/tasks/language-crates-publish.md). A language written
-in another language altogether — JavaScript, or anything that speaks
-fig's helper protocol — registers through the same contract at runtime;
-see [fig in TypeScript](../docs/typescript.md) and
-[the helper protocol](../docs/helper-protocol.md).
+A crate written elsewhere builds as fig's own do: its build script calls
+`fig_language_build::compile`, which builds a copy of the package beside
+the kit `fig-language-build` carries, the kit of the fig release it
+belongs to. In the copy's `build.zig.zon`, `fig_kit` names that kit, a
+dependency fetched by URL stays, and any other by path is dropped; a
+package whose tests need one, as plist's need JSON, asks
+`b.available_deps` before it asks for it. `zig build` in the package
+itself reaches the kit as its own `build.zig.zon` says, by path to a
+checkout of fig's `kit/`: Zig fetches a package by URL only at a
+repository's root, and the kit is a directory of fig's.
+
+A language written in another language altogether — JavaScript, or
+anything that speaks fig's helper protocol — registers through the same
+contract at runtime; see [fig in TypeScript](../docs/typescript.md) and
+[the helper protocol](../docs/helper-protocol.md). The kit's number and
+datetime rules reach it too, so it spells a number and reads a datetime
+as these languages do: `fig_kit_*` in `fig.h`, `fig::kit` in Rust, and
+`@diaryx/fig/kit/number` and `/datetime` in JavaScript.

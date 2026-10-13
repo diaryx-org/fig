@@ -1,5 +1,7 @@
 name: Release (crate)
-# Publish the crates.io crate (fig + fig-macros, from bindings/rust). There is
+# Publish the crates.io crates (fig, fig-sys and its payloads, fig-macros,
+# fig-language-build, from bindings/rust, and each language's crate, from
+# languages/<name>/). There is
 # no Zig package step: Zig has no central registry — consumers `zig fetch`
 # this repo at a git tag, so pushing the tag *is* the Zig release. The macOS
 # CLI binary + Homebrew tap bump is a separate workflow (homebrew.yml);
@@ -116,9 +118,10 @@ jobs:
     - name: Build prebuilt payload libraries
       working-directory: bindings/rust
       run: bash scripts/build-payload-lib.sh all
-    # Vendors the Zig source into fig-sys AND fans the root LICENSE files out into
-    # each crate dir — must run before publishing so the license text (and the
-    # source-build fallback tree) are present in every packaged tarball.
+    # Vendors the Zig source into fig-sys, the kit into fig-language-build, AND
+    # fans the root LICENSE files out into each crate dir — must run before
+    # publishing so the license text, the source-build fallback tree and the kit
+    # a language crate builds against are present in every packaged tarball.
     - name: Vendor the Zig source and licenses into the crates
       run: zig build vendor-rust
     # crates.io Trusted Publishing: exchange this job's OIDC identity (what the
@@ -135,7 +138,9 @@ jobs:
       continue-on-error: true
     # Publish the whole graph bottom-up — crates.io rejects an upload whose
     # dependencies aren't already indexed, so the order is:
-    # payload crates -> fig-sys -> fig-macros -> fig
+    # payload crates -> fig-sys -> fig-macros -> fig -> fig-language-build
+    # -> each language (fig-json, ...), whose build needs Zig and the kit
+    # `vendor-rust` put in fig-language-build
     # Two hazards this loop survives, both worst on the FIRST release (all crates
     # brand new):
     # * crates.io throttles *new-crate* creation to a small burst (~5) then a slow
@@ -188,3 +193,7 @@ jobs:
         publish fig-sys
         publish fig-macros
         publish fig
+        publish fig-language-build
+        for dir in ../../languages/*/; do
+          publish "fig-$(basename "$dir")"
+        done

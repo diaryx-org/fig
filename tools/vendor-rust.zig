@@ -35,8 +35,16 @@ const list = @import("languages");
 // each as a dependency: its build files, its Zig source and its header, but
 // never the whole directory, whose Cargo.toml would make Cargo leave the
 // directory out of the crate.
-const files = [_][]const u8{ "build.zig", "build.zig.zon" } ++ languagePaths(&.{ "build.zig", "build.zig.zon" });
-const trees = [_][]const u8{ "src", "kit", "bindings/c/include" } ++ languagePaths(&.{ "src", "include" });
+const files = [_][]const u8{ "build.zig", "build.zig.zon" } ++ kit_files ++ languagePaths(&.{ "build.zig", "build.zig.zon" });
+const trees = [_][]const u8{ "src", "bindings/c/include" } ++ kit_trees ++ languagePaths(&.{ "src", "include" });
+
+// The kit, which fig-sys's build reaches as fig's dependency, and which
+// `fig-language-build` carries too, for a language crate built outside fig's
+// tree: its build files and its source, never the whole directory, which a
+// build inside it leaves `.zig-cache/` and `zig-out/` in.
+const kit_files = [_][]const u8{ "kit/build.zig", "kit/build.zig.zon" };
+const kit_trees = [_][]const u8{"kit/src"};
+const language_build_dir = "bindings/rust/fig-language-build";
 
 fn languagePaths(comptime names: []const []const u8) [list.rows.len * names.len][]const u8 {
     var out: [list.rows.len * names.len][]const u8 = undefined;
@@ -99,6 +107,20 @@ pub fn main(init: std.process.Init) !void {
         try copyTree(io, arena, src_root, dest_root, name);
     }
 
+    // The kit again, into `fig-language-build`'s own `kit/` (git-ignored,
+    // `include`-added), from a clean slate as above.
+    {
+        var crate = try cwd.openDir(io, try std.fs.path.join(arena, &.{ src_root_path, language_build_dir }), .{});
+        defer crate.close(io);
+        crate.deleteTree(io, "kit") catch {};
+        inline for (kit_files) |name| {
+            try src_root.copyFile(name, crate, name, io, .{ .make_path = true });
+        }
+        inline for (kit_trees) |name| {
+            try copyTree(io, arena, src_root, crate, name);
+        }
+    }
+
     // Fan the root license files out into each crate dir (paths relative to the
     // repo root we were handed as src_root).
     inline for (crate_dirs) |crate_dir| {
@@ -116,7 +138,7 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    std.debug.print("vendor-rust: copied {d} files + {d} trees + {d} licenses x{d} crates + 1 readme -> {s}\n", .{ files.len, trees.len, license_files.len, crate_dirs.len, dest_root_path });
+    std.debug.print("vendor-rust: copied {d} files + {d} trees + {d} licenses x{d} crates + 1 readme -> {s}, and the kit -> {s}/kit\n", .{ files.len, trees.len, license_files.len, crate_dirs.len, dest_root_path, language_build_dir });
 }
 
 /// Verify every path the vendor step reads, without writing anything: the build

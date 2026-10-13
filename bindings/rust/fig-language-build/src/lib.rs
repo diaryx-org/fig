@@ -16,6 +16,14 @@
 //!
 //! which builds the library for the target Cargo is building and links it,
 //! beside fig's own (`fig-sys`). Building needs Zig 0.17 or later on `PATH`.
+//!
+//! The build happens in a copy of the package, in `OUT_DIR`, beside a copy
+//! of the kit: fig's own (`kit/`, two directories up) for a language in
+//! fig's tree, and otherwise the one this crate carries, which is the kit of
+//! the fig release it belongs to. The copy's `build.zig.zon` names that kit
+//! as `fig_kit`, keeps any dependency fetched by URL, and drops any other by
+//! path, which a published crate has nothing at; a package whose tests need
+//! one asks `b.available_deps` before it asks for it.
 
 use std::env;
 use std::fs;
@@ -34,8 +42,10 @@ pub fn compile(name: &str) {
     let cargo_host = env::var("HOST").expect("Cargo sets HOST");
     let package =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("Cargo sets CARGO_MANIFEST_DIR"));
-    let prefix =
-        PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR")).join("zig-prefix");
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));
+    let prefix = out_dir.join("zig-prefix");
+    let kit = kit_source(&package);
+    let build_root = copy_package(&package, &kit, &out_dir.join("fig-language"));
 
     let mut command = Command::new("zig");
     command
@@ -51,7 +61,7 @@ pub fn compile(name: &str) {
     let status = command
         .arg("--prefix")
         .arg(&prefix)
-        .current_dir(&package)
+        .current_dir(&build_root)
         .status()
         .unwrap_or_else(|e| panic!("compiling {name}'s library needs Zig 0.17+ (https://ziglang.org/download/), and running `zig` failed: {e}"));
     if !status.success() {
@@ -67,15 +77,189 @@ pub fn compile(name: &str) {
         prefix.join("lib").display()
     );
     println!("cargo:rustc-link-lib=static={lib}");
-    for input in ["build.zig", "build.zig.zon", "src"] {
+    for input in PACKAGE_INPUTS {
         println!("cargo:rerun-if-changed={}", package.join(input).display());
     }
-    // A language of fig's own builds with the kit beside it in fig's tree
-    // (`languages/<name>/` and `kit/`); one written elsewhere fetches it.
-    let kit = package.join("../../kit");
-    if kit.join("build.zig").is_file() {
-        println!("cargo:rerun-if-changed={}", kit.display());
+    for input in KIT_INPUTS {
+        println!("cargo:rerun-if-changed={}", kit.join(input).display());
     }
+}
+
+/// What of a language package its library is built from.
+const PACKAGE_INPUTS: [&str; 4] = ["build.zig", "build.zig.zon", "src", "include"];
+/// What of the kit a language is built against.
+const KIT_INPUTS: [&str; 3] = ["build.zig", "build.zig.zon", "src"];
+
+/// The kit to build `package` against: fig's own, when the package is one
+/// of fig's languages (`languages/<name>/`, with `kit/` two directories
+/// up), or else the copy this crate carries (`kit/`, put there by fig's
+/// `zig build vendor-rust` before it is published).
+fn kit_source(package: &Path) -> PathBuf {
+    let in_tree = package.join("../../kit");
+    if is_kit(&in_tree) {
+        return in_tree;
+    }
+    let carried = Path::new(env!("CARGO_MANIFEST_DIR")).join("kit");
+    if is_kit(&carried) {
+        return carried;
+    }
+    panic!(
+        "fig-language-build: no kit to build {} against: it is not in fig's tree, and this \
+         crate carries none at {} (in fig's repository, `zig build vendor-rust` puts it there)",
+        package.display(),
+        carried.display()
+    );
+}
+
+/// Whether `dir` is the root of fig's kit package.
+fn is_kit(dir: &Path) -> bool {
+    fs::read_to_string(dir.join("build.zig.zon")).is_ok_and(|zon| zon.contains(".name = .fig_kit"))
+}
+
+/// Copy `package` and `kit` side by side under `root`, with the package's
+/// `build.zig.zon` rewritten to name the copied kit, and return where the
+/// package's copy is.
+fn copy_package(package: &Path, kit: &Path, root: &Path) -> PathBuf {
+    let _ = fs::remove_dir_all(root);
+    let (to_package, to_kit) = (root.join("package"), root.join("kit"));
+    for (from, to, inputs) in [
+        (package, &to_package, &PACKAGE_INPUTS[..]),
+        (kit, &to_kit, &KIT_INPUTS[..]),
+    ] {
+        for input in inputs {
+            let from = from.join(input);
+            if from.exists() {
+                copy_all(&from, &to.join(input));
+            }
+        }
+    }
+    let zon_path = to_package.join("build.zig.zon");
+    let zon = fs::read_to_string(&zon_path).expect("a language package has a build.zig.zon");
+    fs::write(&zon_path, with_kit_at(&zon, "../kit")).expect("write the copied build.zig.zon");
+    to_package
+}
+
+/// Copy a file, or a directory and everything in it.
+fn copy_all(from: &Path, to: &Path) {
+    if from.is_dir() {
+        fs::create_dir_all(to).expect("create a directory of the copy");
+        for entry in fs::read_dir(from).expect("read a directory of the package") {
+            let entry = entry.expect("a directory entry");
+            copy_all(&entry.path(), &to.join(entry.file_name()));
+        }
+    } else {
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent).expect("create a directory of the copy");
+        }
+        fs::copy(from, to).expect("copy a file of the package");
+    }
+}
+
+/// `zon` with its `.dependencies` naming the kit at `kit_path`: `fig_kit`'s
+/// entry replaced, an entry fetched by URL kept as written, and any other
+/// by path dropped.
+fn with_kit_at(zon: &str, kit_path: &str) -> String {
+    let kit = format!(".fig_kit = .{{ .path = \"{kit_path}\" }},");
+    let Some(open) = zon
+        .find(".dependencies")
+        .and_then(|k| zon[k..].find('{').map(|o| k + o))
+    else {
+        // No dependencies at all: give it the kit's.
+        let at = zon.rfind('}').expect("a build.zig.zon is one struct");
+        return format!(
+            "{}    .dependencies = .{{ {kit} }},\n{}",
+            &zon[..at],
+            &zon[at..]
+        );
+    };
+    let close = matching_brace(zon, open);
+    let mut body = format!("\n        {kit}\n");
+    let mut i = open + 1;
+    loop {
+        i = skip_trivia(zon, i);
+        if i >= close {
+            break;
+        }
+        // `.name = .{ ... }`, or `.@"name" = .{ ... }`.
+        let eq = i + zon[i..]
+            .find('=')
+            .expect("a dependency is `.name = .{ ... }`");
+        let name = zon[i..eq]
+            .trim()
+            .trim_start_matches('.')
+            .trim_start_matches('@')
+            .trim_matches('"');
+        let entry_open = eq
+            + zon[eq..]
+                .find('{')
+                .expect("a dependency is `.name = .{ ... }`");
+        let entry_close = matching_brace(zon, entry_open);
+        let entry = &zon[i..=entry_close];
+        if name != "fig_kit" && !entry.contains(".path") {
+            body.push_str("        ");
+            body.push_str(entry);
+            body.push_str(",\n");
+        }
+        i = entry_close + 1;
+    }
+    body.push_str("    ");
+    format!("{}{}{}", &zon[..=open], body, &zon[close..])
+}
+
+/// The index of the `}` that closes the `{` at `open`, past strings and
+/// comments.
+fn matching_brace(s: &str, open: usize) -> usize {
+    let b = s.as_bytes();
+    let (mut depth, mut i) = (0usize, open);
+    while i < b.len() {
+        match b[i] {
+            b'"' => i = string_end(b, i),
+            b'/' if b.get(i + 1) == Some(&b'/') => i = line_end(b, i),
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return i;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    panic!("a build.zig.zon's braces do not close")
+}
+
+/// Past whitespace, commas and comments from `i`.
+fn skip_trivia(s: &str, mut i: usize) -> usize {
+    let b = s.as_bytes();
+    while i < b.len() {
+        match b[i] {
+            b' ' | b'\t' | b'\r' | b'\n' | b',' => i += 1,
+            b'/' if b.get(i + 1) == Some(&b'/') => i = line_end(b, i) + 1,
+            _ => break,
+        }
+    }
+    i
+}
+
+/// The index of the `"` closing the string opened at `i`.
+fn string_end(b: &[u8], mut i: usize) -> usize {
+    i += 1;
+    while i < b.len() && b[i] != b'"' {
+        if b[i] == b'\\' {
+            i += 1;
+        }
+        i += 1;
+    }
+    i
+}
+
+/// The index of the newline ending the line `i` is on, or the end.
+fn line_end(b: &[u8], i: usize) -> usize {
+    b[i..]
+        .iter()
+        .position(|&c| c == b'\n')
+        .map_or(b.len(), |n| i + n)
 }
 
 /// Repackage a Zig-produced static archive so Apple's `ld` accepts it.
@@ -234,5 +418,49 @@ fn zig_target_for_cargo_target(target: &str, host: &str) -> Option<&'static str>
             "unsupported Rust target `{target}` for fig's bundled Zig static library; \
              add a Cargo-to-Zig target mapping in fig-language-build"
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::with_kit_at;
+
+    #[test]
+    fn the_kit_is_named_and_path_dependencies_dropped() {
+        let zon = r#".{
+    .name = .fig_plist,
+    .dependencies = .{
+        .fig_kit = .{ .path = "../../kit" },
+        // Its tests print what they read as JSON: "}".
+        .fig_json = .{ .path = "../json" },
+        .@"other" = .{ .url = "https://example.com/x.tar.gz", .hash = "abc" },
+    },
+    .paths = .{ "src" },
+}"#;
+        let out = with_kit_at(zon, "../kit");
+        assert!(
+            out.contains(r#".fig_kit = .{ .path = "../kit" },"#),
+            "{out}"
+        );
+        assert!(
+            !out.contains("../json") && !out.contains("../../kit"),
+            "{out}"
+        );
+        assert!(
+            out.contains(
+                r#".@"other" = .{ .url = "https://example.com/x.tar.gz", .hash = "abc" },"#
+            ),
+            "{out}"
+        );
+        assert!(out.contains(r#".paths = .{ "src" },"#), "{out}");
+    }
+
+    #[test]
+    fn a_package_with_no_dependencies_gets_the_kit() {
+        let out = with_kit_at(".{\n    .name = .x,\n}\n", "../kit");
+        assert!(
+            out.contains(r#".dependencies = .{ .fig_kit = .{ .path = "../kit" }, },"#),
+            "{out}"
+        );
     }
 }

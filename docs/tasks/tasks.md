@@ -17,7 +17,6 @@ contents
 > * [Deleting the last item of a YAML block list leaves the key null](/docs/tasks/yaml-block-list-emptied-to-null.md)
 > * [Closed tasks](/docs/tasks/closed/closed.md)
 > * [The Rust helper reads JSON with fig's json format](/docs/tasks/helper-serde-json.md)
-> * [The language crates can be published](/docs/tasks/language-crates-publish.md)
 ```
 
 # Tasks

@@ -1,12 +1,22 @@
 ```fig
 title = Deleting the only table of a TOML array of tables removes the key
-part_of = [Tasks](/docs/tasks/tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 description = Deleting the only `[[x]]` table removes `x`, where every other TOML list emptied by a delete leaves `x = []`; the empty array has to go in the parent table's body, not where the header was
-status = open
+status = done
 created = 2026-10-13
+updated = 2026-10-13
 ```
 
 # Deleting the only table of a TOML array of tables removes the key
+
+**Status.** Done, in `` fix(editor): deleting the only element of a TOML
+array of tables leaves `x = []` `` (d5a4010, 2026-10-13). Deleting the only
+element of an array of tables leaves `x = []` in the body of the table that
+holds it: among the root's entries, under `[t]` or under the enclosing
+`[[a]]` element, or, when the table has no header of its own, as the dotted
+key `t.x = []` in the nearest table that has one. The header's leading and
+trailing comments are kept; a result that does not read back as an empty
+list is rolled back.
 
 **Repro.** On `main` at dcc6617:
 

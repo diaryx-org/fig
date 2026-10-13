@@ -472,24 +472,24 @@ fn copyMap(self: anytype, src_node: AST.Node) Error!Id {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 const testing = std.testing;
-const JsonParser = @import("languages/json/parser.zig");
-const JsonPrinter = @import("languages/json/printer.zig");
+const JsonParser = @import("fig_json").Parser;
+const JsonPrinter = @import("fig_json").Printer;
 // The canonical parser is the AST-literal syntax for tests whose subject isn't a
 // particular format (here: null-stripping), so they don't depend on JSON reading.
 const CanonicalParser = @import("canonical/parser.zig");
-const TomlParser = @import("languages/toml/parser.zig");
-const TomlPrinter = @import("languages/toml/printer.zig");
-const ZonParser = @import("languages/zon/parser.zig");
-const ZonPrinter = @import("languages/zon/printer.zig");
+const TomlParser = @import("fig_toml").Parser;
+const TomlPrinter = @import("fig_toml").Printer;
+const ZonParser = @import("fig_zon").Parser;
+const ZonPrinter = @import("fig_zon").Printer;
 
 // The declarations the tests encode for, read straight off each language
 // module rather than through `nativeFor`: these tests import the parsers and
 // printers directly too, so they run in a build that has the language gated
 // out of `Language.*` (where `nativeFor` would answer null).
-const json_native: NativeKinds = @import("languages/json/json.zig").Language.caps.lossless.?;
-const toml_native: NativeKinds = @import("languages/toml/toml.zig").Language.caps.lossless.?;
-const zon_native: NativeKinds = @import("languages/zon/zon.zig").Language.caps.lossless.?;
-const yaml_native: NativeKinds = @import("languages/yaml/yaml.zig").Language.caps.lossless.?;
+const json_native: NativeKinds = @import("fig_json").Language.caps.lossless.?;
+const toml_native: NativeKinds = @import("fig_toml").Language.caps.lossless.?;
+const zon_native: NativeKinds = @import("fig_zon").Language.caps.lossless.?;
+const yaml_native: NativeKinds = @import("fig_yaml").Language.caps.lossless.?;
 
 /// Parse `input` with `Parser`, run `decode` then `encode(native)`, print with
 /// `Printer`, all inside `arena`. Returns the printed bytes (arena-owned).
@@ -624,8 +624,8 @@ test "encode, decode and lossyStrip keep a document's tags and %TAG directives" 
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const arena = a.allocator();
-    const YamlParser = @import("languages/yaml/parser.zig");
-    const YamlPrinter = @import("languages/yaml/printer.zig");
+    const YamlParser = @import("fig_yaml").Parser;
+    const YamlPrinter = @import("fig_yaml").Printer;
 
     // `!e!foo` prints only beside the `%TAG` line declaring `!e!`, and
     // `!!str` is a kind tag: all three rebuilds must hand both on, or the
@@ -650,7 +650,7 @@ test "an envelope carries no tag of the scalar it wraps" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
     const arena = a.allocator();
-    const YamlParser = @import("languages/yaml/parser.zig");
+    const YamlParser = @import("fig_yaml").Parser;
 
     // A tag on the wrapper would assert a type on a mapping. The envelope
     // already records the kind in its `t`.

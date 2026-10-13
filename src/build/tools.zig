@@ -42,6 +42,9 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
             .root_source_file = b.path("tools/vendor-rust.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "languages", .module = b.createModule(.{ .root_source_file = b.path("src/languages/list.zig") }) },
+            },
         }),
     });
     const vendor_rust_run = b.addRunArtifact(vendor_rust);
@@ -143,8 +146,8 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     // Shells out to the same `zig` running the build (`b.graph.zig_exe`), so
     // the fixtures are checked against the toolchain in use rather than
     // whatever is first on PATH. Side-effecting: it writes and re-writes one
-    // probe file per case, and its result depends on `src/languages/` state
-    // that isn't a declared input, so it must not be served from cache.
+    // probe file per case, and its result depends on the source of fig and its
+    // languages, which isn't a declared input, so it must not be served from cache.
     //
     // Takes the format list as a module so its all-formats-off
     // `build_options` stub names exactly the gates the library reads.

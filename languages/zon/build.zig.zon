@@ -1,0 +1,16 @@
+.{
+    .name = .fig_zon,
+    .version = "6.0.0",
+    .license = "MIT OR Apache-2.0",
+    .fingerprint = 0xf3849a2b8c15c200, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        .fig_kit = .{ .path = "../../kit" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "include",
+    },
+}

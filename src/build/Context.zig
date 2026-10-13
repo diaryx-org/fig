@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const Options = @import("Options.zig");
+const list = @import("../languages/list.zig");
 
 /// The build graph everything hangs off of.
 b: *std.Build,
@@ -44,10 +45,23 @@ zigjr: ?*std.Build.Module,
 kit: *std.Build.Module,
 /// The kit package itself, for its tests.
 kit_dep: *std.Build.Dependency,
+/// Each language fig ships, a package of its own (`languages/<name>/`), in
+/// `list.rows` order, built for this build's target.
+languages: [list.rows.len]*std.Build.Dependency,
 
 /// Give `m` the `kit` import.
 pub fn importKit(self: @This(), m: *std.Build.Module) void {
     m.addImport("kit", self.kit);
+}
+
+/// Give `m` every language's module, `fig_<name>`. Unreferenced, an import
+/// costs nothing: the bundle reaches a language only when it bundles it,
+/// and core's tests reach the ones they read.
+pub fn importLanguages(self: @This(), m: *std.Build.Module) void {
+    for (list.rows, self.languages) |row, dep| {
+        const name = self.b.fmt("fig_{s}", .{row.name});
+        m.addImport(name, dep.module(name));
+    }
 }
 
 /// Give `m` the `zigjr` import, when the build carries the wire.

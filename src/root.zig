@@ -15,6 +15,9 @@ pub const Wire = @import("languages/wire.zig");
 pub const Host = @import("languages/host.zig");
 
 pub const Editor = @import("editor.zig").Editor;
+/// The editor's module: `Editor`, and the source-coordinate helpers its
+/// splices use (`splice`), which a language's editor tests read too.
+pub const editor = @import("editor.zig");
 /// Structure-aware patching: merge one document into another through the
 /// editor's span splices, so everything the patch does not name stays
 /// byte-identical. See its module doc for the merge rule and what it refuses.

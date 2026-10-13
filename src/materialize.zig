@@ -391,7 +391,7 @@ const testing = std.testing;
 const build_options = @import("build_options");
 // By path: these exercise the pass over what the
 // compiled YAML parser builds, and skip when it is gated out of the build.
-const Parser = @import("languages/yaml/parser.zig");
+const Parser = @import("fig_yaml").Parser;
 
 fn hasAlias(ast: AST) bool {
     for (0..ast.nodeCount()) |i| if (ast.kindOf(@intCast(i)) == .alias) return true;

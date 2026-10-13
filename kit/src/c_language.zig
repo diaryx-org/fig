@@ -2,7 +2,7 @@
 //! linked beside fig's (`libfig.a`) by a C or Rust program: the one export
 //! `fig_<name>_register`, which registers the language through
 //! `fig_language_register` as any C host's language is
-//! (`bindings/c/include/fig/<name>.h`).
+//! (`languages/<name>/include/fig/<name>.h`).
 //!
 //! The library carries its own copy of the kit, a separate compilation from
 //! fig's, so the table fig hands a parse is opaque here: the language parses

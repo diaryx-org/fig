@@ -1,0 +1,116 @@
+const ini = @This();
+const Document = @import("kit").Document;
+const Table = @import("kit").table.Table;
+const lang = @import("kit").manifest;
+
+pub const Parser = @import("parser.zig");
+pub const Tokenizer = @import("tokenizer.zig");
+pub const Printer = @import("printer.zig");
+
+pub const Type = enum {
+    /// The one dialect this parser accepts: `=`-separated `key = value`
+    /// lines, `[section]` headers, `;`/`#` full-line comments. See
+    /// `tokenizer.zig`'s module doc for exactly what's deliberately excluded
+    /// from the many incompatible things "INI" means in the wild.
+    INI,
+};
+
+pub const Language = struct {
+    pub const Type = ini.Type;
+    pub const Parser = ini.Parser;
+    pub const Printer = ini.Printer;
+    pub const default_type: ini.Type = .INI;
+    /// Write `input`'s rows into `out`, the table fig hands a parse.
+    pub fn parseTable(parser: *ini.Parser, input: []const u8, format: ini.Type, out: *Table) !void {
+        _ = parser;
+        return ini.Parser.parseInto(out, input, format);
+    }
+    /// The document fig would adopt from a parse.
+    pub fn parse(parser: *ini.Parser, input: []const u8, format: ini.Type) !Document {
+        return ini.Parser.parse(parser.allocator, input, format);
+    }
+    pub const print = ini.Printer.print;
+    pub const printNode = ini.Printer.printNode;
+
+    pub const name = "ini";
+    pub const extensions: []const []const u8 = &.{"ini"};
+    /// A root mapping and one level of `[section]` mappings; a sequence at
+    /// any depth, or a mapping nested two or more levels deep, has no INI
+    /// spelling (`printer.zig` hard-errors on both rather than degrading).
+    pub const caps: lang.Caps = .{ .read = true, .edit = true, .serialize = true, .max_mapping_depth = 1 };
+
+    /// What `languages/harness.zig` round-trips and edits: a root key and a
+    /// `[section]` (the shape the parser records regions for).
+    pub const samples: []const []const u8 = &.{
+        "a = 1\n\n[s]\nk = v\n",
+    };
+
+    /// Untyped scalars: the grammar carries no type information, so
+    /// `port = 8080` reads back as the STRING "8080".
+    pub const dialects: []const lang.Dialect(@This()) = &.{.{
+        .name = "ini",
+        .prints = .{ .holds = .{}, .typed_scalars = false, .char_as = "number" },
+        .splice = .raw,
+        .empty_doc_seed = "",
+    }};
+
+    pub fn syntax(t: ini.Type) lang.Syntax {
+        _ = t;
+        return .{
+            // The printer accepts a leading `#` on read but always WRITES
+            // `;`, so `;` is what the editor's inserts and scans use. No
+            // same-line trailing comment syntax at all: a `;`/`#` after a
+            // value on the SAME line is literal value text (see `parser.zig`,
+            // "a value runs to end of line"). Splicing one in would corrupt
+            // the value on reread, so trailing ops are refused.
+            .comments = .{ .line = .{ .open = ";" }, .trailing = null },
+            .kv_sep = " = ",
+            // No literal spelling for an empty nested mapping — `{}` in INI
+            // is the two-character STRING `{}`, not a container — so `set`
+            // cannot auto-vivify a missing ancestor here at all.
+            .empty_map_literal = null,
+            // No `{…}`/`[…]` spelling at all: a `[` opening the file is the
+            // first section's header, which the flow sniff would misread.
+            .flow_containers = false,
+            // A section format: a `[section]` may be reopened and so
+            // scattered, and `parser.zig` records every section's header
+            // lines in `Document.regionsOf`. Its refusals say "section".
+            .section_noun = "section",
+        };
+    }
+
+    // ── Editing ──────────────────────────────────────────────────────────────
+    //
+    // No hooks. Every edit is the generic engine's, driven by `syntax` above:
+    // `insertKey` used to be hooked for one reason — to skip the flow sniff
+    // on a root whose first byte is a `[section]`'s bracket — and that is
+    // now `flow_containers = false` plus the engine's own rule that a
+    // section format's root is block (`editor.Editor.isFlowNode`).
+    //
+    // No delete/replace/move/reorder guards either: the engine's section rule
+    // covers them. A `[section]` is a section node (`Document.regionsOf`)
+    // — its span is anchored at its first header's name token alone — and a
+    // section node cannot be line-spliced: `deleteKey`, `replaceValAtPath`,
+    // `moveKey` and `reorderKeys` refuse it (`CannotDeleteSection`, …) and
+    // point at the whole-container ops.
+
+    // ── Whole-container ops ──────────────────────────────────────────────────
+    //
+    // All generic (see `editor.Editor`'s block of the same name). A reopened
+    // `[section]` is scattered through the file exactly as a TOML table or fig
+    // container is, and `deleteContainer`/`moveContainer`/`reorderContainers`
+    // derive its regions — every header occurrence plus its entries — from
+    // `Document.regionsOf`, with no INI code at all. No `insertContainer`
+    // (INI cannot auto-vivify at all — `syntax().empty_map_literal` is null)
+    // and no `renameContainer` (a header's key is one tight span the generic
+    // `replaceKeyAtPath` rewrites, with no dotted descendants to follow).
+};
+
+// The package's own tests (`zig build test`): every file's. Its editor
+// tests need fig itself, which a language cannot depend on, so they are
+// `tests/editor.zig`, which fig's build compiles.
+test {
+    _ = @import("tokenizer.zig");
+    _ = @import("parser.zig");
+    _ = @import("printer.zig");
+}

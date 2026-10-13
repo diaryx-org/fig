@@ -810,7 +810,7 @@ test "renderEdit spells a value as the format does and leaves a key a name, a de
 // Regression: `.json5` used to be a hard-refused branch in both `runEdit`
 // and `applyToFileAs` (`error.UnsupportedJson5Edit`) even though
 // `Editor(json.Language)` with `.format = .JSON5` fully supports every
-// structural op (see `languages/json/editor_test.zig`). These exercise the
+// structural op (see `languages/json/tests/editor.zig`). These exercise the
 // CLI's own dispatch path — `renderEdit` spelling the value, then
 // `applyEdit` reparsing under the `json5` registry entry's dialect (`.JSON5`)
 // — the same two calls `route` makes, so a re-introduced gate would only be

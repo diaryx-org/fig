@@ -5,6 +5,7 @@
 const std = @import("std");
 const Context = @import("Context.zig");
 const Options = @import("Options.zig");
+const list = @import("../languages/list.zig");
 
 /// The handles later stages need to hang more graph off of:
 ///   * `fig_mod`  — the `fig` library module (the tests and the abi probes import it).
@@ -16,7 +17,7 @@ pub const Result = struct {
     exe: *std.Build.Step.Compile,
     c_lib: *std.Build.Step.Compile,
     /// Each language's own static library, in `languages/list.zig`'s order.
-    c_languages: [@import("../languages/list.zig").rows.len]*std.Build.Step.Compile,
+    c_languages: [list.rows.len]*std.Build.Step.Compile,
 };
 
 pub fn add(ctx: Context) Result {
@@ -33,6 +34,7 @@ pub fn add(ctx: Context) Result {
     });
     mod.addImport("build_options", options_mod);
     ctx.importKit(mod);
+    ctx.importLanguages(mod);
     ctx.importWire(mod);
     // `root.zig`'s `test {}` block pulls in `c_api.zig`, which uses
     // `std.heap.c_allocator` on non-wasm targets — that allocator is only
@@ -116,37 +118,16 @@ pub fn add(ctx: Context) Result {
     const shared_step = b.step("shared", "Build the C ABI as a shared library (.so/.dylib/.dll) — for Android/iOS/dlopen consumers");
     shared_step.dependOn(&install_c_shared.step);
 
-    // One static library per language (`libfig_<name>.a`), linked beside
-    // `libfig.a`, with its header (`<fig/<name>.h>`): the language and its
-    // own copy of the kit, exporting `fig_<name>_register`
-    // (`kit/c_language.zig`).
+    // Each language's own static library (`libfig_<name>.a`), built by its
+    // package (`languages/<name>/`), linked beside `libfig.a`, with its
+    // header (`<fig/<name>.h>`).
     const c_languages_step = b.step("c-languages", "Build one static library per language, linked beside the C ABI library");
-    var c_languages: [@import("../languages/list.zig").rows.len]*std.Build.Step.Compile = undefined;
-    for (@import("../languages/list.zig").rows, 0..) |row, i| {
-        const lang_options = b.addOptions();
-        lang_options.addOption([]const u8, "name", row.name);
-        const lang = b.addLibrary(.{
-            .linkage = .static,
-            .name = b.fmt("fig_{s}", .{row.name}),
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("src/c_language.zig"),
-                .target = target,
-                .optimize = optimize,
-                .strip = strip,
-                .link_libc = !target.result.cpu.arch.isWasm() and !target.result.abi.isAndroid(),
-                .pic = if (target.result.abi.isAndroid()) true else null,
-            }),
-        });
-        lang.root_module.addImport("build_options", lib_options_mod);
-        lang.root_module.addImport("c_language_options", lang_options.createModule());
-        ctx.importKit(lang.root_module);
-        c_languages[i] = lang;
-        // `c-language-<name>`: the one library, what its Rust crate builds.
+    var c_languages: [list.rows.len]*std.Build.Step.Compile = undefined;
+    for (list.rows, ctx.languages, &c_languages) |row, dep, *lib| {
+        lib.* = dep.artifact(b.fmt("fig_{s}", .{row.name}));
         const one = b.step(b.fmt("c-language-{s}", .{row.name}), b.fmt("Build {s}'s own static library", .{row.name}));
-        const install_lang = b.addInstallArtifact(lang, .{});
-        const install_header = b.addInstallHeaderFile(b.path(b.fmt("bindings/c/include/fig/{s}.h", .{row.name})), b.fmt("fig/{s}.h", .{row.name}));
-        one.dependOn(&install_lang.step);
-        one.dependOn(&install_header.step);
+        one.dependOn(&b.addInstallArtifact(lib.*, .{}).step);
+        one.dependOn(&b.addInstallHeaderFile(dep.path(b.fmt("include/fig/{s}.h", .{row.name})), b.fmt("fig/{s}.h", .{row.name})).step);
         c_languages_step.dependOn(one);
     }
 
@@ -167,6 +148,7 @@ pub fn add(ctx: Context) Result {
     });
     wasm.root_module.addImport("build_options", options_mod);
     ctx.importKit(wasm.root_module);
+    ctx.importLanguages(wasm.root_module);
     ctx.importWire(wasm.root_module);
     wasm.entry = .disabled;
     wasm.rdynamic = true;
@@ -174,29 +156,12 @@ pub fn add(ctx: Context) Result {
     const wasm_step = b.step("wasm", "Build the WebAssembly module for the TypeScript bindings");
     wasm_step.dependOn(&install_wasm.step);
 
-    // One WebAssembly module per language (`fig-<name>.wasm`), beside
-    // `fig.wasm`: the language and its own copy of the kit, which the
-    // TypeScript binding loads and registers into `fig.wasm`
-    // (`kit/wasm_language.zig`).
+    // Each language's own WebAssembly module (`fig-<name>.wasm`), built by
+    // its package, beside `fig.wasm`: the TypeScript binding loads one and
+    // registers it into `fig.wasm` (`kit/src/wasm_language.zig`).
     const wasm_languages_step = b.step("wasm-languages", "Build one WebAssembly module per language for the TypeScript bindings");
-    for (@import("../languages/list.zig").rows) |row| {
-        const lang_options = b.addOptions();
-        lang_options.addOption([]const u8, "name", row.name);
-        const lang = b.addExecutable(.{
-            .name = b.fmt("fig-{s}", .{row.name}),
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("src/wasm_language.zig"),
-                .target = wasm_target,
-                .optimize = .small,
-                .strip = true,
-            }),
-        });
-        lang.root_module.addImport("build_options", options_mod);
-        lang.root_module.addImport("wasm_language_options", lang_options.createModule());
-        ctx.importKit(lang.root_module);
-        lang.entry = .disabled;
-        lang.rdynamic = true;
-        wasm_languages_step.dependOn(&b.addInstallArtifact(lang, .{}).step);
+    for (list.rows, ctx.languages) |row, dep| {
+        wasm_languages_step.dependOn(&b.addInstallArtifact(dep.artifact(b.fmt("fig-{s}", .{row.name})), .{}).step);
     }
 
     // WASI build of the *CLI* (`main.zig`), distinct from the freestanding
@@ -210,6 +175,7 @@ pub fn add(ctx: Context) Result {
     });
     wasi_mod.addImport("build_options", options_mod);
     ctx.importKit(wasi_mod);
+    ctx.importLanguages(wasi_mod);
     ctx.importWire(wasi_mod);
     const wasi_cli = b.addExecutable(.{
         .name = "fig-wasi",
@@ -287,5 +253,6 @@ fn addCApiLibrary(
     });
     lib.root_module.addImport("build_options", options_mod);
     ctx.importKit(lib.root_module);
+    ctx.importLanguages(lib.root_module);
     return lib;
 }

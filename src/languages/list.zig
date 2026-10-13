@@ -13,9 +13,9 @@
 //! A leaf, deliberately: both `build.zig` (through `Options.zig`) and the
 //! library read it, so it can import nothing and hold nothing but data.
 
-/// One format. `name` is the directory (`src/languages/<name>/`), the entry
-/// file (`<name>.zig` inside it), the `-D<name>` build option and the
-/// `build_options.lang_<name>` decl the option becomes.
+/// One format. `name` is the package (`languages/<name>/`, a dependency of
+/// fig's named `fig_<name>`), its module (`fig_<name>`), the `-D<name>`
+/// build option and the `build_options.lang_<name>` decl the option becomes.
 pub const Row = struct {
     name: [:0]const u8,
     /// The `-D<name>` option's help text.

@@ -4,7 +4,7 @@
 // `fig lang check js-json --against json <files…>` holds this module to the
 // compiled parser's node table on every file given, and this module is
 // written against `fig lang table -i json`, which prints that table. What
-// the compiled format accepts is stated in fig's `src/languages/json/`, and
+// the compiled format accepts is stated in fig's `languages/json/`, and
 // this follows it:
 //
 //   * a document is one value, whitespace (space, tab, `\n`, `\r`) around

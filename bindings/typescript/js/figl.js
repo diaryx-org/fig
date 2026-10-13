@@ -6,7 +6,7 @@
 // compiled `fig` reads, this module builds the same node table and prints
 // the same bytes. `fig lang table -i fig` prints that table, and `fig lang
 // check js-fig --against fig <files…>` holds this module to it on any
-// file; where the format is written down is fig's `src/languages/figl/`
+// file; where the format is written down is fig's `languages/figl/`
 // (`DESIGN.md`, `tokenizer.zig`, `parser.zig`, `printer.zig`).
 //
 // The shape, as the compiled parser builds it:

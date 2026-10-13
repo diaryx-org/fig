@@ -5,6 +5,7 @@ const artifacts = @import("src/build/artifacts.zig");
 const tools = @import("src/build/tools.zig");
 const tests = @import("src/build/tests.zig");
 const checks = @import("src/build/checks.zig");
+const list = @import("src/languages/list.zig");
 
 // The build graph lives in src/build/, split by role and wired together at the
 // bottom of `build`:
@@ -83,6 +84,14 @@ pub fn build(b: *std.Build) void {
         null;
 
     const kit_dep = b.dependency("fig_kit", .{});
+    var languages: [list.rows.len]*std.Build.Dependency = undefined;
+    for (list.rows, &languages) |row, *dep| {
+        dep.* = b.dependency(b.fmt("fig_{s}", .{row.name}), .{
+            .target = target,
+            .optimize = optimize,
+            .strip = strip,
+        });
+    }
 
     const ctx: Context = .{
         .b = b,
@@ -95,6 +104,7 @@ pub fn build(b: *std.Build) void {
         .zigjr = zigjr,
         .kit = kit_dep.module("kit"),
         .kit_dep = kit_dep,
+        .languages = languages,
     };
 
     // Order matters only for the data handed downstream, not the build graph:

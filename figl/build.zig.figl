@@ -14,4 +14,25 @@ dependencies.zigjr
 # The kit, a package of its own: what core and every language share.
 dependencies.fig_kit
 > path = kit
-paths = [build.zig, build.zig.zon, src, kit, README.md, LICENSE-MIT, LICENSE-APACHE]
+# The languages fig ships, each a package of its own (languages/<name>/).
+dependencies.fig_json
+> path = languages/json
+dependencies.fig_yaml
+> path = languages/yaml
+dependencies.fig_toml
+> path = languages/toml
+dependencies.fig_zon
+> path = languages/zon
+dependencies.fig_figl
+> path = languages/figl
+dependencies.fig_ini
+> path = languages/ini
+dependencies.fig_dotenv
+> path = languages/dotenv
+dependencies.fig_properties
+> path = languages/properties
+dependencies.fig_plist
+> path = languages/plist
+dependencies.fig_nestedtext
+> path = languages/nestedtext
+paths = [build.zig, build.zig.zon, src, kit, languages, README.md, LICENSE-MIT, LICENSE-APACHE]

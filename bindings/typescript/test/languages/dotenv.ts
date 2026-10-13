@@ -3,7 +3,7 @@
 // (`fig lang table -i dotenv <file>`, kept in ../fixtures/dotenv) and, once
 // registered, to the compiled format's reads, prints and edits. It is also
 // what a new language is written against: a complete parser and printer,
-// following src/languages/dotenv/ in the core line for line —
+// following languages/dotenv/ in the core line for line —
 //
 //   * a key is a bash identifier, `[A-Za-z_][A-Za-z0-9_]*`; an `export `
 //     before one is recognized and discarded;

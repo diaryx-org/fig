@@ -6,12 +6,12 @@ const build_options = @import("build_options");
 const AST = @import("kit").AST;
 const Document = @import("kit").Document;
 const Span = @import("kit").Span;
-const json = @import("languages/json/json.zig");
+const json = @import("fig_json");
 const regions = @import("editor/regions.zig");
 /// The source-coordinate utilities the engine and the regions module share.
-/// Re-exported here for the engine's own use; a format's editor tests import
-/// `editor/splice.zig` directly.
-const splice = @import("editor/splice.zig");
+/// Public so a language's editor tests (`languages/<name>/tests/editor.zig`)
+/// can read them through `fig.editor.splice`.
+pub const splice = @import("editor/splice.zig");
 const lineStartBefore = splice.lineStartBefore;
 const lineEndAfter = splice.lineEndAfter;
 const firstNonSpace = splice.firstNonSpace;
@@ -65,7 +65,7 @@ const bare_literal = @import("kit").literal;
 // constant that was really syntax, or a string function, and each became
 // one of those. See `docs/proposals/runtime-languages.md` §4.4. The
 // implementations live in `<lang>/edit.zig` (and the language's editor tests
-// in `<lang>/editor_test.zig`; was: `<lang>/editor_helper.zig`, which also held that
+// in `languages/<lang>/tests/editor.zig`; was: `<lang>/editor_helper.zig`, which also held that
 // language's editor tests), and the DECLARATION of which renderers a format
 // supplies, with the reason, sits in the "Renderers" block of its
 // `<lang>/<lang>.zig`.
@@ -76,15 +76,15 @@ const bare_literal = @import("kit").literal;
 // format that declares none of it; Zig has no conditional container-level
 // declarations (`usingnamespace` was removed in 0.15), so the methods exist
 // for every format.
-const Toml = @import("languages/toml/toml.zig").Language;
-const Fig = @import("languages/figl/figl.zig").Language;
-const Yaml = @import("languages/yaml/yaml.zig").Language;
-const Zon = @import("languages/zon/zon.zig").Language;
-const Dotenv = @import("languages/dotenv/dotenv.zig").Language;
-const Properties = @import("languages/properties/properties.zig").Language;
-const Ini = @import("languages/ini/ini.zig").Language;
-const Plist = @import("languages/plist/plist.zig").Language;
-const NestedText = @import("languages/nestedtext/nestedtext.zig").Language;
+const Toml = @import("fig_toml").Language;
+const Fig = @import("fig_figl").Language;
+const Yaml = @import("fig_yaml").Language;
+const Zon = @import("fig_zon").Language;
+const Dotenv = @import("fig_dotenv").Language;
+const Properties = @import("fig_properties").Language;
+const Ini = @import("fig_ini").Language;
+const Plist = @import("fig_plist").Language;
+const NestedText = @import("fig_nestedtext").Language;
 
 /// What the bare-literal rule (`kit/literal.zig`) makes of `text`, trimmed
 /// of whitespace: the `Literal` a value renderer is handed. `true`, `42`,
@@ -2829,7 +2829,7 @@ pub fn Editor(comptime Language: type) type {
         /// Insert `key_text<kv_sep>value_text` as a new entry in the block
         /// (non-flow) mapping `mapping`, after its last existing entry (or,
         /// if it has none, at a language-appropriate fallback point — see
-        /// below). `pub` so `ini/editor_test.zig`'s `iniInsertKey` (INI's
+        /// below). `pub` so `languages/ini/tests/editor.zig`'s `iniInsertKey` (INI's
         /// `isFlow`-bypassing `insertKey`) can reuse it directly rather than
         /// duplicate it.
         pub fn insertBlockKey(self: *Self, parsed: Document, mapping: AST.Node, key_text: []const u8, value_text: []const u8) !void {
@@ -4128,7 +4128,7 @@ test "addLeadingComment on TOML uses #" {
 // `Editor(Fig)`'s own methods into the test build's reachability graph — `zig
 // test` analyzes a generic struct's methods only once something calls them, so
 // an `Editor(Fig)` that nothing instantiates is an `Editor(Fig)` nothing
-// type-checks. (`fig/editor_test.zig`'s `test` blocks are discovered through
+// type-checks. (`languages/figl/tests/editor.zig`'s `test` blocks are discovered through
 // `fig.zig`'s own `test {}`, and carry the rest of `Editor(Fig)`'s coverage
 // rather than duplicating it here; the same split holds for TOML above.)
 test "addLeadingComment on fig uses # at the target's own marker depth" {
@@ -5467,7 +5467,7 @@ test "properties comment ops: leading works with '#', trailing is unsupported" {
 // Basic root-level/parameter sanity checks only — the same level of coverage
 // TOML/fig/ZON leave here (one "uses the right marker" test apiece). The
 // section-nesting behavior (`iniInsertKey`/`isSectionHeaderLine`,
-// the `set` auto-vivify exclusion) is exercised in `ini/editor_test.zig`,
+// the `set` auto-vivify exclusion) is exercised in `languages/ini/tests/editor.zig`,
 // next to that logic.
 
 test "ini set seeds the first root key into an empty document" {

@@ -116,6 +116,8 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     });
     lang_archive_probe.root_module.addCSourceFile(.{ .file = b.path("tools/lang_archive_probe.c") });
     lang_archive_probe.root_module.addIncludePath(b.path("bindings/c/include"));
+    lang_archive_probe.root_module.addIncludePath(ctx.languages[list.indexOf("yaml")].path("include"));
+    lang_archive_probe.root_module.addIncludePath(ctx.languages[list.indexOf("json")].path("include"));
     lang_archive_probe.root_module.linkLibrary(arts.c_languages[list.indexOf("yaml")]);
     lang_archive_probe.root_module.linkLibrary(arts.c_languages[list.indexOf("json")]);
     lang_archive_probe.root_module.linkLibrary(c_lib);

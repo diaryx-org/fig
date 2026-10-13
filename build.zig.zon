@@ -18,12 +18,44 @@
         .fig_kit = .{
             .path = "kit",
         },
+        // The languages fig ships, each a package of its own (languages/<name>/).
+        .fig_json = .{
+            .path = "languages/json",
+        },
+        .fig_yaml = .{
+            .path = "languages/yaml",
+        },
+        .fig_toml = .{
+            .path = "languages/toml",
+        },
+        .fig_zon = .{
+            .path = "languages/zon",
+        },
+        .fig_figl = .{
+            .path = "languages/figl",
+        },
+        .fig_ini = .{
+            .path = "languages/ini",
+        },
+        .fig_dotenv = .{
+            .path = "languages/dotenv",
+        },
+        .fig_properties = .{
+            .path = "languages/properties",
+        },
+        .fig_plist = .{
+            .path = "languages/plist",
+        },
+        .fig_nestedtext = .{
+            .path = "languages/nestedtext",
+        },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "src",
         "kit",
+        "languages",
         "README.md",
         "LICENSE-MIT",
         "LICENSE-APACHE",

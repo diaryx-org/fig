@@ -23,14 +23,28 @@
 
 const std = @import("std");
 const Dir = std.Io.Dir;
+const list = @import("languages");
 
 // The set `zig build install-c-lib` actually reads: the build scripts (build.zig
 // plus its src/build/ helper tree, which rides along inside `src`), the whole Zig
 // source rooted at src/c_api.zig, the kit it imports (a package of its own, at
 // kit/), and the public header. testdata/, tools/, and the other bindings are
 // not needed to build the static library.
-const files = [_][]const u8{ "build.zig", "build.zig.zon" };
-const trees = [_][]const u8{ "src", "kit", "bindings/c/include" };
+//
+// Every language package too (languages/<name>/), since fig's build names
+// each as a dependency: its build files, its Zig source and its header, but
+// never the whole directory, whose Cargo.toml would make Cargo leave the
+// directory out of the crate.
+const files = [_][]const u8{ "build.zig", "build.zig.zon" } ++ languagePaths(&.{ "build.zig", "build.zig.zon" });
+const trees = [_][]const u8{ "src", "kit", "bindings/c/include" } ++ languagePaths(&.{ "src", "include" });
+
+fn languagePaths(comptime names: []const []const u8) [list.rows.len * names.len][]const u8 {
+    var out: [list.rows.len * names.len][]const u8 = undefined;
+    for (list.rows, 0..) |row, i| {
+        for (names, 0..) |name, j| out[i * names.len + j] = "languages/" ++ row.name ++ "/" ++ name;
+    }
+    return out;
+}
 
 // Dual license, single source of truth at the repo root. crates.io takes the
 // SPDX `license` field, but a published crate should also carry the license

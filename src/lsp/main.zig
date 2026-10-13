@@ -1,6 +1,6 @@
 //! fig-lsp — a minimal Language Server for the fig authoring dialect.
 //!
-//! This is a thin shell around the Zig parser (`src/languages/figl/parser.zig`). It speaks
+//! This is a thin shell around the Zig parser (`languages/figl/src/parser.zig`). It speaks
 //! LSP JSON-RPC over stdio and, for now, does exactly one job well: on every
 //! open/change it re-parses the document and publishes the parser's teaching
 //! diagnostics (DESIGN.md's "every diagnostic names the fix") as squiggles.

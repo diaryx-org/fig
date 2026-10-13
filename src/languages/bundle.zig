@@ -14,16 +14,16 @@ const Runtime = @import("runtime.zig");
 const contract = @import("kit").contract;
 
 const modules = .{
-    .json = @import("json/json.zig"),
-    .yaml = @import("yaml/yaml.zig"),
-    .toml = @import("toml/toml.zig"),
-    .zon = @import("zon/zon.zig"),
-    .figl = @import("figl/figl.zig"),
-    .ini = @import("ini/ini.zig"),
-    .dotenv = @import("dotenv/dotenv.zig"),
-    .properties = @import("properties/properties.zig"),
-    .plist = @import("plist/plist.zig"),
-    .nestedtext = @import("nestedtext/nestedtext.zig"),
+    .json = @import("fig_json"),
+    .yaml = @import("fig_yaml"),
+    .toml = @import("fig_toml"),
+    .zon = @import("fig_zon"),
+    .figl = @import("fig_figl"),
+    .ini = @import("fig_ini"),
+    .dotenv = @import("fig_dotenv"),
+    .properties = @import("fig_properties"),
+    .plist = @import("fig_plist"),
+    .nestedtext = @import("fig_nestedtext"),
 };
 
 comptime {

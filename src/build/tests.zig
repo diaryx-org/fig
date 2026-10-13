@@ -11,6 +11,7 @@ const std = @import("std");
 const Context = @import("Context.zig");
 const Options = @import("Options.zig");
 const artifacts = @import("artifacts.zig");
+const list = @import("../languages/list.zig");
 
 /// The step handles `checks` wires into the `check` gate.
 pub const Result = struct {
@@ -78,6 +79,33 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
 
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_kit_tests.step);
+
+    // Each language's own tests: its package's `test` step, which needs
+    // nothing of fig's.
+    for (ctx.languages) |dep| {
+        test_step.dependOn(&dep.builder.top_level_steps.get("test").?.step);
+    }
+
+    // Each language's editor tests (`languages/<name>/tests/editor.zig`):
+    // fig's editor over the language. A language's package cannot depend
+    // on fig, which depends on it, so fig's build compiles them, with the
+    // language's module and fig's.
+    for (list.rows, ctx.languages) |row, dep| {
+        dep.builder.root.access(b.graph.io, "tests/editor.zig", .{}) catch continue;
+        const editor_tests = b.addTest(.{
+            .name = b.fmt("{s}-editor", .{row.name}),
+            .root_module = b.createModule(.{
+                .root_source_file = dep.path("tests/editor.zig"),
+                .target = target,
+                .optimize = ctx.optimize,
+                .imports = &.{.{ .name = "fig", .module = mod }},
+            }),
+            .filters = test_filters,
+        });
+        ctx.importKit(editor_tests.root_module);
+        ctx.importLanguages(editor_tests.root_module);
+        test_step.dependOn(&b.addRunArtifact(editor_tests).step);
+    }
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_version_sync_tests.step);
@@ -96,6 +124,7 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     });
     all_on_mod.addImport("build_options", all_on_options_mod);
     ctx.importKit(all_on_mod);
+    ctx.importLanguages(all_on_mod);
     ctx.importWire(all_on_mod);
     // Same libc reasoning as `mod` in artifacts.zig: root.zig's test block pulls
     // in c_api.zig, which reaches for `std.heap.c_allocator` on every non-wasm

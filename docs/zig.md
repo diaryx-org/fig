@@ -185,8 +185,9 @@ and `zig build abi-check` runs it. What a language cannot do is add a node
 kind or receive the editor: a renderer returns text. See
 `docs/proposals/runtime-languages.md` and `docs/proposals/core-only.md`.
 
-fig's own languages are Zig modules (`src/languages/<name>/`), and
-`kit/contract.zig`'s `VTable(L, prefix)` builds the vtable from one.
+fig's own languages are Zig packages (`languages/<name>/`), each
+depending on the kit (`kit/`) and on nothing else of fig's, and
+`kit/src/contract.zig`'s `VTable(L, prefix)` builds the vtable from one.
 `fig.Language.validate(comptime L)` holds such a module to the contract at
 comptime — the declarations it must and may make, and their coherence — and
 `zig build validate-check` proves the claims rather than describing them:

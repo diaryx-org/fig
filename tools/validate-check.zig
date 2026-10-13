@@ -11,7 +11,7 @@
 //!
 //! Why it earns its keep: `validate`'s value is entirely in what it refuses,
 //! and nothing else in the tree ever exercises a refusal. Every language in
-//! `src/languages/` is well-formed by construction, so a `validate` that had
+//! `languages/` is well-formed by construction, so a `validate` that had
 //! quietly stopped rejecting anything — an allowlist accidentally opened up, a
 //! coherence rule short-circuiting — would look exactly like a healthy one. The
 //! silent-fallback hazard this all exists to close (see the proposal's §10.5)
@@ -76,7 +76,7 @@ const cases = [_]Case{
         // passes `validate` can be given to `Editor`, its hooks may use
         // `editor/splice.zig`, and it appears in no registry-derived enum.
         // Proved by running one: a `Language` declared here, outside
-        // `src/languages/`, drives `Editor.set` end to end.
+        // `languages/`, drives `Editor.set` end to end.
         .name = "out-of-tree Language drives Editor",
         .expect = "",
         .run = true,
@@ -234,13 +234,10 @@ fn buildProbe(allocator: std.mem.Allocator, case: Case) ![]u8 {
     var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(allocator);
 
-    // `fig` is passed as a MODULE, not imported by path. Two reasons, both
-    // learned the hard way: a root module rooted in the work directory cannot
-    // `@import` a file outside its own module path, and the module has to be
-    // rooted at `src/root.zig` rather than at `languages/language.zig` because
-    // the language modules reach up to `src/document.zig` and `src/editor.zig`
-    // — a module rooted any deeper puts those outside its path. `language.zig`
-    // re-exports `Caps`/`Syntax`, so one dependency covers the whole fixture.
+    // `fig` is passed as a MODULE, not imported by path: a root module rooted
+    // in the work directory cannot `@import` a file outside its own module
+    // path. `language.zig` re-exports `Caps`/`Syntax`, so one dependency
+    // covers the whole fixture.
     try buf.appendSlice(allocator, "const language = @import(\"fig\").Language;\n\n");
     try buf.appendSlice(allocator, "pub const Language = struct {\n");
     try buf.appendSlice(allocator, "    pub const Type = enum { Only };\n");
@@ -378,13 +375,33 @@ pub fn main(init: std.process.Init) !void {
         try f.writePositionalAll(io, options_src, 0);
         try f.setLength(io, options_src.len);
     }
-    const root_arg = try std.fmt.allocPrint(arena, "-Mroot={s}", .{probe_path});
-    const lang_arg = try std.fmt.allocPrint(arena, "-Mfig={s}/src/root.zig", .{root});
-    const kit_arg = try std.fmt.allocPrint(arena, "-Mkit={s}/kit/src/kit.zig", .{root});
-    const opts_arg = try std.fmt.allocPrint(arena, "-Mbuild_options={s}", .{opts_path});
     const emit_arg = try std.fmt.allocPrint(arena, "-femit-bin={s}", .{
         try std.fs.path.join(arena, &.{ work, "probe.o" }),
     });
+
+    // The modules after the command: the probe, which depends on fig and
+    // build_options; fig, which depends on build_options, the kit and every
+    // language package's module (`bundle.zig` names each); the kit; and
+    // each language, which depends on the kit.
+    var modules: std.ArrayList([]const u8) = .empty;
+    try modules.appendSlice(arena, &.{ "--dep", "build_options", "--dep", "fig" });
+    try modules.append(arena, try std.fmt.allocPrint(arena, "-Mroot={s}", .{probe_path}));
+    try modules.appendSlice(arena, &.{ "--dep", "build_options", "--dep", "kit" });
+    inline for (list.rows) |row| try modules.appendSlice(arena, &.{ "--dep", "fig_" ++ row.name });
+    try modules.append(arena, try std.fmt.allocPrint(arena, "-Mfig={s}/src/root.zig", .{root}));
+    try modules.append(arena, try std.fmt.allocPrint(arena, "-Mbuild_options={s}", .{opts_path}));
+    try modules.append(arena, try std.fmt.allocPrint(arena, "-Mkit={s}/kit/src/kit.zig", .{root}));
+    for (list.rows) |row| {
+        try modules.appendSlice(arena, &.{ "--dep", "kit" });
+        try modules.append(arena, try std.fmt.allocPrint(arena, "-Mfig_{s}={s}/languages/{s}/src/{s}.zig", .{ row.name, root, row.name, row.name }));
+    }
+    var test_argv: std.ArrayList([]const u8) = .empty;
+    try test_argv.appendSlice(arena, &.{ zig_exe, "test" });
+    try test_argv.appendSlice(arena, modules.items);
+    var obj_argv: std.ArrayList([]const u8) = .empty;
+    try obj_argv.appendSlice(arena, &.{ zig_exe, "build-obj" });
+    try obj_argv.appendSlice(arena, modules.items);
+    try obj_argv.append(arena, emit_arg);
 
     var failures: usize = 0;
     for (cases) |case| {
@@ -400,25 +417,7 @@ pub fn main(init: std.process.Init) !void {
         // `build-obj` for a compile-or-refuse case; `test` — which also runs
         // the binary — for a case that must execute.
         const res = std.process.run(gpa, io, .{
-            .argv = if (case.run) &.{
-                zig_exe,         "test",
-                "--dep",         "build_options",
-                "--dep",         "fig",
-                root_arg,        "--dep",
-                "build_options", "--dep",
-                "kit",           lang_arg,
-                opts_arg,        kit_arg,
-            } else &.{
-                zig_exe,         "build-obj",
-                // root: depends on both; fig: on build_options and the kit.
-                "--dep",         "build_options",
-                "--dep",         "fig",
-                root_arg,        "--dep",
-                "build_options", "--dep",
-                "kit",           lang_arg,
-                opts_arg,        kit_arg,
-                emit_arg,
-            },
+            .argv = if (case.run) test_argv.items else obj_argv.items,
         }) catch |err| {
             std.debug.print("validate-check: could not run `{s} build-obj`: {s}\n", .{ zig_exe, @errorName(err) });
             return error.CompilerUnavailable;

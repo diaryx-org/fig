@@ -434,7 +434,9 @@ trailing-comment syntax at all, so `setTrailingComment` there returns
 A value that runs to the end of its line has no room after it either — a ZON
 `\\` string is string text up to its newline — so a trailing comment there
 would be read back as part of the value, and `setTrailingComment` rolls the
-edit back with `error.CommentInsideValue`.
+edit back with `error.CommentInsideValue`. A YAML `|`/`>` block scalar takes
+its trailing comment on its header line (`a: | # note`): its body runs through
+its last line's newline, so the end of the line after it is the next entry's.
 
 The comment marker (`#`, `//`) is chosen for the language; strict JSON has no
 comments and every comment op returns `error.CommentsUnsupported`.

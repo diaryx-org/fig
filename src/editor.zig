@@ -1261,8 +1261,12 @@ pub fn Editor(comptime Language: type) type {
         /// node span begins at its first child on a later line — the trailing
         /// comment instead rides the key's line (e.g. `contents: # note` above a
         /// block sequence), so the window is the key line, starting just past the
-        /// key. `start` always sits before any comment marker and after the value
-        /// (scalar) or key (block), so a `#`/`//` inside the value can't false-match.
+        /// key. A scalar that ends with its last line's newline — a YAML block
+        /// scalar — likewise takes it on its first line, the header's, since
+        /// the line its span ends on belongs to whatever follows. `start`
+        /// always sits before any comment marker and after the value (scalar)
+        /// or key (block), or at a block scalar's header, which holds no
+        /// marker of its own, so a `#`/`//` inside the value can't false-match.
         ///
         /// `null` when the node has no such window at all: a flow element or
         /// entry sharing its parent's line, whose line-end comment is the
@@ -1282,8 +1286,16 @@ pub fn Editor(comptime Language: type) type {
                 .mapping, .sequence => !self.isFlowNode(parsed, val) and self.syntax().closed_containers == null,
                 else => false,
             };
+            // A value whose span takes its last line's newline with it (a
+            // YAML `|`/`>` block scalar, whose body runs through its final
+            // line break) leaves nothing of that line: the line its span ends
+            // on is the next entry's. Its comment rides the line it opens
+            // on, after the header (`a: | # note`).
+            const takes_line_end = val_span.end > val_span.start and source[val_span.end - 1] == '\n';
             const start = if (is_block_collection)
                 parsed.span(try parsed.ast.getKeyByPath(path)).end
+            else if (takes_line_end)
+                val_span.start
             else
                 val_span.end;
             var line_end = std.mem.indexOfScalarPos(u8, source, start, '\n') orelse source.len;
@@ -4377,6 +4389,45 @@ test "setTrailingComment on a CRLF line goes before the CR" {
     }
     if (comptime build_options.lang_zon)
         try expectCommentEdit(Zon, .ZON, ".{\r\n    .a = 1,\r\n}\r\n", ".{\r\n    .a = 1, // note\r\n}\r\n", .trailing, &.{.{ .key = "a" }}, "note");
+}
+
+// A block scalar's body runs through its last line's newline, so the end of the
+// line its span ends on is the next entry's: the comment went there and read
+// back as `b`'s (`b: 1 # note`). It goes on the header line, and get and
+// delete find it there rather than reaching `b`'s.
+test "a trailing comment on a YAML block scalar goes on its header line" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    const a: []const AST.PathSegment = &.{.{ .key = "a" }};
+    const headers = [_][]const u8{ "|", ">", "|-", ">+", "|2", ">1-", "|+2" };
+    for (headers) |h| {
+        var in_buf: [64]u8 = undefined;
+        var out_buf: [64]u8 = undefined;
+        const input = try std.fmt.bufPrint(&in_buf, "a: {s}\n  text\n  more\n\nb: 1\n", .{h});
+        const expected = try std.fmt.bufPrint(&out_buf, "a: {s} # note\n  text\n  more\n\nb: 1\n", .{h});
+        try expectCommentEdit(Yaml, .v1_2_2, input, expected, .trailing, a, "note");
+    }
+    // Replaced in place, read back, and deleted from the header line; the
+    // next entry's own comment is not the block scalar's.
+    try expectCommentEdit(Yaml, .v1_2_2, "a: |  # old\n  text\nb: 1 # b's\n", "a: | # new\n  text\nb: 1 # b's\n", .trailing, a, "new");
+    try expectCommentDelete(Yaml, .v1_2_2, "a: | # gone\n  text\nb: 1 # b's\n", "a: |\n  text\nb: 1 # b's\n", .trailing, a);
+    try expectCommentDelete(Yaml, .v1_2_2, "a: |\n  text\nb: 1 # b's\n", "a: |\n  text\nb: 1 # b's\n", .trailing, a);
+    {
+        var ed: Editor(Yaml) = .{ .allocator = testing.allocator, .format = .v1_2_2 };
+        try ed.init("a: >- # kept\n  text\nb: 1 # b's\n");
+        defer ed.deinit();
+        const got = (try ed.getTrailingComment(a)).?;
+        defer testing.allocator.free(got);
+        try testing.expectEqualStrings("kept", got);
+    }
+    {
+        var ed: Editor(Yaml) = .{ .allocator = testing.allocator, .format = .v1_2_2 };
+        try ed.init("a: |\n  text\nb: 1 # b's\n");
+        defer ed.deinit();
+        try testing.expectEqual(null, try ed.getTrailingComment(a));
+    }
+    // A sequence item's block scalar, and a CRLF header line.
+    try expectCommentEdit(Yaml, .v1_2_2, "s:\n  - |\n    text\n  - x\n", "s:\n  - | # note\n    text\n  - x\n", .trailing, &.{ .{ .key = "s" }, .{ .index = 0 } }, "note");
+    try expectCommentEdit(Yaml, .v1_2_2, "a: |\r\n  text\r\nb: 1\r\n", "a: | # note\r\n  text\r\nb: 1\r\n", .trailing, a, "note");
 }
 
 // A ZON `\\` line is string text up to its newline, so there is no place on it

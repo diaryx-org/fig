@@ -18,6 +18,7 @@ contents
 > * [Conformance suite](conformance-suite.md)
 > * [Entry attributes](/docs/proposals/entry-attributes.md)
 > * [JSON-RPC wire](/docs/proposals/json-rpc-wire.md)
+> * [A replaced string keeps its quote style](/docs/proposals/keep-quote-style.md)
 ```
 
 # Proposals

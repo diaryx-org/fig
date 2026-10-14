@@ -781,6 +781,23 @@ test "yaml replace an explicit key's value with a block mapping" {
     try expectSource(&ed, "? k\n:\n  x: 1\n  y: two\nz: 1\n");
 }
 
+// The guards compare with the parse the editor already held, kept from the
+// reparse that would have freed it, and hand its buffer back when nothing
+// was spliced: an edit after a refused one, and after one that found
+// nothing to delete, reads the source as it stands.
+test "yaml edits after a refused one and a missing one read the source as it stands" {
+    const source = "? k\n: v\nz: 1\n";
+    var ed = try newYamlEditor(source);
+    defer ed.deinit();
+    try std.testing.expectError(error.EditReadsBackWrong, ed.replaceValAtPath(&.{.{ .key = "k" }}, "x: 1\ny: two"));
+    try std.testing.expectError(error.NotFound, ed.deleteKey(&.{.{ .key = "nope" }}));
+    try expectSource(&ed, source);
+    try ed.replaceValAtPath(&.{.{ .key = "z" }}, "2");
+    try expectSource(&ed, "? k\n: v\nz: 2\n");
+    try ed.deleteKey(&.{.{ .key = "z" }});
+    try expectSource(&ed, "? k\n: v\n");
+}
+
 test "yaml replace preserves a trailing line comment" {
     var ed = try newYamlEditor("title: Hello # note\n");
     defer ed.deinit();

@@ -525,6 +525,12 @@ pub fn Editor(comptime Language: type) type {
         /// blame the text instead of the file. Cleared at the top of each
         /// splice, so it always describes the most recent one.
         splice_rejected: bool = false,
+        /// While a `Before` keeps the parse of its buffer (`keep_for`), the
+        /// reparse that would free that document holds it here instead
+        /// (`kept`), for `readsBack` and `keepOthers` to compare against
+        /// rather than parse the backup a second time.
+        keep_for: ?[*]const u8 = null,
+        kept: ?Document = null,
 
         pub fn getParsed(self: *const Self) !Document {
             return self.document orelse {
@@ -2179,10 +2185,10 @@ pub fn Editor(comptime Language: type) type {
         /// source as it was.
         pub fn deleteKey(self: *Self, path: []const AST.PathSegment) !void {
             const removed = self.entryIndex(path);
-            const backup = try self.allocator.dupe(u8, self.source.items);
-            defer self.allocator.free(backup);
+            var before = try self.takeBefore();
+            defer before.deinit();
             try self.spliceOutEntry(path);
-            if (removed) |at| try self.keepOthers(backup, path[0 .. path.len - 1], at);
+            if (removed) |at| try self.keepOthers(before.bytes(), path[0 .. path.len - 1], at);
         }
 
         /// Where the entry at `path` stands among its container's children,
@@ -2222,8 +2228,7 @@ pub fn Editor(comptime Language: type) type {
         /// over `A=3`). Scalars compare by their lexemes, so a `NaN` is
         /// equal to itself.
         fn keepOthers(self: *Self, backup: []const u8, container_path: []const AST.PathSegment, removed: usize) !void {
-            var parser: Language.Parser = .{ .allocator = self.allocator };
-            const before = Language.parse(&parser, backup, self.format) catch {
+            const before = self.parseOfBackup(backup) catch {
                 // `backup` parsed before the splice, as in `uncommentBlock`.
                 try self.restoreSource(backup);
                 return error.DeleteChangedOtherValues;
@@ -2236,16 +2241,79 @@ pub fn Editor(comptime Language: type) type {
             }
         }
 
+        /// The source as it stood before an edit, for a check to compare the
+        /// edit's result with and to roll it back to. The editor's own
+        /// buffer becomes the backup, and the editor splices a copy, so the
+        /// document already parsed from that buffer stays valid; the first
+        /// reparse keeps it (`kept`) rather than freeing it, and
+        /// `parseOfBackup` hands it over instead of parsing the backup
+        /// again. A `Before` taken while another keeps keeps nothing.
+        const Before = struct {
+            owner: *Self,
+            buffer: std.ArrayList(u8),
+
+            fn bytes(b: *const Before) []const u8 {
+                return b.buffer.items;
+            }
+
+            fn deinit(b: *Before) void {
+                const e = b.owner;
+                if (e.keep_for == b.buffer.items.ptr) {
+                    if (e.kept) |d| d.deinit(e.allocator);
+                    e.kept = null;
+                    e.keep_for = null;
+                }
+                // No reparse since, so the editor's document still reads
+                // this buffer: give it back rather than free it under the
+                // document. Every splice that lands reparses, and one that
+                // fails restores the bytes, so the two buffers agree; and
+                // were they not to, the source the document reads is the
+                // one to keep.
+                if (e.document) |d| if (d.source.ptr == b.buffer.items.ptr) {
+                    e.source.deinit(e.allocator);
+                    e.source = b.buffer;
+                    return;
+                };
+                b.buffer.deinit(e.allocator);
+            }
+        };
+
+        fn takeBefore(self: *Self) !Before {
+            var copy: std.ArrayList(u8) = .empty;
+            try copy.appendSlice(self.allocator, self.source.items);
+            const buffer = self.source;
+            self.source = copy;
+            if (self.keep_for == null) self.keep_for = buffer.items.ptr;
+            return .{ .owner = self, .buffer = buffer };
+        }
+
+        /// The parse of `backup`: the document `kept` from before the edit
+        /// when there is one, which was parsed from those same bytes, or a
+        /// parse of them.
+        fn parseOfBackup(self: *Self, backup: []const u8) !Document {
+            if (self.kept) |d| if (d.source.ptr == backup.ptr) {
+                self.kept = null;
+                self.keep_for = null;
+                return d;
+            };
+            var parser: Language.Parser = .{ .allocator = self.allocator };
+            return Language.parse(&parser, backup, self.format);
+        }
+
         /// What a write, move or reorder is checked against once its splice
         /// is in: the source before it, the container it changes (`route`,
         /// from the root), and the one change it may make there.
         const Guard = struct {
-            backup: []u8,
+            before: ?Before = null,
             route: []usize,
             write: Write,
 
+            fn backup(g: *const Guard) []const u8 {
+                return g.before.?.bytes();
+            }
+
             fn deinit(g: *Guard, allocator: std.mem.Allocator) void {
-                allocator.free(g.backup);
+                if (g.before) |*b| b.deinit();
                 allocator.free(g.route);
                 switch (g.write) {
                     .whole => |w| if (w) |r| r.deinit(allocator),
@@ -2260,10 +2328,10 @@ pub fn Editor(comptime Language: type) type {
         /// A `Guard` for `write` to `container`, taking ownership of what
         /// `write` holds.
         fn guardAt(self: *Self, parsed: Document, container: AST.Node, write: Write) !Guard {
-            var held: Guard = .{ .backup = &.{}, .route = &.{}, .write = write };
+            var held: Guard = .{ .route = &.{}, .write = write };
             errdefer held.deinit(self.allocator);
             held.route = try routeTo(self.allocator, parsed, container.id);
-            held.backup = try self.allocator.dupe(u8, self.source.items);
+            held.before = try self.takeBefore();
             return held;
         }
 
@@ -2410,16 +2478,15 @@ pub fn Editor(comptime Language: type) type {
         /// other node must be as it was, and otherwise the splice is rolled
         /// back byte-for-byte with `EditReadsBackWrong`.
         fn readsBack(self: *Self, guard: *const Guard) !void {
-            var parser: Language.Parser = .{ .allocator = self.allocator };
-            const before = Language.parse(&parser, guard.backup, self.format) catch {
+            const before = self.parseOfBackup(guard.backup()) catch {
                 // `backup` parsed before the splice, as in `keepOthers`.
-                try self.restoreSource(guard.backup);
+                try self.restoreSource(guard.backup());
                 return error.EditReadsBackWrong;
             };
             defer before.deinit(self.allocator);
             const after = try self.getParsed();
             if (!writtenOnlyAt(before, before.ast.root, after, after.ast.root, guard.route, guard.write)) {
-                try self.restoreSource(guard.backup);
+                try self.restoreSource(guard.backup());
                 return error.EditReadsBackWrong;
             }
         }
@@ -2860,10 +2927,10 @@ pub fn Editor(comptime Language: type) type {
             if (node.kind != .sequence) return error.NotASequence;
             const n = try seqLen(parsed, node);
             const removed = if (index == std.math.maxInt(usize)) n -| 1 else index;
-            const backup = try self.allocator.dupe(u8, self.source.items);
-            defer self.allocator.free(backup);
+            var before = try self.takeBefore();
+            defer before.deinit();
             try self.spliceOutItem(path, index);
-            try self.keepOthers(backup, path, removed);
+            try self.keepOthers(before.bytes(), path, removed);
         }
 
         fn spliceOutItem(self: *Self, path: []const AST.PathSegment, index: usize) !void {
@@ -4677,14 +4744,14 @@ pub fn Editor(comptime Language: type) type {
                 }.later);
                 const first = flowFirstEntryStart(parsed, owner.flow);
                 const removed = self.entryIndex(path);
-                const backup = try self.allocator.dupe(u8, self.source.items);
-                defer self.allocator.free(backup);
+                var before = try self.takeBefore();
+                defer before.deinit();
                 // Last first, so the spans before each splice still stand.
                 for (entries.items) |entry| self.removeFlowEntry(entry, entry.start <= first) catch |err| {
-                    try self.restoreSource(backup);
+                    try self.restoreSource(before.bytes());
                     return err;
                 };
-                if (removed) |at| try self.keepOthers(backup, path[0 .. path.len - 1], at);
+                if (removed) |at| try self.keepOthers(before.bytes(), path[0 .. path.len - 1], at);
                 return;
             }
             var used = try self.gatherRegions(parsed, node, true);
@@ -5481,12 +5548,18 @@ pub fn Editor(comptime Language: type) type {
 
         fn freeDocument(self: *Self) void {
             if (self.document) |parsed| {
-                parsed.deinit(self.allocator);
+                if (self.kept == null and self.keep_for == parsed.source.ptr)
+                    self.kept = parsed
+                else
+                    parsed.deinit(self.allocator);
                 self.document = null;
             }
         }
 
         pub fn deinit(self: *Self) void {
+            if (self.kept) |d| d.deinit(self.allocator);
+            self.kept = null;
+            self.keep_for = null;
             self.freeDocument();
             self.source.deinit(self.allocator);
         }

@@ -453,7 +453,10 @@ its trailing comment on its header line (`a: | # note`): its body runs through
 its last line's newline, so the end of the line after it is the next entry's.
 A figl `'''`/`"""` string takes it on its opener line too (`x = ''' # note`),
 which a language declares with `Syntax.opener_line_comment`; a comment after
-its close is not the value's, and the trailing-comment ops leave it alone.
+its close is not the value's, and the trailing-comment ops leave it alone. So
+does a figl flow list or object over several lines whose opener line holds no
+element (`xs = [ # note`); one with an element there, or on one line, takes
+its comment after the close.
 
 The comment marker (`#`, `//`) is chosen for the language; strict JSON has no
 comments and every comment op returns `error.CommentsUnsupported`.

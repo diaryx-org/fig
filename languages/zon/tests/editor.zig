@@ -65,14 +65,16 @@ test "zon remove the only item of a tuple leaves .{}" {
 }
 
 // The line after a multi-line string's last `\\` line belongs to the string,
-// and the splice that deleted `.c` joined `c`'s line onto it: the guard
-// refuses (docs/tasks/delete-splices-taking-other-values.md).
-test "zon delete a field after a multi-line string is refused, not joined to it" {
-    const source = ".{\n    .ml =\n        \\\\line\n    ,\n    .c = 'A', .nl = '\\n',\n}\n";
-    var ed = try newZonEditor(source);
+// and the splice that deleted `.c` with the comma before it joined the rest
+// of `c`'s line onto it. A field that begins its line goes with the comma
+// after it (docs/tasks/delete-splices-taking-other-values.md).
+test "zon delete a field after a multi-line string leaves the string alone" {
+    var ed = try newZonEditor(".{\n    .ml =\n        \\\\line two\n    ,\n    .c = 'A', .nl = '\\n',\n}\n");
     defer ed.deinit();
-    try std.testing.expectError(error.DeleteChangedOtherValues, ed.deleteKey(&.{.{ .key = "c" }}));
-    try expectZonSource(&ed, source);
+    try ed.deleteKey(&.{.{ .key = "c" }});
+    try expectZonSource(&ed, ".{\n    .ml =\n        \\\\line two\n    ,\n    .nl = '\\n',\n}\n");
+    try ed.deleteKey(&.{.{ .key = "nl" }});
+    try expectZonSource(&ed, ".{\n    .ml =\n        \\\\line two\n    ,\n}\n");
 }
 
 // Regression: deleting the *only* field of a single-field struct must leave an

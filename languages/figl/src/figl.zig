@@ -99,7 +99,9 @@ pub const Language = struct {
             .section_noun = "container",
             // A `'''`/`"""` string's opener line holds nothing but the
             // delimiter and its comment (spec § 4.6), and that is where the
-            // comment lives: `x = ''' # note`. See `Syntax.opener_line_comment`.
+            // comment lives: `x = ''' # note`; so does a flow list or object
+            // over several lines whose `[`/`{` line holds no element
+            // (`xs = [ # note`). See `Syntax.opener_line_comment`.
             .opener_line_comment = true,
         };
     }

@@ -418,6 +418,10 @@ learns *this rule*, not each author's taste). The decision procedure below is
     to the key it describes, not after the far-away `]`. A comment written
     after the closing `]` still parses as trailing and migrates to the opener
     on the next fmt; when both are written, the opener wins — same as `'''`.
+    The editor's trailing-comment ops act on the opener line too, for a list
+    or object over several lines whose opener line holds no element
+    (`Syntax.opener_line_comment`), and leave a comment after the close
+    alone.
   - **Not blank-line separated at the root.** A stacked list is still one
     assignment, so it packs tight with its scalar neighbors — the frontmatter
     look — rather than reading as a section the way a header + block body does.

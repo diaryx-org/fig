@@ -1208,3 +1208,51 @@ test "yaml replace an explicit key's empty value with a block list" {
     try ed.replaceValAtPath(&.{ .{ .key = "m" }, .{ .key = "k" } }, "- 1\n- 2");
     try expectSource(&ed, "m:\n  ? k\n  :\n  - 1\n  - 2\n  z: 1\n");
 }
+
+// A quoted flow key may stand against its `:`, a plain one may not: plain,
+// `renamed:v` is one scalar. A rename to a plain key puts a blank after the
+// colon, so the entry keeps its value.
+fn expectValueText(ed: *editor.Editor(Yaml), path: []const AST.PathSegment, expected: []const u8) !void {
+    const parsed = try ed.getParsed();
+    const node = try parsed.ast.getValByPath(path);
+    const span = parsed.span(node);
+    try std.testing.expectEqualStrings(expected, ed.source.items[span.start..span.end]);
+}
+
+test "yaml rename a flow mapping key written against its colon" {
+    var ed = try newYamlEditor("m: { \"k\":v, q: 1 }\n");
+    defer ed.deinit();
+    try ed.replaceNamedKey(&.{ .{ .key = "m" }, .{ .key = "k" } }, "renamed");
+    try expectSource(&ed, "m: { renamed: v, q: 1 }\n");
+    try expectValueText(&ed, &.{ .{ .key = "m" }, .{ .key = "renamed" } }, "v");
+
+    var single = try newYamlEditor("m: {'k':[1]}\n");
+    defer single.deinit();
+    try single.replaceNamedKey(&.{ .{ .key = "m" }, .{ .key = "k" } }, "renamed");
+    try expectSource(&single, "m: {renamed: [1]}\n");
+    try expectValueText(&single, &.{ .{ .key = "m" }, .{ .key = "renamed" } }, "[1]");
+}
+
+test "yaml rename a flow sequence pair's key written against its colon" {
+    var ed = try newYamlEditor("n: [\"e\":f]\n");
+    defer ed.deinit();
+    try ed.replaceNamedKey(&.{ .{ .key = "n" }, .{ .index = 0 }, .{ .key = "e" } }, "renamed");
+    try expectSource(&ed, "n: [renamed: f]\n");
+    try expectValueText(&ed, &.{ .{ .key = "n" }, .{ .index = 0 }, .{ .key = "renamed" } }, "f");
+}
+
+// Only the colon a plain key would run into takes a blank: one already
+// followed by a blank, and a new key that closes with a quote, are left as
+// written.
+test "yaml rename a flow key leaves a colon that needs no blank" {
+    var spaced = try newYamlEditor("m: { \"k\": v }\n");
+    defer spaced.deinit();
+    try spaced.replaceNamedKey(&.{ .{ .key = "m" }, .{ .key = "k" } }, "renamed");
+    try expectSource(&spaced, "m: { renamed: v }\n");
+
+    var quoted = try newYamlEditor("m: { \"k\":v }\n");
+    defer quoted.deinit();
+    try quoted.replaceKeyAtPath(&.{ .{ .key = "m" }, .{ .key = "k" } }, "\"renamed\"");
+    try expectSource(&quoted, "m: { \"renamed\":v }\n");
+    try expectValueText(&quoted, &.{ .{ .key = "m" }, .{ .key = "renamed" } }, "v");
+}

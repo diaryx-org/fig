@@ -1132,7 +1132,45 @@ pub fn Editor(comptime Language: type) type {
                 try Language.renderKey(self.format, self.allocator, &out, .{ .indent = indent, .key = replacement, .old_key = source[span.start..span.end], .parent_key = place.key, .parent_tag = place.tag });
                 return self.replaceAtSpan(span, out.items);
             }
+            // A quoted key may stand against its separator (YAML's
+            // `{ "k":v }`), but a plain one runs through a `:` that no blank
+            // follows: `renamed:v` is one scalar, a key with no value. The
+            // separator then takes the blank `kv_sep` writes after it, so the
+            // entry reads as the rename asked.
+            if (self.joinedSeparator(span, replacement)) |sep_end| {
+                const text = try std.mem.concat(self.allocator, u8, &.{ replacement, self.source.items[span.end..sep_end], " " });
+                defer self.allocator.free(text);
+                return self.replaceAtSpan(Span.init(span.start, sep_end), text);
+            }
             try self.replaceAtSpan(span, replacement);
+        }
+
+        /// Where the separator ends when `new_key`, spliced over the quoted
+        /// key at `key_span`, would run into it, or null. That is when
+        /// `kv_sep` is a separator and a blank (`: `), the old key closes
+        /// with a quote and the separator stands directly after it with the
+        /// value directly after that, and the new key closes with no quote.
+        /// Flow entries record no separator (`Document.sepSpan`), so it is
+        /// read from the source.
+        fn joinedSeparator(self: *const Self, key_span: Span, new_key: []const u8) ?usize {
+            const kv_sep = self.syntax().kv_sep orelse return null;
+            if (kv_sep.len < 2 or kv_sep[kv_sep.len - 1] != ' ') return null;
+            const sep = kv_sep[0 .. kv_sep.len - 1];
+            if (std.mem.indexOfAny(u8, sep, " \t") != null) return null;
+            if (new_key.len == 0 or isQuote(new_key[new_key.len - 1])) return null;
+            const source = self.source.items;
+            if (key_span.end == key_span.start or !isQuote(source[key_span.end - 1])) return null;
+            if (!std.mem.startsWith(u8, source[key_span.end..], sep)) return null;
+            const sep_end = key_span.end + sep.len;
+            if (sep_end >= source.len) return null;
+            return switch (source[sep_end]) {
+                ' ', '\t', '\r', '\n' => null,
+                else => sep_end,
+            };
+        }
+
+        fn isQuote(c: u8) bool {
+            return c == '"' or c == '\'';
         }
 
         /// `replaceKeyAtPath` for a caller that has the new key's NAME rather

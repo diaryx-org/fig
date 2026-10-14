@@ -2,12 +2,24 @@
 title = Renaming a YAML flow key written against its colon makes another key
 part_of = [Tasks](/docs/tasks/tasks.md)
 description = `{ "k":v }` renamed becomes `{ renamed:v }`, which reads as the key `renamed:v` with no value
-status = open
+status = done
 created = 2026-10-14
 updated = 2026-10-14
 ```
 
 # Renaming a YAML flow key written against its colon makes another key
+
+**Status.** Done, in `fix(editor): a key renamed against its colon takes
+a blank after the colon` (2026-10-14). The new key is spelled as before and
+the colon it stands against takes the blank `kv_sep` writes after it, so
+`{ "k":v }` becomes `{ renamed: v }` and `["e":f]` becomes
+`[renamed: f]`. Keeping the old quotes was the other way; it would have
+changed every rename of a quoted key, which is the open question of the
+[quote-style proposal](/docs/proposals/keep-quote-style.md), where this
+touches only the entries that would misread. fig-conformance's yaml edits,
+against a wasm with every format compiled in and against the JavaScript
+twin, go from faithful 4374/4377 to 4376/4377, the two `suspect` cases no
+longer exact; `languages/yaml/tests/editor.zig` covers both shapes.
 
 **Repro.** At eca3f34, with the CLI:
 

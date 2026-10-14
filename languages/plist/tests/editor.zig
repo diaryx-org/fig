@@ -143,6 +143,25 @@ test "deleteKey (generic path, xml_comment style) removes the whole entry" {
     );
 }
 
+// plist reads a `<key>` written more than once as one entry, the last
+// spelling's value at the first's place. A delete or rename takes every
+// spelling; one that took the first left the key reading on.
+test "deleteKey and replaceKeyAtPath on a repeated key take every spelling" {
+    const dict = wrapper ++ "\n<dict>\n  <key>a</key>\n  <integer>1</integer>\n  <key>b</key>\n  <string>x</string>\n  <!-- again -->\n  <key>a</key>\n  <string>last</string>\n</dict>\n</plist>\n";
+    try expectEdit(
+        "deleteKey",
+        dict,
+        .{&[_]AST.PathSegment{.{ .key = "a" }}},
+        wrapper ++ "\n<dict>\n  <key>b</key>\n  <string>x</string>\n</dict>\n</plist>\n",
+    );
+    try expectEdit(
+        "replaceKeyAtPath",
+        dict,
+        .{ &[_]AST.PathSegment{.{ .key = "a" }}, "z" },
+        wrapper ++ "\n<dict>\n  <key>z</key>\n  <integer>1</integer>\n  <key>b</key>\n  <string>x</string>\n  <!-- again -->\n  <key>z</key>\n  <string>last</string>\n</dict>\n</plist>\n",
+    );
+}
+
 test "array append and prepend put an element on its own line (no dash)" {
     try expectEdit(
         "appendToSeq",

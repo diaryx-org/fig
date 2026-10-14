@@ -1082,6 +1082,9 @@ pub fn Editor(comptime Language: type) type {
         /// gives the mapping a second entry of one name is rolled back with
         /// `DuplicateKey`, counted as `insertKey` counts, because most
         /// parsers here accept the repeat and the reparse cannot be the net.
+        ///
+        /// A key written more than once and read as one entry is renamed at
+        /// every spelling (`spelledAgain`), so the old name no longer reads.
         pub fn replaceKeyAtPath(self: *Self, path: []const AST.PathSegment, replacement: []const u8) !void {
             if (path.len == 0 or path[path.len - 1] == .index) return error.NotAKey;
             const parent_path = path[0 .. path.len - 1];
@@ -1089,7 +1092,21 @@ pub fn Editor(comptime Language: type) type {
             const repeated_before = if (before.ast.getValByPath(parent_path)) |parent| try self.repeatedKeyCount(before.ast, parent) else |_| 0;
             const backup = try self.allocator.dupe(u8, self.source.items);
             defer self.allocator.free(backup);
-            try self.spliceKeyAtPath(path, replacement);
+            var spellings: usize = 0;
+            while (self.spelledAgain(path)) : (spellings += 1) {
+                const prior = try self.allocator.dupe(u8, self.source.items);
+                defer self.allocator.free(prior);
+                self.spliceKeyAtPath(path, replacement) catch |err| {
+                    if (spellings > 0) try self.restoreSource(backup);
+                    return err;
+                };
+                // A rename to the name it had finds the same spelling again.
+                if (std.mem.eql(u8, prior, self.source.items)) break;
+            }
+            self.spliceKeyAtPath(path, replacement) catch |err| {
+                if (spellings > 0) try self.restoreSource(backup);
+                return err;
+            };
             const after = try self.getParsed();
             const parent_after = after.ast.getValByPath(parent_path) catch return;
             if (try self.repeatedKeyCount(after.ast, parent_after) > repeated_before) {
@@ -2166,6 +2183,32 @@ pub fn Editor(comptime Language: type) type {
             return false;
         }
 
+        /// Whether the entry at `path` is one spelling of a key written
+        /// again later. dotenv, INI, `.properties` and plist read a key
+        /// written more than once as one entry: the parser keeps the first
+        /// spelling's place, as the entry's span, and the last spelling's
+        /// value, which so lies past it. A splice at the span takes one
+        /// spelling, and the key reads on with another's value, so
+        /// `deleteKey` and `replaceKeyAtPath` take this spelling and ask
+        /// again, until the entry is the last spelling and holds its own
+        /// value. Where a format keeps every spelling as an entry of its own
+        /// (YAML, JSON, ZON), each holds its value and the path names one.
+        fn spelledAgain(self: *Self, path: []const AST.PathSegment) bool {
+            if (path.len == 0 or path[path.len - 1] != .key) return false;
+            const parsed = self.getParsed() catch return false;
+            const kv = parsed.ast.getNodeByPath(path) catch return false;
+            return valuePastEntry(parsed, kv);
+        }
+
+        /// Whether `kv` is an entry whose value lies past its own span, a
+        /// later spelling's (`spelledAgain`). A section's value is spread
+        /// through the file by design and never counts.
+        fn valuePastEntry(parsed: Document, kv: AST.Node) bool {
+            if (kv.kind != .keyvalue) return false;
+            const value = parsed.ast.node(kv.kind.keyvalue.value);
+            return !parsed.isSection(value) and parsed.span(value).start > parsed.span(kv).end;
+        }
+
         /// Whether `mapping` has a direct entry whose key is `name`, other
         /// than the entry `except` — false for a node that is not a mapping.
         fn holdsName(ast: AST, mapping: AST.Node, name: []const u8, except: ?AST.Node.Id) bool {
@@ -2220,6 +2263,10 @@ pub fn Editor(comptime Language: type) type {
         /// one-per-line and the block path's line delete cannot handle them
         /// safely at any arity or position.
         ///
+        /// A key written more than once and read as one entry goes at every
+        /// spelling (`spelledAgain`), in one edit: refused whole if any
+        /// spelling's splice is.
+        ///
         /// Whatever the arm, the result is held to what a delete promises
         /// (`keepOthers`): a document that reads back with that entry gone
         /// and nothing else changed, or `DeleteChangedOtherValues` and the
@@ -2228,7 +2275,19 @@ pub fn Editor(comptime Language: type) type {
             const removed = self.entryIndex(path);
             var before = try self.takeBefore();
             defer before.deinit();
-            try self.spliceOutEntry(path);
+            var spellings: usize = 0;
+            while (self.spelledAgain(path)) : (spellings += 1) {
+                const len = self.source.items.len;
+                self.spliceOutEntry(path) catch |err| {
+                    if (spellings > 0) try self.restoreSource(before.bytes());
+                    return err;
+                };
+                if (self.source.items.len >= len) break; // the guard has the last word
+            }
+            self.spliceOutEntry(path) catch |err| {
+                if (spellings > 0) try self.restoreSource(before.bytes());
+                return err;
+            };
             if (removed) |at| try self.keepOthers(before.bytes(), path[0 .. path.len - 1], at);
         }
 
@@ -2265,9 +2324,8 @@ pub fn Editor(comptime Language: type) type {
         /// format reads an empty value (`k:` over `  a: 1` becomes `k:`,
         /// null; ZON's emptied tuple is `.{}`, a struct); an implicit table
         /// that held only the entry goes too (TOML's `a.b.c = 1` is all of
-        /// `a.b`); and a duplicate of its key shows through (dotenv's `A=1`
-        /// over `A=3`). Scalars compare by their lexemes, so a `NaN` is
-        /// equal to itself.
+        /// `a.b`). Scalars compare by their lexemes, so a `NaN` is equal to
+        /// itself.
         fn keepOthers(self: *Self, backup: []const u8, container_path: []const AST.PathSegment, removed: usize) !void {
             const before = self.parseOfBackup(backup) catch {
                 // `backup` parsed before the splice, as in `uncommentBlock`.
@@ -2275,8 +2333,7 @@ pub fn Editor(comptime Language: type) type {
                 return error.DeleteChangedOtherValues;
             };
             defer before.deinit(self.allocator);
-            const removal: Removal = .{ .at = removed, .edit = .between(backup, self.source.items) };
-            if (!changedOnlyAt(before, try self.getParsed(), container_path, .{ .removed = removal })) {
+            if (!changedOnlyAt(before, try self.getParsed(), container_path, .{ .removed = removed })) {
                 try self.restoreSource(backup);
                 return error.DeleteChangedOtherValues;
             }
@@ -4744,8 +4801,67 @@ pub fn Editor(comptime Language: type) type {
         /// occurrences included. A scalar or flow-valued target is refused
         /// (`NotASection` / `NotAContainer`): `deleteKey`/`removeSeqItem` is the
         /// op for those.
+        ///
+        /// An entry of the section written more than once goes at every
+        /// spelling first (`repeatedEntries`), and the whole is one edit.
         pub fn deleteContainer(self: *Self, path: []const AST.PathSegment) !void {
             comptime requireSectionFormat("deleteContainer");
+            var repeated = try self.repeatedEntries(path);
+            defer {
+                for (repeated.items) |name| self.allocator.free(name);
+                repeated.deinit(self.allocator);
+            }
+            if (repeated.items.len == 0) return self.deleteSection(path);
+            const backup = try self.allocator.dupe(u8, self.source.items);
+            defer self.allocator.free(backup);
+            const child = try self.allocator.alloc(AST.PathSegment, path.len + 1);
+            defer self.allocator.free(child);
+            @memcpy(child[0..path.len], path);
+            for (repeated.items) |name| {
+                child[path.len] = .{ .key = name };
+                self.deleteKey(child) catch |err| {
+                    try self.restoreSource(backup);
+                    return err;
+                };
+            }
+            self.deleteSection(path) catch |err| {
+                try self.restoreSource(backup);
+                return err;
+            };
+        }
+
+        /// The names of the section at `path`'s entries that are written
+        /// more than once (`spelledAgain`), owned by the caller. The gather
+        /// finds an entry's lines through its span, which is one spelling's,
+        /// so a spelling it left would read on under whatever comes before
+        /// it once the headers go.
+        fn repeatedEntries(self: *Self, path: []const AST.PathSegment) !std.ArrayList([]const u8) {
+            var names: std.ArrayList([]const u8) = .empty;
+            errdefer {
+                for (names.items) |name| self.allocator.free(name);
+                names.deinit(self.allocator);
+            }
+            const parsed = try self.getParsed();
+            const node = parsed.ast.getValByPath(path) catch return names;
+            if (node.kind != .mapping or !parsed.isSection(node)) return names;
+            var cur = node.kind.mapping;
+            while (cur) |id| : (cur = parsed.ast.node(id).next_sibling) {
+                const kv = switch (parsed.ast.node(id).kind) {
+                    .keyvalue => |kv| kv,
+                    else => continue,
+                };
+                const name = switch (parsed.ast.node(kv.key).kind) {
+                    .string => |str| str,
+                    else => continue,
+                };
+                if (!valuePastEntry(parsed, parsed.ast.node(id))) continue;
+                try names.append(self.allocator, try self.allocator.dupe(u8, name));
+            }
+            return names;
+        }
+
+        /// `deleteContainer`, once each entry of the section is written once.
+        fn deleteSection(self: *Self, path: []const AST.PathSegment) !void {
             const parsed = try self.getParsed();
             const node = try self.sectionAt(parsed, path);
             // A list's only item leaves the list, emptied, as
@@ -5729,8 +5845,10 @@ fn seqLen(parsed: Document, node: AST.Node) !usize {
 // document differs only by the one child REMOVED from its container, or the
 // splice is rolled back with `DeleteChangedOtherValues`. What reads back
 // differently only because that child is gone counts as the child: its
-// container read as empty (`readsEmpty`), an implicit table that held only it
-// (`impliedOnlyBy`), a duplicate of its key (`duplicateSurfaced`).
+// container read as empty (`readsEmpty`), or an implicit table that held only
+// it (`impliedOnlyBy`). A key written more than once is no exception: the
+// delete takes every spelling (`spelledAgain`), and the guard compares the
+// document before the first with the one after the last.
 //
 // The comparison is over the two parses, not their bytes: the after-tree is
 // walked to the target container along the same path the caller named, every
@@ -5834,51 +5952,7 @@ fn siblingRow(rows: []const tbl.Row, id: u32) u32 {
 /// (uncomment), or the child at an index removed (delete).
 const Change = union(enum) {
     added,
-    removed: Removal,
-};
-
-/// What a delete took: the child at `at` of its container, by a splice that
-/// changed `edit`'s bytes.
-const Removal = struct {
-    at: usize,
-    edit: Edit,
-};
-
-/// The one run of bytes two sources differ in: `before[start..before_end]`
-/// became `after[start..after_end]`, everything either side of it the same
-/// bytes in both. The run starts at a line's start, which is where a delete's
-/// splice starts unless it shares a line: a run found byte by byte would
-/// start wherever the text the splice took happens to repeat the text after
-/// it (`A=1` over `A=2` is a run from `1` to `2`), and say a duplicate's
-/// surviving spelling is the deleted one's.
-const Edit = struct {
-    start: usize,
-    before_end: usize,
-    after_end: usize,
-
-    fn between(before: []const u8, after: []const u8) Edit {
-        const shorter = @min(before.len, after.len);
-        var head: usize = 0;
-        while (head < shorter and before[head] == after[head]) head += 1;
-        const start = lineStartBefore(before, head);
-        var tail: usize = 0;
-        while (tail < shorter - start and before[before.len - 1 - tail] == after[after.len - 1 - tail]) tail += 1;
-        return .{ .start = start, .before_end = before.len - tail, .after_end = after.len - tail };
-    }
-
-    /// Whether the splice took or rewrote the bytes `span` names in the
-    /// source before.
-    fn took(self: Edit, span: Span) bool {
-        return span.start >= self.start and span.end <= self.before_end;
-    }
-
-    /// Where the byte at `at` in the source after stood in the source
-    /// before, or null for a byte the splice wrote.
-    fn beforeOffset(self: Edit, at: usize) ?usize {
-        if (at < self.start) return at;
-        if (at >= self.after_end) return at - self.after_end + self.before_end;
-        return null;
-    }
+    removed: usize,
 };
 
 /// Whether `after` differs from `before` only by `change` to the container
@@ -5905,11 +5979,11 @@ fn changedOnlyUnder(
     // (ZON's `.{}` is the one literal for both).
     if (path.len == 0 and change == .removed and readsEmpty(a, an) and
         std.meta.activeTag(bn.kind) != std.meta.activeTag(an.kind))
-        return change.removed.at == 0 and (seqLen(b, bn) catch return false) == 1;
+        return change.removed == 0 and (seqLen(b, bn) catch return false) == 1;
     if (std.meta.activeTag(bn.kind) != std.meta.activeTag(an.kind)) return false;
     if (path.len == 0) return switch (change) {
         .added => childrenOnlyGrew(b, bn, a, an),
-        .removed => |r| childrenLostOne(b, bn, a, an, r.at) or duplicateSurfaced(b, bn, a, an, r),
+        .removed => |at| childrenLostOne(b, bn, a, an, at),
     };
 
     // Not the target yet: walk the two child lists in lockstep. They must have
@@ -5931,7 +6005,7 @@ fn changedOnlyUnder(
         const paired = if (a_cur) |ac| !on_path or path[0] == .index or
             (ac.kind == .keyvalue and keyNodeIs(a, ac.kind.keyvalue.key, path[0].key)) else false;
         if (!paired) {
-            if (on_path and change == .removed and impliedOnlyBy(b, bc, path[1..], change.removed.at)) continue;
+            if (on_path and change == .removed and impliedOnlyBy(b, bc, path[1..], change.removed)) continue;
             return false;
         }
         const ac = a_cur.?;
@@ -5994,60 +6068,6 @@ fn impliedOnlyBy(b: Document, kv: AST.Node, rest: []const AST.PathSegment, at: u
     return rest[0] == .key and only.kind == .keyvalue and
         keyNodeIs(b, only.kind.keyvalue.key, rest[0].key) and
         impliedOnlyBy(b, only, rest[1..], at);
-}
-
-/// Whether the mapping `an` is `bn` with the entry at `r.at` deleted and a
-/// DUPLICATE of its key showing through: a format that lets a key repeat
-/// (dotenv, INI, `.properties`, plist) reads `A=1` … `A=3` as one `A` whose
-/// value is the last, so deleting the first spelling leaves `A` there, with
-/// the value its other spelling gives it and at that spelling's place.
-/// Every other entry must be as it was and in its order. The deleted key must
-/// be one the splice took, and the `A` after it one the splice did not
-/// write — a spelling that stood elsewhere before — so a splice that left the
-/// key it was meant to take is not mistaken for a duplicate.
-fn duplicateSurfaced(b: Document, bn: AST.Node, a: Document, an: AST.Node, r: Removal) bool {
-    if (bn.kind != .mapping) return false;
-    var b_cur = (b.ast.child(&bn) catch return false);
-    var gone: ?AST.Node = null;
-    var index: usize = 0;
-    while (b_cur) |bc| : (b_cur = b.ast.next(&bc)) {
-        if (index == r.at) gone = bc;
-        index += 1;
-    }
-    const kv = (gone orelse return false).kind;
-    if (kv != .keyvalue) return false;
-    const key = switch (b.ast.node(kv.keyvalue.key).kind) {
-        .string => |s| s,
-        else => return false,
-    };
-    if (!r.edit.took(b.spanOf(kv.keyvalue.key))) return false;
-
-    b_cur = (b.ast.child(&bn) catch return false);
-    var a_cur = (a.ast.child(&an) catch return false);
-    var surfaced = false;
-    index = 0;
-    while (true) {
-        if (b_cur != null and index == r.at) {
-            b_cur = b.ast.next(&b_cur.?);
-            index += 1;
-            continue;
-        }
-        if (a_cur) |ac| {
-            if (ac.kind == .keyvalue and keyNodeIs(a, ac.kind.keyvalue.key, key)) {
-                // A spelling the splice wrote is not one that stood before.
-                if (surfaced or r.edit.beforeOffset(a.spanOf(ac.kind.keyvalue.key).start) == null) return false;
-                surfaced = true;
-                a_cur = a.ast.next(&ac);
-                continue;
-            }
-        }
-        const bc = b_cur orelse return surfaced and a_cur == null;
-        const ac = a_cur orelse return false;
-        if (!nodesEqualDeep(b, bc.id, a, ac.id)) return false;
-        b_cur = b.ast.next(&bc);
-        a_cur = a.ast.next(&ac);
-        index += 1;
-    }
 }
 
 /// Whether the key node `id` is the string `name` — the physical spelling a
@@ -7792,6 +7812,26 @@ test "dotenv deleteKey removes the only entry, leaving an empty file" {
     try testing.expectEqualStrings("AGAIN=v2\n", ed.source.items);
 }
 
+// dotenv reads a key written more than once as one entry, the last
+// spelling's value at the first's place. A delete or rename takes every
+// spelling (`spelledAgain`); one that took the first left the key reading on.
+test "dotenv deleteKey and replaceKeyAtPath on a repeated key take every spelling" {
+    if (comptime !build_options.lang_dotenv) return error.SkipZigTest;
+    var ed: Editor(Dotenv) = .{ .allocator = testing.allocator, .format = .DOTENV };
+    try ed.init("A=1\nB=2\n# lead\nexport A=3\nA=4 # last\n");
+    defer ed.deinit();
+    try ed.replaceKeyAtPath(&.{.{ .key = "A" }}, "Z");
+    try testing.expectEqualStrings("Z=1\nB=2\n# lead\nexport Z=3\nZ=4 # last\n", ed.source.items);
+    try ed.deleteKey(&.{.{ .key = "Z" }});
+    try testing.expectEqualStrings("B=2\n", ed.source.items);
+    // A rename to a name the file already holds is refused, as before.
+    var taken: Editor(Dotenv) = .{ .allocator = testing.allocator, .format = .DOTENV };
+    try taken.init("A=1\nA=2\nB=3\n");
+    defer taken.deinit();
+    try testing.expectError(error.DuplicateKey, taken.replaceNamedKey(&.{.{ .key = "A" }}, "B"));
+    try testing.expectEqualStrings("A=1\nA=2\nB=3\n", taken.source.items);
+}
+
 test "dotenv: an entry appended after an `export` entry starts at column 0" {
     // The entry's span starts at its key, past `export `; a new sibling
     // takes the line's indent, not the key's column (see `indentAt`).
@@ -7863,6 +7903,17 @@ test "properties deleteKey removes the only entry, leaving an empty file" {
     try testing.expectEqualStrings("", ed.source.items);
     try ed.set(&.{.{ .key = "again" }}, "v2");
     try testing.expectEqualStrings("again=v2\n", ed.source.items);
+}
+
+test "properties deleteKey and replaceKeyAtPath on a repeated key take every spelling" {
+    if (comptime !build_options.lang_properties) return error.SkipZigTest;
+    var ed: Editor(Properties) = .{ .allocator = testing.allocator, .format = .PROPERTIES };
+    try ed.init("a=1\nb=2\na : 3\na=four \\\n  five\n");
+    defer ed.deinit();
+    try ed.replaceKeyAtPath(&.{.{ .key = "a" }}, "z");
+    try testing.expectEqualStrings("z=1\nb=2\nz : 3\nz=four \\\n  five\n", ed.source.items);
+    try ed.deleteKey(&.{.{ .key = "z" }});
+    try testing.expectEqualStrings("b=2\n", ed.source.items);
 }
 
 test "properties comment ops: leading works with '#', trailing is unsupported" {

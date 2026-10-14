@@ -1305,10 +1305,12 @@ pub fn Editor(comptime Language: type) type {
         /// the line its span ends on belongs to whatever follows; so does a
         /// scalar over several lines in a format whose opener line is its
         /// comment's (`Syntax.opener_line_comment`: figl's `x = ''' # note`),
-        /// and the comment after its close is not its own. `start` always
-        /// sits before any comment marker and after the value (scalar) or key
-        /// (block), or at a multi-line scalar's opener, which holds no marker
-        /// of its own, so a `#`/`//` inside the value can't false-match.
+        /// and a flow list or object over several lines whose opener line
+        /// holds no element (`xs = [ # note`); the comment after its close
+        /// is not its own. `start` always sits before any comment marker and
+        /// after the value (scalar) or key (block), or at a multi-line
+        /// value's opener, which holds no marker of its own, so a `#`/`//`
+        /// inside the value can't false-match.
         ///
         /// `null` when the node has no such window at all: a flow element or
         /// entry sharing its parent's line, whose line-end comment is the
@@ -1334,15 +1336,18 @@ pub fn Editor(comptime Language: type) type {
             // on is the next entry's. Its comment rides the line it opens
             // on, after the header (`a: | # note`).
             const takes_line_end = val_span.end > val_span.start and source[val_span.end - 1] == '\n';
-            // A format may put a multi-line scalar's comment on its opener
-            // line instead of after its close (figl's `x = ''' # note`, whose
-            // opener line holds only the delimiter and the comment).
+            // A format may put a multi-line value's comment on its opener
+            // line instead of after its close: figl's `x = ''' # note`, whose
+            // opener line holds only the delimiter and the comment, and
+            // `xs = [ # note` for a flow list or object whose opener line
+            // holds no element.
             const is_scalar = switch (std.meta.activeTag(val.kind)) {
                 .mapping, .sequence => false,
                 else => true,
             };
-            const on_opener_line = self.syntax().opener_line_comment and is_scalar and
-                std.mem.indexOfScalar(u8, source[val_span.start..val_span.end], '\n') != null;
+            const spans_lines = std.mem.indexOfScalar(u8, source[val_span.start..val_span.end], '\n') != null;
+            const on_opener_line = self.syntax().opener_line_comment and spans_lines and
+                (is_scalar or (!is_block_collection and self.flowOpenerLineIsEmpty(val_span.start)));
             const start = if (is_block_collection)
                 parsed.span(try parsed.ast.getKeyByPath(path)).end
             else if (takes_line_end or on_opener_line)
@@ -1355,6 +1360,21 @@ pub fn Editor(comptime Language: type) type {
             // value (YAML reads `a: 1\r # x` as the string "1\r").
             if (line_end > start and source[line_end - 1] == '\r') line_end -= 1;
             return .{ .start = start, .line_end = line_end };
+        }
+
+        /// Whether the flow container opening at `open` (its `[`/`{`) has
+        /// nothing after the opener on its line but blanks and a comment —
+        /// figl's `xs = [ # note`, whose first element starts on the next
+        /// line. Only then is the opener line the comment's (as the parser
+        /// reads it); one that holds an element there keeps its comment
+        /// after the close, since a `#` on that line is flow-interior.
+        fn flowOpenerLineIsEmpty(self: *const Self, open: usize) bool {
+            const source = self.source.items;
+            var i = open + 1;
+            while (i < source.len and (source[i] == ' ' or source[i] == '\t')) i += 1;
+            if (i >= source.len or source[i] == '\n' or source[i] == '\r') return true;
+            const marker = self.trailingCommentMarker() orelse return false;
+            return std.mem.startsWith(u8, source[i..], marker.open);
         }
 
         /// Set the same-line trailing comment on the value at `path`: replace an

@@ -206,6 +206,79 @@ test "fig a multi-line string's trailing comment lives on its opener line" {
     try expectTrailingRoundTrip("x = 'a'\n", x, "note", "x = 'a' # note\n");
 }
 
+// A flow list or object over several lines takes its comment on its opener
+// line, as the parser reads it (`xs = [ # op`). The window began after the
+// close, so get missed `# op` and set wrote a second comment after the `]`.
+test "fig a multi-line flow list's or object's trailing comment lives on its opener line" {
+    const xs: []const AST.PathSegment = &.{.{ .key = "xs" }};
+    const el: []const AST.PathSegment = &.{ .{ .key = "ys" }, .{ .index = 0 } };
+    const Shape = struct { open: []const u8, lf: []const u8, crlf: []const u8, close: []const u8 };
+    for ([_]Shape{
+        .{ .open = "[", .lf = "  1,\n  2,\n", .crlf = "  1,\r\n  2,\r\n", .close = "]" },
+        .{ .open = "{", .lf = "  a = 1,\n  b = 2,\n", .crlf = "  a = 1,\r\n  b = 2,\r\n", .close = "}" },
+    }) |sh| {
+        var in_buf: [256]u8 = undefined;
+        var out_buf: [256]u8 = undefined;
+        // A map entry's value, LF and CRLF, and a sequence element.
+        try expectTrailingRoundTrip(
+            try std.fmt.bufPrint(&in_buf, "xs = {s}\n{s}{s}\ny = 1\n", .{ sh.open, sh.lf, sh.close }),
+            xs,
+            "note",
+            try std.fmt.bufPrint(&out_buf, "xs = {s} # note\n{s}{s}\ny = 1\n", .{ sh.open, sh.lf, sh.close }),
+        );
+        try expectTrailingRoundTrip(
+            try std.fmt.bufPrint(&in_buf, "xs = {s}\r\n{s}{s}\r\ny = 1\r\n", .{ sh.open, sh.crlf, sh.close }),
+            xs,
+            "note",
+            try std.fmt.bufPrint(&out_buf, "xs = {s} # note\r\n{s}{s}\r\ny = 1\r\n", .{ sh.open, sh.crlf, sh.close }),
+        );
+        try expectTrailingRoundTrip(
+            try std.fmt.bufPrint(&in_buf, "ys\n> * {s}\n{s}{s}\n> * z\n", .{ sh.open, sh.lf, sh.close }),
+            el,
+            "note",
+            try std.fmt.bufPrint(&out_buf, "ys\n> * {s} # note\n{s}{s}\n> * z\n", .{ sh.open, sh.lf, sh.close }),
+        );
+
+        // An opener comment is read, replaced in place, and deleted there.
+        {
+            var ed = try newFigEditor(try std.fmt.bufPrint(&in_buf, "xs = {s}  # op\r\n{s}{s}\r\n", .{ sh.open, sh.crlf, sh.close }));
+            defer ed.deinit();
+            const got = (try ed.getTrailingComment(xs)).?;
+            defer std.testing.allocator.free(got);
+            try std.testing.expectEqualStrings("op", got);
+            try ed.setTrailingComment(xs, "new");
+            try expectFigSource(&ed, try std.fmt.bufPrint(&out_buf, "xs = {s} # new\r\n{s}{s}\r\n", .{ sh.open, sh.crlf, sh.close }));
+            try ed.deleteTrailingComment(xs);
+            try expectFigSource(&ed, try std.fmt.bufPrint(&out_buf, "xs = {s}\r\n{s}{s}\r\n", .{ sh.open, sh.crlf, sh.close }));
+        }
+
+        // A comment after the close is not the container's when its opener
+        // line is the comment's: get does not report it, delete leaves it,
+        // and set writes beside the opener.
+        {
+            const input = try std.fmt.bufPrint(&in_buf, "xs = {s}\n{s}{s} # close\n", .{ sh.open, sh.lf, sh.close });
+            var ed = try newFigEditor(input);
+            defer ed.deinit();
+            try std.testing.expectEqual(null, try ed.getTrailingComment(xs));
+            try ed.deleteTrailingComment(xs);
+            try expectFigSource(&ed, input);
+            try ed.setTrailingComment(xs, "op");
+            try expectFigSource(&ed, try std.fmt.bufPrint(&out_buf, "xs = {s} # op\n{s}{s} # close\n", .{ sh.open, sh.lf, sh.close }));
+        }
+    }
+    // A flow container on one line keeps its comment after the close, and
+    // so does one whose opener line holds an element: a `#` there is inside
+    // the flow, which the parser skips.
+    try expectTrailingRoundTrip("xs = [1, 2]\n", xs, "note", "xs = [1, 2] # note\n");
+    try expectTrailingRoundTrip("xs = {a=1}\n", xs, "note", "xs = {a=1} # note\n");
+    try expectTrailingRoundTrip("xs = [1,\n  2,\n]\n", xs, "note", "xs = [1,\n  2,\n] # note\n");
+    {
+        var ed = try newFigEditor("xs = [1, # inner\n  2,\n]\n");
+        defer ed.deinit();
+        try std.testing.expectEqual(null, try ed.getTrailingComment(xs));
+    }
+}
+
 // --- insertKey (block) ---
 
 test "fig insert key into root" {

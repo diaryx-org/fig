@@ -688,13 +688,16 @@ pub const Syntax = struct {
     empty_seq_literal: ?[]const u8 = null,
 
     // ================
-    // MULTI-LINE SCALARS
+    // MULTI-LINE VALUES
     // ================
 
     /// Whether a scalar written over several lines takes its same-line
     /// trailing comment on the line it OPENS on — figl's `x = ''' # note`,
     /// whose opener line holds nothing but the delimiter and the comment —
-    /// rather than after its close.
+    /// rather than after its close. So does a flow list or object written
+    /// over several lines whose opener line holds no element
+    /// (`xs = [ # note`); one with an element on that line keeps its comment
+    /// after the close, since a comment there is inside the flow.
     ///
     /// True for figl alone. A TOML `'''`/`"""` opener's line is string
     /// content, and a quoted YAML or JSON5 string that spans lines takes its

@@ -2273,7 +2273,8 @@ const language = {
     line_prefix_marks: ">+",
     section_noun: "container",
     // A `'''`/`"""` string's comment lives on its opener line:
-    // `x = ''' # note`.
+    // `x = ''' # note`; so does a multi-line flow list's or object's
+    // whose opener line holds no element: `xs = [ # note`.
     opener_line_comment: true,
   },
   // The extension the Zig language claims: a file by that name reaches

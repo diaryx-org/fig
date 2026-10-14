@@ -77,7 +77,7 @@ Indentation, when present, is checked against the convention `2 × depth` spaces
 Attachment rules:
 
 - a comment-only line attaches as a **leading** comment, at its own marker depth, to the next structural sibling;
-- a `# …` after a value on the same line is that value's **trailing** comment — for a multi-line string, on its opener line (§ 4.6);
+- a `# …` after a value on the same line is that value's **trailing** comment — for a multi-line string, or a flow value over several lines, on its opener line (§ 4.6, § 6.3);
 - when containers close over buffered comment lines, a comment at or deeper than the closing container's child depth becomes that container's **dangling** run; a shallower one stays pending as a leading comment on the next sibling;
 - comments buffered at end of input attach as the root's dangling run.
 
@@ -300,7 +300,7 @@ empty_map = {}
 - **Bracket-led bare strings** (§ 4.7's flow twin): an element whose first char is `[`/`{` and whose balanced close is followed by more content is a bare string, scanned bracket-aware so interior `]` does not terminate it — `links = [[Blog](/Blog.md), [Resume](/Resume.md)]` is two unquoted strings. As a fig object's value the trailing content must be glued to the close (`{href=[Blog](/x.md)}`); after whitespace the bracket group is a flow value and the rest is the next pair (`{xs=[1, 2] n=3}`).
 - **JSONC affordances**: trailing commas and `#` comments are accepted in both object spellings and in arrays; interior comments are discarded. JSON5 is otherwise dropped: `Infinity`/`NaN` are plain strings. A comment that hides the closing bracket (`[see #3, y]`) is `FigFlowCommentedClose`.
 - **No multi-line strings**: a `'''`/`"""` string inside a flow value is `FigFlowMultilineString`.
-- A `# …` alone after the opening bracket on its line is the flow value's trailing comment (the multi-line-string opener rule's flow twin).
+- A `# …` alone after the opening bracket on its line is the flow value's trailing comment (the multi-line-string opener rule's flow twin). For a flow value over several lines whose opener line holds no element, that is where its comment lives, as a multi-line string's does (§ 4.6): a printer writes it there, an editor reads, writes and removes it there and does not touch one after the close, and a parser reads one after the close only when the opener line has none.
 - An array element or JSON object value containing ` = ` produces the `flow_missing_comma` warning (`[k = v]`).
 
 ### 6.4 Closed flow values

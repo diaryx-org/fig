@@ -182,8 +182,8 @@ $ fig lang check lua-dotenv --against dotenv secrets.env
 ```
 
 A helper named after a format your build leaves out (`fig lang list` says
-"not built in") is that format: `.plist` files and `-i plist` reach the
-helper.
+"not built in") is that format: in a build made with `-Dplist=false`,
+`.plist` files and `-i plist` reach the helper.
 
 `fig lang list` shows every built-in and configured language; `fig lang check`
 holds a configured one to a built-in twin, table for table; `fig lang table`

@@ -62,7 +62,7 @@ const fig_dep = b.dependency("fig", .{
     .optimize = optimize,
     .toml = false,  // drop TOML support
     .zon = false,   // drop ZON support
-    .plist = true,  // plist is opt-in; enable it if you need it
+    .plist = false, // drop plist support
 });
 ```
 
@@ -77,7 +77,7 @@ const fig_dep = b.dependency("fig", .{
 | `dotenv`      |   ✅    | dotenv / `.env`.                            |
 | `properties`  |   ✅    | Java `.properties`.                         |
 | `nestedtext`  |   ✅    | NestedText (nestedtext.org).                |
-| `plist`       |         | Apple XML property lists.                   |
+| `plist`       |   ✅    | Apple XML property lists.                   |
 | `canonical`   |         | The AST's own oracle encoding (mostly for tests; always compiled for a test build). |
 
 The languages a build bundles register the first time anything looks a
@@ -129,7 +129,7 @@ needed to target a different format.
 | `ini`        |  ✅   |  ✅  |    ✅     | Untyped scalars — `port = 8080` reads back as the *string* `"8080"`. |
 | `dotenv`     |  ✅   |  ✅  |    ✅     | Flat string map: no nesting, untyped scalars. |
 | `properties` |  ✅   |  ✅  |    ✅     | Java `.properties`; same flat, untyped limits as dotenv. |
-| `plist`      |  ✅   |  ✅  |    ✅     | Opt-in (`-Dplist`). Typed *and* nested; date/data ride on `extended`. |
+| `plist`      |  ✅   |  ✅  |    ✅     | Typed *and* nested; date/data ride on `extended`. |
 | `nestedtext` |  ✅   |  ✅  |    ✅     | Nested (dict/list) but deliberately untyped — every leaf is a string. |
 
 A language's `--spec` versions are dialects of their own, named

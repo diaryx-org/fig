@@ -34,6 +34,7 @@ the change; this page is the part of it that asks you to change something.
 | `-i fig` / `-o fig` | `-i figl` / `-o figl` |
 | `fig lang list` under `compiled:`, a left-out format "compiled out" | under `built in:`, a left-out format "not built in" |
 | a helper named after a left-out format "stands in" for it | a helper of that name *is* that format; its extension reaches it too |
+| plist left out unless built with `-Dplist=true`; a `languages.figl` language named `plist` serves `.plist` | plist is built in; a configured `plist` is refused as a taken name, and `-Dplist=false` leaves the name to it |
 | `--strict` counting "fig authoring warning(s)" | counts under the dialect's name: "3 yaml warning(s)" |
 | messages saying "a fig value" | "a figl value" |
 | `zig build -Dfig=false` | `-Dfigl=false` |

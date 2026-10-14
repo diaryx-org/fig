@@ -43,11 +43,11 @@ pub const rows = [_]Row{
     .{ .name = "ini", .help = "Include INI support", .default_on = true },
     .{ .name = "dotenv", .help = "Include dotenv (.env) support", .default_on = true },
     .{ .name = "properties", .help = "Include Java .properties support", .default_on = true },
-    // plist (XML variant only so far): the newest, least battle-tested
-    // format, opt-in via `-Dplist=true`. plist is a first-class typed flavor
-    // (typed scalars, round-trips, in-place editor) and is the intended
-    // long-term home for structured XML config.
-    .{ .name = "plist", .help = "Include Apple XML property list support (opt-in; default off)", .default_on = false },
+    // plist (XML variant only so far): a first-class typed flavor (typed
+    // scalars, round-trips, in-place editor), held to its oracle and edit
+    // suites in fig-conformance, and the intended long-term home for
+    // structured XML config. On by default from 6.0; opt-in before.
+    .{ .name = "plist", .help = "Include Apple XML property list support", .default_on = true },
     // NestedText (nestedtext.org): reader + printer + editor, untyped-string
     // scalars like INI, held to the official test suite (in fig-conformance).
     // On by default like TOML/ZON/INI.

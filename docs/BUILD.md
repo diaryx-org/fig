@@ -48,8 +48,8 @@ A format left out is not built at all, not merely hidden: its parser and
 printer never compile, nothing registers it, `fig_format_by_name` finds no
 handle for it over the C ABI, and the CLI refuses a file of its extension
 unless a `languages.figl` configures a language by that name. `zig build -h`
-lists the full set with their defaults — note that `plist` and `canonical`
-are opt-**in** (`-Dplist=true`), and that `-Dfigl=false` also drops
+lists the full set with their defaults — note that `canonical` is
+opt-**in** (`-Dcanonical=true`), and that `-Dfigl=false` also drops
 `fig-lsp`, which is a language server for figl and has nothing to serve
 without it.
 </details>

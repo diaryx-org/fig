@@ -1452,9 +1452,7 @@ fn currentContainerIndent(self: *const Parser) usize {
 
 /// The source column (offset from the start of its line) of byte position `pos`.
 fn columnOf(self: *const Parser, pos: usize) usize {
-    var start = pos;
-    while (start > 0 and self.source[start - 1] != '\n') start -= 1;
-    return pos - start;
+    return @import("kit").lines.columnOf(self.source, pos);
 }
 
 const LineIter = struct {
@@ -3281,6 +3279,16 @@ test "yaml core schema type resolution" {
     for ([_][]const u8{ "s1", "s2", "s3" }) |key| {
         try testing.expect(std.meta.activeTag((try ast.getValByPath(&.{.{ .key = key }})).kind) == .string);
     }
+}
+
+test "yaml reads a leading BOM as no part of the first line" {
+    const doc = try Parser.parse(testing.allocator, "\xEF\xBB\xBFa:\n  b: |\n    t\n", .v1_2_2);
+    defer doc.deinit(testing.allocator);
+    // The key is `a`, its mapping starts past the BOM, and the block
+    // scalar's indentation is counted from the column the BOM is not in.
+    const b = try doc.ast.getValByPath(&.{ .{ .key = "a" }, .{ .key = "b" } });
+    try testing.expectEqualSlices(u8, "t\n", b.kind.string);
+    try testing.expectEqual(@as(usize, 3), doc.span(doc.ast.node(doc.ast.root)).start);
 }
 
 test "yaml root scalar documents" {

@@ -240,6 +240,24 @@ test("Editor inserts while preserving the rest", () => {
   assert.equal(ed.source(), "a: 1\nb: 2\nc: 3\n");
 });
 
+test("a BOM-led document reads and edits its first key, and keeps the BOM", () => {
+  const src = "\uFEFFa: 1\n";
+  using doc = Document.parse(src, Format.Yaml);
+  assert.deepEqual(toJS(doc.toValue()), { a: 1 });
+  using ed = Editor.open(src, Format.Yaml);
+  ed.setValue(["a"], "set");
+  assert.equal(ed.source(), "\uFEFFa: set\n");
+  ed.replaceValue(["a"], 2);
+  assert.equal(ed.source(), "\uFEFFa: 2\n");
+  ed.insertValue([], "b", 3);
+  ed.deleteKey(["a"]);
+  assert.equal(ed.source(), "\uFEFFb: 3\n");
+  // A header-first TOML file takes a root key at its top, past the BOM.
+  using toml = Editor.open("\uFEFF[t]\ny = 2\n", Format.Toml);
+  toml.setValue(["z"], 3);
+  assert.equal(toml.source(), "\uFEFFz = 3\n[t]\ny = 2\n");
+});
+
 test("Editor.insertValue takes the key's name and spells it as the format does", () => {
   // JSON quotes and escapes it; TOML quotes it when it must; a name that is
   // already its own syntax lands as it is.

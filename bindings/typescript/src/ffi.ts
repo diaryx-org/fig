@@ -230,7 +230,10 @@ const fig: Exports = new Proxy({} as Exports, {
 }) as Exports;
 
 export const encoder = new TextEncoder();
-export const decoder = new TextDecoder("utf-8", { fatal: false });
+// `ignoreBOM`: what the core hands back is text as it stands — an editor's
+// source keeps the byte-order mark it opened with — and a WHATWG decoder
+// would otherwise drop one at the start of a slice.
+export const decoder = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true });
 
 /** A fresh view over linear memory. `memory.grow` detaches the old buffer, so a
  *  view must be re-derived after any allocation rather than cached. */

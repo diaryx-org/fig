@@ -17,6 +17,8 @@ const lineStartBefore = splice.lineStartBefore;
 const lineEndAfter = splice.lineEndAfter;
 const firstNonSpace = splice.firstNonSpace;
 const columnOf = splice.columnOf;
+const atLineStart = splice.atLineStart;
+const textStart = splice.textStart;
 const isFlow = splice.isFlow;
 const flowOpenEnd = splice.flowOpenEnd;
 const Comments = splice.Comments;
@@ -761,7 +763,7 @@ pub fn Editor(comptime Language: type) type {
         /// follows the splice.
         fn terminateLine(self: *Self, out: *std.ArrayList(u8), end: usize) !void {
             const source = self.source.items;
-            const at_line_start = end == 0 or source[end - 1] == '\n';
+            const at_line_start = atLineStart(source, end);
             if (at_line_start and !std.mem.endsWith(u8, out.items, "\n"))
                 try out.append(self.allocator, '\n');
         }
@@ -1768,7 +1770,7 @@ pub fn Editor(comptime Language: type) type {
             defer buf.deinit(self.allocator);
             // A final line with no newline of its own would otherwise weld the
             // first comment onto it.
-            if (at > 0 and self.source.items[at - 1] != '\n') try buf.append(self.allocator, '\n');
+            if (!atLineStart(self.source.items, at)) try buf.append(self.allocator, '\n');
             try renderLineComments(self.allocator, &buf, anchor.indent, .{ .open = marker }, text);
             try self.replaceAtSpan(Span.init(at, at), buf.items);
         }
@@ -3675,7 +3677,7 @@ pub fn Editor(comptime Language: type) type {
                 defer indent_buf.deinit(self.allocator);
                 const indent = try self.indentAt(&indent_buf, dottedEntryStart(parsed, owner.top, parsed.span(l).start));
                 const insert_at = lineEndAfter(source, parsed.span(l).end -| 1);
-                if (insert_at > 0 and source[insert_at - 1] != '\n') try out.append(self.allocator, '\n');
+                if (!atLineStart(source, insert_at)) try out.append(self.allocator, '\n');
                 try out.appendSlice(self.allocator, indent);
                 try self.writeEntry(&out, indent, key.items, rendered, place);
                 try out.append(self.allocator, '\n');
@@ -4590,8 +4592,8 @@ pub fn Editor(comptime Language: type) type {
                 // comments-only) document takes it at the end of whatever is
                 // there. For the flat formats the root's span is the whole
                 // input anyway; for fig it is not (a comments-only file has a
-                // zero-width root).
-                (if (skipped) 0 else source.len)
+                // zero-width root). The top is past a leading BOM.
+                (if (skipped) textStart(source) else source.len)
             else if (parsed.isSection(mapping))
                 // A SECTION with no entry on its own lines (INI's empty
                 // `[section]` with nothing under it yet): its span is
@@ -4617,7 +4619,7 @@ pub fn Editor(comptime Language: type) type {
                     return error.ContainerClosesOnItsLine;
             };
 
-            if (insert_at > 0 and source[insert_at - 1] != '\n') try out.append(self.allocator, '\n');
+            if (!atLineStart(source, insert_at)) try out.append(self.allocator, '\n');
             try out.appendSlice(self.allocator, indent);
             try self.writeEntry(&out, indent, key_text, rendered, place);
             try out.append(self.allocator, '\n');
@@ -4848,8 +4850,8 @@ pub fn Editor(comptime Language: type) type {
             const source = self.source.items;
             var out: std.ArrayList(u8) = .empty;
             defer out.deinit(self.allocator);
-            if (insert_at > 0 and source[insert_at - 1] != '\n') try out.append(self.allocator, '\n');
-            if (insert_at > 0) try out.append(self.allocator, '\n');
+            if (!atLineStart(source, insert_at)) try out.append(self.allocator, '\n');
+            if (insert_at > textStart(source)) try out.append(self.allocator, '\n');
             try out.appendSlice(self.allocator, open);
             try self.writeHeaderPath(&out, hdr, path);
             try out.appendSlice(self.allocator, close);
@@ -5182,7 +5184,7 @@ pub fn Editor(comptime Language: type) type {
             const rendered = try self.renderedValue(&val_buf, value_text, place);
             var out: std.ArrayList(u8) = .empty;
             defer out.deinit(self.allocator);
-            if (insert_at > 0 and source[insert_at - 1] != '\n') try out.append(self.allocator, '\n');
+            if (!atLineStart(source, insert_at)) try out.append(self.allocator, '\n');
             try out.appendSlice(self.allocator, indent);
             try self.writeItem(&out, indent, rendered, place);
             try out.append(self.allocator, '\n');

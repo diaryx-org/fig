@@ -121,6 +121,10 @@ pub fn tokenize(self: *Tokenizer) ![]const Token {
     defer indent_stack.deinit(self.allocator);
     try indent_stack.append(self.allocator, .{ .indent = 0, .prop_only = false });
 
+    // A leading UTF-8 BOM is not content: the first line starts after it,
+    // so its indentation and its first key are read as without one.
+    if (self.i == 0 and std.mem.startsWith(u8, self.source, "\xEF\xBB\xBF")) self.i = 3;
+
     // YAML is whitespace-sensitive, so we parse line-by-line.
     while (try self.getLine()) |line| {
         if (line.isBlank()) continue;
@@ -1190,9 +1194,7 @@ fn lineIsPropertyOnly(self: *const Tokenizer, line: Line) bool {
 
 /// Column (0-based) of `pos` on its source line.
 fn columnOf(self: *const Tokenizer, pos: usize) usize {
-    var i = pos;
-    while (i > 0 and self.source[i - 1] != '\n') i -= 1;
-    return pos - i;
+    return @import("kit").lines.columnOf(self.source, pos);
 }
 
 /// For a block header that opens a key/dash's deferred value (it sits alone on a

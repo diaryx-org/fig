@@ -26,6 +26,8 @@ pub const lineStartBefore = lines.lineStartBefore;
 pub const lineEndAfter = lines.lineEndAfter;
 pub const firstNonSpace = lines.firstNonSpace;
 pub const columnOf = lines.columnOf;
+pub const atLineStart = lines.atLineStart;
+pub const textStart = lines.textStart;
 pub const isFlow = lines.isFlow;
 pub const flowOpenEnd = lines.flowOpenEnd;
 

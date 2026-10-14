@@ -262,6 +262,15 @@ test "toml insert root key goes above the first header" {
     try expectTomlSource(&ed, "x = 1\nz = 3\n[t]\ny = 2\n");
 }
 
+test "toml insert root key above the first header, after a BOM" {
+    // The top of a header-first document is past its BOM: a key spliced
+    // before it would leave the BOM mid-file, where TOML refuses it.
+    var ed = try newTomlEditor("\xEF\xBB\xBF[t]\ny = 2\n");
+    defer ed.deinit();
+    try ed.insertKey(&.{}, "z", "3");
+    try expectTomlSource(&ed, "\xEF\xBB\xBFz = 3\n[t]\ny = 2\n");
+}
+
 test "toml insert root key into a document that OPENS with a header" {
     // The root's span is the whole document, so its first byte is the `[` of
     // `[t]` — which the generic `isFlow` sniff read as an inline table's opening

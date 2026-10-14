@@ -6,13 +6,29 @@ const std = @import("std");
 const Span = @import("span.zig");
 
 /// Byte index of the start of the line containing `at` (just past the previous
-/// '\n', or 0).
+/// '\n', or 0). The first line starts after a leading UTF-8 BOM, which is
+/// not text of the line: a column counts from past it, and a splice at the
+/// line's start leaves it first in the file.
 pub fn lineStartBefore(source: []const u8, at: usize) usize {
     var i = at;
     while (i > 0) : (i -= 1) {
         if (source[i - 1] == '\n') return i;
     }
-    return 0;
+    const text = textStart(source);
+    return if (at >= text) text else 0;
+}
+
+const bom = "\xEF\xBB\xBF";
+
+/// Whether `at` is the start of its line: just past a '\n', or the start of
+/// the text (`textStart`), or 0.
+pub fn atLineStart(source: []const u8, at: usize) bool {
+    return lineStartBefore(source, at) == at;
+}
+
+/// Where the text of `source` begins: past a leading UTF-8 BOM, else 0.
+pub fn textStart(source: []const u8) usize {
+    return if (std.mem.startsWith(u8, source, bom)) bom.len else 0;
 }
 
 /// Byte index just past the next '\n' at or after `at`, or `source.len`.
@@ -51,4 +67,18 @@ pub fn flowOpenEnd(source: []const u8, span: Span, flow_map_open: []const u8) us
     const i = firstNonSpace(source, span.start);
     if (std.mem.startsWith(u8, source[i..], flow_map_open)) return i + flow_map_open.len;
     return i + 1;
+}
+
+test "a leading BOM is not text of the first line" {
+    const t = std.testing;
+    const src = "\xEF\xBB\xBFa: 1\nb: 2\n";
+    try t.expectEqual(@as(usize, 3), lineStartBefore(src, 3));
+    try t.expectEqual(@as(usize, 3), lineStartBefore(src, 5));
+    try t.expectEqual(@as(usize, 0), columnOf(src, 3));
+    try t.expectEqual(@as(usize, 2), columnOf(src, 5));
+    try t.expectEqual(@as(usize, 8), lineStartBefore(src, 9));
+    try t.expect(atLineStart(src, 3) and atLineStart(src, 8) and !atLineStart(src, 4));
+    // Inside the BOM itself, the line is the file's start.
+    try t.expectEqual(@as(usize, 0), lineStartBefore(src, 2));
+    try t.expectEqual(@as(usize, 0), textStart("a: 1\n"));
 }

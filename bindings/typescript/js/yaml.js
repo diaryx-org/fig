@@ -59,6 +59,16 @@ const at = (s, i) => s.charCodeAt(i);
 const isBlank = (c) => c === SP || c === TAB;
 const isFlowIndicator = (c) => c === COMMA || c === LBRACK || c === RBRACK || c === LBRACE || c === RBRACE;
 
+// A leading UTF-8 BOM is not text of the first line: the line starts past
+// it, and so does every column counted on it.
+const BOM = "\xef\xbb\xbf";
+const textStart = (s) => (s.startsWith(BOM) ? BOM.length : 0);
+const columnOf = (s, pos) => {
+  let i = pos;
+  while (i > 0 && at(s, i - 1) !== NL) i -= 1;
+  return pos - (i === 0 && pos >= textStart(s) ? textStart(s) : i);
+};
+
 // Refuse the document, in this module's own words — at an offset when
 // one is at hand.
 const fail = fig.fail;
@@ -187,7 +197,7 @@ class Tokenizer {
   constructor(src) {
     this.src = src;
     this.n = src.length;
-    this.i = 0;
+    this.i = textStart(src);
     this.tokens = [];
     this.pendingBlock = null;
     this.flowDepth = 0;
@@ -295,9 +305,7 @@ class Tokenizer {
   }
 
   columnOf(pos) {
-    let i = pos;
-    while (i > 0 && at(this.src, i - 1) !== NL) i -= 1;
-    return pos - i;
+    return columnOf(this.src, pos);
   }
 
   precededOnlyByTrivia() {
@@ -1229,9 +1237,7 @@ class Parser {
   }
 
   columnOf(pos) {
-    let start = pos;
-    while (start > 0 && at(this.src, start - 1) !== NL) start -= 1;
-    return pos - start;
+    return columnOf(this.src, pos);
   }
 
   advance() {

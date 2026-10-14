@@ -494,6 +494,37 @@ test "applyEdit performs the structural ops on YAML" {
     }
 }
 
+test "applyEdit edits a BOM-led YAML document's first key in place, keeping the BOM" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    const t = std.testing;
+    const Y = fig.bundle.Language("yaml");
+    const dia = Y.default_type;
+    const bom = "\xEF\xBB\xBF";
+
+    var a = [_]fig.AST.PathSegment{.{ .key = "a" }};
+    const Case = struct { op: EditOp, text: []const u8, in: []const u8, want: []const u8 };
+    const cases = [_]Case{
+        .{ .op = .set, .text = "set", .in = "a: 1\n", .want = "a: set\n" },
+        .{ .op = .replace_value, .text = "2", .in = "a: 1\n", .want = "a: 2\n" },
+        .{ .op = .replace_key, .text = "q", .in = "a: 1\n", .want = "q: 1\n" },
+        .{ .op = .delete_key, .text = "", .in = "a: 1\nb: 2\n", .want = "b: 2\n" },
+        .{ .op = .add_leading_comment, .text = "hi", .in = "a: 1\n", .want = "# hi\na: 1\n" },
+    };
+    inline for (cases) |c| {
+        const out = try applyEdit(Y, t.allocator, bom ++ c.in, &a, c.text, c.op, dia);
+        defer t.allocator.free(out);
+        try t.expectEqualStrings(bom ++ c.want, out);
+    }
+    // The first item's mapping, whose key's column counts from past the BOM.
+    var first = [_]fig.AST.PathSegment{ .{ .index = 0 }, .{ .key = "b" } };
+    const nested = try applyEdit(Y, t.allocator, bom ++ "- a: 1\n", &first, "5", .set, dia);
+    defer t.allocator.free(nested);
+    try t.expectEqualStrings(bom ++ "- a: 1\n  b: 5\n", nested);
+    const pre = try applyEdit(Y, t.allocator, bom ++ "- x\n", &.{}, "w", .prepend_seq, dia);
+    defer t.allocator.free(pre);
+    try t.expectEqualStrings(bom ++ "- w\n- x\n", pre);
+}
+
 test "applyEdit blames the spliced text, not the file, when the edit won't parse" {
     if (comptime !build_options.lang_toml) return error.SkipZigTest;
     const t = std.testing;

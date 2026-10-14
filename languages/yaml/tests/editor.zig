@@ -1256,3 +1256,42 @@ test "yaml rename a flow key leaves a colon that needs no blank" {
     try expectSource(&quoted, "m: { \"renamed\":v }\n");
     try expectValueText(&quoted, &.{ .{ .key = "m" }, .{ .key = "renamed" } }, "v");
 }
+
+// --- a leading BOM ---
+//
+// A BOM is not text of the first line: the first key is found as `a`, a
+// splice at the start of its line lands after the BOM, and a column on that
+// line counts from past it. Every edit leaves the BOM first in the file.
+
+const bom = "\xEF\xBB\xBF";
+
+test "yaml set and replace a BOM-led document's first key in place" {
+    var ed = try newYamlEditor(bom ++ "a: 1\n");
+    defer ed.deinit();
+    try ed.set(&.{.{ .key = "a" }}, "set");
+    try expectSource(&ed, bom ++ "a: set\n");
+    try ed.replaceValAtPath(&.{.{ .key = "a" }}, "2");
+    try expectSource(&ed, bom ++ "a: 2\n");
+    try ed.replaceKeyAtPath(&.{.{ .key = "a" }}, "q");
+    try expectSource(&ed, bom ++ "q: 2\n");
+}
+
+test "yaml delete, comment and reorder a BOM-led document's first key" {
+    var ed = try newYamlEditor(bom ++ "a: 1\nb: 2\n");
+    defer ed.deinit();
+    try ed.addLeadingComment(&.{.{ .key = "a" }}, "hi");
+    try expectSource(&ed, bom ++ "# hi\na: 1\nb: 2\n");
+    try ed.reorderKeys(&.{}, &.{ "b", "a" });
+    try expectSource(&ed, bom ++ "b: 2\n# hi\na: 1\n");
+    try ed.deleteKey(&.{.{ .key = "b" }});
+    try expectSource(&ed, bom ++ "# hi\na: 1\n");
+}
+
+test "yaml edits a BOM-led sequence's first item at its own column" {
+    var ed = try newYamlEditor(bom ++ "- a: 1\n");
+    defer ed.deinit();
+    try ed.set(&.{ .{ .index = 0 }, .{ .key = "b" } }, "5");
+    try expectSource(&ed, bom ++ "- a: 1\n  b: 5\n");
+    try ed.prependToSeq(&.{}, "w");
+    try expectSource(&ed, bom ++ "- w\n- a: 1\n  b: 5\n");
+}

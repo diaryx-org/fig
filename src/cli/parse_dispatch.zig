@@ -384,6 +384,18 @@ test "resolveSpec selects a version's dialect row" {
     try t.expectError(error.UnsupportedSpec, resolveSpec(.canonical, "1.1"));
 }
 
+test "parseSliceAs reads a BOM-led YAML document's first key without the BOM" {
+    if (comptime !build_options.lang_yaml) return error.SkipZigTest;
+    const t = std.testing;
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    var reports: Reports = .{};
+    const doc = try parseSliceAs(args_mod.parseFormatName("yaml").?, arena.allocator(), "\xEF\xBB\xBFa: 1\n", &reports);
+    // `fig get` finds `a`, and no key that holds the BOM.
+    _ = try doc.ast.getValByPath(&.{.{ .key = "a" }});
+    try t.expectError(error.NotFound, doc.ast.getValByPath(&.{.{ .key = "\xEF\xBB\xBFa" }}));
+}
+
 test "resolveSpec selects TOML 1.0, which refuses what 1.1 added" {
     if (comptime !build_options.lang_toml) return error.SkipZigTest;
     const t = std.testing;

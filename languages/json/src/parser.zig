@@ -1,6 +1,6 @@
 //! The parser turns a JSON-formatted []const u8 into the node table fig
-//! hands it. It uses the Tokenizer to tokenize the string, and then writes
-//! a row per node from the token slice incrementally (`RowWriter`): a
+//! hands it. It pulls the string's tokens from the Tokenizer one at a time
+//! and writes a row per node as it goes (`RowWriter`): a
 //! container when it opens, an entry when its key is met, then the key and
 //! value — so the rows are written in the pre-order fig reads them in.
 //!
@@ -68,6 +68,11 @@ last_value_id: ?AST.Node.Id = null,
 
 root: ?AST.Node.Id = null,
 
+/// Whether the tokenizer has yielded `end_of_file` (`pull`).
+at_eof: bool = false,
+/// Whether the parse failed in the tokenizer rather than the parser.
+tokenizer_failed: bool = false,
+
 // Initial fields
 allocator: std.mem.Allocator,
 /// Which JSON dialect is being parsed. Gates the JSON5-only grammar
@@ -94,8 +99,8 @@ const ParseError = error{ UnclosedObject, UnclosedArray, UnclosedString, Invalid
 const ParserError = ParseError || std.mem.Allocator.Error;
 const TokenizeError = Tokenizer.TokenizeError;
 
-/// The union of every error this parser can produce — both the one-shot
-/// tokenizer (which runs to completion before the token loop even starts, so
+/// The union of every error this parser can produce — both the tokenizer
+/// (whose failure anywhere fails the parse as if before the first token, so
 /// its failures need describing too) and the token-dispatch parser. Kept as
 /// one flat set (mirrors fig's `Error = error{...} || tok.ScanError`) so a
 /// `Diagnostic` needs only one `code` field regardless of which stage failed.
@@ -435,9 +440,9 @@ pub fn parseWithReportInto(t: *Table, input: []const u8, format: Type, out: *Rep
 /// `parseWithReportInto`, but recovers past each parser-level error
 /// (resyncing to the next safe token — see `resync`) to collect the WHOLE
 /// file's diagnostics in one pass (`out.errors`, source order) rather than
-/// stopping at the first. A TOKENIZER failure (before the token loop even
-/// starts) is never recoverable — it still stops the parse after exactly one
-/// diagnostic. On any error the return value is still the first error code
+/// stopping at the first. A TOKENIZER failure (anywhere in the input) is
+/// never recoverable — it still stops the parse after exactly one
+/// diagnostic, its own. On any error the return value is still the first error code
 /// and the table is not finished; a clean parse writes it exactly as
 /// `parseWithReportInto` would. `out.diag` mirrors `errors[0]`.
 pub fn parseCollectingInto(t: *Table, input: []const u8, format: Type, out: *Report) !void {
@@ -471,43 +476,60 @@ fn parse_once(self: *Parser, input: []const u8, kind: Type) !void {
         .kind = kind,
     };
 
-    const tokens = tokenizer.tokenize() catch |err| {
+    // The tokens are pulled one at a time rather than gathered first, but a
+    // tokenizer failure anywhere still fails the parse as if no token had
+    // been dispatched: it is the one diagnostic, and no warning stands. A
+    // parse that stops early first tokenizes the rest to find one.
+    self.dispatchAll(input, &tokenizer) catch |err| {
+        if (!self.tokenizer_failed) return err;
         // The tokenizer's cursor sits on (or just after) the offending byte —
         // precise enough for `file:line:col` without threading a location
         // through its many scan-error sites (mirrors the parser's own
-        // token-span anchor below).
+        // token-span anchor in `dispatchAll`).
+        self.diagnostics.clearRetainingCapacity();
+        self.warnings.clearRetainingCapacity();
         try self.diagnostics.append(self.allocator, .{ .code = err, .offset = tokenizer.index });
         return err;
     };
-    defer self.allocator.free(tokens);
 
+    if (self.diagnostics.items.len > 0) {
+        // Recover mode collected 1+ errors (or the loop above stopped early):
+        // the tree may be malformed (dangling open containers, no root), so
+        // don't try to build it — return the first failure's code, matching
+        // the non-recovering contract exactly. `parseImpl` reads the full list
+        // out of `self.diagnostics` for `Report.errors` before this unwinds.
+        return self.diagnostics.items[0].code;
+    }
+
+    const root = self.root orelse return ParseError.UnexpectedToken;
+    try self.w.finish(root);
+}
+
+/// Dispatch every token `tokenizer` yields, through `end_of_file`. A parse
+/// error is recorded in `diagnostics`; single-shot it ends the parse, once
+/// the rest of the input is tokenized, and in `recover` mode the parse
+/// resyncs and goes on.
+fn dispatchAll(self: *Parser, input: []const u8, tokenizer: *Tokenizer) Error!void {
     // Each node is a row, linked to its children and siblings, and written
-    // in pre-order. A row is a value, a key,
-    // or the entry a colon pairs them into (an empty document one null
-    // row): room for every one up front, rather than a copy each time the
-    // table outgrows itself.
-    var rows: usize = 1;
-    for (tokens) |token| switch (token.kind) {
-        .open_brace, .open_bracket, .colon, .true_, .false_, .null_, .string, .number, .identifier => rows += 1,
-        else => {},
-    };
-    try self.w.t.rows.ensureUnusedCapacity(self.w.t.allocator, rows);
+    // in pre-order: room for every one up front, rather than a copy each
+    // time the table outgrows itself.
+    try self.w.t.rows.ensureUnusedCapacity(self.w.t.allocator, rowBound(input));
 
-    var i: usize = 0;
-    while (i < tokens.len) {
-        const token = tokens[i];
+    // A closer `resync` stopped on, to be dispatched next.
+    var held: ?Token = null;
+    while (true) {
+        const token = if (held) |h| h else try self.pull(tokenizer);
+        held = null;
         switch (token.kind) {
             // A newline closes the previous value's trailing-comment window: a
             // comment on the next line leads the next node instead.
             .whitespace => {
                 if (std.mem.indexOfScalar(u8, input[token.span.start..token.span.end], '\n') != null)
                     self.last_value_id = null;
-                i += 1;
                 continue;
             },
             .comment => {
-                try self.handleComment(input, tokens, i);
-                i += 1;
+                try self.handleComment(input, token);
                 continue;
             },
             else => {},
@@ -520,9 +542,12 @@ fn parse_once(self: *Parser, input: []const u8, kind: Type) !void {
             // unclosed container noticed at EOF), but the current token is
             // always a reasonable, precise-enough caret.
             try self.diagnostics.append(self.allocator, .{ .code = err, .offset = token.span.start, .end = token.span.end });
-            if (!self.recover) return err;
-            const sync = self.resync(tokens, i);
-            switch (tokens[sync].kind) {
+            if (!self.recover) {
+                while (!self.at_eof) _ = try self.pull(tokenizer);
+                return err;
+            }
+            const sync = try self.resync(tokenizer, token);
+            switch (sync.kind) {
                 .comma => {
                     // Consume the comma ourselves and put the parser into the
                     // state it legally produces, so the next key/value parses
@@ -534,7 +559,6 @@ fn parse_once(self: *Parser, input: []const u8, kind: Type) !void {
                             .object => .ExpectObjectKey,
                         };
                     }
-                    i = sync + 1;
                 },
                 .close_bracket, .close_brace => {
                     // Leave the closer for the normal dispatch to consume,
@@ -548,30 +572,56 @@ fn parse_once(self: *Parser, input: []const u8, kind: Type) !void {
                             .object => .ExpectObjectCommaOrEnd,
                         };
                     }
-                    i = sync;
+                    held = sync;
                 },
                 // Nothing left to resync onto (EOF): stop recovering. Falls
-                // through to the shared diagnostics check below, which
-                // returns `diagnostics.items[0].code` — the first failure,
-                // same contract as the non-recovering path.
-                else => break,
+                // through to `parse_once`'s diagnostics check, which returns
+                // `diagnostics.items[0].code` — the first failure, same
+                // contract as the non-recovering path.
+                else => {
+                    while (!self.at_eof) _ = try self.pull(tokenizer);
+                    return;
+                },
             }
             continue;
         };
-        i += 1;
+        if (token.kind == .end_of_file) return;
     }
+}
 
-    if (self.diagnostics.items.len > 0) {
-        // Recover mode collected 1+ errors (or the loop above stopped early):
-        // the tree may be malformed (dangling open containers, no root), so
-        // don't try to build it — return the first failure's code, matching
-        // the non-recovering contract exactly. `parseImpl` reads the full list
-        // out of `self.diagnostics` for `Report.errors` before this unwinds.
-        return self.diagnostics.items[0].code;
+/// The tokenizer's next token. A failure is marked as the tokenizer's (its
+/// codes overlap the parser's), and `end_of_file` as the input's end.
+fn pull(self: *Parser, tokenizer: *Tokenizer) TokenizeError!Token {
+    const token = tokenizer.next() catch |err| {
+        self.tokenizer_failed = true;
+        return err;
+    };
+    if (token.kind == .end_of_file) self.at_eof = true;
+    return token;
+}
+
+/// At least as many rows as `input` can make. A row is a value, a key, or
+/// the entry a colon pairs them into: every entry has a `:`, and every
+/// value but the root is an entry's or an item, which a `,` or its array's
+/// `[` precedes — so `1 + 3·colons + commas + brackets` bounds them,
+/// counted as bytes (one inside a string or comment only raises it).
+fn rowBound(input: []const u8) usize {
+    const V = @Vector(32, u8);
+    var colons: usize = 0;
+    var others: usize = 0;
+    var i: usize = 0;
+    while (i + 32 <= input.len) : (i += 32) {
+        const v: V = input[i..][0..32].*;
+        colons += @popCount(@as(u32, @bitCast(v == @as(V, @splat(':')))));
+        others += @popCount(@as(u32, @bitCast(v == @as(V, @splat(',')))));
+        others += @popCount(@as(u32, @bitCast(v == @as(V, @splat('[')))));
     }
-
-    const root = self.root orelse return ParseError.UnexpectedToken;
-    try self.w.finish(root);
+    for (input[i..]) |c| switch (c) {
+        ':' => colons += 1,
+        ',', '[' => others += 1,
+        else => {},
+    };
+    return 1 + 3 * colons + others;
 }
 
 /// One token's worth of the state machine — extracted from `parse_once`'s
@@ -743,8 +793,8 @@ fn dispatchToken(self: *Parser, input: []const u8, token: Token) ParserError!voi
     }
 }
 
-/// After a parse error at `tokens[start]` (only reachable in `recover` mode),
-/// scan forward for a safe resumption point: the next `,`/`]`/`}` at the SAME
+/// After a parse error at `first` (only reachable in `recover` mode), pull
+/// forward for a safe resumption point: the next `,`/`]`/`}` at the SAME
 /// nesting depth as the error, tracking any `[`/`{` seen along the way so a
 /// well-formed nested value inside the garbage doesn't confuse the scan (a
 /// `,` or closer belonging to a nested container it opens doesn't count).
@@ -754,25 +804,24 @@ fn dispatchToken(self: *Parser, input: []const u8, token: Token) ParserError!voi
 /// accepted: the caller always resumes dispatch AT the token this returns for
 /// the close-bracket/brace case, so returning a non-matching one would hand
 /// dispatch a token it rejects in the very same state, re-erroring on the
-/// same index forever. Falls back to the tokenizer's own trailing
-/// `end_of_file` token when no such point exists before it (unclosed to the
-/// end of the document), or when a matching closer would close a container
-/// that isn't actually open (nothing left to recover into at the root) — the
-/// caller's outer loop treats landing on `end_of_file` as "stop recovering",
-/// so this always terminates.
-fn resync(self: *Parser, tokens: []const Token, start: usize) usize {
+/// same token forever. Falls back to `end_of_file` when no such point exists
+/// before it (unclosed to the end of the document), or when a matching
+/// closer would close a container that isn't actually open (nothing left to
+/// recover into at the root) — the caller treats landing on `end_of_file` as
+/// "stop recovering", so this always terminates.
+fn resync(self: *Parser, tokenizer: *Tokenizer, first: Token) TokenizeError!Token {
     var depth: isize = 0;
-    var j = start;
-    while (j < tokens.len) : (j += 1) {
-        switch (tokens[j].kind) {
+    var token = first;
+    while (true) : (token = try self.pull(tokenizer)) {
+        switch (token.kind) {
             .open_brace, .open_bracket => depth += 1,
             .close_brace, .close_bracket => {
                 if (depth == 0) {
-                    if (self.container_stack.items.len == 0) return tokens.len - 1;
+                    if (self.container_stack.items.len == 0) return .fixed(.end_of_file, token.span.start);
                     const top = self.container_stack.items[self.container_stack.items.len - 1];
-                    const matches = (tokens[j].kind == .close_brace and top.kind == .object) or
-                        (tokens[j].kind == .close_bracket and top.kind == .array);
-                    if (matches) return j;
+                    const matches = (token.kind == .close_brace and top.kind == .object) or
+                        (token.kind == .close_bracket and top.kind == .array);
+                    if (matches) return token;
                     // Mismatched closer: doesn't belong to anything open at
                     // this depth (e.g. `]` while an object is open) — treat it
                     // as ordinary garbage and keep scanning past it.
@@ -780,12 +829,11 @@ fn resync(self: *Parser, tokens: []const Token, start: usize) usize {
                 }
                 depth -= 1;
             },
-            .comma => if (depth == 0) return j,
-            .end_of_file => return j,
+            .comma => if (depth == 0) return token,
+            .end_of_file => return token,
             else => {},
         }
     }
-    return tokens.len - 1;
 }
 
 pub fn deinit(self: *Parser) void {
@@ -936,16 +984,16 @@ fn finishValue(self: *Parser, value_id: AST.Node.Id) !void {
 
 // ── comments ────────────────────────────────────────────────────────────────
 
-/// Classify and attach the comment at `tokens[i]`. It trails the most recently
+/// Classify and attach the comment `token`. It trails the most recently
 /// completed value when that value's trailing window is still open
 /// (`last_value_id` set — no newline since) AND the comment is the last thing on
 /// its line (`endsLine`). Otherwise it buffers as leading for the next node. The
 /// `endsLine` test is what disambiguates `1, // trail` (trailing) from
 /// `1, /*c*/ b` (leading of `b`).
-fn handleComment(self: *Parser, input: []const u8, tokens: []const Token, i: usize) !void {
-    const c = parseComment(tokens[i].source(input));
-    const comment_start = tokens[i].span.start;
-    if (self.last_value_id != null and endsLine(input, tokens, i)) {
+fn handleComment(self: *Parser, input: []const u8, token: Token) !void {
+    const c = parseComment(token.source(input));
+    const comment_start = token.span.start;
+    if (self.last_value_id != null and endsLine(input, token)) {
         const id = self.last_value_id.?;
         self.last_value_id = null; // one trailing per value
         // A comment on the CLOSING line of a multi-line container (`]` / `}` then
@@ -958,8 +1006,8 @@ fn handleComment(self: *Parser, input: []const u8, tokens: []const Token, i: usi
         } else {
             try self.setTrailing(id, c);
         }
-    } else if (endsLine(input, tokens, i) and self.container_stack.items.len > 0 and
-        afterOpenDelimiter(input, tokens, i))
+    } else if (endsLine(input, token) and self.container_stack.items.len > 0 and
+        afterOpenDelimiter(input, token))
     {
         // `[ // note` / `{ // note` — the comment rides the line the container
         // opened on, so it trails the container value (mirrors YAML's `key: #`).
@@ -969,38 +1017,38 @@ fn handleComment(self: *Parser, input: []const u8, tokens: []const Token, i: usi
     }
 }
 
-/// Whether the comment at `tokens[i]` is the last content on its source line —
+/// Whether the comment `token` is the last content on its source line —
 /// i.e. the next significant token is a newline, a comma, or a closing
 /// delimiter / EOF. A value/key (or another comment) appearing first on the same
 /// line means this comment instead leads that following content.
-fn endsLine(input: []const u8, tokens: []const Token, i: usize) bool {
-    var j = i + 1;
-    while (j < tokens.len) : (j += 1) {
-        switch (tokens[j].kind) {
-            .whitespace => {
-                if (std.mem.indexOfScalar(u8, input[tokens[j].span.start..tokens[j].span.end], '\n') != null)
-                    return true;
-            },
-            .comma, .close_brace, .close_bracket, .end_of_file => return true,
-            else => return false,
-        }
-    }
+///
+/// Read from the bytes, the tokens not yet being pulled: whitespace is the
+/// only token that can follow a comment with a whitespace byte, and the
+/// three delimiters are one byte each. (A byte the tokenizer would refuse
+/// fails the whole parse, whatever this answers.)
+fn endsLine(input: []const u8, token: Token) bool {
+    for (input[token.span.end..]) |c| switch (c) {
+        '\n' => return true,
+        ' ', '\t', '\r', 0x0b, 0x0c => {},
+        ',', '}', ']' => return true,
+        else => return false,
+    };
     return true;
 }
 
-/// Whether the most recent significant token before `tokens[i]`, on the same
-/// line, is a container-opening `[`/`{`. Identifies a comment that rides the
-/// line a container opened on (`[ // c`), which trails the container value.
-fn afterOpenDelimiter(input: []const u8, tokens: []const Token, i: usize) bool {
-    var j = i;
+/// Whether the most recent significant token before the comment `token`, on
+/// the same line, is a container-opening `[`/`{`. Identifies a comment that
+/// rides the line a container opened on (`[ // c`), which trails the
+/// container value. Read from the bytes, as `endsLine` is: no token but
+/// whitespace ends in a whitespace byte.
+fn afterOpenDelimiter(input: []const u8, token: Token) bool {
+    var j = token.span.start;
     while (j > 0) {
         j -= 1;
-        switch (tokens[j].kind) {
-            .whitespace => {
-                if (std.mem.indexOfScalar(u8, input[tokens[j].span.start..tokens[j].span.end], '\n') != null)
-                    return false; // crossed a newline → not the open line
-            },
-            .open_bracket, .open_brace => return true,
+        switch (input[j]) {
+            '\n' => return false, // crossed a newline → not the open line
+            ' ', '\t', '\r', 0x0b, 0x0c => {},
+            '[', '{' => return true,
             else => return false,
         }
     }

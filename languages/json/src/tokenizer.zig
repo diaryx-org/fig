@@ -1,6 +1,6 @@
-//! JSON Tokenizer. Turns a []const u8 in JSON format to a slice of Tokens.
-//!
-//! Allocates (then frees) memory for an expanding ArrayList of tokens.
+//! JSON Tokenizer. Turns a []const u8 in JSON format into Tokens, one at a
+//! time (`next`, which the parser pulls and allocates nothing) or as a slice
+//! (`tokenize`).
 
 pub const Tokenizer = @This();
 
@@ -62,66 +62,72 @@ pub const TokenizeError = error{ UnexpectedToken, MissingToken, OutOfMemory, Une
 // State
 tokens: std.ArrayList(Token) = .empty,
 index: usize = 0,
+/// Whether `next` has stepped over a leading byte-order mark yet.
+begun: bool = false,
 
 // Initial fields
 allocator: std.mem.Allocator,
 str: []const u8 = "",
 kind: JsonFormat = JsonFormat.JSONC,
 
+/// Every token of the input, through `end_of_file`, in a slice the caller
+/// frees. The parser pulls them one at a time with `next` instead.
 pub fn tokenize(self: *Tokenizer) ![]const Token {
     errdefer self.tokens.deinit(self.allocator);
     try self.tokens.ensureTotalCapacity(self.allocator, self.str.len + 1);
-
-    if (std.mem.startsWith(u8, self.str, "\xEF\xBB\xBF")) {
-        self.index = 3;
+    while (true) {
+        const token = try self.next();
+        try self.tokens.append(self.allocator, token);
+        if (token.kind == .end_of_file) break;
     }
-
-    const json5 = self.kind == JsonFormat.JSON5;
-    while (self.char()) |c| {
-        // JSON5 widens the alphabet: unquoted identifier keys (and the bare
-        // `Infinity`/`NaN` values), single-quoted strings, a leading `+` or `.`
-        // on numbers, and the extra ES whitespace (vertical tab, form feed).
-        if (json5) {
-            if (isIdentStart(c)) {
-                try self.addToken(try self.identifierOrKeyword());
-                continue;
-            }
-            switch (c) {
-                '\'' => {
-                    try self.addToken(try self.string('\''));
-                    continue;
-                },
-                '+', '.' => {
-                    try self.addToken(try self.number());
-                    continue;
-                },
-                0x0b, 0x0c => {
-                    try self.addToken(try self.getWhitespace());
-                    continue;
-                },
-                else => {},
-            }
-        }
-        try self.addToken(switch (c) {
-            '{' => .init(.open_brace, .init(self.index, self.index + 1)),
-            '}' => .init(.close_brace, .init(self.index, self.index + 1)),
-            '[' => .init(.open_bracket, .init(self.index, self.index + 1)),
-            ']' => .init(.close_bracket, .init(self.index, self.index + 1)),
-            ':' => .init(.colon, .init(self.index, self.index + 1)),
-            ',' => .init(.comma, .init(self.index, self.index + 1)),
-            't' => try self.findLiteral(.true_),
-            'f' => try self.findLiteral(.false_),
-            'n' => try self.findLiteral(.null_),
-            '"' => try self.string('"'),
-            '/' => try self.comment(),
-            '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-' => try self.number(),
-            ' ', '\t', '\n', '\r' => try self.getWhitespace(),
-            else => return TokenizeError.UnexpectedToken,
-        });
-    }
-
-    try self.addToken(.fixed(.end_of_file, self.index));
     return try self.tokens.toOwnedSlice(self.allocator);
+}
+
+/// The next token: the sequence `tokenize` returns, one at a time, through
+/// `end_of_file` — which every later call returns again. After an error
+/// `index` is where it was found.
+pub fn next(self: *Tokenizer) TokenizeError!Token {
+    if (!self.begun) {
+        self.begun = true;
+        if (std.mem.startsWith(u8, self.str, "\xEF\xBB\xBF")) {
+            self.index = 3;
+        }
+    }
+    const token = try self.scan();
+    self.index = token.span.end;
+    return token;
+}
+
+fn scan(self: *Tokenizer) TokenizeError!Token {
+    const c = self.char() orelse return .fixed(.end_of_file, self.index);
+    // JSON5 widens the alphabet: unquoted identifier keys (and the bare
+    // `Infinity`/`NaN` values), single-quoted strings, a leading `+` or `.`
+    // on numbers, and the extra ES whitespace (vertical tab, form feed).
+    if (self.kind == JsonFormat.JSON5) {
+        if (isIdentStart(c)) return self.identifierOrKeyword();
+        switch (c) {
+            '\'' => return self.string('\''),
+            '+', '.' => return self.number(),
+            0x0b, 0x0c => return self.getWhitespace(),
+            else => {},
+        }
+    }
+    return switch (c) {
+        '{' => .init(.open_brace, .init(self.index, self.index + 1)),
+        '}' => .init(.close_brace, .init(self.index, self.index + 1)),
+        '[' => .init(.open_bracket, .init(self.index, self.index + 1)),
+        ']' => .init(.close_bracket, .init(self.index, self.index + 1)),
+        ':' => .init(.colon, .init(self.index, self.index + 1)),
+        ',' => .init(.comma, .init(self.index, self.index + 1)),
+        't' => self.findLiteral(.true_),
+        'f' => self.findLiteral(.false_),
+        'n' => self.findLiteral(.null_),
+        '"' => self.string('"'),
+        '/' => self.comment(),
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-' => self.number(),
+        ' ', '\t', '\n', '\r' => self.getWhitespace(),
+        else => TokenizeError.UnexpectedToken,
+    };
 }
 
 fn findLiteral(self: *const Tokenizer, kind: Token.Kind) TokenizeError!Token {
@@ -141,7 +147,6 @@ fn findLiteral(self: *const Tokenizer, kind: Token.Kind) TokenizeError!Token {
 }
 
 /// Collects all whitespace and returns it as a token.
-/// Can return null. `addToken` checks for null.
 fn getWhitespace(self: *Tokenizer) TokenizeError!Token {
     const start = self.index;
     while (self.char()) |c| {
@@ -161,12 +166,6 @@ fn getWhitespace(self: *Tokenizer) TokenizeError!Token {
 fn char(self: *const Tokenizer) ?u8 {
     if (self.index >= self.str.len) return null;
     return self.str[self.index];
-}
-
-/// Convenience function for adding a token to the tokens array
-fn addToken(self: *Tokenizer, token: Token) TokenizeError!void {
-    try self.tokens.append(self.allocator, token);
-    self.index = token.span.end;
 }
 
 /// Checks if the index is on a given sequence of characters.

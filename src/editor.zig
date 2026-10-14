@@ -666,12 +666,19 @@ pub fn Editor(comptime Language: type) type {
                 const kv = try parsed.ast.getNodeByPath(path);
                 if (parsed.sepSpan(kv)) |sep| {
                     const key_span = parsed.span(parsed.ast.node(kv.kind.keyvalue.key));
-                    const indent = try self.indentAt(&indent_buf, key_span.start);
+                    // An explicit key's separator opens a line of its own
+                    // (YAML's `? k` over `: v`): the tail is rewritten from
+                    // there, under that line's indent, so the key keeps its
+                    // `?` line instead of taking the value onto it.
+                    const own_line = !self.hasRenderer(.tail) and
+                        std.mem.indexOfScalar(u8, source[key_span.end..sep.start], '\n') != null;
+                    const from = if (own_line) sep.start else key_span.end;
+                    const indent = try self.indentAt(&indent_buf, if (own_line) sep.start else key_span.start);
                     try self.writeTail(&out, indent, source[key_span.start..key_span.end], rendered, place);
                     // A null value is a zero-width span at the separator.
                     const end = @max(span.end, sep.end);
                     try self.terminateLine(&out, end);
-                    return self.replaceAtSpan(Span.init(key_span.end, end), out.items);
+                    return self.replaceAtSpan(Span.init(from, end), out.items);
                 }
             }
             // The engine's veto, before anything is spliced — a target whose

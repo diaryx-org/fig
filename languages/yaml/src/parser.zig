@@ -2407,6 +2407,20 @@ fn addNode(self: *Parser, kind: AST.Node.Kind, span: Span) ParserError!AST.Node.
     // sees `&a !tag value` as one editable unit (a replace can't orphan `&a `).
     if (tag) |t| node_span.start = @min(node_span.start, t.span.start);
     if (anchor) |a| node_span.start = @min(node_span.start, a.span.start);
+    // An implicit empty (`k: !!str`, `- &a`) is anchored at the separator,
+    // before its properties: it covers them instead, as a written value
+    // does, so a replace takes them rather than writing in front of them
+    // (`x !!str`).
+    if (span.start == span.end) {
+        var after: ?Span = null;
+        if (tag) |t| if (t.span.start >= span.start) {
+            after = t.span;
+        };
+        if (anchor) |a| if (a.span.start >= span.start) {
+            after = if (after) |b| .init(@min(b.start, a.span.start), @max(b.end, a.span.end)) else a.span;
+        };
+        if (after) |b| node_span = b;
+    }
     const id = try self.w.add(kind, node_span);
     // YAML stores the tag VERBATIM (leading `!` kept) in the `.text` arm — its
     // exact spelling round-trips — resolved here under the document's `%TAG`

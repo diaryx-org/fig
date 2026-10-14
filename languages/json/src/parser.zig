@@ -1,8 +1,8 @@
 //! The parser turns a JSON-formatted []const u8 into the node table fig
 //! hands it. It uses the Tokenizer to tokenize the string, and then writes
 //! a row per node from the token slice incrementally (`RowWriter`): a
-//! container when it opens, its children as they complete, and the rows in
-//! pre-order once the root is done.
+//! container when it opens, an entry when its key is met, then the key and
+//! value — so the rows are written in the pre-order fig reads them in.
 //!
 //! A decoded string (one with escapes) is copied into the table's buffer;
 //! the parser frees its own copy.
@@ -35,6 +35,9 @@ const OpenContainer = struct {
     first_child: ?AST.Node.Id = null,
     last_child: ?AST.Node.Id = null,
     pending_key: ?AST.Node.Id = null,
+    /// The pending key's entry: its row is written just before the key's,
+    /// so the rows come out in pre-order and `finish` moves none of them.
+    pending_entry: AST.Node.Id = 0,
     /// The pending key's text: a slice of the input, or one of the
     /// parser's decoded strings — not the table's buffer, which moves.
     pending_key_text: []const u8 = "",
@@ -478,8 +481,8 @@ fn parse_once(self: *Parser, input: []const u8, kind: Type) !void {
     };
     defer self.allocator.free(tokens);
 
-    // Each node is a row, linked to its children and siblings; the rows
-    // are put in pre-order once the root is done. A row is a value, a key,
+    // Each node is a row, linked to its children and siblings, and written
+    // in pre-order. A row is a value, a key,
     // or the entry a colon pairs them into (an empty document one null
     // row): room for every one up front, rather than a copy each time the
     // table outgrows itself.
@@ -846,9 +849,14 @@ fn specialNumber(raw: []const u8) ?AST.Node.Kind {
 fn beginKey(self: *Parser, input: []const u8, token: Token) ParserError!void {
     // Only quoted strings are legal keys in strict JSON; the rest are JSON5.
     if (token.kind != .string and self.format != .JSON5) return ParseError.UnexpectedToken;
+    // The entry's row, before its key's: a placeholder `finishValue` makes
+    // the keyvalue. Written straight to the table, so a buffered leading
+    // comment waits for the key.
+    const entry = try self.w.add(.null_, token.span);
     const key = try self.addKeyNode(input, token);
     const parent = &self.container_stack.items[self.container_stack.items.len - 1];
     parent.pending_key = key.id;
+    parent.pending_entry = entry;
     parent.pending_key_text = key.text;
     self.state = .ExpectObjectColon;
 }
@@ -913,14 +921,12 @@ fn finishValue(self: *Parser, value_id: AST.Node.Id) !void {
                 try parent.seen_keys.put(self.allocator, key_text, {});
             }
 
+            // Every comment before the value was claimed by it, or at its
+            // close, so the entry has none to take.
             const value_span = self.w.spanOf(value_id);
-            const pair_id = try self.addNode(.{ .keyvalue = .{
-                .key = key_id,
-                .value = value_id,
-            } }, .{
-                .start = key_span.start,
-                .end = value_span.end,
-            });
+            const pair_id = parent.pending_entry;
+            try self.w.set(pair_id, .{ .keyvalue = .{ .key = key_id, .value = value_id } });
+            self.w.setSpan(pair_id, .{ .start = key_span.start, .end = value_span.end });
 
             try self.attachChild(parent, pair_id);
             self.state = .ExpectObjectCommaOrEnd;

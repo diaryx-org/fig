@@ -247,8 +247,9 @@ function word(sc) {
   sc.fail("`" + w + "` is not a ZON value; ZON holds numbers, strings, `.name`, `true`, `false` and `null`", s);
 }
 
-// A name, the span the wire reports for a field or an enum literal — the
-// `.` before it is not in the span: `foo`, or `@"any text"`.
+// A name, the span the wire reports for a field — the `.` before it is not
+// in the span (an enum literal's value span takes it back): `foo`, or
+// `@"any text"`.
 function name(sc) {
   const s = sc.pos;
   if (byteAt(sc, s) === 64) {
@@ -395,7 +396,7 @@ value = (sc, ctx) => {
     sc.advance();
     const n = name(sc);
     if (n == null) sc.fail("expected a name after `.`", s);
-    return fig.scalar("string", n.span, n.text, { ext_kind: "enum_literal" });
+    return fig.scalar("string", [s, n.span[1]], n.text, { ext_kind: "enum_literal" });
   }
   if (c === 45) return negated(sc);
   if (c === 34) return stringLiteral(sc);

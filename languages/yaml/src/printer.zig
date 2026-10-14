@@ -658,13 +658,18 @@ fn resolvesToNonString(s: []const u8) bool {
         ".INF",  "-.inf", "-.Inf", "-.INF",
         "+.inf", ".nan",  ".NaN",  ".NAN",
     };
-    for (keywords) |kw| if (std.mem.eql(u8, s, kw)) return true;
+    // Every keyword is at most five bytes and starts with one of these.
+    if (s.len > 0 and s.len <= 5 and std.mem.indexOfScalar(u8, "nNtTfF~.-+", s[0]) != null) {
+        for (keywords) |kw| if (std.mem.eql(u8, s, kw)) return true;
+    }
     return looksNumeric(s);
 }
 
 /// Whether `s` would parse as a YAML number. Zig's float parser also accepts
 /// bare `inf`/`nan`, which the core schema does not, so those are excluded.
 fn looksNumeric(s: []const u8) bool {
+    // Both parsers read a sign, a digit or (a float) a `.` first.
+    if (s.len == 0 or !(std.ascii.isDigit(s[0]) or s[0] == '+' or s[0] == '-' or s[0] == '.')) return false;
     if (asciiContains(s, "inf") or asciiContains(s, "nan")) return false;
     if (std.fmt.parseInt(i64, s, 10)) |_| return true else |_| {}
     if (std.fmt.parseInt(u64, s, 10)) |_| return true else |_| {}

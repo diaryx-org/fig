@@ -688,14 +688,14 @@ fn gatherPlainContinuation(self: *Tokenizer, line: Line, floor: ?usize) Tokenize
             // `#` comment still leaves a valid final continuation line, so gather
             // its content up to the comment, then stop.
             if (self.source[se] == '#') result = .{
-                .content_end = trimRightSpaces(self.source, ws, se),
+                .content_end = trimRightBlanks(self.source, ws, se),
                 .last_line = .{ .start = line_start, .content_start = spaces, .end = end, .newline_end = newline_end },
             };
             break;
         }
 
         result = .{
-            .content_end = trimRightSpaces(self.source, ws, end),
+            .content_end = trimRightBlanks(self.source, ws, end),
             .last_line = .{ .start = line_start, .content_start = spaces, .end = end, .newline_end = newline_end },
         };
         probe = newline_end;
@@ -778,7 +778,7 @@ fn addToken(self: *Tokenizer, token: Token) TokenizeError!void {
 }
 
 fn addScalar(self: *Tokenizer, start: usize, end: usize) TokenizeError!void {
-    const trimmed_end = trimRightSpaces(self.source, start, end);
+    const trimmed_end = trimRightBlanks(self.source, start, end);
     if (trimmed_end > start) {
         try self.addToken(.init(.scalar, .init(start, trimmed_end)));
     }
@@ -1267,9 +1267,11 @@ fn precededOnlyByTrivia(self: *const Tokenizer) bool {
     return true;
 }
 
-fn trimRightSpaces(source: []const u8, start: usize, end: usize) usize {
+/// A plain scalar never ends in a blank: trailing spaces and tabs before a
+/// comment or the line's end are not its text (`a: 1\t# c` is `1`).
+fn trimRightBlanks(source: []const u8, start: usize, end: usize) usize {
     var trimmed = end;
-    while (trimmed > start and source[trimmed - 1] == ' ') {
+    while (trimmed > start and isBlank(source[trimmed - 1])) {
         trimmed -= 1;
     }
     return trimmed;

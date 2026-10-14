@@ -73,8 +73,10 @@ const fail = fig.fail;
 // (or the source's end): a trailing `\r` is trimmed.
 const trimCr = (src, start, nl) => (nl > start && at(src, nl - 1) === CR ? nl - 1 : nl);
 
-function trimRightSpaces(src, start, e) {
-  while (e > start && at(src, e - 1) === SP) e -= 1;
+// A plain scalar never ends in a blank: trailing spaces and tabs are not
+// its text (`a: 1\t# c` is `1`).
+function trimRightBlanks(src, start, e) {
+  while (e > start && (at(src, e - 1) === SP || at(src, e - 1) === TAB)) e -= 1;
   return e;
 }
 
@@ -387,7 +389,7 @@ class Tokenizer {
   }
 
   addScalar(s, e) {
-    const te = trimRightSpaces(this.src, s, e);
+    const te = trimRightBlanks(this.src, s, e);
     if (te > s) this.add("scalar", s, te);
   }
 
@@ -450,11 +452,11 @@ class Tokenizer {
       const se = scalarEnd(src, ws, e, false);
       if (se !== e) {
         if (at(src, se) === HASH) {
-          result = { contentEnd: trimRightSpaces(src, ws, se), lastLine: ln };
+          result = { contentEnd: trimRightBlanks(src, ws, se), lastLine: ln };
         }
         break;
       }
-      result = { contentEnd: trimRightSpaces(src, ws, e), lastLine: ln };
+      result = { contentEnd: trimRightBlanks(src, ws, e), lastLine: ln };
       probe = newlineEnd;
     }
     if (result) this.i = result.lastLine.newlineEnd;
@@ -1323,6 +1325,12 @@ class Parser {
       n.anchor = anchor.name;
       n.anchor_span = [anchor.s, anchor.e];
       this.anchors.push({ name: anchor.name, node: id });
+    }
+    // An implicit empty (`k: !!str`) is anchored before its properties; it
+    // covers them instead, as a written value does.
+    if (s === e) {
+      const after = [tag, anchor].filter((p) => p && p.s >= s);
+      if (after.length > 0) n.span = [Math.min(...after.map((p) => p.s)), Math.max(...after.map((p) => p.e))];
     }
     this.nodes.push(n);
     if (!this.parkingContainer) this.claimLeading(id);

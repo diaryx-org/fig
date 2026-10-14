@@ -262,11 +262,13 @@ fn identifier(self: *Parser, node: Ast.Node.Index) Error!AST.Node.Id {
 /// `.foo` enum literal → `extended` enum_literal whose text is the bare name (no
 /// leading `.`). The name is a valid identifier in the common case (slice
 /// straight from source); the rare `.@"quoted"` form is decoded into an owned
-/// string.
+/// string. The node's span covers the leading `.` too, so an edit that splices
+/// over the value replaces the whole literal rather than leaving the dot behind.
 fn enumLiteral(self: *Parser, node: Ast.Node.Index) Error!AST.Node.Id {
     const tree = self.tree;
     const token = tree.nodeMainToken(node);
-    const span = self.tokenSpan(token);
+    const name = self.tokenSpan(token);
+    const span: Span = .{ .start = tree.tokenStart(tree.firstToken(node)), .end = name.end };
     const slice = tree.tokenSlice(token);
     if (std.mem.startsWith(u8, slice, "@\"")) {
         const decoded = std.zig.string_literal.parseAlloc(self.allocator, slice[1..]) catch |e| switch (e) {
@@ -276,7 +278,7 @@ fn enumLiteral(self: *Parser, node: Ast.Node.Index) Error!AST.Node.Id {
         defer self.allocator.free(decoded);
         return self.addNode(.{ .extended = .{ .kind = .enum_literal, .text = decoded } }, span);
     }
-    return self.addNode(.{ .extended = .{ .kind = .enum_literal, .text = self.sourceSlice(span) } }, span);
+    return self.addNode(.{ .extended = .{ .kind = .enum_literal, .text = self.sourceSlice(name) } }, span);
 }
 
 fn stringLiteral(self: *Parser, node: Ast.Node.Index) Error!AST.Node.Id {

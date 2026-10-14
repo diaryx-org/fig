@@ -3,16 +3,16 @@ title = Tasks
 description = Deferred work with a done state — a bug is a task with a repro
 author = adammharris
 created = 2026-09-04
-updated = 2026-10-12
+updated = 2026-10-14
 part_of = [docs](/docs/docs.md)
 contents
 > * [Closed tasks](/docs/tasks/closed/closed.md)
 > * [The Rust helper reads JSON with fig's json format](/docs/tasks/helper-serde-json.md)
 > * [Four deletes are refused because their splice takes another value](/docs/tasks/delete-splices-taking-other-values.md)
 > * [The JavaScript YAML twin misreads compact sequences two deep](/docs/tasks/yaml-twin-deep-compact-sequences.md)
-> * [A ZON enum-literal value cannot be replaced](/docs/tasks/zon-enum-literal-replace.md)
-> * [A dotenv value followed by a spaced comment cannot be replaced](/docs/tasks/dotenv-replace-before-comment.md)
-> * [Three YAML value shapes cannot be replaced](/docs/tasks/yaml-replace-refused-shapes.md)
+> * [A comment after a figl multi-line list's opening bracket is invisible to the editor](/docs/tasks/figl-multiline-list-opener-comment.md)
+> * [Moving or reordering figl elements breaks + chains and index addresses](/docs/tasks/figl-move-chains-and-indices.md)
+> * [An insert into a figl element with a nested header lands in the wrong element](/docs/tasks/figl-insert-under-nested-header.md)
 ```
 
 # Tasks

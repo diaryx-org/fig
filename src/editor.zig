@@ -669,12 +669,19 @@ pub fn Editor(comptime Language: type) type {
                 const kv = try parsed.ast.getNodeByPath(path);
                 if (parsed.sepSpan(kv)) |sep| {
                     const key_span = parsed.span(parsed.ast.node(kv.kind.keyvalue.key));
-                    const indent = try self.indentAt(&indent_buf, key_span.start);
+                    // An explicit key's separator opens a line of its own
+                    // (YAML's `? k` over `: v`): the tail is rewritten from
+                    // there, under that line's indent, so the key keeps its
+                    // `?` line instead of taking the value onto it.
+                    const own_line = !self.hasRenderer(.tail) and
+                        std.mem.indexOfScalar(u8, source[key_span.end..sep.start], '\n') != null;
+                    const from = if (own_line) sep.start else key_span.end;
+                    const indent = try self.indentAt(&indent_buf, if (own_line) sep.start else key_span.start);
                     try self.writeTail(&out, indent, source[key_span.start..key_span.end], rendered, place);
                     // A null value is a zero-width span at the separator.
                     const end = @max(span.end, sep.end);
                     try self.terminateLine(&out, end);
-                    return self.replaceAtSpan(Span.init(key_span.end, end), out.items);
+                    return self.replaceAtSpan(Span.init(from, end), out.items);
                 }
             }
             // The engine's veto, before anything is spliced — a target whose
@@ -724,6 +731,17 @@ pub fn Editor(comptime Language: type) type {
                 try self.terminateLine(&out, span.end);
                 return self.replaceAtSpan(span, out.items);
             }
+            // An empty value can sit right against a trailing comment, its
+            // separating blank before it (dotenv's `A= #c`): the new text
+            // keeps one between them, or the comment would read as more of
+            // the value (`A= 42#c` is `42#c`).
+            if (span.len() == 0 and rendered.len > 0) if (self.syntax().comments.trailing) |c| {
+                if (std.mem.startsWith(u8, source[span.end..], c.open)) {
+                    try out.appendSlice(self.allocator, rendered);
+                    try out.append(self.allocator, ' ');
+                    return self.replaceAtSpan(span, out.items);
+                }
+            };
             try self.replaceAtSpan(span, rendered);
         }
 
@@ -7649,6 +7667,20 @@ test "dotenv: an entry appended after an `export` entry starts at column 0" {
     defer ed.deinit();
     try ed.set(&.{.{ .key = "NEW" }}, "v");
     try testing.expectEqualStrings("export D=p\nNEW=v\n", ed.source.items);
+}
+
+test "dotenv replacing an empty value keeps a blank before its comment" {
+    if (comptime !build_options.lang_dotenv) return error.SkipZigTest;
+    // `A= #c` is an empty `A`; written straight against the `#`, `42#c`
+    // would read as the value.
+    try expectSet(Dotenv, .DOTENV, "A= #c\nB=1\n", &.{.{ .key = "A" }}, "42", "A= 42 #c\nB=1\n");
+    try expectSet(Dotenv, .DOTENV, "A=\t#c\n", &.{.{ .key = "A" }}, "42", "A=\t42 #c\n");
+}
+
+test "properties replacing a value that looks like a comment replaces it whole" {
+    if (comptime !build_options.lang_properties) return error.SkipZigTest;
+    // A `#` is a comment only at a line's start, so `#c` here is the value.
+    try expectSet(Properties, .PROPERTIES, "a= #c\nb=1\n", &.{.{ .key = "a" }}, "42", "a= 42\nb=1\n");
 }
 
 test "dotenv comment ops use # and round-trip" {

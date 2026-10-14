@@ -199,3 +199,28 @@ test "zon failed edit rolls back and keeps editor usable" {
     try ed.replaceValAtPath(&.{.{ .key = "a" }}, "9");
     try expectZonSource(&ed, ".{ .a = 9 }");
 }
+
+// An enum literal's span covers its leading `.`, so a replace takes the whole
+// literal; it used to splice past the dot and leave it in front of the new
+// text, turning `true` into the enum literal `.true`.
+test "zon replace an enum-literal value with another kind" {
+    var ed = try newZonEditor(".{ .a = .fast, .b = 1 }\n");
+    defer ed.deinit();
+    try ed.replaceValAtPath(&.{.{ .key = "a" }}, "true");
+    try expectZonSource(&ed, ".{ .a = true, .b = 1 }\n");
+}
+
+test "zon replace an enum-literal value with another enum literal" {
+    var ed = try newZonEditor(".{ .a = .fast, .b = .@\"quoted name\" }\n");
+    defer ed.deinit();
+    try ed.replaceValAtPath(&.{.{ .key = "a" }}, ".slow");
+    try ed.replaceValAtPath(&.{.{ .key = "b" }}, "2");
+    try expectZonSource(&ed, ".{ .a = .slow, .b = 2 }\n");
+}
+
+test "zon replace an enum-literal tuple item" {
+    var ed = try newZonEditor(".{ .xs = .{ .one, .two } }\n");
+    defer ed.deinit();
+    try ed.replaceValAtPath(&.{ .{ .key = "xs" }, .{ .index = 1 } }, "\"two\"");
+    try expectZonSource(&ed, ".{ .xs = .{ .one, \"two\" } }\n");
+}

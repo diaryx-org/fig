@@ -771,16 +771,14 @@ test "yaml replace an item with a block value indents it under the item" {
     }
 }
 
-// The write guard (`readsBack`): the reframe writes an explicit key's new
-// value after the `? k` it reads as the key, and `? k:` over `  x: 1` is a
-// key that is itself a mapping, with `v` gone; the replace is refused and
-// nothing is written.
-test "yaml a replace that would not read back as asked is rolled back" {
-    const source = "? k\n: v\nz: 1\n";
-    var ed = try newYamlEditor(source);
+// An explicit key's new value is written from its own `:` line; written
+// after the `? k` instead, `? k:` over `  x: 1` was a key that is itself a
+// mapping, and the write guard (`readsBack`) refused it.
+test "yaml replace an explicit key's value with a block mapping" {
+    var ed = try newYamlEditor("? k\n: v\nz: 1\n");
     defer ed.deinit();
-    try std.testing.expectError(error.EditReadsBackWrong, ed.replaceValAtPath(&.{.{ .key = "k" }}, "x: 1\ny: two"));
-    try expectSource(&ed, source);
+    try ed.replaceValAtPath(&.{.{ .key = "k" }}, "x: 1\ny: two");
+    try expectSource(&ed, "? k\n:\n  x: 1\n  y: two\nz: 1\n");
 }
 
 test "yaml replace preserves a trailing line comment" {
@@ -1165,4 +1163,48 @@ test "a key inserted into an item's mapping aligns under the item's keys, past e
     defer nested.deinit();
     try nested.set(&.{ .{ .key = "x" }, .{ .index = 0 }, .{ .index = 0 }, .{ .key = "n" } }, "1");
     try expectSource(&nested, "x:\n  - - k: v\n      n: 1\n");
+}
+
+// --- replace: shapes whose value slot is not where the value's text is ---
+
+// A plain scalar ends before the blanks that precede its comment, a tab
+// included; with the tab in its span, a replace wrote `42# c`, the comment
+// read as more of the value.
+test "yaml replace a value with a tab before its comment" {
+    var ed = try newYamlEditor("a: 1\t# c\nb: 2\n");
+    defer ed.deinit();
+    try ed.replaceValAtPath(&.{.{ .key = "a" }}, "42");
+    try expectSource(&ed, "a: 42\t# c\nb: 2\n");
+}
+
+// An empty tagged value covers its tag, as a written one does (`t: !!str y`
+// replaced is `t: 42`); anchored before it, a replace wrote `x !!str`.
+test "yaml replace an empty tagged value" {
+    var ed = try newYamlEditor("t: !!str\nu: 1\n");
+    defer ed.deinit();
+    try ed.replaceValAtPath(&.{.{ .key = "t" }}, "x");
+    try expectSource(&ed, "t: x\nu: 1\n");
+}
+
+test "yaml replace an empty tagged sequence item" {
+    var ed = try newYamlEditor("- !!str\n- 1\n");
+    defer ed.deinit();
+    try ed.replaceValAtPath(&.{.{ .index = 0 }}, "5");
+    try expectSource(&ed, "- 5\n- 1\n");
+}
+
+// An explicit key's `:` opens a line of its own; the value is rewritten
+// from there, and the key keeps its `?` line.
+test "yaml replace an explicit key's value" {
+    var ed = try newYamlEditor("? k\n: v # c\nz: 1\n");
+    defer ed.deinit();
+    try ed.replaceValAtPath(&.{.{ .key = "k" }}, "42");
+    try expectSource(&ed, "? k\n: 42 # c\nz: 1\n");
+}
+
+test "yaml replace an explicit key's empty value with a block list" {
+    var ed = try newYamlEditor("m:\n  ? k\n  :\n  z: 1\n");
+    defer ed.deinit();
+    try ed.replaceValAtPath(&.{ .{ .key = "m" }, .{ .key = "k" } }, "- 1\n- 2");
+    try expectSource(&ed, "m:\n  ? k\n  :\n  - 1\n  - 2\n  z: 1\n");
 }

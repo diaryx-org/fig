@@ -479,7 +479,16 @@ fn parse_once(self: *Parser, input: []const u8, kind: Type) !void {
     defer self.allocator.free(tokens);
 
     // Each node is a row, linked to its children and siblings; the rows
-    // are put in pre-order once the root is done.
+    // are put in pre-order once the root is done. A row is a value, a key,
+    // or the entry a colon pairs them into (an empty document one null
+    // row): room for every one up front, rather than a copy each time the
+    // table outgrows itself.
+    var rows: usize = 1;
+    for (tokens) |token| switch (token.kind) {
+        .open_brace, .open_bracket, .colon, .true_, .false_, .null_, .string, .number, .identifier => rows += 1,
+        else => {},
+    };
+    try self.w.t.rows.ensureUnusedCapacity(self.w.t.allocator, rows);
 
     var i: usize = 0;
     while (i < tokens.len) {

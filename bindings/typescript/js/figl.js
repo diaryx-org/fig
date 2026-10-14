@@ -25,8 +25,10 @@
 //     element records its `*` as `marker`;
 //   * a block container's *regions* are the line that created it and every
 //     later header line that re-opened it by its final segment; its
-//     *mentions* are its key and each such re-opening's key, all of kind
-//     `entry` — a fig header sits on its parent's own lines;
+//     *mentions* are its key and each such re-opening's key, of kind
+//     `entry` when the line is one of the parent's own — the line's target,
+//     or a container the line created — and `header` when the path reached
+//     the parent through a container written elsewhere (`p` in `c[].p[]`);
 //   * an element's mentions are where its path is written: each literal
 //     index that addresses it on the line it is written (`index`), and the
 //     `[]` header path that appended it or the `+` that re-ran one
@@ -716,14 +718,14 @@ class Parser {
     (el.paths ??= []).push({ span, kind: "index" });
   }
 
-  getOrCreateMapContainer(m, seg) {
+  getOrCreateMapContainer(m, seg, mention = "entry") {
     const e = m.index.get(seg.name);
     if (e) {
       if (e.value.value.kind !== "container") this.fail("FigKeyNotContainer");
       return this.open(e.value.value.container);
     }
     const child = newContainer();
-    const entry = { key: seg.name, keySpan: seg.span, sepSpan: [seg.span[1], seg.span[1]], keyLeading: [], value: newNode({ kind: "container", container: child }, [seg.span[0], seg.span[1]]) };
+    const entry = { key: seg.name, keySpan: seg.span, sepSpan: [seg.span[1], seg.span[1]], keyLeading: [], mention, value: newNode({ kind: "container", container: child }, [seg.span[0], seg.span[1]]) };
     m.entries.push(entry);
     m.index.set(entry.key, entry);
     return child;
@@ -753,23 +755,34 @@ class Parser {
     this.fail("FigIndexSkipped");
   }
 
+  // The container every step but the last reaches, and the kind of mention
+  // the last step's key is: `entry` when the line is one of that
+  // container's own — the line's target, or a container this line made —
+  // and `header` when the path re-opened one written on an earlier line.
   navigateIntermediate(start, steps) {
     let cur = start;
+    let mention = "entry";
     for (let i = 0; i < steps.length - 1; i++) {
       const step = steps[i];
-      if (step.key) cur = this.getOrCreateMapContainer(this.asMapping(cur), step.key);
-      else {
+      if (step.key) {
+        const m = this.asMapping(cur);
+        const fresh = !m.index.has(step.key.name);
+        cur = this.getOrCreateMapContainer(m, step.key, mention);
+        mention = fresh ? "entry" : "header";
+      } else {
         const s = this.asSequence(cur);
         this.markAddressed(s);
+        const fresh = step.index === s.elements.length;
         cur = this.getOrCreateSeqContainer(s, step);
+        mention = fresh ? "entry" : "header";
       }
     }
-    return cur;
+    return { container: cur, mention };
   }
 
   // A header line's final segment: the container to push, its owner node,
   // and its entry when reached through a key.
-  resolveHeaderFinal(parent, last) {
+  resolveHeaderFinal({ container: parent, mention }, last) {
     if (last.key) {
       const k = last.key;
       const m = this.asMapping(parent);
@@ -777,11 +790,11 @@ class Parser {
       if (e) {
         if (e.value.value.kind !== "container") this.fail("FigDuplicateKey");
         const c = this.open(e.value.value.container);
-        c.reentries.push({ at: k.span[0], name: k.span });
+        c.reentries.push({ at: k.span[0], name: k.span, mention });
         return [c, e.value, e];
       }
       const child = newContainer();
-      const entry = { key: k.name, keySpan: k.span, sepSpan: [k.span[1], k.span[1]], keyLeading: [], value: newNode({ kind: "container", container: child }, [k.span[0], k.span[1]]) };
+      const entry = { key: k.name, keySpan: k.span, sepSpan: [k.span[1], k.span[1]], keyLeading: [], mention, value: newNode({ kind: "container", container: child }, [k.span[0], k.span[1]]) };
       m.entries.push(entry);
       m.index.set(entry.key, entry);
       return [child, entry.value, entry];
@@ -1243,7 +1256,7 @@ class Parser {
   finishAssignment(target, steps, typeName, sep) {
     this.skipSpacesTabs();
     const leading = this.drainPending();
-    const parent = this.navigateIntermediate(target, steps);
+    const parent = this.navigateIntermediate(target, steps).container;
     const last = steps[steps.length - 1];
     const valueNode = this.parseAssignedValue(typeName);
     this.consumeLineEnd();
@@ -1422,7 +1435,7 @@ function isSection(node) {
 
 function reenter(S, built, c) {
   for (const r of c.reentries) {
-    if (r.name) S.reopen(built, r.name, "entry");
+    if (r.name) S.reopen(built, r.name, r.mention);
     else S.region(built, r.at);
   }
 }
@@ -1444,7 +1457,7 @@ function buildNode(S, node) {
         if (e.sepSpan) kv.sep = e.sepSpan;
         if (e.value.span[1] > end) end = e.value.span[1];
         if (isSection(e.value)) {
-          S.open(built, kv, "entry");
+          S.open(built, kv, e.mention ?? "entry");
           reenter(S, value, e.value.value.container);
         } else {
           built.put(kv);

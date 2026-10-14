@@ -668,6 +668,34 @@ test "fig moving the first element of a nested `+` chain is refused, not a new c
     try expectFigSource(&ed, source);
 }
 
+// An element's own keys come before a header that opens a child of it; a
+// `> key` after `c[].p[]` is the port's (docs/tasks/closed/figl-insert-under-nested-header.md).
+test "fig insert into an element with a nested header goes among its own keys" {
+    var ed = try newFigEditor("spec.containers[]\n> name = app\nspec.containers[].ports[]\n> containerPort = 80\n+\n> containerPort = 443\n");
+    defer ed.deinit();
+    try ed.insertKey(&.{ .{ .key = "spec" }, .{ .key = "containers" }, .{ .index = 0 } }, "added_bool", "true");
+    try expectFigSource(&ed, "spec.containers[]\n> name = app\n> added_bool = true\nspec.containers[].ports[]\n> containerPort = 80\n+\n> containerPort = 443\n");
+
+    // A dotted header or line re-entering a container is its child's line,
+    // not the container's, and so is one nested a level down.
+    var dotted = try newFigEditor("a\n> y = 0\na.b\n> x = 1\na.c.d = 2\n");
+    defer dotted.deinit();
+    try dotted.insertKey(&.{.{ .key = "a" }}, "m", "1");
+    try expectFigSource(&dotted, "a\n> y = 0\n> m = 1\na.b\n> x = 1\na.c.d = 2\n");
+
+    var nested = try newFigEditor("s\n> c[]\n> > n = 1\n> c[].p[]\n> > x = 1\n");
+    defer nested.deinit();
+    try nested.insertKey(&.{ .{ .key = "s" }, .{ .key = "c" }, .{ .index = 0 } }, "m", "1");
+    try expectFigSource(&nested, "s\n> c[]\n> > n = 1\n> > m = 1\n> c[].p[]\n> > x = 1\n");
+
+    // A container with no line of its own but the header that names its
+    // child still takes the entry on a dotted line, as it did.
+    var implicit = try newFigEditor("a.b\n> x = 1\n");
+    defer implicit.deinit();
+    try implicit.insertKey(&.{.{ .key = "a" }}, "m", "1");
+    try expectFigSource(&implicit, "a.b\n> x = 1\na.m = 1\n");
+}
+
 test "fig an element's index and header are not names a rename rewrites" {
     var ed = try newFigEditor("ys[0]\n> k = 1\n");
     defer ed.deinit();

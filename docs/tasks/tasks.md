@@ -14,7 +14,6 @@ contents
 > * [A ZON enum-literal value cannot be replaced](/docs/tasks/zon-enum-literal-replace.md)
 > * [A dotenv value followed by a spaced comment cannot be replaced](/docs/tasks/dotenv-replace-before-comment.md)
 > * [Three YAML value shapes cannot be replaced](/docs/tasks/yaml-replace-refused-shapes.md)
-> * [An insert into a figl element with a nested header lands in the wrong element](/docs/tasks/figl-insert-under-nested-header.md)
 ```
 
 # Tasks

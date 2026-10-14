@@ -501,8 +501,10 @@ fn parse_once(self: *Parser, input: []const u8, kind: Type) !void {
         return self.diagnostics.items[0].code;
     }
 
-    const root = self.root orelse return ParseError.UnexpectedToken;
-    try self.w.finish(root);
+    // The root is the first row written, and every row after it names its
+    // parent (`attachChild`, and the entry for its key and value).
+    _ = self.root orelse return ParseError.UnexpectedToken;
+    try self.w.finishInOrder();
 }
 
 /// Dispatch every token `tokenizer` yields, through `end_of_file`. A parse
@@ -922,6 +924,7 @@ fn addKeyNode(self: *Parser, input: []const u8, token: Token) ParserError!struct
 
 /// Attaches a completed child to the current open container.
 fn attachChild(self: *Parser, parent: *OpenContainer, child_id: AST.Node.Id) !void {
+    self.w.setParent(child_id, parent.id);
     if (parent.first_child != null) {
         self.w.setNext(parent.last_child.?, child_id);
     } else {

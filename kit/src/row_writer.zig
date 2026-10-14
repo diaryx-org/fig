@@ -124,6 +124,12 @@ pub fn setNext(self: RowWriter, id: Node.Id, next: ?Node.Id) void {
     self.t.rows.items[id].next_sibling = next orelse none;
 }
 
+/// Name `parent` as node `id`'s parent — which only `finishInOrder` reads;
+/// `finish` names every parent itself.
+pub fn setParent(self: RowWriter, id: Node.Id, parent: Node.Id) void {
+    self.t.rows.items[id].parent = parent;
+}
+
 /// Node `id`'s span.
 pub fn spanOf(self: RowWriter, id: Node.Id) Span {
     const r = self.t.rows.items[id];
@@ -276,6 +282,39 @@ pub fn finish(self: RowWriter, root: Node.Id) Allocator.Error!void {
     remap(table.Comment, &self.t.comments, place);
     remap(table.SpanFact, &self.t.regions, place);
     remap(table.Mention, &self.t.mentions, place);
+}
+
+/// `finish` for a parser that wrote its rows in pre-order from the root at
+/// row 0, each naming its parent (`setParent`): the rows are left as they
+/// are, and only the comments put in order. A build with runtime safety
+/// walks the tree as `finish` does and checks the claim.
+pub fn finishInOrder(self: RowWriter) Allocator.Error!void {
+    if (std.debug.runtime_safety) try self.checkInOrder();
+    self.lastTrailing();
+}
+
+/// Assert that `finish` from row 0 would move no row and name every parent
+/// as it already is.
+fn checkInOrder(self: RowWriter) Allocator.Error!void {
+    const a = self.t.allocator;
+    const rows = self.t.rows.items;
+    var stack: std.ArrayList(struct { id: u32, parent: u32 }) = .empty;
+    defer stack.deinit(a);
+    var n: usize = 0;
+    try stack.append(a, .{ .id = 0, .parent = none });
+    while (stack.pop()) |item| {
+        if (item.parent != none) {
+            const sibling = rows[item.id].next_sibling;
+            if (sibling != none) try stack.append(a, .{ .id = sibling, .parent = item.parent });
+        }
+        std.debug.assert(item.id == n);
+        std.debug.assert(rows[item.id].parent == item.parent);
+        n += 1;
+        const first = rows[item.id].first_child;
+        if (table.Kind.isContainer(rows[item.id].kind) and first != none)
+            try stack.append(a, .{ .id = first, .parent = item.id });
+    }
+    std.debug.assert(n == rows.len);
 }
 
 /// Sort the comments by node and slot, keeping their order within a slot,

@@ -116,15 +116,24 @@ test "json5 delete beside and of a NaN" {
     try expectJson5Source(&ed, "{ c: -Infinity }");
 }
 
-// The splice took `\n  n: NaN`, and the rest of `n`'s line joined the `// t`
-// comment above it, `i` with it: the guard refuses
+// A later entry that begins its line goes with the comma after it, not
+// the one before: that one ends the line above, behind a `// t` comment,
+// and the old splice took `\n  n: NaN`, joining the rest of `n`'s line,
+// `i` with it, to the comment
 // (docs/tasks/delete-splices-taking-other-values.md).
-test "json5 delete that would join a line to a comment is refused" {
-    const source = "{\n  a: 1, // t\n  n: NaN, i: 2,\n}\n";
-    var ed = try newJson5Editor(source);
+test "json5 delete after a line comment leaves the rest of its line" {
+    var ed = try newJson5Editor("{\n  \"b c\": [1, 2], // tb\n  n: NaN, i: -Infinity,\n  z: 3,\n}\n");
     defer ed.deinit();
-    try std.testing.expectError(error.DeleteChangedOtherValues, ed.deleteKey(&.{.{ .key = "n" }}));
-    try expectJson5Source(&ed, source);
+    try ed.deleteKey(&.{.{ .key = "n" }});
+    try expectJson5Source(&ed, "{\n  \"b c\": [1, 2], // tb\n  i: -Infinity,\n  z: 3,\n}\n");
+    // Alone on its line, the entry takes the line and its own comment.
+    try ed.deleteKey(&.{.{ .key = "i" }});
+    try expectJson5Source(&ed, "{\n  \"b c\": [1, 2], // tb\n  z: 3,\n}\n");
+
+    var own = try newJson5Editor("{\n  a: 1, // t\n  n: NaN, // n's\n  i: 2\n}\n");
+    defer own.deinit();
+    try own.deleteKey(&.{.{ .key = "n" }});
+    try expectJson5Source(&own, "{\n  a: 1, // t\n  i: 2\n}\n");
 }
 
 test "json5 delete key carries an owned /* */ block comment" {

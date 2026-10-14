@@ -2,11 +2,24 @@
 title = Four deletes are refused because their splice takes another value
 part_of = [Tasks](/docs/tasks/tasks.md)
 description = The delete guard refuses four shapes whose splice reads the source wrongly and takes values beside the deleted one; each should delete only its entry or item
-status = open
+status = done
 created = 2026-10-13
+updated = 2026-10-14
 ```
 
 # Four deletes are refused because their splice takes another value
+
+**Status.** Done, in `fix(editor): four deletes take only their own entry or
+item` (2026-10-14). A later flow member that begins its line now goes with
+the separator after it, not the one ending the line above, so neither a
+`// tb` comment nor a ZON multi-line string's last line takes the rest of
+its line; alone on its line it takes the line and its trailing comment. The
+flow sniff (`isFlowNode`) reads past a YAML node's anchor and tag, so `&i
+[1, 2]` is a flow sequence. A YAML flow pair's only entry goes as the pair's
+whole text, leaving `{}`. Each shape's test in `tests/editor.zig` that
+expected `DeleteChangedOtherValues` now expects the delete. The
+fig-conformance edit suites, recorded before 346db34, were not re-scored
+here.
 
 The delete guard (`keepOthers` in `src/editor.zig`) rolls these back with
 `DeleteChangedOtherValues`, or the reparse fails. Before 346db34 each was

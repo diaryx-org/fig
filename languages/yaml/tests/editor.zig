@@ -622,14 +622,35 @@ test "yaml a flow mapping delete passes the guard, and the line delete of a flow
     try ed.deleteKey(&.{ .{ .key = "o" }, .{ .key = "b" } });
     try expectSource(&ed, "o: {}\np: x\n");
 
-    // A single-pair mapping in a flow sequence has no braces of its own, and
-    // the delete would take the whole `n:` line; the guard refuses
-    // (docs/tasks/delete-splices-taking-other-values.md).
-    const pairs = "n: [a: b, c: d]\nm: 1\n";
-    var flow = try newYamlEditor(pairs);
+    // A single-pair mapping in a flow sequence has no braces of its own,
+    // and the delete took the whole `n:` line. Its entry's going leaves it
+    // an empty mapping (docs/tasks/delete-splices-taking-other-values.md).
+    var flow = try newYamlEditor("n: [a: b, ? c, : d, \"e\":f]\nm: 1\n");
     defer flow.deinit();
-    try std.testing.expectError(error.DeleteChangedOtherValues, flow.deleteKey(&.{ .{ .key = "n" }, .{ .index = 0 }, .{ .key = "a" } }));
-    try expectSource(&flow, pairs);
+    try flow.deleteKey(&.{ .{ .key = "n" }, .{ .index = 0 }, .{ .key = "a" } });
+    try expectSource(&flow, "n: [{}, ? c, : d, \"e\":f]\nm: 1\n");
+    try flow.deleteKey(&.{ .{ .key = "n" }, .{ .index = 1 }, .{ .key = "c" } });
+    try expectSource(&flow, "n: [{}, {}, : d, \"e\":f]\nm: 1\n");
+    try flow.deleteKey(&.{ .{ .key = "n" }, .{ .index = 3 }, .{ .key = "e" } });
+    try expectSource(&flow, "n: [{}, {}, : d, {}]\nm: 1\n");
+}
+
+// An anchored flow sequence's span starts at its anchor, and the flow
+// sniff read `&i [1, 2]` as block: deleting its first item did not parse,
+// and its last was refused
+// (docs/tasks/delete-splices-taking-other-values.md).
+test "yaml delete from an anchored flow sequence" {
+    var ed = try newYamlEditor("seq:\n- 0\n- &i [1, 2]\n- !!seq [3, 4]\nk: v\n");
+    defer ed.deinit();
+    try ed.removeSeqItem(&.{ .{ .key = "seq" }, .{ .index = 1 } }, 0);
+    try expectSource(&ed, "seq:\n- 0\n- &i [2]\n- !!seq [3, 4]\nk: v\n");
+    try ed.removeSeqItem(&.{ .{ .key = "seq" }, .{ .index = 2 } }, 1);
+    try expectSource(&ed, "seq:\n- 0\n- &i [2]\n- !!seq [3]\nk: v\n");
+
+    var last = try newYamlEditor("seq:\n- &i [1, 2]\n");
+    defer last.deinit();
+    try last.removeSeqItem(&.{ .{ .key = "seq" }, .{ .index = 0 } }, 1);
+    try expectSource(&last, "seq:\n- &i [1]\n");
 }
 
 test "yaml a delete does not take an implicit mapping's parent" {

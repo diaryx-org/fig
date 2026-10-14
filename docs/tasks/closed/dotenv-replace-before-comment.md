@@ -1,12 +1,20 @@
 ```fig
 title = A dotenv value followed by a spaced comment cannot be replaced
-part_of = [Tasks](/docs/tasks/tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 description = Replacing an empty dotenv value followed by ` #c` drops the space before the `#`, so `A= #c` would read back as `42#c`; the read-back guard now refuses it
-status = open
+status = done
 created = 2026-10-13
+updated = 2026-10-14
 ```
 
 # A dotenv value followed by a spaced comment cannot be replaced
+
+**Status.** Done, in `fix(editor): replacing an empty value keeps a blank
+before a trailing comment` (cc907ae, 2026-10-14). A replace into an empty
+span that a trailing-comment opener follows writes a blank after the new
+text: `A= #c` becomes `A= 42 #c`. `.properties` needed nothing, since its
+`a= #c` is the value `#c` and is replaced whole. The fig-conformance cases
+were not re-run from the change's session.
 
 **Repro.** On `main` at 5a1a559:
 

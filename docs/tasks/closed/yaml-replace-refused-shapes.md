@@ -1,12 +1,25 @@
 ```fig
 title = Three YAML value shapes cannot be replaced
-part_of = [Tasks](/docs/tasks/tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 description = Replacing a YAML value is refused after a tab before its comment (`a: 1\t# c`), for an empty tagged value (`t: !!str`), and for an explicit key's value (`? k` / `: v`)
-status = open
+status = done
 created = 2026-10-13
+updated = 2026-10-14
 ```
 
 # Three YAML value shapes cannot be replaced
+
+**Status.** Done, in `fix(yaml): a value after a tab, an empty tagged value
+and an explicit key's value can be replaced` (638f6d7, 2026-10-14). A plain
+scalar ends before trailing tabs as well as spaces (it used to read
+`a: 1\t# c` as `1\t`), so the tab case writes `a: 42\t# c`. An explicit
+key's value is rewritten from its own `:` line, so `? k` / `: 42`. The
+tagged case differs from the "done when" below: an empty value with
+properties now covers them, as a written one does (`t: !!str y` already
+spans `!!str y`), so the replace writes `t: x`, dropping the tag the way
+replacing `t: !!str y` always has. Keeping it would make `t: !!str 42`
+read as a string and be refused for any non-string value. The
+fig-conformance cases were not re-run from the change's session.
 
 **Repro.** On `main` at 5a1a559, each refused (would not read back as that edit asks):
 

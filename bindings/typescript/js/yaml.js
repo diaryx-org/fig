@@ -715,7 +715,7 @@ class Tokenizer {
 
   tokenize() {
     const src = this.src;
-    const indentStack = [{ indent: 0, propOnly: false, seqContent: null }];
+    const indentStack = [{ indent: 0, propOnly: false, entryDash: null }];
     let currentIndent = 0;
 
     for (;;) {
@@ -750,7 +750,7 @@ class Tokenizer {
       const indent = line.contentStart - line.start;
       const propOnly = this.lineIsPropertyOnly(line);
       if (indent > currentIndent) {
-        indentStack.push({ indent, propOnly, seqContent: null });
+        indentStack.push({ indent, propOnly, entryDash: null });
         this.add("indent", line.start, line.contentStart);
         currentIndent = indent;
       } else if (indent < currentIndent) {
@@ -758,23 +758,27 @@ class Tokenizer {
           const popped = indentStack.pop();
           currentIndent = indentStack[indentStack.length - 1].indent;
           if (popped.propOnly && indent > currentIndent) {
-            indentStack.push({ indent, propOnly, seqContent: null });
+            indentStack.push({ indent, propOnly, entryDash: null });
             currentIndent = indent;
             break;
           }
           this.add("dedent", line.contentStart, line.contentStart);
         }
-        if (indent !== currentIndent && indent > currentIndent && indentStack[indentStack.length - 1].seqContent === indent) {
-          indentStack.push({ indent, propOnly, seqContent: null });
+        // The dedent may land between two levels at the content column of a
+        // `- ` on the last entry's dash line: a sibling key after the first
+        // key's block value (`- k:\n    v: 1\n  s: 2`), or an item returning
+        // to a compact nested sequence (`- - - a\n    - b\n  - c`). The dash
+        // established that column but never pushed it; admit it.
+        const top = indentStack[indentStack.length - 1];
+        if (indent !== currentIndent && indent > currentIndent && entryContentColumn(src, top.entryDash, top.indent, indent)) {
+          indentStack.push({ indent, propOnly, entryDash: null });
           currentIndent = indent;
         }
         if (indent !== currentIndent) fail("this line's indentation matches no block open above it", line.contentStart);
       }
 
       if (at(src, line.contentStart) === DASH && followedByBlank(src, line.contentStart, line.e)) {
-        let c = line.contentStart + 1;
-        while (c < line.e && at(src, c) === SP) c += 1;
-        if (c < line.e) indentStack[indentStack.length - 1].seqContent = c - line.start;
+        indentStack[indentStack.length - 1].entryDash = line.contentStart;
       }
 
       if (indent === 0) {
@@ -828,6 +832,26 @@ const eqlAny = (s, list) => list.includes(s);
 
 // Folds a run of line breaks where `inner[i]` is a newline; returns the
 // index past the run. `out` is a list of one-byte strings.
+// True when `col` is the content column of one of the `- ` that begin
+// the line whose first dash is at `entryDash`, in column `dashCol`: the
+// column just past the first dash, and for a compact nested sequence
+// (`- - - a`) past each later one. Content after the last dash ends the
+// walk.
+function entryContentColumn(src, entryDash, dashCol, col) {
+  if (entryDash === null) return false;
+  let c = entryDash;
+  const lineStart = c - dashCol;
+  const nl = src.indexOf("\n", c);
+  const lineEnd = nl < 0 ? src.length : trimCr(src, c, nl);
+  while (c < lineEnd && at(src, c) === DASH && followedByBlank(src, c, lineEnd)) {
+    c += 1;
+    while (c < lineEnd && at(src, c) === SP) c += 1;
+    if (c === lineEnd) return false;
+    if (c - lineStart === col) return true;
+  }
+  return false;
+}
+
 function foldFlowBreak(out, inner, i) {
   while (out.length > 0) {
     const last = out[out.length - 1];
@@ -1554,6 +1578,25 @@ class Parser {
     }
   }
 
+  // Hands a line beginning at column `col` to the open compact item
+  // container that begins at that column, closing the ones nested deeper
+  // on its dash line: in `- - - a\n  - d` the `- d` is an item of the
+  // middle sequence. True when a compact item begins at `col`.
+  landContinuations(col) {
+    while (this.stack.length > 0) {
+      const c = this.current();
+      if (!c.continuesSequenceItem) return false;
+      const cCol = this.columnOf(this.spanOf(c.id)[0]);
+      if (cCol < col) return false;
+      c.continuesSequenceItem = false;
+      if (cCol === col) return true;
+      this.closePendingEmptyValue();
+      const id = this.closeContainer(this.spanOf(this.current().id)[1]);
+      this.finishValue(id);
+    }
+    return false;
+  }
+
   closeOpenComplexKey() {
     if (this.stack.length < 2) return;
     const parent = this.stack[this.stack.length - 2];
@@ -2047,8 +2090,15 @@ class Parser {
       if (this.docEnded && CONTENT_AFTER_END.has(k)) fail("content after `...` begins a second document; this format reads one per file", this.peek().s);
       if (k === "indent") {
         if (this.stack.length > 0 && this.current().continuesSequenceItem) {
-          if (this.columnOf(this.peek().e) > this.currentContainerIndent()) this.forceNewContainer = true;
-          else this.current().continuesSequenceItem = false;
+          // A compact item container (`- key:` / `- -`) opened no indent of
+          // its own. An indent at an item's own column is its content, a
+          // sibling key or item: the line goes to the compact item that
+          // begins at its column, closing the deeper ones; a column between
+          // two nested items (`   - d` under `- - - a`) begins nothing. One
+          // deeper than the innermost is the pending key's block value.
+          const col = this.columnOf(this.peek().e);
+          if (col > this.currentContainerIndent()) this.forceNewContainer = true;
+          else if (!this.landContinuations(col)) fail("this line is indented between two nested items on the line above, so it begins no node", this.peek().e);
         } else {
           // An entry whose node is already whole takes nothing more
           // indented: a sequence item with its value, or an explicit key
@@ -2085,10 +2135,10 @@ class Parser {
             if (!closeParentToo) break;
             this.closePendingEmptyValue();
           }
-          if (this.stack.length > 0) {
-            const c = this.current();
-            if (c.continuesSequenceItem && c.kind === "mapping" && this.columnOf(this.spanOf(c.id)[0]) === dedentCol) c.continuesSequenceItem = false;
-          }
+          // A dedent to an open compact item's own column returns to a
+          // sibling within it: the next key of an item mapping, or the next
+          // item of a nested compact sequence (`- - - a\n    - b\n  - c`).
+          this.landContinuations(dedentCol);
         }
       } else if (k === "newline") {
         this.onDocStartLine = false;

@@ -198,6 +198,15 @@ test("the YAML twin refuses a line indented under an entry whose node is whole, 
   }
 });
 
+test("the YAML twin refuses a line indented between two compact nested items, as the compiled format does", () => {
+  // Each `- ` on a compact line begins an item at its own column
+  // (fixtures/yaml/compact-nested.yaml); a column between two of them
+  // begins no node. PyYAML refuses each of these.
+  for (const src of ["- - - a\n   - d\n", "- - a\n - d\n", "- - - - a\n     - b\n"]) {
+    assert.throws(() => convert(src, yaml.format!, json.format!), Error, JSON.stringify(src));
+  }
+});
+
 test("each language prints every fixture as the compiled printer did", () => {
   for (const t of TWINS) {
     for (const d of t.dialects) {

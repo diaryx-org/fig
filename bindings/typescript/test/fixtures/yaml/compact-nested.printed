@@ -1,0 +1,74 @@
+-
+  -
+    # Compact nested items: a line goes to the item that begins at its column.
+    - a
+  - d
+-
+  -
+    - a
+    - c
+  - d
+- e
+-
+  -
+    - a
+  -
+    - b
+    - c
+-
+  -
+    -
+      - a
+      - b
+    - c
+  - d
+-
+  - k: v
+  - c
+-
+  - k: v
+    j: w
+  - c
+-
+  - k: v
+    j: w
+-
+  -
+    - k: v
+      j: w
+    - c
+  - d
+-
+  - a: b
+  - c
+-
+  - k: { x: 1 }
+  - c
+-
+  - k: v
+    j: [z]
+  - c
+- k: [[a, b], c]
+  j: 1
+-
+  -
+    - a # one
+    # note
+    - b # two
+  # other
+  - d # three
+-
+  - |
+    text
+  - d
+-
+  -
+    - |
+      folded text
+    - c
+  - d
+-
+  - k: |
+      text
+    j: w
+  - c

@@ -2,11 +2,21 @@
 title = The JavaScript YAML twin misreads compact sequences two deep
 part_of = [Tasks](/docs/tasks/tasks.md)
 description = `js/yaml.js` still has the compact-nesting bug 0f784cb fixed in the Zig parser, so it refuses `- - k: v` over `    w: x` over `  - y`, and 53 fig-conformance edit cases in nested-seqs.yaml
-status = open
+status = done
 created = 2026-10-13
+updated = 2026-10-14
 ```
 
 # The JavaScript YAML twin misreads compact sequences two deep
+
+**Status.** Done, in `fix(yaml): the JavaScript twin hands a line under
+compact nested items to the item at its column` (2026-10-14), which ports
+0f784cb's `landContinuations` and the tokenizer's dedent to any `- `
+content column. Every source in the compact-sequence task's table reads as
+PyYAML reads it, `npm run edits -- yaml` in fig-conformance at 53fc34c
+scores the twin 4377/4377 (4300 before), and
+`test/fixtures/yaml/compact-nested.yaml` with a refusal test in
+`twins.test.ts` covers the shapes.
 
 **Repro.** In fig-conformance at 9415fc2, `npm run edits -- yaml` scores
 the JavaScript languages 4324/4377; every miss is in `nested-seqs.yaml`,

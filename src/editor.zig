@@ -6,6 +6,7 @@ const build_options = @import("build_options");
 const AST = @import("kit").AST;
 const Document = @import("kit").Document;
 const Span = @import("kit").Span;
+const tbl = @import("kit").table;
 const json = @import("fig_json");
 const regions = @import("editor/regions.zig");
 /// The source-coordinate utilities the engine and the regions module share.
@@ -5747,26 +5748,46 @@ fn childrenLostOne(b: Document, bn: AST.Node, a: Document, an: AST.Node, removed
 /// scalar bytes, same children in the same order. Node ids differ between the
 /// two documents, so `AST.Node.Kind.eql` (which compares child ids) cannot be
 /// used for containers — only for the leaves.
+///
+/// Read off the rows, which is what `node` decodes them from: a row's kind
+/// byte tells the kinds apart as finely as `Kind.eql` does (a boolean's
+/// value, an integer from a float, an extended scalar's kind), and a leaf
+/// with text compares it.
 fn nodesEqualDeep(b: Document, bid: AST.Node.Id, a: Document, aid: AST.Node.Id) bool {
-    const bn = b.ast.node(bid);
-    const an = a.ast.node(aid);
-    if (std.meta.activeTag(bn.kind) != std.meta.activeTag(an.kind)) return false;
-    switch (bn.kind) {
-        .mapping, .sequence => {
-            var b_cur = (b.ast.child(&bn) catch return false);
-            var a_cur = (a.ast.child(&an) catch return false);
-            while (b_cur) |bc| {
-                const ac = a_cur orelse return false;
-                if (!nodesEqualDeep(b, bc.id, a, ac.id)) return false;
-                b_cur = b.ast.next(&bc);
-                a_cur = a.ast.next(&ac);
+    const K = tbl.Kind;
+    const b_rows = b.ast.rows;
+    const a_rows = a.ast.rows;
+    const br = b_rows[bid];
+    const ar = a_rows[aid];
+    if (br.kind != ar.kind) return false;
+    switch (br.kind) {
+        K.mapping, K.sequence => {
+            var bc = br.first_child;
+            var ac = ar.first_child;
+            while (bc != tbl.none) {
+                if (ac == tbl.none) return false;
+                if (!nodesEqualDeep(b, bc, a, ac)) return false;
+                bc = siblingRow(b_rows, bc);
+                ac = siblingRow(a_rows, ac);
             }
-            return a_cur == null;
+            return ac == tbl.none;
         },
-        .keyvalue => |kv| return nodesEqualDeep(b, kv.key, a, an.kind.keyvalue.key) and
-            nodesEqualDeep(b, kv.value, a, an.kind.keyvalue.value),
-        else => return bn.kind.eql(an.kind),
+        K.keyvalue => return nodesEqualDeep(b, br.first_child, a, ar.first_child) and
+            nodesEqualDeep(b, b_rows[br.first_child].next_sibling, a, a_rows[ar.first_child].next_sibling),
+        else => {
+            if (!K.hasText(br.kind)) return true;
+            return std.mem.eql(u8, b.ast.textOf(br.text) orelse "", a.ast.textOf(ar.text) orelse "");
+        },
     }
+}
+
+/// Row `id`'s next sibling, as `AST.node` reads it: none for a keyvalue's
+/// key or value.
+fn siblingRow(rows: []const tbl.Row, id: u32) u32 {
+    const r = rows[id];
+    if (r.next_sibling == tbl.none) return tbl.none;
+    if (r.parent != tbl.none and rows[r.parent].kind == tbl.Kind.keyvalue) return tbl.none;
+    return r.next_sibling;
 }
 
 /// The one change a guarded op may make to its container: nodes added

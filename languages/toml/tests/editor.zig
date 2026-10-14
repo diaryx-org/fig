@@ -1080,6 +1080,23 @@ test "toml moveContainer to before a root dotted table is refused, not a reparen
     try expectTomlSource(&ed, "d.k = 0\n[a]\nx = 1\n[b]\ny = 2\n");
 }
 
+// The guards compare with the parse the editor already held, kept from the
+// reparse that would have freed it, and hand its buffer back when nothing
+// was spliced: an edit after a refused one, and after one that found
+// nothing to delete, reads the source as it stands.
+test "toml edits after a refused one and a missing one read the source as it stands" {
+    const source = "d.k = 0\n[a]\nx = 1\n[b]\ny = 2\n";
+    var ed = try newTomlEditor(source);
+    defer ed.deinit();
+    try std.testing.expectError(error.EditReadsBackWrong, ed.moveContainer(&.{.{ .key = "b" }}, &.{.{ .key = "d" }}));
+    try std.testing.expectError(error.NotFound, ed.deleteKey(&.{ .{ .key = "a" }, .{ .key = "nope" } }));
+    try expectTomlSource(&ed, source);
+    try ed.replaceValAtPath(&.{ .{ .key = "a" }, .{ .key = "x" } }, "2");
+    try expectTomlSource(&ed, "d.k = 0\n[a]\nx = 2\n[b]\ny = 2\n");
+    try ed.deleteKey(&.{ .{ .key = "a" }, .{ .key = "x" } });
+    try expectTomlSource(&ed, "d.k = 0\n[a]\n[b]\ny = 2\n");
+}
+
 test "toml reorderKeys reorders an inline table" {
     var ed = try newTomlEditor("t = { a = 1, b = 2 }\n");
     defer ed.deinit();

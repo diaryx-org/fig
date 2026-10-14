@@ -261,3 +261,17 @@ test("the figl twin's comment on a multi-line flow list or object is on its open
   one.setTrailingComment(["xs"], "note");
   assert.equal(one.source(), "xs = [1, 2] # note\n");
 });
+
+test("the figl twin renames a container on every line that names it, as figl does", () => {
+  // A key that re-opens a container mid-path names it as surely as the
+  // line that made it; a `+` re-running a header names nothing again.
+  const figl = formatByName("figl")!;
+  using dotted = Editor.open("a.b.c = 1\na.b.d = 2\n", figl);
+  dotted.renameKey(["a"], "q");
+  assert.equal(dotted.source(), "q.b.c = 1\nq.b.d = 2\n");
+  dotted.renameContainer(["q", "b"], "r");
+  assert.equal(dotted.source(), "q.r.c = 1\nq.r.d = 2\n");
+  using headers = Editor.open("jobs.test.steps[]\n> uses = x\njobs.test.steps[]\n> run = y\n+\n> run = z\n", figl);
+  headers.renameContainer(["jobs", "test"], "t");
+  assert.equal(headers.source(), "jobs.t.steps[]\n> uses = x\njobs.t.steps[]\n> run = y\n+\n> run = z\n");
+});

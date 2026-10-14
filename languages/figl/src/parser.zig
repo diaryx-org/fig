@@ -458,8 +458,8 @@ diagnostics: std.ArrayList(Diagnostic) = .empty,
 /// The table the rows are written into as the lines are read; set by
 /// `parseImpl`. Besides the rows it takes each block container's header
 /// lines (`Document.regionsOf`), each `*` marker, each assignment's `=`, and
-/// each block container's name mentions — its creating key and every `.key`
-/// re-entry. A key is an `.entry` mention when its line is one of its
+/// each block container's name mentions — its creating key and every key
+/// that re-opens it, a path's final step or one mid-way. A key is an `.entry` mention when its line is one of its
 /// parent's own lines — the line's target, whose body it is in, or a
 /// container this line created — and a `.header` one when the path reached
 /// its parent through a container written elsewhere: `p` in `c[].p[]` is on
@@ -882,7 +882,7 @@ fn parseContinuationLine(self: *Parser, depth: u32) Error!void {
     const steps = self.last_append_steps orelse return error.FigDanglingContinuation;
     self.skipSpacesTabs();
     if (!self.atEndOfContent()) return error.FigTrailingContent;
-    const parent = try self.navigateIntermediate(self.root, steps);
+    const parent = try self.navigateIntermediate(self.root, steps, true);
     const resolved = try self.resolveHeaderFinal(parent, steps[steps.len - 1]);
     // The `+` stands for the header it re-runs: should the element before
     // go, with that header, the header is written here.
@@ -1031,7 +1031,7 @@ fn parseKeyLine(self: *Parser, target: Id, depth: u32) Error!void {
 /// A header line whose key path is `steps`, written at `path`.
 fn finishHeader(self: *Parser, target: Id, steps: []const Step, path: Span, depth: u32) Error!void {
     if (!self.atEndOfContent()) return error.FigTrailingContent;
-    const parent = try self.navigateIntermediate(target, steps);
+    const parent = try self.navigateIntermediate(target, steps, false);
     const last = steps[steps.len - 1];
     const resolved = try self.resolveHeaderFinal(parent, last);
     // The element a header-final `[]` appends is written by this path, which
@@ -1058,7 +1058,7 @@ fn finishHeader(self: *Parser, target: Id, steps: []const Step, path: Span, dept
 
 fn finishAssignment(self: *Parser, target: Id, steps: []const Step, type_name: ?[]const u8, sep: Span) Error!void {
     self.skipSpacesTabs();
-    const parent = (try self.navigateIntermediate(target, steps)).container;
+    const parent = (try self.navigateIntermediate(target, steps, false)).container;
     const last = steps[steps.len - 1];
     const value = try self.parseAssignedValue(type_name);
     self.consumeLineEnd();
@@ -1363,15 +1363,18 @@ fn valueOf(self: *Parser, kv: Id) Id {
 
 /// Resolve every step except the last, creating/reusing intermediate
 /// containers. `[]`/`[i]` here always mean "the last existing element" (never
-/// creates) — only a HEADER line's OVERALL final `[]` appends.
-fn navigateIntermediate(self: *Parser, start: Id, steps: []const Step) Error!Reached {
+/// creates) — only a HEADER line's OVERALL final `[]` appends. Each key step
+/// is a mention of the container it reaches, made or re-opened, unless the
+/// line is a `+` re-running a header (`rerun`): its steps are that header's,
+/// whose keys are already recorded.
+fn navigateIntermediate(self: *Parser, start: Id, steps: []const Step, rerun: bool) Error!Reached {
     var cur: Reached = .{ .container = start, .own = true };
     for (steps[0 .. steps.len - 1]) |step| {
         const len = self.rows().len;
         switch (step) {
             .key => |k| {
                 try self.asMapping(cur.container);
-                cur.container = try self.getOrCreateMapContainer(cur.container, k, false, cur.kind());
+                cur.container = try self.getOrCreateMapContainer(cur.container, k, false, if (rerun) null else cur.kind());
             },
             .index => |idx| {
                 try self.asSequence(cur.container);
@@ -1388,19 +1391,25 @@ fn navigateIntermediate(self: *Parser, start: Id, steps: []const Step) Error!Rea
 
 /// Mapping `m`'s container under `seg`, made when there is none. One a block
 /// path makes is a block container named by `seg`; one a flow object's dotted
-/// key makes (`flow`) is closed with its object, and is neither.
-fn getOrCreateMapContainer(self: *Parser, m: Id, seg: KeySeg, flow: bool, kind: Document.MentionKind) Error!Id {
+/// key makes (`flow`) is closed with its object, and is neither. `seg` is a
+/// `kind` mention of a block container, the one it makes or the one it
+/// re-opens: `a.b.d = 2` after `a.b.c = 1` names `a` and `a.b` as surely as
+/// the line that made them, and a rename has to rewrite it too. A null
+/// `kind` records none.
+fn getOrCreateMapContainer(self: *Parser, m: Id, seg: KeySeg, flow: bool, kind: ?Document.MentionKind) Error!Id {
     if (self.children.get(self.w, m, seg.name)) |kv| {
         const v = self.valueOf(kv);
         if (self.infoOf(v) == null) return error.FigKeyNotContainer;
-        return self.open(v);
+        const c = try self.open(v);
+        if (!flow) if (kind) |k| try self.w.mention(c, seg.span, k);
+        return c;
     }
     const child = if (flow) try self.newContainer(seg.span, .{}) else try self.newBlockContainer(seg.span, .{});
     // A header has no `=`; its container's body hangs under the key, and a
     // replacement value is reframed from the key's end. A zero-width
     // separator there says so.
     _ = try self.addEntry(m, seg, child, Span.init(seg.span.end, seg.span.end));
-    if (!flow) try self.w.mention(child, seg.span, kind);
+    if (!flow) if (kind) |k| try self.w.mention(child, seg.span, k);
     return child;
 }
 
@@ -2087,7 +2096,7 @@ fn parseFlowObject(self: *Parser) Error!Id {
         var target = map;
         for (path[0 .. path.len - 1]) |seg| {
             const fresh = self.children.get(self.w, target, seg.name) == null;
-            const child = self.getOrCreateMapContainer(target, seg, true, .entry) catch |err|
+            const child = self.getOrCreateMapContainer(target, seg, true, null) catch |err|
                 return self.failSpan(seg.span.start, seg.span.end, err);
             if (fresh) try implicit.append(self.scratch, child);
             self.asMapping(child) catch |err| return self.failSpan(seg.span.start, seg.span.end, err);

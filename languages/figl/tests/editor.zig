@@ -834,13 +834,55 @@ test "fig remove first item of a multi-line one-item-per-line array" {
     try expectFigSource(&ed, "contents = [\n  b,\n  c,\n]\n");
 }
 
-// --- renameContainer: no dedicated op — replaceKeyAtPath already does it ---
+// --- renaming a container: replaceKeyAtPath and renameContainer, every mention ---
 
 test "fig rename a container's key via the generic replaceKeyAtPath" {
     var ed = try newFigEditor("database\n> host = localhost\n> pool\n> > size = 10\n");
     defer ed.deinit();
     try ed.replaceKeyAtPath(&.{ .{ .key = "database" }, .{ .key = "pool" } }, "settings");
     try expectFigSource(&ed, "database\n> host = localhost\n> settings\n> > size = 10\n");
+}
+
+test "fig rename a container written by several dotted lines renames every line" {
+    // Was: only `a.b.c` became `q.b.c`; `a.b.d` re-opened `a` mid-path and
+    // was no mention of it, so the rename split `a` in two.
+    var ed = try newFigEditor("a.b.c = 1\na.b.d = 2\n");
+    defer ed.deinit();
+    try ed.replaceKeyAtPath(&.{.{ .key = "a" }}, "q");
+    try expectFigSource(&ed, "q.b.c = 1\nq.b.d = 2\n");
+    try ed.renameContainer(&.{ .{ .key = "q" }, .{ .key = "b" } }, "r");
+    try expectFigSource(&ed, "q.r.c = 1\nq.r.d = 2\n");
+}
+
+test "fig rename a container behind repeated append headers renames every header" {
+    var ed = try newFigEditor("jobs.test.steps[]\n> uses = x\njobs.test.steps[]\n> run = y\n");
+    defer ed.deinit();
+    try ed.renameContainer(&.{.{ .key = "jobs" }}, "q");
+    try expectFigSource(&ed, "q.test.steps[]\n> uses = x\nq.test.steps[]\n> run = y\n");
+    try ed.replaceKeyAtPath(&.{ .{ .key = "q" }, .{ .key = "test" } }, "t");
+    try expectFigSource(&ed, "q.t.steps[]\n> uses = x\nq.t.steps[]\n> run = y\n");
+    try ed.renameContainer(&.{ .{ .key = "q" }, .{ .key = "t" }, .{ .key = "steps" } }, "s");
+    try expectFigSource(&ed, "q.t.s[]\n> uses = x\nq.t.s[]\n> run = y\n");
+}
+
+test "fig rename through a `+` chain rewrites its header once and leaves the `+`" {
+    var ed = try newFigEditor("jobs.steps[]\n> a = 1\n+\n> b = 2\n");
+    defer ed.deinit();
+    try ed.renameContainer(&.{.{ .key = "jobs" }}, "q");
+    try expectFigSource(&ed, "q.steps[]\n> a = 1\n+\n> b = 2\n");
+}
+
+test "fig rename a container named by a header and a later dotted header" {
+    var ed = try newFigEditor("a\n> x = 1\nother = 1\na.b\n> z = 3\na.c = 4\n");
+    defer ed.deinit();
+    try ed.renameContainer(&.{.{ .key = "a" }}, "q");
+    try expectFigSource(&ed, "q\n> x = 1\nother = 1\nq.b\n> z = 3\nq.c = 4\n");
+}
+
+test "fig a dotted key inside a flow object is no container name" {
+    var ed = try newFigEditor("t = {a.b = 1, a.c = 2}\n");
+    defer ed.deinit();
+    try std.testing.expectError(error.NotASection, ed.renameContainer(&.{ .{ .key = "t" }, .{ .key = "a" } }, "q"));
 }
 
 // --- deleteContainer ---

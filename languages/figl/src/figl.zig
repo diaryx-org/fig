@@ -138,9 +138,10 @@ pub const Language = struct {
     // `moveContainer`/`reorderContainers` derive its disjoint regions from
     // `Document.regionsOf` — re-entered header lines included — with no
     // fig code at all. No `insertContainer`/`appendContainerToSeq` — `set`
-    // already vivifies a path — and no `renameContainer`, since a fig header
-    // carries its key in one tight span the generic `replaceKeyAtPath`
-    // rewrites in place.
+    // already vivifies a path. `renameContainer` (and `replaceKeyAtPath` on
+    // a block container) rewrites every name mention the parser records:
+    // each key that makes or re-opens the container, a dotted line's or a
+    // header's, mid-path or final.
 };
 
 // The package's own tests (`zig build test`): every file's. Its editor

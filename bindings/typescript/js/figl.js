@@ -25,7 +25,8 @@
 //     element records its `*` as `marker`;
 //   * a block container's *regions* are the line that created it and every
 //     later header line that re-opened it by its final segment; its
-//     *mentions* are its key and each such re-opening's key, of kind
+//     *mentions* are its key and every key that re-opened it, a path's
+//     final segment or one mid-way, of kind
 //     `entry` when the line is one of the parent's own — the line's target,
 //     or a container the line created — and `header` when the path reached
 //     the parent through a container written elsewhere (`p` in `c[].p[]`);
@@ -718,14 +719,21 @@ class Parser {
     (el.paths ??= []).push({ span, kind: "index" });
   }
 
-  getOrCreateMapContainer(m, seg, mention = "entry") {
+  // Mapping `m`'s container under `seg`, made when there is none. `seg` is
+  // a `mention` of the container it makes or re-opens — `a.b.d = 2` after
+  // `a.b.c = 1` names `a` and `a.b` as surely as the line that made them —
+  // and a null `mention` (a flow object's key, a `+` re-running a header)
+  // records none.
+  getOrCreateMapContainer(m, seg, mention = null) {
     const e = m.index.get(seg.name);
     if (e) {
       if (e.value.value.kind !== "container") this.fail("FigKeyNotContainer");
-      return this.open(e.value.value.container);
+      const c = this.open(e.value.value.container);
+      if (mention !== null) c.reentries.push({ name: seg.span, mention, nameOnly: true });
+      return c;
     }
     const child = newContainer();
-    const entry = { key: seg.name, keySpan: seg.span, sepSpan: [seg.span[1], seg.span[1]], keyLeading: [], mention, value: newNode({ kind: "container", container: child }, [seg.span[0], seg.span[1]]) };
+    const entry = { key: seg.name, keySpan: seg.span, sepSpan: [seg.span[1], seg.span[1]], keyLeading: [], mention: mention ?? "entry", value: newNode({ kind: "container", container: child }, [seg.span[0], seg.span[1]]) };
     m.entries.push(entry);
     m.index.set(entry.key, entry);
     return child;
@@ -759,7 +767,9 @@ class Parser {
   // the last step's key is: `entry` when the line is one of that
   // container's own — the line's target, or a container this line made —
   // and `header` when the path re-opened one written on an earlier line.
-  navigateIntermediate(start, steps) {
+  // A `+` re-running a header (`rerun`) walks that header's steps, whose
+  // keys are mentioned already.
+  navigateIntermediate(start, steps, rerun = false) {
     let cur = start;
     let mention = "entry";
     for (let i = 0; i < steps.length - 1; i++) {
@@ -767,7 +777,7 @@ class Parser {
       if (step.key) {
         const m = this.asMapping(cur);
         const fresh = !m.index.has(step.key.name);
-        cur = this.getOrCreateMapContainer(m, step.key, mention);
+        cur = this.getOrCreateMapContainer(m, step.key, rerun ? null : mention);
         mention = fresh ? "entry" : "header";
       } else {
         const s = this.asSequence(cur);
@@ -1375,7 +1385,7 @@ class Parser {
     this.skipSpacesTabs();
     if (!this.atEndOfContent()) this.fail("FigTrailingContent");
     const leading = this.drainPending();
-    const parent = this.navigateIntermediate(this.root, steps);
+    const parent = this.navigateIntermediate(this.root, steps, true);
     const [container, owner] = this.resolveHeaderFinal(parent, steps[steps.length - 1]);
     (owner.paths ??= []).push({ span: plus, kind: "append" });
     owner.leading.push(...leading);
@@ -1427,7 +1437,8 @@ class Parser {
 
 // A block container is a section: the line that created it is its first
 // region, and every header that re-entered it by its final segment adds a
-// region and, when the segment is a key, a mention.
+// region and, when the segment is a key, a mention. A path that re-opened
+// it mid-way adds a mention alone.
 function isSection(node) {
   const v = node.value;
   return v.kind === "container" && !v.container.closed && !v.container.isRoot;
@@ -1435,7 +1446,8 @@ function isSection(node) {
 
 function reenter(S, built, c) {
   for (const r of c.reentries) {
-    if (r.name) S.reopen(built, r.name, r.mention);
+    if (r.nameOnly) S.mention(built, r.name, r.mention);
+    else if (r.name) S.reopen(built, r.name, r.mention);
     else S.region(built, r.at);
   }
 }

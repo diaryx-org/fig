@@ -29,6 +29,7 @@ fields:
     reify: true
   created: { type: date }
   date_of_document: { type: date }
+  attachments[].content: { type: payload }
 exports:
   www:
     label: fig on diaryx.org

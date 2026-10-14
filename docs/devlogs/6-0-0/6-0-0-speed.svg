@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="502" viewBox="0 0 720 502" role="img" aria-label="Wall time of fig 5.2 and 6.0 reading and editing a large YAML and JSON file">
+<title>Wall time of fig 5.2 and 6.0 reading and editing a large YAML and JSON file</title>
+<style>
+  .t { font-family: Iowan Old Style, Palatino, Georgia, serif }
+  .b, .m, .k { font-family: Helvetica Neue, Helvetica, Arial, sans-serif }
+  .mono { font-family: SF Mono, Menlo, Consolas, monospace }
+  .grid, .axis, .box, .boxp, .chip, .card { stroke-width:1 }
+  .ln { stroke-width:1.6; fill:none }
+
+  .card { fill:#FAFAF9; stroke:#E3E1DC }
+  .t { fill:#2C2130 } .b { fill:#5E4A66 } .m { fill:#8A7590 } .k { fill:#2C2130 }
+  .plum { fill:#52355C } .pink { fill:#D4576B } .stem { fill:#7A5A37 }
+  .soft { fill:#52355C; fill-opacity:.4 }
+  .grid { stroke:#E3E1DC } .axis { stroke:#C7C4BD }
+  .box { fill:#F2F1EE; stroke:#E3E1DC }
+  .boxp { fill:#52355C; fill-opacity:.09; stroke:#52355C; stroke-opacity:.6 }
+  .chip { fill:#FFFFFF; stroke:#E3E1DC }
+  .ln { stroke:#52355C }
+  .g-stem { stroke:#7A5A37 } .g-skin { fill:#52355C } .g-mid { fill:#F2E6D8 }
+  .g-flesh { fill:#D4576B } .g-seed { fill:#F6EADC }
+  @media (prefers-color-scheme: dark) {
+  .card { fill:#161517; stroke:#333136 }
+  .t { fill:#EFE6F1 } .b { fill:#C9B6CE } .m { fill:#8E7A96 } .k { fill:#EFE6F1 }
+  .plum { fill:#7A5187 } .pink { fill:#E06A7D } .stem { fill:#B08954 }
+  .soft { fill:#7A5187; fill-opacity:.4 }
+  .grid { stroke:#333136 } .axis { stroke:#4A474D }
+  .box { fill:#1F1E21; stroke:#333136 }
+  .boxp { fill:#7A5187; fill-opacity:.09; stroke:#7A5187; stroke-opacity:.6 }
+  .chip { fill:#2A292D; stroke:#333136 }
+  .ln { stroke:#7A5187 }
+  .g-stem { stroke:#B08954 } .g-skin { fill:#7A5187 } .g-mid { fill:#EEDFCC }
+  .g-flesh { fill:#E06A7D } .g-seed { fill:#F3E4CF }
+  }
+</style>
+<defs><path id="f" d="M0,-40 C-1,-30 -8,-26 -16,-18 C-25,-9 -30,2 -30,12 C-30,29 -17,40 0,40 C17,40 30,29 30,12 C30,2 25,-9 16,-18 C8,-26 1,-30 0,-40 Z"/></defs>
+<rect x="0.5" y="0.5" width="719" height="501" rx="14" class="card"/>
+<g transform="translate(680,44) scale(0.32)"><path class="g-stem" d="M0,-40 C1,-46 3,-50 8,-54" fill="none" stroke-width="4.5" stroke-linecap="round"/><use href="#f" class="g-skin"/><g transform="scale(0.84)"><use href="#f" class="g-mid"/></g><g transform="scale(0.70)"><use href="#f" class="g-flesh"/></g><g class="g-seed"><circle cx="0" cy="-14" r="2.1"/><circle cx="-7" cy="-6" r="2.1"/><circle cx="7" cy="-6" r="2.1"/><circle cx="-13" cy="3" r="2.1"/><circle cx="0" cy="2" r="2.1"/><circle cx="13" cy="3" r="2.1"/><circle cx="-8" cy="11" r="2.1"/><circle cx="8" cy="11" r="2.1"/><circle cx="-15" cy="12" r="2.1"/><circle cx="15" cy="12" r="2.1"/><circle cx="0" cy="19" r="2.1"/><circle cx="-7" cy="24" r="2.1"/><circle cx="7" cy="24" r="2.1"/></g></g>
+<text x="28" y="36" class="t" font-size="22" text-anchor="start" font-weight="normal" >Faster on every command</text>
+<text x="28" y="58" class="b" font-size="12.5" text-anchor="start" font-weight="normal" >Wall time of one fig command on a large file, starting the process included.</text>
+<rect x="28" y="77" width="10" height="10" rx="2" class="soft"/>
+<text x="43" y="86" class="b" font-size="12" text-anchor="start" font-weight="normal" >fig 5.2</text>
+<rect x="113.2" y="77" width="10" height="10" rx="2" class="plum"/>
+<text x="128.2" y="86" class="b" font-size="12" text-anchor="start" font-weight="normal" >fig 6.0</text>
+<line x1="150" y1="102" x2="150" y2="426" class="axis"/>
+<text x="150" y="442" class="m" font-size="11" text-anchor="middle" font-weight="normal" >0</text>
+<line x1="237.04" y1="102" x2="237.04" y2="426" class="grid"/>
+<text x="237.04" y="442" class="m" font-size="11" text-anchor="middle" font-weight="normal" >50 ms</text>
+<line x1="324.07" y1="102" x2="324.07" y2="426" class="grid"/>
+<text x="324.07" y="442" class="m" font-size="11" text-anchor="middle" font-weight="normal" >100 ms</text>
+<line x1="411.11" y1="102" x2="411.11" y2="426" class="grid"/>
+<text x="411.11" y="442" class="m" font-size="11" text-anchor="middle" font-weight="normal" >150 ms</text>
+<line x1="498.15" y1="102" x2="498.15" y2="426" class="grid"/>
+<text x="498.15" y="442" class="m" font-size="11" text-anchor="middle" font-weight="normal" >200 ms</text>
+<line x1="585.19" y1="102" x2="585.19" y2="426" class="grid"/>
+<text x="585.19" y="442" class="m" font-size="11" text-anchor="middle" font-weight="normal" >250 ms</text>
+<text x="138" y="126" class="k" font-size="12.5" text-anchor="end" font-weight="normal" >YAML get</text>
+<path class="soft" d="M150,112 H348.07 a4,4 0 0 1 4,4 V120 a4,4 0 0 1 -4,4 H150 Z"/>
+<text x="360.07" y="122" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >116 ms</text>
+<path class="plum" d="M150,126 H276.41 a4,4 0 0 1 4,4 V134 a4,4 0 0 1 -4,4 H150 Z"/>
+<text x="288.41" y="136" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >75 ms</text>
+<text x="138" y="164" class="k" font-size="12.5" text-anchor="end" font-weight="normal" >YAML replace</text>
+<path class="soft" d="M150,150 H580.94 a4,4 0 0 1 4,4 V158 a4,4 0 0 1 -4,4 H150 Z"/>
+<text x="592.94" y="160" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >250 ms</text>
+<path class="plum" d="M150,164 H387.33 a4,4 0 0 1 4,4 V172 a4,4 0 0 1 -4,4 H150 Z"/>
+<text x="399.33" y="174" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >139 ms</text>
+<text x="138" y="202" class="k" font-size="12.5" text-anchor="end" font-weight="normal" >YAML convert</text>
+<path class="soft" d="M150,188 H470.35 a4,4 0 0 1 4,4 V196 a4,4 0 0 1 -4,4 H150 Z"/>
+<text x="482.35" y="198" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >186 ms</text>
+<path class="plum" d="M150,202 H381.28 a4,4 0 0 1 4,4 V210 a4,4 0 0 1 -4,4 H150 Z"/>
+<text x="393.28" y="212" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >135 ms</text>
+<text x="138" y="240" class="k" font-size="12.5" text-anchor="end" font-weight="normal" >YAML fmt</text>
+<path class="soft" d="M150,226 H538.8 a4,4 0 0 1 4,4 V234 a4,4 0 0 1 -4,4 H150 Z"/>
+<text x="550.8" y="236" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >226 ms</text>
+<path class="plum" d="M150,240 H431.71 a4,4 0 0 1 4,4 V248 a4,4 0 0 1 -4,4 H150 Z"/>
+<text x="443.71" y="250" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >164 ms</text>
+<text x="138" y="292" class="k" font-size="12.5" text-anchor="end" font-weight="normal" >JSON get</text>
+<path class="soft" d="M150,278 H253.59 a4,4 0 0 1 4,4 V286 a4,4 0 0 1 -4,4 H150 Z"/>
+<text x="265.59" y="288" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >62 ms</text>
+<path class="plum" d="M150,292 H213.76 a4,4 0 0 1 4,4 V300 a4,4 0 0 1 -4,4 H150 Z"/>
+<text x="225.76" y="302" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >39 ms</text>
+<text x="138" y="330" class="k" font-size="12.5" text-anchor="end" font-weight="normal" >JSON replace</text>
+<path class="soft" d="M150,316 H334.98 a4,4 0 0 1 4,4 V324 a4,4 0 0 1 -4,4 H150 Z"/>
+<text x="346.98" y="326" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >109 ms</text>
+<path class="plum" d="M150,330 H276.1 a4,4 0 0 1 4,4 V338 a4,4 0 0 1 -4,4 H150 Z"/>
+<text x="288.1" y="340" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >75 ms</text>
+<text x="138" y="368" class="k" font-size="12.5" text-anchor="end" font-weight="normal" >JSON convert</text>
+<path class="soft" d="M150,354 H378.78 a4,4 0 0 1 4,4 V362 a4,4 0 0 1 -4,4 H150 Z"/>
+<text x="390.78" y="364" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >134 ms</text>
+<path class="plum" d="M150,368 H345.64 a4,4 0 0 1 4,4 V376 a4,4 0 0 1 -4,4 H150 Z"/>
+<text x="357.64" y="378" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >115 ms</text>
+<text x="138" y="406" class="k" font-size="12.5" text-anchor="end" font-weight="normal" >JSON fmt</text>
+<path class="soft" d="M150,392 H288.87 a4,4 0 0 1 4,4 V400 a4,4 0 0 1 -4,4 H150 Z"/>
+<text x="300.87" y="402" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >82 ms</text>
+<path class="plum" d="M150,406 H270.91 a4,4 0 0 1 4,4 V414 a4,4 0 0 1 -4,4 H150 Z"/>
+<text x="282.91" y="416" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >72 ms</text>
+<text x="28" y="472" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >Every command is faster. A small file takes 3 ms in both, most of it starting the process.</text>
+<text x="28" y="486" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >One file of 30,000 services in each format: YAML 4.5 MB, JSON 7.3 MB, TOML 4.5 MB.</text>
+<text x="28" y="500" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >Apple M3 Pro, release builds, median of 7 runs, 2026-10-14. TOML has a chart of its own.</text>
+
+</svg>

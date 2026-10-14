@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="518" viewBox="0 0 720 518" role="img" aria-label="Lines changed when fig, yq, dasel, jq, jaq and gojq set one value in a hand-written YAML, JSON and TOML file">
+<title>Lines changed when fig, yq, dasel, jq, jaq and gojq set one value in a hand-written YAML, JSON and TOML file</title>
+<style>
+  .t { font-family: Iowan Old Style, Palatino, Georgia, serif }
+  .b, .m, .k { font-family: Helvetica Neue, Helvetica, Arial, sans-serif }
+  .mono { font-family: SF Mono, Menlo, Consolas, monospace }
+  .grid, .axis, .box, .boxp, .chip, .card { stroke-width:1 }
+  .ln { stroke-width:1.6; fill:none }
+
+  .card { fill:#FAFAF9; stroke:#E3E1DC }
+  .t { fill:#2C2130 } .b { fill:#5E4A66 } .m { fill:#8A7590 } .k { fill:#2C2130 }
+  .plum { fill:#52355C } .pink { fill:#D4576B } .stem { fill:#7A5A37 }
+  .soft { fill:#52355C; fill-opacity:.4 }
+  .grid { stroke:#E3E1DC } .axis { stroke:#C7C4BD }
+  .box { fill:#F2F1EE; stroke:#E3E1DC }
+  .boxp { fill:#52355C; fill-opacity:.09; stroke:#52355C; stroke-opacity:.6 }
+  .chip { fill:#FFFFFF; stroke:#E3E1DC }
+  .ln { stroke:#52355C }
+  .g-stem { stroke:#7A5A37 } .g-skin { fill:#52355C } .g-mid { fill:#F2E6D8 }
+  .g-flesh { fill:#D4576B } .g-seed { fill:#F6EADC }
+  @media (prefers-color-scheme: dark) {
+  .card { fill:#161517; stroke:#333136 }
+  .t { fill:#EFE6F1 } .b { fill:#C9B6CE } .m { fill:#8E7A96 } .k { fill:#EFE6F1 }
+  .plum { fill:#7A5187 } .pink { fill:#E06A7D } .stem { fill:#B08954 }
+  .soft { fill:#7A5187; fill-opacity:.4 }
+  .grid { stroke:#333136 } .axis { stroke:#4A474D }
+  .box { fill:#1F1E21; stroke:#333136 }
+  .boxp { fill:#7A5187; fill-opacity:.09; stroke:#7A5187; stroke-opacity:.6 }
+  .chip { fill:#2A292D; stroke:#333136 }
+  .ln { stroke:#7A5187 }
+  .g-stem { stroke:#B08954 } .g-skin { fill:#7A5187 } .g-mid { fill:#EEDFCC }
+  .g-flesh { fill:#E06A7D } .g-seed { fill:#F3E4CF }
+  }
+</style>
+<defs><path id="f" d="M0,-40 C-1,-30 -8,-26 -16,-18 C-25,-9 -30,2 -30,12 C-30,29 -17,40 0,40 C17,40 30,29 30,12 C30,2 25,-9 16,-18 C8,-26 1,-30 0,-40 Z"/></defs>
+<rect x="0.5" y="0.5" width="719" height="517" rx="14" class="card"/>
+<g transform="translate(680,44) scale(0.32)"><path class="g-stem" d="M0,-40 C1,-46 3,-50 8,-54" fill="none" stroke-width="4.5" stroke-linecap="round"/><use href="#f" class="g-skin"/><g transform="scale(0.84)"><use href="#f" class="g-mid"/></g><g transform="scale(0.70)"><use href="#f" class="g-flesh"/></g><g class="g-seed"><circle cx="0" cy="-14" r="2.1"/><circle cx="-7" cy="-6" r="2.1"/><circle cx="7" cy="-6" r="2.1"/><circle cx="-13" cy="3" r="2.1"/><circle cx="0" cy="2" r="2.1"/><circle cx="13" cy="3" r="2.1"/><circle cx="-8" cy="11" r="2.1"/><circle cx="8" cy="11" r="2.1"/><circle cx="-15" cy="12" r="2.1"/><circle cx="15" cy="12" r="2.1"/><circle cx="0" cy="19" r="2.1"/><circle cx="-7" cy="24" r="2.1"/><circle cx="7" cy="24" r="2.1"/></g></g>
+<text x="28" y="36" class="t" font-size="22" text-anchor="start" font-weight="normal" >Change one value, and only that value</text>
+<text x="28" y="58" class="b" font-size="12.5" text-anchor="start" font-weight="normal" >Each tool sets replicas from 3 to 4 in a hand-written file. Lines that differ afterwards; 2 is the edit itself.</text>
+<text x="132" y="102" class="b" font-size="12" text-anchor="start" font-weight="600" >YAML</text>
+<text x="322" y="102" class="b" font-size="12" text-anchor="start" font-weight="600" >JSON</text>
+<text x="512" y="102" class="b" font-size="12" text-anchor="start" font-weight="600" >TOML</text>
+<rect x="28" y="118" width="664" height="56" rx="10" class="boxp"/>
+<text x="44" y="151" class="k" font-size="13" text-anchor="start" font-weight="600" >fig 6.0</text>
+<text x="132" y="153" class="t plum" font-size="24" text-anchor="start" font-weight="normal" >2</text>
+<text x="168" y="149" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >only the edit</text>
+<text x="322" y="153" class="t plum" font-size="24" text-anchor="start" font-weight="normal" >2</text>
+<text x="358" y="149" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >only the edit</text>
+<text x="512" y="153" class="t plum" font-size="24" text-anchor="start" font-weight="normal" >2</text>
+<text x="548" y="149" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >only the edit</text>
+<line x1="28" y1="178" x2="692" y2="178" class="grid"/>
+<text x="44" y="213" class="k" font-size="13" text-anchor="start" font-weight="normal" >yq 4.53</text>
+<text x="132" y="215" class="t t" font-size="24" text-anchor="start" font-weight="normal" >7</text>
+<text x="168" y="204" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >blank line and comment</text>
+<text x="168" y="218" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >spacing gone</text>
+<text x="322" y="215" class="t t" font-size="24" text-anchor="start" font-weight="normal" >18</text>
+<text x="358" y="204" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >reflowed; 20-digit integer</text>
+<text x="358" y="218" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >made 1.2345…e+19</text>
+<text x="512" y="215" class="t t" font-size="24" text-anchor="start" font-weight="normal" >9</text>
+<text x="548" y="204" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >key moved, blank line</text>
+<text x="548" y="218" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >gone, quotes changed</text>
+<line x1="28" y1="240" x2="692" y2="240" class="grid"/>
+<text x="44" y="275" class="k" font-size="13" text-anchor="start" font-weight="normal" >dasel 3.11</text>
+<text x="132" y="277" class="t t" font-size="24" text-anchor="start" font-weight="normal" >24</text>
+<text x="168" y="266" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >comments dropped, 0x1F</text>
+<text x="168" y="280" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >made 31, reindented</text>
+<text x="322" y="277" class="t pink" font-size="24" text-anchor="start" font-weight="normal" >✕</text>
+<text x="358" y="266" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >refused: an integer</text>
+<text x="358" y="280" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >out of range</text>
+<text x="512" y="277" class="t t" font-size="24" text-anchor="start" font-weight="normal" >18</text>
+<text x="548" y="266" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >comments dropped, keys</text>
+<text x="548" y="280" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >reordered, date made text</text>
+<line x1="28" y1="302" x2="692" y2="302" class="grid"/>
+<text x="44" y="337" class="k" font-size="13" text-anchor="start" font-weight="normal" >jq, jaq</text>
+<text x="132" y="337" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >JSON only</text>
+<text x="322" y="339" class="t t" font-size="24" text-anchor="start" font-weight="normal" >14</text>
+<text x="358" y="328" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >reflowed; number</text>
+<text x="358" y="342" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >spellings kept</text>
+<text x="512" y="337" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >JSON only</text>
+<line x1="28" y1="364" x2="692" y2="364" class="grid"/>
+<text x="44" y="399" class="k" font-size="13" text-anchor="start" font-weight="normal" >gojq</text>
+<text x="132" y="399" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >JSON only</text>
+<text x="322" y="401" class="t t" font-size="24" text-anchor="start" font-weight="normal" >22</text>
+<text x="358" y="390" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >reflowed, and every</text>
+<text x="358" y="404" class="b" font-size="10.5" text-anchor="start" font-weight="normal" >object's keys sorted</text>
+<text x="512" y="399" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >JSON only</text>
+<text x="28" y="456" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >The files had comments, a blank line, an inline table, a hex number, 1.50, a single-quoted string and a datetime,</text>
+<text x="28" y="470" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >and in JSON a 20-digit integer and an escaped slash. fig changes the one line; the others write the file afresh.</text>
+<text x="28" y="484" class="m" font-size="10.5" text-anchor="start" font-weight="normal" >Lines counted by diff. yq is mikefarah's Go yq. jq 1.7.1, jaq 3.1.1, gojq 0.12.19, 2026-10-14.</text>
+
+</svg>

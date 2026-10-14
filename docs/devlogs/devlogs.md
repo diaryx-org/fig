@@ -9,6 +9,7 @@ contents
 > * [Version 2.0.0](2-0-0.md)
 > * [Version 2.5.0](2-5-0.md)
 > * "[Fig's 2nd Epoch: Texas Everbearing](/docs/devlogs/2-texas-everbearing/2-texas-everbearing.md)"
+> * [Version 6.0.0](/docs/devlogs/6-0-0/6-0-0.md)
 ```
 
 # Devlogs

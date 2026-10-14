@@ -206,6 +206,79 @@ test "fig a multi-line string's trailing comment lives on its opener line" {
     try expectTrailingRoundTrip("x = 'a'\n", x, "note", "x = 'a' # note\n");
 }
 
+// A flow list or object over several lines takes its comment on its opener
+// line, as the parser reads it (`xs = [ # op`). The window began after the
+// close, so get missed `# op` and set wrote a second comment after the `]`.
+test "fig a multi-line flow list's or object's trailing comment lives on its opener line" {
+    const xs: []const AST.PathSegment = &.{.{ .key = "xs" }};
+    const el: []const AST.PathSegment = &.{ .{ .key = "ys" }, .{ .index = 0 } };
+    const Shape = struct { open: []const u8, lf: []const u8, crlf: []const u8, close: []const u8 };
+    for ([_]Shape{
+        .{ .open = "[", .lf = "  1,\n  2,\n", .crlf = "  1,\r\n  2,\r\n", .close = "]" },
+        .{ .open = "{", .lf = "  a = 1,\n  b = 2,\n", .crlf = "  a = 1,\r\n  b = 2,\r\n", .close = "}" },
+    }) |sh| {
+        var in_buf: [256]u8 = undefined;
+        var out_buf: [256]u8 = undefined;
+        // A map entry's value, LF and CRLF, and a sequence element.
+        try expectTrailingRoundTrip(
+            try std.fmt.bufPrint(&in_buf, "xs = {s}\n{s}{s}\ny = 1\n", .{ sh.open, sh.lf, sh.close }),
+            xs,
+            "note",
+            try std.fmt.bufPrint(&out_buf, "xs = {s} # note\n{s}{s}\ny = 1\n", .{ sh.open, sh.lf, sh.close }),
+        );
+        try expectTrailingRoundTrip(
+            try std.fmt.bufPrint(&in_buf, "xs = {s}\r\n{s}{s}\r\ny = 1\r\n", .{ sh.open, sh.crlf, sh.close }),
+            xs,
+            "note",
+            try std.fmt.bufPrint(&out_buf, "xs = {s} # note\r\n{s}{s}\r\ny = 1\r\n", .{ sh.open, sh.crlf, sh.close }),
+        );
+        try expectTrailingRoundTrip(
+            try std.fmt.bufPrint(&in_buf, "ys\n> * {s}\n{s}{s}\n> * z\n", .{ sh.open, sh.lf, sh.close }),
+            el,
+            "note",
+            try std.fmt.bufPrint(&out_buf, "ys\n> * {s} # note\n{s}{s}\n> * z\n", .{ sh.open, sh.lf, sh.close }),
+        );
+
+        // An opener comment is read, replaced in place, and deleted there.
+        {
+            var ed = try newFigEditor(try std.fmt.bufPrint(&in_buf, "xs = {s}  # op\r\n{s}{s}\r\n", .{ sh.open, sh.crlf, sh.close }));
+            defer ed.deinit();
+            const got = (try ed.getTrailingComment(xs)).?;
+            defer std.testing.allocator.free(got);
+            try std.testing.expectEqualStrings("op", got);
+            try ed.setTrailingComment(xs, "new");
+            try expectFigSource(&ed, try std.fmt.bufPrint(&out_buf, "xs = {s} # new\r\n{s}{s}\r\n", .{ sh.open, sh.crlf, sh.close }));
+            try ed.deleteTrailingComment(xs);
+            try expectFigSource(&ed, try std.fmt.bufPrint(&out_buf, "xs = {s}\r\n{s}{s}\r\n", .{ sh.open, sh.crlf, sh.close }));
+        }
+
+        // A comment after the close is not the container's when its opener
+        // line is the comment's: get does not report it, delete leaves it,
+        // and set writes beside the opener.
+        {
+            const input = try std.fmt.bufPrint(&in_buf, "xs = {s}\n{s}{s} # close\n", .{ sh.open, sh.lf, sh.close });
+            var ed = try newFigEditor(input);
+            defer ed.deinit();
+            try std.testing.expectEqual(null, try ed.getTrailingComment(xs));
+            try ed.deleteTrailingComment(xs);
+            try expectFigSource(&ed, input);
+            try ed.setTrailingComment(xs, "op");
+            try expectFigSource(&ed, try std.fmt.bufPrint(&out_buf, "xs = {s} # op\n{s}{s} # close\n", .{ sh.open, sh.lf, sh.close }));
+        }
+    }
+    // A flow container on one line keeps its comment after the close, and
+    // so does one whose opener line holds an element: a `#` there is inside
+    // the flow, which the parser skips.
+    try expectTrailingRoundTrip("xs = [1, 2]\n", xs, "note", "xs = [1, 2] # note\n");
+    try expectTrailingRoundTrip("xs = {a=1}\n", xs, "note", "xs = {a=1} # note\n");
+    try expectTrailingRoundTrip("xs = [1,\n  2,\n]\n", xs, "note", "xs = [1,\n  2,\n] # note\n");
+    {
+        var ed = try newFigEditor("xs = [1, # inner\n  2,\n]\n");
+        defer ed.deinit();
+        try std.testing.expectEqual(null, try ed.getTrailingComment(xs));
+    }
+}
+
 // --- insertKey (block) ---
 
 test "fig insert key into root" {
@@ -584,15 +657,76 @@ test "fig delete the first element of a nested `+` chain keeps the next in its c
     try expectFigSource(&whole, "spec.containers[]\n> name = app\nspec.containers[].ports[]  # tls\n> port = 443\nspec.containers[]\n> name = sidecar\n");
 }
 
-// The move took `c[].p[]`'s lines past the `+` that re-runs it, and the `+`
-// would read as a second `c` element: the move guard (`readsBack`) refuses
-// (docs/tasks/figl-move-chains-and-indices.md).
-test "fig moving the first element of a nested `+` chain is refused, not a new container" {
-    const source = "c[]\n> n = a\nc[].p[]\n> x = 1\n+\n> x = 2\n";
-    var ed = try newFigEditor(source);
+// A `+` repeats the header before it (spec § 8), so the position an
+// element stands in is written by its header or its `+`: whichever element
+// comes first takes the header, and its comment stays its own.
+test "fig move an element of a nested `+` chain re-spells the header and the `+`" {
+    var ed = try newFigEditor("c[]\n> n = a\nc[].p[]  # one\n> x = 1\n+\n> x = 2\n");
     defer ed.deinit();
-    try std.testing.expectError(error.EditReadsBackWrong, ed.moveItem(&.{ .{ .key = "c" }, .{ .index = 0 }, .{ .key = "p" } }, 0, 1));
-    try expectFigSource(&ed, source);
+    try ed.moveItem(&.{ .{ .key = "c" }, .{ .index = 0 }, .{ .key = "p" } }, 0, 1);
+    try expectFigSource(&ed, "c[]\n> n = a\nc[].p[]\n> x = 2\n+        # one\n> x = 1\n");
+
+    var chain = try newFigEditor("r[]   # one\n> a = 1\n+     # two\n> a = 2\n+\n> a = 3\n");
+    defer chain.deinit();
+    try chain.reorderItems(&.{.{ .key = "r" }}, &.{ 2, 0, 1 });
+    try expectFigSource(&chain, "r[]\n> a = 3\n+     # one\n> a = 1\n+     # two\n> a = 2\n");
+}
+
+// The kitchen-sink shape: moving the container that holds a nested chain
+// takes the chain with it, and `[]` mid-path still reaches it.
+test "fig move a container holding a nested `+` chain" {
+    var ed = try newFigEditor("c[]\n> n = a\nc[].p[]\n> x = 1\n+\n> x = 2\nc[]\n> n = b\n");
+    defer ed.deinit();
+    try ed.moveItem(&.{.{ .key = "c" }}, 0, 1);
+    try expectFigSource(&ed, "c[]\n> n = b\nc[]\n> n = a\nc[].p[]\n> x = 1\n+\n> x = 2\n");
+}
+
+// An index is a position (spec § 7.4): the lines that address an element
+// take its new index, wherever they are written.
+test "fig move an index-addressed element renumbers every line that addresses it" {
+    var ed = try newFigEditor("xs[0] = a\nxs[1] = b  # b\n");
+    defer ed.deinit();
+    try ed.moveItem(&.{.{ .key = "xs" }}, 0, 1);
+    try expectFigSource(&ed, "xs[0] = b  # b\nxs[1] = a\n");
+
+    // `ys[0]` is written again after `ys[1]`, outside the moved lines.
+    var twice = try newFigEditor("ys[0]\n> k = 1\nys[1]\n> k = 2\nys[0]\n> j = 3\n");
+    defer twice.deinit();
+    try twice.moveItem(&.{.{ .key = "ys" }}, 1, 0);
+    try expectFigSource(&twice, "ys[0]\n> k = 2\nys[1]\n> k = 1\nys[1]\n> j = 3\n");
+
+    var dotted = try newFigEditor("clusters[0].name = alpha\nclusters[0].size = 3\nclusters[1].name = beta\nclusters[1].size = 5\n");
+    defer dotted.deinit();
+    try dotted.reorderItems(&.{.{ .key = "clusters" }}, &.{1});
+    try expectFigSource(&dotted, "clusters[0].name = beta\nclusters[0].size = 5\nclusters[1].name = alpha\nclusters[1].size = 3\n");
+}
+
+// An element's own keys come before a header that opens a child of it; a
+// `> key` after `c[].p[]` is the port's (docs/tasks/closed/figl-insert-under-nested-header.md).
+test "fig insert into an element with a nested header goes among its own keys" {
+    var ed = try newFigEditor("spec.containers[]\n> name = app\nspec.containers[].ports[]\n> containerPort = 80\n+\n> containerPort = 443\n");
+    defer ed.deinit();
+    try ed.insertKey(&.{ .{ .key = "spec" }, .{ .key = "containers" }, .{ .index = 0 } }, "added_bool", "true");
+    try expectFigSource(&ed, "spec.containers[]\n> name = app\n> added_bool = true\nspec.containers[].ports[]\n> containerPort = 80\n+\n> containerPort = 443\n");
+
+    // A dotted header or line re-entering a container is its child's line,
+    // not the container's, and so is one nested a level down.
+    var dotted = try newFigEditor("a\n> y = 0\na.b\n> x = 1\na.c.d = 2\n");
+    defer dotted.deinit();
+    try dotted.insertKey(&.{.{ .key = "a" }}, "m", "1");
+    try expectFigSource(&dotted, "a\n> y = 0\n> m = 1\na.b\n> x = 1\na.c.d = 2\n");
+
+    var nested = try newFigEditor("s\n> c[]\n> > n = 1\n> c[].p[]\n> > x = 1\n");
+    defer nested.deinit();
+    try nested.insertKey(&.{ .{ .key = "s" }, .{ .key = "c" }, .{ .index = 0 } }, "m", "1");
+    try expectFigSource(&nested, "s\n> c[]\n> > n = 1\n> > m = 1\n> c[].p[]\n> > x = 1\n");
+
+    // A container with no line of its own but the header that names its
+    // child still takes the entry on a dotted line, as it did.
+    var implicit = try newFigEditor("a.b\n> x = 1\n");
+    defer implicit.deinit();
+    try implicit.insertKey(&.{.{ .key = "a" }}, "m", "1");
+    try expectFigSource(&implicit, "a.b\n> x = 1\na.m = 1\n");
 }
 
 test "fig an element's index and header are not names a rename rewrites" {

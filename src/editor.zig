@@ -1308,10 +1308,12 @@ pub fn Editor(comptime Language: type) type {
         /// the line its span ends on belongs to whatever follows; so does a
         /// scalar over several lines in a format whose opener line is its
         /// comment's (`Syntax.opener_line_comment`: figl's `x = ''' # note`),
-        /// and the comment after its close is not its own. `start` always
-        /// sits before any comment marker and after the value (scalar) or key
-        /// (block), or at a multi-line scalar's opener, which holds no marker
-        /// of its own, so a `#`/`//` inside the value can't false-match.
+        /// and a flow list or object over several lines whose opener line
+        /// holds no element (`xs = [ # note`); the comment after its close
+        /// is not its own. `start` always sits before any comment marker and
+        /// after the value (scalar) or key (block), or at a multi-line
+        /// value's opener, which holds no marker of its own, so a `#`/`//`
+        /// inside the value can't false-match.
         ///
         /// `null` when the node has no such window at all: a flow element or
         /// entry sharing its parent's line, whose line-end comment is the
@@ -1337,15 +1339,18 @@ pub fn Editor(comptime Language: type) type {
             // on is the next entry's. Its comment rides the line it opens
             // on, after the header (`a: | # note`).
             const takes_line_end = val_span.end > val_span.start and source[val_span.end - 1] == '\n';
-            // A format may put a multi-line scalar's comment on its opener
-            // line instead of after its close (figl's `x = ''' # note`, whose
-            // opener line holds only the delimiter and the comment).
+            // A format may put a multi-line value's comment on its opener
+            // line instead of after its close: figl's `x = ''' # note`, whose
+            // opener line holds only the delimiter and the comment, and
+            // `xs = [ # note` for a flow list or object whose opener line
+            // holds no element.
             const is_scalar = switch (std.meta.activeTag(val.kind)) {
                 .mapping, .sequence => false,
                 else => true,
             };
-            const on_opener_line = self.syntax().opener_line_comment and is_scalar and
-                std.mem.indexOfScalar(u8, source[val_span.start..val_span.end], '\n') != null;
+            const spans_lines = std.mem.indexOfScalar(u8, source[val_span.start..val_span.end], '\n') != null;
+            const on_opener_line = self.syntax().opener_line_comment and spans_lines and
+                (is_scalar or (!is_block_collection and self.flowOpenerLineIsEmpty(val_span.start)));
             const start = if (is_block_collection)
                 parsed.span(try parsed.ast.getKeyByPath(path)).end
             else if (takes_line_end or on_opener_line)
@@ -1358,6 +1363,21 @@ pub fn Editor(comptime Language: type) type {
             // value (YAML reads `a: 1\r # x` as the string "1\r").
             if (line_end > start and source[line_end - 1] == '\r') line_end -= 1;
             return .{ .start = start, .line_end = line_end };
+        }
+
+        /// Whether the flow container opening at `open` (its `[`/`{`) has
+        /// nothing after the opener on its line but blanks and a comment —
+        /// figl's `xs = [ # note`, whose first element starts on the next
+        /// line. Only then is the opener line the comment's (as the parser
+        /// reads it); one that holds an element there keeps its comment
+        /// after the close, since a `#` on that line is flow-interior.
+        fn flowOpenerLineIsEmpty(self: *const Self, open: usize) bool {
+            const source = self.source.items;
+            var i = open + 1;
+            while (i < source.len and (source[i] == ' ' or source[i] == '\t')) i += 1;
+            if (i >= source.len or source[i] == '\n' or source[i] == '\r') return true;
+            const marker = self.trailingCommentMarker() orelse return false;
+            return std.mem.startsWith(u8, source[i..], marker.open);
         }
 
         /// Set the same-line trailing comment on the value at `path`: replace an
@@ -4123,7 +4143,95 @@ pub fn Editor(comptime Language: type) type {
             }
             const last_end = entryBlockEnd(source, spans.items[spans.items.len - 1]);
             tileBlocks(blocks.items, last_end);
-            try self.reorderBlocks(blocks.items[0].start, last_end, blocks.items, order);
+            const perm = try fullOrder(self.allocator, order, blocks.items.len);
+            defer self.allocator.free(perm);
+            var arena: std.heap.ArenaAllocator = .init(self.allocator);
+            defer arena.deinit();
+            const edits = try self.reorderEdits(arena.allocator(), parsed, node, perm);
+            if (edits.len == 0) return self.reorderBlocks(blocks.items[0].start, last_end, blocks.items, perm);
+            // The whole source is rewritten, since an item may be addressed
+            // on a line outside the blocks (figl's `ys[0]` written again
+            // after `ys[1]`).
+            var region: std.ArrayList(u8) = .empty;
+            defer region.deinit(self.allocator);
+            var block: std.ArrayList(u8) = .empty;
+            defer block.deinit(self.allocator);
+            for (perm) |i| {
+                block.clearRetainingCapacity();
+                try appendEdited(&block, self.allocator, source, blocks.items[i].start, blocks.items[i].end, edits);
+                try appendBlockSep(&region, self.allocator, block.items, self.syntax());
+            }
+            var out: std.ArrayList(u8) = .empty;
+            defer out.deinit(self.allocator);
+            try appendEdited(&out, self.allocator, source, 0, blocks.items[0].start, edits);
+            try out.appendSlice(self.allocator, region.items);
+            try appendEdited(&out, self.allocator, source, last_end, source.len, edits);
+            try self.replaceAtSpan(Span.init(0, source.len), out.items);
+        }
+
+        /// What keeps each item of the block sequence `seq` addressing
+        /// itself once its items stand in the order `perm` (`perm[k]` the
+        /// item that goes to position `k`), as rewrites in source order,
+        /// their text in `arena`; `followingEdits` is the delete's. Every
+        /// other format records no item path and gets none.
+        ///
+        /// An item addressed by its index takes its new one at each `index`
+        /// mention: figl's index is a position (spec § 7.4), and the lines
+        /// saying `xs[1]` move with the item now at 0. A line that appends
+        /// an item (figl's `a[]`, or the `+` that repeats it, spec § 8) is
+        /// how the position it stands in is written, so the item that comes
+        /// to stand there is written with it: the first item of a `+` chain
+        /// carries the header and the rest a `+`, whichever item is first.
+        /// The item's trailing comment stays with it, in its column.
+        fn reorderEdits(self: *const Self, arena: std.mem.Allocator, parsed: Document, seq: AST.Node, perm: []const usize) ![]PathEdit {
+            const source = self.source.items;
+            var items: std.ArrayList(AST.Node) = .empty;
+            var it = try parsed.ast.child(&seq);
+            while (it) |item| : (it = parsed.ast.next(&item)) try items.append(arena, item);
+            if (items.items.len != perm.len) return &.{};
+            // Each item's one `append` mention, by its place in the source.
+            const appended = try arena.alloc(?Span, perm.len);
+            for (items.items, appended) |item, *a| {
+                a.* = null;
+                var count: usize = 0;
+                var mentions = parsed.mentionsOf(item.id);
+                while (mentions.next()) |m| if (m.kind == .append) {
+                    a.* = m.span;
+                    count += 1;
+                };
+                if (count > 1) a.* = null;
+            }
+            var edits: std.ArrayList(PathEdit) = .empty;
+            for (perm, 0..) |from, to| {
+                if (from == to) continue;
+                var mentions = parsed.mentionsOf(items.items[from].id);
+                while (mentions.next()) |m| if (m.kind == .index)
+                    try edits.append(arena, .{ .span = m.span, .text = try std.fmt.allocPrint(arena, "{d}", .{to}) });
+                const own = appended[from] orelse continue;
+                const slot = appended[to] orelse continue;
+                const text = source[slot.start..slot.end];
+                if (!std.mem.eql(u8, source[own.start..own.end], text))
+                    try edits.append(arena, try padded(arena, source, own, text));
+            }
+            std.mem.sortUnstable(PathEdit, edits.items, {}, struct {
+                fn lessThan(_: void, a: PathEdit, b: PathEdit) bool {
+                    return a.span.start < b.span.start;
+                }
+            }.lessThan);
+            return edits.items;
+        }
+
+        /// `source[from..to]` appended to `out`, with each of `edits`
+        /// (ascending) that lies inside it written over its span.
+        fn appendEdited(out: *std.ArrayList(u8), allocator: std.mem.Allocator, source: []const u8, from: usize, to: usize, edits: []const PathEdit) !void {
+            var pos = from;
+            for (edits) |edit| {
+                if (edit.span.start < pos or edit.span.end > to) continue;
+                try out.appendSlice(allocator, source[pos..edit.span.start]);
+                try out.appendSlice(allocator, edit.text);
+                pos = edit.span.end;
+            }
+            try out.appendSlice(allocator, source[pos..to]);
         }
 
         /// Splice a block container's region so the entries indexed by `order`

@@ -1,12 +1,21 @@
 ```fig
 title = Moving or reordering figl elements breaks + chains and index addresses
-part_of = [Tasks](/docs/tasks/tasks.md)
+part_of = [Closed tasks](/docs/tasks/closed/closed.md)
 description = moveItem and reorderItems on a figl list written as a `+` chain or with index addresses either change other values (a `+` moved under the wrong header appends a container) or fail to parse, where they should rearrange the elements and re-spell headers and indices as deletes now do (6621ef0)
-status = open
+status = done
 created = 2026-10-13
+updated = 2026-10-14
 ```
 
 # Moving or reordering figl elements breaks + chains and index addresses
+
+**Status.** Done, in `fix(editor): a figl move or reorder re-spells each
+element's header, + and index for its new place` (2026-10-14). A block
+sequence's move and reorder write, in the same splice, each moved
+element's `index` mentions as its new index, wherever the line is, and its
+`append` mention as the one the position it lands in had (`reorderEdits`),
+so the first of a chain carries the header and the rest a `+`, each
+element keeping its trailing comment in its column.
 
 **Repro.** On `main` at 2f7f865, through the editor API:
 

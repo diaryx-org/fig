@@ -65,8 +65,9 @@ pub const NodeRegion = table.SpanFact;
 /// `kind` says how the mention sits relative to the node's PARENT
 /// (`MentionKind`): a header opens a region of the node's own, outside the
 /// parent's lines (`[a.b]` is not inside `[a]`'s text; a reopened INI `[a]`
-/// is a new region), while an entry mention is on one of the parent's own
-/// entry lines (a dotted key, a fig header at the parent's depth). The
+/// is a new region; figl's `p` in `c[].p[]`, after `c[]`'s own lines), while
+/// an entry mention is on one of the parent's own entry lines (a dotted key,
+/// a fig header at the parent's depth). The
 /// editor's block insert reads it to keep a new entry inside the intended
 /// table, and `renameContainer` and a section's `replaceKeyAtPath` rewrite
 /// every mention at once.

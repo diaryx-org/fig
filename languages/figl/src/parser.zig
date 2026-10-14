@@ -459,8 +459,12 @@ diagnostics: std.ArrayList(Diagnostic) = .empty,
 /// `parseImpl`. Besides the rows it takes each block container's header
 /// lines (`Document.regionsOf`), each `*` marker, each assignment's `=`, and
 /// each block container's name mentions — its creating key and every `.key`
-/// re-entry; a fig header sits on its parent's own lines, so every mention is
-/// an `.entry`.
+/// re-entry. A key is an `.entry` mention when its line is one of its
+/// parent's own lines — the line's target, whose body it is in, or a
+/// container this line created — and a `.header` one when the path reached
+/// its parent through a container written elsewhere: `p` in `c[].p[]` is on
+/// no line of `c[0]`'s, as `[c.p]` is on no line of TOML's `[c]`
+/// (`Reached`).
 w: RowWriter = undefined,
 /// Each container's last child, and each mapping's entry by key.
 children: ChildIndex = .{},
@@ -529,6 +533,21 @@ const Step = union(enum) { key: KeySeg, index: IndexKind };
 /// the entry's key when reached via a map key, the container itself when
 /// reached via a sequence index (`AST.leadingCommentAnchor`).
 const Resolved = struct { container: Id, leading: Id };
+
+/// The container a path's steps but the last reach, and whether the line is
+/// one of its own (`MentionKind` of the key the last step names). The first
+/// step's parent is the line's target, whose body the line is in; past it,
+/// the line is a container's own when the line created it, and not when
+/// the path re-opened one written earlier, which this line does not
+/// re-enter (only a header-final step does, `resolveHeaderFinal`).
+const Reached = struct {
+    container: Id,
+    own: bool,
+
+    fn kind(r: Reached) Document.MentionKind {
+        return if (r.own) .entry else .header;
+    }
+};
 // ── Entry points ─────────────────────────────────────────────────────────────
 
 /// `input` as an `AST`, alone.
@@ -1039,7 +1058,7 @@ fn finishHeader(self: *Parser, target: Id, steps: []const Step, path: Span, dept
 
 fn finishAssignment(self: *Parser, target: Id, steps: []const Step, type_name: ?[]const u8, sep: Span) Error!void {
     self.skipSpacesTabs();
-    const parent = try self.navigateIntermediate(target, steps);
+    const parent = (try self.navigateIntermediate(target, steps)).container;
     const last = steps[steps.len - 1];
     const value = try self.parseAssignedValue(type_name);
     self.consumeLineEnd();
@@ -1345,20 +1364,24 @@ fn valueOf(self: *Parser, kv: Id) Id {
 /// Resolve every step except the last, creating/reusing intermediate
 /// containers. `[]`/`[i]` here always mean "the last existing element" (never
 /// creates) — only a HEADER line's OVERALL final `[]` appends.
-fn navigateIntermediate(self: *Parser, start: Id, steps: []const Step) Error!Id {
-    var cur = start;
+fn navigateIntermediate(self: *Parser, start: Id, steps: []const Step) Error!Reached {
+    var cur: Reached = .{ .container = start, .own = true };
     for (steps[0 .. steps.len - 1]) |step| {
+        const len = self.rows().len;
         switch (step) {
             .key => |k| {
-                try self.asMapping(cur);
-                cur = try self.getOrCreateMapContainer(cur, k, false);
+                try self.asMapping(cur.container);
+                cur.container = try self.getOrCreateMapContainer(cur.container, k, false, cur.kind());
             },
             .index => |idx| {
-                try self.asSequence(cur);
-                try self.markAddressed(cur);
-                cur = try self.getOrCreateSeqContainer(cur, idx);
+                try self.asSequence(cur.container);
+                try self.markAddressed(cur.container);
+                cur.container = try self.getOrCreateSeqContainer(cur.container, idx);
             },
         }
+        // A container made by this step is this line's; one it re-opened was
+        // written on an earlier line.
+        cur.own = cur.container >= len;
     }
     return cur;
 }
@@ -1366,7 +1389,7 @@ fn navigateIntermediate(self: *Parser, start: Id, steps: []const Step) Error!Id 
 /// Mapping `m`'s container under `seg`, made when there is none. One a block
 /// path makes is a block container named by `seg`; one a flow object's dotted
 /// key makes (`flow`) is closed with its object, and is neither.
-fn getOrCreateMapContainer(self: *Parser, m: Id, seg: KeySeg, flow: bool) Error!Id {
+fn getOrCreateMapContainer(self: *Parser, m: Id, seg: KeySeg, flow: bool, kind: Document.MentionKind) Error!Id {
     if (self.children.get(self.w, m, seg.name)) |kv| {
         const v = self.valueOf(kv);
         if (self.infoOf(v) == null) return error.FigKeyNotContainer;
@@ -1377,7 +1400,7 @@ fn getOrCreateMapContainer(self: *Parser, m: Id, seg: KeySeg, flow: bool) Error!
     // replacement value is reframed from the key's end. A zero-width
     // separator there says so.
     _ = try self.addEntry(m, seg, child, Span.init(seg.span.end, seg.span.end));
-    if (!flow) try self.w.mention(child, seg.span, .entry);
+    if (!flow) try self.w.mention(child, seg.span, kind);
     return child;
 }
 
@@ -1410,7 +1433,8 @@ fn getOrCreateSeqContainer(self: *Parser, s: Id, idx: IndexKind) Error!Id {
 /// push as the next frame. A plain key may be re-entered (fine, per
 /// DESIGN.md); a header-final `[]` always appends a fresh, forced-mapping
 /// element.
-fn resolveHeaderFinal(self: *Parser, parent: Id, last: Step) Error!Resolved {
+fn resolveHeaderFinal(self: *Parser, reached: Reached, last: Step) Error!Resolved {
+    const parent = reached.container;
     switch (last) {
         .key => |k| {
             try self.asMapping(parent);
@@ -1425,14 +1449,14 @@ fn resolveHeaderFinal(self: *Parser, parent: Id, last: Step) Error!Resolved {
                 // whose final segment creates something anchors itself through
                 // that new node, and a mid-path re-open always rides such a line.
                 try self.region(c, k.span.start);
-                try self.w.mention(c, k.span, .entry);
+                try self.w.mention(c, k.span, reached.kind());
                 return .{ .container = c, .leading = self.keyOf(kv) };
             }
             const child = try self.newBlockContainer(k.span, .{});
             // A header line's container hangs under the key; a replacement
             // value reframes from the key's end (a zero-width separator).
             const kv = try self.addEntry(parent, k, child, Span.init(k.span.end, k.span.end));
-            try self.w.mention(child, k.span, .entry);
+            try self.w.mention(child, k.span, reached.kind());
             return .{ .container = child, .leading = self.keyOf(kv) };
         },
         .index => |idx| {
@@ -2063,7 +2087,7 @@ fn parseFlowObject(self: *Parser) Error!Id {
         var target = map;
         for (path[0 .. path.len - 1]) |seg| {
             const fresh = self.children.get(self.w, target, seg.name) == null;
-            const child = self.getOrCreateMapContainer(target, seg, true) catch |err|
+            const child = self.getOrCreateMapContainer(target, seg, true, .entry) catch |err|
                 return self.failSpan(seg.span.start, seg.span.end, err);
             if (fresh) try implicit.append(self.scratch, child);
             self.asMapping(child) catch |err| return self.failSpan(seg.span.start, seg.span.end, err);

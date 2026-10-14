@@ -22,7 +22,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { capabilities, convert, detectFormat, formatByName, formatName, handle, splitStream, registerLanguage, type Language, type NodeTable } from "../src/index.ts";
+import { capabilities, convert, detectFormat, Editor, formatByName, formatName, handle, splitStream, registerLanguage, type Language, type NodeTable } from "../src/index.ts";
 
 import canonical from "@diaryx/fig/js/canonical";
 import dotenv from "@diaryx/fig/js/dotenv";
@@ -237,4 +237,27 @@ test("figl writes a non-finite float from another format under : float, as the c
   // Bare, figl reads `inf` as a string; the compiled printer wrote this.
   const figl = formatByName("figl")!;
   assert.equal(convert("a: .inf\nb: [1, -.inf]\nc: .nan\n", yaml.format!, figl), "a: float = inf\n\nb\n> * 1\n> *: float = -inf\n\nc: float = nan\n");
+});
+
+test("the figl twin's comment on a multi-line flow list or object is on its opener line, as figl's is", () => {
+  // The parser reads `xs = [ # op` as the list's trailing comment, so the
+  // editor's trailing-comment ops act there, not after the close.
+  const figl = formatByName("figl")!;
+  const shapes: [string, string, string][] = [["[", "  1,\n  2,\n", "]"], ["{", "  a = 1,\n  b = 2,\n", "}"]];
+  for (const [open, body, close] of shapes) {
+    for (const nl of ["\n", "\r\n"]) {
+      const b = body.replace(/\n/g, nl);
+      using ed = Editor.open(`xs = ${open} # op${nl}${b}${close}${nl}y = 1${nl}`, figl);
+      assert.equal(ed.getTrailingComment(["xs"]), "op");
+      ed.setTrailingComment(["xs"], "note");
+      assert.equal(ed.source(), `xs = ${open} # note${nl}${b}${close}${nl}y = 1${nl}`);
+      ed.deleteTrailingComment(["xs"]);
+      assert.equal(ed.source(), `xs = ${open}${nl}${b}${close}${nl}y = 1${nl}`);
+      assert.equal(ed.getTrailingComment(["xs"]), null);
+    }
+  }
+  // A flow list on one line keeps its comment after the close.
+  using one = Editor.open("xs = [1, 2]\n", figl);
+  one.setTrailingComment(["xs"], "note");
+  assert.equal(one.source(), "xs = [1, 2] # note\n");
 });

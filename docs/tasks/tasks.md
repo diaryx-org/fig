@@ -13,6 +13,10 @@ contents
 > * [A comment after a figl multi-line list's opening bracket is invisible to the editor](/docs/tasks/figl-multiline-list-opener-comment.md)
 > * [Moving or reordering figl elements breaks + chains and index addresses](/docs/tasks/figl-move-chains-and-indices.md)
 > * [An insert into a figl element with a nested header lands in the wrong element](/docs/tasks/figl-insert-under-nested-header.md)
+> * [Renaming a figl container written over several lines renames only its first line](/docs/tasks/figl-rename-multi-line-container.md)
+> * [Renaming a YAML flow key written against its colon makes another key](/docs/tasks/yaml-rename-flow-key-against-colon.md)
+> * [A leading BOM hides a YAML document's first key from the editor](/docs/tasks/yaml-bom-first-key.md)
+> * [Deleting or renaming a duplicated key leaves the key readable](/docs/tasks/duplicate-key-delete-and-rename.md)
 ```
 
 # Tasks

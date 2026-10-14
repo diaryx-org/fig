@@ -159,10 +159,13 @@ pub fn Editor(comptime Language: type) type {
             if (is_section_format and self.syntax().section_noun != null and (node.id == parsed.ast.root or parsed.isSection(node))) return false;
             if (self.isOpenRoot(parsed, node)) return true;
             const source = self.source.items;
-            if (!isFlow(source, parsed.span(node), self.syntax().flow_map_open)) return false;
+            // A YAML node's span starts at its properties (`&i [1, 2]`), and
+            // the sniff reads the value after them.
+            const span = self.valueSpanWithoutProps(parsed, node);
+            if (!isFlow(source, span, self.syntax().flow_map_open)) return false;
             // `flow_maps_only`: a `[` is not an opener, so what it begins
             // (a CSS attribute selector) is read as block.
-            return !(self.syntax().flow_maps_only and source[firstNonSpace(source, parsed.span(node).start)] == '[');
+            return !(self.syntax().flow_maps_only and source[firstNonSpace(source, span.start)] == '[');
         }
 
         /// Whether `node` is the root of a `flow_root` format: a flow mapping
@@ -2424,6 +2427,11 @@ pub fn Editor(comptime Language: type) type {
             // first entry, the preceding comma otherwise) and always leaves the
             // enclosing braces intact, correct for every arity and position.
             const parent = try parsed.ast.getValByPath(path[0 .. path.len - 1]);
+            if (self.flowPairSpan(parsed, parent, node)) |pair| {
+                const empty = try std.mem.concat(self.allocator, u8, &.{ self.syntax().flow_map_open, self.syntax().flow_map_close });
+                defer self.allocator.free(empty);
+                return self.replaceAtSpan(pair, empty);
+            }
             if (parent.kind == .mapping and self.isFlowNode(parsed, parent)) {
                 // Find the entry's immediate predecessor: `removeFlowItem` drops
                 // the *following* comma for the first entry and the *preceding*
@@ -2489,6 +2497,24 @@ pub fn Editor(comptime Language: type) type {
             const del_start = commentBlockStart(source, line_start, self.syntax().comments);
             const del_end = lineEndAfter(source, span.end -| 1);
             try self.replaceAtSpan(Span.init(del_start, del_end), "");
+        }
+
+        /// The span of a flow pair whose one entry is `entry`: a mapping
+        /// with no braces of its own, an item of a flow sequence (YAML's
+        /// `a: b` in `[a: b, c]`, or `? c` from its `?`), which its entry's
+        /// going leaves an empty mapping. Its span is the entry's, which the
+        /// flow sniff reads as block, and the line delete took the line the
+        /// sequence is on. Null for any other entry.
+        fn flowPairSpan(self: *const Self, parsed: Document, parent: AST.Node, entry: AST.Node) ?Span {
+            if (parent.kind != .mapping or self.isFlowNode(parsed, parent)) return null;
+            const span = parsed.span(parent);
+            if (span.start != parsed.span(entry).start or span.end != parsed.span(entry).end) return null;
+            const seq = parsed.ast.node(parsed.ast.parentOf(parent.id) orelse return null);
+            if (seq.kind != .sequence or parsed.itemSep(seq) != null or !self.isFlowNode(parsed, seq)) return null;
+            const source = self.source.items;
+            var s = span.start;
+            while (s > 0 and isFlowItemWs(source[s - 1])) s -= 1;
+            return Span.init(if (s > 0 and source[s - 1] == '?') s - 1 else span.start, span.end);
         }
 
         /// Delete the entry of a flow mapping that runs over `entry`, and
@@ -5235,6 +5261,32 @@ pub fn Editor(comptime Language: type) type {
             return Span.init(ts, line_end);
         }
 
+        /// The splice for a later flow item that begins its line and has a
+        /// separator after it on that line: the item and that separator,
+        /// not the one before it. The separator before ends the line
+        /// above, and what lies between it and the item is that line's, not
+        /// whitespace to cross: a line comment (`a, // t` over `n: NaN,
+        /// i: 2`) or the closing line of a ZON multi-line string (`\\line`
+        /// over `,` over `.c = 'A', .nl = 1`), either of which the rest of
+        /// the item's line would join. An item alone on its line takes the
+        /// whole line, with its trailing comment; one with a sibling after
+        /// it leaves that sibling where it stands. Null when the item does
+        /// not begin its line or no separator follows it there, which the
+        /// backward splice handles.
+        fn ownLineFlowItem(self: *const Self, item_span: Span, sep: []const u8, limit: Span) ?Span {
+            if (sep.len == 0) return null;
+            const source = self.source.items[0..limit.end];
+            const line_start = lineStartBefore(source, item_span.start);
+            if (line_start < limit.start) return null;
+            for (source[line_start..item_span.start]) |c| if (c != ' ' and c != '\t') return null;
+            var e = firstNonSpace(source, item_span.end);
+            if (!std.mem.startsWith(u8, source[e..], sep)) return null;
+            e = firstNonSpace(source, e + sep.len);
+            if (self.lineEndComment(e, "")) |trail| e = trail.end;
+            if (e >= source.len or source[e] == '\n' or source[e] == '\r') return Span.init(line_start, lineEndAfter(source, e));
+            return Span.init(firstNonSpace(source, item_span.start), e);
+        }
+
         /// Delete the flow item or member at `item_span` and exactly one
         /// separator beside it: the one after it when it is first, else the
         /// one before it, so the last of `a, b,` leaves `a,` and keeps a
@@ -5259,6 +5311,8 @@ pub fn Editor(comptime Language: type) type {
                     while (e < source.len and isFlowItemWs(source[e])) e += 1;
                 }
                 try self.replaceAtSpan(Span.init(item_span.start, e), "");
+            } else if (self.ownLineFlowItem(item_span, sep, limit)) |own| {
+                try self.replaceAtSpan(own, "");
             } else {
                 // Drop a preceding ", " and the item. Scanning backward
                 // across newlines (not just spaces/tabs) is what lets this

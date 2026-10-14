@@ -721,6 +721,17 @@ pub fn Editor(comptime Language: type) type {
                 try self.terminateLine(&out, span.end);
                 return self.replaceAtSpan(span, out.items);
             }
+            // An empty value can sit right against a trailing comment, its
+            // separating blank before it (dotenv's `A= #c`): the new text
+            // keeps one between them, or the comment would read as more of
+            // the value (`A= 42#c` is `42#c`).
+            if (span.len() == 0 and rendered.len > 0) if (self.syntax().comments.trailing) |c| {
+                if (std.mem.startsWith(u8, source[span.end..], c.open)) {
+                    try out.appendSlice(self.allocator, rendered);
+                    try out.append(self.allocator, ' ');
+                    return self.replaceAtSpan(span, out.items);
+                }
+            };
             try self.replaceAtSpan(span, rendered);
         }
 
@@ -7487,6 +7498,20 @@ test "dotenv: an entry appended after an `export` entry starts at column 0" {
     defer ed.deinit();
     try ed.set(&.{.{ .key = "NEW" }}, "v");
     try testing.expectEqualStrings("export D=p\nNEW=v\n", ed.source.items);
+}
+
+test "dotenv replacing an empty value keeps a blank before its comment" {
+    if (comptime !build_options.lang_dotenv) return error.SkipZigTest;
+    // `A= #c` is an empty `A`; written straight against the `#`, `42#c`
+    // would read as the value.
+    try expectSet(Dotenv, .DOTENV, "A= #c\nB=1\n", &.{.{ .key = "A" }}, "42", "A= 42 #c\nB=1\n");
+    try expectSet(Dotenv, .DOTENV, "A=\t#c\n", &.{.{ .key = "A" }}, "42", "A=\t42 #c\n");
+}
+
+test "properties replacing a value that looks like a comment replaces it whole" {
+    if (comptime !build_options.lang_properties) return error.SkipZigTest;
+    // A `#` is a comment only at a line's start, so `#c` here is the value.
+    try expectSet(Properties, .PROPERTIES, "a= #c\nb=1\n", &.{.{ .key = "a" }}, "42", "a= 42\nb=1\n");
 }
 
 test "dotenv comment ops use # and round-trip" {

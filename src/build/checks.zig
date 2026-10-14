@@ -250,6 +250,16 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     cli_args_check.has_side_effects = true;
     check_step.dependOn(&cli_args_check.step);
 
+    // `fig patch` as the writing half of `fig convert -o json | jq | fig
+    // patch`: only what jq changed is rewritten, whatever spelling the file
+    // gave its other numbers (`tools/cli-patch-check.sh`). Gated on jq 1.7,
+    // which keeps a number literal it did not touch.
+    const cli_patch_check = b.addSystemCommand(&.{ "sh", "tools/cli-patch-check.sh" });
+    cli_patch_check.addArtifactArg(arts.exe);
+    cli_patch_check.setCwd(b.path("."));
+    cli_patch_check.has_side_effects = true;
+    check_step.dependOn(&cli_patch_check.step);
+
     // The CLI's end of the runtime-language carrier: the Rust crate's
     // `tinykv_helper` example, named in a `languages.figl`, driven through
     // every action of the built `fig` (`tools/cli-lang-check.sh`). The C

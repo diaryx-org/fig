@@ -211,6 +211,143 @@ pub fn writeCanonical(writer: anytype, raw: []const u8) !void {
     }
 }
 
+/// What a multi-digit integer led by a zero (`0755`) means where it was
+/// read: decimal 755 to YAML 1.2 (and to `writeCanonical`), octal 493 to YAML
+/// 1.1. `unknown` when the reader's dialect is not to hand.
+pub const LeadingZero = enum { decimal, octal, unknown };
+
+/// A number lexeme as `eqlValue` reads it.
+pub const Lexeme = struct {
+    raw: []const u8,
+    float: bool,
+    leading_zero: LeadingZero = .unknown,
+};
+
+/// Whether two number lexemes spell the same value, whatever their source
+/// formats: what `fig patch` asks before it rewrites a number, so that a
+/// value the patch and the target agree on keeps the target's spelling.
+///
+/// An integer is its exact mathematical value, read across bases (`0x1F`,
+/// `0o37`, `0b11111`), signs, `_` separators and digits past 64 bits. A float
+/// is its exact decimal value, so `1.50` is `1.5` and `1e3` is `1000.0`, but two
+/// lexemes that round to one double while differing in the digits written are
+/// different. A non-finite float equals one of the same kind in any format's
+/// spelling, a NaN included: the question is whether a rewrite would change
+/// the document, not IEEE's. `-0.0` is not `0.0`; an integer has no negative
+/// zero, so `-0` is `0`.
+///
+/// An integer never equals a float, `1` and `1.0` included: YAML and TOML type
+/// them apart, so a patch that turns one into the other changes the document.
+///
+/// A lexeme this cannot read for certain is compared by its bytes alone,
+/// which can only ever report a real change as one: a leading-zero integer
+/// whose `LeadingZero` is `unknown`, a YAML 1.1 sexagesimal (`1:30`), and
+/// anything else outside these spellings or too long for its buffers.
+pub fn eqlValue(a: Lexeme, b: Lexeme) bool {
+    if (a.float != b.float) return false;
+    if (std.mem.eql(u8, a.raw, b.raw)) return true;
+    const x_nf = nonFinite(a.raw);
+    const y_nf = nonFinite(b.raw);
+    if (x_nf != null or y_nf != null) return x_nf == y_nf;
+
+    var a_buf: [512]u8 = undefined;
+    var b_buf: [512]u8 = undefined;
+    const x = Exact.read(a, &a_buf) orelse return false;
+    const y = Exact.read(b, &b_buf) orelse return false;
+    if (x.digits.len == 0 and y.digits.len == 0) return !a.float or x.negative == y.negative;
+    return x.negative == y.negative and x.exponent == y.exponent and std.mem.eql(u8, x.digits, y.digits);
+}
+
+/// A finite number's exact value: `digits` × 10^`exponent`, with neither a
+/// leading nor a trailing zero in `digits`, so equal values read equal. Zero
+/// is empty `digits`.
+const Exact = struct {
+    negative: bool,
+    digits: []const u8,
+    exponent: i64,
+
+    /// `raw`'s value, its digits written into `buf`; null for a lexeme
+    /// `eqlValue` compares by bytes instead.
+    fn read(lexeme: Lexeme, buf: []u8) ?Exact {
+        const float = lexeme.float;
+        var s = lexeme.raw;
+        var negative = false;
+        if (s.len > 0 and (s[0] == '+' or s[0] == '-')) {
+            negative = s[0] == '-';
+            s = s[1..];
+        }
+        if (s.len == 0) return null;
+
+        if (s.len >= 2 and s[0] == '0' and (s[1] | 0x20 == 'x' or s[1] | 0x20 == 'o' or s[1] | 0x20 == 'b')) {
+            if (float) return null;
+            const base: u8 = switch (s[1] | 0x20) {
+                'x' => 16,
+                'o' => 8,
+                else => 2,
+            };
+            const digits = radixToDecimal(s[2..], base, buf) orelse return null;
+            return normalize(negative, digits, 0);
+        }
+
+        const e_idx = std.mem.indexOfAny(u8, s, "eE");
+        const mantissa = if (e_idx) |i| s[0..i] else s;
+        const dot = std.mem.indexOfScalar(u8, mantissa, '.');
+        if (!float) {
+            if (e_idx != null or dot != null) return null;
+            if (s.len > 1 and s[0] == '0') switch (lexeme.leading_zero) {
+                .decimal => {},
+                .octal => return normalize(negative, radixToDecimal(s[1..], 8, buf) orelse return null, 0),
+                .unknown => return null,
+            };
+        }
+
+        var len: usize = 0;
+        var frac_digits: i64 = 0;
+        var any = false;
+        for (mantissa, 0..) |c, i| {
+            if (c == '_' or (dot != null and i == dot.?)) continue;
+            if (!std.ascii.isDigit(c)) return null;
+            if (len == buf.len) return null;
+            buf[len] = c;
+            len += 1;
+            any = true;
+            if (dot != null and i > dot.?) frac_digits += 1;
+        }
+        if (!any) return null;
+
+        var exponent: i64 = 0;
+        if (e_idx) |i| {
+            var e = s[i + 1 ..];
+            var e_negative = false;
+            if (e.len > 0 and (e[0] == '+' or e[0] == '-')) {
+                e_negative = e[0] == '-';
+                e = e[1..];
+            }
+            var e_any = false;
+            for (e) |c| {
+                if (c == '_') continue;
+                if (!std.ascii.isDigit(c)) return null;
+                exponent = std.math.mul(i64, exponent, 10) catch return null;
+                exponent = std.math.add(i64, exponent, c - '0') catch return null;
+                e_any = true;
+            }
+            if (!e_any) return null;
+            if (e_negative) exponent = -exponent;
+        }
+        return normalize(negative, buf[0..len], exponent - frac_digits);
+    }
+
+    fn normalize(negative: bool, digits: []const u8, exponent: i64) Exact {
+        var d = std.mem.trimStart(u8, digits, "0");
+        var e = exponent;
+        while (d.len > 0 and d[d.len - 1] == '0') {
+            d = d[0 .. d.len - 1];
+            e += 1;
+        }
+        return .{ .negative = negative, .digits = d, .exponent = e };
+    }
+};
+
 /// `digits`, in `base` with `_` separators, as decimal digits at the end of
 /// `buf`; null when a digit is not one of `base`'s, there is none, or the
 /// decimal outgrows `buf`. Digit by digit rather than through an integer
@@ -369,4 +506,99 @@ test "writeCanonical" {
     try t.expectEqualStrings("0x", try canon(&buf, "0x"));
     try t.expectEqualStrings("0o89", try canon(&buf, "0o89"));
     try t.expectEqualStrings("0xg", try canon(&buf, "0xg"));
+}
+
+test "eqlValue: an integer is its value, across bases, signs and separators" {
+    const t = std.testing;
+    const int = struct {
+        fn f(a: []const u8, b: []const u8) bool {
+            return eqlValue(.{ .raw = a, .float = false }, .{ .raw = b, .float = false });
+        }
+    }.f;
+    try t.expect(int("0x1F", "31"));
+    try t.expect(int("0X1f", "31"));
+    try t.expect(int("0o37", "0x1f"));
+    try t.expect(int("0b11111", "+31"));
+    try t.expect(int("-0x1F", "-31"));
+    try t.expect(int("1_000_000", "1000000"));
+    try t.expect(int("0xdead_beef", "3735928559"));
+    try t.expect(int("-0", "0"));
+    try t.expect(int("+0", "0x0"));
+    // Past 64 and 128 bits, exact to the last digit.
+    try t.expect(int("12345678901234567890123", "12345678901234567890123"));
+    try t.expect(!int("12345678901234567890123", "12345678901234567890124"));
+    try t.expect(int("0x1_0000_0000_0000_0000", "18446744073709551616"));
+    try t.expect(!int("18446744073709551617", "18446744073709551616"));
+    try t.expect(!int("0x1F", "32"));
+    try t.expect(!int("-31", "31"));
+    try t.expect(!int("1:30", "90"));
+}
+
+test "eqlValue: a leading-zero integer by the dialect that read it" {
+    const t = std.testing;
+    const lz = struct {
+        fn f(a: []const u8, zero: LeadingZero, b: []const u8) bool {
+            return eqlValue(.{ .raw = a, .float = false, .leading_zero = zero }, .{ .raw = b, .float = false });
+        }
+    }.f;
+    try t.expect(lz("0755", .decimal, "755"));
+    try t.expect(!lz("0755", .decimal, "493"));
+    try t.expect(lz("0755", .octal, "493"));
+    try t.expect(lz("-0_755", .octal, "-0o755"));
+    try t.expect(!lz("0755", .octal, "755"));
+    // Not known: only the same bytes agree.
+    try t.expect(lz("0755", .unknown, "0755"));
+    try t.expect(!lz("0755", .unknown, "755"));
+    try t.expect(!lz("0755", .unknown, "493"));
+    // `08` is not octal, so it is not read as one.
+    try t.expect(!lz("08", .octal, "8"));
+}
+
+test "eqlValue: a float is its exact decimal value" {
+    const t = std.testing;
+    const flt = struct {
+        fn f(a: []const u8, b: []const u8) bool {
+            return eqlValue(.{ .raw = a, .float = true }, .{ .raw = b, .float = true });
+        }
+    }.f;
+    try t.expect(flt("1.50", "1.5"));
+    try t.expect(flt("1e3", "1000.0"));
+    try t.expect(flt("1E+3", "1e3"));
+    try t.expect(flt("1.5E+300", "15e299"));
+    try t.expect(flt(".5", "0.5"));
+    try t.expect(flt("5.", "5.0"));
+    try t.expect(flt("+1.5", "1.5"));
+    try t.expect(flt("1_000.5", "1000.5"));
+    try t.expect(flt("1e1_0", "1e10"));
+    try t.expect(flt("0.0", "0e5"));
+    try t.expect(flt("100000000000000000000.0", "1e20"));
+    try t.expect(!flt("1.5", "1.25"));
+    try t.expect(!flt("-1.5", "1.5"));
+    // One double, two values: the digits the source wrote are the value.
+    try t.expect(!flt("0.1", "0.1000000000000000055511151231257827"));
+    try t.expect(!flt("9007199254740993.0", "9007199254740992.0"));
+    // A signed zero is a different float.
+    try t.expect(!flt("-0.0", "0.0"));
+    try t.expect(flt("-0.0", "-0e0"));
+    try t.expect(flt("+0.0", "0.0"));
+}
+
+test "eqlValue: non-finite floats in every spelling, NaN included" {
+    const t = std.testing;
+    try t.expect(eqlValue(.{ .raw = ".inf", .float = true }, .{ .raw = "Infinity", .float = true }));
+    try t.expect(eqlValue(.{ .raw = "inf", .float = true }, .{ .raw = "+.Inf", .float = true }));
+    try t.expect(eqlValue(.{ .raw = "-inf", .float = true }, .{ .raw = "-Infinity", .float = true }));
+    try t.expect(eqlValue(.{ .raw = "nan", .float = true }, .{ .raw = "NaN", .float = true }));
+    try t.expect(eqlValue(.{ .raw = ".NaN", .float = true }, .{ .raw = "-nan", .float = true }));
+    try t.expect(!eqlValue(.{ .raw = "inf", .float = true }, .{ .raw = "-inf", .float = true }));
+    try t.expect(!eqlValue(.{ .raw = "inf", .float = true }, .{ .raw = "nan", .float = true }));
+    try t.expect(!eqlValue(.{ .raw = "inf", .float = true }, .{ .raw = "1e999999", .float = true }));
+}
+
+test "eqlValue: an integer never equals a float" {
+    const t = std.testing;
+    try t.expect(!eqlValue(.{ .raw = "1", .float = false }, .{ .raw = "1.0", .float = true }));
+    try t.expect(!eqlValue(.{ .raw = "1000", .float = false }, .{ .raw = "1e3", .float = true }));
+    try t.expect(!eqlValue(.{ .raw = "0", .float = false }, .{ .raw = "0.0", .float = true }));
+    try t.expect(!eqlValue(.{ .raw = "1", .float = true }, .{ .raw = "1", .float = false }));
 }

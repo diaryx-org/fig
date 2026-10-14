@@ -486,6 +486,9 @@ pub const Help = struct {
             \\    anything else             -> the patch's value wins
             \\  A value the two files already agree on is not rewritten at all, so
             \\  re-running a patch is a no-op and the diff is only what changed.
+            \\  Agreeing is by value in <file>'s own reading, not by spelling: a
+            \\  patch's 31 leaves <file>'s 0x1F alone, 1.5 its 1.50, "x" its 'x'.
+            \\  An integer never agrees with a float, so 1.0 does replace a 1.
             \\  A container the patch DOES change is re-rendered by the target
             \\  format's printer, so it comes back in that format's house style
             \\  (in YAML, a block collection) rather than the patch's spelling.

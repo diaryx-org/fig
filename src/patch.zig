@@ -23,7 +23,8 @@
 //!     spelling is the printer's; a container the patch leaves alone keeps its
 //!     bytes, flow spelling included.
 //!   * A value the patch and the target already agree on is not spliced at all
-//!     (`nodesEqual`), so re-applying a patch is a no-op on disk rather than a
+//!     (`nodesEqual`, which reads a number by its value, so `31` agrees with
+//!     `0x1F`), so re-applying a patch is a no-op on disk rather than a
 //!     re-render of every value it mentions. This is load-bearing, not an
 //!     optimization: without it a patch that changes one key would rewrite
 //!     every other key it names into fig's spelling of it.
@@ -60,6 +61,7 @@ const std = @import("std");
 const AST = @import("kit").AST;
 const Serialize = @import("serialize.zig");
 const Document = @import("kit").Document;
+const number = @import("kit").number;
 const editor_mod = @import("editor.zig");
 const Runtime = @import("contract/runtime.zig");
 const Diagnostics = @import("diagnostics.zig");
@@ -76,7 +78,7 @@ pub const SeqStrategy = enum {
     /// Append every item of the patch's sequence to the target's.
     append,
     /// Append only the items the target does not already hold — compared
-    /// structurally (`nodesEqual`), not by source text, so `1` and `1` match
+    /// structurally (`nodesEqual`), not by source text, so `1` and `0x1` match
     /// across formats while `1` and `1.0` do not.
     unite,
 };
@@ -287,7 +289,7 @@ fn Walker(comptime Language: type) type {
             if (seq.kind != .sequence) return false;
             var next = seq.kind.sequence;
             while (next) |id| {
-                if (nodesEqual(patch, item_id, &parsed.ast, id)) return true;
+                if (nodesEqualWith(patch, item_id, &parsed.ast, id, .of(self.target))) return true;
                 next = parsed.ast.node(id).next_sibling;
             }
             return false;
@@ -298,7 +300,7 @@ fn Walker(comptime Language: type) type {
             // keeps a patch's diff the size of what it actually changes.
             if (target) |t| {
                 const parsed = try self.editor.getParsed();
-                if (nodesEqual(patch, id, &parsed.ast, t.id)) {
+                if (nodesEqualWith(patch, id, &parsed.ast, t.id, .of(self.target))) {
                     self.stats.unchanged += 1;
                     return;
                 }
@@ -466,24 +468,69 @@ fn Walker(comptime Language: type) type {
 /// question the merge asks: "would splicing this change what the document
 /// means?"
 ///
-/// Numbers compare by their source lexeme, not by numeric value: `1` and `1.0`
-/// are different bytes, so splicing one over the other IS a change, and
-/// reporting them equal would silently drop an edit the caller asked for.
+/// A number compares by its value, not its lexeme (`number.eqlValue`): a
+/// target's `0x1F` agrees with a patch's `31`, and `1.50` with `1.5`, which is
+/// what lets a patch that came through JSON (`fig convert -o json | jq | fig
+/// patch`) leave every number it did not change in the target's spelling. An
+/// integer never agrees with a float, `1` with `1.0` included, and a JSON5
+/// `Infinity` is the float it spells. Strings, booleans and nulls already
+/// reach here as values, so `'debug'` is `debug` and `~` is `null`: what the
+/// target's dialect read them as, not how it spelled them.
+///
+/// A leading-zero integer (`0755`) means what only its dialect can say, so
+/// here it agrees only with the same bytes; `nodesEqualWith` is told.
 pub fn nodesEqual(a: *const AST, a_id: Id, b: *const AST, b_id: Id) bool {
+    return nodesEqualWith(a, a_id, b, b_id, .{});
+}
+
+/// `nodesEqual`, told what a leading-zero integer means in each document.
+/// `Zeros.of` says it for a target.
+pub fn nodesEqualWith(a: *const AST, a_id: Id, b: *const AST, b_id: Id, zeros: Zeros) bool {
     const x = a.node(a_id).kind;
     const y = b.node(b_id).kind;
+    if (numberOf(x)) |p| if (numberOf(y)) |q| return number.eqlValue(
+        .{ .raw = p.raw, .float = p.kind == .float, .leading_zero = zeros.a },
+        .{ .raw = q.raw, .float = q.kind == .float, .leading_zero = zeros.b },
+    );
     if (std.meta.activeTag(x) != std.meta.activeTag(y)) return false;
     return switch (x) {
         .null_ => true,
         .boolean => |v| v == y.boolean,
         .string => |v| std.mem.eql(u8, v, y.string),
-        .number => |v| v.eql(y.number),
+        .number => unreachable, // compared by value above
         .extended => |v| v.eql(y.extended),
         .alias => |v| std.mem.eql(u8, v, y.alias),
-        .keyvalue => |kv| nodesEqual(a, kv.key, b, y.keyvalue.key) and
-            nodesEqual(a, kv.value, b, y.keyvalue.value),
-        .sequence => |first| childrenEqual(a, first, b, y.sequence),
-        .mapping => |first| childrenEqual(a, first, b, y.mapping),
+        .keyvalue => |kv| nodesEqualWith(a, kv.key, b, y.keyvalue.key, zeros) and
+            nodesEqualWith(a, kv.value, b, y.keyvalue.value, zeros),
+        .sequence => |first| childrenEqual(a, first, b, y.sequence, zeros),
+        .mapping => |first| childrenEqual(a, first, b, y.mapping, zeros),
+    };
+}
+
+/// What a leading-zero integer means in `nodesEqualWith`'s `a` and in its `b`.
+pub const Zeros = struct {
+    a: number.LeadingZero = .unknown,
+    b: number.LeadingZero = .unknown,
+
+    /// A patch, whose dialect `apply` is not told, against `target`. YAML
+    /// 1.1 reads `0755` as octal; every other format fig edits either has no
+    /// such integer or reads it as decimal, as `number.writeCanonical` does.
+    pub fn of(target: Target) Zeros {
+        const yaml_1_1 = switch (target) {
+            .language => |e| std.mem.eql(u8, e.name, "yaml-1.1"),
+            .canonical => false,
+        };
+        return .{ .b = if (yaml_1_1) .octal else .decimal };
+    }
+};
+
+/// The number `kind` holds: a number, or a JSON5 non-finite one, which rides
+/// in an extended scalar because no JSON number can hold it.
+fn numberOf(kind: AST.Node.Kind) ?AST.Node.Kind.Number {
+    return switch (kind) {
+        .number => |n| n,
+        .extended => |e| if (e.kind == .number_special) .{ .raw = e.text, .kind = .float } else null,
+        else => null,
     };
 }
 
@@ -492,11 +539,11 @@ pub fn nodesEqual(a: *const AST, a_id: Id, b: *const AST, b_id: Id) bool {
 /// is a different set of BYTES — and since the merge recurses into a mapping
 /// it finds on both sides, this only ever compares mappings it is about to
 /// splice whole anyway.
-fn childrenEqual(a: *const AST, a_first: ?Id, b: *const AST, b_first: ?Id) bool {
+fn childrenEqual(a: *const AST, a_first: ?Id, b: *const AST, b_first: ?Id, zeros: Zeros) bool {
     var p = a_first;
     var q = b_first;
     while (p != null and q != null) {
-        if (!nodesEqual(a, p.?, b, q.?)) return false;
+        if (!nodesEqualWith(a, p.?, b, q.?, zeros)) return false;
         p = a.node(p.?).next_sibling;
         q = b.node(q.?).next_sibling;
     }
@@ -764,8 +811,8 @@ test "nodesEqual compares structure, not spelling or trivia" {
 
     try t.expect(nodesEqual(&ydoc.ast, ydoc.ast.root, &jdoc.ast, jdoc.ast.root));
 
-    // A different lexeme for the same number is a different value here, since
-    // splicing it would change the file.
+    // An integer and a float are different values, even equal ones: in YAML
+    // or TOML, splicing one over the other changes the type.
     var jdoc2 = try testParse(t.allocator, "json", "{\"a\": [1.0, \"x\"]}");
     defer jdoc2.deinit(t.allocator);
     try t.expect(!nodesEqual(&ydoc.ast, ydoc.ast.root, &jdoc2.ast, jdoc2.ast.root));
@@ -789,4 +836,113 @@ test "a patch value the target cannot hold where it lands is refused, not splice
     const out = try patchForTest(t.allocator, "dotenv", "yaml", "a=1\n", "b: 2\n", .{});
     defer t.allocator.free(out);
     try t.expectEqualStrings("a=1\nb=2\n", out);
+}
+
+test "a number the target spells another way is left as the target spells it" {
+    if (comptime !(build_options.lang_yaml and build_options.lang_toml and build_options.lang_json)) return error.SkipZigTest;
+    const t = std.testing;
+
+    // What `fig convert -o json | jq | fig patch` hands back: every number in
+    // decimal, and only `n` changed.
+    {
+        const target = "hex: 0x1F\noct: 0o17\nratio: 1.50\nexp: 1e3\nplus: +5\ndot: .5\nn: 1\n";
+        const out = try patchForTest(t.allocator, "yaml", "json", target,
+            \\{"hex": 31, "oct": 15, "ratio": 1.5, "exp": 1000.0, "plus": 5, "dot": 0.5, "n": 2}
+        , .{});
+        defer t.allocator.free(out);
+        try t.expectEqualStrings("hex: 0x1F\noct: 0o17\nratio: 1.50\nexp: 1e3\nplus: +5\ndot: .5\nn: 2\n", out);
+    }
+    {
+        const target = "hex = 0xdead_beef\noct = 0o755\nbin = 0b1010\nsep = 1_000_000\nexp = 1E+3\nfsep = 1_000.5\ninf = -inf\nnan = nan\nn = 1\n";
+        const out = try patchForTest(t.allocator, "toml", "yaml", target,
+            \\{hex: 3735928559, oct: 493, bin: 10, sep: 1000000, exp: 1000.0, fsep: 1000.50, inf: -.inf, nan: .NaN, n: 2}
+            \\
+        , .{});
+        defer t.allocator.free(out);
+        try t.expectEqualStrings("hex = 0xdead_beef\noct = 0o755\nbin = 0b1010\nsep = 1_000_000\nexp = 1E+3\nfsep = 1_000.5\ninf = -inf\nnan = nan\nn = 2\n", out);
+    }
+    {
+        // JSON5's non-finite numbers are extended scalars, not numbers; they
+        // still agree with the float they spell.
+        const target = "{hex: 0X1f, plus: +5, dot: 5., inf: Infinity, nan: NaN, n: 1}\n";
+        const out = try patchForTest(t.allocator, "json5", "yaml", target,
+            \\{hex: 31, plus: 5, dot: 5.0, inf: .inf, nan: .nan, n: 2}
+            \\
+        , .{});
+        defer t.allocator.free(out);
+        try t.expectEqualStrings("{hex: 0X1f, plus: +5, dot: 5., inf: Infinity, nan: NaN, n: 2}\n", out);
+    }
+}
+
+test "an integer and a float never agree, so a patch can change one to the other" {
+    if (comptime !(build_options.lang_yaml and build_options.lang_toml and build_options.lang_json)) return error.SkipZigTest;
+    const t = std.testing;
+
+    // TOML types `1` and `1.0` apart; so does YAML. The patch asked for a
+    // float, and keeping the integer would drop that.
+    {
+        const out = try patchForTest(t.allocator, "toml", "json", "a = 1\nb = 1e3\n", "{\"a\": 1.0, \"b\": 1000}", .{});
+        defer t.allocator.free(out);
+        try t.expectEqualStrings("a = 1.0\nb = 1000\n", out);
+    }
+    {
+        const out = try patchForTest(t.allocator, "yaml", "json", "a: 1.0\n", "{\"a\": 1}", .{});
+        defer t.allocator.free(out);
+        try t.expectEqualStrings("a: 1\n", out);
+    }
+}
+
+test "numbers agree only to the precision the source wrote" {
+    if (comptime !(build_options.lang_yaml and build_options.lang_json)) return error.SkipZigTest;
+    const t = std.testing;
+
+    const target = "{\"big\": 12345678901234567890123, \"tenth\": 0.1, \"zero\": -0.0}";
+    {
+        // Beyond 64 bits, and two decimals that round to one double: each a
+        // real change, never dropped.
+        const out = try patchForTest(t.allocator, "json", "json", target,
+            \\{"big": 12345678901234567890124, "tenth": 0.1000000000000000055511151231257827, "zero": 0.0}
+        , .{});
+        defer t.allocator.free(out);
+        try t.expectEqualStrings("{\"big\": 12345678901234567890124, \"tenth\": 0.1000000000000000055511151231257827, \"zero\": 0.0}", out);
+    }
+    {
+        const out = try patchForTest(t.allocator, "json", "yaml", target, "{big: 0x29D42B64E76714244CB, tenth: 1e-1, zero: -0e0}\n", .{});
+        defer t.allocator.free(out);
+        try t.expectEqualStrings(target, out);
+    }
+}
+
+test "a string, boolean or null the target spells another way is left alone" {
+    if (comptime !(build_options.lang_yaml and build_options.lang_json)) return error.SkipZigTest;
+    const t = std.testing;
+
+    const target = "a: \"debug\"\nb: 'debug'\nc: debug\nd: \"caf\\u00e9\"\ne: True\nf: ~\ng: Null\nh: yes\n";
+    const out = try patchForTest(t.allocator, "yaml", "json", target,
+        \\{"a": "debug", "b": "debug", "c": "debug", "d": "café", "e": true, "f": null, "g": null, "h": true}
+    , .{});
+    defer t.allocator.free(out);
+    // `yes` is a string in YAML 1.2, so `true` changes it.
+    try t.expectEqualStrings("a: \"debug\"\nb: 'debug'\nc: debug\nd: \"caf\\u00e9\"\ne: True\nf: ~\ng: Null\nh: true\n", out);
+}
+
+test "a YAML 1.1 target agrees by its own dialect's reading" {
+    if (comptime !(build_options.lang_yaml and build_options.lang_json)) return error.SkipZigTest;
+    const t = std.testing;
+
+    const target = "flag: yes\nsep: 1_000\nbin: 0b1010\nmode: 0755\n";
+    const out = try patchForTest(t.allocator, "yaml-1.1", "json", target,
+        \\{"flag": true, "sep": 1000, "bin": 10, "mode": 493}
+    , .{});
+    defer t.allocator.free(out);
+    // `yes` is 1.1's `true`, and `0755` its octal 493.
+    try t.expectEqualStrings(target, out);
+
+    // The same `0755` is decimal 755 to YAML 1.2, so 493 changes it there.
+    const out_1_2 = try patchForTest(t.allocator, "yaml", "json", "mode: 0755\n", "{\"mode\": 493}", .{});
+    defer t.allocator.free(out_1_2);
+    try t.expectEqualStrings("mode: 493\n", out_1_2);
+    const same_1_2 = try patchForTest(t.allocator, "yaml", "json", "mode: 0755\n", "{\"mode\": 755}", .{});
+    defer t.allocator.free(same_1_2);
+    try t.expectEqualStrings("mode: 0755\n", same_1_2);
 }

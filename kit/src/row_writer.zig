@@ -237,28 +237,25 @@ pub fn finish(self: RowWriter, root: Node.Id) Allocator.Error!void {
     @memset(place, none);
     var stack: std.ArrayList(struct { id: u32, parent: u32 }) = .empty;
     defer stack.deinit(a);
-    var kids: std.ArrayList(u32) = .empty;
-    defer kids.deinit(a);
     var n: usize = 0;
     var in_place = true;
     try stack.append(a, .{ .id = root, .parent = none });
+    // A child's next sibling goes on the stack before its own first child,
+    // so the stack pops a subtree whole before the sibling after it.
     while (stack.pop()) |item| {
+        if (item.parent != none) {
+            const sibling = rows[item.id].next_sibling;
+            if (sibling != none) try stack.append(a, .{ .id = sibling, .parent = item.parent });
+        }
         if (place[item.id] != none) continue; // a node linked twice is written once
         place[item.id] = @intCast(n);
         order[n] = item.id;
         if (item.id != n) in_place = false;
         rows[item.id].parent = item.parent;
         n += 1;
-        kids.clearRetainingCapacity();
-        var c = rows[item.id].first_child;
-        if (table.Kind.isContainer(rows[item.id].kind)) {
-            while (c != none) : (c = rows[c].next_sibling) try kids.append(a, c);
-        }
-        var k = kids.items.len;
-        while (k > 0) {
-            k -= 1;
-            try stack.append(a, .{ .id = kids.items[k], .parent = item.id });
-        }
+        const first = rows[item.id].first_child;
+        if (table.Kind.isContainer(rows[item.id].kind) and first != none)
+            try stack.append(a, .{ .id = first, .parent = item.id });
     }
     if (in_place and n == rows.len) {
         // Parents name rows that did not move.

@@ -1268,6 +1268,30 @@ test "a tag is read by its resolution, or by its text when the language left it 
     try testing.expectEqualStrings("!custom", built.textOf(built.tags.items[1].text).?);
 }
 
+test "a tree whose rows are out of pre-order still prints from a table in pre-order" {
+    // A parse's rows are already the walk's, and are copied as they
+    // stand; a tree built otherwise — here its root last — is walked.
+    const nodes = [_]AST.Node{
+        .{ .id = 0, .kind = .{ .string = "a" } },
+        .{ .id = 1, .kind = .{ .number = .{ .raw = "1", .kind = .integer } } },
+        .{ .id = 2, .kind = .{ .keyvalue = .{ .key = 0, .value = 1 } } },
+        .{ .id = 3, .kind = .{ .mapping = 2 } },
+    };
+    var ast = try AST.fromNodes(testing.allocator, 3, &nodes);
+    defer ast.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const built = try documentToTable(arena.allocator(), &ast, ast.root);
+    const kinds = [_]u8{ TK.mapping, TK.keyvalue, TK.string, TK.int };
+    const parents = [_]u32{ table.none, 0, 1, 1 };
+    try testing.expectEqual(kinds.len, built.rows.items.len);
+    for (built.rows.items, kinds, parents) |got, kind, parent| {
+        try testing.expectEqual(kind, got.kind);
+        try testing.expectEqual(parent, got.parent);
+    }
+    try testing.expectEqualStrings("a", built.textOf(built.rows.items[2].text).?);
+}
+
 test "a tag directive travels with the rows, and only a whole document's print gets it back" {
     // `!e!foo` is legal only in a document declaring `!e!`, so a twin of
     // YAML that read the `%TAG` line has to hand it over for the printer

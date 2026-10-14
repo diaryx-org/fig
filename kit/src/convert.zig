@@ -76,6 +76,30 @@ fn write(t: *Table, ast: *const AST, doc: ?*const Document, root: Node.Id) Alloc
     // The last child row of each row, while its subtree is being written.
     var last: std.ArrayList(u32) = .empty;
     defer last.deinit(a);
+    // The whole tree is every node, and its texts are at most the source
+    // and the strings it decoded: room for all of it up front, rather
+    // than a copy each time a list outgrows itself.
+    if (root == ast.root) {
+        const n = ast.nodeCount();
+        try t.rows.ensureTotalCapacity(a, n);
+        try ids.ensureTotalCapacity(a, n);
+        try last.ensureTotalCapacity(a, n);
+        try t.strings.ensureTotalCapacity(a, ast.source.len + ast.strings.len);
+        // A tree whose rows are already in an order the walk would keep —
+        // each parent before its children, which follow one another as
+        // their links do — is the table row for row, as a parse's always is.
+        if (doc == null) {
+            try last.resize(a, n);
+            if (try rowsInOrder(t, ast, last.items)) {
+                for (0..n) |i| ids.appendAssumeCapacity(@intCast(i));
+                _ = stack.pop();
+            } else {
+                t.rows.clearRetainingCapacity();
+                t.strings.clearRetainingCapacity();
+            }
+            last.clearRetainingCapacity();
+        }
+    }
     while (stack.pop()) |item| {
         const index: u32 = @intCast(t.rows.items.len);
         const n = ast.node(item.id);
@@ -158,6 +182,43 @@ fn write(t: *Table, ast: *const AST, doc: ?*const Document, root: Node.Id) Alloc
             .kind = m.kind.byte(),
         });
     }
+}
+
+/// `ast`'s rows into the empty table `t` as they stand, when the walk in
+/// `write` would write them in that order: row 0 the root, each later row's
+/// parent before it, and each the first child of its parent or the next
+/// sibling of the one before it. Each row is as `rowOf` makes it, its text
+/// copied to the buffer. False, with `t` partly written, when they are not.
+/// `last` is scratch, a slot per row.
+fn rowsInOrder(t: *Table, ast: *const AST, last: []u32) Allocator.Error!bool {
+    const K = table.Kind;
+    const rows = ast.rows;
+    if (ast.root != 0 or rows.len == 0 or rows[0].parent != no_node) return false;
+    @memset(last, no_node);
+    for (rows, 0..) |r, i| {
+        const index: u32 = @intCast(i);
+        var row: table.Row = .{ .kind = r.kind, .parent = r.parent };
+        if (i > 0) {
+            const p = r.parent;
+            if (p == no_node or p >= index) return false;
+            const linked = if (last[p] != no_node) rows[last[p]].next_sibling else rows[p].first_child;
+            if (linked != index) return false;
+            if (last[p] != no_node) t.rows.items[last[p]].next_sibling = index else t.rows.items[p].first_child = index;
+            last[p] = index;
+        }
+        switch (r.kind) {
+            K.null_, K.false_, K.true_, K.sequence, K.mapping, K.keyvalue => {},
+            else => row.text = try t.addString(ast.textOf(r.text) orelse ""),
+        }
+        try t.rows.append(t.allocator, row);
+    }
+    // Every child the links name was reached in order: a row with no child
+    // names none, and a last child links nowhere further.
+    for (rows, 0..) |r, i| {
+        const tail = if (last[i] == no_node) r.first_child else rows[last[i]].next_sibling;
+        if (tail != no_node) return false;
+    }
+    return true;
 }
 
 fn rowOf(t: *Table, ast: *const AST, n: Node, parent: u32) Allocator.Error!table.Row {

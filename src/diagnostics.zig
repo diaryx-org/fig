@@ -148,7 +148,7 @@ pub const Options = struct {
 /// comment, it declared nothing about is its own, and not reported.
 pub fn analyze(arena: Allocator, ast: *const AST, root_id: AST.Node.Id, target: Target, options: Options) Allocator.Error![]Warning {
     var c = Collector{ .ast = ast, .arena = arena, .target = target, .options = options };
-    try c.walk(root_id, "", options.depth);
+    try c.walk(root_id, options.depth);
     return c.warnings.toOwnedSlice(arena);
 }
 
@@ -173,9 +173,35 @@ const Collector = struct {
     target: Target,
     options: Options,
     warnings: std.ArrayList(Warning) = .empty,
+    /// The path to the node being visited, a segment per level. Spelled
+    /// out (`here`) only for a warning, since most walks raise none.
+    trail: std.ArrayList(Segment) = .empty,
+
+    const Segment = union(enum) { key: AST.Node.Id, index: usize };
 
     fn add(self: *Collector, w: Warning) Allocator.Error!void {
-        try self.warnings.append(self.arena, w);
+        var with_path = w;
+        with_path.path = try self.here();
+        try self.warnings.append(self.arena, with_path);
+    }
+
+    /// `trail` as a path: `a.b[1].c`, or `""` at the root. A non-string
+    /// key shows as `?` (only its value can be a loss target, so the key
+    /// text is a hint).
+    fn here(self: *const Collector) Allocator.Error![]const u8 {
+        var out: std.Io.Writer.Allocating = .init(self.arena);
+        for (self.trail.items, 0..) |seg, i| switch (seg) {
+            .key => |id| {
+                if (i > 0) out.writer.writeByte('.') catch return error.OutOfMemory;
+                const name = switch (self.ast.node(id).kind) {
+                    .string => |x| x,
+                    else => "?",
+                };
+                out.writer.writeAll(name) catch return error.OutOfMemory;
+            },
+            .index => |n| out.writer.print("[{d}]", .{n}) catch return error.OutOfMemory,
+        };
+        return out.toOwnedSlice();
     }
 
     /// Visit one node: check its own value + comments, then recurse into a
@@ -185,35 +211,37 @@ const Collector = struct {
     /// — used by `valueLoss`'s INI arm, whose capability depends on nesting
     /// depth (root + one level of `[section]`s are fine; deeper is not) and
     /// not just root-vs-not like every other format needs.
-    fn walk(self: *Collector, id: AST.Node.Id, path: []const u8, depth: usize) Allocator.Error!void {
-        try self.checkComments(id, path);
-        try self.checkValue(id, path, depth);
+    fn walk(self: *Collector, id: AST.Node.Id, depth: usize) Allocator.Error!void {
+        try self.checkComments(id);
+        try self.checkValue(id, depth);
         switch (self.ast.node(id).kind) {
             .mapping => |first| {
                 var child = first;
                 while (child) |cid| : (child = self.ast.node(cid).next_sibling) {
                     const kv = self.ast.node(cid).kind.keyvalue;
-                    const child_path = try self.keyPath(path, kv.key);
+                    try self.trail.append(self.arena, .{ .key = kv.key });
                     // A mapping entry's leading comment binds to its KEY node; its
                     // trailing/value losses ride the value node (checked in walk).
-                    try self.checkComments(kv.key, child_path);
-                    try self.walk(kv.value, child_path, depth + 1);
+                    try self.checkComments(kv.key);
+                    try self.walk(kv.value, depth + 1);
+                    _ = self.trail.pop();
                 }
             },
             .sequence => |first| {
                 var child = first;
                 var i: usize = 0;
                 while (child) |cid| : (child = self.ast.node(cid).next_sibling) {
-                    const child_path = try indexPath(self.arena, path, i);
+                    try self.trail.append(self.arena, .{ .index = i });
                     i += 1;
-                    try self.walk(cid, child_path, depth + 1);
+                    try self.walk(cid, depth + 1);
+                    _ = self.trail.pop();
                 }
             },
             else => {},
         }
     }
 
-    fn checkValue(self: *Collector, id: AST.Node.Id, path: []const u8, depth: usize) Allocator.Error!void {
+    fn checkValue(self: *Collector, id: AST.Node.Id, depth: usize) Allocator.Error!void {
         const kind = self.ast.node(id).kind;
         const loss = switch (self.target) {
             .canonical => null,
@@ -221,10 +249,10 @@ const Collector = struct {
         } orelse return;
         // Under lossless, unrepresentable values are enveloped, not lost.
         if (self.options.lossless) return;
-        try self.add(.{ .code = loss.code, .cause = .format_limitation, .path = path, .note = loss.note });
+        try self.add(.{ .code = loss.code, .cause = .format_limitation, .path = "", .note = loss.note });
     }
 
-    fn checkComments(self: *Collector, id: AST.Node.Id, path: []const u8) Allocator.Error!void {
+    fn checkComments(self: *Collector, id: AST.Node.Id) Allocator.Error!void {
         const nc = self.ast.comments(id);
         if (nc.isEmpty()) return;
         // An explicit `strip_comments` is the user asking for the drop: that's the
@@ -232,7 +260,7 @@ const Collector = struct {
         // the comment (a consumer filtering out `explicit_option` then correctly
         // stays silent — it's not a surprising loss).
         if (self.options.strip_comments) {
-            try self.add(.{ .code = .comment_dropped, .cause = .explicit_option, .path = path });
+            try self.add(.{ .code = .comment_dropped, .cause = .explicit_option, .path = "" });
             return;
         }
         // Otherwise, a format with no comment syntax here drops it outright.
@@ -244,29 +272,14 @@ const Collector = struct {
             .language => |e| declaredComments(e, self.options.pretty) orelse return,
         };
         if (!emitted) {
-            try self.add(.{ .code = .comment_dropped, .cause = .format_limitation, .path = path });
+            try self.add(.{ .code = .comment_dropped, .cause = .format_limitation, .path = "" });
             return;
         }
         if (!block and hasBlock(nc)) {
-            try self.add(.{ .code = .comment_style_degraded, .cause = .format_limitation, .path = path });
+            try self.add(.{ .code = .comment_style_degraded, .cause = .format_limitation, .path = "" });
         }
     }
-
-    /// `parent.key` (or `key` at the root). A non-string key shows as `?` (only
-    /// its value can be a loss target, so the key text is a hint).
-    fn keyPath(self: *Collector, parent: []const u8, key_id: AST.Node.Id) Allocator.Error![]const u8 {
-        const name = switch (self.ast.node(key_id).kind) {
-            .string => |s| s,
-            else => "?",
-        };
-        if (parent.len == 0) return self.arena.dupe(u8, name);
-        return std.fmt.allocPrint(self.arena, "{s}.{s}", .{ parent, name });
-    }
 };
-
-fn indexPath(arena: Allocator, parent: []const u8, i: usize) Allocator.Error![]const u8 {
-    return std.fmt.allocPrint(arena, "{s}[{d}]", .{ parent, i });
-}
 
 // ── Capability table ────────────────────────────────────────────────────────
 //

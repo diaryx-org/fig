@@ -4117,7 +4117,95 @@ pub fn Editor(comptime Language: type) type {
             }
             const last_end = entryBlockEnd(source, spans.items[spans.items.len - 1]);
             tileBlocks(blocks.items, last_end);
-            try self.reorderBlocks(blocks.items[0].start, last_end, blocks.items, order);
+            const perm = try fullOrder(self.allocator, order, blocks.items.len);
+            defer self.allocator.free(perm);
+            var arena: std.heap.ArenaAllocator = .init(self.allocator);
+            defer arena.deinit();
+            const edits = try self.reorderEdits(arena.allocator(), parsed, node, perm);
+            if (edits.len == 0) return self.reorderBlocks(blocks.items[0].start, last_end, blocks.items, perm);
+            // The whole source is rewritten, since an item may be addressed
+            // on a line outside the blocks (figl's `ys[0]` written again
+            // after `ys[1]`).
+            var region: std.ArrayList(u8) = .empty;
+            defer region.deinit(self.allocator);
+            var block: std.ArrayList(u8) = .empty;
+            defer block.deinit(self.allocator);
+            for (perm) |i| {
+                block.clearRetainingCapacity();
+                try appendEdited(&block, self.allocator, source, blocks.items[i].start, blocks.items[i].end, edits);
+                try appendBlockSep(&region, self.allocator, block.items, self.syntax());
+            }
+            var out: std.ArrayList(u8) = .empty;
+            defer out.deinit(self.allocator);
+            try appendEdited(&out, self.allocator, source, 0, blocks.items[0].start, edits);
+            try out.appendSlice(self.allocator, region.items);
+            try appendEdited(&out, self.allocator, source, last_end, source.len, edits);
+            try self.replaceAtSpan(Span.init(0, source.len), out.items);
+        }
+
+        /// What keeps each item of the block sequence `seq` addressing
+        /// itself once its items stand in the order `perm` (`perm[k]` the
+        /// item that goes to position `k`), as rewrites in source order,
+        /// their text in `arena`; `followingEdits` is the delete's. Every
+        /// other format records no item path and gets none.
+        ///
+        /// An item addressed by its index takes its new one at each `index`
+        /// mention: figl's index is a position (spec § 7.4), and the lines
+        /// saying `xs[1]` move with the item now at 0. A line that appends
+        /// an item (figl's `a[]`, or the `+` that repeats it, spec § 8) is
+        /// how the position it stands in is written, so the item that comes
+        /// to stand there is written with it: the first item of a `+` chain
+        /// carries the header and the rest a `+`, whichever item is first.
+        /// The item's trailing comment stays with it, in its column.
+        fn reorderEdits(self: *const Self, arena: std.mem.Allocator, parsed: Document, seq: AST.Node, perm: []const usize) ![]PathEdit {
+            const source = self.source.items;
+            var items: std.ArrayList(AST.Node) = .empty;
+            var it = try parsed.ast.child(&seq);
+            while (it) |item| : (it = parsed.ast.next(&item)) try items.append(arena, item);
+            if (items.items.len != perm.len) return &.{};
+            // Each item's one `append` mention, by its place in the source.
+            const appended = try arena.alloc(?Span, perm.len);
+            for (items.items, appended) |item, *a| {
+                a.* = null;
+                var count: usize = 0;
+                var mentions = parsed.mentionsOf(item.id);
+                while (mentions.next()) |m| if (m.kind == .append) {
+                    a.* = m.span;
+                    count += 1;
+                };
+                if (count > 1) a.* = null;
+            }
+            var edits: std.ArrayList(PathEdit) = .empty;
+            for (perm, 0..) |from, to| {
+                if (from == to) continue;
+                var mentions = parsed.mentionsOf(items.items[from].id);
+                while (mentions.next()) |m| if (m.kind == .index)
+                    try edits.append(arena, .{ .span = m.span, .text = try std.fmt.allocPrint(arena, "{d}", .{to}) });
+                const own = appended[from] orelse continue;
+                const slot = appended[to] orelse continue;
+                const text = source[slot.start..slot.end];
+                if (!std.mem.eql(u8, source[own.start..own.end], text))
+                    try edits.append(arena, try padded(arena, source, own, text));
+            }
+            std.mem.sortUnstable(PathEdit, edits.items, {}, struct {
+                fn lessThan(_: void, a: PathEdit, b: PathEdit) bool {
+                    return a.span.start < b.span.start;
+                }
+            }.lessThan);
+            return edits.items;
+        }
+
+        /// `source[from..to]` appended to `out`, with each of `edits`
+        /// (ascending) that lies inside it written over its span.
+        fn appendEdited(out: *std.ArrayList(u8), allocator: std.mem.Allocator, source: []const u8, from: usize, to: usize, edits: []const PathEdit) !void {
+            var pos = from;
+            for (edits) |edit| {
+                if (edit.span.start < pos or edit.span.end > to) continue;
+                try out.appendSlice(allocator, source[pos..edit.span.start]);
+                try out.appendSlice(allocator, edit.text);
+                pos = edit.span.end;
+            }
+            try out.appendSlice(allocator, source[pos..to]);
         }
 
         /// Splice a block container's region so the entries indexed by `order`

@@ -657,15 +657,48 @@ test "fig delete the first element of a nested `+` chain keeps the next in its c
     try expectFigSource(&whole, "spec.containers[]\n> name = app\nspec.containers[].ports[]  # tls\n> port = 443\nspec.containers[]\n> name = sidecar\n");
 }
 
-// The move took `c[].p[]`'s lines past the `+` that re-runs it, and the `+`
-// would read as a second `c` element: the move guard (`readsBack`) refuses
-// (docs/tasks/figl-move-chains-and-indices.md).
-test "fig moving the first element of a nested `+` chain is refused, not a new container" {
-    const source = "c[]\n> n = a\nc[].p[]\n> x = 1\n+\n> x = 2\n";
-    var ed = try newFigEditor(source);
+// A `+` repeats the header before it (spec § 8), so the position an
+// element stands in is written by its header or its `+`: whichever element
+// comes first takes the header, and its comment stays its own.
+test "fig move an element of a nested `+` chain re-spells the header and the `+`" {
+    var ed = try newFigEditor("c[]\n> n = a\nc[].p[]  # one\n> x = 1\n+\n> x = 2\n");
     defer ed.deinit();
-    try std.testing.expectError(error.EditReadsBackWrong, ed.moveItem(&.{ .{ .key = "c" }, .{ .index = 0 }, .{ .key = "p" } }, 0, 1));
-    try expectFigSource(&ed, source);
+    try ed.moveItem(&.{ .{ .key = "c" }, .{ .index = 0 }, .{ .key = "p" } }, 0, 1);
+    try expectFigSource(&ed, "c[]\n> n = a\nc[].p[]\n> x = 2\n+        # one\n> x = 1\n");
+
+    var chain = try newFigEditor("r[]   # one\n> a = 1\n+     # two\n> a = 2\n+\n> a = 3\n");
+    defer chain.deinit();
+    try chain.reorderItems(&.{.{ .key = "r" }}, &.{ 2, 0, 1 });
+    try expectFigSource(&chain, "r[]\n> a = 3\n+     # one\n> a = 1\n+     # two\n> a = 2\n");
+}
+
+// The kitchen-sink shape: moving the container that holds a nested chain
+// takes the chain with it, and `[]` mid-path still reaches it.
+test "fig move a container holding a nested `+` chain" {
+    var ed = try newFigEditor("c[]\n> n = a\nc[].p[]\n> x = 1\n+\n> x = 2\nc[]\n> n = b\n");
+    defer ed.deinit();
+    try ed.moveItem(&.{.{ .key = "c" }}, 0, 1);
+    try expectFigSource(&ed, "c[]\n> n = b\nc[]\n> n = a\nc[].p[]\n> x = 1\n+\n> x = 2\n");
+}
+
+// An index is a position (spec § 7.4): the lines that address an element
+// take its new index, wherever they are written.
+test "fig move an index-addressed element renumbers every line that addresses it" {
+    var ed = try newFigEditor("xs[0] = a\nxs[1] = b  # b\n");
+    defer ed.deinit();
+    try ed.moveItem(&.{.{ .key = "xs" }}, 0, 1);
+    try expectFigSource(&ed, "xs[0] = b  # b\nxs[1] = a\n");
+
+    // `ys[0]` is written again after `ys[1]`, outside the moved lines.
+    var twice = try newFigEditor("ys[0]\n> k = 1\nys[1]\n> k = 2\nys[0]\n> j = 3\n");
+    defer twice.deinit();
+    try twice.moveItem(&.{.{ .key = "ys" }}, 1, 0);
+    try expectFigSource(&twice, "ys[0]\n> k = 2\nys[1]\n> k = 1\nys[1]\n> j = 3\n");
+
+    var dotted = try newFigEditor("clusters[0].name = alpha\nclusters[0].size = 3\nclusters[1].name = beta\nclusters[1].size = 5\n");
+    defer dotted.deinit();
+    try dotted.reorderItems(&.{.{ .key = "clusters" }}, &.{1});
+    try expectFigSource(&dotted, "clusters[0].name = beta\nclusters[0].size = 5\nclusters[1].name = alpha\nclusters[1].size = 3\n");
 }
 
 // An element's own keys come before a header that opens a child of it; a

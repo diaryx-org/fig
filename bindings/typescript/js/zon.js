@@ -47,6 +47,7 @@
 // Every offset is a byte offset.
 import * as fig from "@diaryx/fig/kit";
 import * as G from "@diaryx/fig/kit/grammar";
+import * as N from "@diaryx/fig/kit/number";
 
 // ── bytes ─────────────────────────────────────────────────────────────────
 // The lexical rules read bytes by offset rather than moving the scanner, so
@@ -481,7 +482,8 @@ function writeNode(w, row, depth) {
   if (k === "null") w.put("null");
   else if (k === "bool") w.put(row.text);
   else if (k === "int" && row.ext_kind === "char_literal") writeChar(w, row.text);
-  else if (k === "int" || k === "float") w.put(row.text);
+  // A non-finite float from another format is respelled in ZON's words.
+  else if (k === "int" || k === "float") w.put(N.PLAIN_NON_FINITE[N.nonFinite(row.text)] ?? row.text);
   else if (k === "string" && row.ext_kind === "enum_literal") writeName(w, row.text ?? "");
   else if (k === "string") w.put('"', escaped(row.text ?? ""), '"');
   else if (isContainer(row)) writeContainer(w, row, depth);

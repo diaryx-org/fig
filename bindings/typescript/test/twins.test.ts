@@ -233,6 +233,17 @@ test("each language converts every fixture to the JSON the compiled format did",
   }
 });
 
+test("each language respells a non-finite float from another format in its own words, as the compiled printers do", () => {
+  const jsonc = formatByName("jsonc")!;
+  assert.equal(convert("a = inf\nb = -inf\nc = nan\n", toml.format!, yaml.format!), "a: .inf\nb: -.inf\nc: .nan\n");
+  assert.equal(convert("a: .Inf\nb: -.INF\nc: .NaN\n", yaml.format!, toml.format!), "a = inf\nb = -inf\nc = nan\n");
+  assert.equal(convert("a: [.inf, .nan]\n", yaml.format!, json5.format!), "{\n  a: [\n    Infinity,\n    NaN\n  ]\n}\n");
+  assert.equal(convert("a: -.inf\n", yaml.format!, zon.format!), ".{\n    .a = -inf,\n}\n");
+  // JSON and JSONC have no words for them, and refuse.
+  assert.throws(() => convert("a: .nan\n", yaml.format!, json.format!), /unsupported format/);
+  assert.throws(() => convert("a = inf\n", toml.format!, jsonc), /unsupported format/);
+});
+
 test("figl writes a non-finite float from another format under : float, as the compiled printer does", () => {
   // Bare, figl reads `inf` as a string; the compiled printer wrote this.
   const figl = formatByName("figl")!;

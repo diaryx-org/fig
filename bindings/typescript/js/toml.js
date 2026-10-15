@@ -779,7 +779,9 @@ function tomlSpecial(text) {
 function inlineValue(row) {
   const k = row.kind;
   if (k === "null") throw new Error("TOML has no null; a null value cannot be written");
-  if (k === "bool" || k === "int" || k === "float") return row.text;
+  if (k === "bool") return row.text;
+  // A non-finite float from another format is respelled in TOML's words.
+  if (k === "int" || k === "float") return N.PLAIN_NON_FINITE[N.nonFinite(row.text)] ?? row.text;
   if (k === "string") {
     const ext = row.ext_kind;
     if (ext == null) return basicString(row.text ?? "");

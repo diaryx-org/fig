@@ -12,25 +12,44 @@
 // decimal, the one spelling every format shares. The value is unchanged;
 // only its notation degrades.
 
+import { LanguageError, Refusal } from "@diaryx/fig/helper";
 import * as Z from "./zig.js";
 
 /** The spellings a format reads back as a number. A field left `false`
  *  means that spelling is canonicalized to decimal before it is written:
  *  `hex` (`0x1F`), `octal` (`0o17`), `binary` (`0b1010`), `underscores`
  *  (`1_000`), `leadingZero` (`0755`), `bareDot` (`.5`, `5.`), `plus` (a
- *  leading `+`). */
+ *  leading `+`). `nonFinite` is the format's words for infinity and NaN,
+ *  keyed as `nonFinite(raw)` answers; without it the format has none. */
 export const NONE = Object.freeze({});
+
+/** TOML 1.0's and ZON's words for infinity and NaN. */
+export const PLAIN_NON_FINITE = Object.freeze({ inf: "inf", "-inf": "-inf", nan: "nan" });
 
 /** Strict JSON: none of it. */
 export const JSON = NONE;
 
 /** JSON5's numbers are ES5.1 numeric literals: hex, a leading `+`, and
- *  bare dots — not `0o`/`0b`, `_`, or a leading zero. */
-export const JSON5 = Object.freeze({ hex: true, bareDot: true, plus: true });
+ *  bare dots — not `0o`/`0b`, `_`, or a leading zero — and `Infinity` and
+ *  `NaN`. */
+export const JSON5 = Object.freeze({
+  hex: true,
+  bareDot: true,
+  plus: true,
+  nonFinite: Object.freeze({ inf: "Infinity", "-inf": "-Infinity", nan: "NaN" }),
+});
 
 /** YAML 1.2 core: hex and octal, a bare dot, a leading `+`, and a leading
- *  zero (read as decimal); no `0b` and no `_`, which 1.2 reads as strings. */
-export const YAML_1_2 = Object.freeze({ hex: true, octal: true, leadingZero: true, bareDot: true, plus: true });
+ *  zero (read as decimal); no `0b` and no `_`, which 1.2 reads as strings.
+ *  Infinity and NaN are `.inf`, `-.inf` and `.nan`. */
+export const YAML_1_2 = Object.freeze({
+  hex: true,
+  octal: true,
+  leadingZero: true,
+  bareDot: true,
+  plus: true,
+  nonFinite: Object.freeze({ inf: ".inf", "-inf": "-.inf", nan: ".nan" }),
+});
 
 /** Whether a format that spells `s` reads `raw` back as the same number. */
 export function spellable(raw, s) {
@@ -46,15 +65,24 @@ export function canonical(raw) {
 
 /** Which non-finite float `raw` spells, in any format's words (`inf`,
  *  `.inf`, `Infinity`, `nan`, …, with an optional sign): "inf", "-inf",
- *  "nan", or null when it is a finite number or none. */
+ *  "nan", or null when it is a finite number or none.
+ *  @returns {"inf" | "-inf" | "nan" | null} */
 export function nonFinite(raw) {
   return Z.numberNonFinite(raw);
 }
 
 /** `raw` as a format that spells `s` writes it: itself when spellable,
- *  else canonical. */
+ *  else canonical. A non-finite `raw` is respelled in `s`'s own words, and
+ *  refused (a `LanguageError` with `Refusal.NonFiniteNumber`) when `s` has
+ *  none — the Zig kit's `write`. */
 export function text(raw, s) {
+  const v = nonFinite(raw);
+  if (v !== null) {
+    const names = s?.nonFinite;
+    if (names === undefined) throw new LanguageError("this format has no way to write infinity or NaN", undefined, Refusal.NonFiniteNumber);
+    return names[v];
+  }
   return spellable(raw, s) ? raw : canonical(raw);
 }
 
-export default { NONE, JSON, JSON5, YAML_1_2, spellable, canonical, nonFinite, text };
+export default { NONE, PLAIN_NON_FINITE, JSON, JSON5, YAML_1_2, spellable, canonical, nonFinite, text };

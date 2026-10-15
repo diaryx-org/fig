@@ -41,6 +41,15 @@ test("number: nonFinite reads each format's words", () => {
   assert.equal(N.nonFinite("1e999"), null);
 });
 
+test("number: text respells a non-finite float in the format's words, or refuses it", () => {
+  assert.equal(N.text(".NaN", N.YAML_1_2), ".nan");
+  assert.equal(N.text("-inf", N.YAML_1_2), "-.inf");
+  assert.equal(N.text("+.inf", N.JSON5), "Infinity");
+  assert.equal(N.text("nan", N.JSON5), "NaN");
+  assert.equal(N.PLAIN_NON_FINITE[N.nonFinite("-Infinity")!], "-inf");
+  assert.throws(() => N.text("nan", N.JSON), { name: "LanguageError", code: 6 });
+});
+
 test("datetime: classify and its options", () => {
   assert.equal(DT.classify("1979-05-27T07:32:00Z"), "offset_datetime");
   assert.equal(DT.classify("1979-05-27 07:32:00.999-07:00"), "offset_datetime");

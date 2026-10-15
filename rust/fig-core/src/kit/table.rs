@@ -22,9 +22,12 @@
 //! the table mutably) for its texts to stay in the source rather than be
 //! copied into the buffer.
 //!
-//! The C layout (`extern struct`, the `reserved` padding, `View`'s raw
-//! pointers and `size`) is not ported: a `View` is a struct of slices
-//! borrowing a `Table`.
+//! The rows and side facts are `#[repr(C)]`, laid out as `fig.h`'s
+//! `FigRow`, `FigText` and `FigTable*` records (the C `reserved` bytes are
+//! padding here), so the C ABI (`fig-capi`) hands a language a row or a
+//! list of a `Table` to write in place, as Zig's `extern struct`s are. A
+//! `View` is a struct of slices borrowing a `Table`; its C form, raw
+//! pointers and `size`, is `fig-capi`'s.
 
 use std::sync::Arc;
 
@@ -38,6 +41,7 @@ pub const NONE: u32 = u32::MAX;
 /// set — in the table's string buffer. `len == NONE` is no text at all,
 /// which is not the empty string.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(C)]
 pub struct Text {
     pub off: u32,
     pub len: u32,
@@ -100,6 +104,7 @@ pub const ROW_OPEN: u8 = 1 << 0;
 /// precedes its children, and a keyvalue's two children are its key and
 /// then its value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
 pub struct Row {
     pub kind: u8,
     pub flags: u8,
@@ -151,6 +156,7 @@ macro_rules! fact {
 
 /// An anchor defined on `node`, and where its `&name` is written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
 pub struct Anchor {
     pub node: u32,
     pub start: u32,
@@ -182,6 +188,7 @@ pub const TAG_KIND: u8 = 3;
 /// agrees with that resolution (`!!int` on `1 - 3` does not). Where the
 /// `!tag` is written, or `NONE`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
 pub struct Tag {
     pub node: u32,
     pub start: u32,
@@ -201,6 +208,7 @@ fact!(Tag);
 /// A fact with a span: a block-sequence item's marker, a keyvalue's
 /// separator, a section's header line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(C)]
 pub struct SpanFact {
     pub node: u32,
     pub start: u32,
@@ -211,6 +219,7 @@ fact!(SpanFact);
 /// The bytes a separated sequence writes between two items on one line,
 /// or absent for the dialect's `flow_entry_sep`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(C)]
 pub struct ItemSep {
     pub node: u32,
     pub text: Text,
@@ -226,6 +235,7 @@ pub const COMMENT_BLOCK: u8 = 1;
 /// A comment bound to `node`, in its `slot`, in source order within it; at
 /// most one trailing per node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(C)]
 pub struct Comment {
     pub node: u32,
     pub slot: u8,
@@ -244,6 +254,7 @@ pub const MENTION_APPEND: u8 = 3;
 /// path is written: its index (`MENTION_INDEX`), or the header that
 /// appended it (`MENTION_APPEND`). See `document::MentionKind`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(C)]
 pub struct Mention {
     pub node: u32,
     pub start: u32,
@@ -254,6 +265,7 @@ fact!(Mention);
 
 /// A tag-handle declaration of the document (YAML's `%TAG`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(C)]
 pub struct Directive {
     pub handle: Text,
     pub prefix: Text,
@@ -267,6 +279,7 @@ pub const DIAGNOSTIC_WARNING: u8 = 1;
 /// span — `end` may be `NONE` for a point — a sentence that says what is
 /// wrong and how to fix it, and a few words for the caret's label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
 pub struct Diagnostic {
     pub severity: u8,
     pub start: u32,

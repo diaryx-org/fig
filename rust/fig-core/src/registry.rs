@@ -26,6 +26,7 @@
 //! pub const MAX_ENTRIES: usize = 4096;
 //! pub struct Registry;                       // Registry::new()
 //! pub fn global() -> &'static Registry;      // with the bundle registered
+//! pub fn install_global(registry: Registry) -> bool;   // instead of the bundle (fig-capi)
 //! impl Registry {
 //!     pub fn register(&self, lang: &'static dyn Language) -> Result<i32>;
 //!     pub fn register_with(&self, lang: &'static dyn Language, options: RegisterOptions) -> Result<i32>;
@@ -557,6 +558,15 @@ pub fn global() -> &'static Registry {
         let _ = register_bundle(&r, &bundled_languages());
         r
     })
+}
+
+/// Make `registry` the process-wide one, in place of the bundle `global()`
+/// would register on first use. A host that bundles no language — fig's C
+/// library, whose formats are each registered by the program that links
+/// it — installs an empty one before anything looks a format up. `false`
+/// when the global registry is already settled, and nothing changes.
+pub fn install_global(registry: Registry) -> bool {
+    GLOBAL.set(registry).is_ok()
 }
 
 // ============================================================================

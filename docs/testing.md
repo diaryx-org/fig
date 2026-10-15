@@ -15,7 +15,7 @@ misreading them. Three layers guard that, in increasing order of paranoia:
 | Conformance | [fig-conformance](https://github.com/diaryx-org/fig-conformance) | Do we agree with the format's own spec suite? |
 | Fuzzing | `cargo fuzz` in `fuzz/` | Is there *any* input that breaks us? |
 
-The unit tests run on every push, via `cargo xtask ci`. Fuzzing runs nightly —
+The unit tests run on every push, via `ship ci`. Fuzzing runs nightly —
 see [Fuzzing](#Fuzzing) for why it cannot sensibly run on a pull request.
 
 `ci` also runs the built CLI end to end (`tools/cli-*-check.sh`), every

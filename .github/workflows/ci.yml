@@ -1,8 +1,9 @@
 name: CI
 # Build + test everything on every push/PR, as parallel jobs of one workflow:
 #
-# * check       — `cargo xtask ci`, the one pre-release gate: the workspace's
-# tests, the edit fixtures, the CLI checks and the
+# * check       — `ship ci`, the one pre-release gate: the `job` list in
+# .config/ship.figl — the workspace's tests, the edit
+# fixtures, the CLI checks and the
 # abi/semver/version/vendor/figl guards.
 # * cross       — the `fig` crate builds for each tier-1 target.
 # * typescript  — build + test the TypeScript/npm binding (bindings/typescript).
@@ -22,6 +23,7 @@ on:
 # workflow (every job below), since they now share this one group.
 concurrency: { group: 'ci-${{ github.ref }}', cancel-in-progress: true }
 jobs:
+  # The name is the check's, which predates ship; it runs `ship ci` now.
   check:
     name: Rust — cargo xtask ci
     runs-on: ubuntu-latest
@@ -34,17 +36,18 @@ jobs:
         fetch-depth: 0
     - uses: dtolnay/rust-toolchain@stable
     - uses: Swatinem/rust-cache@v2
-    # The one pre-release gate (docs/VERSIONING.md): the workspace's tests with
-    # every feature on and with each crate's defaults, the edit fixtures, the
-    # CLI checks, and the abi/semver/version/vendor/figl guards. It also folds
-    # in the TypeScript and WASI suites, which skip with a note here, with no
-    # node_modules installed; the `typescript` and `wasi` jobs below run them
-    # for real, in parallel.
+    - run: cargo install --locked --git https://github.com/diaryx-org/ship ship
+    # The one pre-release gate (docs/VERSIONING.md): every job in
+    # .config/ship.figl, in order — the workspace's tests with every feature on
+    # and with each crate's defaults, the abi/semver/version/vendor/figl guards,
+    # the CLI checks and the edit fixtures. It also folds in the TypeScript and
+    # WASI suites, which skip with a note here, with no node_modules installed;
+    # the `typescript` and `wasi` jobs below run them for real, in parallel.
     #
     # The conformance corpora are not here: they live in fig-conformance.
     # Fuzzing has no natural stopping point, so it runs nightly (fuzz.figl)
     # rather than on the critical path.
-    - run: cargo xtask ci
+    - run: ship ci
   # The `fig` crate, its core (`fig-core`, `fig-kit`) and its language crates
   # are pure Rust, so a program on any target builds them with no C toolchain.
   # The `check` job builds for the host; this builds the `fig` crate for each

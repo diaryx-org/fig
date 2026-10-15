@@ -81,7 +81,7 @@ Building fig needs a Rust toolchain (1.88 or newer), not Zig. Every
 | `zig build -D<name>=false` | gone: the CLI carries all ten formats; the C library carries none |
 | `zig build c`, `zig build c-languages` | `cargo rustc -p fig-capi …`, `cargo rustc -p fig-lang-export --features <name> …` (above) |
 | `zig build wasi` | `cargo build --release -p fig-cli --bin fig --target wasm32-wasip1` |
-| `zig build check` | `cargo xtask ci` |
+| `zig build check` | `ship ci` |
 | `zig build version-sync`, `abi-check`, `semver-check`, `check-figl` | `cargo xtask version-sync`, `abi-check`, `semver-check`, `check-figl` |
 | `zig-out/` | `target/` |
 

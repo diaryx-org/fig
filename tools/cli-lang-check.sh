@@ -5,7 +5,7 @@
 # is driven through it — `lang list`, `lang check`, `get` by `--lang` and by
 # extension, `set`, `insert`, `delete`, `comment`, `patch`, `check`, `convert` both
 # ways, `fmt`, a parse error with the helper's message and offset, and a
-# refused helper. Run by `cargo xtask ci` with the built CLI as $1; run by
+# refused helper. Run by `ship ci` with the built CLI as $1; run by
 # hand as `sh tools/cli-lang-check.sh target/debug/fig`.
 #
 # Skips with a note when cargo is absent, the same way the Rust test suite

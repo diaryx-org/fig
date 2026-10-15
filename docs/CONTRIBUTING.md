@@ -20,11 +20,11 @@ fig is Rust throughout, so building and testing it needs only a Rust
 toolchain (see [Building](BUILD.md)). Run the gate a release runs:
 
 ```bash
-cargo xtask ci
+ship ci
 ```
 
-It runs the workspace's tests and every release guard (`cargo xtask help`
-lists them). The TypeScript and WASI suites skip with a note unless Node 24
+It runs the jobs in `.config/ship.figl`: the workspace's tests and every
+release guard (`ship ci --list` lists them; `ship ci <id>` runs one). The TypeScript and WASI suites skip with a note unless Node 24
 and each package's `node_modules` are installed; CI runs them either way.
 
 ## Commit messages

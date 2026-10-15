@@ -1,14 +1,14 @@
 # git-cliff, for every diaryx-org repository.
 #
-# One file, one style. The canonical copy lives beside the shared release tooling
-# in diaryx-org/devtools. fig releases through that tooling (`release`, see
-# docs/VERSIONING.md), and `.config/release.toml` points it at this copy with
+# One file, one style. The canonical copy is carried inside ship
+# (diaryx-org/ship's cliff.toml). fig releases with ship (see
+# docs/VERSIONING.md), and `.config/ship.figl` points it at this copy with
 # `cliff_config`, because fig's tag history needs a pattern of its own. It
 # differs from the canonical file in exactly one line, marked below; keep it
-# that way, and `diff` against devtools/cliff.toml before changing anything else
+# that way, and `diff` against ship's cliff.toml before changing anything else
 # here.
 #
-# The consumer is a program rather than a person: a repo's release tooling
+# The consumer is a program rather than a person: ship
 # regenerates the region between the `git-cliff:begin`/`git-cliff:end` markers
 # inside its changelog's `## Unreleased` section, renders that region once more
 # under the version being cut, and moves it down; where a workflow writes the

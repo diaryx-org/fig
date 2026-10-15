@@ -9,7 +9,7 @@
 //! `std::fs::copy` rather than a shell `cp`, so it runs the same on Windows.
 //!
 //! `vendor-check` verifies that every path the copy reads from or writes into
-//! still exists, copying nothing. `cargo xtask ci` runs it, because the copy
+//! still exists, copying nothing. `ship ci` runs it, because the copy
 //! itself only ever runs at publish time: renaming a file out from under this
 //! list is invisible until a release workflow dies on it, which is exactly how
 //! `fig.md` -> `README.md` once reached CI.

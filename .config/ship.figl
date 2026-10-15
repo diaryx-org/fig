@@ -1,0 +1,176 @@
+# What ship needs to know about fig: its release, and its CI.
+#
+# fig ships its artifacts off one tree — the `fig` CLI, the Rust crates, the
+# C library, `@diaryx/fig`, each language's npm package and `@diaryx/fig-wasi`
+# — and from 5.0.0 they share one version and one `v*` tag
+# (docs/VERSIONING.md). Like twig, the version is decided in the Cargo
+# workspace at the repository root.
+name = fig
+url = https://github.com/diaryx-org/fig
+release_branch = main
+
+# Where the version is decided: `[workspace.package]`'s `version`, the first
+# line of the root manifest that starts with the prefix. The workspace's
+# internal `{ path = …, version = … }` pins and its lockfile follow it.
+manifest = Cargo.toml
+version_prefix = 'version = "'
+cargo_workspace = true
+
+# Everything else the version reaches, which no Cargo-manifest rewrite finds:
+# fig.h's FIG_VERSION_* macros, README.md's frontmatter, the npm packages and
+# their lockfiles (each language's package and its pin on @diaryx/fig among
+# them), and the nushell plugin's path pin on fig and its lockfile's fig
+# crates (the plugin is a workspace of its own, on its own version).
+# `cargo xtask version-sync` copies the workspace's version into each of them
+# (rust/xtask/src/version.rs), and `cargo xtask version-check` — the `version`
+# job below — fails on any that disagrees.
+post_bump = cargo xtask version-sync
+extra_version_files = [
+  bindings/c/include/fig.h,
+  README.md,
+  bindings/typescript/package.json,
+  bindings/typescript/package-lock.json,
+  bindings/wasi/package.json,
+  bindings/wasi/package-lock.json,
+  bindings/nushell/Cargo.toml,
+  bindings/nushell/Cargo.lock,
+  languages/dotenv/package.json,
+  languages/figl/package.json,
+  languages/ini/package.json,
+  languages/json/package.json,
+  languages/nestedtext/package.json,
+  languages/plist/package.json,
+  languages/properties/package.json,
+  languages/toml/package.json,
+  languages/yaml/package.json,
+  languages/zon/package.json,
+]
+
+# fig keeps its own copy of the cliff config, differing from ship's in
+# `tag_pattern` alone: its history carries the four prefixed per-artifact lines
+# from before 5.0.0 (`core/v…`, `cli/v…`, `rust/v…`, `npm/v…`) and three bare
+# tags from before those (`v1.0.0`, `v2.0.0`, `v2.5.1`) that must not be read as
+# the newest `v*`. See the comment on `tag_pattern` there.
+cliff_config = .config/cliff.toml
+
+# Where the changelog's `v*` sections begin. The sections before 5.0.0 are
+# headed by the artifacts that moved (`## core 3.1.0 · npm 3.1.0`) and cover
+# the prefixed tags; the three bare tags predate the changelog altogether. So
+# the backfill starts at the first one-version release rather than inventing
+# sections for `v1.0.0`, `v2.0.0` and `v2.5.1`.
+changelog_since = v5.0.0
+
+# No `verify`: before cutting, a release runs the jobs below — and here, after
+# the bump rather than before it. The `version` and `semver` jobs judge the
+# versions in the tree, so running them first would be checking the versions
+# this release replaces. A failure after the bump restores the tree.
+verify_after_bump = true
+
+# What pushing the tag sets off, most consequential first. The warning printed
+# before the push is handed back to you is composed from these.
+tag_starts
+> *
+> > workflow = release.yml
+> > does = uploads fig-kit, fig-core, fig-macros, fig and the ten language crates to crates.io
+> *
+> > workflow = release-npm.yml
+> > does = publishes @diaryx/fig and each language's package to npm
+> *
+> > workflow = release-npm-wasi.yml
+> > does = publishes @diaryx/fig-wasi to npm
+> *
+> > workflow = homebrew.yml
+> > does = builds the macOS and Linux CLI binaries and writes the tap
+> *
+> > workflow = release-binaries.yml
+> > does = attaches the Windows and WASI CLI binaries to the GitHub release
+
+# CI: the one pre-release gate (docs/VERSIONING.md), everything a change has to
+# pass before it is called done. `ship ci` runs these here, in this order, and
+# stops at the first that fails; `ship ci <id>` runs one; a release runs them
+# all after the bump.
+#
+# A job is `id` (what `ship ci <id>` takes), `name` (what `ship ci --list`
+# shows) and `run` (run by `bash -eo pipefail -c` at the repository root).
+# A job that is more than a command is a `cargo xtask` task (rust/xtask).
+#
+# fig's workflow is not built from this list: `.github/workflows/ci.yml`
+# (generated from figl/ci.figl) runs all of it as one job, `check`, with
+# `ship ci`, beside the jobs only a runner can do — `cross` builds the `fig`
+# crate for each tier-1 target, and `typescript` and `wasi` install Node 24 and
+# the packages' node_modules and run the two suites below for real.
+#
+# The conformance corpora are not here: they live in fig-conformance. Fuzzing
+# has no natural stopping point, so it runs nightly (figl/fuzz.figl) rather than
+# on the critical path.
+job
+> *
+> > # Every feature on, then the crates a program takes as it takes them:
+> > # default features.
+> > id = test
+> > name = Test (all features)
+> > run = cargo test --workspace --all-features --quiet
+> *
+> > id = test-defaults
+> > name = Test (default features)
+> > run = cargo test --quiet -p fig-kit -p fig-core -p fig-cli -p fig-capi -p fig-conform
+> *
+> > # The release guards.
+> > id = version
+> > name = Version check
+> > run = cargo xtask version-check
+> *
+> > id = vendor
+> > name = Vendor check
+> > run = cargo xtask vendor-check
+> *
+> > id = figl
+> > name = Workflows match figl/
+> > run = cargo xtask check-figl
+> *
+> > id = abi
+> > name = C ABI check
+> > run = cargo xtask abi-check
+> *
+> > # Diffs the C ABI against the most recent release tag, so it needs the
+> > # history and the tags (the workflow's checkout fetches them all).
+> > id = semver
+> > name = C ABI semver check
+> > run = cargo xtask semver-check
+> *
+> > # The built CLI end to end: its usage errors, `fig patch` behind jq, and
+> > # the helper runner.
+> > id = cli
+> > name = CLI checks
+> > run = '''
+cargo build --quiet -p fig-cli --bin fig
+sh tools/cli-args-check.sh "$PWD/target/debug/fig"
+sh tools/cli-patch-check.sh "$PWD/target/debug/fig"
+sh tools/cli-lang-check.sh "$PWD/target/debug/fig"
+'''
+> *
+> > # Every language's edit fixtures through the Rust editor, behind
+> > # fig-conformance's adapter. Skipped with a note where there is no Node,
+> > # so a contributor with Rust alone still gets a useful gate.
+> > id = edit-fixtures
+> > name = Edit fixtures
+> > run = '''
+if ! node --version >/dev/null 2>&1; then
+  echo "edit fixtures: node not found — skipping (install Node.js to run them)." >&2
+  exit 0
+fi
+cargo build --quiet --release -p fig-conform
+node tools/edit-fixtures.mjs --command target/release/fig-conform
+'''
+> *
+> > # The TypeScript binding's suite, and the edit fixtures again through it;
+> > # then the WASI package's. Each skips with a note without Node 24 and its
+> > # installed node_modules, as on the workflow's `check` runner — the
+> > # `typescript` and `wasi` jobs there install both and run them for real.
+> > id = typescript
+> > name = TypeScript
+> > run = cargo xtask npm-test typescript
+> *
+> > id = wasi
+> > name = fig-wasi
+> > run = cargo xtask npm-test wasi

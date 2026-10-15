@@ -9,7 +9,7 @@ name = Fuzz
 # Why this is not part of ci.figl's gate: fuzzing has no natural stopping point,
 # which is a terrible fit for the PR critical path. What every PR *does* get is
 # these same targets run over their seed inputs as ordinary tests (`cargo test
-# -p fig-fuzz`, inside `cargo xtask ci`), which is what stops them rotting
+# -p fig-fuzz`, inside `ship ci`), which is what stops them rotting
 # unnoticed between nightly runs. This workflow is the half that actually goes
 # looking for new bugs.
 #

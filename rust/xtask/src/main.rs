@@ -1,10 +1,11 @@
 //! fig's own tasks, run as `cargo xtask <task>` from anywhere in the
 //! repository (`.cargo/config.toml` names the alias): the release guards,
-//! and `ci`, the one pre-release gate that runs them all.
+//! and the tasks behind the jobs in `.config/ship.figl` that are more than a
+//! command. `ship ci` runs those jobs — the one pre-release gate.
 
 mod abi;
-mod ci;
 mod figl;
+mod npm;
 mod semver;
 mod vendor;
 mod version;
@@ -15,9 +16,6 @@ use std::process::ExitCode;
 const HELP: &str = "\
 cargo xtask <task>
 
-  ci              the pre-release gate: every task below that checks, the
-                  workspace's tests, the CLI checks and the TypeScript and
-                  WASI suites (each skipped with a note without its toolchain)
   version-sync    copy the workspace's version into every file that carries it
   version-check   fail if a file that carries fig's version disagrees
   vendor          copy the license texts and READMEs the published crates need
@@ -27,6 +25,10 @@ cargo xtask <task>
   semver-check    diff the C ABI against the last release tag and check the bump
   sync-figl       regenerate the workflow files from their .figl sources
   check-figl      fail if a workflow file is stale against its .figl source
+  npm-test <pkg>  build and test bindings/<pkg> (typescript or wasi), skipped
+                  with a note without Node 24 and its node_modules
+
+The pre-release gate is `ship ci`: the jobs in .config/ship.figl.
 ";
 
 fn main() -> ExitCode {
@@ -37,7 +39,7 @@ fn main() -> ExitCode {
     };
     let rest = &args[1..];
     let result = match task.as_str() {
-        "ci" => ci::run(rest),
+        "ci" => Err("is `ship ci` now: the jobs are in .config/ship.figl".into()),
         "version-sync" => version::run(false),
         "version-check" => version::run(true),
         "vendor" => vendor::run(false),
@@ -46,6 +48,7 @@ fn main() -> ExitCode {
         "semver-check" => semver::run(rest),
         "sync-figl" => figl::run(false),
         "check-figl" => figl::run(true),
+        "npm-test" => npm::run(rest),
         "help" | "-h" | "--help" => {
             print!("{HELP}");
             Ok(())

@@ -124,7 +124,7 @@ the table's layout. The build needs
 
 `cargo test -p <crate>` runs the language's own tests. `tests/edits.json`
 holds fig's editor over the language: each case an edit and the exact bytes
-(or the refusal) it must give. `cargo xtask ci` runs every language's
+(or the refusal) it must give. `ship ci` runs every language's
 fixtures through the Rust editor, behind fig-conformance's adapter
 (`rust/fig-conform`), and again through the TypeScript binding, so the
 JavaScript packages are held to the same bytes.

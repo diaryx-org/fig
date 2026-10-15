@@ -51,7 +51,7 @@ by reflection, which in Rust is serde's job, in the `fig` crate.
 This is the record of how the port was verified before it replaced the Zig.
 The Zig is gone, so the comparisons can no longer be rerun; the suites that
 stand on their own (fig-conformance, the edit fixtures, the probes, the
-bindings' tests) still run, against the Rust alone, in `cargo xtask ci`.
+bindings' tests) still run, against the Rust alone, in `ship ci`.
 
 Nothing below imported either implementation: each check runs both through
 an interface they share and compares what comes out.
@@ -98,7 +98,7 @@ node runner/parse.mjs --command <fig>/target/release/fig-conform
 node rust/parity/cli-diff.mjs --reference <a 6.x fig> --candidate target/release/fig
 ```
 
-`cargo xtask ci` runs the tests and the edit fixtures, and CI runs it on
+`ship ci` runs the tests and the edit fixtures, and CI runs it on
 every push.
 
 ## Zig bugs the port found

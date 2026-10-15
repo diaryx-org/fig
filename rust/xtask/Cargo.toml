@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "fig's own tasks: the release guards and the one pre-release gate, `cargo xtask ci`"
+description = "fig's own tasks: the release guards, and what the jobs in .config/ship.figl run that is more than a command"
 publish = false
 
 [dependencies]

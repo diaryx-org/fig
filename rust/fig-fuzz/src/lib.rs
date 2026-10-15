@@ -156,6 +156,9 @@ pub fn detect_seeds() -> Vec<Vec<u8>> {
         // YAML once hung on a NUL after a flow `:`.
         b"{:\0".to_vec(),
         b"{a: 1, b:\0\0\0\0\0\0\0\x02*".to_vec(),
+        // ...and on a lone `\r` inside flow.
+        b"[O\r[O\r".to_vec(),
+        b"{a:\r}".to_vec(),
     ];
     for lang in languages() {
         seeds.extend(lang.samples().iter().map(|s| s.to_vec()));

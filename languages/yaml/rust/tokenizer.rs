@@ -684,11 +684,20 @@ impl<'a> Tokenizer<'a> {
     fn handle_plain(&mut self, start: usize, line: &mut Line, cursor: &mut usize, at_content_start: &mut bool) -> Result<()> {
         let flow = self.flow_depth > 0;
         if flow {
+            // A lone `\r` is a break, never scalar content, so one before the
+            // scalar is trivia.
+            if self.source[start] == b'\r' {
+                self.add_token(Token::new(Kind::Whitespace, Span::new(start, start + 1)));
+                *cursor = start + 1;
+                return Ok(());
+            }
             // A plain scalar inside flow may fold across line breaks; gather it whole.
             let fend = self.flow_plain_end(start);
-            if fend > start {
-                self.add_token(Token::new(Kind::Scalar, Span::new(start, fend)));
+            if fend == start {
+                // The scan consumed nothing; refuse rather than loop forever.
+                return Err(self.fail(err!(UnexpectedToken), start, Some(start + 1)));
             }
+            self.add_token(Token::new(Kind::Scalar, Span::new(start, fend)));
             if fend > line.end {
                 // The scalar ran onto following lines; resume on the line it ended on.
                 *line = self.remainder_line(fend);
@@ -1362,7 +1371,8 @@ fn colon_is_indicator(source: &[u8], i: usize, line_end: usize, flow: bool) -> b
     if !flow {
         return false;
     }
-    matches!(source[i + 1], b',' | b']' | b'}')
+    // A lone `\r` is a break, as `flow_plain_end` reads it.
+    matches!(source[i + 1], b',' | b']' | b'}' | b'\r')
 }
 
 fn is_blank(c: u8) -> bool {
@@ -1657,6 +1667,19 @@ mod tests {
         // tokenizing never finished.
         test_tokenizer("{:\0", &[tok(FlowMapStart, 0, 1), tok(Scalar, 1, 3), tok(EndOfFile, 3, 3)]);
         test_tokenizer("{a:\0}", &[tok(FlowMapStart, 0, 1), tok(Scalar, 1, 4), tok(FlowMapEnd, 4, 5), tok(EndOfFile, 5, 5)]);
+    }
+
+    #[test]
+    fn yaml_flow_lone_cr_is_trivia() {
+        // A lone `\r` in flow is a break, never scalar content. It once made
+        // the plain-scalar scan return without consuming anything, so
+        // tokenizing never finished.
+        test_tokenizer("[\r[", &[tok(FlowSeqStart, 0, 1), tok(Whitespace, 1, 2), tok(FlowSeqStart, 2, 3), tok(EndOfFile, 3, 3)]);
+        test_tokenizer("[a\r]", &[tok(FlowSeqStart, 0, 1), tok(Scalar, 1, 2), tok(Whitespace, 2, 3), tok(FlowSeqEnd, 3, 4), tok(EndOfFile, 4, 4)]);
+        test_tokenizer(
+            "{a:\rb}",
+            &[tok(FlowMapStart, 0, 1), tok(Scalar, 1, 2), tok(Colon, 2, 3), tok(Whitespace, 3, 4), tok(Scalar, 4, 5), tok(FlowMapEnd, 5, 6), tok(EndOfFile, 6, 6)],
+        );
     }
 
     #[test]

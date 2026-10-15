@@ -1,7 +1,8 @@
-// Hand the prebuilt archive's directory to `fig-sys`'s build script. Because
+// Hand the prebuilt archives' directory to `fig-sys`'s build script. Because
 // this crate sets `links`, the `cargo:libdir=…` line below reaches dependents
-// as `DEP_<LINKS>_LIBDIR`. This crate emits no link directives itself —
-// `fig-sys` is the single place that decides to link the static library.
+// as `DEP_<LINKS>_LIBDIR`. This crate emits no link directives itself:
+// `fig-sys` decides to link the core, and passes the directory on to the
+// language crates, which link their own.
 use std::env;
 use std::path::Path;
 

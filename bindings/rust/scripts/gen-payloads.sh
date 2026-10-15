@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
 # Generate the per-target `fig-sys-<key>` payload crates from
-# prebuilt-targets.tsv. Each payload crate carries a prebuilt `lib/libfig.a`
-# (produced separately by build-payload-lib.sh / CI, git-ignored) built with
-# fig's DEFAULT language set, and a tiny build script that hands its location to
-# `fig-sys` via `links` metadata.
+# prebuilt-targets.tsv. Each payload crate carries the prebuilt core
+# (`lib/libfig.a`) and every language fig ships (`lib/libfig_<name>.a`),
+# produced separately by build-payload-lib.sh / CI and git-ignored, and a tiny
+# build script that hands their location to `fig-sys` via `links` metadata.
 #
 # Idempotent: safe to re-run after editing the table. Does NOT touch lib/.
 set -euo pipefail
@@ -19,9 +19,11 @@ while IFS=$'\t' read -r rust_target zig_target key cfg; do
     underscored="${key//-/_}"
     links="fig_prebuilt_$underscored"
     libname="fig_sys_$underscored"
-    # Zig names the static library `fig.lib` on Windows and `libfig.a` elsewhere.
+    # `tr`, not `${links^^}`, which macOS's bash 3.2 does not have.
+    links_upper="$(printf '%s' "$links" | tr '[:lower:]' '[:upper:]')"
+    # Zig names a static library `fig.lib` on Windows and `libfig.a` elsewhere.
     # rustc's `-l static=fig` resolves either name from the search dir.
-    if [[ "$rust_target" == *windows* ]]; then archive="fig.lib"; else archive="libfig.a"; fi
+    if [[ "$rust_target" == *windows* ]]; then archives="lib/*.lib"; else archives="lib/*.a"; fi
     mkdir -p "$dir/src"
 
     cat >"$dir/Cargo.toml" <<EOF
@@ -31,28 +33,29 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Prebuilt libfig.a (default features) for $rust_target. Support crate for fig-sys; not for direct use."
+description = "Prebuilt fig core and language libraries for $rust_target. Support crate for fig-sys; not for direct use."
 repository = "https://github.com/diaryx-org/fig"
-# The build script hands \`lib/$archive\`'s location to \`fig-sys\` via this
-# \`links\` key (as \`DEP_${links^^}_LIBDIR\`). Unique per payload crate.
+# The build script hands \`lib/\`'s location to \`fig-sys\` via this
+# \`links\` key (as \`DEP_${links_upper}_LIBDIR\`). Unique per payload crate.
 links = "$links"
-# Allowlist: the prebuilt archive plus the trivial crate skeleton. \`lib/\` is
+# Allowlist: the prebuilt archives plus the trivial crate skeleton. \`lib/\` is
 # git-ignored and populated by scripts/build-payload-lib.sh (or CI) before publish.
-include = ["build.rs", "src/lib.rs", "lib/$archive", "README.md"]
+include = ["build.rs", "src/lib.rs", "$archives", "README.md"]
 
 [lib]
 name = "$libname"
 path = "src/lib.rs"
 EOF
 
-    # lib/ holds the archive build-payload-lib.sh drops in; it is never committed.
+    # lib/ holds the archives build-payload-lib.sh drops in; never committed.
     printf 'lib\n' >"$dir/.gitignore"
 
     cat >"$dir/build.rs" <<'EOF'
-// Hand the prebuilt archive's directory to `fig-sys`'s build script. Because
+// Hand the prebuilt archives' directory to `fig-sys`'s build script. Because
 // this crate sets `links`, the `cargo:libdir=…` line below reaches dependents
-// as `DEP_<LINKS>_LIBDIR`. This crate emits no link directives itself —
-// `fig-sys` is the single place that decides to link the static library.
+// as `DEP_<LINKS>_LIBDIR`. This crate emits no link directives itself:
+// `fig-sys` decides to link the core, and passes the directory on to the
+// language crates, which link their own.
 use std::env;
 use std::path::Path;
 
@@ -65,23 +68,24 @@ fn main() {
 EOF
 
     cat >"$dir/src/lib.rs" <<EOF
-//! Prebuilt \`libfig.a\` (default language features) for \`$rust_target\`.
+//! Prebuilt fig core and language libraries for \`$rust_target\`.
 //!
 //! Support crate for [\`fig-sys\`](https://docs.rs/fig-sys); do not depend on it
-//! directly. The archive is delivered to \`fig-sys\`'s build script through this
-//! crate's \`links\` metadata (see \`build.rs\`); there is no Rust API here.
+//! directly. The archives are delivered to \`fig-sys\`'s build script through
+//! this crate's \`links\` metadata (see \`build.rs\`); there is no Rust API here.
 EOF
 
     cat >"$dir/README.md" <<EOF
 # fig-sys-$key
 
-Prebuilt \`libfig.a\` (fig's default language set) for \`$rust_target\`, letting
-\`fig-sys\` link fig's native library on this target **without a Zig toolchain**.
+Prebuilt fig core (\`libfig.a\`) and the library of every language fig ships
+(\`libfig_json.a\`, …) for \`$rust_target\`, letting \`fig-sys\` and the language
+crates (\`fig-json\`, \`fig-yaml\`, …) link on this target **without a Zig
+toolchain**.
 
 This is an implementation detail of [\`fig-sys\`](https://crates.io/crates/fig-sys)
 and [\`fig\`](https://crates.io/crates/fig). You should not depend on it directly;
-\`fig-sys\` pulls in the right payload crate automatically for your target. A
-non-default language feature set builds from source instead.
+\`fig-sys\` pulls in the right payload crate automatically for your target.
 
 ## License
 

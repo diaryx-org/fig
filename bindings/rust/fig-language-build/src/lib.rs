@@ -17,6 +17,13 @@
 //! which builds the library for the target Cargo is building and links it,
 //! beside fig's own (`fig-sys`). Building needs Zig 0.17 or later on `PATH`.
 //!
+//! A language fig ships needs no Zig where `fig-sys` links a prebuilt core:
+//! the payload crate that carries the core carries every such language's
+//! library too, and `fig-sys` hands its directory to the language crate's
+//! build script (`DEP_FIG_PREBUILT`), so `compile` links the library from
+//! there instead. A language crate in fig's own tree builds from source, as
+//! `fig-sys` does there, and so does any language fig does not ship.
+//!
 //! The build happens in a copy of the package, in `OUT_DIR`, beside a copy
 //! of the kit: fig's own (`kit/`, two directories up) for a language in
 //! fig's tree, and otherwise the one this crate carries, which is the kit of
@@ -42,6 +49,12 @@ pub fn compile(name: &str) {
     let cargo_host = env::var("HOST").expect("Cargo sets HOST");
     let package =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("Cargo sets CARGO_MANIFEST_DIR"));
+    if let Some(libdir) = prebuilt_libdir(name, &cargo_target) {
+        println!("cargo:rustc-link-search=native={}", libdir.display());
+        println!("cargo:rustc-link-lib=static=fig_{name}");
+        println!("cargo:rerun-if-changed={}", libdir.display());
+        return;
+    }
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));
     let prefix = out_dir.join("zig-prefix");
     let kit = kit_source(&package);
@@ -83,6 +96,25 @@ pub fn compile(name: &str) {
     for input in KIT_INPUTS {
         println!("cargo:rerun-if-changed={}", kit.join(input).display());
     }
+}
+
+/// The directory holding a prebuilt library of the language `name`, when
+/// `fig-sys` linked a prebuilt core and its payload carries one: only for a
+/// language fig ships (the crate is `fig-<name>`). In fig's own tree
+/// `fig-sys` builds from source unless `FIG_SYS_PREBUILT` asks, and passes
+/// no directory, so the language builds from source beside it.
+fn prebuilt_libdir(name: &str, target: &str) -> Option<PathBuf> {
+    println!("cargo:rerun-if-env-changed=DEP_FIG_PREBUILT");
+    if env::var("CARGO_PKG_NAME").ok()? != format!("fig-{name}") {
+        return None;
+    }
+    let dir = PathBuf::from(env::var_os("DEP_FIG_PREBUILT")?);
+    let archive = if target.contains("windows") {
+        format!("fig_{name}.lib")
+    } else {
+        format!("libfig_{name}.a")
+    };
+    dir.join(archive).is_file().then_some(dir)
 }
 
 /// What of a language package its library is built from.

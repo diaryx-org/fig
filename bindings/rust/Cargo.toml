@@ -41,6 +41,12 @@ fig-sys-windows-x64-msvc = { path = "fig-sys-windows-x64-msvc", version = "6.0.0
 fig-sys-wasm32 = { path = "fig-sys-wasm32", version = "6.0.0" }
 fig-sys-ios-arm64 = { path = "fig-sys-ios-arm64", version = "6.0.0" }
 fig-sys-ios-arm64-sim = { path = "fig-sys-ios-arm64-sim", version = "6.0.0" }
+fig-sys-macos-x64 = { path = "fig-sys-macos-x64", version = "6.0.0" }
+fig-sys-linux-x64-musl = { path = "fig-sys-linux-x64-musl", version = "6.0.0" }
+fig-sys-linux-arm64-musl = { path = "fig-sys-linux-arm64-musl", version = "6.0.0" }
+fig-sys-android-arm64 = { path = "fig-sys-android-arm64", version = "6.0.0" }
+fig-sys-android-x64 = { path = "fig-sys-android-x64", version = "6.0.0" }
+fig-sys-wasm32-wasi = { path = "fig-sys-wasm32-wasi", version = "6.0.0" }
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }

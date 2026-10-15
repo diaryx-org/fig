@@ -126,7 +126,7 @@ echo "version $want matches tag $GITHUB_REF_NAME"
 > run = cargo test --workspace --all-features --locked
 > working-directory = bindings/rust
 +
-> # Cross-compile each tier-1 target's libfig.a (default language set) into its
+> # Cross-compile each tier-1 target's core and language libraries into its
 > # fig-sys-<target> payload crate's git-ignored lib/. Zig cross-compiles every
 > # target from this one runner, the iOS ones against Xcode's SDK. Must precede
 > # packaging: the payload crates ship lib/<archive> via their `include` list.
@@ -202,10 +202,9 @@ publish() {
   done
   echo "::error::failed to publish $crate after retries"; return 1
 }
-for crate in \
-  fig-sys-macos-arm64 fig-sys-linux-x64-gnu fig-sys-linux-arm64-gnu \
-  fig-sys-windows-x64-msvc fig-sys-wasm32 fig-sys-ios-arm64 fig-sys-ios-arm64-sim; do
-  publish "$crate"
+# One payload crate per row of the target table.
+for key in $(grep -v '^#' prebuilt-targets.tsv | cut -f3); do
+  publish "fig-sys-$key"
 done
 publish fig-sys
 publish fig-macros

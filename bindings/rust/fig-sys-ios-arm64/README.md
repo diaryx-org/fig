@@ -1,12 +1,13 @@
 # fig-sys-ios-arm64
 
-Prebuilt `libfig.a` (fig's default language set) for `aarch64-apple-ios`, letting
-`fig-sys` link fig's native library on this target **without a Zig toolchain**.
+Prebuilt fig core (`libfig.a`) and the library of every language fig ships
+(`libfig_json.a`, …) for `aarch64-apple-ios`, letting `fig-sys` and the language
+crates (`fig-json`, `fig-yaml`, …) link on this target **without a Zig
+toolchain**.
 
 This is an implementation detail of [`fig-sys`](https://crates.io/crates/fig-sys)
 and [`fig`](https://crates.io/crates/fig). You should not depend on it directly;
-`fig-sys` pulls in the right payload crate automatically for your target. A
-non-default language feature set builds from source instead.
+`fig-sys` pulls in the right payload crate automatically for your target.
 
 ## License
 

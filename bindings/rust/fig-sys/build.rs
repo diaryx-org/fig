@@ -13,25 +13,45 @@ fn main() {
     }
 
     println!("cargo:rerun-if-env-changed=FIG_SYS_FORCE_SOURCE");
+    println!("cargo:rerun-if-env-changed=FIG_SYS_PREBUILT");
 
     let cargo_target = env::var("TARGET").expect("Cargo should set TARGET");
     let cargo_host = env::var("HOST").expect("Cargo should set HOST");
+    let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
 
     // Preferred path: link the prebuilt `libfig.a` shipped by the
     // `fig-sys-<target>` payload crate for this target — no Zig toolchain
     // required. The library carries no language, so there is one build of it
     // and the prebuilt is always it. Set FIG_SYS_FORCE_SOURCE=1 to build from
     // source anyway.
-    if env::var_os("FIG_SYS_FORCE_SOURCE").is_none()
-        && let Some(libdir) = prebuilt_libdir(&cargo_target)
-    {
+    //
+    // In a checkout of fig the source is right there and the payload's
+    // archives (git-ignored, left by whoever last ran build-payload-lib.sh)
+    // may be older than it, so a checkout builds from source unless
+    // FIG_SYS_PREBUILT=1 asks for the payload.
+    let use_prebuilt = env::var_os("FIG_SYS_FORCE_SOURCE").is_none()
+        && (env::var_os("FIG_SYS_PREBUILT").is_some() || !in_checkout(&manifest_dir));
+    if use_prebuilt && let Some(libdir) = prebuilt_libdir(&cargo_target) {
         println!("cargo:rustc-link-search=native={}", libdir.display());
         println!("cargo:rustc-link-lib=static=fig");
         println!("cargo:rerun-if-changed={}", libdir.display());
+        // The payload carries every language fig ships too. Through `links`,
+        // this reaches each language crate's build script as
+        // `DEP_FIG_PREBUILT`, and `fig-language-build` links the language's
+        // library from it rather than compiling it, so a language matches
+        // the core it links beside.
+        println!("cargo:prebuilt={}", libdir.display());
         return;
     }
 
     build_from_source(&cargo_target, &cargo_host);
+}
+
+/// Whether this crate is built from a checkout of fig (an ancestor is fig's
+/// source tree) rather than from a published package, whose source is
+/// vendored beside it.
+fn in_checkout(manifest_dir: &Path) -> bool {
+    manifest_dir.ancestors().skip(1).any(is_fig_zig_root)
 }
 
 /// Directory holding the prebuilt `libfig.a`/`fig.lib` for `target`, if a
@@ -59,6 +79,13 @@ fn payload_env_key(target: &str) -> Option<&'static str> {
         "wasm32-unknown-unknown" => "WASM32",
         "aarch64-apple-ios" => "IOS_ARM64",
         "aarch64-apple-ios-sim" => "IOS_ARM64_SIM",
+        "x86_64-apple-darwin" => "MACOS_X64",
+        "x86_64-unknown-linux-musl" => "LINUX_X64_MUSL",
+        "aarch64-unknown-linux-musl" => "LINUX_ARM64_MUSL",
+        "aarch64-linux-android" => "ANDROID_ARM64",
+        "x86_64-linux-android" => "ANDROID_X64",
+        // One archive serves both: the library does no I/O.
+        "wasm32-wasip1" | "wasm32-wasip2" => "WASM32_WASI",
         _ => return None,
     })
 }
@@ -106,9 +133,12 @@ fn build_from_source(cargo_target: &str, cargo_host: &str) {
                  (target `{cargo_target}` has no prebuilt library, or \
                  FIG_SYS_FORCE_SOURCE is set), but running `zig` failed: {e}.\n\
                  These targets need no Zig: \
-                 aarch64-apple-darwin, x86_64-unknown-linux-gnu, \
-                 aarch64-unknown-linux-gnu, x86_64-pc-windows-msvc, \
-                 wasm32-unknown-unknown, aarch64-apple-ios, \
+                 aarch64-apple-darwin, x86_64-apple-darwin, \
+                 x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, \
+                 x86_64-unknown-linux-musl, aarch64-unknown-linux-musl, \
+                 x86_64-pc-windows-msvc, aarch64-linux-android, \
+                 x86_64-linux-android, wasm32-unknown-unknown, \
+                 wasm32-wasip1, wasm32-wasip2, aarch64-apple-ios, \
                  aarch64-apple-ios-sim.\n\
                  Otherwise install Zig 0.17+ (https://ziglang.org/download/)."
             )

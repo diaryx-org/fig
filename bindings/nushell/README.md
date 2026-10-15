@@ -94,7 +94,7 @@ fig's (the repository root's): the nu dependency tree has no business in that wo
 `cargo test --workspace`.
 Its dependency on fig is the one thing that does follow fig's version: the
 `fig = { path, version }` pin and the fig crates in `Cargo.lock` are moved by
-`cargo xtask version-sync`, which `dx release` runs, and checked by
+`cargo xtask version-sync`, which `release` runs, and checked by
 `cargo xtask version-check`.
 
 ## Building

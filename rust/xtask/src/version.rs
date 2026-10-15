@@ -6,7 +6,7 @@
 //! `@diaryx/fig`, `@diaryx/fig-wasi` and each language's npm package — under
 //! one version and one `v*` tag (see docs/VERSIONING.md). The version is
 //! decided in the root `Cargo.toml`'s `[workspace.package] version`, which
-//! every crate of the workspace inherits; `dx release` moves it there, then
+//! every crate of the workspace inherits; `release` moves it there, then
 //! runs `cargo xtask version-sync` for the files Cargo's inheritance does not
 //! reach. `cargo xtask version-check` is the read-only half, and
 //! `cargo xtask ci` runs it.

@@ -1,7 +1,7 @@
 # git-cliff, for every diaryx-org repository.
 #
 # One file, one style. The canonical copy lives beside the shared release tooling
-# in diaryx-org/devtools. fig releases through that tooling (`dx release`, see
+# in diaryx-org/devtools. fig releases through that tooling (`release`, see
 # docs/VERSIONING.md), and `.config/release.toml` points it at this copy with
 # `cliff_config`, because fig's tag history needs a pattern of its own. It
 # differs from the canonical file in exactly one line, marked below; keep it

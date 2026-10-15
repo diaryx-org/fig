@@ -15,8 +15,8 @@ name: Release binaries
 # Runs on the same `v*.*.*` tag as homebrew.yml — one tag releases every
 # artifact (see "Release tagging" in docs/VERSIONING.md).
 #
-# The release's body is not written here. `dx release` cuts the changelog
-# section the tag carries, and `dx github-release` puts that section on the
+# The release's body is not written here. `release` cuts the changelog
+# section the tag carries, and `release github` puts that section on the
 # release page, creating it or editing it — so this only attaches files, and
 # sends no body that would race it.
 on:

@@ -52,7 +52,7 @@ license = "MIT OR Apache-2.0"
 
 # Shared across the workspace so every crate pins one set of versions. The
 # internal `fig*` crates all share fig's one version, `[workspace.package]`'s;
-# `dx release` and `cargo xtask version-sync` rewrite these `version = "…"`
+# `release` and `cargo xtask version-sync` rewrite these `version = "…"`
 # fields in lockstep, and `cargo xtask version-check` fails on drift.
 [workspace.dependencies]
 fig-macros = { path = "bindings/rust/fig-macros", version = "7.0.0" }

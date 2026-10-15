@@ -1,5 +1,5 @@
 //! `ci`: the one pre-release gate. Everything a change has to pass before it
-//! is called done, and what `dx release` runs after a bump (`verify` in
+//! is called done, and what `release` runs after a bump (`verify` in
 //! `.config/release.toml`):
 //!
 //! - the workspace's tests, with every feature on and then with the crates a

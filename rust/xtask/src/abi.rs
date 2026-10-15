@@ -289,7 +289,9 @@ fn target_dir(root: &Path) -> PathBuf {
 /// Cargo replays the note on a fresh build, so it is there every time.
 fn build(root: &Path, package: &[&str], dest: &Path) -> crate::Result<(PathBuf, Vec<String>)> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let mut args = vec!["rustc"];
+    // `--color never` because the note is read back as text: CI sets
+    // CARGO_TERM_COLOR=always, and rustc's colored note ends `-lc\x1b[0m`.
+    let mut args = vec!["rustc", "--color", "never"];
     args.extend_from_slice(package);
     args.extend_from_slice(&[
         "--release",

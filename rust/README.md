@@ -20,6 +20,11 @@ needs no Zig and no C to build, and uses no crates outside `std`.
 | `fig-core` | `kit/` (the node table, AST, `Document`, the `Language` trait, the shared rules), `languages/*/src/` (all ten), `src/editor*`, `src/serialize.zig`, `src/canonical/`, `src/materialize.zig`, `src/lossless.zig`, `src/flat_strip.zig`, `src/diagnostics.zig`, `src/patch.zig`, `src/contract/` (the registry, the helper wire, the host), and the logic of `src/c_api.zig` (`api`) | 66,000 |
 | `fig-cli` | `src/cli/*.zig` (the `fig` binary) and `src/lsp/main.zig` (`fig-lsp`) | 9,600 |
 | `fig-conform` | new: fig-conformance's JSON-lines adapter over `fig-core` | 1,000 |
+| `fig-capi` | the C ABI: every function in `bindings/c/include/fig.h`, as a static and shared library and as the wasm module the TypeScript binding loads | 4,800 |
+
+The published Rust binding (`bindings/rust`: the `fig` crate and the ten
+language crates) runs on `fig-core` too, so it no longer needs `fig-sys`,
+its thirteen prebuilt payload crates, or Zig on any target.
 
 `src/deserialize.zig` is not ported: it reads a document into a Zig type
 by reflection, which in Rust is serde's job, in the `fig` crate.
@@ -37,6 +42,9 @@ an interface they share and compares what comes out.
 | CLI differential (`parity/cli-diff.mjs`) | 21,546 command lines over 746 documents: exit status, stdout, the file written | 21,541 / 21,546 |
 | LSP | an LSP session with diagnostics, byte for byte | identical |
 | Helper wire | every line sent to and received from real helper processes | identical |
+| C ABI | `nm` against `fig.h`; `tools/abi_probe.c`, `abi_probe.cpp`, `abi_runtime_probe.c`, `lang_archive_probe.c` linked against `fig-capi` | 113 / 113 symbols; every probe passes |
+| TypeScript binding | its own test suite, on the Rust wasm in place of the Zig one | 117 / 117, as on the Zig wasm |
+| Rust binding | `bindings/rust`'s own tests, with no Zig on PATH | 198 / 198 (the three `fig-language-build` tests went with it) |
 
 The five CLI commands that differ are ones the Zig binary panics on: four
 `convert`s of a YAML document with complex keys to a flat format, where
@@ -52,7 +60,7 @@ full node table. Where they differ, the Zig crashed.
 ## Reproducing
 
 ```sh
-cargo test --workspace                       # 949 tests
+cargo test --workspace                       # 959 tests
 cargo build --release
 
 # The edit fixtures, from the repository root:

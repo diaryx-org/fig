@@ -4,15 +4,21 @@ part_of = [Proposals](/docs/proposals/proposals.md)
 description = fig's core, kit and languages move from Zig to Rust a layer at a time, each held to what the Zig implementation answers through checks that never import either one
 author = adammharris
 created = 2026-10-15
-status = draft
+status = accepted
 updated = 2026-10-15
 ```
 
 # Rust core
 
-> **Status: DRAFT.** Written against `main` at 0afdab4 (6.0.0). Step 1
-> (§4) has begun: INI's editor tests are fixtures (§3.2). Nothing is
-> ported yet.
+> **Status: PORTED, not yet switched over.** Written against `main` at
+> 0afdab4 (6.0.0). Steps 1 to 6 (§4) are done in `rust/`: every language's
+> editor tests are fixtures (§3.2), and the kit, core, ten languages, CLI,
+> LSP, helper wire and C ABI are ported and agree with the Zig on every
+> check of §3 ([rust/README.md](/rust/README.md) has the numbers). The
+> `fig` crate and the language crates run on the port, with no Zig.
+> Left: deleting `fig-sys*` and `fig-language-build`, building the
+> release binaries, npm packages and wasm from `rust/`, and taking Zig
+> out of CI; and §6's open questions.
 
 ## 1. The claim
 

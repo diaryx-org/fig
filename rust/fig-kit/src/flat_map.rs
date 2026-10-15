@@ -133,7 +133,7 @@ pub fn put_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kit::ast::{self, PathSegment, AST};
+    use crate::ast::{self, PathSegment, AST};
     use std::sync::Arc;
 
     #[test]

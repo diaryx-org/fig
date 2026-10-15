@@ -476,9 +476,9 @@ pub fn validate(l: &dyn Language) -> core::result::Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kit::ast::{KeyValue, NodeKind, PathSegment};
-    use crate::kit::row_writer::RowWriter;
-    use crate::kit::span::Span;
+    use crate::ast::{KeyValue, NodeKind, PathSegment};
+    use crate::row_writer::RowWriter;
+    use crate::span::Span;
 
     /// A one-line `k=v` language: what the trait asks of the smallest one.
     struct TinyKv;

@@ -26,3 +26,10 @@ dependencies = [
 [[package]]
 name = "fig-core"
 version = "6.0.0"
+dependencies = [
+ "fig-kit",
+]
+
+[[package]]
+name = "fig-kit"
+version = "6.0.0"

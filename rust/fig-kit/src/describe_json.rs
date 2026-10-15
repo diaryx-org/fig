@@ -310,8 +310,8 @@ fn str(w: &mut Vec<u8>, s: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kit::language::{Caps, Comments, DialectInfo, SpecName, SpliceStyle};
-    use crate::kit::table::Table;
+    use crate::language::{Caps, Comments, DialectInfo, SpecName, SpliceStyle};
+    use crate::table::Table;
     use crate::Result;
 
     struct Spec;

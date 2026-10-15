@@ -93,9 +93,9 @@ impl ChildIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kit::ast::KeyValue;
-    use crate::kit::span::Span;
-    use crate::kit::table::Table;
+    use crate::ast::KeyValue;
+    use crate::span::Span;
+    use crate::table::Table;
 
     #[test]
     fn append_links_in_order_and_get_finds_an_entry_by_its_key() {

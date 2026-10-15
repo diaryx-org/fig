@@ -454,7 +454,7 @@ fn remap<F: table::Fact>(list: &mut Vec<F>, place: &[u32]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kit::ast::KeyValue;
+    use crate::ast::KeyValue;
 
     #[test]
     fn finish_puts_rows_written_out_of_order_into_pre_order_facts_and_all() {

@@ -6,6 +6,7 @@ license.workspace = true
 description = "fig's core, kit and languages in Rust: lossless parsing, comment-preserving editing and conversion of config files"
 
 [dependencies]
+fig-kit = { path = "../fig-kit" }
 
 [features]
 # The languages `registry::global()` registers on first use: fig's ten, as a

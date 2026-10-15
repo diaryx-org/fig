@@ -1,4 +1,12 @@
-//! Port of kit/src/kit.zig: what fig's languages share.
+//! Port of kit/src/kit.zig: what fig's languages share — the node table,
+//! the AST, `Document`, the `Language` trait and the shared rules — and
+//! fig's error type ([`Error`], [`Result`], [`err!`]). fig's core
+//! (`fig-core`, which re-exports this crate as `fig_core::kit`) and each
+//! language crate (`fig-json`, …) build on it; it depends on nothing.
+
+pub mod error;
+
+pub use error::{Error, Result};
 
 pub mod span;
 pub mod token;

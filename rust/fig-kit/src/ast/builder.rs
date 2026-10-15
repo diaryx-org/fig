@@ -15,8 +15,8 @@
 //! corrupts the tree.
 
 use super::{Comment, ExtKind, KindTag, NodeComments, NodeId, Style, Tag, AST};
-use crate::kit::span::Span;
-use crate::kit::table::{self, Row, Table, NONE};
+use crate::span::Span;
+use crate::table::{self, Row, Table, NONE};
 use crate::Result;
 
 /// One mapping entry for `add_mapping`.
@@ -331,7 +331,7 @@ impl Builder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kit::ast::NodeKind;
+    use crate::ast::NodeKind;
 
     #[test]
     fn builder_builds_a_tree_with_comments_and_tags() {

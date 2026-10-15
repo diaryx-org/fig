@@ -304,7 +304,7 @@ fn row_of(t: &mut Table, n: &Node<'_>, parent: u32) -> Result<table::Row> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kit::ast::{self, Builder, Comment, Entry};
+    use crate::ast::{self, Builder, Comment, Entry};
 
     #[test]
     fn document_to_table_round_trips_through_borrow() {

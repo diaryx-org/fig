@@ -1518,7 +1518,7 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kit::ast::PathSegment;
+    use crate::ast::PathSegment;
 
     fn grammar() -> Document {
         let kv = entry(EntryOpts {

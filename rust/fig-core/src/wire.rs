@@ -736,10 +736,10 @@ const REFUSALS: [Error; 9] = [
 
 /// A parse that bypasses the wire (`host.zig`'s `nativeParse`): the dialect's
 /// name, the input, the table to fill. On a refusal it fills the `ErrorInfo`.
-pub(crate) type NativeParse = Box<dyn Fn(&str, &[u8], &mut Table) -> std::result::Result<(), ErrorInfo> + Send + Sync>;
+pub(crate) type NativeParse = Box<dyn Fn(&str, &[u8], &mut Table) -> std::result::Result<(), ErrorInfo> + Send + Sync + std::panic::RefUnwindSafe>;
 /// A print that bypasses the wire (`host.zig`'s `nativePrint`).
 pub(crate) type NativePrint =
-    Box<dyn Fn(&str, &table::View<'_>, &PrintOptions) -> std::result::Result<Vec<u8>, ErrorInfo> + Send + Sync>;
+    Box<dyn Fn(&str, &table::View<'_>, &PrintOptions) -> std::result::Result<Vec<u8>, ErrorInfo> + Send + Sync + std::panic::RefUnwindSafe>;
 
 // ============================================================================
 // DESCRIPTION → LANGUAGE

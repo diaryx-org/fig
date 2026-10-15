@@ -1194,7 +1194,10 @@ pub fn register_core(lang: &'static dyn CoreLanguage) -> Result<Format, Error> {
 /// handed it, and the calls the vtable's thunks made. Lives for the
 /// process, as a registration does.
 struct Registration {
-    lang: Box<dyn Language>,
+    /// Asserted unwind-safe: every call into it runs under `catch_unwind`
+    /// (a panic is a refusal, as the C vtable's thunks made it), so a
+    /// `Document` or `Editor` over this language stays `UnwindSafe`.
+    lang: AssertUnwindSafe<Box<dyn Language>>,
     name: &'static str,
     caps: manifest::Caps,
     syntax: Option<manifest::Syntax>,
@@ -1385,7 +1388,7 @@ impl Registration {
         }
         let samples: Vec<&'static [u8]> = desc.samples.iter().map(|s| leak_bytes(s)).collect();
         Ok(Registration {
-            lang,
+            lang: AssertUnwindSafe(lang),
             name,
             caps,
             syntax,

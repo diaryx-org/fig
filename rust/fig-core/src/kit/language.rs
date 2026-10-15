@@ -127,7 +127,7 @@ pub fn take_parse_error() -> Option<(Vec<u8>, usize)> {
 
 /// A language: what a Zig `Language` module declares, as a trait object the
 /// registry holds. See the module doc.
-pub trait Language: Send + Sync {
+pub trait Language: Send + Sync + std::panic::RefUnwindSafe {
     // ── Identity ────────────────────────────────────────────────────────────
 
     /// Zig `Language.name`: the language's name, which its default dialect

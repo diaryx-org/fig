@@ -164,8 +164,8 @@ pub export fn fig_format_name(format: c_int) ?[*:0]const u8 {
 // THE KIT'S RULES
 // ==================
 //
-// The kit's number and datetime rules, for a runner whose languages are
-// not Zig (`fig.h`, "The kit's rules"). `kit/src/rules.zig` defines them,
+// The kit's rules — numbers, datetimes, bare literals and JSON strings —
+// for a runner whose languages are not Zig (`fig.h`, "The kit's rules"). `kit/src/rules.zig` defines them,
 // and `fig-kit.wasm` exports the same functions under the same names.
 
 const rules = @import("kit").rules;
@@ -196,6 +196,18 @@ pub export fn fig_kit_datetime_valid_time(s: [*]const u8, len: usize, flags: u32
 
 pub export fn fig_kit_datetime_valid_offset(s: [*]const u8, len: usize) bool {
     return rules.datetimeValidOffset(s, len);
+}
+
+pub export fn fig_kit_literal_kind(raw: [*]const u8, len: usize) u8 {
+    return rules.literalKind(raw, len);
+}
+
+pub export fn fig_kit_literal_number(raw: [*]const u8, len: usize) i32 {
+    return rules.literalNumber(raw, len);
+}
+
+pub export fn fig_kit_json_string_quote(raw: [*]const u8, len: usize, quote: u8, out: [*]u8, out_cap: usize) usize {
+    return rules.jsonStringQuote(raw, len, quote, out, out_cap);
 }
 
 /// The registered dialect a format handle names, or null for one never

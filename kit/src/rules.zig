@@ -2,7 +2,9 @@
 //! JavaScript kit, through `fig-kit.wasm` (`js.zig`), and a host linking
 //! `libfig`, which declares them in `fig.h` as `fig_kit_*`. One set of
 //! functions under one set of names, so a runner in any language spells a
-//! number and reads a datetime as fig's own languages do.
+//! number, reads a datetime, sniffs a bare literal and quotes a JSON string
+//! as fig's own languages do. `kit/testdata/rules/` holds the answers every
+//! binding gives through them.
 //!
 //! The kit defines them and does not export them: every language's library
 //! compiles the kit in, and two exported copies would clash where they are
@@ -15,6 +17,9 @@
 const std = @import("std");
 const number = @import("number.zig");
 const datetime = @import("datetime.zig");
+const literal = @import("literal.zig");
+const json_string = @import("json_string.zig");
+const table = @import("table.zig");
 
 /// How much longer than its input `numberCanonical`'s answer can be: a
 /// canonical number is its input less what it drops, plus a padded `0`
@@ -33,6 +38,9 @@ pub fn exportAll() void {
     @export(&datetimeValidDate, .{ .name = "fig_kit_datetime_valid_date" });
     @export(&datetimeValidTime, .{ .name = "fig_kit_datetime_valid_time" });
     @export(&datetimeValidOffset, .{ .name = "fig_kit_datetime_valid_offset" });
+    @export(&literalKind, .{ .name = "fig_kit_literal_kind" });
+    @export(&literalNumber, .{ .name = "fig_kit_literal_number" });
+    @export(&jsonStringQuote, .{ .name = "fig_kit_json_string_quote" });
 }
 
 /// A `number.Spelling` as `FIG_SPELL_*` bits: hex, octal, binary,
@@ -102,6 +110,48 @@ pub fn datetimeValidTime(s: [*]const u8, len: usize, bits: u32) callconv(.c) boo
 pub fn datetimeValidOffset(s: [*]const u8, len: usize) callconv(.c) bool {
     datetime.validateOffset(s[0..len]) catch return false;
     return true;
+}
+
+/// The row kind a bare token is written as (`literal.sniffBare`): a
+/// `table.Kind` — null, false, true, int, float or string — or
+/// `table.Kind.ext` plus a datetime's `ExtKind`.
+pub fn literalKind(raw: [*]const u8, len: usize) callconv(.c) u8 {
+    const K = table.Kind;
+    return switch (literal.sniffBare(raw[0..len])) {
+        .null_ => K.null_,
+        .boolean => |b| if (b) K.true_ else K.false_,
+        .number => |n| if (n.kind == .float) K.float else K.int,
+        .datetime => |d| K.ext + @as(u8, @intFromEnum(d.kind)),
+        .string => K.string,
+    };
+}
+
+/// The row kind of the number `raw` is (`literal.sniffNumber`): int or
+/// float, or -1 when it is not one.
+pub fn literalNumber(raw: [*]const u8, len: usize) callconv(.c) i32 {
+    const n = literal.sniffNumber(raw[0..len]) orelse return -1;
+    return if (n.kind == .float) table.Kind.float else table.Kind.int;
+}
+
+/// How long `jsonStringQuote`'s answer can be: every byte a six-byte
+/// `\u00XX`, and the two quotes. `FIG_KIT_JSON_STRING_ROOM`.
+pub fn jsonStringRoom(len: usize) usize {
+    return len * 6 + 2;
+}
+
+/// Writes `raw` between `quote`s (`"`, or JSON5's `'`) with the JSON
+/// escapes (`json_string.writeQuotedIn`) to `out` and returns its length,
+/// or `maxInt(usize)` when `out_cap` is too small or `quote` is neither;
+/// `jsonStringRoom(len)` never is too small.
+pub fn jsonStringQuote(raw: [*]const u8, len: usize, quote: u8, out: [*]u8, out_cap: usize) callconv(.c) usize {
+    var w: std.Io.Writer = .fixed(out[0..out_cap]);
+    const r = switch (quote) {
+        '"' => json_string.writeQuotedIn(&w, raw[0..len], '"'),
+        '\'' => json_string.writeQuotedIn(&w, raw[0..len], '\''),
+        else => return std.math.maxInt(usize),
+    };
+    r catch return std.math.maxInt(usize);
+    return w.end;
 }
 
 comptime {

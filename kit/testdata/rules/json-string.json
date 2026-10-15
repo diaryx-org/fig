@@ -1,0 +1,11 @@
+{
+  "about": "A string written as a JSON string literal between its quotes: the JSON escapes for a backslash, the quote itself and the control characters, and every other byte as it is, UTF-8 included. A single quote is JSON5's, which escapes ' and lets \" through.",
+  "quote": [
+    ["plain", "\"", "\"plain\""],
+    ["", "\"", "\"\""],
+    ["tab:\t quote:\" back:\\ ctrl:\u0007 utf:é", "\"", "\"tab:\\t quote:\\\" back:\\\\ ctrl:\\u0007 utf:é\""],
+    ["a\nb\r\u0008\u000c", "\"", "\"a\\nb\\r\\b\\f\""],
+    ["it's \"x\"", "'", "'it\\'s \"x\"'"],
+    ["\u001f\u0000", "\"", "\"\\u001f\\u0000\""]
+  ]
+}

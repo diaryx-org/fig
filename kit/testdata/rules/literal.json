@@ -1,0 +1,31 @@
+{
+  "about": "What a bare token means when nothing else says: its row kind (null, false, true, int, float, string, or a datetime's ext kind). true, false and null are lowercase only; a leading zero, inf and nan stay strings. number is the numeric half alone: int, float, or null for not a number.",
+  "kind": [
+    ["null", "null"],
+    ["true", "true"],
+    ["false", "false"],
+    ["True", "string"],
+    ["42", "int"],
+    ["-0x1F", "int"],
+    ["2.5e3", "float"],
+    ["1_000.000_1e1_0", "float"],
+    ["007", "string"],
+    ["0", "int"],
+    ["1_", "string"],
+    ["inf", "string"],
+    ["2026-07-01", "local_date"],
+    ["2026-07-01T09:00:00Z", "offset_datetime"],
+    ["", "string"],
+    ["hello world", "string"]
+  ],
+  "number": [
+    ["42", "int"],
+    ["+1.5", "float"],
+    ["1e5", "float"],
+    ["0b101", "int"],
+    ["0b102", null],
+    ["1.", null],
+    ["true", null],
+    ["", null]
+  ]
+}

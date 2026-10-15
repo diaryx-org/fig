@@ -1,0 +1,36 @@
+{
+  "about": "Which datetime a bare token is, and the parts' validity. Options are minute_precision (HH:MM with no seconds) and time_only (a time with no date); a case's options are always given.",
+  "classify": [
+    ["2026-10-14", {"minute_precision": true, "time_only": true}, "local_date"],
+    ["2026-10-14T12:30:00", {"minute_precision": true, "time_only": true}, "local_datetime"],
+    ["2026-10-14 12:30:00", {"minute_precision": true, "time_only": true}, "local_datetime"],
+    ["2026-10-14t12:30:00Z", {"minute_precision": true, "time_only": true}, "offset_datetime"],
+    ["2026-10-14T12:30:00.25+05:30", {"minute_precision": true, "time_only": true}, "offset_datetime"],
+    ["2026-10-14T12:30", {"minute_precision": true, "time_only": true}, "local_datetime"],
+    ["2026-10-14T12:30", {"minute_precision": false, "time_only": true}, null],
+    ["12:30:00", {"minute_precision": true, "time_only": true}, "local_time"],
+    ["12:30:00", {"minute_precision": true, "time_only": false}, null],
+    ["2026-02-30", {"minute_precision": true, "time_only": true}, null],
+    ["2026-10-14T25:00:00", {"minute_precision": true, "time_only": true}, null],
+    ["hello", {"minute_precision": true, "time_only": true}, null]
+  ],
+  "valid_date": [
+    ["2024-02-29", true],
+    ["2023-02-29", false],
+    ["2026-13-01", false],
+    ["2026-1-01", false]
+  ],
+  "valid_time": [
+    ["23:59:60", {"minute_precision": true, "time_only": true}, true],
+    ["12:30", {"minute_precision": true, "time_only": true}, true],
+    ["12:30", {"minute_precision": false, "time_only": true}, false],
+    ["12:30:00.123456", {"minute_precision": false, "time_only": true}, true],
+    ["24:00:00", {"minute_precision": true, "time_only": true}, false]
+  ],
+  "valid_offset": [
+    ["+05:30", true],
+    ["-12:00", true],
+    ["+24:00", false],
+    ["05:30", false]
+  ]
+}

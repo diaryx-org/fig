@@ -1,0 +1,44 @@
+{
+  "about": "How a number's lexeme is spelled for a format. A spelling is the list of what a format reads besides plain decimal: hex, octal, binary, underscores, leading_zero, bare_dot, plus.",
+  "spellable": [
+    ["0xff", [], false],
+    ["0xff", ["hex", "bare_dot", "plus"], true],
+    ["0o755", ["hex", "octal", "leading_zero", "bare_dot", "plus"], true],
+    ["1_000", ["hex", "octal", "leading_zero", "bare_dot", "plus"], false],
+    ["1_000", ["underscores"], true],
+    ["+5", [], false],
+    ["+5", ["plus"], true],
+    ["1.10", [], true],
+    [".5", [], false],
+    [".5", ["bare_dot"], true],
+    ["0755", [], false],
+    ["0755", ["leading_zero"], true],
+    ["0b1010", ["hex"], false],
+    ["0b1010", ["binary"], true],
+    ["-12", [], true],
+    ["1e10", [], true]
+  ],
+  "canonical": [
+    ["0xdead_beef", "3735928559"],
+    ["-0b1010", "-10"],
+    ["0o17", "15"],
+    [".5", "0.5"],
+    ["5.", "5.0"],
+    ["+7", "7"],
+    ["1_000", "1000"],
+    ["0755", "755"],
+    ["0x100000000000000000000000000000000", "340282366920938463463374607431768211456"],
+    ["0xg", "0xg"],
+    ["12", "12"]
+  ],
+  "non_finite": [
+    ["inf", "inf"],
+    ["-.inf", "-inf"],
+    ["Infinity", "inf"],
+    ["-Infinity", "-inf"],
+    [".NaN", "nan"],
+    ["nan", "nan"],
+    ["1.5", null],
+    ["infinite", null]
+  ]
+}

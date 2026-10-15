@@ -1335,9 +1335,10 @@ FigStatus fig_value_warning(FigValue *value, size_t index, FigWarning *out);
 // ============================================================================
 // The kit's rules
 //
-// How a number's lexeme is spelled for a format and which datetime a bare
-// token is: the rules fig's own languages are written with, for a language
-// that is not Zig (a runner's, written in JavaScript or Lua). The same
+// How a number's lexeme is spelled for a format, which datetime a bare
+// token is, what a bare token means, and how a string is quoted as JSON:
+// the rules fig's own languages are written with, for a language that is
+// not Zig (one written in C, Rust, or a runner's JavaScript or Lua). The same
 // functions, under the same names, are the exports of the kit's WebAssembly
 // module (`fig-kit.wasm`), which the TypeScript binding's kit answers
 // through. Each reads `len` bytes at `raw` and keeps nothing.
@@ -1394,6 +1395,32 @@ bool fig_kit_datetime_valid_time(const uint8_t *s, size_t len, uint32_t flags);
 
 // Whether `s` is `+HH:MM` or `-HH:MM`, an offset within a day.
 bool fig_kit_datetime_valid_offset(const uint8_t *s, size_t len);
+
+// The FigRow kind a bare token is written as when nothing else says what it
+// means: FIG_ROW_NULL for `null`, FIG_ROW_TRUE or FIG_ROW_FALSE for `true`
+// or `false` (lowercase only), FIG_ROW_INT or FIG_ROW_FLOAT for a number,
+// FIG_ROW_EXT + its FigExtKind for a datetime (as fig_kit_datetime_classify
+// reads one with both flags), and FIG_ROW_STRING for anything else. A
+// number is decimal with an optional sign, fraction and exponent, or a
+// `0x`/`0o`/`0b` integer, with `_` between digits; a multi-digit integer
+// part led by a zero, `inf` and `nan` are strings.
+uint8_t fig_kit_literal_kind(const uint8_t *raw, size_t len);
+
+// The FigRow kind of the number `raw` is, by the same rule: FIG_ROW_INT or
+// FIG_ROW_FLOAT, or -1 when it is not a number.
+int32_t fig_kit_literal_number(const uint8_t *raw, size_t len);
+
+// How long fig_kit_json_string_quote's answer can be for `len` bytes.
+#define FIG_KIT_JSON_STRING_ROOM(len) ((len) * 6 + 2)
+
+// Write `raw` between two `quote`s — '"', or the '\'' JSON5 also takes —
+// escaped as JSON escapes it (`\\`, the quote, `\b \f \n \r \t`, and
+// `\u00XX` for any other control byte; every other byte, UTF-8 included, as
+// it is) to `out`, and return its length. Returns SIZE_MAX, having written
+// nothing a caller should read, when `out_cap` is too small or `quote` is
+// neither; FIG_KIT_JSON_STRING_ROOM(len) never is too small.
+size_t fig_kit_json_string_quote(const uint8_t *raw, size_t len, uint8_t quote,
+                                 uint8_t *out, size_t out_cap);
 
 #ifdef __cplusplus
 }

@@ -103,6 +103,28 @@ pub fn add_diagnostic(out: &mut Table, severity: u8, offset: usize, end: Option<
     Ok(())
 }
 
+thread_local! {
+    /// The message and byte offset a refusing parser states apart from its
+    /// diagnostics: what a runtime language's `parse` writes into the C
+    /// `ErrorInfo` (`setErr`), as the helper wire does for a helper's
+    /// refusal. Thread-local: the parse that sets it and the registry's
+    /// `Parser` that reads it run on one thread.
+    static PARSE_ERROR: std::cell::RefCell<Option<(Vec<u8>, usize)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// State why the parse under way refuses, and where, without a diagnostic
+/// (the vtable's `ErrorInfo`): the registry's `Parser` reports it ahead of
+/// the table's first error. For a language whose refusal is a message, not
+/// a diagnostic — a helper's JSON-RPC error.
+pub fn set_parse_error(message: &[u8], offset: usize) {
+    PARSE_ERROR.with(|e| *e.borrow_mut() = Some((message.to_vec(), offset)));
+}
+
+/// Take what `set_parse_error` stated, leaving none.
+pub fn take_parse_error() -> Option<(Vec<u8>, usize)> {
+    PARSE_ERROR.with(|e| e.borrow_mut().take())
+}
+
 /// A language: what a Zig `Language` module declares, as a trait object the
 /// registry holds. See the module doc.
 pub trait Language: Send + Sync {
@@ -116,6 +138,16 @@ pub trait Language: Send + Sync {
     /// extension named after a dialect row belongs to that dialect, every
     /// other to the first (`kit/contract.zig`'s `extensionsOf`).
     fn extensions(&self) -> &[&'static str];
+
+    /// The extensions of dialect row `row` (an index into `dialects()`), for
+    /// a language that states them per row, as a runtime language's C record
+    /// does (`DialectDesc.extensions`). `None`, the default, hands out
+    /// `extensions()` by name: an extension named after a dialect row belongs
+    /// to that row, every other to the first.
+    fn dialect_extensions(&self, row: usize) -> Option<Vec<&'static str>> {
+        let _ = row;
+        None
+    }
 
     /// Zig `Language.caps`.
     fn caps(&self) -> Caps;

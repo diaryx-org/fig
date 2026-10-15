@@ -321,6 +321,9 @@ fn rows_of(lang: &dyn Language) -> Vec<Row> {
 /// Every extension of `lang` goes to the dialect named after it, else to the
 /// first (`kit/contract.zig`'s `extensionsOf`).
 fn extensions_of(lang: &dyn Language, row: usize) -> Vec<&'static str> {
+    if let Some(own) = lang.dialect_extensions(row) {
+        return own;
+    }
     let mut out = Vec::new();
     for &e in lang.extensions() {
         let mut owner = 0usize;
@@ -855,9 +858,15 @@ impl Parser {
         let mut tbl = Table::init(source.clone());
         self.last_error.clear();
         self.last_offset = 0;
+        language::take_parse_error();
         let parsed = reg.lang.parse_table(&source, e.dialect, &mut tbl);
-        // The parse thunk's report: a refusal's first error, or its name.
+        let stated = language::take_parse_error();
+        // The parse thunk's report: what the language stated (a runtime
+        // language's `ErrorInfo`), else a refusal's first error, or its name.
         let refusal = parsed.err().map(|err| {
+            if let Some(s) = stated {
+                return s;
+            }
             match tbl.diagnostics.iter().find(|d| d.severity == table::DIAGNOSTIC_ERROR) {
                 Some(d) => (tbl.text_of(d.message).unwrap_or(b"").to_vec(), d.start as usize),
                 None => (err.name().as_bytes().to_vec(), 0),
@@ -931,9 +940,14 @@ impl Entry {
             None => Err(err!(UnsupportedShape)),
             Some(Err(e)) => {
                 // A renderer's refusal: the format saying the text has no
-                // spelling here.
-                let text = e.name();
-                refuse(if text.is_empty() { "the renderer declined" } else { text });
+                // spelling here. A language that refuses with
+                // `RendererRefused` has put its own words in `last_refusal`
+                // already (a runtime language's `ErrorInfo`, which the helper
+                // wire fills from the helper's message).
+                if e != err!(RendererRefused) {
+                    let text = e.name();
+                    refuse(if text.is_empty() { "the renderer declined" } else { text });
+                }
                 Err(err!(RendererRefused))
             }
             Some(Ok(())) => {

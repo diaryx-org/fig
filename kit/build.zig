@@ -110,9 +110,11 @@ pub fn language(b: *std.Build, options: LanguageOptions) Language {
             // Android has no libc Zig can link, and the kit's C exports
             // need none; wasm has no libc either.
             .link_libc = !target.result.cpu.arch.isWasm() and !target.result.abi.isAndroid(),
-            // Every Android consumer is a shared object, which refuses the
-            // local-exec TLS model non-PIC code uses.
-            .pic = if (target.result.abi.isAndroid()) true else null,
+            // Position-independent, as fig's own C library is: every
+            // Android consumer is a shared object, which refuses the
+            // local-exec TLS model non-PIC code uses, and Rust links a musl
+            // program as a static PIE, which refuses an absolute relocation.
+            .pic = if (target.result.cpu.arch.isWasm()) null else true,
             .imports = &.{.{ .name = "kit", .module = kit }},
         }),
     });

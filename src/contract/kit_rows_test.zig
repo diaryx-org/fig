@@ -213,3 +213,167 @@ fn runZig(a: std.mem.Allocator, _: []const u8, fx: Value) !void {
 test "the Zig kit's row writer gives every rows fixture's table" {
     try eachFixture(runZig);
 }
+
+// ── C ───────────────────────────────────────────────────────────────────────
+// The same fixtures written as a C language writes a table: rows through
+// `fig_table_rows`, linked by their `first_child` and `next_sibling`, text
+// through `fig_table_string`, facts through `fig_table_*`, a repeat found by
+// `fig_table_child_by_key`, and `fig_table_finish` at the end. Appending
+// and the duplicate policies are the C author's own few lines, here.
+
+const c = @import("../c_api.zig");
+const FigRow = c.FigRow;
+const none = table.none;
+
+const C = struct {
+    t: *table.Table,
+    last: std.AutoHashMapUnmanaged(u32, u32) = .empty,
+
+    fn row(self: *C, id: u32) *FigRow {
+        return &self.t.rows.items[id];
+    }
+
+    fn text(self: *C, s: []const u8) !table.Text {
+        var out: table.Text = undefined;
+        try testing.expectEqual(c.FigStatus.ok, c.fig_table_string(self.t, s.ptr, s.len, &out));
+        return out;
+    }
+
+    fn append(self: *C, a: std.mem.Allocator, parent: u32, child: u32) !void {
+        if (self.last.get(parent)) |prev| self.row(prev).next_sibling = child else self.row(parent).first_child = child;
+        self.row(child).next_sibling = none;
+        try self.last.put(a, parent, child);
+    }
+};
+
+const row_kinds = [_]struct { []const u8, u8 }{
+    .{ "null", table.Kind.null_ },     .{ "string", table.Kind.string },
+    .{ "int", table.Kind.int },        .{ "float", table.Kind.float },
+    .{ "sequence", table.Kind.sequence }, .{ "mapping", table.Kind.mapping },
+    .{ "keyvalue", table.Kind.keyvalue }, .{ "alias", table.Kind.alias },
+};
+
+/// A fixture's row kind as `FIG_ROW_*`: a bool is true or false by its text.
+fn cKind(name: []const u8, text: ?[]const u8) u8 {
+    for (row_kinds) |k| if (std.mem.eql(u8, k[0], name)) return k[1];
+    return if (std.mem.eql(u8, text.?, "true")) table.Kind.true_ else table.Kind.false_;
+}
+
+fn runC(a: std.mem.Allocator, _: []const u8, fx: Value) !void {
+    var t = table.Table.init(a, fx.object.get("source").?.string);
+    var w: C = .{ .t = &t };
+    var puts: std.json.Array = .init(a);
+    const eq = std.mem.eql;
+    for (fx.object.get("ops").?.array.items) |op_v| {
+        const op = op_v.array.items;
+        const name = op[0].string;
+        if (eq(u8, name, "add")) {
+            const extra: ?std.json.ObjectMap = if (op.len > 4) op[4].object else null;
+            const span = spanOf(op[3]);
+            const id: u32 = @intCast(t.rows.items.len);
+            const r = &(c.fig_table_rows(&t, 1) orelse return error.OutOfMemory)[0];
+            const text: ?[]const u8 = if (extra) |x| if (x.get("text")) |s| s.string else null else null;
+            r.kind = cKind(op[1].string, text);
+            if (extra) |x| if (x.get("ext_kind")) |ek| {
+                r.kind = table.Kind.ext + @as(u8, @intFromEnum(std.meta.stringToEnum(Node.Kind.Extended.ExtKind, ek.string).?));
+            };
+            r.start = @intCast(span.start);
+            r.end = @intCast(span.end);
+            if (text != null and r.kind != table.Kind.true_ and r.kind != table.Kind.false_) {
+                const tx = try w.text(text.?);
+                w.row(id).text = tx;
+            }
+            if (extra) |x| {
+                if (x.get("marker")) |s| _ = c.fig_table_marker(&t, id, @intCast(spanOf(s).start), @intCast(spanOf(s).end));
+                if (x.get("sep")) |s| _ = c.fig_table_sep(&t, id, @intCast(spanOf(s).start), @intCast(spanOf(s).end));
+                if (x.get("anchor")) |n| {
+                    const s = spanOf(x.get("anchor_span").?);
+                    _ = c.fig_table_anchor(&t, id, @intCast(s.start), @intCast(s.end), try w.text(n.string));
+                }
+                if (x.get("item_sep")) |s| _ = c.fig_table_item_sep(&t, id, try w.text(s.string));
+                if (x.get("open")) |o| if (o.bool) {
+                    w.row(id).flags |= table.row_open;
+                };
+            }
+            if (idOf(op[2])) |parent| try w.append(a, parent, id);
+        } else if (eq(u8, name, "append")) {
+            try w.append(a, idOf(op[1]).?, idOf(op[2]).?);
+        } else if (eq(u8, name, "first")) {
+            w.row(idOf(op[1]).?).first_child = idOf(op[2]) orelse none;
+            _ = w.last.remove(idOf(op[1]).?);
+        } else if (eq(u8, name, "next")) {
+            w.row(idOf(op[1]).?).next_sibling = idOf(op[2]) orelse none;
+        } else if (eq(u8, name, "put")) {
+            const map = idOf(op[1]).?;
+            const key = idOf(op[2]).?;
+            const value = idOf(op[3]).?;
+            const policy = op[4].string;
+            const key_text = t.textOf(w.row(key).text).?;
+            const repeat = c.fig_table_child_by_key(&t, map, key_text.ptr, key_text.len);
+            if (repeat != none and !eq(u8, policy, "keep")) {
+                if (eq(u8, policy, "error")) {
+                    try puts.append(.{ .string = "error" });
+                    continue;
+                }
+                if (eq(u8, policy, "last_value")) {
+                    w.row(w.row(repeat).first_child).next_sibling = value;
+                    w.row(value).next_sibling = none;
+                }
+                var pair: std.json.Array = .init(a);
+                try pair.append(.{ .integer = repeat });
+                try pair.append(.{ .bool = true });
+                try puts.append(.{ .array = pair });
+                continue;
+            }
+            const kv: u32 = @intCast(t.rows.items.len);
+            const r = &(c.fig_table_rows(&t, 1) orelse return error.OutOfMemory)[0];
+            r.kind = table.Kind.keyvalue;
+            r.start = w.row(key).start;
+            r.end = w.row(value).end;
+            try w.append(a, map, kv);
+            try w.append(a, kv, key);
+            try w.append(a, kv, value);
+            var pair: std.json.Array = .init(a);
+            try pair.append(.{ .integer = kv });
+            try pair.append(.{ .bool = repeat != none });
+            try puts.append(.{ .array = pair });
+        } else if (eq(u8, name, "child_by_key")) {
+            const k = op[2].string;
+            const got = c.fig_table_child_by_key(&t, idOf(op[1]).?, k.ptr, k.len);
+            try testing.expectEqual(idOf(op[3]), if (got == none) null else got);
+        } else if (eq(u8, name, "comment")) {
+            const style: u8 = if (eq(u8, op[3].string, "block")) table.comment_block else table.comment_line;
+            try testing.expectEqual(c.FigStatus.ok, c.fig_table_comment(&t, idOf(op[1]).?, slotOf(op[2].string), style, try w.text(op[4].string)));
+        } else if (eq(u8, name, "region")) {
+            _ = c.fig_table_region(&t, idOf(op[1]).?, @intCast(op[2].integer), @intCast(op[3].integer));
+        } else if (eq(u8, name, "mention")) {
+            const s = spanOf(op[2]);
+            const kind = std.meta.stringToEnum(kit.Document.MentionKind, op[3].string).?;
+            _ = c.fig_table_mention(&t, idOf(op[1]).?, @intCast(s.start), @intCast(s.end), kind.byte());
+        } else if (eq(u8, name, "finish")) {
+            try testing.expectEqual(c.FigStatus.ok, c.fig_table_finish(&t, idOf(op[1]).?));
+            try testing.expectEqual(c.FigStatus.ok, c.fig_table_finish_in_order(&t));
+        } else return error.UnknownOp;
+    }
+    if (fx.object.get("puts")) |want| try testing.expect(jsonEql(want, .{ .array = puts }));
+    try expectTable(a, fx.object.get("table").?, &t);
+}
+
+test "C's fig_table_finish and fig_table_child_by_key give every rows fixture's table" {
+    try eachFixture(runC);
+}
+
+test "fig_table_finish refuses a link to no row, and fig_table_finish_in_order rows out of order" {
+    var t = table.Table.init(testing.allocator, "");
+    defer t.deinit();
+    const rows = c.fig_table_rows(&t, 2).?;
+    rows[0].kind = table.Kind.sequence;
+    rows[0].first_child = 7;
+    try testing.expectEqual(c.FigStatus.invalid_argument, c.fig_table_finish(&t, 0));
+    try testing.expectEqual(c.FigStatus.invalid_argument, c.fig_table_finish(&t, 2));
+    t.rows.items[0].first_child = 1;
+    try testing.expectEqual(c.FigStatus.invalid_argument, c.fig_table_finish_in_order(&t));
+    try testing.expectEqual(c.FigStatus.ok, c.fig_table_finish(&t, 0));
+    try testing.expectEqual(@as(u32, 0), t.rows.items[1].parent);
+    try testing.expectEqual(c.FigStatus.ok, c.fig_table_finish_in_order(&t));
+}

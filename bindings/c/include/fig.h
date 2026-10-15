@@ -939,6 +939,26 @@ typedef struct FigTable FigTable;
 // `n` new rows, each a null with no parent, span or text, to fill in place;
 // NULL when out of memory. Valid until the next call on `t`.
 FigRow   *fig_table_rows(FigTable *t, size_t n);
+// Rows written in any order: link each row to its first child and next
+// sibling (FigRow.first_child, .next_sibling; FIG_ROW_NONE for none; a
+// keyvalue's first child is its key, whose next sibling is its value),
+// write its side facts against the row as it stands, and call
+// fig_table_finish once at the end. It puts the rows in pre-order from row
+// `root`, names each one's parent, moves every side fact to its node's new
+// row, leaves each list in node order and the links naming the new rows,
+// and drops a row the links do not reach, with its facts. Comments end up
+// by node and slot, and a node given two trailing comments keeps the last.
+// FIG_STATUS_INVALID_ARGUMENT for a root or a link that names no row; a
+// row linked twice is written once.
+FigStatus fig_table_finish(FigTable *t, uint32_t root);
+// fig_table_finish for rows written in pre-order from row 0, each naming its
+// parent and linked: they stay where they are, and only the comments are put
+// in order. FIG_STATUS_INVALID_ARGUMENT when they are not in that order.
+FigStatus fig_table_finish_in_order(FigTable *t);
+// Mapping `map`'s entry whose key's text is the `key_len` bytes at `key`,
+// found by walking its links, or FIG_ROW_NONE: the repeat a flat format's
+// parser looks for before it adds an entry.
+uint32_t fig_table_child_by_key(const FigTable *t, uint32_t map, const uint8_t *key, size_t key_len);
 // `bytes` copied into the table's string buffer, its FigText to `*out`.
 FigStatus fig_table_string(FigTable *t, const uint8_t *bytes, size_t len, FigText *out);
 FigStatus fig_table_anchor(FigTable *t, uint32_t node, uint32_t start, uint32_t end, FigText name);

@@ -44,6 +44,7 @@ const Diagnostics = @import("diagnostics.zig");
 /// under their `Fig*` names are its, and so is the one `Language` every
 /// format is read, edited and printed through.
 const Runtime = @import("contract/runtime.zig");
+const RowWriter = @import("kit").RowWriter;
 const manifest = @import("kit").manifest;
 
 // The wasm module's half of the runtime-language carrier: a language
@@ -307,7 +308,8 @@ pub export fn fig_detect_order(input: ?[*]const u8, input_len: usize, names: ?[*
 // The node table a language's `parse` fills (`languages/table.zig`). Fig
 // allocated it; these are how a language writes into it, so no memory
 // crosses from a language's allocator to fig's. Every node index names a
-// row already added; every list is appended in node order.
+// row already added; every list is appended in node order, or put in it
+// by fig_table_finish.
 
 /// `n` new rows, each a null with no parent, span or text, to be filled in
 /// place; null when out of memory. Valid until the next call on `t`.
@@ -315,6 +317,51 @@ pub export fn fig_table_rows(t: ?*FigTable, n: usize) ?[*]FigRow {
     const tbl = t orelse return null;
     const rows = tbl.addRows(n) catch return null;
     return rows.ptr;
+}
+
+/// Put `t`'s rows in pre-order from row `root` by their links (`first_child`,
+/// `next_sibling`), naming each parent and moving every side fact to its
+/// node's new row (`RowWriter.finish`). `invalid_argument` for a root or a
+/// link that names no row.
+pub export fn fig_table_finish(t: ?*FigTable, root: u32) FigStatus {
+    const tbl = t orelse return .invalid_argument;
+    const w = RowWriter.init(tbl);
+    if (root >= tbl.rows.items.len or !w.linksInRange()) return .invalid_argument;
+    w.finish(root) catch return .out_of_memory;
+    return .ok;
+}
+
+/// `fig_table_finish` for rows written in pre-order from row 0, each
+/// naming its parent and linked to its siblings: they stay as they are and
+/// only the comments are put in order. `invalid_argument` when they are
+/// not in that order.
+pub export fn fig_table_finish_in_order(t: ?*FigTable) FigStatus {
+    const tbl = t orelse return .invalid_argument;
+    const w = RowWriter.init(tbl);
+    if (!w.linksInRange()) return .invalid_argument;
+    if (!(w.isInOrder() catch return .out_of_memory)) return .invalid_argument;
+    w.finishInOrder() catch return .out_of_memory;
+    return .ok;
+}
+
+/// Mapping `map`'s entry whose key's text is `key`, found by walking its
+/// links, or `FIG_ROW_NONE`.
+pub export fn fig_table_child_by_key(t: ?*const FigTable, map: u32, key: ?[*]const u8, key_len: usize) u32 {
+    const none = Runtime.table.none;
+    const tbl = t orelse return none;
+    const want: []const u8 = if (key_len == 0) "" else (key orelse return none)[0..key_len];
+    const rows = tbl.rows.items;
+    if (map >= rows.len) return none;
+    var e = rows[map].first_child;
+    var steps: usize = 0;
+    while (e != none and e < rows.len and steps < rows.len) : (steps += 1) {
+        const k = rows[e].first_child;
+        if (rows[e].kind == Runtime.table.Kind.keyvalue and k != none and k < rows.len) {
+            if (tbl.textOf(rows[k].text)) |text| if (std.mem.eql(u8, text, want)) return e;
+        }
+        e = rows[e].next_sibling;
+    }
+    return none;
 }
 
 /// `n` zeroed elements appended to list `which` of `t` (`FigTableList`),

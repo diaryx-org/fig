@@ -17,7 +17,7 @@ use fig_core::{err, Result};
 
 use crate::edit_ops::{self, OpValue};
 use crate::fileio::{self, Color, Input, OpenMode, Terminal};
-use crate::help::{self, Help};
+use crate::help;
 use crate::types::{self, *};
 use crate::value_arg;
 use crate::{args, diag_report, diff, external, gron, languages, parse_dispatch, patch_ops, reformat};
@@ -29,7 +29,7 @@ pub fn run_help(stdout_term: &mut Terminal, stderr_term: &mut Terminal, binary_n
         return Ok(());
     }
     stderr_term.write_str(help::TITLE_STRING)?;
-    Help::general(stderr_term, binary_name)
+    help::general(stderr_term, binary_name)
 }
 
 /// The git-style fallback for a word that is not one of fig's own actions:
@@ -43,10 +43,7 @@ pub fn run_external(stdout_term: &mut Terminal, stderr_term: &mut Terminal, bina
 /// Print fig's one version — every artifact ships under it (see
 /// docs/VERSIONING.md) — and its marketing epoch, a purely cosmetic label with
 /// no compatibility meaning: `fig 5.0.0 "Texas Everbearing"`.
-pub fn run_version(stdout_term: &mut Terminal, binary_name: &str, version: &str, epoch: &str, opts: &VersionOptions) -> Result<()> {
-    if opts.requested_help {
-        return Help::version(stdout_term, binary_name);
-    }
+pub fn run_version(stdout_term: &mut Terminal, version: &str, epoch: &str) -> Result<()> {
     stdout_term.print(format_args!("fig {version} \"{epoch}\"\n"))?;
     stdout_term.flush()
 }
@@ -57,10 +54,7 @@ fn exit_with(term: &mut Terminal, message: &str, code: i32) -> ! {
     fileio::exit(code);
 }
 
-pub fn run_edit(stdout_term: &mut Terminal, stderr_term: &mut Terminal, binary_name: &str, opts: &EditOptions) -> Result<()> {
-    if opts.requested_help {
-        return if opts.key { Help::rename(stdout_term, binary_name) } else { Help::replace(stdout_term, binary_name) };
-    }
+pub fn run_edit(stderr_term: &mut Terminal, opts: &EditOptions) -> Result<()> {
     // A replacement VALUE is read before the file is touched, so one that is
     // not a value exits 2 with the file as it was; a replacement key is a
     // name, spelled by the editor.
@@ -83,10 +77,7 @@ pub fn run_edit(stdout_term: &mut Terminal, stderr_term: &mut Terminal, binary_n
     edit_ops::apply_to_file_as(&mut input, resolved, &opts.path, opts.replacement.as_bytes(), &value, &op)
 }
 
-pub fn run_set(stdout_term: &mut Terminal, stderr_term: &mut Terminal, binary_name: &str, opts: &SetOptions) -> Result<()> {
-    if opts.requested_help {
-        return Help::set(stdout_term, binary_name);
-    }
+pub fn run_set(stderr_term: &mut Terminal, opts: &SetOptions) -> Result<()> {
     if opts.path.is_empty() {
         exit_with(stderr_term, "error: set needs a path to the key (or, with --seq, the sequence) to upsert.\n", 2);
     }
@@ -219,10 +210,7 @@ fn starts_lists(format: Format) -> bool {
     e.syntax_or_default().empty_seq_literal.is_some()
 }
 
-pub fn run_insert(stdout_term: &mut Terminal, stderr_term: &mut Terminal, binary_name: &str, opts: &InsertOptions) -> Result<()> {
-    if opts.requested_help {
-        return Help::insert(stdout_term, binary_name);
-    }
+pub fn run_insert(stderr_term: &mut Terminal, binary_name: &str, opts: &InsertOptions) -> Result<()> {
     // Read before the file is opened: see `run_edit`.
     let value = OpValue { one: Some(value_arg::read(stderr_term, &opts.value, opts.value_mode)?), items: Vec::new() };
     let mut input = fileio::get_input(Some(&opts.file), OpenMode::ReadWrite)?;
@@ -272,10 +260,7 @@ pub fn run_insert(stdout_term: &mut Terminal, stderr_term: &mut Terminal, binary
     }
 }
 
-pub fn run_delete(stdout_term: &mut Terminal, stderr_term: &mut Terminal, binary_name: &str, opts: &DeleteOptions) -> Result<()> {
-    if opts.requested_help {
-        return Help::delete(stdout_term, binary_name);
-    }
+pub fn run_delete(stderr_term: &mut Terminal, opts: &DeleteOptions) -> Result<()> {
     let mut input = fileio::get_input(Some(&opts.file), OpenMode::ReadWrite)?;
 
     if opts.path.is_empty() {
@@ -298,10 +283,7 @@ pub fn run_delete(stdout_term: &mut Terminal, stderr_term: &mut Terminal, binary
     }
 }
 
-pub fn run_get(stdout_term: &mut Terminal, stderr_term: &mut Terminal, binary_name: &str, opts: &GetOptions) -> Result<()> {
-    if opts.requested_help {
-        return Help::get(stdout_term, binary_name);
-    }
+pub fn run_get(stdout_term: &mut Terminal, stderr_term: &mut Terminal, opts: &GetOptions) -> Result<()> {
     let mut input = fileio::get_input(Some(&opts.file), OpenMode::ReadOnly)?;
 
     // Resolved input/output formats. They equal the parsed options unless
@@ -468,10 +450,7 @@ fn scalar_text(ast: &AST, id: u32) -> Result<Option<Vec<u8>>> {
     Ok(Some(w))
 }
 
-pub fn run_comment(stdout_term: &mut Terminal, stderr_term: &mut Terminal, binary_name: &str, opts: &CommentOptions) -> Result<()> {
-    if opts.requested_help {
-        return Help::comment(stdout_term, binary_name);
-    }
+pub fn run_comment(stdout_term: &mut Terminal, stderr_term: &mut Terminal, opts: &CommentOptions) -> Result<()> {
     // `--get` only reads: open read-only and never write back.
     let mut input = fileio::get_input(Some(&opts.file), if opts.get { OpenMode::ReadOnly } else { OpenMode::ReadWrite })?;
 
@@ -531,11 +510,7 @@ pub fn run_comment(stdout_term: &mut Terminal, stderr_term: &mut Terminal, binar
     edit_ops::apply_to_file_as(&mut input, resolved, &opts.path, opts.text.as_bytes(), &OpValue::default(), &op)
 }
 
-pub fn run_check(stdout_term: &mut Terminal, stderr_term: &mut Terminal, binary_name: &str, opts: &CheckOptions) -> Result<()> {
-    if opts.requested_help {
-        return Help::check(stdout_term, binary_name);
-    }
-
+pub fn run_check(stdout_term: &mut Terminal, stderr_term: &mut Terminal, opts: &CheckOptions) -> Result<()> {
     // Validate every file, reporting each independently, so one bad file
     // doesn't hide the status of the rest. Success lines go to stdout
     // (silenced by `--quiet`); failures always go to stderr. A single
@@ -630,10 +605,7 @@ pub fn run_check(stdout_term: &mut Terminal, stderr_term: &mut Terminal, binary_
 /// and format-detected — because the patch document's own
 /// preparation depends on it: `--lossless` encodes the patch's values for the
 /// format they are about to be rendered into, which is the target's.
-pub fn run_patch(stdout_term: &mut Terminal, stderr_term: &mut Terminal, binary_name: &str, opts: &PatchOptions) -> Result<()> {
-    if opts.requested_help {
-        return Help::patch(stdout_term, binary_name);
-    }
+pub fn run_patch(stdout_term: &mut Terminal, stderr_term: &mut Terminal, opts: &PatchOptions) -> Result<()> {
     // `--dry-run`/`--diff` are preview modes: nothing is written under either,
     // so the target opens read-only and stdin becomes a legal target.
     let preview_only = opts.dry_run || opts.diff;
@@ -756,10 +728,7 @@ fn load_patch(stderr_term: &mut Terminal, opts: &PatchOptions, target_format: Fo
     Ok((encoded, r))
 }
 
-pub fn run_fmt(stdout_term: &mut Terminal, stderr_term: &mut Terminal, binary_name: &str, opts: &FmtOptions) -> Result<()> {
-    if opts.requested_help {
-        return Help::fmt(stdout_term, binary_name);
-    }
+pub fn run_fmt(stdout_term: &mut Terminal, stderr_term: &mut Terminal, opts: &FmtOptions) -> Result<()> {
     // `--diff` is a preview mode just like `--dry-run` — nothing is
     // ever written to `file` under either.
     let preview_only = opts.dry_run || opts.diff;
@@ -845,10 +814,7 @@ fn finish_convert(
     Ok(())
 }
 
-pub fn run_lang(stdout_term: &mut Terminal, stderr_term: &mut Terminal, binary_name: &str, opts: &LangOptions) -> Result<()> {
-    if opts.requested_help {
-        return Help::lang(stderr_term, binary_name);
-    }
+pub fn run_lang(stdout_term: &mut Terminal, stderr_term: &mut Terminal, opts: &LangOptions) -> Result<()> {
     match opts.verb {
         LangVerb::List => languages::list(stdout_term),
         LangVerb::Check => languages::check(stdout_term, stderr_term, &opts.name, opts.against.as_deref(), &opts.files),
@@ -856,10 +822,7 @@ pub fn run_lang(stdout_term: &mut Terminal, stderr_term: &mut Terminal, binary_n
     }
 }
 
-pub fn run_convert(stdout_term: &mut Terminal, stderr_term: &mut Terminal, binary_name: &str, opts: &ConvertOptions) -> Result<()> {
-    if opts.requested_help {
-        return Help::convert(stdout_term, binary_name);
-    }
+pub fn run_convert(stdout_term: &mut Terminal, stderr_term: &mut Terminal, opts: &ConvertOptions) -> Result<()> {
     let is_stdin = opts.file == "-";
     if opts.write && is_stdin {
         exit_with(stderr_term, "error: cannot write stdin in place; omit --write to print the converted result instead.\n", 2);

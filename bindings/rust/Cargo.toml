@@ -60,6 +60,10 @@ fig-dotenv = { path = "../../languages/dotenv", version = "6.0.0", default-featu
 fig-properties = { path = "../../languages/properties", version = "6.0.0", default-features = false }
 fig-plist = { path = "../../languages/plist", version = "6.0.0", default-features = false }
 fig-nestedtext = { path = "../../languages/nestedtext", version = "6.0.0", default-features = false }
+# fig-cli's command line. `derive` for its declaration; the default
+# features (std, color, help, usage, error-context, suggestions) for the
+# usage errors and `--help` pages it prints.
+clap = { version = "4.6", features = ["derive"] }
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }

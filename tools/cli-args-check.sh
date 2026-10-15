@@ -74,7 +74,10 @@ exits "help --help" 0 help --help
 # `version` takes `--help` like every other action.
 exits "version --help" 0 version --help
 exits "-v -h" 0 -v -h
-[ "$("$fig" version --help 2>/dev/null | head -1)" = "Usage: $fig version" ] || fail "version --help printed no usage"
+case "$("$fig" version --help 2>/dev/null)" in
+*Usage:*version*) ;;
+*) fail "version --help printed no usage" ;;
+esac
 # `help <action>` says where that action's help is.
 err="$("$fig" help set 2>&1 >/dev/null || true)"
 case "$err" in

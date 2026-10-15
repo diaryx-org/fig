@@ -14,7 +14,9 @@ of fig from Zig to Rust, following [the proposal](/docs/proposals/rust-core.md).
 The port is file for file: every `.rs` file starts with
 `//! Port of <zig path>`, keeps the Zig file's names and doc comments, and
 does what it does, byte for byte. It needs no Zig and no C to build, and
-uses no crates outside `std`.
+uses no crates outside `std` but one: `fig-cli` reads its command line
+with clap, so its usage errors and `--help` pages are clap's (the rules
+they enforce, and everything else the CLI prints, are the Zig's).
 
 | Crate | Where | Ports | Lines |
 |---|---|---|---|

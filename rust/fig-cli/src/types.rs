@@ -1,9 +1,9 @@
 //! Port of src/cli/types.zig.
 //!
 //! CLI-only type definitions shared across the `fig` binary: the `Format`
-//! enum, the `CliAction`/`CliActionOptions` action model, the in-place
-//! `EditOp` union, and the small helper types (`CliConfig`, `ArgError`,
-//! `Detected`, `APPEND_INDEX`) threaded through arg parsing and dispatch.
+//! enum, the `CliActionOptions` action model, the in-place
+//! `EditOp` union, and the small helper types (`CliConfig`, `Detected`,
+//! `APPEND_INDEX`) threaded through arg parsing and dispatch.
 //! Nothing here touches I/O or does any real work — see `args.rs` for
 //! parsing, `actions.rs` for execution.
 
@@ -116,55 +116,6 @@ pub fn segs(path: &[PathSeg]) -> Vec<PathSegment<'_>> {
         .collect()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CliAction {
-    Help,
-    Version,
-    /// `fig replace`: the value at a path.
-    Replace,
-    /// `fig rename`: the key at a path.
-    Rename,
-    Set,
-    Insert,
-    Delete,
-    Get,
-    Comment,
-    Check,
-    Fmt,
-    Convert,
-    Patch,
-    /// `fig lang list` / `fig lang check`: the languages the CLI did not
-    /// compile in. See `LangOptions` and `cli/languages.rs`.
-    Lang,
-    /// Not one of fig's own verbs: a word handed off to a `fig-<word>`
-    /// executable on PATH. See `ExternalOptions`.
-    External,
-}
-
-impl CliAction {
-    /// `std.meta.stringToEnum(CliAction, s)`.
-    pub fn from_name(s: &str) -> Option<CliAction> {
-        Some(match s {
-            "help" => CliAction::Help,
-            "version" => CliAction::Version,
-            "replace" => CliAction::Replace,
-            "rename" => CliAction::Rename,
-            "set" => CliAction::Set,
-            "insert" => CliAction::Insert,
-            "delete" => CliAction::Delete,
-            "get" => CliAction::Get,
-            "comment" => CliAction::Comment,
-            "check" => CliAction::Check,
-            "fmt" => CliAction::Fmt,
-            "convert" => CliAction::Convert,
-            "patch" => CliAction::Patch,
-            "lang" => CliAction::Lang,
-            "external" => CliAction::External,
-            _ => return None,
-        })
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LangVerb {
     #[default]
@@ -175,7 +126,6 @@ pub enum LangVerb {
 
 #[derive(Debug, Clone, Default)]
 pub struct LangOptions {
-    pub requested_help: bool,
     pub verb: LangVerb,
     /// `check`'s language name; `table`'s file.
     pub name: String,
@@ -192,16 +142,9 @@ pub struct LangOptions {
 }
 
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)]
 pub struct HelpOptions {
-    pub requested_help: bool,
     /// `help --oneline`: what fig is for, in one line on stdout.
     pub oneline: bool,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct VersionOptions {
-    pub requested_help: bool,
 }
 
 /// How a value argument (`set`/`insert`/`replace`) is read — see `value_arg.rs`.
@@ -226,7 +169,6 @@ pub struct EditOptions {
     /// Set for `rename`: `replacement` is a key name, not a value.
     pub key: bool,
     pub value_mode: ValueMode,
-    pub requested_help: bool,
     pub format: Format,
     /// Set when the format could not be inferred from the file extension:
     /// the handler then sniffs the file's contents with `Language.detect`.
@@ -247,7 +189,6 @@ pub struct SetOptions {
     pub seq: bool,
     pub values: Vec<String>,
     pub value_mode: ValueMode,
-    pub requested_help: bool,
     pub format: Format,
     pub detect: bool,
 }
@@ -264,7 +205,6 @@ pub struct InsertOptions {
     pub path: Vec<PathSeg>,
     pub value: String,
     pub value_mode: ValueMode,
-    pub requested_help: bool,
     pub format: Format,
     /// Set when the format could not be inferred from the extension; the
     /// handler then sniffs the contents with `Language.detect`.
@@ -278,7 +218,6 @@ pub struct DeleteOptions {
     /// its owned leading comments); a trailing index removes that sequence
     /// item from the parent sequence.
     pub path: Vec<PathSeg>,
-    pub requested_help: bool,
     pub format: Format,
     pub detect: bool,
 }
@@ -289,7 +228,6 @@ pub struct GetOptions {
     pub path: Option<Vec<PathSeg>>,
     pub from: Format,
     pub to: Format,
-    pub requested_help: bool,
     /// Set when `from` could not be inferred from the file extension and no
     /// `--input` was given: the handler sniffs the contents with
     /// `Language.detect`. When `to` was also left to default (`output_explicit`
@@ -336,7 +274,6 @@ pub struct CommentOptions {
     /// When set, print the targeted comment to stdout instead of editing it
     /// (then `text` is unused, and the file is opened read-only).
     pub get: bool,
-    pub requested_help: bool,
     pub format: Format,
     /// Set when the format could not be inferred from the file extension:
     /// the handler then sniffs the file's contents with `Language.detect`.
@@ -360,7 +297,6 @@ pub struct CheckOptions {
     /// `--strict`: a file that parses with warnings fails (exit 1), as one
     /// that does not parse does.
     pub strict: bool,
-    pub requested_help: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -371,7 +307,6 @@ pub struct FmtOptions {
     /// The single format `fmt` parses AND re-emits — unlike `get`, there is
     /// no `--output`: reformatting never changes the document's format.
     pub from: Format,
-    pub requested_help: bool,
     /// Set when `from` could not be inferred from the file extension and no
     /// `--input` was given: the handler sniffs the contents with
     /// `Language.detect`.
@@ -397,7 +332,6 @@ pub struct ConvertOptions {
     /// The file to convert. `-` reads stdin — only valid without `--write`
     /// (there is nowhere to write an in-place result back to).
     pub file: String,
-    pub requested_help: bool,
     /// Parse as `from`, re-emit as `to` (`--output`, required).
     pub from: Format,
     pub to: Format,
@@ -445,7 +379,6 @@ pub struct PatchOptions {
     /// How the merge behaves — sequence strategy, comment strategy, and the
     /// serialize knobs patch subtrees are rendered with.
     pub patch_options: patch::Options,
-    pub requested_help: bool,
     /// The TARGET's format. As everywhere else: `--input`, else the extension,
     /// else (with `detect`) a content sniff.
     pub format: Format,
@@ -501,7 +434,7 @@ pub struct ExternalOptions {
 #[derive(Debug, Clone)]
 pub enum CliActionOptions {
     Help(HelpOptions),
-    Version(VersionOptions),
+    Version,
     Replace(EditOptions),
     Rename(EditOptions),
     Set(SetOptions),
@@ -565,24 +498,13 @@ pub enum EditOp {
 /// it never collides with an addressable item.
 pub const APPEND_INDEX: usize = usize::MAX;
 
+/// What `args::parse_config` makes of the command line: the action, with
+/// its options resolved, and the name fig was run as (argv[0]), which the
+/// reports quote.
 #[derive(Debug, Clone)]
 pub struct CliConfig {
-    pub action: CliAction,
     pub options: CliActionOptions,
     pub binary_name: String,
-    #[allow(dead_code)]
-    pub requested_help: bool,
-}
-
-impl Default for CliConfig {
-    fn default() -> Self {
-        CliConfig {
-            action: CliAction::Help,
-            options: CliActionOptions::Help(HelpOptions::default()),
-            binary_name: "fig".to_string(),
-            requested_help: false,
-        }
-    }
 }
 
 /// The caller-supplied text an action splices into the document, plus what it
@@ -702,7 +624,7 @@ pub fn target_file(config: &CliConfig) -> Option<&str> {
         // arguments is the other binary's business, and its failures are its
         // own to report.
         CliActionOptions::Help(_)
-        | CliActionOptions::Version(_)
+        | CliActionOptions::Version
         | CliActionOptions::Check(_)
         | CliActionOptions::Lang(_)
         | CliActionOptions::External(_) => None,
@@ -747,7 +669,7 @@ pub fn parse_target(config: &CliConfig) -> Option<ParseTarget<'_>> {
         CliActionOptions::Fmt(o) => of(&o.file, o.detect, o.from),
         CliActionOptions::Convert(o) => of(&o.file, o.detect, o.from),
         CliActionOptions::Help(_)
-        | CliActionOptions::Version(_)
+        | CliActionOptions::Version
         | CliActionOptions::Check(_)
         | CliActionOptions::Lang(_)
         | CliActionOptions::External(_) => return None,
@@ -756,27 +678,6 @@ pub fn parse_target(config: &CliConfig) -> Option<ParseTarget<'_>> {
         return None;
     }
     Some(t)
-}
-
-/// `ArgError`: the ways `parse_config` refuses a command line, by Zig name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArgError {
-    UnsupportedFileFormat,
-    MissingReplaceArgument,
-    MissingRenameArgument,
-    MissingSetArgument,
-    MissingInsertArgument,
-    MissingDeleteArgument,
-    MissingGetArgument,
-    MissingCommentArgument,
-    MissingCheckArgument,
-    MissingFmtArgument,
-    MissingConvertArgument,
-    MissingPatchArgument,
-    MissingLangArgument,
-    SurplusArgument,
-    HelpNamesAction,
-    InvalidPath,
 }
 
 /// Result of mapping a file extension to a parse strategy.

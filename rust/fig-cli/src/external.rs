@@ -20,7 +20,7 @@
 use fig_core::{err, Error, Result};
 
 use crate::fileio::{self, Color, Terminal};
-use crate::help::Help;
+use crate::help;
 use crate::types::ExternalOptions;
 
 /// Hand `opts.argv` to `fig-<name>`. Never returns normally: this process
@@ -97,7 +97,7 @@ fn report_impl(term: &mut Terminal, binary_name: &str, opts: &ExternalOptions, e
             write_error(term, &format!("`{}` is not a fig command.\n", opts.name))?;
         }
         term.write_str("\n")?;
-        return Help::general(term, binary_name);
+        return help::general(term, binary_name);
     }
 
     let program = opts.program.as_deref().unwrap_or("");

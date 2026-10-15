@@ -5,8 +5,8 @@
 //! fig <action> [action options] [--flags]
 //!
 //! This file is deliberately thin: process/terminal setup, log routing,
-//! and `parse_config`'s error-to-help mapping, then a dispatch switch straight
-//! into `actions.rs`. Everything else (arg parsing, format detection,
+//! and `parse_config` (clap, which reports a usage error itself), then a
+//! dispatch switch straight into `actions.rs`. Everything else (arg parsing, format detection,
 //! parse dispatch, in-place editing, reformat/convert, diagnostic rendering,
 //! the `fig-<action>` handoff) lives in its own sibling module — see each
 //! file's own doc comment.
@@ -16,8 +16,7 @@ use std::sync::OnceLock;
 use fig_core::Error;
 
 use crate::fileio::{Color, Mode, Sink, Terminal};
-use crate::help::Help;
-use crate::types::{ArgError, CliActionOptions, CliConfig, ParseTarget};
+use crate::types::{CliActionOptions, CliConfig, ParseTarget};
 
 /// The colour mode of standard error, set by `main` once it is known; the
 /// log lines below are written in it.
@@ -93,9 +92,11 @@ fn main() {
     // Accessing command line arguments:
     let argv = std::env::args_os().map(|a| a.into_string().unwrap_or_else(|a| a.to_string_lossy().into_owned()));
 
+    // A usage error is clap's to report: it prints it with the action's
+    // usage and exits 2 (or, for `--help`, prints the help and exits 0).
     let config = match args::parse_config(argv) {
         Ok(c) => c,
-        Err(err) => usage_error(&mut stderr_terminal, err),
+        Err(err) => err.exit(),
     };
 
     // Now, act on config. One failure is intercepted here rather than left to
@@ -164,54 +165,6 @@ fn main() {
     let _ = stdout_terminal.flush();
 }
 
-/// `parse_config`'s refusal, mapped to the help it calls for, and exit 2.
-fn usage_error(stderr_terminal: &mut Terminal, err: ArgError) -> ! {
-    let t = stderr_terminal;
-    let _ = match err {
-        ArgError::UnsupportedFileFormat => {
-            let _ = t.write_str("Try using `--input <format>` to manually specify a format.\n");
-            let mut supported = String::new();
-            for n in ["canonical", "gron"] {
-                supported.push_str(&format!("\n- {n}"));
-            }
-            let _ = t.print(format_args!("Supported formats:{supported}\n"));
-            // And the languages a `languages.figl` configures, by name only —
-            // listing is not the moment to spawn each one.
-            let configured = languages::configured();
-            if !configured.is_empty() {
-                let _ = t.write_str("Configured languages (`fig lang list`):");
-                for c in &configured {
-                    let _ = t.print(format_args!("\n- {}", c.name));
-                }
-                let _ = t.write_str("\n");
-            }
-            t.flush()
-        }
-        ArgError::MissingReplaceArgument => Help::replace(t, "fig"),
-        ArgError::MissingRenameArgument => Help::rename(t, "fig"),
-        ArgError::MissingSetArgument => Help::set(t, "fig"),
-        ArgError::MissingInsertArgument => Help::insert(t, "fig"),
-        ArgError::MissingDeleteArgument => Help::delete(t, "fig"),
-        ArgError::MissingGetArgument => Help::get(t, "fig"),
-        ArgError::MissingCommentArgument => Help::comment(t, "fig"),
-        ArgError::MissingCheckArgument => Help::check(t, "fig"),
-        ArgError::MissingFmtArgument => Help::fmt(t, "fig"),
-        ArgError::MissingConvertArgument => Help::convert(t, "fig"),
-        ArgError::MissingPatchArgument => Help::patch(t, "fig"),
-        ArgError::MissingLangArgument => Help::lang(t, "fig"),
-        // Each has said what was wrong already (`args::path_arg`, the action
-        // `help` was given), and nothing more is worth adding: `fig --help`
-        // would only mislead after being told `fig <action> --help`.
-        ArgError::InvalidPath | ArgError::HelpNamesAction => Ok(()),
-        // `help`/`version` with an argument after them: said which already.
-        ArgError::SurplusArgument => {
-            let _ = t.write_str("See `fig --help`.\n");
-            t.flush()
-        }
-    };
-    fileio::exit(2);
-}
-
 /// `diag_report::report_unparseable_edit` for `config`'s file and path. Every
 /// action that edits has both, so the fallbacks only keep a report from
 /// panicking.
@@ -245,18 +198,18 @@ fn dispatch(stdout_terminal: &mut Terminal, stderr_terminal: &mut Terminal, conf
     let b = &config.binary_name;
     match &config.options {
         CliActionOptions::Help(o) => actions::run_help(stdout_terminal, stderr_terminal, b, o),
-        CliActionOptions::Version(o) => actions::run_version(stdout_terminal, b, VERSION, EPOCH, o),
-        CliActionOptions::Replace(o) | CliActionOptions::Rename(o) => actions::run_edit(stdout_terminal, stderr_terminal, b, o),
-        CliActionOptions::Set(o) => actions::run_set(stdout_terminal, stderr_terminal, b, o),
-        CliActionOptions::Insert(o) => actions::run_insert(stdout_terminal, stderr_terminal, b, o),
-        CliActionOptions::Delete(o) => actions::run_delete(stdout_terminal, stderr_terminal, b, o),
-        CliActionOptions::Get(o) => actions::run_get(stdout_terminal, stderr_terminal, b, o),
-        CliActionOptions::Comment(o) => actions::run_comment(stdout_terminal, stderr_terminal, b, o),
-        CliActionOptions::Check(o) => actions::run_check(stdout_terminal, stderr_terminal, b, o),
-        CliActionOptions::Fmt(o) => actions::run_fmt(stdout_terminal, stderr_terminal, b, o),
-        CliActionOptions::Convert(o) => actions::run_convert(stdout_terminal, stderr_terminal, b, o),
-        CliActionOptions::Patch(o) => actions::run_patch(stdout_terminal, stderr_terminal, b, o),
-        CliActionOptions::Lang(o) => actions::run_lang(stdout_terminal, stderr_terminal, b, o),
+        CliActionOptions::Version => actions::run_version(stdout_terminal, VERSION, EPOCH),
+        CliActionOptions::Replace(o) | CliActionOptions::Rename(o) => actions::run_edit(stderr_terminal, o),
+        CliActionOptions::Set(o) => actions::run_set(stderr_terminal, o),
+        CliActionOptions::Insert(o) => actions::run_insert(stderr_terminal, b, o),
+        CliActionOptions::Delete(o) => actions::run_delete(stderr_terminal, o),
+        CliActionOptions::Get(o) => actions::run_get(stdout_terminal, stderr_terminal, o),
+        CliActionOptions::Comment(o) => actions::run_comment(stdout_terminal, stderr_terminal, o),
+        CliActionOptions::Check(o) => actions::run_check(stdout_terminal, stderr_terminal, o),
+        CliActionOptions::Fmt(o) => actions::run_fmt(stdout_terminal, stderr_terminal, o),
+        CliActionOptions::Convert(o) => actions::run_convert(stdout_terminal, stderr_terminal, o),
+        CliActionOptions::Patch(o) => actions::run_patch(stdout_terminal, stderr_terminal, o),
+        CliActionOptions::Lang(o) => actions::run_lang(stdout_terminal, stderr_terminal, o),
         CliActionOptions::External(o) => actions::run_external(stdout_terminal, stderr_terminal, b, o),
     }
 }

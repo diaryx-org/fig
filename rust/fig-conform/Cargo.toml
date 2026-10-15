@@ -1,0 +1,14 @@
+[package]
+name = "fig-conform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "fig-conformance's JSON-lines adapter over fig-core: parse, print, split and edit, answered as fig's TypeScript binding answers them"
+publish = false
+
+[[bin]]
+name = "fig-conform"
+path = "src/main.rs"
+
+[dependencies]
+fig-core = { path = "../fig-core" }

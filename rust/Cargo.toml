@@ -2,7 +2,7 @@
 # (docs/proposals/rust-core.md). Each file mirrors the Zig file it ports.
 [workspace]
 resolver = "3"
-members = ["fig-core", "fig-cli"]
+members = ["fig-core", "fig-cli", "fig-conform"]
 
 [workspace.package]
 version = "6.0.0"

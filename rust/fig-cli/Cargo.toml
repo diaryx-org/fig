@@ -11,3 +11,8 @@ path = "src/main.rs"
 
 [dependencies]
 fig-core = { path = "../fig-core" }
+
+[features]
+# fig-lsp diagnoses through the figl parser (`fig_core::lang::figl`), which
+# is not ported yet: turn this on, and make it a default, when it lands.
+figl = []

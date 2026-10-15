@@ -23,17 +23,16 @@ name: Release (crate)
 # It publishes the version Cargo.toml carries, which the checks below hold to
 # the tag, and no-ops if that exact version is already out.
 #
-# Authentication: crates.io Trusted Publishing (OIDC) is preferred — the job
-# trades its `id-token` identity for a short-lived registry token, so nothing
-# long-lived is stored. It requires a trusted-publisher entry on crates.io naming
-# this repo and this workflow file.
-#
-# Fallback repository secret (used when that exchange doesn't succeed):
-# CARGO_REGISTRY_TOKEN  — crates.io API token with publish rights (already set)
+# Required repository secret:
+# CARGO_REGISTRY_TOKEN  — crates.io API token with publish rights to every
+# fig* crate, new ones included (already set). Not
+# crates.io Trusted Publishing: it needs an entry per
+# crate, made by hand once the crate exists, and the
+# graph gains a crate with each new language or target.
 on:
   workflow_dispatch: {}
   push: { tags: [v*.*.*] }
-permissions: { id-token: write, contents: read }
+permissions: { contents: read }
 jobs:
   crate:
     name: Publish crate (crates.io)
@@ -124,18 +123,6 @@ jobs:
     # a language crate builds against are present in every packaged tarball.
     - name: Vendor the Zig source and licenses into the crates
       run: zig build vendor-rust
-    # crates.io Trusted Publishing: exchange this job's OIDC identity (what the
-    # workflow-level `id-token: write` above grants) for a short-lived registry
-    # token, so no long-lived API token has to sit in repository secrets. The
-    # exchange needs a matching trusted-publisher entry on the crates.io side,
-    # naming this repository AND this workflow file — which is why the step is
-    # `continue-on-error`: if that entry is missing, renamed, or not yet added for
-    # a new crate, this fails soft and the publish below still authenticates with
-    # `CARGO_REGISTRY_TOKEN`. Delete the fallback once every crate in the graph
-    # has a trusted publisher configured.
-    - id: auth
-      uses: rust-lang/crates-io-auth-action@v1
-      continue-on-error: true
     # Publish the whole graph bottom-up — crates.io rejects an upload whose
     # dependencies aren't already indexed, so the order is:
     # payload crates -> fig-sys -> fig-macros -> fig -> fig-language-build
@@ -152,11 +139,7 @@ jobs:
     # re-run after a partial publish skips the crates that already landed.
     - name: Publish to crates.io (bottom-up)
       working-directory: bindings/rust
-      env:
-        CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
-        # crates.io refuses to create a crate with a Trusted Publishing token, so a
-        # payload crate's first upload falls back to the repository secret.
-        FALLBACK_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      env: { CARGO_REGISTRY_TOKEN: '${{ secrets.CARGO_REGISTRY_TOKEN }}' }
       run: |
         set -uo pipefail
         publish() {
@@ -166,13 +149,6 @@ jobs:
               echo "$out"; return 0
             fi
             echo "$out"
-            if echo "$out" | grep -qi 'do not support creating new crates'; then
-              echo "::notice::$crate is new to crates.io — publishing it with CARGO_REGISTRY_TOKEN"
-              if out=$(CARGO_REGISTRY_TOKEN="$FALLBACK_REGISTRY_TOKEN" cargo publish -p "$crate" --allow-dirty 2>&1); then
-                echo "$out"; return 0
-              fi
-              echo "$out"
-            fi
             if echo "$out" | grep -qiE 'already (uploaded|exists)'; then
               echo "::notice::$crate already on crates.io — skipping"; return 0
             fi

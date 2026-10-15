@@ -1,9 +1,28 @@
-//! The kit's rules: how a number's lexeme is spelled for a format, and which
-//! datetime a bare token is. They are the rules fig's own languages are
-//! written with, and `@diaryx/fig/kit/number` and `/datetime` answer through
-//! the same code, so a [`Language`](crate::language::Language) written in
-//! Rust, or run from a script by a runner, reads and writes these the way
-//! fig's own do.
+//! The kit: what a [`Language`](crate::language::Language) written in Rust
+//! is built from. It is the same kit fig's own languages are written with in
+//! Zig, and that `@diaryx/fig/kit` is in JavaScript, layer for layer, and
+//! the kit's shared fixtures (`kit/testdata/` in the fig repository) hold
+//! every binding's to the same answers.
+//!
+//! The **rules** have one right answer, which fig's own languages give, so
+//! they are the Zig kit's own code, called through the C ABI:
+//!
+//! * [`number`]: how a number's lexeme is spelled for a format;
+//! * [`datetime`]: which datetime a bare token is;
+//! * [`literal`]: what a bare token means when nothing else says;
+//! * [`json_string`]: a string quoted as JSON or JSON5 quotes it;
+//! * [`xml`]: the tokens of an XML-shaped format.
+//!
+//! The **structure** is Rust of its own, since it deals in the values a
+//! language builds:
+//!
+//! * [`rows`]: the [`NodeTable`](crate::language::NodeTable) written in any
+//!   order, linked, and finished into the pre-order a parse returns.
+
+pub mod json_string;
+pub mod literal;
+pub mod rows;
+pub mod xml;
 
 /// How a number's lexeme is spelled for a format.
 ///

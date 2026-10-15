@@ -64,6 +64,8 @@ serde_json = { version = "1", optional = true }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
+# The kit's shared fixtures (`kit/testdata/`) are JSON.
+serde_json = "1"
 # Every language, for the tests to read and write: each registers from its
 # own library (`tests/common`, `src/test_languages.rs`), and without their
 # default `serde`, which would turn fig's on for a test run without it. By

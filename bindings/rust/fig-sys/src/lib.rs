@@ -1101,6 +1101,14 @@ unsafe extern "C" {
     /// life of the process; NULL for a handle never handed out.
     pub fn fig_format_name(format: c_int) -> *const c_char;
     pub fn fig_table_rows(t: *mut FigTable, n: usize) -> *mut FigRow;
+    pub fn fig_table_finish(t: *mut FigTable, root: u32) -> FigStatus;
+    pub fn fig_table_finish_in_order(t: *mut FigTable) -> FigStatus;
+    pub fn fig_table_child_by_key(
+        t: *const FigTable,
+        map: u32,
+        key: *const u8,
+        key_len: usize,
+    ) -> u32;
     pub fn fig_table_string(
         t: *mut FigTable,
         bytes: *const u8,
@@ -1169,7 +1177,8 @@ unsafe extern "C" {
 }
 
 // The kit's rules (`fig.h`, "The kit's rules"): how a number's lexeme is
-// spelled for a format and which datetime a bare token is, for a language
+// spelled for a format, which datetime a bare token is, what a bare token
+// means, how a string is quoted as JSON, and XML's tokens, for a language
 // that is not Zig. Wrapped by `fig::kit`.
 pub const FIG_SPELL_HEX: u32 = 1 << 0;
 pub const FIG_SPELL_OCTAL: u32 = 1 << 1;
@@ -1199,4 +1208,55 @@ unsafe extern "C" {
     pub fn fig_kit_datetime_valid_date(s: *const u8, len: usize) -> bool;
     pub fn fig_kit_datetime_valid_time(s: *const u8, len: usize, flags: u32) -> bool;
     pub fn fig_kit_datetime_valid_offset(s: *const u8, len: usize) -> bool;
+    pub fn fig_kit_literal_kind(raw: *const u8, len: usize) -> u8;
+    pub fn fig_kit_literal_number(raw: *const u8, len: usize) -> i32;
+    pub fn fig_kit_json_string_quote(
+        raw: *const u8,
+        len: usize,
+        quote: u8,
+        out: *mut u8,
+        out_cap: usize,
+    ) -> usize;
+    pub fn fig_kit_xml_tokenize(
+        xml: *const u8,
+        len: usize,
+        out: *mut FigXmlToken,
+        cap: usize,
+        err: *mut i32,
+        err_at: *mut usize,
+    ) -> usize;
 }
+
+/// `FIG_KIT_JSON_STRING_ROOM(len)`.
+pub const fn fig_kit_json_string_room(len: usize) -> usize {
+    len * 6 + 2
+}
+
+pub const FIG_XML_LT: u8 = 0;
+pub const FIG_XML_LT_SLASH: u8 = 1;
+pub const FIG_XML_GT: u8 = 2;
+pub const FIG_XML_SLASH_GT: u8 = 3;
+pub const FIG_XML_EQ: u8 = 4;
+pub const FIG_XML_NAME: u8 = 5;
+pub const FIG_XML_ATTR_VALUE: u8 = 6;
+pub const FIG_XML_CHAR_DATA: u8 = 7;
+pub const FIG_XML_CDATA: u8 = 8;
+pub const FIG_XML_EOF: u8 = 9;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FigXmlToken {
+    pub kind: u8,
+    pub reserved: [u8; 3],
+    pub start: u32,
+    pub end: u32,
+}
+
+pub const FIG_XML_ERR_UNCLOSED_TAG: i32 = 1;
+pub const FIG_XML_ERR_UNCLOSED_ATTRIBUTE_VALUE: i32 = 2;
+pub const FIG_XML_ERR_UNCLOSED_COMMENT: i32 = 3;
+pub const FIG_XML_ERR_UNCLOSED_CDATA: i32 = 4;
+pub const FIG_XML_ERR_UNCLOSED_PI: i32 = 5;
+pub const FIG_XML_ERR_UNSUPPORTED_DOCTYPE: i32 = 6;
+pub const FIG_XML_ERR_INVALID_MARKUP: i32 = 7;
+pub const FIG_XML_ERR_UNEXPECTED_CHARACTER: i32 = 8;

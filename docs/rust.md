@@ -278,6 +278,37 @@ on one takes a `_` arm.
 somewhere, and a slot it had never heard of could only be dropped by a
 wildcard, so a fourth anchor is a major release and a compile error.
 
+### The kit
+
+`fig::kit` is what a language is built from, the same kit fig's own
+languages are written with in Zig and `@diaryx/fig/kit` is in JavaScript,
+layer for layer; `kit/testdata/` in the repository holds every binding's
+kit to the same answers.
+
+The rules have one right answer, which fig's own languages give, so they
+are the Zig kit's code, called through the C ABI:
+
+- `kit::number`: whether a format reads a number's lexeme back
+  (`spellable`), and its decimal spelling (`canonical`);
+- `kit::datetime`: which datetime a bare token is (`classify`);
+- `kit::literal`: what a bare token means when nothing else says —
+  `kind("true")` is `(NodeKind::Bool, None)`, `kind("2026-07-01")` is
+  `(NodeKind::String, Some(ExtKind::LocalDate))`, `kind("007")` a string;
+- `kit::json_string`: a string quoted and escaped as JSON (or JSON5) writes
+  it;
+- `kit::xml`: an XML-shaped format's tokens, with comments, processing
+  instructions and a DOCTYPE skipped.
+
+The structure is Rust of its own:
+
+- `kit::rows::RowWriter`: a `NodeTable` written in whatever order the
+  parser meets its nodes. `add` a row (one with a `parent` is appended to
+  it), link rows with `append`, `set_first` and `set_next`, put a mapping's
+  entries with `put(map, key, value, DuplicatePolicy::LastValue)` — the
+  repeated key keeps its first place and takes the last value, as every
+  flat format does — and `finish(root)` returns the table in pre-order,
+  every comment, region and mention moved to its node's new row.
+
 `register` returns a `Vec<Format>`, one per dialect the description
 declares, in declaration order. The core validates the description by the
 rules it holds every language to and runs its harness over the samples —

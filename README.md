@@ -235,7 +235,8 @@ rather than preserving the file as it is.
 `fig` generalizes its structure to an arbitrary number of formats.
 In this way, it is a bit like `serde` but with editing support as well---`serdedit`, if you will.
 
-fig ensures fidelity with lots of testing and daily fuzzing. The whole conformance suite is found at \<https://github.com/diaryx-org/fig-conformance>.
+fig ensures fidelity with lots of testing and daily fuzzing.
+The whole conformance suite is found at <https://github.com/diaryx-org/fig-conformance>.
 
 ## Possible future features
 

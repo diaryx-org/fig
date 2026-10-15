@@ -1,0 +1,8 @@
+[package]
+name = "fig-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "fig's core, kit and languages in Rust: lossless parsing, comment-preserving editing and conversion of config files"
+
+[dependencies]

@@ -1,0 +1,10 @@
+# fig in Rust: the core, the kit and every language, ported from the Zig
+# (docs/proposals/rust-core.md). Each file mirrors the Zig file it ports.
+[workspace]
+resolver = "3"
+members = ["fig-core", "fig-cli"]
+
+[workspace.package]
+version = "6.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"

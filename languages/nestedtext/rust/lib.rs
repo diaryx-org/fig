@@ -1,7 +1,8 @@
 //! NestedText for [fig](https://docs.rs/fig): fig's own parser,
-//! printer and editing rules for the language, written in Zig (`src/`)
-//! and compiled into a library of its own that links beside fig's, which
-//! carries no language. Typed values go to and
+//! printer and editing rules for the language, as `fig-core` implements
+//! them in Rust (its `lang::nestedtext`, a port of the Zig in `src/`),
+//! registered with fig's core, which carries no language until a crate
+//! like this one registers it. Typed values go to and
 //! from it as they do with `serde_json`:
 //!
 //! ```ignore
@@ -15,22 +16,10 @@
 //!
 //! It registers `nestedtext`, found by name with [`fig::Format::by_name`].
 
-use std::os::raw::c_int;
-
-// The library's one export (`include/fig/nestedtext.h`).
-unsafe extern "C" {
-    fn fig_nestedtext_register(
-        out_format: *mut c_int,
-        out_err: *mut fig_sys::FigError,
-    ) -> fig_sys::FigStatus;
-}
-
 /// Register NestedText, and return the format of its first dialect.
 /// Registering it again returns the format it already has.
 pub fn register() -> Result<fig::Format, fig::Error> {
-    // SAFETY: `fig_nestedtext_register` is this crate's library's, which its
-    // build script links.
-    unsafe { fig::language::register_library(fig_nestedtext_register) }
+    fig::language::register_core(&fig_core::lang::nestedtext::LANGUAGE)
 }
 
 fig::__language_crate_functions!("NestedText");

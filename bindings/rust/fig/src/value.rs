@@ -1,19 +1,18 @@
 //! The non-serde value representation and its serializer.
 //!
 //! [`Value`] is an owned, format-independent tree mirroring fig's AST node
-//! kinds. [`Value::serialize`] builds it through the C value API
-//! (`fig_value_*`) and renders it with fig's core serializer — so the binding
+//! kinds. [`Value::serialize`] builds it through the core's value API (the
+//! C ABI's `fig_value_*`) and renders it with fig's core serializer — so the binding
 //! carries no emitter of its own. With the `serde` feature, `fig::to_value`
 //! builds a `Value` from any `Serialize` type; without it, callers construct
 //! `Value` directly or through `#[derive(ToValue)]`.
 
 use std::borrow::Cow;
 use std::os::raw::c_int;
-use std::ptr::{self, NonNull};
 
+use crate::capi;
 use crate::error::Error;
-use crate::ffi;
-use crate::{Format, SerializeOptions};
+use crate::{FigNodeId, Format, SerializeOptions};
 
 /// The kind of a format-specific [`Value::Extended`] scalar. Mirrors the core's
 /// `ExtKind` and the C ABI's `FigExtKind`; the discriminants match that ABI.
@@ -186,8 +185,8 @@ impl From<&Value> for Value {
 
 impl Value {
     /// Render to `format` via fig's core serializer, using default output style.
-    /// The value is built through the C value API and emitted by fig, so no
-    /// JSON/YAML/TOML/ZON formatting happens in Rust.
+    /// The value is built through the core's value API and emitted by fig's
+    /// core, so no JSON/YAML/TOML/ZON formatting happens in this crate.
     pub fn serialize(&self, format: Format) -> Result<String, Error> {
         self.serialize_with(format, SerializeOptions::default())
     }
@@ -199,55 +198,30 @@ impl Value {
         format: Format,
         options: SerializeOptions,
     ) -> Result<String, Error> {
-        self.serialize_ffi(format, options.into())
+        self.serialize_core(format, options.into())
     }
 
     /// The raw-options serialize path. Exists so crate-internal callers (the
     /// editors' `value_text`) can set ABI-level options that the public
     /// [`SerializeOptions`] deliberately does not expose (`flow` — inline is a
     /// property of where the text is spliced, not a caller style preference).
-    pub(crate) fn serialize_ffi(
+    pub(crate) fn serialize_core(
         &self,
         format: Format,
-        ffi_options: ffi::FigSerializeOptions,
+        core_options: capi::FigSerializeOptions,
     ) -> Result<String, Error> {
-        let mut raw = ptr::null_mut();
-        // Safety: `raw` is a valid out-pointer; create sets it or returns non-ok.
-        Error::from_status(unsafe { ffi::fig_value_create(&mut raw) })?;
-        NonNull::new(raw).ok_or(Error::Internal)?;
-        let guard = ValueGuard(raw);
-
-        let root = build(guard.0, self)?;
-
-        let mut ptr_out: *const u8 = ptr::null();
-        let mut len: usize = 0;
-        let status = unsafe {
-            ffi::fig_value_serialize_opts(
-                guard.0,
-                root,
-                format.to_c(),
-                &ffi_options,
-                &mut ptr_out,
-                &mut len,
-            )
-        };
-        if status == ffi::FigStatus::UNSUPPORTED_FORMAT
+        let mut handle = capi::Value::create();
+        let root = build(&mut handle, self)?;
+        let status = handle
+            .serialize_opts(root, format.to_c(), Some(&core_options))
+            .map(<[u8]>::to_vec);
+        if status == Err(capi::Status::UnsupportedFormat)
             && let Some(message) = non_finite_refusal(self, format)
         {
             return Err(Error::Message(message));
         }
-        Error::from_status(status)?;
-
-        // Safety: on success the ABI guarantees `len` bytes at `ptr_out`, owned
-        // by the handle and valid until the next call / destroy. We copy out now.
-        let bytes = if len == 0 {
-            &[][..]
-        } else {
-            unsafe { std::slice::from_raw_parts(ptr_out, len) }
-        };
-        Ok(std::str::from_utf8(bytes)
-            .map_err(|_| Error::Utf8)?
-            .to_owned())
+        let bytes = Error::check(status)?;
+        String::from_utf8(bytes).map_err(|_| Error::Utf8)
     }
 
     /// Report what serializing this value to `format` would silently lose
@@ -259,25 +233,13 @@ impl Value {
         format: Format,
         options: SerializeOptions,
     ) -> Result<Vec<crate::Warning>, Error> {
-        let mut raw = ptr::null_mut();
-        Error::from_status(unsafe { ffi::fig_value_create(&mut raw) })?;
-        NonNull::new(raw).ok_or(Error::Internal)?;
-        let guard = ValueGuard(raw);
-
-        let root = build(guard.0, self)?;
-        let ffi_options: ffi::FigSerializeOptions = options.into();
-        let mut count: usize = 0;
-        Error::from_status(unsafe {
-            ffi::fig_value_diagnose(guard.0, root, format.to_c(), &ffi_options, &mut count)
-        })?;
+        let mut handle = capi::Value::create();
+        let root = build(&mut handle, self)?;
+        let core_options: capi::FigSerializeOptions = options.into();
+        let count = Error::check(handle.diagnose(root, format.to_c(), Some(&core_options)))?;
         let mut out = Vec::with_capacity(count);
         for i in 0..count {
-            let mut w = ffi::FigWarning::new();
-            Error::from_status(unsafe { ffi::fig_value_warning(guard.0, i, &mut w) })?;
-            // Safety: on `OK`, `w` is filled with borrowed path/note bytes valid
-            // until the next diagnose on this handle (which we don't call before
-            // copying them out here) or its destroy.
-            out.push(unsafe { crate::Warning::from_ffi(&w) });
+            out.push(crate::Warning::from_core(Error::check(handle.warning(i))?));
         }
         Ok(out)
     }
@@ -709,58 +671,41 @@ fn first_non_finite(value: &Value) -> Option<f64> {
     }
 }
 
-/// Destroys the value handle on drop, so an early `?` return can't leak it.
-struct ValueGuard(*mut ffi::FigValue);
-
-impl Drop for ValueGuard {
-    fn drop(&mut self) {
-        unsafe { ffi::fig_value_destroy(self.0) };
-    }
-}
-
 /// Build `value` into the handle bottom-up (children before their container),
 /// returning the new root node's id.
-fn build(handle: *mut ffi::FigValue, value: &Value) -> Result<ffi::FigNodeId, Error> {
-    let mut id: ffi::FigNodeId = 0;
-    // Safety: `handle` is a live value handle; the out-id is valid; child ids
-    // passed to seq/map were returned by earlier builds on this same handle.
-    let status = unsafe {
-        match value {
-            Value::Null => ffi::fig_value_null(handle, &mut id),
-            Value::Bool(b) => ffi::fig_value_bool(handle, *b, &mut id),
-            Value::Int(n) => ffi::fig_value_int(handle, *n, &mut id),
-            Value::Uint(n) => ffi::fig_value_uint(handle, *n, &mut id),
-            Value::Float(f) => {
-                let text = format_float(*f);
-                ffi::fig_value_number(handle, text.as_ptr(), text.len(), true, &mut id)
-            }
-            Value::Str(s) => ffi::fig_value_string(handle, s.as_ptr(), s.len(), &mut id),
-            Value::Extended { kind, text } => {
-                ffi::fig_value_extended(handle, kind.to_c(), text.as_ptr(), text.len(), &mut id)
-            }
-            Value::Seq(items) => {
-                let ids = items
-                    .iter()
-                    .map(|it| build(handle, it))
-                    .collect::<Result<Vec<_>, _>>()?;
-                ffi::fig_value_seq(handle, ids.as_ptr(), ids.len(), &mut id)
-            }
-            Value::Map(entries) => {
-                let kvs = entries
-                    .iter()
-                    .map(|(k, v)| {
-                        Ok(ffi::FigKeyValue {
-                            key: build(handle, k)?,
-                            value: build(handle, v)?,
-                        })
+fn build(handle: &mut capi::Value, value: &Value) -> Result<FigNodeId, Error> {
+    let id = match value {
+        Value::Null => handle.null(),
+        Value::Bool(b) => handle.bool(*b),
+        Value::Int(n) => handle.int(*n),
+        Value::Uint(n) => handle.uint(*n),
+        Value::Float(f) => {
+            let text = format_float(*f);
+            handle.number(text.as_bytes(), true)
+        }
+        Value::Str(s) => handle.string(s.as_bytes()),
+        Value::Extended { kind, text } => handle.extended(kind.to_c(), text.as_bytes()),
+        Value::Seq(items) => {
+            let ids = items
+                .iter()
+                .map(|it| build(handle, it))
+                .collect::<Result<Vec<_>, _>>()?;
+            handle.seq(&ids)
+        }
+        Value::Map(entries) => {
+            let kvs = entries
+                .iter()
+                .map(|(k, v)| {
+                    Ok(capi::FigKeyValue {
+                        key: build(handle, k)?,
+                        value: build(handle, v)?,
                     })
-                    .collect::<Result<Vec<_>, Error>>()?;
-                ffi::fig_value_map(handle, kvs.as_ptr(), kvs.len(), &mut id)
-            }
+                })
+                .collect::<Result<Vec<_>, Error>>()?;
+            handle.map(&kvs)
         }
     };
-    Error::from_status(status)?;
-    Ok(id)
+    Error::check(id)
 }
 
 /// The splice text for an editor value: the value rendered in `format` as the
@@ -772,10 +717,10 @@ pub(crate) fn value_text(value: &Value, format: Format) -> Result<String, Error>
     // for in flow: a format whose block spelling only parses as lines of its
     // own (figl's `* ` items and section headers) would re-read one there as
     // a bare string. A format with one spelling for a container ignores it.
-    let mut ffi_options: crate::ffi::FigSerializeOptions = SerializeOptions::default().into();
-    ffi_options.splice = 1;
-    ffi_options.flow = 1;
-    let mut s = value.serialize_ffi(format, ffi_options)?;
+    let mut core_options: capi::FigSerializeOptions = SerializeOptions::default().into();
+    core_options.splice = true;
+    core_options.flow = true;
+    let mut s = value.serialize_core(format, core_options)?;
     if s.ends_with('\n') {
         s.pop();
     }
@@ -798,9 +743,9 @@ pub(crate) fn value_text_with(
     format: Format,
     options: SerializeOptions,
 ) -> Result<String, Error> {
-    let mut ffi_options: crate::ffi::FigSerializeOptions = options.into(); // flow = 0
-    ffi_options.splice = 1;
-    let mut s = value.serialize_ffi(format, ffi_options)?;
+    let mut core_options: capi::FigSerializeOptions = options.into(); // flow = false
+    core_options.splice = true;
+    let mut s = value.serialize_core(format, core_options)?;
     if s.ends_with('\n') {
         s.pop();
     }

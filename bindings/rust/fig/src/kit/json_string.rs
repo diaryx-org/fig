@@ -1,8 +1,8 @@
-//! A string written as a JSON string literal: the Zig kit's
+//! A string written as a JSON string literal: fig-core's port of the Zig kit's
 //! `json_string.zig`, the escaper fig's JSON and canonical printers write
 //! with.
 
-use crate::ffi;
+use fig_core::kit::json_string as core_json_string;
 
 /// The quote a JSON string is written between.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -18,18 +18,12 @@ pub enum Quote {
 /// `\b \f \n \r \t`, and `\u00XX` for any other control character. Every
 /// other character, non-ASCII included, is written as it is.
 pub fn quote(s: &str, q: Quote) -> String {
-    let mut out = vec![0u8; ffi::fig_kit_json_string_room(s.len())];
+    let mut out = Vec::with_capacity(core_json_string::json_string_room(s.len()));
     let byte = match q {
         Quote::Double => b'"',
         Quote::Single => b'\'',
     };
-    // SAFETY: `out` has the room `fig.h` promises is always enough, and the
-    // function reads `s.len()` bytes at `s`.
-    let n = unsafe {
-        ffi::fig_kit_json_string_quote(s.as_ptr(), s.len(), byte, out.as_mut_ptr(), out.len())
-    };
-    assert!(n <= out.len(), "fig_kit_json_string_quote outgrew its room");
-    out.truncate(n);
+    core_json_string::write_quoted_in(&mut out, s.as_bytes(), byte);
     // `s`'s own characters, ASCII escapes and two ASCII quotes.
     String::from_utf8(out).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }

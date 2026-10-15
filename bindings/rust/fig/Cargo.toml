@@ -12,9 +12,9 @@ repository = "https://github.com/diaryx-org/fig"
 # not run the vendor step simply has no README.md; cargo only requires it when
 # packaging/publishing, not for `build`/`test`.
 readme = "README.md"
-# The native library and its Zig source now live entirely in `fig-sys` (a
-# dependency), so this crate packages only its own Rust sources plus the
-# vendored README/licenses. No `build.rs`, no `zig/` tree, no `links` here.
+# The core is `fig-core` (a dependency, pure Rust), so this crate packages only
+# its own Rust sources plus the vendored README/licenses. No `build.rs`, no
+# `links`, nothing to compile but Rust.
 include = [
     "src/**/*",
     # Vendored in by `zig build vendor-rust` from the repo root (git-ignored here).
@@ -53,10 +53,10 @@ indexmap = ["dep:indexmap"]
 helper = ["dep:serde_json"]
 
 [dependencies]
-# The `-sys` layer: raw FFI + the `links = "fig"` build script that provides
-# `libfig.a`, which carries no language: a program adds the language crates
-# it uses (`fig-yaml`, …) and registers each.
-fig-sys = { workspace = true }
+# fig's core, kit and languages, in Rust, without its `bundle` feature: the
+# registry carries no language until a program adds the language crates it
+# uses (`fig-yaml`, …) and registers each.
+fig-core = { workspace = true }
 serde = { version = "1", optional = true }
 fig-macros = { workspace = true, optional = true }
 indexmap = { version = "2", optional = true }

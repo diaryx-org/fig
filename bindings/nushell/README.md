@@ -100,9 +100,8 @@ Its dependency on fig is the one thing that does follow fig's version: the
 
 ## Building
 
-Needs no Zig toolchain on a tier-1 target — `fig-sys` links a prebuilt
-`libfig.a` for the default language set. Anywhere else it builds the core from
-the vendored Zig source, which does.
+Needs no Zig toolchain: fig's core and the figl language are pure Rust
+(`fig-core`), compiled with the plugin.
 
 ```nu
 > cargo test          # 10 behavioural tests, in-process via nu-plugin-test-support

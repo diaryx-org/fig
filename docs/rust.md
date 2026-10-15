@@ -15,10 +15,10 @@ deep in a YAML or TOML file and every comment, blank line, key order, and quotin
 style elsewhere stays byte-for-byte identical. It also converts losslessly
 between formats.
 
-The core is a Zig library statically linked into your crate — as a prebuilt
-archive, so it needs no Zig toolchain — and it carries no language: each
-format is a crate of its own (`fig-yaml`, `fig-toml`, …) that links its
-language's library beside the core's, and you register the ones you use.
+The core is Rust, the `fig-core` crate — no Zig toolchain, no C compiler,
+no native library — and it carries no language until you add one: each
+format is a crate of its own (`fig-yaml`, `fig-toml`, …) that registers its
+language with the core, and you register the ones you use.
 It carries an optional `serde` layer, or you can use its own
 `serde`-independent `Value` tree and `#[derive(ToValue, FromValue)]` macros —
 `fig` can replace `serde` in your project entirely. Diaryx uses `fig` in
@@ -49,20 +49,11 @@ fig-yaml = "6"   # one crate per language you read or write
 fig-json = "6"
 ```
 
-On a tier-1 target **no Zig toolchain is required**: `fig-sys` links a
-prebuilt core shipped by a per-target payload crate — Cargo downloads
-exactly the one matching your target — and that payload carries the library
-of every language fig ships too, which each language crate links from it.
-The tier-1 targets are macOS (arm64, x86_64), Linux (x86_64, arm64; glibc
-and musl), Windows (x86_64 MSVC), Android (arm64, x86_64), iOS (device and
-arm64 simulator), and wasm32 (`unknown-unknown`, `wasip1`, `wasip2`). Any
-other target, `FIG_SYS_FORCE_SOURCE=1`, or a build inside a checkout of fig
-compiles from fig's Zig source, which needs Zig 0.17+ (in a checkout,
-`FIG_SYS_PREBUILT=1` links the payload instead, once
-`bindings/rust/scripts/build-payload-lib.sh` has filled it).
-
-Either way there is no separate native library to ship: the core and each
-language are linked straight into your binary.
+**No Zig toolchain is required**, on any target Rust builds for: the core
+(`fig-core`, a dependency of `fig`) and every language are pure Rust, a port
+of fig's Zig implementation held to the same conformance suites, and they
+compile with the rest of your crate. There is no separate native library to
+ship.
 
 ## Quick start
 
@@ -281,12 +272,12 @@ wildcard, so a fourth anchor is a major release and a compile error.
 ### The kit
 
 `fig::kit` is what a language is built from, the same kit fig's own
-languages are written with in Zig and `@diaryx/fig/kit` is in JavaScript,
-layer for layer; `kit/testdata/` in the repository holds every binding's
-kit to the same answers.
+languages are written with and `@diaryx/fig/kit` is in JavaScript, layer
+for layer; `kit/testdata/` in the repository holds every binding's kit to
+the same answers.
 
 The rules have one right answer, which fig's own languages give, so they
-are the Zig kit's code, called through the C ABI:
+are the core kit's code (`fig-core`'s `kit`), called directly:
 
 - `kit::number`: whether a format reads a number's lexeme back
   (`spellable`), and its decimal spelling (`canonical`);
@@ -872,7 +863,7 @@ text to outlive the next edit — the borrow checker enforces this for you.
 - `version() -> Version` / `version_string() -> &'static str` — linked core version.
 - *(serde)* `from_slice<T>(bytes, format) -> Result<T>` — deserialize any format.
 - *(serde)* `to_value<T>(&value) -> Result<Value>` — build a `Value` from any `Serialize`.
-- `language::register_library(fig_<name>_register)` — what each language crate's `register()` is.
+- `language::register_core(&fig_core::lang::<name>::LANGUAGE)` — what each language crate's `register()` is.
 
 **Each language crate** (`fig_json`, `fig_yaml`, …)
 

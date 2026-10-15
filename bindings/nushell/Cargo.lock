@@ -644,92 +644,20 @@ dependencies = [
 name = "fig"
 version = "6.0.0"
 dependencies = [
- "fig-sys",
+ "fig-core",
 ]
+
+[[package]]
+name = "fig-core"
+version = "6.0.0"
 
 [[package]]
 name = "fig-figl"
 version = "6.0.0"
 dependencies = [
  "fig",
- "fig-language-build",
- "fig-sys",
+ "fig-core",
 ]
-
-[[package]]
-name = "fig-language-build"
-version = "6.0.0"
-
-[[package]]
-name = "fig-sys"
-version = "6.0.0"
-dependencies = [
- "fig-sys-android-arm64",
- "fig-sys-android-x64",
- "fig-sys-ios-arm64",
- "fig-sys-ios-arm64-sim",
- "fig-sys-linux-arm64-gnu",
- "fig-sys-linux-arm64-musl",
- "fig-sys-linux-x64-gnu",
- "fig-sys-linux-x64-musl",
- "fig-sys-macos-arm64",
- "fig-sys-macos-x64",
- "fig-sys-wasm32",
- "fig-sys-wasm32-wasi",
- "fig-sys-windows-x64-msvc",
-]
-
-[[package]]
-name = "fig-sys-android-arm64"
-version = "6.0.0"
-
-[[package]]
-name = "fig-sys-android-x64"
-version = "6.0.0"
-
-[[package]]
-name = "fig-sys-ios-arm64"
-version = "6.0.0"
-
-[[package]]
-name = "fig-sys-ios-arm64-sim"
-version = "6.0.0"
-
-[[package]]
-name = "fig-sys-linux-arm64-gnu"
-version = "6.0.0"
-
-[[package]]
-name = "fig-sys-linux-arm64-musl"
-version = "6.0.0"
-
-[[package]]
-name = "fig-sys-linux-x64-gnu"
-version = "6.0.0"
-
-[[package]]
-name = "fig-sys-linux-x64-musl"
-version = "6.0.0"
-
-[[package]]
-name = "fig-sys-macos-arm64"
-version = "6.0.0"
-
-[[package]]
-name = "fig-sys-macos-x64"
-version = "6.0.0"
-
-[[package]]
-name = "fig-sys-wasm32"
-version = "6.0.0"
-
-[[package]]
-name = "fig-sys-wasm32-wasi"
-version = "6.0.0"
-
-[[package]]
-name = "fig-sys-windows-x64-msvc"
-version = "6.0.0"
 
 [[package]]
 name = "find-msvc-tools"

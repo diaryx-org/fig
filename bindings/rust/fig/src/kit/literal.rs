@@ -1,4 +1,4 @@
-//! What a bare token means when nothing else says: the Zig kit's
+//! What a bare token means when nothing else says: fig-core's port of the Zig kit's
 //! `literal.zig`, the rule fig's editor classifies a caller's value by and
 //! figl reads its bare tokens by.
 //!
@@ -9,32 +9,36 @@
 //! part led by a zero (`007`), `inf` and `nan` stay strings, as `Yes` and
 //! `TRUE` do.
 
+use fig_core::kit::literal::{self as core_literal, NumberKind, Sniffed};
+
 use crate::ExtKind;
-use crate::ffi;
 use crate::language::NodeKind;
 
 /// The row bare `raw` is written as: its kind, and a datetime's
 /// [`ExtKind`], whose row is a [`NodeKind::String`]. A bool's text is
 /// `raw`.
 pub fn kind(raw: &str) -> (NodeKind, Option<ExtKind>) {
-    // SAFETY: the function reads `raw.len()` bytes at `raw` and keeps
-    // nothing.
-    let k = unsafe { ffi::fig_kit_literal_kind(raw.as_ptr(), raw.len()) };
-    if k >= ffi::FIG_ROW_EXT {
-        return (
-            NodeKind::String,
-            ExtKind::from_c((k - ffi::FIG_ROW_EXT) as i32),
-        );
+    match core_literal::sniff_bare(raw.as_bytes()) {
+        Sniffed::Null => (NodeKind::Null, None),
+        Sniffed::Boolean(_) => (NodeKind::Bool, None),
+        Sniffed::Number(n) => (number_kind(n.kind), None),
+        // The datetime kind's index is its `ExtKind`'s.
+        Sniffed::Datetime { kind, .. } => (NodeKind::String, ExtKind::from_c(kind as i32)),
+        Sniffed::String => (NodeKind::String, None),
     }
-    (NodeKind::from_row(k).unwrap_or(NodeKind::String), None)
 }
 
 /// Whether `raw` is a number by the same rule: [`NodeKind::Int`],
 /// [`NodeKind::Float`], or `None`.
 pub fn number(raw: &str) -> Option<NodeKind> {
-    // SAFETY: as `kind`.
-    let k = unsafe { ffi::fig_kit_literal_number(raw.as_ptr(), raw.len()) };
-    u8::try_from(k).ok().and_then(NodeKind::from_row)
+    core_literal::sniff_number(raw.as_bytes()).map(|n| number_kind(n.kind))
+}
+
+fn number_kind(k: NumberKind) -> NodeKind {
+    match k {
+        NumberKind::Integer => NodeKind::Int,
+        NumberKind::Float => NodeKind::Float,
+    }
 }
 
 #[cfg(test)]

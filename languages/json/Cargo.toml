@@ -4,24 +4,16 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-# fig's Rust workspace; this crate sits with its language's Zig.
+# fig's Rust workspace; this crate sits in its language's package.
 workspace = "../../bindings/rust"
-description = "JSON, JSONC and JSON5 for fig: fig's own parser, printer and editing rules for the language, as a library linked beside fig's."
+description = "JSON, JSONC and JSON5 for fig: fig's own parser, printer and editing rules for the language, in pure Rust (fig-core's), registered with fig's core."
 repository = "https://github.com/diaryx-org/fig"
 homepage = "https://github.com/diaryx-org/fig"
 documentation = "https://docs.rs/fig-json"
 readme = "README.md"
 keywords = ["config", "fig", "json", "parser"]
 categories = ["config", "parser-implementations"]
-# The language's own library, `libfig_json.a`, which the build script
-# compiles from the Zig beside this file.
-links = "fig_json"
 include = [
-    "build.rs",
-    "build.zig",
-    "build.zig.zon",
-    "src/**/*",
-    "include/**/*",
     "rust/**/*",
     "README.md",
     "LICENSE-MIT",
@@ -40,8 +32,6 @@ serde = ["fig/serde", "dep:serde"]
 
 [dependencies]
 fig = { workspace = true }
-fig-sys = { workspace = true }
+# The language itself: fig-core's port of the Zig beside this file.
+fig-core = { workspace = true }
 serde = { version = "1", optional = true }
-
-[build-dependencies]
-fig-language-build = { workspace = true }

@@ -1,7 +1,17 @@
 [workspace]
 resolver = "3"
-# Each language's crate sits with its Zig, in languages/<name>/.
-members = ["fig", "fig-macros", "fig-sys", "fig-sys-*", "fig-language-build", "../../languages/*"]
+# Each language's crate sits in its language's package, languages/<name>/.
+#
+# fig's core and its languages are `fig-core` (rust/fig-core), pure Rust: a
+# path dependency here, not a member. It stays in the rust/ workspace, whose
+# CLI, LSP and conformance adapter want its default `bundle` feature; as a
+# member here, `cargo test --workspace` would build it with that feature on
+# and register every language before a program asked for one.
+#
+# `fig-sys`, the `fig-sys-*` payload crates and `fig-language-build`, which
+# linked fig's Zig core as a C library, are no longer members or
+# dependencies: nothing here needs Zig or a C toolchain.
+members = ["fig", "fig-macros", "../../languages/*"]
 
 [workspace.package]
 version = "6.0.0"
@@ -20,10 +30,11 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 fig-macros = { path = "fig-macros", version = "6.0.0" }
 fig = { path = "fig", version = "6.0.0" }
-# fig-sys carries no language: each is a crate of its own (`fig-yaml`, …),
-# in its language's package, built with `fig-language-build`.
-fig-sys = { path = "fig-sys", version = "6.0.0" }
-fig-language-build = { path = "fig-language-build", version = "6.0.0" }
+# The core, its kit and fig's ten languages, in Rust. Without its `bundle`
+# feature: the registry starts empty, and a program registers each language
+# it uses through that language's crate (`fig-yaml`, …), as it did when each
+# was a library linked beside fig's.
+fig-core = { path = "../../rust/fig-core", version = "6.0.0", default-features = false }
 fig-json = { path = "../../languages/json", version = "6.0.0" }
 fig-yaml = { path = "../../languages/yaml", version = "6.0.0" }
 fig-toml = { path = "../../languages/toml", version = "6.0.0" }
@@ -34,19 +45,6 @@ fig-dotenv = { path = "../../languages/dotenv", version = "6.0.0" }
 fig-properties = { path = "../../languages/properties", version = "6.0.0" }
 fig-plist = { path = "../../languages/plist", version = "6.0.0" }
 fig-nestedtext = { path = "../../languages/nestedtext", version = "6.0.0" }
-fig-sys-macos-arm64 = { path = "fig-sys-macos-arm64", version = "6.0.0" }
-fig-sys-linux-x64-gnu = { path = "fig-sys-linux-x64-gnu", version = "6.0.0" }
-fig-sys-linux-arm64-gnu = { path = "fig-sys-linux-arm64-gnu", version = "6.0.0" }
-fig-sys-windows-x64-msvc = { path = "fig-sys-windows-x64-msvc", version = "6.0.0" }
-fig-sys-wasm32 = { path = "fig-sys-wasm32", version = "6.0.0" }
-fig-sys-ios-arm64 = { path = "fig-sys-ios-arm64", version = "6.0.0" }
-fig-sys-ios-arm64-sim = { path = "fig-sys-ios-arm64-sim", version = "6.0.0" }
-fig-sys-macos-x64 = { path = "fig-sys-macos-x64", version = "6.0.0" }
-fig-sys-linux-x64-musl = { path = "fig-sys-linux-x64-musl", version = "6.0.0" }
-fig-sys-linux-arm64-musl = { path = "fig-sys-linux-arm64-musl", version = "6.0.0" }
-fig-sys-android-arm64 = { path = "fig-sys-android-arm64", version = "6.0.0" }
-fig-sys-android-x64 = { path = "fig-sys-android-x64", version = "6.0.0" }
-fig-sys-wasm32-wasi = { path = "fig-sys-wasm32-wasi", version = "6.0.0" }
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }

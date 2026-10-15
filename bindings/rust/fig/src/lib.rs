@@ -8,10 +8,11 @@ mod error;
 mod language_crate;
 mod value;
 
-// The raw FFI layer moved to the `fig-sys` crate. Alias it as `ffi` so every
-// `ffi::…` / `crate::ffi::…` reference in this crate keeps resolving unchanged,
-// and so `fig-sys`'s build script (via its `links = "fig"`) links `libfig.a`.
-pub(crate) use fig_sys as ffi;
+// The core is `fig-core`, in Rust. Its `api` is fig's C ABI less the
+// marshalling — the same calls under the same names, the same argument
+// checks and the same statuses — so this crate reads as it did over
+// `libfig`: `fig_parse_ex` is `capi::Document::parse_ex`, and so on.
+pub(crate) use fig_core::api as capi;
 
 #[cfg(feature = "derive")]
 mod convert;
@@ -21,7 +22,6 @@ mod de;
 mod ser;
 
 use std::os::raw::c_int;
-use std::ptr::NonNull;
 
 pub use diagnostics::{Warning, WarningCause, WarningCode};
 pub use editor::{Editor, Segment};
@@ -56,7 +56,9 @@ pub use de::from_slice;
 #[cfg(feature = "serde")]
 pub use ser::to_value;
 
-use ffi::{FIG_NODE_NONE, FigNodeId, FigNodeKind};
+/// A node of a parsed document, as the core numbers them.
+pub(crate) type FigNodeId = fig_core::kit::ast::NodeId;
+pub(crate) use capi::{FigNodeKind, NODE_NONE as FIG_NODE_NONE};
 
 /// A half-open `[start, end)` byte range within the input, as a runtime
 /// language's node table records one. Converts to and from a
@@ -84,7 +86,7 @@ impl From<Span> for std::ops::Range<usize> {
 }
 
 /// A config format: an opaque, per-process handle naming a dialect
-/// registered with the linked fig core.
+/// registered with fig's core.
 ///
 /// A `Format` is obtained by name — [`Format::by_name`]`("yaml")` — or from
 /// [`language::register`] and [`Format::detect`]; it cannot be built from an
@@ -92,7 +94,7 @@ impl From<Span> for std::ops::Range<usize> {
 /// order and differ between processes: persist [`Format::name`] and resolve it
 /// again with [`Format::by_name`], never the handle.
 ///
-/// The native library carries no language: each is a crate of its own
+/// The core carries no language: each is a crate of its own
 /// (`fig-yaml`, …) whose `register()` returns its first dialect's format, and
 /// until a language is registered [`Format::by_name`] returns `None` for its
 /// names. Besides the dialect names, a language's `--spec` versions are
@@ -108,7 +110,7 @@ impl Format {
 
     /// The `Format` an ABI handle names, or `None` for one never handed out.
     pub(crate) fn from_c(value: c_int) -> Option<Format> {
-        if value <= 0 || unsafe { ffi::fig_format_name(value) }.is_null() {
+        if value <= 0 || capi::format_name(value).is_none() {
             return None;
         }
         Some(Format(value))
@@ -118,8 +120,11 @@ impl Format {
     /// or a language registered at runtime). `None` when nothing answers to it
     /// in this process — a misspelling, or a language this build compiled out.
     pub fn by_name(name: &str) -> Option<Format> {
-        let c = std::ffi::CString::new(name).ok()?;
-        let value = unsafe { ffi::fig_format_by_name(c.as_ptr()) };
+        // A name is a C string at the ABI: one holding a NUL names nothing.
+        if name.contains('\0') {
+            return None;
+        }
+        let value = capi::format_by_name(name);
         if value <= 0 {
             return None;
         }
@@ -134,15 +139,7 @@ impl Format {
     /// core ever answer with none (or with a name that is not UTF-8), this is
     /// the empty string, which [`Format::by_name`] resolves to nothing.
     pub fn name(self) -> &'static str {
-        let ptr = unsafe { ffi::fig_format_name(self.0) };
-        if ptr.is_null() {
-            return "";
-        }
-        // Safety: a non-NULL name is NUL-terminated and lives as long as the
-        // process (the registry is append-only).
-        unsafe { std::ffi::CStr::from_ptr(ptr) }
-            .to_str()
-            .unwrap_or("")
+        format_name_static(self.0)
     }
 
     /// The documents of a multi-document stream in this format (YAML's
@@ -150,35 +147,17 @@ impl Format {
     /// its own. An empty stream is one document.
     /// [`Error::UnsupportedOperation`] for a format without streams.
     pub fn split_stream(self, input: &[u8]) -> Result<Vec<language::StreamDocument>, Error> {
-        let mut docs: *mut ffi::FigStreamDoc = std::ptr::null_mut();
-        let mut count = 0usize;
-        let mut err = ffi::FigError::new();
-        let status = unsafe {
-            ffi::fig_stream_split(
-                input.as_ptr(),
-                input.len(),
-                self.to_c(),
-                &mut docs,
-                &mut count,
-                &mut err,
-            )
-        };
-        if status == ffi::FigStatus::PARSE_ERROR {
-            return Err(Error::Parse(crate::error::ParseError::from_ffi(&err)));
-        }
-        Error::from_status(status)?;
-        let out = (0..count)
-            .map(|i| {
-                let d = unsafe { *docs.add(i) };
-                language::StreamDocument {
+        match capi::stream_split(input, self.to_c()) {
+            Ok(docs) => Ok(docs
+                .into_iter()
+                .map(|d| language::StreamDocument {
                     start: d.start,
                     end: d.end,
                     explicit: d.marked,
-                }
-            })
-            .collect();
-        unsafe { ffi::fig_stream_free(docs, count) };
-        Ok(out)
+                })
+                .collect()),
+            Err(e) => Err(Error::from_fig_error(&e)),
+        }
     }
 
     /// The first format `order` names whose parser accepts `input`, tried in
@@ -186,26 +165,31 @@ impl Format {
     /// The grammars overlap, so put the strictest first. A name nothing
     /// answers to is skipped.
     pub fn detect(input: &[u8], order: &[&str]) -> Option<Format> {
-        let names: Vec<std::ffi::CString> = order
-            .iter()
-            .filter_map(|n| std::ffi::CString::new(*n).ok())
-            .collect();
-        let ptrs: Vec<*const std::os::raw::c_char> = names.iter().map(|n| n.as_ptr()).collect();
-        let mut out: std::os::raw::c_int = -1;
-        let status = unsafe {
-            ffi::fig_detect_order(
-                input.as_ptr(),
-                input.len(),
-                ptrs.as_ptr(),
-                ptrs.len(),
-                &mut out,
-            )
-        };
-        if status != ffi::FigStatus::OK {
-            return None;
-        }
+        // A name is a C string at the ABI: one holding a NUL is dropped.
+        let names: Vec<&str> = order.iter().copied().filter(|n| !n.contains('\0')).collect();
+        let out = capi::detect_order(input, &names).ok()?;
         Format::from_c(out)
     }
+}
+
+/// The name the registry holds for format `abi`, for the life of the
+/// process: the registry is append-only, so each name is copied out once and
+/// kept. The empty string for a format never handed out.
+fn format_name_static(abi: c_int) -> &'static str {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static NAMES: OnceLock<Mutex<HashMap<c_int, &'static str>>> = OnceLock::new();
+    let names = NAMES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut names = names.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(name) = names.get(&abi) {
+        return name;
+    }
+    let Some(name) = capi::format_name(abi) else {
+        return "";
+    };
+    let name: &'static str = Box::leak(name.into_boxed_str());
+    names.insert(abi, name);
+    name
 }
 
 /// Controls how [`Value::serialize_with`] renders output. The [`Default`] is
@@ -324,19 +308,18 @@ impl SerializeOptions {
     }
 }
 
-impl From<SerializeOptions> for ffi::FigSerializeOptions {
+impl From<SerializeOptions> for capi::FigSerializeOptions {
     fn from(o: SerializeOptions) -> Self {
-        ffi::FigSerializeOptions {
-            size: std::mem::size_of::<ffi::FigSerializeOptions>() as u32,
-            pretty: u8::from(o.pretty),
+        capi::FigSerializeOptions {
+            pretty: o.pretty,
             indent: o.indent,
-            strip_comments: u8::from(o.strip_comments),
-            lossless: u8::from(o.lossless),
+            strip_comments: o.strip_comments,
+            lossless: o.lossless,
             width: o.width,
             // Not a public style option — the editors' splice path sets this
             // directly (see `value_text`).
-            flow: 0,
-            splice: 0,
+            flow: false,
+            splice: false,
         }
     }
 }
@@ -353,7 +336,7 @@ pub struct Version {
 /// The version of the linked fig core, decoded from the packed
 /// `(major << 16) | (minor << 8) | patch` that `fig_version` returns.
 pub fn version() -> Version {
-    let packed = unsafe { ffi::fig_version() };
+    let packed = capi::version();
     Version {
         major: (packed >> 16) as u8,
         minor: (packed >> 8) as u8,
@@ -363,12 +346,7 @@ pub fn version() -> Version {
 
 /// The linked fig core's version as a `"major.minor.patch"` string.
 pub fn version_string() -> &'static str {
-    // Safety: `fig_version_string` returns a static NUL-terminated ASCII string
-    // owned by the library, valid for the whole program.
-    let ptr = unsafe { ffi::fig_version_string() };
-    unsafe { std::ffi::CStr::from_ptr(ptr) }
-        .to_str()
-        .unwrap_or("")
+    capi::version_string()
 }
 
 /// What this build of the fig core can do with a format: the capabilities its
@@ -409,7 +387,7 @@ impl Capabilities {
 /// Query what this build can do with `format` (read/edit/serialize). Lets a host
 /// pick a working format up front instead of probing via `UnsupportedFormat`.
 pub fn capabilities(format: Format) -> Capabilities {
-    let bits = unsafe { ffi::fig_format_capabilities(format.to_c()) };
+    let bits = capi::format_capabilities(format.to_c());
     Capabilities {
         read: bits & (1 << 0) != 0,
         edit: bits & (1 << 1) != 0,
@@ -420,44 +398,18 @@ pub fn capabilities(format: Format) -> Capabilities {
 
 #[derive(Debug)]
 pub struct Document {
-    raw: NonNull<ffi::FigDocument>,
+    inner: capi::Document,
 }
-
-// SAFETY: a `FigDocument` is owned by this handle alone and tied to no
-// thread: it is allocated from the process allocator (libc's, or a
-// thread-safe one where there is none; `activeAllocator` in c_api.zig),
-// holds no thread-local state, and reads languages from a registry built for
-// concurrent use, whose Rust languages are `Send + Sync`. So it may be moved
-// to, used on and freed on another thread. Not `Sync`: nothing promises two
-// threads may read one document at once.
-unsafe impl Send for Document {}
 
 impl Document {
     pub fn parse(input: &[u8], format: Format) -> Result<Self, Error> {
-        let mut raw = std::ptr::null_mut();
-
-        // `fig_parse_ex` fills `err` on failure; on a parse error we project its
-        // message/location into `Error::Parse`. Other statuses fold through
-        // `from_status` as usual (the struct is meaningful only on failure).
-        let mut err = ffi::FigError::new();
-        let status = unsafe {
-            ffi::fig_parse_ex(
-                input.as_ptr(),
-                input.len(),
-                format.to_c(),
-                &mut raw,
-                &mut err,
-            )
-        };
-        if status != ffi::FigStatus::OK {
-            if status == ffi::FigStatus::PARSE_ERROR {
-                return Err(Error::Parse(crate::error::ParseError::from_ffi(&err)));
-            }
-            Error::from_status(status)?;
+        // `parse_ex` reports a failure as `fig_parse_ex` fills its `FigError`;
+        // on a parse error we project its message/location into
+        // `Error::Parse`. Other statuses fold through `from_status` as usual.
+        match capi::Document::parse_ex(input, format.to_c()) {
+            Ok(inner) => Ok(Self { inner }),
+            Err(e) => Err(Error::from_fig_error(&e)),
         }
-
-        let raw = NonNull::new(raw).ok_or(Error::Internal)?;
-        Ok(Self { raw })
     }
 }
 
@@ -485,14 +437,10 @@ impl Document {
     /// and every `<<` merge flattened, or `None` when there is neither and
     /// `self` reads as it is. The node walk below never meets an alias.
     pub(crate) fn resolve_aliases(&self) -> Result<Option<Document>, Error> {
-        let mut raw = std::ptr::null_mut();
-        let mut err = ffi::FigError::new();
-        let status = unsafe { ffi::fig_document_resolve_aliases(self.ptr(), &mut raw, &mut err) };
-        if status == ffi::FigStatus::PARSE_ERROR {
-            return Err(Error::Parse(crate::error::ParseError::from_ffi(&err)));
+        match self.inner.resolve_aliases() {
+            Ok(resolved) => Ok(resolved.map(|inner| Document { inner })),
+            Err(e) => Err(Error::from_fig_error(&e)),
         }
-        Error::from_status(status)?;
-        Ok(NonNull::new(raw).map(|raw| Document { raw }))
     }
 
     fn node_to_value(&self, id: FigNodeId) -> Result<Value, Error> {
@@ -537,20 +485,16 @@ impl Document {
             }
             // A bare keyvalue or an invalid id can't stand alone as a value,
             // and `to_value` reads a document whose aliases are resolved.
-            FigNodeKind::Keyvalue
+            FigNodeKind::KeyValue
             | FigNodeKind::Invalid
             | FigNodeKind::Alias
             | FigNodeKind::Extended => Err(Error::Internal),
         }
     }
 
-    fn ptr(&self) -> *const ffi::FigDocument {
-        self.raw.as_ptr()
-    }
-
     /// The root node, or `None` for an empty document.
     pub(crate) fn root(&self) -> Option<FigNodeId> {
-        normalize(unsafe { ffi::fig_document_root(self.ptr()) })
+        normalize(self.inner.root())
     }
 
     /// The node's kind as the serde path reads it: an extended scalar is
@@ -558,9 +502,7 @@ impl Document {
     /// is, so a struct field of either type takes one. `node_to_value`
     /// asks `extended` first and keeps the kind.
     pub(crate) fn kind(&self, node: FigNodeId) -> FigNodeKind {
-        // `from_c` is the sole gate that turns the raw ABI int into the enum,
-        // mapping any unknown/future kind to `Invalid` instead of risking UB.
-        match FigNodeKind::from_c(unsafe { ffi::fig_node_kind(self.ptr(), node) }) {
+        match self.inner.node_kind(node) {
             FigNodeKind::Extended => match self.extended(node) {
                 Some((ExtKind::CharLiteral, _)) => FigNodeKind::Int,
                 _ => FigNodeKind::String,
@@ -570,39 +512,40 @@ impl Document {
     }
 
     pub(crate) fn first_child(&self, node: FigNodeId) -> Option<FigNodeId> {
-        normalize(unsafe { ffi::fig_node_first_child(self.ptr(), node) })
+        normalize(self.inner.first_child(node))
     }
 
     pub(crate) fn next_sibling(&self, node: FigNodeId) -> Option<FigNodeId> {
-        normalize(unsafe { ffi::fig_node_next_sibling(self.ptr(), node) })
+        normalize(self.inner.next_sibling(node))
     }
 
     pub(crate) fn child_count(&self, node: FigNodeId) -> usize {
-        unsafe { ffi::fig_node_child_count(self.ptr(), node) }
+        self.inner.child_count(node)
     }
 
     pub(crate) fn kv_key(&self, node: FigNodeId) -> Option<FigNodeId> {
-        normalize(unsafe { ffi::fig_keyvalue_key(self.ptr(), node) })
+        normalize(self.inner.keyvalue_key(node))
     }
 
     pub(crate) fn kv_value(&self, node: FigNodeId) -> Option<FigNodeId> {
-        normalize(unsafe { ffi::fig_keyvalue_value(self.ptr(), node) })
+        normalize(self.inner.keyvalue_value(node))
     }
 
     pub(crate) fn get_bool(&self, node: FigNodeId) -> Option<bool> {
-        let mut out = false;
-        unsafe { ffi::fig_node_bool(self.ptr(), node, &mut out) }.then_some(out)
+        self.inner.node_bool(node)
     }
 
     /// The raw source text of a numeric scalar. Borrows document memory.
     pub(crate) fn number_raw(&self, node: FigNodeId) -> Option<Result<&str, Error>> {
-        self.scalar_bytes(node, ffi::fig_node_number)
+        self.inner
+            .node_number(node)
             .map(|bytes| std::str::from_utf8(bytes).map_err(|_| Error::Utf8))
     }
 
     /// The bytes of a string scalar, as UTF-8. Borrows document memory.
     pub(crate) fn get_str(&self, node: FigNodeId) -> Option<Result<&str, Error>> {
-        self.scalar_bytes(node, ffi::fig_node_string)
+        self.inner
+            .node_string(node)
             .map(|bytes| std::str::from_utf8(bytes).map_err(|_| Error::Utf8))
     }
 
@@ -611,51 +554,10 @@ impl Document {
     /// Used only by the structural [`Document::to_value`] read — the serde path
     /// reads these as plain strings/ints.
     pub(crate) fn extended(&self, node: FigNodeId) -> Option<(ExtKind, String)> {
-        let mut kind: c_int = 0;
-        let mut ptr: *const u8 = std::ptr::null();
-        let mut len: usize = 0;
-        let ok = unsafe { ffi::fig_node_extended(self.ptr(), node, &mut kind, &mut ptr, &mut len) };
-        if !ok {
-            return None;
-        }
-        let ext = ExtKind::from_c(kind)?;
-        let text = if len == 0 {
-            String::new()
-        } else {
-            // Safety: on success the ABI guarantees `ptr` points to `len` bytes
-            // owned by the document, valid until our `Drop`.
-            let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
-            std::str::from_utf8(bytes).ok()?.to_owned()
-        };
+        let (kind, bytes) = self.inner.node_extended(node)?;
+        let ext = ExtKind::from_c(c_int::from(kind.ordinal()))?;
+        let text = std::str::from_utf8(bytes).ok()?.to_owned();
         Some((ext, text))
-    }
-
-    /// Shared helper for the byte-returning scalar accessors. The returned
-    /// slice borrows memory owned by the document (valid until drop), which we
-    /// tie to `&self`.
-    fn scalar_bytes(
-        &self,
-        node: FigNodeId,
-        accessor: unsafe extern "C" fn(
-            *const ffi::FigDocument,
-            FigNodeId,
-            *mut *const u8,
-            *mut usize,
-        ) -> bool,
-    ) -> Option<&[u8]> {
-        let mut ptr: *const u8 = std::ptr::null();
-        let mut len: usize = 0;
-        let ok = unsafe { accessor(self.ptr(), node, &mut ptr, &mut len) };
-        if !ok {
-            return None;
-        }
-        if len == 0 {
-            return Some(&[]);
-        }
-        // Safety: on success the ABI guarantees `ptr` points to `len` bytes
-        // owned by the document, valid until `fig_document_destroy` (i.e. our
-        // `Drop`). The returned borrow is bounded by `&self`.
-        Some(unsafe { std::slice::from_raw_parts(ptr, len) })
     }
 }
 
@@ -678,28 +580,9 @@ impl Document {
         format: Format,
         options: SerializeOptions,
     ) -> Result<String, Error> {
-        let ffi_options: ffi::FigSerializeOptions = options.into();
-        let mut ptr_out: *const u8 = std::ptr::null();
-        let mut len: usize = 0;
-        Error::from_status(unsafe {
-            ffi::fig_document_serialize(
-                self.raw.as_ptr(),
-                format.to_c(),
-                &ffi_options,
-                &mut ptr_out,
-                &mut len,
-            )
-        })?;
-        // Safety: on success the ABI guarantees `len` bytes at `ptr_out`, owned by
-        // the handle and valid until the next serialize/destroy. Copy out now.
-        let bytes = if len == 0 {
-            &[][..]
-        } else {
-            unsafe { std::slice::from_raw_parts(ptr_out, len) }
-        };
-        Ok(std::str::from_utf8(bytes)
-            .map_err(|_| Error::Utf8)?
-            .to_owned())
+        let core_options: capi::FigSerializeOptions = options.into();
+        let bytes = Error::check(self.inner.serialize_to_vec(format.to_c(), Some(&core_options)))?;
+        String::from_utf8(bytes).map_err(|_| Error::Utf8)
     }
 
     /// Report what serializing the whole document to `format` would silently lose
@@ -711,28 +594,9 @@ impl Document {
         format: Format,
         options: SerializeOptions,
     ) -> Result<Vec<Warning>, Error> {
-        let ffi_options: ffi::FigSerializeOptions = options.into();
-        let mut count: usize = 0;
-        Error::from_status(unsafe {
-            ffi::fig_document_diagnose(self.raw.as_ptr(), format.to_c(), &ffi_options, &mut count)
-        })?;
-        let mut out = Vec::with_capacity(count);
-        for i in 0..count {
-            let mut w = ffi::FigWarning::new();
-            Error::from_status(unsafe { ffi::fig_document_warning(self.raw.as_ptr(), i, &mut w) })?;
-            // Safety: on `OK`, `w` is filled with a warning whose path/note point
-            // into the handle's arena, valid until the next diagnose/destroy.
-            out.push(unsafe { Warning::from_ffi(&w) });
-        }
-        Ok(out)
-    }
-}
-
-impl Drop for Document {
-    fn drop(&mut self) {
-        unsafe {
-            ffi::fig_document_destroy(self.raw.as_ptr());
-        }
+        let core_options: capi::FigSerializeOptions = options.into();
+        let warnings = Error::check(self.inner.diagnose_to_vec(format.to_c(), Some(&core_options)))?;
+        Ok(warnings.iter().map(Warning::from_core).collect())
     }
 }
 

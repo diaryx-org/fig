@@ -1,6 +1,7 @@
 //! Languages resolved at runtime: the [`Language`] trait, the node table its
 //! `parse` returns, and [`register`], which carries an implementation to the
-//! core as a vtable and hands back a [`Format`] that every entry point of
+//! core — as the core's own `Language`, with the semantics the C ABI's
+//! vtable gave it — and hands back a [`Format`] that every entry point of
 //! this crate then accepts.
 //!
 //! This is the in-process carrier of the core's runtime-language contract
@@ -22,11 +23,17 @@
 //! handle is per process; persist [`Format::name`] and resolve it with
 //! [`Format::by_name`].
 
-use std::ffi::{CString, c_void};
-use std::os::raw::{c_char, c_int};
+use std::os::raw::c_int;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
 
-use crate::ffi;
+use fig_core::kit::ast::{AST, NodeId, SerializeOptions as CoreSerializeOptions};
+use fig_core::kit::convert;
+use fig_core::kit::language::{self as core_language, Language as CoreLanguage};
+use fig_core::kit::manifest;
+use fig_core::kit::table::{self, Kind as RowKind, Table};
+use fig_core::registry::{self, RegisterOptions};
+
 use crate::{Capabilities, Error, ExtKind, Format, LanguageFailure, Span};
 
 // ── the description ────────────────────────────────────────────────────────
@@ -632,29 +639,29 @@ impl NodeKind {
     /// its text.
     pub(crate) fn to_row(self) -> u8 {
         match self {
-            NodeKind::Null => ffi::FIG_ROW_NULL,
-            NodeKind::Bool => ffi::FIG_ROW_FALSE,
-            NodeKind::Int => ffi::FIG_ROW_INT,
-            NodeKind::Float => ffi::FIG_ROW_FLOAT,
-            NodeKind::String => ffi::FIG_ROW_STRING,
-            NodeKind::Sequence => ffi::FIG_ROW_SEQUENCE,
-            NodeKind::Mapping => ffi::FIG_ROW_MAPPING,
-            NodeKind::KeyValue => ffi::FIG_ROW_KEYVALUE,
-            NodeKind::Alias => ffi::FIG_ROW_ALIAS,
+            NodeKind::Null => RowKind::NULL,
+            NodeKind::Bool => RowKind::FALSE,
+            NodeKind::Int => RowKind::INT,
+            NodeKind::Float => RowKind::FLOAT,
+            NodeKind::String => RowKind::STRING,
+            NodeKind::Sequence => RowKind::SEQUENCE,
+            NodeKind::Mapping => RowKind::MAPPING,
+            NodeKind::KeyValue => RowKind::KEYVALUE,
+            NodeKind::Alias => RowKind::ALIAS,
         }
     }
 
     pub(crate) fn from_row(v: u8) -> Option<Self> {
         Some(match v {
-            ffi::FIG_ROW_NULL => NodeKind::Null,
-            ffi::FIG_ROW_FALSE | ffi::FIG_ROW_TRUE => NodeKind::Bool,
-            ffi::FIG_ROW_INT => NodeKind::Int,
-            ffi::FIG_ROW_FLOAT => NodeKind::Float,
-            ffi::FIG_ROW_STRING => NodeKind::String,
-            ffi::FIG_ROW_SEQUENCE => NodeKind::Sequence,
-            ffi::FIG_ROW_MAPPING => NodeKind::Mapping,
-            ffi::FIG_ROW_KEYVALUE => NodeKind::KeyValue,
-            ffi::FIG_ROW_ALIAS => NodeKind::Alias,
+            RowKind::NULL => NodeKind::Null,
+            RowKind::FALSE | RowKind::TRUE => NodeKind::Bool,
+            RowKind::INT => NodeKind::Int,
+            RowKind::FLOAT => NodeKind::Float,
+            RowKind::STRING => NodeKind::String,
+            RowKind::SEQUENCE => NodeKind::Sequence,
+            RowKind::MAPPING => NodeKind::Mapping,
+            RowKind::KEYVALUE => NodeKind::KeyValue,
+            RowKind::ALIAS => NodeKind::Alias,
             _ => return None,
         })
     }
@@ -1119,459 +1126,365 @@ pub trait Language: Send + Sync + 'static {
 /// Register `lang` with the core. Returns one [`Format`] per dialect the
 /// description declares, in declaration order — the first is the language's
 /// own. A runtime language is a peer of the bundled ones: a dialect named
-/// after a language compiled out of the linked library (`yaml` in a build
-/// without the `yaml` feature) takes that name, and [`Format::by_name`]
-/// resolves it. Refused, with the reason in [`Error::Language`], when the
-/// description breaks a rule the core holds its own formats to, when a
-/// sample fails to parse, print, reparse to the same tree or take a no-op
-/// edit, or when a dialect's name is already registered — the bundled
-/// languages' names included.
+/// after a language no crate has registered (`yaml` in a program without
+/// `fig-yaml`) takes that name, and [`Format::by_name`] resolves it.
+/// Refused, with the reason in [`Error::Language`], when the description
+/// breaks a rule the core holds its own formats to, when a sample fails to
+/// parse, print, reparse to the same tree or take a no-op edit, or when a
+/// dialect's name is already registered — a registered language's names
+/// included.
 pub fn register(lang: impl Language) -> Result<Vec<Format>, Error> {
     let desc = lang.describe();
     let dialect_names: Vec<String> = desc.dialects.iter().map(|d| d.name.clone()).collect();
-    let reg = Registration::new(Box::new(lang), desc)?;
-    // The registration lives for the process: the core keeps `ctx` and the
-    // function pointers, and the strings the vtable points to are copied
-    // at registration but `ctx` is read on every call.
-    let reg: &'static Registration = Box::leak(Box::new(reg));
-    let vt = reg.vtable();
-    let mut format: c_int = -1;
-    let mut err = ffi::FigError::new();
-    let status = unsafe { ffi::fig_language_register(&vt, &mut format, &mut err) };
-    registration(status, &err)?;
-    // By name, not by counting up from `format`: the core promises each row
-    // a handle of its own, not that the handles are consecutive.
+    let adapter = Registration::new(Box::new(lang), desc)?;
+    registration(adapter.register())?;
+    // By name, not by counting up from the first format: the core promises
+    // each row a handle of its own, not that the handles are consecutive.
     dialect_names
         .iter()
         .map(|name| Format::by_name(name).ok_or(Error::Internal))
         .collect()
 }
 
-/// A registration's status as a `Result`: the core's reason, when it gave
-/// one, as [`Error::Language`].
-fn registration(status: ffi::FigStatus, err: &ffi::FigError) -> Result<(), Error> {
-    if status == ffi::FigStatus::OK {
-        return Ok(());
-    }
-    let len = err.message_len.min(err.message.len());
-    let message = String::from_utf8_lossy(&err.message[..len]).into_owned();
+/// A registration's answer as a `Result`, as `fig_language_register`
+/// reports a refusal: the reason the core gave, when it gave one, as
+/// [`Error::Language`].
+fn registration(r: fig_core::Result<i32>) -> Result<Format, Error> {
+    let err = match r {
+        Ok(abi) => return Ok(Format(abi)),
+        Err(err) => err,
+    };
+    let (status, message) = match err.name() {
+        "OutOfMemory" => (crate::capi::Status::OutOfMemory, b"out of memory".to_vec()),
+        "InvalidLanguage" | "HarnessFailed" | "NameTaken" => (
+            crate::capi::Status::InvalidArgument,
+            registry::last_refusal(),
+        ),
+        _ => (
+            crate::capi::Status::UnsupportedOperation,
+            b"the language registry cannot take another registration".to_vec(),
+        ),
+    };
+    // What the C `FigError`'s message buffer holds.
+    let message = String::from_utf8_lossy(&message[..message.len().min(255)]).into_owned();
     if message.is_empty() {
         Error::from_status(status)?;
         return Err(Error::Internal);
     }
     Err(Error::Language(LanguageFailure {
         message,
-        byte_offset: (err.byte_offset != 0).then_some(err.byte_offset),
+        byte_offset: None,
     }))
 }
 
-/// The C call a language's own library registers it through,
-/// `fig_<name>_register` (`<fig/<name>.h>`).
-pub type LibraryRegister =
-    unsafe extern "C" fn(out_format: *mut c_int, out_err: *mut ffi::FigError) -> ffi::FigStatus;
-
-/// Register a language whose library is linked beside fig's, through its
-/// `fig_<name>_register`, and return the format of its first dialect. What
-/// each language crate's `register` is (`fig_yaml::register()`): a crate
-/// links its language's library and hands its function here. Registering
-/// one again returns the format it already has.
-///
-/// # Safety
-///
-/// `register` must be a language library's `fig_<name>_register`, whose
-/// library is linked into the program.
-pub unsafe fn register_library(register: LibraryRegister) -> Result<Format, Error> {
-    let mut format: c_int = -1;
-    let mut err = ffi::FigError::new();
-    let status = unsafe { register(&mut format, &mut err) };
-    registration(status, &err)?;
-    Ok(Format(format))
+/// Register one of fig's own languages, as `fig-core` implements it, and
+/// return the format of its first dialect. What each language crate's
+/// `register` is (`fig_yaml::register()`): the crate hands its language
+/// here. Registering one again returns the format it already has.
+pub fn register_core(lang: &'static dyn CoreLanguage) -> Result<Format, Error> {
+    // Two threads registering at once: the second waits, then finds the
+    // first's (the lock each language library's `fig_<name>_register` took).
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _held = LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    registration(registry::register_bundled(registry::global(), lang))
 }
 
-/// Everything the vtable points at, owned for the life of the process, plus
-/// the language itself.
+/// A [`Language`] as the core's `Language`, read off its [`Description`]
+/// once: what `fig_language_register` built from the vtable this crate
+/// handed it, and the calls the vtable's thunks made. Lives for the
+/// process, as a registration does.
 struct Registration {
     lang: Box<dyn Language>,
-    name: CString,
-    caps: u32,
-    max_mapping_depth: c_int,
-    lossless: u32,
-    syntax: Option<Box<CSyntax>>,
-    dialects: Vec<ffi::FigDialectDesc>,
-    /// What each dialect's pointers reach.
-    _dialect_owned: Vec<CDialect>,
-    samples: Vec<Vec<u8>>,
-    sample_strs: Vec<ffi::FigStr>,
+    name: &'static str,
+    caps: manifest::Caps,
+    syntax: Option<manifest::Syntax>,
+    dialects: &'static [manifest::DialectInfo],
+    /// Each dialect row's own syntax, and its extensions.
+    dialect_syntax: Vec<Option<manifest::Syntax>>,
+    dialect_extensions: Vec<Vec<&'static str>>,
+    /// Every row's extensions, in order.
+    extensions: &'static [&'static str],
+    samples: &'static [&'static [u8]],
     renderers: Renderers,
     streams: bool,
 }
 
-/// A `FigSyntax` and the strings it points into.
-struct CSyntax {
-    c: ffi::FigSyntax,
-    _strings: Vec<CString>,
+fn leak_str(s: &str) -> &'static str {
+    Box::leak(s.to_owned().into_boxed_str())
 }
 
-struct CDialect {
-    _name: CString,
-    _extensions: Vec<CString>,
-    _extension_ptrs: Vec<*const c_char>,
-    _seed: Option<CString>,
-    _syntax: Option<Box<CSyntax>>,
-    _char_as: Option<CString>,
-    _number_special_as: Option<CString>,
+fn leak_bytes(s: &str) -> &'static [u8] {
+    leak_str(s).as_bytes()
 }
 
-/// `kinds` as `FigLanguageVTable.lossless`'s bits: the envelope bit, then
-/// one bit per kind held natively.
-fn native_bits(l: &NativeKinds) -> u32 {
-    let ext = [
-        (l.offset_datetime, ExtKind::OffsetDateTime),
-        (l.local_datetime, ExtKind::LocalDateTime),
-        (l.local_date, ExtKind::LocalDate),
-        (l.local_time, ExtKind::LocalTime),
-        (l.enum_literal, ExtKind::EnumLiteral),
-        (l.char_literal, ExtKind::CharLiteral),
-        (l.number_special, ExtKind::NumberSpecial),
-        (l.plist_date, ExtKind::PlistDate),
-        (l.data, ExtKind::Data),
-    ];
-    let mut bits = ffi::FIG_LOSSLESS_ENVELOPE;
-    if l.null {
-        bits |= ffi::FIG_NATIVE_NULL;
-    }
-    for (held, kind) in ext {
-        if held {
-            bits |= ffi::fig_native_ext(kind.to_c() as u32);
-        }
-    }
-    bits
-}
-
-unsafe impl Send for Registration {}
-unsafe impl Sync for Registration {}
-
-fn cstr(s: &str) -> Result<CString, Error> {
-    CString::new(s).map_err(|e| {
-        Error::Language(LanguageFailure {
+/// A declared string, which the core reads as C reads one: a NUL in it is
+/// refused, as it was when it crossed the ABI as a C string.
+fn checked(s: &str) -> Result<&str, Error> {
+    match s.find('\0') {
+        None => Ok(s),
+        Some(at) => Err(Error::Language(LanguageFailure {
             message: format!("a declared string contains a NUL byte: {s:?}"),
-            byte_offset: Some(e.nul_position()),
-        })
+            byte_offset: Some(at),
+        })),
+    }
+}
+
+fn str_of(s: &str) -> Result<&'static str, Error> {
+    Ok(leak_str(checked(s)?))
+}
+
+fn bytes_of(s: &str) -> Result<&'static [u8], Error> {
+    Ok(leak_bytes(checked(s)?))
+}
+
+fn opt_bytes(s: Option<&str>) -> Result<Option<&'static [u8]>, Error> {
+    s.map(bytes_of).transpose()
+}
+
+/// `kinds` as the core holds them.
+fn native_kinds(l: &NativeKinds) -> manifest::NativeKinds {
+    manifest::NativeKinds {
+        null: l.null,
+        offset_datetime: l.offset_datetime,
+        local_datetime: l.local_datetime,
+        local_date: l.local_date,
+        local_time: l.local_time,
+        enum_literal: l.enum_literal,
+        char_literal: l.char_literal,
+        number_special: l.number_special,
+        plist_date: l.plist_date,
+        data: l.data,
+    }
+}
+
+fn delimiter(d: Option<&CommentDelimiter>) -> Result<Option<manifest::CommentDelimiter>, Error> {
+    let Some(d) = d else { return Ok(None) };
+    Ok(Some(manifest::CommentDelimiter {
+        open: bytes_of(&d.open)?,
+        close: bytes_of(&d.close)?,
+        forbidden: opt_bytes(d.forbidden.as_deref())?,
+    }))
+}
+
+/// `s` as the core's syntax: the runtime registry's `syntaxOf`, every
+/// field as stated, a 0 byte as none.
+fn syntax_of(s: &Syntax) -> Result<manifest::Syntax, Error> {
+    Ok(manifest::Syntax {
+        comments: manifest::Comments {
+            line: delimiter(s.comments.line.as_ref())?,
+            trailing: delimiter(s.comments.trailing.as_ref())?,
+            block: delimiter(s.comments.block.as_ref())?,
+        },
+        kv_sep: opt_bytes(s.kv_sep.as_deref())?,
+        flow_kv_sep_from_siblings: s.flow_kv_sep_from_siblings,
+        flow_map_pad: bytes_of(&s.flow_map_pad)?,
+        key_sigil: s.key_sigil.filter(|&b| b != 0),
+        empty_map_literal: opt_bytes(s.empty_map_literal.as_deref())?,
+        block_seq_editable: s.block_seq_editable,
+        flow_containers: s.flow_containers,
+        indent_unit: bytes_of(&s.indent_unit)?,
+        seq_item_marker: bytes_of(&s.seq_item_marker)?,
+        closed_containers: match &s.closed_containers {
+            Some(c) => Some(manifest::ClosedContainers {
+                map: manifest::Delimiters {
+                    open: bytes_of(&c.map_open)?,
+                    close: bytes_of(&c.map_close)?,
+                },
+                seq: manifest::Delimiters {
+                    open: bytes_of(&c.seq_open)?,
+                    close: bytes_of(&c.seq_close)?,
+                },
+            }),
+            None => None,
+        },
+        single_line_block_mapping: s.single_line_block_mapping,
+        bare_document_mapping: s.bare_document_mapping,
+        flow_map_open: bytes_of(&s.flow_map_open)?,
+        flow_map_close: bytes_of(&s.flow_map_close)?,
+        structural_indent: s.structural_indent,
+        section_noun: opt_bytes(s.section_noun.as_deref())?,
+        section_header: match &s.section_header {
+            Some(h) => Some(manifest::SectionHeader {
+                open: bytes_of(&h.open)?,
+                close: bytes_of(&h.close)?,
+                seq_open: opt_bytes(h.seq_open.as_deref())?,
+                seq_close: opt_bytes(h.seq_close.as_deref())?,
+                sep: bytes_of(&h.sep)?,
+                skip_index: h.skip_index,
+            }),
+            None => None,
+        },
+        merge_key: opt_bytes(s.merge_key.as_deref())?,
+        flow_entry_sep: bytes_of(&s.flow_entry_sep)?,
+        flow_root: s.flow_root,
+        flow_maps_only: s.flow_maps_only,
+        line_prefix_marks: bytes_of(&s.line_prefix_marks)?,
+        flow_map_kv_sep: bytes_of(&s.flow_map_kv_sep)?,
+        flow_map_entry_sep: bytes_of(&s.flow_map_entry_sep)?,
+        line_continuation: s.line_continuation.filter(|&b| b != 0),
+        empty_seq_literal: opt_bytes(s.empty_seq_literal.as_deref())?,
+        opener_line_comment: s.opener_line_comment,
     })
 }
 
-fn opt_ptr(strings: &mut Vec<CString>, s: Option<&str>) -> Result<*const c_char, Error> {
-    match s {
-        Some(s) => {
-            let c = cstr(s)?;
-            let p = c.as_ptr();
-            strings.push(c);
-            Ok(p)
-        }
-        None => Ok(std::ptr::null()),
-    }
-}
-
-impl CSyntax {
-    fn new(s: &Syntax) -> Result<Box<Self>, Error> {
-        let mut strings = Vec::new();
-        let delim = |strings: &mut Vec<CString>,
-                     d: Option<&CommentDelimiter>|
-         -> Result<ffi::FigCommentDelimiter, Error> {
-            Ok(match d {
-                Some(d) => ffi::FigCommentDelimiter {
-                    open: opt_ptr(strings, Some(&d.open))?,
-                    close: opt_ptr(strings, Some(&d.close))?,
-                    forbidden: opt_ptr(strings, d.forbidden.as_deref())?,
-                },
-                None => ffi::FigCommentDelimiter {
-                    open: std::ptr::null(),
-                    close: std::ptr::null(),
-                    forbidden: std::ptr::null(),
-                },
-            })
-        };
-        let c = ffi::FigSyntax {
-            size: std::mem::size_of::<ffi::FigSyntax>() as u32,
-            comments: ffi::FigComments {
-                line: delim(&mut strings, s.comments.line.as_ref())?,
-                trailing: delim(&mut strings, s.comments.trailing.as_ref())?,
-                block: delim(&mut strings, s.comments.block.as_ref())?,
-            },
-            kv_sep: opt_ptr(&mut strings, s.kv_sep.as_deref())?,
-            flow_kv_sep_from_siblings: s.flow_kv_sep_from_siblings,
-            flow_map_pad: opt_ptr(&mut strings, Some(&s.flow_map_pad))?,
-            key_sigil: s.key_sigil.unwrap_or(0),
-            empty_map_literal: opt_ptr(&mut strings, s.empty_map_literal.as_deref())?,
-            block_seq_editable: s.block_seq_editable,
-            flow_containers: s.flow_containers,
-            indent_unit: opt_ptr(&mut strings, Some(&s.indent_unit))?,
-            seq_item_marker: opt_ptr(&mut strings, Some(&s.seq_item_marker))?,
-            closed_containers: match &s.closed_containers {
-                Some(c) => ffi::FigClosedContainers {
-                    map_open: opt_ptr(&mut strings, Some(&c.map_open))?,
-                    map_close: opt_ptr(&mut strings, Some(&c.map_close))?,
-                    seq_open: opt_ptr(&mut strings, Some(&c.seq_open))?,
-                    seq_close: opt_ptr(&mut strings, Some(&c.seq_close))?,
-                },
-                None => ffi::FigClosedContainers {
-                    map_open: std::ptr::null(),
-                    map_close: std::ptr::null(),
-                    seq_open: std::ptr::null(),
-                    seq_close: std::ptr::null(),
-                },
-            },
-            single_line_block_mapping: s.single_line_block_mapping,
-            bare_document_mapping: s.bare_document_mapping,
-            flow_map_open: opt_ptr(&mut strings, Some(&s.flow_map_open))?,
-            flow_map_close: opt_ptr(&mut strings, Some(&s.flow_map_close))?,
-            structural_indent: s.structural_indent,
-            section_noun: opt_ptr(&mut strings, s.section_noun.as_deref())?,
-            section_header: match &s.section_header {
-                Some(h) => ffi::FigSectionHeader {
-                    open: opt_ptr(&mut strings, Some(&h.open))?,
-                    close: opt_ptr(&mut strings, Some(&h.close))?,
-                    seq_open: opt_ptr(&mut strings, h.seq_open.as_deref())?,
-                    seq_close: opt_ptr(&mut strings, h.seq_close.as_deref())?,
-                    sep: opt_ptr(&mut strings, Some(&h.sep))?,
-                    skip_index: h.skip_index,
-                },
-                None => ffi::FigSectionHeader {
-                    open: std::ptr::null(),
-                    close: std::ptr::null(),
-                    seq_open: std::ptr::null(),
-                    seq_close: std::ptr::null(),
-                    sep: std::ptr::null(),
-                    skip_index: true,
-                },
-            },
-            merge_key: opt_ptr(&mut strings, s.merge_key.as_deref())?,
-            flow_entry_sep: opt_ptr(&mut strings, Some(&s.flow_entry_sep))?,
-            flow_root: s.flow_root,
-            flow_maps_only: s.flow_maps_only,
-            line_prefix_marks: opt_ptr(&mut strings, Some(&s.line_prefix_marks))?,
-            flow_map_kv_sep: opt_ptr(&mut strings, Some(&s.flow_map_kv_sep))?,
-            flow_map_entry_sep: opt_ptr(&mut strings, Some(&s.flow_map_entry_sep))?,
-            line_continuation: s.line_continuation.unwrap_or(0),
-            empty_seq_literal: opt_ptr(&mut strings, s.empty_seq_literal.as_deref())?,
-            opener_line_comment: s.opener_line_comment,
-        };
-        Ok(Box::new(CSyntax {
-            c,
-            _strings: strings,
-        }))
-    }
+fn prints_of(p: &Prints) -> Result<manifest::Prints, Error> {
+    Ok(manifest::Prints {
+        holds: native_kinds(&p.holds),
+        typed_scalars: p.typed_scalars,
+        null_at_root: p.null_at_root,
+        root_container: p.root_container,
+        char_as: str_of(&p.char_as)?,
+        number_special_as: str_of(&p.number_special_as)?,
+        comments: match p.comments {
+            CommentsPrinted::Always => manifest::PrintsComments::Always,
+            CommentsPrinted::Pretty => manifest::PrintsComments::Pretty,
+            CommentsPrinted::Never => manifest::PrintsComments::Never,
+        },
+    })
 }
 
 impl Registration {
     fn new(lang: Box<dyn Language>, desc: Description) -> Result<Self, Error> {
-        let name = cstr(&desc.name)?;
-        let mut caps = 0u32;
-        if desc.caps.read {
-            caps |= 1 << 0;
-        }
-        if desc.caps.edit {
-            caps |= 1 << 1;
-        }
-        if desc.caps.serialize {
-            caps |= 1 << 2;
-        }
-        if desc.caps.references {
-            caps |= 1 << 3;
-        }
-        // The envelope bit, then one bit per kind held natively.
-        let lossless = desc.lossless.map_or(0, |l| native_bits(&l));
-        let syntax = match &desc.syntax {
-            Some(s) => Some(CSyntax::new(s)?),
-            None => None,
+        let name = str_of(&desc.name)?;
+        let caps = manifest::Caps {
+            read: desc.caps.read,
+            edit: desc.caps.edit,
+            serialize: desc.caps.serialize,
+            references: desc.caps.references,
+            lossless: desc.lossless.as_ref().map(native_kinds),
+            max_mapping_depth: desc.max_mapping_depth,
         };
+        let syntax = desc.syntax.as_ref().map(syntax_of).transpose()?;
         let mut dialects = Vec::with_capacity(desc.dialects.len());
-        let mut owned = Vec::with_capacity(desc.dialects.len());
-        for d in &desc.dialects {
-            let dname = cstr(&d.name)?;
-            let extensions: Vec<CString> = d
+        let mut dialect_syntax = Vec::with_capacity(desc.dialects.len());
+        let mut dialect_extensions = Vec::with_capacity(desc.dialects.len());
+        let mut extensions = Vec::new();
+        for (index, d) in desc.dialects.iter().enumerate() {
+            let exts: Vec<&'static str> = d
                 .extensions
                 .iter()
-                .map(|e| cstr(e))
+                .map(|e| str_of(e))
                 .collect::<Result<_, _>>()?;
-            let mut extension_ptrs: Vec<*const c_char> =
-                extensions.iter().map(|e| e.as_ptr()).collect();
-            extension_ptrs.push(std::ptr::null());
-            let seed = match &d.empty_doc_seed {
-                Some(s) => Some(cstr(s)?),
-                None => None,
+            let splice = match d.splice {
+                Splice::Literal => manifest::SpliceStyle::Literal,
+                Splice::Escaped => manifest::SpliceStyle::Escaped,
+                Splice::Raw => manifest::SpliceStyle::Raw,
             };
-            let dsyntax = match &d.syntax {
-                Some(s) => Some(CSyntax::new(s)?),
-                None => None,
-            };
-            let char_as = match &d.prints {
-                Some(p) => Some(cstr(&p.char_as)?),
-                None => None,
-            };
-            let number_special_as = match &d.prints {
-                Some(p) => Some(cstr(&p.number_special_as)?),
-                None => None,
-            };
-            let mut prints_flags = 0u32;
-            if let Some(p) = &d.prints {
-                if !p.typed_scalars {
-                    prints_flags |= ffi::FIG_PRINTS_TEXT_SCALARS;
-                }
-                if p.null_at_root {
-                    prints_flags |= ffi::FIG_PRINTS_NULL_AT_ROOT;
-                }
-                if p.root_container {
-                    prints_flags |= ffi::FIG_PRINTS_ROOT_CONTAINER;
-                }
-            }
-            dialects.push(ffi::FigDialectDesc {
-                name: dname.as_ptr(),
-                extensions: extension_ptrs.as_ptr(),
-                splice: match d.splice {
-                    Splice::Literal => 0,
-                    Splice::Escaped => 1,
-                    Splice::Raw => 2,
-                },
-                empty_doc_seed: seed.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()),
-                syntax: dsyntax
-                    .as_ref()
-                    .map_or(std::ptr::null(), |s| &s.c as *const _),
-                prints_holds: d.prints.as_ref().map_or(0, |p| native_bits(&p.holds)),
-                prints_flags,
-                prints_char_as: char_as.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()),
-                prints_number_special_as: number_special_as
-                    .as_ref()
-                    .map_or(std::ptr::null(), |s| s.as_ptr()),
-                prints_comments: d.prints.as_ref().map_or(0, |p| match p.comments {
-                    CommentsPrinted::Always => 0,
-                    CommentsPrinted::Pretty => 1,
-                    CommentsPrinted::Never => 2,
-                }),
+            dialects.push(manifest::DialectInfo {
+                dialect: index as manifest::Dialect,
+                prints: d.prints.as_ref().map(prints_of).transpose()?,
+                ..manifest::DialectInfo::new(
+                    str_of(&d.name)?,
+                    splice,
+                    opt_bytes(d.empty_doc_seed.as_deref())?,
+                )
             });
-            owned.push(CDialect {
-                _name: dname,
-                _extensions: extensions,
-                _extension_ptrs: extension_ptrs,
-                _seed: seed,
-                _syntax: dsyntax,
-                _char_as: char_as,
-                _number_special_as: number_special_as,
-            });
+            dialect_syntax.push(d.syntax.as_ref().map(syntax_of).transpose()?);
+            extensions.extend(exts.iter().copied());
+            dialect_extensions.push(exts);
         }
-        let samples: Vec<Vec<u8>> = desc.samples.iter().map(|s| s.as_bytes().to_vec()).collect();
-        let sample_strs = samples
-            .iter()
-            .map(|s| ffi::FigStr {
-                ptr: s.as_ptr(),
-                len: s.len(),
-            })
-            .collect();
+        let samples: Vec<&'static [u8]> = desc.samples.iter().map(|s| leak_bytes(s)).collect();
         Ok(Registration {
             lang,
             name,
             caps,
-            max_mapping_depth: desc
-                .max_mapping_depth
-                .map_or(ffi::FIG_DEPTH_NONE, c_int::from),
-            lossless,
             syntax,
-            dialects,
-            _dialect_owned: owned,
-            samples,
-            sample_strs,
+            dialects: Box::leak(dialects.into_boxed_slice()),
+            dialect_syntax,
+            dialect_extensions,
+            extensions: Box::leak(extensions.into_boxed_slice()),
+            samples: Box::leak(samples.into_boxed_slice()),
             renderers: desc.renderers,
             streams: desc.streams,
         })
     }
 
-    fn vtable(&'static self) -> ffi::FigLanguageVTable {
-        ffi::FigLanguageVTable {
-            version: ffi::FIG_LANGUAGE_VTABLE_VERSION,
-            ctx: self as *const Registration as *mut c_void,
-            name: self.name.as_ptr(),
-            caps: self.caps,
-            max_mapping_depth: self.max_mapping_depth,
-            size: std::mem::size_of::<ffi::FigLanguageVTable>() as u32,
-            lossless: self.lossless,
-            syntax: self
-                .syntax
-                .as_ref()
-                .map_or(std::ptr::null(), |s| &s.c as *const _),
-            dialects: self.dialects.as_ptr(),
-            dialect_count: self.dialects.len(),
-            dialect_size: std::mem::size_of::<ffi::FigDialectDesc>(),
-            samples: self.sample_strs.as_ptr(),
-            sample_count: self.samples.len(),
-            parse: parse_thunk,
-            print: if self.caps & (1 << 2) != 0 {
-                Some(print_thunk)
-            } else {
-                None
-            },
-            free_bytes: free_bytes_thunk,
-            render_value: if self.renderers.value {
-                Some(render_value_thunk)
-            } else {
-                None
-            },
-            render_entry: if self.renderers.entry {
-                Some(render_entry_thunk)
-            } else {
-                None
-            },
-            render_item: if self.renderers.item {
-                Some(render_item_thunk)
-            } else {
-                None
-            },
-            render_tail: if self.renderers.tail {
-                Some(render_tail_thunk)
-            } else {
-                None
-            },
-            render_key: if self.renderers.key {
-                Some(render_key_thunk)
-            } else {
-                None
-            },
-            render_key_name: if self.renderers.key_name {
-                Some(render_key_name_thunk)
-            } else {
-                None
-            },
-            split_stream: if self.streams {
-                Some(split_stream_thunk)
-            } else {
-                None
-            },
-            render_string: if self.renderers.string {
-                Some(render_string_thunk)
-            } else {
-                None
-            },
+    /// `fig_language_register`: the record's rules a core `Syntax` cannot
+    /// state (an editable language states a syntax), then the registry's
+    /// own validation and the harness over the samples.
+    fn register(self) -> fig_core::Result<i32> {
+        registry::clear_refusal();
+        let name = self.name;
+        if !name.is_empty()
+            && self.caps.read
+            && !self.dialects.is_empty()
+            && self.caps.edit
+            && self.syntax.is_none()
+        {
+            registry::refuse(&format!(
+                "'{name}' declares the edit capability and must supply syntax"
+            ));
+            return Err(fig_core::err!(InvalidLanguage));
+        }
+        registry::global().register_arc(Arc::new(self), RegisterOptions::default())
+    }
+
+    fn dialect_name(&self, d: manifest::Dialect) -> &'static str {
+        self.dialects.get(d as usize).map_or(self.name, |r| r.name)
+    }
+
+    fn has(&self, which: manifest::Renderer) -> bool {
+        let r = &self.renderers;
+        match which {
+            manifest::Renderer::Value => r.value,
+            manifest::Renderer::Entry => r.entry,
+            manifest::Renderer::Item => r.item,
+            manifest::Renderer::Tail => r.tail,
+            manifest::Renderer::Key => r.key,
+            manifest::Renderer::KeyName => r.key_name,
+            manifest::Renderer::String => r.string,
+        }
+    }
+
+    /// The vtable's `print` thunk over `ast` from `root`: the subtree's
+    /// table, stripped of comments when asked, as this crate's
+    /// [`NodeTable`], handed to the language with the C `PrintOptions`.
+    fn print_from(
+        &self,
+        dialect: manifest::Dialect,
+        ast: &AST,
+        root: NodeId,
+        options: &CoreSerializeOptions,
+        out: &mut Vec<u8>,
+    ) -> fig_core::Result<()> {
+        if !self.caps.serialize {
+            return Err(fig_core::err!(FormatDisabled));
+        }
+        let mut built = convert::document_to_table(ast, root)?;
+        if options.strip_comments {
+            built.comments.clear();
+        }
+        let print_options = PrintOptions {
+            pretty: options.pretty,
+            strip_comments: options.strip_comments,
+            indent: options.indent,
+            width: options.width,
+            splice: options.splice,
+            flow: options.flow,
+        };
+        let dialect = self.dialect_name(dialect);
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let table = table_from_view(&built.view())?;
+            self.lang.print(dialect, &table, &print_options)
+        }));
+        match result {
+            Ok(Ok(bytes)) => {
+                out.extend_from_slice(&bytes);
+                Ok(())
+            }
+            // A refusal names no `Refusal` code: the core reads it as a
+            // printer's failure.
+            Ok(Err(_)) | Err(_) => Err(fig_core::err!(RuntimePrintFailed)),
         }
     }
 }
 
-// ── the thunks ─────────────────────────────────────────────────────────────
+// ── the language, as the core calls it ─────────────────────────────────────
 //
-// Each is the C signature over one `Language` method. A panic in the
-// language is caught here — unwinding across the C boundary is undefined —
-// and reported as a failure with the panic's message.
-
-fn fill_err(err: *mut ffi::FigError, e: &LanguageError) {
-    if err.is_null() {
-        return;
-    }
-    let err = unsafe { &mut *err };
-    let bytes = e.message.as_bytes();
-    let n = bytes.len().min(err.message.len() - 1);
-    err.message[..n].copy_from_slice(&bytes[..n]);
-    err.message[n] = 0;
-    err.message_len = n;
-    err.byte_offset = e.byte_offset.unwrap_or(0);
-}
+// Each method is one of the vtable's thunks over the [`Language`] and the
+// runtime registry's reading of its answer. A panic in the language is
+// caught here and reported as a failure with the panic's message, as the
+// thunks did at the C boundary.
 
 fn panic_message(p: Box<dyn std::any::Any + Send>) -> LanguageError {
     let msg = p
@@ -1582,240 +1495,433 @@ fn panic_message(p: Box<dyn std::any::Any + Send>) -> LanguageError {
     LanguageError::new(format!("the language panicked: {msg}"))
 }
 
-/// The `T` fig wrote at `p`, which leads with its `size` as a `u32`: the
-/// prefix this crate's `T` shares with fig's, and `fill` past it. A fig
-/// built against another header than this crate's writes a shorter or a
-/// longer record, and neither is read past what both know.
-unsafe fn read_gated<T: Copy>(p: *const T, fill: T) -> T {
-    let size = unsafe { (p as *const u32).read_unaligned() } as usize;
-    unsafe { read_prefix(p, size, fill) }
-}
-
-/// The first `size` bytes at `p` over `fill`, as far as a `T` reaches.
-unsafe fn read_prefix<T: Copy>(p: *const T, size: usize, fill: T) -> T {
-    let mut out = fill;
-    let n = size.min(std::mem::size_of::<T>());
-    unsafe { std::ptr::copy_nonoverlapping(p as *const u8, &mut out as *mut T as *mut u8, n) };
-    out
-}
-
-const DEFAULT_PRINT_OPTIONS: ffi::FigPrintOptions = ffi::FigPrintOptions {
-    size: 0,
-    pretty: true,
-    strip_comments: false,
-    indent: 2,
-    width: 80,
-    splice: false,
-    flow: false,
-};
-
-const EMPTY_STR: ffi::FigStr = ffi::FigStr {
-    ptr: std::ptr::null(),
-    len: 0,
-};
-
-const EMPTY_REQUEST: ffi::FigRenderRequest = ffi::FigRenderRequest {
-    size: 0,
-    dialect: c"".as_ptr(),
-    indent: EMPTY_STR,
-    key: EMPTY_STR,
-    value: EMPTY_STR,
-    literal: c"string".as_ptr(),
-    old_key: EMPTY_STR,
-    parent_key: EMPTY_STR,
-    parent_tag: EMPTY_STR,
-    old_value: EMPTY_STR,
-};
-
-unsafe fn reg_of<'a>(ctx: *mut c_void) -> &'a Registration {
-    unsafe { &*(ctx as *const Registration) }
-}
-
-unsafe fn dialect_of<'a>(dialect: *const c_char) -> &'a str {
-    unsafe { std::ffi::CStr::from_ptr(dialect) }
-        .to_str()
-        .unwrap_or("")
-}
-
-fn bytes_of<'a>(s: ffi::FigStr) -> &'a [u8] {
-    if s.len == ffi::FIG_LEN_NONE || s.len == 0 || s.ptr.is_null() {
-        return &[];
+impl CoreLanguage for Registration {
+    fn name(&self) -> &str {
+        self.name
     }
-    unsafe { std::slice::from_raw_parts(s.ptr, s.len) }
+
+    fn extensions(&self) -> &[&'static str] {
+        self.extensions
+    }
+
+    fn dialect_extensions(&self, row: usize) -> Option<Vec<&'static str>> {
+        Some(
+            self.dialect_extensions
+                .get(row)
+                .cloned()
+                .unwrap_or_default(),
+        )
+    }
+
+    fn caps(&self) -> manifest::Caps {
+        self.caps
+    }
+
+    fn dialects(&self) -> &[manifest::DialectInfo] {
+        self.dialects
+    }
+
+    fn samples(&self) -> &[&'static [u8]] {
+        self.samples
+    }
+
+    /// The dialect's syntax, else the language's (the runtime registry's
+    /// `Language.syntax`), else none at all for a read-only format.
+    fn syntax(&self, dialect: manifest::Dialect) -> manifest::Syntax {
+        if let Some(Some(s)) = self.dialect_syntax.get(dialect as usize) {
+            return *s;
+        }
+        self.syntax
+            .unwrap_or(manifest::Syntax::new(manifest::Comments::NONE, None, None))
+    }
+
+    fn is_runtime(&self) -> bool {
+        true
+    }
+
+    /// The language's parse, its table copied into the core's. A refusal is
+    /// `RuntimeParseFailed`, its message and offset stated with
+    /// `set_parse_error` (the vtable's `ErrorInfo`).
+    fn parse_table(
+        &self,
+        input: &[u8],
+        dialect: manifest::Dialect,
+        out: &mut Table,
+    ) -> fig_core::Result<()> {
+        let dialect = self.dialect_name(dialect);
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let table = self.lang.parse(dialect, input)?;
+            fill_table(out, &table)
+        }));
+        let e = match result {
+            Ok(Ok(())) => return Ok(()),
+            Ok(Err(e)) => e,
+            Err(p) => panic_message(p),
+        };
+        core_language::set_parse_error(e.message.as_bytes(), e.byte_offset.unwrap_or(0));
+        Err(fig_core::err!(RuntimeParseFailed))
+    }
+
+    fn print(
+        &self,
+        dialect: manifest::Dialect,
+        ast: &AST,
+        options: &CoreSerializeOptions,
+        out: &mut Vec<u8>,
+    ) -> fig_core::Result<()> {
+        self.print_from(dialect, ast, ast.root, options, out)
+    }
+
+    fn print_node(
+        &self,
+        dialect: manifest::Dialect,
+        ast: &AST,
+        node: NodeId,
+        options: &CoreSerializeOptions,
+        out: &mut Vec<u8>,
+    ) -> fig_core::Result<()> {
+        self.print_from(dialect, ast, node, options, out)
+    }
+
+    /// One renderer call, when the description lists it. A refusal is the
+    /// language's words in `registry::last_refusal` and `RendererRefused`
+    /// (the runtime registry's `rendererError`).
+    fn render(
+        &self,
+        which: manifest::Renderer,
+        dialect: manifest::Dialect,
+        out: &mut Vec<u8>,
+        r: &manifest::RenderRequest<'_>,
+    ) -> Option<fig_core::Result<()>> {
+        if !self.has(which) {
+            return None;
+        }
+        let renderer = match which {
+            manifest::Renderer::Value => Renderer::Value,
+            manifest::Renderer::Entry => Renderer::Entry,
+            manifest::Renderer::Item => Renderer::Item,
+            manifest::Renderer::Tail => Renderer::Tail,
+            manifest::Renderer::Key => Renderer::Key,
+            manifest::Renderer::KeyName => Renderer::KeyName,
+            manifest::Renderer::String => Renderer::String,
+        };
+        let args = RenderArgs {
+            dialect: self.dialect_name(dialect),
+            indent: r.indent,
+            key: r.key,
+            value: r.value,
+            // A name this crate does not know is a core newer than it; the
+            // fallback is what a renderer does with any text it cannot type.
+            literal: Literal::from_name(r.literal.name()).unwrap_or_default(),
+            old_key: r.old_key,
+            parent_key: r.parent_key,
+            parent_tag: r.parent_tag,
+            old_value: r.old_value,
+        };
+        let result = match catch_unwind(AssertUnwindSafe(|| self.lang.render(renderer, args))) {
+            Ok(result) => result,
+            Err(p) => Err(panic_message(p)),
+        };
+        Some(match result {
+            Ok(bytes) => {
+                out.extend_from_slice(&bytes);
+                Ok(())
+            }
+            Err(e) => {
+                // What the C `ErrorInfo`'s message buffer held.
+                let bytes = &e.message.as_bytes()[..e.message.len().min(255)];
+                let text = String::from_utf8_lossy(bytes);
+                registry::refuse(if text.is_empty() {
+                    "the renderer declined"
+                } else {
+                    &text
+                });
+                Err(fig_core::err!(RendererRefused))
+            }
+        })
+    }
+
+    fn render_value(
+        &self,
+        d: manifest::Dialect,
+        out: &mut Vec<u8>,
+        r: &manifest::RenderRequest<'_>,
+    ) -> Option<fig_core::Result<()>> {
+        self.render(manifest::Renderer::Value, d, out, r)
+    }
+    fn render_entry(
+        &self,
+        d: manifest::Dialect,
+        out: &mut Vec<u8>,
+        r: &manifest::RenderRequest<'_>,
+    ) -> Option<fig_core::Result<()>> {
+        self.render(manifest::Renderer::Entry, d, out, r)
+    }
+    fn render_item(
+        &self,
+        d: manifest::Dialect,
+        out: &mut Vec<u8>,
+        r: &manifest::RenderRequest<'_>,
+    ) -> Option<fig_core::Result<()>> {
+        self.render(manifest::Renderer::Item, d, out, r)
+    }
+    fn render_tail(
+        &self,
+        d: manifest::Dialect,
+        out: &mut Vec<u8>,
+        r: &manifest::RenderRequest<'_>,
+    ) -> Option<fig_core::Result<()>> {
+        self.render(manifest::Renderer::Tail, d, out, r)
+    }
+    fn render_key(
+        &self,
+        d: manifest::Dialect,
+        out: &mut Vec<u8>,
+        r: &manifest::RenderRequest<'_>,
+    ) -> Option<fig_core::Result<()>> {
+        self.render(manifest::Renderer::Key, d, out, r)
+    }
+    fn render_key_name(
+        &self,
+        d: manifest::Dialect,
+        out: &mut Vec<u8>,
+        r: &manifest::RenderRequest<'_>,
+    ) -> Option<fig_core::Result<()>> {
+        self.render(manifest::Renderer::KeyName, d, out, r)
+    }
+    fn render_string(
+        &self,
+        d: manifest::Dialect,
+        out: &mut Vec<u8>,
+        r: &manifest::RenderRequest<'_>,
+    ) -> Option<fig_core::Result<()>> {
+        self.render(manifest::Renderer::String, d, out, r)
+    }
+
+    /// Whether the description lists the renderer (the vtable slot is
+    /// non-null), without asking the language.
+    fn has_renderer(&self, _dialect: manifest::Dialect, which: manifest::Renderer) -> bool {
+        self.has(which)
+    }
+
+    /// `split_stream`, when the description declares `streams`. A refusal
+    /// is `RuntimeParseFailed`.
+    fn split_stream(
+        &self,
+        input: &[u8],
+        dialect: manifest::Dialect,
+    ) -> Option<fig_core::Result<Vec<manifest::StreamDocument>>> {
+        if !self.streams {
+            return None;
+        }
+        let dialect = self.dialect_name(dialect);
+        let result = catch_unwind(AssertUnwindSafe(|| self.lang.split_stream(dialect, input)));
+        Some(match result {
+            Ok(Ok(docs)) => Ok(docs
+                .into_iter()
+                .map(|d| manifest::StreamDocument {
+                    start: d.start,
+                    end: d.end,
+                    explicit: d.explicit,
+                })
+                .collect()),
+            Ok(Err(_)) | Err(_) => Err(fig_core::err!(RuntimeParseFailed)),
+        })
+    }
+
+    fn has_split_stream(&self) -> bool {
+        self.streams
+    }
 }
 
-/// `table` written into fig's table `t` through the `fig_table_*` calls. Every
-/// text is copied into the table's buffer.
-fn fill_table(t: *mut ffi::FigTable, table: &NodeTable) -> Result<(), LanguageError> {
+// ── the node table, across ─────────────────────────────────────────────────
+
+/// `table` written into the core's table `t`, as the `fig_table_*` calls
+/// wrote it: every text copied into the table's buffer, and a side fact on
+/// a row that does not exist refused.
+fn fill_table(t: &mut Table, table: &NodeTable) -> Result<(), LanguageError> {
     let oom = || LanguageError::new("out of memory filling the node table");
-    let check = |status: ffi::FigStatus| -> Result<(), LanguageError> {
-        if status == ffi::FigStatus::OK {
-            Ok(())
-        } else {
-            Err(LanguageError::new("fig refused a node table fact"))
-        }
-    };
-    let text = |s: &str| -> Result<ffi::FigText, LanguageError> {
-        let mut out = ffi::FigText::NONE;
-        let status = unsafe { ffi::fig_table_string(t, s.as_ptr(), s.len(), &mut out) };
-        if status == ffi::FigStatus::OK {
-            Ok(out)
-        } else {
-            Err(oom())
-        }
-    };
-    let opt_text = |s: &Option<String>| -> Result<ffi::FigText, LanguageError> {
-        match s {
-            Some(s) => text(s),
-            None => Ok(ffi::FigText::NONE),
-        }
-    };
+    let refused = || LanguageError::new("fig refused a node table fact");
     let span = |s: Option<Span>| -> (u32, u32) {
         match s {
             Some(s) => (s.start as u32, s.end as u32),
-            None => (ffi::FIG_ROW_NONE, ffi::FIG_ROW_NONE),
+            None => (table::NONE, table::NONE),
         }
     };
-    // Every row's text first, then the rows in one call: a row pointer fig
-    // hands back is valid only until the next call on the table.
+    fn text(t: &mut Table, s: &str) -> Result<table::Text, LanguageError> {
+        t.add_string(s.as_bytes())
+            .map_err(|_| LanguageError::new("out of memory filling the node table"))
+    }
+    fn opt_text(t: &mut Table, s: &Option<String>) -> Result<table::Text, LanguageError> {
+        match s {
+            Some(s) => text(t, s),
+            None => Ok(table::Text::ABSENT),
+        }
+    }
+    // Every row's text first, then the rows in one call.
     let mut rows = Vec::with_capacity(table.rows.len());
     for r in &table.rows {
         let (start, end) = span(r.span);
         let (kind, row_text) = match (r.ext_kind, r.kind) {
-            (Some(k), _) => (ffi::FIG_ROW_EXT + k.to_c() as u8, opt_text(&r.text)?),
+            (Some(k), _) => (RowKind::EXT + k.to_c() as u8, opt_text(t, &r.text)?),
             (None, NodeKind::Bool) => match r.text.as_deref() {
-                Some("true") => (ffi::FIG_ROW_TRUE, ffi::FigText::NONE),
-                Some("false") => (ffi::FIG_ROW_FALSE, ffi::FigText::NONE),
+                Some("true") => (RowKind::TRUE, table::Text::ABSENT),
+                Some("false") => (RowKind::FALSE, table::Text::ABSENT),
                 _ => return Err(LanguageError::new("a bool row's text is not true or false")),
             },
-            (None, k) => (k.to_row(), opt_text(&r.text)?),
+            (None, k) => (k.to_row(), opt_text(t, &r.text)?),
         };
-        rows.push(ffi::FigRow {
+        rows.push(table::Row {
             kind,
-            flags: if r.open { ffi::FIG_ROW_OPEN } else { 0 },
-            reserved: 0,
-            parent: r.parent.unwrap_or(ffi::FIG_ROW_NONE),
+            flags: if r.open { table::ROW_OPEN } else { 0 },
+            parent: r.parent.unwrap_or(table::NONE),
             start,
             end,
             text: row_text,
-            first_child: ffi::FIG_ROW_NONE,
-            next_sibling: ffi::FIG_ROW_NONE,
+            first_child: table::NONE,
+            next_sibling: table::NONE,
         });
     }
     if !rows.is_empty() {
-        let dest = unsafe { ffi::fig_table_rows(t, rows.len()) };
-        if dest.is_null() {
-            return Err(oom());
-        }
-        unsafe { std::ptr::copy_nonoverlapping(rows.as_ptr(), dest, rows.len()) };
+        let dest = t.add_rows(rows.len()).map_err(|_| oom())?;
+        dest.copy_from_slice(&rows);
     }
+    let row_count = t.rows.len() as u32;
+    let on_row = |node: u32| {
+        if node < row_count {
+            Ok(())
+        } else {
+            Err(refused())
+        }
+    };
     for (i, r) in table.rows.iter().enumerate() {
         let node = i as u32;
         if let Some(name) = &r.anchor {
-            let (s, e) = span(r.anchor_span);
-            let name = text(name)?;
-            check(unsafe { ffi::fig_table_anchor(t, node, s, e, name) })?;
+            let (start, end) = span(r.anchor_span);
+            let name = text(t, name)?;
+            on_row(node)?;
+            t.anchors.push(table::Anchor {
+                node,
+                start,
+                end,
+                name,
+            });
         }
         if let Some(tag) = &r.tag {
-            let (s, e) = span(r.tag_span);
-            let tag = text(tag)?;
-            check(unsafe { ffi::fig_table_tag(t, node, s, e, tag, ffi::FIG_TAG_UNSTATED, true) })?;
+            let (start, end) = span(r.tag_span);
+            let tag = text(t, tag)?;
+            on_row(node)?;
+            t.tags.push(table::Tag {
+                node,
+                start,
+                end,
+                text: tag,
+                resolved: table::TAG_UNSTATED,
+                agrees: 1,
+            });
         }
         if let Some(m) = r.marker {
-            check(unsafe { ffi::fig_table_marker(t, node, m.start as u32, m.end as u32) })?;
+            on_row(node)?;
+            t.markers.push(table::SpanFact {
+                node,
+                start: m.start as u32,
+                end: m.end as u32,
+            });
         }
         if let Some(m) = r.sep {
-            check(unsafe { ffi::fig_table_sep(t, node, m.start as u32, m.end as u32) })?;
+            on_row(node)?;
+            t.seps.push(table::SpanFact {
+                node,
+                start: m.start as u32,
+                end: m.end as u32,
+            });
         }
         if let Some(is) = &r.item_sep {
-            let is = text(is)?;
-            check(unsafe { ffi::fig_table_item_sep(t, node, is) })?;
+            let is = text(t, is)?;
+            on_row(node)?;
+            t.item_seps.push(table::ItemSep { node, text: is });
         }
     }
     for r in &table.regions {
-        check(unsafe { ffi::fig_table_region(t, r.node, r.span.start as u32, r.span.end as u32) })?;
+        on_row(r.node)?;
+        t.regions.push(table::SpanFact {
+            node: r.node,
+            start: r.span.start as u32,
+            end: r.span.end as u32,
+        });
     }
     for m in &table.mentions {
         let kind = match m.kind {
-            MentionKind::Header => ffi::FIG_MENTION_HEADER,
-            MentionKind::Entry => ffi::FIG_MENTION_ENTRY,
-            MentionKind::Index => ffi::FIG_MENTION_INDEX,
-            MentionKind::Append => ffi::FIG_MENTION_APPEND,
+            MentionKind::Header => table::MENTION_HEADER,
+            MentionKind::Entry => table::MENTION_ENTRY,
+            MentionKind::Index => table::MENTION_INDEX,
+            MentionKind::Append => table::MENTION_APPEND,
         };
-        check(unsafe {
-            ffi::fig_table_mention(t, m.node, m.span.start as u32, m.span.end as u32, kind)
-        })?;
+        on_row(m.node)?;
+        t.mentions.push(table::Mention {
+            node: m.node,
+            start: m.span.start as u32,
+            end: m.span.end as u32,
+            kind,
+        });
     }
     for c in &table.comments {
         let slot = match c.slot {
-            CommentSlot::Leading => ffi::FIG_COMMENT_LEADING,
-            CommentSlot::Trailing => ffi::FIG_COMMENT_TRAILING,
-            CommentSlot::Dangling => ffi::FIG_COMMENT_DANGLING,
+            CommentSlot::Leading => table::COMMENT_LEADING,
+            CommentSlot::Trailing => table::COMMENT_TRAILING,
+            CommentSlot::Dangling => table::COMMENT_DANGLING,
         };
         let style = match c.style {
-            CommentForm::Line => ffi::FIG_COMMENT_LINE,
-            CommentForm::Block => ffi::FIG_COMMENT_BLOCK,
+            CommentForm::Line => table::COMMENT_LINE,
+            CommentForm::Block => table::COMMENT_BLOCK,
         };
-        let body = text(&c.text)?;
-        check(unsafe { ffi::fig_table_comment(t, c.node, slot, style, body) })?;
+        let body = text(t, &c.text)?;
+        on_row(c.node)?;
+        t.comments.push(table::Comment {
+            node: c.node,
+            slot,
+            style,
+            text: body,
+        });
     }
     for d in &table.directives {
-        let handle = text(&d.handle)?;
-        let prefix = text(&d.prefix)?;
-        check(unsafe { ffi::fig_table_directive(t, handle, prefix) })?;
+        let handle = text(t, &d.handle)?;
+        let prefix = text(t, &d.prefix)?;
+        t.directives.push(table::Directive { handle, prefix });
     }
     for d in &table.diagnostics {
         let severity = match d.severity {
-            Severity::Error => ffi::FIG_DIAGNOSTIC_ERROR,
-            Severity::Warning => ffi::FIG_DIAGNOSTIC_WARNING,
+            Severity::Error => table::DIAGNOSTIC_ERROR,
+            Severity::Warning => table::DIAGNOSTIC_WARNING,
         };
-        let message = text(&d.message)?;
-        let label = text(&d.label)?;
-        check(unsafe {
-            ffi::fig_table_diagnostic(
-                t,
-                severity,
-                d.span.start as u32,
-                d.span.end as u32,
-                message,
-                label,
-            )
-        })?;
+        let message = text(t, &d.message)?;
+        let label = text(t, &d.label)?;
+        t.diagnostics.push(table::Diagnostic {
+            severity,
+            start: d.span.start as u32,
+            end: d.span.end as u32,
+            message,
+            label,
+        });
     }
     Ok(())
 }
 
-/// A slice of a view's list.
-fn view_slice<'a, T>(ptr: *const T, count: usize) -> &'a [T] {
-    if ptr.is_null() || count == 0 {
-        &[]
-    } else {
-        unsafe { std::slice::from_raw_parts(ptr, count) }
-    }
-}
-
-/// A Rust table from the view fig hands `print`.
-pub(crate) fn table_from_c(v: &ffi::FigTableView) -> Result<NodeTable, LanguageError> {
-    let source = view_slice(v.source, v.source_len);
-    let strings = view_slice(v.strings, v.strings_len);
-    let text_of = |t: ffi::FigText| -> Result<Option<String>, LanguageError> {
-        if t.len == ffi::FIG_ROW_NONE {
+/// A Rust table from the view the core hands `print`.
+pub(crate) fn table_from_view(v: &table::View<'_>) -> Result<NodeTable, LanguageError> {
+    let text_of = |t: table::Text| -> Result<Option<String>, LanguageError> {
+        if t.is_absent() {
             return Ok(None);
         }
-        let (base, len) = if t.len & ffi::FIG_TEXT_BUFFER != 0 {
-            (strings, (t.len & !ffi::FIG_TEXT_BUFFER) as usize)
-        } else {
-            (source, t.len as usize)
-        };
-        let bytes = base
-            .get(t.off as usize..t.off as usize + len)
+        let bytes = v
+            .text_of(t)
             .ok_or_else(|| LanguageError::new("a table text is out of range"))?;
         String::from_utf8(bytes.to_vec())
             .map(Some)
             .map_err(|_| LanguageError::new("a table string is not UTF-8"))
     };
     let span_of = |start: u32, end: u32| -> Option<Span> {
-        if start == ffi::FIG_ROW_NONE {
+        if start == table::NONE {
             None
         } else {
             Some(Span {
@@ -1825,9 +1931,9 @@ pub(crate) fn table_from_c(v: &ffi::FigTableView) -> Result<NodeTable, LanguageE
         }
     };
     let mut out = NodeTable::new();
-    for r in view_slice(v.rows, v.row_count) {
-        let (kind, ext_kind, text) = if r.kind >= ffi::FIG_ROW_EXT {
-            let k = ExtKind::from_c((r.kind - ffi::FIG_ROW_EXT) as c_int)
+    for r in v.rows {
+        let (kind, ext_kind, text) = if r.kind >= RowKind::EXT {
+            let k = ExtKind::from_c((r.kind - RowKind::EXT) as c_int)
                 .ok_or_else(|| LanguageError::new("unknown extended kind"))?;
             let kind = if k == ExtKind::CharLiteral {
                 NodeKind::Int
@@ -1837,8 +1943,8 @@ pub(crate) fn table_from_c(v: &ffi::FigTableView) -> Result<NodeTable, LanguageE
             (kind, Some(k), text_of(r.text)?)
         } else {
             match r.kind {
-                ffi::FIG_ROW_FALSE => (NodeKind::Bool, None, Some("false".to_owned())),
-                ffi::FIG_ROW_TRUE => (NodeKind::Bool, None, Some("true".to_owned())),
+                RowKind::FALSE => (NodeKind::Bool, None, Some("false".to_owned())),
+                RowKind::TRUE => (NodeKind::Bool, None, Some("true".to_owned())),
                 k => (
                     NodeKind::from_row(k).ok_or_else(|| LanguageError::new("unknown node kind"))?,
                     None,
@@ -1849,7 +1955,7 @@ pub(crate) fn table_from_c(v: &ffi::FigTableView) -> Result<NodeTable, LanguageE
         out.rows.push(NodeRow {
             kind,
             ext_kind,
-            parent: if r.parent == ffi::FIG_ROW_NONE {
+            parent: if r.parent == table::NONE {
                 None
             } else {
                 Some(r.parent)
@@ -1863,10 +1969,10 @@ pub(crate) fn table_from_c(v: &ffi::FigTableView) -> Result<NodeTable, LanguageE
             marker: None,
             sep: None,
             item_sep: None,
-            open: r.flags & ffi::FIG_ROW_OPEN != 0,
+            open: r.flags & table::ROW_OPEN != 0,
         });
     }
-    let row = |out: &mut NodeTable, node: u32| -> Result<usize, LanguageError> {
+    let row = |out: &NodeTable, node: u32| -> Result<usize, LanguageError> {
         let i = node as usize;
         if i < out.rows.len() {
             Ok(i)
@@ -1874,29 +1980,29 @@ pub(crate) fn table_from_c(v: &ffi::FigTableView) -> Result<NodeTable, LanguageE
             Err(LanguageError::new("a side fact names no row"))
         }
     };
-    for a in view_slice(v.anchors, v.anchor_count) {
-        let i = row(&mut out, a.node)?;
+    for a in v.anchors {
+        let i = row(&out, a.node)?;
         out.rows[i].anchor = text_of(a.name)?;
         out.rows[i].anchor_span = span_of(a.start, a.end);
     }
-    for t in view_slice(v.tags, v.tag_count) {
-        let i = row(&mut out, t.node)?;
+    for t in v.tags {
+        let i = row(&out, t.node)?;
         out.rows[i].tag = text_of(t.text)?;
         out.rows[i].tag_span = span_of(t.start, t.end);
     }
-    for m in view_slice(v.markers, v.marker_count) {
-        let i = row(&mut out, m.node)?;
+    for m in v.markers {
+        let i = row(&out, m.node)?;
         out.rows[i].marker = span_of(m.start, m.end);
     }
-    for m in view_slice(v.seps, v.sep_count) {
-        let i = row(&mut out, m.node)?;
+    for m in v.seps {
+        let i = row(&out, m.node)?;
         out.rows[i].sep = span_of(m.start, m.end);
     }
-    for m in view_slice(v.item_seps, v.item_sep_count) {
-        let i = row(&mut out, m.node)?;
+    for m in v.item_seps {
+        let i = row(&out, m.node)?;
         out.rows[i].item_sep = text_of(m.text)?;
     }
-    for r in view_slice(v.regions, v.region_count) {
+    for r in v.regions {
         out.regions.push(RegionRow {
             node: r.node,
             span: Span {
@@ -1905,28 +2011,28 @@ pub(crate) fn table_from_c(v: &ffi::FigTableView) -> Result<NodeTable, LanguageE
             },
         });
     }
-    for m in view_slice(v.mentions, v.mention_count) {
+    for m in v.mentions {
         out.mentions.push(MentionRow {
             node: m.node,
             span: span_of(m.start, m.end)
                 .ok_or_else(|| LanguageError::new("a mention has no span"))?,
             kind: match m.kind {
-                ffi::FIG_MENTION_ENTRY => MentionKind::Entry,
-                ffi::FIG_MENTION_INDEX => MentionKind::Index,
-                ffi::FIG_MENTION_APPEND => MentionKind::Append,
+                table::MENTION_ENTRY => MentionKind::Entry,
+                table::MENTION_INDEX => MentionKind::Index,
+                table::MENTION_APPEND => MentionKind::Append,
                 _ => MentionKind::Header,
             },
         });
     }
-    for c in view_slice(v.comments, v.comment_count) {
+    for c in v.comments {
         out.comments.push(CommentRow {
             node: c.node,
             slot: match c.slot {
-                ffi::FIG_COMMENT_TRAILING => CommentSlot::Trailing,
-                ffi::FIG_COMMENT_DANGLING => CommentSlot::Dangling,
+                table::COMMENT_TRAILING => CommentSlot::Trailing,
+                table::COMMENT_DANGLING => CommentSlot::Dangling,
                 _ => CommentSlot::Leading,
             },
-            style: if c.style == ffi::FIG_COMMENT_BLOCK {
+            style: if c.style == table::COMMENT_BLOCK {
                 CommentForm::Block
             } else {
                 CommentForm::Line
@@ -1934,7 +2040,7 @@ pub(crate) fn table_from_c(v: &ffi::FigTableView) -> Result<NodeTable, LanguageE
             text: text_of(c.text)?.unwrap_or_default(),
         });
     }
-    for d in view_slice(v.directives, v.directive_count) {
+    for d in v.directives {
         out.directives.push(DirectiveRow {
             handle: text_of(d.handle)?
                 .ok_or_else(|| LanguageError::new("a directive has no handle"))?,
@@ -1944,188 +2050,3 @@ pub(crate) fn table_from_c(v: &ffi::FigTableView) -> Result<NodeTable, LanguageE
     }
     Ok(out)
 }
-
-unsafe extern "C" fn parse_thunk(
-    ctx: *mut c_void,
-    dialect: *const c_char,
-    input: ffi::FigStr,
-    out: *mut ffi::FigTable,
-    err: *mut ffi::FigError,
-) -> c_int {
-    let reg = unsafe { reg_of(ctx) };
-    let dialect = unsafe { dialect_of(dialect) };
-    let input = bytes_of(input);
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        let table = reg.lang.parse(dialect, input)?;
-        fill_table(out, &table)
-    }));
-    match result {
-        Ok(Ok(())) => 0,
-        Ok(Err(e)) => {
-            fill_err(err, &e);
-            ffi::FigStatus::PARSE_ERROR.0
-        }
-        Err(p) => {
-            fill_err(err, &panic_message(p));
-            ffi::FigStatus::INTERNAL_ERROR.0
-        }
-    }
-}
-
-/// Hand `bytes` to the core as a `FigStr` it will return through
-/// `free_bytes`: a boxed slice, whose pointer and length are enough to
-/// rebuild it.
-fn give_bytes(bytes: Vec<u8>, out: *mut ffi::FigStr) {
-    let boxed = bytes.into_boxed_slice();
-    let len = boxed.len();
-    let ptr = Box::into_raw(boxed) as *const u8;
-    unsafe { *out = ffi::FigStr { ptr, len } };
-}
-
-unsafe extern "C" fn free_bytes_thunk(_ctx: *mut c_void, bytes: ffi::FigStr) {
-    if bytes.ptr.is_null() || bytes.len == ffi::FIG_LEN_NONE {
-        return;
-    }
-    let slice = std::ptr::slice_from_raw_parts_mut(bytes.ptr as *mut u8, bytes.len);
-    drop(unsafe { Box::from_raw(slice) });
-}
-
-unsafe extern "C" fn print_thunk(
-    ctx: *mut c_void,
-    dialect: *const c_char,
-    table: *const ffi::FigTableView,
-    options: *const ffi::FigPrintOptions,
-    out: *mut ffi::FigStr,
-    err: *mut ffi::FigError,
-) -> c_int {
-    let reg = unsafe { reg_of(ctx) };
-    let dialect = unsafe { dialect_of(dialect) };
-    let opts = unsafe { read_gated(options, DEFAULT_PRINT_OPTIONS) };
-    let options = PrintOptions {
-        pretty: opts.pretty,
-        strip_comments: opts.strip_comments,
-        indent: opts.indent,
-        width: opts.width,
-        splice: opts.splice,
-        flow: opts.flow,
-    };
-    let result = catch_unwind(AssertUnwindSafe(|| {
-        let table = table_from_c(unsafe { &*table })?;
-        reg.lang.print(dialect, &table, &options)
-    }));
-    match result {
-        Ok(Ok(bytes)) => {
-            give_bytes(bytes, out);
-            0
-        }
-        Ok(Err(e)) => {
-            fill_err(err, &e);
-            ffi::FigStatus::UNSUPPORTED_FORMAT.0
-        }
-        Err(p) => {
-            fill_err(err, &panic_message(p));
-            ffi::FigStatus::INTERNAL_ERROR.0
-        }
-    }
-}
-
-fn render_thunk_body(
-    ctx: *mut c_void,
-    which: Renderer,
-    request: *const ffi::FigRenderRequest,
-    out: *mut ffi::FigStr,
-    err: *mut ffi::FigError,
-) -> c_int {
-    let reg = unsafe { reg_of(ctx) };
-    let r = unsafe { read_gated(request, EMPTY_REQUEST) };
-    let args = RenderArgs {
-        dialect: unsafe { dialect_of(r.dialect) },
-        indent: bytes_of(r.indent),
-        key: bytes_of(r.key),
-        value: bytes_of(r.value),
-        // A name this crate does not know is a core newer than it; the
-        // fallback is what a renderer does with any text it cannot type.
-        literal: Literal::from_name(unsafe { dialect_of(r.literal) }).unwrap_or_default(),
-        old_key: bytes_of(r.old_key),
-        parent_key: bytes_of(r.parent_key),
-        parent_tag: bytes_of(r.parent_tag),
-        old_value: bytes_of(r.old_value),
-    };
-    match catch_unwind(AssertUnwindSafe(|| reg.lang.render(which, args))) {
-        Ok(Ok(bytes)) => {
-            give_bytes(bytes, out);
-            0
-        }
-        Ok(Err(e)) => {
-            fill_err(err, &e);
-            ffi::FigStatus::UNSUPPORTED_OPERATION.0
-        }
-        Err(p) => {
-            fill_err(err, &panic_message(p));
-            ffi::FigStatus::INTERNAL_ERROR.0
-        }
-    }
-}
-
-unsafe extern "C" fn split_stream_thunk(
-    ctx: *mut c_void,
-    dialect: *const c_char,
-    input: ffi::FigStr,
-    out: *mut ffi::FigStr,
-    err: *mut ffi::FigError,
-) -> c_int {
-    let reg = unsafe { reg_of(ctx) };
-    let dialect = unsafe { dialect_of(dialect) };
-    let input = bytes_of(input);
-    match catch_unwind(AssertUnwindSafe(|| reg.lang.split_stream(dialect, input))) {
-        Ok(Ok(docs)) => {
-            // The rows as bytes, which `free_bytes` frees as it frees any.
-            let mut bytes =
-                Vec::with_capacity(docs.len() * std::mem::size_of::<ffi::FigStreamDoc>());
-            for d in docs {
-                let row = ffi::FigStreamDoc {
-                    start: d.start,
-                    end: d.end,
-                    marked: d.explicit,
-                };
-                bytes.extend_from_slice(unsafe {
-                    std::slice::from_raw_parts(
-                        (&row as *const ffi::FigStreamDoc).cast::<u8>(),
-                        std::mem::size_of::<ffi::FigStreamDoc>(),
-                    )
-                });
-            }
-            give_bytes(bytes, out);
-            0
-        }
-        Ok(Err(e)) => {
-            fill_err(err, &e);
-            ffi::FigStatus::PARSE_ERROR.0
-        }
-        Err(p) => {
-            fill_err(err, &panic_message(p));
-            ffi::FigStatus::INTERNAL_ERROR.0
-        }
-    }
-}
-
-macro_rules! render_thunk {
-    ($name:ident, $which:expr) => {
-        unsafe extern "C" fn $name(
-            ctx: *mut c_void,
-            request: *const ffi::FigRenderRequest,
-            out: *mut ffi::FigStr,
-            err: *mut ffi::FigError,
-        ) -> c_int {
-            render_thunk_body(ctx, $which, request, out, err)
-        }
-    };
-}
-
-render_thunk!(render_value_thunk, Renderer::Value);
-render_thunk!(render_entry_thunk, Renderer::Entry);
-render_thunk!(render_item_thunk, Renderer::Item);
-render_thunk!(render_tail_thunk, Renderer::Tail);
-render_thunk!(render_key_thunk, Renderer::Key);
-render_thunk!(render_key_name_thunk, Renderer::KeyName);
-render_thunk!(render_string_thunk, Renderer::String);

@@ -1,6 +1,7 @@
 use std::fmt;
 
-use crate::{Format, ffi};
+use crate::Format;
+use crate::capi::{self, Status};
 
 /// Errors produced while parsing, serializing, or deserializing.
 ///
@@ -155,11 +156,10 @@ pub struct ParseError {
 
 impl ParseError {
     /// Build from a filled `FigError`. `byte_offset`/`line`/`column` of 0 are the
-    /// ABI's "unknown" sentinel and map to `None`. The message is read from
-    /// `message[..message_len]` as lossy UTF-8.
-    pub(crate) fn from_ffi(e: &ffi::FigError) -> Self {
-        let len = e.message_len.min(e.message.len());
-        let message = String::from_utf8_lossy(&e.message[..len]).into_owned();
+    /// ABI's "unknown" sentinel and map to `None`. The message is read as
+    /// lossy UTF-8.
+    pub(crate) fn from_core(e: &capi::FigError) -> Self {
+        let message = String::from_utf8_lossy(&e.message).into_owned();
         ParseError {
             message,
             byte_offset: (e.byte_offset != 0).then_some(e.byte_offset),
@@ -219,14 +219,15 @@ pub(crate) enum EditTarget {
 /// refusal, said in a sentence (see [`ParseError::refused_edit`]), and every
 /// other status folds as [`Error::from_status`] folds it.
 pub(crate) fn edit_status(
-    status: ffi::FigStatus,
+    status: Result<(), Status>,
     format: Format,
     what: EditTarget,
 ) -> Result<(), Error> {
-    if status == ffi::FigStatus::PARSE_ERROR {
-        return Err(Error::Parse(ParseError::refused_edit(format, what)));
+    match status {
+        Ok(()) => Ok(()),
+        Err(Status::ParseError) => Err(Error::Parse(ParseError::refused_edit(format, what))),
+        Err(status) => Error::from_status(status),
     }
-    Error::from_status(status)
 }
 
 impl fmt::Display for ParseError {
@@ -305,19 +306,34 @@ impl Error {
         Error::IntOutOfRange { ty }
     }
 
-    pub(crate) fn from_status(status: ffi::FigStatus) -> Result<(), Self> {
+    pub(crate) fn from_status(status: Status) -> Result<(), Self> {
         match status {
-            ffi::FigStatus::OK => Ok(()),
-            ffi::FigStatus::INVALID_ARGUMENT => Err(Self::InvalidArgument),
-            ffi::FigStatus::PARSE_ERROR => Err(Self::Parse(ParseError::generic())),
-            ffi::FigStatus::OUT_OF_MEMORY => Err(Self::OutOfMemory),
-            ffi::FigStatus::UNSUPPORTED_FORMAT => Err(Self::UnsupportedFormat),
-            ffi::FigStatus::UNSUPPORTED_OPERATION => Err(Self::UnsupportedOperation),
-            ffi::FigStatus::NOT_FOUND => Err(Self::NotFound),
-            // `INTERNAL_ERROR` and any code fig may add in a later release fold
-            // into `Internal`: an unrecognized status is never mistaken for `Ok`.
-            _ => Err(Self::Internal),
+            Status::Ok => Ok(()),
+            Status::InvalidArgument => Err(Self::InvalidArgument),
+            Status::ParseError => Err(Self::Parse(ParseError::generic())),
+            Status::OutOfMemory => Err(Self::OutOfMemory),
+            Status::UnsupportedFormat => Err(Self::UnsupportedFormat),
+            Status::UnsupportedOperation => Err(Self::UnsupportedOperation),
+            Status::NotFound => Err(Self::NotFound),
+            // `InternalError` folds into `Internal`.
+            Status::InternalError => Err(Self::Internal),
         }
+    }
+
+    /// A core call's answer as a `Result`, its status folded as
+    /// [`Error::from_status`] folds it.
+    pub(crate) fn check<T>(r: Result<T, Status>) -> Result<T, Self> {
+        r.map_err(|status| Self::from_status(status).err().unwrap_or(Self::Internal))
+    }
+
+    /// A failure the core reported with what `FigError` carries: a parse
+    /// error with its message and location, any other status as
+    /// [`Error::from_status`] folds it.
+    pub(crate) fn from_fig_error(e: &capi::FigError) -> Self {
+        if e.code == Status::ParseError {
+            return Self::Parse(ParseError::from_core(e));
+        }
+        Self::from_status(e.code).err().unwrap_or(Self::Internal)
     }
 }
 

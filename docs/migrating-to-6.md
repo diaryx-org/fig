@@ -3,7 +3,7 @@ title = Migrating to 6.0
 description = What changes for a caller of the fig CLI, the Rust crates, @diaryx/fig, @diaryx/fig-wasi, the Zig module or the C ABI moving to 6.0, and what to write instead
 author = adammharris
 created = 2026-10-12
-updated = 2026-10-12
+updated = 2026-10-14
 part_of = [docs](docs.md)
 ```
 
@@ -91,11 +91,19 @@ does not carry the wire passes `-Dhelper-wire=false` and fetches nothing.
 | `Debug` printing `Yaml` | `Format(<n>)`; use `name()` |
 | the crate feature `fig` | `figl` |
 | `fig_sys::FigFormat`, `FIG_FORMAT_RUNTIME_BASE` | gone; formats are `c_int` handles; `fig_sys::fig_format_name` names one |
-| the crate features `json`, `yaml`, `toml`, `zon`, `figl`, `ini`, `dotenv`, `properties`, `plist`, `nestedtext` | gone: depend on the language's crate, `fig-yaml` and the rest, and call its `register()` before using its format |
-| a language there by default | nothing is: `fig-sys` carries no language, and `Format::by_name("yaml")` is `None` until `fig_yaml::register()` |
-| `fig::from_yaml_str`, `fig::to_yaml_string` | `fig_yaml::from_str`, `fig_yaml::to_string`, with `fig-yaml`'s `serde` feature |
+| the crate features `json`, `yaml`, `toml`, `zon`, `figl`, `ini`, `dotenv`, `properties`, `plist`, `nestedtext` | gone: depend on the language's crate, `fig-yaml` and the rest; its `format()` is its format, registered the first time it is asked for |
+| a language there by default | nothing is: `fig-sys` carries no language, and `Format::by_name("yaml")` is `None` until something registers YAML (`fig_yaml::format()`, `fig_yaml::register()`, or any of the crate's functions) |
+| `fig::from_yaml_str`, `fig::to_yaml_string` | `fig_yaml::from_str`, `fig_yaml::to_string`; every language crate has them, with `from_slice`, `from_reader`, `to_vec` and `to_writer` |
+| no serde unless `fig`'s `serde` feature was asked for | a language crate's `serde` feature is on by default and turns on `fig`'s; a build that wants no serde depends on each language crate with `default-features = false` |
+| a mapping error for a nested field returned as itself (`Error::MissingField { .. }`, `Error::TypeMismatch { .. }`, …) | `Error::At { path, error }`, which names where (`servers[1].port`) and leads its text with the path; match on `e.innermost()`, and read `e.path()` |
+| `Document` and `Editor` neither `Send` nor `Sync` | both `Send`; neither `Sync` |
 | `fig::helper` always there | behind the `helper` feature, which adds `serde_json` |
 | `helper::handle`, `encode`, `decode`, `table_to_value`, `table_from_value`, `description_to_value`, `description_from_value`, `syntax_to_value`, `syntax_from_value` trading `fig::Value` | they trade `serde_json::Value`; the wire needs no language registered |
+
+On a tier-1 target nothing needs Zig, a language crate included: the
+`fig-sys-<target>` payload carries every language's library beside the
+core. A build inside a checkout of fig builds from source unless
+`FIG_SYS_PREBUILT=1`.
 
 Error text names the dialect ("would not parse
 as toml"). `ParseError::byte_offset` is filled where the language reports

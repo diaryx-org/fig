@@ -3,7 +3,7 @@ title = CHANGELOG
 description = Release history for `fig`
 author = adammharris
 created = 2026-08-17
-updated = 2026-09-26
+updated = 2026-10-14
 part_of = [docs](docs.md)
 ```
 
@@ -130,7 +130,604 @@ and no regeneration can reach a released section.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
-_No commits since the last tag._
+### Breaking
+
+- **fig** — compact flow objects — whitespace-separated pairs, one-token values, dotted keys ([`acd8701`](https://github.com/diaryx-org/fig/commit/acd87014cb9ec7fcbf26718bd487f1b7be3e3db9))
+- a language spells a key's name through renderKeyName, and KeyStyle is gone ([`4660d14`](https://github.com/diaryx-org/fig/commit/4660d145ab54b613f75da36047cd418183219cd2))
+- section refusals are one neutral set, and section_noun is the language's own word ([`da5f5de`](https://github.com/diaryx-org/fig/commit/da5f5de788999fb1d19d8583a2817036d057274a))
+- the owned-comment scan reads declared delimiters, and CommentStyle is gone ([`99beb20`](https://github.com/diaryx-org/fig/commit/99beb200f7c942182fef11c5e4f594570b815e3b))
+- the escaped splice style is named for what it does, not for JSON ([`a0c9dd7`](https://github.com/diaryx-org/fig/commit/a0c9dd7b702a529de94995d0d720fb50b63ff4fc))
+- the node table is fig's, 32-byte rows a language fills through fig's calls ([`05b5faf`](https://github.com/diaryx-org/fig/commit/05b5fafef3d1564324c2b3090c7b7f724972359c))
+- the tree a language builds, the node table and their conversions move into the kit ([`d952b66`](https://github.com/diaryx-org/fig/commit/d952b66ee44cb17a5f0b4441189190f433e85e99))
+- no compiled registry by default; every language reaches core through the contract ([`b0bd6bf`](https://github.com/diaryx-org/fig/commit/b0bd6bfffbc17a5046ae8a107340183856b35ada))
+- core keeps no list of languages, and a format is a registered dialect's handle ([`d2ffc82`](https://github.com/diaryx-org/fig/commit/d2ffc82674643ea6d91839b8af021d4792e5b2b7))
+- the authoring dialect is figl, and fig is no format's name ([`10a0e9b`](https://github.com/diaryx-org/fig/commit/10a0e9bf1447422226908d58cb6ca7c56f6bd25d))
+- **cli** — the CLI reads and writes no embedded blocks ([`40aea3a`](https://github.com/diaryx-org/fig/commit/40aea3aa4860a227d1f4d1110d733fa338f2bd8a))
+- **bindings** — the Rust and TypeScript bindings carry no embedding ([`e0cbc83`](https://github.com/diaryx-org/fig/commit/e0cbc83d1cfde882e10d78e9cbeb57841f1e37a1))
+- the core and the C ABI carry no embedding ([`b801a52`](https://github.com/diaryx-org/fig/commit/b801a5200a4f08d86edbce2364598f297c766093))
+- the helper wire is JSON-RPC 2.0, on a fork of zigjr ([`cf43bfe`](https://github.com/diaryx-org/fig/commit/cf43bfe16ad9c4d1a653e72396974a030b5c4a71))
+- the Document is the node table, adopted from a parse with no copy ([`95ea28e`](https://github.com/diaryx-org/fig/commit/95ea28e1db1fcbf449545bebbd3b32af58fbc1e8))
+- ParseTree is gone; every parser writes rows, and RowWriter is exported ([`f22a246`](https://github.com/diaryx-org/fig/commit/f22a24671c2c232c8f8e2de7364f13e5bdc580ec))
+- **npm** — each language is fig's own Zig, compiled to a WebAssembly module of its own ([`083d022`](https://github.com/diaryx-org/fig/commit/083d02283f1ec3d89e528030cd90e86ba879cbc4))
+- fig-sys and libfig carry no language; each is a library and crate of its own ([`9420df9`](https://github.com/diaryx-org/fig/commit/9420df9eaee8ec085bb88050f26b26730ee6bc79))
+- **npm** — each language is an npm package of its own, @diaryx/fig-`<name>` ([`edaad38`](https://github.com/diaryx-org/fig/commit/edaad388bfec5b6a7ccaf2134be1a39aab06c758))
+- **kit** — the JavaScript kit's number and datetime rules are the Zig kit's, as WebAssembly ([`b55fbc7`](https://github.com/diaryx-org/fig/commit/b55fbc77cc1832f54ca10feda0290514b0dbf1a3))
+- **rust** — fig::helper reads and writes the wire with serde_json, behind a helper feature ([`20f22aa`](https://github.com/diaryx-org/fig/commit/20f22aa8642f2e9552a9786ecaba494d2322019a))
+
+### Added
+
+- **cli** — set upserts a sequence item, and [-] is the last item in every path ([`3dd5da2`](https://github.com/diaryx-org/fig/commit/3dd5da216d320811b0bcc25d93fb53a1f55a4e3e))
+- **cli** — help --oneline says what fig is for in one line ([`9c5fb06`](https://github.com/diaryx-org/fig/commit/9c5fb06a3a2a9ff267dbc904a071b80c0d9c253c))
+- a sequence row names its own item separator, and insertItem inserts at an index ([`ef72fab`](https://github.com/diaryx-org/fig/commit/ef72fab0a27adbb443a4069284ea8a0ee892766f))
+- a registered dialect declares prints, and its conversion warnings come from it ([`cd87c10`](https://github.com/diaryx-org/fig/commit/cd87c102b1a5f2179a8cdf9a4f9a6323db93deac))
+- content sniffing in the caller's order, and the CLI passes its own ([`ad462b2`](https://github.com/diaryx-org/fig/commit/ad462b2a32d87f6d83a1d59fbcfe7edbb8cd99eb))
+- a language splits its own streams, and every binding can ask it to ([`a0ff02c`](https://github.com/diaryx-org/fig/commit/a0ff02c2111ed3d49d91f907679369596f848be4))
+- a Zig language's contract vtable is built from its module, and every one registers through it ([`e60a58a`](https://github.com/diaryx-org/fig/commit/e60a58afd707ea048b997c9d9b24f3fd67d7ad22))
+- a language's diagnostics cross the contract ([`07fee22`](https://github.com/diaryx-org/fig/commit/07fee2248862fbcba541ac9c690e6da5ee9ff8ad))
+- -Dcontract-copies, and a figl value through the contract is a fragment in flow ([`d0eb2a7`](https://github.com/diaryx-org/fig/commit/d0eb2a7e5ff4ad885c46f3db6b24c89883fb4184))
+- -Dcompiled-registry=false, where every bundled Zig language registers through its contract ([`c1a8f18`](https://github.com/diaryx-org/fig/commit/c1a8f181ee4e08ba926fb7abdd9ad1f7c69c1e25))
+- a build with no compiled registry passes the gate, through the registered languages ([`12b6828`](https://github.com/diaryx-org/fig/commit/12b6828bd490d4615e827fc745f2f9521e128a90))
+- **c** — libfig exports the kit's number and datetime rules as fig_kit_* ([`bac358f`](https://github.com/diaryx-org/fig/commit/bac358f2daeda515da4532cef34f4a864afe58a5))
+- **rust** — fig::kit::number and fig::kit::datetime, and helper::decode is public ([`de59b16`](https://github.com/diaryx-org/fig/commit/de59b167256374a2ebea98b8a56fad186c75bd8a))
+- **rust** — the language crates publish, building against the kit fig-language-build carries ([`f6cf3fe`](https://github.com/diaryx-org/fig/commit/f6cf3feb3ed0687d1628ef5a0edbe0d825ae8a7b))
+- **editor** — set starts a missing sequence, from the format's empty one ([`bcde343`](https://github.com/diaryx-org/fig/commit/bcde343ec071c1fab5ecb88f3ec719cd7638cb06))
+- **kit** — a mention can say where a sequence item's path is written ([`07b3b1b`](https://github.com/diaryx-org/fig/commit/07b3b1b51097bef0aaffa59ea57f34c48efdeeed))
+- plist is built in by default ([`daa25b7`](https://github.com/diaryx-org/fig/commit/daa25b7adc04818fa7e72002907ee5d8ad47c462))
+- **docs** — unfinished devlog ([`904649a`](https://github.com/diaryx-org/fig/commit/904649a06a3f77525ed1f75235b293463838f451))
+- **devlog** — devlog done ([`f006ec7`](https://github.com/diaryx-org/fig/commit/f006ec747cefc1c1d3b779aed0f7f1fdaaf11506))
+- **rust** — prebuilt payloads carry every language, on six more targets ([`8739f24`](https://github.com/diaryx-org/fig/commit/8739f24086e4b3c58e050f7cc7d2ec3ff478bfc9))
+- **rust** — Document and Editor are Send ([`867e304`](https://github.com/diaryx-org/fig/commit/867e304932a06b24c194112f9644df9b9b114f02))
+- **rust** — a typed value that fails below the root says where ([`a61da1d`](https://github.com/diaryx-org/fig/commit/a61da1d4f801c1f9a99696023583fe6a72b10f49))
+- **rust** — each language crate reads and writes typed values like serde_json ([`71656e1`](https://github.com/diaryx-org/fig/commit/71656e13fefc87b26fab4ac0ecce3efb990d440b))
+- **editor** — a replaced string keeps its quote style ([`13ce0a8`](https://github.com/diaryx-org/fig/commit/13ce0a8eb598611968ec1f8117427d7aa5a73507))
+
+### Fixed
+
+- **properties** — refuse trailing comment ops, since a `#` after a value is value text ([`a062c32`](https://github.com/diaryx-org/fig/commit/a062c3207ba92249d8788c72995ce191739c5898))
+- **zon** — the JS language refuses a control byte in a `\\` string line ([`25ba6ae`](https://github.com/diaryx-org/fig/commit/25ba6aee3fccb43a96d944f591afa51f578bcea2))
+- **figl** — refuse a `: char` value that is not single-quoted ([`704238e`](https://github.com/diaryx-org/fig/commit/704238e9569604668211b495d8d1f90b619c8945))
+- the bindings read values through a YAML alias and a merge key ([`3835900`](https://github.com/diaryx-org/fig/commit/3835900c14e8fcc331e1caa8143b70949abb14ff))
+- a figl splice is flow only when the caller asks, and print options name no language ([`0aa4ff3`](https://github.com/diaryx-org/fig/commit/0aa4ff35df31ab17aced104acfe60cb12c5e4c36))
+- an insert by key syntax that a parser refuses as a repeat is DuplicateKey, and a runtime print is handed a stripped table ([`1ef3132`](https://github.com/diaryx-org/fig/commit/1ef3132a97e01b5aa8b1bc34d55e51529d3e2454))
+- a dialect that says its printer writes no comments is warned about without a syntax ([`33fac4a`](https://github.com/diaryx-org/fig/commit/33fac4a0a3ad45764617ab0fb6d811b9d46c3977))
+- **cli** — a Markdown or HTML file is refused, not sniffed as a config file ([`1622b78`](https://github.com/diaryx-org/fig/commit/1622b78ec5b1189705582381128d7398f5917267))
+- **nushell** — the plugin registers figl from fig-figl ([`90116e1`](https://github.com/diaryx-org/fig/commit/90116e18e0219948bfdfd512b378182b4f4a2366))
+- **wasi** — copy the JavaScript languages from the library's js/, where they moved ([`bc5943d`](https://github.com/diaryx-org/fig/commit/bc5943d8abd23dadc7baef2c90355e5299534656))
+- **kit** — a radix integer past 128 bits converts to decimal, rather than staying as written ([`99b725d`](https://github.com/diaryx-org/fig/commit/99b725d0ae87f16c9e66e16f34a53ae0d85629a9))
+- **tree-sitter** — a fig object is compact, with dotted keys and one-token values ([`c798507`](https://github.com/diaryx-org/fig/commit/c79850774e231728432cf20cf7bf1f577d8d9a06))
+- **editor** — deleting a block sequence's only item leaves `[]`, not null ([`9fc2b4f`](https://github.com/diaryx-org/fig/commit/9fc2b4f00afcbc41a66e15ec238137cb21ab8797))
+- **editor** — an insert into a compact fig object writes it as fmt does ([`40c1175`](https://github.com/diaryx-org/fig/commit/40c1175357571fb30e4a37bca25da6ed54c4df63))
+- **editor** — a trailing comment on a CRLF line goes before the CR ([`13478e3`](https://github.com/diaryx-org/fig/commit/13478e3c89c317ad84fa61172e788f5dae165c72))
+- **editor** — a trailing comment that would read back as value text is refused ([`aa95dad`](https://github.com/diaryx-org/fig/commit/aa95dad84909865136aa9f8e76b719acc6d5c9ab))
+- **properties** — a line written after a continued line no longer joins it ([`f8582f6`](https://github.com/diaryx-org/fig/commit/f8582f607484c18726883b6cd55ff2227ad31536))
+- **figl** — a non-finite float prints as `key: float = inf`, and an edit that cannot annotate it refuses ([`e561191`](https://github.com/diaryx-org/fig/commit/e5611918b6bd42aa41101ab1a8413e23423b4044))
+- **cli** — an edit with no text of the caller's that leaves the file unparseable is reported, not a panic ([`08fa574`](https://github.com/diaryx-org/fig/commit/08fa574305991fc7c3f320413d3d145d10283822))
+- **editor** — a YAML block scalar's trailing comment goes on its header line ([`e6ca1eb`](https://github.com/diaryx-org/fig/commit/e6ca1eb139c58761b945faa02635e7a2d1660d2e))
+- **editor** — a YAML delete on a parent's marker line keeps the parent ([`346db34`](https://github.com/diaryx-org/fig/commit/346db346f3ecda4ff65aa3c0c25afab0717d9d4c))
+- **editor** — deleting a figl list's only element leaves `key = []`, not no key ([`dcc6617`](https://github.com/diaryx-org/fig/commit/dcc66179f0e3bb08049a598cb01f24b17eee4d59))
+- **yaml** — a line under compact nested items belongs to the item at its column ([`0f784cb`](https://github.com/diaryx-org/fig/commit/0f784cb74d8349c2b8e91fe647c3652fda0f1e31))
+- **editor** — the delete guard counts what goes with the deleted entry as the entry's ([`6300fac`](https://github.com/diaryx-org/fig/commit/6300facd0166ebdea5fd3a7da19138aae4d3ba97))
+- **yaml** — a plain scalar continues onto a more-indented line that starts with a dash ([`df9edca`](https://github.com/diaryx-org/fig/commit/df9edca2a56a4357891326ed64cdac4435e37589))
+- **editor** — a figl multi-line string's trailing comment lives on its opener line ([`ce65966`](https://github.com/diaryx-org/fig/commit/ce6596627e23d9a0f60019e35e4250ea3e7b6d10))
+- **figl** — the printer writes a multi-line string's comment on its opener line ([`8a1c8e4`](https://github.com/diaryx-org/fig/commit/8a1c8e4855d267f45601f26b67b8c4051035915e))
+- **editor** — a dotted key inside a TOML inline table is deleted as the inline table's entry ([`557abcc`](https://github.com/diaryx-org/fig/commit/557abcca05a872b6e9632fa3671d7debaee6f691))
+- **editor** — deleting the only element of a TOML array of tables leaves `x = []` ([`d5a4010`](https://github.com/diaryx-org/fig/commit/d5a40104e475e4de5c1c30bfa675781e30fd55ba))
+- **editor** — a figl delete keeps the elements after it, renumbering indices and re-spelling a + ([`6621ef0`](https://github.com/diaryx-org/fig/commit/6621ef024f6042312ef3f9e73ac8666b9e73f61c))
+- **editor** — a new key in a TOML table with no header goes in as a key path where its entries are ([`dd8d1ba`](https://github.com/diaryx-org/fig/commit/dd8d1bab6e43fcf3db670b6bc4c1949935163c82))
+- **editor** — a block value replacing a YAML list item goes under the item's content column ([`f66847e`](https://github.com/diaryx-org/fig/commit/f66847e82dc4ffde7f6e450dfe359856312fc400))
+- **editor** — a replace, insert, move or reorder that reads back as anything but what was asked is rolled back ([`5a1a559`](https://github.com/diaryx-org/fig/commit/5a1a559fbc93cca8e6462a612677b694eebb780e))
+- **zon** — an enum literal's span covers its leading dot, so a replace takes the whole literal ([`1a8407b`](https://github.com/diaryx-org/fig/commit/1a8407b36d1ccd786cc213f218212380ca3f37c9))
+- **editor** — replacing an empty value keeps a blank before a trailing comment ([`cc907ae`](https://github.com/diaryx-org/fig/commit/cc907aeb8f9a614f1a8ab582675580aa6f8c4e85))
+- **yaml** — a value after a tab, an empty tagged value and an explicit key's value can be replaced ([`638f6d7`](https://github.com/diaryx-org/fig/commit/638f6d71a3dadc799304e5f3196eca95835434d1))
+- **editor** — four deletes take only their own entry or item ([`42fcf0b`](https://github.com/diaryx-org/fig/commit/42fcf0b1f6b9b15b1dff53722615bcf01f70155b))
+- **yaml** — the JavaScript twin hands a line under compact nested items to the item at its column ([`7376b24`](https://github.com/diaryx-org/fig/commit/7376b24eb67fccb1ef585fc5caa0eb03a20e6524))
+- **wasi** — build the kit's zig-bytes.js into lib/ instead of expecting ../typescript's ([`f682d32`](https://github.com/diaryx-org/fig/commit/f682d32a73e38b8e0c9bd44eaeca472b931f1c8a))
+- **editor** — a figl multi-line flow list's or object's trailing comment lives on its opener line ([`0befb95`](https://github.com/diaryx-org/fig/commit/0befb9556c5fea3be72d9800058b9753b6b4716a))
+- **editor** — an insert into a figl element goes among its own keys, before a header that opens a child of it ([`07dabc4`](https://github.com/diaryx-org/fig/commit/07dabc48ce36fc4f5f77def0d3e87517d07abc25))
+- **editor** — a figl move or reorder re-spells each element's header, + and index for its new place ([`f8f63c4`](https://github.com/diaryx-org/fig/commit/f8f63c44808cf26a20322bfa652f9006a88c775e))
+- **patch** — a number the target already holds is left as the target spells it ([`a714436`](https://github.com/diaryx-org/fig/commit/a71443660a752c06df2e8bfef34a460cb93d3aa8))
+- **figl** — a key that re-opens a container mid-path is a mention of it ([`ecc6d1d`](https://github.com/diaryx-org/fig/commit/ecc6d1da6cda2213879fd821d2337266ef7a7ddb))
+- **editor** — a key renamed against its colon takes a blank after the colon ([`1c79939`](https://github.com/diaryx-org/fig/commit/1c79939217fef96fe3886851b6a6bab34ac3e33b))
+- **yaml** — a BOM-led document reads and edits its first key, keeping the BOM ([`284b01f`](https://github.com/diaryx-org/fig/commit/284b01f1cfdbd60b0ec0e11e95786e7b1f826c05))
+- **editor** — a delete or rename of a repeated key takes every spelling ([`ce1d359`](https://github.com/diaryx-org/fig/commit/ce1d359b72f7049ca20db7f2dd1c5c0ad8c2f36c))
+- **c-api** — the wasm static library builds without the helper wire ([`e98c5de`](https://github.com/diaryx-org/fig/commit/e98c5de789a545edbc110b3a025480330fd094fb))
+- **build** — fig's C libraries are position-independent on every target ([`52c8161`](https://github.com/diaryx-org/fig/commit/52c8161c3d44d75859e57549de5ca3216fa836f7))
+
+### Changed
+
+- **toml** — an array of tables appends in constant time, not after walking its elements ([`22301ee`](https://github.com/diaryx-org/fig/commit/22301eee48e8a8b99f7c92d4fbb0856f357c9245))
+- core reads the merge key from the language's syntax, not a hardcoded << ([`9356de0`](https://github.com/diaryx-org/fig/commit/9356de09bffb531c3e0b3eab0b6c58151764449a))
+- **c-api** — drop the pin that only YAML declares a reference layer ([`26e46ac`](https://github.com/diaryx-org/fig/commit/26e46acf91aa41c5eab1b758efdb60255abccc59))
+- **editor** — the flow sniff reads the language's flow_map_open, not ZON's .{ ([`e64e01d`](https://github.com/diaryx-org/fig/commit/e64e01dcd688a12e0f481c29d94a3a03d11a0d42))
+- **editor** — a line's prefix marks are declared, not the bytes - * > + ([`9c01f00`](https://github.com/diaryx-org/fig/commit/9c01f00afdec1a1a245b18fda08d6fd630422267))
+- **editor** — the bare-literal rule lives in util/literal, not figl's tokenizer ([`f32098f`](https://github.com/diaryx-org/fig/commit/f32098f6eb684316d4f4f687747ab0db4888649b))
+- **diagnostics** — conversion warnings read each dialect's prints declaration ([`da59b34`](https://github.com/diaryx-org/fig/commit/da59b3437c07bdc6c338c7c198c4831a31a826fd))
+- a dialect names its fragment printer, and figl's splice is flow by its own rule ([`6b89af1`](https://github.com/diaryx-org/fig/commit/6b89af137cc80cd3924309ae782a410751c3e90c))
+- YAML's stream splitter moves from core's embed layer into YAML ([`9b7d68d`](https://github.com/diaryx-org/fig/commit/9b7d68dc9a6b0643da94d17d4bfafd719b78b21e))
+- SerializeError's root refusal is UnrepresentableRoot, naming no language ([`394dba6`](https://github.com/diaryx-org/fig/commit/394dba68ec4138a2408258731be091f09ab60c64))
+- the shared helpers become the kit, which imports nothing of core ([`0cc9cc3`](https://github.com/diaryx-org/fig/commit/0cc9cc308a48d1034d01889e4d3d7c812107c45b))
+- a language's own source imports nothing of core ([`f0b3cc6`](https://github.com/diaryx-org/fig/commit/f0b3cc6bfcb5cc2ca0faa9f523b65b91696c879c))
+- the contract's declarations and C shapes move into the kit ([`5d7cbed`](https://github.com/diaryx-org/fig/commit/5d7cbed8221bb14706996c5f323f614205fa48e9))
+- the JSON parser writes rows into fig's table, through a RowWriter ([`a1a24f3`](https://github.com/diaryx-org/fig/commit/a1a24f3df685b38eae56b7712dc18ebb4405850c))
+- **figl** — the parser writes rows into fig's table ([`e47bebc`](https://github.com/diaryx-org/fig/commit/e47bebc0ed79b36629945f4d797532f83013f12e))
+- **zon,plist** — the parsers write rows into fig's table ([`0434c25`](https://github.com/diaryx-org/fig/commit/0434c2550fdf377fd43cdb596e27ec54ad34ed1e))
+- **toml** — the parser writes rows into fig's table ([`7de288f`](https://github.com/diaryx-org/fig/commit/7de288f8b0e7262b39785932d35a0bc7531cf02b))
+- **yaml** — the parser writes rows into fig's table ([`8b89e02`](https://github.com/diaryx-org/fig/commit/8b89e0252eb380a325b984fed62d9bbf343157a6))
+- **ini,dotenv,properties,nestedtext** — the parsers write rows into fig's table ([`15bca10`](https://github.com/diaryx-org/fig/commit/15bca10201ff750a0d44ea3e89e8072f3ae2bedc))
+- materialize, lossless, flat_strip and canonical write rows ([`cc84675`](https://github.com/diaryx-org/fig/commit/cc84675e9c76492603930563c9cdd4449b6d3368))
+- appending an entry to a TOML, INI, dotenv, properties or NestedText table is constant time ([`b78dd25`](https://github.com/diaryx-org/fig/commit/b78dd25dac9485c81c0bb40414041eb334d2f45f))
+- **figl** — the parser writes rows as it reads, with no tree of its own ([`3daabb3`](https://github.com/diaryx-org/fig/commit/3daabb313498657ae70a195e477435d01b0e33b1))
+- the child index keeps an entry's row id, not a copy of its key ([`8201443`](https://github.com/diaryx-org/fig/commit/82014430798048e0b958d2f845a8c2aabc70c9e9))
+- languages and the kit import nothing of core's outside the editor tests ([`3a858d2`](https://github.com/diaryx-org/fig/commit/3a858d20f202babea1e718a823b5656743370d64))
+- the kit is a package of its own, at kit/ ([`510a27b`](https://github.com/diaryx-org/fig/commit/510a27b1c79dbb9058f089bf789ac88a8e66b2cd))
+- each language is a Zig package of its own, at languages/`<name>`/ ([`3fc70d5`](https://github.com/diaryx-org/fig/commit/3fc70d53806193493f8b330371b876f7edd94293))
+- core's side of the language contract is src/contract/, not src/languages/ ([`3194d7a`](https://github.com/diaryx-org/fig/commit/3194d7a7d08d3485b591a3f1eb6435409e4adce8))
+- **rust** — each language's crate sits in its language's package, written by hand ([`f2ac3cf`](https://github.com/diaryx-org/fig/commit/f2ac3cf8479be7cf3b67435b7f4c73016b2cdc38))
+- **editor** — the write and delete guards compare with the parse the editor already held ([`bb2ea54`](https://github.com/diaryx-org/fig/commit/bb2ea54a1acf8405e69bb3692bb017f211e8e220))
+- **diagnostics** — a loss walk spells a node's path only when it warns ([`76f773d`](https://github.com/diaryx-org/fig/commit/76f773d0497be3644a3924d5523c4bfa13a1f854))
+- **kit** — a whole document's print table is its rows copied as they stand ([`e476a77`](https://github.com/diaryx-org/fig/commit/e476a77eee7784fdb36e5de2520575903f59e111))
+- **kit** — finish walks pre-order without gathering each node's children ([`f145053`](https://github.com/diaryx-org/fig/commit/f1450538af206dcb1c54fefd8b09ef5c5af8cc15))
+- **json** — the parser reserves a row for every value, key and entry ([`84fee2f`](https://github.com/diaryx-org/fig/commit/84fee2f4468b826b9d45c66fa4511f7d6ef9aeec))
+- **yaml** — the printer's quoting test rules out most strings by length and first byte ([`9fe48ed`](https://github.com/diaryx-org/fig/commit/9fe48ed1271607ccdb34ddb8d2844de23a475115))
+- **json** — the parser writes an entry's row before its key, so its rows are already in pre-order ([`4501813`](https://github.com/diaryx-org/fig/commit/4501813261e79ec9eea02af673a56cac92e75f9e))
+- **json** — the parser pulls its tokens one at a time instead of gathering them all first ([`727bf62`](https://github.com/diaryx-org/fig/commit/727bf62c69816004b8e4fae67efc1a8c53408536))
+- **editor** — the read-back guard compares two subtrees by their rows ([`cb7ac31`](https://github.com/diaryx-org/fig/commit/cb7ac3176b45ba88c9f15b30d189895752b84819))
+- **json** — the parser names each row's parent as it writes it, and finish walks nothing ([`039a878`](https://github.com/diaryx-org/fig/commit/039a87844023f1a0ca1bdc65e61bcf1cddcfb2e7))
+
+### Behavioural changes
+
+- `{a.b = 1}` is now `{a: {b: 1}}`. It used to be one
+  key, `"a.b"`, without a warning.
+
+- an unquoted value with spaces in a fig flow object,
+  `{name = Adam Harris}`, is now FigFlowMissingEquals; quote it, or write
+  the object JSON-style. It used to be the string `Adam Harris`.
+
+- `{x = 1 y = 2}` is two pairs. It used to be
+  `x = "1 y = 2"` with a `flow_missing_comma` warning, which now fires only
+  in arrays and JSON-spelled objects.
+
+- a bare flow key that § 5.1 rejects (`{@x = 1}`,
+  `{-x = 1}`, `{[q = 1}`) is now FigBadKey. It used to become the key as
+  written.
+
+- `fig fmt` writes a flow object as `{x=1 y=2}`, where it
+  wrote `{ x = 1, y = 2 }`, and quotes a value in one that is not a single
+  token.
+
+- malformed flow values report FigFlowMissingEquals,
+  FigFlowMissingComma, FigFlowEmptyElement, FigFlowMultilineString,
+  FigFlowCommentedClose or FigQuotedTrailingContent where they reported
+  FigUnclosedFlow or FigInvalidValue.
+
+- setTrailingComment, getTrailingComment and deleteTrailingComment on a .properties document now fail with CommentsUnsupported (UnsupportedFormat in the bindings) instead of splicing a `#` into the value.
+
+- @diaryx/fig/languages/zon now refuses a ZON document whose `\\` multiline string line holds a tab, a lone CR or another control byte, where it read them into the string before.
+
+- `fig set <file> 'list[N]' <value>` replaces item N
+  where it used to fail with exit 1 ("a segment of this path is not a
+  mapping"); `fig set <file> 'list[-]' <value>` appends. An index past the
+  end still exits 1, with a new message.
+
+- `[-]`/`[$]` in a path given to `get`, `replace`,
+  `rename`, `comment`, or before the end of a `set`/`insert`/`delete` path,
+  now names the last item. It used to report "no such path".
+
+- a `: char` annotation whose value is not wrapped in single quotes (`x: char = "A"`) is now FigTypeMismatch, where a release build read it as a char.
+
+- TypeScript `parse`, `Document.toValue`, `toJS` and `get` on a YAML document with an alias or a `<<` merge key return the aliased and merged values; they used to throw `FigError: fig_node_kind: node kind 8 is not a value`. A cyclic alias throws a `ParseError` FigError located at the alias.
+
+- TypeScript `Document.has` and `get` read through a merge key: `has(["site", "host"])` is true for a key merged in by `<<: *base`, and `has(["site", "<<"])` is false. They used to see `<<` as a key and the merged keys not at all.
+
+- Rust `Document::to_value`, `fig::from_slice` and `from_yaml_str` on a YAML document with an alias or a `<<` merge key return the aliased and merged values; they used to return `Error::Internal` and "malformed document". A cyclic alias is `Error::Parse` located at the alias.
+
+- `fig insert <file> 'list[N]' <value>` for an index
+  between the first and the end inserts the value before item N and exits
+  0. It used to refuse with exit 1, saying there was no insert in the
+  middle of a sequence; an index past the end is still refused.
+
+- a runtime language's table whose sequence row carries
+  `item_sep` or `open` is edited item by item with that separator; the
+  same fields on any other row now make the table malformed, where an
+  older fig ignored them.
+
+- fig_document_resolve_aliases and materialization merge a '<<' key only in a format whose syntax declares merge_key; a runtime-registered language that did not declare it no longer has '<<' entries merged.
+
+- a language registered through the C ABI, Rust or the wire must be rebuilt against vtable version 3; one declaring key_style must declare a key_name renderer instead.
+
+- TOML and ZON escape control characters in an inserted or renamed key's name (TOML "a\nb", ZON .@"a\nb") where they used to write them raw, which did not parse.
+
+- in YAML, NestedText and every other format but figl, a node preceded on its line by '*', '>' or '+' (other than its item marker) no longer counts as owning the line, so commenting it out is refused with CommentsUnanchored.
+
+- the Zig editor's section refusals in TOML and figl are renamed to the neutral set (NotATable and NotAContainer become NotASection, CannotDeleteTable and CannotDeleteContainer become CannotDeleteSection, TableExists and ContainerExists become SectionExists, and likewise for replace, move and reorder); C, Rust and TypeScript callers still see invalid_argument.
+
+- a language registered through C, Rust or the wire declares section_noun as a string instead of an enum ordinal.
+
+- a language registered through C, Rust or the wire declares a block comment delimiter where it used to choose a scanner style; FigComments' layout changes.
+
+- in ZON, which has no block comments, a line ending in `*/` above an entry is no longer taken as part of its comment block.
+
+- the JS twins now report the conversion warnings their compiled formats report: converting to INI, dotenv, .properties or NestedText reports booleans and numbers degraded to strings, JSON reports non-finite numbers as quoted strings, and a runtime target's comments are reported dropped where its printer writes none.
+
+- a figl value serialized with the splice option set is now written in flow even when the caller did not also set flow.
+
+- the Zig module's Embed.extractStream, Embed.Stream and Embed.StreamDoc are removed.
+
+- the Zig module's error.FigUnrepresentableRoot is renamed error.UnrepresentableRoot.
+
+- the Zig module's SerializeOptions.fig_indent is renamed indent_requested.
+
+- a language registered through Rust or the wire declares its splice style as Splice::Escaped or "escaped"; "json_string" is no longer read, and falls back to literal.
+
+- a language registered through C or Rust's ffi fills a FigTable through the fig_table_* calls and reads a FigTableView in print; FigNodeTable, FigNodeRow, FigRegionRow, FigMentionRow, FigCommentRow, FigDirectiveRow and free_table are gone.
+
+- the Zig module's Runtime.NodeTable is replaced by Runtime.table (Table, Row, View, …), and documentToTable and fullTable return a Runtime.Table.
+
+- in the Zig module, ast.serialize, serializeWith, serializeFragmentWith, serializeNode and serializeNodeWith become fig.Serialize.serialize(&ast, …) and the like, and AST.SerializeFormat becomes fig.Serialize.SerializeFormat.
+
+- a figl language registered at runtime (not standing in for the compiled one) has a container value an editor splices written inline, where it was written as block lines that did not parse back.
+
+- figl's Editor.insertKey on a held key returns error.DuplicateKey rather than error.FigDuplicateKey; through the C ABI the status is invalid_argument rather than parse_error.
+
+- SerializeError has a PrintRefused member, so an exhaustive switch over it needs an arm.
+
+- a parse failure through the C ABI and the bindings reports the byte offset the language gives, where a compiled format reported none.
+
+- fig_language_register refuses no name a bundled language holds as compiled; it refuses it as already registered.
+
+- a format handle is per process, assigned in registration order from 1; FIG_FORMAT_* and the integers 1-13 mean nothing, and fig_format_by_name / Format::by_name / formatByName are how a format is found.
+
+- fig_language_register refuses any name already registered, and a language named after a format the build left out no longer takes that format's number.
+
+- Rust Format loses its variants and RuntimeFormat; EmbedType::inner_format returns Result; an embed whose inner language is not registered is Error::UnsupportedFormat before the core is called; error text names the dialect ("as toml").
+
+- TypeScript Format loses its members and is a branded type; Embed.detect, extract, split and retype on a parametric archetype need its inner language registered with embedded spellings; describe() includes embed on every dialect.
+
+- fig_embed_detect reports -1 as the format of a preset container whose language is not registered.
+
+- `fig lang list` says "built in:" and "not built in"; the --strict warning count names the dialect ("3 yaml warning(s)").
+
+- SerializeError has PrintRefused; a registered printer's refusal crosses the contract as the SerializeError it names.
+
+- Zig: fig.Fig, fig.Language.JSON and the other aliases, Language.detect, Serialize.SerializeFormat and deserialize.Format are gone; fig.bundle registers and names the shipped languages.
+
+- the format `fig` is now `figl`, with no alias: `--input fig`, `-o fig`, fig_format_by_name("fig"), Format::by_name("fig") and formatByName("fig") resolve nothing.
+
+- `--embed fenced-fig`, `md-fig`, `html-script-fig` and `html-code-fig` are fenced-figl, md-figl, html-script-figl and html-code-figl; the TypeScript EmbedType values follow.
+
+- the build option -Dfig and the Rust crate feature `fig` are -Dfigl and `figl`; the TypeScript module @diaryx/fig/languages/fig is @diaryx/fig/languages/figl.
+
+- the CLI's messages say "a figl value" and "figl authoring warnings".
+
+- converting a commented document to a registered format whose dialect declares prints.comments = never, and no syntax, now warns that each comment is dropped.
+
+- the CLI flags --embed (get, set, fmt, convert, patch), --to-embed (convert), --patch-embed (patch) and get --body are removed; passing one is a usage error (exit 2).
+
+- a .md/.markdown or .html file is no longer opened through its frontmatter, endmatter or fenced/HTML block; like any file whose extension names no format, its whole contents are sniffed (or read as --input/--lang say), and `set` on a missing .md file is refused as an unrecognized extension.
+
+- `fig help --oneline` no longer claims Markdown frontmatter editing.
+
+- fig get/set/check/convert on a .md, .markdown, .html or .htm file with no -i and no configured language exits 1, naming the file a document, instead of sniffing its contents.
+
+- the Rust crate no longer exports Embed, EmbedType, Extracted, Region, fig::split or fig::detect; code using them stops compiling. Use twig to locate the block and fig::Editor to edit its contents.
+
+- fig-sys no longer declares the fig_embed_* functions, FigEmbed, FigEmbedContainer, FigRegion or FigSpan.
+
+- @diaryx/fig no longer exports Embed, EmbedType, or the Region, Span and EmbedSpellings types, and describe(lang) no longer includes `embed` on a dialect.
+
+- the C ABI no longer exports fig_embed_extract, fig_embed_detect, fig_embed_retype, fig_embed_open, fig_embed_open_or_init, fig_embed_destroy, fig_embed_render, fig_embed_replace_body, fig_embed_set or the per-op fig_embed_* edit and comment functions; fig.h no longer declares FigEmbed, FigEmbedContainer, FigRegion or FigSpan. A host linking them fails to link.
+
+- the Zig module no longer has fig.Embed or bundle.embeddable.
+
+- FigDialectDesc ends at prints_comments; the embed_* fields a 6.0 pre-release added are gone.
+
+- a helper must speak JSON-RPC 2.0; a helper built against 5.x (the {"op":…}/{"ok":…} wire) is refused with a message saying to rebuild it.
+
+- fig::helper::handle and @diaryx/fig's handle answer JSON-RPC requests, returning {"jsonrpc","id","result"} or {"jsonrpc","id","error":{code,message,data}}; describe's result is the description itself, parse's the table, print's and render's the text, split_stream's the documents.
+
+- Zig fig.Wire.Transport has exchangeFn returning the response line instead of callFn returning a std.json.Value; fig.Wire.call(transport, arena, method, params) sends one request; parseLine, okField and failureMessage are gone.
+
+- building fig with the helper wire (the default) fetches the zigjr package; -Dhelper-wire=false does not.
+
+- the TypeScript in-process host call answers a request for an unregistered language as a host failure, not a {"ok":false} line.
+
+- the Zig module's AST has no nodes, node_tags, node_anchors, anchors, node_comments or owned_strings; read through node(id), nodeCount, tagOf, tagFact, anchorOf, anchorIterator and comments.
+
+- the Zig module's Document is { source, ast }; spans through spanOf/span, markerSpan, sepSpan, itemSep, regionsOf (table.SpanFact) and mentionsOf (an iterator).
+
+- Runtime.tableToDocument takes *Table and adopts it, leaving it empty; viewToDocument borrows the view and takes no Spans rule.
+
+- a shipped Zig language module's parse returns the adopted Document; parseTree returns the parser's ParseTree, and a parser's parseAbstract returns the row-backed AST.
+
+- a YAML tag under a %TAG directive that rebinds !! or ! is resolved by the directive in every path, so `%TAG !! tag:example.com,2000:app/` makes !!int custom; a YAML tag spelled `!<tag:yaml.org,2002:int>` reads back as its text, resolved to int, and prints as written.
+
+- the trees materialize, Lossless and FlatStrip return own their strings.
+
+- the Zig module no longer exports ParseTree; a shipped language module has parseTable(parser, input, t, out) in place of parseTree, and its parser parseInto / parseWithReportInto / parseCollectingInto writing into a Table.
+
+- @diaryx/fig/languages/`<name>` is a native module, not a JavaScript Language; the JavaScript languages are at @diaryx/fig/js/<name>.
+
+- @diaryx/fig/languages/json5 is JSON's module, so registering it returns JSON's format; JSON5's is formatByName("json5").
+
+- init(...languages) also compiles the given languages' modules, which a browser main thread needs before registerLanguage.
+
+- the package root has a fig-source export condition, resolving to src/index.ts.
+
+- libfig carries no language: a C program links libfig_`<name>`.a beside it and calls fig_<name>_register before using the format.
+
+- fig-sys and fig have no language features (json, yaml, toml, zon, figl, ini, dotenv, properties, plist, nestedtext); depend on fig-`<name>` and call fig_<name>::register().
+
+- fig::from_yaml_str and fig::to_yaml_string are fig_yaml::from_str and fig_yaml::to_string, behind fig-yaml's serde feature.
+
+- fig::helper reads the wire through the json language, which the helper registers (fig_json::register()).
+
+- a source build for an Apple target is stamped with MACOSX_DEPLOYMENT_TARGET or IPHONEOS_DEPLOYMENT_TARGET, else 11.0 (macOS) or 14.0 (iOS), rather than the build machine's version.
+
+- the `@diaryx/fig/languages/<name>` subpaths are removed; import a language's module from `@diaryx/fig-<name>` instead.
+
+- converting or printing a `0x`/`0o`/`0b` integer wider than 128 bits into a format without that spelling writes its decimal, where it wrote the lexeme as it stood.
+
+- `@diaryx/fig/kit/number` and `@diaryx/fig/kit/datetime` need WebAssembly; a host without it supplies its own `kit/zig.js`.
+
+- `@diaryx/fig/kit/number`'s `canonical` writes a radix integer whose decimal is longer than 512 digits as it stood, where it converted any length.
+
+- a fig object's key in the tree-sitter grammar is a `keypath` node, not a bare `bare_key`; a query matching `(flow_object key: (bare_key))` matches `(flow_object key: (keypath (key)))` instead.
+
+- deleting the last item of a YAML block sequence
+(removeSeqItem, `fig delete`, a patch that empties a list) leaves
+
+- inserting a key into a figl `=`-spelled flow object now writes a space between members rather than `, ` (`{a=1}` + b gives `{a=1 b=2}`; `{ x = 1 }` + y gives `{ x = 1 y = 2 }`), and into an empty one writes `{a=1}` rather than `{ a = 1 }`.
+
+- `setTrailingComment` (`fig comment --inline`) on a
+  CRLF line writes `a: 1 # note\r\n` where it wrote `a: 1\r # note\n`;
+  replacing or deleting a trailing comment on a CRLF line keeps the CR.
+
+- `setTrailingComment` (`fig comment --inline`,
+  fig_editor_set_trailing_comment) on a ZON `\\` multiline string now
+  fails with CommentInsideValue / FIG_STATUS_UNSUPPORTED_OPERATION and
+  leaves the file unchanged. It used to succeed, appending the comment to
+  the string's text.
+
+- `fig patch` drops a trailing comment that would land
+  on such a line and counts it dropped, where it used to write it into the
+  string.
+
+- inserting a comment or entry after a .properties line that ends in a `\` continuation, or moving such an entry before another, now writes a blank line between them; the value is no longer joined.
+
+- FigSyntax gains a trailing `uint8_t line_continuation` (size-gated; 0 for none).
+
+- A response written by `fig::helper` lists its object keys in
+  alphabetical order (`{"id":…,"jsonrpc":"2.0","result":…}`), where fig's json
+  printer kept the order they were written in. JSON-RPC readers, fig's
+  included, do not depend on the order.
+
+- `fig set f 'list[-]' x` and `fig set --seq f list x …` create `list` when it is absent or null, where they exited 1; in INI, dotenv, .properties and NestedText they still exit 1, with a message saying the format has no empty list.
+
+- `Editor.setSequence` on an absent or null path starts the sequence, where it returned `NotFound`.
+
+- figl output writes a non-finite float as `key: float = inf` (`-inf`, `nan`) instead of its source lexeme, and a list or object holding one prints in block, not flow.
+
+- a figl editor replace or insert of an infinite or NaN float, and serializing one as a figl scalar or flow fragment, now fails (unsupported format; in Rust, a message naming the annotated spelling) instead of writing text that reads back as a string.
+
+- a delete (or `comment --delete`) whose result would not parse exits 1 with "the edit at `<path>` in <file> was refused" instead of panicking (or, for `comment --delete`, blaming an empty comment text and exiting 2).
+
+- `setTrailingComment` (`fig comment --inline`) on a YAML
+  block scalar writes the comment on its header line (`a: | # note`), where
+  it wrote it at the end of the next entry's line. `getTrailingComment` and
+  `deleteTrailingComment` on a block scalar read and remove the header
+  line's comment, where they read and removed the next entry's.
+
+- deleting the first item of a YAML block sequence
+  that starts on its parent item's marker line (`- - a` over `  - c`,
+  removeSeqItem, `fig delete`) now leaves `- - c`; it used to delete the
+  parent's marker too, and the parent with it. Deleting the first key of
+  a mapping on an item's marker line (`- k: v` over `  j: w`) leaves
+  `- j: w` where it used to leave `  j: w`, and deleting the only key
+  (`- k: v`) leaves `-`, a null item, where the item used to vanish.
+
+- deleteKey and removeSeqItem (`fig delete`, the
+  bindings' delete and remove-item calls) refuse with
+  DeleteChangedOtherValues (FIG_STATUS_UNSUPPORTED_OPERATION) and leave
+  the source unchanged when the result would read back with any value
+  other than the deleted one changed. They used to report success.
+
+- in figl, deleting the only element of a block list (removeSeqItem, deleteContainer on the element, `fig delete xs[0]`) leaves `xs = []` with the key's comments, instead of removing the key; nested and dotted keys keep their path (`a[].b = []`, `> b = []`).
+
+- in figl, deleting the only item of a root list now fails with NoEmptyRootList and leaves the file unchanged, where it used to leave an empty document (an empty mapping).
+
+- a YAML line under compact nested items (`- - - a`
+  over `  - d`, `- - k: v` over `  - c`) now reads as an item of the
+  container that begins at its column, as YAML reads it; it used to read
+  as part of the innermost container, or fail to parse. A line indented
+  between two such items (`   - d` under `- - - a`) is now a parse error.
+
+- a YAML plain scalar now continues onto a
+  more-indented line that begins `- ` or `? ` (`- a` over `  - b` reads
+  `["a - b"]`, was `["a", ["b"]]`), measured against its collection's
+  column, not its line's indent; a line indented under a sequence item or
+  explicit key whose node is complete, or a `: ` inside a plain scalar's
+  continuation, is now a parse error where it used to read as a nested
+  node.
+
+- `setTrailingComment` (`fig comment --inline`) on a figl
+  `'''`/`"""` string writes the comment on its opener line (`x = ''' # note`),
+  where it wrote it after the closing quotes; `getTrailingComment` and
+  `deleteTrailingComment` read and remove the opener line's comment, and no
+  longer see one after the close.
+
+- `FigSyntax` gains `opener_line_comment` at its end, and
+  the Rust `Syntax` struct gains the `opener_line_comment` field.
+
+- `fig fmt` and conversion into figl print a multi-line
+  string's trailing comment on its opener line (`x = ''' # note`), where they
+  printed it after the closing quotes.
+
+- deleting a key under a dotted key in a TOML inline table (`it.a.b` in `it = { a.b = 1, c = 2 }`) deletes that entry, where it was refused with DeleteChangedOtherValues.
+
+- deleteContainer on a dotted table inside a TOML inline table (`it.a`) deletes only the entries that write it, where it deleted the whole line the inline table stands on.
+
+- deleting the only element of a TOML array of tables (`fig delete f.toml 'x[0]'`, `deleteContainer`) leaves `x = []` in the parent table's body, where it removed `x`.
+
+- a figl parse's node table carries `index` and `append` mentions on sequence elements; a reader that assumed every mention is `header` or `entry` sees two more kinds, and the C ABI's fig_table_mention accepts 2 and 3.
+
+- deleting the first element of a figl `+` chain rewrites the next element's `+` as the header (`r[]`), where it was refused.
+
+- deleting a figl element addressed by index renumbers every later element's index (`ys[1]` becomes `ys[0]`), where it was refused.
+
+- `set`/`insertKey` of a new key under a TOML table made only by dotted keys (`a.b = 1`, or `a.b = 1` inside an inline table) writes a dotted key or an inline-table entry in that table (`a.y = 1`, `{ a.b = 1, a.y = 1 }`), where it wrote a bare key into the enclosing table.
+
+- `set`/`insertKey` of a new key under a TOML table named only by headers below it (`[a.b]` alone, then `a.y`) writes `a.y = 1` in the nearest body with a header, where it was refused with `ImplicitSection`.
+
+- an insert into a TOML inline table or fig flow object whose last member is a dotted key goes after that member, where it was refused (TOML) or panicked (fig, `p = {a.b=1, c=2}`); `set` into a dotted table inside a fig flow object writes a key path entry, where it was refused.
+
+- replacing a YAML block-sequence item (replaceValAtPath,
+  `fig replace`, the bindings' replaceValue) with a multi-line value writes
+  its later lines under the item's content column; they used to be written
+  at column 0, which read back as other keys or failed to parse. Replacing
+  a block-scalar item writes the line break after the new value.
+
+- replaceValAtPath, set, replaceValAtPathFollowing,
+  insertKey, insertNamedKey, appendToSeq, prependToSeq, insertItem,
+  setAppend, moveKey, moveItem, reorderKeys, reorderItems, moveContainer
+  and reorderContainers (`fig replace`/`set`/`insert`/`append`/`move`, the
+  bindings' matching calls) refuse with EditReadsBackWrong
+  (FIG_STATUS_UNSUPPORTED_OPERATION) and leave the source unchanged when
+  the result would read back with another value changed, or the written
+  value reading as something other than the value asked for. They used to
+  report success. `--raw` text that adds entries beside the one replaced
+  is refused the same way.
+
+- `set` on a missing key whose insert is refused this
+  way reports EditReadsBackWrong, not the replace's NotFound.
+
+- replacing a ZON enum-literal value (`.a = .fast`) now
+  writes the new value in its place (`.a = true`). It used to be refused,
+  and before 5a1a559 it wrote `.a = .true`.
+
+- a ZON enum literal's node-table span now starts at its
+  `.` rather than at its name; its text is still the bare name.
+
+- replacing an empty dotenv value followed by a comment
+  (`A= #c`) now writes `A= 42 #c`. It used to be refused, and before
+  5a1a559 it wrote `A= 42#c`, which reads as the value `42#c`.
+
+- a YAML plain scalar followed by a tab and a comment
+  (`a: 1\t# c`) now reads as `1`; it used to read as `1\t`.
+
+- replacing an empty tagged or anchored YAML value
+  (`t: !!str`) now writes the new value in place of its properties
+  (`t: x`), as replacing a written tagged value does. It used to be
+  refused, and before 5a1a559 it wrote `t: x !!str`. Its node-table span
+  now covers the properties.
+
+- replacing an explicit key's value (`? k` / `: v`) now
+  keeps the `?` line and writes `: 42` under it. It used to be refused.
+
+- the JavaScript YAML twin now reads a line under
+  compact nested items (`- - - a` over `  - d`, `- - k: v` over `  - c`)
+  as an item of the container that begins at its column, as the compiled
+  format does; it used to read it into the innermost container, or fail.
+  A line indented between two such items is now refused.
+
+- `setTrailingComment` (`fig comment --inline`) on a figl
+  flow list or object over several lines whose `[`/`{` line holds no
+  element writes the comment on its opener line (`xs = [ # note`), where it
+  wrote it after the close; `getTrailingComment` and `deleteTrailingComment`
+  read and remove the opener line's comment, and no longer see one after
+  the close.
+
+- inserting a key into a figl element or container followed by a header that opens a child of it (`c[].p[]`, `a.b`) writes the key among its own keys, where it was refused.
+
+- the figl node table records a key that a header line reaches through a container written on an earlier line as a `header` mention, where it was an `entry`.
+
+- moving or reordering the elements of a figl `+` chain writes the header on whichever element comes first and a `+` on the rest, where it was refused.
+
+- moving or reordering figl elements addressed by index renumbers every line that addresses them, where it was refused.
+
+- a default build — the CLI, fig-lsp, libfig's bundled
+  languages and a Zig consumer's `fig` dependency — includes plist: `.plist`
+  files and `-i plist` are read, edited and converted, `fig lang list` shows
+  it under "built in", and `fig_format_by_name("plist")` finds it. Such a
+  build used to refuse a `.plist` file unless a `languages.figl` language
+  served it; one named `plist` is now refused as a taken name, and the
+  built-in serves its files.
+
+- `fig patch` leaves a number alone when the patch holds
+  the same value spelled differently (`31` against `0x1F`, `1.5` against
+  `1.50`, `.inf` against `Infinity`), where it used to rewrite it in the
+  patch's spelling. `--seq union` likewise treats such items as present.
+
+- `fig.Patch.nodesEqual` compares numbers by value, so
+  it reports `0x1F` and `31` equal; an integer and a float are still unequal.
+
+- renaming a figl key or container (`fig rename`, `renameKey`, `renameContainer`) rewrites every dotted line and header that names it, not only the first, and a rename it used to refuse because the half-renamed document did not parse (`spec` in `spec.containers[]` / `spec.containers[].ports[]`, `xs` in `xs[0] = a` / `xs[1] = b`) now succeeds.
+
+- a figl document's table (`fig lang table`, the wire) lists a mention for every key that re-opens a block container mid-path, a dotted line's or a header's.
+
+- renaming a key whose closing quote stands against its separator (YAML `{ "k":v }`) to a key with no closing quote now writes a blank after the separator (`{ renamed: v }`, was `{ renamed:v }`). Through the library's `replaceKeyAtPath`, which takes key syntax, a JSON5 `{"a":1}` renamed to `b` likewise gets `{b: 1}`; the CLI's `rename` quotes a JSON5 key and is unchanged there.
+
+- A YAML file that opens with a BOM reads its first key
+  without it: `fig get -o json` gives `{"a":1}`, where it gave
+  `{"﻿a":1}`, and `set`, `replace`, `rename` and `delete` on that
+  key edit it in place, where `set` appended a duplicate and the others
+  said there was no such path.
+
+- In every editable format, an edit at the start of a
+  BOM-led file's first line leaves the BOM first: a leading comment on the
+  first key goes after the BOM, not before it, deleting the first key
+  keeps the BOM, and a key inserted above a TOML or INI file's first
+  header lands after it, where the edit used to fail to parse. A comment
+  above the first key now moves and deletes with it, as it does without
+  a BOM.
+
+- The TypeScript binding's Editor.source() keeps a BOM
+  the document opened with, and every string it reads back from the core
+  keeps a leading U+FEFF, where it dropped it.
+
+- deleting a key written more than once in dotenv, INI,
+  .properties or plist (`fig delete`, deleteKey) removes every spelling,
+  so the key no longer reads. It used to remove the first and leave the
+  key reading with a later spelling's value.
+
+- renaming such a key (`fig rename`, renameKey,
+  replaceKeyAtPath) renames every spelling. It used to rename the first,
+  leaving the key under both names and the old name with the later value.
+
+- deleting an INI section (`fig delete`, deleteContainer)
+  also removes the later spellings of a key the section repeats. They used
+  to be left behind and read as entries of the section before them.
+
+- on a tier-1 target the language crates (`fig-json`,
+  `fig-yaml`, …) link a prebuilt library and no longer run Zig, so a
+  build without Zig succeeds where it used to fail.
+
+- inside a checkout of fig, `fig-sys` builds the core
+  from source even when a payload's git-ignored `lib/` holds an archive,
+  which it used to link however old; `FIG_SYS_PREBUILT=1` links it.
+
+- the aarch64-apple-darwin payload names macOS 11.0 as
+  its minimum, as `fig-sys`'s source build does, rather than Zig's default.
+
+- an error from reading a typed value below the root
+  is `Error::At`, wrapping the error that used to be returned, and its
+  text leads with the path. A match on `Error::MissingField { .. }` (or
+  any mapping error) for a nested field no longer matches; match on
+  `e.innermost()` instead.
+
+- `fig-json` and every other language crate turn on
+  `serde`, and with it fig's `serde` feature, by default; `fig-yaml`'s
+  was opt-in. A build that wants no serde sets `default-features = false`.
+
+- `fig replace`, `fig set` and `fig patch` keep the
+  quote style of a string they replace with a string: a YAML `"debug"`
+  set to `info` becomes `"info"` (was `info`), a YAML `'x'` stays
+  single-quoted, a TOML literal `'…'`, `'''…'''` or `"""…"""` keeps its
+  delimiters, and a JSON5 `'…'` stays single-quoted (was `"…"`). Where the
+  old style cannot hold the new string, the printer's spelling is written
+  as before. `--raw` values are unchanged.
+
+- a C or Rust program linking fig's static libraries
+  for a musl target as a PIE now links; it used to fail at the linker.
 
 <!-- git-cliff:end -->
 

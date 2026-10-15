@@ -2,7 +2,10 @@
 //! keeping as much as each can hold. A port of fig's Zig core, kit and
 //! languages (docs/proposals/rust-core.md), file for file.
 
+pub mod error;
 pub mod kit;
+
+pub use error::{Error, Result};
 pub mod canonical;
 pub mod deserialize;
 pub mod diagnostics;

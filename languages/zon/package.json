@@ -1,6 +1,6 @@
 {
   "name": "@diaryx/fig-zon",
-  "version": "6.0.0",
+  "version": "6.1.0",
   "description": "ZON, Zig Object Notation for @diaryx/fig: fig's own parser, printer and editing rules for the language, written in Zig and compiled to a WebAssembly module of its own. Pass it to registerLanguage.",
   "type": "module",
   "publishConfig": {
@@ -21,7 +21,7 @@
     "LICENSE-APACHE"
   ],
   "peerDependencies": {
-    "@diaryx/fig": "6.0.0"
+    "@diaryx/fig": "6.1.0"
   },
   "scripts": {
     "build": "zig build wasm && node js/build.mjs",

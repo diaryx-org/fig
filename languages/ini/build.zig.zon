@@ -1,6 +1,6 @@
 .{
     .name = .fig_ini,
-    .version = "6.0.0",
+    .version = "6.1.0",
     .license = "MIT OR Apache-2.0",
     .fingerprint = 0x6a9b23e0f0a01212, // Changing this has security and trust implications.
     .minimum_zig_version = "0.17.0",

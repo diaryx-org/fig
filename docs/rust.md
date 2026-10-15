@@ -2,7 +2,7 @@
 title = Using fig in Rust
 author = adammharris
 created = 2026-07-05T21:35:14-06:00
-updated = 2026-10-12T12:00:00-06:00
+updated = 2026-10-14T18:30:00-06:00
 part_of = [docs](docs.md)
 ```
 
@@ -49,12 +49,17 @@ fig-yaml = "6"   # one crate per language you read or write
 fig-json = "6"
 ```
 
-On a tier-1 target `fig-sys` links a prebuilt `libfig.a` shipped by a
-per-target payload crate — Cargo downloads exactly the one matching your
-target, and **no Zig toolchain is required** — unless the target has no
-payload crate or `FIG_SYS_FORCE_SOURCE=1` is set. The core carries no
-language, so there is one build of it. A language crate compiles its
-library from fig's Zig source, which for now needs Zig 0.17+.
+On a tier-1 target **no Zig toolchain is required**: `fig-sys` links a
+prebuilt core shipped by a per-target payload crate — Cargo downloads
+exactly the one matching your target — and that payload carries the library
+of every language fig ships too, which each language crate links from it.
+The tier-1 targets are macOS (arm64, x86_64), Linux (x86_64, arm64; glibc
+and musl), Windows (x86_64 MSVC), Android (arm64, x86_64), iOS (device and
+arm64 simulator), and wasm32 (`unknown-unknown`, `wasip1`, `wasip2`). Any
+other target, `FIG_SYS_FORCE_SOURCE=1`, or a build inside a checkout of fig
+compiles from fig's Zig source, which needs Zig 0.17+ (in a checkout,
+`FIG_SYS_PREBUILT=1` links the payload instead, once
+`bindings/rust/scripts/build-payload-lib.sh` has filled it).
 
 Either way there is no separate native library to ship: the core and each
 language are linked straight into your binary.
@@ -84,35 +89,38 @@ fn main() -> Result<(), fig::Error> {
 }
 ```
 
-With the optional `serde` feature (see [Languages and features](#languages-and-features))
-you also get `serde_json`-style helpers:
+Each language crate also reads and writes typed values the way
+`serde_json` does, with nothing registered first (its default `serde`
+feature; see [Languages and features](#languages-and-features)):
 
 ```rust
-let toml = fig_toml::register()?;
-let json = fig_json::register()?;
+#[derive(serde::Serialize, serde::Deserialize)]
+struct MyConfig { name: String, port: u16 }
 
-// Parse straight into a typed value, in any format…
-let cfg: MyConfig = fig::from_slice(input, toml)?;
-// …or YAML text, with `fig-yaml`'s `serde` feature.
-let cfg: MyConfig = fig_yaml::from_str(yaml)?;
-
-// Serialize any `Serialize` type: to any format through a `Value`…
-let json = fig::to_value(&cfg)?.serialize(json)?;
-// …or straight to YAML.
+let cfg: MyConfig = fig_toml::from_str(input)?;
+let json = fig_json::to_string(&cfg)?;
 let yaml = fig_yaml::to_string(&cfg)?;
 ```
 
 ## Languages and features
 
 Each language is a crate of its own, which links its library beside the
-core's and registers it with `register()`, returning the format of its
-first dialect; registering one again returns the format it already has.
-A language you don't depend on costs nothing.
+core's. Its `format()` is the format of its first dialect, registering the
+language the first time it is asked for; `register()` does the same without
+the caching, and is what makes its other dialects (`json5`, `yaml-1.1`)
+findable by name before anything has asked for the first. A language you
+don't depend on costs nothing.
+
+With its `serde` feature, on by default, each crate has `from_str`,
+`from_slice`, `from_reader`, `to_string`, `to_vec` and `to_writer` in its
+format, as `serde_json` has. A program that maps its types with fig's own
+`derive` instead turns it off (`default-features = false`), and then has
+no serde in its build at all.
 
 | Crate            | Registers |
 | ---------------- | --------- |
 | `fig-json`       | `json`, `jsonc`, `json5` |
-| `fig-yaml`       | `yaml`, `yaml-1.1`, `yaml-1.2` (`serde` feature: `from_str`, `to_string`) |
+| `fig-yaml`       | `yaml`, `yaml-1.1`, `yaml-1.2` |
 | `fig-toml`       | `toml`, `toml-1.0`, `toml-1.1` |
 | `fig-zon`        | `zon` |
 | `fig-figl`       | `figl` |
@@ -421,18 +429,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 struct Config { name: String, port: u16 }
 
-let toml = fig_toml::register()?;
-let json = fig_json::register()?;
-
-let cfg: Config = fig::from_slice(b"name = \"fig\"\nport = 8080\n", toml)?;
-let json = fig::to_value(&cfg)?.serialize(json)?;         // to any format
-let yaml = fig_yaml::to_string(&cfg)?;                     // to YAML (`fig-yaml`'s `serde` feature)
+let cfg: Config = fig_toml::from_str("name = \"fig\"\nport = 8080\n")?;
+let yaml = fig_yaml::to_string(&cfg)?;
+let json5 = fig::Format::by_name("json5").ok_or(fig::Error::UnsupportedFormat)?;
+let cfg: Config = fig::from_slice(b"{name: 'fig', port: 8080}", json5)?;  // any registered format
+let text = fig::to_value(&cfg)?.serialize(json5)?;
 ```
 
-`from_slice` takes any registered [`Format`], and
-`to_value(&x)?.serialize(format)` writes any of them. `fig_yaml::from_str`
-and `fig_yaml::to_string` are the YAML shorthands, with `fig-yaml`'s
-`serde` feature. `Value` itself implements
+Each language crate's functions read and write its first dialect.
+`fig::from_slice` takes any registered [`Format`], and
+`to_value(&x)?.serialize(format)` writes any of them. `Value` itself implements
 `Serialize`/`Deserialize`, so `from_slice::<Value>` gives you a dynamic tree
 the way `serde_json::Value` does.
 
@@ -737,8 +743,30 @@ Notable variants: `Parse(ParseError)`, `UnsupportedFormat` (a format this
 build has not registered, or one that cannot do what was asked), `NotFound` (a path
 or key), `InvalidArgument`, `UnsupportedOperation` (every argument valid,
 but the operation is not defined for them), `Utf8`, `Language(LanguageFailure)`
-(a runtime language refused at registration), plus serde/derive mapping errors
-(`Message`, `MissingField`, `UnknownVariant`, `TypeMismatch`, …). The struct
+(a runtime language refused at registration), `Io` (a language crate's
+`from_reader` or `to_writer` could not read or write), plus serde/derive
+mapping errors (`Message`, `MissingField`, `UnknownVariant`, `TypeMismatch`,
+…).
+
+A mapping error below the document's root says where it happened: it is
+`Error::At { path, error }`, with the path spelled as a diagnostic's is, and
+displays as `servers[1].port: expected integer, found string`. Ask any error
+`path()` for where and `innermost()` for what, so a match need not care
+whether it was nested:
+
+```rust
+match fig_yaml::from_str::<Config>(src) {
+    Err(e) if matches!(e.innermost(), Error::MissingField { .. }) => {
+        eprintln!("{} is missing a field: {}", e.path().unwrap_or("the root"), e.innermost());
+    }
+    other => { /* … */ }
+}
+```
+
+Both the `derive` and the `serde` readers fill it. serde's derive buffers
+the content of an internally tagged or untagged enum, or of a `flatten`ed
+field, before it reads it, and an error inside that content is located at
+the field that holds it. The struct
 variants are `#[non_exhaustive]`, so a pattern on one ends in `..`
 (`Error::MissingField { field, .. }`), and each is built through its
 constructor (`Error::missing_field(field, ty)`), as the derive macros do.
@@ -768,6 +796,9 @@ they release deterministically when they go out of scope — normal Rust RAII:
 }
 ```
 
+Both are `Send`, so one can move into a spawned thread or be held across
+an `.await` in a task; neither is `Sync`.
+
 The one thing to watch is **borrows**: `Editor::source` and the
 comment reads return `&str` (or `Option<String>`) that borrow handle memory and
 are invalidated by the next mutation. Copy out with `.to_owned()` if you need the
@@ -782,7 +813,13 @@ text to outlive the next edit — the borrow checker enforces this for you.
 - *(serde)* `from_slice<T>(bytes, format) -> Result<T>` — deserialize any format.
 - *(serde)* `to_value<T>(&value) -> Result<Value>` — build a `Value` from any `Serialize`.
 - `language::register_library(fig_<name>_register)` — what each language crate's `register()` is.
-- *(fig-yaml, serde)* `fig_yaml::from_str<T>(s)` / `fig_yaml::to_string(&value)` — YAML text.
+
+**Each language crate** (`fig_json`, `fig_yaml`, …)
+
+- `format() -> Result<Format>` — its format, registered the first time.
+- `register() -> Result<Format>` — register it (again: idempotent).
+- *(serde, default)* `from_str` / `from_slice` / `from_reader` — read a typed value.
+- *(serde, default)* `to_string` / `to_vec` / `to_writer` — write one.
 
 **Types**
 

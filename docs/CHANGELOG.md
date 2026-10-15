@@ -246,6 +246,7 @@ and no regeneration can reach a released section.
 - **build** — fig's C libraries are position-independent on every target ([`52c8161`](https://github.com/diaryx-org/fig/commit/52c8161c3d44d75859e57549de5ca3216fa836f7))
 - **kit** — RowWriter.finish leaves the finished table's facts in node order and its links naming the new rows ([`4cf36b1`](https://github.com/diaryx-org/fig/commit/4cf36b19582d50dcbd02de48da1939ff82862209))
 - **kit** — the JavaScript table's finish leaves its regions and mentions in node order ([`af57268`](https://github.com/diaryx-org/fig/commit/af572688c5a3b35d423cace8eb5e8735729307a8))
+- **typescript** — the JavaScript twins spell an infinite or NaN float as the compiled printers do ([`583f45c`](https://github.com/diaryx-org/fig/commit/583f45c6322c54c70977ad75a46d1e06a106aec1))
 
 ### Changed
 
@@ -769,6 +770,18 @@ and no regeneration can reach a released section.
   byte string, not a string under a custom tag: converting it to JSON,
   TOML or plist used to be refused ("a custom YAML tag") and now succeeds,
   and `fig get` of it prints its base64 with whitespace removed.
+
+- `@diaryx/fig/kit/number`'s `text` respells an
+  infinite or NaN lexeme in the spelling's words, and throws a
+  `LanguageError` (`Refusal.NonFiniteNumber`) for `N.JSON` or any
+  spelling without `nonFinite`; it used to return the lexeme, or a
+  canonicalized `0.NaN`.
+
+- the JavaScript JSON and JSONC languages refuse to
+  write an infinite or NaN float (`unsupported format`), where they wrote
+  invalid JSON; the YAML, JSON5, TOML and ZON languages write one as
+  `.inf`/`-.inf`/`.nan`, `Infinity`/`-Infinity`/`NaN` and
+  `inf`/`-inf`/`nan`, where they wrote the source's spelling.
 
 <!-- git-cliff:end -->
 

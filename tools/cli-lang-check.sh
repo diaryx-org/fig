@@ -23,8 +23,9 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 
 # Built from this tree's core, like the Rust tests (see checks.zig).
-(cd "$root/bindings/rust" && FIG_SYS_FORCE_SOURCE=1 cargo build --quiet --features helper --example tinykv_helper)
+(cd "$root/bindings/rust" && FIG_SYS_FORCE_SOURCE=1 cargo build --quiet --features helper --example tinykv_helper --example kit_dotenv_helper)
 helper="$root/bindings/rust/target/debug/examples/tinykv_helper"
+kit_dotenv="$root/bindings/rust/target/debug/examples/kit_dotenv_helper"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -187,5 +188,15 @@ if "$fig" lang list 2>/dev/null | grep -q '^  plist  *not built in'; then
     set -e
     [ "$status" -ne 0 ] || fail "a format this build does not bundle was read with no language configured for it"
 fi
+
+# dotenv written with `fig::kit` holds to the compiled dotenv, table for
+# table, over every dotenv twin fixture: what a language written with the
+# kit in any binding is held to.
+printf 'language[]\n> name = kit-dotenv\n> extensions = [kenv]\n> command = [%s]\n' "$kit_dotenv" > kit.figl
+fixtures="$root/bindings/typescript/test/fixtures/dotenv"
+out="$(FIG_LANGUAGES="$tmp/kit.figl" "$fig" lang check kit-dotenv --against dotenv "$fixtures"/*.env 2>&1)" ||
+    fail "kit-dotenv is not the compiled dotenv: $out"
+n="$(printf '%s\n' "$out" | grep -c 'same table as `dotenv`')"
+[ "$n" -ge "$(ls "$fixtures"/*.env | wc -l)" ] || fail "kit-dotenv was not held to every fixture: $out"
 
 echo "cli-lang-check: the CLI reads, edits, converts and checks through a configured helper"

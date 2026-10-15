@@ -307,7 +307,30 @@ The structure is Rust of its own:
   entries with `put(map, key, value, DuplicatePolicy::LastValue)` — the
   repeated key keeps its first place and takes the last value, as every
   flat format does — and `finish(root)` returns the table in pre-order,
-  every comment, region and mention moved to its node's new row.
+  every comment, region and mention moved to its node's new row;
+- `kit::tree`: `Node`s that hold their children and comments — a parser
+  whose functions return the subtree they read builds these, and
+  `tree::rows(&root)` lays them out as the table;
+- `kit::scan`: a `Scanner` over the input whose position is a byte offset
+  (`lit`, `take_while`, `find`, `same_line`, `fail`), and a `Cursor` over a
+  token list;
+- `kit::grammar`: combinators, so a format is a description. A rule runs
+  over the scanner and a `RowWriter` and answers a span or the row it
+  wrote; `entry`, `map` and `sequence` bind each comment as the trivia
+  passes (trailing on the last node when on its line, else leading the
+  next key, else dangling on the container), and put entries by their
+  duplicate policy; `document` makes the `Grammar` whose `parse` a
+  `Language` returns. Options are set by chained setters:
+  `EntryOpts::new(key).sep(g::lit("=")).value(value)`;
+- `kit::print`: an `Index` over the table a `print` receives — each row's
+  children, a keyvalue's `key` and `value`, its comments by slot — and a
+  `Writer` that knows the `PrintOptions` and writes comment lines.
+
+`examples/kit_dotenv_helper` is dotenv written with all of it, about 200
+lines, and is what a new language is best written against: its tests hold
+it to fig's compiled dotenv table for table and byte for byte, and
+`tools/cli-lang-check.sh` holds it there again through `fig lang check
+kit-dotenv --against dotenv`.
 
 `register` returns a `Vec<Format>`, one per dialect the description
 declares, in declaration order. The core validates the description by the

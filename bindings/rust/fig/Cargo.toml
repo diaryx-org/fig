@@ -87,3 +87,10 @@ fig-nestedtext = { path = "../../../languages/nestedtext", default-features = fa
 [[example]]
 name = "tinykv_helper"
 required-features = ["helper"]
+
+# dotenv written with `fig::kit`, served the same way, and held to the
+# compiled dotenv by `tools/cli-lang-check.sh` and `tests/kit_dotenv.rs`.
+[[example]]
+name = "kit_dotenv_helper"
+path = "examples/kit_dotenv_helper/main.rs"
+required-features = ["helper"]

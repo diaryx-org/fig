@@ -3,13 +3,17 @@
 //! the row writer, whose finished table is compared as the helper wire
 //! spells one.
 
+mod kit_common;
+
 use std::path::PathBuf;
+
+use kit_common::{EXT_NAMES, ext_name, wire};
 
 use fig::kit::rows::{DuplicatePolicy, RowWriter};
 use fig::kit::{datetime, json_string, literal, number, xml};
-use fig::language::{CommentForm, CommentSlot, MentionKind, NodeKind, NodeRow, NodeTable};
-use fig::{ExtKind, Span};
-use serde_json::{Map, Value, json};
+use fig::language::{CommentForm, CommentSlot, MentionKind, NodeKind, NodeRow};
+use fig::Span;
+use serde_json::{Value, json};
 
 fn testdata() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../kit/testdata")
@@ -29,21 +33,6 @@ fn cases<'a>(fx: &'a Value, name: &str) -> &'a Vec<Value> {
 
 fn s(v: &Value) -> &str {
     v.as_str().unwrap()
-}
-
-const EXT_NAMES: [(&str, ExtKind); 4] = [
-    ("offset_datetime", ExtKind::OffsetDateTime),
-    ("local_datetime", ExtKind::LocalDateTime),
-    ("local_date", ExtKind::LocalDate),
-    ("local_time", ExtKind::LocalTime),
-];
-
-fn ext_name(k: ExtKind) -> &'static str {
-    EXT_NAMES
-        .iter()
-        .find(|(_, e)| *e == k)
-        .map(|(n, _)| *n)
-        .unwrap_or("other")
 }
 
 fn spelling(names: &Value) -> number::Spelling {
@@ -245,105 +234,6 @@ fn span(v: &Value) -> Span {
 
 fn id(v: &Value) -> Option<u32> {
     v.as_u64().map(|n| n as u32)
-}
-
-fn span_json(s: Span) -> Value {
-    json!([s.start, s.end])
-}
-
-/// `t` as the helper wire spells a table.
-fn wire(t: &NodeTable) -> Value {
-    let rows: Vec<Value> = t
-        .rows
-        .iter()
-        .map(|r| {
-            let mut o = Map::new();
-            let kind = match r.kind {
-                NodeKind::Null => "null",
-                NodeKind::Bool => "bool",
-                NodeKind::Int => "int",
-                NodeKind::Float => "float",
-                NodeKind::String => "string",
-                NodeKind::Sequence => "sequence",
-                NodeKind::Mapping => "mapping",
-                NodeKind::KeyValue => "keyvalue",
-                NodeKind::Alias => "alias",
-                _ => "unknown",
-            };
-            o.insert("kind".into(), json!(kind));
-            if let Some(e) = r.ext_kind {
-                o.insert("ext_kind".into(), json!(ext_name(e)));
-            }
-            o.insert("parent".into(), json!(r.parent));
-            if let Some(s) = r.span {
-                o.insert("span".into(), span_json(s));
-            }
-            if let Some(t) = &r.text {
-                o.insert("text".into(), json!(t));
-            }
-            if let Some(a) = &r.anchor {
-                o.insert("anchor".into(), json!(a));
-            }
-            if let Some(s) = r.anchor_span {
-                o.insert("anchor_span".into(), span_json(s));
-            }
-            if let Some(a) = &r.tag {
-                o.insert("tag".into(), json!(a));
-            }
-            if let Some(s) = r.tag_span {
-                o.insert("tag_span".into(), span_json(s));
-            }
-            if let Some(s) = r.marker {
-                o.insert("marker".into(), span_json(s));
-            }
-            if let Some(s) = r.sep {
-                o.insert("sep".into(), span_json(s));
-            }
-            if let Some(a) = &r.item_sep {
-                o.insert("item_sep".into(), json!(a));
-            }
-            if r.open {
-                o.insert("open".into(), json!(true));
-            }
-            Value::Object(o)
-        })
-        .collect();
-    let regions: Vec<Value> = t
-        .regions
-        .iter()
-        .map(|r| json!({"node": r.node, "start": r.span.start, "end": r.span.end}))
-        .collect();
-    let mentions: Vec<Value> = t
-        .mentions
-        .iter()
-        .map(|m| {
-            let kind = match m.kind {
-                MentionKind::Header => "header",
-                MentionKind::Entry => "entry",
-                MentionKind::Index => "index",
-                _ => "append",
-            };
-            json!({"node": m.node, "span": span_json(m.span), "kind": kind})
-        })
-        .collect();
-    let comments: Vec<Value> = t
-        .comments
-        .iter()
-        .map(|c| {
-            let slot = match c.slot {
-                CommentSlot::Leading => "leading",
-                CommentSlot::Trailing => "trailing",
-                CommentSlot::Dangling => "dangling",
-            };
-            let style = if c.style == CommentForm::Block {
-                "block"
-            } else {
-                "line"
-            };
-            json!({"node": c.node, "slot": slot, "style": style, "text": c.text})
-        })
-        .collect();
-    json!({"rows": rows, "regions": regions, "mentions": mentions, "comments": comments})
 }
 
 fn node_kind(name: &str) -> NodeKind {

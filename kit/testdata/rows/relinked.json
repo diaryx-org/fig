@@ -1,0 +1,59 @@
+{
+  "about": "Every scalar kind and side fact, with siblings relinked by first and next rather than appended: a sequence's items written last to first, and an entry put before one written earlier. Comments come out by node and slot, a node's second trailing comment replaces its first, and facts on an unreachable row are dropped.",
+  "source": "x: &n 1\ny: [true, 2.5, 2026-10-14, *n]  # end\n",
+  "ops": [
+    ["add", "mapping", null, [0, 40]],
+    ["add", "sequence", null, [11, 33], {"item_sep": ", ", "open": true}],
+    ["add", "alias", null, [29, 31], {"text": "n"}],
+    ["add", "string", null, [23, 27], {"text": "2026-10-14", "ext_kind": "local_date"}],
+    ["add", "float", null, [17, 20], {"text": "2.5"}],
+    ["add", "bool", null, [12, 16], {"text": "true"}],
+    ["first", 1, 5],
+    ["next", 5, 4],
+    ["next", 4, 3],
+    ["next", 3, 2],
+    ["add", "string", null, [8, 9], {"text": "y"}],
+    ["add", "keyvalue", null, [8, 33], {"sep": [9, 10]}],
+    ["append", 7, 6],
+    ["append", 7, 1],
+    ["add", "string", null, [0, 1], {"text": "x"}],
+    ["add", "int", null, [6, 7], {"text": "1", "anchor": "n", "anchor_span": [3, 5]}],
+    ["add", "keyvalue", null, [0, 7], {"sep": [1, 2]}],
+    ["append", 10, 8],
+    ["append", 10, 9],
+    ["first", 0, 10],
+    ["next", 10, 7],
+    ["add", "null", null, [0, 0]],
+    ["comment", 7, "trailing", "line", "first"],
+    ["comment", 7, "trailing", "line", "end"],
+    ["comment", 0, "dangling", "line", "tail"],
+    ["comment", 10, "leading", "block", "lead"],
+    ["comment", 11, "leading", "line", "gone"],
+    ["region", 7, 8, 33],
+    ["mention", 7, [8, 9], "entry"],
+    ["mention", 11, [0, 0], "header"],
+    ["finish", 0]
+  ],
+  "table": {
+    "rows": [
+      {"kind": "mapping", "parent": null, "span": [0, 40]},
+      {"kind": "keyvalue", "parent": 0, "span": [0, 7], "sep": [1, 2]},
+      {"kind": "string", "parent": 1, "span": [0, 1], "text": "x"},
+      {"kind": "int", "parent": 1, "span": [6, 7], "text": "1", "anchor": "n", "anchor_span": [3, 5]},
+      {"kind": "keyvalue", "parent": 0, "span": [8, 33], "sep": [9, 10]},
+      {"kind": "string", "parent": 4, "span": [8, 9], "text": "y"},
+      {"kind": "sequence", "parent": 4, "span": [11, 33], "item_sep": ", ", "open": true},
+      {"kind": "bool", "parent": 6, "span": [12, 16], "text": "true"},
+      {"kind": "float", "parent": 6, "span": [17, 20], "text": "2.5"},
+      {"kind": "string", "ext_kind": "local_date", "parent": 6, "span": [23, 27], "text": "2026-10-14"},
+      {"kind": "alias", "parent": 6, "span": [29, 31], "text": "n"}
+    ],
+    "regions": [{"node": 4, "start": 8, "end": 33}],
+    "mentions": [{"node": 4, "span": [8, 9], "kind": "entry"}],
+    "comments": [
+      {"node": 0, "slot": "dangling", "style": "line", "text": "tail"},
+      {"node": 1, "slot": "leading", "style": "block", "text": "lead"},
+      {"node": 4, "slot": "trailing", "style": "line", "text": "end"}
+    ]
+  }
+}

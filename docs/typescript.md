@@ -602,7 +602,14 @@ The languages are written with `@diaryx/fig/kit`, which the package ships
 for your own formats too:
 
 - `@diaryx/fig/kit`: the node table, a tree that lays itself out as one, and
-  a byte-offset scanner;
+  a byte-offset scanner. A table's rows can be written in pre-order, each
+  naming its parent, or in any order: write a row with no parent, link it
+  with `t.append(parent, child)`, `t.first(id, child)` and
+  `t.next(id, next)`, put an entry in a mapping by a duplicate policy
+  with `t.put(map, key, value, policy)`, and call `t.finish(root)` once,
+  which puts the rows in pre-order and moves every comment, region and
+  mention to its node's new row. The other kits' row writers do the same,
+  and `kit/testdata/rows/` holds them all to the same tables;
 - `@diaryx/fig/kit/grammar`: combinators, so a format is a description and
   its spans, comment binding and duplicate-key policy follow from it;
 - `@diaryx/fig/kit/xml`: the XML tokenizer;

@@ -1,0 +1,40 @@
+{
+  "about": "dotenv's repeated key through put: the first entry keeps its place, its key and its span and takes the last value; the rows a repeat leaves unlinked, and the comments on them, are dropped. The table is the Zig dotenv's for this source (bindings/typescript/test/fixtures/dotenv/duplicate-keys).",
+  "source": "A=1\nA=2 # second\n# lead\nA=3\nB=x\n",
+  "ops": [
+    ["add", "mapping", null, [0, 32]],
+    ["add", "string", null, [0, 1], {"text": "A"}],
+    ["add", "string", null, [2, 3], {"text": "1"}],
+    ["put", 0, 1, 2, "last_value"],
+    ["add", "string", null, [4, 5], {"text": "A"}],
+    ["add", "string", null, [6, 7], {"text": "2"}],
+    ["put", 0, 4, 5, "last_value"],
+    ["comment", 5, "trailing", "line", "second"],
+    ["add", "string", null, [24, 25], {"text": "A"}],
+    ["comment", 6, "leading", "line", "lead"],
+    ["add", "string", null, [26, 27], {"text": "3"}],
+    ["put", 0, 6, 7, "last_value"],
+    ["add", "string", null, [28, 29], {"text": "B"}],
+    ["add", "string", null, [30, 31], {"text": "x"}],
+    ["put", 0, 8, 9, "last_value"],
+    ["child_by_key", 0, "B", 10],
+    ["child_by_key", 0, "A", 3],
+    ["child_by_key", 0, "C", null],
+    ["finish", 0]
+  ],
+  "puts": [[3, false], [3, true], [3, true], [10, false]],
+  "table": {
+    "rows": [
+      {"kind": "mapping", "parent": null, "span": [0, 32]},
+      {"kind": "keyvalue", "parent": 0, "span": [0, 3]},
+      {"kind": "string", "parent": 1, "span": [0, 1], "text": "A"},
+      {"kind": "string", "parent": 1, "span": [26, 27], "text": "3"},
+      {"kind": "keyvalue", "parent": 0, "span": [28, 31]},
+      {"kind": "string", "parent": 4, "span": [28, 29], "text": "B"},
+      {"kind": "string", "parent": 4, "span": [30, 31], "text": "x"}
+    ],
+    "regions": [],
+    "mentions": [],
+    "comments": []
+  }
+}

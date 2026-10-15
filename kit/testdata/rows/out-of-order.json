@@ -1,0 +1,31 @@
+{
+  "about": "Leaves first, as a bottom-up parser writes them: finish puts the rows in pre-order, moves a marker and a comment with their nodes, and drops a row nothing links, with its comment.",
+  "source": "{a: [x]}",
+  "ops": [
+    ["add", "string", null, [5, 6], {"text": "x", "marker": [4, 5]}],
+    ["add", "sequence", null, [4, 7]],
+    ["append", 1, 0],
+    ["add", "string", null, [1, 2], {"text": "a"}],
+    ["add", "keyvalue", null, [1, 7]],
+    ["append", 3, 2],
+    ["append", 3, 1],
+    ["add", "mapping", null, [0, 8]],
+    ["append", 4, 3],
+    ["add", "null", null, [0, 0]],
+    ["comment", 5, "leading", "line", "gone"],
+    ["comment", 3, "leading", "line", "on a"],
+    ["finish", 4]
+  ],
+  "table": {
+    "rows": [
+      {"kind": "mapping", "parent": null, "span": [0, 8]},
+      {"kind": "keyvalue", "parent": 0, "span": [1, 7]},
+      {"kind": "string", "parent": 1, "span": [1, 2], "text": "a"},
+      {"kind": "sequence", "parent": 1, "span": [4, 7]},
+      {"kind": "string", "parent": 3, "span": [5, 6], "text": "x", "marker": [4, 5]}
+    ],
+    "regions": [],
+    "mentions": [],
+    "comments": [{"node": 1, "slot": "leading", "style": "line", "text": "on a"}]
+  }
+}

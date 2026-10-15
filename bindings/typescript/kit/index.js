@@ -55,6 +55,16 @@ export function isFailure(e) {
 // ── the node table ────────────────────────────────────────────────────────
 
 export class Table {
+  // The links a row writer keeps beside the rows (`append`, `next`,
+  // `first`), which `finish` reads: each row's first child, its next
+  // sibling, and a container's last child, by row id. Private, so they
+  // never reach the wire.
+  #first = [];
+  #next = [];
+  #last = [];
+  // `put`'s entries, by mapping and key text.
+  #keyed = new Map();
+
   constructor() {
     this.rows = [];
     this.comments = [];
@@ -80,7 +90,145 @@ export class Table {
       }
     }
     this.rows.push(row);
+    this.#first[id] = null;
+    this.#next[id] = null;
+    this.#last[id] = null;
+    if (parent !== null && parent !== undefined) this.append(parent, id);
     return id;
+  }
+
+  // ── writing rows in any order ───────────────────────────────────────────
+  // A row given a parent is appended to it as it is written, so rows
+  // written in pre-order need nothing more. A parser that meets nodes in
+  // another order writes a row with no parent, links it with `append`,
+  // `next` and `first`, and calls `finish` once at the end, which puts the
+  // rows in pre-order from the root and moves every comment, region and
+  // mention to its node's new row. The kit's other row writers — Zig's
+  // `RowWriter`, Rust's `fig::kit::rows`, C's `fig_table_finish` — do the
+  // same, held to the same fixtures (`kit/testdata/rows/`).
+
+  /** Link row `child` as row `parent`'s last child, naming `parent` as
+   *  its parent. A keyvalue's first child is its key, its second its
+   *  value. */
+  append(parent, child) {
+    const last = this.#last[parent];
+    if (last === null || last === undefined) this.#first[parent] = child;
+    else this.#next[last] = child;
+    this.#next[child] = null;
+    this.#last[parent] = child;
+    this.rows[child].parent = parent;
+  }
+
+  /** Link row `next` after row `id` among its siblings, or end the chain
+   *  at `id` when `next` is null. */
+  next(id, next) {
+    this.#next[id] = next ?? null;
+  }
+
+  /** Make row `child` container `id`'s first child, or empty it when
+   *  `child` is null. Its later children follow through `next`. */
+  first(id, child) {
+    this.#first[id] = child ?? null;
+    if (child === null || child === undefined) this.#last[id] = null;
+  }
+
+  /** Put the entry `key`: `value` in mapping `map`, which takes its
+   *  entries through `put` alone, by `policy`: "last_value" (the default:
+   *  a repeated key's first entry keeps its place, its key and its span,
+   *  and takes the later value), "first_value" (the later entry is
+   *  dropped), "keep" (both stay) or "error" (refused, at the later key).
+   *  A new entry's span runs from its key's start to its value's end.
+   *  Returns `{entry, repeat}`: the keyvalue row that holds the value
+   *  afterwards, and whether the key was already there. The rows a repeat
+   *  leaves unlinked are dropped by `finish`. */
+  put(map, key, value, policy = "last_value") {
+    const name = this.rows[key].text;
+    const k = map + "\u0000" + name;
+    const existing = name === undefined ? undefined : this.#keyed.get(k);
+    if (existing !== undefined && policy !== "keep") {
+      if (policy === "last_value") {
+        const kv = existing;
+        this.#next[this.#first[kv]] = value;
+        this.#next[value] = null;
+        this.#last[kv] = value;
+        this.rows[value].parent = kv;
+        return { entry: kv, repeat: true };
+      }
+      if (policy === "first_value") return { entry: existing, repeat: true };
+      if (policy === "error") fail("duplicate key `" + name + "`", this.rows[key].span?.[0]);
+      throw new Error("unknown duplicate policy `" + String(policy) + "`");
+    }
+    const kspan = this.rows[key].span;
+    const vspan = this.rows[value].span;
+    const kv = this.row("keyvalue", map, kspan && vspan ? [kspan[0], vspan[1]] : undefined);
+    this.append(kv, key);
+    this.append(kv, value);
+    if (name !== undefined && existing === undefined) this.#keyed.set(k, kv);
+    return { entry: kv, repeat: existing !== undefined };
+  }
+
+  /** Mapping `map`'s entry whose key's text is `key`, or null: a walk of
+   *  its children as they are linked. */
+  childByKey(map, key) {
+    for (let e = this.#first[map]; e !== null && e !== undefined; e = this.#next[e]) {
+      const k = this.#first[e];
+      if (this.rows[e].kind === "keyvalue" && k !== null && k !== undefined && this.rows[k].text === key) return e;
+    }
+    return null;
+  }
+
+  /** Put the rows in pre-order from row `root`, as a parse returns them:
+   *  the root first, each row after its parent and naming it, a
+   *  container's children in their linked order, a keyvalue's key before
+   *  its value. Every comment, region and mention moves to its node's new
+   *  row; a row the tree does not reach, and what it carries, is dropped.
+   *  Comments are ordered by node and slot (leading, trailing, dangling),
+   *  keeping their order within a slot, and a node given two trailing
+   *  comments keeps the last. Rows already in pre-order stay where they
+   *  are. The links are spent: write no more rows after `finish`. */
+  finish(root) {
+    const rows = this.rows;
+    const place = new Array(rows.length).fill(-1);
+    const order = [];
+    const parentOf = [];
+    const stack = [[root, null]];
+    // A child's next sibling goes on the stack before its own first child,
+    // so a subtree is written whole before the sibling after it.
+    while (stack.length > 0) {
+      const [id, parent] = stack.pop();
+      if (parent !== null) {
+        const sib = this.#next[id];
+        if (sib !== null && sib !== undefined) stack.push([sib, parent]);
+      }
+      if (place[id] !== -1) continue;
+      place[id] = order.length;
+      order.push(id);
+      parentOf.push(parent);
+      const kind = rows[id].kind;
+      const first = this.#first[id];
+      if ((kind === "mapping" || kind === "sequence" || kind === "keyvalue") && first !== null && first !== undefined) {
+        stack.push([first, id]);
+      }
+    }
+    this.rows = order.map((old, i) => {
+      const r = rows[old];
+      r.parent = parentOf[i] === null ? null : place[parentOf[i]];
+      return r;
+    });
+    const moved = (list) => list.filter((f) => place[f.node] !== -1 && place[f.node] !== undefined).map((f) => ({ ...f, node: place[f.node] }));
+    const SLOT = { leading: 0, trailing: 1, dangling: 2 };
+    const cs = moved(this.comments)
+      .map((c, i) => [c, i])
+      .sort(([a, i], [b, j]) => a.node - b.node || SLOT[a.slot] - SLOT[b.slot] || i - j)
+      .map(([c]) => c);
+    this.comments = cs.filter((c, i) => !(c.slot === "trailing" && cs[i + 1]?.node === c.node && cs[i + 1]?.slot === "trailing"));
+    this.regions = moved(this.regions);
+    this.mentions = moved(this.mentions);
+    this.#first = [];
+    this.#next = [];
+    this.#last = [];
+    this.#keyed = new Map();
+    return this;
   }
 
   /** Bind a comment to row `node`. `slot` is "leading", "trailing" or
@@ -111,8 +259,9 @@ export class Table {
   }
 }
 
-/** A new, empty node table. Rows are added in pre-order: a container before
- *  its children, a keyvalue before its key and then its value. */
+/** A new, empty node table. Rows are added in pre-order — a container
+ *  before its children, a keyvalue before its key and then its value — or
+ *  in any order, linked, and then `finish`ed. */
 export function table() {
   return new Table();
 }

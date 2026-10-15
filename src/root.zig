@@ -75,6 +75,7 @@ test {
     _ = @import("deserialize.zig");
     _ = @import("c_api.zig");
     _ = @import("contract/contract_test.zig");
+    _ = @import("contract/kit_rows_test.zig");
     // The kit's tests are its own package's (`kit/build.zig`), which
     // `zig build test` runs as a compilation of their own.
     //

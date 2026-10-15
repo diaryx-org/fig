@@ -42,6 +42,8 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
 
     // A run step that will run the test executable.
     const run_mod_tests = b.addRunArtifact(mod_tests);
+    // The kit fixture tests read `kit/testdata/` from the build root.
+    run_mod_tests.setCwd(b.path("."));
 
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,

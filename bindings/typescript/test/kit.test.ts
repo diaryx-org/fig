@@ -1,5 +1,5 @@
 // The JavaScript kit's rules, which answer through the Zig kit's
-// WebAssembly module (`kit/zig.js`): that the bridge carries each input
+// WebAssembly module (`kit/rules.js`): that the bridge carries each input
 // and answer whole, whatever its length or its characters. The rules
 // themselves are the Zig kit's, and its own tests hold them.
 import { test } from "node:test";

@@ -1,0 +1,94 @@
+[workspace]
+resolver = "3"
+# fig in Rust, one workspace:
+#
+# - `fig-kit` (rust/fig-kit): what the languages share, and fig's error type.
+#   It depends on nothing.
+# - the ten languages (languages/<name>/, `fig-json`, …): each language's
+#   implementation, in its package's `rust/`, on `fig-kit` alone, plus the `fig` binding's typed API behind their default `fig`
+#   feature.
+# - `fig-core` (rust/fig-core): the core (editor, registry, conversion, the
+#   helper wire, the C ABI's logic), on `fig-kit`. It carries no language:
+#   its registry starts empty, and a program registers the languages it uses.
+# - `fig` and `fig-macros`: the published binding, on `fig-core`.
+# - `fig-cli` (`fig`, `fig-lsp`), `fig-capi` (the C ABI) and `fig-conform`
+#   (fig-conformance's adapter), each registering all ten at startup.
+# - `fig-abi` (fig.h's records), `fig-kit-capi` (the kit's `fig_kit_*`
+#   exports, and alone the `fig-kit.wasm` the TypeScript kit answers
+#   through) and `fig-lang-export` (one language as a C library or wasm
+#   module of its own, for its npm package).
+# - `fig-fuzz` (the fuzz targets' bodies; `fuzz/` runs them under
+#   cargo-fuzz) and `xtask` (`cargo xtask <task>`: the release guards and
+#   the one pre-release gate, `cargo xtask ci`).
+#
+# Nothing here needs a C toolchain, but `cargo xtask abi-check`'s probes.
+members = [
+    "bindings/rust/fig",
+    "bindings/rust/fig-macros",
+    "languages/*",
+    "rust/fig-kit",
+    "rust/fig-core",
+    "rust/fig-cli",
+    "rust/fig-abi",
+    "rust/fig-capi",
+    "rust/fig-kit-capi",
+    "rust/fig-lang-export",
+    "rust/fig-conform",
+    "rust/fig-fuzz",
+    "rust/xtask",
+]
+# The nushell plugin is a workspace of its own, on its own version.
+exclude = ["bindings/nushell", "fuzz"]
+
+[workspace.package]
+version = "6.1.0"
+edition = "2024"
+# The oldest toolchain the workspace builds on. Edition 2024 alone needs 1.85;
+# fig-macros writes let chains (`if a && let Some(x) = …`), stable since 1.88.
+# Checked with `cargo +1.88 test --workspace --all-features`; 1.85 refuses the
+# let chains.
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+
+# Shared across the workspace so every crate pins one set of versions. The
+# internal `fig*` crates all share fig's one version, `[workspace.package]`'s;
+# `dx release` and `cargo xtask version-sync` rewrite these `version = "…"`
+# fields in lockstep, and `cargo xtask version-check` fails on drift.
+[workspace.dependencies]
+fig-macros = { path = "bindings/rust/fig-macros", version = "6.1.0" }
+fig = { path = "bindings/rust/fig", version = "6.1.0" }
+# The kit, the core and fig's ten languages, in Rust. A language without its
+# default features is the language alone, on `fig-kit` (what fig-core's
+# tests and the CLI take); a crate that wants its `register()` and typed
+# API asks for its `fig` or `serde` feature.
+fig-kit = { path = "rust/fig-kit", version = "6.1.0" }
+fig-core = { path = "rust/fig-core", version = "6.1.0" }
+fig-abi = { path = "rust/fig-abi" }
+fig-kit-capi = { path = "rust/fig-kit-capi" }
+fig-json = { path = "languages/json", version = "6.1.0", default-features = false }
+fig-yaml = { path = "languages/yaml", version = "6.1.0", default-features = false }
+fig-toml = { path = "languages/toml", version = "6.1.0", default-features = false }
+fig-zon = { path = "languages/zon", version = "6.1.0", default-features = false }
+fig-figl = { path = "languages/figl", version = "6.1.0", default-features = false }
+fig-ini = { path = "languages/ini", version = "6.1.0", default-features = false }
+fig-dotenv = { path = "languages/dotenv", version = "6.1.0", default-features = false }
+fig-properties = { path = "languages/properties", version = "6.1.0", default-features = false }
+fig-plist = { path = "languages/plist", version = "6.1.0", default-features = false }
+fig-nestedtext = { path = "languages/nestedtext", version = "6.1.0", default-features = false }
+# fig-cli's command line. `derive` for its declaration; the default
+# features (std, color, help, usage, error-context, suggestions) for the
+# usage errors and `--help` pages it prints.
+clap = { version = "4.6", features = ["derive"] }
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full", "extra-traits"] }
+
+# The WebAssembly modules the npm packages inline (fig.wasm, fig-kit.wasm,
+# each language's): small over fast.
+[profile.wasm]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

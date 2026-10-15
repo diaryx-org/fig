@@ -829,8 +829,10 @@ impl<'a> Tokenizer<'a> {
                 b':' => {
                     // A `:` is a value indicator (and so ends the scalar) when
                     // followed by whitespace/EOL or, in flow, a `,`/`]`/`}`.
-                    let next: u8 = if i + 1 < source.len() { source[i + 1] } else { 0 };
-                    if next == 0 || next == b' ' || next == b'\t' || next == b'\n' || next == b'\r' || next == b',' || next == b']' || next == b'}' {
+                    // EOF is `None`, not a sentinel byte: a literal NUL after the
+                    // `:` is scalar content, as `colon_is_indicator` agrees, so the
+                    // scan must not stop here without advancing.
+                    if matches!(source.get(i + 1), None | Some(b' ' | b'\t' | b'\n' | b'\r' | b',' | b']' | b'}')) {
                         break;
                     }
                     i += 1;
@@ -1646,6 +1648,15 @@ mod tests {
         test_tokenizer_error("'unterminated", err!(UnclosedString));
         test_tokenizer_error("\"unterminated", err!(UnclosedString));
         test_tokenizer_error("key: \"a\n  b", err!(UnclosedString));
+    }
+
+    #[test]
+    fn yaml_flow_colon_before_nul_is_scalar_content() {
+        // A NUL after a flow `:` once read as end of input in the plain-scalar
+        // scan but not in the indicator check, so neither consumed the `:` and
+        // tokenizing never finished.
+        test_tokenizer("{:\0", &[tok(FlowMapStart, 0, 1), tok(Scalar, 1, 3), tok(EndOfFile, 3, 3)]);
+        test_tokenizer("{a:\0}", &[tok(FlowMapStart, 0, 1), tok(Scalar, 1, 4), tok(FlowMapEnd, 4, 5), tok(EndOfFile, 5, 5)]);
     }
 
     #[test]

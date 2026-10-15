@@ -30,7 +30,7 @@ function withTempDir(fn) {
   }
 }
 
-// Format is `fig <version> "<epoch>"` — see src/cli/actions.zig's runVersion
+// Format is `fig <version> "<epoch>"` — see rust/fig-cli's `version` action
 // and docs/VERSIONING.md. Every artifact ships under fig's one version, so the
 // module this package carries has to report the package's own: a wasm left
 // over from another release fails here rather than on someone's machine.
@@ -73,7 +73,7 @@ test("relative paths resolve from a subdirectory (the '.' preopen)", () => {
 
 // The module compiles no format in: every one is a language of
 // `@diaryx/fig`, which bin/fig.mjs serves when the CLI asks for it by name
-// or by extension (src/cli/host_languages.zig).
+// or by extension (rust/fig-cli/src/host_languages.rs).
 test("every format is served, by its extension", () => {
   const files = {
     "a.json": '{"k": 1}',
@@ -142,7 +142,7 @@ test("a missing file exits non-zero with fig's own clean error, not a JS stack t
       // What this asserts is the SHAPE of fig's own diagnostic — its `error: `
       // prefix at the start of a line, naming the offending path — not the exact
       // wording of the reason. The wording is deliberately not pinned: this
-      // assertion was written as /error: FileNotFound/ (the raw Zig error name),
+      // assertion was written as /error: FileNotFound/ (the raw error name),
       // and when `dbc8dfc` replaced those names with human messages it started
       // matching nothing. Because the fig-wasi suite runs only at publish time
       // (`prepublishOnly`) and not in CI, that surfaced as a failed *release*

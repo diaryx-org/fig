@@ -1,7 +1,7 @@
-/* ABI probe (C). Compiled by `zig build abi-check` against the C ABI static
- * library to prove include/fig.h is valid, self-contained C that links. The
+/* ABI probe (C). Compiled by `cargo xtask abi-check` against the C ABI static
+ * library to prove fig.h is valid, self-contained C that links. The
  * twin abi_probe.cpp does the same under a C++ compiler (the header guards
- * `extern "C"`). Symbol presence is checked separately by tools/abi-check.zig. */
+ * `extern "C"`). Symbol presence is checked separately, against libfig.a's exports. */
 #include "fig.h"
 
 int main(void) {

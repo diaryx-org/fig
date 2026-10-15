@@ -1,0 +1,35 @@
+# cargo-fuzz's project: one libFuzzer binary per target in rust/fig-fuzz,
+# each a thin `fuzz_target!` over that crate's function of the same name.
+# A workspace of its own (the root workspace excludes it) because it builds
+# only on nightly, with cargo-fuzz's sanitizer flags, and `cargo test
+# --workspace` must not try. `cargo +nightly fuzz run <target>`; see
+# docs/testing.md.
+[package]
+name = "fig-fuzz-targets"
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+fig-fuzz = { path = "../rust/fig-fuzz" }
+
+[workspace]
+
+[[bin]]
+name = "detect"
+path = "fuzz_targets/detect.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "canonical_round_trip"
+path = "fuzz_targets/canonical_round_trip.rs"
+test = false
+doc = false
+bench = false

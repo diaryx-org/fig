@@ -1,12 +1,9 @@
 name: Release (crate)
 # Publish the crates.io crates (fig-kit and fig-core, from rust/; fig and
 # fig-macros, from bindings/rust; and each language's crate, from
-# languages/<name>/), all pure Rust and members of bindings/rust's workspace.
-# There is
-# no Zig package step: Zig has no central registry — consumers `zig fetch`
-# this repo at a git tag, so pushing the tag *is* the Zig release. The macOS
-# CLI binary + Homebrew tap bump is a separate workflow (homebrew.yml);
-# Linux/Windows/WASI CLI binaries are release-binaries.yml.
+# languages/<name>/), all members of the repository's one Cargo workspace.
+# The macOS and Linux CLI binaries + Homebrew tap bump are a separate
+# workflow (homebrew.yml); Windows/WASI CLI binaries are release-binaries.yml.
 #
 # The two npm packages (bindings/typescript's @diaryx/fig and
 # bindings/wasi's @diaryx/fig-wasi) live in their own files —
@@ -15,11 +12,12 @@ name: Release (crate)
 # independently of the others.
 #
 # Runs on the `v*.*.*` tag, like every release workflow here — one tag
-# releases every artifact at fig's one version, and is also the tag Zig
-# consumers `zig fetch` (see "Release tagging" in docs/VERSIONING.md) — and by
-# hand via `workflow_dispatch`, which runs it unconditionally. The crate carries the `license`, `description`, and `readme` crates.io
-# needs (the README and license text are vendored in from the repo root by
-# the `vendor-rust` step that runs before `cargo publish`).
+# releases every artifact at fig's one version (see "Release tagging" in
+# docs/VERSIONING.md) — and by hand via `workflow_dispatch`, which runs it
+# unconditionally. The crate carries the `license`, `description`, and
+# `readme` crates.io needs (the README and license text are vendored in from
+# the repo root by the `cargo xtask vendor` step that runs before `cargo
+# publish`).
 #
 # It publishes the version Cargo.toml carries, which the checks below hold to
 # the tag, and no-ops if that exact version is already out.
@@ -41,42 +39,37 @@ jobs:
     steps:
     - uses: actions/checkout@v7
       with: { fetch-depth: 0 }
-    # For `zig build version-check` and `vendor-rust`; the crates themselves
-    # are pure Rust.
-    - uses: mlugg/setup-zig@v2
-      with: { version: 0.17.0 }
     - uses: dtolnay/rust-toolchain@stable
-    # Every file carrying fig's one version agrees with build.zig.zon, and the
-    # tag names that version: a tag that does not would publish a package under
-    # a number the release did not cut.
+    # Every file carrying fig's one version agrees with the workspace's
+    # Cargo.toml, and the tag names that version: a tag that does not would
+    # publish a package under a number the release did not cut.
     - name: Verify every file carries the one version
-      run: zig build version-check
+      run: cargo xtask version-check
     - name: Verify tag matches the version
       if: github.ref_type == 'tag'
       run: |
-        want=$(sed -n 's/^    \.version = "\([^"]*\)",$/\1/p' build.zig.zon)
+        want=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\([^"]*\)"$/\1/p' Cargo.toml)
         tag="${GITHUB_REF_NAME#v}"
         if [ "$want" != "$tag" ]; then
-          echo "::error::tag $GITHUB_REF_NAME ($tag) != build.zig.zon version ($want)"
+          echo "::error::tag $GITHUB_REF_NAME ($tag) != Cargo.toml version ($want)"
           exit 1
         fi
         echo "version $want matches tag $GITHUB_REF_NAME"
     # --all-features so the serde- and derive-gated integration tests also run
     # (they are not in the default feature set).
     - run: cargo test --workspace --all-features --locked
-      working-directory: bindings/rust
     # Fans the root LICENSE files out into each crate dir (and the README into
     # fig's) — must run before publishing so the license text is present in
     # every packaged tarball.
     - name: Vendor the licenses into the crates
-      run: zig build vendor-rust
+      run: cargo xtask vendor
     # Publish the whole graph bottom-up — crates.io rejects an upload whose
     # dependencies aren't already indexed, so the order is:
     # fig-kit -> fig-core -> fig-macros -> fig -> each language (fig-json, ...),
     # which depends on fig-kit and, behind its default `fig` feature, on fig
     # (fig-core's and fig's dev-dependencies on the languages are by path alone,
-    # so `cargo publish` drops them.) fig-cli, fig-capi and fig-conform are not
-    # published.
+    # so `cargo publish` drops them.) fig-cli, fig-capi, fig-conform and the
+    # rest of the workspace's tooling are not published.
     # Two hazards this loop survives, both worst on the FIRST release (all crates
     # brand new):
     # * crates.io throttles *new-crate* creation to a small burst (~5) then a slow
@@ -87,7 +80,6 @@ jobs:
     # * idempotent: an "already uploaded/exists" response counts as success, so a
     # re-run after a partial publish skips the crates that already landed.
     - name: Publish to crates.io (bottom-up)
-      working-directory: bindings/rust
       env: { CARGO_REGISTRY_TOKEN: '${{ secrets.CARGO_REGISTRY_TOKEN }}' }
       run: |
         set -uo pipefail
@@ -114,6 +106,6 @@ jobs:
         publish fig-core
         publish fig-macros
         publish fig
-        for dir in ../../languages/*/; do
+        for dir in languages/*/; do
           publish "fig-$(basename "$dir")"
         done

@@ -1,15 +1,16 @@
-// The Zig kit's rules, for the JavaScript kit: `fig-kit.wasm` (the fig
-// repository's `kit/src/js.zig`, whose functions `fig.h` declares as
+// fig's kit rules, for the JavaScript kit: `fig-kit.wasm` (the fig
+// repository's `rust/fig-kit-capi`, whose functions `fig.h` declares as
 // `fig_kit_*`), inlined as base64 by scripts/build-wasm.mjs into
-// `zig-bytes.js` and compiled synchronously the first time a rule is asked. At under 5 KB it is far inside what a
-// browser's main thread compiles synchronously.
+// `rules-bytes.js` and compiled synchronously the first time a rule is
+// asked. At under 30 KB it is far inside what a browser's main thread
+// compiles synchronously.
 //
 // `number.js`, `datetime.js`, `literal.js` and `json-string.js` are
 // written on these functions, and
 // nothing else here touches the module, so a host with no WebAssembly
 // (fig-quickjs) answers the same functions from `libfig`'s `fig_kit_*` by
 // replacing this file alone.
-import { BYTES } from "./zig-bytes.js";
+import { BYTES } from "./rules-bytes.js";
 
 let kit = null;
 
@@ -25,16 +26,24 @@ const ANSWER_ROOM = 520;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-/** `s`'s UTF-8 written at the heap's start, with room behind it for an
+/** The buffer inputs are written into, taken from the module
+ *  (`fig_kit_alloc`) and grown as an input needs: [where, how long]. */
+let scratch = 0;
+let scratchSize = 0;
+
+/** `s`'s UTF-8 written into the scratch buffer, with room behind it for an
  *  answer of up to `room(most)` bytes, where `most` is the most bytes `s`
  *  can be: [where, how long]. */
 function put(s, room = (most) => most + ANSWER_ROOM) {
   const k = exports();
-  const at = k.fig_kit_heap();
   const most = s.length * 3;
-  const need = at + most + room(most);
-  const have = k.memory.buffer.byteLength;
-  if (need > have) k.memory.grow(Math.ceil((need - have) / 65536));
+  const need = most + room(most);
+  if (need > scratchSize) {
+    if (scratch) k.fig_kit_free(scratch, scratchSize);
+    scratch = k.fig_kit_alloc(need);
+    scratchSize = need;
+  }
+  const at = scratch;
   const mem = new Uint8Array(k.memory.buffer, at, most);
   let n = 0;
   for (; n < s.length; n++) {

@@ -5,8 +5,8 @@
 # is driven through it — `lang list`, `lang check`, `get` by `--lang` and by
 # extension, `set`, `insert`, `delete`, `comment`, `patch`, `check`, `convert` both
 # ways, `fmt`, a parse error with the helper's message and offset, and a
-# refused helper. Run by `zig build check` with the built CLI as $1; run by
-# hand as `sh tools/cli-lang-check.sh zig-out/bin/fig`.
+# refused helper. Run by `cargo xtask ci` with the built CLI as $1; run by
+# hand as `sh tools/cli-lang-check.sh target/debug/fig`.
 #
 # Skips with a note when cargo is absent, the same way the Rust test suite
 # does: the helper is a cargo example, and a contributor without Rust still
@@ -22,10 +22,10 @@ if ! command -v cargo >/dev/null 2>&1; then
     exit 0
 fi
 
-# Built from this tree's core, like the Rust tests (see checks.zig).
-(cd "$root/bindings/rust" && cargo build --quiet --features helper --example tinykv_helper --example kit_dotenv_helper)
-helper="$root/bindings/rust/target/debug/examples/tinykv_helper"
-kit_dotenv="$root/bindings/rust/target/debug/examples/kit_dotenv_helper"
+# Built from this tree's core, like the Rust tests.
+(cd "$root" && cargo build --quiet -p fig --features helper --example tinykv_helper --example kit_dotenv_helper)
+helper="$root/target/debug/examples/tinykv_helper"
+kit_dotenv="$root/target/debug/examples/kit_dotenv_helper"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

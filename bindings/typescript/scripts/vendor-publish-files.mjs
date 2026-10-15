@@ -5,7 +5,7 @@
 // the repo root, the TS guide at docs/typescript.md). An npm package can only
 // ship files inside its own dir, and a symlink would resolve to nothing once
 // installed from the registry — so before packing we copy real content in. The
-// README is the TypeScript-specific guide (not the repo-root Zig README), with
+// README is the TypeScript-specific guide (not the repo-root README), with
 // its leading fig frontmatter block stripped so the npm page opens on prose.
 // The copies are git-ignored; package.json's `files` allowlist force-adds them
 // to the tarball. Runs from `prepack`, covering `npm pack` and `npm publish`.

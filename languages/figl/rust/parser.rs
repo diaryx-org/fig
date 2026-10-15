@@ -3614,7 +3614,7 @@ mod tests {
 
     #[test]
     fn full_kitchen_sink_file_parses() {
-        let src = include_bytes!("../src/testdata/kitchen_sink.figl");
+        let src = include_bytes!("../tests/kitchen_sink.figl");
         let a = parse_abstract(src, Type::Fig).unwrap();
         assert_eq!(b"2", raw(&a, &[k("version")]));
     }

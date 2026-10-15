@@ -2,7 +2,7 @@ name = Release (npm-wasi)
 
 # Publish @diaryx/fig-wasi (EXPERIMENTAL, bindings/wasi), the npx-able
 # *CLI* (same actions as the native binary), backed by the wasm32-wasi
-# command module (`zig build wasi`) run under Node's built-in (also
+# command module (fig's Rust CLI for wasm32-wasip1) run under Node's built-in (also
 # experimental) WASI support. See docs/npm-wasi.md. Split out from
 # release.figl (crates.io: fig + fig-macros) and release-npm.figl (the
 # @diaryx/fig library) so each publish, with its own required secret, can
@@ -31,8 +31,8 @@ jobs.npm-wasi
 jobs.npm-wasi.steps[]
 > uses = actions/checkout@v7
 +
-> uses = mlugg/setup-zig@v2
-> with.version = 0.17.0
+> uses = dtolnay/rust-toolchain@stable
+> with.targets = "wasm32-wasip1,wasm32-unknown-unknown"
 +
 > uses = actions/setup-node@v7
 > with.node-version = 24
@@ -40,10 +40,10 @@ jobs.npm-wasi.steps[]
 > with.cache = npm
 > with.cache-dependency-path = bindings/wasi/package-lock.json
 +
-> # Every file carrying fig's one version agrees with build.zig.zon, and the
-> # tag names that version.
+> # Every file carrying fig's one version agrees with the workspace's
+> # Cargo.toml, and the tag names that version.
 > name = Verify every file carries the one version
-> run = zig build version-check
+> run = cargo xtask version-check
 +
 > name = Verify tag matches the package version
 > if = github.ref_type == 'tag'
@@ -61,7 +61,7 @@ echo "version $pkg matches tag $GITHUB_REF_NAME"
 > run = npm ci
 > working-directory = bindings/wasi
 +
-> # Builds its own `zig build wasi` (see scripts/build-wasm.mjs) rather than
+> # Builds its own wasm32-wasip1 CLI (see scripts/build-wasm.mjs) rather than
 > # reusing release-binaries.yml's copy: independent workflows on the same
 > # tag have no ordering guarantee (the same reasoning homebrew.yml's doc
 > # comment gives for why its Linux binaries live in that workflow instead).

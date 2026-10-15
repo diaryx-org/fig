@@ -4,10 +4,10 @@
 # commit that touches neither pays nothing. Bypass with `git commit --no-verify`.
 #
 # The policy these enforce is the *code*, not VERSIONING.md (which just describes
-# it): tools/abi-check.zig and tools/version-sync.zig are the source of truth, run
-# here and in CI. This shim is the one piece that must stay shell — a git hook is
-# exec'd as a program and a .zig file cannot carry a shebang — so the Zig logic
-# lives behind `zig build <step>` and this just dispatches to it.
+# it): rust/xtask's abi-check and version-sync are the source of truth, run here
+# and in CI. This shim is the one piece that must stay shell — a git hook is
+# exec'd as a program — so the logic lives behind `cargo xtask <task>` and this
+# just dispatches to it.
 #
 # Enable once per clone:  git config core.hooksPath .githooks
 set -eu
@@ -17,38 +17,23 @@ staged=$(git diff --cached --name-only --diff-filter=ACM)
 
 # C ABI symbol/header consistency when the implementation or header is staged.
 case "$staged" in
-    *src/c_api.zig* | *bindings/c/include/fig.h*)
+    *rust/fig-capi/* | *rust/fig-abi/* | *rust/fig-kit-capi/* | *bindings/c/include/fig.h*)
         printf 'pre-commit: C ABI files staged — running abi-check\n'
-        ( cd "$root" && zig build abi-check ) || {
+        ( cd "$root" && cargo xtask abi-check ) || {
             printf 'pre-commit: abi-check failed; commit aborted (use --no-verify to bypass)\n' >&2
             exit 1
         }
         ;;
 esac
 
-# Every file carrying fig's one version agrees with build.zig.zon, when any of
-# them is staged. Cheap and tag-independent, unlike semver-check (a release gate
-# that needs git tags), which stays CI-only.
+# Every file carrying fig's one version agrees with the workspace's Cargo.toml,
+# when any of them is staged. Cheap and tag-independent, unlike semver-check (a
+# release gate that needs git tags), which stays CI-only.
 case "$staged" in
-    *build.zig.zon* | *build.zig.figl* | *bindings/c/include/fig.h* | *README.md* | *bindings/rust/Cargo.toml* | *package.json* | *package-lock.json* | *bindings/nushell/Cargo.toml* | *bindings/nushell/Cargo.lock*)
+    *Cargo.toml* | *bindings/c/include/fig.h* | *README.md* | *package.json* | *package-lock.json* | *bindings/nushell/Cargo.lock*)
         printf 'pre-commit: version-bearing file staged — running version-check\n'
-        ( cd "$root" && zig build version-check ) || {
-            printf 'pre-commit: version-check failed; run `zig build version-sync` and stage the result (use --no-verify to bypass)\n' >&2
-            exit 1
-        }
-        ;;
-esac
-
-# .figl sources are the source of truth for build.zig.zon, the
-# .github/workflows/*.yml files and the .tangled/workflows/*.yml pipelines (see
-# tools/sync-figl.zig): catch a hand-edited generated file, or a .figl edit
-# whose regeneration wasn't committed, before it lands. Fix with
-# `zig build sync-figl` and stage the result.
-case "$staged" in
-    *.figl | *build.zig.zon* | *.github/workflows/ci.yml* | *.github/workflows/homebrew.yml* | *.github/workflows/release.yml* | *.tangled/workflows/*)
-        printf 'pre-commit: figl source or generated file staged — running check-figl\n'
-        ( cd "$root" && zig build check-figl ) || {
-            printf 'pre-commit: check-figl failed; run `zig build sync-figl` and stage the result (use --no-verify to bypass)\n' >&2
+        ( cd "$root" && cargo xtask version-check ) || {
+            printf 'pre-commit: version-check failed; run `cargo xtask version-sync` and stage the result (use --no-verify to bypass)\n' >&2
             exit 1
         }
         ;;

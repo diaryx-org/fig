@@ -1,0 +1,28 @@
+[package]
+name = "fig-fuzz"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "fig's fuzz targets as plain functions: run over seed inputs by `cargo test`, and under libFuzzer by the cargo-fuzz project at fuzz/"
+publish = false
+
+# Writes the seed inputs out as a libFuzzer corpus (`fig-fuzz-seed <dir>`).
+[[bin]]
+name = "fig-fuzz-seed"
+path = "src/bin/seed.rs"
+
+[dependencies]
+fig-core = { workspace = true }
+# fig's ten languages, each the language alone, for the `detect` target to
+# sweep and for their samples to seed both targets.
+fig-json = { workspace = true }
+fig-yaml = { workspace = true }
+fig-toml = { workspace = true }
+fig-zon = { workspace = true }
+fig-figl = { workspace = true }
+fig-ini = { workspace = true }
+fig-dotenv = { workspace = true }
+fig-properties = { workspace = true }
+fig-plist = { workspace = true }
+fig-nestedtext = { workspace = true }

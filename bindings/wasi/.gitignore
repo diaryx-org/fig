@@ -1,5 +1,5 @@
 node_modules/
-# The wasm module is built by scripts/build-wasm.mjs (zig build wasi); *.wasm
+# The wasm module is built by scripts/build-wasm.mjs (fig's CLI, built for wasm32-wasip1); *.wasm
 # is also git-ignored repo-wide (see the root .gitignore).
 wasm/
 # The languages bin/fig.mjs serves, copied from ../typescript by the same

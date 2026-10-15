@@ -4,8 +4,6 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-# fig's Rust workspace; this crate sits in its language's package.
-workspace = "../../bindings/rust"
 description = "the Apple XML property list for fig: fig's own parser, printer and editing rules for the language, in pure Rust, registered with fig's core."
 repository = "https://github.com/diaryx-org/fig"
 homepage = "https://github.com/diaryx-org/fig"
@@ -36,7 +34,7 @@ fig = ["dep:fig"]
 serde = ["fig", "fig/serde", "dep:serde"]
 
 [dependencies]
-# The language itself, in rust/ beside its Zig, is written on fig's kit alone.
+# The language itself, in rust/, is written on fig's kit alone.
 fig-kit = { workspace = true }
 fig = { workspace = true, optional = true }
 serde = { version = "1", optional = true }

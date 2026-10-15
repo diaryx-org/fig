@@ -1,21 +1,21 @@
-.zig-cache
-zig-out
-# Zig 0.17 unpacks fetched packages (zigjr) beside build.zig.zon.
-zig-pkg
+/target
 .zed
 **/.DS_STORE
 *.wasm
 # Scratch dirs the .tangled/workflows steps create (toolchain, packaged
 # artifacts) — only ever populated when those steps are run locally.
-.zig
 dist
 # The Diaryx app's historica store for this checkout: snapshots of the working
 # tree as it stood, which can hold whatever was in it — the app's publish
 # secrets once did.
 history/
-# A language package's licence texts, copied in from the repo root by
-# `zig build vendor-rust` for its crate and its npm package.
+# The licence texts (and the `fig` crate's README) `cargo xtask vendor`
+# copies in from the repo root for each published crate, and for each
+# language's npm package.
 languages/*/LICENSE-*
+rust/*/LICENSE-*
+bindings/rust/fig*/LICENSE-*
+bindings/rust/fig/README.md
 # A language package's JavaScript module, wrapped from its WebAssembly by
 # its js/build.mjs.
 languages/*/js/*.js

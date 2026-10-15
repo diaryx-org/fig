@@ -2,11 +2,10 @@ name = CI
 
 # Build + test everything on every push/PR, as parallel jobs of one workflow:
 #
-#   * zig         — the core: zig build check (test + all-on + abi-check +
-#                   semver-check + version-check). The one pre-release gate.
-#   * rust        — cargo test for fig's Rust workspace (bindings/rust).
-#   * cross       — the `fig` crate builds for each tier-1 target, without Zig.
-#   * rust-port   — the Rust core, CLI, C ABI and adapter, and the edit fixtures.
+#   * check       — `cargo xtask ci`, the one pre-release gate: the workspace's
+#                   tests, the edit fixtures, the CLI checks and the
+#                   abi/semver/version/vendor/figl guards.
+#   * cross       — the `fig` crate builds for each tier-1 target.
 #   * typescript  — build + test the TypeScript/npm binding (bindings/typescript).
 #   * wasi        — build + test the fig-wasi npm package (bindings/wasi).
 #
@@ -25,59 +24,40 @@ on
 # workflow (every job below), since they now share this one group.
 concurrency = { group = "ci-${{ github.ref }}", cancel-in-progress = true }
 
-jobs.zig
-> name = Zig — check (test + abi/semver/version guards)
+jobs.check
+> name = Rust — cargo xtask ci
 > runs-on = ubuntu-latest
 
-jobs.zig.steps[]
+jobs.check.steps[]
 > uses = actions/checkout@v7
-> # semver-check diffs the C ABI against the most recent release tag (`v*`,
-> # or `core/v*` before the first one-version tag) via `git describe`/`git
-> # show`, so it needs full history + tags, not the default shallow checkout.
+> # semver-check diffs the C ABI against the most recent release tag via
+> # `git describe`/`git show`, so it needs full history + tags, not the
+> # default shallow checkout.
 > with.fetch-depth = 0
 +
-> uses = mlugg/setup-zig@v2
-> with.version = 0.17.0
-+
-> # The one pre-release gate: zig test + all-on + abi-check + semver-check
-> # + version-check. `check` also folds in the Rust/TS test suites, but
-> # those degrade gracefully — with no cargo/npm toolchain in this job they
-> # skip with a note, and the `rust` / `typescript` jobs below run
-> # them for real (in parallel, with their pinned toolchains). See VERSIONING.md.
-> #
-> # `all-on` runs the tests again with every format compiled in. The
-> # conformance corpora are not here: they live in fig-conformance. Fuzzing
-> # has no natural stopping point, so it runs nightly (fuzz.figl) rather than
-> # on the critical path.
-> run = zig build check
-
-jobs.rust
-> name = Rust — cargo test
-> runs-on = ubuntu-latest
-
-jobs.rust.steps[]
-> uses = actions/checkout@v7
-+
-> # The workspace is pure Rust: no Zig here, by design
-> # (docs/proposals/rust-core.md).
 > uses = dtolnay/rust-toolchain@stable
 +
 > uses = Swatinem/rust-cache@v2
-> with.workspaces = bindings/rust
 +
-> # --all-features so the serde- and derive-gated integration tests
-> # (deserialize/serialize/edit/derive) run — none are in the default feature
-> # set, so a plain `cargo test` would silently skip them.
-> run = cargo test --workspace --all-features
-> working-directory = bindings/rust
+> # The one pre-release gate (docs/VERSIONING.md): the workspace's tests with
+> # every feature on and with each crate's defaults, the edit fixtures, the
+> # CLI checks, and the abi/semver/version/vendor/figl guards. It also folds
+> # in the TypeScript and WASI suites, which skip with a note here, with no
+> # node_modules installed; the `typescript` and `wasi` jobs below run them
+> # for real, in parallel.
+> #
+> # The conformance corpora are not here: they live in fig-conformance.
+> # Fuzzing has no natural stopping point, so it runs nightly (fuzz.figl)
+> # rather than on the critical path.
+> run = cargo xtask ci
 
 # The `fig` crate, its core (`fig-core`, `fig-kit`) and its language crates
-# are pure Rust, so a program on any target builds them with no Zig and no C
-# toolchain. The `rust` job above builds for the host; this builds the `fig`
-# crate for each tier-1 target fig once shipped a prebuilt payload for, so a
-# target the crate stopped compiling for shows here, not in a user's build.
+# are pure Rust, so a program on any target builds them with no C toolchain.
+# The `check` job builds for the host; this builds the `fig` crate for each
+# tier-1 target fig once shipped a prebuilt payload for, so a target the
+# crate stopped compiling for shows here, not in a user's build.
 jobs.cross
-> name = "Rust — fig builds for ${{ matrix.key }} (no Zig)"
+> name = "Rust — fig builds for ${{ matrix.key }}"
 > runs-on = "${{ matrix.os }}"
 > strategy.fail-fast = false
 
@@ -117,38 +97,9 @@ jobs.cross.steps[]
 > with.targets = "${{ matrix.target }}"
 +
 > uses = Swatinem/rust-cache@v2
-> with.workspaces = bindings/rust
 > with.key = "${{ matrix.key }}"
 +
 > run = "cargo build -p fig --target ${{ matrix.target }}"
-> working-directory = bindings/rust
-
-jobs.rust-port
-> name = Rust port — cargo test + edit fixtures (no Zig)
-> runs-on = ubuntu-latest
-
-jobs.rust-port.steps[]
-> uses = actions/checkout@v7
-+
-> # The port's crates (rust/) are members of bindings/rust's workspace, and
-> # pure Rust: no Zig here, by design (docs/proposals/rust-core.md).
-> uses = dtolnay/rust-toolchain@stable
-+
-> uses = Swatinem/rust-cache@v2
-> with.workspaces = bindings/rust
-+
-> # The kit, the core, the CLI, the C ABI and the conformance adapter with
-> # their default features, as a program takes them (the `rust` job runs the
-> # whole workspace with every feature on).
-> run = cargo test -p fig-kit -p fig-core -p fig-cli -p fig-capi -p fig-conform
-> working-directory = bindings/rust
-+
-> run = cargo build --release -p fig-conform
-> working-directory = bindings/rust
-+
-> # Every language's hand-written edit fixtures, through the Rust editor
-> # behind fig-conformance's adapter protocol.
-> run = node tools/edit-fixtures.mjs --command bindings/rust/target/release/fig-conform
 
 jobs.typescript
 > name = TypeScript — build + test
@@ -157,9 +108,13 @@ jobs.typescript
 jobs.typescript.steps[]
 > uses = actions/checkout@v7
 +
-> # `npm run build` runs `zig build wasm` to (re)generate the embedded module.
-> uses = mlugg/setup-zig@v2
-> with.version = 0.17.0
+> # `npm run build` builds fig's wasm modules from the Rust workspace: the
+> # core (fig-capi), the kit's rules and each language's own.
+> uses = dtolnay/rust-toolchain@stable
+> with.targets = wasm32-unknown-unknown
++
+> uses = Swatinem/rust-cache@v2
+> with.key = wasm
 +
 > uses = actions/setup-node@v7
 > with
@@ -178,11 +133,16 @@ jobs.typescript.steps[]
 +
 > run = npm test
 > working-directory = bindings/typescript
++
+> # Every language's hand-written edit fixtures, through this binding and
+> # the language modules `npm run build` made.
+> run = node --conditions=fig-source ../../tools/edit-fixtures.mjs
+> working-directory = bindings/typescript
 
 # fig-wasi is the CLI's WASI build wrapped as an npx-able npm package. It had no
 # CI job until now, and its test suite ran in exactly one place: `prepublishOnly`
 # on the release workflow. That is the worst place for the only run of a test to
-# be. A missing-file assertion in it pinned the CLI's old raw-Zig-error wording,
+# be. A missing-file assertion in it pinned the CLI's old raw-error wording,
 # the CLI switched to human messages a fortnight later, and nothing noticed —
 # because nothing ran it — until it failed the RELEASE, twice (cli/v3.5.4 and
 # cli/v3.6.0). Both times the tap and the binaries published and fig-wasi did
@@ -199,9 +159,13 @@ jobs.wasi
 jobs.wasi.steps[]
 > uses = actions/checkout@v7
 +
-> # `npm run build` runs `zig build wasi` to (re)generate wasm/fig-wasi.wasm.
-> uses = mlugg/setup-zig@v2
-> with.version = 0.17.0
+> # `npm run build` builds fig's CLI for wasm32-wasip1 into
+> # wasm/fig-wasi.wasm, and the kit's rules for the languages it serves.
+> uses = dtolnay/rust-toolchain@stable
+> with.targets = "wasm32-wasip1,wasm32-unknown-unknown"
++
+> uses = Swatinem/rust-cache@v2
+> with.key = wasi
 +
 > uses = actions/setup-node@v7
 > with

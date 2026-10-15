@@ -1,7 +1,7 @@
 // A C program that links fig's library and two languages' own libraries
 // beside it (libfig.a, libfig_yaml.a, libfig_json.a): it registers each,
 // converts a YAML document to JSON and back, and edits it. What
-// `zig build c-languages-check` runs; a link of the language libraries
+// `cargo xtask abi-check` runs; a link of the language libraries
 // against a core that names no language is the point.
 #include <stdio.h>
 #include <string.h>

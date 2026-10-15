@@ -1,0 +1,18 @@
+[package]
+name = "fig-kit-capi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The kit's rules as fig.h's fig_kit_* exports: part of libfig, and alone the fig-kit.wasm the TypeScript kit answers through"
+publish = false
+
+[lib]
+# An rlib for libfig; built alone as the wasm module:
+#
+#   cargo rustc -p fig-kit-capi --release --crate-type cdylib --target wasm32-unknown-unknown
+crate-type = ["rlib"]
+
+[dependencies]
+fig-abi = { workspace = true }
+fig-core = { workspace = true }

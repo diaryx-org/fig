@@ -10,7 +10,7 @@ use zed_extension_api::{self as zed, LanguageServerId, Result};
 /// Fallback used only during local development, when `fig-lsp` is not yet on the
 /// PATH. Points at the binary `zig build` installs. Once you `install` or symlink
 /// `fig-lsp` onto your PATH, `worktree.which` finds it and this is never used.
-const DEV_FALLBACK: &str = "/Users/adamharris/Documents/fig/zig-out/bin/fig-lsp";
+const DEV_FALLBACK: &str = "/Users/adamharris/org/fig/target/release/fig-lsp";
 
 struct FigExtension;
 

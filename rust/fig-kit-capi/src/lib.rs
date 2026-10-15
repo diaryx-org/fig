@@ -2,13 +2,72 @@
 //! is not Zig — how a number is spelled, which datetime a token is, what a
 //! bare token means, a JSON string's quoting, and the XML tokenizer. Each
 //! reads `len` bytes and keeps nothing; the rule is fig-core's kit.
+//!
+//! `libfig` carries them (`fig-capi` re-exports this crate), and built alone
+//! for wasm32 they are `fig-kit.wasm` (`kit/src/js.zig`), the module the
+//! TypeScript binding's JavaScript kit answers through (`kit/rules.js`): it
+//! imports nothing, and keeps no state between calls. The caller writes its
+//! input into a buffer it takes from `fig_kit_alloc`, with room behind it
+//! for an answer.
 
 use fig_core::kit::literal::{self, NumberKind, Sniffed};
 use fig_core::kit::table::Kind;
 use fig_core::kit::{datetime, json_string, number, xml};
 
-use crate::abi::FigXmlToken;
-use crate::slice_of;
+use fig_abi::FigXmlToken;
+
+/// `len` bytes at `ptr`, or `None` for a null pointer with a nonzero
+/// length (`fig-capi`'s `slice_of`).
+///
+/// # Safety
+///
+/// A non-null `ptr` must be readable for `len` bytes for `'a`.
+unsafe fn slice_of<'a>(ptr: *const u8, len: usize) -> Option<&'a [u8]> {
+    if len == 0 {
+        return Some(&[]);
+    }
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: non-null, and readable for `len` bytes by the caller's word.
+    Some(unsafe { core::slice::from_raw_parts(ptr, len) })
+}
+
+/// Write `value` through `out` when it is non-null.
+///
+/// # Safety
+///
+/// A non-null `out` must be writable.
+unsafe fn put<T>(out: *mut T, value: T) {
+    if !out.is_null() {
+        // SAFETY: non-null and writable by the caller's word.
+        unsafe { out.write(value) };
+    }
+}
+
+/// `fig_kit_alloc`: `n` bytes the caller writes its input into and reads
+/// an answer back from, kept apart from what the rules allocate. The wasm
+/// module's alone; freed with `fig_kit_free`.
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn fig_kit_alloc(n: usize) -> *mut u8 {
+    // SAFETY: the layout is never zero-sized.
+    unsafe { std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(n.max(1), 1)) }
+}
+
+/// `fig_kit_free`: what `fig_kit_alloc(n)` returned, once.
+///
+/// # Safety
+///
+/// `p` is null, or what `fig_kit_alloc(n)` returned, freed once.
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fig_kit_free(p: *mut u8, n: usize) {
+    if !p.is_null() {
+        // SAFETY: the caller's contract.
+        unsafe { std::alloc::dealloc(p, std::alloc::Layout::from_size_align_unchecked(n.max(1), 1)) }
+    }
+}
 
 /// `len` bytes at `raw`, the empty slice for zero.
 ///
@@ -216,8 +275,8 @@ pub unsafe extern "C" fn fig_kit_xml_tokenize(xml: *const u8, len: usize, out: *
         Err(e) => {
             // SAFETY: each null or writable by the caller's word.
             unsafe {
-                crate::put(err, xml_error_code(e.name()));
-                crate::put(err_at, tz.pos);
+                put(err, xml_error_code(e.name()));
+                put(err_at, tz.pos);
             }
             return FAIL;
         }

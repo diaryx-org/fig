@@ -1,0 +1,11 @@
+[package]
+name = "fig-abi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "fig.h's records as #[repr(C)] Rust, shared by fig's C library and each language's own"
+publish = false
+
+[dependencies]
+fig-core = { workspace = true }

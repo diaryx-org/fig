@@ -1,0 +1,6 @@
+# What a fuzz run leaves: its build, the corpus libFuzzer grows (the
+# nightly uploads it on a finding), crashing inputs, and coverage reports.
+target
+corpus
+artifacts
+coverage

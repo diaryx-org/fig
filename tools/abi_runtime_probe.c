@@ -1,9 +1,9 @@
-/* Runtime-language probe (C). Compiled AND RUN by `zig build abi-check`: a
+/* Runtime-language probe (C). Compiled AND RUN by `cargo xtask abi-check`: a
  * language written in C against fig.h's FigLanguageVTable and FigNodeTable is
  * registered, parsed through, converted out of and into, and edited through
  * the C ABI. This is the layout check the symbol diff cannot make — every
  * struct in the runtime section of fig.h is written by this side and read by
- * the Zig side, so a field that drifted between the two would be read here as
+ * the Rust side, so a field that drifted between the two would be read here as
  * the wrong bytes. It is also the smallest complete host of a runtime
  * language, which is what the section's prose is describing.
  *

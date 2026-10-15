@@ -5,8 +5,8 @@
 # on stdout and no file touched; `--` ends the flags; a missing comment is
 # exit 1, like a missing path; a value argument means the same thing in every
 # format, and `get` prints a scalar as its text; and every action exits by the
-# 0/1/2 table `fig --help` states. Run by `zig build check` with
-# the built CLI as $1; run by hand as `sh tools/cli-args-check.sh zig-out/bin/fig`.
+# 0/1/2 table `fig --help` states. Run by `cargo xtask ci` with
+# the built CLI as $1; run by hand as `sh tools/cli-args-check.sh target/debug/fig`.
 set -eu
 
 fig="$1"

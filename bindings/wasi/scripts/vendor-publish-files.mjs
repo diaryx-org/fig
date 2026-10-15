@@ -5,7 +5,7 @@
 // at the repo root, the CLI guide at docs/npm-wasi.md). An npm package can
 // only ship files inside its own dir, and a symlink would resolve to nothing
 // once installed from the registry — so before packing we copy real content
-// in. The README is the npm-wasi-specific guide (not the repo-root Zig
+// in. The README is the npm-wasi-specific guide (not the repo-root
 // README), with its leading fig frontmatter block stripped so the npm page
 // opens on prose. The copies are git-ignored; package.json's `files`
 // allowlist force-adds them to the tarball. Runs from `prepack`, covering

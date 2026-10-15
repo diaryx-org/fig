@@ -126,14 +126,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "fig-abi"
+version = "6.1.0"
+dependencies = [
+ "fig-core",
+]
+
+[[package]]
 name = "fig-capi"
 version = "6.1.0"
 dependencies = [
+ "fig-abi",
  "fig-core",
  "fig-dotenv",
  "fig-figl",
  "fig-ini",
  "fig-json",
+ "fig-kit-capi",
  "fig-nestedtext",
  "fig-plist",
  "fig-properties",
@@ -213,6 +222,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "fig-fuzz"
+version = "6.1.0"
+dependencies = [
+ "fig-core",
+ "fig-dotenv",
+ "fig-figl",
+ "fig-ini",
+ "fig-json",
+ "fig-nestedtext",
+ "fig-plist",
+ "fig-properties",
+ "fig-toml",
+ "fig-yaml",
+ "fig-zon",
+]
+
+[[package]]
 name = "fig-ini"
 version = "6.1.0"
 dependencies = [
@@ -233,6 +259,32 @@ dependencies = [
 [[package]]
 name = "fig-kit"
 version = "6.1.0"
+
+[[package]]
+name = "fig-kit-capi"
+version = "6.1.0"
+dependencies = [
+ "fig-abi",
+ "fig-core",
+]
+
+[[package]]
+name = "fig-lang-export"
+version = "6.1.0"
+dependencies = [
+ "fig-abi",
+ "fig-core",
+ "fig-dotenv",
+ "fig-figl",
+ "fig-ini",
+ "fig-json",
+ "fig-nestedtext",
+ "fig-plist",
+ "fig-properties",
+ "fig-toml",
+ "fig-yaml",
+ "fig-zon",
+]
 
 [[package]]
 name = "fig-macros"
@@ -458,6 +510,10 @@ checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
 dependencies = [
  "windows-link",
 ]
+
+[[package]]
+name = "xtask"
+version = "6.1.0"
 
 [[package]]
 name = "zmij"

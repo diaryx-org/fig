@@ -1,9 +1,9 @@
 // `import * as J from "@diaryx/fig/kit/json-string"`: a string written as a
-// JSON string literal — the Zig kit's `json_string.zig`, answering through
-// its WebAssembly module (`zig.js`), the escaper fig's JSON and canonical
+// JSON string literal — the kit's `json_string.rs` (rust/fig-kit), answering through
+// its WebAssembly module (`rules.js`), the escaper fig's JSON and canonical
 // printers write with and YAML, TOML and plist borrow.
 
-import * as Z from "./zig.js";
+import * as Z from "./rules.js";
 
 /** `s` between two `quote`s — `"` (the default), or the `'` JSON5 also
  *  takes, which escapes `'` and lets `"` through — escaped as JSON escapes

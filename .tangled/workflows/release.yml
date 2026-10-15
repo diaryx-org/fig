@@ -1,16 +1,16 @@
 engine: microvm
-# Tangled release — cross-compile the `fig` CLI for every target and attach
-# each build to the tag as a tangled *artifact*, the equivalent of the assets
-# `.github/workflows/release-binaries.yml` + `homebrew.yml` attach to a GitHub
-# Release. An artifact is an ATProto record (`sh.tangled.repo.artifact`) in the
+# Tangled release — build the `fig` CLI for the targets this one x86_64 NixOS
+# microVM can build for and attach each build to the tag as a tangled
+# *artifact*, the equivalent of the assets `.github/workflows/
+# release-binaries.yml` + `homebrew.yml` attach to a GitHub Release. An artifact is an ATProto record (`sh.tangled.repo.artifact`) in the
 # repo owner's PDS whose blob is the file and whose `tag` field is the
 # annotated tag's object hash, so tangled shows it on that tag's page.
 #
 # Fires on the same `v*.*.*` tag as the two GitHub workflows above — one tag
-# releases every artifact (see "Release tagging" in docs/VERSIONING.md). Every
-# target is cross-compiled from this one x86_64 NixOS microVM: Zig's
-# self-contained cross-compilation needs no per-target runner, no Docker, no
-# QEMU.
+# releases every artifact (see "Release tagging" in docs/VERSIONING.md). Rust
+# cross-compiles to Linux x86_64 (musl, static) and WASI from here with no
+# other toolchain; macOS, Linux aarch64 and Windows each need a linker this
+# VM does not have, so those builds are the GitHub release's alone.
 #
 # Two prerequisites, once, on the tangled side. A spindle has to be attached to
 # the repo (Settings → Pipelines), same as CI; and `ATP_APP_PASSWORD` has to be
@@ -26,66 +26,39 @@ image: nixos
 when:
 - event: [push]
   tag: [v*.*.*]
-# `git` for the tag object, `curl`/`gnutar`/`xz` for the toolchain tarball and
-# the XRPC calls, `gzip`/`zip` to pack the binaries, `jq` to build the record
-# JSON. No `zig` — see the install step in figl/tangled-ci.figl for why the
-# toolchain comes from ziglang.org rather than from nixpkgs.
-dependencies: [git, curl, gnutar, xz, gzip, zip, jq]
+# `git` for the tag object, `rustup` and `gcc` for the toolchain and its
+# linker (see figl/tangled-ci.figl), `curl` for the XRPC calls, `gnutar` and
+# `gzip` to pack the binary, `jq` to build the record JSON.
+dependencies: [git, rustup, gcc, curl, gnutar, gzip, jq]
 steps:
 # `git rev-parse <tag>^{tag}` below needs the annotated tag object itself,
 # not just the commit it points at.
 - name: Fetch tags
   command: git fetch --tags --force --unshallow 2>/dev/null || git fetch --tags --force || true
-# Identical to figl/tangled-ci.figl's install step — the toolchain version
-# comes from `minimum_zig_version` in build.zig.zon so there is no third
-# pin to bump, and Zig's static Linux tarball runs as-is on NixOS.
-- name: Install the pinned Zig toolchain
+- name: Install the Rust toolchain
   command: |
     set -euo pipefail
-    version=$(sed -n 's/.*minimum_zig_version = "\([^"]*\)".*/\1/p' build.zig.zon)
-    [ -n "$version" ] || { echo "could not read minimum_zig_version from build.zig.zon" >&2; exit 1; }
-    echo "zig $version (from build.zig.zon)"
-    mkdir -p .zig
-    curl -fsSL "https://ziglang.org/download/$version/zig-x86_64-linux-$version.tar.xz" \
-      | tar -xJ --strip-components=1 -C .zig
-    .zig/zig version
-# The same set the GitHub release ships, from one runner: the four Unix
-# tarballs, the Windows zip, the WASI module, and `build_options.zig` — a
-# *source* file `zig build` normally generates in-cache, which a Zig hosted
-# on wasm32-wasi has no build runner to produce, so it rides along with the
-# .wasm (see the `wasi-options` step in build.zig). fig-wasi's
-# optimize/strip are hardcoded in build.zig, hence no -D flags on that one.
-#
-# The Linux pair is built against musl rather than glibc — fig links libc,
-# and these tarballs are downloaded and run directly (no package manager to
-# resolve a glibc dependency), so a static binary that runs on any distro
-# beats one tied to the builder's glibc. The archive names drop the `-musl`:
-# it is a property of the build, not a target the user chooses between.
-# `zig build` installs `fig-lsp` alongside `fig`; only `fig` is packaged,
-# matching what the GitHub release attaches.
+    rustup toolchain install stable --profile minimal --target x86_64-unknown-linux-musl --target wasm32-wasip1
+    rustup default stable
+    cargo --version
+# The Linux build is against musl rather than glibc: these tarballs are
+# downloaded and run directly (no package manager to resolve a glibc
+# dependency), so a static binary that runs on any distro beats one tied to
+# the builder's glibc. The archive name drops the `-musl`: it is a property
+# of the build, not a target the user chooses between. `fig-cli` builds
+# `fig-lsp` alongside `fig`; only `fig` is packaged, matching what the
+# GitHub release attaches. The WASI module carries every format, as the
+# GitHub release's does.
 - name: Build the release binaries
   command: |
     set -euo pipefail
-    export PATH="$PWD/.zig:$PATH"
-    root="$PWD"
     mkdir -p dist
 
-    for spec in x86_64-linux-musl:x86_64-linux aarch64-linux-musl:aarch64-linux \
-                aarch64-macos:aarch64-macos x86_64-macos:x86_64-macos; do
-      target=${spec%%:*}
-      name=${spec##*:}
-      zig build -Doptimize=ReleaseFast -Dstrip=true -Dtarget="$target" --prefix "zig-out/$name"
-      tar -czf "dist/fig-$name.tar.gz" -C "zig-out/$name/bin" fig
-    done
+    cargo build --release -p fig-cli --bin fig --target x86_64-unknown-linux-musl
+    tar -czf dist/fig-x86_64-linux.tar.gz -C target/x86_64-unknown-linux-musl/release fig
 
-    zig build -Doptimize=ReleaseFast -Dstrip=true -Dtarget=x86_64-windows --prefix zig-out/x86_64-windows
-    ( cd zig-out/x86_64-windows/bin && zip -qj "$root/dist/fig-x86_64-windows.zip" fig.exe )
-
-    zig build wasi --prefix zig-out/wasi
-    cp zig-out/wasi/bin/fig-wasi.wasm dist/fig-wasi.wasm
-
-    zig build wasi-options --prefix zig-out/wasi-options
-    cp zig-out/wasi-options/build_options.zig dist/build_options.zig
+    cargo build --release -p fig-cli --bin fig --target wasm32-wasip1
+    cp target/wasm32-wasip1/release/fig.wasm dist/fig-wasi.wasm
 
     ls -l dist
 # One `sh.tangled.repo.artifact` record per file in dist/, following the

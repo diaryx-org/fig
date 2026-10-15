@@ -1,22 +1,22 @@
 name = Fuzz
 
-# Nightly coverage-guided fuzzing of the hand-written tokenizers and parsers.
-# Targets live in src/fuzz.zig; the step they run under is `zig build fuzz`.
-# See docs/testing.md for the whole picture, including how to reproduce a
-# failure from here on your own machine.
+# Nightly coverage-guided fuzzing of the hand-written tokenizers and parsers,
+# under libFuzzer through cargo-fuzz. The targets' bodies live in
+# rust/fig-fuzz; fuzz/ is the cargo-fuzz project that runs them. See
+# docs/testing.md for the whole picture, including how to reproduce a failure
+# from here on your own machine.
 #
-# Why this is not part of ci.figl's gate: fuzzing has no natural stopping point.
-# It runs until it hits an iteration cap or finds something, which is a terrible
-# fit for the PR critical path — so `zig build check` deliberately does not run
-# it. What every PR *does* get is these same targets executed once as ordinary
-# tests (src/root.zig imports src/fuzz.zig unconditionally), which is what stops
-# them rotting unnoticed between nightly runs. This workflow is the half that
-# actually goes looking for new bugs.
+# Why this is not part of ci.figl's gate: fuzzing has no natural stopping point,
+# which is a terrible fit for the PR critical path. What every PR *does* get is
+# these same targets run over their seed inputs as ordinary tests (`cargo test
+# -p fig-fuzz`, inside `cargo xtask ci`), which is what stops them rotting
+# unnoticed between nightly runs. This workflow is the half that actually goes
+# looking for new bugs.
 #
 # The awkward part of a scheduled job is that a failure has no PR to turn red,
 # and GitHub's own notification for it emails whoever last edited the cron line
 # — not whoever broke the parser. So the failure path below files an issue and
-# attaches the corpus instead.
+# attaches the corpus and the failing inputs instead.
 
 on.schedule[]
 > # 07:17 UTC daily. The odd minute is not cosmetic: scheduled runs are
@@ -32,7 +32,7 @@ on.schedule[]
 # `budget` exists so such a test run can be told to take a minute instead of a
 # quarter of an hour.
 on.workflow_dispatch.inputs.budget
-> description = How long to fuzz, as a `timeout(1)` duration (e.g. 1m for a quick check of this workflow).
+> description = How long to fuzz in all, shared between the targets: seconds, or a number with s, m or h (e.g. 1m for a quick check of this workflow).
 > required = false
 > default = 15m
 
@@ -47,115 +47,100 @@ concurrency = { group = "fuzz", cancel-in-progress = false }
 jobs.fuzz
 > name = Fuzz the hand-written parsers
 > runs-on = ubuntu-latest
-> # Belt and braces, NOT the budget — the `timeout` in the fuzz step is. This only
-> # exists to stop a wedged run burning the full 6h job limit, so it wants to stay
-> # comfortably above the budget plus build time. If it ever actually fires,
-> # something is stuck rather than slow: no issue gets filed (a job timeout
-> # cancels the steps below), the run just goes red.
+> # Belt and braces, NOT the budget — libFuzzer's `-max_total_time` is. This
+> # only exists to stop a wedged run burning the full 6h job limit, so it wants
+> # to stay comfortably above the budget plus build time. If it ever actually
+> # fires, something is stuck rather than slow: no issue gets filed (a job
+> # timeout cancels the steps below), the run just goes red.
 > timeout-minutes = 30
 
 jobs.fuzz.steps[]
 > uses = actions/checkout@v7
 +
-> uses = mlugg/setup-zig@v2
-> with.version = 0.17.0
+> # cargo-fuzz needs nightly: it builds the targets with `-Zsanitizer=address`
+> # and libFuzzer's coverage instrumentation.
+> uses = dtolnay/rust-toolchain@nightly
 +
-> # Wall clock is the budget, so `timeout(1)` is what enforces it — NOT `--fuzz`.
-> # That needs explaining, because it looks like the long way round:
+> # Caches the fuzz project's build and ~/.cargo/bin, so the cargo-fuzz
+> # install below is a no-op on a warm cache.
+> uses = Swatinem/rust-cache@v2
+> with.workspaces = '''
+. -> target
+fuzz -> target
+'''
++
+> name = Install cargo-fuzz
+> run = cargo install cargo-fuzz --locked
++
+> # Starts each target's corpus from fig-fuzz's seeds (every language's own
+> # samples, those printed as canonical text, and hand-written edges) rather
+> # than from the empty input.
+> name = Seed the corpus
+> run = cargo run --locked -p fig-fuzz --bin fig-fuzz-seed -- fuzz/corpus
++
+> # Each target gets an equal share of the budget, and both run even when the
+> # first fails, so one finding cannot hide another.
 > #
-> # `--fuzz=<n>` caps ITERATIONS, and iteration throughput is a property of the
-> # machine, not of the job. Measured at ~50K iterations in >10 minutes on an
-> # M-series laptop, and a shared CI runner is slower again — so any count picked
-> # to fill 15 minutes here is wrong on every other machine, and drifts as the
-> # parsers change. Capping time directly is portable; capping iterations is not.
-> #
-> # So: hand `--fuzz` a number it will never reach (`1G`), and let `timeout` end
-> # the run. The `=1G` is still mandatory rather than decorative — a BARE `--fuzz`
-> # implies `--webui`, which serves a live coverage UI until interrupted. Locally
-> # that is the whole point; here it would sit until the job timeout killed it.
-> #
-> # THE OUTPUT IS THE SIGNAL, NOT THE EXIT CODE. This is the part that looks
-> # paranoid and is not:
-> #
-> # `zig build fuzz` does not reliably exit non-zero when a target fails. Verified
-> # on 0.16.0 (aarch64-macos) with a deliberately-always-failing target: `zig
-> # build test` exits 1 correctly, but under `--fuzz` the same failure prints
-> # `error: '...' failed:` with a full trace and then HANGS — so `timeout` reaps
-> # it and reports 124, which is indistinguishable from a clean run. Trusting the
-> # exit code alone would make this job silently green while sitting on a crash,
-> # which is worse than having no nightly at all: it looks like coverage.
-> # (Possibly macOS-only — the fuzzer is least exercised there and CI is Linux —
-> # but a check that is redundant on Linux costs nothing, and being wrong here is
-> # invisible.) So: grep for the failure marker FIRST, and treat the exit code as
-> # a secondary signal.
-> #
-> # `--error-style minimal` is what makes that grep trustworthy in the OTHER
-> # direction. Zig 0.16's build runner prints a step's report whenever the step
-> # wrote anything at all to stderr — "No matter the result, we want to display
-> # error/warning messages", says build_runner.zig — and a `failed command:
-> # <argv>` line rides along with it, because `Run` fills in
-> # `result_failed_command` before spawning the child and clears it only on two
-> # paths that success is not one of. So that line shows up on green runs: `zig
-> # build check` printed one, for the conformance scoreboards it then ran, and
-> # exited 0.
-> # It is a context line, not a verdict. `minimal` turns it off (it gates
-> # `error_style.verboseContext()`) and leaves `error:` lines and their return
-> # traces fully intact — verified both ways, including against a deliberately
-> # failing target. The fuzz targets happen to print nothing to stderr, so this
-> # was a latent false positive rather than a live one; it was one `std.log` line
-> # away from filing an issue against a clean run.
-> #
-> # Exit 124 then means `timeout` ended a run that reported nothing — budget
-> # spent, no findings, which is the good outcome and must exit 0. `-k 1m` is in
-> # case `zig build` declines to die on SIGTERM (it hangs after a finding, so this
-> # is not hypothetical).
-> #
-> # One honest limitation this cannot cover: an input that makes a parser LOOP
-> # FOREVER is indistinguishable from a clean run, since both end at the budget
-> # and neither prints a marker. Zig 0.16 has no per-input timeout. Crashes, leaks
-> # and broken invariants are caught; hangs are not. See docs/testing.md.
+> # The exit code is the signal: libFuzzer exits nonzero on a panic, an
+> # AddressSanitizer report, a stack overflow, an input over `-rss_limit_mb`
+> # (2 GB by default), or an input slower than `-timeout` — so a parser that
+> # loops forever is a finding too, which a budget-only run could not tell
+> # from a clean one. `-timeout` is generous because a shared runner is slow
+> # and the build carries ASan; no input of `-max_len` bytes should take a
+> # parser anywhere near it.
 > name = Fuzz
 > id = fuzz
 > env.BUDGET = ${{ inputs.budget }}
 > run = '''
-set -eu
+# Not -e (Actions' default): a failing target must not stop the next one.
+set +e -u
 
 budget="${BUDGET:-15m}"
-echo "Fuzzing for ${budget} (iteration cap set high so time alone bounds the run)."
+case "$budget" in
+  *h) seconds=$(( ${budget%h} * 3600 )) ;;
+  *m) seconds=$(( ${budget%m} * 60 )) ;;
+  *s) seconds=${budget%s} ;;
+  *)  seconds=$budget ;;
+esac
+targets="detect canonical_round_trip"
+share=$(( seconds / 2 ))
+[ "$share" -ge 1 ] || share=1
+echo "Fuzzing for ${budget}: ${share}s per target."
 
-set +e
-timeout -k 1m --signal=TERM "$budget" zig build fuzz --fuzz=1G --error-style minimal 2>&1 | tee fuzz-output.log
-code="${PIPESTATUS[0]}"
-set -e
+failed=""
+for target in $targets; do
+  echo "::group::${target}"
+  cargo fuzz run "$target" -- \
+    -max_total_time="$share" -max_len=2048 -timeout=30 \
+    -dict="fuzz/dict/${target}.dict" -print_final_stats=1 \
+    2>&1 | tee "fuzz-${target}.log"
+  code="${PIPESTATUS[0]}"
+  echo "::endgroup::"
+  if [ "$code" -ne 0 ]; then
+    echo "::error::${target} found a failing input (exit ${code}) — see its log and the attached artifacts."
+    failed="${failed} ${target}"
+  fi
+done
 
-# Primary signal, and the only marker: `error: '<test>' failed:` is the runner
-# reporting a target. `failed command:` is NOT one — see the `--error-style
-# minimal` note above for what it actually means and why it is switched off.
-if grep -q "^error: " fuzz-output.log; then
-  echo "::error::The fuzzer reported a failing target — see the log above and the attached corpus."
+if [ -n "$failed" ]; then
+  echo "failed=${failed# }" >> "$GITHUB_OUTPUT"
   exit 1
 fi
-
-if [ "$code" -eq 124 ]; then
-  echo "Budget of ${budget} spent with no findings — that is a pass."
-  exit 0
-fi
-exit "$code"
-
+echo "Budget of ${budget} spent with no findings — that is a pass."
 '''
 +
-> # The corpus is the bug report: `.zig-cache/f` holds the inputs the fuzzer
-> # thought were interesting, which includes whichever one just failed. Without
-> # it a crash here is only reproducible by luck.
-> name = Upload corpus and fuzzer log
+> # The failing inputs are the bug report: cargo-fuzz writes each to
+> # fuzz/artifacts/<target>/ (`crash-…`, `timeout-…`, `oom-…`). The corpus rides
+> # along so a local run can resume where this one stopped.
+> name = Upload failing inputs, corpus and fuzzer logs
 > if = failure() && steps.fuzz.outcome == 'failure'
 > uses = actions/upload-artifact@v4
 > with.name = fuzz-corpus-${{ github.run_id }}
 > with.if-no-files-found = ignore
 > with.path = '''
-.zig-cache/f
-.zig-cache/tmp/libfuzzer.log
-fuzz-output.log
+fuzz/artifacts
+fuzz/corpus
+fuzz-*.log
 '''
 +
 > # Deduped on the `fuzz` label rather than filing a fresh issue per night: an
@@ -164,28 +149,33 @@ fuzz-output.log
 > name = Report the failure
 > if = failure() && steps.fuzz.outcome == 'failure'
 > env.GH_TOKEN = ${{ secrets.GITHUB_TOKEN }}
+> env.FAILED = ${{ steps.fuzz.outputs.failed }}
 > run = '''
 set -eu
 
 run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+inputs="$(cd fuzz && find artifacts -type f | sort | sed 's/^/    /')"
 body="$(cat <<EOF
-The nightly fuzz run failed: \`zig build fuzz\` found an input that crashes,
-leaks, or violates a parser invariant.
+The nightly fuzz run failed: a target (${FAILED:-see the log}) found an input
+that panics, overflows the stack, hangs, or violates a parser invariant.
 
 - Run: ${run_url}
-- Corpus: attached to that run as \`fuzz-corpus-${GITHUB_RUN_ID}\`.
+- Failing inputs, corpus and logs: attached to that run as \`fuzz-corpus-${GITHUB_RUN_ID}\`.
 
-The run log names the failing target and carries the error return trace, so
-start there. To dig in locally, download and unzip that artifact so its \`f\`
-directory lands at \`.zig-cache/f\`, then re-run the fuzzer:
+Failing inputs, under \`fuzz/\`:
+
+${inputs:-    (none written; the log says why)}
+
+The target's log carries the panic message or the stack, so start there. To
+reproduce, unzip that artifact into \`fuzz/\` (so its \`artifacts\` and
+\`corpus\` directories land there) and run the failing input alone:
 
 \`\`\`
-zig build fuzz --fuzz=1G
+cargo +nightly fuzz run <target> fuzz/artifacts/<target>/<file>
 \`\`\`
 
-It resumes from that corpus instead of starting cold, which should get it back
-to the failure far faster than the nightly took to find it — though it is a
-head start, not a stored repro case. \`-Dtest-filter\` narrows to one target.
+\`cargo +nightly fuzz tmin <target> <that file>\` shrinks it first. Once fixed,
+add the input to that target's seeds in rust/fig-fuzz so every PR keeps it fixed.
 
 See docs/testing.md.
 EOF
@@ -202,5 +192,4 @@ if [ -n "$existing" ]; then
 else
   gh issue create --title "Nightly fuzz run failed" --label fuzz --body "$body"
 fi
-
 '''

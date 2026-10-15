@@ -1,6 +1,6 @@
 // `import * as L from "@diaryx/fig/kit/literal"`: what a bare token means
-// when nothing else says — the Zig kit's `literal.zig`, answering through
-// its WebAssembly module (`zig.js`), so a language written here reads a
+// when nothing else says — the kit's `literal.rs` (rust/fig-kit), answering through
+// its WebAssembly module (`rules.js`), so a language written here reads a
 // bare value exactly as fig's own languages and its editor do.
 //
 // The rule is literal-else-string: `null`, `true` and `false` (lowercase
@@ -10,7 +10,7 @@
 // part led by a zero (`007`), `inf` and `nan` stay strings, as `Yes` and
 // `TRUE` do.
 
-import * as Z from "./zig.js";
+import * as Z from "./rules.js";
 
 /** The row kind bare `raw` is written as: "null", "true", "false", "int",
  *  "float", "string", or a datetime's `ext_kind` ("offset_datetime",

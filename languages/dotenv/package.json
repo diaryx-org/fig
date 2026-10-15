@@ -1,7 +1,7 @@
 {
   "name": "@diaryx/fig-dotenv",
   "version": "6.1.0",
-  "description": "Dotenv for @diaryx/fig: fig's own parser, printer and editing rules for the language, written in Zig and compiled to a WebAssembly module of its own. Pass it to registerLanguage.",
+  "description": "Dotenv for @diaryx/fig: fig's own parser, printer and editing rules for the language, written in Rust and compiled to a WebAssembly module of its own. Pass it to registerLanguage.",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -24,7 +24,7 @@
     "@diaryx/fig": "6.1.0"
   },
   "scripts": {
-    "build": "zig build wasm && node js/build.mjs",
+    "build": "node js/build.mjs",
     "prepack": "npm run build"
   },
   "keywords": [

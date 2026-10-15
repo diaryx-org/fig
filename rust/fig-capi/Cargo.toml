@@ -4,8 +4,6 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-# A member of fig's one Rust workspace, bindings/rust.
-workspace = "../../bindings/rust"
 description = "fig's C ABI (bindings/c/include/fig.h) over fig-core: libfig and the WebAssembly module the TypeScript binding loads"
 
 [lib]
@@ -15,6 +13,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
 fig-core = { workspace = true }
+fig-abi = { workspace = true }
+fig-kit-capi = { workspace = true }
 # fig's ten languages, each the language alone (no `fig` binding), for the
 # `bundle` feature to register.
 fig-json = { workspace = true, optional = true }
@@ -29,10 +29,9 @@ fig-plist = { workspace = true, optional = true }
 fig-nestedtext = { workspace = true, optional = true }
 
 [features]
-# The C library bundles no language, as Zig's libfig does not: a program
+# The C library bundles no language, as fig's libfig never has: a program
 # registers each format it uses (`fig_language_register`). `bundle`
-# preregisters fig's ten language crates instead, as a `-D<name>` Zig build
-# does.
+# preregisters fig's ten language crates instead.
 bundle = [
     "dep:fig-json",
     "dep:fig-yaml",

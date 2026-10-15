@@ -1,6 +1,6 @@
 // `import * as N from "@diaryx/fig/kit/number"`: how a number's lexeme is
-// spelled for a format — the Zig kit's `number.zig`, answering through its
-// WebAssembly module (`zig.js`), so a language written here spells a
+// spelled for a format — the kit's `number.rs` (rust/fig-kit), answering through its
+// WebAssembly module (`rules.js`), so a language written here spells a
 // number exactly as a Zig language does.
 //
 // A number row's `text` is its source lexeme, verbatim: `0xff`, `1_000`,
@@ -13,7 +13,7 @@
 // only its notation degrades.
 
 import { LanguageError, Refusal } from "@diaryx/fig/helper";
-import * as Z from "./zig.js";
+import * as Z from "./rules.js";
 
 /** The spellings a format reads back as a number. A field left `false`
  *  means that spelling is canonicalized to decimal before it is written:

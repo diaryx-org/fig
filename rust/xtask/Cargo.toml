@@ -1,0 +1,10 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "fig's own tasks: the release guards and the one pre-release gate, `cargo xtask ci`"
+publish = false
+
+[dependencies]

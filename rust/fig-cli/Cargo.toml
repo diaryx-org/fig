@@ -4,8 +4,6 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-# A member of fig's one Rust workspace, bindings/rust.
-workspace = "../../bindings/rust"
 description = "fig's command-line tool, in Rust"
 
 [[bin]]
@@ -33,9 +31,8 @@ fig-nestedtext = { workspace = true }
 # fig-lsp diagnoses through the figl parser (`fig_figl`).
 default = ["figl"]
 figl = []
-# The canonical oracle format, compiled out of a release CLI as Zig's
-# `-Dcanonical=true` is off by default.
+# The canonical oracle format, compiled out of a release CLI by default.
 canonical = []
 # The WASI build for `@diaryx/fig-wasi`, whose host serves languages
-# (Zig's `-Dwasi-host=true`); only meaningful on a wasi target.
+# and which carries none of its own; only meaningful on a wasi target.
 wasi-host = []

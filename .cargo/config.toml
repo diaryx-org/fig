@@ -1,0 +1,3 @@
+[alias]
+# fig's own tasks, in Rust (rust/xtask): `cargo xtask help` lists them.
+xtask = "run --quiet -p xtask --"

@@ -1,40 +1,31 @@
 # What the shared release tooling needs to know about fig.
 #
-# fig ships five artifacts off one tree — the Zig core, the `fig` CLI, the Rust
-# crates, `@diaryx/fig` and `@diaryx/fig-wasi` — and from 5.0.0 they share one
-# version and one `v*` tag (docs/VERSIONING.md). Like twig, the version is
-# decided in `build.zig.zon` rather than a Cargo manifest, and the Rust
-# workspace that copies it lives under `bindings/rust/` with its own lockfile.
+# fig ships its artifacts off one tree — the `fig` CLI, the Rust crates, the
+# C library, `@diaryx/fig`, each language's npm package and `@diaryx/fig-wasi`
+# — and from 5.0.0 they share one version and one `v*` tag
+# (docs/VERSIONING.md). Like twig, the version is decided in the Cargo
+# workspace at the repository root.
 name = "fig"
 url = "https://github.com/diaryx-org/fig"
 release_branch = "main"
 
-# Where the version is decided. The prefix is matched against the raw line, so
-# the zon's indentation is part of it.
-manifest = "build.zig.zon"
-version_prefix = '    .version = "'
-# The zon is not a Cargo manifest: there is no root Cargo.lock to update and no
-# `{ path = …, version = … }` entries to retarget here.
-cargo_workspace = false
-
-# The Cargo workspace that follows that version — `[workspace.package]`, the
-# internal `[workspace.dependencies]` pins (fig-kit, fig-core, fig, fig-macros
-# and the ten language crates), and its lockfile beside it.
-mirrors = ["bindings/rust/Cargo.toml"]
+# Where the version is decided: `[workspace.package]`'s `version`, the first
+# line of the root manifest that starts with the prefix. The workspace's
+# internal `{ path = …, version = … }` pins and its lockfile follow it.
+manifest = "Cargo.toml"
+version_prefix = 'version = "'
+cargo_workspace = true
 
 # Everything else the version reaches, which no Cargo-manifest rewrite finds:
-# the figl source build.zig.zon is generated from, fig.h's FIG_VERSION_*
-# macros, README.md's frontmatter, both package.json files and their lockfiles,
-# and the nushell plugin's path pin on fig and its lockfile's fig crates (the
-# plugin is a workspace of its own, on its own version).
-# `zig build version-sync` copies the zon's version into each of them
-# (tools/version-sync.zig), and `zig build version-check` — part of `zig build
-# check` — fails on any that disagrees. It writes bindings/rust/Cargo.toml too,
-# to the version `mirrors` has already written; the overlap is deliberate, so
-# that `zig build version-sync` on its own still does the whole job.
-post_bump = "zig build version-sync"
+# fig.h's FIG_VERSION_* macros, README.md's frontmatter, the npm packages and
+# their lockfiles (each language's package and its pin on @diaryx/fig among
+# them), and the nushell plugin's path pin on fig and its lockfile's fig
+# crates (the plugin is a workspace of its own, on its own version).
+# `cargo xtask version-sync` copies the workspace's version into each of them
+# (rust/xtask/src/version.rs), and `cargo xtask version-check` — part of
+# `cargo xtask ci` — fails on any that disagrees.
+post_bump = "cargo xtask version-sync"
 extra_version_files = [
-  "figl/build.zig.figl",
   "bindings/c/include/fig.h",
   "README.md",
   "bindings/typescript/package.json",
@@ -43,6 +34,16 @@ extra_version_files = [
   "bindings/wasi/package-lock.json",
   "bindings/nushell/Cargo.toml",
   "bindings/nushell/Cargo.lock",
+  "languages/dotenv/package.json",
+  "languages/figl/package.json",
+  "languages/ini/package.json",
+  "languages/json/package.json",
+  "languages/nestedtext/package.json",
+  "languages/plist/package.json",
+  "languages/properties/package.json",
+  "languages/toml/package.json",
+  "languages/yaml/package.json",
+  "languages/zon/package.json",
 ]
 
 # fig keeps its own copy of the cliff config, differing from the shared one in
@@ -60,8 +61,8 @@ cliff_config = ".config/cliff.toml"
 changelog_since = "v5.0.0"
 
 # What to run before cutting. Each repo owns its own CI; this names it.
-verify = "zig build check"
-# …and here, after the bump rather than before it. `zig build check` runs
+verify = "cargo xtask ci"
+# …and here, after the bump rather than before it. `cargo xtask ci` runs
 # `version-check` and `semver-check`, which judge the versions in the tree, so
 # running it first would be checking the versions this release replaces. A
 # failure after the bump restores the tree.
@@ -75,7 +76,7 @@ does = "uploads fig-kit, fig-core, fig-macros, fig and the ten language crates t
 
 [[tag_starts]]
 workflow = "release-npm.yml"
-does = "publishes @diaryx/fig to npm"
+does = "publishes @diaryx/fig and each language's package to npm"
 
 [[tag_starts]]
 workflow = "release-npm-wasi.yml"
@@ -91,4 +92,4 @@ does = "attaches the Windows and WASI CLI binaries to the GitHub release"
 
 [[tag_starts]]
 system = "tangled.org"
-does = "cross-compiles the CLI and attaches every build to the tag as an artifact (.tangled/workflows/release.yml), if a spindle is attached"
+does = "builds the Linux x86_64 and WASI CLI and attaches each to the tag as an artifact (.tangled/workflows/release.yml), if a spindle is attached"

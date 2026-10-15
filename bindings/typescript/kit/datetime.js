@@ -1,6 +1,6 @@
 // `import * as DT from "@diaryx/fig/kit/datetime"`: which datetime shape a
-// bare token is — the Zig kit's `datetime.zig`, answering through its
-// WebAssembly module (`zig.js`).
+// bare token is — the kit's `datetime.rs` (rust/fig-kit), answering through its
+// WebAssembly module (`rules.js`).
 //
 // TOML, YAML and fig all read `2024-01-02`, `12:30:00`, `2024-01-02T12:30:00`
 // and `2024-01-02T12:30:00+01:00` as typed scalars whose `ext_kind` is one
@@ -10,7 +10,7 @@
 // is only what is allowed — whether seconds may be omitted, and whether a
 // bare time with no date is a time at all — and that is `opts`.
 
-import * as Z from "./zig.js";
+import * as Z from "./rules.js";
 
 /** Whether `s` is `YYYY-MM-DD` and a day that exists. */
 export function validDate(s) {

@@ -20,8 +20,8 @@
 //
 // With no `--command` the implementation is fig's own: the TypeScript binding
 // in-process, with each language's WebAssembly module (`languages/<name>/js/`,
-// built by `zig build wasm && node js/build.mjs` in the language's directory)
-// registered, so the fixtures hold the Zig editor. `--command` runs any
+// built by `node js/build.mjs` in the language's directory) registered, so
+// the fixtures hold the editor as the binding ships it. `--command` runs any
 // implementation that speaks the protocol's `hello` and `edit` methods on its
 // stdin and stdout (fig-conformance's docs/adapters.md), such as another port
 // of the editor.
@@ -29,7 +29,7 @@
 // The fixtures are separate from fig-conformance's edit suites, which are
 // generated from each source's tree and recorded from fig. These are written
 // by hand, each for a reason its `note` gives, and their expectations are the
-// ones the Zig tests asserted, not recorded.
+// ones fig's original editor tests asserted, not recorded.
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -111,7 +111,7 @@ async function figImpl(names) {
   for (const name of names) {
     const module = join(root, "languages", name, "js", `${name}.js`);
     if (!existsSync(module)) {
-      die(`edit-fixtures: no languages/${name}/js/${name}.js; build it with \`zig build wasm && node js/build.mjs\` in languages/${name}`);
+      die(`edit-fixtures: no languages/${name}/js/${name}.js; build it with \`node js/build.mjs\` in languages/${name}`);
     }
     fig.registerLanguage((await import(pathToFileURL(module).href)).default);
   }

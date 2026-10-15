@@ -30,7 +30,7 @@
 //! value     fig_value_*
 //! language  fig_language_register, fig_format_*, fig_detect_order, fig_stream_*
 //! table     fig_table_*
-//! kit       fig_kit_*
+//! (fig_kit_* are fig-kit-capi's, re-exported)
 //! wasm      fig_host_language_register, fig_host_native_register (wasm32 only)
 //! ```
 
@@ -40,7 +40,6 @@ use std::sync::Once;
 pub mod abi;
 mod document;
 mod editor;
-mod kit;
 mod language;
 mod table;
 mod value;
@@ -50,7 +49,7 @@ mod wasm;
 pub use abi::*;
 pub use document::*;
 pub use editor::*;
-pub use kit::*;
+pub use fig_kit_capi::*;
 pub use language::*;
 pub use table::*;
 pub use value::*;

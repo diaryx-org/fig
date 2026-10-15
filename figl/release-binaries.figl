@@ -1,19 +1,17 @@
 name = Release binaries
 
 # Build + attach prebuilt CLI binaries for the platforms homebrew.yml doesn't
-# cover: Windows (x86_64) and a WASI module (wasm32-wasi) runnable under any
-# WASI host (wasmtime, wasmer, ...), plus the generated build_options.zig that
-# a build-system-free build needs (see the `wasi-options` step in build.zig).
-# The macOS universal binary + Linux binaries + Homebrew tap bump live in
-# homebrew.yml instead — the tap's bump-formula job needs the Linux tarballs
-# ready in the same workflow run (via `needs:`) to hash them, which two
-# independent workflows on the same tag can't guarantee relative to each other.
+# cover: Windows (x86_64) and a WASI module (wasm32-wasip1) runnable under any
+# WASI host (wasmtime, wasmer, ...). The macOS + Linux binaries + Homebrew tap
+# bump live in homebrew.yml instead — the tap's bump-formula job needs the
+# Linux tarballs ready in the same workflow run (via `needs:`) to hash them,
+# which two independent workflows on the same tag can't guarantee relative to
+# each other.
 #
 # Neither of these route through a package manager (yet) — plain zip/wasm
-# attached straight to the GitHub Release, downloaded by hand. Both are
-# cross-compiled from one ubuntu-latest runner: Zig's self-contained
-# cross-compilation means no per-target native runner (and no Docker/QEMU) is
-# needed, unlike most C/C++ cross-release setups.
+# attached straight to the GitHub Release, downloaded by hand. Each is built
+# by cargo on a runner that hosts its target: Windows on windows-latest, the
+# WASI module on ubuntu-latest.
 #
 # Runs on the same `v*.*.*` tag as homebrew.yml — one tag releases every
 # artifact (see "Release tagging" in docs/VERSIONING.md).
@@ -28,41 +26,21 @@ on
 
 permissions.contents = write # attaches assets to the GitHub Release
 
-jobs.binaries
-> name = Build + attach Windows/WASI binaries
-> runs-on = ubuntu-latest
+jobs.windows
+> name = Build + attach the Windows binary
+> runs-on = windows-latest
 > if = github.ref_type == 'tag'
 
-jobs.binaries.steps[]
+jobs.windows.steps[]
 > uses = actions/checkout@v7
 +
-> uses = mlugg/setup-zig@v2
-> with.version = 0.17.0
+> uses = dtolnay/rust-toolchain@stable
 +
 > name = Build Windows x86_64
+> shell = pwsh
 > run = '''
-zig build -Doptimize=ReleaseFast -Dstrip=true -Dtarget=x86_64-windows --prefix zig-out/windows-x64
-cd zig-out/windows-x64/bin && zip -j "$OLDPWD/fig-windows-x86_64.zip" fig.exe && cd "$OLDPWD"
-
-'''
-+
-> # fig-wasi's optimize/strip are hardcoded in build.zig (ReleaseSmall,
-> # stripped), so no -D flags needed here.
-> name = Build WASI module
-> run = '''
-zig build wasi --prefix zig-out/wasi
-cp zig-out/wasi/bin/fig-wasi.wasm fig-wasi.wasm
-
-'''
-+
-> # Not a build artifact but a *source* file: the `build_options` module, which
-> # `zig build` normally generates in-cache. A Zig hosted on wasm32-wasi has no
-> # build runner to generate it, so it ships alongside the binaries and gets
-> # named on the `build-exe` command line.
-> name = Emit build_options.zig
-> run = '''
-zig build wasi-options --prefix zig-out/wasi-options
-cp zig-out/wasi-options/build_options.zig build_options.zig
+cargo build --release -p fig-cli --bin fig --target x86_64-pc-windows-msvc
+Compress-Archive -Path target/x86_64-pc-windows-msvc/release/fig.exe -DestinationPath fig-windows-x86_64.zip
 
 '''
 +
@@ -70,9 +48,31 @@ cp zig-out/wasi-options/build_options.zig build_options.zig
 > uses = softprops/action-gh-release@v3
 > with
 > > tag_name = ${{ github.ref_name }}
-> > files = '''
-fig-windows-x86_64.zip
-fig-wasi.wasm
-build_options.zig
+> > files = fig-windows-x86_64.zip
+
+jobs.wasi
+> name = Build + attach the WASI binary
+> runs-on = ubuntu-latest
+> if = github.ref_type == 'tag'
+
+jobs.wasi.steps[]
+> uses = actions/checkout@v7
++
+> uses = dtolnay/rust-toolchain@stable
+> with.targets = wasm32-wasip1
++
+> # Every format compiled in, as the native CLI: a WASI host other than
+> # `@diaryx/fig-wasi`'s serves none (that package builds its own, which asks
+> # its host for each).
+> name = Build WASI module
+> run = '''
+cargo build --release -p fig-cli --bin fig --target wasm32-wasip1
+cp target/wasm32-wasip1/release/fig.wasm fig-wasi.wasm
 
 '''
++
+> name = Attach to the GitHub Release
+> uses = softprops/action-gh-release@v3
+> with
+> > tag_name = ${{ github.ref_name }}
+> > files = fig-wasi.wasm

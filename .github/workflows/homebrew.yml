@@ -3,13 +3,14 @@ name: Homebrew
 # shared with twig and moid and live in the reusable workflow at
 # diaryx-org/.github; only what makes fig different is below.
 #
+# The CLI is the `fig-cli` crate of the workspace, whose binary is `fig`.
+#
 # Linux binaries come from this workflow (not release-binaries.yml) because
 # bump-formula needs them ready in the same run, via `needs:`, before it
 # downloads them to compute checksums — two independent workflows triggered by
 # the same tag have no ordering guarantee between them. Windows + WASI binaries
-# have no such downstream dependency, so they stay in release-binaries.yml. The
-# crates.io crate is release.yml; the two npm packages are release-npm.yml and
-# release-npm-wasi.yml.
+# have no such downstream dependency, so they stay in release-binaries.yml. The crates.io crates are release.yml; the npm
+# packages are release-npm.yml and release-npm-wasi.yml.
 #
 # Runs on the `v*.*.*` tag — one tag releases every artifact (see "Release
 # tagging" in docs/VERSIONING.md), so this is the reusable workflow's default
@@ -31,9 +32,8 @@ jobs:
     with:
       name: fig
       desc: Parse, edit, and convert config files while preserving comments. Supports JSON, YAML, TOML, and more.
-      language: zig
-      zig-version: 0.17.0 # the reusable workflow's default trails the pin in build.zig.zon
-      zig-flags: -Doptimize=ReleaseFast -Dstrip=true
+      language: rust
+      cargo-package: fig-cli
     secrets:
       TAP_APP_ID: ${{ secrets.TAP_APP_ID }}
       TAP_APP_KEY: ${{ secrets.TAP_APP_KEY }}

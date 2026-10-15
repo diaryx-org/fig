@@ -76,6 +76,14 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const EPOCH: &str = "Texas Everbearing";
 
 fn main() {
+    // A WASI process starts at `/`: its host names the directory relative
+    // paths are read from (`@diaryx/fig-wasi`'s `bin/fig.mjs` preopens it
+    // and passes it as `PWD`).
+    #[cfg(target_os = "wasi")]
+    if let Some(pwd) = std::env::var_os("PWD") {
+        let _ = std::env::set_current_dir(pwd);
+    }
+
     // Respected environment variables
     let no_color = std::env::var_os("NO_COLOR").is_some();
     let clicolor_force = std::env::var_os("CLICOLOR_FORCE").is_some();

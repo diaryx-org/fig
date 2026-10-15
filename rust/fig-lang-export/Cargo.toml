@@ -1,0 +1,49 @@
+[package]
+name = "fig-lang-export"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "One of fig's languages as a library of its own: libfig_<name>.a beside libfig, or the WebAssembly module its npm package ships"
+publish = false
+
+[lib]
+# Built with the crate type it is wanted as, one language at a time:
+#
+#   cargo rustc -p fig-lang-export --release --features json --crate-type staticlib
+#   cargo rustc -p fig-lang-export --release --features json --crate-type cdylib --target wasm32-unknown-unknown
+#
+# The C library's `fig_<name>_register` calls into libfig, which a test of
+# this crate alone has nothing to link: `cargo xtask abi-check` links the
+# libraries into `tools/lang_archive_probe.c`, and the TypeScript binding's
+# tests load the modules.
+test = false
+doctest = false
+
+[dependencies]
+fig-abi = { workspace = true }
+fig-core = { workspace = true }
+fig-json = { workspace = true, optional = true }
+fig-yaml = { workspace = true, optional = true }
+fig-toml = { workspace = true, optional = true }
+fig-zon = { workspace = true, optional = true }
+fig-figl = { workspace = true, optional = true }
+fig-ini = { workspace = true, optional = true }
+fig-dotenv = { workspace = true, optional = true }
+fig-properties = { workspace = true, optional = true }
+fig-plist = { workspace = true, optional = true }
+fig-nestedtext = { workspace = true, optional = true }
+
+[features]
+# The language to export. A C library may carry several (each its own
+# `fig_<name>_register`); a wasm module carries one.
+json = ["dep:fig-json"]
+yaml = ["dep:fig-yaml"]
+toml = ["dep:fig-toml"]
+zon = ["dep:fig-zon"]
+figl = ["dep:fig-figl"]
+ini = ["dep:fig-ini"]
+dotenv = ["dep:fig-dotenv"]
+properties = ["dep:fig-properties"]
+plist = ["dep:fig-plist"]
+nestedtext = ["dep:fig-nestedtext"]

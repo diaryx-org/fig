@@ -2,7 +2,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 src/wasm-bytes.ts
-kit/zig-bytes.js
+kit/rules-bytes.js
 # Docs/license text vendored in at pack time by scripts/vendor-publish-files.mjs;
 # the canonical copies live at the repo root.
 LICENSE-MIT

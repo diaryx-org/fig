@@ -4,8 +4,8 @@
 # a YAML, a TOML and a JSON5 file full of number spellings JSON has no words
 # for — hex, octal, binary, `_`, a `+`, bare dots, exponents, trailing zeros.
 # JSON hands each back in decimal, and patch keeps the target's spelling of
-# every value the two agree on. Run by `zig build check` with the built CLI
-# as $1; run by hand as `sh tools/cli-patch-check.sh zig-out/bin/fig`.
+# every value the two agree on. Run by `cargo xtask ci` with the built CLI
+# as $1; run by hand as `sh tools/cli-patch-check.sh target/debug/fig`.
 #
 # Skips with a note when jq is absent or older than 1.7: 1.6 rewrites every
 # number through a double (`1e3` comes back as the integer `1000`, a 20-digit

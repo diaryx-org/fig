@@ -89,10 +89,15 @@ thread_local! {
 /// extensions are resolved: the languages this binary carries, registered
 /// before anything looks one up (Zig's `ensureBundled`). Once per process;
 /// a refusal stops at the language refused, as Zig's `registerAll(...)
-/// catch {}` does.
+/// catch {}` does. The WASI build made for a host (`wasi-host`) carries
+/// none: its host serves every format, as Zig's `-Dwasi-host=true` build
+/// with no format compiled in is.
 pub fn init() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
+        if host_languages::ENABLED {
+            return;
+        }
         let _ = registry::register_bundle(registry::global(), &BUNDLED);
     });
 }

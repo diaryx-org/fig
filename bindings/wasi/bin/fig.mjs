@@ -6,7 +6,7 @@
 //
 // This file is deliberately plain JS with no build step of its own: it's a
 // thin host around the *real* fig CLI, which is the WASI module vendored at
-// ../wasm/fig-wasi.wasm (built from the repo root by `zig build wasi` — see
+// ../wasm/fig-wasi.wasm (fig's Rust CLI, built for wasm32-wasip1 — see
 // scripts/build-wasm.mjs). All the actual parsing/editing/serializing logic
 // lives there, identical to the native binaries Homebrew ships.
 
@@ -64,25 +64,28 @@ try {
   if (err.code === "ENOENT") {
     // Only reachable running from a checkout, not from an installed/packed
     // package — `wasm/` is git-ignored and only populated by
-    // `npm run build` (scripts/build-wasm.mjs runs `zig build wasi` and
-    // copies the result here). A published tarball always has it (see the
+    // `npm run build` (scripts/build-wasm.mjs builds fig-cli for
+    // wasm32-wasip1 and copies the result here). A published tarball always has it (see the
     // `files` allowlist in package.json), so this is a local-dev-only error.
-    console.error(`fig: ${wasmPath} not found — run \`npm run build\` first (needs zig on PATH).`);
+    console.error(`fig: ${wasmPath} not found — run \`npm run build\` first (needs cargo and the wasm32-wasip1 target).`);
     process.exit(1);
   }
   throw err;
 }
 
 const cwd = process.cwd();
-// "." is the preopen name wasi-libc-style relative-path resolution looks
-// for — it's what makes relative arguments (`fig get foo.yaml`) resolve
-// against the real cwd, mirroring `wasmtime run --dir=.::.` (see build.zig's
-// `wasi` step doc comment, which documents that exact invocation). On POSIX,
-// also preopen the real filesystem root so absolute host paths resolve too
-// (the equivalent of `--dir=/::/`). There's no analogous single root on
-// Windows — an absolute Windows path (`C:\...`) only resolves here if it
-// happens to fall under `cwd`; see docs/npm-wasi.md for the exact limitation.
-const preopens = { ".": cwd };
+// The guest's working directory is a preopen of the real one, named where
+// the guest sees it, and handed over as `PWD`, which fig's WASI build
+// changes into before reading its arguments: that is what makes relative
+// arguments (`fig get foo.yaml`) resolve against the real cwd, as
+// `wasmtime run --dir=.::. --env PWD=…` would. On POSIX the guest sees it at
+// its own path, and the real filesystem root is preopened too, so absolute
+// host paths resolve (the equivalent of `--dir=/::/`). There's no analogous
+// single root on Windows — the cwd is `/cwd` there, and an absolute Windows
+// path (`C:\...`) does not resolve; see docs/npm-wasi.md for the exact
+// limitation.
+const guestCwd = process.platform === "win32" ? "/cwd" : cwd;
+const preopens = { [guestCwd]: cwd };
 if (process.platform !== "win32") preopens["/"] = "/";
 
 // --- stdio compatibility shim -------------------------------------------
@@ -111,8 +114,8 @@ if (process.platform !== "win32") preopens["/"] = "/";
 // stream, for every action including `help`, which does nothing but print.
 // The likely cause is fig's very first call in `main()`
 // (`Io.Terminal.Mode.detect`, checking whether stdout/stderr can take color)
-// failing against a real TTY fd under `node:wasi`, with Zig's minimal entry
-// stub then exiting silently rather than surfacing the error — this sandbox
+// failing against a real TTY fd under `node:wasi`, with the guest's entry
+// then exiting silently rather than surfacing the error — this sandbox
 // never has a real TTY on fd 1/2 (always reports as a Pipe), which is why
 // only pipes/sockets were caught and fixed here originally.
 //
@@ -135,7 +138,7 @@ if (process.platform !== "win32") preopens["/"] = "/";
 // the user hits Ctrl-D on a TTY) before starting the guest is only correct
 // when the guest is actually going to read stdin — fig's own convention is
 // that it does so only when `-` is passed as the file argument (see
-// main.zig's per-action `-` handling). Gate the eager read on that: a pipe
+// the CLI's per-action `-` handling). Gate the eager read on that: a pipe
 // with no writer that closes it (a shell's own stdin passed through as a
 // pipe rather than a real TTY — common inside another program, an
 // IDE-integrated terminal, tmux, etc.) never reaches EOF, so unconditionally
@@ -174,7 +177,7 @@ const wasi = new WASI({
   // "fig" so `--help` output reads naturally regardless of how this script
   // was invoked.
   args: ["fig", ...process.argv.slice(2)],
-  env: process.env,
+  env: { ...process.env, PWD: guestCwd },
   preopens,
   stdin: stdinFd,
   stdout: stdoutFd,
@@ -188,7 +191,7 @@ const imports = wasi.getImportObject();
 // The module compiles no format in: each is one of `@diaryx/fig`'s
 // JavaScript languages, copied into ../lib by scripts/build-wasm.mjs, which
 // the CLI asks this host for by name or by extension the first time it
-// meets the format (src/cli/host_languages.zig) and then speaks the helper
+// meets the format (rust/fig-cli/src/host_languages.rs) and then speaks the helper
 // wire to, in-process, through `handle` — synchronously, which is what lets
 // a call cross from the guest into JavaScript while `wasi.start()` blocks.
 // All are loaded up front, since nothing can be imported once the guest
@@ -250,57 +253,6 @@ imports.fig_host = {
       return 1;
     }
   },
-};
-// -------------------------------------------------------------------------
-
-// --- WASI rights compatibility shim -------------------------------------
-// Zig's wasm32-wasi std lib, when it opens a directory handle to resolve a
-// relative path, requests `fs_rights_inheriting` bits that cover directory
-// operations (PATH_OPEN, FD_READDIR, PATH_CREATE_FILE, ...) but not the
-// regular-file operations (FD_READ, FD_SEEK, FD_WRITE, FD_FILESTAT_GET, ...)
-// that a file opened underneath that handle needs. Per the WASI preview1
-// spec, a child open's `fs_rights_base` must be a subset of its parent
-// directory fd's `fs_rights_inheriting` — so without this shim, EVERY file
-// open here is rejected with ENOTCAPABLE (which Zig surfaces as
-// `error: AccessDenied`), even though the preopen itself is fine.
-//
-// This is invisible under wasmtime/wasmer: WASI preview1's rights system was
-// deprecated years ago and modern standalone runtimes simply don't enforce
-// it. Node's `node:wasi` is the outlier that still checks it faithfully —
-// more spec-correct, but it surfaces this gap. Confirmed empirically against
-// `zig build wasi`'s output (Zig 0.16.0): every action that touches a file
-// (`get`, `set`, `replace`, `rename`, `insert`, `delete`, `comment`, `check`, `fmt`,
-// `convert`) fails without this patch and succeeds with it. It's a userspace
-// workaround, not a fig code change — the proper fix belongs in Zig's wasi
-// posix layer, which this package doesn't vendor.
-const FILE_RIGHTS =
-  (1n << 0n) | // FD_DATASYNC
-  (1n << 1n) | // FD_READ
-  (1n << 2n) | // FD_SEEK
-  (1n << 4n) | // FD_SYNC
-  (1n << 5n) | // FD_TELL
-  (1n << 6n) | // FD_WRITE
-  (1n << 7n) | // FD_ADVISE
-  (1n << 8n) | // FD_ALLOCATE
-  (1n << 21n) | // FD_FILESTAT_GET
-  (1n << 22n) | // FD_FILESTAT_SET_SIZE
-  (1n << 23n) | // FD_FILESTAT_SET_TIMES
-  (1n << 27n); // POLL_FD_READWRITE
-const O_DIRECTORY = 2;
-const origPathOpen = imports.wasi_snapshot_preview1.path_open;
-imports.wasi_snapshot_preview1.path_open = function (
-  fd,
-  dirflags,
-  pathPtr,
-  pathLen,
-  oflags,
-  base,
-  inheriting,
-  fdflags,
-  resultPtr,
-) {
-  if (oflags & O_DIRECTORY) inheriting |= FILE_RIGHTS;
-  return origPathOpen.call(this, fd, dirflags, pathPtr, pathLen, oflags, base, inheriting, fdflags, resultPtr);
 };
 // -------------------------------------------------------------------------
 

@@ -45,8 +45,9 @@ fn declared() -> Vec<String> {
     out
 }
 
-/// Every `extern "C" fn fig_*` this crate exports to C (the wasm-only pair
-/// excepted, as fig.h does not declare it).
+/// Every `extern "C" fn fig_*` this crate exports to C (the wasm-only pair,
+/// and the kit module's `fig_kit_alloc` and `fig_kit_free`, excepted, as
+/// fig.h does not declare them).
 fn exported() -> Vec<String> {
     let sources = [
         include_str!("lib.rs"),
@@ -55,7 +56,7 @@ fn exported() -> Vec<String> {
         include_str!("value.rs"),
         include_str!("language.rs"),
         include_str!("table.rs"),
-        include_str!("kit.rs"),
+        include_str!("../../fig-kit-capi/src/lib.rs"),
     ];
     let mut out = Vec::new();
     for src in sources {
@@ -75,6 +76,7 @@ fn exported() -> Vec<String> {
             }
         }
     }
+    out.retain(|n| n != "fig_kit_alloc" && n != "fig_kit_free");
     out.sort();
     out.dedup();
     out

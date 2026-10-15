@@ -4,8 +4,6 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-# A member of fig's one Rust workspace, bindings/rust.
-workspace = "../../bindings/rust"
 description = "What fig's languages share: the node table, AST, Document, the Language trait and fig's error type, in pure Rust"
 repository = "https://github.com/diaryx-org/fig"
 homepage = "https://github.com/diaryx-org/fig"

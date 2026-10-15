@@ -89,7 +89,3 @@ does = "builds the macOS and Linux CLI binaries and writes the tap"
 [[tag_starts]]
 workflow = "release-binaries.yml"
 does = "attaches the Windows and WASI CLI binaries to the GitHub release"
-
-[[tag_starts]]
-system = "tangled.org"
-does = "builds the Linux x86_64 and WASI CLI and attaches each to the tag as an artifact (.tangled/workflows/release.yml), if a spindle is attached"

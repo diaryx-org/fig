@@ -49,7 +49,6 @@ One annotated tag, `v<version>`, releases everything. Pushing it sets off:
 | `release-npm-wasi.yml` | publishes `@diaryx/fig-wasi` |
 | `homebrew.yml` | builds the macOS (native) and Linux (glibc) CLI binaries with cargo, attaches them to the GitHub release, and writes the Homebrew tap |
 | `release-binaries.yml` | attaches the Windows x86_64 and WASI CLI binaries to the GitHub release |
-| `.tangled/workflows/release.yml` | the Linux x86_64 (musl) and WASI CLI, published as artifacts against the tag on the tangled.org mirror; the macOS, aarch64 Linux and Windows binaries are on GitHub only |
 
 Each publishing workflow checks that every file carries the one version (`cargo xtask version-check`) and that the tag names it, and no-ops where the registry already has that version. Until 7.0.0 the tag was also a release in itself, the one Zig programs `zig fetch`ed; fig has no Zig package now, and a Zig program links the C library like any C program.
 

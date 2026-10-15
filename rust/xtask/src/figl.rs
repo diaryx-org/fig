@@ -1,9 +1,8 @@
 //! `sync-figl` / `check-figl`: keep the repository's hand-authored `.figl`
-//! files and the workflow files generated from them (GitHub Actions
-//! workflows, tangled.org pipelines) in step, by running fig itself
-//! (`fig get -o yaml <src>`) rather than re-implementing any parsing or
-//! printing here. It dogfoods the conversion path a user of `fig convert` /
-//! `fig get` takes.
+//! files and the GitHub Actions workflows generated from them in step, by
+//! running fig itself (`fig get -o yaml <src>`) rather than re-implementing
+//! any parsing or printing here. It dogfoods the conversion path a user of
+//! `fig convert` / `fig get` takes.
 //!
 //! The `.figl` files are the source of truth: comments, structure and
 //! intent live there, and the generated files are a build artifact of them.
@@ -29,8 +28,6 @@ const MAPPINGS: &[(&str, &str)] = &[
     ("figl/release.figl", ".github/workflows/release.yml"),
     ("figl/release-npm.figl", ".github/workflows/release-npm.yml"),
     ("figl/release-npm-wasi.figl", ".github/workflows/release-npm-wasi.yml"),
-    ("figl/tangled-ci.figl", ".tangled/workflows/ci.yml"),
-    ("figl/tangled-release.figl", ".tangled/workflows/release.yml"),
 ];
 
 pub fn run(check: bool) -> crate::Result {

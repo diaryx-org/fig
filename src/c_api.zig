@@ -357,6 +357,15 @@ pub export fn fig_table_rows(t: ?*FigTable, n: usize) ?[*]FigRow {
     return rows.ptr;
 }
 
+/// Row `id` of `t`, to read or change in place — its links above all, for
+/// a parser that writes rows out of order — or null for no such row. Valid
+/// until the next call on `t`.
+pub export fn fig_table_row(t: ?*FigTable, id: u32) ?*FigRow {
+    const tbl = t orelse return null;
+    if (id >= tbl.rows.items.len) return null;
+    return &tbl.rows.items[id];
+}
+
 /// Put `t`'s rows in pre-order from row `root` by their links (`first_child`,
 /// `next_sibling`), naming each parent and moving every side fact to its
 /// node's new row (`RowWriter.finish`). `invalid_argument` for a root or a

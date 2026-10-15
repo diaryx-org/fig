@@ -1101,6 +1101,7 @@ unsafe extern "C" {
     /// life of the process; NULL for a handle never handed out.
     pub fn fig_format_name(format: c_int) -> *const c_char;
     pub fn fig_table_rows(t: *mut FigTable, n: usize) -> *mut FigRow;
+    pub fn fig_table_row(t: *mut FigTable, id: u32) -> *mut FigRow;
     pub fn fig_table_finish(t: *mut FigTable, root: u32) -> FigStatus;
     pub fn fig_table_finish_in_order(t: *mut FigTable) -> FigStatus;
     pub fn fig_table_child_by_key(

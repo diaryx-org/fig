@@ -939,6 +939,9 @@ typedef struct FigTable FigTable;
 // `n` new rows, each a null with no parent, span or text, to fill in place;
 // NULL when out of memory. Valid until the next call on `t`.
 FigRow   *fig_table_rows(FigTable *t, size_t n);
+// Row `id` of `t`, to read or change in place — to link it to a row written
+// after it — or NULL for no such row. Valid until the next call on `t`.
+FigRow   *fig_table_row(FigTable *t, uint32_t id);
 // Rows written in any order: link each row to its first child and next
 // sibling (FigRow.first_child, .next_sibling; FIG_ROW_NONE for none; a
 // keyvalue's first child is its key, whose next sibling is its value),

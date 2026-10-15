@@ -230,7 +230,7 @@ const C = struct {
     last: std.AutoHashMapUnmanaged(u32, u32) = .empty,
 
     fn row(self: *C, id: u32) *FigRow {
-        return &self.t.rows.items[id];
+        return c.fig_table_row(self.t, id).?;
     }
 
     fn text(self: *C, s: []const u8) !table.Text {
@@ -371,6 +371,7 @@ test "fig_table_finish refuses a link to no row, and fig_table_finish_in_order r
     rows[0].first_child = 7;
     try testing.expectEqual(c.FigStatus.invalid_argument, c.fig_table_finish(&t, 0));
     try testing.expectEqual(c.FigStatus.invalid_argument, c.fig_table_finish(&t, 2));
+    try testing.expectEqual(@as(?*FigRow, null), c.fig_table_row(&t, 2));
     t.rows.items[0].first_child = 1;
     try testing.expectEqual(c.FigStatus.invalid_argument, c.fig_table_finish_in_order(&t));
     try testing.expectEqual(c.FigStatus.ok, c.fig_table_finish(&t, 0));

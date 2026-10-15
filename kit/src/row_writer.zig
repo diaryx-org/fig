@@ -229,8 +229,10 @@ pub fn directive(self: RowWriter, handle: []const u8, prefix: []const u8) Alloca
 /// Put the rows in pre-order from `root`, as fig reads a parse's table:
 /// row 0 the root, each row after its parent and naming it, a container's
 /// children in their sibling order, a keyvalue's key before its value.
-/// Every side fact moves with its node; a row the tree does not reach, and
-/// its facts, are dropped. Rows already in pre-order stay where they are.
+/// Every side fact moves with its node, and each list is left in node
+/// order; a row the tree does not reach, and its facts, are dropped. The
+/// rows' links are written again to name the new rows. Rows already in
+/// pre-order stay where they are.
 pub fn finish(self: RowWriter, root: Node.Id) Allocator.Error!void {
     const a = self.t.allocator;
     self.lastTrailing();
@@ -249,11 +251,13 @@ pub fn finish(self: RowWriter, root: Node.Id) Allocator.Error!void {
     // A child's next sibling goes on the stack before its own first child,
     // so the stack pops a subtree whole before the sibling after it.
     while (stack.pop()) |item| {
+        // A node linked twice is written once, and its siblings were met
+        // the first time, so a cycle in the links ends here too.
+        if (place[item.id] != none) continue;
         if (item.parent != none) {
             const sibling = rows[item.id].next_sibling;
             if (sibling != none) try stack.append(a, .{ .id = sibling, .parent = item.parent });
         }
-        if (place[item.id] != none) continue; // a node linked twice is written once
         place[item.id] = @intCast(n);
         order[n] = item.id;
         if (item.id != n) in_place = false;
@@ -268,10 +272,22 @@ pub fn finish(self: RowWriter, root: Node.Id) Allocator.Error!void {
         return;
     }
     const out = try a.alloc(table.Row, n);
+    errdefer a.free(out);
     for (order[0..n], out) |old, *r| {
         r.* = rows[old];
         r.parent = if (r.parent == none) none else place[r.parent];
+        r.first_child = none;
+        r.next_sibling = none;
     }
+    // The links again, naming the new rows: each row's parent's children
+    // are the rows after it that name it, in order.
+    const last = try a.alloc(u32, n);
+    defer a.free(last);
+    @memset(last, none);
+    for (out, 0..) |r, i| if (r.parent != none) {
+        if (last[r.parent] == none) out[r.parent].first_child = @intCast(i) else out[last[r.parent]].next_sibling = @intCast(i);
+        last[r.parent] = @intCast(i);
+    };
     self.t.rows.deinit(a);
     self.t.rows = .fromOwnedSlice(out);
     remap(table.Anchor, &self.t.anchors, place);
@@ -284,37 +300,49 @@ pub fn finish(self: RowWriter, root: Node.Id) Allocator.Error!void {
     remap(table.Mention, &self.t.mentions, place);
 }
 
-/// `finish` for a parser that wrote its rows in pre-order from the root at
-/// row 0, each naming its parent (`setParent`): the rows are left as they
-/// are, and only the comments put in order. A build with runtime safety
-/// walks the tree as `finish` does and checks the claim.
-pub fn finishInOrder(self: RowWriter) Allocator.Error!void {
-    if (std.debug.runtime_safety) try self.checkInOrder();
-    self.lastTrailing();
-}
-
-/// Assert that `finish` from row 0 would move no row and name every parent
-/// as it already is.
-fn checkInOrder(self: RowWriter) Allocator.Error!void {
+/// Whether the rows are already in the pre-order `finish` from row 0 would
+/// leave them in, each naming its parent as it stands: what
+/// `finishInOrder` takes on trust. A link out of range is not.
+pub fn isInOrder(self: RowWriter) Allocator.Error!bool {
     const a = self.t.allocator;
     const rows = self.t.rows.items;
+    if (rows.len == 0) return false;
     var stack: std.ArrayList(struct { id: u32, parent: u32 }) = .empty;
     defer stack.deinit(a);
     var n: usize = 0;
     try stack.append(a, .{ .id = 0, .parent = none });
     while (stack.pop()) |item| {
+        if (item.id >= rows.len or item.id != n or rows[item.id].parent != item.parent) return false;
         if (item.parent != none) {
             const sibling = rows[item.id].next_sibling;
             if (sibling != none) try stack.append(a, .{ .id = sibling, .parent = item.parent });
         }
-        std.debug.assert(item.id == n);
-        std.debug.assert(rows[item.id].parent == item.parent);
         n += 1;
         const first = rows[item.id].first_child;
         if (table.Kind.isContainer(rows[item.id].kind) and first != none)
             try stack.append(a, .{ .id = first, .parent = item.id });
     }
-    std.debug.assert(n == rows.len);
+    return n == rows.len;
+}
+
+/// Whether every link in the rows names a row or none, so that `finish`
+/// can walk them.
+pub fn linksInRange(self: RowWriter) bool {
+    const len = self.t.rows.items.len;
+    for (self.t.rows.items) |r| {
+        if (r.first_child != none and r.first_child >= len) return false;
+        if (r.next_sibling != none and r.next_sibling >= len) return false;
+    }
+    return true;
+}
+
+/// `finish` for a parser that wrote its rows in pre-order from the root at
+/// row 0, each naming its parent (`setParent`): the rows are left as they
+/// are, and only the comments put in order. A build with runtime safety
+/// walks the tree as `finish` does and checks the claim.
+pub fn finishInOrder(self: RowWriter) Allocator.Error!void {
+    if (std.debug.runtime_safety) std.debug.assert(try self.isInOrder());
+    self.lastTrailing();
 }
 
 /// Sort the comments by node and slot, keeping their order within a slot,
@@ -340,7 +368,8 @@ fn lastTrailing(self: RowWriter) void {
 }
 
 /// Move each fact in `list` to its node's new row, dropping a fact whose
-/// node the tree does not reach.
+/// node the tree does not reach, and leave the list in node order, a
+/// node's facts in the order they were written.
 fn remap(comptime F: type, list: *std.ArrayList(F), place: []const u32) void {
     var w: usize = 0;
     for (list.items) |f| {
@@ -351,6 +380,11 @@ fn remap(comptime F: type, list: *std.ArrayList(F), place: []const u32) void {
         w += 1;
     }
     list.shrinkRetainingCapacity(w);
+    std.sort.block(F, list.items, {}, struct {
+        fn lt(_: void, x: F, y: F) bool {
+            return x.node < y.node;
+        }
+    }.lt);
 }
 
 /// The `Document` a parser's finished table is, adopted. A parser writes a
@@ -389,4 +423,19 @@ test "finish puts rows written out of order into pre-order, facts and all" {
     try std.testing.expectEqual(@as(usize, 1), ast.marker_facts.len);
     try std.testing.expectEqual(item, ast.marker_facts[0].node);
     try std.testing.expect(!ast.hasComments());
+}
+
+test "finish writes a node linked twice once, and ends a cycle in the links" {
+    var t = table.Table.init(std.testing.allocator, "");
+    defer t.deinit();
+    const w = init(&t);
+    const a = try w.add(.null_, Span.init(0, 0));
+    const b = try w.add(.null_, Span.init(0, 0));
+    const seq = try w.add(.{ .sequence = a }, Span.init(0, 0));
+    w.setNext(a, b);
+    w.setNext(b, a);
+    try std.testing.expect(w.linksInRange());
+    try w.finish(seq);
+    try std.testing.expectEqual(@as(usize, 3), t.rows.items.len);
+    try std.testing.expect(try w.isInOrder());
 }

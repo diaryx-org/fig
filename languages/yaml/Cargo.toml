@@ -40,5 +40,8 @@ serde = { version = "1", optional = true }
 fig-language-build = { workspace = true }
 
 [features]
-# `from_str` and `to_string`: typed values to and from YAML text.
+# `from_str`, `to_string` and the rest: typed values to and from YAML
+# through serde, as `serde_json`'s are. On by default; a program that maps
+# its types with fig's own derive turns it off (`default-features = false`).
+default = ["serde"]
 serde = ["fig/serde", "dep:serde"]

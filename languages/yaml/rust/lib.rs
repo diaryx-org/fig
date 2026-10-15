@@ -1,13 +1,17 @@
 //! YAML for [fig](https://docs.rs/fig): fig's own parser,
 //! printer and editing rules for the language, written in Zig (`src/`)
 //! and compiled into a library of its own that links beside fig's, which
-//! carries no language. Register it once, before reaching for a format of
-//! it:
+//! carries no language. Typed values go to and
+//! from it as they do with `serde_json`:
 //!
 //! ```ignore
-//! let format = fig_yaml::register()?;
-//! let doc = fig::Document::parse(input, format)?;
+//! let config: Config = fig_yaml::from_str(input)?;
+//! let text = fig_yaml::to_string(&config)?;
 //! ```
+//!
+//! and [`format()`] is its format, for everything else fig does
+//! (`fig::Document::parse(input, fig_yaml::format()?)`). Neither needs it
+//! registered first: the first call does that.
 //!
 //! It registers `yaml`, and each version as `yaml-<version>`
 //! (`yaml-1.1`), each found by name with [`fig::Format::by_name`].
@@ -30,16 +34,4 @@ pub fn register() -> Result<fig::Format, fig::Error> {
     unsafe { fig::language::register_library(fig_yaml_register) }
 }
 
-/// Deserialize YAML text into a typed value: [`fig::from_slice`] with YAML
-/// registered.
-#[cfg(feature = "serde")]
-pub fn from_str<T: serde::de::DeserializeOwned>(s: &str) -> Result<T, fig::Error> {
-    fig::from_slice(s.as_bytes(), register()?)
-}
-
-/// Serialize a value to YAML text: [`fig::to_value`], then
-/// [`fig::Value::serialize`] as YAML.
-#[cfg(feature = "serde")]
-pub fn to_string<T: serde::Serialize + ?Sized>(value: &T) -> Result<String, fig::Error> {
-    fig::to_value(value)?.serialize(register()?)
-}
+fig::__language_crate_functions!("YAML");

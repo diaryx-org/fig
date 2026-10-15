@@ -31,9 +31,17 @@ include = [
 [lib]
 path = "rust/lib.rs"
 
+[features]
+# `from_str`, `to_string` and the rest: typed values to and from JSON
+# through serde, as `serde_json`'s are. On by default; a program that maps
+# its types with fig's own derive turns it off (`default-features = false`).
+default = ["serde"]
+serde = ["fig/serde", "dep:serde"]
+
 [dependencies]
 fig = { workspace = true }
 fig-sys = { workspace = true }
+serde = { version = "1", optional = true }
 
 [build-dependencies]
 fig-language-build = { workspace = true }

@@ -1,13 +1,17 @@
 //! The Apple XML property list for [fig](https://docs.rs/fig): fig's own parser,
 //! printer and editing rules for the language, written in Zig (`src/`)
 //! and compiled into a library of its own that links beside fig's, which
-//! carries no language. Register it once, before reaching for a format of
-//! it:
+//! carries no language. Typed values go to and
+//! from it as they do with `serde_json`:
 //!
 //! ```ignore
-//! let format = fig_plist::register()?;
-//! let doc = fig::Document::parse(input, format)?;
+//! let config: Config = fig_plist::from_str(input)?;
+//! let text = fig_plist::to_string(&config)?;
 //! ```
+//!
+//! and [`format()`] is its format, for everything else fig does
+//! (`fig::Document::parse(input, fig_plist::format()?)`). Neither needs it
+//! registered first: the first call does that.
 //!
 //! It registers `plist`, found by name with [`fig::Format::by_name`].
 
@@ -28,3 +32,5 @@ pub fn register() -> Result<fig::Format, fig::Error> {
     // build script links.
     unsafe { fig::language::register_library(fig_plist_register) }
 }
+
+fig::__language_crate_functions!("plist");

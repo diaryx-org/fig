@@ -5,6 +5,7 @@ extern crate self as fig;
 mod diagnostics;
 mod editor;
 mod error;
+mod language_crate;
 mod value;
 
 // The raw FFI layer moved to the `fig-sys` crate. Alias it as `ffi` so every

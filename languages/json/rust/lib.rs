@@ -1,13 +1,17 @@
 //! JSON, JSONC and JSON5 for [fig](https://docs.rs/fig): fig's own parser,
 //! printer and editing rules for the language, written in Zig (`src/`)
 //! and compiled into a library of its own that links beside fig's, which
-//! carries no language. Register it once, before reaching for a format of
-//! it:
+//! carries no language. Typed values go to and
+//! from it as they do with `serde_json`:
 //!
 //! ```ignore
-//! let format = fig_json::register()?;
-//! let doc = fig::Document::parse(input, format)?;
+//! let config: Config = fig_json::from_str(input)?;
+//! let text = fig_json::to_string(&config)?;
 //! ```
+//!
+//! and [`format()`] is its format, for everything else fig does
+//! (`fig::Document::parse(input, fig_json::format()?)`). Neither needs it
+//! registered first: the first call does that.
 //!
 //! It registers `json`, `jsonc` and `json5`, each found by name with
 //! [`fig::Format::by_name`].
@@ -29,3 +33,5 @@ pub fn register() -> Result<fig::Format, fig::Error> {
     // build script links.
     unsafe { fig::language::register_library(fig_json_register) }
 }
+
+fig::__language_crate_functions!("JSON");

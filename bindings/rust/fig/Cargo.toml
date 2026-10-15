@@ -65,19 +65,20 @@ serde_json = { version = "1", optional = true }
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 # Every language, for the tests to read and write: each registers from its
-# own library (`tests/common`, `src/test_languages.rs`). By path alone, so
-# `cargo publish` drops them: each depends on this crate, and is published
-# after it.
-fig-json = { path = "../../../languages/json" }
-fig-yaml = { path = "../../../languages/yaml", features = ["serde"] }
-fig-toml = { path = "../../../languages/toml" }
-fig-zon = { path = "../../../languages/zon" }
-fig-figl = { path = "../../../languages/figl" }
-fig-ini = { path = "../../../languages/ini" }
-fig-dotenv = { path = "../../../languages/dotenv" }
-fig-properties = { path = "../../../languages/properties" }
-fig-plist = { path = "../../../languages/plist" }
-fig-nestedtext = { path = "../../../languages/nestedtext" }
+# own library (`tests/common`, `src/test_languages.rs`), and without their
+# default `serde`, which would turn fig's on for a test run without it. By
+# path alone, so `cargo publish` drops them: each depends on this crate,
+# and is published after it.
+fig-json = { path = "../../../languages/json", default-features = false }
+fig-yaml = { path = "../../../languages/yaml", default-features = false, features = ["serde"] }
+fig-toml = { path = "../../../languages/toml", default-features = false }
+fig-zon = { path = "../../../languages/zon", default-features = false }
+fig-figl = { path = "../../../languages/figl", default-features = false }
+fig-ini = { path = "../../../languages/ini", default-features = false }
+fig-dotenv = { path = "../../../languages/dotenv", default-features = false }
+fig-properties = { path = "../../../languages/properties", default-features = false }
+fig-plist = { path = "../../../languages/plist", default-features = false }
+fig-nestedtext = { path = "../../../languages/nestedtext", default-features = false }
 
 # The helper executable `tools/cli-lang-check.sh` spawns from the CLI. The
 # wire is JSON-RPC 2.0, which the `helper` module reads with `serde_json`.

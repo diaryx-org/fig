@@ -17,13 +17,19 @@ fig-plist = "6"
 ```
 
 ```rust
-let format = fig_plist::register()?;
-let doc = fig::Document::parse(b"<plist version=\"1.0\"><dict><key>a</key><integer>1</integer></dict></plist>\n", format)?;
+let doc = fig::Document::parse(b"<plist version=\"1.0\"><dict><key>a</key><integer>1</integer></dict></plist>\n", fig_plist::format()?)?;
 ```
 
-The crate compiles the language from its Zig with
-[`fig-language-build`](https://docs.rs/fig-language-build), so building it
-needs Zig 0.17 or later.
+`format()` registers the language the first time it is asked for. With
+the crate's default `serde` feature it reads and writes typed values as
+`serde_json` does, with `fig_plist::from_str` and `fig_plist::to_string`, and
+their `slice`, `reader`, `vec` and `writer` twins.
+
+On fig's tier-1 targets the crate links a prebuilt library of the language,
+which `fig-sys`'s payload crate carries, and needs no Zig. Anywhere else it
+compiles the language from its Zig with
+[`fig-language-build`](https://docs.rs/fig-language-build), which needs Zig
+0.17 or later.
 
 ## JavaScript
 

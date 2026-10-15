@@ -6,6 +6,7 @@ pub mod error;
 pub mod kit;
 
 pub use error::{Error, Result};
+pub mod api;
 pub mod canonical;
 pub mod deserialize;
 pub mod diagnostics;

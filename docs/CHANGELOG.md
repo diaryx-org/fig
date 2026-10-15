@@ -180,6 +180,7 @@ and no regeneration can reach a released section.
 - **rust** — a typed value that fails below the root says where ([`a61da1d`](https://github.com/diaryx-org/fig/commit/a61da1d4f801c1f9a99696023583fe6a72b10f49))
 - **rust** — each language crate reads and writes typed values like serde_json ([`71656e1`](https://github.com/diaryx-org/fig/commit/71656e13fefc87b26fab4ac0ecce3efb990d440b))
 - **editor** — a replaced string keeps its quote style ([`13ce0a8`](https://github.com/diaryx-org/fig/commit/13ce0a8eb598611968ec1f8117427d7aa5a73507))
+- **bindings** — the Rust and TypeScript editors keep a replaced string's quote style ([`e77d654`](https://github.com/diaryx-org/fig/commit/e77d6540cfe79d5c6a2881db420c9d8cb4d00348))
 
 ### Fixed
 
@@ -728,6 +729,21 @@ and no regeneration can reach a released section.
 
 - a C or Rust program linking fig's static libraries
   for a musl target as a PIE now links; it used to fail at the linker.
+
+- the Rust `Editor::replace_value`, `set_value`,
+  `replace_value_with` and `set_value_with`, and the TypeScript
+  `replaceValue`, `setValue`, `replaceValueWith` and `setValueWith`, keep
+  the quote style of a string they replace with a string, as `fig replace`
+  and `fig set` do: a YAML `"debug"` set to `info` becomes `"info"` (was
+  `info`), a YAML `'x'` stays single-quoted, a TOML `'…'`, `'''…'''` or
+  `"""…"""` keeps its delimiters, and a JSON5 `'…'` stays single-quoted
+  (was `"…"`). Where the old style cannot hold the new string, the
+  printer's spelling is written as before. `replaceValueRaw` and
+  `setValueRaw` are unchanged.
+
+- the JavaScript YAML, TOML and JSON5 languages
+  (`@diaryx/fig/js/yaml`, `toml`, `json5`) keep a replaced string's quote
+  style as above, as their compiled formats do.
 
 <!-- git-cliff:end -->
 

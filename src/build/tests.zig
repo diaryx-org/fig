@@ -42,8 +42,10 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
 
     // A run step that will run the test executable.
     const run_mod_tests = b.addRunArtifact(mod_tests);
-    // The kit fixture tests read `kit/testdata/` from the build root.
+    // The kit fixture tests read `kit/testdata/` from the build root, so
+    // each fixture is an input of the run: a changed answer runs them again.
     run_mod_tests.setCwd(b.path("."));
+    addKitFixtures(b, run_mod_tests);
 
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,
@@ -211,4 +213,17 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     install_tests_step.dependOn(&install_mod_tests.step);
 
     return .{ .test_step = test_step, .all_on_step = all_on_step };
+}
+
+/// Every file under `kit/testdata/`, as an input of `run`.
+pub fn addKitFixtures(b: *std.Build, run: *std.Build.Step.Run) void {
+    const io = b.graph.io;
+    var dir = b.root.openDir(io, "kit/testdata", .{ .iterate = true }) catch return;
+    defer dir.close(io);
+    var walker = dir.walk(b.allocator) catch @panic("OOM");
+    defer walker.deinit();
+    while (walker.next(io) catch null) |e| {
+        if (e.kind != .file) continue;
+        run.addFileInput(b.path(b.pathJoin(&.{ "kit/testdata", e.path })));
+    }
 }

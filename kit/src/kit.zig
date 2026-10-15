@@ -41,6 +41,12 @@ pub const wasm_language = @import("wasm_language.zig");
 pub const Unicode = @import("unicode.zig");
 pub const json_string = @import("json_string.zig");
 pub const ascii = @import("ascii.zig");
+/// A byte cursor over a parse's input, whose positions are the table's.
+pub const Scanner = @import("scanner.zig");
+/// A printer's output, which knows its options and writes comment lines.
+pub const Writer = @import("writer.zig");
+/// Combinators over the scanner that write the table as they match.
+pub const grammar = @import("grammar.zig");
 pub const datetime = @import("datetime.zig");
 pub const width = @import("width.zig");
 pub const number = @import("number.zig");
@@ -70,6 +76,9 @@ test {
     _ = @import("token.zig");
     _ = json_string;
     _ = ascii;
+    _ = Scanner;
+    _ = Writer;
+    _ = grammar;
     _ = datetime;
     _ = yaml_schema;
     _ = Unicode;

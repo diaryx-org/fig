@@ -180,6 +180,30 @@ echo "$var=$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${
 # same check right before publishing, as a release-time gate — see that job's
 # comments for why its baseline discovery differs slightly (it must exclude
 # the tag that triggered the release run itself).
+jobs.rust-port
+> name = Rust port — cargo test + edit fixtures (no Zig)
+> runs-on = ubuntu-latest
+
+jobs.rust-port.steps[]
+> uses = actions/checkout@v7
++
+> # The port in rust/ is pure Rust: no Zig here, by design
+> # (docs/proposals/rust-core.md).
+> uses = dtolnay/rust-toolchain@stable
++
+> uses = Swatinem/rust-cache@v2
+> with.workspaces = rust
++
+> run = cargo test --workspace
+> working-directory = rust
++
+> run = cargo build --release -p fig-conform
+> working-directory = rust
++
+> # Every language's hand-written edit fixtures, through the Rust editor
+> # behind fig-conformance's adapter protocol.
+> run = node tools/edit-fixtures.mjs --command rust/target/release/fig-conform
+
 jobs.rust-semver
 > name = Rust — cargo-semver-checks
 > runs-on = ubuntu-latest

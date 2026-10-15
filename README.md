@@ -4,7 +4,7 @@ title = fig
 version = 6.0.0
 author = adammharris
 created = 2026-05-08
-updated = 2026-08-27T22:45:00-06:00
+updated = 2026-10-14T21:00:00-06:00
 contents = [[fig docs](docs/docs.md), [Fig Banner Dark](/assets/fig-banner-dark.svg.yaml), [Fig Banner](/assets/fig-banner.svg.yaml), [fig on diaryx.org](/www/index.md), [Audiences](/vocab/audiences.md), [Languages](/languages/README.md)]
 config = .config/prov.yaml
 registry = registry.yaml
@@ -27,9 +27,13 @@ slug = fig
   <a href="LICENSE-MIT"><img src="https://img.shields.io/crates/l/fig.svg" alt="license"></a>
 </p>
 
-`fig` is a Zig library (and CLI) for parsing and editing config files.
+`fig` edits config files losslessly: make an edit and every comment, blank line, quote and key order remains untouched. It converts between formats retaining as much as possible, including comments, and reports exactly what is dropped if a format doesn't support something.
 
-Editing config files programmatically shouldn't be a hassle.
+`fig`'s command-line tool has ten formats built in. The underlying library is maintained for Rust,
+TypeScript, Zig and C and has no languages built in. Every language is registered the same way, and a kit is included to make it easy to write your own in any of those languages.
+
+## The CLI
+
 Take a messy YAML file:
 
 ```yaml
@@ -48,7 +52,7 @@ worker:
   replicas: 1
 ```
 
-And easily edit and comment from the command-line:
+Change a value and annotate it:
 
 ```bash
 $ fig set config.yaml service.replicas 5
@@ -64,11 +68,20 @@ $ fig comment --inline config.yaml service.replicas "bumped for Black Friday"
    ports: [80, 443]
 ```
 
-`fig` produces a single-line diff.
-Every other byte is preserved.
+One line changed.
 
-`fig` supports lots of formats.
-Convert to another format, and keep your comments:
+Read through YAML's anchors and merge keys:
+
+```bash
+$ fig get config.yaml worker -o json
+{
+  "replicas": 1,
+  "retries": 3,
+  "timeout": "30s"
+}
+```
+
+Convert to another format, and keep the comments:
 
 ```bash
 $ fig get config.yaml service -o json5
@@ -82,9 +95,9 @@ $ fig get config.yaml service -o json5
 }
 ```
 
-`fig` can also merge one file into another —
-or one part of one file into part of another —
-touching nothing the patch doesn't name:
+Merge one file into another, or one part of one file into part of another,
+touching nothing the patch doesn't name. The two files need not share a
+format:
 
 ```bash
 $ cat overlay.toml
@@ -109,168 +122,138 @@ $ fig patch config.yaml overlay.toml --diff
    retries: 3
 ```
 
-The two files need not share a format.
-Values the two already agree on are never rewritten,
-so a patch's diff is only what it actually changed,
-and re-applying one is a no-op.
-`--at` and `--from` name where it lands and what to take,
-`--seq` and `--comments` decide who wins where both files have something to say,
-and `--delete` removes a path on the way through.
+## Built-in formats
 
-Originally made for [Diaryx](https://diaryx.org),
-`fig` was made to edit frontmatter in markdown files without reserializing.
-`fig` has since been expanded to include many different kinds of configuration formats:
+You can make your own formats with `fig`!
+But these are the ones that are built-in:
 
-- YAML (1.2.2 and 1.1)
-- JSON (strict, JSONC, JSON5)
-- TOML (1.1 and 1.0)
-- ZON (Zig Object Notation, via `std.zig.AST`)
-- NestedText (<https://nestedtext.org>)
-- Java (`.properties`)
-- dotenv (`.dotenv`)
-- INI (`.ini`)
-- Property list (`.plist`)
-- figl (`.figl`), an in-house authoring dialect authored by yours truly!
+| Format | Files | |
+| --- | --- | --- |
+| YAML | `.yaml`, `.yml` | 1.2.2 and 1.1; anchors, aliases, merge keys |
+| JSON | `.json`, `.jsonc`, `.json5` | strict, JSONC and JSON5 |
+| TOML | `.toml` | 1.1 and 1.0, datetimes |
+| ZON | `.zon` | Zig Object Notation |
+| NestedText | `.nt` | <https://nestedtext.org> |
+| Java properties | `.properties` | |
+| dotenv | `.env` | |
+| INI | `.ini` | |
+| Property list | `.plist` | Apple's XML plist |
+| figl | `.figl` | fig's own authoring dialect |
 
-And has bindings in the following programming languages:
+## Installation
 
-- [Zig](docs/zig.md)
-- [Rust](docs/rust.md)
-- [Typescript](docs/typescript.md) (experimental)
-- C (not tested, but likely works)
-
-## Command-line interface
-
-Download from Github Releases or with Homebrew:
+Install it with Homebrew, download it from GitHub Releases, or run it with no
+install at all (Node 22+, see [docs/npm-wasi.md](docs/npm-wasi.md)):
 
 ```bash
-brew tap diaryx-org/tap
 brew install diaryx-org/tap/fig
-```
-
-Or run it with no install at all (needs Node 22+)—see
-[docs/npm-wasi.md](docs/npm-wasi.md)):
-
-```bash
 npx @diaryx/fig-wasi get config.yaml
 ```
 
-Run `fig help` for instructions for how to use it on your files.
+Run `fig help` for a list of commands.
 
-An action `fig` doesn't implement is handed to a `fig-<action>` program on your
-PATH, the way `git` does — so installing a tool named `fig-schema` makes
-`fig schema ...` run it, with every argument after the action passed through
-untouched.
+## The library
 
-A format `fig` doesn't ship can be a program too. A `languages.figl`
-(in `.fig/` beside your files, or under `~/.config/fig/`) names a helper —
-any executable speaking the [helper wire](docs/rust.md#runtime-languages),
-such as a `fig-lua` script — and it becomes a format every action accepts,
-by extension or by `--lang`:
+The CLI is a thin layer over the `fig` library.
 
-```fig
-language[]
-> name = lua-dotenv
-> extensions = [env]
-> command = [fig-lua, ~/.config/fig/languages/dotenv.lua]
+```rust
+use fig::{Editor, Segment};
+
+let path = [Segment::Key("service"), Segment::Key("replicas")];
+let mut ed = Editor::open(src.as_bytes(), fig_yaml::format()?)?;
+ed.set_value(&path, 5)?;
+ed.set_trailing_comment(&path, "bumped for Black Friday")?;
+std::fs::write("config.yaml", ed.source()?)?;
+
+// serde_json-style, in any format you depend on
+let cfg: Config = fig_yaml::from_str(ed.source()?)?;
+let toml = fig_toml::to_string(&cfg)?;
 ```
 
-```bash
-$ fig get secrets.env --lang lua-dotenv
-$ fig lang list
-$ fig lang check lua-dotenv --against dotenv secrets.env
+```toml
+[dependencies]
+fig = "6"
+fig-yaml = "6"   # one crate per format
+fig-toml = "6"
 ```
 
-A helper named after a format your build leaves out (`fig lang list` says
-"not built in") is that format: in a build made with `-Dplist=false`,
-`.plist` files and `-i plist` reach the helper.
+No Zig toolchain is needed for most platforms. `serde` is optional: fig
+has its own `#[derive(ToValue, FromValue)]`. See [Rust](docs/rust.md).
 
-`fig lang list` shows every built-in and configured language; `fig lang check`
-holds a configured one to a built-in twin, table for table; `fig lang table`
-prints the table a file parses to, which is what a twin has to produce.
+From TypeScript:
 
-## Nushell
+```ts
+import { Editor, registerLanguage } from "@diaryx/fig";
+import yaml from "@diaryx/fig-yaml";
 
-[`bindings/nushell`](bindings/nushell) is a [nushell](https://www.nushell.sh) plugin
-providing `from figl` and `to figl`.
-Nushell dispatches `open` on file extension,
-so registering it also makes `open config.figl` return structured data.
+using ed = Editor.open(src, registerLanguage(yaml));
+ed.setValue(["service", "replicas"], 5);
+ed.setTrailingComment(["service", "replicas"], "bumped for Black Friday");
+```
 
-figl's datetimes arrive as real `datetime`s and its nulls as `nothing`.
-No convert-through-JSON shim manages both at once,
-which is why it is a plugin and not a one-line wrapper over the CLI.
+See [TypeScript](docs/typescript.md), [Zig](docs/zig.md), and for C,
+[`bindings/c/include/fig.h`](bindings/c/include/fig.h).
 
-## Planned features
+## Bring your own format
 
-- Styling directives (maintain styling across formats, such as mapping TOML inline->YAML inline)
-- More distribution options (depends on user need)
-- More bindings (depends on user need)
-- Advanced querying capabilties.
-  - Filtering nodes
-  - Redacting node
-  - Multi-match `fig get`
-- Structure-aware diff & 3-way merge (`fig patch` is the one-way half of this).
-- `fig fmt` enhancements (sort keys, dedupe, stable array, etc.)
+A 'language' simply tells `fig`:
+- how to parse its text into a table of nodes,
+- how to print one back, 
+- and how its syntax is spelled.
 
-**In consideration**
-- Schema validation (see [fig-schema](https://github.com/diaryx-org/fig-schema))
-- LSP enhancements
-- $ENV interpolation
+Bring your own comment markers, key–value separators,
+and so forth, and `fig` will do everything else:
+
+- comment-preserving edits: set, insert, delete, rename, move, reorder,
+  comment out and back in
+- conversion to and from every other registered format, comments included
+- `diagnose`, `fig patch`, `fig get` and every other CLI action
+- a check when it registers: fig parses, prints, reparses and edits its
+  sample documents, and refuses a language that doesn't hold up
+
+dotenv is the smallest language, for reference. Each built-in language package
+builds a C library, a WebAssembly module, a Rust crate and an npm package.
+See [Languages](languages/README.md).
+
+A language can also be written in JavaScript, with `@diaryx/fig/kit`'s node
+table, tree, scanner and grammar combinators; in Rust, by implementing
+`fig::language::Language` (see
+[Runtime languages](docs/rust.md#runtime-languages)); or as any program that
+speaks the [helper protocol](docs/helper-protocol.md), JSON-RPC over stdio.
+Name a helper in a `~/.config/fig/languages.figl` and every `fig` action accepts its
+files, and `fig lang check` holds it to a built-in twin.
+
+## Why `fig`?
+
+`fig` was originally created for [Diaryx](https://diaryx.org),
+a project whose goal is preservation and readability. Existing tools
+read one file in and write an often very different new file out,
+because they prioritize simply getting information from one place to another
+rather than preserving the file as it is.
+
+`toml_edit` accomplishes this goal, but only for the TOML format.
+`fig` generalizes its structure to an arbitrary number of formats.
+In this way, it is a bit like `serde` but with editing support as well---`serdedit`, if you will.
+
+fig ensures fidelity with lots of testing and daily fuzzing. The whole conformance suite is found at \<https://github.com/diaryx-org/fig-conformance>.
+
+## Possible future features
+
+- Styling directives that carry across formats (a TOML inline table as a
+  YAML flow mapping)
+- Structure-aware diff and three-way merge (`fig patch` is the one-way half)
+- `fig fmt`: sort keys, dedupe
 
 ## Fine print
 
-**Contibutions**
+**Contributions** are welcome, subject to my approval.
 
-Contributions are welcome, subject to my approval.
+**License:** MIT or Apache 2.0, at your option. If you use `fig` in your
+work, I would love to hear from you and feature you here.
 
-**AI Use**
+**Credits:** I am thankful for the `toml_edit` Rust crate, which guided the
+structural edits a format-preserving TOML editor needs.
 
-`fig`, like many deceptively simple systems-level codebases,
-require careful thought and intention.
-AI tools can generate code rapidly,
-often at the cost of this important design thinking.
-Therefore, I have chosen to limit the use of AI code generation in this codebase.
+## Contact me
 
-I started writing this library by hand (no AI) for my own education,
-and for use in my larger project, [Diaryx](https://diaryx.org).
-After writing a JSON tokenizer and parser by hand,
-and designing the Document, Token, and Language abstractions,
-I decided to make use of the Codex AI tool
-to generate specific portions of the code that would otherwise require hours of tedious, repetitive work.
-
-Using Codex, I was able to make a compliant YAML parser
-much faster than I would have been able to otherwise.
-Later, I used Claude Code to do the same for TOML, ZON, and JSON5.
-For each of these, I made a conformance suite in order to ensure a correct implementation.
-
-All of the code generated was carefully reviewed and edited according to my taste before being accepted.
-I take full responsibility and ownership of the code in this repository.
-If you have any questions or concerns about AI use in this project, [please contact me!](<#contact-me>)
-
-**License**
-
-MIT or Apache 2.0, at your discretion.
-If you use `fig` in your work, I would love to hear from you and feature you here!
-[Please contact me!](<#contact-me>)
-
-**Credits**
-
-I took the JSON test suite in [fig-conformance](https://github.com/diaryx-org/fig-conformance) from [Nicolas Seriot's JSONTestSuite repository](https://github.com/nst/JSONTestSuite).
-I'm grateful that it is licensed under the MIT license, so I am allowed to use it for `fig`.
-A copy of the license is included beside it there.
-
-I've done likewise for the other testing suites:
-
-- JSON5 <https://github.com/json5/json5-tests>
-- TOML <https://github.com/toml-lang/toml-test>
-- YAML <https://github.com/yaml/yaml-test-suite>
-- NestedText [KenKundert/nestedtext_tests](https://github.com/KenKundert/nestedtext_tests)
-
-I am thankful for each of them.
-
-I am also thankful for the `toml-edit` Rust crate,
-which provided guidance for the complex structural edits required by any format-preserving TOML editor.
-
-## Contact Me
-
-<amh421@icloud.com>, or leave an issue.
+<adam@diaryx.org>, or open an issue.

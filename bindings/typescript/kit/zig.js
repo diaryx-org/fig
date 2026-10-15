@@ -4,7 +4,8 @@
 // `zig-bytes.js` and compiled synchronously the first time a rule is asked. At under 5 KB it is far inside what a
 // browser's main thread compiles synchronously.
 //
-// `number.js` and `datetime.js` are written on these functions, and
+// `number.js`, `datetime.js`, `literal.js` and `json-string.js` are
+// written on these functions, and
 // nothing else here touches the module, so a host with no WebAssembly
 // (fig-quickjs) answers the same functions from `libfig`'s `fig_kit_*` by
 // replacing this file alone.
@@ -25,12 +26,13 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 /** `s`'s UTF-8 written at the heap's start, with room behind it for an
- *  answer: [where, how long]. */
-function put(s) {
+ *  answer of up to `room(most)` bytes, where `most` is the most bytes `s`
+ *  can be: [where, how long]. */
+function put(s, room = (most) => most + ANSWER_ROOM) {
   const k = exports();
   const at = k.fig_kit_heap();
   const most = s.length * 3;
-  const need = at + 2 * most + ANSWER_ROOM;
+  const need = at + most + room(most);
   const have = k.memory.buffer.byteLength;
   if (need > have) k.memory.grow(Math.ceil((need - have) / 65536));
   const mem = new Uint8Array(k.memory.buffer, at, most);
@@ -93,4 +95,35 @@ export function datetimeValidTime(s, opts) {
 export function datetimeValidOffset(s) {
   const [at, len] = put(s);
   return exports().fig_kit_datetime_valid_offset(at, len) !== 0;
+}
+
+// A row kind as `fig.h` numbers it (`FIG_ROW_*`), by name; a datetime is
+// `FIG_ROW_EXT` (16) plus its index in KINDS.
+const ROW_KINDS = ["null", "false", "true", "string", "int", "float"];
+
+function rowKind(k) {
+  return k >= 16 ? KINDS[k - 16] : ROW_KINDS[k];
+}
+
+export function literalKind(raw) {
+  const [at, len] = put(raw);
+  return rowKind(exports().fig_kit_literal_kind(at, len));
+}
+
+export function literalNumber(raw) {
+  const [at, len] = put(raw);
+  const k = exports().fig_kit_literal_number(at, len);
+  return k < 0 ? null : rowKind(k);
+}
+
+// `FIG_KIT_JSON_STRING_ROOM`.
+const jsonStringRoom = (most) => most * 6 + 2;
+
+export function jsonStringQuote(s, quote) {
+  const [at, len] = put(s, jsonStringRoom);
+  const k = exports();
+  // A usize answer comes back as a signed i32: SIZE_MAX is -1.
+  const n = k.fig_kit_json_string_quote(at, len, quote.charCodeAt(0), at + len, jsonStringRoom(len));
+  if (n < 0) throw new RangeError("a JSON string is quoted by `\"` or `'`, not " + JSON.stringify(quote));
+  return decoder.decode(new Uint8Array(k.memory.buffer, at + len, n));
 }

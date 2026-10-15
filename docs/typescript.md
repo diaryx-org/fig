@@ -613,11 +613,14 @@ for your own formats too:
 - `@diaryx/fig/kit/grammar`: combinators, so a format is a description and
   its spans, comment binding and duplicate-key policy follow from it;
 - `@diaryx/fig/kit/xml`: the XML tokenizer;
-- `@diaryx/fig/kit/number` and `@diaryx/fig/kit/datetime`: how a number is
-  spelled for a format, and which datetime a bare token is. These two are
-  the Zig kit's own rules, a 5 KB WebAssembly module the kit compiles the
-  first time one is asked, so a language written in JavaScript spells a
-  number and reads a datetime exactly as fig's own languages do.
+- `@diaryx/fig/kit/number`, `/datetime`, `/literal` and `/json-string`: how
+  a number is spelled for a format, which datetime a bare token is, what a
+  bare token means (`null`, `true`, a number, a datetime, or a string), and
+  a string quoted as JSON. These are the Zig kit's own rules, a 7 KB
+  WebAssembly module the kit compiles the first time one is asked, so a
+  language written in JavaScript spells a number and reads a datetime
+  exactly as fig's own languages do; `kit/testdata/rules/` holds every
+  binding's kit to the same answers.
 
 The rest is plain JavaScript that runs unchanged in Node, the browser, and
 the QuickJS that `fig-quickjs` embeds. A host with no WebAssembly, as

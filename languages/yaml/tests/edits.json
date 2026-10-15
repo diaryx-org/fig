@@ -1,0 +1,1784 @@
+{
+  "dialect": "yaml",
+  "from": ["languages/yaml/tests/editor.zig", "src/editor.zig"],
+  "cases": [
+    {
+      "id": "edit through alias is copy-on-write (severs only that alias)",
+      "note": "anchor + value of `a` untouched.",
+      "source": "a: &x 1\nb: *x\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["b"], 5], "expect": { "ok": true, "source": "a: &x 1\nb: 5\n" } }
+      ]
+    },
+    {
+      "id": "COW materializes a merge-only key locally",
+      "source": "base: &b\n  x: 1\nd:\n  <<: *b\n  y: 2\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["d", "x"], 5], "expect": { "ok": true, "source": "base: &b\n  x: 1\nd:\n  <<: *b\n  y: 2\n  x: 5\n" } }
+      ]
+    },
+    {
+      "id": "deleting a merge-only key is refused",
+      "note": "Zig error MergeOnlyKey.",
+      "source": "base: &b\n  x: 1\nd:\n  <<: *b\n  y: 2\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["d", "x"]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "insert key block",
+      "source": "a: 1\nb: 2\n",
+      "steps": [
+        { "op": "insertValue", "args": [[], "c", 3], "expect": { "ok": true, "source": "a: 1\nb: 2\nc: 3\n" } }
+      ]
+    },
+    {
+      "id": "insert key no trailing newline",
+      "source": "a: 1\nb: 2",
+      "steps": [
+        { "op": "insertValue", "args": [[], "c", 3], "expect": { "ok": true, "source": "a: 1\nb: 2\nc: 3\n" } }
+      ]
+    },
+    {
+      "id": "insert key nested column inheritance",
+      "source": "root:\n  x: 1\n",
+      "steps": [
+        { "op": "insertValue", "args": [["root"], "y", 2], "expect": { "ok": true, "source": "root:\n  x: 1\n  y: 2\n" } }
+      ]
+    },
+    {
+      "id": "insert key multiline block scalar",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "insertValueRaw", "args": [[], "desc", "|\n  line one\n  line two\n"], "expect": { "ok": true, "source": "a: 1\ndesc: |\n  line one\n  line two\n" } }
+      ]
+    },
+    {
+      "id": "insert key empty flow map",
+      "source": "env: {}\n",
+      "steps": [
+        { "op": "insertValue", "args": [["env"], "X", 1], "expect": { "ok": true, "source": "env: {X: 1}\n" } }
+      ]
+    },
+    {
+      "id": "insert key nonempty flow map",
+      "source": "env: {a: 1}\n",
+      "steps": [
+        { "op": "insertValue", "args": [["env"], "b", 2], "expect": { "ok": true, "source": "env: {a: 1, b: 2}\n" } }
+      ]
+    },
+    {
+      "id": "insert key promotes null value",
+      "source": "k:\n",
+      "steps": [
+        { "op": "insertValue", "args": [["k"], "n", 1], "expect": { "ok": true, "source": "k:\n  n: 1\n" } }
+      ]
+    },
+    {
+      "id": "insert key with nested mapping value",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "insertValueRaw", "args": [[], "meta", "x: 1\ny: 2\n"], "expect": { "ok": true, "source": "a: 1\nmeta:\n  x: 1\n  y: 2\n" } }
+      ]
+    },
+    {
+      "id": "insert key with indentless sequence value",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "insertValueRaw", "args": [[], "tags", "- x\n- y\n"], "expect": { "ok": true, "source": "a: 1\ntags:\n- x\n- y\n" } }
+      ]
+    },
+    {
+      "id": "insert key with single-entry mapping value descends like a multi-entry one",
+      "note": "A one-entry mapping renders `k: v` — one line, no dash — so shape alone can't tell it from a scalar. Spliced inline it would read `meta: x: 1`, which is not YAML; it has to descend exactly like the two-entry value in the test above.",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "insertValueRaw", "args": [[], "meta", "x: 1\n"], "expect": { "ok": true, "source": "a: 1\nmeta:\n  x: 1\n" } }
+      ]
+    },
+    {
+      "id": "insert key with single-entry mapping value nests under an existing key",
+      "source": "root:\n  x: 1\n",
+      "steps": [
+        { "op": "insertValueRaw", "args": [["root"], "y", "k: v\n"], "expect": { "ok": true, "source": "root:\n  x: 1\n  y:\n    k: v\n" } }
+      ]
+    },
+    {
+      "id": "replacing a value with a single-entry mapping reframes it to block",
+      "source": "a: 1\nb: 2\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["a"], "k: v\n"], "expect": { "ok": true, "source": "a:\n  k: v\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "promoting a null value takes a block value, not just a scalar [1]",
+      "note": "`promoteNullToMapping` writes the new entry through `writeMapValue`, so a block value descends instead of being jammed inline after the `:`.",
+      "source": "k:\n",
+      "steps": [
+        { "op": "insertValueRaw", "args": [["k"], "n", "x: 1\n"], "expect": { "ok": true, "source": "k:\n  n:\n    x: 1\n" } }
+      ]
+    },
+    {
+      "id": "promoting a null value takes a block value, not just a scalar [2]",
+      "source": "k:\n",
+      "steps": [
+        { "op": "insertValueRaw", "args": [["k"], "n", "- q\n"], "expect": { "ok": true, "source": "k:\n  n:\n  - q\n" } }
+      ]
+    },
+    {
+      "id": "insert into a flow mapping refuses a block value [1]",
+      "note": "Zig error BlockValueIntoFlow. `{a: 1, b: - q}` is not the sequence that was asked for — and a lenient reader would take it as the string `\"- q\"`, losing it silently. Refuse before splicing, naming the reason. untouched. Same for a block mapping, a block scalar, and an empty flow target.",
+      "source": "env: {a: 1}\n",
+      "steps": [
+        { "op": "insertValueRaw", "args": [["env"], "b", "- q\n"], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "insertValueRaw", "args": [["env"], "b", "k: v\n"], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "insertValueRaw", "args": [["env"], "b", "|\n  text\n"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "insert into a flow mapping refuses a block value [2]",
+      "note": "Zig error BlockValueIntoFlow.",
+      "source": "env: {}\n",
+      "steps": [
+        { "op": "insertValueRaw", "args": [["env"], "b", "- q\n"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "appending to a flow sequence refuses a block value",
+      "note": "Zig error BlockValueIntoFlow.",
+      "source": "a: [1]\n",
+      "steps": [
+        { "op": "appendValueRaw", "args": [["a"], "- q\n"], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "prependValueRaw", "args": [["a"], "k: v\n"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "flow inserts still take scalars and flow containers",
+      "note": "The guard is about BLOCK spelling only: flow values and scalars — including quoted text that merely looks dash- or colon-led — splice as before.",
+      "source": "env: {a: 1}\n",
+      "steps": [
+        { "op": "insertValueRaw", "args": [["env"], "b", "[x, y]"], "expect": { "ok": true } },
+        { "op": "insertValueRaw", "args": [["env"], "c", "{k: v}"], "expect": { "ok": true } },
+        { "op": "insertValue", "args": [["env"], "d", "- q"], "expect": { "ok": true, "source": "env: {a: 1, b: [x, y], c: {k: v}, d: '- q'}\n" } }
+      ]
+    },
+    {
+      "id": "delete middle key",
+      "source": "a: 1\nb: 2\nc: 3\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["b"]], "expect": { "ok": true, "source": "a: 1\nc: 3\n" } }
+      ]
+    },
+    {
+      "id": "delete key with owned comment",
+      "source": "a: 1\n# note\nb: 2\nc: 3\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["b"]], "expect": { "ok": true, "source": "a: 1\nc: 3\n" } }
+      ]
+    },
+    {
+      "id": "delete key preserves comment across blank line",
+      "source": "a: 1\n# orphan\n\nb: 2\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["b"]], "expect": { "ok": true, "source": "a: 1\n# orphan\n\n" } }
+      ]
+    },
+    {
+      "id": "delete key with multiline comment block",
+      "source": "# l1\n# l2\nb: 2\nc: 3\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["b"]], "expect": { "ok": true, "source": "c: 3\n" } }
+      ]
+    },
+    {
+      "id": "delete last key",
+      "source": "a: 1\nb: 2\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["b"]], "expect": { "ok": true, "source": "a: 1\n" } }
+      ]
+    },
+    {
+      "id": "delete sole key",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["a"]], "expect": { "ok": true, "source": "" } }
+      ]
+    },
+    {
+      "id": "delete key trailing same-line comment",
+      "source": "a: 1\nb: 2 # gone\nc: 3\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["b"]], "expect": { "ok": true, "source": "a: 1\nc: 3\n" } }
+      ]
+    },
+    {
+      "id": "delete key inside a packed flow mapping (regression)",
+      "note": "Regression: a flow mapping's entries are comma-separated on one physical line, not one-per-line like a block mapping, so `deleteKey`'s generic line-based delete (built for the block shape) used to delete the whole containing line — here, the entire (single-line) document — leaving an empty file that YAML's empty-document-is-an-empty-mapping grammar then accepted, silently committing the data loss instead of erroring. Deleting a key *inside* a packed flow mapping must only remove that key.",
+      "source": "point: { x: 1, y: 2 }\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["point", "y"]], "expect": { "ok": true, "source": "point: { x: 1 }\n" } }
+      ]
+    },
+    {
+      "id": "delete first key of a packed flow mapping",
+      "source": "point: { x: 1, y: 2 }\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["point", "x"]], "expect": { "ok": true, "source": "point: { y: 2 }\n" } }
+      ]
+    },
+    {
+      "id": "delete only key of a single-entry flow mapping (regression)",
+      "note": "Regression: deleting the *only* key of a single-entry flow mapping must leave an empty flow mapping `{}`, not delete the braces with the line. The old block-shaped line delete wiped the whole `point: { x: 1 }` line, and YAML's empty-document-is-an-empty-mapping grammar then silently \"succeeded\", committing a data-loss reparse to disk.",
+      "source": "point: { x: 1 }\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["point", "x"]], "expect": { "ok": true, "source": "point: { }\n" } }
+      ]
+    },
+    {
+      "id": "delete last key of a multi-line flow mapping (regression)",
+      "note": "Regression: deleting the *last* key of a one-entry-per-line flow mapping used to strand the predecessor's separator comma before the closing brace; the flow-aware splice drops the preceding comma instead.",
+      "source": "point: {\n  x: 1,\n  y: 2\n}\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["point", "y"]], "expect": { "ok": true, "source": "point: {\n  x: 1\n}\n" } }
+      ]
+    },
+    {
+      "id": "delete key with block scalar value",
+      "source": "a: |\n  x\n  y\nb: 2\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["a"]], "expect": { "ok": true, "source": "b: 2\n" } }
+      ]
+    },
+    {
+      "id": "append block seq",
+      "source": "- a\n- b\n",
+      "steps": [
+        { "op": "appendValue", "args": [[], "c"], "expect": { "ok": true, "source": "- a\n- b\n- c\n" } }
+      ]
+    },
+    {
+      "id": "append indentless seq",
+      "source": "one:\n- 2\n- 3\n",
+      "steps": [
+        { "op": "appendValue", "args": [["one"], 4], "expect": { "ok": true, "source": "one:\n- 2\n- 3\n- 4\n" } }
+      ]
+    },
+    {
+      "id": "append indented nested seq",
+      "source": "k:\n  - a\n  - b\n",
+      "steps": [
+        { "op": "appendValue", "args": [["k"], "c"], "expect": { "ok": true, "source": "k:\n  - a\n  - b\n  - c\n" } }
+      ]
+    },
+    {
+      "id": "prepend block seq",
+      "source": "- a\n- b\n",
+      "steps": [
+        { "op": "prependValue", "args": [[], "z"], "expect": { "ok": true, "source": "- z\n- a\n- b\n" } }
+      ]
+    },
+    {
+      "id": "append flow seq",
+      "source": "t: [a, b]\n",
+      "steps": [
+        { "op": "appendValue", "args": [["t"], "c"], "expect": { "ok": true, "source": "t: [a, b, c]\n" } }
+      ]
+    },
+    {
+      "id": "append empty flow seq",
+      "source": "t: []\n",
+      "steps": [
+        { "op": "appendValue", "args": [["t"], "a"], "expect": { "ok": true, "source": "t: [a]\n" } }
+      ]
+    },
+    {
+      "id": "append flow seq with pre-existing trailing comma",
+      "note": "A trailing comma before ']' is legal flow-sequence syntax; appending must not double it into an empty element that fails to reparse.",
+      "source": "t: [a, b,]\n",
+      "steps": [
+        { "op": "appendValue", "args": [["t"], "c"], "expect": { "ok": true, "source": "t: [a, b, c,]\n" } }
+      ]
+    },
+    {
+      "id": "append onto a multi-line one-item-per-line flow seq",
+      "source": "t: [\n  a,\n  b,\n]\n",
+      "steps": [
+        { "op": "appendValue", "args": [["t"], "c"], "expect": { "ok": true, "source": "t: [\n  a,\n  b,\n  c,\n]\n" } }
+      ]
+    },
+    {
+      "id": "insertItem: a block item at an index, above the item there and its comment",
+      "note": "Zig error NotFound. 0 prepends and the length appends, as their own ops do. Past the end is refused, and nothing is written.",
+      "source": "- a\n# about b\n- b\n",
+      "steps": [
+        { "op": "insertItem", "args": [[], 1, "m"], "expect": { "ok": true, "source": "- a\n- m\n# about b\n- b\n" } },
+        { "op": "insertItem", "args": [[], 0, "first"], "expect": { "ok": true } },
+        { "op": "insertItem", "args": [[], 4, "last"], "expect": { "ok": true, "source": "- first\n- a\n- m\n# about b\n- b\n- last\n" } },
+        { "op": "insertItem", "args": [[], 9, "x"], "expect": { "ok": false, "status": "NotFound" } }
+      ]
+    },
+    {
+      "id": "insertItem: a nested block item takes its siblings' indent",
+      "source": "k:\n  - a\n  - b\n",
+      "steps": [
+        { "op": "insertItem", "args": [["k"], 1, "m"], "expect": { "ok": true, "source": "k:\n  - a\n  - m\n  - b\n" } }
+      ]
+    },
+    {
+      "id": "insertItem: a flow item at an index, on one line and one per line [1]",
+      "note": "The index 4294967295 is the `std.math.maxInt(usize)` the Zig test passed (as a wasm32 usize): the editor reads it as the last item.",
+      "source": "t: [a, b, c]\n",
+      "steps": [
+        { "op": "insertItem", "args": [["t"], 2, "m"], "expect": { "ok": true, "source": "t: [a, b, m, c]\n" } },
+        { "op": "insertItem", "args": [["t"], 4294967295, "z"], "expect": { "ok": true, "source": "t: [a, b, m, c, z]\n" } }
+      ]
+    },
+    {
+      "id": "insertItem: a flow item at an index, on one line and one per line [2]",
+      "note": "0 is a prepend, which keeps the dialect's one-line spelling.",
+      "source": "t: [\n  a,\n  b,\n]\n",
+      "steps": [
+        { "op": "insertItem", "args": [["t"], 1, "m"], "expect": { "ok": true, "source": "t: [\n  a,\n  m,\n  b,\n]\n" } },
+        { "op": "insertItem", "args": [["t"], 0, "z"], "expect": { "ok": true, "source": "t: [\n  z, a,\n  m,\n  b,\n]\n" } }
+      ]
+    },
+    {
+      "id": "remove block seq middle",
+      "source": "- a\n- b\n- c\n",
+      "steps": [
+        { "op": "deleteItem", "args": [[], 1], "expect": { "ok": true, "source": "- a\n- c\n" } }
+      ]
+    },
+    {
+      "id": "remove flow seq middle",
+      "source": "t: [a, b, c]\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["t"], 1], "expect": { "ok": true, "source": "t: [a, c]\n" } }
+      ]
+    },
+    {
+      "id": "remove flow seq first",
+      "source": "t: [a, b]\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["t"], 0], "expect": { "ok": true, "source": "t: [b]\n" } }
+      ]
+    },
+    {
+      "id": "remove last flow item via the [-] end sentinel",
+      "note": "The index 4294967295 is the `std.math.maxInt(usize)` the Zig test passed (as a wasm32 usize): the editor reads it as the last item.",
+      "source": "t: [a, b, c]\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["t"], 4294967295], "expect": { "ok": true, "source": "t: [a, b]\n" } }
+      ]
+    },
+    {
+      "id": "remove last item of a multi-line trailing-comma flow seq (regression)",
+      "note": "Regression: the backward scan for the preceding separator comma only skipped spaces/tabs, not newlines, so it never found the previous item's comma across a one-item-per-line layout — leaving the removed item's own trailing comma dangling as an empty element that failed to reparse. The index 4294967295 is the `std.math.maxInt(usize)` the Zig test passed (as a wasm32 usize): the editor reads it as the last item.",
+      "source": "t: [\n  a,\n  b,\n]\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["t"], 4294967295], "expect": { "ok": true, "source": "t: [\n  a,\n]\n" } }
+      ]
+    },
+    {
+      "id": "remove middle item of a multi-line one-item-per-line flow seq",
+      "source": "t: [\n  a,\n  b,\n  c,\n]\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["t"], 1], "expect": { "ok": true, "source": "t: [\n  a,\n  c,\n]\n" } }
+      ]
+    },
+    {
+      "id": "remove the only item of a block seq leaves an empty flow seq",
+      "note": "The Zig test also reads `links` back as a sequence, which `links: []` pins.",
+      "source": "links:\n  - a\nother: 1\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["links"], 0], "expect": { "ok": true, "source": "links: []\nother: 1\n" } }
+      ]
+    },
+    {
+      "id": "remove the only item of a block seq keeps the key's comments",
+      "source": "# links\nlinks: # keep\n  # the item's\n  - a # its own\nother: 1\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["links"], 0], "expect": { "ok": true, "source": "# links\nlinks: [] # keep\nother: 1\n" } }
+      ]
+    },
+    {
+      "id": "remove the only item of a nested, indentless or last block seq [1]",
+      "source": "x:\n  links:\n    - a\n  y: 2\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["x", "links"], 0], "expect": { "ok": true, "source": "x:\n  links: []\n  y: 2\n" } }
+      ]
+    },
+    {
+      "id": "remove the only item of a nested, indentless or last block seq [2]",
+      "source": "links:\n- a\nother: 1\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["links"], 0], "expect": { "ok": true, "source": "links: []\nother: 1\n" } }
+      ]
+    },
+    {
+      "id": "remove the only item of a nested, indentless or last block seq [3]",
+      "note": "The index 4294967295 is the `std.math.maxInt(usize)` the Zig test passed (as a wasm32 usize): the editor reads it as the last item.",
+      "source": "title: x\nlinks:\n  - k: 1\n    j: 2",
+      "steps": [
+        { "op": "deleteItem", "args": [["links"], 4294967295], "expect": { "ok": true, "source": "title: x\nlinks: []" } }
+      ]
+    },
+    {
+      "id": "remove the only item of a block seq keeps its anchor and tag [1]",
+      "source": "links: &x\n  - a\nother: *x\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["links"], 0], "expect": { "ok": true, "source": "links: &x []\nother: *x\n" } }
+      ]
+    },
+    {
+      "id": "remove the only item of a block seq keeps its anchor and tag [2]",
+      "source": "links: !!seq\n  - a\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["links"], 0], "expect": { "ok": true, "source": "links: !!seq []\n" } }
+      ]
+    },
+    {
+      "id": "remove the only item of a block seq inside a block seq [1]",
+      "source": "-\n  - a\n- b\n",
+      "steps": [
+        { "op": "deleteItem", "args": [[0], 0], "expect": { "ok": true, "source": "- []\n- b\n" } }
+      ]
+    },
+    {
+      "id": "remove the only item of a block seq inside a block seq [2]",
+      "source": "- - a\n- b\n",
+      "steps": [
+        { "op": "deleteItem", "args": [[0], 0], "expect": { "ok": true, "source": "- []\n- b\n" } }
+      ]
+    },
+    {
+      "id": "remove the first item of a block seq on its parent's marker line keeps the parent [1]",
+      "note": "The line delete took the outer `-` with the item: `[[a, c]]` read back as `[c]`. The next item moves up onto the marker line instead.",
+      "source": "- - a\n  - c\n",
+      "steps": [
+        { "op": "deleteItem", "args": [[0], 0], "expect": { "ok": true, "source": "- - c\n" } }
+      ]
+    },
+    {
+      "id": "remove the first item of a block seq on its parent's marker line keeps the parent [2]",
+      "source": "k:\n  - - a\n    - c\nj: 1\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["k", 0], 0], "expect": { "ok": true, "source": "k:\n  - - c\nj: 1\n" } }
+      ]
+    },
+    {
+      "id": "remove the first item of a block seq on its parent's marker line keeps the parent [3]",
+      "source": "- - - a # gone\n\n    - c\n- d\n",
+      "steps": [
+        { "op": "deleteItem", "args": [[0, 0], 0], "expect": { "ok": true, "source": "- - - c\n- d\n" } }
+      ]
+    },
+    {
+      "id": "remove the first item of a block seq on its parent's marker line keeps the parent [4]",
+      "note": "A comment line above the next item is the next item's: it stays, and the parent's marker ends its line.",
+      "source": "- - a # gone\n  # c's\n  - c\n",
+      "steps": [
+        { "op": "deleteItem", "args": [[0], 0], "expect": { "ok": true, "source": "-\n  # c's\n  - c\n" } }
+      ]
+    },
+    {
+      "id": "delete inside compact items two deep [1]",
+      "note": "These were refused with DeleteChangedOtherValues while the parser misread the shapes (`[[[a, c], d]]` as `[[[a, c]], d]`).",
+      "source": "- - - a\n    - c\n  - d\n",
+      "steps": [
+        { "op": "deleteItem", "args": [[0, 0], 0], "expect": { "ok": true, "source": "- - - c\n  - d\n" } }
+      ]
+    },
+    {
+      "id": "delete inside compact items two deep [2]",
+      "source": "- - - a\n    - c\n  - d\n",
+      "steps": [
+        { "op": "deleteItem", "args": [[0], 1], "expect": { "ok": true, "source": "- - - a\n    - c\n" } }
+      ]
+    },
+    {
+      "id": "delete inside compact items two deep [3]",
+      "source": "- - - a\n  - d\n",
+      "steps": [
+        { "op": "deleteItem", "args": [[0, 0], 0], "expect": { "ok": true, "source": "- - []\n  - d\n" } }
+      ]
+    },
+    {
+      "id": "delete inside compact items two deep [4]",
+      "source": "- - k: v\n    j: w\n  - c\n",
+      "steps": [
+        { "op": "deleteKey", "args": [[0, 0, "k"]], "expect": { "ok": true, "source": "- - j: w\n  - c\n" } }
+      ]
+    },
+    {
+      "id": "delete inside compact items two deep [5]",
+      "source": "- - k: v\n  - c\n",
+      "steps": [
+        { "op": "deleteItem", "args": [[0], 0], "expect": { "ok": true, "source": "- - c\n" } }
+      ]
+    },
+    {
+      "id": "delete the first key of a mapping on its item's marker line keeps the item [1]",
+      "source": "- k: v\n  j: w\n- x\n",
+      "steps": [
+        { "op": "deleteKey", "args": [[0, "k"]], "expect": { "ok": true, "source": "- j: w\n- x\n" } }
+      ]
+    },
+    {
+      "id": "delete the first key of a mapping on its item's marker line keeps the item [2]",
+      "source": "- k:\n    - a\n  j: w\n",
+      "steps": [
+        { "op": "deleteKey", "args": [[0, "k"]], "expect": { "ok": true, "source": "- j: w\n" } }
+      ]
+    },
+    {
+      "id": "delete the first key of a mapping on its item's marker line keeps the item [3]",
+      "note": "The only key: the item stays, emptied to null as `k:` is.",
+      "source": "- k: v\n- x\n",
+      "steps": [
+        { "op": "deleteKey", "args": [[0, "k"]], "expect": { "ok": true, "source": "-\n- x\n" } }
+      ]
+    },
+    {
+      "id": "a delete that would change another value is rolled back",
+      "note": "Zig error DeleteChangedOtherValues. An explicit key's span starts at `k`, past its `?`, so no splice of it reads back as `{j: w}`; the guard refuses whatever it would write.",
+      "source": "- ? k\n  : v\n  j: w\n",
+      "steps": [
+        { "op": "deleteKey", "args": [[0, "k"]], "expect": { "ok": false, "status": "UnsupportedOperation" } }
+      ]
+    },
+    {
+      "id": "a flow mapping delete passes the guard, and the line delete of a flow pair does not [1]",
+      "source": "o: {a: 1, b: NaN}\np: x\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["o", "a"]], "expect": { "ok": true, "source": "o: {b: NaN}\np: x\n" } },
+        { "op": "deleteKey", "args": [["o", "b"]], "expect": { "ok": true, "source": "o: {}\np: x\n" } }
+      ]
+    },
+    {
+      "id": "a flow mapping delete passes the guard, and the line delete of a flow pair does not [2]",
+      "note": "A single-pair mapping in a flow sequence has no braces of its own, and the delete took the whole `n:` line. Its entry's going leaves it an empty mapping (docs/tasks/delete-splices-taking-other-values.md).",
+      "source": "n: [a: b, ? c, : d, \"e\":f]\nm: 1\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["n", 0, "a"]], "expect": { "ok": true, "source": "n: [{}, ? c, : d, \"e\":f]\nm: 1\n" } },
+        { "op": "deleteKey", "args": [["n", 1, "c"]], "expect": { "ok": true, "source": "n: [{}, {}, : d, \"e\":f]\nm: 1\n" } },
+        { "op": "deleteKey", "args": [["n", 3, "e"]], "expect": { "ok": true, "source": "n: [{}, {}, : d, {}]\nm: 1\n" } }
+      ]
+    },
+    {
+      "id": "delete from an anchored flow sequence [1]",
+      "note": "An anchored flow sequence's span starts at its anchor, and the flow sniff read `&i [1, 2]` as block: deleting its first item did not parse, and its last was refused (docs/tasks/delete-splices-taking-other-values.md).",
+      "source": "seq:\n- 0\n- &i [1, 2]\n- !!seq [3, 4]\nk: v\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["seq", 1], 0], "expect": { "ok": true, "source": "seq:\n- 0\n- &i [2]\n- !!seq [3, 4]\nk: v\n" } },
+        { "op": "deleteItem", "args": [["seq", 2], 1], "expect": { "ok": true, "source": "seq:\n- 0\n- &i [2]\n- !!seq [3]\nk: v\n" } }
+      ]
+    },
+    {
+      "id": "delete from an anchored flow sequence [2]",
+      "source": "seq:\n- &i [1, 2]\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["seq", 0], 1], "expect": { "ok": true, "source": "seq:\n- &i [1]\n" } }
+      ]
+    },
+    {
+      "id": "a delete does not take an implicit mapping's parent",
+      "note": "A YAML block mapping is never implicit: the key that holds it stays, null, when its only entry goes.",
+      "source": "k:\n  a: 1\nj: 2\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["k", "a"]], "expect": { "ok": true, "source": "k:\nj: 2\n" } }
+      ]
+    },
+    {
+      "id": "remove the only item of a root block seq",
+      "source": "---\n- a\n",
+      "steps": [
+        { "op": "deleteItem", "args": [[], 0], "expect": { "ok": true, "source": "---\n[]\n" } }
+      ]
+    },
+    {
+      "id": "remove the only item of a frontmatter block seq",
+      "note": "What a Markdown host hands the editor: the block between the fences.",
+      "source": "title: Note\ntags:\n  - draft\nlinks:\n  - \"[a](/a.md)\"\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["links"], 0], "expect": { "ok": true } },
+        { "op": "deleteItem", "args": [["tags"], 0], "expect": { "ok": true, "source": "title: Note\ntags: []\nlinks: []\n" } }
+      ]
+    },
+    {
+      "id": "failed edit rolls back source and keeps editor usable",
+      "note": "Splice an unterminated flow sequence as a's value: the reparse fails (the specific error is the parser's concern; we only require failure). Source is byte-identical to before the failed edit... ...and the document still matches it, so a later valid edit works. A refusal with no status is one the Zig test asserted only fails, not with which error.",
+      "source": "a: 1\nb: 2\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["a"], "[oops"], "expect": { "ok": false } },
+        { "op": "replaceValue", "args": [["a"], 9], "expect": { "ok": true, "source": "a: 9\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "replace inline empty seq with a block list",
+      "source": "t: []\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["t"], "- a\n- b"], "expect": { "ok": true, "source": "t:\n- a\n- b\n" } }
+      ]
+    },
+    {
+      "id": "replace block list with an inline empty seq",
+      "source": "t:\n- a\n- b\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["t"], "[]"], "expect": { "ok": true, "source": "t: []\n" } }
+      ]
+    },
+    {
+      "id": "replace scalar with a single-item block list",
+      "source": "k: old\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["k"], "- a"], "expect": { "ok": true, "source": "k:\n- a\n" } }
+      ]
+    },
+    {
+      "id": "replace null value with a block list",
+      "source": "k:\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["k"], "- a"], "expect": { "ok": true, "source": "k:\n- a\n" } }
+      ]
+    },
+    {
+      "id": "replace scalar with a nested mapping",
+      "source": "m: x\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["m"], "a: 1\nb: 2"], "expect": { "ok": true, "source": "m:\n  a: 1\n  b: 2\n" } }
+      ]
+    },
+    {
+      "id": "replace scalar with scalar keeps it inline",
+      "source": "title: Hello\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["title"], "Hi"], "expect": { "ok": true, "source": "title: Hi\n" } }
+      ]
+    },
+    {
+      "id": "replace an item with a block value indents it under the item [1]",
+      "note": "A block value written over an item goes under the item's content column, as the printer writes a map in a list. Its second line at column 0 put `y` in the mapping around the list, and the replace reported success. scalar → map, under a key.",
+      "source": "k:\n  - x\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["k", 0], "x: 1\ny: two"], "expect": { "ok": true, "source": "k:\n  - x: 1\n    y: two\n" } }
+      ]
+    },
+    {
+      "id": "replace an item with a block value indents it under the item [2]",
+      "note": "scalar → list, at the root.",
+      "source": "- x\n- z\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [[0], "- 1\n- 2"], "expect": { "ok": true, "source": "- - 1\n  - 2\n- z\n" } }
+      ]
+    },
+    {
+      "id": "replace an item with a block value indents it under the item [3]",
+      "note": "map → map.",
+      "source": "k:\n  - a: 1\n    b: 2\n  - z\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["k", 0], "x: 1\ny: two"], "expect": { "ok": true, "source": "k:\n  - x: 1\n    y: two\n  - z\n" } }
+      ]
+    },
+    {
+      "id": "replace an item with a block value indents it under the item [4]",
+      "note": "list → list, nested in a compact item.",
+      "source": "- - - a\n    - b\n  - c\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [[0, 0], "- 1\n- 2"], "expect": { "ok": true, "source": "- - - 1\n    - 2\n  - c\n" } }
+      ]
+    },
+    {
+      "id": "replace an item with a block value indents it under the item [5]",
+      "note": "a compact item's scalar.",
+      "source": "- - x\n  - z\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [[0, 0], "x: 1\ny: two"], "expect": { "ok": true, "source": "- - x: 1\n    y: two\n  - z\n" } }
+      ]
+    },
+    {
+      "id": "replace an item with a block value indents it under the item [6]",
+      "note": "the item's comments stay.",
+      "source": "# lead\n- x # tail\n- z\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [[0], "x: 1\ny: two"], "expect": { "ok": true, "source": "# lead\n- x: 1\n  y: two # tail\n- z\n" } }
+      ]
+    },
+    {
+      "id": "replace an item with a block value indents it under the item [7]",
+      "source": "- # c\n  a: 1\n  b: 2\n- z\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [[0], "x: 1\ny: two"], "expect": { "ok": true, "source": "- # c\n  x: 1\n  y: two\n- z\n" } }
+      ]
+    },
+    {
+      "id": "replace an item with a block value indents it under the item [8]",
+      "note": "CRLF: the value's own lines are written as the editor writes lines.",
+      "source": "a: 1\r\nb:\r\n  - x\r\n  - y\r\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["b", 0], "x: 1\ny: two"], "expect": { "ok": true, "source": "a: 1\r\nb:\r\n  - x: 1\n    y: two\r\n  - y\r\n" } }
+      ]
+    },
+    {
+      "id": "replace an item with a block value indents it under the item [9]",
+      "note": "a block scalar's item keeps the line break its span took.",
+      "source": "- >-\n  folded\n- |\n  lit\n",
+      "steps": [
+        { "op": "replaceValue", "args": [[0], 42], "expect": { "ok": true, "source": "- 42\n- |\n  lit\n" } }
+      ]
+    },
+    {
+      "id": "replace an explicit key's value with a block mapping",
+      "note": "An explicit key's new value is written from its own `:` line; written after the `? k` instead, `? k:` over `  x: 1` was a key that is itself a mapping, and the write guard (`readsBack`) refused it.",
+      "source": "? k\n: v\nz: 1\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["k"], "x: 1\ny: two"], "expect": { "ok": true, "source": "? k\n:\n  x: 1\n  y: two\nz: 1\n" } }
+      ]
+    },
+    {
+      "id": "replace preserves a trailing line comment",
+      "source": "title: Hello # note\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["title"], "Hi"], "expect": { "ok": true, "source": "title: Hi # note\n" } }
+      ]
+    },
+    {
+      "id": "reframe a nested mapping value",
+      "source": "root:\n  c: []\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["root", "c"], "- x"], "expect": { "ok": true, "source": "root:\n  c:\n  - x\n" } }
+      ]
+    },
+    {
+      "id": "move key forward (src before dest)",
+      "note": "Move a to before c: a lands between b and c.",
+      "source": "a: 1\nb: 2\nc: 3\n",
+      "steps": [
+        { "op": "moveKey", "args": [["a"], ["c"]], "expect": { "ok": true, "source": "b: 2\na: 1\nc: 3\n" } }
+      ]
+    },
+    {
+      "id": "move key backward (dest before src)",
+      "note": "Move c to before a.",
+      "source": "a: 1\nb: 2\nc: 3\n",
+      "steps": [
+        { "op": "moveKey", "args": [["c"], ["a"]], "expect": { "ok": true, "source": "c: 3\na: 1\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "move key carries owned comment",
+      "source": "a: 1\n# note for c\nc: 3\nb: 2\n",
+      "steps": [
+        { "op": "moveKey", "args": [["c"], ["a"]], "expect": { "ok": true, "source": "# note for c\nc: 3\na: 1\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "move key carries trailing same-line comment",
+      "source": "a: 1\nb: 2 # keep\nc: 3\n",
+      "steps": [
+        { "op": "moveKey", "args": [["b"], ["a"]], "expect": { "ok": true, "source": "b: 2 # keep\na: 1\nc: 3\n" } }
+      ]
+    },
+    {
+      "id": "move key with block scalar value",
+      "source": "a: |\n  x\n  y\nb: 2\n",
+      "steps": [
+        { "op": "moveKey", "args": [["b"], ["a"]], "expect": { "ok": true, "source": "b: 2\na: |\n  x\n  y\n" } }
+      ]
+    },
+    {
+      "id": "move key to itself is a no-op",
+      "source": "a: 1\nb: 2\n",
+      "steps": [
+        { "op": "moveKey", "args": [["a"], ["a"]], "expect": { "ok": true, "source": "a: 1\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "reorder keys full order",
+      "source": "a: 1\nb: 2\nc: 3\n",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["c", "a", "b"]], "expect": { "ok": true, "source": "c: 3\na: 1\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "reorder keys of a flow mapping keeps its commas",
+      "source": "m: {a: 1, b: 2, c: 3}\n",
+      "steps": [
+        { "op": "reorderKeys", "args": [["m"], ["c", "a"]], "expect": { "ok": true, "source": "m: {c: 3, a: 1, b: 2}\n" } },
+        { "op": "moveKey", "args": [["m", "b"], ["m", "c"]], "expect": { "ok": true, "source": "m: {b: 2, c: 3, a: 1}\n" } }
+      ]
+    },
+    {
+      "id": "reorder keys partial appends rest in original order",
+      "note": "Only c, a listed; b and d keep their original relative order after.",
+      "source": "a: 1\nb: 2\nc: 3\nd: 4\n",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["c", "a"]], "expect": { "ok": true, "source": "c: 3\na: 1\nb: 2\nd: 4\n" } }
+      ]
+    },
+    {
+      "id": "reorder keys preserves owned comments",
+      "source": "# about a\na: 1\nb: 2\n# about c\nc: 3\n",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["c", "b", "a"]], "expect": { "ok": true, "source": "# about c\nc: 3\nb: 2\n# about a\na: 1\n" } }
+      ]
+    },
+    {
+      "id": "reorder keys preserves interleaved blank line with preceding entry",
+      "note": "The blank line rides with a (its preceding entry).",
+      "source": "a: 1\n\nb: 2\nc: 3\n",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["c", "a", "b"]], "expect": { "ok": true, "source": "c: 3\na: 1\n\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "reorder keys unknown key ignored",
+      "source": "a: 1\nb: 2\n",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["z", "b", "a"]], "expect": { "ok": true, "source": "b: 2\na: 1\n" } }
+      ]
+    },
+    {
+      "id": "reorder keys no-op when order matches",
+      "source": "a: 1\nb: 2\nc: 3\n",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["a", "b", "c"]], "expect": { "ok": true, "source": "a: 1\nb: 2\nc: 3\n" } }
+      ]
+    },
+    {
+      "id": "reorder keys empty list keeps original order",
+      "source": "a: 1\nb: 2\n",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], []], "expect": { "ok": true, "source": "a: 1\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "reorder keys nested mapping",
+      "source": "root:\n  x: 1\n  y: 2\n  z: 3\n",
+      "steps": [
+        { "op": "reorderKeys", "args": [["root"], ["z", "x"]], "expect": { "ok": true, "source": "root:\n  z: 3\n  x: 1\n  y: 2\n" } }
+      ]
+    },
+    {
+      "id": "reorder keys with block scalar entry",
+      "source": "a: 1\nbody: |\n  line one\n  line two\nb: 2\n",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["body", "b", "a"]], "expect": { "ok": true, "source": "body: |\n  line one\n  line two\nb: 2\na: 1\n" } }
+      ]
+    },
+    {
+      "id": "move item block forward",
+      "note": "Move item 0 (a) to index 2: remove a, reinsert -> b, c, a.",
+      "source": "- a\n- b\n- c\n",
+      "steps": [
+        { "op": "moveItem", "args": [[], 0, 2], "expect": { "ok": true, "source": "- b\n- c\n- a\n" } }
+      ]
+    },
+    {
+      "id": "move item block backward",
+      "source": "- a\n- b\n- c\n",
+      "steps": [
+        { "op": "moveItem", "args": [[], 2, 0], "expect": { "ok": true, "source": "- c\n- a\n- b\n" } }
+      ]
+    },
+    {
+      "id": "move item carries owned comment",
+      "note": "Items: a(0), c(1), b(2). Move c to the front.",
+      "source": "- a\n# note for c\n- c\n- b\n",
+      "steps": [
+        { "op": "moveItem", "args": [[], 1, 0], "expect": { "ok": true, "source": "# note for c\n- c\n- a\n- b\n" } }
+      ]
+    },
+    {
+      "id": "move item to itself is a no-op",
+      "source": "- a\n- b\n",
+      "steps": [
+        { "op": "moveItem", "args": [[], 1, 1], "expect": { "ok": true, "source": "- a\n- b\n" } }
+      ]
+    },
+    {
+      "id": "move flow item",
+      "source": "t: [a, b, c]\n",
+      "steps": [
+        { "op": "moveItem", "args": [["t"], 0, 2], "expect": { "ok": true, "source": "t: [b, c, a]\n" } }
+      ]
+    },
+    {
+      "id": "reorder items block partial",
+      "note": "Bring index 2 then 0 to the front; the rest (b) follows in order.",
+      "source": "- a\n- b\n- c\n",
+      "steps": [
+        { "op": "reorderItems", "args": [[], [2, 0]], "expect": { "ok": true, "source": "- c\n- a\n- b\n" } }
+      ]
+    },
+    {
+      "id": "reorder items nested under key",
+      "source": "tags:\n- x\n- y\n- z\n",
+      "steps": [
+        { "op": "reorderItems", "args": [["tags"], [2, 1, 0]], "expect": { "ok": true, "source": "tags:\n- z\n- y\n- x\n" } }
+      ]
+    },
+    {
+      "id": "reorder items indented nested seq",
+      "source": "k:\n  - a\n  - b\n  - c\n",
+      "steps": [
+        { "op": "reorderItems", "args": [["k"], [1]], "expect": { "ok": true, "source": "k:\n  - b\n  - a\n  - c\n" } }
+      ]
+    },
+    {
+      "id": "reorder items preserves owned comment",
+      "source": "- a\n# note for b\n- b\n- c\n",
+      "steps": [
+        { "op": "reorderItems", "args": [[], [1, 0]], "expect": { "ok": true, "source": "# note for b\n- b\n- a\n- c\n" } }
+      ]
+    },
+    {
+      "id": "reorder flow items keeps spaced separators",
+      "source": "t: [a, b, c]\n",
+      "steps": [
+        { "op": "reorderItems", "args": [["t"], [2, 0]], "expect": { "ok": true, "source": "t: [c, a, b]\n" } }
+      ]
+    },
+    {
+      "id": "reorder flow items keeps tight separators",
+      "source": "t: [a,b,c]\n",
+      "steps": [
+        { "op": "reorderItems", "args": [["t"], [2, 1, 0]], "expect": { "ok": true, "source": "t: [c,b,a]\n" } }
+      ]
+    },
+    {
+      "id": "reorder items out of range index ignored",
+      "source": "- a\n- b\n",
+      "steps": [
+        { "op": "reorderItems", "args": [[], [9, 1]], "expect": { "ok": true, "source": "- b\n- a\n" } }
+      ]
+    },
+    {
+      "id": "reorder items no-op when order matches",
+      "source": "- a\n- b\n- c\n",
+      "steps": [
+        { "op": "reorderItems", "args": [[], [0, 1, 2]], "expect": { "ok": true, "source": "- a\n- b\n- c\n" } }
+      ]
+    },
+    {
+      "id": "reorder items empty list keeps original order",
+      "source": "- a\n- b\n",
+      "steps": [
+        { "op": "reorderItems", "args": [[], []], "expect": { "ok": true, "source": "- a\n- b\n" } }
+      ]
+    },
+    {
+      "id": "setSequence keeps surviving items' comments while reordering",
+      "note": "Drop b, add d, and reorder to [c, a, d]. a and c keep their comments.",
+      "source": "tags:\n- a # first\n- b # second\n- c # third\n",
+      "steps": [
+        { "op": "setSequence", "args": [["tags"], ["c", "a", "d"]], "expect": { "ok": true, "source": "tags:\n- c # third\n- a # first\n- d\n" } }
+      ]
+    },
+    {
+      "id": "setSequence pure reorder preserves every comment",
+      "source": "- a # ca\n- b # cb\n- c # cc\n",
+      "steps": [
+        { "op": "setSequence", "args": [[], ["c", "b", "a"]], "expect": { "ok": true, "source": "- c # cc\n- b # cb\n- a # ca\n" } }
+      ]
+    },
+    {
+      "id": "setSequence is a byte-identical no-op when unchanged",
+      "source": "- a\n# note\n- b\n",
+      "steps": [
+        { "op": "setSequence", "args": [[], ["a", "b"]], "expect": { "ok": true, "source": "- a\n# note\n- b\n" } }
+      ]
+    },
+    {
+      "id": "setSequence appends a new item keeping existing comments",
+      "source": "- a # ka\n- b # kb\n",
+      "steps": [
+        { "op": "setSequence", "args": [[], ["a", "b", "c"]], "expect": { "ok": true, "source": "- a # ka\n- b # kb\n- c\n" } }
+      ]
+    },
+    {
+      "id": "setSequence handles a full replacement (no survivors)",
+      "source": "- a\n- b\n",
+      "steps": [
+        { "op": "setSequence", "args": [[], ["c", "d"]], "expect": { "ok": true, "source": "- c\n- d\n" } }
+      ]
+    },
+    {
+      "id": "setSequence dedups by occurrence (keeps the right duplicate's comment)",
+      "note": "Two a's -> one a: the first occurrence survives, the second is dropped.",
+      "source": "- a # one\n- a # two\n- b\n",
+      "steps": [
+        { "op": "setSequence", "args": [[], ["a", "b"]], "expect": { "ok": true, "source": "- a # one\n- b\n" } }
+      ]
+    },
+    {
+      "id": "setSequence matches by value, not lexical form (int vs string)",
+      "note": "Swap order; int 1 and string '1' are distinct identities and keep comments.",
+      "source": "- 1 # int\n- '1' # str\n",
+      "steps": [
+        { "op": "setSequence", "args": [[], ["1", 1]], "expect": { "ok": true, "source": "- '1' # str\n- 1 # int\n" } }
+      ]
+    },
+    {
+      "id": "setSequence declines an empty target",
+      "note": "Zig error UnsupportedShape.",
+      "source": "- a\n- b\n",
+      "steps": [
+        { "op": "setSequence", "args": [[], []], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "setSequence declines a non-scalar current item",
+      "note": "Zig error UnsupportedShape.",
+      "source": "- a\n- k: v\n",
+      "steps": [
+        { "op": "setSequence", "args": [[], ["a", "z"]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "setSequence declines a non-sequence target",
+      "note": "Zig error NotASequence.",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "setSequence", "args": [["a"], ["x"]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "setSequence starts a list that is absent or null [1]",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "setSequence", "args": [["tags"], ["x", "y"]], "expect": { "ok": true, "source": "a: 1\ntags: [x, y]\n" } }
+      ]
+    },
+    {
+      "id": "setSequence starts a list that is absent or null [2]",
+      "source": "tags:\n",
+      "steps": [
+        { "op": "setSequence", "args": [["tags"], ["x"]], "expect": { "ok": true, "source": "tags: [x]\n" } }
+      ]
+    },
+    {
+      "id": "appendValue appends to a list that is there",
+      "note": "`setAppend` on a list that is there, or on a value that is not a list, is `appendToSeq`'s own append or refusal, which is the binding's `appendValue`.",
+      "source": "tags:\n  - a\n",
+      "steps": [
+        { "op": "appendValue", "args": [["tags"], "b"], "expect": { "ok": true, "source": "tags:\n  - a\n  - b\n" } }
+      ]
+    },
+    {
+      "id": "appendValue never clobbers a scalar or a mapping",
+      "note": "Zig errors NotASequence, NotAMapping. `setAppend` on a list that is there, or on a value that is not a list, is `appendToSeq`'s own append or refusal, which is the binding's `appendValue`.",
+      "source": "a: 1\nm:\n  k: v\n",
+      "steps": [
+        { "op": "appendValue", "args": [["a"], "x"], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "appendValue", "args": [["m"], "x"], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "appendValue", "args": [["a", "l"], "x"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "a key inserted into an item's mapping aligns under the item's keys, past each marker [1]",
+      "source": "x:\n  - k: v\n    j: w\n",
+      "steps": [
+        { "op": "setValue", "args": [["x", 0, "n"], 1], "expect": { "ok": true, "source": "x:\n  - k: v\n    j: w\n    n: 1\n" } }
+      ]
+    },
+    {
+      "id": "a key inserted into an item's mapping aligns under the item's keys, past each marker [2]",
+      "source": "x:\n  - - k: v\n",
+      "steps": [
+        { "op": "setValue", "args": [["x", 0, 0, "n"], 1], "expect": { "ok": true, "source": "x:\n  - - k: v\n      n: 1\n" } }
+      ]
+    },
+    {
+      "id": "replace a value with a tab before its comment",
+      "note": "A plain scalar ends before the blanks that precede its comment, a tab included; with the tab in its span, a replace wrote `42# c`, the comment read as more of the value.",
+      "source": "a: 1\t# c\nb: 2\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["a"], 42], "expect": { "ok": true, "source": "a: 42\t# c\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "replace an empty tagged value",
+      "note": "An empty tagged value covers its tag, as a written one does (`t: !!str y` replaced is `t: 42`); anchored before it, a replace wrote `x !!str`.",
+      "source": "t: !!str\nu: 1\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["t"], "x"], "expect": { "ok": true, "source": "t: x\nu: 1\n" } }
+      ]
+    },
+    {
+      "id": "replace an empty tagged sequence item",
+      "source": "- !!str\n- 1\n",
+      "steps": [
+        { "op": "replaceValue", "args": [[0], 5], "expect": { "ok": true, "source": "- 5\n- 1\n" } }
+      ]
+    },
+    {
+      "id": "replace an explicit key's value",
+      "note": "An explicit key's `:` opens a line of its own; the value is rewritten from there, and the key keeps its `?` line.",
+      "source": "? k\n: v # c\nz: 1\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["k"], 42], "expect": { "ok": true, "source": "? k\n: 42 # c\nz: 1\n" } }
+      ]
+    },
+    {
+      "id": "replace an explicit key's empty value with a block list",
+      "source": "m:\n  ? k\n  :\n  z: 1\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["m", "k"], "- 1\n- 2"], "expect": { "ok": true, "source": "m:\n  ? k\n  :\n  - 1\n  - 2\n  z: 1\n" } }
+      ]
+    },
+    {
+      "id": "rename a flow mapping key written against its colon [1]",
+      "note": "The Zig test also reads the renamed entry's value span back; the bytes pin it (a blank after the colon keeps the value its own scalar).",
+      "source": "m: { \"k\":v, q: 1 }\n",
+      "steps": [
+        { "op": "renameKey", "args": [["m", "k"], "renamed"], "expect": { "ok": true, "source": "m: { renamed: v, q: 1 }\n" } }
+      ]
+    },
+    {
+      "id": "rename a flow mapping key written against its colon [2]",
+      "source": "m: {'k':[1]}\n",
+      "steps": [
+        { "op": "renameKey", "args": [["m", "k"], "renamed"], "expect": { "ok": true, "source": "m: {renamed: [1]}\n" } }
+      ]
+    },
+    {
+      "id": "rename a flow sequence pair's key written against its colon",
+      "note": "The Zig test also reads the renamed entry's value span back; the bytes pin it (a blank after the colon keeps the value its own scalar).",
+      "source": "n: [\"e\":f]\n",
+      "steps": [
+        { "op": "renameKey", "args": [["n", 0, "e"], "renamed"], "expect": { "ok": true, "source": "n: [renamed: f]\n" } }
+      ]
+    },
+    {
+      "id": "rename a flow key leaves a colon that needs no blank",
+      "note": "Only the colon a plain key would run into takes a blank: one already followed by a blank, and a new key that closes with a quote, are left as written. The Zig test also reads the renamed entry's value span back; the bytes pin it (a blank after the colon keeps the value its own scalar).",
+      "source": "m: { \"k\": v }\n",
+      "steps": [
+        { "op": "renameKey", "args": [["m", "k"], "renamed"], "expect": { "ok": true, "source": "m: { renamed: v }\n" } }
+      ]
+    },
+    {
+      "id": "set and replace a BOM-led document's first key in place",
+      "source": "﻿a: 1\n",
+      "steps": [
+        { "op": "setValue", "args": [["a"], "set"], "expect": { "ok": true, "source": "﻿a: set\n" } },
+        { "op": "replaceValue", "args": [["a"], 2], "expect": { "ok": true, "source": "﻿a: 2\n" } },
+        { "op": "renameKey", "args": [["a"], "q"], "expect": { "ok": true, "source": "﻿q: 2\n" } }
+      ]
+    },
+    {
+      "id": "delete, comment and reorder a BOM-led document's first key",
+      "source": "﻿a: 1\nb: 2\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["a"], "hi"], "expect": { "ok": true, "source": "﻿# hi\na: 1\nb: 2\n" } },
+        { "op": "reorderKeys", "args": [[], ["b", "a"]], "expect": { "ok": true, "source": "﻿b: 2\n# hi\na: 1\n" } },
+        { "op": "deleteKey", "args": [["b"]], "expect": { "ok": true, "source": "﻿# hi\na: 1\n" } }
+      ]
+    },
+    {
+      "id": "edits a BOM-led sequence's first item at its own column",
+      "source": "﻿- a: 1\n",
+      "steps": [
+        { "op": "setValue", "args": [[0, "b"], 5], "expect": { "ok": true, "source": "﻿- a: 1\n  b: 5\n" } },
+        { "op": "prependValue", "args": [[], "w"], "expect": { "ok": true, "source": "﻿- w\n- a: 1\n  b: 5\n" } }
+      ]
+    },
+    {
+      "id": "a string replacing a double-quoted one stays double-quoted",
+      "note": "It escapes anything, a line break included. The Zig test hands its second edit the caller's own rendering, a `|-` block scalar; `replaceValue` renders the string itself, and the replaced string's quote style decides the spelling either way.",
+      "source": "env:\n  LOG: \"debug\" # level\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["env", "LOG"], "info"], "expect": { "ok": true, "source": "env:\n  LOG: \"info\" # level\n" } },
+        { "op": "replaceValue", "args": [["env", "LOG"], "a \"b\"\nc"], "expect": { "ok": true, "source": "env:\n  LOG: \"a \\\"b\\\"\\nc\" # level\n" } }
+      ]
+    },
+    {
+      "id": "a string replacing a single-quoted one stays single-quoted where it can",
+      "note": "A control character is the printer's to spell: it double-quotes one.",
+      "source": "a: 'x'\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["a"], "it's"], "expect": { "ok": true, "source": "a: 'it''s'\n" } },
+        { "op": "replaceValue", "args": [["a"], "t\tu"], "expect": { "ok": true, "source": "a: \"t\\tu\"\n" } }
+      ]
+    },
+    {
+      "id": "a plain string, a non-string and raw text take what the caller spelled",
+      "note": "Plain is the printer's own choice already. A number has no quote style to keep. Text the caller spelled itself is spliced as written. Its `replaceValAtPath` step is raw text (`replaceValueRaw`), the point of it; the binding's `replaceValue` of a string would keep `\"q\"`'s quotes.",
+      "source": "a: x\nb: 5\nc: \"q\"\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["a"], "y"], "expect": { "ok": true } },
+        { "op": "replaceValue", "args": [["b"], "six"], "expect": { "ok": true } },
+        { "op": "replaceValueRaw", "args": [["c"], "r"], "expect": { "ok": true, "source": "a: y\nb: six\nc: r\n" } }
+      ]
+    },
+    {
+      "id": "a flow item keeps its quotes, and setString inserts what it is given",
+      "source": "xs: [\"a\", 'b']\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["xs", 1], "c"], "expect": { "ok": true, "source": "xs: [\"a\", 'c']\n" } },
+        { "op": "setValue", "args": [["xs"], "d"], "expect": { "ok": true, "source": "xs: d\n" } },
+        { "op": "setValue", "args": [["n"], "e"], "expect": { "ok": true, "source": "xs: d\nn: e\n" } }
+      ]
+    },
+    {
+      "id": "addLeadingComment inserts an own-line comment above a YAML key",
+      "source": "a: 1\nb: 2\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["b"], "note"], "expect": { "ok": true, "source": "a: 1\n# note\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "addLeadingComment matches indentation and lands nearest the key",
+      "note": "Nested key: comment takes the key's 2-space indent and sits just above it, below the pre-existing comment.",
+      "source": "outer:\n  # kept\n  inner: 1\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["outer", "inner"], "new"], "expect": { "ok": true, "source": "outer:\n  # kept\n  # new\n  inner: 1\n" } }
+      ]
+    },
+    {
+      "id": "setTrailingComment appends and then replaces a YAML same-line comment [1]",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["a"], "done"], "expect": { "ok": true, "source": "a: 1 # done\n" } }
+      ]
+    },
+    {
+      "id": "setTrailingComment appends and then replaces a YAML same-line comment [2]",
+      "note": "Re-setting replaces the existing trailing comment rather than nesting it.",
+      "source": "a: 1 # old\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["a"], "new"], "expect": { "ok": true, "source": "a: 1 # new\n" } }
+      ]
+    },
+    {
+      "id": "setTrailingComment on a CRLF line goes before the CR [1]",
+      "note": "A CRLF line's content ends before its CR: a new trailing comment goes there, and the line keeps its CRLF. Spliced after the CR, it read back in YAML as the string \"1\\r\".",
+      "source": "a: 1\r\nb: 2\r\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["a"], "note"], "expect": { "ok": true, "source": "a: 1 # note\r\nb: 2\r\n" } }
+      ]
+    },
+    {
+      "id": "setTrailingComment on a CRLF line goes before the CR [2]",
+      "source": "a: 1 # old\r\nb: 2\r\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["a"], "new"], "expect": { "ok": true, "source": "a: 1 # new\r\nb: 2\r\n" } }
+      ]
+    },
+    {
+      "id": "setTrailingComment on a CRLF line goes before the CR [3]",
+      "source": "a: 1 # gone\r\nb: 2\r\n",
+      "steps": [
+        { "op": "deleteTrailingComment", "args": [["a"]], "expect": { "ok": true, "source": "a: 1\r\nb: 2\r\n" } }
+      ]
+    },
+    {
+      "id": "a trailing comment on a YAML block scalar goes on its header line [1]",
+      "note": "A block scalar's body runs through its last line's newline, so the end of the line its span ends on is the next entry's: the comment went there and read back as `b`'s (`b: 1 # note`). It goes on the header line, and get and delete find it there rather than reaching `b`'s. The Zig test also reads the comment back (`getTrailingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "a: |\n  text\n  more\n\nb: 1\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["a"], "note"], "expect": { "ok": true, "source": "a: | # note\n  text\n  more\n\nb: 1\n" } }
+      ]
+    },
+    {
+      "id": "a trailing comment on a YAML block scalar goes on its header line [2]",
+      "source": "a: >\n  text\n  more\n\nb: 1\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["a"], "note"], "expect": { "ok": true, "source": "a: > # note\n  text\n  more\n\nb: 1\n" } }
+      ]
+    },
+    {
+      "id": "a trailing comment on a YAML block scalar goes on its header line [3]",
+      "source": "a: |-\n  text\n  more\n\nb: 1\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["a"], "note"], "expect": { "ok": true, "source": "a: |- # note\n  text\n  more\n\nb: 1\n" } }
+      ]
+    },
+    {
+      "id": "a trailing comment on a YAML block scalar goes on its header line [4]",
+      "source": "a: >+\n  text\n  more\n\nb: 1\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["a"], "note"], "expect": { "ok": true, "source": "a: >+ # note\n  text\n  more\n\nb: 1\n" } }
+      ]
+    },
+    {
+      "id": "a trailing comment on a YAML block scalar goes on its header line [5]",
+      "source": "a: |2\n  text\n  more\n\nb: 1\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["a"], "note"], "expect": { "ok": true, "source": "a: |2 # note\n  text\n  more\n\nb: 1\n" } }
+      ]
+    },
+    {
+      "id": "a trailing comment on a YAML block scalar goes on its header line [6]",
+      "source": "a: >1-\n  text\n  more\n\nb: 1\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["a"], "note"], "expect": { "ok": true, "source": "a: >1- # note\n  text\n  more\n\nb: 1\n" } }
+      ]
+    },
+    {
+      "id": "a trailing comment on a YAML block scalar goes on its header line [7]",
+      "source": "a: |+2\n  text\n  more\n\nb: 1\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["a"], "note"], "expect": { "ok": true, "source": "a: |+2 # note\n  text\n  more\n\nb: 1\n" } }
+      ]
+    },
+    {
+      "id": "a trailing comment on a YAML block scalar goes on its header line [8]",
+      "note": "Replaced in place, read back, and deleted from the header line; the next entry's own comment is not the block scalar's.",
+      "source": "a: |  # old\n  text\nb: 1 # b's\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["a"], "new"], "expect": { "ok": true, "source": "a: | # new\n  text\nb: 1 # b's\n" } }
+      ]
+    },
+    {
+      "id": "a trailing comment on a YAML block scalar goes on its header line [9]",
+      "source": "a: | # gone\n  text\nb: 1 # b's\n",
+      "steps": [
+        { "op": "deleteTrailingComment", "args": [["a"]], "expect": { "ok": true, "source": "a: |\n  text\nb: 1 # b's\n" } }
+      ]
+    },
+    {
+      "id": "a trailing comment on a YAML block scalar goes on its header line [10]",
+      "source": "a: |\n  text\nb: 1 # b's\n",
+      "steps": [
+        { "op": "deleteTrailingComment", "args": [["a"]], "expect": { "ok": true, "source": "a: |\n  text\nb: 1 # b's\n" } }
+      ]
+    },
+    {
+      "id": "a trailing comment on a YAML block scalar goes on its header line [11]",
+      "note": "A sequence item's block scalar, and a CRLF header line.",
+      "source": "s:\n  - |\n    text\n  - x\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["s", 0], "note"], "expect": { "ok": true, "source": "s:\n  - | # note\n    text\n  - x\n" } }
+      ]
+    },
+    {
+      "id": "a trailing comment on a YAML block scalar goes on its header line [12]",
+      "source": "a: |\r\n  text\r\nb: 1\r\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["a"], "note"], "expect": { "ok": true, "source": "a: | # note\r\n  text\r\nb: 1\r\n" } }
+      ]
+    },
+    {
+      "id": "multi-line leading comment becomes one line per row",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["a"], "one\ntwo"], "expect": { "ok": true, "source": "# one\n# two\na: 1\n" } }
+      ]
+    },
+    {
+      "id": "setTrailingComment rejects a multi-line comment",
+      "note": "Zig error MultilineComment.",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["a"], "x\ny"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "deleteLeadingComment removes the owned block above a YAML key [1]",
+      "note": "Only the block touching the key goes; a blank line breaks ownership, so the earlier comment (above the blank) stays.",
+      "source": "# top\n\n# a\n# b\nkey: 1\n",
+      "steps": [
+        { "op": "deleteLeadingComment", "args": [["key"]], "expect": { "ok": true, "source": "# top\n\nkey: 1\n" } }
+      ]
+    },
+    {
+      "id": "deleteLeadingComment removes the owned block above a YAML key [2]",
+      "note": "No leading comment → no-op.",
+      "source": "key: 1\n",
+      "steps": [
+        { "op": "deleteLeadingComment", "args": [["key"]], "expect": { "ok": true, "source": "key: 1\n" } }
+      ]
+    },
+    {
+      "id": "deleteTrailingComment removes a same-line comment (YAML/JSONC), else no-op [1]",
+      "source": "a: 1 # gone\nb: 2\n",
+      "steps": [
+        { "op": "deleteTrailingComment", "args": [["a"]], "expect": { "ok": true, "source": "a: 1\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "deleteTrailingComment removes a same-line comment (YAML/JSONC), else no-op [2]",
+      "note": "No trailing comment → no-op.",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "deleteTrailingComment", "args": [["a"]], "expect": { "ok": true, "source": "a: 1\n" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no leading comment [1]",
+      "note": "The Zig test also reads the comment back (`getLeadingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "# above\nmembers: [a, b]\n",
+      "steps": [
+        { "op": "deleteLeadingComment", "args": [["members", 0]], "expect": { "ok": true, "source": "# above\nmembers: [a, b]\n" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no leading comment [2]",
+      "note": "Zig error CommentsUnanchored.",
+      "source": "# above\nmembers: [a, b]\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["members", 0], "new"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no leading comment [3]",
+      "note": "A flow mapping's entry shares the line the same way.",
+      "source": "# above nested\nnested: {k: v}\n",
+      "steps": [
+        { "op": "deleteLeadingComment", "args": [["nested", "k"]], "expect": { "ok": true, "source": "# above nested\nnested: {k: v}\n" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no leading comment [4]",
+      "note": "Zig error CommentsUnanchored.",
+      "source": "# above nested\nnested: {k: v}\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["nested", "k"], "new"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no leading comment [5]",
+      "note": "A block sequence's items each begin their own line: unchanged.",
+      "source": "# above\nmembers:\n  - a\n  - b\n",
+      "steps": [
+        { "op": "deleteLeadingComment", "args": [["members", 0]], "expect": { "ok": true, "source": "# above\nmembers:\n  - a\n  - b\n" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no leading comment [6]",
+      "source": "# above\nmembers:\n  - a\n  - b\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["members", 0], "new"], "expect": { "ok": true, "source": "# above\nmembers:\n  # new\n  - a\n  - b\n" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no trailing comment either [1]",
+      "note": "The Zig test also reads the comment back (`getTrailingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "members: [a, b] # note\n",
+      "steps": [
+        { "op": "deleteTrailingComment", "args": [["members", 0]], "expect": { "ok": true, "source": "members: [a, b] # note\n" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no trailing comment either [2]",
+      "note": "Zig error CommentsUnanchored.",
+      "source": "members: [a, b] # note\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["members", 0], "new"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "dangling comment round-trips at a YAML container's end and at the root [1]",
+      "note": "Nested: at the child depth of the container's body, after its last entry. The Zig test also reads the comment back (`getDanglingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "server:\n  port: 8080\nclient:\n  x: 1\n",
+      "steps": [
+        { "op": "addDanglingComment", "args": [["server"], "was: here"], "expect": { "ok": true, "source": "server:\n  port: 8080\n  # was: here\nclient:\n  x: 1\n" } },
+        { "op": "deleteDanglingComment", "args": [["server"]], "expect": { "ok": true, "source": "server:\n  port: 8080\nclient:\n  x: 1\n" } }
+      ]
+    },
+    {
+      "id": "dangling comment round-trips at a YAML container's end and at the root [2]",
+      "note": "The root (empty path): the run at the end of the document.",
+      "source": "a: 1\nb: 2\n",
+      "steps": [
+        { "op": "addDanglingComment", "args": [[], "end of file"], "expect": { "ok": true, "source": "a: 1\nb: 2\n# end of file\n" } },
+        { "op": "deleteDanglingComment", "args": [[]], "expect": { "ok": true, "source": "a: 1\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "dangling comment round-trips at a YAML container's end and at the root [3]",
+      "note": "Multi-line text becomes one comment line per row.",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "addDanglingComment", "args": [[], "one\ntwo"], "expect": { "ok": true, "source": "a: 1\n# one\n# two\n" } },
+        { "op": "deleteDanglingComment", "args": [[]], "expect": { "ok": true, "source": "a: 1\n" } }
+      ]
+    },
+    {
+      "id": "addDanglingComment lands below a run already there",
+      "note": "The Zig test also reads the comment back (`getDanglingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "a: 1\n# first\n",
+      "steps": [
+        { "op": "addDanglingComment", "args": [[], "second"], "expect": { "ok": true, "source": "a: 1\n# first\n# second\n" } }
+      ]
+    },
+    {
+      "id": "a document with no trailing newline still takes a dangling comment",
+      "source": "a: 1",
+      "steps": [
+        { "op": "addDanglingComment", "args": [[], "note"], "expect": { "ok": true, "source": "a: 1\n# note\n" } }
+      ]
+    },
+    {
+      "id": "commentOut then uncommentLeading round-trips a YAML entry",
+      "note": "The Zig test also checks the commented-out key is gone from the tree, which the commented line pins.",
+      "source": "server:\n  port: 8080\n  host: local\n",
+      "steps": [
+        { "op": "commentOut", "args": [["server", "port"]], "expect": { "ok": true, "source": "server:\n  # port: 8080\n  host: local\n" } },
+        { "op": "uncommentLeading", "args": [["server", "host"], 0, 1], "expect": { "ok": true, "source": "server:\n  port: 8080\n  host: local\n" } }
+      ]
+    },
+    {
+      "id": "commentOut leaves the entry's own leading block above it",
+      "note": "`# why` is a note ON the note afterwards, and the uncomment addresses line 1 of the block — the caller decides which lines are an entry. The Zig test also checks the commented-out key is gone from the tree, which the commented line pins.",
+      "source": "# why\na: 1\nb: 2\n",
+      "steps": [
+        { "op": "commentOut", "args": [["a"]], "expect": { "ok": true, "source": "# why\n# a: 1\nb: 2\n" } },
+        { "op": "uncommentLeading", "args": [["b"], 1, 1], "expect": { "ok": true, "source": "# why\na: 1\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "commentOut round-trips a multi-line value whole",
+      "note": "Every line of the block scalar takes the marker at its own indentation, the blank line included (bare marker, no trailing space). The Zig test also checks the commented-out key is gone from the tree, which the commented line pins.",
+      "source": "text: |\n  one\n\n  two\nb: 2\n",
+      "steps": [
+        { "op": "commentOut", "args": [["text"]], "expect": { "ok": true, "source": "# text: |\n  # one\n#\n  # two\nb: 2\n" } },
+        { "op": "uncommentLeading", "args": [["b"], 0, 4], "expect": { "ok": true, "source": "text: |\n  one\n\n  two\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "commentOut round-trips a block sequence item, dash and all",
+      "source": "tags:\n  - a\n  - b\n",
+      "steps": [
+        { "op": "commentOut", "args": [["tags", 0]], "expect": { "ok": true, "source": "tags:\n  # - a\n  - b\n" } },
+        { "op": "uncommentLeading", "args": [["tags", 0], 0, 1], "expect": { "ok": true, "source": "tags:\n  - a\n  - b\n" } }
+      ]
+    },
+    {
+      "id": "commentOut of the last entry lands in the parent's dangling run [1]",
+      "note": "The Zig test also reads the comment back (`getDanglingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "server:\n  port: 8080\n  host: local\nclient: 1\n",
+      "steps": [
+        { "op": "commentOut", "args": [["server", "host"]], "expect": { "ok": true, "source": "server:\n  port: 8080\n  # host: local\nclient: 1\n" } },
+        { "op": "uncommentDangling", "args": [["server"], 0, 1], "expect": { "ok": true, "source": "server:\n  port: 8080\n  host: local\nclient: 1\n" } }
+      ]
+    },
+    {
+      "id": "commentOut of the last entry lands in the parent's dangling run [2]",
+      "note": "The last entry of the document: the root's dangling run.",
+      "source": "a: 1\nb: 2\n",
+      "steps": [
+        { "op": "commentOut", "args": [["b"]], "expect": { "ok": true, "source": "a: 1\n# b: 2\n" } },
+        { "op": "uncommentDangling", "args": [[], 0, 1], "expect": { "ok": true, "source": "a: 1\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "commentOut and uncomment decline strict JSON, the root, flow items and sections",
+      "note": "Zig errors CommentsUnanchored, UnsupportedShape. Inside a flow collection a marker would swallow the separator, and the parse discards interior comments anyway. The root is not an entry anything can carry.",
+      "source": "tags: [a, b]\nk: 1\n",
+      "steps": [
+        { "op": "commentOut", "args": [["tags", 0]], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "uncommentLeading", "args": [["tags", 1], 0, 1], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "uncommentDangling", "args": [["tags"], 0, 1], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "commentOut", "args": [[]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "uncomment refuses lines that are not an entry, byte-exactly [1]",
+      "note": "Zig error CommentNotAnEntry. The `# two` here is CONTENT of the block scalar, not a comment: stripping the marker parses, but it changes `text`'s value — a node the caller never named. Refused and rolled back.",
+      "source": "text: |\n  one\n  # two\nb: 2\n",
+      "steps": [
+        { "op": "uncommentLeading", "args": [["b"], 0, 1], "expect": { "ok": false, "status": "UnsupportedOperation" } }
+      ]
+    },
+    {
+      "id": "uncomment refuses lines that are not an entry, byte-exactly [2]",
+      "note": "Prose that does not parse as an entry: the reparse fails and `replaceAtSpan` rolls the splice back on its own. A refusal with no status is one the Zig test asserted only fails, not with which error.",
+      "source": "a: 1\n# just a note\nb: 2\n",
+      "steps": [
+        { "op": "uncommentLeading", "args": [["b"], 0, 1], "expect": { "ok": false } }
+      ]
+    },
+    {
+      "id": "uncomment refuses lines that are not an entry, byte-exactly [3]",
+      "note": "Zig error NotFound. A line with no marker at all, and a range past the end of the block. A zero-length range is a no-op.",
+      "source": "a: 1\n# x: 2\nb: 3\n",
+      "steps": [
+        { "op": "uncommentLeading", "args": [["b"], 1, 1], "expect": { "ok": false, "status": "NotFound" } },
+        { "op": "uncommentLeading", "args": [["b"], 0, 2], "expect": { "ok": false, "status": "NotFound" } },
+        { "op": "uncommentLeading", "args": [["b"], 0, 0], "expect": { "ok": true, "source": "a: 1\n# x: 2\nb: 3\n" } }
+      ]
+    },
+    {
+      "id": "uncomment brings back a middle line of a block, leaving the rest commented",
+      "note": "The Zig test also finds `x` in the tree, which `x: 2` pins.",
+      "source": "# note\n# x: 2\nb: 3\n",
+      "steps": [
+        { "op": "uncommentLeading", "args": [["b"], 1, 1], "expect": { "ok": true, "source": "# note\nx: 2\nb: 3\n" } }
+      ]
+    },
+    {
+      "id": "set replaces an existing YAML value",
+      "source": "a: 1\nb: 2\n",
+      "steps": [
+        { "op": "setValue", "args": [["a"], 9], "expect": { "ok": true, "source": "a: 9\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "set inserts a missing top-level YAML key",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "setValue", "args": [["b"], 2], "expect": { "ok": true, "source": "a: 1\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "set inserts a missing nested key under an existing mapping",
+      "source": "outer:\n  inner: 1\n",
+      "steps": [
+        { "op": "setValue", "args": [["outer", "added"], 2], "expect": { "ok": true, "source": "outer:\n  inner: 1\n  added: 2\n" } }
+      ]
+    },
+    {
+      "id": "set reframes a YAML value inline->block on replace",
+      "note": "Inherits replaceValAtPath's reframing: a scalar becomes a block list (fig writes indentless block sequences under a key).",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["a"], "- x\n- y"], "expect": { "ok": true, "source": "a:\n- x\n- y\n" } }
+      ]
+    },
+    {
+      "id": "set rejects a path that does not end in a key",
+      "note": "Zig error NotAMapping.",
+      "source": "a:\n  - 1\n",
+      "steps": [
+        { "op": "setValue", "args": [["a", 0], 9], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "setValue", "args": [[], 9], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "set vivifies a nested path through an empty node [1]",
+      "note": "A null is a container waiting to exist, not data — so navigation failing through one is vivifiable, unlike failing through a scalar (next test). An empty document's root:",
+      "source": "",
+      "steps": [
+        { "op": "setValue", "args": [["a", "b"], 1], "expect": { "ok": true, "source": "a:\n  b: 1\n" } }
+      ]
+    },
+    {
+      "id": "set vivifies a nested path through an empty node [2]",
+      "source": "",
+      "steps": [
+        { "op": "setValue", "args": [["a", "b", "c"], 1], "expect": { "ok": true, "source": "a:\n  b:\n    c: 1\n" } }
+      ]
+    },
+    {
+      "id": "set vivifies a nested path through an empty node [3]",
+      "note": "And a bare `key:` standing where an intermediate mapping should be.",
+      "source": "title: t\na:\n",
+      "steps": [
+        { "op": "setValue", "args": [["a", "b", "c"], 1], "expect": { "ok": true, "source": "title: t\na:\n  b:\n    c: 1\n" } }
+      ]
+    },
+    {
+      "id": "set does not clobber a scalar standing where a parent map should be",
+      "note": "Zig error NotAMapping. `a` is a scalar, not a map: descending into it for `b` is a real type error (`NotAMapping`), not a missing key to vivify — `a: 1` stays intact.",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "setValue", "args": [["a", "b"], 2], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "set lands a single-entry mapping value like any other mapping value [1]",
+      "note": "A one-entry map renders `k: v` — the shape a scalar has — so every splice path used to read it as one and fail. All three branches of `set` (insert, nested insert, replace) must treat it as the block mapping it is, exactly as they already treated a two-entry map.",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["fresh"], "k: v\n"], "expect": { "ok": true, "source": "a: 1\nfresh:\n  k: v\n" } }
+      ]
+    },
+    {
+      "id": "set lands a single-entry mapping value like any other mapping value [2]",
+      "source": "outer:\n  inner: 1\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["outer", "added"], "k: v\n"], "expect": { "ok": true, "source": "outer:\n  inner: 1\n  added:\n    k: v\n" } }
+      ]
+    },
+    {
+      "id": "set lands a single-entry mapping value like any other mapping value [3]",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["a"], "k: v\n"], "expect": { "ok": true, "source": "a:\n  k: v\n" } }
+      ]
+    },
+    {
+      "id": "set rolls back a vivified ancestor when the leaf insert fails",
+      "note": "Zig error UnexpectedToken. Malformed value text: `a` is seeded, then the leaf insert's reparse rejects it. Two splices, one outcome — `Err` has to mean the document is untouched, or a caller that retries is editing a document it never asked for. Without the rollback the seeded `a:` would survive.",
+      "source": "title: t\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["a", "b"], "[unclosed"], "expect": { "ok": false, "status": "ParseError" } }
+      ]
+    },
+    {
+      "id": "set surfaces a rolled-back replace rather than inserting a second entry of that name",
+      "note": "A refusal with no status is one the Zig test asserted only fails, not with which error. The Zig test also checks the editor's internal `splice_rejected` flag, which a fixture cannot see.",
+      "source": "a: 1\nb: 2\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["a"], "\"open"], "expect": { "ok": false } }
+      ]
+    },
+    {
+      "id": "insertValue refuses a key the mapping already holds, in every format",
+      "note": "Zig error DuplicateKey. Most parsers accept a repeated key, so without the engine's own check the insert went through and the file gained a second entry. A new name still lands. The Zig test also checks the editor's internal `splice_rejected` flag, which a fixture cannot see.",
+      "source": "a: 1\nm:\n  x: 1\n",
+      "steps": [
+        { "op": "insertValue", "args": [[], "a", 3], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "insertValue", "args": [["m"], "x", 3], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "insertValue", "args": [[], "b", 2], "expect": { "ok": true, "source": "a: 1\nm:\n  x: 1\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "a rename refuses a path with no key, and a name the mapping already holds",
+      "note": "Zig errors NotAKey, DuplicateKey. An item's \"key\" is the item itself; the splice overwrote its value. YAML's parser accepts the repeat, so the engine is the net: by name up front, and by count from key syntax. Its own name is not a repeat, and a new one lands. The Zig test also checks the editor's internal `splice_rejected` flag, which a fixture cannot see. Its `replaceKeyAtPath` steps (key syntax, checked by count after the splice) are the binding's by-name `renameKey`, checked up front.",
+      "source": "l:\n  - 1\na: 1\nb: 2\n",
+      "steps": [
+        { "op": "renameKey", "args": [["l", 0], "z"], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "renameKey", "args": [[], "z"], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "renameKey", "args": [["a"], "b"], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "renameKey", "args": [["a"], "b"], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "renameKey", "args": [["a"], "a"], "expect": { "ok": true } },
+        { "op": "renameKey", "args": [["a"], "c"], "expect": { "ok": true, "source": "l:\n  - 1\nc: 1\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "insertValue rolls back an insert that repeats a name, from key syntax",
+      "note": "Zig error DuplicateKey. A document that already repeats a name is not refused an unrelated insert — only an insert that adds a repeat is. The Zig test passes key syntax (`insertKey`), where only the reparse knows the name; the binding inserts by name (`insertValue`), so these steps hold the same refusals through the up-front name check.",
+      "source": "a: 1\na: 2\n",
+      "steps": [
+        { "op": "insertValue", "args": [[], "b", 3], "expect": { "ok": true, "source": "a: 1\na: 2\nb: 3\n" } },
+        { "op": "insertValue", "args": [[], "b", 4], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "set reports the flow container, not a missing key, when a block value can't land",
+      "note": "Zig error BlockValueIntoFlow. The parent exists and IS a mapping — just a flow one. Falling back to the replace branch's `NotFound` would send the caller after a key that isn't the problem.",
+      "source": "a: {b: 1}\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["a", "c"], "- q\n"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "set vivifies a fresh nested path as BLOCK containers [1]",
+      "note": "YAML seeds missing ancestors as bare `key:` (null), which `insertKey` promotes to a real block mapping — so a fresh nested path reads like hand-written YAML instead of a flow chain (`a: {b: {c: 1}}`).",
+      "source": "title: t\n",
+      "steps": [
+        { "op": "setValue", "args": [["a", "b", "c"], 1], "expect": { "ok": true, "source": "title: t\na:\n  b:\n    c: 1\n" } }
+      ]
+    },
+    {
+      "id": "set vivifies a fresh nested path as BLOCK containers [2]",
+      "note": "And the payoff: a BLOCK value now lands at a fresh nested path, which no flow seed could ever hold.",
+      "source": "title: t\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["a", "b"], "- q\n"], "expect": { "ok": true, "source": "title: t\na:\n  b:\n  - q\n" } }
+      ]
+    },
+    {
+      "id": "set vivifies a fresh nested path as BLOCK containers [3]",
+      "note": "The seeded line carries no trailing whitespace.",
+      "source": "title: t\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["a", "b"], "k: v\n"], "expect": { "ok": true, "source": "title: t\na:\n  b:\n    k: v\n" } }
+      ]
+    }
+  ]
+}

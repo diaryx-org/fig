@@ -9,8 +9,8 @@ use serde::de::{self, DeserializeOwned, DeserializeSeed, EnumAccess, VariantAcce
 use serde::forward_to_deserialize_any;
 
 use crate::error::Error;
-use crate::ffi::{FigNodeId, FigNodeKind};
 use crate::{Document, Format};
+use crate::{FigNodeId, FigNodeKind};
 
 /// Deserialize `input`, written in `format`, into a typed value. Every
 /// registered [`Format`] reads — a bundled language whose crate feature is on,
@@ -67,7 +67,7 @@ impl<'de, 'a> Deserializer<'de> for NodeDeserializer<'a> {
             // A bare keyvalue/invalid node cannot be deserialized directly;
             // `from_slice` reads a document whose aliases are resolved, so an
             // alias is never reached.
-            FigNodeKind::Keyvalue
+            FigNodeKind::KeyValue
             | FigNodeKind::Invalid
             | FigNodeKind::Alias
             // `Document::kind` reads an extended scalar as the string or

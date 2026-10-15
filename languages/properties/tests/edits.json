@@ -1,0 +1,138 @@
+{
+  "dialect": "properties",
+  "from": "src/editor.zig",
+  "cases": [
+    {
+      "id": "replacing a value that looks like a comment replaces it whole",
+      "note": "A `#` is a comment only at a line's start, so `#c` here is the value.",
+      "source": "a= #c\nb=1\n",
+      "steps": [
+        { "op": "setValue", "args": [["a"], 42], "expect": { "ok": true, "source": "a= 42\nb=1\n" } }
+      ]
+    },
+    {
+      "id": "set seeds the first key into an empty document",
+      "source": "",
+      "steps": [
+        { "op": "setValue", "args": [["foo"], "bar"], "expect": { "ok": true, "source": "foo=bar\n" } }
+      ]
+    },
+    {
+      "id": "set inserts a second key using '=', no spaces",
+      "source": "foo=bar\n",
+      "steps": [
+        { "op": "setValue", "args": [["baz"], "qux"], "expect": { "ok": true, "source": "foo=bar\nbaz=qux\n" } }
+      ]
+    },
+    {
+      "id": "set on a bare key — no separator — writes the separator with the value [1]",
+      "note": "`flag` alone on its line is a key with an empty value at the key's end; the value cannot take that slot alone, or `flagx` reads back as the key `flagx`.",
+      "source": "flag\nb=1\n",
+      "steps": [
+        { "op": "setValue", "args": [["flag"], "x"], "expect": { "ok": true, "source": "flag=x\nb=1\n" } }
+      ]
+    },
+    {
+      "id": "set on a bare key — no separator — writes the separator with the value [2]",
+      "note": "A value that is empty after a separator keeps the separator it has.",
+      "source": "k=\n",
+      "steps": [
+        { "op": "setValue", "args": [["k"], "x"], "expect": { "ok": true, "source": "k=x\n" } }
+      ]
+    },
+    {
+      "id": "set on a bare key — no separator — writes the separator with the value [3]",
+      "source": "k :   \n",
+      "steps": [
+        { "op": "setValue", "args": [["k"], "x"], "expect": { "ok": true, "source": "k :   x\n" } }
+      ]
+    },
+    {
+      "id": "deleteKey removes the only entry, leaving an empty file",
+      "source": "foo=bar\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["foo"]], "expect": { "ok": true, "source": "" } },
+        { "op": "setValue", "args": [["again"], "v2"], "expect": { "ok": true, "source": "again=v2\n" } }
+      ]
+    },
+    {
+      "id": "deleteKey and renameKey on a repeated key take every spelling",
+      "source": "a=1\nb=2\na : 3\na=four \\\n  five\n",
+      "steps": [
+        { "op": "renameKey", "args": [["a"], "z"], "expect": { "ok": true, "source": "z=1\nb=2\nz : 3\nz=four \\\n  five\n" } },
+        { "op": "deleteKey", "args": [["z"]], "expect": { "ok": true, "source": "b=2\n" } }
+      ]
+    },
+    {
+      "id": "comment ops: leading works with '#', trailing is unsupported",
+      "note": "Zig error CommentsUnsupported. A `#` after a value is value text, so `flag # note` would read back as `flag` = `# note`. Refused, and nothing is written.",
+      "source": "flag\nk=v\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["k"], "note"], "expect": { "ok": true, "source": "flag\n# note\nk=v\n" } },
+        { "op": "setTrailingComment", "args": [["flag"], "note"], "expect": { "ok": false, "status": "UnsupportedFormat" } },
+        { "op": "setTrailingComment", "args": [["k"], "note"], "expect": { "ok": false, "status": "UnsupportedFormat" } }
+      ]
+    },
+    {
+      "id": "a comment or entry written after a continued last line ends the continuation first [1]",
+      "note": "`trail=v\\` continues onto the next line, so a line written straight after it would be read as the rest of `trail`'s value. The Zig test also reads `trail` (and `n`) back, which the bytes pin: the continued line is followed by a blank one.",
+      "source": "trail=v\\\n",
+      "steps": [
+        { "op": "addDanglingComment", "args": [[], "note"], "expect": { "ok": true, "source": "trail=v\\\n\n# note\n" } }
+      ]
+    },
+    {
+      "id": "a comment or entry written after a continued last line ends the continuation first [2]",
+      "source": "a=1\ntrail=v\\\r\n",
+      "steps": [
+        { "op": "setValue", "args": [["n"], 1], "expect": { "ok": true, "source": "a=1\ntrail=v\\\r\n\nn=1\n" } }
+      ]
+    },
+    {
+      "id": "a comment or entry written after a continued last line ends the continuation first [3]",
+      "note": "A blank line already ends it, but the entry's span stops before that line, so the insert lands between the two.",
+      "source": "x=1\ntrail=v\\\n\n",
+      "steps": [
+        { "op": "setValue", "args": [["n"], 1], "expect": { "ok": true, "source": "x=1\ntrail=v\\\n\nn=1\n\n" } }
+      ]
+    },
+    {
+      "id": "a comment or entry written after a continued last line ends the continuation first [4]",
+      "note": "An even run of `\\` is an escaped one, and a comment never continues: neither takes a blank line.",
+      "source": "a=v\\\\\n",
+      "steps": [
+        { "op": "setValue", "args": [["n"], 1], "expect": { "ok": true, "source": "a=v\\\\\nn=1\n" } }
+      ]
+    },
+    {
+      "id": "a comment or entry written after a continued last line ends the continuation first [5]",
+      "source": "a=1\n# c\\\n",
+      "steps": [
+        { "op": "addDanglingComment", "args": [[], "note"], "expect": { "ok": true, "source": "a=1\n# c\\\n# note\n" } }
+      ]
+    },
+    {
+      "id": "an entry moved after a continued line does not join it [1]",
+      "note": "The Zig test also reads the moved entries' values back, which the bytes pin.",
+      "source": "a=1\ntrail=v\\\n",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["trail"]], "expect": { "ok": true, "source": "trail=v\\\n\na=1\n" } }
+      ]
+    },
+    {
+      "id": "an entry moved after a continued line does not join it [2]",
+      "note": "`moveKey` sets `trail` down before `b`, whose line is not spliced.",
+      "source": "trail=v\\\n\na=1\nb=2\n",
+      "steps": [
+        { "op": "moveKey", "args": [["trail"], ["b"]], "expect": { "ok": true, "source": "\na=1\ntrail=v\\\n\nb=2\n" } }
+      ]
+    },
+    {
+      "id": "an entry moved after a continued line does not join it [3]",
+      "source": "a=1\ntrail=v\\\n",
+      "steps": [
+        { "op": "moveKey", "args": [["trail"], ["a"]], "expect": { "ok": true, "source": "trail=v\\\n\na=1\n" } }
+      ]
+    }
+  ]
+}

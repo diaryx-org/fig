@@ -4,9 +4,9 @@ name = CI
 #
 #   * zig         — the core: zig build check (test + all-on + abi-check +
 #                   semver-check + version-check). The one pre-release gate.
-#   * rust        — cargo test for the Rust binding (bindings/rust).
-#   * rust-semver — cargo-semver-checks over the native Rust public surface.
-#   * payload     — each payload crate links fig without Zig, per target.
+#   * rust        — cargo test for fig's Rust workspace (bindings/rust).
+#   * cross       — the `fig` crate builds for each tier-1 target, without Zig.
+#   * rust-port   — the Rust core, CLI, C ABI and adapter, and the edit fixtures.
 #   * typescript  — build + test the TypeScript/npm binding (bindings/typescript).
 #   * wasi        — build + test the fig-wasi npm package (bindings/wasi).
 #
@@ -40,9 +40,9 @@ jobs.zig.steps[]
 > with.version = 0.17.0
 +
 > # The one pre-release gate: zig test + all-on + abi-check + semver-check
-> # + version-check. `check` also folds in cargo-semver-checks and the Rust/TS
-> # test suites, but those degrade gracefully — with no cargo/npm toolchain in
-> # this job they skip with a note, and the `rust` / `typescript` jobs below run
+> # + version-check. `check` also folds in the Rust/TS test suites, but
+> # those degrade gracefully — with no cargo/npm toolchain in this job they
+> # skip with a note, and the `rust` / `typescript` jobs below run
 > # them for real (in parallel, with their pinned toolchains). See VERSIONING.md.
 > #
 > # `all-on` runs the tests again with every format compiled in. The
@@ -58,11 +58,8 @@ jobs.rust
 jobs.rust.steps[]
 > uses = actions/checkout@v7
 +
-> # build.rs compiles the fig core with `zig build`, so Zig is required here
-> # even though this is a Rust job.
-> uses = mlugg/setup-zig@v2
-> with.version = 0.17.0
-+
+> # The workspace is pure Rust: no Zig here, by design
+> # (docs/proposals/rust-core.md).
 > uses = dtolnay/rust-toolchain@stable
 +
 > uses = Swatinem/rust-cache@v2
@@ -74,71 +71,47 @@ jobs.rust.steps[]
 > run = cargo test --workspace --all-features
 > working-directory = bindings/rust
 
-# A payload crate (bindings/rust/fig-sys-<key>) carries the prebuilt core and
-# every language's library for one target, so a Rust program there needs no
-# Zig. The `rust` job above builds from source in the checkout and never links
-# a payload, and the release only builds them, on one macOS runner, just
-# before publishing: so nothing showed that a payload's archives link on the
-# target they are for. A broken one (the wasm core stopped building for a
-# month in 2026, unnoticed) would surface as a failed release or a user's
-# link error. This runs scripts/check-payload.sh for each target the host can
-# link: it builds the payload, shadows Zig with a `zig` that fails, links
-# fig's `wasm_smoke` example (fig and every language crate) from the payload
-# alone, and runs it where the runner can. Android is linked with the NDK
-# the runner image carries and not run: its programs need Android's loader.
-#
-# Here and not only in the release, because a release is the worst place for
-# a check's first run (see the wasi job below).
-jobs.payload
-> name = "Rust — payload ${{ matrix.key }} links without Zig"
+# The `fig` crate, its core (`fig-core`, `fig-kit`) and its language crates
+# are pure Rust, so a program on any target builds them with no Zig and no C
+# toolchain. The `rust` job above builds for the host; this builds the `fig`
+# crate for each tier-1 target fig once shipped a prebuilt payload for, so a
+# target the crate stopped compiling for shows here, not in a user's build.
+jobs.cross
+> name = "Rust — fig builds for ${{ matrix.key }} (no Zig)"
 > runs-on = "${{ matrix.os }}"
 > strategy.fail-fast = false
 
-jobs.payload.strategy.matrix.include[]
+jobs.cross.strategy.matrix.include[]
 > key = macos-x64
 > os = macos-latest
 > target = x86_64-apple-darwin
-> # The arm64 runner runs an x86_64 program under Rosetta.
-> run = arch -x86_64
 +
 > key = linux-x64-musl
 > os = ubuntu-latest
 > target = x86_64-unknown-linux-musl
-> run = ""
 +
 > key = linux-arm64-musl
 > os = ubuntu-24.04-arm
 > target = aarch64-unknown-linux-musl
-> run = ""
 +
 > key = android-arm64
 > os = ubuntu-latest
 > target = aarch64-linux-android
-> run = "-"
 +
 > key = android-x64
 > os = ubuntu-latest
 > target = x86_64-linux-android
-> run = "-"
 +
-> # Linked, not run: the core and the languages each compile for iOS apart
-> # from macOS, and a release found the languages' did not.
 > key = ios-arm64
 > os = macos-latest
 > target = aarch64-apple-ios
-> run = "-"
 +
 > key = wasm32-wasi
 > os = ubuntu-latest
 > target = wasm32-wasip1
-> run = wasmtime run
 
-jobs.payload.steps[]
+jobs.cross.steps[]
 > uses = actions/checkout@v7
-+
-> # Builds the payload's archives; the link after it must not call Zig.
-> uses = mlugg/setup-zig@v2
-> with.version = 0.17.0
 +
 > uses = dtolnay/rust-toolchain@stable
 > with.targets = "${{ matrix.target }}"
@@ -147,107 +120,35 @@ jobs.payload.steps[]
 > with.workspaces = bindings/rust
 > with.key = "${{ matrix.key }}"
 +
-> if = "matrix.key == 'wasm32-wasi'"
-> uses = bytecodealliance/actions/wasmtime/setup@v1
-+
-> # Cargo links Android with the host's `cc` unless told otherwise; the
-> # runner image carries an NDK, whose clang names the API level.
-> name = Link Android with the NDK
-> if = "startsWith(matrix.key, 'android')"
-> run = '''
-set -euo pipefail
-target="${{ matrix.target }}"
-var="CARGO_TARGET_$(printf '%s' "$target" | tr '[:lower:]-' '[:upper:]_')_LINKER"
-echo "$var=$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${target}24-clang" >> "$GITHUB_ENV"
-'''
-+
-> run = "bash scripts/check-payload.sh ${{ matrix.key }} \"${{ matrix.run }}\""
+> run = "cargo build -p fig --target ${{ matrix.target }}"
 > working-directory = bindings/rust
 
-# cargo-semver-checks guards the *native Rust* public surface (Value, Document,
-# the editor, the #[derive] macros, serde impls, cargo features) — the contract
-# the Zig `semver-check` cannot see, since none of it crosses the C ABI. Like
-# semver-check it is version-aware: it only fails if the API delta exceeds what
-# the crate's current version bump allows. It diffs against the most recent
-# release tag (not crates.io). fig releases every artifact under one version and
-# one `vX.Y.Z` tag from 5.0.0 on (see docs/VERSIONING.md), so that tag is
-# matched first — as `v[5-9].*` or `v[1-9][0-9]*`, which admits v10 and later
-# and leaves out the three bare tags that predate the per-track scheme (`v1.0.0`,
-# `v2.0.0`, `v2.5.1`, all ancestors of main) — and the crate's old `rust/v*`
-# line is the fallback until the first one-version tag exists.
-#
-# The Rust crate release workflow (release.figl's `crate` job) re-runs this
-# same check right before publishing, as a release-time gate — see that job's
-# comments for why its baseline discovery differs slightly (it must exclude
-# the tag that triggered the release run itself).
-jobs.rust-semver
-> name = Rust — cargo-semver-checks
+jobs.rust-port
+> name = Rust port — cargo test + edit fixtures (no Zig)
 > runs-on = ubuntu-latest
-> steps
-> > *
-> > > uses = actions/checkout@v7
-> > > # Needs full history + tags: the baseline is the most recent release
-> > > # tag, discovered the same way semver-check discovers its own baseline.
-> > > with.fetch-depth = 0
-> > *
-> > > # build.rs compiles the fig core with `zig build`, so building the crate's
-> > > # rustdoc (current AND the baseline rev) needs Zig.
-> > > uses = mlugg/setup-zig@v2
-> > > with.version = 0.17.0
-> > *
-> > > # STABLE, deliberately — cargo-semver-checks reads rustdoc JSON, and its
-> > > # README is explicit that the formats it supports are the ones emitted by
-> > > # the then-current stable and beta Rust, with nightly supported only on a
-> > > # best-effort basis ("often, but not always"), sometimes dropped even while
-> > > # older stable formats are still supported.
-> > > #
-> > > # This used to pin a dated nightly (nightly-2026-06-15, the last emitting
-> > > # rustdoc-types v57) because a bare `@nightly` kept racing ahead of the
-> > > # tool: nightly ships a new FORMAT_VERSION days-to-weeks before
-> > > # cargo-semver-checks learns to read it. But a dated pin only trades a
-> > > # fast-moving break for a slow-rotting one — it ages out of support in the
-> > > # other direction, and it is one more number to remember to advance.
-> > > # Tracking stable removes the race instead of re-timing it: stable moves
-> > > # every six weeks, the tool supports a RANGE of formats at once (0.50.0
-> > > # reads v57, v60 and v61), and stable is the combination its authors
-> > > # actually test. So both halves float, and the recommendation the README
-> > > # gives — newest cargo-semver-checks against newest stable — is what runs.
-> > > uses = dtolnay/rust-toolchain@stable
-> > *
-> > > uses = Swatinem/rust-cache@v2
-> > > with.workspaces = bindings/rust
-> > *
-> > > uses = taiki-e/install-action@v2
-> > > with.tool = cargo-semver-checks
-> > *
-> > > name = Check the fig crate's Rust API against the last release tag
-> > > working-directory = bindings/rust
-> > > run = '''
-set -euo pipefail
-tag="$(git describe --tags --abbrev=0 --match 'v[5-9].*' --match 'v[1-9][0-9]*' 2>/dev/null \
-  || git describe --tags --abbrev=0 --match 'rust/v*' 2>/dev/null || true)"
-if [ -z "$tag" ]; then
-  echo "cargo-semver-checks: no release tag found — skipping (nothing to diff against)."
-  exit 0
-fi
-zon_zig() { sed -n 's/^    \.minimum_zig_version = "\([^"]*\)",$/\1/p'; }
-want="$(zon_zig < ../../build.zig.zon)"
-had="$(git show "$tag:build.zig.zon" | zon_zig)"
-if [ "$had" = "$want" ]; then
-  echo "cargo-semver-checks: baseline $tag"
-  cargo semver-checks --package fig --baseline-rev "$tag"
-else
-  # The tag's Zig source needs a toolchain this job does not have, so the
-  # baseline is the crate crates.io has for it, with default features: that
-  # set links the prebuilt core and needs no Zig. The opt-in surfaces (serde,
-  # derive, indexmap, zon, plist) go unchecked until the next release is cut
-  # with this Zig. See "After a Zig bump" in docs/VERSIONING.md.
-  ver="${tag##*/}"; ver="${ver#v}"
-  echo "cargo-semver-checks: $tag was built with Zig $had, this tree needs $want — baseline is the published fig $ver, default features"
-  cargo semver-checks --package fig --baseline-version "$ver" --default-features
-fi
 
-'''
+jobs.rust-port.steps[]
+> uses = actions/checkout@v7
++
+> # The port's crates (rust/) are members of bindings/rust's workspace, and
+> # pure Rust: no Zig here, by design (docs/proposals/rust-core.md).
+> uses = dtolnay/rust-toolchain@stable
++
+> uses = Swatinem/rust-cache@v2
+> with.workspaces = bindings/rust
++
+> # The kit, the core, the CLI, the C ABI and the conformance adapter with
+> # their default features, as a program takes them (the `rust` job runs the
+> # whole workspace with every feature on).
+> run = cargo test -p fig-kit -p fig-core -p fig-cli -p fig-capi -p fig-conform
+> working-directory = bindings/rust
++
+> run = cargo build --release -p fig-conform
+> working-directory = bindings/rust
++
+> # Every language's hand-written edit fixtures, through the Rust editor
+> # behind fig-conformance's adapter protocol.
+> run = node tools/edit-fixtures.mjs --command bindings/rust/target/release/fig-conform
 
 jobs.typescript
 > name = TypeScript — build + test

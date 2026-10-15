@@ -37,10 +37,10 @@ nu-plugin = "=0.115.1"
 nu-protocol = "=0.115.1"
 # Only for building the `DateTime<FixedOffset>` that `Value::date` takes.
 chrono = { version = "0.4", default-features = false, features = ["std"] }
-# The native binding, which carries no language, and the figl language, which
-# links its own library beside it.
+# The native binding, which carries no language, and the figl language, with
+# its `fig` feature (`fig_figl::register()`) and without its serde.
 fig = { path = "../rust/fig", version = "6.0.0" }
-fig-figl = { path = "../../languages/figl", version = "6.0.0", default-features = false }
+fig-figl = { path = "../../languages/figl", version = "6.0.0", default-features = false, features = ["fig"] }
 
 [dev-dependencies]
 nu-plugin-test-support = "=0.115.1"

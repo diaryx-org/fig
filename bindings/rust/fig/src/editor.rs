@@ -4,7 +4,7 @@
 //! [`Editor`] splices only the bytes of the node you change — comments, key
 //! order, blank lines, and quoting style everywhere else are left byte-
 //! identical. Inserted values are rendered by fig's serializer (via [`Value`]),
-//! then spliced in; the Zig editor re-frames indentation and flow/block context
+//! then spliced in; the core editor re-frames indentation and flow/block context
 //! at the site.
 //!
 //! # Naming
@@ -34,11 +34,12 @@
 //!   (`add_leading_comment`, `add_dangling_comment` append to it), `set_` for
 //!   the one that holds a single line (`set_trailing_comment` replaces it).
 
-use std::ptr::NonNull;
+use fig_core::kit::ast::PathSegment;
 
+use crate::capi::{self, Status};
 use crate::error::{EditTarget, Error, edit_status};
 use crate::value::{Value, value_text, value_text_with};
-use crate::{Format, SerializeOptions, ffi};
+use crate::{Format, SerializeOptions};
 
 /// One step of a path into a document: a mapping key or a sequence index.
 #[derive(Clone, Copy, Debug)]
@@ -59,47 +60,25 @@ impl From<usize> for Segment<'_> {
     }
 }
 
-/// Build the C path array. The returned segments borrow the key bytes of
-/// `path`, so the result must not outlive `path` (it never does: it is consumed
-/// within a single FFI call).
-pub(crate) fn to_ffi_path(path: &[Segment]) -> Vec<ffi::FigPathSegment> {
+/// The core's path. The returned segments borrow the key bytes of `path`.
+pub(crate) fn to_core_path<'a>(path: &[Segment<'a>]) -> Vec<PathSegment<'a>> {
     path.iter()
         .map(|seg| match seg {
-            Segment::Key(k) => ffi::FigPathSegment {
-                kind: 0,
-                key_ptr: k.as_ptr(),
-                key_len: k.len(),
-                index: 0,
-            },
-            Segment::Index(i) => ffi::FigPathSegment {
-                kind: 1,
-                key_ptr: std::ptr::null(),
-                key_len: 0,
-                index: *i,
-            },
+            Segment::Key(k) => PathSegment::Key(k.as_bytes()),
+            Segment::Index(i) => PathSegment::Index(*i),
         })
         .collect()
 }
 
-/// Build the C `FigStr` array for a key list. The returned entries borrow the
-/// key bytes of `keys`, so the result must not outlive `keys` (it never does:
-/// it is consumed within a single FFI call).
-pub(crate) fn to_ffi_keys<S: AsRef<str>>(keys: &[S]) -> Vec<ffi::FigStr> {
-    keys.iter()
-        .map(|k| {
-            let s = k.as_ref();
-            ffi::FigStr {
-                ptr: s.as_ptr(),
-                len: s.len(),
-            }
-        })
-        .collect()
+/// The core's key list. The returned entries borrow the key bytes of `keys`.
+pub(crate) fn to_core_keys<S: AsRef<str>>(keys: &[S]) -> Vec<&[u8]> {
+    keys.iter().map(|k| k.as_ref().as_bytes()).collect()
 }
 
 /// An in-place editor over an owned copy of a document's source.
 #[derive(Debug)]
 pub struct Editor {
-    raw: NonNull<ffi::FigEditor>,
+    inner: capi::Editor,
     /// The document's format, used to render replacement/insertion splice text in
     /// the same dialect (e.g. a `Value::Str` becomes `"x"` for TOML/JSON but a
     /// bare `x` for YAML). Hardcoding one format would splice syntactically wrong
@@ -107,33 +86,20 @@ pub struct Editor {
     format: Format,
 }
 
-// SAFETY: as for `Document`: the `FigEditor` (its source copy and the
-// document it reparses) belongs to this handle alone and to no thread. Not
-// `Sync`, its every edit takes `&mut self` anyway.
-unsafe impl Send for Editor {}
-
 impl Editor {
     /// Open an editor over a copy of `input` in the given format.
     pub fn open(input: &[u8], format: Format) -> Result<Self, Error> {
-        let mut raw = std::ptr::null_mut();
-        let status =
-            unsafe { ffi::fig_editor_create(input.as_ptr(), input.len(), format.to_c(), &mut raw) };
-        if status == ffi::FigStatus::PARSE_ERROR {
-            // `fig_editor_create` has no `_ex` twin, and its parse is the one
-            // `fig_parse_ex` runs: ask that for the core's diagnostic, so the
+        match capi::Editor::create(input, format.to_c()) {
+            Ok(inner) => Ok(Self { inner, format }),
+            // `Editor::create` has no `_ex` twin, and its parse is the one
+            // `parse_ex` runs: ask that for the core's diagnostic, so the
             // error names what failed rather than only that something did.
-            return Err(match crate::Document::parse(input, format) {
+            Err(Status::ParseError) => Err(match crate::Document::parse(input, format) {
                 Err(e @ Error::Parse(_)) => e,
                 _ => Error::Parse(crate::error::ParseError::generic()),
-            });
+            }),
+            Err(status) => Err(Error::from_status(status).err().unwrap_or(Error::Internal)),
         }
-        Error::from_status(status)?;
-        let raw = NonNull::new(raw).ok_or(Error::Internal)?;
-        Ok(Self { raw, format })
-    }
-
-    fn ptr(&self) -> *mut ffi::FigEditor {
-        self.raw.as_ptr()
     }
 
     // ── value edits (over `Value`) ──────────────────────────────────────────
@@ -157,16 +123,8 @@ impl Editor {
     /// and a `key` another entry of the mapping already holds are
     /// [`Error::InvalidArgument`], and nothing is written.
     pub fn rename_key(&mut self, path: &[Segment], key: &str) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_replace_named_key(
-                self.ptr(),
-                p.as_ptr(),
-                p.len(),
-                key.as_ptr(),
-                key.len(),
-            )
-        };
+        let p = to_core_path(path);
+        let status = self.inner.replace_named_key(&p, key.as_bytes());
         edit_status(status, self.format, EditTarget::Key)
     }
 
@@ -182,18 +140,10 @@ impl Editor {
         // key (`.k` in ZON, `"k"` in JSON) — a string value, which this used
         // to send, is not a key in ZON.
         let val = value_text(&value.into(), self.format)?;
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_insert_named_key(
-                self.ptr(),
-                p.as_ptr(),
-                p.len(),
-                key.as_ptr(),
-                key.len(),
-                val.as_ptr(),
-                val.len(),
-            )
-        };
+        let p = to_core_path(path);
+        let status = self
+            .inner
+            .insert_named_key(&p, key.as_bytes(), val.as_bytes());
         edit_status(status, self.format, EditTarget::Value)
     }
 
@@ -265,18 +215,10 @@ impl Editor {
         options: SerializeOptions,
     ) -> Result<(), Error> {
         let val = value_text_with(&value.into(), self.format, options)?;
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_insert_named_key(
-                self.ptr(),
-                p.as_ptr(),
-                p.len(),
-                key.as_ptr(),
-                key.len(),
-                val.as_ptr(),
-                val.len(),
-            )
-        };
+        let p = to_core_path(path);
+        let status = self
+            .inner
+            .insert_named_key(&p, key.as_bytes(), val.as_bytes());
         edit_status(status, self.format, EditTarget::Value)
     }
 
@@ -305,49 +247,19 @@ impl Editor {
         repl: &str,
         value: &Value,
     ) -> Result<(), Error> {
-        let p = to_ffi_path(path);
+        let p = to_core_path(path);
         let status = match value {
-            Value::Str(s) => unsafe {
-                ffi::fig_editor_replace_string(
-                    self.ptr(),
-                    p.as_ptr(),
-                    p.len(),
-                    repl.as_ptr(),
-                    repl.len(),
-                    s.as_ptr(),
-                    s.len(),
-                )
-            },
-            _ => unsafe {
-                ffi::fig_editor_replace_val(
-                    self.ptr(),
-                    p.as_ptr(),
-                    p.len(),
-                    repl.as_ptr(),
-                    repl.len(),
-                )
-            },
+            Value::Str(s) => self.inner.replace_string(&p, repl.as_bytes(), s.as_bytes()),
+            _ => self.inner.replace_val(&p, repl.as_bytes()),
         };
         edit_status(status, self.format, EditTarget::Value)
     }
 
     fn set_rendered(&mut self, path: &[Segment], val: &str, value: &Value) -> Result<(), Error> {
-        let p = to_ffi_path(path);
+        let p = to_core_path(path);
         let status = match value {
-            Value::Str(s) => unsafe {
-                ffi::fig_editor_set_string(
-                    self.ptr(),
-                    p.as_ptr(),
-                    p.len(),
-                    val.as_ptr(),
-                    val.len(),
-                    s.as_ptr(),
-                    s.len(),
-                )
-            },
-            _ => unsafe {
-                ffi::fig_editor_set(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
-            },
+            Value::Str(s) => self.inner.set_string(&p, val.as_bytes(), s.as_bytes()),
+            _ => self.inner.set(&p, val.as_bytes()),
         };
         edit_status(status, self.format, EditTarget::Value)
     }
@@ -371,10 +283,8 @@ impl Editor {
     }
 
     fn append_text(&mut self, path: &[Segment], val: &str) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_append_seq(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
-        };
+        let p = to_core_path(path);
+        let status = self.inner.append_seq(&p, val.as_bytes());
         edit_status(status, self.format, EditTarget::Value)
     }
 
@@ -401,10 +311,8 @@ impl Editor {
     }
 
     fn prepend_text(&mut self, path: &[Segment], val: &str) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_prepend_seq(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
-        };
+        let p = to_core_path(path);
+        let status = self.inner.prepend_seq(&p, val.as_bytes());
         edit_status(status, self.format, EditTarget::Value)
     }
 
@@ -440,17 +348,8 @@ impl Editor {
     }
 
     fn insert_item_text(&mut self, path: &[Segment], index: usize, val: &str) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_insert_seq_item(
-                self.ptr(),
-                p.as_ptr(),
-                p.len(),
-                index,
-                val.as_ptr(),
-                val.len(),
-            )
-        };
+        let p = to_core_path(path);
+        let status = self.inner.insert_seq_item(&p, index, val.as_bytes());
         edit_status(status, self.format, EditTarget::Value)
     }
 
@@ -467,16 +366,8 @@ impl Editor {
     /// comment: those paths return [`Error::InvalidArgument`]. Comment the
     /// collection itself, or break it onto one element per line.
     pub fn add_leading_comment(&mut self, path: &[Segment], text: &str) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_add_leading_comment(
-                self.ptr(),
-                p.as_ptr(),
-                p.len(),
-                text.as_ptr(),
-                text.len(),
-            )
-        };
+        let p = to_core_path(path);
+        let status = self.inner.add_leading_comment(&p, text.as_bytes());
         edit_status(status, self.format, EditTarget::Comment)
     }
 
@@ -487,16 +378,8 @@ impl Editor {
     /// collection also returns [`Error::InvalidArgument`]: the end of that line
     /// is the parent's, not the element's.
     pub fn set_trailing_comment(&mut self, path: &[Segment], text: &str) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_set_trailing_comment(
-                self.ptr(),
-                p.as_ptr(),
-                p.len(),
-                text.as_ptr(),
-                text.len(),
-            )
-        };
+        let p = to_core_path(path);
+        let status = self.inner.set_trailing_comment(&p, text.as_bytes());
         edit_status(status, self.format, EditTarget::Comment)
     }
 
@@ -506,9 +389,8 @@ impl Editor {
     /// or entry of a one-line flow collection, whose block above is its
     /// parent's.
     pub fn delete_leading_comment(&mut self, path: &[Segment]) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status =
-            unsafe { ffi::fig_editor_delete_leading_comments(self.ptr(), p.as_ptr(), p.len()) };
+        let p = to_core_path(path);
+        let status = self.inner.delete_leading_comments(&p);
         edit_status(status, self.format, EditTarget::Document)
     }
 
@@ -516,9 +398,8 @@ impl Editor {
     /// (still `Ok`) when there is none — including an element or entry of a
     /// one-line flow collection, whose line-end comment is its parent's.
     pub fn delete_trailing_comment(&mut self, path: &[Segment]) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status =
-            unsafe { ffi::fig_editor_delete_trailing_comment(self.ptr(), p.as_ptr(), p.len()) };
+        let p = to_core_path(path);
+        let status = self.inner.delete_trailing_comment(&p);
         edit_status(status, self.format, EditTarget::Document)
     }
 
@@ -548,33 +429,13 @@ impl Editor {
     /// across later reads, and maps `NOT_FOUND` to `Ok(None)` — distinguishing an
     /// absent comment from a present-but-empty one (`Some(String::new())`).
     fn read_comment(&self, path: &[Segment], trailing: bool) -> Result<Option<String>, Error> {
-        let p = to_ffi_path(path);
-        let mut ptr: *const u8 = std::ptr::null();
-        let mut len: usize = 0;
-        let status = unsafe {
-            if trailing {
-                ffi::fig_editor_get_trailing_comment(
-                    self.ptr(),
-                    p.as_ptr(),
-                    p.len(),
-                    &mut ptr,
-                    &mut len,
-                )
-            } else {
-                ffi::fig_editor_get_leading_comment(
-                    self.ptr(),
-                    p.as_ptr(),
-                    p.len(),
-                    &mut ptr,
-                    &mut len,
-                )
-            }
+        let p = to_core_path(path);
+        let comment = if trailing {
+            self.inner.get_trailing_comment(&p)
+        } else {
+            self.inner.get_leading_comment(&p)
         };
-        if status == ffi::FigStatus::NOT_FOUND {
-            return Ok(None);
-        }
-        Error::from_status(status)?;
-        Ok(Some(borrow_str(ptr, len)?.to_string()))
+        comment_text(comment)
     }
 
     // ── the dangling anchor ─────────────────────────────────────────────────
@@ -590,16 +451,8 @@ impl Editor {
     /// pretty-printed one is fine); strict JSON returns
     /// [`Error::UnsupportedFormat`].
     pub fn add_dangling_comment(&mut self, path: &[Segment], text: &str) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_add_dangling_comment(
-                self.ptr(),
-                p.as_ptr(),
-                p.len(),
-                text.as_ptr(),
-                text.len(),
-            )
-        };
+        let p = to_core_path(path);
+        let status = self.inner.add_dangling_comment(&p, text.as_bytes());
         edit_status(status, self.format, EditTarget::Comment)
     }
 
@@ -607,9 +460,8 @@ impl Editor {
     /// body — what [`dangling_comment`](Self::dangling_comment) reads. A no-op
     /// (still `Ok`) when there is none.
     pub fn delete_dangling_comment(&mut self, path: &[Segment]) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status =
-            unsafe { ffi::fig_editor_delete_dangling_comments(self.ptr(), p.as_ptr(), p.len()) };
+        let p = to_core_path(path);
+        let status = self.inner.delete_dangling_comments(&p);
         edit_status(status, self.format, EditTarget::Document)
     }
 
@@ -617,23 +469,8 @@ impl Editor {
     /// (lines joined by `\n`, markers and indentation stripped). `None` when
     /// there is no run; `Some("")` for a bare marker.
     pub fn dangling_comment(&self, path: &[Segment]) -> Result<Option<String>, Error> {
-        let p = to_ffi_path(path);
-        let mut ptr: *const u8 = std::ptr::null();
-        let mut len: usize = 0;
-        let status = unsafe {
-            ffi::fig_editor_get_dangling_comment(
-                self.ptr(),
-                p.as_ptr(),
-                p.len(),
-                &mut ptr,
-                &mut len,
-            )
-        };
-        if status == ffi::FigStatus::NOT_FOUND {
-            return Ok(None);
-        }
-        Error::from_status(status)?;
-        Ok(Some(borrow_str(ptr, len)?.to_string()))
+        let p = to_core_path(path);
+        comment_text(self.inner.get_dangling_comment(&p))
     }
 
     // ── comment out, and back ───────────────────────────────────────────────
@@ -649,8 +486,8 @@ impl Editor {
     /// `{ "a": 1, "b": 2 }`), and for a whole `[table]`/`[section]`, whose body
     /// is lines this op cannot see.
     pub fn comment_out(&mut self, path: &[Segment]) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status = unsafe { ffi::fig_editor_comment_out(self.ptr(), p.as_ptr(), p.len()) };
+        let p = to_core_path(path);
+        let status = self.inner.comment_out(&p);
         edit_status(status, self.format, EditTarget::Document)
     }
 
@@ -672,16 +509,8 @@ impl Editor {
         first_line: usize,
         line_count: usize,
     ) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_uncomment_leading(
-                self.ptr(),
-                p.as_ptr(),
-                p.len(),
-                first_line,
-                line_count,
-            )
-        };
+        let p = to_core_path(path);
+        let status = self.inner.uncomment_leading(&p, first_line, line_count);
         edit_status(status, self.format, EditTarget::Document)
     }
 
@@ -694,16 +523,8 @@ impl Editor {
         first_line: usize,
         line_count: usize,
     ) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_uncomment_dangling(
-                self.ptr(),
-                p.as_ptr(),
-                p.len(),
-                first_line,
-                line_count,
-            )
-        };
+        let p = to_core_path(path);
+        let status = self.inner.uncomment_dangling(&p, first_line, line_count);
         edit_status(status, self.format, EditTarget::Document)
     }
 
@@ -711,16 +532,15 @@ impl Editor {
 
     /// Delete the mapping entry named by `path`.
     pub fn delete_key(&mut self, path: &[Segment]) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status = unsafe { ffi::fig_editor_delete_key(self.ptr(), p.as_ptr(), p.len()) };
+        let p = to_core_path(path);
+        let status = self.inner.delete_key(&p);
         edit_status(status, self.format, EditTarget::Document)
     }
 
     /// Delete the item at `index` from the sequence at `path`.
     pub fn delete_item(&mut self, path: &[Segment], index: usize) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status =
-            unsafe { ffi::fig_editor_remove_seq_item(self.ptr(), p.as_ptr(), p.len(), index) };
+        let p = to_core_path(path);
+        let status = self.inner.remove_seq_item(&p, index);
         edit_status(status, self.format, EditTarget::Document)
     }
 
@@ -728,11 +548,9 @@ impl Editor {
     /// `dest_path`. Both must name keys in the same mapping. The moved entry
     /// keeps its owned comments; bytes between the two entries are preserved.
     pub fn move_key(&mut self, src_path: &[Segment], dest_path: &[Segment]) -> Result<(), Error> {
-        let s = to_ffi_path(src_path);
-        let d = to_ffi_path(dest_path);
-        let status = unsafe {
-            ffi::fig_editor_move_key(self.ptr(), s.as_ptr(), s.len(), d.as_ptr(), d.len())
-        };
+        let s = to_core_path(src_path);
+        let d = to_core_path(dest_path);
+        let status = self.inner.move_key(&s, &d);
         edit_status(status, self.format, EditTarget::Document)
     }
 
@@ -745,11 +563,9 @@ impl Editor {
         path: &[Segment],
         keys: &[S],
     ) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let k = to_ffi_keys(keys);
-        let status = unsafe {
-            ffi::fig_editor_reorder_keys(self.ptr(), p.as_ptr(), p.len(), k.as_ptr(), k.len())
-        };
+        let p = to_core_path(path);
+        let k = to_core_keys(keys);
+        let status = self.inner.reorder_keys(&p, &k);
         edit_status(status, self.format, EditTarget::Document)
     }
 
@@ -757,9 +573,8 @@ impl Editor {
     /// semantics). A block item keeps its owned comments; a flow sequence keeps
     /// its separators. No-op when `from == to`.
     pub fn move_item(&mut self, path: &[Segment], from: usize, to: usize) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status =
-            unsafe { ffi::fig_editor_move_item(self.ptr(), p.as_ptr(), p.len(), from, to) };
+        let p = to_core_path(path);
+        let status = self.inner.move_item(&p, from, to);
         edit_status(status, self.format, EditTarget::Document)
     }
 
@@ -768,16 +583,8 @@ impl Editor {
     /// listed keep their original relative order and follow. Out-of-range
     /// indices are ignored.
     pub fn reorder_items(&mut self, path: &[Segment], indices: &[usize]) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_reorder_items(
-                self.ptr(),
-                p.as_ptr(),
-                p.len(),
-                indices.as_ptr(),
-                indices.len(),
-            )
-        };
+        let p = to_core_path(path);
+        let status = self.inner.reorder_items(&p, indices);
         edit_status(status, self.format, EditTarget::Document)
     }
 
@@ -805,11 +612,9 @@ impl Editor {
             .into_iter()
             .map(|v| value_text(&v.into(), self.format))
             .collect::<Result<_, _>>()?;
-        let strs = to_ffi_keys(&texts);
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_set_sequence(self.ptr(), p.as_ptr(), p.len(), strs.as_ptr(), strs.len())
-        };
+        let strs = to_core_keys(&texts);
+        let p = to_core_path(path);
+        let status = self.inner.set_sequence(&p, &strs);
         edit_status(status, self.format, EditTarget::Value)
     }
 
@@ -836,40 +641,24 @@ impl Editor {
     /// Delete the whole container at `path` — every scattered region of its
     /// subtree, leaving interleaved foreign content in place.
     pub fn delete_container(&mut self, path: &[Segment]) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status = unsafe { ffi::fig_editor_delete_container(self.ptr(), p.as_ptr(), p.len()) };
+        let p = to_core_path(path);
+        let status = self.inner.delete_container(&p);
         edit_status(status, self.format, EditTarget::Document)
     }
 
     /// Create a container at `path` with `body` as its entries, spliced past
     /// the parent's whole subtree so no existing key is reparented.
     pub fn insert_container(&mut self, path: &[Segment], body: &str) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_insert_container(
-                self.ptr(),
-                p.as_ptr(),
-                p.len(),
-                body.as_ptr(),
-                body.len(),
-            )
-        };
+        let p = to_core_path(path);
+        let status = self.inner.insert_container(&p, body.as_bytes());
         edit_status(status, self.format, EditTarget::Value)
     }
 
     /// Rename the container at `path` to `new_leaf`, rewriting every line that
     /// names it: renaming `a` rewrites `[a]`, `[a.b]` and `[[a.c]]` alike.
     pub fn rename_container(&mut self, path: &[Segment], new_leaf: &str) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_rename_container(
-                self.ptr(),
-                p.as_ptr(),
-                p.len(),
-                new_leaf.as_ptr(),
-                new_leaf.len(),
-            )
-        };
+        let p = to_core_path(path);
+        let status = self.inner.rename_container(&p, new_leaf.as_bytes());
         edit_status(status, self.format, EditTarget::Key)
     }
 
@@ -882,17 +671,10 @@ impl Editor {
         src_path: &[Segment],
         dest_path: Option<&[Segment]>,
     ) -> Result<(), Error> {
-        let s = to_ffi_path(src_path);
-        let d = dest_path.map(to_ffi_path);
-        // A null pointer is what carries "to EOF" across the ABI, so the None
-        // arm must not hand over a dangling-but-non-null empty-Vec pointer.
-        let (d_ptr, d_len) = match &d {
-            Some(v) => (v.as_ptr(), v.len()),
-            None => (std::ptr::null(), 0),
-        };
-        let status = unsafe {
-            ffi::fig_editor_move_container(self.ptr(), s.as_ptr(), s.len(), d_ptr, d_len)
-        };
+        let s = to_core_path(src_path);
+        let d = dest_path.map(to_core_path);
+        // `None` is "to EOF", distinct from `Some(&[])`, the root.
+        let status = self.inner.move_container(&s, d.as_deref());
         edit_status(status, self.format, EditTarget::Document)
     }
 
@@ -904,52 +686,32 @@ impl Editor {
     /// core reorders the document's top-level containers only, and a path that
     /// could only ever be empty would be a parameter that means nothing.
     pub fn reorder_containers<S: AsRef<str>>(&mut self, order: &[S]) -> Result<(), Error> {
-        let o = to_ffi_keys(order);
-        let status = unsafe { ffi::fig_editor_reorder_containers(self.ptr(), o.as_ptr(), o.len()) };
+        let o = to_core_keys(order);
+        let status = self.inner.reorder_containers(&o);
         edit_status(status, self.format, EditTarget::Document)
     }
 
     /// Append an element with body `body` to the container sequence at `path` —
     /// TOML's `[[header]]` array-of-tables append.
     pub fn append_container_to_seq(&mut self, path: &[Segment], body: &str) -> Result<(), Error> {
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_append_container_to_seq(
-                self.ptr(),
-                p.as_ptr(),
-                p.len(),
-                body.as_ptr(),
-                body.len(),
-            )
-        };
+        let p = to_core_path(path);
+        let status = self.inner.append_container_to_seq(&p, body.as_bytes());
         edit_status(status, self.format, EditTarget::Value)
     }
 
     /// The current source. Borrows editor memory; invalidated by the next edit.
     pub fn source(&self) -> Result<&str, Error> {
-        let mut ptr: *const u8 = std::ptr::null();
-        let mut len: usize = 0;
-        let status = unsafe { ffi::fig_editor_source(self.raw.as_ptr(), &mut ptr, &mut len) };
-        Error::from_status(status)?;
-        borrow_str(ptr, len)
+        std::str::from_utf8(self.inner.source()).map_err(|_| Error::Utf8)
     }
 }
 
-impl Drop for Editor {
-    fn drop(&mut self) {
-        unsafe { ffi::fig_editor_destroy(self.raw.as_ptr()) };
+/// A comment read's answer: `NotFound` is `Ok(None)` — distinguishing an
+/// absent comment from a present-but-empty one (`Some(String::new())`) — and
+/// any other status folds as [`Error::from_status`] folds it.
+fn comment_text(comment: Result<Vec<u8>, Status>) -> Result<Option<String>, Error> {
+    match comment {
+        Ok(bytes) => String::from_utf8(bytes).map(Some).map_err(|_| Error::Utf8),
+        Err(Status::NotFound) => Ok(None),
+        Err(status) => Err(Error::from_status(status).err().unwrap_or(Error::Internal)),
     }
-}
-
-/// Interpret `len` bytes at `ptr` (owned by a fig handle, valid for `'a`) as a
-/// UTF-8 string slice.
-pub(crate) fn borrow_str<'a>(ptr: *const u8, len: usize) -> Result<&'a str, Error> {
-    if len == 0 {
-        return Ok("");
-    }
-    // Safety: on success the ABI guarantees `len` bytes at `ptr` owned by the
-    // handle and valid until the next mutation / destroy; the caller bounds the
-    // returned borrow accordingly.
-    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
-    std::str::from_utf8(bytes).map_err(|_| Error::Utf8)
 }

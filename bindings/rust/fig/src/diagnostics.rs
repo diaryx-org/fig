@@ -7,7 +7,7 @@
 
 use std::os::raw::c_int;
 
-use crate::ffi;
+use fig_core::diagnostics::{Cause, Code, Warning as CoreWarning};
 
 /// What kind of loss a [`Warning`] describes. Mirrors `FigWarningCode`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,13 +26,12 @@ pub enum WarningCode {
 }
 
 impl WarningCode {
-    fn from_c(c: c_int) -> Self {
+    fn from_core(c: Code) -> Self {
         match c {
-            0 => WarningCode::CommentDropped,
-            1 => WarningCode::CommentStyleDegraded,
-            2 => WarningCode::ValueDropped,
-            3 => WarningCode::TypeDegraded,
-            other => WarningCode::Unknown(other),
+            Code::CommentDropped => WarningCode::CommentDropped,
+            Code::CommentStyleDegraded => WarningCode::CommentStyleDegraded,
+            Code::ValueDropped => WarningCode::ValueDropped,
+            Code::TypeDegraded => WarningCode::TypeDegraded,
         }
     }
 }
@@ -50,11 +49,10 @@ pub enum WarningCause {
 }
 
 impl WarningCause {
-    fn from_c(c: c_int) -> Self {
+    fn from_core(c: Cause) -> Self {
         match c {
-            0 => WarningCause::FormatLimitation,
-            1 => WarningCause::ExplicitOption,
-            other => WarningCause::Unknown(other),
+            Cause::FormatLimitation => WarningCause::FormatLimitation,
+            Cause::ExplicitOption => WarningCause::ExplicitOption,
         }
     }
 }
@@ -73,27 +71,14 @@ pub struct Warning {
 }
 
 impl Warning {
-    /// Decode one filled `FigWarning`, copying its borrowed `path`/`note` bytes
-    /// into owned `String`s before they can be invalidated by the next diagnose.
-    ///
-    /// # Safety
-    /// `w.path`/`w.note` must point to `w.path_len`/`w.note_len` valid bytes (as
-    /// the ABI guarantees for a warning just returned by `fig_*_warning`).
-    pub(crate) unsafe fn from_ffi(w: &ffi::FigWarning) -> Self {
+    /// One warning the core's `diagnose` found, its path and note copied
+    /// into owned (lossy-UTF-8) `String`s.
+    pub(crate) fn from_core(w: &CoreWarning) -> Self {
         Warning {
-            code: WarningCode::from_c(w.code),
-            cause: WarningCause::from_c(w.cause),
-            path: unsafe { borrowed_string(w.path, w.path_len) },
-            note: unsafe { borrowed_string(w.note, w.note_len) },
+            code: WarningCode::from_core(w.code),
+            cause: WarningCause::from_core(w.cause),
+            path: String::from_utf8_lossy(&w.path).into_owned(),
+            note: w.note.to_owned(),
         }
     }
-}
-
-/// Copy a borrowed `(ptr, len)` slice into an owned (lossy-UTF-8) `String`.
-unsafe fn borrowed_string(ptr: *const u8, len: usize) -> String {
-    if ptr.is_null() || len == 0 {
-        return String::new();
-    }
-    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
-    String::from_utf8_lossy(bytes).into_owned()
 }

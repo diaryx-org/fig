@@ -1,4 +1,4 @@
-//! Developer/maintenance tooling: vendoring the Zig source into the Rust crate,
+//! Developer/maintenance tooling: vendoring the license texts into the Rust crates,
 //! the figl → generated-file sync, and the version sync. None of these run on a normal build; they are explicit steps
 //! a maintainer invokes (a few are wired into the `check` gate via the handles
 //! returned in `Result`).
@@ -32,10 +32,9 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     const optimize = ctx.optimize;
     const exe = arts.exe;
 
-    // Vendor this Zig source into fig-sys (bindings/rust/fig-sys/zig) so the
-    // published crate is self-contained — build.rs compiles the core from there
-    // when there is no repo above it. A small Zig program rather than a shell
-    // script, so it runs anywhere the crate's own `zig build` already does.
+    // Vendor the repo-root license texts (and the `fig` crate's README) into
+    // each published Rust crate, which cannot reach outside its own directory.
+    // A small Zig program rather than a shell script, so it runs anywhere.
     const vendor_rust = b.addExecutable(.{
         .name = "vendor_rust",
         .root_module = b.createModule(.{
@@ -49,8 +48,7 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     });
     const vendor_rust_run = b.addRunArtifact(vendor_rust);
     vendor_rust_run.addDirectoryArg(b.path("."));
-    vendor_rust_run.addDirectoryArg(b.path("bindings/rust/fig-sys/zig"));
-    const vendor_rust_step = b.step("vendor-rust", "Vendor the Zig source into the Rust crate for publishing");
+    const vendor_rust_step = b.step("vendor-rust", "Vendor the license texts and README into the Rust crates for publishing");
     vendor_rust_step.dependOn(&vendor_rust_run.step);
 
     // The read-only half: every path the copy above reads, plus every entry in
@@ -61,7 +59,6 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     // be cached.
     const vendor_check_run = b.addRunArtifact(vendor_rust);
     vendor_check_run.addDirectoryArg(b.path("."));
-    vendor_check_run.addDirectoryArg(b.path("bindings/rust/fig-sys/zig"));
     vendor_check_run.addArg("--check");
     vendor_check_run.has_side_effects = true;
     const vendor_check_step = b.step("vendor-check", "Fail if a path the published crate needs (or build.zig.zon's .paths promises) is missing");

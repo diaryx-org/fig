@@ -1,0 +1,110 @@
+{
+  "dialect": "plist",
+  "from": "languages/plist/tests/editor.zig",
+  "cases": [
+    {
+      "id": "renameKey renames a key inside its element, escaped",
+      "source": "<dict><key>a</key><string>x</string></dict>",
+      "steps": [
+        { "op": "renameKey", "args": [["a"], "b&c"], "expect": { "ok": true, "source": "<dict><key>b&amp;c</key><string>x</string></dict>" } }
+      ]
+    },
+    {
+      "id": "set replaces a value, preserving or changing type by autodetection [1]",
+      "note": "string -> string.",
+      "source": "<dict><key>name</key><string>fig</string></dict>",
+      "steps": [
+        { "op": "setValueRaw", "args": [["name"], "zig"], "expect": { "ok": true, "source": "<dict><key>name</key><string>zig</string></dict>" } }
+      ]
+    },
+    {
+      "id": "set replaces a value, preserving or changing type by autodetection [2]",
+      "note": "autodetect promotes to integer.",
+      "source": "<dict><key>n</key><integer>1</integer></dict>",
+      "steps": [
+        { "op": "setValueRaw", "args": [["n"], "99"], "expect": { "ok": true, "source": "<dict><key>n</key><integer>99</integer></dict>" } }
+      ]
+    },
+    {
+      "id": "set replaces a value, preserving or changing type by autodetection [3]",
+      "note": "escape hatch forces string over a numeric-looking value.",
+      "source": "<dict><key>v</key><string>1.0</string></dict>",
+      "steps": [
+        { "op": "setValueRaw", "args": [["v"], "<string>2.0</string>"], "expect": { "ok": true, "source": "<dict><key>v</key><string>2.0</string></dict>" } }
+      ]
+    },
+    {
+      "id": "an empty dict after its key on one line expands under the line's indent, not the dict's column",
+      "source": "<dict>\n\t<key>a</key><dict/>\n</dict>\n",
+      "steps": [
+        { "op": "insertValueRaw", "args": [["a"], "x", "y"], "expect": { "ok": true, "source": "<dict>\n\t<key>a</key><dict>\n\t  <key>x</key>\n\t  <string>y</string>\n\t</dict>\n</dict>\n" } }
+      ]
+    },
+    {
+      "id": "insertValue refuses a dict that closes on its last entry's line",
+      "note": "Zig error ContainerClosesOnItsLine. Appending after the line would land the entry in the outer dict.",
+      "source": "<dict>\n\t<key>o</key><dict><key>a</key><string>x</string></dict>\n</dict>\n",
+      "steps": [
+        { "op": "insertValueRaw", "args": [["o"], "b", "y"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "appendValue refuses an array that closes on its last item's line",
+      "note": "Zig error ContainerClosesOnItsLine.",
+      "source": "<dict>\n\t<key>l</key><array><string>a</string></array>\n</dict>\n",
+      "steps": [
+        { "op": "appendValueRaw", "args": [["l"], "b"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "insertValue appends a two-line entry at the children's indent",
+      "source": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>a</key>\n  <integer>1</integer>\n</dict>\n</plist>\n",
+      "steps": [
+        { "op": "insertValueRaw", "args": [[], "b", "hello"], "expect": { "ok": true, "source": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>a</key>\n  <integer>1</integer>\n  <key>b</key>\n  <string>hello</string>\n</dict>\n</plist>\n" } }
+      ]
+    },
+    {
+      "id": "insertValue expands an empty <dict/>",
+      "source": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict/>\n</plist>\n",
+      "steps": [
+        { "op": "insertValueRaw", "args": [[], "a", "1"], "expect": { "ok": true, "source": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>a</key>\n  <integer>1</integer>\n</dict>\n</plist>\n" } }
+      ]
+    },
+    {
+      "id": "deleteKey (generic path, xml_comment style) removes the whole entry",
+      "source": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>a</key>\n  <integer>1</integer>\n  <key>b</key>\n  <string>x</string>\n</dict>\n</plist>\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["a"]], "expect": { "ok": true, "source": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>b</key>\n  <string>x</string>\n</dict>\n</plist>\n" } }
+      ]
+    },
+    {
+      "id": "deleteKey and renameKey on a repeated key take every spelling [1]",
+      "note": "plist reads a `<key>` written more than once as one entry, the last spelling's value at the first's place. A delete or rename takes every spelling; one that took the first left the key reading on.",
+      "source": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>a</key>\n  <integer>1</integer>\n  <key>b</key>\n  <string>x</string>\n  <!-- again -->\n  <key>a</key>\n  <string>last</string>\n</dict>\n</plist>\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["a"]], "expect": { "ok": true, "source": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>b</key>\n  <string>x</string>\n</dict>\n</plist>\n" } }
+      ]
+    },
+    {
+      "id": "deleteKey and renameKey on a repeated key take every spelling [2]",
+      "source": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>a</key>\n  <integer>1</integer>\n  <key>b</key>\n  <string>x</string>\n  <!-- again -->\n  <key>a</key>\n  <string>last</string>\n</dict>\n</plist>\n",
+      "steps": [
+        { "op": "renameKey", "args": [["a"], "z"], "expect": { "ok": true, "source": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>z</key>\n  <integer>1</integer>\n  <key>b</key>\n  <string>x</string>\n  <!-- again -->\n  <key>z</key>\n  <string>last</string>\n</dict>\n</plist>\n" } }
+      ]
+    },
+    {
+      "id": "array append and prepend put an element on its own line (no dash) [1]",
+      "source": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<array>\n  <string>one</string>\n</array>\n</plist>\n",
+      "steps": [
+        { "op": "appendValueRaw", "args": [[], "two"], "expect": { "ok": true, "source": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<array>\n  <string>one</string>\n  <string>two</string>\n</array>\n</plist>\n" } }
+      ]
+    },
+    {
+      "id": "array append and prepend put an element on its own line (no dash) [2]",
+      "source": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<array>\n  <string>one</string>\n</array>\n</plist>\n",
+      "steps": [
+        { "op": "prependValueRaw", "args": [[], "zero"], "expect": { "ok": true, "source": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<array>\n  <string>zero</string>\n  <string>one</string>\n</array>\n</plist>\n" } }
+      ]
+    }
+  ]
+}

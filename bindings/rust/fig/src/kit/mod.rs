@@ -1,11 +1,12 @@
 //! The kit: what a [`Language`](crate::language::Language) written in Rust
-//! is built from. It is the same kit fig's own languages are written with in
-//! Zig, and that `@diaryx/fig/kit` is in JavaScript, layer for layer, and
-//! the kit's shared fixtures (`kit/testdata/` in the fig repository) hold
-//! every binding's to the same answers.
+//! is built from. It is the same kit fig's own languages are written with,
+//! and that `@diaryx/fig/kit` is in JavaScript, layer for layer, and the
+//! kit's shared fixtures (`kit/testdata/` in the fig repository) hold every
+//! binding's to the same answers.
 //!
 //! The **rules** have one right answer, which fig's own languages give, so
-//! they are the Zig kit's own code, called through the C ABI:
+//! they are the core kit's own code (`fig-kit`, re-exported as `fig-core`'s `kit`: the Rust port of
+//! the Zig kit), called directly:
 //!
 //! * [`number`]: how a number's lexeme is spelled for a format;
 //! * [`datetime`]: which datetime a bare token is;
@@ -49,7 +50,7 @@ pub mod xml;
 pub mod number {
     use std::borrow::Cow;
 
-    use crate::ffi;
+    use fig_core::kit::number as core_number;
 
     /// The spellings a format reads back as a number. A field left `false`
     /// means that spelling is canonicalized to decimal before it is written.
@@ -105,47 +106,37 @@ pub mod number {
             ..Spelling::NONE
         };
 
-        fn bits(self) -> u32 {
-            let mut b = 0;
-            for (on, bit) in [
-                (self.hex, ffi::FIG_SPELL_HEX),
-                (self.octal, ffi::FIG_SPELL_OCTAL),
-                (self.binary, ffi::FIG_SPELL_BINARY),
-                (self.underscores, ffi::FIG_SPELL_UNDERSCORES),
-                (self.leading_zero, ffi::FIG_SPELL_LEADING_ZERO),
-                (self.bare_dot, ffi::FIG_SPELL_BARE_DOT),
-                (self.plus, ffi::FIG_SPELL_PLUS),
-            ] {
-                if on {
-                    b |= bit;
-                }
+        /// The core's spelling: the same seven fields, and no non-finite
+        /// names (no `FIG_SPELL_*` bit spells them).
+        fn to_core(self) -> core_number::Spelling {
+            core_number::Spelling {
+                hex: self.hex,
+                octal: self.octal,
+                binary: self.binary,
+                underscores: self.underscores,
+                leading_zero: self.leading_zero,
+                bare_dot: self.bare_dot,
+                plus: self.plus,
+                non_finite: None,
             }
-            b
         }
     }
 
     /// Whether a format that spells `s` reads `raw` back as the same number.
     pub fn spellable(raw: &str, s: Spelling) -> bool {
-        // SAFETY: the function reads `raw.len()` bytes at `raw` and keeps
-        // nothing.
-        unsafe { ffi::fig_kit_number_spellable(raw.as_ptr(), raw.len(), s.bits()) }
+        core_number::spellable(raw.as_bytes(), s.to_core())
     }
 
     /// `raw` as the decimal lexeme every format reads: a radix converted,
     /// `_` and a leading `+` dropped, a bare dot padded, leading zeros
     /// stripped. A lexeme that is not a number at all comes back as it was.
     pub fn canonical(raw: &str) -> String {
-        let mut out = vec![0u8; raw.len() + ffi::FIG_KIT_ANSWER_ROOM];
-        // SAFETY: `out` has the room `fig.h` promises is always enough, and
-        // the function reads `raw.len()` bytes at `raw`.
-        let n = unsafe {
-            ffi::fig_kit_number_canonical(raw.as_ptr(), raw.len(), out.as_mut_ptr(), out.len())
-        };
+        let mut out = Vec::with_capacity(raw.len() + core_number::ANSWER_ROOM);
+        core_number::write_canonical(&mut out, raw.as_bytes());
         assert!(
-            n <= out.len(),
-            "fig_kit_number_canonical outgrew FIG_KIT_ANSWER_ROOM"
+            out.len() <= raw.len() + core_number::ANSWER_ROOM,
+            "the canonical number outgrew its answer room"
         );
-        out.truncate(n);
         // The answer is `raw`'s own characters less some ASCII, or ASCII
         // digits, so it is UTF-8 whenever `raw` is.
         String::from_utf8(out)
@@ -177,12 +168,10 @@ pub mod number {
     /// `.inf`, `Infinity`, `nan`, …, with an optional sign), or `None` when
     /// it spells a finite number or none.
     pub fn non_finite(raw: &str) -> Option<NonFinite> {
-        // SAFETY: as `spellable`.
-        match unsafe { ffi::fig_kit_number_non_finite(raw.as_ptr(), raw.len()) } {
-            ffi::FIG_NON_FINITE_INF => Some(NonFinite::Inf),
-            ffi::FIG_NON_FINITE_NEG_INF => Some(NonFinite::NegInf),
-            ffi::FIG_NON_FINITE_NAN => Some(NonFinite::NaN),
-            _ => None,
+        match core_number::non_finite(raw.as_bytes())? {
+            core_number::NonFinite::Inf => Some(NonFinite::Inf),
+            core_number::NonFinite::NegInf => Some(NonFinite::NegInf),
+            core_number::NonFinite::Nan => Some(NonFinite::NaN),
         }
     }
 }
@@ -196,7 +185,7 @@ pub mod number {
 /// only what is allowed, which is [`Options`].
 pub mod datetime {
     use crate::ExtKind;
-    use crate::ffi;
+    use fig_core::kit::datetime as core_datetime;
 
     /// What a datetime may leave out. Both are allowed by default.
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -220,16 +209,11 @@ pub mod datetime {
     }
 
     impl Options {
-        fn bits(self) -> u32 {
-            (if self.minute_precision {
-                ffi::FIG_DATETIME_MINUTE_PRECISION
-            } else {
-                0
-            }) | (if self.time_only {
-                ffi::FIG_DATETIME_TIME_ONLY
-            } else {
-                0
-            })
+        fn to_core(self) -> core_datetime::Options {
+            core_datetime::Options {
+                allow_minute_precision: self.minute_precision,
+                allow_time_only: self.time_only,
+            }
         }
     }
 
@@ -240,33 +224,25 @@ pub mod datetime {
     /// date and the time are joined by `T`, `t` or a space; an offset is
     /// `Z`, `z` or `±HH:MM`.
     pub fn classify(raw: &str, opts: Options) -> Option<ExtKind> {
-        // SAFETY: the function reads `raw.len()` bytes at `raw` and keeps
-        // nothing.
-        let kind = unsafe { ffi::fig_kit_datetime_classify(raw.as_ptr(), raw.len(), opts.bits()) };
-        if kind < 0 {
-            None
-        } else {
-            ExtKind::from_c(kind)
-        }
+        let kind = core_datetime::classify(raw.as_bytes(), opts.to_core()).ok()?;
+        // The kind's index is its `ExtKind`'s.
+        ExtKind::from_c(kind as i32)
     }
 
     /// Whether `s` is `YYYY-MM-DD` and a day that exists.
     pub fn valid_date(s: &str) -> bool {
-        // SAFETY: as `classify`.
-        unsafe { ffi::fig_kit_datetime_valid_date(s.as_ptr(), s.len()) }
+        core_datetime::validate_date(s.as_bytes()).is_ok()
     }
 
     /// Whether `s` is `HH:MM:SS[.frac]`, or `HH:MM` when `opts` allows it.
     /// A second of 60 is a leap second.
     pub fn valid_time(s: &str, opts: Options) -> bool {
-        // SAFETY: as `classify`.
-        unsafe { ffi::fig_kit_datetime_valid_time(s.as_ptr(), s.len(), opts.bits()) }
+        core_datetime::validate_time(s.as_bytes(), opts.to_core()).is_ok()
     }
 
     /// Whether `s` is `±HH:MM`, an offset within a day.
     pub fn valid_offset(s: &str) -> bool {
-        // SAFETY: as `classify`.
-        unsafe { ffi::fig_kit_datetime_valid_offset(s.as_ptr(), s.len()) }
+        core_datetime::validate_offset(s.as_bytes()).is_ok()
     }
 }
 

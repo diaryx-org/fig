@@ -1,12 +1,13 @@
-//! The tokens of an XML-shaped format: the Zig kit's `xml.zig`, the
+//! The tokens of an XML-shaped format: fig-kit's port of the Zig kit's `xml.zig`, the
 //! tokenizer fig's plist reads with. It is lexical and knows nothing of
 //! which elements mean what. Comments, processing instructions (the
 //! `<?xml …?>` declaration among them) and a DOCTYPE are skipped; a DOCTYPE
 //! with an internal subset is refused. Entity references are left in the
 //! spans for the language to decode.
 
+use fig_core::kit::xml as core_xml;
+
 use crate::Span;
-use crate::ffi;
 
 /// What a token is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -35,18 +36,18 @@ pub enum TokenKind {
 }
 
 impl TokenKind {
-    fn from_c(k: u8) -> TokenKind {
+    fn from_core(k: core_xml::Kind) -> TokenKind {
         match k {
-            ffi::FIG_XML_LT => TokenKind::Lt,
-            ffi::FIG_XML_LT_SLASH => TokenKind::LtSlash,
-            ffi::FIG_XML_GT => TokenKind::Gt,
-            ffi::FIG_XML_SLASH_GT => TokenKind::SlashGt,
-            ffi::FIG_XML_EQ => TokenKind::Eq,
-            ffi::FIG_XML_NAME => TokenKind::Name,
-            ffi::FIG_XML_ATTR_VALUE => TokenKind::AttrValue,
-            ffi::FIG_XML_CHAR_DATA => TokenKind::CharData,
-            ffi::FIG_XML_CDATA => TokenKind::CData,
-            _ => TokenKind::Eof,
+            core_xml::Kind::Lt => TokenKind::Lt,
+            core_xml::Kind::LtSlash => TokenKind::LtSlash,
+            core_xml::Kind::Gt => TokenKind::Gt,
+            core_xml::Kind::SlashGt => TokenKind::SlashGt,
+            core_xml::Kind::Eq => TokenKind::Eq,
+            core_xml::Kind::Name => TokenKind::Name,
+            core_xml::Kind::AttrValue => TokenKind::AttrValue,
+            core_xml::Kind::CharData => TokenKind::CharData,
+            core_xml::Kind::Cdata => TokenKind::CData,
+            core_xml::Kind::Eof => TokenKind::Eof,
         }
     }
 }
@@ -104,49 +105,40 @@ impl std::error::Error for Error {}
 
 /// `input`'s tokens, the last [`TokenKind::Eof`], or why it is refused.
 pub fn tokenize(input: &[u8]) -> Result<Vec<Token>, Error> {
-    let mut err = 0i32;
-    let mut at = 0usize;
-    let mut out: Vec<ffi::FigXmlToken> = Vec::new();
-    loop {
-        // SAFETY: the function reads `input.len()` bytes at `input` and
-        // writes at most `out.len()` tokens to `out`.
-        let n = unsafe {
-            ffi::fig_kit_xml_tokenize(
-                input.as_ptr(),
-                input.len(),
-                out.as_mut_ptr(),
-                out.len(),
-                &mut err,
-                &mut at,
-            )
-        };
-        if n == usize::MAX {
-            let kind = match err {
-                ffi::FIG_XML_ERR_UNCLOSED_TAG => ErrorKind::UnclosedTag,
-                ffi::FIG_XML_ERR_UNCLOSED_ATTRIBUTE_VALUE => ErrorKind::UnclosedAttributeValue,
-                ffi::FIG_XML_ERR_UNCLOSED_COMMENT => ErrorKind::UnclosedComment,
-                ffi::FIG_XML_ERR_UNCLOSED_CDATA => ErrorKind::UnclosedCData,
-                ffi::FIG_XML_ERR_UNCLOSED_PI => ErrorKind::UnclosedPi,
-                ffi::FIG_XML_ERR_UNSUPPORTED_DOCTYPE => ErrorKind::UnsupportedDoctype,
-                ffi::FIG_XML_ERR_INVALID_MARKUP => ErrorKind::InvalidMarkup,
-                ffi::FIG_XML_ERR_UNEXPECTED_CHARACTER => ErrorKind::UnexpectedCharacter,
+    // The C call refuses an input past `u32` offsets as it refuses one
+    // out of memory.
+    if input.len() > u32::MAX as usize {
+        return Err(Error {
+            kind: ErrorKind::OutOfMemory,
+            at: 0,
+        });
+    }
+    let mut tz = core_xml::Tokenizer::new(input);
+    match tz.tokenize() {
+        Ok(tokens) => Ok(tokens
+            .iter()
+            .map(|t| Token {
+                kind: TokenKind::from_core(t.kind),
+                span: Span {
+                    start: t.span.start,
+                    end: t.span.end,
+                },
+            })
+            .collect()),
+        Err(e) => {
+            let kind = match e.name() {
+                "UnclosedTag" => ErrorKind::UnclosedTag,
+                "UnclosedAttributeValue" => ErrorKind::UnclosedAttributeValue,
+                "UnclosedComment" => ErrorKind::UnclosedComment,
+                "UnclosedCData" => ErrorKind::UnclosedCData,
+                "UnclosedPI" => ErrorKind::UnclosedPi,
+                "UnsupportedDoctype" => ErrorKind::UnsupportedDoctype,
+                "InvalidMarkup" => ErrorKind::InvalidMarkup,
+                "UnexpectedCharacter" => ErrorKind::UnexpectedCharacter,
                 _ => ErrorKind::OutOfMemory,
             };
-            return Err(Error { kind, at });
+            Err(Error { kind, at: tz.pos })
         }
-        if n <= out.len() {
-            return Ok(out[..n]
-                .iter()
-                .map(|t| Token {
-                    kind: TokenKind::from_c(t.kind),
-                    span: Span {
-                        start: t.start as usize,
-                        end: t.end as usize,
-                    },
-                })
-                .collect());
-        }
-        out.resize(n, ffi::FigXmlToken::default());
     }
 }
 

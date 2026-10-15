@@ -25,11 +25,8 @@ the crate's default `serde` feature it reads and writes typed values as
 `serde_json` does, with `fig_properties::from_str` and `fig_properties::to_string`, and
 their `slice`, `reader`, `vec` and `writer` twins.
 
-On fig's tier-1 targets the crate links a prebuilt library of the language,
-which `fig-sys`'s payload crate carries, and needs no Zig. Anywhere else it
-compiles the language from its Zig with
-[`fig-language-build`](https://docs.rs/fig-language-build), which needs Zig
-0.17 or later.
+The language is pure Rust — `fig-core`'s port of the Zig in this package —
+so the crate needs no Zig toolchain and no native library, on any target.
 
 ## JavaScript
 

@@ -1,0 +1,488 @@
+{
+  "dialect": "json",
+  "from": ["languages/json/tests/editor.zig", "src/editor.zig"],
+  "cases": [
+    {
+      "id": "simple value edit",
+      "source": "[{\"hello\":\"world\"}]",
+      "steps": [
+        { "op": "replaceValue", "args": [[0, "hello"], "person!"], "expect": { "ok": true, "source": "[{\"hello\":\"person!\"}]" } }
+      ]
+    },
+    {
+      "id": "simple key edit",
+      "source": "[{\"hello\":\"world\"}]",
+      "steps": [
+        { "op": "renameKey", "args": [[0, "hello"], "greetings"], "expect": { "ok": true, "source": "[{\"greetings\":\"world\"}]" } }
+      ]
+    },
+    {
+      "id": "json5 value edit preserves unquoted keys, comments, trailing comma",
+      "dialect": "json5",
+      "source": "{\n  // server config\n  host: 'localhost',\n  port: 8080, // default\n}",
+      "steps": [
+        { "op": "replaceValue", "args": [["port"], 9090], "expect": { "ok": true, "source": "{\n  // server config\n  host: 'localhost',\n  port: 9090, // default\n}" } }
+      ]
+    },
+    {
+      "id": "json5 delete key carries its owned // comment",
+      "dialect": "json5",
+      "source": "{\n  host: 'localhost',\n  // the listening port\n  port: 8080,\n}",
+      "steps": [
+        { "op": "deleteKey", "args": [["port"]], "expect": { "ok": true, "source": "{\n  host: 'localhost',\n}" } }
+      ]
+    },
+    {
+      "id": "json5 delete beside and of a NaN",
+      "note": "The delete guard compares the parses before and after, and a `NaN` is compared by its lexeme, so it is equal to itself: deleting beside it, or deleting it, is not refused as a value having changed.",
+      "dialect": "json5",
+      "source": "{ a: NaN, b: 1, c: -Infinity }",
+      "steps": [
+        { "op": "deleteKey", "args": [["b"]], "expect": { "ok": true, "source": "{ a: NaN, c: -Infinity }" } },
+        { "op": "deleteKey", "args": [["a"]], "expect": { "ok": true, "source": "{ c: -Infinity }" } }
+      ]
+    },
+    {
+      "id": "json5 delete after a line comment leaves the rest of its line [1]",
+      "note": "A later entry that begins its line goes with the comma after it, not the one before: that one ends the line above, behind a `// t` comment, and the old splice took `\\n  n: NaN`, joining the rest of `n`'s line, `i` with it, to the comment (docs/tasks/delete-splices-taking-other-values.md). Alone on its line, the entry takes the line and its own comment.",
+      "dialect": "json5",
+      "source": "{\n  \"b c\": [1, 2], // tb\n  n: NaN, i: -Infinity,\n  z: 3,\n}\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["n"]], "expect": { "ok": true, "source": "{\n  \"b c\": [1, 2], // tb\n  i: -Infinity,\n  z: 3,\n}\n" } },
+        { "op": "deleteKey", "args": [["i"]], "expect": { "ok": true, "source": "{\n  \"b c\": [1, 2], // tb\n  z: 3,\n}\n" } }
+      ]
+    },
+    {
+      "id": "json5 delete after a line comment leaves the rest of its line [2]",
+      "dialect": "json5",
+      "source": "{\n  a: 1, // t\n  n: NaN, // n's\n  i: 2\n}\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["n"]], "expect": { "ok": true, "source": "{\n  a: 1, // t\n  i: 2\n}\n" } }
+      ]
+    },
+    {
+      "id": "json5 delete key carries an owned /* */ block comment",
+      "dialect": "json5",
+      "source": "{\n  host: 'localhost',\n  /* the listening\n     port number */\n  port: 8080,\n}",
+      "steps": [
+        { "op": "deleteKey", "args": [["port"]], "expect": { "ok": true, "source": "{\n  host: 'localhost',\n}" } }
+      ]
+    },
+    {
+      "id": "json5 delete key from a packed single-line object (regression)",
+      "note": "Regression: a compact single-line object packs multiple entries onto one physical line — the *only* shape a minified/compact JSON object ever has — so `deleteKey`'s generic line-based delete (built for one-entry-per-line layout) used to delete the whole line, i.e. the sole remaining entry's deletion wiped the entire document, and a middle/first entry's deletion swallowed its neighbor too. Deleting one key from a packed object must leave its siblings untouched.",
+      "dialect": "json5",
+      "source": "{ host: 'localhost', port: 8080, tls: true }",
+      "steps": [
+        { "op": "deleteKey", "args": [["port"]], "expect": { "ok": true, "source": "{ host: 'localhost', tls: true }" } }
+      ]
+    },
+    {
+      "id": "json5 delete first key of a packed single-line object",
+      "dialect": "json5",
+      "source": "{ host: 'localhost', port: 8080 }",
+      "steps": [
+        { "op": "deleteKey", "args": [["host"]], "expect": { "ok": true, "source": "{ port: 8080 }" } }
+      ]
+    },
+    {
+      "id": "delete key from a packed single-line object (regression)",
+      "source": "{\"a\":1,\"b\":2,\"c\":3}",
+      "steps": [
+        { "op": "deleteKey", "args": [["b"]], "expect": { "ok": true, "source": "{\"a\":1,\"c\":3}" } }
+      ]
+    },
+    {
+      "id": "delete last key of a pretty multi-line object (regression)",
+      "note": "Regression: deleting the *last* key of a one-entry-per-line (pretty) object used to leave the *predecessor's* separator comma dangling before the closing brace — the block-shaped line delete removes the last entry's own line but not the comma on the line above it. In strict JSON (no trailing comma allowed) that produced invalid output that failed to reparse; the flow-aware splice now drops the preceding comma instead.",
+      "source": "{\n  \"a\": 1,\n  \"b\": 2\n}\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["b"]], "expect": { "ok": true, "source": "{\n  \"a\": 1\n}\n" } }
+      ]
+    },
+    {
+      "id": "delete first key of a pretty multi-line object keeps indentation",
+      "source": "{\n  \"a\": 1,\n  \"b\": 2\n}\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["a"]], "expect": { "ok": true, "source": "{\n  \"b\": 2\n}\n" } }
+      ]
+    },
+    {
+      "id": "delete only key of a single-entry object leaves an empty object",
+      "note": "Regression: deleting the *only* key of a single-entry object must leave an empty object `{}`, not delete the braces with the line. A packed single-line `{\"a\":1}` has the braces on the entry's own line, so the block-shaped line delete used to wipe the whole document (here: fail to reparse as strict JSON).",
+      "source": "{\"a\":1}",
+      "steps": [
+        { "op": "deleteKey", "args": [["a"]], "expect": { "ok": true, "source": "{}" } }
+      ]
+    },
+    {
+      "id": "json5 delete only key of a single-entry object leaves an empty object",
+      "dialect": "json5",
+      "source": "{ a: 1 }",
+      "steps": [
+        { "op": "deleteKey", "args": [["a"]], "expect": { "ok": true, "source": "{ }" } }
+      ]
+    },
+    {
+      "id": "json5 delete leaves an unrelated earlier comment intact",
+      "dialect": "json5",
+      "source": "{\n  // host comment\n  host: 'localhost',\n  port: 8080,\n}",
+      "steps": [
+        { "op": "deleteKey", "args": [["port"]], "expect": { "ok": true, "source": "{\n  // host comment\n  host: 'localhost',\n}" } }
+      ]
+    },
+    {
+      "id": "json5 array append with pre-existing trailing comma",
+      "note": "JSON5 permits a trailing comma before ']'; appending must not double it into an empty element that fails to reparse.",
+      "dialect": "json5",
+      "source": "{ ports: [1, 2,] }",
+      "steps": [
+        { "op": "appendValue", "args": [["ports"], 3], "expect": { "ok": true, "source": "{ ports: [1, 2, 3,] }" } }
+      ]
+    },
+    {
+      "id": "json5 array append onto a multi-line one-item-per-line array",
+      "dialect": "json5",
+      "source": "{\n  ports: [\n    1,\n    2,\n  ],\n}",
+      "steps": [
+        { "op": "appendValue", "args": [["ports"], 3], "expect": { "ok": true, "source": "{\n  ports: [\n    1,\n    2,\n    3,\n  ],\n}" } }
+      ]
+    },
+    {
+      "id": "json5 remove last item of a multi-line trailing-comma array (regression)",
+      "note": "The index 4294967295 is the `std.math.maxInt(usize)` the Zig test passed (as a wasm32 usize): the editor reads it as the last item.",
+      "dialect": "json5",
+      "source": "{\n  ports: [\n    1,\n    2,\n  ],\n}",
+      "steps": [
+        { "op": "deleteItem", "args": [["ports"], 4294967295], "expect": { "ok": true, "source": "{\n  ports: [\n    1,\n  ],\n}" } }
+      ]
+    },
+    {
+      "id": "json5 insertItem lands between two items of a multi-line array, one per line",
+      "note": "Zig error NotFound.",
+      "dialect": "json5",
+      "source": "{\n  ports: [\n    1,\n    3,\n  ],\n}",
+      "steps": [
+        { "op": "insertItem", "args": [["ports"], 1, 2], "expect": { "ok": true, "source": "{\n  ports: [\n    1,\n    2,\n    3,\n  ],\n}" } },
+        { "op": "insertItem", "args": [["ports"], 4, 9], "expect": { "ok": false, "status": "NotFound" } }
+      ]
+    },
+    {
+      "id": "reorderKeys reorders the root object",
+      "source": "{\n  \"name\": \"music\",\n  \"private\": true,\n  \"type\": \"module\"\n}",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["private", "name", "type"]], "expect": { "ok": true, "source": "{\n  \"private\": true,\n  \"name\": \"music\",\n  \"type\": \"module\"\n}" } }
+      ]
+    },
+    {
+      "id": "reorderKeys moves the last member, which has no comma",
+      "source": "{\n  \"name\": \"music\",\n  \"private\": true,\n  \"type\": \"module\"\n}",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["type"]], "expect": { "ok": true, "source": "{\n  \"type\": \"module\",\n  \"name\": \"music\",\n  \"private\": true\n}" } }
+      ]
+    },
+    {
+      "id": "reorderKeys reorders a nested object and leaves its siblings",
+      "source": "{\n  \"name\": \"music\",\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\"\n  },\n  \"type\": \"module\"\n}",
+      "steps": [
+        { "op": "reorderKeys", "args": [["scripts"], ["build", "dev"]], "expect": { "ok": true, "source": "{\n  \"name\": \"music\",\n  \"scripts\": {\n    \"build\": \"vite build\",\n    \"dev\": \"vite\"\n  },\n  \"type\": \"module\"\n}" } }
+      ]
+    },
+    {
+      "id": "reorderKeys moves a container member, and keeps a packed object packed [1]",
+      "source": "{\n  \"a\": 1,\n  \"b\": {\n    \"x\": [1, 2]\n  }\n}",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["b"]], "expect": { "ok": true, "source": "{\n  \"b\": {\n    \"x\": [1, 2]\n  },\n  \"a\": 1\n}" } }
+      ]
+    },
+    {
+      "id": "reorderKeys moves a container member, and keeps a packed object packed [2]",
+      "source": "{\"a\": 1, \"b\": 2, \"c\": 3}",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["c", "a"]], "expect": { "ok": true, "source": "{\"c\": 3, \"a\": 1, \"b\": 2}" } }
+      ]
+    },
+    {
+      "id": "reorderKeys moves a container member, and keeps a packed object packed [3]",
+      "source": "{\"a\":1,\"b\":2}",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["b"]], "expect": { "ok": true, "source": "{\"b\":2,\"a\":1}" } }
+      ]
+    },
+    {
+      "id": "reorderKeys moves a container member, and keeps a packed object packed [4]",
+      "source": "[{\"a\": 1, \"b\": 2}]",
+      "steps": [
+        { "op": "reorderKeys", "args": [[0], ["b"]], "expect": { "ok": true, "source": "[{\"b\": 2, \"a\": 1}]" } }
+      ]
+    },
+    {
+      "id": "jsonc reorderKeys carries each member's own comments",
+      "dialect": "jsonc",
+      "source": "{\n  // the package\n  \"name\": \"music\",\n  \"private\": true, // never published\n\n  /* how it loads */\n  \"type\": \"module\" // ESM\n}",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["type", "private", "name"]], "expect": { "ok": true, "source": "{\n  /* how it loads */\n  \"type\": \"module\", // ESM\n  \"private\": true, // never published\n\n  // the package\n  \"name\": \"music\"\n}" } }
+      ]
+    },
+    {
+      "id": "json5 reorderKeys keeps unquoted keys, the trailing comma, and comments [1]",
+      "dialect": "json5",
+      "source": "{\n  host: 'localhost', // dev only\n  // the listening port\n  port: 8080,\n}",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["port"]], "expect": { "ok": true, "source": "{\n  // the listening port\n  port: 8080,\n  host: 'localhost', // dev only\n}" } }
+      ]
+    },
+    {
+      "id": "json5 reorderKeys keeps unquoted keys, the trailing comma, and comments [2]",
+      "dialect": "json5",
+      "source": "{\n  a: 1,\n  b: 2, // last\n}",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["b"]], "expect": { "ok": true, "source": "{\n  b: 2, // last\n  a: 1,\n}" } }
+      ]
+    },
+    {
+      "id": "moveKey moves the last member before the first",
+      "source": "{\n  \"a\": 1,\n  \"b\": 2,\n  \"c\": 3\n}",
+      "steps": [
+        { "op": "moveKey", "args": [["c"], ["a"]], "expect": { "ok": true, "source": "{\n  \"c\": 3,\n  \"a\": 1,\n  \"b\": 2\n}" } },
+        { "op": "moveKey", "args": [["c"], ["b"]], "expect": { "ok": true, "source": "{\n  \"a\": 1,\n  \"c\": 3,\n  \"b\": 2\n}" } }
+      ]
+    },
+    {
+      "id": "json5 a string replacing a single-quoted one stays single-quoted",
+      "dialect": "json5",
+      "source": "{a: 'x', b: \"y\"}\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["a"], "it's \"so\""], "expect": { "ok": true } },
+        { "op": "replaceValue", "args": [["b"], "z"], "expect": { "ok": true, "source": "{a: 'it\\'s \"so\"', b: \"z\"}\n" } }
+      ]
+    },
+    {
+      "id": "comment ops on JSONC use // and respect indentation",
+      "dialect": "jsonc",
+      "source": "{\n  \"a\": 1\n}",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["a"], "note"], "expect": { "ok": true, "source": "{\n  // note\n  \"a\": 1\n}" } }
+      ]
+    },
+    {
+      "id": "set inserts into a pretty-printed JSON object on its own line, indented",
+      "source": "{\n  \"a\": 1,\n  \"b\": 2\n}",
+      "steps": [
+        { "op": "setValue", "args": [["c"], 3], "expect": { "ok": true, "source": "{\n  \"a\": 1,\n  \"b\": 2,\n  \"c\": 3\n}" } }
+      ]
+    },
+    {
+      "id": "set keeps compact single-line JSON objects inline",
+      "source": "{\"a\": 1, \"b\": 2}",
+      "steps": [
+        { "op": "setValue", "args": [["c"], 3], "expect": { "ok": true, "source": "{\"a\": 1, \"b\": 2, \"c\": 3}" } }
+      ]
+    },
+    {
+      "id": "comment ops are rejected for strict JSON",
+      "note": "Zig error CommentsUnsupported.",
+      "source": "{\"a\":1}",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["a"], "x"], "expect": { "ok": false, "status": "UnsupportedFormat" } },
+        { "op": "setTrailingComment", "args": [["a"], "x"], "expect": { "ok": false, "status": "UnsupportedFormat" } }
+      ]
+    },
+    {
+      "id": "deleteTrailingComment removes a same-line comment (YAML/JSONC), else no-op",
+      "note": "JSONC `//` trailing.",
+      "dialect": "jsonc",
+      "source": "{\n  \"a\": 1 // x\n}",
+      "steps": [
+        { "op": "deleteTrailingComment", "args": [["a"]], "expect": { "ok": true, "source": "{\n  \"a\": 1\n}" } }
+      ]
+    },
+    {
+      "id": "comment delete ops are rejected for strict JSON",
+      "note": "Zig error CommentsUnsupported.",
+      "source": "{\"a\":1}",
+      "steps": [
+        { "op": "deleteLeadingComment", "args": [["a"]], "expect": { "ok": false, "status": "UnsupportedFormat" } },
+        { "op": "deleteTrailingComment", "args": [["a"]], "expect": { "ok": false, "status": "UnsupportedFormat" } }
+      ]
+    },
+    {
+      "id": "get comment ops are rejected for strict JSON",
+      "note": "Zig error CommentsUnsupported.",
+      "source": "{\"a\":1}",
+      "steps": [
+        { "op": "getLeadingComment", "args": [["a"]], "expect": { "ok": false, "status": "UnsupportedFormat" } },
+        { "op": "getTrailingComment", "args": [["a"]], "expect": { "ok": false, "status": "UnsupportedFormat" } }
+      ]
+    },
+    {
+      "id": "JSONC: a flow item on its parent's line owns no leading comment [1]",
+      "note": "The Zig test also reads the comment back (`getLeadingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "dialect": "jsonc",
+      "source": "{\n  // above\n  \"members\": [\"a\", \"b\"]\n}",
+      "steps": [
+        { "op": "deleteLeadingComment", "args": [["members", 0]], "expect": { "ok": true, "source": "{\n  // above\n  \"members\": [\"a\", \"b\"]\n}" } }
+      ]
+    },
+    {
+      "id": "JSONC: a flow item on its parent's line owns no leading comment [2]",
+      "note": "Zig error CommentsUnanchored.",
+      "dialect": "jsonc",
+      "source": "{\n  // above\n  \"members\": [\"a\", \"b\"]\n}",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["members", 0], "new"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "JSONC: a flow item on its parent's line owns no leading comment [3]",
+      "note": "A one-line nested object's entry shares the line the same way.",
+      "dialect": "jsonc",
+      "source": "{\n  // above\n  \"nested\": { \"k\": \"v\" }\n}",
+      "steps": [
+        { "op": "deleteLeadingComment", "args": [["nested", "k"]], "expect": { "ok": true, "source": "{\n  // above\n  \"nested\": { \"k\": \"v\" }\n}" } }
+      ]
+    },
+    {
+      "id": "JSONC: a flow item on its parent's line owns no leading comment [4]",
+      "note": "Zig error CommentsUnanchored.",
+      "dialect": "jsonc",
+      "source": "{\n  // above\n  \"nested\": { \"k\": \"v\" }\n}",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["nested", "k"], "new"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "JSONC: a flow item on its parent's line owns no leading comment [5]",
+      "note": "Pretty-printed, one element per line: unchanged.",
+      "dialect": "jsonc",
+      "source": "{\n  // above\n  \"members\": [\n    \"a\",\n    \"b\"\n  ]\n}",
+      "steps": [
+        { "op": "deleteLeadingComment", "args": [["members", 0]], "expect": { "ok": true, "source": "{\n  // above\n  \"members\": [\n    \"a\",\n    \"b\"\n  ]\n}" } }
+      ]
+    },
+    {
+      "id": "JSONC: a flow item on its parent's line owns no leading comment [6]",
+      "dialect": "jsonc",
+      "source": "{\n  // above\n  \"members\": [\n    \"a\",\n    \"b\"\n  ]\n}",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["members", 0], "new"], "expect": { "ok": true, "source": "{\n  // above\n  \"members\": [\n    // new\n    \"a\",\n    \"b\"\n  ]\n}" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no trailing comment either [1]",
+      "note": "The Zig test also reads the comment back (`getTrailingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "dialect": "jsonc",
+      "source": "{\n  \"members\": [\"a\", \"b\"] // note\n}",
+      "steps": [
+        { "op": "deleteTrailingComment", "args": [["members", 0]], "expect": { "ok": true, "source": "{\n  \"members\": [\"a\", \"b\"] // note\n}" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no trailing comment either [2]",
+      "note": "Zig error CommentsUnanchored.",
+      "dialect": "jsonc",
+      "source": "{\n  \"members\": [\"a\", \"b\"] // note\n}",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["members", 0], "new"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "dangling comment round-trips inside a multi-line JSONC object",
+      "note": "A `//` line before the closing brace is the object's dangling run; the editor can address it even though the container is flow-spelled. The Zig test also reads the comment back (`getDanglingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "dialect": "jsonc",
+      "source": "{\n  \"a\": 1\n}\n",
+      "steps": [
+        { "op": "addDanglingComment", "args": [[], "note"], "expect": { "ok": true, "source": "{\n  \"a\": 1\n  // note\n}\n" } },
+        { "op": "deleteDanglingComment", "args": [[]], "expect": { "ok": true, "source": "{\n  \"a\": 1\n}\n" } }
+      ]
+    },
+    {
+      "id": "dangling ops decline a scalar, a one-line flow container and strict JSON [1]",
+      "note": "Zig error UnsupportedShape. No line of its own to sit on. A scalar has no body to end.",
+      "dialect": "jsonc",
+      "source": "{\"a\": 1, \"b\": {\"c\": 2}}",
+      "steps": [
+        { "op": "getDanglingComment", "args": [[]], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "addDanglingComment", "args": [[], "x"], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "getDanglingComment", "args": [["a"]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "dangling ops decline a scalar, a one-line flow container and strict JSON [2]",
+      "note": "Zig error CommentsUnsupported.",
+      "source": "{\n  \"a\": 1\n}\n",
+      "steps": [
+        { "op": "getDanglingComment", "args": [[]], "expect": { "ok": false, "status": "UnsupportedFormat" } },
+        { "op": "addDanglingComment", "args": [[], "x"], "expect": { "ok": false, "status": "UnsupportedFormat" } },
+        { "op": "deleteDanglingComment", "args": [[]], "expect": { "ok": false, "status": "UnsupportedFormat" } }
+      ]
+    },
+    {
+      "id": "commentOut round-trips a TOML entry and a JSONC member",
+      "note": "JSONC: the member's own trailing comma is commented out with it, so what is left is still valid. The Zig test also checks the commented-out key is gone from the tree, which the commented line pins.",
+      "dialect": "jsonc",
+      "source": "{\n  \"a\": 1,\n  \"b\": 2\n}\n",
+      "steps": [
+        { "op": "commentOut", "args": [["a"]], "expect": { "ok": true, "source": "{\n  // \"a\": 1,\n  \"b\": 2\n}\n" } },
+        { "op": "uncommentLeading", "args": [["b"], 0, 1], "expect": { "ok": true, "source": "{\n  \"a\": 1,\n  \"b\": 2\n}\n" } }
+      ]
+    },
+    {
+      "id": "commentOut and uncomment decline strict JSON, the root, flow items and sections",
+      "note": "Zig error CommentsUnsupported.",
+      "source": "{\n  \"a\": 1\n}\n",
+      "steps": [
+        { "op": "commentOut", "args": [["a"]], "expect": { "ok": false, "status": "UnsupportedFormat" } },
+        { "op": "uncommentLeading", "args": [["a"], 0, 1], "expect": { "ok": false, "status": "UnsupportedFormat" } },
+        { "op": "uncommentDangling", "args": [[], 0, 1], "expect": { "ok": false, "status": "UnsupportedFormat" } }
+      ]
+    },
+    {
+      "id": "set replaces an existing JSON value (replace branch is format-agnostic)",
+      "note": "The replace branch matches keys logically, so it works for strict JSON.",
+      "source": "{\"a\": 1}",
+      "steps": [
+        { "op": "setValue", "args": [["a"], "x"], "expect": { "ok": true, "source": "{\"a\": \"x\"}" } }
+      ]
+    },
+    {
+      "id": "set creates a new JSON key, quoting it for the format [1]",
+      "note": "The insert branch renders the logical key into JSON syntax (`b` -> `\"b\"`), so creating a not-yet-present key produces valid JSON.",
+      "source": "{\"a\": 1}",
+      "steps": [
+        { "op": "setValue", "args": [["b"], 2], "expect": { "ok": true, "source": "{\"a\": 1, \"b\": 2}" } }
+      ]
+    },
+    {
+      "id": "set creates a new JSON key, quoting it for the format [2]",
+      "note": "A key needing escaping is escaped, not spliced raw.",
+      "source": "{}",
+      "steps": [
+        { "op": "setValue", "args": [["a\"b"], 1], "expect": { "ok": true, "source": "{\"a\\\"b\": 1}" } }
+      ]
+    },
+    {
+      "id": "insertValue refuses a key the mapping already holds, in every format",
+      "note": "Zig error DuplicateKey. The Zig test also checks the editor's internal `splice_rejected` flag, which a fixture cannot see.",
+      "source": "{\"s\": \"hi\"}",
+      "steps": [
+        { "op": "insertValue", "args": [[], "s", "x"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "insertValue rolls back an insert that repeats a name, from key syntax",
+      "note": "Zig error DuplicateKey. The key arrives as syntax (`\"s\"`), so only the reparse knows its name. The Zig test passes key syntax (`insertKey`), where only the reparse knows the name; the binding inserts by name (`insertValue`), so these steps hold the same refusals through the up-front name check.",
+      "source": "{\"s\": \"hi\"}",
+      "steps": [
+        { "op": "insertValue", "args": [[], "s", "x"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "non-YAML formats keep vivifying through flow seeds",
+      "source": "{\"t\": 1}",
+      "steps": [
+        { "op": "setValue", "args": [["a", "b"], 2], "expect": { "ok": true, "source": "{\"t\": 1, \"a\": {\"b\": 2}}" } }
+      ]
+    }
+  ]
+}

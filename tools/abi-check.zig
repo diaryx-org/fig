@@ -18,7 +18,7 @@
 //! `fig_abi_version()` (likewise passed in by build.zig).
 //!
 //! Every format is a registered language's handle (6.0), so it also checks
-//! that no surface — fig.h, fig-sys, the TypeScript and Rust bindings —
+//! that no surface — fig.h, the TypeScript and Rust bindings —
 //! states a fixed format number again: no `FigFormat` enum, no
 //! `FIG_FORMAT_RUNTIME_BASE`, no `Format` enumeration.
 //!
@@ -31,7 +31,7 @@
 //!
 //! Usage (driven by build.zig):
 //!   abi-check <header.h> <impl.zig> <major.minor.patch> <abi-version>
-//!             <fig-sys/lib.rs> <typescript/types.ts> <fig/lib.rs> <fig/value.rs>
+//!             <typescript/types.ts> <fig/lib.rs> <fig/value.rs>
 
 const std = @import("std");
 /// For `Runtime.vtable_version` and the core's `ExtKind`. Wired in by
@@ -53,7 +53,6 @@ pub fn main(init: std.process.Init) !void {
     const impl_path = args.next() orelse return error.MissingArgument;
     const want_version = args.next() orelse return error.MissingArgument;
     const want_abi = args.next() orelse return error.MissingArgument;
-    const sys_path = args.next() orelse return error.MissingArgument;
     const ts_path = args.next() orelse return error.MissingArgument;
     const rust_path = args.next() orelse return error.MissingArgument;
     const rust_value_path = args.next() orelse return error.MissingArgument;
@@ -61,7 +60,6 @@ pub fn main(init: std.process.Init) !void {
     const cwd = std.Io.Dir.cwd();
     const header = try cwd.readFileAlloc(io, header_path, arena, .limited(max_file));
     const impl = try cwd.readFileAlloc(io, impl_path, arena, .limited(max_file));
-    const sys_src = try cwd.readFileAlloc(io, sys_path, arena, .limited(max_file));
     const ts_src = try cwd.readFileAlloc(io, ts_path, arena, .limited(max_file));
     const rust_src = try cwd.readFileAlloc(io, rust_path, arena, .limited(max_file));
     const rust_value_src = try cwd.readFileAlloc(io, rust_value_path, arena, .limited(max_file));
@@ -125,23 +123,11 @@ pub fn main(init: std.process.Init) !void {
         fail = true;
     }
 
-    const sys_vt = rustConstInt(sys_src, "FIG_LANGUAGE_VTABLE_VERSION") orelse return error.MissingVTableVersionConst;
-    if (sys_vt != fig.Runtime.vtable_version) {
-        if (!fail) std.debug.print("abi-check: FAIL\n", .{});
-        std.debug.print(
-            "  vtable-version drift: fig-sys FIG_LANGUAGE_VTABLE_VERSION is {d} but runtime.vtable_version is {d}\n",
-            .{ sys_vt, fig.Runtime.vtable_version },
-        );
-        fail = true;
-    }
-
     // No fixed format numbers: every format is a registered language's
     // handle (6.0), so no surface may state one again.
     const gone = [_]struct { surface: []const u8, src: []const u8, needle: []const u8 }{
         .{ .surface = "fig.h", .src = header, .needle = "typedef enum FigFormat" },
         .{ .surface = "fig.h", .src = header, .needle = "#define FIG_FORMAT_RUNTIME_BASE" },
-        .{ .surface = "fig-sys", .src = sys_src, .needle = "pub enum FigFormat" },
-        .{ .surface = "fig-sys", .src = sys_src, .needle = "FIG_FORMAT_RUNTIME_BASE" },
         .{ .surface = "TypeScript", .src = ts_src, .needle = "export const Format = {" },
         .{ .surface = "Rust", .src = rust_src, .needle = "pub enum Format" },
     };
@@ -447,25 +433,6 @@ fn macroInt(text: []const u8, name: []const u8) ?u32 {
         if (!std.mem.eql(u8, macro, name)) continue;
         const value = it.next() orelse return null;
         return std.fmt.parseInt(u32, value, 10) catch null;
-    }
-    return null;
-}
-
-/// The value of a Rust `pub const <name>: <type> = <int>;` item, or null if
-/// no line declares one.
-fn rustConstInt(text: []const u8, name: []const u8) ?i64 {
-    var lines = std.mem.splitScalar(u8, text, '\n');
-    while (lines.next()) |line| {
-        const trimmed = std.mem.trimStart(u8, line, " \t");
-        if (!std.mem.startsWith(u8, trimmed, "pub const ")) continue;
-        const rest = trimmed["pub const ".len..];
-        if (!std.mem.startsWith(u8, rest, name)) continue;
-        if (rest.len == name.len or rest[name.len] != ':') continue;
-        const eq = std.mem.indexOfScalar(u8, rest, '=') orelse continue;
-        const semi = std.mem.indexOfScalar(u8, rest, ';') orelse continue;
-        if (semi <= eq) continue;
-        const value = std.mem.trim(u8, rest[eq + 1 .. semi], " \t");
-        return std.fmt.parseInt(i64, value, 10) catch null;
     }
     return null;
 }

@@ -4,24 +4,16 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-# fig's Rust workspace; this crate sits with its language's Zig.
+# fig's Rust workspace; this crate sits in its language's package.
 workspace = "../../bindings/rust"
-description = "figl, fig's authoring dialect for fig: fig's own parser, printer and editing rules for the language, as a library linked beside fig's."
+description = "figl, fig's authoring dialect for fig: fig's own parser, printer and editing rules for the language, in pure Rust, registered with fig's core."
 repository = "https://github.com/diaryx-org/fig"
 homepage = "https://github.com/diaryx-org/fig"
 documentation = "https://docs.rs/fig-figl"
 readme = "README.md"
 keywords = ["config", "fig", "figl", "parser"]
 categories = ["config", "parser-implementations"]
-# The language's own library, `libfig_figl.a`, which the build script
-# compiles from the Zig beside this file.
-links = "fig_figl"
 include = [
-    "build.rs",
-    "build.zig",
-    "build.zig.zon",
-    "src/**/*",
-    "include/**/*",
     "rust/**/*",
     "README.md",
     "LICENSE-MIT",
@@ -34,14 +26,17 @@ path = "rust/lib.rs"
 [features]
 # `from_str`, `to_string` and the rest: typed values to and from figl
 # through serde, as `serde_json`'s are. On by default; a program that maps
-# its types with fig's own derive turns it off (`default-features = false`).
-default = ["serde"]
-serde = ["fig/serde", "dep:serde"]
+# its types with fig's own derive keeps `fig` and turns this off
+# (`default-features = false, features = ["fig"]`).
+default = ["fig", "serde"]
+# `register()` and `format()`: the language through the `fig` binding. Off
+# (`default-features = false`), the crate is the language alone, on
+# `fig-kit`, for a program that registers it with `fig-core` itself.
+fig = ["dep:fig"]
+serde = ["fig", "fig/serde", "dep:serde"]
 
 [dependencies]
-fig = { workspace = true }
-fig-sys = { workspace = true }
+# The language itself, in rust/ beside its Zig, is written on fig's kit alone.
+fig-kit = { workspace = true }
+fig = { workspace = true, optional = true }
 serde = { version = "1", optional = true }
-
-[build-dependencies]
-fig-language-build = { workspace = true }

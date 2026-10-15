@@ -1,0 +1,36 @@
+[package]
+name = "fig-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# A member of fig's one Rust workspace, bindings/rust.
+workspace = "../../bindings/rust"
+description = "fig's core in Rust: lossless parsing, comment-preserving editing and conversion of config files, over the languages a program registers"
+
+repository = "https://github.com/diaryx-org/fig"
+homepage = "https://github.com/diaryx-org/fig"
+documentation = "https://docs.rs/fig-core"
+include = ["src/**/*", "LICENSE-MIT", "LICENSE-APACHE"]
+
+# The core carries no language: `registry::global()` starts empty, and a
+# program registers the languages it uses (`registry::register_bundle` with
+# each crate's `LANGUAGE`, or the `fig` binding's `fig_<name>::register()`).
+[dependencies]
+fig-kit = { workspace = true }
+
+# fig's ten languages, for the core's own tests and examples, which register
+# them; each without its default features, so the language alone, on
+# `fig-kit`. By path alone, so `cargo publish` drops them: each is published
+# after this crate.
+[dev-dependencies]
+fig-json = { path = "../../languages/json", default-features = false }
+fig-yaml = { path = "../../languages/yaml", default-features = false }
+fig-toml = { path = "../../languages/toml", default-features = false }
+fig-zon = { path = "../../languages/zon", default-features = false }
+fig-figl = { path = "../../languages/figl", default-features = false }
+fig-ini = { path = "../../languages/ini", default-features = false }
+fig-dotenv = { path = "../../languages/dotenv", default-features = false }
+fig-properties = { path = "../../languages/properties", default-features = false }
+fig-plist = { path = "../../languages/plist", default-features = false }
+fig-nestedtext = { path = "../../languages/nestedtext", default-features = false }

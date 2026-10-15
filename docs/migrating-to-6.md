@@ -102,7 +102,7 @@ does not carry the wire passes `-Dhelper-wire=false` and fetches nothing.
 | the crate features `json`, `yaml`, `toml`, `zon`, `figl`, `ini`, `dotenv`, `properties`, `plist`, `nestedtext` | gone: depend on the language's crate, `fig-yaml` and the rest; its `format()` is its format, registered the first time it is asked for |
 | a language there by default | nothing is: `fig-sys` carries no language, and `Format::by_name("yaml")` is `None` until something registers YAML (`fig_yaml::format()`, `fig_yaml::register()`, or any of the crate's functions) |
 | `fig::from_yaml_str`, `fig::to_yaml_string` | `fig_yaml::from_str`, `fig_yaml::to_string`; every language crate has them, with `from_slice`, `from_reader`, `to_vec` and `to_writer` |
-| no serde unless `fig`'s `serde` feature was asked for | a language crate's `serde` feature is on by default and turns on `fig`'s; a build that wants no serde depends on each language crate with `default-features = false` |
+| no serde unless `fig`'s `serde` feature was asked for | a language crate's `serde` feature is on by default and turns on `fig`'s; a build that wants no serde depends on each language crate with `default-features = false, features = ["fig"]` (with no features at all, a language crate is the language alone, with no `fig` binding) |
 | a mapping error for a nested field returned as itself (`Error::MissingField { .. }`, `Error::TypeMismatch { .. }`, …) | `Error::At { path, error }`, which names where (`servers[1].port`) and leads its text with the path; match on `e.innermost()`, and read `e.path()` |
 | `Document` and `Editor` neither `Send` nor `Sync` | both `Send`; neither `Sync` |
 | `fig::helper` always there | behind the `helper` feature, which adds `serde_json` |

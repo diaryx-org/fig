@@ -47,8 +47,11 @@ yaml/
     wasm.zig           the root of its WebAssembly module
   include/fig/yaml.h   its C header
   Cargo.toml           its Rust crate, fig-yaml
-  build.rs
-  rust/lib.rs
+  rust/
+    lib.rs             the language in Rust, and its `fig` binding API
+    tokenizer.rs       …a port of src/, file for file
+    parser.rs
+    printer.rs
   package.json         its npm package, @diaryx/fig-yaml
   js/
     build.mjs
@@ -103,22 +106,18 @@ fig's through `fig_table_extend`.
 ## Rust
 
 The crate is the same folder: `Cargo.toml` beside `build.zig`, with its
-source in `rust/lib.rs` and the Zig in its package. The build script is
-one call to [`fig-language-build`](../bindings/rust/fig-language-build),
-which runs `zig build c` for the target Cargo is building and links the
-library:
-
-```rust
-fn main() {
-    fig_language_build::compile("yaml");
-}
-```
-
-`rust/lib.rs` declares the library's export and wraps it in `register()`,
-which hands back the language's first `fig::Format`. `links =
-"fig_yaml"` in `Cargo.toml` names the library, and the crate depends on
-`fig` and `fig-sys`, whose `libfig.a` resolves the three functions the
-language's library imports from fig.
+source in `rust/` beside the Zig in `src/`. It is the language itself, in
+pure Rust — a port of `src/`, file for file — written on fig's kit
+(`fig-kit`, in `rust/fig-kit/` at the repository's root) alone, with no
+build script, no Zig and no C. `rust/lib.rs` is the crate root: the
+language's `LANGUAGE` and its modules (`fig_yaml::parser`, …), and, behind
+the crate's default `fig` feature, `register()`, which registers it with
+the `fig` binding and hands back its first `fig::Format`, with the serde
+functions (`from_str`, `to_string`, …) behind its default `serde`
+feature. Without its default features the crate is the language alone,
+which fig's CLI and core tests take and register with `fig-core`
+themselves. Every crate is a member of the one Rust workspace,
+`bindings/rust/Cargo.toml`.
 
 ## JavaScript
 
@@ -140,13 +139,10 @@ language's own tests too.
 
 ## A language outside fig
 
-A crate written elsewhere builds as fig's own do: its build script calls
-`fig_language_build::compile`, which builds a copy of the package beside
-the kit `fig-language-build` carries, the kit of the fig release it
-belongs to. In the copy's `build.zig.zon`, `fig_kit` names that kit, a
-dependency fetched by URL stays, and any other by path is dropped; a
-package whose tests need one, as plist's need JSON, asks
-`b.available_deps` before it asks for it. `zig build` in the package
+A Rust crate written elsewhere is written as fig's own are: on
+`fig-kit`, implementing its `Language` trait, and registered with the
+`fig` binding (`fig::language::register_core`). A Zig package written
+elsewhere depends on the kit as fig's own do. `zig build` in the package
 itself reaches the kit as its own `build.zig.zon` says, by path to a
 checkout of fig's `kit/`: Zig fetches a package by URL only at a
 repository's root, and the kit is a directory of fig's.

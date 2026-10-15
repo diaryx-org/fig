@@ -1,0 +1,1205 @@
+{
+  "dialect": "figl",
+  "from": ["languages/figl/tests/editor.zig", "src/editor.zig"],
+  "cases": [
+    {
+      "id": "replace root scalar value",
+      "source": "title = old\nport = 8080\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["port"], 9090], "expect": { "ok": true, "source": "title = old\nport = 9090\n" } }
+      ]
+    },
+    {
+      "id": "replace value nested under marker depth",
+      "source": "database\n> host = localhost\n> pool\n> > size = 10\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["database", "pool", "size"], 20], "expect": { "ok": true, "source": "database\n> host = localhost\n> pool\n> > size = 20\n" } }
+      ]
+    },
+    {
+      "id": "set: a block-map value re-frames as a nested section (not an inline splice)",
+      "note": "The prov case: splice a whole block map as a new key's value. A block container has no valid inline `key = <block>` spelling, so it descends under a `registry` header with its entries one marker level deeper.",
+      "source": "title = hi\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["registry"], "a = 1\nb = 2\n"], "expect": { "ok": true, "source": "title = hi\nregistry\n> a = 1\n> b = 2\n" } }
+      ]
+    },
+    {
+      "id": "replace: an inline scalar value re-frames into a block map",
+      "source": "registry = old\ntitle = hi\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["registry"], "a = 1\nb = 2\n"], "expect": { "ok": true, "source": "registry\n> a = 1\n> b = 2\ntitle = hi\n" } }
+      ]
+    },
+    {
+      "id": "set: a block value under an existing depth-1 key nests one level deeper",
+      "source": "server\n> port = 8080\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["server", "opts"], "x = 1\ny = 2\n"], "expect": { "ok": true, "source": "server\n> port = 8080\n> opts\n> > x = 1\n> > y = 2\n" } }
+      ]
+    },
+    {
+      "id": "set: a block-sequence value re-frames as `> *` element lines",
+      "source": "title = hi\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["items"], "* a\n* b\n"], "expect": { "ok": true, "source": "title = hi\nitems\n> * a\n> * b\n" } }
+      ]
+    },
+    {
+      "id": "set: a flow-map value still splices inline (unchanged)",
+      "note": "A `{ … }` fragment has a valid inline spelling, so it is NOT re-framed.",
+      "source": "title = hi\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["m"], "{ a = 1, b = 2 }"], "expect": { "ok": true, "source": "title = hi\nm = { a = 1, b = 2 }\n" } }
+      ]
+    },
+    {
+      "id": "rename a leaf key",
+      "source": "server\n> port = 8080\n",
+      "steps": [
+        { "op": "renameKey", "args": [["server", "port"], "listen_port"], "expect": { "ok": true, "source": "server\n> listen_port = 8080\n" } }
+      ]
+    },
+    {
+      "id": "failed edit rolls back and keeps editor usable",
+      "note": "A refusal with no status is one the Zig test asserted only fails, not with which error.",
+      "source": "a = 1\nb = 2\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["a"], "[oops"], "expect": { "ok": false } },
+        { "op": "replaceValue", "args": [["a"], 9], "expect": { "ok": true, "source": "a = 9\nb = 2\n" } }
+      ]
+    },
+    {
+      "id": "add leading comment matches marker depth",
+      "source": "database\n> host = localhost\n> pool\n> > size = 10\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["database", "pool", "size"], "note"], "expect": { "ok": true, "source": "database\n> host = localhost\n> pool\n> > # note\n> > size = 10\n" } }
+      ]
+    },
+    {
+      "id": "set trailing comment on a nested header line",
+      "source": "database\n> pool\n> > size = 10\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["database", "pool"], "nested container"], "expect": { "ok": true, "source": "database\n> pool # nested container\n> > size = 10\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line string's trailing comment lives on its opener line [1]",
+      "note": "A multi-line string's comment lives on its opener line (spec § 4.6). The window began after the closing quotes, so get missed `x = ''' # op` and set wrote a second comment after the close. A map entry's value, LF and CRLF, and a sequence element. The Zig test also reads the comment back (`getTrailingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "x = '''\ntext\n'''\ny = 1\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["x"], "note"], "expect": { "ok": true, "source": "x = ''' # note\ntext\n'''\ny = 1\n" } },
+        { "op": "deleteTrailingComment", "args": [["x"]], "expect": { "ok": true, "source": "x = '''\ntext\n'''\ny = 1\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line string's trailing comment lives on its opener line [2]",
+      "source": "x = '''\r\ntext\r\n'''\r\ny = 1\r\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["x"], "note"], "expect": { "ok": true, "source": "x = ''' # note\r\ntext\r\n'''\r\ny = 1\r\n" } },
+        { "op": "deleteTrailingComment", "args": [["x"]], "expect": { "ok": true, "source": "x = '''\r\ntext\r\n'''\r\ny = 1\r\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line string's trailing comment lives on its opener line [3]",
+      "source": "xs\n> * '''\ntext\n'''\n> * z\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["xs", 0], "note"], "expect": { "ok": true, "source": "xs\n> * ''' # note\ntext\n'''\n> * z\n" } },
+        { "op": "deleteTrailingComment", "args": [["xs", 0]], "expect": { "ok": true, "source": "xs\n> * '''\ntext\n'''\n> * z\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line string's trailing comment lives on its opener line [4]",
+      "note": "An opener comment is read, replaced in place, and deleted there.",
+      "source": "x = '''  # op\r\ntext\r\n'''\r\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["x"], "new"], "expect": { "ok": true, "source": "x = ''' # new\r\ntext\r\n'''\r\n" } },
+        { "op": "deleteTrailingComment", "args": [["x"]], "expect": { "ok": true, "source": "x = '''\r\ntext\r\n'''\r\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line string's trailing comment lives on its opener line [5]",
+      "note": "A comment after the closing quotes is not the string's: get does not report it, delete leaves it, and set writes beside the opener.",
+      "source": "x = '''\ntext\n''' # close\n",
+      "steps": [
+        { "op": "deleteTrailingComment", "args": [["x"]], "expect": { "ok": true, "source": "x = '''\ntext\n''' # close\n" } },
+        { "op": "setTrailingComment", "args": [["x"], "op"], "expect": { "ok": true, "source": "x = ''' # op\ntext\n''' # close\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line string's trailing comment lives on its opener line [6]",
+      "source": "x = \"\"\"\ntext\n\"\"\"\ny = 1\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["x"], "note"], "expect": { "ok": true, "source": "x = \"\"\" # note\ntext\n\"\"\"\ny = 1\n" } },
+        { "op": "deleteTrailingComment", "args": [["x"]], "expect": { "ok": true, "source": "x = \"\"\"\ntext\n\"\"\"\ny = 1\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line string's trailing comment lives on its opener line [7]",
+      "source": "x = \"\"\"\r\ntext\r\n\"\"\"\r\ny = 1\r\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["x"], "note"], "expect": { "ok": true, "source": "x = \"\"\" # note\r\ntext\r\n\"\"\"\r\ny = 1\r\n" } },
+        { "op": "deleteTrailingComment", "args": [["x"]], "expect": { "ok": true, "source": "x = \"\"\"\r\ntext\r\n\"\"\"\r\ny = 1\r\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line string's trailing comment lives on its opener line [8]",
+      "source": "xs\n> * \"\"\"\ntext\n\"\"\"\n> * z\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["xs", 0], "note"], "expect": { "ok": true, "source": "xs\n> * \"\"\" # note\ntext\n\"\"\"\n> * z\n" } },
+        { "op": "deleteTrailingComment", "args": [["xs", 0]], "expect": { "ok": true, "source": "xs\n> * \"\"\"\ntext\n\"\"\"\n> * z\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line string's trailing comment lives on its opener line [9]",
+      "source": "x = \"\"\"  # op\r\ntext\r\n\"\"\"\r\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["x"], "new"], "expect": { "ok": true, "source": "x = \"\"\" # new\r\ntext\r\n\"\"\"\r\n" } },
+        { "op": "deleteTrailingComment", "args": [["x"]], "expect": { "ok": true, "source": "x = \"\"\"\r\ntext\r\n\"\"\"\r\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line string's trailing comment lives on its opener line [10]",
+      "source": "x = \"\"\"\ntext\n\"\"\" # close\n",
+      "steps": [
+        { "op": "deleteTrailingComment", "args": [["x"]], "expect": { "ok": true, "source": "x = \"\"\"\ntext\n\"\"\" # close\n" } },
+        { "op": "setTrailingComment", "args": [["x"], "op"], "expect": { "ok": true, "source": "x = \"\"\" # op\ntext\n\"\"\" # close\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line string's trailing comment lives on its opener line [11]",
+      "note": "An empty multi-line string still opens a line of its own; a quoted string on one line keeps its comment after the close.",
+      "source": "x = '''\n'''\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["x"], "note"], "expect": { "ok": true, "source": "x = ''' # note\n'''\n" } },
+        { "op": "deleteTrailingComment", "args": [["x"]], "expect": { "ok": true, "source": "x = '''\n'''\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line string's trailing comment lives on its opener line [12]",
+      "source": "x = 'a'\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["x"], "note"], "expect": { "ok": true, "source": "x = 'a' # note\n" } },
+        { "op": "deleteTrailingComment", "args": [["x"]], "expect": { "ok": true, "source": "x = 'a'\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line flow list's or object's trailing comment lives on its opener line [1]",
+      "note": "A flow list or object over several lines takes its comment on its opener line, as the parser reads it (`xs = [ # op`). The window began after the close, so get missed `# op` and set wrote a second comment after the `]`. A map entry's value, LF and CRLF, and a sequence element. The Zig test also reads the comment back (`getTrailingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "xs = [\n  1,\n  2,\n]\ny = 1\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["xs"], "note"], "expect": { "ok": true, "source": "xs = [ # note\n  1,\n  2,\n]\ny = 1\n" } },
+        { "op": "deleteTrailingComment", "args": [["xs"]], "expect": { "ok": true, "source": "xs = [\n  1,\n  2,\n]\ny = 1\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line flow list's or object's trailing comment lives on its opener line [2]",
+      "source": "xs = [\r\n  1,\r\n  2,\r\n]\r\ny = 1\r\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["xs"], "note"], "expect": { "ok": true, "source": "xs = [ # note\r\n  1,\r\n  2,\r\n]\r\ny = 1\r\n" } },
+        { "op": "deleteTrailingComment", "args": [["xs"]], "expect": { "ok": true, "source": "xs = [\r\n  1,\r\n  2,\r\n]\r\ny = 1\r\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line flow list's or object's trailing comment lives on its opener line [3]",
+      "source": "ys\n> * [\n  1,\n  2,\n]\n> * z\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["ys", 0], "note"], "expect": { "ok": true, "source": "ys\n> * [ # note\n  1,\n  2,\n]\n> * z\n" } },
+        { "op": "deleteTrailingComment", "args": [["ys", 0]], "expect": { "ok": true, "source": "ys\n> * [\n  1,\n  2,\n]\n> * z\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line flow list's or object's trailing comment lives on its opener line [4]",
+      "note": "An opener comment is read, replaced in place, and deleted there.",
+      "source": "xs = [  # op\r\n  1,\r\n  2,\r\n]\r\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["xs"], "new"], "expect": { "ok": true, "source": "xs = [ # new\r\n  1,\r\n  2,\r\n]\r\n" } },
+        { "op": "deleteTrailingComment", "args": [["xs"]], "expect": { "ok": true, "source": "xs = [\r\n  1,\r\n  2,\r\n]\r\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line flow list's or object's trailing comment lives on its opener line [5]",
+      "note": "A comment after the close is not the container's when its opener line is the comment's: get does not report it, delete leaves it, and set writes beside the opener.",
+      "source": "xs = [\n  1,\n  2,\n] # close\n",
+      "steps": [
+        { "op": "deleteTrailingComment", "args": [["xs"]], "expect": { "ok": true, "source": "xs = [\n  1,\n  2,\n] # close\n" } },
+        { "op": "setTrailingComment", "args": [["xs"], "op"], "expect": { "ok": true, "source": "xs = [ # op\n  1,\n  2,\n] # close\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line flow list's or object's trailing comment lives on its opener line [6]",
+      "source": "xs = {\n  a = 1,\n  b = 2,\n}\ny = 1\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["xs"], "note"], "expect": { "ok": true, "source": "xs = { # note\n  a = 1,\n  b = 2,\n}\ny = 1\n" } },
+        { "op": "deleteTrailingComment", "args": [["xs"]], "expect": { "ok": true, "source": "xs = {\n  a = 1,\n  b = 2,\n}\ny = 1\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line flow list's or object's trailing comment lives on its opener line [7]",
+      "source": "xs = {\r\n  a = 1,\r\n  b = 2,\r\n}\r\ny = 1\r\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["xs"], "note"], "expect": { "ok": true, "source": "xs = { # note\r\n  a = 1,\r\n  b = 2,\r\n}\r\ny = 1\r\n" } },
+        { "op": "deleteTrailingComment", "args": [["xs"]], "expect": { "ok": true, "source": "xs = {\r\n  a = 1,\r\n  b = 2,\r\n}\r\ny = 1\r\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line flow list's or object's trailing comment lives on its opener line [8]",
+      "source": "ys\n> * {\n  a = 1,\n  b = 2,\n}\n> * z\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["ys", 0], "note"], "expect": { "ok": true, "source": "ys\n> * { # note\n  a = 1,\n  b = 2,\n}\n> * z\n" } },
+        { "op": "deleteTrailingComment", "args": [["ys", 0]], "expect": { "ok": true, "source": "ys\n> * {\n  a = 1,\n  b = 2,\n}\n> * z\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line flow list's or object's trailing comment lives on its opener line [9]",
+      "source": "xs = {  # op\r\n  a = 1,\r\n  b = 2,\r\n}\r\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["xs"], "new"], "expect": { "ok": true, "source": "xs = { # new\r\n  a = 1,\r\n  b = 2,\r\n}\r\n" } },
+        { "op": "deleteTrailingComment", "args": [["xs"]], "expect": { "ok": true, "source": "xs = {\r\n  a = 1,\r\n  b = 2,\r\n}\r\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line flow list's or object's trailing comment lives on its opener line [10]",
+      "source": "xs = {\n  a = 1,\n  b = 2,\n} # close\n",
+      "steps": [
+        { "op": "deleteTrailingComment", "args": [["xs"]], "expect": { "ok": true, "source": "xs = {\n  a = 1,\n  b = 2,\n} # close\n" } },
+        { "op": "setTrailingComment", "args": [["xs"], "op"], "expect": { "ok": true, "source": "xs = { # op\n  a = 1,\n  b = 2,\n} # close\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line flow list's or object's trailing comment lives on its opener line [11]",
+      "note": "A flow container on one line keeps its comment after the close, and so does one whose opener line holds an element: a `#` there is inside the flow, which the parser skips.",
+      "source": "xs = [1, 2]\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["xs"], "note"], "expect": { "ok": true, "source": "xs = [1, 2] # note\n" } },
+        { "op": "deleteTrailingComment", "args": [["xs"]], "expect": { "ok": true, "source": "xs = [1, 2]\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line flow list's or object's trailing comment lives on its opener line [12]",
+      "source": "xs = {a=1}\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["xs"], "note"], "expect": { "ok": true, "source": "xs = {a=1} # note\n" } },
+        { "op": "deleteTrailingComment", "args": [["xs"]], "expect": { "ok": true, "source": "xs = {a=1}\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line flow list's or object's trailing comment lives on its opener line [13]",
+      "source": "xs = [1,\n  2,\n]\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["xs"], "note"], "expect": { "ok": true, "source": "xs = [1,\n  2,\n] # note\n" } },
+        { "op": "deleteTrailingComment", "args": [["xs"]], "expect": { "ok": true, "source": "xs = [1,\n  2,\n]\n" } }
+      ]
+    },
+    {
+      "id": "insert key into root",
+      "source": "a = 1\nb = 2\n",
+      "steps": [
+        { "op": "insertValue", "args": [[], "c", 3], "expect": { "ok": true, "source": "a = 1\nb = 2\nc = 3\n" } }
+      ]
+    },
+    {
+      "id": "insert key into a nested marker-block mapping",
+      "source": "database\n> host = localhost\n",
+      "steps": [
+        { "op": "insertValue", "args": [["database"], "port", 5432], "expect": { "ok": true, "source": "database\n> host = localhost\n> port = 5432\n" } }
+      ]
+    },
+    {
+      "id": "insert key preserves spaced marker style at depth 2",
+      "source": "database\n> pool\n> > size = 10\n",
+      "steps": [
+        { "op": "insertValue", "args": [["database", "pool"], "timeout", 30], "expect": { "ok": true, "source": "database\n> pool\n> > size = 10\n> > timeout = 30\n" } }
+      ]
+    },
+    {
+      "id": "insert key after a container whose own line ends without a value",
+      "note": "The new key must land after `pool`'s WHOLE nested body, not right after the `pool` header line itself.",
+      "source": "database\n> pool\n> > size = 10\n",
+      "steps": [
+        { "op": "insertValue", "args": [["database"], "name", "primary"], "expect": { "ok": true, "source": "database\n> pool\n> > size = 10\n> name = primary\n" } }
+      ]
+    },
+    {
+      "id": "insert key into a fig-inline flow mapping",
+      "source": "p = { x = 1 }\n",
+      "steps": [
+        { "op": "insertValue", "args": [["p"], "y", 2], "expect": { "ok": true, "source": "p = { x = 1 y = 2 }\n" } }
+      ]
+    },
+    {
+      "id": "insert key into a compact flow mapping writes no comma",
+      "note": "A compact object (`{a=1 b=2}`) stays in the form `fig fmt` writes: pairs parted by a space, no spaces around `=`, no padding inside the braces.",
+      "source": "p = {a=1}\n",
+      "steps": [
+        { "op": "insertValue", "args": [["p"], "b", 2], "expect": { "ok": true, "source": "p = {a=1 b=2}\n" } },
+        { "op": "insertValue", "args": [["p"], "c", 3], "expect": { "ok": true, "source": "p = {a=1 b=2 c=3}\n" } }
+      ]
+    },
+    {
+      "id": "insert key into an empty flow mapping writes it compact",
+      "source": "p = {}\n",
+      "steps": [
+        { "op": "insertValue", "args": [["p"], "x", 1], "expect": { "ok": true, "source": "p = {x=1}\n" } },
+        { "op": "insertValue", "args": [["p"], "y", 2], "expect": { "ok": true, "source": "p = {x=1 y=2}\n" } }
+      ]
+    },
+    {
+      "id": "insert key into a comma-joined fig-inline flow mapping keeps its commas",
+      "source": "p = {a=1, b=2}\n",
+      "steps": [
+        { "op": "insertValue", "args": [["p"], "c", 3], "expect": { "ok": true, "source": "p = {a=1, b=2, c=3}\n" } }
+      ]
+    },
+    {
+      "id": "insert key into a multi-line compact flow mapping writes no comma",
+      "source": "p = {\n  a=1\n}\n",
+      "steps": [
+        { "op": "insertValue", "args": [["p"], "b", 2], "expect": { "ok": true, "source": "p = {\n  a=1\n  b=2\n}\n" } }
+      ]
+    },
+    {
+      "id": "insert key into a dotted object in a flow mapping writes its key path inside the braces [1]",
+      "source": "p = {a.b=1 c=2 a.d=3}\n",
+      "steps": [
+        { "op": "setValue", "args": [["p", "a", "e"], 5], "expect": { "ok": true, "source": "p = {a.b=1 c=2 a.d=3 a.e=5}\n" } },
+        { "op": "setValue", "args": [["p", "f"], 6], "expect": { "ok": true, "source": "p = {a.b=1 c=2 a.d=3 a.e=5 f=6}\n" } }
+      ]
+    },
+    {
+      "id": "insert key into a dotted object in a flow mapping writes its key path inside the braces [2]",
+      "note": "A dotted first entry: the separators are its leaf's.",
+      "source": "p = {a.b=1, c=2}\n",
+      "steps": [
+        { "op": "setValue", "args": [["p", "e"], 5], "expect": { "ok": true, "source": "p = {a.b=1, c=2, e=5}\n" } }
+      ]
+    },
+    {
+      "id": "insert key into a dotted object in a flow mapping writes its key path inside the braces [3]",
+      "source": "p = {c=1 a.\"x y\".c=1}\n",
+      "steps": [
+        { "op": "setValue", "args": [["p", "a", "x y", "e"], 5], "expect": { "ok": true, "source": "p = {c=1 a.\"x y\".c=1 a.\"x y\".e=5}\n" } }
+      ]
+    },
+    {
+      "id": "insert key into a dotted object among block lines writes its key path",
+      "source": "s\n> a.b = 1\n> z = 2\n",
+      "steps": [
+        { "op": "setValue", "args": [["s", "a", "y"], 1], "expect": { "ok": true, "source": "s\n> a.b = 1\n> a.y = 1\n> z = 2\n" } }
+      ]
+    },
+    {
+      "id": "insert into a flow array still writes commas",
+      "source": "p = {a=[1]}\n",
+      "steps": [
+        { "op": "appendValue", "args": [["p", "a"], 2], "expect": { "ok": true, "source": "p = {a=[1, 2]}\n" } }
+      ]
+    },
+    {
+      "id": "insert duplicate key rolls back",
+      "note": "Zig error DuplicateKey.",
+      "source": "a = 1\n",
+      "steps": [
+        { "op": "insertValue", "args": [[], "a", 2], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "delete scalar key",
+      "source": "a = 1\nb = 2\nc = 3\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["b"]], "expect": { "ok": true, "source": "a = 1\nc = 3\n" } }
+      ]
+    },
+    {
+      "id": "delete key with owned comment",
+      "source": "a = 1\n# note\nb = 2\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["b"]], "expect": { "ok": true, "source": "a = 1\n" } }
+      ]
+    },
+    {
+      "id": "delete a dotted key takes the maps only it made",
+      "note": "A dotted line is all there is of the maps it names: deleting its key takes them too, as the delete guard allows (`impliedOnlyBy` in editor.zig).",
+      "source": "a.b.c = 1\ndeep.nested.value = 42 # c\n'q k'.sub = 1\nv = 2\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["q k", "sub"]], "expect": { "ok": true, "source": "a.b.c = 1\ndeep.nested.value = 42 # c\nv = 2\n" } },
+        { "op": "deleteKey", "args": [["deep", "nested", "value"]], "expect": { "ok": true, "source": "a.b.c = 1\nv = 2\n" } }
+      ]
+    },
+    {
+      "id": "delete an element written in two places takes both, and renumbers the next [1]",
+      "note": "`ys[0]` is written in two places, with `ys[1]` between them: the delete takes both, and not the lines between, and `ys[1]` is renumbered, an index being a position (spec § 7.4).",
+      "source": "ys[0]\n> k = 1\nys[1]  # one\n> k = 2\nys[0]\n> j = 3\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["ys"], 0], "expect": { "ok": true, "source": "ys[0]  # one\n> k = 2\n" } }
+      ]
+    },
+    {
+      "id": "delete an element written in two places takes both, and renumbers the next [2]",
+      "source": "ys[0]\n> k = 1\nys[1]  # one\n> k = 2\nys[0]\n> j = 3\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["ys", 0]], "expect": { "ok": true, "source": "ys[0]  # one\n> k = 2\n" } }
+      ]
+    },
+    {
+      "id": "delete an index-addressed element renumbers every line after it [1]",
+      "source": "xs[0] = a\nxs[1] = b  # b\nxs[2] = c\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["xs"], 0], "expect": { "ok": true, "source": "xs[0] = b  # b\nxs[1] = c\n" } },
+        { "op": "deleteItem", "args": [["xs"], 0], "expect": { "ok": true, "source": "xs[0] = c\n" } }
+      ]
+    },
+    {
+      "id": "delete an index-addressed element renumbers every line after it [2]",
+      "note": "Dotted lines through the index, and an index deeper in the path, which is another sequence's and stays.",
+      "source": "c[0].name = x\nc[1].name = y\nc[0].size = 1\nc[1].p[0] = 2\nc[2].name = z\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["c", 0]], "expect": { "ok": true, "source": "c[0].name = y\nc[0].p[0] = 2\nc[1].name = z\n" } }
+      ]
+    },
+    {
+      "id": "delete the middle index-addressed element leaves the first alone",
+      "source": "ys[0]\n> k = 1\nys[1]\n> k = 2\nys[2]\n> k = 3\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["ys"], 1], "expect": { "ok": true, "source": "ys[0]\n> k = 1\nys[1]\n> k = 3\n" } }
+      ]
+    },
+    {
+      "id": "delete a nested scalar key",
+      "source": "database\n> host = localhost\n> port = 5432\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["database", "port"]], "expect": { "ok": true, "source": "database\n> host = localhost\n" } }
+      ]
+    },
+    {
+      "id": "delete a flow-container-valued key",
+      "source": "a = 1\np = { x = 1 }\nb = 2\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["p"]], "expect": { "ok": true, "source": "a = 1\nb = 2\n" } }
+      ]
+    },
+    {
+      "id": "delete key inside a packed flow mapping (regression)",
+      "note": "Regression: deleting a key *inside* a flow mapping — the packed case swallowed a sibling, the single-entry case wiped the whole `{ … }` line. The flow-aware splice removes only the targeted entry and its adjoining comma, leaving the braces (and any survivor) intact.",
+      "source": "p = { x = 1, y = 2 }\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["p", "y"]], "expect": { "ok": true, "source": "p = { x = 1 }\n" } }
+      ]
+    },
+    {
+      "id": "delete key inside a compact flow mapping leaves it compact",
+      "source": "p = {a=1 b=2 c=3}\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["p", "b"]], "expect": { "ok": true, "source": "p = {a=1 c=3}\n" } },
+        { "op": "deleteKey", "args": [["p", "a"]], "expect": { "ok": true, "source": "p = {c=3}\n" } },
+        { "op": "deleteKey", "args": [["p", "c"]], "expect": { "ok": true, "source": "p = {}\n" } }
+      ]
+    },
+    {
+      "id": "delete key inside a JSON-mode flow mapping keeps its commas",
+      "source": "p = {\"x\": 1, \"y\": 2, \"z\": 3}\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["p", "y"]], "expect": { "ok": true, "source": "p = {\"x\": 1, \"z\": 3}\n" } }
+      ]
+    },
+    {
+      "id": "delete only key of a single-entry flow mapping (regression)",
+      "source": "p = { x = 1 }\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["p", "x"]], "expect": { "ok": true, "source": "p = { }\n" } }
+      ]
+    },
+    {
+      "id": "deleting a block-container-valued key is refused",
+      "note": "Zig error CannotDeleteSection.",
+      "source": "database\n> host = localhost\n> pool\n> > size = 10\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["database", "pool"]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "append/prepend/remove a scalar sequence",
+      "source": "ports\n> * 1\n> * 2\n",
+      "steps": [
+        { "op": "appendValue", "args": [["ports"], 3], "expect": { "ok": true, "source": "ports\n> * 1\n> * 2\n> * 3\n" } },
+        { "op": "prependValue", "args": [["ports"], 0], "expect": { "ok": true, "source": "ports\n> * 0\n> * 1\n> * 2\n> * 3\n" } },
+        { "op": "deleteItem", "args": [["ports"], 2], "expect": { "ok": true, "source": "ports\n> * 0\n> * 1\n> * 3\n" } }
+      ]
+    },
+    {
+      "id": "remove a map-shaped sequence element carries its whole body",
+      "source": "servers\n> *\n>> host = a.com\n> *\n>> host = b.com\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["servers"], 0], "expect": { "ok": true, "source": "servers\n> *\n>> host = b.com\n" } }
+      ]
+    },
+    {
+      "id": "remove the only `*` item leaves the key and an empty list",
+      "source": "a = 1\n# lead\nports  # tail\n> * 25565\nb = 2\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["ports"], 0], "expect": { "ok": true, "source": "a = 1\n# lead\nports = []  # tail\nb = 2\n" } },
+        { "op": "appendValue", "args": [["ports"], 80], "expect": { "ok": true, "source": "a = 1\n# lead\nports = [80]  # tail\nb = 2\n" } }
+      ]
+    },
+    {
+      "id": "remove the only map element under a header leaves an empty list",
+      "source": "servers\n> *  # first\n> > host = a\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["servers"], 0], "expect": { "ok": true, "source": "servers = []\n" } }
+      ]
+    },
+    {
+      "id": "remove the only append-header element keeps its key's line and comments",
+      "source": "a = 1\n# lead\nreplacements[]  # tail\n> file = README.md\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["replacements"], 0], "expect": { "ok": true, "source": "a = 1\n# lead\nreplacements = []  # tail\n" } }
+      ]
+    },
+    {
+      "id": "delete the only append-header element as a container leaves an empty list",
+      "note": "The CLI's `delete xs[0]` takes a block element whole, through `deleteContainer`.",
+      "source": "a = 1\nreplacements[]\n> file = README.md\n> exactly = 0\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["replacements", 0]], "expect": { "ok": true, "source": "a = 1\nreplacements = []\n" } }
+      ]
+    },
+    {
+      "id": "remove the only element of a nested append header keeps the path to it [1]",
+      "source": "a[]\n> x = 1\na[].b[]\n> y = 2\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["a", 0, "b"], 0], "expect": { "ok": true, "source": "a[]\n> x = 1\na[].b = []\n" } }
+      ]
+    },
+    {
+      "id": "remove the only element of a nested append header keeps the path to it [2]",
+      "source": "a[]\n> x = 1\n> b[]\n> > y = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a", 0, "b", 0]], "expect": { "ok": true, "source": "a[]\n> x = 1\n> b = []\n" } }
+      ]
+    },
+    {
+      "id": "emptying a `+` chain one element at a time ends at an empty list",
+      "source": "r[]\n> f = 1\n+\n> f = 2\nb = 2\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["r"], 1], "expect": { "ok": true, "source": "r[]\n> f = 1\nb = 2\n" } },
+        { "op": "deleteItem", "args": [["r"], 0], "expect": { "ok": true, "source": "r = []\nb = 2\n" } }
+      ]
+    },
+    {
+      "id": "delete the first element of a two-element `+` chain moves the header onto the next [1]",
+      "note": "Deleting the first element of a `+` chain takes its `r[]` line, and the `+` after it, which re-ran that header, takes its text (spec § 8). Each element keeps its own comments.",
+      "source": "# r\nr[]  # first\n> file = a\n# b's\n+  # second\n> file = b\nafter = 1\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["r"], 0], "expect": { "ok": true, "source": "# b's\nr[]  # second\n> file = b\nafter = 1\n" } }
+      ]
+    },
+    {
+      "id": "delete the first element of a two-element `+` chain moves the header onto the next [2]",
+      "source": "# r\nr[]  # first\n> file = a\n# b's\n+  # second\n> file = b\nafter = 1\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["r", 0]], "expect": { "ok": true, "source": "# b's\nr[]  # second\n> file = b\nafter = 1\n" } }
+      ]
+    },
+    {
+      "id": "delete the first element of a two-element `+` chain moves the header onto the next [3]",
+      "note": "A comment set in a column stays in it.",
+      "source": "rows[]    # a\n> f = 1\n+         # b\n> f = 2\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["rows"], 0], "expect": { "ok": true, "source": "rows[]    # b\n> f = 2\n" } }
+      ]
+    },
+    {
+      "id": "delete from a three-element `+` chain [1]",
+      "source": "r[]\n> f = 1\n+\n> f = 2\n+\n> f = 3\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["r"], 0], "expect": { "ok": true, "source": "r[]\n> f = 2\n+\n> f = 3\n" } },
+        { "op": "deleteItem", "args": [["r"], 0], "expect": { "ok": true, "source": "r[]\n> f = 3\n" } }
+      ]
+    },
+    {
+      "id": "delete from a three-element `+` chain [2]",
+      "source": "r[]\n> f = 1\n+\n> f = 2\n+\n> f = 3\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["r"], 1], "expect": { "ok": true, "source": "r[]\n> f = 1\n+\n> f = 3\n" } }
+      ]
+    },
+    {
+      "id": "delete the first element of a nested `+` chain keeps the next in its container [1]",
+      "note": "A `+` under a nested header re-runs the whole path; with the header gone it would re-run `spec.containers[]` and append a container.",
+      "source": "spec.containers[]\n> name = app\nspec.containers[].ports[]  # web\n> port = 80\n+  # tls\n> port = 443\nspec.containers[]\n> name = sidecar\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["spec", "containers", 0, "ports"], 0], "expect": { "ok": true, "source": "spec.containers[]\n> name = app\nspec.containers[].ports[]  # tls\n> port = 443\nspec.containers[]\n> name = sidecar\n" } }
+      ]
+    },
+    {
+      "id": "delete the first element of a nested `+` chain keeps the next in its container [2]",
+      "source": "spec.containers[]\n> name = app\nspec.containers[].ports[]  # web\n> port = 80\n+  # tls\n> port = 443\nspec.containers[]\n> name = sidecar\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["spec", "containers", 0, "ports", 0]], "expect": { "ok": true, "source": "spec.containers[]\n> name = app\nspec.containers[].ports[]  # tls\n> port = 443\nspec.containers[]\n> name = sidecar\n" } }
+      ]
+    },
+    {
+      "id": "move an element of a nested `+` chain re-spells the header and the `+` [1]",
+      "note": "A `+` repeats the header before it (spec § 8), so the position an element stands in is written by its header or its `+`: whichever element comes first takes the header, and its comment stays its own.",
+      "source": "c[]\n> n = a\nc[].p[]  # one\n> x = 1\n+\n> x = 2\n",
+      "steps": [
+        { "op": "moveItem", "args": [["c", 0, "p"], 0, 1], "expect": { "ok": true, "source": "c[]\n> n = a\nc[].p[]\n> x = 2\n+        # one\n> x = 1\n" } }
+      ]
+    },
+    {
+      "id": "move an element of a nested `+` chain re-spells the header and the `+` [2]",
+      "source": "r[]   # one\n> a = 1\n+     # two\n> a = 2\n+\n> a = 3\n",
+      "steps": [
+        { "op": "reorderItems", "args": [["r"], [2, 0, 1]], "expect": { "ok": true, "source": "r[]\n> a = 3\n+     # one\n> a = 1\n+     # two\n> a = 2\n" } }
+      ]
+    },
+    {
+      "id": "move a container holding a nested `+` chain",
+      "note": "The kitchen-sink shape: moving the container that holds a nested chain takes the chain with it, and `[]` mid-path still reaches it.",
+      "source": "c[]\n> n = a\nc[].p[]\n> x = 1\n+\n> x = 2\nc[]\n> n = b\n",
+      "steps": [
+        { "op": "moveItem", "args": [["c"], 0, 1], "expect": { "ok": true, "source": "c[]\n> n = b\nc[]\n> n = a\nc[].p[]\n> x = 1\n+\n> x = 2\n" } }
+      ]
+    },
+    {
+      "id": "move an index-addressed element renumbers every line that addresses it [1]",
+      "note": "An index is a position (spec § 7.4): the lines that address an element take its new index, wherever they are written.",
+      "source": "xs[0] = a\nxs[1] = b  # b\n",
+      "steps": [
+        { "op": "moveItem", "args": [["xs"], 0, 1], "expect": { "ok": true, "source": "xs[0] = b  # b\nxs[1] = a\n" } }
+      ]
+    },
+    {
+      "id": "move an index-addressed element renumbers every line that addresses it [2]",
+      "note": "`ys[0]` is written again after `ys[1]`, outside the moved lines.",
+      "source": "ys[0]\n> k = 1\nys[1]\n> k = 2\nys[0]\n> j = 3\n",
+      "steps": [
+        { "op": "moveItem", "args": [["ys"], 1, 0], "expect": { "ok": true, "source": "ys[0]\n> k = 2\nys[1]\n> k = 1\nys[1]\n> j = 3\n" } }
+      ]
+    },
+    {
+      "id": "move an index-addressed element renumbers every line that addresses it [3]",
+      "source": "clusters[0].name = alpha\nclusters[0].size = 3\nclusters[1].name = beta\nclusters[1].size = 5\n",
+      "steps": [
+        { "op": "reorderItems", "args": [["clusters"], [1]], "expect": { "ok": true, "source": "clusters[0].name = beta\nclusters[0].size = 5\nclusters[1].name = alpha\nclusters[1].size = 3\n" } }
+      ]
+    },
+    {
+      "id": "insert into an element with a nested header goes among its own keys [1]",
+      "note": "An element's own keys come before a header that opens a child of it; a `> key` after `c[].p[]` is the port's (docs/tasks/closed/figl-insert-under-nested-header.md).",
+      "source": "spec.containers[]\n> name = app\nspec.containers[].ports[]\n> containerPort = 80\n+\n> containerPort = 443\n",
+      "steps": [
+        { "op": "insertValue", "args": [["spec", "containers", 0], "added_bool", true], "expect": { "ok": true, "source": "spec.containers[]\n> name = app\n> added_bool = true\nspec.containers[].ports[]\n> containerPort = 80\n+\n> containerPort = 443\n" } }
+      ]
+    },
+    {
+      "id": "insert into an element with a nested header goes among its own keys [2]",
+      "note": "A dotted header or line re-entering a container is its child's line, not the container's, and so is one nested a level down.",
+      "source": "a\n> y = 0\na.b\n> x = 1\na.c.d = 2\n",
+      "steps": [
+        { "op": "insertValue", "args": [["a"], "m", 1], "expect": { "ok": true, "source": "a\n> y = 0\n> m = 1\na.b\n> x = 1\na.c.d = 2\n" } }
+      ]
+    },
+    {
+      "id": "insert into an element with a nested header goes among its own keys [3]",
+      "source": "s\n> c[]\n> > n = 1\n> c[].p[]\n> > x = 1\n",
+      "steps": [
+        { "op": "insertValue", "args": [["s", "c", 0], "m", 1], "expect": { "ok": true, "source": "s\n> c[]\n> > n = 1\n> > m = 1\n> c[].p[]\n> > x = 1\n" } }
+      ]
+    },
+    {
+      "id": "insert into an element with a nested header goes among its own keys [4]",
+      "note": "A container with no line of its own but the header that names its child still takes the entry on a dotted line, as it did.",
+      "source": "a.b\n> x = 1\n",
+      "steps": [
+        { "op": "insertValue", "args": [["a"], "m", 1], "expect": { "ok": true, "source": "a.b\n> x = 1\na.m = 1\n" } }
+      ]
+    },
+    {
+      "id": "an element's index and header are not names a rename rewrites",
+      "note": "Zig error NotASection.",
+      "source": "ys[0]\n> k = 1\n",
+      "steps": [
+        { "op": "renameContainer", "args": [["ys", 0], "z"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "remove the only index-addressed element takes every line of it [1]",
+      "note": "The comment ends an assignment to the element, so it goes with it.",
+      "source": "c[0].name = x  # the name\nother = 1\nc[0].size = 3\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["c"], 0], "expect": { "ok": true, "source": "c = []\nother = 1\n" } }
+      ]
+    },
+    {
+      "id": "remove the only index-addressed element takes every line of it [2]",
+      "source": "a[]\n> x = 1\nb = 2\na[0].y = 3\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a", 0]], "expect": { "ok": true, "source": "a = []\nb = 2\n" } }
+      ]
+    },
+    {
+      "id": "removing the only item of a root list is refused [1]",
+      "note": "Zig error NoEmptyRootList. figl reads an empty document as an empty mapping, and `[]` at a line's start is TOML's header, not a list. The Zig test also checks the editor's internal `splice_rejected` flag stays clear: the refusal comes before any splice.",
+      "source": "# c\n* a\n",
+      "steps": [
+        { "op": "deleteItem", "args": [[], 0], "expect": { "ok": false, "status": "UnsupportedOperation" } }
+      ]
+    },
+    {
+      "id": "removing the only item of a root list is refused [2]",
+      "note": "Zig error NoEmptyRootList.",
+      "source": "*\n> a = 1\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [[0]], "expect": { "ok": false, "status": "UnsupportedOperation" } }
+      ]
+    },
+    {
+      "id": "inline array append/prepend/remove (flow)",
+      "source": "ports = [1, 2]\n",
+      "steps": [
+        { "op": "appendValue", "args": [["ports"], 3], "expect": { "ok": true, "source": "ports = [1, 2, 3]\n" } },
+        { "op": "prependValue", "args": [["ports"], 0], "expect": { "ok": true, "source": "ports = [0, 1, 2, 3]\n" } },
+        { "op": "deleteItem", "args": [["ports"], 2], "expect": { "ok": true, "source": "ports = [0, 1, 3]\n" } }
+      ]
+    },
+    {
+      "id": "inline array append with pre-existing trailing comma (single line)",
+      "note": "A trailing comma before ']' is legal fig flow-array syntax; appending must not double it into an empty element that fails to reparse.",
+      "source": "ports = [1, 2,]\n",
+      "steps": [
+        { "op": "appendValue", "args": [["ports"], 3], "expect": { "ok": true, "source": "ports = [1, 2, 3,]\n" } }
+      ]
+    },
+    {
+      "id": "inline array append onto a multi-line one-item-per-line array",
+      "note": "Regression: appending used to splice right before the closing ']', which — combined with the pre-existing trailing comma after the last item — produced a doubled comma that failed to reparse. The fix splices after the last item and keeps the one-per-line style.",
+      "source": "contents = [\n  a,\n  b,\n]\n",
+      "steps": [
+        { "op": "appendValue", "args": [["contents"], "c"], "expect": { "ok": true, "source": "contents = [\n  a,\n  b,\n  c,\n]\n" } }
+      ]
+    },
+    {
+      "id": "remove last flow item via the [-] end sentinel",
+      "note": "`removeSeqItem` treats `std.math.maxInt(usize)` — the same sentinel `parsePath` produces for `contents[-]`/`contents[$]` — as \"the last item\", so delete can address the end symmetrically with append. The index 4294967295 is the `std.math.maxInt(usize)` the Zig test passed (as a wasm32 usize): the editor reads it as the last item.",
+      "source": "ports = [1, 2, 3]\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["ports"], 4294967295], "expect": { "ok": true, "source": "ports = [1, 2]\n" } }
+      ]
+    },
+    {
+      "id": "remove last item of a multi-line trailing-comma array (regression)",
+      "note": "Regression: appending to this shape used to leave the array such that removing the new last item (found via a preceding-comma backward scan that only skipped spaces/tabs, not newlines) left the item's own trailing comma dangling with nothing before it — an empty element that failed to reparse. The scan must cross the newline to find the real separator comma. The index 4294967295 is the `std.math.maxInt(usize)` the Zig test passed (as a wasm32 usize): the editor reads it as the last item.",
+      "source": "contents = [\n  a,\n  b,\n]\n",
+      "steps": [
+        { "op": "appendValue", "args": [["contents"], "c"], "expect": { "ok": true, "source": "contents = [\n  a,\n  b,\n  c,\n]\n" } },
+        { "op": "deleteItem", "args": [["contents"], 4294967295], "expect": { "ok": true, "source": "contents = [\n  a,\n  b,\n]\n" } }
+      ]
+    },
+    {
+      "id": "remove middle item of a multi-line one-item-per-line array",
+      "source": "contents = [\n  a,\n  b,\n  c,\n]\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["contents"], 1], "expect": { "ok": true, "source": "contents = [\n  a,\n  c,\n]\n" } }
+      ]
+    },
+    {
+      "id": "remove first item of a multi-line one-item-per-line array",
+      "source": "contents = [\n  a,\n  b,\n  c,\n]\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["contents"], 0], "expect": { "ok": true, "source": "contents = [\n  b,\n  c,\n]\n" } }
+      ]
+    },
+    {
+      "id": "rename a container's key via the generic renameKey",
+      "source": "database\n> host = localhost\n> pool\n> > size = 10\n",
+      "steps": [
+        { "op": "renameKey", "args": [["database", "pool"], "settings"], "expect": { "ok": true, "source": "database\n> host = localhost\n> settings\n> > size = 10\n" } }
+      ]
+    },
+    {
+      "id": "rename a container written by several dotted lines renames every line",
+      "note": "Was: only `a.b.c` became `q.b.c`; `a.b.d` re-opened `a` mid-path and was no mention of it, so the rename split `a` in two.",
+      "source": "a.b.c = 1\na.b.d = 2\n",
+      "steps": [
+        { "op": "renameKey", "args": [["a"], "q"], "expect": { "ok": true, "source": "q.b.c = 1\nq.b.d = 2\n" } },
+        { "op": "renameContainer", "args": [["q", "b"], "r"], "expect": { "ok": true, "source": "q.r.c = 1\nq.r.d = 2\n" } }
+      ]
+    },
+    {
+      "id": "rename a container behind repeated append headers renames every header",
+      "source": "jobs.test.steps[]\n> uses = x\njobs.test.steps[]\n> run = y\n",
+      "steps": [
+        { "op": "renameContainer", "args": [["jobs"], "q"], "expect": { "ok": true, "source": "q.test.steps[]\n> uses = x\nq.test.steps[]\n> run = y\n" } },
+        { "op": "renameKey", "args": [["q", "test"], "t"], "expect": { "ok": true, "source": "q.t.steps[]\n> uses = x\nq.t.steps[]\n> run = y\n" } },
+        { "op": "renameContainer", "args": [["q", "t", "steps"], "s"], "expect": { "ok": true, "source": "q.t.s[]\n> uses = x\nq.t.s[]\n> run = y\n" } }
+      ]
+    },
+    {
+      "id": "rename through a `+` chain rewrites its header once and leaves the `+`",
+      "source": "jobs.steps[]\n> a = 1\n+\n> b = 2\n",
+      "steps": [
+        { "op": "renameContainer", "args": [["jobs"], "q"], "expect": { "ok": true, "source": "q.steps[]\n> a = 1\n+\n> b = 2\n" } }
+      ]
+    },
+    {
+      "id": "rename a container named by a header and a later dotted header",
+      "source": "a\n> x = 1\nother = 1\na.b\n> z = 3\na.c = 4\n",
+      "steps": [
+        { "op": "renameContainer", "args": [["a"], "q"], "expect": { "ok": true, "source": "q\n> x = 1\nother = 1\nq.b\n> z = 3\nq.c = 4\n" } }
+      ]
+    },
+    {
+      "id": "a dotted key inside a flow object is no container name",
+      "note": "Zig error NotASection.",
+      "source": "t = {a.b = 1, a.c = 2}\n",
+      "steps": [
+        { "op": "renameContainer", "args": [["t", "a"], "q"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "delete a nested block container",
+      "source": "database\n> host = localhost\n> pool\n> > size = 10\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["database", "pool"]], "expect": { "ok": true, "source": "database\n> host = localhost\n" } }
+      ]
+    },
+    {
+      "id": "delete a whole top-level container with all descendants",
+      "source": "database\n> host = localhost\n> pool\n> > size = 10\nother = 1\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["database"]], "expect": { "ok": true, "source": "other = 1\n" } }
+      ]
+    },
+    {
+      "id": "delete carries an owned leading comment",
+      "source": "# about database\ndatabase\n> host = localhost\nother = 1\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["database"]], "expect": { "ok": true, "source": "other = 1\n" } }
+      ]
+    },
+    {
+      "id": "delete a container split across dotted re-entry, foreign sibling intact",
+      "note": "`a`/`other`/`a.b` — the fig equivalent of TOML's `[a]`/`[other]`/`[a.b]` interleaving: `a.b` is a SEPARATE dotted path (not the identical header `a` written twice), so gather finds it via recursion into `a`'s own child \"b\", with no separate header-occurrence tracking needed.",
+      "source": "a\n> x = 1\nother = 1\na.b\n> z = 3\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a"]], "expect": { "ok": true, "source": "other = 1\n" } }
+      ]
+    },
+    {
+      "id": "delete a block sequence",
+      "source": "servers\n> *\n>> host = a.com\n> *\n>> host = b.com\nother = 1\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["servers"]], "expect": { "ok": true, "source": "other = 1\n" } }
+      ]
+    },
+    {
+      "id": "delete one index-addressed block-mapped sequence element",
+      "source": "servers\n> *\n>> host = a.com\n> *\n>> host = b.com\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["servers", 0]], "expect": { "ok": true, "source": "servers\n> *\n>> host = b.com\n" } }
+      ]
+    },
+    {
+      "id": "deleteContainer on a scalar is refused",
+      "note": "Zig error NotASection.",
+      "source": "x = 1\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["x"]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "deleteContainer on a flow-valued key is refused",
+      "note": "Zig error NotASection.",
+      "source": "p = { x = 1 }\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["p"]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "delete a verbatim re-entered header removes every occurrence",
+      "note": "The exact same header (`database`, not a deeper dotted path) written twice — the shape spans alone can't discover; found via the parser's `Document.regionsOf` record (see the module doc comment). Both header lines and every child go; the foreign sibling stays put.",
+      "source": "database\n> x = 1\nother = 1\ndatabase\n> y = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["database"]], "expect": { "ok": true, "source": "other = 1\n" } }
+      ]
+    },
+    {
+      "id": "delete a re-entered NESTED header removes the reopened line too",
+      "note": "`> pool` reopened later inside the same parent's body — the nested twin of the verbatim root re-entry (same `resolveHeaderFinal` record).",
+      "source": "database\n> pool\n>> a = 1\n> pool\n>> b = 2\n> keep = 1\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["database", "pool"]], "expect": { "ok": true, "source": "database\n> keep = 1\n" } }
+      ]
+    },
+    {
+      "id": "delete a container re-opened by a dotted header's final segment",
+      "note": "`b` is CREATED by the dotted assignment `> b.x = 1` (so its span anchors that line), then RE-OPENED by the `a.b` section header — a deeper-dotted-path line that is in no child's span. The re-entry record is what removes it.",
+      "source": "a\n> keep = 1\n> b.x = 1\nother = 1\na.b\n> y = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a", "b"]], "expect": { "ok": true, "source": "a\n> keep = 1\nother = 1\n" } }
+      ]
+    },
+    {
+      "id": "delete a sequence whose element header is re-opened by index",
+      "note": "`xs[0]` written twice: the first creates element 0, the second re-opens it (`resolveHeaderFinal`'s index twin of the key re-open).",
+      "source": "xs[0]\n> a = 1\nxs[0]\n> b = 2\nother = 1\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["xs"]], "expect": { "ok": true, "source": "other = 1\n" } }
+      ]
+    },
+    {
+      "id": "delete carries a re-entered header's own leading comment",
+      "source": "database\n> x = 1\nother = 1\n# more database\ndatabase\n> y = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["database"]], "expect": { "ok": true, "source": "other = 1\n" } }
+      ]
+    },
+    {
+      "id": "delete leaving an ANCESTOR header childless fails safely",
+      "note": "Zig error FigEmptyContainer. The documented residual edge (module doc \"Scope\"): removing `a.b` leaves the `a` header with nothing under it. The cascade delete is deliberately not implied; `FigEmptyContainer` on the reparse rolls the edit back instead of leaving a bare childless container behind.",
+      "source": "a\n> b\n>> x = 1\nother = 1\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a", "b"]], "expect": { "ok": false, "status": "ParseError" } }
+      ]
+    },
+    {
+      "id": "move a container to end of file",
+      "source": "a\n> x = 1\nb\n> y = 2\n",
+      "steps": [
+        { "op": "moveContainer", "args": [["a"], null], "expect": { "ok": true, "source": "b\n> y = 2\n\na\n> x = 1\n" } }
+      ]
+    },
+    {
+      "id": "move a container before another",
+      "source": "a\n> x = 1\nb\n> y = 2\nc\n> w = 3\n",
+      "steps": [
+        { "op": "moveContainer", "args": [["c"], ["b"]], "expect": { "ok": true, "source": "a\n> x = 1\n\nc\n> w = 3\nb\n> y = 2\n" } }
+      ]
+    },
+    {
+      "id": "move a dotted-re-entry-scattered container collapses fragments contiguously",
+      "source": "a\n> x = 1\nb\n> y = 2\na.c\n> z = 3\n",
+      "steps": [
+        { "op": "moveContainer", "args": [["a"], null], "expect": { "ok": true, "source": "b\n> y = 2\n\na\n> x = 1\na.c\n> z = 3\n" } }
+      ]
+    },
+    {
+      "id": "move a verbatim re-entered container relocates both occurrences",
+      "note": "Both physical `database` blocks (the creating header and the verbatim re-entry, found via `Document.regionsOf`) move contiguously; the re-entered spelling itself is preserved — still-valid fig that parses to the same merged mapping.",
+      "source": "database\n> x = 1\nother = 1\ndatabase\n> y = 2\n",
+      "steps": [
+        { "op": "moveContainer", "args": [["database"], null], "expect": { "ok": true, "source": "other = 1\n\ndatabase\n> x = 1\ndatabase\n> y = 2\n" } }
+      ]
+    },
+    {
+      "id": "move destination inside the source is a no-op",
+      "source": "a\n> x = 1\n> pool\n> > size = 10\n",
+      "steps": [
+        { "op": "moveContainer", "args": [["a"], ["a", "pool"]], "expect": { "ok": true, "source": "a\n> x = 1\n> pool\n> > size = 10\n" } }
+      ]
+    },
+    {
+      "id": "moveContainer on a scalar is refused",
+      "note": "Zig error NotASection.",
+      "source": "x = 1\na\n> y = 2\n",
+      "steps": [
+        { "op": "moveContainer", "args": [["x"], null], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "delete a nested container carries its own trailing comments, leaves the sibling section comment alone",
+      "source": "database # container header (bare word, no `=`)\n> host = localhost # database.host\n> port = 5432 # database.port  (bare number)\n> pool # nested container header\n> > size = 10 # database.pool.size\n> > timeout = 30 # database.pool.timeout\n\n# === Dotted-key flattener (flatten within one line) ===\ncache\n> redis\n> > host = 127.0.0.1 # cache.redis.host  (IP -> string, 3 dots)\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["database", "pool"]], "expect": { "ok": true, "source": "database # container header (bare word, no `=`)\n> host = localhost # database.host\n> port = 5432 # database.port  (bare number)\n\n# === Dotted-key flattener (flatten within one line) ===\ncache\n> redis\n> > host = 127.0.0.1 # cache.redis.host  (IP -> string, 3 dots)\n" } }
+      ]
+    },
+    {
+      "id": "move a container up front of a differently-commented sibling",
+      "note": "No blank line goes IN FRONT of `cache` (it lands at the absolute start of the file — `appendWithBlankBefore` only separates from PRECEDING output, and there is none here); the original blank line that used to separate `database` from `cache`'s leading comment rides along after `database` instead (part of `database`'s own \"kept\" tail).",
+      "source": "database # container header (bare word, no `=`)\n> host = localhost # database.host\n\n# === Dotted-key flattener (flatten within one line) ===\ncache\n> redis\n> > host = 127.0.0.1 # cache.redis.host\n",
+      "steps": [
+        { "op": "moveContainer", "args": [["cache"], ["database"]], "expect": { "ok": true, "source": "# === Dotted-key flattener (flatten within one line) ===\ncache\n> redis\n> > host = 127.0.0.1 # cache.redis.host\ndatabase # container header (bare word, no `=`)\n> host = localhost # database.host\n\n" } }
+      ]
+    },
+    {
+      "id": "reorder top-level containers",
+      "source": "a\n> x = 1\nb\n> y = 2\nc\n> w = 3\n",
+      "steps": [
+        { "op": "reorderContainers", "args": [["c", "a", "b"]], "expect": { "ok": true, "source": "c\n> w = 3\na\n> x = 1\nb\n> y = 2\n" } }
+      ]
+    },
+    {
+      "id": "reorder leaves an unnamed container untouched, in its original relative position",
+      "note": "Only `b`/`a` are named (swapped); `c` isn't mentioned, so it stays put.",
+      "source": "a\n> x = 1\nb\n> y = 2\nc\n> w = 3\n",
+      "steps": [
+        { "op": "reorderContainers", "args": [["b", "a"]], "expect": { "ok": true, "source": "b\n> y = 2\na\n> x = 1\nc\n> w = 3\n" } }
+      ]
+    },
+    {
+      "id": "reorderContainers on a scalar is refused",
+      "note": "Zig error NotASection.",
+      "source": "x = 1\na\n> y = 2\n",
+      "steps": [
+        { "op": "reorderContainers", "args": [["x", "a"]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "moveKey refuses a block container at either end",
+      "note": "Zig error CannotMoveSection. Moving `a` by its span would carry only the first `a` block. `moveContainer` carries both fragments.",
+      "source": "a\n> x = 1\nother = 1\na\n> y = 2\nb\n> z = 3\n",
+      "steps": [
+        { "op": "moveKey", "args": [["a"], ["b"]], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "moveKey", "args": [["other"], ["b"]], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "moveContainer", "args": [["a"], null], "expect": { "ok": true, "source": "other = 1\nb\n> z = 3\n\na\n> x = 1\na\n> y = 2\n" } }
+      ]
+    },
+    {
+      "id": "moveKey still moves scalar entries, inside and around a container",
+      "source": "x = 1\ny = 2\na\n> p = 1\n> q = 2\n",
+      "steps": [
+        { "op": "moveKey", "args": [["y"], ["x"]], "expect": { "ok": true } },
+        { "op": "moveKey", "args": [["a", "q"], ["a", "p"]], "expect": { "ok": true, "source": "y = 2\nx = 1\na\n> q = 2\n> p = 1\n" } }
+      ]
+    },
+    {
+      "id": "reorderKeys refuses a reorder that shifts a block container",
+      "note": "Zig error CannotReorderSections. Scalars reordered around a container that keeps its index are fine.",
+      "source": "x = 1\na\n> p = 1\nb\n> q = 2\n",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["b", "a"]], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "reorderKeys", "args": [["a"], ["p"]], "expect": { "ok": true, "source": "x = 1\na\n> p = 1\nb\n> q = 2\n" } }
+      ]
+    },
+    {
+      "id": "replaceValue still re-frames a contiguous block container from its recorded separator",
+      "note": "The section rule guards only the ENGINE's splice; a fig header records a zero-width separator, so the reframe runs first and owns the target and re-frames the value in place.",
+      "source": "a\n> p = 1\nz = 0\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["a"], "q = 2\nr = 3\n"], "expect": { "ok": true, "source": "a\n> q = 2\n> r = 3\nz = 0\n" } }
+      ]
+    },
+    {
+      "id": "addLeadingComment on fig uses # at the target's own marker depth [1]",
+      "note": "This instantiation (plus every `Editor(Fig)` call below) is what pulls `Editor(Fig)`'s own methods into the test build's reachability graph — `zig test` analyzes a generic struct's methods only once something calls them, so an `Editor(Fig)` that nothing instantiates is an `Editor(Fig)` nothing type-checks. (`languages/figl/tests/editor.zig`'s `test` blocks are discovered through `fig.zig`'s own `test {}`, and carry the rest of `Editor(Fig)`'s coverage rather than duplicating it here; the same split holds for TOML above.)",
+      "source": "a = 1\nb = 2\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["b"], "note"], "expect": { "ok": true, "source": "a = 1\n# note\nb = 2\n" } }
+      ]
+    },
+    {
+      "id": "addLeadingComment on fig uses # at the target's own marker depth [2]",
+      "source": "database\n> pool\n> > size = 10\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["database", "pool", "size"], "note"], "expect": { "ok": true, "source": "database\n> pool\n> > # note\n> > size = 10\n" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no leading comment [1]",
+      "note": "The Zig test also reads the comment back (`getLeadingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "# above\nmembers = [a, b]\n",
+      "steps": [
+        { "op": "deleteLeadingComment", "args": [["members", 0]], "expect": { "ok": true, "source": "# above\nmembers = [a, b]\n" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no leading comment [2]",
+      "note": "Zig error CommentsUnanchored. Refused rather than spliced: fig's indent is the raw line prefix, so the add used to emit `members = [# new` and duplicate the key line.",
+      "source": "# above\nmembers = [a, b]\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["members", 0], "new"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no leading comment [3]",
+      "note": "A flow object's entry shares the line the same way.",
+      "source": "# above nested\nnested = { k = v }\n",
+      "steps": [
+        { "op": "deleteLeadingComment", "args": [["nested", "k"]], "expect": { "ok": true, "source": "# above nested\nnested = { k = v }\n" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no leading comment [4]",
+      "note": "Zig error CommentsUnanchored.",
+      "source": "# above nested\nnested = { k = v }\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["nested", "k"], "new"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no leading comment [5]",
+      "note": "A multi-line (stacked flow) list's items each begin their own line.",
+      "source": "# above\nmembers = [\n  a,\n  b,\n]\n",
+      "steps": [
+        { "op": "deleteLeadingComment", "args": [["members", 0]], "expect": { "ok": true, "source": "# above\nmembers = [\n  a,\n  b,\n]\n" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no leading comment [6]",
+      "source": "# above\nmembers = [\n  a,\n  b,\n]\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["members", 0], "new"], "expect": { "ok": true, "source": "# above\nmembers = [\n  # new\n  a,\n  b,\n]\n" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no trailing comment either [1]",
+      "note": "The Zig test also reads the comment back (`getTrailingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "members = [a, b] # note\n",
+      "steps": [
+        { "op": "deleteTrailingComment", "args": [["members", 0]], "expect": { "ok": true, "source": "members = [a, b] # note\n" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no trailing comment either [2]",
+      "note": "Zig error CommentsUnanchored.",
+      "source": "members = [a, b] # note\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["members", 0], "new"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "dangling comment round-trips at a fig container's marker depth",
+      "note": "The Zig test also reads the comment back (`getDanglingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "database\n> host = local\n> port = 5432\n",
+      "steps": [
+        { "op": "addDanglingComment", "args": [["database"], "note"], "expect": { "ok": true, "source": "database\n> host = local\n> port = 5432\n> # note\n" } },
+        { "op": "deleteDanglingComment", "args": [["database"]], "expect": { "ok": true, "source": "database\n> host = local\n> port = 5432\n" } }
+      ]
+    },
+    {
+      "id": "commentOut round-trips a fig entry",
+      "note": "The Zig test also checks the commented-out key is gone from the tree, which the commented line pins.",
+      "source": "host = local\nport = 5432\n",
+      "steps": [
+        { "op": "commentOut", "args": [["host"]], "expect": { "ok": true, "source": "# host = local\nport = 5432\n" } },
+        { "op": "uncommentLeading", "args": [["port"], 0, 1], "expect": { "ok": true, "source": "host = local\nport = 5432\n" } }
+      ]
+    },
+    {
+      "id": "commentOut writes a nested fig entry's marker after its `>` run",
+      "note": "The `>` run is section depth, not indentation: the marker goes after it, or the comment detaches to the root. Coming BACK is `uncommentDangling`'s here — `commentBlockStart`, which is the block `getLeadingComment` reports, does not climb past the `>` prefix.",
+      "source": "database\n> host = local\n> port = 5432\n",
+      "steps": [
+        { "op": "commentOut", "args": [["database", "host"]], "expect": { "ok": true, "source": "database\n> # host = local\n> port = 5432\n" } }
+      ]
+    },
+    {
+      "id": "commentOut of the last entry lands in the parent's dangling run",
+      "note": "The Zig test also reads the comment back (`getDanglingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "database\n> host = local\n> port = 5432\n",
+      "steps": [
+        { "op": "commentOut", "args": [["database", "port"]], "expect": { "ok": true, "source": "database\n> host = local\n> # port = 5432\n" } },
+        { "op": "uncommentDangling", "args": [["database"], 0, 1], "expect": { "ok": true, "source": "database\n> host = local\n> port = 5432\n" } }
+      ]
+    },
+    {
+      "id": "insertValue refuses a key the mapping already holds, in every format",
+      "note": "Zig error DuplicateKey. fig's parser rejects the repeat itself; the name check answers first, so it is `DuplicateKey` here too, not a blamed value. The Zig test also checks the editor's internal `splice_rejected` flag, which a fixture cannot see.",
+      "source": "a = 1\n",
+      "steps": [
+        { "op": "insertValue", "args": [[], "a", 3], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    }
+  ]
+}

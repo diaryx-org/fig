@@ -91,7 +91,10 @@ Each language's editor tests become `languages/<name>/tests/edits.json`:
 A case is a source and edits applied in turn, each to the one before's
 output. An op is an `Editor` method as the bindings name it, with JSON
 arguments; most are in the adapter protocol under the same names. The
-expectation is the whole edited source, or a refusal's status. The
+expectation is the whole edited source, or a refusal's status; one
+without them holds only that the edit was taken, or refused, where the
+Zig test asserted no more of that step. A fixture names one dialect, and
+a case may name another (`json5`, `jsonc` in the JSON fixture). The
 `note` carries what the Zig test's comments said, since the reason a
 case exists is most of its value. The expectations are the ones the Zig
 test asserted, copied, not recorded: a fixture that disagrees with fig
@@ -102,8 +105,17 @@ TypeScript binding and each language's wasm module by default, or with
 `--command` against any adapter that answers `edit`. `zig build check`
 runs it beside the TypeScript suite.
 
-INI is done: 23 tests, 25 cases (two tests each pinned two sources),
-25/25 against the Zig editor. Two things showed up in converting it:
+All of them are converted: 551 tests, 753 cases (a test that pinned
+several sources is a case per source), every one passing against the Zig
+editor. `src/editor.zig`'s tests went to the fixture of the language each
+drives, which is where dotenv's and `.properties`'s fixtures come from.
+23 tests stay Zig-only, and two more lost a source each: they start a
+list with `setAppend` or edit through an alias, which the C ABI does not
+export; they pass a key's raw spelling to `insertKey` or
+`replaceKeyAtPath`, where the binding names the key and spells it itself;
+they only read comments back, or call a renderer directly; or they
+assert a substring of the output, or a value read from the tree, and
+never the bytes. Three things showed up in converting them:
 
 - **Raw edits.** A Zig test passes text the format spells; a binding
   takes a value. Where the value serializer cannot write it (INI cannot
@@ -113,6 +125,10 @@ INI is done: 23 tests, 25 cases (two tests each pinned two sources),
   `CannotMoveSection` all reach the wire as `InvalidArgument`. A case
   names the Zig error in its `note`, and the Rust port keeps the
   distinction in its own error type even where the wire does not.
+- **Binding gaps.** No binding op starts a list (`setAppend` is the CLI's
+  alone), edits through an alias, or splices a key's raw spelling. And in
+  a figl JSON-mode flow mapping (`p = { "x": 1 }`), `insertValue` of a
+  new name is refused with `ParseError` where the raw `"y"` lands.
 
 A test that reads the editor's internals (`Document.regionsOf`, the
 parsed AST after an edit) converts to its edit alone when the output

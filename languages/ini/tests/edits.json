@@ -1,6 +1,6 @@
 {
   "dialect": "ini",
-  "from": "languages/ini/tests/editor.zig",
+  "from": ["languages/ini/tests/editor.zig", "src/editor.zig"],
   "cases": [
     {
       "id": "set adds a key into an existing section",
@@ -197,6 +197,55 @@
       "source": "[a]\nx = 1\ny = 2\nz = 3\n",
       "steps": [
         { "op": "reorderKeys", "args": [["a"], ["z", "x"]], "expect": { "ok": true, "source": "[a]\nz = 3\nx = 1\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "an insert into a section with no own entries takes a header line of its own, or the nearest one up",
+      "note": "The case the header-line anchor was written for stays right.",
+      "source": "[a]\n[b]\nk = 1\n",
+      "steps": [
+        { "op": "setValue", "args": [["a", "y"], 2], "expect": { "ok": true, "source": "[a]\ny = 2\n[b]\nk = 1\n" } }
+      ]
+    },
+    {
+      "id": "set surfaces a section veto rather than inserting a second entry of that name",
+      "note": "Zig error CannotReplaceSection. The Zig test also checks the editor's internal `splice_rejected` flag, which a fixture cannot see.",
+      "source": "[user]\nname = x\n",
+      "steps": [
+        { "op": "setValue", "args": [["user"], 1], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "insertValue refuses a key the mapping already holds, in every format",
+      "note": "Zig error DuplicateKey. The Zig test also checks the editor's internal `splice_rejected` flag, which a fixture cannot see.",
+      "source": "[a]\nx = 1\n",
+      "steps": [
+        { "op": "insertValue", "args": [["a"], "x", 2], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "set seeds the first root key into an empty document",
+      "source": "",
+      "steps": [
+        { "op": "setValue", "args": [["name"], "fig"], "expect": { "ok": true, "source": "name = fig\n" } }
+      ]
+    },
+    {
+      "id": "set inserts a second root key using ' = '",
+      "source": "name = fig\n",
+      "steps": [
+        { "op": "setValue", "args": [["lang"], "zig"], "expect": { "ok": true, "source": "name = fig\nlang = zig\n" } }
+      ]
+    },
+    {
+      "id": "comment ops: leading works with ';', trailing is unsupported",
+      "note": "Zig error CommentsUnsupported. The Zig test also reads the comment back (`getLeadingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "name = fig\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["name"], "a language"], "expect": { "ok": true, "source": "; a language\nname = fig\n" } },
+        { "op": "setTrailingComment", "args": [["name"], "note"], "expect": { "ok": false, "status": "UnsupportedFormat" } },
+        { "op": "getTrailingComment", "args": [["name"]], "expect": { "ok": false, "status": "UnsupportedFormat" } },
+        { "op": "deleteTrailingComment", "args": [["name"]], "expect": { "ok": false, "status": "UnsupportedFormat" } }
       ]
     }
   ]

@@ -8,7 +8,11 @@
 // each the output of the one before (a refused edit leaves the source as it
 // was). Each edit is one of fig's `Editor` methods, with its arguments as
 // JSON, and expects either the whole edited source or a refusal with a status.
-// Statuses are compared; messages are not. Most ops are in fig-conformance's
+// Statuses are compared; messages are not. An expectation with no `source`
+// holds only that the edit is taken, and a refusal with no `status` only that
+// it is refused: what the test asserted of that step, and no more. A fixture
+// names the dialect its cases are read as, and a case may name another (a
+// JSON5 case in the JSON fixture). Most ops are in fig-conformance's
 // adapter protocol, under the same names; a few the protocol does not carry
 // (`moveContainer`, `reorderContainers`, the `*Raw` edits that take text the
 // format spells rather than a value) are the TypeScript binding's, and an
@@ -52,7 +56,7 @@ for (const name of names) {
   const fixture = JSON.parse(readFileSync(fixturePath(name), "utf8"));
   let ok = 0;
   for (const c of fixture.cases) {
-    const why = await runCase(fixture.dialect, c);
+    const why = await runCase(c.dialect ?? fixture.dialect, c);
     if (why) {
       failed++;
       console.log(`FAIL ${name}: ${c.id}\n${why}`);
@@ -81,7 +85,8 @@ async function runCase(dialect, c) {
   for (const [i, step] of c.steps.entries()) {
     const got = await impl.edit(dialect, source, step.op, step.args);
     const want = step.expect;
-    const same = got.ok === want.ok && (got.ok ? got.source === want.source : got.status === want.status);
+    const same = got.ok === want.ok &&
+      (got.ok ? want.source === undefined || got.source === want.source : want.status === undefined || got.status === want.status);
     if (!same) {
       return [
         `  step ${i + 1}: ${step.op} ${JSON.stringify(step.args)}`,
@@ -96,7 +101,7 @@ async function runCase(dialect, c) {
 }
 
 function show(outcome) {
-  return outcome.ok ? JSON.stringify(outcome.source) : `refusal ${outcome.status}${outcome.message ? ` (${outcome.message})` : ""}`;
+  return outcome.ok ? (outcome.source === undefined ? "ok" : JSON.stringify(outcome.source)) : `refusal ${outcome.status ?? "(any status)"}${outcome.message ? ` (${outcome.message})` : ""}`;
 }
 
 /** fig's own editor, through the TypeScript binding, with the WebAssembly

@@ -1,0 +1,1302 @@
+{
+  "dialect": "toml",
+  "from": ["languages/toml/tests/editor.zig", "src/editor.zig"],
+  "cases": [
+    {
+      "id": "replace root scalar value",
+      "source": "title = \"old\"\nport = 8080\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["port"], 9090], "expect": { "ok": true, "source": "title = \"old\"\nport = 9090\n" } }
+      ]
+    },
+    {
+      "id": "replace string value keeps quoting verbatim",
+      "source": "title = \"old\"\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["title"], "new title"], "expect": { "ok": true, "source": "title = \"new title\"\n" } }
+      ]
+    },
+    {
+      "id": "replace value in a table",
+      "source": "[server]\nhost = \"a\"\nport = 1\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["server", "port"], 2], "expect": { "ok": true, "source": "[server]\nhost = \"a\"\nport = 2\n" } }
+      ]
+    },
+    {
+      "id": "replace value through scattered table headers",
+      "note": "The owning table `a` spans the whole file (it nests b and c), but the value node's span is contiguous, so the point edit is exact.",
+      "source": "[a]\nx = 1\n[a.b]\ny = 2\n[a.c]\nz = 3\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["a", "b", "y"], 99], "expect": { "ok": true, "source": "[a]\nx = 1\n[a.b]\ny = 99\n[a.c]\nz = 3\n" } }
+      ]
+    },
+    {
+      "id": "replace dotted-key value",
+      "source": "a.b.c = 1\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["a", "b", "c"], 2], "expect": { "ok": true, "source": "a.b.c = 2\n" } }
+      ]
+    },
+    {
+      "id": "replace value with an inline array",
+      "source": "ports = [1, 2]\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["ports"], "[3, 4, 5]"], "expect": { "ok": true, "source": "ports = [3, 4, 5]\n" } }
+      ]
+    },
+    {
+      "id": "replace value with an inline table",
+      "note": "An inline container's span IS its `{ … }` text, so it splices in place — the shape `tableReplaceGuard` deliberately lets through.",
+      "source": "t = { a = 1 }\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["t"], "{ z = 2 }"], "expect": { "ok": true, "source": "t = { z = 2 }\n" } }
+      ]
+    },
+    {
+      "id": "replace at the document root rewrites the whole document",
+      "note": "The root's span is the whole file, so replacing it is exact — the empty path is the one container `tableReplaceGuard` exempts.",
+      "source": "k = 1\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [[], "z = 2\n"], "expect": { "ok": true, "source": "z = 2\n" } }
+      ]
+    },
+    {
+      "id": "replace refuses a [header] table (would rename the header)",
+      "note": "Zig error CannotReplaceSection.",
+      "source": "[nested]\nk = \"v\"\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["nested"], "REPLACED"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "replace refuses a dotted table",
+      "note": "Zig error CannotReplaceSection. Not a `[header]` line at all — the line starts with the key — so this is the case a line-based sniff would miss and splice into `\"x\".b = 1`.",
+      "source": "a.b = 1\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["a"], "REPLACED"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "replace refuses an array of tables and its elements",
+      "note": "Zig error CannotReplaceSection. The `[[aot]]` sequence and every element share the header key's span, so both paths are the same hazard.",
+      "source": "[[aot]]\nk = 1\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["aot"], "[1, 2]"], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "replaceValueRaw", "args": [["aot", 0], "{ z = 1 }"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "set on an existing [header] table refuses without touching the file",
+      "note": "Zig error CannotReplaceSection. `set` falls back to `insertKey` on ANY replace error, so the guard has to leave the document byte-for-byte intact through that second attempt too (the insert's own reparse would hit TOML's duplicate-key rule).",
+      "source": "[nested]\nk = \"v\"\n",
+      "steps": [
+        { "op": "setValue", "args": [["nested"], "REPLACED"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "rename a leaf key",
+      "source": "[server]\nport = 8080\n",
+      "steps": [
+        { "op": "renameKey", "args": [["server", "port"], "listen_port"], "expect": { "ok": true, "source": "[server]\nlisten_port = 8080\n" } }
+      ]
+    },
+    {
+      "id": "failed edit rolls back and keeps editor usable",
+      "note": "An unterminated array fails to reparse; the source must be restored. A refusal with no status is one the Zig test asserted only fails, not with which error.",
+      "source": "a = 1\nb = 2\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["a"], "[oops"], "expect": { "ok": false } },
+        { "op": "replaceValue", "args": [["a"], 9], "expect": { "ok": true, "source": "a = 9\nb = 2\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line string's trailing comment goes after its close [1]",
+      "note": "A TOML multi-line string's opener line is string content, not a place for its comment (figl's is, `Syntax.opener_line_comment`): a `#` there is text, and the comment goes after the close. The Zig test also reads the comment back (`getTrailingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "a = ''' # text\nmore'''\r\nb = 1\r\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["a"], "note"], "expect": { "ok": true, "source": "a = ''' # text\nmore''' # note\r\nb = 1\r\n" } },
+        { "op": "deleteTrailingComment", "args": [["a"]], "expect": { "ok": true, "source": "a = ''' # text\nmore'''\r\nb = 1\r\n" } }
+      ]
+    },
+    {
+      "id": "a multi-line string's trailing comment goes after its close [2]",
+      "source": "a = \"\"\" # text\nmore\"\"\"\r\nb = 1\r\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["a"], "note"], "expect": { "ok": true, "source": "a = \"\"\" # text\nmore\"\"\" # note\r\nb = 1\r\n" } },
+        { "op": "deleteTrailingComment", "args": [["a"]], "expect": { "ok": true, "source": "a = \"\"\" # text\nmore\"\"\"\r\nb = 1\r\n" } }
+      ]
+    },
+    {
+      "id": "insert key into root",
+      "source": "a = 1\nb = 2\n",
+      "steps": [
+        { "op": "insertValue", "args": [[], "c", 3], "expect": { "ok": true, "source": "a = 1\nb = 2\nc = 3\n" } }
+      ]
+    },
+    {
+      "id": "insert key into empty document",
+      "source": "",
+      "steps": [
+        { "op": "insertValue", "args": [[], "a", 1], "expect": { "ok": true, "source": "a = 1\n" } }
+      ]
+    },
+    {
+      "id": "insert root key goes above the first header",
+      "note": "The new root key must land in root's own region — before `[t]` opens — not after the table (which would reparent it into `[t]`).",
+      "source": "x = 1\n[t]\ny = 2\n",
+      "steps": [
+        { "op": "insertValue", "args": [[], "z", 3], "expect": { "ok": true, "source": "x = 1\nz = 3\n[t]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "insert root key above the first header, after a BOM",
+      "note": "The top of a header-first document is past its BOM: a key spliced before it would leave the BOM mid-file, where TOML refuses it.",
+      "source": "﻿[t]\ny = 2\n",
+      "steps": [
+        { "op": "insertValue", "args": [[], "z", 3], "expect": { "ok": true, "source": "﻿z = 3\n[t]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "insert root key into a document that OPENS with a header",
+      "note": "The root's span is the whole document, so its first byte is the `[` of `[t]` — which the generic `isFlow` sniff read as an inline table's opening delimiter, splicing the new entry into the header itself (`[t, z = 3]`) and failing the reparse with `BadKey`. Every header-first file was affected, which is to say every Cargo.toml.",
+      "source": "[t]\ny = 2\n",
+      "steps": [
+        { "op": "insertValue", "args": [[], "z", 3], "expect": { "ok": true, "source": "z = 3\n[t]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "insert root key into a document that opens with an array-of-tables",
+      "note": "`[[bin]]` is the same hazard with a doubled delimiter.",
+      "source": "[[bin]]\nname = \"a\"\n",
+      "steps": [
+        { "op": "insertValue", "args": [[], "z", 3], "expect": { "ok": true, "source": "z = 3\n[[bin]]\nname = \"a\"\n" } }
+      ]
+    },
+    {
+      "id": "insert key into a table",
+      "source": "[server]\nhost = \"a\"\nport = 1\n",
+      "steps": [
+        { "op": "insertValue", "args": [["server"], "tls", true], "expect": { "ok": true, "source": "[server]\nhost = \"a\"\nport = 1\ntls = true\n" } }
+      ]
+    },
+    {
+      "id": "insert into a table that has a sub-table inserts before the sub-header",
+      "source": "[a]\nx = 1\n[a.b]\ny = 2\n",
+      "steps": [
+        { "op": "insertValue", "args": [["a"], "w", 9], "expect": { "ok": true, "source": "[a]\nx = 1\nw = 9\n[a.b]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "insert into a header-only table",
+      "source": "[a]\n[a.b]\ny = 2\n",
+      "steps": [
+        { "op": "insertValue", "args": [["a"], "x", 1], "expect": { "ok": true, "source": "[a]\nx = 1\n[a.b]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "insert preserves the column of existing entries",
+      "source": "[a]\n  x = 1\n",
+      "steps": [
+        { "op": "insertValue", "args": [["a"], "y", 2], "expect": { "ok": true, "source": "[a]\n  x = 1\n  y = 2\n" } }
+      ]
+    },
+    {
+      "id": "insert into an inline table",
+      "source": "p = { x = 1 }\n",
+      "steps": [
+        { "op": "insertValue", "args": [["p"], "y", 2], "expect": { "ok": true, "source": "p = { x = 1, y = 2 }\n" } }
+      ]
+    },
+    {
+      "id": "insert into an empty inline table",
+      "source": "p = {}\n",
+      "steps": [
+        { "op": "insertValue", "args": [["p"], "x", 1], "expect": { "ok": true, "source": "p = { x = 1 }\n" } }
+      ]
+    },
+    {
+      "id": "insert into a dotted table writes a dotted key after its last line [1]",
+      "note": "A bare `y = 1` here is the root's, or `[s]`'s, not `a`'s.",
+      "source": "a.b = 1\n",
+      "steps": [
+        { "op": "setValue", "args": [["a", "y"], 1], "expect": { "ok": true, "source": "a.b = 1\na.y = 1\n" } }
+      ]
+    },
+    {
+      "id": "insert into a dotted table writes a dotted key after its last line [2]",
+      "source": "a.b = 1\nz = 2\n",
+      "steps": [
+        { "op": "setValue", "args": [["a", "y"], 1], "expect": { "ok": true, "source": "a.b = 1\na.y = 1\nz = 2\n" } }
+      ]
+    },
+    {
+      "id": "insert into a dotted table writes a dotted key after its last line [3]",
+      "source": "[s]\n  a.b = 1 # c\n  z = 2\n",
+      "steps": [
+        { "op": "setValue", "args": [["s", "a", "y"], 1], "expect": { "ok": true, "source": "[s]\n  a.b = 1 # c\n  a.y = 1\n  z = 2\n" } }
+      ]
+    },
+    {
+      "id": "insert into a dotted table writes a dotted key after its last line [4]",
+      "source": "a.b.c = 1\nz = 2\na.d = 3\n",
+      "steps": [
+        { "op": "setValue", "args": [["a", "b", "y"], 1], "expect": { "ok": true, "source": "a.b.c = 1\na.b.y = 1\nz = 2\na.d = 3\n" } }
+      ]
+    },
+    {
+      "id": "insert into a dotted table writes a dotted key after its last line [5]",
+      "source": "a.b = [\n  1,\n]\nz = 2\n",
+      "steps": [
+        { "op": "setValue", "args": [["a", "y"], 1], "expect": { "ok": true, "source": "a.b = [\n  1,\n]\na.y = 1\nz = 2\n" } }
+      ]
+    },
+    {
+      "id": "insert into a dotted table writes a dotted key after its last line [6]",
+      "note": "The key path is copied as written, quotes and spaces kept.",
+      "source": "\"x y\" . b = 1\n",
+      "steps": [
+        { "op": "setValue", "args": [["x y", "k"], 1], "expect": { "ok": true, "source": "\"x y\" . b = 1\n\"x y\" . k = 1\n" } }
+      ]
+    },
+    {
+      "id": "insert into a dotted table writes a dotted key after its last line [7]",
+      "source": "[[arr]]\nt.k = 1\n[[arr]]\nt.k = 2\n",
+      "steps": [
+        { "op": "setValue", "args": [["arr", 0, "t", "y"], 1], "expect": { "ok": true, "source": "[[arr]]\nt.k = 1\nt.y = 1\n[[arr]]\nt.k = 2\n" } }
+      ]
+    },
+    {
+      "id": "insert into a dotted table writes a dotted key after its last line [8]",
+      "note": "A missing table under it is a dotted key with an inline table.",
+      "source": "a.b = 1\n",
+      "steps": [
+        { "op": "setValue", "args": [["a", "q", "r"], 1], "expect": { "ok": true, "source": "a.b = 1\na.q = { r = 1 }\n" } }
+      ]
+    },
+    {
+      "id": "insert into a dotted table inside an inline table goes inside its braces [1]",
+      "source": "it = { a.b = 1, c = 2, a.d = 3 }\n",
+      "steps": [
+        { "op": "setValue", "args": [["it", "a", "e"], 5], "expect": { "ok": true, "source": "it = { a.b = 1, c = 2, a.d = 3, a.e = 5 }\n" } }
+      ]
+    },
+    {
+      "id": "insert into a dotted table inside an inline table goes inside its braces [2]",
+      "source": "x.it = { a.b = 1 }\n",
+      "steps": [
+        { "op": "setValue", "args": [["x", "it", "a", "e"], 5], "expect": { "ok": true, "source": "x.it = { a.b = 1, a.e = 5 }\n" } }
+      ]
+    },
+    {
+      "id": "insert into a dotted table inside an inline table goes inside its braces [3]",
+      "source": "it = {\n  a.b = 1,\n  c = 2\n}\n",
+      "steps": [
+        { "op": "setValue", "args": [["it", "a", "e"], 5], "expect": { "ok": true, "source": "it = {\n  a.b = 1,\n  c = 2,\n  a.e = 5\n}\n" } }
+      ]
+    },
+    {
+      "id": "insert into a dotted table inside an inline table goes inside its braces [4]",
+      "note": "The inline table's own new entry goes after a dotted one that ends it, whose own span is only its name.",
+      "source": "it = { c = 2, a.b = 1 }\n",
+      "steps": [
+        { "op": "setValue", "args": [["it", "e"], 5], "expect": { "ok": true, "source": "it = { c = 2, a.b = 1, e = 5 }\n" } }
+      ]
+    },
+    {
+      "id": "insert into a dotted table inside an inline table goes inside its braces [5]",
+      "source": "it = { c = 2, a.b = 1 }\n",
+      "steps": [
+        { "op": "setValue", "args": [["it", "a", "e"], 5], "expect": { "ok": true, "source": "it = { c = 2, a.b = 1, a.e = 5 }\n" } }
+      ]
+    },
+    {
+      "id": "insert into a table named only by headers below it writes a dotted key in the nearest body [1]",
+      "note": "TOML has no `[a]` to write after `[a.b]` made `a`, without moving `[a.b]`; the root's `a.y = 1` is `a`'s.",
+      "source": "top = 0\n\n[a.b]\nx = 1\n",
+      "steps": [
+        { "op": "setValue", "args": [["a", "y"], 1], "expect": { "ok": true, "source": "top = 0\na.y = 1\n\n[a.b]\nx = 1\n" } }
+      ]
+    },
+    {
+      "id": "insert into a table named only by headers below it writes a dotted key in the nearest body [2]",
+      "source": "[s]\n[s.a.b]\nx = 1\n",
+      "steps": [
+        { "op": "setValue", "args": [["s", "a", "y"], 1], "expect": { "ok": true, "source": "[s]\na.y = 1\n[s.a.b]\nx = 1\n" } }
+      ]
+    },
+    {
+      "id": "insert into a table named only by headers below it writes a dotted key in the nearest body [3]",
+      "source": "[[t.x]]\nk = 1\n",
+      "steps": [
+        { "op": "setValue", "args": [["t", "y"], 1], "expect": { "ok": true, "source": "t.y = 1\n[[t.x]]\nk = 1\n" } }
+      ]
+    },
+    {
+      "id": "insert into a table named only by headers below it writes a dotted key in the nearest body [4]",
+      "note": "Dotted lines and a sub-header both: after the dotted lines.",
+      "source": "a.x = 1\n[a.b]\nx = 1\n",
+      "steps": [
+        { "op": "setValue", "args": [["a", "y"], 1], "expect": { "ok": true, "source": "a.x = 1\na.y = 1\n[a.b]\nx = 1\n" } }
+      ]
+    },
+    {
+      "id": "insert duplicate key rolls back",
+      "note": "Zig error DuplicateKey.",
+      "source": "a = 1\n",
+      "steps": [
+        { "op": "insertValue", "args": [[], "a", 2], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "delete scalar key",
+      "source": "a = 1\nb = 2\nc = 3\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["b"]], "expect": { "ok": true, "source": "a = 1\nc = 3\n" } }
+      ]
+    },
+    {
+      "id": "delete key with owned comment",
+      "source": "a = 1\n# note\nb = 2\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["b"]], "expect": { "ok": true, "source": "a = 1\n" } }
+      ]
+    },
+    {
+      "id": "delete key inside a table",
+      "source": "[t]\nx = 1\ny = 2\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["t", "x"]], "expect": { "ok": true, "source": "[t]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "delete the only key under a dotted table takes the implicit table",
+      "note": "`a.b.c = 1` is all there is of the table `a.b`: deleting `c` takes `a.b` too, and the delete guard counts that as the deleted entry's (`impliedOnlyBy` in editor.zig). A table with a header of its own stays, empty. A dotted table that holds anything else is not taken.",
+      "source": "a.b.c = 1\na.c = 2\n\"quoted\".k = 3\n[t]\nd.e = 3\n[t.u]\nv.w = 5\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["a", "b", "c"]], "expect": { "ok": true, "source": "a.c = 2\n\"quoted\".k = 3\n[t]\nd.e = 3\n[t.u]\nv.w = 5\n" } },
+        { "op": "deleteKey", "args": [["quoted", "k"]], "expect": { "ok": true, "source": "a.c = 2\n[t]\nd.e = 3\n[t.u]\nv.w = 5\n" } },
+        { "op": "deleteKey", "args": [["t", "u", "v", "w"]], "expect": { "ok": true, "source": "a.c = 2\n[t]\nd.e = 3\n[t.u]\n" } }
+      ]
+    },
+    {
+      "id": "delete under a dotted key in an inline table takes only its entry",
+      "note": "An implicit table inside an inline table is written by the dotted entries of the inline table, `a.b = 1` whole: deleting `it.a.b` takes that entry and its separator, as deleting `it.c` takes `c = 2`, where the line delete took the whole `it` line. The implicit table goes with its only entry.",
+      "source": "it = { a.b = 1, c = { d = 2 } }\nlst = 1\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["it", "a", "b"]], "expect": { "ok": true, "source": "it = { c = { d = 2 } }\nlst = 1\n" } },
+        { "op": "deleteKey", "args": [["it", "c", "d"]], "expect": { "ok": true, "source": "it = { c = { } }\nlst = 1\n" } }
+      ]
+    },
+    {
+      "id": "delete a dotted key in an inline table, first, middle, last and only [1]",
+      "source": "it = { x = 1, a.b = 2 }\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["it", "a", "b"]], "expect": { "ok": true, "source": "it = { x = 1 }\n" } }
+      ]
+    },
+    {
+      "id": "delete a dotted key in an inline table, first, middle, last and only [2]",
+      "source": "it = { a.b.c = 1 }\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["it", "a", "b", "c"]], "expect": { "ok": true, "source": "it = { }\n" } }
+      ]
+    },
+    {
+      "id": "delete a dotted key in an inline table, first, middle, last and only [3]",
+      "source": "it = { a.b = 1, x = 2, a.c = 3 }\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["it", "a", "c"]], "expect": { "ok": true, "source": "it = { a.b = 1, x = 2 }\n" } }
+      ]
+    },
+    {
+      "id": "delete a dotted key in an inline table, first, middle, last and only [4]",
+      "source": "it = { a.b.c = 1, a.b.d = 2, a.e = 3 }\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["it", "a", "b", "d"]], "expect": { "ok": true, "source": "it = { a.b.c = 1, a.e = 3 }\n" } }
+      ]
+    },
+    {
+      "id": "delete a dotted key in an inline table, first, middle, last and only [5]",
+      "source": "it = { \"q.r\".b = 1, x = 2 }\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["it", "q.r", "b"]], "expect": { "ok": true, "source": "it = { x = 2 }\n" } }
+      ]
+    },
+    {
+      "id": "delete a dotted key in an inline table, first, middle, last and only [6]",
+      "source": "o = { i = { a.b = 1, c = 2 } }\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["o", "i", "a", "b"]], "expect": { "ok": true, "source": "o = { i = { c = 2 } }\n" } }
+      ]
+    },
+    {
+      "id": "delete a dotted key in an inline table, first, middle, last and only [7]",
+      "source": "[t]\nit = { a.b = 1, a.c = { d = 2 } }\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["t", "it", "a", "c", "d"]], "expect": { "ok": true, "source": "[t]\nit = { a.b = 1, a.c = { } }\n" } }
+      ]
+    },
+    {
+      "id": "delete a dotted key in an inline table, first, middle, last and only [8]",
+      "source": "x = [{ a.b = 1, c = 2 }]\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["x", 0, "a", "b"]], "expect": { "ok": true, "source": "x = [{ c = 2 }]\n" } }
+      ]
+    },
+    {
+      "id": "delete the first of a dotted table's scattered entries is refused, inline and block [1]",
+      "note": "Zig error DeleteChangedOtherValues. Deleting the first entry that writes `a` when another writes it after `x` moves `a` after `x` among `it`'s keys, as `a.b = 1` over `x = 2` over `a.c = 3` does among a block table's: the guard refuses both.",
+      "source": "it = { a.b = 1, x = 2, a.c = 3 }\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["it", "a", "b"]], "expect": { "ok": false, "status": "UnsupportedOperation" } }
+      ]
+    },
+    {
+      "id": "delete the first of a dotted table's scattered entries is refused, inline and block [2]",
+      "note": "Zig error DeleteChangedOtherValues.",
+      "source": "[it]\na.b = 1\nx = 2\na.c = 3\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["it", "a", "b"]], "expect": { "ok": false, "status": "UnsupportedOperation" } }
+      ]
+    },
+    {
+      "id": "deleteContainer of an implicit table in an inline table takes its entries [1]",
+      "note": "A whole implicit table inside an inline table is every entry that writes it, wherever they stand among the others; `deleteContainer` takes those and leaves the rest, where its line gather took the whole `it` line.",
+      "source": "it = { a.b = 1, c = { d = 2 }, a.e.f = 3 }\nz = 0\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["it", "a", "e"]], "expect": { "ok": true, "source": "it = { a.b = 1, c = { d = 2 } }\nz = 0\n" } }
+      ]
+    },
+    {
+      "id": "deleteContainer of an implicit table in an inline table takes its entries [2]",
+      "source": "it = { a.b = 1, c = { d = 2 }, a.e.f = 3 }\nz = 0\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["it", "a"]], "expect": { "ok": true, "source": "it = { c = { d = 2 } }\nz = 0\n" } }
+      ]
+    },
+    {
+      "id": "deleteContainer of an implicit table in an inline table takes its entries [3]",
+      "source": "it = { a.b = 1 }\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["it", "a"]], "expect": { "ok": true, "source": "it = { }\n" } }
+      ]
+    },
+    {
+      "id": "delete an inline-table-valued key",
+      "source": "a = 1\np = { x = 1, y = 2 }\nb = 2\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["p"]], "expect": { "ok": true, "source": "a = 1\nb = 2\n" } }
+      ]
+    },
+    {
+      "id": "delete key inside a packed inline table (regression)",
+      "note": "Regression: an inline table's entries are comma-separated on one physical line, not one-per-line like a block table, so `deleteKey`'s generic line-based delete (built for the block shape) used to delete the whole containing line — here, the entire (single-line) document — leaving an empty file that TOML's empty-document-is-an-empty-table grammar then accepted, silently committing the data loss instead of erroring. Deleting a key *inside* a packed inline table must only remove that key.",
+      "source": "point = { x = 1, y = 2 }\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["point", "y"]], "expect": { "ok": true, "source": "point = { x = 1 }\n" } }
+      ]
+    },
+    {
+      "id": "delete first key of a packed inline table",
+      "source": "point = { x = 1, y = 2 }\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["point", "x"]], "expect": { "ok": true, "source": "point = { y = 2 }\n" } }
+      ]
+    },
+    {
+      "id": "delete only key of a single-entry inline table (regression)",
+      "note": "Regression: deleting the *only* key of a single-entry inline table must leave an empty inline table `{}`, not delete the braces with the line. The old block-shaped line delete wiped the whole `point = { x = 1 }` line, which TOML's empty-document-is-an-empty-table grammar then silently accepted, committing the data loss to disk instead of preserving `point = {}`.",
+      "source": "point = { x = 1 }\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["point", "x"]], "expect": { "ok": true, "source": "point = { }\n" } }
+      ]
+    },
+    {
+      "id": "delete last key of a multi-line inline table (regression)",
+      "note": "Regression: deleting the *last* key of a one-entry-per-line inline table used to strand the predecessor's separator comma before the closing brace — which TOML forbids (no trailing comma in an inline table). The flow-aware splice drops the preceding comma instead.",
+      "source": "point = {\n  x = 1,\n  y = 2\n}\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["point", "y"]], "expect": { "ok": true, "source": "point = {\n  x = 1\n}\n" } }
+      ]
+    },
+    {
+      "id": "delete dotted key removes the line",
+      "source": "a.b.c = 1\na.b.d = 2\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["a", "b", "c"]], "expect": { "ok": true, "source": "a.b.d = 2\n" } }
+      ]
+    },
+    {
+      "id": "deleting a header table is refused",
+      "note": "Zig error CannotDeleteSection.",
+      "source": "[a]\nx = 1\n[a.b]\ny = 2\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["a", "b"]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "deleting an array-of-tables is refused",
+      "note": "Zig error CannotDeleteSection.",
+      "source": "[[fruit]]\nname = \"apple\"\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["fruit"]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "inline array append/prepend/remove",
+      "source": "ports = [1, 2]\n",
+      "steps": [
+        { "op": "appendValue", "args": [["ports"], 3], "expect": { "ok": true, "source": "ports = [1, 2, 3]\n" } },
+        { "op": "prependValue", "args": [["ports"], 0], "expect": { "ok": true, "source": "ports = [0, 1, 2, 3]\n" } },
+        { "op": "deleteItem", "args": [["ports"], 2], "expect": { "ok": true, "source": "ports = [0, 1, 3]\n" } }
+      ]
+    },
+    {
+      "id": "inline array append with pre-existing trailing comma",
+      "note": "A trailing comma before ']' is legal TOML inline-array syntax; appending must not double it into an empty element that fails to reparse.",
+      "source": "ports = [1, 2,]\n",
+      "steps": [
+        { "op": "appendValue", "args": [["ports"], 3], "expect": { "ok": true, "source": "ports = [1, 2, 3,]\n" } }
+      ]
+    },
+    {
+      "id": "inline array append onto a multi-line one-item-per-line array",
+      "source": "ports = [\n  1,\n  2,\n]\n",
+      "steps": [
+        { "op": "appendValue", "args": [["ports"], 3], "expect": { "ok": true, "source": "ports = [\n  1,\n  2,\n  3,\n]\n" } }
+      ]
+    },
+    {
+      "id": "remove last item of a multi-line trailing-comma inline array (regression)",
+      "note": "Same class of bug as the append regression above, on the delete side: the backward scan for the preceding comma didn't cross newlines, so removing the last item left its own trailing comma dangling as an empty element that failed to reparse. The index 4294967295 is the `std.math.maxInt(usize)` the Zig test passed (as a wasm32 usize): the editor reads it as the last item.",
+      "source": "ports = [\n  1,\n  2,\n]\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["ports"], 4294967295], "expect": { "ok": true, "source": "ports = [\n  1,\n]\n" } }
+      ]
+    },
+    {
+      "id": "inline array ops on array-of-tables are refused",
+      "note": "Zig error NotAnInlineArray.",
+      "source": "[[fruit]]\nname = \"apple\"\n",
+      "steps": [
+        { "op": "appendValue", "args": [["fruit"], 1], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "append array-of-tables element",
+      "source": "[[fruit]]\nname = \"apple\"\n",
+      "steps": [
+        { "op": "appendContainerToSeq", "args": [["fruit"], "name = \"pear\"\n"], "expect": { "ok": true, "source": "[[fruit]]\nname = \"apple\"\n\n[[fruit]]\nname = \"pear\"\n" } }
+      ]
+    },
+    {
+      "id": "append AoT element after one with a sub-table",
+      "note": "The new element must splice past the last element's nested sub-table, not into the middle of it.",
+      "source": "[[fruit]]\nname = \"apple\"\n\n[fruit.variety]\nkind = \"red\"\n",
+      "steps": [
+        { "op": "appendContainerToSeq", "args": [["fruit"], "name = \"pear\"\n"], "expect": { "ok": true, "source": "[[fruit]]\nname = \"apple\"\n\n[fruit.variety]\nkind = \"red\"\n\n[[fruit]]\nname = \"pear\"\n" } }
+      ]
+    },
+    {
+      "id": "append empty AoT element",
+      "source": "[[fruit]]\nname = \"apple\"\n",
+      "steps": [
+        { "op": "appendContainerToSeq", "args": [["fruit"], ""], "expect": { "ok": true, "source": "[[fruit]]\nname = \"apple\"\n\n[[fruit]]\n" } }
+      ]
+    },
+    {
+      "id": "append AoT with a dotted header path",
+      "source": "[[a.b]]\nx = 1\n",
+      "steps": [
+        { "op": "appendContainerToSeq", "args": [["a", "b"], "x = 2\n"], "expect": { "ok": true, "source": "[[a.b]]\nx = 1\n\n[[a.b]]\nx = 2\n" } }
+      ]
+    },
+    {
+      "id": "appendTableToArray on a non-AoT is refused",
+      "note": "Zig error NotAnArrayOfTables.",
+      "source": "nums = [1, 2]\n",
+      "steps": [
+        { "op": "appendContainerToSeq", "args": [["nums"], "x = 1\n"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "delete simple header table",
+      "source": "[a]\nx = 1\n[b]\ny = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a"]], "expect": { "ok": true, "source": "[b]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "delete table leaves interleaved foreign table intact",
+      "source": "[a]\nx = 1\n[other]\ny = 2\n[a.b]\nz = 3\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a"]], "expect": { "ok": true, "source": "[other]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "delete header-only table with sub-tables",
+      "source": "[a]\n[a.b]\ny = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a"]], "expect": { "ok": true, "source": "" } }
+      ]
+    },
+    {
+      "id": "delete table carries owned comment",
+      "source": "# about a\n[a]\nx = 1\n[b]\ny = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a"]], "expect": { "ok": true, "source": "[b]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "delete table with multi-line array value",
+      "source": "[a]\nl = [\n  1,\n  2,\n]\n[b]\ny = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a"]], "expect": { "ok": true, "source": "[b]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "delete dotted-only table",
+      "source": "a.b = 1\na.c = 2\nz = 9\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a"]], "expect": { "ok": true, "source": "z = 9\n" } }
+      ]
+    },
+    {
+      "id": "delete whole array-of-tables",
+      "source": "[[f]]\nn = \"a\"\n[[f]]\nn = \"b\"\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["f"]], "expect": { "ok": true, "source": "" } }
+      ]
+    },
+    {
+      "id": "delete single AoT element",
+      "source": "[[f]]\nn = \"a\"\n[[f]]\nn = \"b\"\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["f", 0]], "expect": { "ok": true, "source": "[[f]]\nn = \"b\"\n" } }
+      ]
+    },
+    {
+      "id": "delete the only AoT element leaves an empty array in the parent's body [1]",
+      "note": "The only element of an array of tables leaves the array, emptied, as the last item of an inline array does: `x = []`, written in the body of the table that holds `x` — the root's entries above the first header, `[t]`'s under its header, an element's under its `[[a]]` — where an entry inserted into that table goes. A table with no header of its own (`t` made by `[[t.x]]` alone, or by a dotted line) has no body, so the key path from the nearest table that has one is written as a dotted key there. The comment block above `[[x]]` and the comment ending its line stay, around `x = []`. The Zig test also reads the array back as an empty sequence, which `= []` pins.",
+      "source": "a = 1\n[[x]]\nb = 2\n[y]\nc = 3\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["x", 0]], "expect": { "ok": true, "source": "a = 1\nx = []\n[y]\nc = 3\n" } }
+      ]
+    },
+    {
+      "id": "delete the only AoT element leaves an empty array in the parent's body [2]",
+      "source": "[y]\nc = 3\n[[x]]\nb = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["x", 0]], "expect": { "ok": true, "source": "x = []\n[y]\nc = 3\n" } }
+      ]
+    },
+    {
+      "id": "delete the only AoT element leaves an empty array in the parent's body [3]",
+      "source": "[[x]]\nb = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["x", 0]], "expect": { "ok": true, "source": "x = []\n" } }
+      ]
+    },
+    {
+      "id": "delete the only AoT element leaves an empty array in the parent's body [4]",
+      "source": "[[x]]\n[x.sub]\nk = 1\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["x", 0]], "expect": { "ok": true, "source": "x = []\n" } }
+      ]
+    },
+    {
+      "id": "delete the only AoT element leaves an empty array in the parent's body [5]",
+      "source": "[[\"x y\"]]\nb = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["x y", 0]], "expect": { "ok": true, "source": "\"x y\" = []\n" } }
+      ]
+    },
+    {
+      "id": "delete the only AoT element leaves an empty array in the parent's body [6]",
+      "source": "[t]\na = 1\n[[t.x]]\nb = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["t", "x", 0]], "expect": { "ok": true, "source": "[t]\na = 1\nx = []\n" } }
+      ]
+    },
+    {
+      "id": "delete the only AoT element leaves an empty array in the parent's body [7]",
+      "source": "[t]\n[t.u]\nc = 1\n[[t.x]]\nb = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["t", "x", 0]], "expect": { "ok": true, "source": "[t]\nx = []\n[t.u]\nc = 1\n" } }
+      ]
+    },
+    {
+      "id": "delete the only AoT element leaves an empty array in the parent's body [8]",
+      "source": "a = 1\n[[t.x]]\nb = 2\n[t.u]\nc = 1\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["t", "x", 0]], "expect": { "ok": true, "source": "a = 1\nt.x = []\n[t.u]\nc = 1\n" } }
+      ]
+    },
+    {
+      "id": "delete the only AoT element leaves an empty array in the parent's body [9]",
+      "source": "[[p.q.x]]\nb = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["p", "q", "x", 0]], "expect": { "ok": true, "source": "p.q.x = []\n" } }
+      ]
+    },
+    {
+      "id": "delete the only AoT element leaves an empty array in the parent's body [10]",
+      "source": "[a]\nt.k = 1\n[[a.t.x]]\nb = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a", "t", "x", 0]], "expect": { "ok": true, "source": "[a]\nt.k = 1\nt.x = []\n" } }
+      ]
+    },
+    {
+      "id": "delete the only AoT element leaves an empty array in the parent's body [11]",
+      "source": "[[a]]\nn = 1\n[[a.x]]\nb = 2\n[[a]]\nn = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a", 0, "x", 0]], "expect": { "ok": true, "source": "[[a]]\nn = 1\nx = []\n[[a]]\nn = 2\n" } }
+      ]
+    },
+    {
+      "id": "delete the only AoT element leaves an empty array in the parent's body [12]",
+      "source": "[[a]]\n[[a.x]]\nb = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a", 0, "x", 0]], "expect": { "ok": true, "source": "[[a]]\nx = []\n" } }
+      ]
+    },
+    {
+      "id": "delete the only AoT element leaves an empty array in the parent's body [13]",
+      "source": "a = 1\n\n# the xs\n[[x]] # first\nb = 2\n\n[y]\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["x", 0]], "expect": { "ok": true, "source": "a = 1\n# the xs\nx = [] # first\n\n[y]\n" } }
+      ]
+    },
+    {
+      "id": "delete the only AoT element leaves an empty array in the parent's body [14]",
+      "source": "a = 1\n\n[[x]]\nb = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["x", 0]], "expect": { "ok": true, "source": "a = 1\nx = []\n" } }
+      ]
+    },
+    {
+      "id": "delete the only AoT element leaves an empty array in the parent's body [15]",
+      "source": "[y]\nc = 3\n\n[[x]]\nb = 2\n\n[z]\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["x", 0]], "expect": { "ok": true, "source": "x = []\n[y]\nc = 3\n\n[z]\n" } }
+      ]
+    },
+    {
+      "id": "delete the only AoT element leaves an empty array in the parent's body [16]",
+      "source": "# the xs\n[[x]] # first\nb = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["x", 0]], "expect": { "ok": true, "source": "# the xs\nx = [] # first\n" } }
+      ]
+    },
+    {
+      "id": "delete the only AoT element leaves an empty array in the parent's body [17]",
+      "source": "[t]\na = 1 # one\n# the xs\n[[t.x]]\nb = 2\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["t", "x", 0]], "expect": { "ok": true, "source": "[t]\na = 1 # one\n# the xs\nx = []\n" } }
+      ]
+    },
+    {
+      "id": "delete AoT element with nested sub-table",
+      "source": "[[f]]\nn = \"a\"\n[f.sub]\nk = 1\n[[f]]\nn = \"b\"\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["f", 0]], "expect": { "ok": true, "source": "[[f]]\nn = \"b\"\n" } }
+      ]
+    },
+    {
+      "id": "deleteTable on a scalar key is refused",
+      "note": "Zig error NotASection.",
+      "source": "x = 1\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["x"]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "insert new table at root end",
+      "source": "a = 1\n[t]\nx = 1\n",
+      "steps": [
+        { "op": "insertContainer", "args": [["s"], "p = 1\n"], "expect": { "ok": true, "source": "a = 1\n[t]\nx = 1\n\n[s]\np = 1\n" } }
+      ]
+    },
+    {
+      "id": "insert sub-table after parent subtree",
+      "source": "[a]\nx = 1\n",
+      "steps": [
+        { "op": "insertContainer", "args": [["a", "b"], "z = 3\n"], "expect": { "ok": true, "source": "[a]\nx = 1\n\n[a.b]\nz = 3\n" } }
+      ]
+    },
+    {
+      "id": "insert empty table",
+      "source": "a = 1\n",
+      "steps": [
+        { "op": "insertContainer", "args": [["t"], ""], "expect": { "ok": true, "source": "a = 1\n\n[t]\n" } }
+      ]
+    },
+    {
+      "id": "insert table with quoted-key segment",
+      "source": "a = 1\n",
+      "steps": [
+        { "op": "insertContainer", "args": [["needs space"], "x = 1\n"], "expect": { "ok": true, "source": "a = 1\n\n[\"needs space\"]\nx = 1\n" } }
+      ]
+    },
+    {
+      "id": "insert duplicate table is refused",
+      "note": "Zig error SectionExists.",
+      "source": "[a]\nx = 1\n",
+      "steps": [
+        { "op": "insertContainer", "args": [["a"], "y = 2\n"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "rename leaf table header",
+      "source": "[server]\nport = 8080\n",
+      "steps": [
+        { "op": "renameContainer", "args": [["server"], "http"], "expect": { "ok": true, "source": "[http]\nport = 8080\n" } }
+      ]
+    },
+    {
+      "id": "rename rewrites descendant sub-headers",
+      "source": "[a]\nx = 1\n[a.b]\nz = 3\n[a.b.c]\nw = 4\n",
+      "steps": [
+        { "op": "renameContainer", "args": [["a"], "q"], "expect": { "ok": true, "source": "[q]\nx = 1\n[q.b]\nz = 3\n[q.b.c]\nw = 4\n" } }
+      ]
+    },
+    {
+      "id": "rename does not touch a similar-prefix foreign table",
+      "source": "[a]\nx = 1\n[ab]\ny = 2\n",
+      "steps": [
+        { "op": "renameContainer", "args": [["a"], "q"], "expect": { "ok": true, "source": "[q]\nx = 1\n[ab]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "rename leaf needing quotes",
+      "source": "[a]\nx = 1\n",
+      "steps": [
+        { "op": "renameContainer", "args": [["a"], "new key"], "expect": { "ok": true, "source": "[\"new key\"]\nx = 1\n" } }
+      ]
+    },
+    {
+      "id": "rename AoT header",
+      "source": "[[a.b]]\nn = 1\n[[a.b]]\nn = 2\n",
+      "steps": [
+        { "op": "renameContainer", "args": [["a", "b"], "c"], "expect": { "ok": true, "source": "[[a.c]]\nn = 1\n[[a.c]]\nn = 2\n" } }
+      ]
+    },
+    {
+      "id": "rename a dotted table rewrites every line that names it",
+      "source": "a.b = 1\na.c = 2\n",
+      "steps": [
+        { "op": "renameContainer", "args": [["a"], "q"], "expect": { "ok": true, "source": "q.b = 1\nq.c = 2\n" } }
+      ]
+    },
+    {
+      "id": "rename an intermediate dotted segment",
+      "note": "`a.b.d = 2` has no node of its own for `b` — it is reached as a child of the `b` created by line 1, which is why the walk recurses per dotted LEVEL rather than per node with a span.",
+      "source": "a.b.c = 1\na.b.d = 2\n",
+      "steps": [
+        { "op": "renameContainer", "args": [["a", "b"], "q"], "expect": { "ok": true, "source": "a.q.c = 1\na.q.d = 2\n" } }
+      ]
+    },
+    {
+      "id": "rename a dotted table inside a header uses its LINE index",
+      "note": "`t.a` is at path depth 1 but segment 0 of each line: a dotted key is spelled relative to the enclosing header, so the index comes from the source, not the path.",
+      "source": "[t]\na.b = 1\na.c = 2\n",
+      "steps": [
+        { "op": "renameContainer", "args": [["t", "a"], "q"], "expect": { "ok": true, "source": "[t]\nq.b = 1\nq.c = 2\n" } }
+      ]
+    },
+    {
+      "id": "rename a header does NOT touch its children's dotted keys",
+      "note": "The mirror of the case above: `[t]`'s name appears in the header alone — its children's dotted lines are relative to it and must stay as they are.",
+      "source": "[t]\na.b = 1\na.c = 2\n",
+      "steps": [
+        { "op": "renameContainer", "args": [["t"], "q"], "expect": { "ok": true, "source": "[q]\na.b = 1\na.c = 2\n" } }
+      ]
+    },
+    {
+      "id": "rename a table named by BOTH a dotted line and a sub-header",
+      "note": "Renaming `a` has to rewrite both mentions; either one alone split the document into a renamed table plus a re-created `a`.",
+      "source": "a.b = 1\n[a.c]\nd = 2\n",
+      "steps": [
+        { "op": "renameContainer", "args": [["a"], "q"], "expect": { "ok": true, "source": "q.b = 1\n[q.c]\nd = 2\n" } }
+      ]
+    },
+    {
+      "id": "rename a quoted dotted segment replaces the whole token",
+      "source": "[t]\n\"q k\".b = 1\n",
+      "steps": [
+        { "op": "renameContainer", "args": [["t", "q k"], "plain"], "expect": { "ok": true, "source": "[t]\nplain.b = 1\n" } }
+      ]
+    },
+    {
+      "id": "rename refuses a target whose name is nowhere to rewrite",
+      "note": "Zig error NotASection. An inline table's key is a plain key, not a table name — the whole-table rename has nothing to gather, so it says so instead of reporting a rename that changed nothing. (`replaceKeyAtPath` is what renames these; see below.)",
+      "source": "t = { a = 1 }\nk = 1\n",
+      "steps": [
+        { "op": "renameContainer", "args": [["t"], "q"], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "renameContainer", "args": [["k"], "q"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "replaceKey on a [header] table renames every mention",
+      "note": "Was: `[a]` → `[Q]` with `[a.b]` left behind, which re-created `a` around `b` and split the table — reported as a successful rename.",
+      "source": "[a]\nx = 1\n[a.b]\ny = 2\n",
+      "steps": [
+        { "op": "renameKey", "args": [["a"], "q"], "expect": { "ok": true, "source": "[q]\nx = 1\n[q.b]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "replaceKey on an array of tables renames every element header",
+      "source": "[[aot]]\nk = 1\n[[aot]]\nk = 2\n",
+      "steps": [
+        { "op": "renameKey", "args": [["aot"], "q"], "expect": { "ok": true, "source": "[[q]]\nk = 1\n[[q]]\nk = 2\n" } }
+      ]
+    },
+    {
+      "id": "replaceKey on a dotted table renames every line",
+      "source": "a.b = 1\na.c = 2\n",
+      "steps": [
+        { "op": "renameKey", "args": [["a"], "q"], "expect": { "ok": true, "source": "q.b = 1\nq.c = 2\n" } }
+      ]
+    },
+    {
+      "id": "replaceKey on a scalar or inline container still splices one span",
+      "note": "These keys are written exactly once, so the key span IS the whole rename — the routing above must not reach for the table machinery here. `replaceKey` takes key SYNTAX, which is what a quoted rename spells.",
+      "source": "t = { a = 1 }\nk = 1\nl = [1, 2]\n",
+      "steps": [
+        { "op": "renameKey", "args": [["t"], "tbl"], "expect": { "ok": true } },
+        { "op": "renameKey", "args": [["k"], "a key"], "expect": { "ok": true } },
+        { "op": "renameKey", "args": [["l"], "list"], "expect": { "ok": true, "source": "tbl = { a = 1 }\n\"a key\" = 1\nlist = [1, 2]\n" } }
+      ]
+    },
+    {
+      "id": "replaceKey rolls back a rename that collides with a sibling",
+      "note": "Zig error DuplicateKey. `[a]` → `[b]` makes two `[b]` tables; the reparse rejects it and the whole multi-line rewrite is undone.",
+      "source": "[a]\nx = 1\n[b]\ny = 2\n",
+      "steps": [
+        { "op": "renameKey", "args": [["a"], "b"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "move table to end",
+      "source": "[a]\nx = 1\n[b]\ny = 2\n",
+      "steps": [
+        { "op": "moveContainer", "args": [["a"], null], "expect": { "ok": true, "source": "[b]\ny = 2\n\n[a]\nx = 1\n" } }
+      ]
+    },
+    {
+      "id": "move scattered table collapses fragments contiguously",
+      "source": "[a]\nx = 1\n[b]\ny = 2\n[a.c]\nz = 3\n",
+      "steps": [
+        { "op": "moveContainer", "args": [["a"], null], "expect": { "ok": true, "source": "[b]\ny = 2\n\n[a]\nx = 1\n[a.c]\nz = 3\n" } }
+      ]
+    },
+    {
+      "id": "move table before another",
+      "source": "[a]\nx = 1\n[b]\ny = 2\n[c]\nw = 3\n",
+      "steps": [
+        { "op": "moveContainer", "args": [["c"], ["b"]], "expect": { "ok": true, "source": "[a]\nx = 1\n\n[c]\nw = 3\n[b]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "reorder top-level tables",
+      "source": "[a]\nx = 1\n[b]\ny = 2\n[c]\nw = 3\n",
+      "steps": [
+        { "op": "reorderContainers", "args": [["c", "a", "b"]], "expect": { "ok": true, "source": "[c]\nw = 3\n[a]\nx = 1\n[b]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "moveKey refuses to move a [header] table",
+      "note": "Zig error CannotMoveSection. Used to produce `[b]\\nz = 0\\ny = 2\\n…` — only the header line moved, so the root key `z` landed inside `b`.",
+      "source": "z = 0\n[b]\ny = 2\n[a]\nx = 1\n",
+      "steps": [
+        { "op": "moveKey", "args": [["b"], ["z"]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "moveKey refuses to move an entry to before a [header]",
+      "note": "Zig error CannotMoveSection. \"Before `[b]`\" is the end of `[a]`'s body, so `z` would have become `a.z` — the destination is as much of a hazard as the source.",
+      "source": "z = 0\n[a]\nx = 1\n[b]\ny = 2\n",
+      "steps": [
+        { "op": "moveKey", "args": [["z"], ["b"]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "moveKey still moves plain entries inside a table",
+      "source": "[a]\nx = 1\ny = 2\nz = 3\n",
+      "steps": [
+        { "op": "moveKey", "args": [["a", "z"], ["a", "y"]], "expect": { "ok": true, "source": "[a]\nx = 1\nz = 3\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "reorderKeys refuses a reorder that shifts a table",
+      "note": "Zig error CannotReorderSections. Used to produce `z = 0\\n[a]\\n[b]\\ny = 2\\nx = 1\\n`: `[a]` was the last entry, so its block stopped at its own header line and `x = 1` stayed put — becoming `b.x`, with `[a]` left empty.",
+      "source": "z = 0\n[b]\ny = 2\n[a]\nx = 1\n",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["z", "a", "b"]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "reorderKeys still reorders scalars around a sub-table that stays put",
+      "note": "The guard sees only entries whose position CHANGES, and `b` keeps its index here — so this legitimate reorder is untouched.",
+      "source": "[a]\nx = 1\ny = 2\n[a.b]\nz = 3\n",
+      "steps": [
+        { "op": "reorderKeys", "args": [["a"], ["y", "x"]], "expect": { "ok": true, "source": "[a]\ny = 2\nx = 1\n[a.b]\nz = 3\n" } }
+      ]
+    },
+    {
+      "id": "deleteKey refuses a dotted table; deleteContainer takes every line",
+      "note": "Zig error CannotDeleteSection. Used to delete `a.b = 1` alone, leaving `a.c = 2` to keep `a` alive.",
+      "source": "a.b = 1\nz = 0\na.c = 2\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["a"]], "expect": { "ok": false, "status": "InvalidArgument" } },
+        { "op": "deleteContainer", "args": [["a"]], "expect": { "ok": true, "source": "z = 0\n" } }
+      ]
+    },
+    {
+      "id": "deleteContainer of a header table takes a multi-line dotted child whole",
+      "note": "`x` is a dotted table under `[a]` spread over two lines; the second line is in no node span of `x`'s keyvalue, and a gather that took the entry's own line would have left `x.z = 2` behind to become a root key.",
+      "source": "[a]\nx.y = 1\nx.z = 2\n[b]\nw = 3\n",
+      "steps": [
+        { "op": "deleteContainer", "args": [["a"]], "expect": { "ok": true, "source": "[b]\nw = 3\n" } }
+      ]
+    },
+    {
+      "id": "moveContainer to before a root dotted table is refused, not a reparented table",
+      "note": "Zig error EditReadsBackWrong. A dotted-only table has no `[` line, which the old header-line sniff refused as a destination; it is a section node like any other. But `[b]` set down above the root's `d.k = 0` takes that line into `b`, where `d` reads back as `b.d`: the move guard refuses.",
+      "source": "d.k = 0\n[a]\nx = 1\n[b]\ny = 2\n",
+      "steps": [
+        { "op": "moveContainer", "args": [["b"], ["d"]], "expect": { "ok": false, "status": "UnsupportedOperation" } }
+      ]
+    },
+    {
+      "id": "edits after a refused one and a missing one read the source as it stands",
+      "note": "Zig errors EditReadsBackWrong, NotFound. The guards compare with the parse the editor already held, kept from the reparse that would have freed it, and hand its buffer back when nothing was spliced: an edit after a refused one, and after one that found nothing to delete, reads the source as it stands.",
+      "source": "d.k = 0\n[a]\nx = 1\n[b]\ny = 2\n",
+      "steps": [
+        { "op": "moveContainer", "args": [["b"], ["d"]], "expect": { "ok": false, "status": "UnsupportedOperation" } },
+        { "op": "deleteKey", "args": [["a", "nope"]], "expect": { "ok": false, "status": "NotFound" } },
+        { "op": "replaceValue", "args": [["a", "x"], 2], "expect": { "ok": true, "source": "d.k = 0\n[a]\nx = 2\n[b]\ny = 2\n" } },
+        { "op": "deleteKey", "args": [["a", "x"]], "expect": { "ok": true, "source": "d.k = 0\n[a]\n[b]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "reorderKeys reorders an inline table",
+      "source": "t = { a = 1, b = 2 }\n",
+      "steps": [
+        { "op": "reorderKeys", "args": [["t"], ["b"]], "expect": { "ok": true, "source": "t = { b = 2, a = 1 }\n" } }
+      ]
+    },
+    {
+      "id": "reorderKeys still reorders a document of plain root keys",
+      "source": "a = 1\nb = 2\nc = 3\n",
+      "steps": [
+        { "op": "reorderKeys", "args": [[], ["c", "a"]], "expect": { "ok": true, "source": "c = 3\na = 1\nb = 2\n" } }
+      ]
+    },
+    {
+      "id": "spells an inserted key's name bare when it can, else as an escaped basic string",
+      "source": "a = 1\n",
+      "steps": [
+        { "op": "insertValue", "args": [[], "b-2", 2], "expect": { "ok": true } },
+        { "op": "insertValue", "args": [[], "has space", 3], "expect": { "ok": true } },
+        { "op": "insertValue", "args": [[], "line\nbreak", 4], "expect": { "ok": true, "source": "a = 1\nb-2 = 2\n\"has space\" = 3\n\"line\\nbreak\" = 4\n" } }
+      ]
+    },
+    {
+      "id": "a string replacing a literal string stays literal where it can",
+      "note": "A `'` it cannot hold: the basic string the caller rendered.",
+      "source": "path = 'C:\\dir'\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["path"], "D:\\x"], "expect": { "ok": true, "source": "path = 'D:\\x'\n" } },
+        { "op": "replaceValue", "args": [["path"], "it's"], "expect": { "ok": true, "source": "path = \"it's\"\n" } }
+      ]
+    },
+    {
+      "id": "a basic string stays the printer's",
+      "source": "a = \"x\"\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["a"], "y"], "expect": { "ok": true, "source": "a = \"y\"\n" } }
+      ]
+    },
+    {
+      "id": "multi-line strings keep their delimiters and the break after the opener",
+      "note": "`'''` would close the literal, so it takes the basic string.",
+      "source": "a = '''\none\n'''\nb = \"\"\"x\"\"\"\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["a"], "two\nthree\n"], "expect": { "ok": true, "source": "a = '''\ntwo\nthree\n'''\nb = \"\"\"x\"\"\"\n" } },
+        { "op": "replaceValue", "args": [["b"], "say \"hi\"\n"], "expect": { "ok": true, "source": "a = '''\ntwo\nthree\n'''\nb = \"\"\"say \\\"hi\\\"\n\"\"\"\n" } },
+        { "op": "replaceValue", "args": [["a"], "x'''y"], "expect": { "ok": true, "source": "a = \"x'''y\"\nb = \"\"\"say \\\"hi\\\"\n\"\"\"\n" } }
+      ]
+    },
+    {
+      "id": "addLeadingComment on TOML uses #",
+      "source": "a = 1\nb = 2\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["b"], "note"], "expect": { "ok": true, "source": "a = 1\n# note\nb = 2\n" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no leading comment [1]",
+      "note": "Read: null through either item; the block is still `members`' own. Delete: a no-op, not a delete of the parent's block. The Zig test also reads the comment back (`getLeadingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "# above members\nmembers = [\"a\", \"b\"]\n",
+      "steps": [
+        { "op": "deleteLeadingComment", "args": [["members", 0]], "expect": { "ok": true, "source": "# above members\nmembers = [\"a\", \"b\"]\n" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no leading comment [2]",
+      "note": "Zig error CommentsUnanchored. Add: refused; there is no line the item owns to put one on.",
+      "source": "# above members\nmembers = [\"a\", \"b\"]\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["members", 0], "new"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no leading comment [3]",
+      "note": "An inline table's entry shares the line the same way.",
+      "source": "# above nested\nnested = { k = \"v\" }\n",
+      "steps": [
+        { "op": "deleteLeadingComment", "args": [["nested", "k"]], "expect": { "ok": true, "source": "# above nested\nnested = { k = \"v\" }\n" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no leading comment [4]",
+      "note": "Zig error CommentsUnanchored.",
+      "source": "# above nested\nnested = { k = \"v\" }\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["nested", "k"], "new"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no leading comment [5]",
+      "note": "A multi-line array's items each begin their own line: unchanged.",
+      "source": "# above members\nmembers = [\n  \"a\",\n  \"b\",\n]\n",
+      "steps": [
+        { "op": "deleteLeadingComment", "args": [["members", 0]], "expect": { "ok": true, "source": "# above members\nmembers = [\n  \"a\",\n  \"b\",\n]\n" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no leading comment [6]",
+      "source": "# above members\nmembers = [\n  \"a\",\n  \"b\",\n]\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["members", 0], "new"], "expect": { "ok": true, "source": "# above members\nmembers = [\n  # new\n  \"a\",\n  \"b\",\n]\n" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no trailing comment either [1]",
+      "note": "The same defect, one line to the right: the comment after `]` closes the parent's line, and the item's window used to run right through the rest of the collection to reach it. The Zig test also reads the comment back (`getTrailingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "members = [\"a\", \"b\"] # note\n",
+      "steps": [
+        { "op": "deleteTrailingComment", "args": [["members", 0]], "expect": { "ok": true, "source": "members = [\"a\", \"b\"] # note\n" } }
+      ]
+    },
+    {
+      "id": "a flow item on its parent's line owns no trailing comment either [2]",
+      "note": "Zig error CommentsUnanchored.",
+      "source": "members = [\"a\", \"b\"] # note\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["members", 0], "new"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "dangling comment round-trips in a TOML table, before any sub-table [1]",
+      "note": "The Zig test also reads the comment back (`getDanglingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "[server]\nport = 8080\n\n[client]\nx = 1\n",
+      "steps": [
+        { "op": "addDanglingComment", "args": [["server"], "note"], "expect": { "ok": true, "source": "[server]\nport = 8080\n# note\n\n[client]\nx = 1\n" } },
+        { "op": "deleteDanglingComment", "args": [["server"]], "expect": { "ok": true, "source": "[server]\nport = 8080\n\n[client]\nx = 1\n" } }
+      ]
+    },
+    {
+      "id": "dangling comment round-trips in a TOML table, before any sub-table [2]",
+      "note": "A table whose only child is a sub-table anchors after its header line — where `toml/printer.zig` emits the run, before the sub-tables.",
+      "source": "[a]\n[a.b]\nx = 1\n",
+      "steps": [
+        { "op": "addDanglingComment", "args": [["a"], "note"], "expect": { "ok": true, "source": "[a]\n# note\n[a.b]\nx = 1\n" } },
+        { "op": "deleteDanglingComment", "args": [["a"]], "expect": { "ok": true, "source": "[a]\n[a.b]\nx = 1\n" } }
+      ]
+    },
+    {
+      "id": "commentOut round-trips a TOML entry and a JSONC member",
+      "note": "The Zig test also checks the commented-out key is gone from the tree, which the commented line pins.",
+      "source": "[server]\nport = 8080\nhost = \"local\"\n",
+      "steps": [
+        { "op": "commentOut", "args": [["server", "port"]], "expect": { "ok": true, "source": "[server]\n# port = 8080\nhost = \"local\"\n" } },
+        { "op": "uncommentLeading", "args": [["server", "host"], 0, 1], "expect": { "ok": true, "source": "[server]\nport = 8080\nhost = \"local\"\n" } }
+      ]
+    },
+    {
+      "id": "commentOut of the last entry lands in the parent's dangling run",
+      "note": "The Zig test also reads the comment back (`getDanglingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "[server]\nport = 8080\nhost = \"local\"\n",
+      "steps": [
+        { "op": "commentOut", "args": [["server", "host"]], "expect": { "ok": true, "source": "[server]\nport = 8080\n# host = \"local\"\n" } },
+        { "op": "uncommentDangling", "args": [["server"], 0, 1], "expect": { "ok": true, "source": "[server]\nport = 8080\nhost = \"local\"\n" } }
+      ]
+    },
+    {
+      "id": "commentOut and uncomment decline strict JSON, the root, flow items and sections",
+      "note": "Zig error CannotDeleteSection. A table's span is the name inside its header; its body is lines this op cannot see. Same refusal `deleteKey` makes, in TOML's words.",
+      "source": "[server]\nport = 8080\n",
+      "steps": [
+        { "op": "commentOut", "args": [["server"]], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "an insert into a section with no own entries takes a header line of its own, or the nearest one up [1]",
+      "note": "`a` is implicit: its one header line is `[a.b]`'s, and an entry written after it would belong to `a.b`. The root's body takes it as a dotted key.",
+      "source": "[a.b]\nx = 1\n",
+      "steps": [
+        { "op": "setValue", "args": [["a", "y"], 2], "expect": { "ok": true, "source": "a.y = 2\n[a.b]\nx = 1\n" } }
+      ]
+    },
+    {
+      "id": "an insert into a section with no own entries takes a header line of its own, or the nearest one up [2]",
+      "note": "Deeper: `a` and `a.b` both pass through `[a.b.c]`.",
+      "source": "[a.b.c]\nx = 1\n",
+      "steps": [
+        { "op": "setValue", "args": [["a", "b", "y"], 2], "expect": { "ok": true, "source": "a.b.y = 2\n[a.b.c]\nx = 1\n" } }
+      ]
+    },
+    {
+      "id": "an insert into a section with no own entries takes a header line of its own, or the nearest one up [3]",
+      "note": "A header of its own, before or after the child's, is the anchor.",
+      "source": "[a.b]\nx = 1\n[a]\n",
+      "steps": [
+        { "op": "setValue", "args": [["a", "y"], 2], "expect": { "ok": true, "source": "[a.b]\nx = 1\n[a]\ny = 2\n" } }
+      ]
+    },
+    {
+      "id": "an insert into a section with no own entries takes a header line of its own, or the nearest one up [4]",
+      "source": "[a]\n[a.b]\nx = 1\n",
+      "steps": [
+        { "op": "setValue", "args": [["a", "y"], 2], "expect": { "ok": true, "source": "[a]\ny = 2\n[a.b]\nx = 1\n" } }
+      ]
+    },
+    {
+      "id": "set surfaces a section veto rather than inserting a second entry of that name",
+      "note": "Zig error CannotReplaceSection. The key exists and the replace was refused for cause; an insert does not cure that, and trying it is what sent the CLI blaming the value (`splice_rejected`) for a veto the value had nothing to do with. The Zig test also checks the editor's internal `splice_rejected` flag, which a fixture cannot see.",
+      "source": "[a]\nx = 1\n",
+      "steps": [
+        { "op": "setValue", "args": [["a"], 2], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "a rename refuses a path with no key, and a name the mapping already holds",
+      "note": "Zig error DuplicateKey. TOML's parser refuses the repeat itself, which read as a key that does not parse; the name check answers first. The Zig test also checks the editor's internal `splice_rejected` flag, which a fixture cannot see.",
+      "source": "a = 1\nb = 2\n",
+      "steps": [
+        { "op": "renameKey", "args": [["a"], "b"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "non-YAML formats keep vivifying through flow seeds",
+      "note": "The empty seed is YAML-specific: `a =` is not a TOML value, and the flow chain is the idiomatic intermediate form for the dotted-key formats. The Zig test reads its TOML source as TOML 1.0; the binding's `toml` dialect is 1.1, and the seed is the same in both.",
+      "source": "title = 't'\n",
+      "steps": [
+        { "op": "setValue", "args": [["a", "b"], 1], "expect": { "ok": true, "source": "title = 't'\na = { b = 1 }\n" } }
+      ]
+    }
+  ]
+}

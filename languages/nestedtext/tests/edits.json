@@ -1,0 +1,304 @@
+{
+  "dialect": "nestedtext",
+  "from": "languages/nestedtext/tests/editor.zig",
+  "cases": [
+    {
+      "id": "insertValue: promotes an empty document to the first root key",
+      "source": "",
+      "steps": [
+        { "op": "setValue", "args": [["name"], "fig"], "expect": { "ok": true, "source": "name: fig\n" } }
+      ]
+    },
+    {
+      "id": "insertValue: appends after the last existing entry, matching indent [1]",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "insertValue", "args": [[], "b", 2], "expect": { "ok": true, "source": "a: 1\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "insertValue: appends after the last existing entry, matching indent [2]",
+      "source": "server:\n    host: localhost\n",
+      "steps": [
+        { "op": "insertValue", "args": [["server"], "port", 80], "expect": { "ok": true, "source": "server:\n    host: localhost\n    port: 80\n" } }
+      ]
+    },
+    {
+      "id": "insertValue: empty/multiline value renders as a nested `>`-block [1]",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "insertValue", "args": [[], "b", ""], "expect": { "ok": true, "source": "a: 1\nb:\n    >\n" } }
+      ]
+    },
+    {
+      "id": "insertValue: empty/multiline value renders as a nested `>`-block [2]",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "insertValueRaw", "args": [[], "b", "line1\nline2"], "expect": { "ok": true, "source": "a: 1\nb:\n    > line1\n    > line2\n" } }
+      ]
+    },
+    {
+      "id": "insertValue: a key needing multiline form gets the `: key` spelling",
+      "source": "a: 1\n",
+      "steps": [
+        { "op": "insertValue", "args": [[], "- looks like a list tag", "v"], "expect": { "ok": true, "source": "a: 1\n: - looks like a list tag\n    > v\n" } }
+      ]
+    },
+    {
+      "id": "insertValue: fills a childless inline `{}` through the generic flow insert",
+      "source": "{}",
+      "steps": [
+        { "op": "insertValue", "args": [[], "a", 1], "expect": { "ok": true, "source": "{a: 1}" } }
+      ]
+    },
+    {
+      "id": "set: same-line scalar replace, autodetecting old shape",
+      "source": "name: fig\n",
+      "steps": [
+        { "op": "setValue", "args": [["name"], "zig"], "expect": { "ok": true, "source": "name: zig\n" } }
+      ]
+    },
+    {
+      "id": "set: switches a same-line value to a nested `>`-block and back [1]",
+      "source": "name: fig\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["name"], "line1\nline2"], "expect": { "ok": true, "source": "name:\n    > line1\n    > line2\n" } }
+      ]
+    },
+    {
+      "id": "set: switches a same-line value to a nested `>`-block and back [2]",
+      "source": "name:\n    > line1\n    > line2\n",
+      "steps": [
+        { "op": "setValue", "args": [["name"], "fig"], "expect": { "ok": true, "source": "name: fig\n" } }
+      ]
+    },
+    {
+      "id": "set: empty value becomes the nested bare `>` block [1]",
+      "source": "name: fig\n",
+      "steps": [
+        { "op": "setValue", "args": [["name"], ""], "expect": { "ok": true, "source": "name:\n    >\n" } }
+      ]
+    },
+    {
+      "id": "set: empty value becomes the nested bare `>` block [2]",
+      "source": "name:\n    >\n",
+      "steps": [
+        { "op": "setValue", "args": [["name"], "fig"], "expect": { "ok": true, "source": "name: fig\n" } }
+      ]
+    },
+    {
+      "id": "set: replaces a whole nested container value with a scalar",
+      "source": "server:\n    host: localhost\n    port: 80\n",
+      "steps": [
+        { "op": "setValue", "args": [["server"], "disabled"], "expect": { "ok": true, "source": "server: disabled\n" } }
+      ]
+    },
+    {
+      "id": "set: on a multiline key's value stays nested even for a short value",
+      "source": ": key 1\n: spread over 2 lines\n    > value 1\n",
+      "steps": [
+        { "op": "setValue", "args": [["key 1\nspread over 2 lines"], "v"], "expect": { "ok": true, "source": ": key 1\n: spread over 2 lines\n    > v\n" } }
+      ]
+    },
+    {
+      "id": "replaceValue: on a list item, by index",
+      "note": "`set` only ever creates/replaces a MAPPING entry (its path must end in `.key`); an `.index`-ending or path-less (root) target goes through `replaceValAtPath` directly, same as every other language.",
+      "source": "- a\n- b\n- c\n",
+      "steps": [
+        { "op": "replaceValue", "args": [[1], "z"], "expect": { "ok": true, "source": "- a\n- z\n- c\n" } }
+      ]
+    },
+    {
+      "id": "replaceValue: on a list item whose value is nested/empty",
+      "source": "- a\n-\n    nested: 1\n- c\n",
+      "steps": [
+        { "op": "replaceValue", "args": [[1], "b"], "expect": { "ok": true, "source": "- a\n- b\n- c\n" } }
+      ]
+    },
+    {
+      "id": "replaceValue: the whole-document root value [1]",
+      "source": "> hello\n",
+      "steps": [
+        { "op": "replaceValue", "args": [[], "goodbye"], "expect": { "ok": true, "source": "> goodbye\n" } }
+      ]
+    },
+    {
+      "id": "replaceValue: the whole-document root value [2]",
+      "source": "",
+      "steps": [
+        { "op": "replaceValue", "args": [[], "hi"], "expect": { "ok": true, "source": "> hi\n" } }
+      ]
+    },
+    {
+      "id": "renameKey: plain to plain",
+      "source": "name: fig\n",
+      "steps": [
+        { "op": "renameKey", "args": [["name"], "lang"], "expect": { "ok": true, "source": "lang: fig\n" } }
+      ]
+    },
+    {
+      "id": "renameKey: multiline to plain adds the separator colon",
+      "source": ": - looks like a list tag\n    > v\n",
+      "steps": [
+        { "op": "renameKey", "args": [["- looks like a list tag"], "plain"], "expect": { "ok": true, "source": "plain:\n    > v\n" } }
+      ]
+    },
+    {
+      "id": "renameKey: plain to multiline is declined when the value is same-line",
+      "note": "Zig error KeyRequiresMultilineForm.",
+      "source": "name: fig\n",
+      "steps": [
+        { "op": "renameKey", "args": [["name"], "- oops"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "appendValue / prependValue put a scalar item on its own line [1]",
+      "source": "- a\n- b\n",
+      "steps": [
+        { "op": "appendValue", "args": [[], "c"], "expect": { "ok": true, "source": "- a\n- b\n- c\n" } }
+      ]
+    },
+    {
+      "id": "appendValue / prependValue put a scalar item on its own line [2]",
+      "source": "- a\n- b\n",
+      "steps": [
+        { "op": "prependValue", "args": [[], "z"], "expect": { "ok": true, "source": "- z\n- a\n- b\n" } }
+      ]
+    },
+    {
+      "id": "appendValue / prependValue render an empty/multiline item as a nested `>`-block [1]",
+      "source": "- a\n",
+      "steps": [
+        { "op": "appendValue", "args": [[], ""], "expect": { "ok": true, "source": "- a\n-\n    >\n" } }
+      ]
+    },
+    {
+      "id": "appendValue / prependValue render an empty/multiline item as a nested `>`-block [2]",
+      "source": "- a\n",
+      "steps": [
+        { "op": "prependValueRaw", "args": [[], "l1\nl2"], "expect": { "ok": true, "source": "-\n    > l1\n    > l2\n- a\n" } }
+      ]
+    },
+    {
+      "id": "appendValue: after a nested-value first item, indent still matches the sequence",
+      "source": "-\n    nested: 1\n",
+      "steps": [
+        { "op": "appendValue", "args": [[], "b"], "expect": { "ok": true, "source": "-\n    nested: 1\n- b\n" } }
+      ]
+    },
+    {
+      "id": "deleteItem removes a nested/empty-valued item cleanly, leaving siblings intact [1]",
+      "source": "- a\n-\n    nested: 1\n- c\n",
+      "steps": [
+        { "op": "deleteItem", "args": [[], 1], "expect": { "ok": true, "source": "- a\n- c\n" } }
+      ]
+    },
+    {
+      "id": "deleteItem removes a nested/empty-valued item cleanly, leaving siblings intact [2]",
+      "note": "Removing the first item (nested/empty) is anchored via the sequence's own span, not a (nonexistent) previous sibling.",
+      "source": "-\n    nested: 1\n- b\n",
+      "steps": [
+        { "op": "deleteItem", "args": [[], 0], "expect": { "ok": true, "source": "- b\n" } }
+      ]
+    },
+    {
+      "id": "deleteKey of a dictionary's only key leaves an empty item",
+      "note": "NestedText has no null: a dictionary emptied of its only key reads back as the empty string `-` is, which the delete guard counts as the dictionary emptied, not as a value changing kind.",
+      "source": "- a\n-\n    k: v\n",
+      "steps": [
+        { "op": "deleteKey", "args": [[1, "k"]], "expect": { "ok": true, "source": "- a\n-\n" } }
+      ]
+    },
+    {
+      "id": "deleteItem carries a leading comment above a nested item",
+      "source": "- a\n# note\n-\n    nested: 1\n- c\n",
+      "steps": [
+        { "op": "deleteItem", "args": [[], 1], "expect": { "ok": true, "source": "- a\n- c\n" } }
+      ]
+    },
+    {
+      "id": "moveItem / reorderItems relocate whole (possibly nested) item blocks [1]",
+      "source": "- a\n-\n    nested: 1\n- c\n",
+      "steps": [
+        { "op": "moveItem", "args": [[], 2, 0], "expect": { "ok": true, "source": "- c\n- a\n-\n    nested: 1\n" } }
+      ]
+    },
+    {
+      "id": "moveItem / reorderItems relocate whole (possibly nested) item blocks [2]",
+      "source": "- a\n- b\n- c\n",
+      "steps": [
+        { "op": "reorderItems", "args": [[], [2, 0]], "expect": { "ok": true, "source": "- c\n- a\n- b\n" } }
+      ]
+    },
+    {
+      "id": "addLeadingComment / getLeadingComment / deleteLeadingComment on a nested-valued list item",
+      "note": "The Zig test also reads the comment back (`getLeadingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "- a\n-\n    nested: 1\n- c\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [[1], "note"], "expect": { "ok": true, "source": "- a\n# note\n-\n    nested: 1\n- c\n" } },
+        { "op": "deleteLeadingComment", "args": [[1]], "expect": { "ok": true, "source": "- a\n-\n    nested: 1\n- c\n" } }
+      ]
+    },
+    {
+      "id": "trailing comments are unsupported (no same-line comment spelling)",
+      "note": "Zig error CommentsUnsupported.",
+      "source": "name: fig\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["name"], "note"], "expect": { "ok": false, "status": "UnsupportedFormat" } },
+        { "op": "getTrailingComment", "args": [["name"]], "expect": { "ok": false, "status": "UnsupportedFormat" } },
+        { "op": "deleteTrailingComment", "args": [["name"]], "expect": { "ok": false, "status": "UnsupportedFormat" } }
+      ]
+    },
+    {
+      "id": "deleteKey removes a whole nested-value entry (generic engine, no override needed)",
+      "source": "a: 1\nserver:\n    host: localhost\n    port: 80\nb: 2\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["server"]], "expect": { "ok": true, "source": "a: 1\nb: 2\n" } }
+      ]
+    },
+    {
+      "id": "a value that opens with a line break and reads as NestedText is nested, not blocked [1]",
+      "note": "Splice text for a mapping, a list and an empty dict (`printSplice`).",
+      "source": "k: v\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["m"], "\nx: 1\ny:\n    - a"], "expect": { "ok": true, "source": "k: v\nm:\n    x: 1\n    y:\n        - a\n" } }
+      ]
+    },
+    {
+      "id": "a value that opens with a line break and reads as NestedText is nested, not blocked [2]",
+      "source": "k: v\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["m"], "\n- a\n- b"], "expect": { "ok": true, "source": "k: v\nm:\n    - a\n    - b\n" } }
+      ]
+    },
+    {
+      "id": "a value that opens with a line break and reads as NestedText is nested, not blocked [3]",
+      "source": "k: v\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["m"], "\n{}"], "expect": { "ok": true, "source": "k: v\nm:\n    {}\n" } }
+      ]
+    },
+    {
+      "id": "a value that opens with a line break and reads as NestedText is nested, not blocked [4]",
+      "source": "k: v\nm: 1\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["m"], "\nx: 1"], "expect": { "ok": true, "source": "k: v\nm:\n    x: 1\n" } }
+      ]
+    },
+    {
+      "id": "a value that opens with a line break and reads as NestedText is nested, not blocked [5]",
+      "note": "A string argument stays a string: no leading break, or a rest that is not NestedText on its own.",
+      "source": "k: v\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["m"], "x: 1\ny: 2"], "expect": { "ok": true, "source": "k: v\nm:\n    > x: 1\n    > y: 2\n" } }
+      ]
+    },
+    {
+      "id": "a value that opens with a line break and reads as NestedText is nested, not blocked [6]",
+      "source": "k: v\n",
+      "steps": [
+        { "op": "setValueRaw", "args": [["m"], "\nhello"], "expect": { "ok": true, "source": "k: v\nm:\n    >\n    > hello\n" } }
+      ]
+    }
+  ]
+}

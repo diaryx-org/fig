@@ -1,0 +1,85 @@
+{
+  "dialect": "dotenv",
+  "from": "src/editor.zig",
+  "cases": [
+    {
+      "id": "set seeds the first key into an empty document",
+      "source": "",
+      "steps": [
+        { "op": "setValue", "args": [["FOO"], "bar"], "expect": { "ok": true, "source": "FOO=bar\n" } }
+      ]
+    },
+    {
+      "id": "set inserts a second key using '=', no spaces",
+      "source": "FOO=bar\n",
+      "steps": [
+        { "op": "setValue", "args": [["BAZ"], "qux"], "expect": { "ok": true, "source": "FOO=bar\nBAZ=qux\n" } }
+      ]
+    },
+    {
+      "id": "set replaces an existing value",
+      "source": "FOO=bar\n",
+      "steps": [
+        { "op": "setValue", "args": [["FOO"], "baz"], "expect": { "ok": true, "source": "FOO=baz\n" } }
+      ]
+    },
+    {
+      "id": "deleteKey removes the only entry, leaving an empty file",
+      "note": "Deleting down to empty round-trips back through the same from-empty insert path a from-scratch `set` would use.",
+      "source": "FOO=bar\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["FOO"]], "expect": { "ok": true, "source": "" } },
+        { "op": "setValue", "args": [["AGAIN"], "v2"], "expect": { "ok": true, "source": "AGAIN=v2\n" } }
+      ]
+    },
+    {
+      "id": "deleteKey and renameKey on a repeated key take every spelling [1]",
+      "note": "dotenv reads a key written more than once as one entry, the last spelling's value at the first's place. A delete or rename takes every spelling (`spelledAgain`); one that took the first left the key reading on.",
+      "source": "A=1\nB=2\n# lead\nexport A=3\nA=4 # last\n",
+      "steps": [
+        { "op": "renameKey", "args": [["A"], "Z"], "expect": { "ok": true, "source": "Z=1\nB=2\n# lead\nexport Z=3\nZ=4 # last\n" } },
+        { "op": "deleteKey", "args": [["Z"]], "expect": { "ok": true, "source": "B=2\n" } }
+      ]
+    },
+    {
+      "id": "deleteKey and renameKey on a repeated key take every spelling [2]",
+      "note": "Zig error DuplicateKey. A rename to a name the file already holds is refused, as before.",
+      "source": "A=1\nA=2\nB=3\n",
+      "steps": [
+        { "op": "renameKey", "args": [["A"], "B"], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "an entry appended after an `export` entry starts at column 0",
+      "note": "The entry's span starts at its key, past `export `; a new sibling takes the line's indent, not the key's column (see `indentAt`).",
+      "source": "export D=p\n",
+      "steps": [
+        { "op": "setValue", "args": [["NEW"], "v"], "expect": { "ok": true, "source": "export D=p\nNEW=v\n" } }
+      ]
+    },
+    {
+      "id": "replacing an empty value keeps a blank before its comment [1]",
+      "note": "`A= #c` is an empty `A`; written straight against the `#`, `42#c` would read as the value.",
+      "source": "A= #c\nB=1\n",
+      "steps": [
+        { "op": "setValue", "args": [["A"], 42], "expect": { "ok": true, "source": "A= 42 #c\nB=1\n" } }
+      ]
+    },
+    {
+      "id": "replacing an empty value keeps a blank before its comment [2]",
+      "source": "A=\t#c\n",
+      "steps": [
+        { "op": "setValue", "args": [["A"], 42], "expect": { "ok": true, "source": "A=\t42 #c\n" } }
+      ]
+    },
+    {
+      "id": "comment ops use # and round-trip",
+      "note": "The Zig test also reads the comment back (`getLeadingComment`, `getTrailingComment`), which a fixture does not carry: the edits are here, the read is not.",
+      "source": "FOO=bar\n",
+      "steps": [
+        { "op": "addLeadingComment", "args": [["FOO"], "explaining foo"], "expect": { "ok": true } },
+        { "op": "setTrailingComment", "args": [["FOO"], "inline note"], "expect": { "ok": true, "source": "# explaining foo\nFOO=bar # inline note\n" } }
+      ]
+    }
+  ]
+}

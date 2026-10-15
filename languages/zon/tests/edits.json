@@ -1,0 +1,209 @@
+{
+  "dialect": "zon",
+  "from": ["languages/zon/tests/editor.zig", "src/editor.zig"],
+  "cases": [
+    {
+      "id": "delete a key from a packed single-line struct (regression)",
+      "note": "Regression: a compact single-line struct packs multiple fields onto one physical line, so `deleteKey`'s generic line-based delete used to remove the whole line. ZON compounds this: a field's key span starts at the bare identifier, not its leading `.` (its declared `key_sigil`; see `insertFlowMapEntry`), so the comma-aware flow-splice fallback must also back up over that `.` itself, or it strands a bare `.` next to the surviving sibling instead of removing the field cleanly.",
+      "source": ".{ .a = 1, .b = 2, .c = 3 }",
+      "steps": [
+        { "op": "deleteKey", "args": [["b"]], "expect": { "ok": true, "source": ".{ .a = 1, .c = 3 }" } }
+      ]
+    },
+    {
+      "id": "delete first key of a packed single-line struct",
+      "source": ".{ .a = 1, .b = 2 }",
+      "steps": [
+        { "op": "deleteKey", "args": [["a"]], "expect": { "ok": true, "source": ".{ .b = 2 }" } }
+      ]
+    },
+    {
+      "id": "remove the only item of a tuple leaves .{}",
+      "note": "An emptied tuple is `.{}`, which ZON reads as an empty struct, the one literal for both: the delete guard counts that as the tuple emptied, not as a value changing kind.",
+      "source": ".{\n    .x = .{\n        1,\n    },\n    .b = .{ 1 },\n}\n",
+      "steps": [
+        { "op": "deleteItem", "args": [["b"], 0], "expect": { "ok": true, "source": ".{\n    .x = .{\n        1,\n    },\n    .b = .{ },\n}\n" } },
+        { "op": "deleteItem", "args": [["x"], 0], "expect": { "ok": true, "source": ".{\n    .x = .{\n        },\n    .b = .{ },\n}\n" } }
+      ]
+    },
+    {
+      "id": "delete a field after a multi-line string leaves the string alone",
+      "note": "The line after a multi-line string's last `\\\\` line belongs to the string, and the splice that deleted `.c` with the comma before it joined the rest of `c`'s line onto it. A field that begins its line goes with the comma after it (docs/tasks/delete-splices-taking-other-values.md).",
+      "source": ".{\n    .ml =\n        \\\\line two\n    ,\n    .c = 'A', .nl = '\\n',\n}\n",
+      "steps": [
+        { "op": "deleteKey", "args": [["c"]], "expect": { "ok": true, "source": ".{\n    .ml =\n        \\\\line two\n    ,\n    .nl = '\\n',\n}\n" } },
+        { "op": "deleteKey", "args": [["nl"]], "expect": { "ok": true, "source": ".{\n    .ml =\n        \\\\line two\n    ,\n}\n" } }
+      ]
+    },
+    {
+      "id": "delete only key of a single-field struct (regression)",
+      "note": "Regression: deleting the *only* field of a single-field struct must leave an empty struct `.{}`, not delete the braces with the line. The `.`-backup of the flow splice must still fire so no bare `.` is stranded.",
+      "source": ".{ .a = 1 }",
+      "steps": [
+        { "op": "deleteKey", "args": [["a"]], "expect": { "ok": true, "source": ".{ }" } }
+      ]
+    },
+    {
+      "id": "delete last key of a multi-line struct (regression)",
+      "note": "Regression: deleting the *last* field of a one-field-per-line struct used to strand the predecessor's separator comma before the closing brace.",
+      "source": ".{\n    .a = 1,\n    .b = 2\n}",
+      "steps": [
+        { "op": "deleteKey", "args": [["b"]], "expect": { "ok": true, "source": ".{\n    .a = 1\n}" } }
+      ]
+    },
+    {
+      "id": "array append/prepend/remove",
+      "source": ".{ 1, 2 }",
+      "steps": [
+        { "op": "appendValue", "args": [[], 3], "expect": { "ok": true, "source": ".{ 1, 2, 3 }" } },
+        { "op": "prependValue", "args": [[], 0], "expect": { "ok": true, "source": ".{ 0, 1, 2, 3 }" } },
+        { "op": "deleteItem", "args": [[], 2], "expect": { "ok": true, "source": ".{ 0, 1, 3 }" } }
+      ]
+    },
+    {
+      "id": "appendValue on an empty .{} is NotASequence (ZON has no way to tell an empty struct from an empty array)",
+      "note": "Zig error NotASequence. Unlike JSON's `[]`/`{}` or YAML's `[]`/`{}`, ZON's struct and array literals share one empty spelling (`.{}`); fig's parser resolves that ambiguity by always treating an empty container as a mapping (see `zon/parser.zig`'s \"empty .{} is an empty mapping\" test). So there is no ZON source an empty *array* append could target — the caller must seed a non-empty array (or a struct) explicitly.",
+      "source": ".{}",
+      "steps": [
+        { "op": "appendValue", "args": [[], 1], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "appendValue starts an absent list as .{}, which its first item makes a tuple",
+      "note": "Zig error NotASequence. The seed is the same `.{}` the test above cannot append to; what `setAppend` wrote it as is a list, and the item goes in as one. An empty struct that was there is real data, and is not taken for one. `setAppend` on a list that is there, or on a value that is not a list, is `appendToSeq`'s own append or refusal, which is the binding's `appendValue`.",
+      "source": ".{ .m = .{} }",
+      "steps": [
+        { "op": "appendValue", "args": [["m"], 1], "expect": { "ok": false, "status": "InvalidArgument" } }
+      ]
+    },
+    {
+      "id": "append onto a multi-line one-item-per-line array",
+      "source": ".{\n    1,\n    2,\n}",
+      "steps": [
+        { "op": "appendValue", "args": [[], 3], "expect": { "ok": true, "source": ".{\n    1,\n    2,\n    3,\n}" } }
+      ]
+    },
+    {
+      "id": "set replaces an existing key",
+      "source": ".{ .a = 1 }",
+      "steps": [
+        { "op": "setValue", "args": [["a"], 2], "expect": { "ok": true, "source": ".{ .a = 2 }" } }
+      ]
+    },
+    {
+      "id": "set creates a missing bare-identifier key with a leading dot",
+      "source": ".{ .a = 1 }",
+      "steps": [
+        { "op": "setValue", "args": [["b"], 2], "expect": { "ok": true, "source": ".{ .a = 1, .b = 2 }" } }
+      ]
+    },
+    {
+      "id": "set creates a missing key needing @\"...\" quoting",
+      "source": ".{ .a = 1 }",
+      "steps": [
+        { "op": "setValue", "args": [["has space"], 2], "expect": { "ok": true, "source": ".{ .a = 1, .@\"has space\" = 2 }" } }
+      ]
+    },
+    {
+      "id": "set auto-vivifies a missing parent as an empty struct",
+      "source": ".{}",
+      "steps": [
+        { "op": "setValue", "args": [["server", "port"], 8080], "expect": { "ok": true, "source": ".{.server = .{.port = 8080}}" } }
+      ]
+    },
+    {
+      "id": "insertValue promotes a null value to a struct",
+      "source": ".{ .a = null }",
+      "steps": [
+        { "op": "insertValue", "args": [["a"], "b", 1], "expect": { "ok": true, "source": ".{ .a = .{ .b = 1 } }" } }
+      ]
+    },
+    {
+      "id": "failed edit rolls back and keeps editor usable",
+      "note": "A refusal with no status is one the Zig test asserted only fails, not with which error.",
+      "source": ".{ .a = 1 }",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["a"], "[oops"], "expect": { "ok": false } },
+        { "op": "replaceValue", "args": [["a"], 9], "expect": { "ok": true, "source": ".{ .a = 9 }" } }
+      ]
+    },
+    {
+      "id": "replace an enum-literal value with another kind",
+      "note": "An enum literal's span covers its leading `.`, so a replace takes the whole literal; it used to splice past the dot and leave it in front of the new text, turning `true` into the enum literal `.true`.",
+      "source": ".{ .a = .fast, .b = 1 }\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["a"], true], "expect": { "ok": true, "source": ".{ .a = true, .b = 1 }\n" } }
+      ]
+    },
+    {
+      "id": "replace an enum-literal value with another enum literal",
+      "source": ".{ .a = .fast, .b = .@\"quoted name\" }\n",
+      "steps": [
+        { "op": "replaceValueRaw", "args": [["a"], ".slow"], "expect": { "ok": true } },
+        { "op": "replaceValue", "args": [["b"], 2], "expect": { "ok": true, "source": ".{ .a = .slow, .b = 2 }\n" } }
+      ]
+    },
+    {
+      "id": "replace an enum-literal tuple item",
+      "source": ".{ .xs = .{ .one, .two } }\n",
+      "steps": [
+        { "op": "replaceValue", "args": [["xs", 1], "two"], "expect": { "ok": true, "source": ".{ .xs = .{ .one, \"two\" } }\n" } }
+      ]
+    },
+    {
+      "id": "setTrailingComment on a CRLF line goes before the CR",
+      "note": "A CRLF line's content ends before its CR: a new trailing comment goes there, and the line keeps its CRLF. Spliced after the CR, it read back in YAML as the string \"1\\r\".",
+      "source": ".{\r\n    .a = 1,\r\n}\r\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["a"], "note"], "expect": { "ok": true, "source": ".{\r\n    .a = 1, // note\r\n}\r\n" } }
+      ]
+    },
+    {
+      "id": "setTrailingComment refuses a ZON multiline string's line [1]",
+      "note": "Zig error CommentInsideValue. A ZON `\\\\` line is string text up to its newline, so there is no place on it for a comment: one appended there parsed, as part of the string. The edit is refused and rolled back, LF or CRLF.",
+      "source": ".{\n    .ml =\n        \\\\two\n    ,\n}\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["ml"], "note"], "expect": { "ok": false, "status": "UnsupportedOperation" } }
+      ]
+    },
+    {
+      "id": "setTrailingComment refuses a ZON multiline string's line [2]",
+      "note": "Zig error CommentInsideValue.",
+      "source": ".{\r\n    .ml =\r\n        \\\\two\r\n    ,\r\n}\r\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["ml"], "note"], "expect": { "ok": false, "status": "UnsupportedOperation" } }
+      ]
+    },
+    {
+      "id": "setTrailingComment refuses a ZON multiline string's line [3]",
+      "note": "Zig error CommentInsideValue.",
+      "source": ".{\n    .ml =\n        \\\\two // kept\n    ,\n}\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["ml"], "note"], "expect": { "ok": false, "status": "UnsupportedOperation" } }
+      ]
+    },
+    {
+      "id": "setTrailingComment refuses a ZON multiline string's line [4]",
+      "note": "The `// kept` is the string's own text, inside its span: not a trailing comment to delete.",
+      "source": ".{\n    .ml =\n        \\\\two // kept\n    ,\n}\n",
+      "steps": [
+        { "op": "deleteTrailingComment", "args": [["ml"]], "expect": { "ok": true, "source": ".{\n    .ml =\n        \\\\two // kept\n    ,\n}\n" } }
+      ]
+    },
+    {
+      "id": "setTrailingComment refuses a ZON multiline string's line [5]",
+      "note": "A one-line string on the same document still takes one.",
+      "source": ".{\n    .s = \"two\",\n}\n",
+      "steps": [
+        { "op": "setTrailingComment", "args": [["s"], "note"], "expect": { "ok": true, "source": ".{\n    .s = \"two\", // note\n}\n" } }
+      ]
+    },
+    {
+      "id": "owned-comment scan uses // (comments fix)",
+      "source": ".{\n    // note\n    .n = 3,\n}\n",
+      "steps": [
+        { "op": "deleteLeadingComment", "args": [["n"]], "expect": { "ok": true, "source": ".{\n    .n = 3,\n}\n" } }
+      ]
+    }
+  ]
+}

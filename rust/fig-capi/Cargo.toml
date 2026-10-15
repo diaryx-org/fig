@@ -1,0 +1,20 @@
+[package]
+name = "fig-capi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "fig's C ABI (bindings/c/include/fig.h) over fig-core: libfig and the WebAssembly module the TypeScript binding loads"
+
+[lib]
+# `staticlib` and `cdylib` are libfig.a and libfig.so; on wasm32 the cdylib
+# is fig.wasm. `rlib` lets this crate's own tests call the exports.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+fig-core = { path = "../fig-core" }
+
+[features]
+# The C library bundles no language, as Zig's libfig does not: a program
+# registers each format it uses (`fig_language_register`). `bundle`
+# preregisters fig-core's ten instead, as a `-D<name>` Zig build does.
+bundle = []

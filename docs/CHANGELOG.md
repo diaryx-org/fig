@@ -153,6 +153,7 @@ and no regeneration can reach a released section.
 - **npm** — each language is an npm package of its own, @diaryx/fig-`<name>` ([`edaad38`](https://github.com/diaryx-org/fig/commit/edaad388bfec5b6a7ccaf2134be1a39aab06c758))
 - **kit** — the JavaScript kit's number and datetime rules are the Zig kit's, as WebAssembly ([`b55fbc7`](https://github.com/diaryx-org/fig/commit/b55fbc77cc1832f54ca10feda0290514b0dbf1a3))
 - **rust** — fig::helper reads and writes the wire with serde_json, behind a helper feature ([`20f22aa`](https://github.com/diaryx-org/fig/commit/20f22aa8642f2e9552a9786ecaba494d2322019a))
+- a byte string is one kind, `data`, and YAML's `!!binary` reads and writes it ([`4c7d83a`](https://github.com/diaryx-org/fig/commit/4c7d83a150cb86c72a3f021540abdcc880c3f3e8))
 
 ### Added
 
@@ -758,6 +759,16 @@ and no regeneration can reach a released section.
   style as above, as their compiled formats do.
 
 - flat_map.PutResult has two more values, ignored and kept, so a Zig switch over it that names every value no longer compiles until it names them too.
+
+- `ExtKind::PlistData` / `ExtKind.PlistData` /
+  `FIG_EXT_PLIST_DATA` / `ExtKind.plist_data` are renamed `Data` /
+  `FIG_EXT_DATA` / `.data`, and the wire's `"plist_data"` is `"data"`;
+  the number and the text are unchanged.
+
+- a YAML `!!binary` scalar holding base64 reads as a
+  byte string, not a string under a custom tag: converting it to JSON,
+  TOML or plist used to be refused ("a custom YAML tag") and now succeeds,
+  and `fig get` of it prints its base64 with whitespace removed.
 
 <!-- git-cliff:end -->
 

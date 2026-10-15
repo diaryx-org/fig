@@ -215,12 +215,15 @@ export class Table {
       r.parent = parentOf[i] === null ? null : place[parentOf[i]];
       return r;
     });
-    const moved = (list) => list.filter((f) => place[f.node] !== -1 && place[f.node] !== undefined).map((f) => ({ ...f, node: place[f.node] }));
+    // Each list on its nodes' new rows and in node order, a node's facts
+    // in the order they were written (the sort is stable).
+    const moved = (list) =>
+      list
+        .filter((f) => place[f.node] !== -1 && place[f.node] !== undefined)
+        .map((f) => ({ ...f, node: place[f.node] }))
+        .sort((a, b) => a.node - b.node);
     const SLOT = { leading: 0, trailing: 1, dangling: 2 };
-    const cs = moved(this.comments)
-      .map((c, i) => [c, i])
-      .sort(([a, i], [b, j]) => a.node - b.node || SLOT[a.slot] - SLOT[b.slot] || i - j)
-      .map(([c]) => c);
+    const cs = moved(this.comments).sort((a, b) => a.node - b.node || SLOT[a.slot] - SLOT[b.slot]);
     this.comments = cs.filter((c, i) => !(c.slot === "trailing" && cs[i + 1]?.node === c.node && cs[i + 1]?.slot === "trailing"));
     this.regions = moved(this.regions);
     this.mentions = moved(this.mentions);

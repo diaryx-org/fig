@@ -6,7 +6,7 @@ engine: microvm
 # It runs the same one pre-release gate — `zig build check` (test +
 # all-on + abi-check + semver-check + version-check) — and nothing else:
 # a tangled workflow file has no `jobs:`, one file *is* one job, so the
-# `rust` / `rust-semver` / `typescript` jobs that run in parallel on GitHub
+# `rust` / `rust-port` / `typescript` jobs that run in parallel on GitHub
 # would each need their own file here. They stay GitHub-only for now; `check`
 # already folds them in where a toolchain happens to be present and skips
 # them with a note where it isn't, so nothing goes unchecked overall.
@@ -28,13 +28,12 @@ when:
 # the install step).
 dependencies: [git, curl, gnutar, xz]
 steps:
-# `semver-check` and `cargo-semver-checks` diff against the most recent
-# release tag (`v*`, or `core/v*` / `rust/v*` before the first one-version
-# tag), both discovered with `git describe` — the GitHub job gets them via
-# `fetch-depth: 0`. Spindle's clone
+# `semver-check` diffs against the most recent release tag (`v*`, or
+# `core/v*` before the first one-version tag), discovered with `git
+# describe` — the GitHub job gets it via `fetch-depth: 0`. Spindle's clone
 # depth isn't ours to set portably (`clone.depth` takes a positive count),
 # so ask for the tags directly and shrug if the clone can't be deepened:
-# both checks degrade to "no release tag found — skipping diff" rather than
+# the check degrades to "no release tag found — skipping diff" rather than
 # failing, so a tag-less clone costs coverage, not a red run.
 - name: Fetch tags (ABI/semver baselines)
   command: git fetch --tags --force --unshallow 2>/dev/null || git fetch --tags --force || true

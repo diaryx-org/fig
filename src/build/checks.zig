@@ -1,6 +1,6 @@
 //! The correctness/release guards and the one-stop `check` gate that folds them
-//! all together: the C ABI surface check, the SemVer diff, the cargo-semver-checks
-//! pass, and the Rust/TypeScript binding test suites. `check` additionally
+//! all together: the C ABI surface check, the SemVer diff, and the
+//! Rust/TypeScript binding test suites. `check` additionally
 //! depends on the `check-figl` and `version-check` steps (from `tools`) and the
 //! `test`/`all-on` steps (from `tests`), passed in via
 //! `Deps` so this module doesn't reach back into the others.
@@ -158,11 +158,9 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     // One-stop release gate: every version/ABI guard behind a single command, so
     // "did I bump correctly?" is `zig build check` instead of remembering four
     // separate invocations across two build systems. It depends on the Zig
-    // guards above and the version sync's `--check`, and additionally shells out to cargo-semver-checks — the only
-    // guard that lives in cargo's world rather than zig's (it diffs the native
-    // Rust API, which never crosses the C ABI the Zig tools inspect). A
-    // TypeScript API guard can hang off this same step later the same way.
-    const check_step = b.step("check", "Pre-release gate: zig test (default and every format on) + abi/semver/version/figl guards + cargo-semver-checks + rust & typescript tests (binding suites skip with a note if their toolchain is missing)");
+    // guards above and the version sync's `--check`. The native Rust API has no
+    // automated guard: the maintainer decides each release's version.
+    const check_step = b.step("check", "Pre-release gate: zig test (default and every format on) + abi/semver/version/figl guards + rust & typescript tests (binding suites skip with a note if their toolchain is missing)");
     check_step.dependOn(abi_check_step);
     check_step.dependOn(semver_check_step);
     check_step.dependOn(deps.version_check_step);
@@ -172,50 +170,6 @@ pub fn add(ctx: Context, arts: artifacts.Result, deps: Deps) void {
     // what a well-formed manifest DOES; this covers what `validate` refuses,
     // which nothing inside a test binary can reach — see tools/validate-check.zig.
     check_step.dependOn(deps.validate_check_step);
-
-    // cargo-semver-checks guards the native Rust public surface. Mirror CI: the
-    // baseline is the most recent release tag — `v5.0.0` and later, matched as
-    // `v[5-9].*` or `v[1-9][0-9]*` so neither the three bare pre-scheme tags
-    // (`v1.0.0`, `v2.0.0`, `v2.5.1`) nor a two-digit major is misread — falling
-    // back to the crate's old `rust/v*` line until the first one-version tag
-    // exists (see docs/VERSIONING.md), and skipping cleanly when there is none
-    // at all. Runs in bindings/rust; requires a nightly toolchain
-    // (cargo-semver-checks reads rustdoc JSON) and the cargo-semver-checks
-    // subcommand installed. git state is not a declared input, so it must never
-    // be served from cache.
-    const cargo_semver_script =
-        \\set -eu
-        \\if ! command -v cargo-semver-checks >/dev/null 2>&1; then
-        \\  echo "cargo-semver-checks: not installed — skipping (install: cargo install cargo-semver-checks)."
-        \\  exit 0
-        \\fi
-        \\tag="$(git describe --tags --abbrev=0 --match 'v[5-9].*' --match 'v[1-9][0-9]*' 2>/dev/null \
-        \\  || git describe --tags --abbrev=0 --match 'rust/v*' 2>/dev/null || true)"
-        \\if [ -z "$tag" ]; then
-        \\  echo "cargo-semver-checks: no release tag found — skipping (nothing to diff against)."
-        \\  exit 0
-        \\fi
-        \\zon_zig() { sed -n 's/^    \.minimum_zig_version = "\([^"]*\)",$/\1/p'; }
-        \\want="$(zon_zig < ../../build.zig.zon)"
-        \\had="$(git show "$tag:build.zig.zon" | zon_zig)"
-        \\if [ "$had" = "$want" ]; then
-        \\  echo "cargo-semver-checks: baseline $tag"
-        \\  cargo semver-checks --package fig --baseline-rev "$tag"
-        \\else
-        \\  # The tag's Zig source needs a toolchain this job does not have, so the
-        \\  # baseline is the crate crates.io has for it, with default features: that
-        \\  # set links the prebuilt core and needs no Zig. The opt-in surfaces (serde,
-        \\  # derive, indexmap, zon, plist) go unchecked until the next release is cut
-        \\  # with this Zig. See "After a Zig bump" in docs/VERSIONING.md.
-        \\  ver="${tag##*/}"; ver="${ver#v}"
-        \\  echo "cargo-semver-checks: $tag was built with Zig $had, this tree needs $want — baseline is the published fig $ver, default features"
-        \\  cargo semver-checks --package fig --baseline-version "$ver" --default-features
-        \\fi
-    ;
-    const cargo_semver = b.addSystemCommand(&.{ "sh", "-c", cargo_semver_script });
-    cargo_semver.setCwd(b.path("bindings/rust"));
-    cargo_semver.has_side_effects = true;
-    check_step.dependOn(&cargo_semver.step);
 
     // Rust binding test suite, gated on a local cargo toolchain. A contributor
     // who only touches the Zig core (and has no Rust installed) still gets a

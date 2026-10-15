@@ -91,8 +91,7 @@ This crate is versioned and released independently of fig's other artifacts (see
 [VERSIONING](../../docs/VERSIONING.md)) — it moves on nushell's cadence, not
 fig's. It is likewise a standalone cargo workspace, deliberately not a member of
 `bindings/rust`: the nu dependency tree has no business in that workspace's
-`cargo test --workspace` or in cargo-semver-checks' run over the published fig
-surface.
+`cargo test --workspace`.
 Its dependency on fig is the one thing that does follow fig's version: the
 `fig = { path, version }` pin and the fig crates in `Cargo.lock` are moved by
 `zig build version-sync`, which `dx release` runs, and checked by

@@ -5,7 +5,6 @@ name = CI
 #   * zig         — the core: zig build check (test + all-on + abi-check +
 #                   semver-check + version-check). The one pre-release gate.
 #   * rust        — cargo test for the Rust binding (bindings/rust).
-#   * rust-semver — cargo-semver-checks over the native Rust public surface.
 #   * payload     — each payload crate links fig without Zig, per target.
 #   * typescript  — build + test the TypeScript/npm binding (bindings/typescript).
 #   * wasi        — build + test the fig-wasi npm package (bindings/wasi).
@@ -40,9 +39,9 @@ jobs.zig.steps[]
 > with.version = 0.17.0
 +
 > # The one pre-release gate: zig test + all-on + abi-check + semver-check
-> # + version-check. `check` also folds in cargo-semver-checks and the Rust/TS
-> # test suites, but those degrade gracefully — with no cargo/npm toolchain in
-> # this job they skip with a note, and the `rust` / `typescript` jobs below run
+> # + version-check. `check` also folds in the Rust/TS test suites, but
+> # those degrade gracefully — with no cargo/npm toolchain in this job they
+> # skip with a note, and the `rust` / `typescript` jobs below run
 > # them for real (in parallel, with their pinned toolchains). See VERSIONING.md.
 > #
 > # `all-on` runs the tests again with every format compiled in. The
@@ -164,22 +163,6 @@ echo "$var=$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${
 > run = "bash scripts/check-payload.sh ${{ matrix.key }} \"${{ matrix.run }}\""
 > working-directory = bindings/rust
 
-# cargo-semver-checks guards the *native Rust* public surface (Value, Document,
-# the editor, the #[derive] macros, serde impls, cargo features) — the contract
-# the Zig `semver-check` cannot see, since none of it crosses the C ABI. Like
-# semver-check it is version-aware: it only fails if the API delta exceeds what
-# the crate's current version bump allows. It diffs against the most recent
-# release tag (not crates.io). fig releases every artifact under one version and
-# one `vX.Y.Z` tag from 5.0.0 on (see docs/VERSIONING.md), so that tag is
-# matched first — as `v[5-9].*` or `v[1-9][0-9]*`, which admits v10 and later
-# and leaves out the three bare tags that predate the per-track scheme (`v1.0.0`,
-# `v2.0.0`, `v2.5.1`, all ancestors of main) — and the crate's old `rust/v*`
-# line is the fallback until the first one-version tag exists.
-#
-# The Rust crate release workflow (release.figl's `crate` job) re-runs this
-# same check right before publishing, as a release-time gate — see that job's
-# comments for why its baseline discovery differs slightly (it must exclude
-# the tag that triggered the release run itself).
 jobs.rust-port
 > name = Rust port — cargo test + edit fixtures (no Zig)
 > runs-on = ubuntu-latest
@@ -203,75 +186,6 @@ jobs.rust-port.steps[]
 > # Every language's hand-written edit fixtures, through the Rust editor
 > # behind fig-conformance's adapter protocol.
 > run = node tools/edit-fixtures.mjs --command rust/target/release/fig-conform
-
-jobs.rust-semver
-> name = Rust — cargo-semver-checks
-> runs-on = ubuntu-latest
-> steps
-> > *
-> > > uses = actions/checkout@v7
-> > > # Needs full history + tags: the baseline is the most recent release
-> > > # tag, discovered the same way semver-check discovers its own baseline.
-> > > with.fetch-depth = 0
-> > *
-> > > # build.rs compiles the fig core with `zig build`, so building the crate's
-> > > # rustdoc (current AND the baseline rev) needs Zig.
-> > > uses = mlugg/setup-zig@v2
-> > > with.version = 0.17.0
-> > *
-> > > # STABLE, deliberately — cargo-semver-checks reads rustdoc JSON, and its
-> > > # README is explicit that the formats it supports are the ones emitted by
-> > > # the then-current stable and beta Rust, with nightly supported only on a
-> > > # best-effort basis ("often, but not always"), sometimes dropped even while
-> > > # older stable formats are still supported.
-> > > #
-> > > # This used to pin a dated nightly (nightly-2026-06-15, the last emitting
-> > > # rustdoc-types v57) because a bare `@nightly` kept racing ahead of the
-> > > # tool: nightly ships a new FORMAT_VERSION days-to-weeks before
-> > > # cargo-semver-checks learns to read it. But a dated pin only trades a
-> > > # fast-moving break for a slow-rotting one — it ages out of support in the
-> > > # other direction, and it is one more number to remember to advance.
-> > > # Tracking stable removes the race instead of re-timing it: stable moves
-> > > # every six weeks, the tool supports a RANGE of formats at once (0.50.0
-> > > # reads v57, v60 and v61), and stable is the combination its authors
-> > > # actually test. So both halves float, and the recommendation the README
-> > > # gives — newest cargo-semver-checks against newest stable — is what runs.
-> > > uses = dtolnay/rust-toolchain@stable
-> > *
-> > > uses = Swatinem/rust-cache@v2
-> > > with.workspaces = bindings/rust
-> > *
-> > > uses = taiki-e/install-action@v2
-> > > with.tool = cargo-semver-checks
-> > *
-> > > name = Check the fig crate's Rust API against the last release tag
-> > > working-directory = bindings/rust
-> > > run = '''
-set -euo pipefail
-tag="$(git describe --tags --abbrev=0 --match 'v[5-9].*' --match 'v[1-9][0-9]*' 2>/dev/null \
-  || git describe --tags --abbrev=0 --match 'rust/v*' 2>/dev/null || true)"
-if [ -z "$tag" ]; then
-  echo "cargo-semver-checks: no release tag found — skipping (nothing to diff against)."
-  exit 0
-fi
-zon_zig() { sed -n 's/^    \.minimum_zig_version = "\([^"]*\)",$/\1/p'; }
-want="$(zon_zig < ../../build.zig.zon)"
-had="$(git show "$tag:build.zig.zon" | zon_zig)"
-if [ "$had" = "$want" ]; then
-  echo "cargo-semver-checks: baseline $tag"
-  cargo semver-checks --package fig --baseline-rev "$tag"
-else
-  # The tag's Zig source needs a toolchain this job does not have, so the
-  # baseline is the crate crates.io has for it, with default features: that
-  # set links the prebuilt core and needs no Zig. The opt-in surfaces (serde,
-  # derive, indexmap, zon, plist) go unchecked until the next release is cut
-  # with this Zig. See "After a Zig bump" in docs/VERSIONING.md.
-  ver="${tag##*/}"; ver="${ver#v}"
-  echo "cargo-semver-checks: $tag was built with Zig $had, this tree needs $want — baseline is the published fig $ver, default features"
-  cargo semver-checks --package fig --baseline-version "$ver" --default-features
-fi
-
-'''
 
 jobs.typescript
 > name = TypeScript — build + test

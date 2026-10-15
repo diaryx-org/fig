@@ -53,15 +53,15 @@ One annotated tag, `v<version>`, releases everything. Pushing it sets off:
 
 The tag is also what Zig consumers `zig fetch`: Zig has no registry, so pushing the tag *is* the Zig release. Each publishing workflow checks that every file carries the one version (`zig build version-check`) and that the tag names it, and no-ops where the registry already has that version.
 
-**Finding the last release.** `semver-check` and both `cargo-semver-checks` runs (in `zig build check`, in `ci.yml`, and in `release.yml` before publishing) diff against the most recent release tag reachable from HEAD. Three bare tags from before the per-artifact scheme — `v1.0.0`, `v2.0.0`, `v2.5.1` — are ancestors of every commit since, so a bare `--match 'v*'` would take `v2.5.1` for the latest release. The baseline is found instead with
+**Finding the last release.** `semver-check` (in `zig build check`) diffs the C ABI against the most recent release tag reachable from HEAD. Three bare tags from before the per-artifact scheme — `v1.0.0`, `v2.0.0`, `v2.5.1` — are ancestors of every commit since, so a bare `--match 'v*'` would take `v2.5.1` for the latest release. The baseline is found instead with
 
 ```
 git describe --tags --abbrev=0 --match 'v[5-9].*' --match 'v[1-9][0-9]*'
 ```
 
-which admits v5 through v9 and every two-or-more-digit major, and leaves those three out. Until the first one-version tag exists, each falls back to its old prefixed line: `core/v*` for `semver-check`, `rust/v*` for `cargo-semver-checks`. `.config/cliff.toml`'s `tag_pattern` makes the same cut for the changelog, keeping the prefixed tags as history.
+which admits v5 through v9 and every two-or-more-digit major, and leaves those three out. Until the first one-version tag exists, it falls back to its old prefixed line, `core/v*`. `.config/cliff.toml`'s `tag_pattern` makes the same cut for the changelog, keeping the prefixed tags as history.
 
-**After a Zig bump.** A release tag's Zig source builds only with the Zig it was pinned to, and `cargo semver-checks --baseline-rev` builds the baseline crate from that source. So on the first release after `minimum_zig_version` moves, every `cargo-semver-checks` run compares the tag's `build.zig.zon` pin with the tree's and, where they differ, takes the baseline from crates.io instead (`--baseline-version`, the version the tag names) with `--default-features`: the default language set links the prebuilt payload crate and needs no Zig. That run says so in its output. What it leaves unchecked until the next release is the opt-in surface — `serde`, `derive`, `indexmap`, and the `zon`/`plist` languages — so a change behind those features in that window gets its SemVer judgement from review rather than the tool.
+**The Rust API has no automated guard.** fig's native Rust surface (the `fig` crate's types, its derive macros and serde impls, its cargo features) never crosses the C ABI, so `semver-check` cannot see it. `cargo-semver-checks` used to diff it in CI and before publishing; it was removed when the crates moved onto the Rust port, because which version a release is, is decided by its maintainer, not by a tool. A change to that surface is judged in review and named in its commit (`!`, `BREAKING CHANGE:`, `Behavioural-change:`).
 
 ## Releasing
 
@@ -81,7 +81,7 @@ It stops before the push. The steps, which are also how to do it by hand:
 
 1. **Preflight.** Refuse a release that is already doomed, before anything is written: a dirty tree, a branch that isn't `main`, a `main` behind `origin/main`, a tag that already exists, a crate version crates.io already has, no `git-cliff` on PATH.
 2. **Bump.** `build.zig.zon`'s `.version`, then `bindings/rust/Cargo.toml` and its internal pins, then `zig build version-sync` (the `post_bump`) for every other file that carries the version, then the Rust lockfile. `as-is` skips this and releases the version already in the tree — the way to release a version bumped in an earlier commit without spending a second number on it.
-3. **Verify** with `zig build check` (test + conformance + abi-check + semver-check + version-check + check-figl + cargo-semver-checks + the binding suites) — all green. This runs *after* the bump: `semver-check` and `version-check` judge the versions in the tree, so running them first would judge the versions the release is replacing. A failure restores the tree.
+3. **Verify** with `zig build check` (test + conformance + abi-check + semver-check + version-check + check-figl + the binding suites) — all green. This runs *after* the bump: `semver-check` and `version-check` judge the versions in the tree, so running them first would judge the versions the release is replacing. A failure restores the tree.
 4. **Cut the changelog entry.** The generated region under [CHANGELOG](CHANGELOG.md)'s `## Unreleased` is rendered once more through `.config/cliff.toml` and written as a new `## v<version> — <date>` section directly below the end marker; the region is reset to empty. Check the **Behavioural changes** section covers what an unedited caller will notice — it is gathered from `Behavioural-change:` trailers, so a missing one means a commit didn't carry it — and triage anything in **Uncategorised**. `dx changelog` prints the region, `dx changelog --write` regenerates it, `dx changelog --check` fails if it is stale.
 5. **Commit** the version files and the changelog, and nothing else, as `chore: bump to <version>` (or `chore: release <version>` for `as-is`) — subjects `.config/cliff.toml` skips.
 6. **Tag** `v<version>`, annotated.
@@ -91,7 +91,7 @@ If the core had a **breaking** ABI change, bump `FIG_ABI_VERSION` (`abi_version`
 
 ## Known gaps
 
-- **No automated TypeScript API guard.** There is no turnkey `cargo-semver-checks` equivalent for the TS public surface, and the C-ABI integer has no TS analog (npm exposes no C ABI). An automated TS API diff (e.g. an `api-extractor` report committed to git) is an optional follow-up; once it lands, it should baseline against the last release tag the same way the other two do.
+- **No automated TypeScript API guard.** The C-ABI integer has no TS analog (npm exposes no C ABI). An automated TS API diff (e.g. an `api-extractor` report committed to git) is an optional follow-up; once it lands, it should baseline against the last release tag the same way `semver-check` does.
 - **No `publish` command.** `release.yml`'s crate job inlines its own bottom-up
   `cargo publish` loop over the workspace, so the workflow knows the crate list
   rather than asking the repo for it, and a run that dies halfway is finished by

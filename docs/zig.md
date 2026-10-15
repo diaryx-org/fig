@@ -204,6 +204,41 @@ to a string that the engine splices under the same reparse net as any other
 edit. The renderers are documented on `Decls.renderers` in
 `src/contract/language.zig` and on the `Editor` methods that call them.
 
+### The kit
+
+A language is written with the kit (`kit/`), the same kit the other
+bindings have — `@diaryx/fig/kit` in JavaScript, `fig::kit` in Rust, the
+`fig_kit_*` and `fig_table_*` calls in C — layer for layer, and
+`kit/testdata/` holds every binding's to the same answers:
+
+- the rules: `number` (how a lexeme is spelled for a format), `datetime`,
+  `literal` (what a bare token means), `json_string`, `xml` (the
+  tokenizer), each also a C function `fig.h` declares as `fig_kit_*`;
+- `RowWriter`: rows written in whatever order the parser meets its nodes,
+  linked by first child and next sibling, and `finish(root)` into the
+  pre-order a parse's table is read in, every side fact moved with its
+  node; `ChildIndex` and `flat_map.putEntry` find a mapping's last child
+  and its entry by key, and put an entry by a duplicate policy
+  (`.overwrite`, `.first_value`, `.keep`, `.err`);
+- `Scanner`: a byte cursor whose position is already the table's offset;
+- `grammar`: combinators, built at compile time, that write the table
+  through a `RowWriter` as they match — `lit`, `ident`, `seq`, `choice`,
+  `opt`, `many`, `expect`, `failIf` and the node rules `scalar`, `key`,
+  `bare`, `quoted`, `comment`, `trivia`, `entry`, `map`, `sequence` — so a
+  format is a description, its comments bound and its repeated keys put by
+  the policy it names. `grammar.Document(.{ .root = … })` reads a whole
+  input, and `grammar.Parser(Doc, Type)` is the `Parser` a language
+  module declares, its refusals carrying the grammar's message and offset;
+- `Writer`: a printer's output over a `std.Io.Writer` that knows `pretty`
+  and the indent, and writes a node's comments as `# text` lines.
+
+`kit/examples/dotenv.zig` is dotenv written with them, a language module
+whose parse is a grammar of about forty lines. `zig build test` registers
+it through `contract.VTable`, beside `bindings/c/examples/dotenv.c`, the
+same language written in C against `fig.h`, and holds both to the compiled
+dotenv table for table, byte for byte as printed, and refusal for refusal
+(`src/kit_twins_test.zig`).
+
 Every "Edit" ✅ above goes through the *same* `Editor(Runtime.Language)`
 engine (next section) — ZON included, splicing its `.key = value`
 struct-field syntax and `.{}`/`.@"..."` quoting rules exactly like JSON gets

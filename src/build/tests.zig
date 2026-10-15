@@ -87,6 +87,35 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_kit_tests.step);
 
+    // The kit's dotenv twins in Zig (`kit/examples/dotenv.zig`) and C
+    // (`bindings/c/examples/dotenv.c`), registered and held to the compiled
+    // dotenv (`src/kit_twins_test.zig`): a test of its own, since the twins
+    // are not part of fig, carrying core's imports and both of them.
+    const twins_mod = b.createModule(.{
+        .root_source_file = b.path("src/kit_twins_test.zig"),
+        .target = target,
+        .optimize = ctx.optimize,
+    });
+    twins_mod.addImport("build_options", mod.import_table.get("build_options").?);
+    ctx.importKit(twins_mod);
+    ctx.importLanguages(twins_mod);
+    ctx.importWire(twins_mod);
+    twins_mod.addImport("kit_dotenv", b.createModule(.{
+        .root_source_file = ctx.kit_dep.path("examples/dotenv.zig"),
+        .imports = &.{.{ .name = "kit", .module = ctx.kit }},
+    }));
+    twins_mod.link_libc = !resolved_target.cpu.arch.isWasm();
+    twins_mod.addIncludePath(b.path("bindings/c/include"));
+    twins_mod.addCSourceFile(.{
+        .file = b.path("bindings/c/examples/dotenv.c"),
+        .flags = &.{ "-std=c11", "-Wall", "-Wextra", "-Werror" },
+    });
+    const twins_tests = b.addTest(.{ .name = "kit-twins", .root_module = twins_mod, .filters = test_filters });
+    const run_twins = b.addRunArtifact(twins_tests);
+    run_twins.setCwd(b.path("."));
+    addKitFixtures(b, run_twins);
+    test_step.dependOn(&run_twins.step);
+
     // Each language's own tests: its package's `test` step, which needs
     // nothing of fig's.
     for (ctx.languages) |dep| {
@@ -215,15 +244,18 @@ pub fn add(ctx: Context, arts: artifacts.Result) Result {
     return .{ .test_step = test_step, .all_on_step = all_on_step };
 }
 
-/// Every file under `kit/testdata/`, as an input of `run`.
+/// Every file the kit's tests read — the kit's own fixtures, and the dotenv
+/// twin fixtures the twins are held to — as an input of `run`.
 pub fn addKitFixtures(b: *std.Build, run: *std.Build.Step.Run) void {
     const io = b.graph.io;
-    var dir = b.root.openDir(io, "kit/testdata", .{ .iterate = true }) catch return;
-    defer dir.close(io);
-    var walker = dir.walk(b.allocator) catch @panic("OOM");
-    defer walker.deinit();
-    while (walker.next(io) catch null) |e| {
-        if (e.kind != .file) continue;
-        run.addFileInput(b.path(b.pathJoin(&.{ "kit/testdata", e.path })));
+    for ([_][]const u8{ "kit/testdata", "bindings/typescript/test/fixtures/dotenv" }) |root| {
+        var dir = b.root.openDir(io, root, .{ .iterate = true }) catch continue;
+        defer dir.close(io);
+        var walker = dir.walk(b.allocator) catch @panic("OOM");
+        defer walker.deinit();
+        while (walker.next(io) catch null) |e| {
+            if (e.kind != .file) continue;
+            run.addFileInput(b.path(b.pathJoin(&.{ root, e.path })));
+        }
     }
 }

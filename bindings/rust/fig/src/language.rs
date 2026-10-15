@@ -229,6 +229,7 @@ pub struct Renderers {
     pub tail: bool,
     pub key: bool,
     pub key_name: bool,
+    pub string: bool,
 }
 
 /// The surface syntax the splice engine writes a format with. Every field
@@ -902,6 +903,10 @@ pub enum Renderer {
     /// Spell a key's name as the format writes a key (JSON's `"b"`, ZON's
     /// `.b`). Without it a name is written as it stands.
     KeyName,
+    /// Spell a string that replaces a string in the replaced one's quote
+    /// style (`old_value`), or nothing where that style is the printer's
+    /// own or cannot hold it, and the editor writes fig's spelling.
+    String,
 }
 
 impl Renderer {
@@ -913,6 +918,7 @@ impl Renderer {
             Renderer::Tail => "tail",
             Renderer::Key => "key",
             Renderer::KeyName => "key_name",
+            Renderer::String => "string",
         }
     }
 }
@@ -972,7 +978,9 @@ impl Literal {
 /// [`Renderer`]: `value` for all but `Key`, and with it, for `Value`
 /// only, `literal`, what fig's bare-literal rules make of that value;
 /// `indent` for all but `Value`; `key` for `Entry`, `Tail` and `Key`;
-/// `old_key` for `Key`.
+/// `old_key` for `Key`. For `String`, `value` is the new string, decoded,
+/// and `old_value` the string it replaces as the source spells it, quotes
+/// and all.
 ///
 /// `parent_key` and `parent_tag`, for every renderer, are the container
 /// the fragment is written into — the mapping an entry joins, the
@@ -999,6 +1007,7 @@ pub struct RenderArgs<'a> {
     pub old_key: &'a [u8],
     pub parent_key: &'a [u8],
     pub parent_tag: &'a [u8],
+    pub old_value: &'a [u8],
 }
 
 impl<'a> RenderArgs<'a> {
@@ -1047,6 +1056,12 @@ impl<'a> RenderArgs<'a> {
     /// Set `parent_tag`.
     pub fn parent_tag(mut self, parent_tag: &'a [u8]) -> Self {
         self.parent_tag = parent_tag;
+        self
+    }
+
+    /// Set `old_value`.
+    pub fn old_value(mut self, old_value: &'a [u8]) -> Self {
+        self.old_value = old_value;
         self
     }
 }
@@ -1530,8 +1545,11 @@ impl Registration {
             } else {
                 None
             },
-            // A Rust language has no string renderer yet.
-            render_string: None,
+            render_string: if self.renderers.string {
+                Some(render_string_thunk)
+            } else {
+                None
+            },
         }
     }
 }
@@ -2031,6 +2049,7 @@ fn render_thunk_body(
         old_key: bytes_of(r.old_key),
         parent_key: bytes_of(r.parent_key),
         parent_tag: bytes_of(r.parent_tag),
+        old_value: bytes_of(r.old_value),
     };
     match catch_unwind(AssertUnwindSafe(|| reg.lang.render(which, args))) {
         Ok(Ok(bytes)) => {
@@ -2109,3 +2128,4 @@ render_thunk!(render_item_thunk, Renderer::Item);
 render_thunk!(render_tail_thunk, Renderer::Tail);
 render_thunk!(render_key_thunk, Renderer::Key);
 render_thunk!(render_key_name_thunk, Renderer::KeyName);
+render_thunk!(render_string_thunk, Renderer::String);

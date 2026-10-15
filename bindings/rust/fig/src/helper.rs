@@ -202,6 +202,7 @@ fn answer(lang: &dyn Language, method: &str, req: &Value) -> Result<Value, Proto
                 "tail" => Renderer::Tail,
                 "key" => Renderer::Key,
                 "key_name" => Renderer::KeyName,
+                "string" => Renderer::String,
                 other => {
                     return Err(Protocol::new(
                         -32602,
@@ -221,6 +222,7 @@ fn answer(lang: &dyn Language, method: &str, req: &Value) -> Result<Value, Proto
                 old_key: field("old_key").as_bytes(),
                 parent_key: field("parent_key").as_bytes(),
                 parent_tag: field("parent_tag").as_bytes(),
+                old_value: field("old_value").as_bytes(),
             };
             let out = lang.render(which, args).map_err(refused)?;
             let out = String::from_utf8(out).map_err(|_| {
@@ -328,6 +330,7 @@ pub fn description_to_value(d: &Description) -> Value {
         (d.renderers.tail, "tail"),
         (d.renderers.key, "key"),
         (d.renderers.key_name, "key_name"),
+        (d.renderers.string, "string"),
     ] {
         if on {
             renderers.push(s(name));
@@ -457,6 +460,7 @@ pub fn description_from_value(v: &Value) -> Result<Description, LanguageError> {
             Some("tail") => renderers.tail = true,
             Some("key") => renderers.key = true,
             Some("key_name") => renderers.key_name = true,
+            Some("string") => renderers.string = true,
             _ => {}
         }
     }

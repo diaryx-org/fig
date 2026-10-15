@@ -8,7 +8,7 @@
 // site; the `*Raw` variants pass already-serialized text straight through.
 import { check, disposedError, type Format, type SerializeOptions } from "./types.ts";
 import { Frame, encodePath, encodeKeyList, encodeIndexList, readOutSlice, Status, type Segment } from "./ffi.ts";
-import { V, valueText, valueTextWith, type JsInput, type Value } from "./value.ts";
+import { V, stringOf, valueText, valueTextWith, type JsInput, type Value } from "./value.ts";
 
 /** The bound C ABI edit functions a concrete editor supplies. */
 export interface EditFns {
@@ -16,6 +16,10 @@ export interface EditFns {
   /** Rename by the key's NAME, spelled as `insertNamedKey` spells one. */
   replaceNamedKey(h: number, path: number, pathLen: number, name: number, nameLen: number): number;
   set(h: number, path: number, pathLen: number, val: number, valLen: number): number;
+  /** `replaceVal` and `set` for a string fig rendered: `repl`/`val` spells
+   *  the string `str`, and a string it replaces keeps its quote style. */
+  replaceString(h: number, path: number, pathLen: number, repl: number, replLen: number, str: number, strLen: number): number;
+  setString(h: number, path: number, pathLen: number, val: number, valLen: number, str: number, strLen: number): number;
   /** Insert by the key's NAME: the editor spells it as the format spells a
    *  key (`.k` in ZON, `"k"` in JSON). */
   insertNamedKey(h: number, path: number, pathLen: number, name: number, nameLen: number, val: number, valLen: number): number;
@@ -67,7 +71,7 @@ export abstract class Editable {
 
   /** Replace the value at `path` with `value`. */
   replaceValue(path: readonly Segment[], value: Value | JsInput): void {
-    this.replaceValueRaw(path, valueText(value, this.textFormat));
+    this.replaceRendered(path, valueText(value, this.textFormat), stringOf(value));
   }
 
   /** Rename the key at `path` to `key`, a name the format spells as it
@@ -96,7 +100,7 @@ export abstract class Editable {
    *  `insertValue` two-step into one call. `path` must end in a key; a missing
    *  intermediate container throws `NotFound`. */
   setValue(path: readonly Segment[], value: Value | JsInput): void {
-    this.setValueRaw(path, valueText(value, this.textFormat));
+    this.setRendered(path, valueText(value, this.textFormat), stringOf(value));
   }
 
   // ── value edits with a layout knob (block-vs-inline containers) ─────────
@@ -111,7 +115,7 @@ export abstract class Editable {
   /** Replace the value at `path`, rendering `value` with `options` (a block
    *  map/sequence lands as a nested section). */
   replaceValueWith(path: readonly Segment[], value: Value | JsInput, options?: SerializeOptions): void {
-    this.replaceValueRaw(path, valueTextWith(value, this.textFormat, options));
+    this.replaceRendered(path, valueTextWith(value, this.textFormat, options), stringOf(value));
   }
 
   /** Insert `key: value` into the mapping at `path`, rendering `value` with
@@ -123,7 +127,38 @@ export abstract class Editable {
   /** Upsert the value at `path`, rendering `value` with `options` (a block
    *  map/sequence lands as a nested section). The width-aware twin of `setValue`. */
   setValueWith(path: readonly Segment[], value: Value | JsInput, options?: SerializeOptions): void {
-    this.setValueRaw(path, valueTextWith(value, this.textFormat, options));
+    this.setRendered(path, valueTextWith(value, this.textFormat, options), stringOf(value));
+  }
+
+  // A string fig rendered goes to the `*String` exports with the string
+  // beside its spelling, so the string it replaces keeps its quote style (a
+  // YAML `"debug"` set to `info` stays `"info"`); anything else is spliced as
+  // rendered, as the `*Raw` methods splice the caller's own spelling.
+
+  private replaceRendered(path: readonly Segment[], text: string, string: string | undefined): void {
+    if (string === undefined) return this.replaceValueRaw(path, text);
+    const frame = new Frame();
+    try {
+      const p = encodePath(frame, path);
+      const t = frame.str(text);
+      const s = frame.str(string);
+      check(this.fns.replaceString(this.live(), p.ptr, p.len, t.ptr, t.len, s.ptr, s.len), "replaceValue");
+    } finally {
+      frame.dispose();
+    }
+  }
+
+  private setRendered(path: readonly Segment[], text: string, string: string | undefined): void {
+    if (string === undefined) return this.setValueRaw(path, text);
+    const frame = new Frame();
+    try {
+      const p = encodePath(frame, path);
+      const t = frame.str(text);
+      const s = frame.str(string);
+      check(this.fns.setString(this.live(), p.ptr, p.len, t.ptr, t.len, s.ptr, s.len), "setValue");
+    } finally {
+      frame.dispose();
+    }
   }
 
   /** Append `value` to the sequence at `path`. */

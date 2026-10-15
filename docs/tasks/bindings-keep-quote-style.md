@@ -1,22 +1,31 @@
 ```fig
 title = The bindings and the JavaScript twins keep a replaced string's quote style
 part_of = [Tasks](/docs/tasks/tasks.md)
-status = open
-description = The TypeScript and Rust replaceValue and setValue still splice the printer's spelling of a string, and the JavaScript YAML, TOML and JSON5 twins declare no string renderer; adopting both moves the conformance edit suites
+status = done
+description = The TypeScript and Rust replaceValue and setValue now keep a replaced string's quote style, the JavaScript YAML, TOML and JSON5 twins declare a string renderer, and the conformance edit suites are re-recorded
 created = 2026-10-15
 updated = 2026-10-15
 ```
 
 # The bindings and the JavaScript twins keep a replaced string's quote style
 
-**Status.** Open. The core half of the
-[quote-style proposal](/docs/proposals/keep-quote-style.md) has landed:
-`renderString` on YAML, TOML and JSON's `Language`, the engine's
+**Status.** Done, in `feat(bindings): the Rust and TypeScript editors keep
+a replaced string's quote style` (2026-10-15), the rest of the
+[quote-style proposal](/docs/proposals/keep-quote-style.md) after its core
+half (`renderString` on YAML, TOML and JSON's `Language`, the engine's
 `replaceStringAtPath` and `setString`, the C ABI's
 `fig_editor_replace_string` and `fig_editor_set_string`, and the CLI's
-`replace`, `set` and `patch` through them. This is the rest.
+`replace`, `set` and `patch` through them). The Rust `replace_value`,
+`set_value` and their `*_with` twins, and the TypeScript `replaceValue`,
+`setValue` and `*With`, hand a string to those exports beside its
+rendering; the `*Raw` methods are as they were. `Renderer` names `string`
+in Rust and TypeScript, with `old_value` on `RenderArgs`, and the YAML,
+TOML and JSON5 twins declare one spelled as their Zig originals. The
+fig-conformance edit suites were re-recorded in the same change: 88
+`replaceValue` answers moved (yaml 39, toml 44, json5 5), and the compiled,
+native and JavaScript languages score every edit case exact and faithful.
 
-## What is left
+## What was left
 
 - **The TypeScript binding.** `replaceValue`, `setValue` and their `*With`
   twins render a `Value` and call `replaceValueRaw` / `setValueRaw`. For a

@@ -73,9 +73,9 @@ an empty mapping is spelled with, and so on). It may declare
 `samples`, small documents fig's checks parse, print, reparse and edit
 when the language registers; and, where it spells a fragment in a way no
 `syntax` value covers, a renderer: `renderValue`, `renderEntry`,
-`renderItem`, `renderTail`, `renderKey` or `renderKeyName`, each a pure
-function to a string fig splices. fig's `src/contract/language.zig`
-holds the full list, and why each is there.
+`renderItem`, `renderTail`, `renderKey`, `renderKeyName` or `renderString`,
+each a pure function to a string fig splices. fig's
+`src/contract/language.zig` holds the full list, and why each is there.
 
 The parser writes a node table — a row per node, in pre-order, and
 sparse side facts such as comments and the spans of separators — through

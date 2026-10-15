@@ -296,6 +296,26 @@ test("stringify stays a whole document where splice text does not", () => {
   assert.equal(stringify("h2", Format.Nestedtext), "> h2\n");
 });
 
+test("Editor keeps the quote style of a string it replaces with a string", () => {
+  using yaml = Editor.open("env:\n  LOG: \"debug\"\n  MODE: 'fast'\n  NAME: plain\n", Format.Yaml);
+  yaml.replaceValue(["env", "LOG"], "info");
+  yaml.setValue(["env", "MODE"], V.string("it's slow"));
+  yaml.setValueWith(["env", "NAME"], "other", {});
+  assert.equal(yaml.source(), "env:\n  LOG: \"info\"\n  MODE: 'it''s slow'\n  NAME: other\n");
+  // A number, or a string replacing a non-string, has no old style to keep,
+  // and a `*Raw` text is the caller's own spelling.
+  using kinds = Editor.open("a: \"x\"\nb: 1\nc: \"y\"\n", Format.Yaml);
+  kinds.replaceValue(["a"], 5);
+  kinds.replaceValue(["b"], "z");
+  kinds.replaceValueRaw(["c"], "w");
+  assert.equal(kinds.source(), "a: 5\nb: z\nc: w\n");
+  // TOML keeps a literal string where it can hold the new one.
+  using toml = Editor.open("a = 'one'\nb = 'two'\n", Format.Toml);
+  toml.replaceValueWith(["a"], "C:\\x", {});
+  toml.setValue(["b"], "it's");
+  assert.equal(toml.source(), "a = 'C:\\x'\nb = \"it's\"\n");
+});
+
 test("Editor.set replaces an existing key or inserts a missing one", () => {
   using ed = Editor.open("a: 1\nb: 2\n", Format.Yaml);
   ed.setValue(["a"], 9); // existing → replace

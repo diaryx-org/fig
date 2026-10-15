@@ -7,7 +7,7 @@
 
 mod common;
 
-use fig::{Editor, Segment};
+use fig::{Editor, Segment, SerializeOptions};
 
 #[test]
 fn editor_insert_appends_after_last_entry() {
@@ -40,6 +40,48 @@ fn editor_replace_quotes_when_needed() {
     let value: std::collections::BTreeMap<String, String> =
         fig_yaml::from_str(ed.source().unwrap()).unwrap();
     assert_eq!(value["title"], "has: colon");
+}
+
+#[test]
+fn a_replaced_string_keeps_its_quote_style() {
+    // YAML: `"…"` always, `'…'` where it can hold the string, plain as the
+    // printer spells it.
+    let mut ed = Editor::open(
+        b"env:\n  LOG: \"debug\"\n  MODE: 'fast'\n  NAME: plain\n",
+        by_name("yaml"),
+    )
+    .unwrap();
+    ed.replace_value(&[Segment::Key("env"), Segment::Key("LOG")], "info")
+        .unwrap();
+    ed.set_value(&[Segment::Key("env"), Segment::Key("MODE")], "it's slow")
+        .unwrap();
+    ed.set_value(&[Segment::Key("env"), Segment::Key("NAME")], "other")
+        .unwrap();
+    assert_eq!(
+        ed.source().unwrap(),
+        "env:\n  LOG: \"info\"\n  MODE: 'it''s slow'\n  NAME: other\n"
+    );
+
+    // A string that is not replacing a string, and a value that is not a
+    // string, have no old style to keep.
+    let mut ed = Editor::open(b"a: \"x\"\nb: 1\n", by_name("yaml")).unwrap();
+    ed.replace_value(&[Segment::Key("a")], 5).unwrap();
+    ed.replace_value(&[Segment::Key("b")], "y").unwrap();
+    assert_eq!(ed.source().unwrap(), "a: 5\nb: y\n");
+
+    // TOML: a literal string stays literal where it can hold the string, and
+    // is a basic one where it cannot.
+    let mut ed = Editor::open(b"a = 'one'\nb = 'two'\n", by_name("toml")).unwrap();
+    ed.replace_value_with(&[Segment::Key("a")], "C:\\x", SerializeOptions::default())
+        .unwrap();
+    ed.set_value_with(&[Segment::Key("b")], "it's", SerializeOptions::default())
+        .unwrap();
+    assert_eq!(ed.source().unwrap(), "a = 'C:\\x'\nb = \"it's\"\n");
+
+    // JSON5: single quotes stay, escaping a `'`.
+    let mut ed = Editor::open(b"{ host: 'localhost' }", by_name("json5")).unwrap();
+    ed.replace_value(&[Segment::Key("host")], "it's").unwrap();
+    assert_eq!(ed.source().unwrap(), "{ host: 'it\\'s' }");
 }
 
 #[test]

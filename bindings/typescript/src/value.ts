@@ -271,6 +271,14 @@ export function valueText(value: Value | JsInput, format: Format, options?: Seri
   return s.endsWith("\n") ? s.slice(0, -1) : s;
 }
 
+/** The string `value` is, when it is one: the value fig renders and the
+ *  editors hand beside its spelling, so the string it replaces keeps its
+ *  quote style. */
+export function stringOf(value: Value | JsInput): string | undefined {
+  if (typeof value === "string") return value;
+  return isValue(value) && value.kind === "string" ? value.value : undefined;
+}
+
 /** Serialize a value for splicing with a layout knob — the `*With` editor
  *  methods' text path (mirrors the Rust binding's `value_text_with`). Unlike
  *  {@link valueText}, the fig-dialect flow override is NOT forced: a container

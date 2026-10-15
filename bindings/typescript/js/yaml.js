@@ -2867,9 +2867,17 @@ const language = {
     { name: "yaml-1.1", extensions: [], splice: "literal", empty_doc_seed: "", prints: YAML_PRINTS },
   ],
   samples: ["a: 1\nb:\n  - x\n  - y\nc:\n  d: true\n", "{a: 1, b: [2, 3]}\n"],
-  renderers: [],
+  // A string replacing a quoted one, in its quotes: `"…"` always, and `'…'`
+  // when the new string has no control character, which the printer would
+  // double-quote. Plain and block scalars are the printer's own.
+  renderers: ["string"],
   parse,
   print,
+  render: (_which, args) => {
+    if (args.old_value.startsWith('"')) return doubleQuotedText(args.value);
+    if (args.old_value.startsWith("'") && !hasControlChar(args.value)) return singleQuotedText(args.value);
+    return "";
+  },
   split_stream: splitStream,
 };
 

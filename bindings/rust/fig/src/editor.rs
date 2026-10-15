@@ -145,12 +145,9 @@ impl Editor {
         path: &[Segment],
         value: impl Into<Value>,
     ) -> Result<(), Error> {
-        let repl = value_text(&value.into(), self.format)?;
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_replace_val(self.ptr(), p.as_ptr(), p.len(), repl.as_ptr(), repl.len())
-        };
-        edit_status(status, self.format, EditTarget::Value)
+        let value = value.into();
+        let repl = value_text(&value, self.format)?;
+        self.replace_rendered(path, &repl, &value)
     }
 
     /// Rename the key at `path` to `key`, a name the format spells as it
@@ -229,12 +226,9 @@ impl Editor {
     /// * A failed `set_value` is a no-op: any container created on the way is
     ///   rolled back, so `Err` always means the document is unchanged.
     pub fn set_value(&mut self, path: &[Segment], value: impl Into<Value>) -> Result<(), Error> {
-        let val = value_text(&value.into(), self.format)?;
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_set(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
-        };
-        edit_status(status, self.format, EditTarget::Value)
+        let value = value.into();
+        let val = value_text(&value, self.format)?;
+        self.set_rendered(path, &val, &value)
     }
 
     // ── value edits with a layout knob (block-vs-inline containers) ─────────
@@ -256,12 +250,9 @@ impl Editor {
         value: impl Into<Value>,
         options: SerializeOptions,
     ) -> Result<(), Error> {
-        let repl = value_text_with(&value.into(), self.format, options)?;
-        let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_replace_val(self.ptr(), p.as_ptr(), p.len(), repl.as_ptr(), repl.len())
-        };
-        edit_status(status, self.format, EditTarget::Value)
+        let value = value.into();
+        let repl = value_text_with(&value, self.format, options)?;
+        self.replace_rendered(path, &repl, &value)
     }
 
     /// Insert `key: value` into the mapping at `path`, rendering `value` with
@@ -298,10 +289,65 @@ impl Editor {
         value: impl Into<Value>,
         options: SerializeOptions,
     ) -> Result<(), Error> {
-        let val = value_text_with(&value.into(), self.format, options)?;
+        let value = value.into();
+        let val = value_text_with(&value, self.format, options)?;
+        self.set_rendered(path, &val, &value)
+    }
+
+    // A string fig rendered goes to the `_string` exports with the string
+    // beside its spelling, so the string it replaces keeps its quote style
+    // (a YAML `"debug"` set to `info` stays `"info"`); anything else is
+    // spliced as rendered.
+
+    fn replace_rendered(
+        &mut self,
+        path: &[Segment],
+        repl: &str,
+        value: &Value,
+    ) -> Result<(), Error> {
         let p = to_ffi_path(path);
-        let status = unsafe {
-            ffi::fig_editor_set(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
+        let status = match value {
+            Value::Str(s) => unsafe {
+                ffi::fig_editor_replace_string(
+                    self.ptr(),
+                    p.as_ptr(),
+                    p.len(),
+                    repl.as_ptr(),
+                    repl.len(),
+                    s.as_ptr(),
+                    s.len(),
+                )
+            },
+            _ => unsafe {
+                ffi::fig_editor_replace_val(
+                    self.ptr(),
+                    p.as_ptr(),
+                    p.len(),
+                    repl.as_ptr(),
+                    repl.len(),
+                )
+            },
+        };
+        edit_status(status, self.format, EditTarget::Value)
+    }
+
+    fn set_rendered(&mut self, path: &[Segment], val: &str, value: &Value) -> Result<(), Error> {
+        let p = to_ffi_path(path);
+        let status = match value {
+            Value::Str(s) => unsafe {
+                ffi::fig_editor_set_string(
+                    self.ptr(),
+                    p.as_ptr(),
+                    p.len(),
+                    val.as_ptr(),
+                    val.len(),
+                    s.as_ptr(),
+                    s.len(),
+                )
+            },
+            _ => unsafe {
+                ffi::fig_editor_set(self.ptr(), p.as_ptr(), p.len(), val.as_ptr(), val.len())
+            },
         };
         edit_status(status, self.format, EditTarget::Value)
     }

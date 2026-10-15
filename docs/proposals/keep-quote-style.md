@@ -10,10 +10,10 @@ updated = 2026-10-15
 
 # A replaced string keeps its quote style
 
-**Status.** Implemented in the core, 2026-10-15: the engine, the C ABI, and
-the CLI's `replace`, `set` and `patch`. The TypeScript and Rust bindings, the
-JavaScript twins and the fig-conformance re-recording are
-[a task](/docs/tasks/bindings-keep-quote-style.md). Proposed 2026-10-14, split
+**Status.** Implemented, 2026-10-15: the engine, the C ABI, and the CLI's
+`replace`, `set` and `patch`, then the TypeScript and Rust bindings, the
+JavaScript twins and the fig-conformance re-recording
+([the task](/docs/tasks/bindings-keep-quote-style.md)). Proposed 2026-10-14, split
 out of the `fix(patch)` commit that made `fig patch` leave alone a value the
 target already holds in another spelling. This is the other half: a value
 that *does* change.

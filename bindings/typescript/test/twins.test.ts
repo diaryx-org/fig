@@ -275,3 +275,26 @@ test("the figl twin renames a container on every line that names it, as figl doe
   headers.renameContainer(["jobs", "test"], "t");
   assert.equal(headers.source(), "jobs.t.steps[]\n> uses = x\njobs.t.steps[]\n> run = y\n+\n> run = z\n");
 });
+
+test("each twin keeps a replaced string's quote style, as its compiled format does", () => {
+  // The renderers' answers are the Zig languages' `renderString`'s, and the
+  // compiled CLI writes these same bytes.
+  const cases: [string, string, string[], string, string][] = [
+    ["yaml", 'LOG: "debug"\n', ["LOG"], "info", 'LOG: "info"\n'],
+    ["yaml", "a: 'x'\n", ["a"], "it's", "a: 'it''s'\n"],
+    ["yaml", "a: 'x'\n", ["a"], "tab\there", 'a: "tab\\there"\n'],
+    ["yaml", "a: x\n", ["a"], "y", "a: y\n"],
+    ["toml", "a = 'x'\n", ["a"], "C:\\y", "a = 'C:\\y'\n"],
+    ["toml", "a = 'x'\n", ["a"], "it's", 'a = "it\'s"\n'],
+    ["toml", "a = '''\nx'''\n", ["a"], "one\ntwo", "a = '''\none\ntwo'''\n"],
+    ["toml", 'a = """x"""\n', ["a"], 'say "hi"', 'a = """say \\"hi\\""""\n'],
+    ["toml", 'a = "x"\n', ["a"], "y", 'a = "y"\n'],
+    ["json5", "{ host: 'localhost' }", ["host"], "it's", "{ host: 'it\\'s' }"],
+    ["json5", '{ host: "localhost" }', ["host"], "y", '{ host: "y" }'],
+  ];
+  for (const [name, source, path, value, expected] of cases) {
+    using ed = Editor.open(source, formatByName(name)!);
+    ed.replaceValue(path, value);
+    assert.equal(ed.source(), expected, `${name}: ${JSON.stringify(source)} <- ${JSON.stringify(value)}`);
+  }
+});

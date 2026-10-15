@@ -721,6 +721,48 @@ function basicString(s) {
   );
 }
 
+// Whether `s` can be a literal string: no control character but a tab, and,
+// outside a multi-line one, no line break or `'` either. A multi-line one
+// also refuses `'''`, which would close it, and a closing `'`, which would
+// read as part of the delimiter. The Zig printer's `literalHolds`.
+function literalHolds(s, multiline) {
+  // eslint-disable-next-line no-control-regex
+  if ((multiline ? /[\x00-\x08\x0b-\x1f\x7f]/ : /[\x00-\x08\x0a-\x1f\x7f']/).test(s)) return false;
+  return !multiline || (!s.includes("'''") && !s.endsWith("'"));
+}
+
+// `s`, which `literalHolds`, as `'…'`, or `'''…'''` when `multiline`.
+// `newlineFirst` breaks the line after the opener, which TOML drops; a
+// string that starts with a line break takes one there whatever it says, or
+// that break would be the one dropped.
+function literalString(s, multiline, newlineFirst) {
+  const quote = multiline ? "'''" : "'";
+  return quote + (multiline && (newlineFirst || s.startsWith("\n")) ? "\n" : "") + s + quote;
+}
+
+// `s` as `"""…"""`: line breaks and tabs as they are, `"` and `\` escaped,
+// every other control character as `basicString` escapes it.
+function multilineBasicString(s, newlineFirst) {
+  // eslint-disable-next-line no-control-regex
+  const body = s.replace(/[\x00-\x08\x0b-\x1f"\\\x7f]/g, (ch) => ESCAPES[ch] ?? "\\u" + ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0"));
+  return '"""' + (newlineFirst || s.startsWith("\n") ? "\n" : "") + body + '"""';
+}
+
+// A string replacing a string, in the old one's style where that style can
+// hold it, as the Zig language's `renderString` writes it: `'…'` and
+// `'''…'''` within their rules, `"""…"""` always. Empty for a basic `"…"`,
+// the printer's own. A multi-line string keeps a line break after its opener.
+function renderString(value, old) {
+  if (old.startsWith("'''") || old.startsWith('"""')) {
+    const after = old.slice(3);
+    const newlineFirst = after.startsWith("\n") || after.startsWith("\r\n");
+    if (old[0] === '"') return multilineBasicString(value, newlineFirst);
+    return literalHolds(value, true) ? literalString(value, true, newlineFirst) : "";
+  }
+  if (old.startsWith("'") && literalHolds(value, false)) return literalString(value, false, false);
+  return "";
+}
+
 function keyText(row) {
   if (row.kind !== "string") throw new Error("a TOML key must be a string");
   return row.text ?? "";
@@ -928,11 +970,12 @@ const language = {
     },
   ],
   samples: ['a = 1\nb = [1, 2]\n\n[s]\nk = "v"\nt = { x = 1 }\n'],
-  // A key's name as TOML writes a key: bare when it can be, else a basic string.
-  renderers: ["key_name"],
+  // A key's name as TOML writes a key: bare when it can be, else a basic
+  // string; and a string replacing one, in the old one's style.
+  renderers: ["key_name", "string"],
   parse,
   print,
-  render: (_which, args) => spellKey(args.key),
+  render: (which, args) => (which === "string" ? renderString(args.value, args.old_value) : spellKey(args.key)),
 };
 
 export default language;

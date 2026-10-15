@@ -291,6 +291,60 @@ fn a_renderer_is_told_the_container_its_fragment_goes_into() {
     assert_eq!(ed.source().unwrap(), "x=!kv||ten\ny=!kv||two\n");
 }
 
+// `tinykv` with a string renderer alone: a string replacing one in `'…'`
+// keeps the quotes, and any other is written as fig spells it — so that the
+// renderer's slot, `old_value` and the editor's fallback are seen to cross
+// the C boundary.
+struct QuotedKv;
+
+impl Language for QuotedKv {
+    fn describe(&self) -> Description {
+        let mut d = TinyKv.describe();
+        d.name = "quotedkv".into();
+        d.dialects = vec![raw_dialect("quotedkv", "qkv")];
+        d.renderers = Renderers::default();
+        d.renderers.string = true;
+        d
+    }
+
+    fn parse(&self, dialect: &str, input: &[u8]) -> Result<NodeTable, LanguageError> {
+        TinyKv.parse(dialect, input)
+    }
+
+    fn print(
+        &self,
+        dialect: &str,
+        table: &NodeTable,
+        options: &PrintOptions,
+    ) -> Result<Vec<u8>, LanguageError> {
+        TinyKv.print(dialect, table, options)
+    }
+
+    fn render(&self, which: Renderer, args: RenderArgs<'_>) -> Result<Vec<u8>, LanguageError> {
+        assert_eq!(which, Renderer::String);
+        if !args.old_value.starts_with(b"'") {
+            return Ok(Vec::new());
+        }
+        let mut out = b"'".to_vec();
+        out.extend(args.value);
+        out.push(b'\'');
+        Ok(out)
+    }
+}
+
+#[test]
+fn a_string_renderer_keeps_the_style_of_the_string_it_replaces() {
+    let qkv = fig::language::register(QuotedKv).expect("registers")[0];
+    let mut ed = Editor::open(b"x='one'\ny=two\n", qkv).expect("editor");
+    ed.replace_value(&[Segment::Key("x")], "ten").unwrap();
+    ed.set_value(&[Segment::Key("y")], "three").unwrap();
+    ed.set_value(&[Segment::Key("z")], "four").unwrap();
+    assert_eq!(ed.source().unwrap(), "x='ten'\ny=three\nz=four\n");
+    // A renderer is called with the request it is given directly, too.
+    let args = RenderArgs::default().value(b"v").old_value(b"'o'");
+    assert_eq!(QuotedKv.render(Renderer::String, args).unwrap(), b"'v'");
+}
+
 struct Broken;
 
 impl Language for Broken {
@@ -413,6 +467,16 @@ fn the_helper_wire_round_trips_describe_parse_print_and_render() {
         resp.get("result").and_then(Value::as_str),
         Some("!dep|deps|v")
     );
+    // So does the string replaced, for the string renderer, which a
+    // description declares and decodes.
+    let resp = helper::handle(
+        &QuotedKv,
+        r#"{"jsonrpc":"2.0","id":7,"method":"render","params":{"which":"string","dialect":"quotedkv","value":"v","old_value":"'o'"}}"#,
+    );
+    assert_eq!(resp.get("result").and_then(Value::as_str), Some("'v'"));
+    let resp = helper::handle(&QuotedKv, r#"{"jsonrpc":"2.0","id":8,"method":"describe"}"#);
+    let desc = helper::description_from_value(resp.get("result").unwrap()).unwrap();
+    assert!(desc.renderers.string && !desc.renderers.value);
     let resp = helper::handle(
         &lang,
         r#"{"jsonrpc":"2.0","id":"seven","method":"parse","params":{"dialect":"tinykv","input":"nope"}}"#,

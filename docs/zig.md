@@ -198,10 +198,10 @@ declared half), what its parser records on `Document` beside the spans —
 each block-sequence item's marker, each entry's separator, a section's
 header lines and every place its name is written — and, where it spells a
 fragment in a way no declaration covers, a *renderer*: `renderValue`,
-`renderEntry`, `renderItem`, `renderTail`, `renderKey` or `renderKeyName`,
-each a pure function from the dialect and a `RenderRequest` to a string
-that the engine splices under the same reparse net as any other edit. The
-renderers are documented on `Decls.renderers` in
+`renderEntry`, `renderItem`, `renderTail`, `renderKey`, `renderKeyName` or
+`renderString`, each a pure function from the dialect and a `RenderRequest`
+to a string that the engine splices under the same reparse net as any other
+edit. The renderers are documented on `Decls.renderers` in
 `src/contract/language.zig` and on the `Editor` methods that call them.
 
 Every "Edit" ✅ above goes through the *same* `Editor(Runtime.Language)`

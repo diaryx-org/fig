@@ -83,6 +83,8 @@ interface Exports {
   fig_editor_replace_key(ed: number, path: number, path_len: number, repl: number, repl_len: number): number;
   fig_editor_replace_named_key(ed: number, path: number, path_len: number, name: number, name_len: number): number;
   fig_editor_set(ed: number, path: number, path_len: number, val: number, val_len: number): number;
+  fig_editor_replace_string(ed: number, path: number, path_len: number, repl: number, repl_len: number, str: number, str_len: number): number;
+  fig_editor_set_string(ed: number, path: number, path_len: number, val: number, val_len: number, str: number, str_len: number): number;
   fig_editor_add_leading_comment(ed: number, path: number, path_len: number, text: number, text_len: number): number;
   fig_editor_set_trailing_comment(ed: number, path: number, path_len: number, text: number, text_len: number): number;
   fig_editor_delete_leading_comments(ed: number, path: number, path_len: number): number;

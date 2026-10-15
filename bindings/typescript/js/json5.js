@@ -415,7 +415,14 @@ function quote(s) {
   return '"' + s.replace(/[\x00-\x1f"\\]/g, (ch) => QUOTE[ch] ?? "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0")) + '"';
 }
 
-const isBareIdentifier = (name) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name);
+// Between the single quotes JSON5 also takes, which escape a `'` and let a
+// `"` through, as the Zig `writeQuotedIn` writes them.
+function singleQuote(s) {
+  // eslint-disable-next-line no-control-regex
+  return "'" + s.replace(/[\x00-\x1f'\\]/g, (ch) => (ch === "'" ? "\\'" : (QUOTE[ch] ?? "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0")))) + "'";
+}
+
+const isBareIdentifier =(name) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name);
 
 const isContainer = (row) => row.kind === "mapping" || row.kind === "sequence";
 
@@ -547,11 +554,16 @@ const language = {
     { name: "jsonc", extensions: ["jsonc"], splice: "escaped", empty_doc_seed: "{}\n", prints: { holds: { null: true }, char_as: "number", number_special_as: "quoted string", comments: "pretty" } },
   ],
   samples: ['{"a": 1, "b": [true, null, "s"], "c": {"d": 2.5}}\n', "// top\n[] // empty\n"],
-  // A key's name as JSON5 writes a key: quoted and escaped, as the compiled format writes it.
-  renderers: ["key_name"],
+  // A key's name as JSON5 writes a key: quoted and escaped, as the compiled
+  // format writes it; and a string replacing a JSON5 `'…'` one, in single
+  // quotes. A `"…"` string is the printer's own, and JSONC has no other.
+  renderers: ["key_name", "string"],
   parse,
   print,
-  render: (_which, args) => quote(args.key),
+  render: (which, args) => {
+    if (which !== "string") return quote(args.key);
+    return args.dialect === "json5" && args.old_value.startsWith("'") ? singleQuote(args.value) : "";
+  },
 };
 
 export default language;

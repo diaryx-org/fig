@@ -190,8 +190,11 @@ export interface StreamRange {
   explicit: boolean;
 }
 
-/** The six fragment renderers the editor may ask a format for. */
-export type Renderer = "value" | "entry" | "item" | "tail" | "key" | "key_name";
+/** The seven fragment renderers the editor may ask a format for. `string`
+ *  spells a string that replaces a string in the replaced one's quote
+ *  style, `old_value`, or answers `""` where that style is the printer's own
+ *  or cannot hold it. */
+export type Renderer = "value" | "entry" | "item" | "tail" | "key" | "key_name" | "string";
 
 /** What fig's bare-literal rules made of a value's text — classified once
  *  by fig so that every format means the same thing by `42`. */
@@ -199,7 +202,9 @@ export type Literal = "null" | "bool" | "int" | "float" | "datetime" | "string";
 
 /** The arguments to a renderer. `indent` is the target line's indentation;
  *  `key`, `value` and `old_key` are as written; `literal` is set for the
- *  value renderer alone. `parent_key` and `parent_tag`, for every
+ *  value renderer alone, and `old_value`, the string replaced as the source
+ *  spells it, quotes and all, for the string renderer alone, whose `value`
+ *  is the new string, decoded. `parent_key` and `parent_tag`, for every
  *  renderer, are the container the fragment is written into — the mapping
  *  an entry joins, the sequence an item joins, the container holding a
  *  value replaced or a key renamed: the name of the key it stands under
@@ -214,6 +219,7 @@ export interface RenderArgs {
   old_key: string;
   parent_key: string;
   parent_tag: string;
+  old_value: string;
 }
 
 /** The subset of the serialize options a printer outside fig is told. */
@@ -461,6 +467,7 @@ type Params =
         old_key?: string;
         parent_key?: string;
         parent_tag?: string;
+        old_value?: string;
       };
     };
 
@@ -497,7 +504,7 @@ export function describe(lang: Language): Record<string, unknown> {
   };
 }
 
-const RENDERERS: readonly Renderer[] = ["value", "entry", "item", "tail", "key", "key_name"];
+const RENDERERS: readonly Renderer[] = ["value", "entry", "item", "tail", "key", "key_name", "string"];
 const LITERALS: readonly Literal[] = ["null", "bool", "int", "float", "datetime", "string"];
 
 /** One request line to one response line — the helper wire, JSON-RPC
@@ -594,6 +601,7 @@ function answer(lang: Language, req: Params): unknown {
         old_key: p.old_key ?? "",
         parent_key: p.parent_key ?? "",
         parent_tag: p.parent_tag ?? "",
+        old_value: p.old_value ?? "",
       });
     }
     default:

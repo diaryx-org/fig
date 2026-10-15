@@ -780,15 +780,16 @@ fn from_map_named(
             }
         };
         let present = match &f.deserialize_with {
-            Some(path) => quote! { #path(__v)? },
-            None => quote! { <#ty as fig::FromValue>::from_value(__v)? },
+            Some(path) => quote! { #path(__v) },
+            None => quote! { <#ty as fig::FromValue>::from_value(__v) },
         };
         let aliases = &f.aliases;
+        // An error names the key as the document spells it, alias or not.
         quote! {
-            let #ident: #ty = match fig::map_get(__entries, #key)
-                #(.or_else(|| fig::map_get(__entries, #aliases)))*
+            let #ident: #ty = match fig::map_get(__entries, #key).map(|__v| (#key, __v))
+                #(.or_else(|| fig::map_get(__entries, #aliases).map(|__v| (#aliases, __v))))*
             {
-                ::std::option::Option::Some(__v) => #present,
+                ::std::option::Option::Some((__k, __v)) => #present.map_err(|__e| __e.at_key(__k))?,
                 ::std::option::Option::None => #missing,
             };
         }
@@ -845,7 +846,8 @@ fn build_variant(
                     );
                 }
                 ::core::result::Result::Ok(Self::#vident(
-                    #(<#tys as fig::FromValue>::from_value(&__items[#idxs])?),*
+                    #(<#tys as fig::FromValue>::from_value(&__items[#idxs])
+                        .map_err(|__e| __e.at_index(#idxs))?),*
                 ))
             }})
         }
@@ -889,7 +891,11 @@ fn from_value_external(
             unit_arms.push(quote! { #key => ::core::result::Result::Ok(Self::#vident), });
         } else {
             let body = build_variant(variant, &quote! { __v }, &label)?;
-            map_arms.push(quote! { #key => #body, });
+            // The content sits under the variant's key.
+            map_arms.push(quote! {
+                #key => (|| -> ::core::result::Result<Self, fig::Error> { #body })()
+                    .map_err(|__e| __e.at_key(#key)),
+            });
         }
     }
     let expected = format!("expected a string or single-key mapping for enum `{enum_name}`");
@@ -1032,7 +1038,9 @@ fn from_value_adjacent(
                             fig::Error::msg_static(#missing),
                         ),
                     };
-                    #body
+                    // The content sits under the content key.
+                    (|| -> ::core::result::Result<Self, fig::Error> { #body })()
+                        .map_err(|__e| __e.at_key(#content))
                 }
             });
         }

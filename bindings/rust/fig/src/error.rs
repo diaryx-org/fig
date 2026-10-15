@@ -92,6 +92,16 @@ pub enum Error {
     /// A runtime language was refused by [`language::register`](crate::language::register):
     /// the reason, as the core gave it, and where when it names a place.
     Language(LanguageFailure),
+    /// Reading the input or writing the output failed, in a language
+    /// crate's `from_reader` or `to_writer`.
+    Io(std::io::Error),
+    /// Building a typed value failed below the document's root: `path` says
+    /// where, spelled as a [`Warning`](crate::Warning)'s path is
+    /// (`servers[0].port`), and `error` is what failed there, never itself
+    /// an `At`. [`Error::path`] and [`Error::innermost`] read it from any
+    /// error, so a caller can ask what failed whether or not it was nested.
+    #[non_exhaustive]
+    At { path: String, error: Box<Error> },
 }
 
 /// Why a runtime language was refused, from [`Error::Language`].
@@ -348,11 +358,87 @@ impl fmt::Display for Error {
             Error::IntOutOfRange { ty } => {
                 write!(f, "integer out of range for {ty}")
             }
+            Error::Io(e) => write!(f, "{e}"),
+            Error::At { path, error } => write!(f, "{path}: {error}"),
         }
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Parse(e) => Some(e),
+            Error::Language(e) => Some(e),
+            Error::Io(e) => Some(e),
+            Error::At { error, .. } => Some(&**error),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Error::Io(e)
+    }
+}
+
+impl Error {
+    /// Where in the document a typed value failed to build, as
+    /// [`Error::At`] spells it (`servers[0].port`), or `None` for an error
+    /// at the root or one that is not about a value at all.
+    pub fn path(&self) -> Option<&str> {
+        match self {
+            Error::At { path, .. } => Some(path),
+            _ => None,
+        }
+    }
+
+    /// What failed, beneath the location an [`Error::At`] adds: the error
+    /// itself for any other variant. Match on this to ask what went wrong
+    /// whether or not it happened below the root.
+    pub fn innermost(&self) -> &Error {
+        match self {
+            Error::At { error, .. } => error,
+            other => other,
+        }
+    }
+
+    /// This error, as having happened under the mapping key `key`. Used by
+    /// the `FromValue` impls, `#[derive(FromValue)]` and the serde reader as
+    /// each returns from a level of the document.
+    #[doc(hidden)]
+    #[cold]
+    pub fn at_key(self, key: &str) -> Self {
+        self.prefixed(key)
+    }
+
+    /// This error, as having happened under sequence item `index`.
+    #[doc(hidden)]
+    #[cold]
+    pub fn at_index(self, index: usize) -> Self {
+        self.prefixed(&format!("[{index}]"))
+    }
+
+    fn prefixed(self, segment: &str) -> Self {
+        match self {
+            Error::At { path, error } => {
+                // An index runs on (`a[0]`); a key after anything is dotted.
+                let sep = if path.starts_with('[') { "" } else { "." };
+                Error::At {
+                    path: format!("{segment}{sep}{path}"),
+                    error,
+                }
+            }
+            // Where a document failed to parse, or could not be read at all,
+            // is not a place in a value.
+            e @ (Error::Parse(_) | Error::Io(_) | Error::Language(_)) => e,
+            other => Error::At {
+                path: segment.to_string(),
+                error: Box::new(other),
+            },
+        }
+    }
+}
 
 #[cfg(feature = "serde")]
 impl serde::de::Error for Error {

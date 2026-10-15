@@ -167,6 +167,8 @@ struct SeqAccess<'a> {
     doc: &'a Document,
     next: Option<FigNodeId>,
     remaining: usize,
+    /// The index of the item `next` is, for an error's path.
+    index: usize,
 }
 
 impl<'a> SeqAccess<'a> {
@@ -175,6 +177,7 @@ impl<'a> SeqAccess<'a> {
             doc,
             next: doc.first_child(seq),
             remaining: doc.child_count(seq),
+            index: 0,
         }
     }
 }
@@ -191,11 +194,14 @@ impl<'de, 'a> de::SeqAccess<'de> for SeqAccess<'a> {
         };
         self.next = self.doc.next_sibling(id);
         self.remaining = self.remaining.saturating_sub(1);
+        let index = self.index;
+        self.index += 1;
         seed.deserialize(NodeDeserializer {
             doc: self.doc,
             id: Some(id),
         })
         .map(Some)
+        .map_err(|e| e.at_index(index))
     }
 
     fn size_hint(&self) -> Option<usize> {
@@ -209,6 +215,8 @@ struct MapAccess<'a> {
     next: Option<FigNodeId>,
     /// Value node stashed by `next_key_seed`.
     value: Option<FigNodeId>,
+    /// Its key's node, for an error's path.
+    key: Option<FigNodeId>,
     remaining: usize,
 }
 
@@ -218,6 +226,7 @@ impl<'a> MapAccess<'a> {
             doc,
             next: doc.first_child(mapping),
             value: None,
+            key: None,
             remaining: doc.child_count(mapping),
         }
     }
@@ -234,6 +243,7 @@ impl<'de, 'a> de::MapAccess<'de> for MapAccess<'a> {
             return Ok(None);
         };
         let key = self.doc.kv_key(kv);
+        self.key = key;
         self.value = self.doc.kv_value(kv);
         self.next = self.doc.next_sibling(kv);
         self.remaining = self.remaining.saturating_sub(1);
@@ -249,6 +259,7 @@ impl<'de, 'a> de::MapAccess<'de> for MapAccess<'a> {
             doc: self.doc,
             id: self.value.take(),
         })
+        .map_err(|e| e.at_key(&key_text(self.doc, self.key)))
     }
 
     fn size_hint(&self) -> Option<usize> {
@@ -276,6 +287,7 @@ impl<'de, 'a> EnumAccess<'de> for EnumRef<'a> {
             variant,
             VariantRef {
                 doc: self.doc,
+                variant: self.variant,
                 value: self.value,
             },
         ))
@@ -284,6 +296,8 @@ impl<'de, 'a> EnumAccess<'de> for EnumRef<'a> {
 
 struct VariantRef<'a> {
     doc: &'a Document,
+    /// The variant's name, the key its content sits under.
+    variant: &'a str,
     value: Option<FigNodeId>,
 }
 
@@ -303,13 +317,14 @@ impl<'de, 'a> VariantAccess<'de> for VariantRef<'a> {
             doc: self.doc,
             id: self.value,
         })
+        .map_err(|e| e.at_key(self.variant))
     }
 
     fn tuple_variant<V: Visitor<'de>>(self, _len: usize, visitor: V) -> Result<V::Value, Error> {
         match self.value {
-            Some(id) if self.doc.kind(id) == FigNodeKind::Sequence => {
-                visitor.visit_seq(SeqAccess::new(self.doc, id))
-            }
+            Some(id) if self.doc.kind(id) == FigNodeKind::Sequence => visitor
+                .visit_seq(SeqAccess::new(self.doc, id))
+                .map_err(|e| e.at_key(self.variant)),
             _ => Err(Error::Message("expected a tuple variant".into())),
         }
     }
@@ -320,10 +335,20 @@ impl<'de, 'a> VariantAccess<'de> for VariantRef<'a> {
         visitor: V,
     ) -> Result<V::Value, Error> {
         match self.value {
-            Some(id) if self.doc.kind(id) == FigNodeKind::Mapping => {
-                visitor.visit_map(MapAccess::new(self.doc, id))
-            }
+            Some(id) if self.doc.kind(id) == FigNodeKind::Mapping => visitor
+                .visit_map(MapAccess::new(self.doc, id))
+                .map_err(|e| e.at_key(self.variant)),
             _ => Err(Error::Message("expected a struct variant".into())),
         }
     }
+}
+
+/// A mapping key as an error's path spells it: its text, or `?` for a key
+/// that is neither a string nor a number, as fig's diagnostics write one.
+#[cold]
+fn key_text(doc: &Document, key: Option<FigNodeId>) -> String {
+    key.and_then(|id| doc.get_str(id).or_else(|| doc.number_raw(id)))
+        .and_then(Result::ok)
+        .unwrap_or("?")
+        .to_string()
 }

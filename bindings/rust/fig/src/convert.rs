@@ -74,7 +74,7 @@ pub fn field<T: FromValue>(
     ty: &'static str,
 ) -> Result<T, Error> {
     match map_get(entries, key) {
-        Some(v) => T::from_value(v),
+        Some(v) => T::from_value(v).map_err(|e| e.at_key(key)),
         None => Err(Error::missing_field(key, ty)),
     }
 }
@@ -87,7 +87,7 @@ pub fn field_or_default<T: FromValue + Default>(
     key: &str,
 ) -> Result<T, Error> {
     match map_get(entries, key) {
-        Some(v) => T::from_value(v),
+        Some(v) => T::from_value(v).map_err(|e| e.at_key(key)),
         None => Ok(T::default()),
     }
 }
@@ -312,7 +312,11 @@ impl<T: ToValue> ToValue for Vec<T> {
 impl<T: FromValue> FromValue for Vec<T> {
     fn from_value(value: &Value) -> Result<Self, Error> {
         match value {
-            Value::Seq(items) => items.iter().map(T::from_value).collect(),
+            Value::Seq(items) => items
+                .iter()
+                .enumerate()
+                .map(|(i, v)| T::from_value(v).map_err(|e| e.at_index(i)))
+                .collect(),
             other => Err(type_err("sequence", other)),
         }
     }
@@ -343,7 +347,8 @@ macro_rules! string_map_impls {
                                     return Err(type_err("string (map key)", other));
                                 }
                             };
-                            out.insert(key, T::from_value(v)?);
+                            let v = T::from_value(v).map_err(|e| e.at_key(&key))?;
+                            out.insert(key, v);
                         }
                         Ok(out)
                     }

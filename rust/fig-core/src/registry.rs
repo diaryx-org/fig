@@ -510,8 +510,7 @@ impl Registry {
 // conformance adapter's.
 
 /// The languages fig bundles, in `LIST_ROWS` order: what `global()`
-/// registers on first use. Wired to `crate::lang::*::LANGUAGE` by whoever
-/// lands the languages; empty until then.
+/// registers on first use.
 fn bundled_languages() -> Vec<&'static dyn Language> {
     use crate::lang;
     vec![
@@ -519,6 +518,7 @@ fn bundled_languages() -> Vec<&'static dyn Language> {
         &lang::yaml::LANGUAGE,
         &lang::toml::LANGUAGE,
         &lang::zon::LANGUAGE,
+        &lang::figl::LANGUAGE,
         &lang::ini::LANGUAGE,
         &lang::dotenv::LANGUAGE,
         &lang::properties::LANGUAGE,

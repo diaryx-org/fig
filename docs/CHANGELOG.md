@@ -181,6 +181,16 @@ and no regeneration can reach a released section.
 - **rust** — each language crate reads and writes typed values like serde_json ([`71656e1`](https://github.com/diaryx-org/fig/commit/71656e13fefc87b26fab4ac0ecce3efb990d440b))
 - **editor** — a replaced string keeps its quote style ([`13ce0a8`](https://github.com/diaryx-org/fig/commit/13ce0a8eb598611968ec1f8117427d7aa5a73507))
 - **bindings** — the Rust and TypeScript editors keep a replaced string's quote style ([`e77d654`](https://github.com/diaryx-org/fig/commit/e77d6540cfe79d5c6a2881db420c9d8cb4d00348))
+- **kit** — flat_map puts a repeated key by first_value and keep too ([`c6e9de6`](https://github.com/diaryx-org/fig/commit/c6e9de62bbc8960acdd12c65b1f0f657acc32f91))
+- **kit** — the JavaScript kit's table writes rows in any order and finishes them into pre-order ([`282523d`](https://github.com/diaryx-org/fig/commit/282523d8a1989378bd39e2fc9d20fab92d978640))
+- **c** — libfig exports the kit's literal rule and JSON string quoting as fig_kit_* ([`70ae494`](https://github.com/diaryx-org/fig/commit/70ae494344956957b13617a517374fd8b6ffbdd4))
+- **kit** — @diaryx/fig/kit/literal and /json-string, the Zig kit's rules through fig-kit.wasm ([`30e78aa`](https://github.com/diaryx-org/fig/commit/30e78aa5339334c60d791554c00353cf39110ca7))
+- **c** — fig_table_finish puts a parse's rows in pre-order, and fig_table_child_by_key finds a mapping's entry ([`90739ea`](https://github.com/diaryx-org/fig/commit/90739eae53247dcaf01cd7f20b6aa0f5091224cf))
+- **c** — fig_kit_xml_tokenize, the kit's XML tokenizer for a language written in C or Rust ([`e3f7859`](https://github.com/diaryx-org/fig/commit/e3f78594fc335f9b8947cf7fc12c909cb8afc7c3))
+- **rust** — fig::kit gains the literal, JSON string and XML rules, and a row writer ([`895a708`](https://github.com/diaryx-org/fig/commit/895a708b8c34e911065cab27448bd95fc04aa002))
+- **rust** — fig::kit gains the tree, the scanner, the grammar and the printer's index and writer ([`ee0103c`](https://github.com/diaryx-org/fig/commit/ee0103c30338252b9b43b584f203ea3d5699683d))
+- **c** — fig_table_row reaches a row already written, to link it to one written after ([`1916c58`](https://github.com/diaryx-org/fig/commit/1916c586fc984968eeac56ef5e2e766835670a93))
+- **kit** — the Zig kit gains a scanner, grammar combinators and a printer's writer ([`ee475a4`](https://github.com/diaryx-org/fig/commit/ee475a4cfb030199cb5dc32ae9c48cd4d876d950))
 
 ### Fixed
 
@@ -233,6 +243,8 @@ and no regeneration can reach a released section.
 - **editor** — a delete or rename of a repeated key takes every spelling ([`ce1d359`](https://github.com/diaryx-org/fig/commit/ce1d359b72f7049ca20db7f2dd1c5c0ad8c2f36c))
 - **c-api** — the wasm static library builds without the helper wire ([`e98c5de`](https://github.com/diaryx-org/fig/commit/e98c5de789a545edbc110b3a025480330fd094fb))
 - **build** — fig's C libraries are position-independent on every target ([`52c8161`](https://github.com/diaryx-org/fig/commit/52c8161c3d44d75859e57549de5ca3216fa836f7))
+- **kit** — RowWriter.finish leaves the finished table's facts in node order and its links naming the new rows ([`4cf36b1`](https://github.com/diaryx-org/fig/commit/4cf36b19582d50dcbd02de48da1939ff82862209))
+- **kit** — the JavaScript table's finish leaves its regions and mentions in node order ([`af57268`](https://github.com/diaryx-org/fig/commit/af572688c5a3b35d423cace8eb5e8735729307a8))
 
 ### Changed
 
@@ -744,6 +756,8 @@ and no regeneration can reach a released section.
 - the JavaScript YAML, TOML and JSON5 languages
   (`@diaryx/fig/js/yaml`, `toml`, `json5`) keep a replaced string's quote
   style as above, as their compiled formats do.
+
+- flat_map.PutResult has two more values, ignored and kept, so a Zig switch over it that names every value no longer compiles until it names them too.
 
 <!-- git-cliff:end -->
 

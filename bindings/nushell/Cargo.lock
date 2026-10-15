@@ -642,21 +642,21 @@ dependencies = [
 
 [[package]]
 name = "fig"
-version = "6.1.0"
+version = "7.0.0"
 dependencies = [
  "fig-core",
 ]
 
 [[package]]
 name = "fig-core"
-version = "6.1.0"
+version = "7.0.0"
 dependencies = [
  "fig-kit",
 ]
 
 [[package]]
 name = "fig-figl"
-version = "6.1.0"
+version = "7.0.0"
 dependencies = [
  "fig",
  "fig-kit",
@@ -664,7 +664,7 @@ dependencies = [
 
 [[package]]
 name = "fig-kit"
-version = "6.1.0"
+version = "7.0.0"
 
 [[package]]
 name = "find-msvc-tools"

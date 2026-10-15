@@ -1,6 +1,6 @@
 {
   "name": "@diaryx/fig-nestedtext",
-  "version": "6.1.0",
+  "version": "7.0.0",
   "description": "NestedText for @diaryx/fig: fig's own parser, printer and editing rules for the language, written in Rust and compiled to a WebAssembly module of its own. Pass it to registerLanguage.",
   "type": "module",
   "publishConfig": {
@@ -21,7 +21,7 @@
     "LICENSE-APACHE"
   ],
   "peerDependencies": {
-    "@diaryx/fig": "6.1.0"
+    "@diaryx/fig": "7.0.0"
   },
   "scripts": {
     "build": "node js/build.mjs",

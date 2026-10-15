@@ -134,6 +134,27 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v7.0.0 — 2026-10-15
+
+### Breaking
+
+- build, test and release fig from Rust alone ([`ac873d5`](https://github.com/diaryx-org/fig/commit/ac873d5e22612f94c6bc3e0fc87b33b996cb24a0))
+- delete the Zig implementation, fig's Zig package with it ([`0734302`](https://github.com/diaryx-org/fig/commit/0734302ce95d886b37f41ced707cb19c020bbfbd))
+
+### Fixed
+
+- **yaml** — treat a lone CR in flow as a break instead of looping ([`5329dbc`](https://github.com/diaryx-org/fig/commit/5329dbc1940ed59bc7ed991431ea6c58da310367))
+- **xtask** — read rustc's native-static-libs note uncoloured ([`657f9a0`](https://github.com/diaryx-org/fig/commit/657f9a0b66d495dec1004f0850ff3561af0e1f7b))
+
+### Behavioural changes
+
+- @diaryx/fig-wasi's module carries no format of its own (every one is served by its host) and reads relative paths from a preopen of the real working directory, handed over as PWD.
+
+- the Linux CLI binaries Homebrew installs are built by cargo against glibc; the GitHub release no longer attaches build_options.zig, and the tangled release attaches only the Linux x86_64 and WASI builds.
+
+- fig can no longer be imported as a Zig package (`zig fetch` of the tag); a Zig program reaches fig through fig.h, as any C program does.
+
+
 ## v6.1.0 — 2026-10-15
 
 ### Breaking

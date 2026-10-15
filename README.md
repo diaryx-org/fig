@@ -1,7 +1,7 @@
 ```fig
 part_of = id:dx4hxn744/kv2bv2m
 title = fig
-version = 6.1.0
+version = 7.0.0
 author = adammharris
 created = 2026-05-08
 updated = 2026-10-14T21:00:00-06:00

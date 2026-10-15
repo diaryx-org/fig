@@ -1,6 +1,6 @@
 {
   "name": "@diaryx/fig",
-  "version": "6.1.0",
+  "version": "7.0.0",
   "description": "JSON, JSONC, JSON5, YAML, TOML, INI, dotenv, .properties, NestedText, ZON, plist and fig parsing, comment-preserving editing, and cross-format serialization: a Rust core compiled to WebAssembly, with each format a WebAssembly module of its own, a package of its own (@diaryx/fig-yaml, …) you install only if you use it.",
   "type": "module",
   "publishConfig": {

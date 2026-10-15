@@ -1,0 +1,9 @@
+# Byte strings: a block wrapped across lines, a flow one, and the empty one.
+icon: !!binary aGVsbG8gd29ybGQ=
+key: !!binary aGk=
+empty: !!binary ""
+# Not base64: a string, under its tag.
+note: !!binary not*base64
+flow:
+- !!binary aGk=
+- plain

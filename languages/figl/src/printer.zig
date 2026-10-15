@@ -1094,7 +1094,7 @@ fn writeExtended(self: *Printer, e: AST.Node.Kind.Extended) Error!void {
         // never line-initial here since a `key = `/`* ` marker always
         // precedes it) — same untagged raw-passthrough treatment as a
         // datetime above.
-        .plist_date, .plist_data => try self.writer.writeAll(e.text),
+        .plist_date, .data => try self.writer.writeAll(e.text),
     }
 }
 

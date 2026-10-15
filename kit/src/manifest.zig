@@ -208,9 +208,11 @@ pub const NativeKinds = struct {
     char_literal: bool = false,
     /// A non-finite float (`inf`/`nan`, JSON5's `Infinity`/`NaN`).
     number_special: bool = false,
-    /// plist's `<date>` and `<data>`.
+    /// plist's `<date>`.
     plist_date: bool = false,
-    plist_data: bool = false,
+    /// A byte string (`ExtKind.data`): plist's `<data>`, YAML's `!!binary`,
+    /// a binary format's bytes.
+    data: bool = false,
 };
 
 /// `Lang.Type` when `Lang` is a language, `void` when it is the gated-out

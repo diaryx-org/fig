@@ -104,7 +104,9 @@ pub const Anchor = extern struct { node: u32, start: u32 = none, end: u32 = none
 pub const tag_unstated: u8 = 0;
 /// A tag with no core meaning (`!foo`), kept for a language that spells it.
 pub const tag_custom: u8 = 1;
-/// The non-specific tag (YAML's `!`), which asserts nothing.
+/// The non-specific tag (YAML's `!`), which asserts nothing; and a tag the
+/// language has already read into the node's own kind (YAML's `!!binary`,
+/// on the byte string it made the node), which asks nothing more of it.
 pub const tag_non_specific: u8 = 2;
 /// A core type: `tag_kind + KindTag ordinal` (null, boolean, string,
 /// integer, float, sequence, mapping).

@@ -137,7 +137,7 @@ const elements = {
   data(sc, _ctx, tag) {
     const t = X.content(sc, tag).replace(/[ \t\r\n]/g, "");
     if (!validBase64(t)) sc.fail("`<data>` holds something other than base64", tag[0]);
-    return scalar("string", sc, tag, t, { ext_kind: "plist_data" });
+    return scalar("string", sc, tag, t, { ext_kind: "data" });
   },
 };
 
@@ -202,7 +202,7 @@ function writeValue(w, row, depth) {
   } else if (k === "float") {
     w.put("<real>", row.text ?? "", "</real>");
   } else if (k === "string") {
-    const tag = row.ext_kind === "plist_date" ? "date" : row.ext_kind === "plist_data" ? "data" : "string";
+    const tag = row.ext_kind === "plist_date" ? "date" : row.ext_kind === "data" ? "data" : "string";
     w.put(textElement(tag, row.text ?? ""));
   } else if (k === "sequence") {
     if (row.items.length === 0) return w.put("<array/>");
@@ -308,7 +308,7 @@ const language = {
     seq_item_marker: "",
     empty_seq_literal: "<array/>",
   },
-  dialects: [{ name: "plist", extensions: ["plist"], splice: "raw", empty_doc_seed: "<dict>\n</dict>\n", prints: { holds: { plist_date: true, plist_data: true }, comments: "never" } }],
+  dialects: [{ name: "plist", extensions: ["plist"], splice: "raw", empty_doc_seed: "<dict>\n</dict>\n", prints: { holds: { plist_date: true, data: true }, comments: "never" } }],
   samples: [
     '<plist version="1.0"><dict><key>a</key><string>b</string><key>n</key><integer>1</integer><key>l</key><array><true/><false/></array></dict></plist>\n',
   ],

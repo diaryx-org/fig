@@ -37,9 +37,11 @@ pub enum ExtKind {
     NumberSpecial,
     /// A plist `<date>`; text is the raw ISO-8601 timestamp, verbatim.
     PlistDate,
-    /// A plist `<data>`; text is the base64 payload with all whitespace
-    /// stripped.
-    PlistData,
+    /// A byte string. Its text is always base64 (standard alphabet,
+    /// padded, no whitespace): a plist `<data>` or YAML `!!binary` writes
+    /// that base64, and a binary format holds the raw bytes, which its
+    /// language encodes on parse and decodes on print.
+    Data,
 }
 
 impl ExtKind {
@@ -54,7 +56,7 @@ impl ExtKind {
             ExtKind::CharLiteral => 5,
             ExtKind::NumberSpecial => 6,
             ExtKind::PlistDate => 7,
-            ExtKind::PlistData => 8,
+            ExtKind::Data => 8,
         }
     }
 
@@ -69,7 +71,7 @@ impl ExtKind {
             5 => ExtKind::CharLiteral,
             6 => ExtKind::NumberSpecial,
             7 => ExtKind::PlistDate,
-            8 => ExtKind::PlistData,
+            8 => ExtKind::Data,
             _ => return None,
         })
     }

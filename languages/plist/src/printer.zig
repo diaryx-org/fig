@@ -7,8 +7,8 @@
 //!   * `sequence` → `<array>` of the same items, in order.
 //!   * `string`/`number`(integer|float)/`boolean` → `<string>`/`<integer>`/
 //!     `<real>`/`<true/>`/`<false/>`.
-//!   * `extended` → `<date>`/`<data>` for plist's own two kinds
-//!     (`ExtKind.plist_date`/`.plist_data`); any OTHER extended kind reaching
+//!   * `extended` → `<date>`/`<data>` for its date and a byte string
+//!     (`ExtKind.plist_date`/`.data`, whatever wrote it); any OTHER extended kind reaching
 //!     here from a foreign AST (a TOML datetime, a ZON enum/char literal, a
 //!     JSON5 non-finite float) has no dedicated plist primitive and degrades
 //!     to a plain `<string>` of its text — the same blanket treatment XML's
@@ -87,7 +87,7 @@ fn value(self: *Printer, id: AST.Node.Id, depth: usize) Error!void {
         .string => |s| try self.textElement("string", s),
         .extended => |e| switch (e.kind) {
             .plist_date => try self.textElement("date", e.text),
-            .plist_data => try self.textElement("data", e.text),
+            .data => try self.textElement("data", e.text),
             else => try self.textElement("string", e.text),
         },
         .sequence => |first| try self.array(first, depth),

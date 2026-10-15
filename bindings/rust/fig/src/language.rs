@@ -215,7 +215,7 @@ pub struct NativeKinds {
     pub char_literal: bool,
     pub number_special: bool,
     pub plist_date: bool,
-    pub plist_data: bool,
+    pub data: bool,
 }
 
 /// Which renderers a language answers. Start from `Default` (none) and set
@@ -1234,7 +1234,7 @@ fn native_bits(l: &NativeKinds) -> u32 {
         (l.char_literal, ExtKind::CharLiteral),
         (l.number_special, ExtKind::NumberSpecial),
         (l.plist_date, ExtKind::PlistDate),
-        (l.plist_data, ExtKind::PlistData),
+        (l.data, ExtKind::Data),
     ];
     let mut bits = ffi::FIG_LOSSLESS_ENVELOPE;
     if l.null {

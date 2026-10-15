@@ -443,7 +443,7 @@ fn writeExtended(w: *Writer, ext: AST.Node.Kind.Extended) Error!void {
         .number_special => try w.writeAll(tomlSpecial(ext.text)),
         // plist's date/data have no TOML primitive; degrade to a string, same
         // as a ZON enum literal.
-        .plist_date, .plist_data => try writeBasicString(w, ext.text),
+        .plist_date, .data => try writeBasicString(w, ext.text),
     }
 }
 

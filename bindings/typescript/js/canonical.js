@@ -52,7 +52,7 @@ const EXT_KINDS = new Set([
   "char_literal",
   "number_special",
   "plist_date",
-  "plist_data",
+  "data",
 ]);
 
 const lineComment = G.comment("//");

@@ -963,11 +963,14 @@ pub const Node = struct {
                 /// (plist's DTD-documented subset), kept verbatim like the TOML
                 /// datetimes above.
                 plist_date,
-                /// A plist `<data>` — `text` is the base64 payload with all
-                /// whitespace (plists commonly wrap it across lines) stripped,
-                /// so the bytes are the intrinsic value, same convention as
-                /// every other extended scalar.
-                plist_data,
+                /// A byte string. `text` is always its base64 (the standard
+                /// alphabet, padded, no whitespace), whatever the source
+                /// spells: a text format writes the base64 itself (plist's
+                /// `<data>`, YAML's `!!binary`, wrapped across lines or not),
+                /// and a binary format holds the raw bytes, which its language
+                /// encodes on parse and decodes on print. One spelling is what
+                /// lets a byte string move between them unchanged.
+                data,
             };
             pub fn eql(self: Extended, other: Extended) bool {
                 return self.kind == other.kind and util.eql(u8, self.text, other.text);

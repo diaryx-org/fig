@@ -1325,6 +1325,16 @@ class Parser {
       if (tag.s < n.span[0]) n.span[0] = tag.s;
       n.tag = tag.text;
       n.tag_span = [tag.s, tag.e];
+      // A `!!binary` scalar is a byte string, as the Zig YAML reads one:
+      // its text, less the whitespace a block scalar wraps it in, when
+      // that is base64.
+      if (kind === "string" && n.ext_kind === undefined && coreTagName(this.tagDirectives, tag.text) === "binary") {
+        const b64 = (n.text ?? "").replace(/[ \t\n\r\v\f]/g, "");
+        if (isBase64(b64)) {
+          n.text = b64;
+          n.ext_kind = "data";
+        }
+      }
     }
     if (anchor) {
       if (anchor.s < n.span[0]) n.span[0] = anchor.s;
@@ -2380,6 +2390,31 @@ function blockScalarOk(s) {
   return true;
 }
 
+// The core-schema name a tag spells under the document's `%TAG`
+// directives (`!!binary` → "binary"), or null for any other tag: the Zig
+// kit's `yaml_schema.coreTagName`.
+function coreTagName(directives, tag) {
+  const core = "tag:yaml.org,2002:";
+  if (tag.length >= 3 && tag.startsWith("!<") && tag.endsWith(">")) {
+    const inner = tag.slice(2, -1);
+    return inner.startsWith(core) ? inner.slice(core.length) || null : null;
+  }
+  if (tag.startsWith(core)) return tag.slice(core.length) || null;
+  const handle = tagHandleOf(tag);
+  if (handle === null) return null;
+  const suffix = tag.slice(handle.length);
+  const d = directives.find((x) => x.handle === handle);
+  const prefix = d ? d.prefix : handle === "!!" ? core : null;
+  if (prefix === null || prefix.length > core.length || !core.startsWith(prefix)) return null;
+  const rest = core.slice(prefix.length);
+  if (!suffix.startsWith(rest)) return null;
+  return suffix.slice(rest.length) || null;
+}
+
+// Standard base64: the alphabet, then at most two `=`, in whole groups of
+// four. Empty is the empty byte string.
+const isBase64 = (s) => s.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(s);
+
 function tagHandleOf(text) {
   if (text.length === 0 || text[0] !== "!") return null;
   if (text.length > 1 && text[1] === "<") return null;
@@ -2470,6 +2505,7 @@ class Printer {
   // cut short.
   scalarWord(row, flow) {
     const k = row.kind;
+    if (row.ext_kind === "data") return (row.tag === undefined ? "!!binary " : "") + (row.text === "" ? '""' : row.text);
     if (row.ext_kind !== undefined) return row.ext_kind === "enum_literal" ? scalarText(row.text) : row.text;
     if (k === "null") return "null";
     if (k === "bool") return row.text;
@@ -2836,14 +2872,15 @@ function splitStream(_dialect, input) {
 }
 
 // What YAML's printer makes of another format's tree, in both dialects.
-const YAML_PRINTS = { holds: { null: true }, char_as: "number" };
+const YAML_PRINTS = { holds: { null: true, data: true }, char_as: "number" };
 
 /** @type {import("@diaryx/fig/helper").Language} */
 const language = {
   name: "yaml",
   caps: { read: true, edit: true, serialize: true, references: true },
-  // The core schema has a `null` and none of the extended scalars.
-  lossless: { null: true },
+  // The core schema has a `null` and none of the extended scalars; a byte
+  // string is `!!binary`.
+  lossless: { null: true, data: true },
   syntax: {
     comments: { line: { open: "#" }, trailing: { open: "#" } },
     merge_key: "<<",

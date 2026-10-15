@@ -552,7 +552,7 @@ fn native_kinds_to_value(k: &NativeKinds) -> Value {
         ("char_literal", Value::Bool(k.char_literal)),
         ("number_special", Value::Bool(k.number_special)),
         ("plist_date", Value::Bool(k.plist_date)),
-        ("plist_data", Value::Bool(k.plist_data)),
+        ("data", Value::Bool(k.data)),
     ])
 }
 
@@ -568,7 +568,7 @@ fn native_kinds_from_value(v: &Value) -> NativeKinds {
         char_literal: f("char_literal"),
         number_special: f("number_special"),
         plist_date: f("plist_date"),
-        plist_data: f("plist_data"),
+        data: f("data"),
     }
 }
 
@@ -813,7 +813,7 @@ fn ext_kind_name(k: ExtKind) -> &'static str {
         ExtKind::CharLiteral => "char_literal",
         ExtKind::NumberSpecial => "number_special",
         ExtKind::PlistDate => "plist_date",
-        ExtKind::PlistData => "plist_data",
+        ExtKind::Data => "data",
     }
 }
 
@@ -827,7 +827,7 @@ fn ext_kind_of(name: &str) -> Option<ExtKind> {
         "char_literal" => ExtKind::CharLiteral,
         "number_special" => ExtKind::NumberSpecial,
         "plist_date" => ExtKind::PlistDate,
-        "plist_data" => ExtKind::PlistData,
+        "data" => ExtKind::Data,
         _ => return None,
     })
 }

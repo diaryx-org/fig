@@ -140,7 +140,7 @@ export interface NativeKinds {
   char_literal?: boolean;
   number_special?: boolean;
   plist_date?: boolean;
-  plist_data?: boolean;
+  data?: boolean;
 }
 
 /** One dialect of a language. The first row's `name` must be the
@@ -256,7 +256,7 @@ export type RowExtKind =
   | "char_literal"
   | "number_special"
   | "plist_date"
-  | "plist_data";
+  | "data";
 
 /** One node. Rows are in pre-order — a parent precedes its children, a
  *  keyvalue is followed by its key row then its value row — and the row's

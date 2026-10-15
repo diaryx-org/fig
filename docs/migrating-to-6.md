@@ -26,6 +26,13 @@ the change; this page is the part of it that asks you to change something.
   number.
 - **`--spec` versions are dialects.** YAML 1.1 is the dialect `yaml-1.1`,
   TOML 1.0 is `toml-1.0`, and so on for every spelling `--spec` takes.
+- **A byte string is one kind, `data`, in every binding.** plist's
+  `<data>` kind was named for plist; it is now the kind any format's byte
+  string is, and keeps its number (8) and its text, always base64. YAML's
+  `!!binary` reads as one: it used to be a string under a custom tag, which
+  a conversion to a format without tags refused. Now it converts to plist's
+  `<data>`, and to JSON or TOML as its base64, and a byte string from plist
+  is written to YAML as `!!binary`.
 
 ## The CLI
 
@@ -85,6 +92,7 @@ does not carry the wire passes `-Dhelper-wire=false` and fetches nothing.
 
 | 5.x | 6.0 |
 | --- | --- |
+| `ExtKind::PlistData`, `NativeKinds::plist_data` | `ExtKind::Data`, `NativeKinds::data`: any format's byte string, its text base64 as before |
 | `Format::Json`, `Format::Yaml`, … | `Format::by_name("json")` → `Option<Format>`; an unregistered format is `None` |
 | `Format::Runtime(RuntimeFormat)`, `RuntimeFormat` | gone: a registered language's handle is a `Format` like any other |
 | `match format { Format::Yaml => … }` | compare handles, or `format.name() == "yaml"` |
@@ -124,6 +132,7 @@ formatByName("yaml") === yamlFormat;       // true
 
 | 5.x | 6.0 |
 | --- | --- |
+| `ExtKind.PlistData`, the wire's `"plist_data"` | `ExtKind.Data`, `"data"`: any format's byte string, its text base64 as before |
 | `Format.Json`, `Format.Yaml`, … | `registerLanguage(json)`'s return, `json.format`, `formatByName("json")` or `requireFormat("json")` |
 | a raw number as a `Format` | does not type-check; a number nobody registered throws `UnsupportedFormat` |
 | `@diaryx/fig/languages/<name>`, a format written in JavaScript | `@diaryx/fig-<name>`, a package of its own you install beside `@diaryx/fig`: fig's own Zig, compiled to a WebAssembly module of its own. The JavaScript is at `@diaryx/fig/js/<name>` |
@@ -139,6 +148,7 @@ a non-enumerable `format` onto the language object.
 
 | 5.x | 6.0 |
 | --- | --- |
+| `ExtKind.plist_data`, `NativeKinds.plist_data` | `.data`: any format's byte string, its text base64 as before |
 | `fig.Language.JSON.Parser.parse(a, src, .JSON)` | `fig.Runtime.Language.Parser.parse(a, src, fig.Runtime.entryByName("json").?.typeOf())` |
 | `fig.Editor(fig.Language.TOML)` | `fig.Editor(fig.Runtime.Language)` with `.format = entry.typeOf()` |
 | `fig.Serialize.serialize(&ast, w, .yaml)`, `SerializeFormat` | `serialize(&ast, w, fig.Serialize.Target.named("yaml").?)`; a `Target` is `.canonical` or `.{ .language = entry }` |
@@ -173,6 +183,7 @@ the format. `fig_table_extend` appends a whole list to a table at once.
 
 | 5.x | 6.0 |
 | --- | --- |
+| `FIG_EXT_PLIST_DATA` | `FIG_EXT_DATA`, the same value (8): any format's byte string, its text base64 as before |
 | `FigFormat`, `FIG_FORMAT_JSON` … `FIG_FORMAT_NESTEDTEXT` | gone; `int fig_format_by_name("json")`, -1 for a name nobody registered |
 | `FIG_FORMAT_RUNTIME_BASE`, a registered language's handle ≥ 4096 | gone; every handle counts from 1 |
 | a language named after a compiled-out format taking its number | refused if the name is taken; otherwise a handle like any other |

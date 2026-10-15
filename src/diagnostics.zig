@@ -396,7 +396,7 @@ fn rootScalarNote(kind: AST.Node.Kind) []const u8 {
             .number_special => "number",
             .offset_datetime, .local_datetime, .local_date, .local_time => "datetime",
             .plist_date => "date",
-            .plist_data => "data",
+            .data => "data",
         },
         .mapping, .sequence, .keyvalue => unreachable,
     };

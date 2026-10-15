@@ -2,7 +2,7 @@
 title = Using fig in Typescript
 author = adammharris
 created = 2026-07-05T21:35:14-06:00
-updated = 2026-09-27T12:00:00-06:00
+updated = 2026-10-14T23:00:00-06:00
 part_of = [docs](docs.md)
 ```
 
@@ -237,9 +237,10 @@ config value faithfully, note:
   instead, because JS objects would silently reorder those keys. Non-string keys
   always yield a `Map`.
 - **Format-specific scalars** — TOML datetimes, ZON enum and char literals,
-  JSON5's non-finite numbers (`Infinity`, `-Infinity`, `NaN`), and plist
-  `<date>` and `<data>` — come back from `toJS` as their source text (a
-  plist `<data>` as its base64 with whitespace stripped). The `Value` tree
+  JSON5's non-finite numbers (`Infinity`, `-Infinity`, `NaN`), plist
+  `<date>`, and byte strings (`ExtKind.Data`: plist's `<data>`, YAML's
+  `!!binary`) — come back from `toJS` as their source text (a byte string as
+  its base64, with whitespace stripped). The `Value` tree
   keeps their kind as well (`{ kind: "extended", ext: ExtKind.…, text }`),
   which is what lets them round-trip.
 

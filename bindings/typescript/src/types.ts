@@ -100,8 +100,12 @@ export const ExtKind = {
   NumberSpecial: 6,
   /** A plist `<date>`: the raw ISO-8601 timestamp, verbatim. */
   PlistDate: 7,
-  /** A plist `<data>`: the base64 payload with all whitespace stripped. */
-  PlistData: 8,
+  /**
+   * A byte string. Its text is always base64 (standard alphabet, padded, no
+   * whitespace): a plist `<data>` or YAML `!!binary` writes that base64, and a
+   * binary format holds the raw bytes, which its language encodes and decodes.
+   */
+  Data: 8,
 } as const;
 export type ExtKind = (typeof ExtKind)[keyof typeof ExtKind] | (number & {});
 

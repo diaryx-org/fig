@@ -559,6 +559,19 @@ test "TOML datetime stays native for a TOML target" {
     try testing.expectEqualStrings(src, toml); // not wrapped
 }
 
+test "a byte string rides an envelope through JSON and is !!binary again in YAML" {
+    var a = std.heap.ArenaAllocator.init(testing.allocator);
+    defer a.deinit();
+    const arena = a.allocator();
+    const YamlParser = @import("fig_yaml").Parser;
+    const YamlPrinter = @import("fig_yaml").Printer;
+
+    const json = try convert(arena, YamlParser, .v1_2_2, JsonPrinter, json_native, "k: !!binary aGk=\n");
+    try testing.expect(std.mem.indexOf(u8, json, sentinel) != null); // wrapped
+    const yaml = try convert(arena, JsonParser, .JSON, YamlPrinter, yaml_native, json);
+    try testing.expectEqualStrings("k: !!binary aGk=\n", yaml);
+}
+
 test "ZON enum and char literals round-trip through JSON" {
     var a = std.heap.ArenaAllocator.init(testing.allocator);
     defer a.deinit();
@@ -700,7 +713,7 @@ test "declared native kinds reproduce the pre-declaration envelope table" {
         .{ .native = toml_native, .kind = ext.of(.enum_literal), .envelope = true, .unrepresentable = false },
         .{ .native = toml_native, .kind = ext.of(.char_literal), .envelope = true, .unrepresentable = false },
         .{ .native = toml_native, .kind = ext.of(.plist_date), .envelope = true, .unrepresentable = false },
-        .{ .native = toml_native, .kind = ext.of(.plist_data), .envelope = true, .unrepresentable = false },
+        .{ .native = toml_native, .kind = ext.of(.data), .envelope = true, .unrepresentable = false },
         // ZON: enum/char native; everything else not.
         .{ .native = zon_native, .kind = ext.of(.enum_literal), .envelope = false, .unrepresentable = false },
         .{ .native = zon_native, .kind = ext.of(.char_literal), .envelope = false, .unrepresentable = false },
@@ -710,7 +723,7 @@ test "declared native kinds reproduce the pre-declaration envelope table" {
         .{ .native = zon_native, .kind = ext.of(.local_time), .envelope = true, .unrepresentable = false },
         .{ .native = zon_native, .kind = ext.of(.number_special), .envelope = true, .unrepresentable = false },
         .{ .native = zon_native, .kind = ext.of(.plist_date), .envelope = true, .unrepresentable = false },
-        .{ .native = zon_native, .kind = ext.of(.plist_data), .envelope = true, .unrepresentable = false },
+        .{ .native = zon_native, .kind = ext.of(.data), .envelope = true, .unrepresentable = false },
         // Containers and the core scalars never envelope anywhere.
         .{ .native = toml_native, .kind = .{ .mapping = null }, .envelope = false, .unrepresentable = false },
         .{ .native = toml_native, .kind = .{ .sequence = null }, .envelope = false, .unrepresentable = false },
@@ -722,11 +735,12 @@ test "declared native kinds reproduce the pre-declaration envelope table" {
         try testing.expectEqual(r.envelope, needsEnvelope(r.native, r.kind));
         try testing.expectEqual(r.unrepresentable, isUnrepresentable(r.native, r.kind));
     }
-    // JSON and YAML: every extended kind is enveloped, none is dropped.
+    // JSON and YAML: every extended kind is enveloped, none is dropped,
+    // except that YAML holds a byte string as `!!binary`.
     inline for (@typeInfo(ExtKind).@"enum".field_names) |f_name| {
         const k = ext.of(@field(ExtKind, f_name));
         try testing.expect(needsEnvelope(json_native, k));
-        try testing.expect(needsEnvelope(yaml_native, k));
+        try testing.expectEqual(@field(ExtKind, f_name) != .data, needsEnvelope(yaml_native, k));
         try testing.expect(!isUnrepresentable(json_native, k));
         try testing.expect(!isUnrepresentable(yaml_native, k));
     }

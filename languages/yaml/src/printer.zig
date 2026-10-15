@@ -117,6 +117,7 @@ pub fn printNode(writer: *Writer, ast: *const AST, id: AST.Node.Id, depth: usize
             // datetimes and char codepoints emit verbatim as plain scalars.
             switch (value.kind) {
                 .enum_literal => try printScalar(writer, value.text),
+                .data => try writeData(writer, ast, id, value.text),
                 else => try writer.writeAll(value.text),
             }
             try writer.writeByte('\n');
@@ -403,6 +404,7 @@ fn writeScalarKey(writer: *Writer, ast: *const AST, key_id: AST.Node.Id) Writer.
         .number => |n| try num.write(writer, n.raw, num.yaml_1_2),
         .extended => |value| switch (value.kind) {
             .enum_literal => try printScalar(writer, value.text),
+            .data => try writeData(writer, ast, key_id, value.text),
             else => try writer.writeAll(value.text),
         },
         // `*a : b` — the space is load-bearing: `:` is a legal anchor-name
@@ -521,6 +523,7 @@ fn printInlineValue(writer: *Writer, document: *const AST, id: AST.Node.Id) Writ
         .number => |value| try num.write(writer, value.raw, num.yaml_1_2),
         .extended => |value| switch (value.kind) {
             .enum_literal => try printScalar(writer, value.text),
+            .data => try writeData(writer, document, id, value.text),
             else => try writer.writeAll(value.text),
         },
         .string => |value| try printScalar(writer, value),
@@ -548,6 +551,16 @@ fn writeProps(writer: *Writer, ast: *const AST, id: AST.Node.Id) Writer.Error!vo
         try writer.writeAll(tagText(tag));
         try writer.writeByte(' ');
     }
+}
+
+/// A byte string, as YAML spells one: `!!binary` and its base64, a plain
+/// scalar (the alphabet needs no quoting). A node read from YAML already
+/// carries its tag, which `writeProps` wrote, so it is not written twice.
+fn writeData(writer: *Writer, ast: *const AST, id: AST.Node.Id, base64: []const u8) Writer.Error!void {
+    if (ast.tagOf(id) == null) try writer.writeAll("!!binary ");
+    // An empty byte string is an empty scalar, which a tag alone reads as
+    // null; quote it so it reads back as text.
+    if (base64.len == 0) try writer.writeAll("\"\"") else try writer.writeAll(base64);
 }
 
 /// Render a type tag as YAML: a verbatim `.text` tag as-is (its exact spelling),
@@ -1013,6 +1026,13 @@ test "yaml flow: a comment or overflow keeps a collection block" {
 test "yaml printer: a nested block sequence leaves no trailing space after the dash" {
     try expectRoundTrip("- - a\n  - b\n- c\n", "-\n  - a\n  - b\n- c\n");
     try expectRoundTrip("- []\n", "- []\n");
+}
+
+test "yaml printer: a byte string is !!binary, its tag written once" {
+    try expectRoundTrip("a: !!binary aGk=\n", "a: !!binary aGk=\n");
+    try expectRoundTrip("a: !!binary |\n  aGVs\n  bG8=\n", "a: !!binary aGVsbG8=\n");
+    try expectRoundTrip("a: !!binary \"\"\n", "a: !!binary \"\"\n");
+    try expectRoundTrip("[!!binary aGk=]\n", "- !!binary aGk=\n");
 }
 
 test "yaml printer: every key kind has a spelling that re-parses" {

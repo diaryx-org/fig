@@ -2,7 +2,7 @@
 title = Using fig in Rust
 author = adammharris
 created = 2026-07-05T21:35:14-06:00
-updated = 2026-10-14T18:30:00-06:00
+updated = 2026-10-14T23:00:00-06:00
 part_of = [docs](docs.md)
 ```
 
@@ -435,8 +435,14 @@ A few things to know:
   and a key can be any `Value` (non-string keys serialize only to formats whose
   printer accepts them).
 - **Format-specific scalars** — TOML datetimes, ZON enum/char literals, JSON5
-  `Infinity`/`NaN` — read into `Value::Extended { kind, text }` (see [`ExtKind`])
-  and serialize back verbatim instead of degrading to strings.
+  `Infinity`/`NaN`, plist dates, and byte strings — read into
+  `Value::Extended { kind, text }` (see [`ExtKind`]) and serialize back
+  verbatim instead of degrading to strings.
+- **A byte string** is `ExtKind::Data`, and its `text` is always base64
+  (standard alphabet, padded, no whitespace): plist's `<data>` and YAML's
+  `!!binary` write that base64, wrapped across lines or not, and a binary
+  format's language decodes and encodes it at its edge. So bytes move between
+  plist and YAML natively, and into JSON or TOML as their base64.
 
 `From` conversions make literals ergonomic (`bool`, `i32`/`i64`, `u64`, `f64`,
 `&str`, `String`, `Vec<Value>`), and [`Value::serialize`] renders through fig's

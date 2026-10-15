@@ -56,8 +56,8 @@ pub const Language = struct {
         .references = true,
         // The core schema has a `null` and none of the extended scalars
         // (a `!!timestamp` is a 1.1 tag, not a core kind), so those ride in
-        // a `$fig` envelope.
-        .lossless = .{ .null = true },
+        // a `$fig` envelope; a byte string is `!!binary`.
+        .lossless = .{ .null = true, .data = true },
     };
 
     /// What fig's `src/contract/harness.zig` round-trips and edits: block and

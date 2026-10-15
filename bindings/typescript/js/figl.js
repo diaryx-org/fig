@@ -2272,7 +2272,7 @@ const EVERY_KIND = {
   char_literal: true,
   number_special: true,
   plist_date: true,
-  plist_data: true,
+  data: true,
 };
 
 /** @type {import("@diaryx/fig/helper").Language} */

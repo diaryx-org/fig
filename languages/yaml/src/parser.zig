@@ -2076,6 +2076,21 @@ fn bool1_1(source: []const u8) ?bool {
     return null;
 }
 
+/// Whether `s` is standard base64: the alphabet, then at most two `=`, in
+/// whole groups of four. Empty is the empty byte string.
+fn isBase64(s: []const u8) bool {
+    if (s.len % 4 != 0) return false;
+    var i: usize = 0;
+    while (i < s.len and s[i] != '=') : (i += 1) {
+        const c = s[i];
+        if (!std.ascii.isAlphanumeric(c) and c != '+' and c != '/') return false;
+    }
+    const pad = s.len - i;
+    if (pad > 2) return false;
+    for (s[i..]) |c| if (c != '=') return false;
+    return true;
+}
+
 // ── Tag resolution ──────────────────────────────────────────────────────────
 // YAML resolves its own tags (docs/proposals/core-only.md §4.3): each row's
 // tag carries its text as written, what it names under the document's
@@ -2091,6 +2106,12 @@ pub const TagResolution = struct { resolved: u8 = table.tag_unstated, agrees: bo
 pub fn resolveTag(directives: []const AST.TagDirective, text: []const u8, kind: AST.Node.Kind) TagResolution {
     if (std.mem.eql(u8, text, "!")) return .{ .resolved = table.tag_non_specific };
     const name = coreTagName(directives, text) orelse return .{ .resolved = table.tag_custom };
+    // `!!binary` on a byte string has been read into the node's own kind
+    // (`data`), and asks nothing more of it.
+    if (std.mem.eql(u8, name, "binary")) switch (kind) {
+        .extended => |e| if (e.kind == .data) return .{ .resolved = table.tag_non_specific },
+        else => {},
+    };
     const k: AST.Tag.KindTag = if (std.mem.eql(u8, name, "str")) .string else if (std.mem.eql(u8, name, "null")) .null_ else if (std.mem.eql(u8, name, "bool")) .boolean else if (std.mem.eql(u8, name, "int")) .integer else if (std.mem.eql(u8, name, "float")) .float else if (std.mem.eql(u8, name, "seq")) .sequence else if (std.mem.eql(u8, name, "map")) .mapping else
         // A `!!`-secondary tag with a name the core schema does not have
         // (`!!binary`, `!!timestamp`) is custom.
@@ -2419,13 +2440,29 @@ fn addNode(self: *Parser, kind: AST.Node.Kind, span: Span) ParserError!AST.Node.
         };
         if (after) |b| node_span = b;
     }
-    const id = try self.w.add(kind, node_span);
+    // A `!!binary` scalar is a byte string: its text, less the line breaks
+    // and indentation a block scalar wraps it in, is the base64 every
+    // format's `data` holds. Text that is not base64 stays a string under
+    // its tag.
+    var binary: std.ArrayList(u8) = .empty;
+    defer binary.deinit(self.allocator);
+    var node_kind = kind;
+    if (tag) |t| switch (kind) {
+        .string => |text| if (coreTagName(self.tag_directives.items, t.text)) |name| {
+            if (std.mem.eql(u8, name, "binary")) {
+                for (text) |c| if (!std.ascii.isWhitespace(c)) try binary.append(self.allocator, c);
+                if (isBase64(binary.items)) node_kind = .{ .extended = .{ .kind = .data, .text = binary.items } };
+            }
+        },
+        else => {},
+    };
+    const id = try self.w.add(node_kind, node_span);
     // YAML stores the tag VERBATIM (leading `!` kept) in the `.text` arm — its
     // exact spelling round-trips — resolved here under the document's `%TAG`
     // directives, which all precede the body. A container's kind is final
     // (sequence or mapping) when it opens, which is all a resolution reads.
     if (tag) |t| {
-        const res = resolveTag(self.tag_directives.items, t.text, kind);
+        const res = resolveTag(self.tag_directives.items, t.text, node_kind);
         try self.w.tag(id, .{ .text = t.text }, res.resolved, res.agrees, t.span);
     }
     if (anchor) |a| {
@@ -3063,6 +3100,28 @@ test "yaml block scalar: next-line header with explicit indent over the owner co
     defer doc.deinit(testing.allocator);
     const v = try doc.ast.getValByPath(&.{.{ .key = "folded" }});
     try testing.expect(v.kind == .string);
+}
+
+test "yaml !!binary: a byte string, its base64 unwrapped" {
+    const doc = try Parser.parse(testing.allocator, "a: !!binary |\n  aGVs\n  bG8=\nb: !!binary not*base64\nc: !!binary \"\"\n", .v1_2_2);
+    defer doc.deinit(testing.allocator);
+    const a = try doc.ast.getValByPath(&.{.{ .key = "a" }});
+    try testing.expectEqual(.data, a.kind.extended.kind);
+    try testing.expectEqualStrings("aGVsbG8=", a.kind.extended.text);
+    try testing.expectEqualStrings("!!binary", tagText(&doc.ast, a.id).?);
+    // Not base64: a string, under its tag.
+    const b = try doc.ast.getValByPath(&.{.{ .key = "b" }});
+    try testing.expectEqualStrings("not*base64", b.kind.string);
+    // The empty byte string.
+    const c = try doc.ast.getValByPath(&.{.{ .key = "c" }});
+    try testing.expectEqual(.data, c.kind.extended.kind);
+    try testing.expectEqualStrings("", c.kind.extended.text);
+}
+
+test "yaml !!binary: on a byte string it asks nothing more; on text it is custom" {
+    const data: AST.Node.Kind = .{ .extended = .{ .kind = .data, .text = "aGk=" } };
+    try testing.expectEqual(table.tag_non_specific, resolveTag(&.{}, "!!binary", data).resolved);
+    try testing.expectEqual(table.tag_custom, resolveTag(&.{}, "!!binary", .{ .string = "x" }).resolved);
 }
 
 test "yaml tag: untagged node has null side-table entry" {

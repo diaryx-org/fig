@@ -1041,7 +1041,7 @@ fn figExtKindOf(kind: AST.Node.Kind.Extended.ExtKind) FigExtKind {
         .char_literal => .char_literal,
         .number_special => .number_special,
         .plist_date => .plist_date,
-        .plist_data => .plist_data,
+        .data => .data,
     };
 }
 
@@ -2196,7 +2196,7 @@ pub const FigExtKind = enum(c_int) {
     char_literal = 5,
     number_special = 6,
     plist_date = 7,
-    plist_data = 8,
+    data = 8,
 };
 
 const ValueHandle = struct {
@@ -2229,7 +2229,7 @@ fn extKindOf(kind: c_int) ?AST.Node.Kind.Extended.ExtKind {
         @backingInt(FigExtKind.char_literal) => .char_literal,
         @backingInt(FigExtKind.number_special) => .number_special,
         @backingInt(FigExtKind.plist_date) => .plist_date,
-        @backingInt(FigExtKind.plist_data) => .plist_data,
+        @backingInt(FigExtKind.data) => .data,
         else => null,
     };
 }

@@ -595,8 +595,10 @@ typedef enum FigExtKind {
     FIG_EXT_NUMBER_SPECIAL  = 6,
     // A plist <date>: the raw ISO-8601 timestamp, verbatim.
     FIG_EXT_PLIST_DATE      = 7,
-    // A plist <data>: the base64 payload with all whitespace stripped.
-    FIG_EXT_PLIST_DATA      = 8,
+    // A byte string: its text is always base64 (standard alphabet, padded,
+    // no whitespace). A plist <data> or YAML !!binary writes that base64; a
+    // binary format holds raw bytes and its language encodes and decodes.
+    FIG_EXT_DATA            = 8,
 } FigExtKind;
 
 FigStatus fig_value_create(FigValue **out_value);

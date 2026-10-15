@@ -38,7 +38,7 @@ fn plist_date_and_data_reach_the_wrapper() {
     assert_eq!(
         get("blob"),
         &Value::Extended {
-            kind: ExtKind::PlistData,
+            kind: ExtKind::Data,
             text: "aGVsbG8=".into()
         }
     );

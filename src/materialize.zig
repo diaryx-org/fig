@@ -269,6 +269,11 @@ const Materializer = struct {
             .text => |t| blk: {
                 if (std.mem.eql(u8, t, "!")) break :blk .non_specific;
                 const name = yaml_scalar.coreTagName(self.src.tag_directives, t) orelse break :blk .custom;
+                // `!!binary` on a byte string the language already made it.
+                if (std.mem.eql(u8, name, "binary")) switch (self.src.node(id).kind) {
+                    .extended => |e| if (e.kind == .data) break :blk .non_specific,
+                    else => {},
+                };
                 const k = AST.Tag.ofCoreName(name) orelse break :blk .custom;
                 break :blk .{ .core = .{ .kind = k, .agrees = null } };
             },

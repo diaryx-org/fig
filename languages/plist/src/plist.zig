@@ -68,7 +68,7 @@ pub const Language = struct {
     /// format that is also a full value model.
     pub const dialects: []const lang.Dialect(@This()) = &.{.{
         .name = "plist",
-        .prints = .{ .holds = .{ .plist_date = true, .plist_data = true }, .comments = .never },
+        .prints = .{ .holds = .{ .plist_date = true, .data = true }, .comments = .never },
         .splice = .raw,
         // A bare `<dict>` IS a document this parser accepts (see its `detect`
         // probe), so `fig set` on a nonexistent `.plist` can create one.

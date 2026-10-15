@@ -33,7 +33,7 @@
 //!     `integer`/`real` text is trimmed of surrounding whitespace but
 //!     otherwise kept verbatim (no reparse-and-reformat), like TOML's numbers.
 //!   * `date`/`data` → an `extended` scalar (`ExtKind.plist_date`/
-//!     `.plist_data`) — the same mechanism TOML datetimes and ZON enum/char
+//!     `.data`, the byte string every format shares) — the same mechanism TOML datetimes and ZON enum/char
 //!     literals use for a format-specific lexical type the abstract model has
 //!     no scalar of its own for. `data`'s payload is stored with ALL
 //!     whitespace stripped (real plist files commonly wrap base64 across
@@ -231,7 +231,7 @@ fn parseValueFromName(self: *Parser, name: []const u8, sp: Span) ParseError!Id {
     if (eq(u8, name, "true")) return self.parseBoolScalar(sp, true);
     if (eq(u8, name, "false")) return self.parseBoolScalar(sp, false);
     if (eq(u8, name, "date")) return self.parseExtendedScalar(sp, .plist_date);
-    if (eq(u8, name, "data")) return self.parseExtendedScalar(sp, .plist_data);
+    if (eq(u8, name, "data")) return self.parseExtendedScalar(sp, .data);
     // `key` only ever appears where `parseDict` explicitly looks for it.
     return error.UnknownElement;
 }
@@ -366,9 +366,9 @@ fn parseBoolScalar(self: *Parser, sp: Span, val: bool) ParseError!Id {
 fn parseExtendedScalar(self: *Parser, sp: Span, kind: ExtKind) ParseError!Id {
     const tag_name = if (kind == .plist_date) "date" else "data";
     const raw = try self.parseElementTextContent(tag_name);
-    const text = if (kind == .plist_data) try self.stripAllWhitespace(raw) else std.mem.trim(u8, raw, " \t\r\n");
+    const text = if (kind == .data) try self.stripAllWhitespace(raw) else std.mem.trim(u8, raw, " \t\r\n");
     switch (kind) {
-        .plist_data => if (!isValidBase64(text)) return error.InvalidBase64,
+        .data => if (!isValidBase64(text)) return error.InvalidBase64,
         .plist_date => if (!isValidDateText(text)) return error.InvalidDate,
         else => unreachable,
     }

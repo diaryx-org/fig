@@ -50,7 +50,8 @@ fig-json = "6"
 ```
 
 **No Zig toolchain is required**, on any target Rust builds for: the core
-(`fig-core`, a dependency of `fig`) and every language are pure Rust, a port
+(`fig-core`, a dependency of `fig`), its kit (`fig-kit`) and every language
+are pure Rust, a port
 of fig's Zig implementation held to the same conformance suites, and they
 compile with the rest of your crate. There is no separate native library to
 ship.
@@ -105,8 +106,11 @@ don't depend on costs nothing.
 With its `serde` feature, on by default, each crate has `from_str`,
 `from_slice`, `from_reader`, `to_string`, `to_vec` and `to_writer` in its
 format, as `serde_json` has. A program that maps its types with fig's own
-`derive` instead turns it off (`default-features = false`), and then has
-no serde in its build at all.
+`derive` instead keeps only its `fig` feature (`default-features = false,
+features = ["fig"]`), and then has no serde in its build at all. With
+neither, a language crate is the language alone — its `LANGUAGE` and its
+parser and printer modules, on `fig-kit`, with no `fig` binding — for a
+program that drives `fig-core` itself, as fig's CLI does.
 
 | Crate            | Registers |
 | ---------------- | --------- |
@@ -277,7 +281,8 @@ for layer; `kit/testdata/` in the repository holds every binding's kit to
 the same answers.
 
 The rules have one right answer, which fig's own languages give, so they
-are the core kit's code (`fig-core`'s `kit`), called directly:
+are the core kit's code (`fig-kit`, which `fig-core` re-exports as its
+`kit`), called directly:
 
 - `kit::number`: whether a format reads a number's lexeme back
   (`spellable`), and its decimal spelling (`canonical`);
@@ -863,7 +868,7 @@ text to outlive the next edit — the borrow checker enforces this for you.
 - `version() -> Version` / `version_string() -> &'static str` — linked core version.
 - *(serde)* `from_slice<T>(bytes, format) -> Result<T>` — deserialize any format.
 - *(serde)* `to_value<T>(&value) -> Result<Value>` — build a `Value` from any `Serialize`.
-- `language::register_core(&fig_core::lang::<name>::LANGUAGE)` — what each language crate's `register()` is.
+- `language::register_core(&fig_<name>::LANGUAGE)` — what each language crate's `register()` is.
 
 **Each language crate** (`fig_json`, `fig_yaml`, …)
 

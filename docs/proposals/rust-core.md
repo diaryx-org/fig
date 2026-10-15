@@ -11,14 +11,17 @@ updated = 2026-10-15
 # Rust core
 
 > **Status: PORTED, not yet switched over.** Written against `main` at
-> 0afdab4 (6.0.0). Steps 1 to 6 (§4) are done in `rust/`: every language's
-> editor tests are fixtures (§3.2), and the kit, core, ten languages, CLI,
-> LSP, helper wire and C ABI are ported and agree with the Zig on every
-> check of §3 ([rust/README.md](/rust/README.md) has the numbers). The
-> `fig` crate and the language crates run on the port, with no Zig.
-> Left: deleting `fig-sys*` and `fig-language-build`, building the
-> release binaries, npm packages and wasm from `rust/`, and taking Zig
-> out of CI; and §6's open questions.
+> 0afdab4 (6.0.0). Steps 1 to 6 (§4) are done: every language's editor
+> tests are fixtures (§3.2), and the kit (`rust/fig-kit`), the core
+> (`rust/fig-core`), the ten languages (each in its own crate, beside its
+> Zig in `languages/<name>/rust/`), the CLI and LSP (`rust/fig-cli`), the
+> helper wire and the C ABI (`rust/fig-capi`) are ported and agree with
+> the Zig on every check of §3 ([rust/README.md](/rust/README.md) has the
+> numbers). They are members of one Cargo workspace, `bindings/rust`, with
+> the `fig` crate, which runs on the port with no Zig; `fig-sys*`,
+> `fig-language-build` and the payload CI are gone. Left: building the
+> release binaries, npm packages and wasm from the Rust crates, and taking
+> Zig out of CI; and §6's open questions.
 
 ## 1. The claim
 

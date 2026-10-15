@@ -1,4 +1,4 @@
-//! A string written as a JSON string literal: fig-core's port of the Zig kit's
+//! A string written as a JSON string literal: fig-kit's port of the Zig kit's
 //! `json_string.zig`, the escaper fig's JSON and canonical printers write
 //! with.
 

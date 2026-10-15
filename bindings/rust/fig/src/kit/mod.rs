@@ -5,7 +5,7 @@
 //! binding's to the same answers.
 //!
 //! The **rules** have one right answer, which fig's own languages give, so
-//! they are the core kit's own code (`fig-core`'s `kit`, the Rust port of
+//! they are the core kit's own code (`fig-kit`, re-exported as `fig-core`'s `kit`: the Rust port of
 //! the Zig kit), called directly:
 //!
 //! * [`number`]: how a number's lexeme is spelled for a format;

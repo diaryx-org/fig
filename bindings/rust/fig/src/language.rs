@@ -1177,7 +1177,7 @@ fn registration(r: fig_core::Result<i32>) -> Result<Format, Error> {
     }))
 }
 
-/// Register one of fig's own languages, as `fig-core` implements it, and
+/// Register one of fig's own languages, a `fig-kit` `Language` (its crate's `LANGUAGE`), and
 /// return the format of its first dialect. What each language crate's
 /// `register` is (`fig_yaml::register()`): the crate hands its language
 /// here. Registering one again returns the format it already has.

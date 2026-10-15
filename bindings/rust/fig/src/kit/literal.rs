@@ -1,4 +1,4 @@
-//! What a bare token means when nothing else says: fig-core's port of the Zig kit's
+//! What a bare token means when nothing else says: fig-kit's port of the Zig kit's
 //! `literal.zig`, the rule fig's editor classifies a caller's value by and
 //! figl reads its bare tokens by.
 //!

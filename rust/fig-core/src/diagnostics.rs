@@ -521,10 +521,9 @@ fn has_block(nc: &NodeComments<'_>) -> bool {
 // ── Tests ───────────────────────────────────────────────────────────────────
 //
 // Most name a bundled dialect (`toml`, `json`, `json5`, `yaml`, `figl`,
-// `dotenv`, `ini`) and return early while the global registry has none
-// (a test build's global registry holds fig's ten,
-// from the language crates). The
-// registered-target test builds its own entry over a test language.
+// `dotenv`, `ini`) and return early while the global registry has none (a
+// test build's global registry holds fig's ten, from the language crates).
+// The registered-target test builds its own entry over a test language.
 
 #[cfg(test)]
 mod tests {

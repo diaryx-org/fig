@@ -1,4 +1,4 @@
-//! The tokens of an XML-shaped format: fig-core's port of the Zig kit's `xml.zig`, the
+//! The tokens of an XML-shaped format: fig-kit's port of the Zig kit's `xml.zig`, the
 //! tokenizer fig's plist reads with. It is lexical and knows nothing of
 //! which elements mean what. Comments, processing instructions (the
 //! `<?xml …?>` declaration among them) and a DOCTYPE are skipped; a DOCTYPE

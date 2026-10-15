@@ -513,7 +513,14 @@ impl Registry {
 /// registers on first use. Wired to `crate::lang::*::LANGUAGE` by whoever
 /// lands the languages; empty until then.
 fn bundled_languages() -> Vec<&'static dyn Language> {
-    Vec::new()
+    use crate::lang;
+    vec![
+        &lang::json::LANGUAGE,
+        &lang::toml::LANGUAGE,
+        &lang::ini::LANGUAGE,
+        &lang::dotenv::LANGUAGE,
+        &lang::properties::LANGUAGE,
+    ]
 }
 
 static GLOBAL: OnceLock<Registry> = OnceLock::new();

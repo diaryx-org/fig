@@ -19,6 +19,7 @@ contents
 > * [Entry attributes](/docs/proposals/entry-attributes.md)
 > * [JSON-RPC wire](/docs/proposals/json-rpc-wire.md)
 > * [A replaced string keeps its quote style](/docs/proposals/keep-quote-style.md)
+> * [Kit parity](/docs/proposals/kit-parity.md)
 ```
 
 # Proposals

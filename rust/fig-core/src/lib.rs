@@ -18,3 +18,5 @@ pub mod materialize;
 pub mod patch;
 pub mod registry;
 pub mod serialize;
+pub mod wire;
+pub mod host;

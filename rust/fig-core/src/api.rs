@@ -1470,3 +1470,663 @@ impl Language for RuntimeLanguage {
         self.lang().has_renderer(dialect, which)
     }
 }
+
+// ============================================================================
+// TESTS (src/c_api.zig's that exercise logic, not the ABI's layout)
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diagnostics::{Cause, Code};
+
+    /// The handle of the registered dialect `name`.
+    fn fmt(name: &str) -> i32 {
+        let f = format_by_name(name);
+        assert!(f >= 0, "{name} is not registered");
+        f
+    }
+
+    fn k(s: &str) -> PathSegment<'_> {
+        PathSegment::Key(s.as_bytes())
+    }
+
+    fn editor(src: &str, format: &str) -> Editor {
+        Editor::create(src.as_bytes(), fmt(format)).unwrap()
+    }
+
+    fn source(ed: &Editor) -> &str {
+        std::str::from_utf8(ed.source()).unwrap()
+    }
+
+    fn doc(src: &str, format: &str) -> Document {
+        Document::parse(src.as_bytes(), fmt(format)).unwrap()
+    }
+
+    /// The value of the root mapping's first entry.
+    fn first_value(d: &Document) -> NodeId {
+        d.keyvalue_value(d.first_child(d.root()))
+    }
+
+    #[test]
+    fn traversal_over_a_parsed_mapping() {
+        let d = doc("title: Hello\ncount: 42\ntags:\n- a\n- b\n", "yaml");
+        let root = d.root();
+        assert_ne!(NODE_NONE, root);
+        assert_eq!(FigNodeKind::Mapping, d.node_kind(root));
+        assert_eq!(3, d.child_count(root));
+        let first = d.first_child(root);
+        assert_eq!(FigNodeKind::KeyValue, d.node_kind(first));
+        assert_eq!(Some(&b"title"[..]), d.node_string(d.keyvalue_key(first)));
+        assert_eq!(Some(&b"Hello"[..]), d.node_string(d.keyvalue_value(first)));
+        let second = d.next_sibling(first);
+        let count = d.keyvalue_value(second);
+        assert_eq!(FigNodeKind::Int, d.node_kind(count));
+        assert_eq!(Some(&b"42"[..]), d.node_number(count));
+        let tags = d.keyvalue_value(d.next_sibling(second));
+        assert_eq!(FigNodeKind::Sequence, d.node_kind(tags));
+        assert_eq!(2, d.child_count(tags));
+        // Out of range reads as nothing.
+        assert_eq!(FigNodeKind::Invalid, d.node_kind(9999));
+        assert_eq!(NODE_NONE, d.first_child(9999));
+    }
+
+    #[test]
+    fn a_spec_version_is_a_dialect_of_its_own_found_by_name() {
+        for (name, kind) in [("yaml", FigNodeKind::String), ("yaml-1.2.2", FigNodeKind::String), ("yaml-1.1", FigNodeKind::Bool)] {
+            let d = doc("a: yes\n", name);
+            assert_eq!(kind, d.node_kind(first_value(&d)), "{name}");
+        }
+        let trailing = b"t = { a = 1, }\n";
+        for (name, want) in [("toml", Status::Ok), ("toml-1.1", Status::Ok), ("toml-1.0", Status::ParseError), ("toml-1.0.0", Status::ParseError)] {
+            let got = Document::parse(trailing, fmt(name)).map(|_| Status::Ok).unwrap_or_else(|s| s);
+            assert_eq!(want, got, "{name}");
+        }
+        assert_eq!(-1, format_by_name("toml-2.0"));
+        assert_eq!(-1, format_by_name("yaml-1.3"));
+    }
+
+    #[test]
+    fn document_diagnose_reports_a_dropped_null_for_toml() {
+        let mut d = doc("a: null\nb: 1\n", "yaml");
+        assert_eq!(Ok(1), d.diagnose(fmt("toml"), None));
+        let w = d.warning(0).unwrap();
+        assert_eq!(Code::ValueDropped, w.code);
+        assert_eq!(Cause::FormatLimitation, w.cause);
+        assert_eq!(b"a", &w.path[..]);
+        assert_eq!(Status::InvalidArgument, d.warning(1).unwrap_err());
+        // Lossless preserves the null.
+        let lossless = FigSerializeOptions { lossless: true, ..Default::default() };
+        assert_eq!(Ok(0), d.diagnose(fmt("toml"), Some(&lossless)));
+        assert_eq!(Status::InvalidArgument, d.warning(0).unwrap_err());
+        assert_eq!(Ok(0), d.diagnose(fmt("json"), None));
+    }
+
+    #[test]
+    fn value_diagnose_reports_a_degraded_datetime() {
+        let mut v = Value::create();
+        let dt = v.extended(ExtKind::OffsetDatetime.ordinal() as i32, b"1979-05-27T07:32:00Z").unwrap();
+        assert_eq!(Ok(1), v.diagnose(dt, fmt("json"), None));
+        let w = v.warning(0).unwrap();
+        assert_eq!(Code::TypeDegraded, w.code);
+        assert_eq!("string", w.note);
+        assert_eq!(Ok(0), v.diagnose(dt, fmt("toml"), None));
+        // An unknown kind, root or format.
+        assert_eq!(Status::InvalidArgument, v.extended(42, b"x").unwrap_err());
+        assert_eq!(Status::InvalidArgument, v.diagnose(99, fmt("json"), None).unwrap_err());
+        assert_eq!(Status::UnsupportedFormat, v.diagnose(dt, 0xBEEF, None).unwrap_err());
+    }
+
+    #[test]
+    fn parse_ex_reports_a_parse_failure() {
+        let bad = b"{ \"a\":";
+        assert_eq!(Status::ParseError, Document::parse(bad, fmt("json")).unwrap_err());
+        let e = Document::parse_ex(bad, fmt("json")).unwrap_err();
+        assert_eq!(Status::ParseError, e.code);
+        assert!(!e.message.is_empty());
+        assert!(e.byte_offset <= bad.len());
+        let e = Document::parse_ex(bad, 0xBEEF).unwrap_err();
+        assert_eq!(Status::UnsupportedFormat, e.code);
+        assert_eq!(b"unsupported or unknown format", &e.message[..]);
+        assert!(Document::parse_ex(b"{\"a\":1}", fmt("json")).is_ok());
+    }
+
+    #[test]
+    fn parse_reads_toml_zon_and_json5_and_rejects_json5_under_strict_json() {
+        let d = doc("name = \"fig\"\ncount = 42\n", "toml");
+        assert_eq!(FigNodeKind::Mapping, d.node_kind(d.root()));
+        assert_eq!(2, d.child_count(d.root()));
+        let d = doc(".{ .name = \"fig\", .count = 42 }", "zon");
+        assert_eq!(FigNodeKind::Mapping, d.node_kind(d.root()));
+        let src = "{\n  // c\n  host: 'localhost',\n  port: 8080,\n}\n";
+        let d = doc(src, "json5");
+        assert_eq!(2, d.child_count(d.root()));
+        assert_eq!(Status::ParseError, Document::parse(src.as_bytes(), fmt("json")).unwrap_err());
+    }
+
+    #[test]
+    fn node_extended_recovers_datetime_and_char_literal_scalars() {
+        let d = doc("d = 2026-06-18\n", "toml");
+        let v = first_value(&d);
+        assert_eq!(FigNodeKind::Extended, d.node_kind(v));
+        assert_eq!(Some((ExtKind::LocalDate, &b"2026-06-18"[..])), d.node_extended(v));
+        assert_eq!(Some(&b"2026-06-18"[..]), d.node_string(v));
+        let d = doc(".{ .c = 'a' }", "zon");
+        let v = first_value(&d);
+        assert_eq!(Some((ExtKind::CharLiteral, &b"97"[..])), d.node_extended(v));
+        assert_eq!(Some(&b"97"[..]), d.node_number(v));
+        assert_eq!(None, d.node_string(v));
+        let d = doc("s = \"hi\"\n", "toml");
+        assert_eq!(None, d.node_extended(first_value(&d)));
+    }
+
+    #[test]
+    fn parse_judges_empty_input_per_format() {
+        assert_eq!(Status::ParseError, Document::parse(b"", fmt("json")).unwrap_err());
+        let d = doc("", "yaml");
+        assert_eq!(FigNodeKind::Null, d.node_kind(d.root()));
+        let d = doc("", "toml");
+        assert_eq!(FigNodeKind::Mapping, d.node_kind(d.root()));
+        assert_eq!(0, d.child_count(d.root()));
+    }
+
+    #[test]
+    fn editor_insert_round_trips_and_takes_empty_input() {
+        let mut ed = editor("a: 1\nb: 2\n", "yaml");
+        ed.insert_key(&[], b"c", b"3").unwrap();
+        assert_eq!("a: 1\nb: 2\nc: 3\n", source(&ed));
+        let mut ed = editor("", "yaml");
+        ed.insert_key(&[], b"k", b"v").unwrap();
+        assert_eq!("k: v\n", source(&ed));
+    }
+
+    #[test]
+    fn toml_editor_insert_replace_delete_round_trip() {
+        let mut ed = editor("[server]\nhost = \"a\"\nport = 1\n", "toml");
+        ed.insert_key(&[k("server")], b"tls", b"true").unwrap();
+        ed.replace_val(&[k("server"), k("port")], b"9090").unwrap();
+        ed.delete_key(&[k("server"), k("host")]).unwrap();
+        assert_eq!("[server]\nport = 9090\ntls = true\n", source(&ed));
+    }
+
+    #[test]
+    fn toml_editor_adds_a_leading_comment_with_the_hash_marker() {
+        let mut ed = editor("a = 1\nb = 2\n", "toml");
+        ed.add_leading_comment(&[k("b")], b"note").unwrap();
+        assert_eq!("a = 1\n# note\nb = 2\n", source(&ed));
+    }
+
+    #[test]
+    fn a_duplicate_key_is_invalid_argument_and_rolls_back() {
+        let mut ed = editor("a = 1\n", "toml");
+        assert_eq!(Status::InvalidArgument, ed.insert_key(&[], b"a", b"2").unwrap_err());
+        assert_eq!("a = 1\n", source(&ed));
+        let mut ed = editor("a: 1\n", "yaml");
+        assert_eq!(Status::InvalidArgument, ed.insert_named_key(&[], b"a", b"2").unwrap_err());
+        assert_eq!(Status::InvalidArgument, ed.insert_key(&[], b"a", b"2").unwrap_err());
+        assert_eq!("a: 1\n", source(&ed));
+    }
+
+    fn name_nums(v: &mut Value) -> NodeId {
+        let name = v.string(b"fig").unwrap();
+        let n1 = v.int(1).unwrap();
+        let n2 = v.int(2).unwrap();
+        let nums = v.seq(&[n1, n2]).unwrap();
+        let k_name = v.string(b"name").unwrap();
+        let k_nums = v.string(b"nums").unwrap();
+        v.map(&[FigKeyValue { key: k_name, value: name }, FigKeyValue { key: k_nums, value: nums }]).unwrap()
+    }
+
+    #[test]
+    fn value_builds_and_serializes_to_multiple_formats() {
+        let mut v = Value::create();
+        let root = name_nums(&mut v);
+        assert_eq!(b"{\n  \"name\": \"fig\",\n  \"nums\": [\n    1,\n    2\n  ]\n}\n", v.serialize(root, fmt("json")).unwrap());
+        assert_eq!(b"name: fig\nnums: [1, 2]\n", v.serialize(root, fmt("yaml")).unwrap());
+    }
+
+    #[test]
+    fn value_maps_an_unrepresentable_value_to_unsupported_format() {
+        let mut v = Value::create();
+        let null = v.null().unwrap();
+        let key = v.string(b"k").unwrap();
+        let root = v.map(&[FigKeyValue { key, value: null }]).unwrap();
+        assert_eq!(Status::UnsupportedFormat, v.serialize(root, fmt("toml")).unwrap_err());
+        assert_eq!(b"{\n  \"k\": null\n}\n", v.serialize(root, fmt("json")).unwrap());
+    }
+
+    #[test]
+    fn value_spells_a_non_finite_float_in_each_formats_words_and_json_refuses_it() {
+        let cases = [
+            (".inf", "v = inf\n", "v: .inf\n", "{\n  v: Infinity\n}\n"),
+            ("-.inf", "v = -inf\n", "v: -.inf\n", "{\n  v: -Infinity\n}\n"),
+            (".nan", "v = nan\n", "v: .nan\n", "{\n  v: NaN\n}\n"),
+            ("inf", "v = inf\n", "v: .inf\n", "{\n  v: Infinity\n}\n"),
+        ];
+        for (raw, toml, yaml, json5) in cases {
+            let mut v = Value::create();
+            let n = v.number(raw.as_bytes(), true).unwrap();
+            let key = v.string(b"v").unwrap();
+            let root = v.map(&[FigKeyValue { key, value: n }]).unwrap();
+            assert_eq!(toml.as_bytes(), v.serialize(root, fmt("toml")).unwrap());
+            assert_eq!(yaml.as_bytes(), v.serialize(root, fmt("yaml")).unwrap());
+            assert_eq!(json5.as_bytes(), v.serialize(root, fmt("json5")).unwrap());
+            assert_eq!(Status::UnsupportedFormat, v.serialize(root, fmt("json")).unwrap_err());
+            assert_eq!(Status::UnsupportedFormat, v.serialize(root, fmt("jsonc")).unwrap_err());
+        }
+    }
+
+    #[test]
+    fn document_converts_a_non_finite_float_into_the_targets_spelling() {
+        let cases = [
+            ("a: .inf\nb: -.inf\nc: .nan\n", "yaml", "toml", Some("a = inf\nb = -inf\nc = nan\n")),
+            ("a = inf\nb = -inf\nc = nan\n", "toml", "yaml", Some("a: .inf\nb: -.inf\nc: .nan\n")),
+            ("a: .inf\n", "yaml", "json", None),
+        ];
+        for (src, from, to, want) in cases {
+            let mut d = doc(src, from);
+            match want {
+                Some(w) => assert_eq!(w.as_bytes(), d.serialize(fmt(to), None).unwrap()),
+                None => assert_eq!(Status::UnsupportedFormat, d.serialize(fmt(to), None).unwrap_err()),
+            }
+        }
+    }
+
+    #[test]
+    fn toml_editor_takes_inf_and_nan_as_a_replacement_value() {
+        let mut ed = editor("name = \"music\"\nversion = 1\n", "toml");
+        for repl in ["inf", "-inf", "nan"] {
+            ed.replace_val(&[k("version")], repl.as_bytes()).unwrap();
+            assert_eq!(format!("name = \"music\"\nversion = {repl}\n"), source(&ed));
+        }
+    }
+
+    #[test]
+    fn value_serialize_options_compact_and_default() {
+        let mut v = Value::create();
+        let a = v.int(1).unwrap();
+        let b = v.int(2).unwrap();
+        let root = v.seq(&[a, b]).unwrap();
+        let compact = FigSerializeOptions { pretty: false, ..Default::default() };
+        assert_eq!(b"[1,2]\n", v.serialize_opts(root, fmt("json"), Some(&compact)).unwrap());
+        // Zero indent and width read as their defaults, not as zero.
+        let zeroed = FigSerializeOptions { indent: 0, width: 0, ..Default::default() };
+        assert_eq!(b"[\n  1,\n  2\n]\n", v.serialize_opts(root, fmt("json"), Some(&zeroed)).unwrap());
+    }
+
+    #[test]
+    fn value_serialize_options_carry_toml_width_to_the_inline_or_section_choice() {
+        let mut v = Value::create();
+        let x = v.int(1).unwrap();
+        let y = v.int(2).unwrap();
+        let kx = v.string(b"x").unwrap();
+        let ky = v.string(b"y").unwrap();
+        let point = v.map(&[FigKeyValue { key: kx, value: x }, FigKeyValue { key: ky, value: y }]).unwrap();
+        let kp = v.string(b"point").unwrap();
+        let root = v.map(&[FigKeyValue { key: kp, value: point }]).unwrap();
+        assert_eq!(b"point = { x = 1, y = 2 }\n", v.serialize(root, fmt("toml")).unwrap());
+        let narrow = FigSerializeOptions { width: 8, ..Default::default() };
+        assert_eq!(b"[point]\nx = 1\ny = 2\n", v.serialize_opts(root, fmt("toml"), Some(&narrow)).unwrap());
+    }
+
+    #[test]
+    fn value_flow_option_renders_figl_container_fragments_inline() {
+        let mut v = Value::create();
+        let a = v.string(b"a.md").unwrap();
+        let b = v.string(b"b.md").unwrap();
+        let root = v.seq(&[a, b]).unwrap();
+        let flow = FigSerializeOptions { flow: true, ..Default::default() };
+        assert_eq!(b"[a.md, b.md]\n", v.serialize_opts(root, fmt("figl"), Some(&flow)).unwrap());
+        assert_eq!(b"* a.md\n* b.md\n", v.serialize(root, fmt("figl")).unwrap());
+    }
+
+    #[test]
+    fn value_rejects_an_out_of_range_child_id() {
+        let mut v = Value::create();
+        let one = v.int(1).unwrap();
+        assert_eq!(Status::InvalidArgument, v.seq(&[one, 99]).unwrap_err());
+        assert_eq!(Status::InvalidArgument, v.map(&[FigKeyValue { key: one, value: 99 }]).unwrap_err());
+        assert_eq!(Status::InvalidArgument, v.serialize(99, fmt("json")).unwrap_err());
+        assert_eq!(Status::UnsupportedFormat, v.serialize(one, 0xBEEF).unwrap_err());
+    }
+
+    #[test]
+    fn document_serialize_converts_json_to_yaml_toml_and_figl() {
+        let mut d = doc("{\"name\":\"fig\",\"nums\":[1,2]}", "json");
+        assert_eq!(b"name: fig\nnums: [1, 2]\n", d.serialize(fmt("yaml"), None).unwrap());
+        assert_eq!(b"name = \"fig\"\nnums = [1, 2]\n", d.serialize(fmt("toml"), None).unwrap());
+        assert_eq!(b"name = fig\nnums = [1, 2]\n", d.serialize(fmt("figl"), None).unwrap());
+        let mut d = doc("title = Hello\ncount = 42\n", "figl");
+        assert_eq!(b"{\n  \"title\": \"Hello\",\n  \"count\": 42\n}\n", d.serialize(fmt("json"), None).unwrap());
+    }
+
+    #[test]
+    fn editor_edits_figl_and_zon() {
+        let mut ed = editor("title = old\nport = 8080\n", "figl");
+        ed.replace_val(&[k("port")], b"9090").unwrap();
+        assert_eq!("title = old\nport = 9090\n", source(&ed));
+        let mut ed = editor(".{ .title = \"old\", .port = 8080 }", "zon");
+        ed.replace_val(&[k("port")], b"9090").unwrap();
+        assert_eq!(".{ .title = \"old\", .port = 9090 }", source(&ed));
+    }
+
+    #[test]
+    fn insert_named_key_spells_the_name_as_the_format_does() {
+        let mut ed = editor(".{ .a = 1 }", "zon");
+        ed.insert_named_key(&[], b"new", b"true").unwrap();
+        ed.insert_named_key(&[], b"has space", b"true").unwrap();
+        assert_eq!(".{ .a = 1, .new = true, .@\"has space\" = true }", source(&ed));
+        let mut ed = editor("{\"a\": 1}", "json");
+        ed.insert_named_key(&[], b"k\"q", b"2").unwrap();
+        assert_eq!("{\"a\": 1, \"k\\\"q\": 2}", source(&ed));
+    }
+
+    #[test]
+    fn replace_named_key_spells_the_new_name_as_the_format_does() {
+        let mut ed = editor(".{ .a = 1, .b = 2 }", "zon");
+        ed.replace_named_key(&[k("a")], b"k").unwrap();
+        ed.replace_named_key(&[k("b")], b"has space").unwrap();
+        assert_eq!(".{ .k = 1, .@\"has space\" = 2 }", source(&ed));
+        let mut ed = editor("<dict><key>a</key><string>x</string></dict>", "plist");
+        ed.replace_named_key(&[k("a")], b"b&c").unwrap();
+        assert_eq!("<dict><key>b&amp;c</key><string>x</string></dict>", source(&ed));
+    }
+
+    #[test]
+    fn replace_key_refuses_a_path_with_no_key_and_a_name_already_held() {
+        let src = "{\"l\": [1, 2], \"a\": 1, \"b\": 2}";
+        let mut ed = editor(src, "json");
+        assert_eq!(Status::InvalidArgument, ed.replace_key(&[k("l"), PathSegment::Index(0)], b"\"z\"").unwrap_err());
+        assert_eq!(Status::InvalidArgument, ed.replace_key(&[], b"\"z\"").unwrap_err());
+        assert_eq!(Status::InvalidArgument, ed.replace_named_key(&[k("a")], b"b").unwrap_err());
+        assert_eq!(Status::InvalidArgument, ed.replace_key(&[k("a")], b"\"b\"").unwrap_err());
+        assert_eq!(src, source(&ed));
+    }
+
+    #[test]
+    fn whole_container_ops_reach_a_toml_table_the_key_ops_cannot() {
+        let src = "[a]\nx = 1\n[b]\ny = 2\n";
+        let mut ed = editor(src, "toml");
+        assert_eq!(Status::InvalidArgument, ed.delete_key(&[k("a")]).unwrap_err());
+        ed.delete_container(&[k("a")]).unwrap();
+        assert_eq!("[b]\ny = 2\n", source(&ed));
+
+        let mut ed = editor(src, "toml");
+        ed.rename_container(&[k("a")], b"q").unwrap();
+        assert_eq!("[q]\nx = 1\n[b]\ny = 2\n", source(&ed));
+
+        let mut ed = editor(src, "toml");
+        ed.insert_container(&[k("c")], b"z = 3\n").unwrap();
+        assert_eq!("[a]\nx = 1\n[b]\ny = 2\n\n[c]\nz = 3\n", source(&ed));
+
+        let mut ed = editor(src, "toml");
+        assert_eq!(Status::InvalidArgument, ed.move_key(&[k("a")], &[k("b")]).unwrap_err());
+        ed.move_container(&[k("a")], None).unwrap();
+        assert_eq!("[b]\ny = 2\n\n[a]\nx = 1\n", source(&ed));
+
+        let mut ed = editor(src, "toml");
+        assert_eq!(Status::InvalidArgument, ed.reorder_keys(&[], &[b"b", b"a"]).unwrap_err());
+        ed.reorder_containers(&[b"b", b"a"]).unwrap();
+        assert_eq!("[b]\ny = 2\n[a]\nx = 1\n", source(&ed));
+    }
+
+    #[test]
+    fn append_container_to_seq_appends_a_toml_array_of_tables_element() {
+        let mut ed = editor("[[bin]]\nname = \"a\"\n", "toml");
+        ed.append_container_to_seq(&[k("bin")], b"name = \"b\"\n").unwrap();
+        assert_eq!("[[bin]]\nname = \"a\"\n\n[[bin]]\nname = \"b\"\n", source(&ed));
+    }
+
+    #[test]
+    fn whole_container_ops_answer_unsupported_format_where_the_format_has_none() {
+        let mut ed = editor("a:\n  x: 1\nb:\n  y: 2\n", "yaml");
+        assert_eq!(Status::UnsupportedFormat, ed.delete_container(&[k("a")]).unwrap_err());
+        ed.delete_key(&[k("a")]).unwrap();
+        assert_eq!("b:\n  y: 2\n", source(&ed));
+
+        let mut ed = editor("[a]\nx = 1\n[b]\ny = 2\n[a]\nz = 3\n", "ini");
+        assert_eq!(Status::UnsupportedFormat, ed.insert_container(&[k("a")], b"").unwrap_err());
+        ed.rename_container(&[k("a")], b"q").unwrap();
+        assert_eq!("[q]\nx = 1\n[b]\ny = 2\n[q]\nz = 3\n", source(&ed));
+        ed.delete_container(&[k("q")]).unwrap();
+        assert_eq!("[b]\ny = 2\n", source(&ed));
+    }
+
+    #[test]
+    fn document_serialize_materializes_the_yaml_reference_layer_when_leaving_yaml() {
+        let mut d = doc("a: &x 1\nb: *x\n", "yaml");
+        assert_eq!(b"{\n  \"a\": 1,\n  \"b\": 1\n}\n", d.serialize(fmt("json"), None).unwrap());
+        let yaml = d.serialize(fmt("yaml"), None).unwrap();
+        assert!(String::from_utf8_lossy(yaml).contains("*x"));
+    }
+
+    #[test]
+    fn resolve_aliases_reads_an_alias_and_a_merge_key_as_values() {
+        let d = doc("base: &b {x: 1, y: 2}\nname: &n fig\nd:\n  <<: *b\n  y: 3\nalias: *n\n", "yaml");
+        let mut resolved = d.resolve_aliases().unwrap().unwrap();
+        drop(d);
+        {
+            let ast = &resolved.document().ast;
+            let val = |p: &[PathSegment<'_>]| ast.get_val_by_path(p).map(|n| n.kind);
+            assert_eq!(Ok(NodeKind::String(b"fig")), val(&[k("alias")]));
+            assert_eq!(Some(&b"1"[..]), val(&[k("d"), k("x")]).unwrap().as_number().map(|n| n.raw));
+            assert_eq!(Some(&b"3"[..]), val(&[k("d"), k("y")]).unwrap().as_number().map(|n| n.raw));
+            assert_eq!(err!(NotFound), val(&[k("d"), k("<<")]).unwrap_err());
+            let d_id = ast.get_val_by_path(&[k("d")]).unwrap().id;
+            assert_eq!(FigNodeKind::Mapping, resolved.node_kind(d_id));
+            for i in 0..ast.node_count() {
+                assert!(!matches!(ast.kind_of(i as NodeId), NodeKind::Alias(_)));
+            }
+        }
+        let yaml = resolved.serialize(fmt("yaml"), None).unwrap();
+        assert!(!yaml.iter().any(|&b| b == b'*' || b == b'&'));
+    }
+
+    #[test]
+    fn resolve_aliases_answers_none_with_nothing_to_resolve() {
+        assert!(doc("a: &x 1\nb: 2\n", "yaml").resolve_aliases().unwrap().is_none());
+        assert!(doc("{\"<<\": {\"a\": 1}}", "json").resolve_aliases().unwrap().is_none());
+    }
+
+    #[test]
+    fn resolve_aliases_refuses_a_cyclic_alias_as_a_parse_error_at_the_alias() {
+        let src = "ok: 1\nloop: &a [1, *a]\n";
+        let e = doc(src, "yaml").resolve_aliases().unwrap_err();
+        assert_eq!(Status::ParseError, e.code);
+        assert_eq!(&b"alias `*a` refers to a node that contains it, so it has no value"[..], &e.message[..]);
+        assert_eq!(src.find("*a").unwrap(), e.byte_offset);
+        assert_eq!(2, e.line);
+        assert_eq!(14, e.column);
+        let e = doc("m: &m {a: 1, <<: *m}\n", "yaml").resolve_aliases().unwrap_err();
+        assert_eq!(Status::ParseError, e.code);
+    }
+
+    #[test]
+    fn document_serialize_honors_the_lossless_option_for_toml_null() {
+        let mut d = doc("{\"k\":null}", "json");
+        assert_eq!(Status::UnsupportedFormat, d.serialize(fmt("toml"), None).unwrap_err());
+        let lossless = FigSerializeOptions { lossless: true, ..Default::default() };
+        let out = d.serialize(fmt("toml"), Some(&lossless)).unwrap();
+        assert!(String::from_utf8_lossy(out).contains("$fig"));
+    }
+
+    #[test]
+    fn document_serialize_preserves_comments_across_formats() {
+        let mut d = doc("{\n  // hello\n  a: 1,\n}\n", "json5");
+        let out = String::from_utf8_lossy(d.serialize(fmt("yaml"), None).unwrap()).into_owned();
+        assert!(out.contains("# hello") && out.contains("a: 1"));
+        let strip = FigSerializeOptions { strip_comments: true, ..Default::default() };
+        assert!(!String::from_utf8_lossy(d.serialize(fmt("yaml"), Some(&strip)).unwrap()).contains("hello"));
+    }
+
+    #[test]
+    fn version_is_the_crate_version() {
+        let v = version();
+        assert_eq!(version_string(), format!("{}.{}.{}", v >> 16, (v >> 8) & 0xff, v & 0xff));
+    }
+
+    #[test]
+    fn format_capabilities_report_the_per_format_matrix() {
+        let rws = CAP_READ | CAP_EDIT | CAP_SERIALIZE;
+        for f in ["json", "jsonc", "json5", "toml", "zon", "figl"] {
+            assert_eq!(rws, format_capabilities(fmt(f)), "{f}");
+        }
+        assert_eq!(rws | CAP_REFERENCES, format_capabilities(fmt("yaml")));
+        for bad in [0, 9999, -1] {
+            assert_eq!(0, format_capabilities(bad));
+        }
+        assert_eq!(Some("json".to_string()), format_name(fmt("json")));
+        assert_eq!(None, format_name(0));
+    }
+
+    #[test]
+    fn format_capabilities_agree_with_what_each_entry_point_does() {
+        let mut v = Value::create();
+        let one = v.int(1).unwrap();
+        let a = v.string(b"a").unwrap();
+        let root = v.map(&[FigKeyValue { key: a, value: one }]).unwrap();
+        let cases = [
+            ("json", "{\"a\":1}"),
+            ("jsonc", "{\"a\":1}"),
+            ("json5", "{a:1}"),
+            ("yaml", "a: 1\n"),
+            ("toml", "a = 1\n"),
+            ("zon", ".{ .a = 1 }"),
+            ("figl", "a = 1\n"),
+        ];
+        for (name, sample) in cases {
+            let f = fmt(name);
+            let caps = format_capabilities(f);
+            assert_eq!(caps & CAP_READ != 0, Document::parse(sample.as_bytes(), f).is_ok());
+            let edit = Editor::create(sample.as_bytes(), f).map(|_| Status::Ok).unwrap_or_else(|s| s);
+            assert_eq!(caps & CAP_EDIT != 0, edit != Status::UnsupportedFormat);
+            let ser = v.serialize(root, f).map(|_| Status::Ok).unwrap_or_else(|s| s);
+            assert_eq!(caps & CAP_SERIALIZE != 0, ser != Status::UnsupportedFormat);
+        }
+    }
+
+    #[test]
+    fn editor_comment_ops_add_set_and_delete() {
+        let mut ed = editor("a: 1\nb: 2\n", "yaml");
+        ed.add_leading_comment(&[k("b")], b"why").unwrap();
+        ed.set_trailing_comment(&[k("b")], b"two").unwrap();
+        assert_eq!("a: 1\n# why\nb: 2 # two\n", source(&ed));
+        ed.delete_trailing_comment(&[k("b")]).unwrap();
+        ed.delete_leading_comments(&[k("b")]).unwrap();
+        assert_eq!("a: 1\nb: 2\n", source(&ed));
+    }
+
+    #[test]
+    fn set_sequence_reconciles_a_list_preserving_survivors_comments() {
+        let mut ed = editor("tags:\n- a # first\n- b # second\n- c # third\n", "yaml");
+        ed.set_sequence(&[k("tags")], &[b"c", b"a", b"d"]).unwrap();
+        assert_eq!("tags:\n- c # third\n- a # first\n- d\n", source(&ed));
+        assert_eq!(Status::InvalidArgument, ed.set_sequence(&[k("tags")], &[]).unwrap_err());
+    }
+
+    #[test]
+    fn comment_ops_reject_strict_json_with_unsupported_format() {
+        let mut ed = editor("{\"a\":1}", "json");
+        assert_eq!(Status::UnsupportedFormat, ed.add_leading_comment(&[k("a")], b"x").unwrap_err());
+        assert_eq!(Status::UnsupportedFormat, ed.delete_trailing_comment(&[k("a")]).unwrap_err());
+        assert_eq!(Status::UnsupportedFormat, ed.get_leading_comment(&[k("a")]).unwrap_err());
+        assert_eq!(Status::UnsupportedFormat, ed.get_trailing_comment(&[k("a")]).unwrap_err());
+    }
+
+    #[test]
+    fn comment_ops_on_a_one_line_flow_item_answer_as_if_it_had_none() {
+        let src = "# above members\nmembers = [\"a\", \"b\"] # note\n";
+        let mut ed = editor(src, "toml");
+        let item0 = [k("members"), PathSegment::Index(0)];
+        assert_eq!(Status::InvalidArgument, ed.add_leading_comment(&item0, b"mine").unwrap_err());
+        assert_eq!(Status::InvalidArgument, ed.set_trailing_comment(&item0, b"mine").unwrap_err());
+        assert_eq!(Status::NotFound, ed.get_leading_comment(&item0).unwrap_err());
+        assert_eq!(Status::NotFound, ed.get_trailing_comment(&item0).unwrap_err());
+        ed.delete_leading_comments(&item0).unwrap();
+        ed.delete_trailing_comment(&item0).unwrap();
+        assert_eq!(src, source(&ed));
+        assert_eq!(b"above members", &ed.get_leading_comment(&[k("members")]).unwrap()[..]);
+        assert_eq!(b"note", &ed.get_trailing_comment(&[k("members")]).unwrap()[..]);
+    }
+
+    #[test]
+    fn comment_reads_distinguish_absent_from_empty() {
+        let ed = editor("# why\na: 1 # two\nb: 2 #\nc: 3\n", "yaml");
+        assert_eq!(b"why", &ed.get_leading_comment(&[k("a")]).unwrap()[..]);
+        assert_eq!(b"two", &ed.get_trailing_comment(&[k("a")]).unwrap()[..]);
+        assert_eq!(b"", &ed.get_trailing_comment(&[k("b")]).unwrap()[..]);
+        assert_eq!(Status::NotFound, ed.get_leading_comment(&[k("c")]).unwrap_err());
+        assert_eq!(Status::NotFound, ed.get_trailing_comment(&[k("c")]).unwrap_err());
+    }
+
+    #[test]
+    fn editor_create_refuses_an_unknown_format_and_an_unparseable_source() {
+        assert_eq!(Status::UnsupportedFormat, Editor::create(b"a = 1\n", 0xBEEF).unwrap_err());
+        assert_eq!(Status::ParseError, Editor::create(b"{", fmt("json")).unwrap_err());
+    }
+
+    #[test]
+    fn a_reparse_failure_is_a_parse_error_whatever_the_parser_called_it() {
+        // A replacement that does not parse is the parser's failure, which
+        // reaches the caller as `ParseError` through the registry, never as
+        // the refusal status a same-named editor error would map to.
+        let mut ed = editor("[a]\nx = 1\n", "toml");
+        assert_eq!(Status::ParseError, ed.replace_val(&[k("a"), k("x")], b"1\n[a]").unwrap_err());
+        assert_eq!("[a]\nx = 1\n", source(&ed));
+        let lang = runtime_language(&registry::global().entry_by_name("toml").unwrap());
+        assert_eq!(err!(RuntimeParseFailed), lang.parse(b"a = 1\na = 2\n", lang.entry.dialect).unwrap_err());
+    }
+
+    #[test]
+    fn a_path_or_list_past_the_limits_is_invalid_argument() {
+        let mut ed = editor("a = 1\n", "toml");
+        let long: Vec<PathSegment<'_>> = (0..=MAX_PATH_LEN).map(|_| k("a")).collect();
+        assert_eq!(Status::InvalidArgument, ed.delete_key(&long).unwrap_err());
+        let keys: Vec<&[u8]> = (0..=MAX_KEYS_LEN).map(|_| &b"a"[..]).collect();
+        assert_eq!(Status::InvalidArgument, ed.reorder_keys(&[], &keys).unwrap_err());
+    }
+
+    #[test]
+    fn detect_order_and_stream_split() {
+        assert_eq!(Ok(fmt("toml")), detect_order(b"a = 1\n", &["json", "toml"]));
+        assert_eq!(Err(Status::NotFound), detect_order(b"{", &["json"]));
+        let docs = stream_split(b"a: 1\n---\nb: 2\n", fmt("yaml")).unwrap();
+        assert_eq!(vec![(0, 5), (5, 14)], docs.iter().map(|d| (d.start, d.end)).collect::<Vec<_>>());
+        assert_eq!(Status::UnsupportedOperation, stream_split(b"a = 1\n", fmt("toml")).unwrap_err().code);
+        assert_eq!(Status::UnsupportedFormat, stream_split(b"", 0xBEEF).unwrap_err().code);
+    }
+
+    #[test]
+    fn edit_status_every_editor_refusal_is_a_caller_error_not_parse_error() {
+        let refusals = [
+            err!(NotFound), err!(NotAMapping), err!(NotASequence), err!(NotAContainer), err!(UnsupportedShape),
+            err!(NotASection), err!(NotAnInlineArray), err!(NotAnArrayOfTables), err!(SectionExists),
+            err!(DuplicateKey), err!(MergeOnlyKey), err!(CannotDeleteSection), err!(CannotReplaceSection),
+            err!(CannotMoveSection), err!(CannotReorderSections), err!(EmptyInlineContainer),
+            err!(KeyRequiresMultilineForm), err!(BlockValueIntoFlow), err!(CommentsUnsupported),
+            err!(NullUnsupported), err!(MultilineComment), err!(InvalidComment), err!(CommentsUnanchored),
+            err!(RendererRefused), err!(ImplicitSection), err!(ContainerClosesOnItsLine), err!(NotAKey),
+            err!(NonFiniteNumber), err!(CommentInsideValue), err!(DeleteChangedOtherValues),
+            err!(NoEmptyRootList), err!(EditReadsBackWrong),
+        ];
+        for e in refusals {
+            assert_ne!(Status::ParseError, edit_status(e), "{e:?}");
+        }
+        assert_eq!(Status::ParseError, edit_status(err!(FigEmptyContainer)));
+        assert_eq!(Status::ParseError, edit_status(err!(FigDuplicateKey)));
+        assert_eq!(Status::UnsupportedOperation, edit_status(err!(CommentNotAnEntry)));
+        assert_eq!(Status::InternalError, edit_status(err!(MultipleInit)));
+    }
+
+    #[test]
+    fn statuses_carry_the_c_abi_numbers_and_the_bindings_names() {
+        for s in [
+            Status::Ok, Status::InvalidArgument, Status::ParseError, Status::OutOfMemory, Status::UnsupportedFormat,
+            Status::NotFound, Status::UnsupportedOperation, Status::InternalError,
+        ] {
+            assert_eq!(Some(s), Status::from_code(s.code()));
+        }
+        assert_eq!(255, Status::InternalError.code());
+        assert_eq!("UnsupportedOperation", Status::UnsupportedOperation.name());
+    }
+}

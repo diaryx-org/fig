@@ -516,6 +516,7 @@ fn bundled_languages() -> Vec<&'static dyn Language> {
     use crate::lang;
     vec![
         &lang::json::LANGUAGE,
+        &lang::yaml::LANGUAGE,
         &lang::toml::LANGUAGE,
         &lang::ini::LANGUAGE,
         &lang::dotenv::LANGUAGE,

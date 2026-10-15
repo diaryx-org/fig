@@ -337,7 +337,7 @@ fn diagnose(text: &[u8]) -> Report {
     let mut report = parser::Report::default();
     // Recover past each error so the server squiggles the WHOLE file at
     // once, not just the first mistake (`report.errors`, source order).
-    let _ = parser::parse_collecting(text, figl::DEFAULT_TYPE, &mut report);
+    let _ = parser::parse_collecting(text, figl::Type::Fig, &mut report);
     let error = |d: &parser::Diagnostic| Diag { offset: d.offset, end: d.end, code: d.code.name().to_owned(), message: parser::describe(d.code) };
     Report {
         diag: report.diag.as_ref().map(error),

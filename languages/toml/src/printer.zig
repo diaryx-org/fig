@@ -531,6 +531,56 @@ fn writeBasicString(w: *Writer, value: []const u8) Writer.Error!void {
     try w.writeByte('"');
 }
 
+/// Whether `value` can be a literal string: no control character but a tab,
+/// and, outside a multi-line one, no line break or `'` either. A multi-line
+/// literal also refuses `'''`, which would close it, and a closing `'`,
+/// which would read as part of the delimiter.
+pub fn literalHolds(value: []const u8, multiline: bool) bool {
+    for (value) |char| switch (char) {
+        '\t' => {},
+        '\n' => if (!multiline) return false,
+        '\'' => if (!multiline) return false,
+        0x00...0x08, 0x0b...0x1f, 0x7f => return false,
+        else => {},
+    };
+    if (multiline) return std.mem.indexOf(u8, value, "'''") == null and !std.mem.endsWith(u8, value, "'");
+    return true;
+}
+
+/// Emit `value`, which `literalHolds`, as a literal string: `'…'`, or
+/// `'''…'''` when `multiline`. `newline_first` breaks the line after the
+/// opener, which TOML drops; a value that starts with a line break takes
+/// one there whatever it says, or that break would be the one dropped.
+pub fn writeLiteralString(w: *Writer, value: []const u8, multiline: bool, newline_first: bool) Writer.Error!void {
+    const quote = if (multiline) "'''" else "'";
+    try w.writeAll(quote);
+    if (multiline and (newline_first or std.mem.startsWith(u8, value, "\n"))) try w.writeByte('\n');
+    try w.writeAll(value);
+    try w.writeAll(quote);
+}
+
+/// Emit `value` as a multi-line basic string, `"""…"""`: line breaks as
+/// they are, `"` and `\` escaped (so no run of quotes can close it), and
+/// every other control byte as `writeBasicString` escapes it.
+/// `newline_first` is `writeLiteralString`'s.
+pub fn writeMultilineBasicString(w: *Writer, value: []const u8, newline_first: bool) Writer.Error!void {
+    try w.writeAll("\"\"\"");
+    if (newline_first or std.mem.startsWith(u8, value, "\n")) try w.writeByte('\n');
+    for (value) |char| {
+        switch (char) {
+            '"' => try w.writeAll("\\\""),
+            '\\' => try w.writeAll("\\\\"),
+            '\n', '\t' => try w.writeByte(char),
+            0x08 => try w.writeAll("\\b"),
+            0x0c => try w.writeAll("\\f"),
+            '\r' => try w.writeAll("\\r"),
+            0x00...0x07, 0x0b, 0x0e...0x1f, 0x7f => try writeUnicodeEscape(w, char),
+            else => try w.writeByte(char),
+        }
+    }
+    try w.writeAll("\"\"\"");
+}
+
 fn writeUnicodeEscape(w: *Writer, char: u8) Writer.Error!void {
     const hex = "0123456789ABCDEF";
     try w.writeAll("\\u00");

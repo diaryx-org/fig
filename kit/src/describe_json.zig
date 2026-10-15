@@ -40,7 +40,7 @@ pub fn write(w: *Writer, vt: *const abi.VTable) Writer.Error!void {
     }
     try w.writeAll("],\"renderers\":[");
     var first = true;
-    inline for (.{ "value", "entry", "item", "tail", "key", "key_name" }) |name| {
+    inline for (.{ "value", "entry", "item", "tail", "key", "key_name", "string" }) |name| {
         if (@field(vt, "render_" ++ name) != null) {
             if (!first) try w.writeByte(',');
             first = false;

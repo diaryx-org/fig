@@ -313,10 +313,19 @@ fn Walker(comptime Language: type) type {
             // `set` upserts and vivifies missing ancestors, but it addresses a
             // mapping key. An indexed tail names an existing item instead —
             // there is nothing to create — so it goes through the plain value
-            // replacement.
-            switch (self.path.items[self.path.items.len - 1]) {
-                .key => try self.editor.set(self.path.items, text),
-                .index => try self.editor.replaceValAtPath(self.path.items, text),
+            // replacement. A string goes through their string forms, so a
+            // string it replaces keeps its quote style: the patch's own style
+            // is the printer's by now, and the target's is the one kept.
+            const last = self.path.items[self.path.items.len - 1];
+            switch (patch.node(id).kind) {
+                .string => |string| switch (last) {
+                    .key => try self.editor.setString(self.path.items, text, string),
+                    .index => try self.editor.replaceStringAtPath(self.path.items, text, string),
+                },
+                else => switch (last) {
+                    .key => try self.editor.set(self.path.items, text),
+                    .index => try self.editor.replaceValAtPath(self.path.items, text),
+                },
             }
             if (target == null) self.stats.added += 1 else self.stats.replaced += 1;
         }
@@ -945,4 +954,23 @@ test "a YAML 1.1 target agrees by its own dialect's reading" {
     const same_1_2 = try patchForTest(t.allocator, "yaml", "json", "mode: 0755\n", "{\"mode\": 755}", .{});
     defer t.allocator.free(same_1_2);
     try t.expectEqualStrings("mode: 0755\n", same_1_2);
+}
+
+test "a string the patch changes keeps the target's quote style" {
+    if (comptime !(build_options.lang_yaml and build_options.lang_json and build_options.lang_toml)) return error.SkipZigTest;
+    const t = std.testing;
+
+    const yaml = try patchForTest(t.allocator, "yaml", "json", "a: \"debug\"\nb: 'x'\nc: x\nl: ['p', \"q\"]\n",
+        \\{"a": "info", "b": "it's", "c": "y", "l": ["r", "s"], "n": "new"}
+    , .{});
+    defer t.allocator.free(yaml);
+    // A whole sequence is the printer's; a new key has no style to keep.
+    try t.expectEqualStrings("a: \"info\"\nb: 'it''s'\nc: y\nl:\n- r\n- s\nn: new\n", yaml);
+
+    const toml = try patchForTest(t.allocator, "toml", "json", "p = 'C:\\x'\nq = 'a'\n",
+        \\{"p": "D:\\y", "q": "it's"}
+    , .{});
+    defer t.allocator.free(toml);
+    // A `'` a literal string cannot hold takes the basic string instead.
+    try t.expectEqualStrings("p = 'D:\\y'\nq = \"it's\"\n", toml);
 }

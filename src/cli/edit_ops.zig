@@ -72,6 +72,8 @@ fn applyOp(
         // for strict JSON — exactly as `set`'s insert branch spells it.
         .insert_key => |key| try editor.insertNamedKey(path, key, text),
         .set => try editor.set(path, text),
+        .replace_string => |string| try editor.replaceStringAtPath(path, text, string),
+        .set_string => |string| try editor.setString(path, text, string),
         .set_sequence => |items| try editor.setSequence(path, items),
         .append_seq => try editor.appendToSeq(path, text),
         .set_append => try editor.setAppend(path, text),
@@ -280,6 +282,9 @@ pub const OpValue = struct {
 /// text: the edit's own text for `one`, each `set_sequence` item for `items`.
 /// The same for every format — a JSON file gets `5` for the number and
 /// `"hello"` for the string, where it used to get every argument quoted.
+/// A string `replace` or `set` becomes `replace_string` or `set_string`, so
+/// the string it replaces keeps its quote style; a `--raw` value is the
+/// user's own spelling, and stays as it is.
 pub fn renderEdit(allocator: std.mem.Allocator, text: []const u8, value: OpValue, op: EditOp, format: Format, layout: value_arg.Layout) !struct { text: []const u8, op: EditOp } {
     const text_out = if (value.one) |v| try value_arg.render(allocator, v, format, layout) else text;
     const op_out: EditOp = switch (op) {
@@ -289,9 +294,23 @@ pub fn renderEdit(allocator: std.mem.Allocator, text: []const u8, value: OpValue
             for (value.items, 0..) |v, i| rendered[i] = try value_arg.render(allocator, v, format, layout);
             break :blk .{ .set_sequence = rendered };
         },
+        .replace_value => if (stringOf(value)) |s| .{ .replace_string = s } else op,
+        .set => if (stringOf(value)) |s| .{ .set_string = s } else op,
         else => op,
     };
     return .{ .text = text_out, .op = op_out };
+}
+
+/// The string `value` holds, when it is one string fig read and renders.
+fn stringOf(value: OpValue) ?[]const u8 {
+    const one = value.one orelse return null;
+    return switch (one) {
+        .raw => null,
+        .tree => |t| switch (t.node(t.root).kind) {
+            .string => |s| s,
+            else => null,
+        },
+    };
 }
 
 /// The minimal valid empty document for `format`, used to seed a file `set`
@@ -864,12 +883,13 @@ test "applyEdit performs the structural ops on JSON5 via the CLI's render+dialec
         const out = try applyEdit(J, a, "{ host: 'localhost' }", &.{}, j.text, j.op, dia);
         try t.expectEqualStrings("{ host: 'localhost', \"port\": 8080 }", out);
     }
-    // replace_value (the `replace` action): a string stays one.
+    // replace_value (the `replace` action): a string stays one, in the
+    // single quotes of the string it replaces.
     {
         var p = [_]fig.AST.PathSegment{.{ .key = "host" }};
         const j = try renderEdit(a, "example.org", try figValue(a, "example.org"), .replace_value, types.mustNamed("json5"), .natural);
         const out = try applyEdit(J, a, "{ host: 'localhost', port: 8080 }", &p, j.text, j.op, dia);
-        try t.expectEqualStrings("{ host: \"example.org\", port: 8080 }", out);
+        try t.expectEqualStrings("{ host: 'example.org', port: 8080 }", out);
     }
     // delete_key carries no value and drops the entry outright.
     {

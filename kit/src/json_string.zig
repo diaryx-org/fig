@@ -16,11 +16,18 @@ const Writer = std.Io.Writer;
 /// dropping to the escape path only at a byte that needs it — ASCII-heavy
 /// strings (the common case) emit in one call rather than byte-by-byte.
 pub fn writeQuoted(writer: *Writer, value: []const u8) Writer.Error!void {
-    try writer.writeByte('"');
+    return writeQuotedIn(writer, value, '"');
+}
+
+/// `writeQuoted` between `quote`s: `"`, or the `'` JSON5 also takes, which
+/// escapes a `'` and lets a `"` through instead.
+pub fn writeQuotedIn(writer: *Writer, value: []const u8, comptime quote: u8) Writer.Error!void {
+    comptime std.debug.assert(quote == '"' or quote == '\'');
+    try writer.writeByte(quote);
     var run_start: usize = 0;
     for (value, 0..) |char, i| {
         const escape: []const u8 = switch (char) {
-            '"' => "\\\"",
+            '"', '\'' => if (char != quote) continue else if (quote == '"') "\\\"" else "\\'",
             '\\' => "\\\\",
             0x08 => "\\b",
             0x0c => "\\f",
@@ -40,7 +47,7 @@ pub fn writeQuoted(writer: *Writer, value: []const u8) Writer.Error!void {
         run_start = i + 1;
     }
     try writer.writeAll(value[run_start..]);
-    try writer.writeByte('"');
+    try writer.writeByte(quote);
 }
 
 /// Emit a non-printable control byte as a `\u00XX` escape.

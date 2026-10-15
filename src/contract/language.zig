@@ -120,7 +120,11 @@ const Decls = struct {
     /// block on the following lines — and `renderKey` a renamed key in the
     /// form the old one allows, and `renderKeyName` a key's NAME as the
     /// language writes a key (JSON quotes it, ZON writes `.name`); without
-    /// it a name is written as it stands. Every one is told the container its
+    /// it a name is written as it stands. `renderString` spells a string
+    /// that replaces a string in the old one's quote style (`old_value`),
+    /// and writes nothing where that style is the printer's own or cannot
+    /// hold the new value; the engine then splices what the caller rendered.
+    /// Every one is told the container its
     /// fragment goes into (`parent_key`, `parent_tag`). `t` is the editor's dialect; no
     /// compiled renderer varies by it, and a runtime language's must
     /// (`docs/proposals/runtime-languages.md` §8.4). None receives the
@@ -132,7 +136,7 @@ const Decls = struct {
     /// renderer. See `editor.Editor.renderedValue`, `writeEntry`,
     /// `writeItem`, `writeTail` and `replaceKeyAtPath`, and the proposal's
     /// §4.4.
-    const renderers = [_][]const u8{ "renderValue", "renderEntry", "renderItem", "renderTail", "renderKey", "renderKeyName" };
+    const renderers = [_][]const u8{ "renderValue", "renderEntry", "renderItem", "renderTail", "renderKey", "renderKeyName", "renderString" };
 
     fn has(comptime set: []const []const u8, comptime name: []const u8) bool {
         for (set) |k| if (std.mem.eql(u8, k, name)) return true;

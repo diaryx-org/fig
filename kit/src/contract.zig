@@ -338,6 +338,11 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
                         .old_key = r.old_key.slice() orelse "",
                         .parent_key = r.parent_key.slice() orelse "",
                         .parent_tag = r.parent_tag.slice() orelse "",
+                        // Read only where fig's `size` covers it.
+                        .old_value = if (r.size >= @offsetOf(abi.RenderRequest, "old_value") + @sizeOf(abi.Str))
+                            r.old_value.slice() orelse ""
+                        else
+                            "",
                     };
                     @field(L, which.declName())(t, gpa, &list, request) catch |e| {
                         err.set(@errorName(e));
@@ -400,6 +405,7 @@ pub fn VTable(comptime L: type, comptime prefix: []const u8) type {
             .render_key = renderer(.key),
             .render_key_name = renderer(.key_name),
             .split_stream = if (@hasDecl(L, "splitStream")) splitStream else null,
+            .render_string = renderer(.string),
         };
     };
 }

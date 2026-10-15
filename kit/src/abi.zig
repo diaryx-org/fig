@@ -336,6 +336,7 @@ pub const RenderRequest = extern struct {
     old_key: Str = .{},
     parent_key: Str = .{},
     parent_tag: Str = .{},
+    old_value: Str = .{},
 };
 
 /// Every renderer slot's shape: the request in, the fragment out.
@@ -408,6 +409,9 @@ pub const VTable = extern struct {
     /// The language's `splitStream`, or null for a language without
     /// multi-document streams.
     split_stream: ?SplitStreamFn = null,
+    /// After `split_stream`, not beside the other renderers: a field is
+    /// appended, never inserted.
+    render_string: ?RenderFn = null,
 };
 
 /// `FigCapability` bits, restated so this file is a leaf.

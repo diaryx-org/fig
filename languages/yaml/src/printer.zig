@@ -622,7 +622,7 @@ fn printScalar(writer: *Writer, raw: []const u8) Writer.Error!void {
 
 /// True if any byte is an ASCII control character (newline/tab included). Such a
 /// scalar can only be represented inline by double-quoting.
-fn hasControlChar(s: []const u8) bool {
+pub fn hasControlChar(s: []const u8) bool {
     for (s) |c| if (c < 0x20 or c == 0x7f) return true;
     return false;
 }
@@ -688,7 +688,7 @@ fn asciiContains(haystack: []const u8, needle: []const u8) bool {
     return false;
 }
 
-fn writeSingleQuoted(writer: *Writer, s: []const u8) Writer.Error!void {
+pub fn writeSingleQuoted(writer: *Writer, s: []const u8) Writer.Error!void {
     try writer.writeByte('\'');
     for (s) |c| {
         if (c == '\'') try writer.writeByte('\''); // '' escapes a quote
@@ -697,7 +697,7 @@ fn writeSingleQuoted(writer: *Writer, s: []const u8) Writer.Error!void {
     try writer.writeByte('\'');
 }
 
-fn writeDoubleQuoted(writer: *Writer, s: []const u8) Writer.Error!void {
+pub fn writeDoubleQuoted(writer: *Writer, s: []const u8) Writer.Error!void {
     try writer.writeByte('"');
     for (s) |c| {
         switch (c) {

@@ -4,14 +4,19 @@ part_of = [Proposals](/docs/proposals/proposals.md)
 description = When set, replace or patch changes a string, write the new one in the old one's quote style where it can hold the value, rather than the printer's
 author = adammharris
 created = 2026-10-14
-status = proposed
+status = implemented
+updated = 2026-10-15
 ```
 
 # A replaced string keeps its quote style
 
-**Status.** Proposed, 2026-10-14. Split out of the `fix(patch)` commit that
-made `fig patch` leave alone a value the target already holds in another
-spelling. This is the other half: a value that *does* change.
+**Status.** Implemented in the core, 2026-10-15: the engine, the C ABI, and
+the CLI's `replace`, `set` and `patch`. The TypeScript and Rust bindings, the
+JavaScript twins and the fig-conformance re-recording are
+[a task](/docs/tasks/bindings-keep-quote-style.md). Proposed 2026-10-14, split
+out of the `fix(patch)` commit that made `fig patch` leave alone a value the
+target already holds in another spelling. This is the other half: a value
+that *does* change.
 
 ## The problem
 
@@ -45,7 +50,7 @@ spelling if it cannot:
 | --- | --- | --- |
 | YAML | `"…"` | always: it escapes anything |
 | YAML | `'…'` | has no line break (a `'` is doubled) |
-| YAML | `\|`, `>` | has the line breaks the style needs; else the printer's |
+| YAML | `\|`, `>` | the printer's, which writes `\|` for a string with line breaks |
 | TOML | `'…'` | has no `'`, no line break and no control character |
 | TOML | `"""…"""`, `'''…'''` | fits the multi-line rules |
 | JSON5 | `'…'` | always: it escapes `'` |
@@ -56,12 +61,36 @@ string replacing a mapping, has no old style to keep.
 
 ## Why not in the patch fix
 
-It is not a patch question. The new value is rendered by the editor's value
-replacement, which `set`, `replace`, `patch` and the language contract's
-`replaceValue` share, so the change moves the bytes of every string
-replacement in every format, and with them the fig-conformance edit suites'
-recorded expectations (`replaceValue` alone is 16,748 cases). It wants its
-own commit, its own `Behavioural-change:` trailer, and its own re-recording.
+It is not a patch question. Every string replacement in every format moves,
+and with them the fig-conformance edit suites' recorded expectations
+(`replaceValue` alone is 16,748 cases). It wants its own commit, its own
+`Behavioural-change:` trailer, and its own re-recording.
+
+## How it landed
+
+The proposal first said the editor renders the new value. It does not: the
+editor takes text already spelled, and four callers render it (the CLI's
+`value_arg.render`, `patch.zig`, and the TypeScript and Rust bindings'
+`valueText`). By the time a `"info"` reaches the editor it cannot tell
+fig's spelling from a `--raw` one, so the editor cannot restyle every string
+it is handed.
+
+So the caller says when the text is fig's. `Editor.replaceStringAtPath` and
+`Editor.setString` take the rendered text and the string it spells; where
+the value replaced is a string, the format's new `renderString` renderer
+(the seventh, after `renderKeyName`) is told the string and the old one's
+spelling, `old_value`, and writes the string in that style or nothing, and
+the editor splices `rendered` when it writes nothing. YAML, TOML and JSON
+declare one. The C ABI has `fig_editor_replace_string` and
+`fig_editor_set_string`, the vtable `render_string` after `split_stream`,
+and the helper wire `which: "string"` with `old_value`. The CLI turns a
+string `replace` or `set` into these; `patch` does for a string it writes.
+`--raw` and the `*Raw` binding methods go to the plain ops, and keep what
+they were given.
+
+A style the renderer judges too risky is the printer's rather than a
+refusal: TOML's `'''` refuses a closing `'` as well as `'''`, and YAML's
+`'…'` any control character, as the printer would.
 
 ## Open questions
 
@@ -73,4 +102,5 @@ own commit, its own `Behavioural-change:` trailer, and its own re-recording.
   old style should win here too.
 - **Where the style is read.** The AST holds a string's value, not its
   quoting. The old style is in the source bytes at the value's span, which
-  the editor has when it splices, so this needs no AST change.
+  the editor has when it splices, so this needs no AST change. It is read
+  there, and told to the renderer as `old_value`.

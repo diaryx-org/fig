@@ -56,13 +56,17 @@ its dialects'.
 and integers for `indent` and `width`. A field that is absent takes its
 default (`true`, `false`, `2`, `80`, `false`, `false`).
 
-**`render`** asks for one of the six fragments the editor writes, named by
-`which`: `value`, `entry`, `item`, `tail`, `key` or `key_name`. fig asks
-only for those the description's `renderers` lists. The other params are
-strings: `indent`, `key`, `value`, `old_key`, and `parent_key` and
-`parent_tag`, the container the fragment goes into. `literal` comes with
+**`render`** asks for one of the seven fragments the editor writes, named by
+`which`: `value`, `entry`, `item`, `tail`, `key`, `key_name` or `string`.
+fig asks only for those the description's `renderers` lists. The other
+params are strings: `indent`, `key`, `value`, `old_key`, and `parent_key`
+and `parent_tag`, the container the fragment goes into. `literal` comes with
 `which: "value"` alone and says what fig made of the value — `null`,
 `bool`, `int`, `float`, `datetime` or `string`; absent means a string.
+`old_value` comes with `which: "string"` alone: the string being replaced
+as the source spells it, quotes and all, with `value` the new string,
+decoded. The answer is the new string in the old one's style, or empty
+where that style is the printer's own or cannot hold it.
 
 **`split_stream`** is asked only of a language whose description says
 `split_stream: true`. Each document is a range of BYTES of the UTF-8

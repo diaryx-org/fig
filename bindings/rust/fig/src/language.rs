@@ -1530,6 +1530,8 @@ impl Registration {
             } else {
                 None
             },
+            // A Rust language has no string renderer yet.
+            render_string: None,
         }
     }
 }
@@ -1604,6 +1606,7 @@ const EMPTY_REQUEST: ffi::FigRenderRequest = ffi::FigRenderRequest {
     old_key: EMPTY_STR,
     parent_key: EMPTY_STR,
     parent_tag: EMPTY_STR,
+    old_value: EMPTY_STR,
 };
 
 unsafe fn reg_of<'a>(ctx: *mut c_void) -> &'a Registration {

@@ -1295,3 +1295,48 @@ test "yaml edits a BOM-led sequence's first item at its own column" {
     try ed.prependToSeq(&.{}, "w");
     try expectSource(&ed, bom ++ "- w\n- a: 1\n  b: 5\n");
 }
+
+// --- a replaced string keeps its quote style (`renderString`) ---
+
+test "yaml a string replacing a double-quoted one stays double-quoted" {
+    var ed = try newYamlEditor("env:\n  LOG: \"debug\" # level\n");
+    defer ed.deinit();
+    try ed.replaceStringAtPath(&.{ .{ .key = "env" }, .{ .key = "LOG" } }, "info", "info");
+    try expectSource(&ed, "env:\n  LOG: \"info\" # level\n");
+    // It escapes anything, a line break included.
+    try ed.replaceStringAtPath(&.{ .{ .key = "env" }, .{ .key = "LOG" } }, "|-\n  a \"b\"\n  c", "a \"b\"\nc");
+    try expectSource(&ed, "env:\n  LOG: \"a \\\"b\\\"\\nc\" # level\n");
+}
+
+test "yaml a string replacing a single-quoted one stays single-quoted where it can" {
+    var ed = try newYamlEditor("a: 'x'\n");
+    defer ed.deinit();
+    try ed.replaceStringAtPath(&.{.{ .key = "a" }}, "it's", "it's");
+    try expectSource(&ed, "a: 'it''s'\n");
+    // A control character is the printer's to spell: it double-quotes one.
+    try ed.replaceStringAtPath(&.{.{ .key = "a" }}, "\"t\\tu\"", "t\tu");
+    try expectSource(&ed, "a: \"t\\tu\"\n");
+}
+
+test "yaml a plain string, a non-string and raw text take what the caller spelled" {
+    var ed = try newYamlEditor("a: x\nb: 5\nc: \"q\"\n");
+    defer ed.deinit();
+    // Plain is the printer's own choice already.
+    try ed.replaceStringAtPath(&.{.{ .key = "a" }}, "y", "y");
+    // A number has no quote style to keep.
+    try ed.replaceStringAtPath(&.{.{ .key = "b" }}, "six", "six");
+    // Text the caller spelled itself is spliced as written.
+    try ed.replaceValAtPath(&.{.{ .key = "c" }}, "r");
+    try expectSource(&ed, "a: y\nb: six\nc: r\n");
+}
+
+test "yaml a flow item keeps its quotes, and setString inserts what it is given" {
+    var ed = try newYamlEditor("xs: [\"a\", 'b']\n");
+    defer ed.deinit();
+    try ed.replaceStringAtPath(&.{ .{ .key = "xs" }, .{ .index = 1 } }, "c", "c");
+    try expectSource(&ed, "xs: [\"a\", 'c']\n");
+    try ed.setString(&.{.{ .key = "xs" }}, "d", "d");
+    try expectSource(&ed, "xs: d\n");
+    try ed.setString(&.{.{ .key = "n" }}, "e", "e");
+    try expectSource(&ed, "xs: d\nn: e\n");
+}

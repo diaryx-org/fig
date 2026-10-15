@@ -14,6 +14,7 @@ contents
 > * [Renaming a YAML flow key written against its colon makes another key](/docs/tasks/yaml-rename-flow-key-against-colon.md)
 > * [A leading BOM hides a YAML document's first key from the editor](/docs/tasks/yaml-bom-first-key.md)
 > * [Deleting or renaming a duplicated key leaves the key readable](/docs/tasks/duplicate-key-delete-and-rename.md)
+> * [The bindings and the JavaScript twins keep a replaced string's quote style](/docs/tasks/bindings-keep-quote-style.md)
 ```
 
 # Tasks

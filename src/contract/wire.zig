@@ -371,10 +371,10 @@ fn vtableFromDescription(a: Allocator, t: *Transport, desc: std.json.Value) !Run
         for (sv.array.items) |x| if (x == .string) try samples.append(a, Runtime.Str.of(try a.dupe(u8, x.string)));
     };
 
-    var renderers: [6]bool = .{ false, false, false, false, false, false };
+    var renderers: [7]bool = .{ false, false, false, false, false, false, false };
     if (o.get("renderers")) |rv| if (rv == .array) {
         for (rv.array.items) |x| if (x == .string) {
-            inline for ([_][]const u8{ "value", "entry", "item", "tail", "key", "key_name" }, 0..) |n, i| {
+            inline for ([_][]const u8{ "value", "entry", "item", "tail", "key", "key_name", "string" }, 0..) |n, i| {
                 if (std.mem.eql(u8, x.string, n)) renderers[i] = true;
             }
         };
@@ -404,6 +404,7 @@ fn vtableFromDescription(a: Allocator, t: *Transport, desc: std.json.Value) !Run
         .render_key = if (renderers[4]) renderKeyThunk else null,
         .render_key_name = if (renderers[5]) renderKeyNameThunk else null,
         .split_stream = if (boolOr(o, "split_stream", false)) splitStreamThunk else null,
+        .render_string = if (renderers[6]) renderStringThunk else null,
     };
 }
 
@@ -524,6 +525,11 @@ fn renderCall(ctx: ?*anyopaque, which: []const u8, r: *const Runtime.RenderReque
         w.print(",\"{s}\":", .{name}) catch return 3;
         jsonString(w, @field(r, name).slice() orelse "") catch return 3;
     }
+    // The string replaced, for the string renderer alone.
+    if (std.mem.eql(u8, which, "string")) {
+        w.writeAll(",\"old_value\":") catch return 3;
+        jsonString(w, r.old_value.slice() orelse "") catch return 3;
+    }
     w.writeAll("}") catch return 3;
     return outputCall(t, "render", req.written(), out, err);
 }
@@ -545,6 +551,9 @@ fn renderKeyThunk(ctx: ?*anyopaque, r: *const Runtime.RenderRequest, out: *Runti
 }
 fn renderKeyNameThunk(ctx: ?*anyopaque, r: *const Runtime.RenderRequest, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
     return renderCall(ctx, "key_name", r, out, err);
+}
+fn renderStringThunk(ctx: ?*anyopaque, r: *const Runtime.RenderRequest, out: *Runtime.Str, err: *Runtime.ErrorInfo) callconv(.c) c_int {
+    return renderCall(ctx, "string", r, out, err);
 }
 
 /// `split_stream` with `{"dialect","input"}`, answered with

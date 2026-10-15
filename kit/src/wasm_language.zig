@@ -128,7 +128,7 @@ pub fn Exports(comptime L: type) type {
             var err: abi.ErrorInfo = .empty;
             const rc: c_int = if (std.mem.eql(u8, req.method, "render")) blk: {
                 const which = req.str("which");
-                const f: ?abi.RenderFn = inline for (.{ "value", "entry", "item", "tail", "key", "key_name" }) |name| {
+                const f: ?abi.RenderFn = inline for (.{ "value", "entry", "item", "tail", "key", "key_name", "string" }) |name| {
                     if (std.mem.eql(u8, which, name)) break @field(vt, "render_" ++ name);
                 } else null;
                 const render = f orelse return refuse(w, -32601, "this language has no such renderer");
@@ -142,6 +142,7 @@ pub fn Exports(comptime L: type) type {
                     .old_key = abi.Str.of(req.str("old_key")),
                     .parent_key = abi.Str.of(req.str("parent_key")),
                     .parent_tag = abi.Str.of(req.str("parent_tag")),
+                    .old_value = abi.Str.of(req.str("old_value")),
                 };
                 break :blk render(null, &r, &out, &err);
             } else if (std.mem.eql(u8, req.method, "split_stream")) blk: {

@@ -415,6 +415,24 @@ unsafe extern "C" {
         val: *const u8,
         val_len: usize,
     ) -> FigStatus;
+    pub fn fig_editor_replace_string(
+        editor: *mut FigEditor,
+        path: *const FigPathSegment,
+        path_len: usize,
+        repl: *const u8,
+        repl_len: usize,
+        str_: *const u8,
+        str_len: usize,
+    ) -> FigStatus;
+    pub fn fig_editor_set_string(
+        editor: *mut FigEditor,
+        path: *const FigPathSegment,
+        path_len: usize,
+        val: *const u8,
+        val_len: usize,
+        str_: *const u8,
+        str_len: usize,
+    ) -> FigStatus;
     pub fn fig_editor_add_leading_comment(
         editor: *mut FigEditor,
         path: *const FigPathSegment,
@@ -1005,6 +1023,7 @@ pub struct FigRenderRequest {
     pub old_key: FigStr,
     pub parent_key: FigStr,
     pub parent_tag: FigStr,
+    pub old_value: FigStr,
 }
 
 /// Every `render_*` slot's shape.
@@ -1063,6 +1082,7 @@ pub struct FigLanguageVTable {
     pub render_key: Option<FigRenderFn>,
     pub render_key_name: Option<FigRenderFn>,
     pub split_stream: Option<FigSplitStreamFn>,
+    pub render_string: Option<FigRenderFn>,
 }
 
 unsafe extern "C" {

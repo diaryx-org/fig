@@ -1365,6 +1365,51 @@ pub export fn fig_editor_set(
     };
 }
 
+/// `fig_editor_replace_val` for a string the caller rendered: `repl` is its
+/// spelling of the string `str`. Where the value replaced is a string, the
+/// new one keeps the old one's quote style when that style can hold it (a
+/// YAML `"debug"` replaced by `info` stays `"info"`); see
+/// `Editor.replaceStringAtPath`.
+pub export fn fig_editor_replace_string(
+    ed: ?*FigEditor,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    repl_ptr: ?[*]const u8,
+    repl_len: usize,
+    str_ptr: ?[*]const u8,
+    str_len: usize,
+) FigStatus {
+    const handle = editorFrom(ed) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    const repl = sliceOf(repl_ptr, repl_len) orelse return .invalid_argument;
+    const str = sliceOf(str_ptr, str_len) orelse return .invalid_argument;
+    return switch (handle.inner) {
+        inline else => |*e| if (e.replaceStringAtPath(path, repl, str)) .ok else |err| editStatus(err),
+    };
+}
+
+/// `fig_editor_set` for a string the caller rendered, as
+/// `fig_editor_replace_string` is to `fig_editor_replace_val`.
+pub export fn fig_editor_set_string(
+    ed: ?*FigEditor,
+    path_ptr: ?[*]const FigPathSegment,
+    path_len: usize,
+    val_ptr: ?[*]const u8,
+    val_len: usize,
+    str_ptr: ?[*]const u8,
+    str_len: usize,
+) FigStatus {
+    const handle = editorFrom(ed) orelse return .invalid_argument;
+    var buf: [max_path_len]AST.PathSegment = undefined;
+    const path = decodePath(path_ptr, path_len, &buf) orelse return .invalid_argument;
+    const val = sliceOf(val_ptr, val_len) orelse return .invalid_argument;
+    const str = sliceOf(str_ptr, str_len) orelse return .invalid_argument;
+    return switch (handle.inner) {
+        inline else => |*e| if (e.setString(path, val, str)) .ok else |err| editStatus(err),
+    };
+}
+
 // ── Comment editing ─────────────────────────────────────────────────────────
 // Splice comment trivia around the node at `path`, preserving the rest of the
 // document byte-for-byte. The marker (`#`, `//`) is added by the editor; a

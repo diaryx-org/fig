@@ -60,7 +60,9 @@ and `Span`, Zig
 [twig](https://github.com/diaryx-org/twig) locates frontmatter, endmatter
 and fenced or HTML blocks: a Markdown `metadata` node's byte spans, through
 twig's query API. Open fig's `Editor` over the block's contents, edit, and
-splice its source back between those spans.
+splice its source back between those spans. In Rust, twig's `twig-meta`
+crate does this for you: `twig_meta::Embed` is fig 5's `Embed` over
+frontmatter and endmatter, and reads fig 5's `fig` and `yml` fence tags.
 
 ## Helpers speak JSON-RPC 2.0
 

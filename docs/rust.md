@@ -716,6 +716,24 @@ endmatter, and fenced or HTML blocks in Markdown are located by
 block's contents and splice its `source()` back between the byte spans twig
 reported.
 
+twig's `twig-meta` crate does that splice: it finds the block, opens an
+`Editor` over its body in the dialect the fence names (`---` YAML, `+++`
+TOML, `---json`, `---figl`, …), and renders the host back with every byte
+outside the body kept. It registers YAML, TOML, JSON and figl itself, and
+finds any other language your program registered by the fence's tag.
+
+```rust
+use twig_meta::{Embed, Where};
+
+let host = b"---\ntitle: Hi # kept\n---\n# Body\n";
+let mut e = Embed::open_in(host, twig::Format::Markdown, Where::Front)?;
+e.editor_mut().set_value(&["title".into()], "Hello")?;
+assert_eq!(e.render()?, b"---\ntitle: Hello # kept\n---\n# Body\n");
+```
+
+`Embed::open_or_init` adds a block to a document that has none. It is fig
+5's `Embed`, now on twig's side.
+
 ## Serialization options
 
 [`Value::serialize_with`], [`Document::serialize_with`], and the `diagnose`

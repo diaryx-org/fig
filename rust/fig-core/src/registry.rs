@@ -11,7 +11,9 @@
 //! The registry is an explicit value, [`Registry`], plus a process-wide one,
 //! [`global()`], which registers the bundled languages ([`register_bundle`]
 //! over `bundled_languages()`) the first time it is reached, as Zig's
-//! `ensureBundled` does.
+//! `ensureBundled` does. The bundle is fig's ten languages with the `bundle`
+//! feature (the default), and none without it, as a Zig build with every
+//! `-D<name>` off: what the `fig` binding crate links.
 //!
 //! ```text
 //! // The one list of formats (list.zig)
@@ -516,7 +518,17 @@ impl Registry {
 // conformance adapter's.
 
 /// The languages fig bundles, in `LIST_ROWS` order: what `global()`
+/// registers on first use. None without the `bundle` feature, as a Zig
+/// build with every `-D<name>` off bundles none (the `libfig` the bindings
+/// link, whose languages each register from a library of their own).
+#[cfg(not(feature = "bundle"))]
+fn bundled_languages() -> Vec<&'static dyn Language> {
+    Vec::new()
+}
+
+/// The languages fig bundles, in `LIST_ROWS` order: what `global()`
 /// registers on first use.
+#[cfg(feature = "bundle")]
 fn bundled_languages() -> Vec<&'static dyn Language> {
     use crate::lang;
     vec![

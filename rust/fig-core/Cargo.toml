@@ -6,3 +6,13 @@ license.workspace = true
 description = "fig's core, kit and languages in Rust: lossless parsing, comment-preserving editing and conversion of config files"
 
 [dependencies]
+
+[features]
+# The languages `registry::global()` registers on first use: fig's ten, as a
+# Zig build compiles them in with its `-D<name>` options. On by default, for
+# the CLI, the LSP and the conformance adapter. The `fig` binding crate turns
+# it off: the `libfig` it linked carried no language, and a program registers
+# each one it uses through that language's crate (`fig-yaml`, …), so until
+# then `Format::by_name("yaml")` finds nothing.
+default = ["bundle"]
+bundle = []

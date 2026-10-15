@@ -3,7 +3,7 @@ title = Proposals
 description = Design proposals, findings, and wishlists for `fig` — from inside and outside the project
 author = adammharris
 created = 2026-07-25
-updated = 2026-10-11
+updated = 2026-10-15
 part_of = [docs](/docs/docs.md)
 contents
 > * [Editor splice: findings and wishlist](editor-splice-wishlist.md)
@@ -20,6 +20,7 @@ contents
 > * [JSON-RPC wire](/docs/proposals/json-rpc-wire.md)
 > * [A replaced string keeps its quote style](/docs/proposals/keep-quote-style.md)
 > * [Kit parity](/docs/proposals/kit-parity.md)
+> * [Rust core](/docs/proposals/rust-core.md)
 ```
 
 # Proposals

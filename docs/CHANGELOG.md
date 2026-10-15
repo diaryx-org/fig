@@ -130,6 +130,12 @@ and no regeneration can reach a released section.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
+_No commits since the last tag._
+
+<!-- git-cliff:end -->
+
+## v6.0.0 — 2026-10-14
+
 ### Breaking
 
 - **fig** — compact flow objects — whitespace-separated pairs, one-token values, dotted keys ([`acd8701`](https://github.com/diaryx-org/fig/commit/acd87014cb9ec7fcbf26718bd487f1b7be3e3db9))
@@ -783,7 +789,6 @@ and no regeneration can reach a released section.
   `.inf`/`-.inf`/`.nan`, `Infinity`/`-Infinity`/`NaN` and
   `inf`/`-inf`/`nan`, where they wrote the source's spelling.
 
-<!-- git-cliff:end -->
 
 ## v5.2.0 — 2026-10-03
 

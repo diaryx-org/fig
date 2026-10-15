@@ -17,11 +17,23 @@
 //! language builds:
 //!
 //! * [`rows`]: the [`NodeTable`](crate::language::NodeTable) written in any
-//!   order, linked, and finished into the pre-order a parse returns.
+//!   order, linked, and finished into the pre-order a parse returns;
+//! * [`tree`]: nodes that hold their children and comments, for a parser
+//!   that builds owned values, laid out as rows at the end;
+//! * [`scan`]: a byte cursor whose positions are already the table's
+//!   offsets, and a cursor over a token list;
+//! * [`grammar`]: combinators over the scanner that write the table as they
+//!   match, so a format is a description;
+//! * [`print`]: the table a `print` receives, indexed by node, and a writer
+//!   that knows the print options.
 
+pub mod grammar;
 pub mod json_string;
 pub mod literal;
+pub mod print;
 pub mod rows;
+pub mod scan;
+pub mod tree;
 pub mod xml;
 
 /// How a number's lexeme is spelled for a format.

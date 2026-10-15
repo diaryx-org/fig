@@ -105,6 +105,16 @@ impl RowWriter {
         &mut self.table.rows[id as usize]
     }
 
+    /// Row `id`'s first child as linked so far.
+    pub fn first_child(&self, id: u32) -> Option<u32> {
+        self.first[id as usize]
+    }
+
+    /// Row `id`'s next sibling as linked so far.
+    pub fn next_sibling(&self, id: u32) -> Option<u32> {
+        self.next[id as usize]
+    }
+
     /// How many rows have been written.
     pub fn len(&self) -> usize {
         self.table.rows.len()
@@ -197,6 +207,46 @@ impl RowWriter {
         let kv = self.add(row);
         self.append(kv, key);
         self.append(kv, value);
+        if let (Some(n), None) = (name, existing) {
+            self.keyed.insert((map, n), kv);
+        }
+        Ok(Put {
+            entry: kv,
+            repeat: existing.is_some(),
+        })
+    }
+
+    /// [`put`](Self::put) for a keyvalue row already written, its key and
+    /// value linked to it — what a grammar's entry rule makes. On a repeat
+    /// that the policy does not keep, `kv` and its key are left unlinked,
+    /// with any comments on them, for `finish` to drop.
+    pub fn put_entry(&mut self, map: u32, kv: u32, policy: DuplicatePolicy) -> Result<Put, LanguageError> {
+        let key = self.first[kv as usize].expect("an entry has its key");
+        let value = self.next[key as usize].expect("an entry has its value");
+        let name = self.row(key).text.clone();
+        let existing = name.as_ref().and_then(|n| self.keyed.get(&(map, n.clone())).copied());
+        if let Some(e) = existing {
+            match policy {
+                DuplicatePolicy::LastValue => {
+                    let k = self.first[e as usize].expect("an entry put here has its key");
+                    self.next[k as usize] = Some(value);
+                    self.next[value as usize] = None;
+                    self.last[e as usize] = Some(value);
+                    self.table.rows[value as usize].parent = Some(e);
+                    return Ok(Put { entry: e, repeat: true });
+                }
+                DuplicatePolicy::FirstValue => return Ok(Put { entry: e, repeat: true }),
+                DuplicatePolicy::Error => {
+                    let message = format!("duplicate key `{}`", name.unwrap_or_default());
+                    return Err(match self.row(key).span {
+                        Some(s) => LanguageError::at(message, s.start),
+                        None => LanguageError::new(message),
+                    });
+                }
+                DuplicatePolicy::Keep => {}
+            }
+        }
+        self.append(map, kv);
         if let (Some(n), None) = (name, existing) {
             self.keyed.insert((map, n), kv);
         }

@@ -30,7 +30,7 @@ slug = fig
 `fig` edits config files losslessly: make an edit and every comment, blank line, quote and key order remains untouched. It converts between formats retaining as much as possible, including comments, and reports exactly what is dropped if a format doesn't support something.
 
 `fig`'s command-line tool has ten formats built in. The underlying library is maintained for Rust,
-TypeScript, Zig and C and has no languages built in. Every language is registered the same way, and a kit is included to make it easy to write your own in any of those languages.
+TypeScript and C (and so any language with a C FFI, Zig among them) and has no languages built in. Every language is registered the same way, and a kit is included to make it easy to write your own in any of those languages.
 
 ## The CLI
 
@@ -177,7 +177,7 @@ fig-yaml = "6"   # one crate per format
 fig-toml = "6"
 ```
 
-No Zig toolchain is needed for most platforms. `serde` is optional: fig
+fig is pure Rust: no C compiler or other toolchain. `serde` is optional: fig
 has its own `#[derive(ToValue, FromValue)]`. See [Rust](docs/rust.md).
 
 From TypeScript:
@@ -191,8 +191,8 @@ ed.setValue(["service", "replicas"], 5);
 ed.setTrailingComment(["service", "replicas"], "bumped for Black Friday");
 ```
 
-See [TypeScript](docs/typescript.md), [Zig](docs/zig.md), and for C,
-[`bindings/c/include/fig.h`](bindings/c/include/fig.h).
+See [TypeScript](docs/typescript.md), and for C (or Zig, or anything else
+that calls C), [`bindings/c/include/fig.h`](bindings/c/include/fig.h).
 
 ## Bring your own format
 

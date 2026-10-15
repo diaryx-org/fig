@@ -13,7 +13,7 @@ id: gns15jg
     <div class="pj-title" style="margin-top: 1rem">
       <h1>fig</h1>
       <span class="pj-tags">
-        <span class="tag-chip">Zig</span>
+        <span class="tag-chip">Rust</span>
         <span class="tag-chip">MIT / Apache-2.0</span>
       </span>
     </div>
@@ -47,9 +47,9 @@ for anyone who scripts against config files.
 
 ## Status
 
-Actively maintained and published: the Rust crate wraps the Zig
-core, an npm package ships it for JavaScript, and Homebrew carries
-the CLI.
+Actively maintained and published: the core is Rust, on crates.io,
+an npm package ships it compiled to WebAssembly for JavaScript, a C
+library carries it to anything with a C FFI, and Homebrew carries the CLI.
 
 </div>
 <aside class="pj-aside">
@@ -60,7 +60,7 @@ the CLI.
 <div class="cmd">npm install @diaryx/fig <small>JavaScript</small></div>
 </div>
 <div class="facts">
-<div class="row"><span class="k">Language</span><span class="v">Zig (Rust bindings)</span></div>
+<div class="row"><span class="k">Language</span><span class="v">Rust (C and TypeScript bindings)</span></div>
 <div class="row"><span class="k">Used by</span><span class="v"><a href="../prov/index.md">prov</a> · <a href="../flower/index.md">flower</a> · <a href="../index.html">Diaryx</a></span></div>
 <div class="row"><span class="k">Source</span><span class="v"><a href="https://github.com/diaryx-org/fig">github.com/diaryx-org/fig</a></span></div>
 <div class="row"><span class="k">Packages</span><span class="v"><a href="https://crates.io/crates/fig">crates.io/crates/fig</a> · <a href="https://www.npmjs.com/package/@diaryx/fig">npmjs.com/@diaryx/fig</a></span></div>

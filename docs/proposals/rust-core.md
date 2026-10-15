@@ -4,24 +4,25 @@ part_of = [Proposals](/docs/proposals/proposals.md)
 description = fig's core, kit and languages move from Zig to Rust a layer at a time, each held to what the Zig implementation answers through checks that never import either one
 author = adammharris
 created = 2026-10-15
-status = accepted
+status = implemented
 updated = 2026-10-15
 ```
 
 # Rust core
 
-> **Status: PORTED, not yet switched over.** Written against `main` at
-> 0afdab4 (6.0.0). Steps 1 to 6 (§4) are done: every language's editor
-> tests are fixtures (§3.2), and the kit (`rust/fig-kit`), the core
-> (`rust/fig-core`), the ten languages (each in its own crate, beside its
-> Zig in `languages/<name>/rust/`), the CLI and LSP (`rust/fig-cli`), the
-> helper wire and the C ABI (`rust/fig-capi`) are ported and agree with
-> the Zig on every check of §3 ([rust/README.md](/rust/README.md) has the
-> numbers). They are members of one Cargo workspace, `bindings/rust`, with
-> the `fig` crate, which runs on the port with no Zig; `fig-sys*`,
-> `fig-language-build` and the payload CI are gone. Left: building the
-> release binaries, npm packages and wasm from the Rust crates, and taking
-> Zig out of CI; and §6's open questions.
+> **Status: SWITCHED OVER, in 7.0.0.** Written against `main` at
+> 0afdab4 (6.0.0). Every step of §4 is done. The kit (`rust/fig-kit`), the
+> core (`rust/fig-core`), the ten languages (each in its own crate, in
+> `languages/<name>/rust/`), the CLI and LSP (`rust/fig-cli`), the helper
+> wire and the C ABI (`rust/fig-capi`) were ported and agreed with the Zig
+> on every check of §3 ([rust/README.md](/rust/README.md) has the numbers),
+> and then the Zig was removed: the release binaries, the npm packages'
+> wasm modules (`rust/fig-capi`, `rust/fig-kit-capi`,
+> `rust/fig-lang-export`) and CI are built from the Rust, in one Cargo
+> workspace at the repository root, and `zig build` is `cargo xtask`. The
+> Zig package went with it, which is what makes 7.0.0 a major: Zig gets
+> fig through `fig.h`, as §1 says ([Migrating to 7.0](/docs/migrating-to-7.md)).
+> §6's open questions are as they stood.
 
 ## 1. The claim
 

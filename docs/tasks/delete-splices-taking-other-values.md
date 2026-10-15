@@ -21,7 +21,7 @@ expected `DeleteChangedOtherValues` now expects the delete. The
 fig-conformance edit suites, recorded before 346db34, were not re-scored
 here.
 
-The delete guard (`keepOthers` in `src/editor.zig`) rolls these back with
+The delete guard (`keep_others` in `rust/fig-core/src/editor/mod.rs`, `keepOthers` in the Zig before 7.0) rolls these back with
 `DeleteChangedOtherValues`, or the reparse fails. Before 346db34 each was
 reported as a success, and the fig-conformance edit suites recorded the
 wrong result. Each splice is the line delete or the flow splice applied to
@@ -44,5 +44,5 @@ a shape it misreads.
   'A'`, so the rest of `c`'s line joins the string.
 
 **Done when** each deletes only its entry or item, leaving every other
-value as it was, with a test beside the guard's in each language's
-`tests/editor.zig`.
+value as it was, with a case beside the guard's in each language's
+`tests/edits.json`.

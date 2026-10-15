@@ -90,17 +90,17 @@ Upgrading nushell therefore means bumping the three `=0.x.y` pins in
 This crate is versioned and released independently of fig's other artifacts (see
 [VERSIONING](../../docs/VERSIONING.md)) — it moves on nushell's cadence, not
 fig's. It is likewise a standalone cargo workspace, deliberately not a member of
-`bindings/rust`: the nu dependency tree has no business in that workspace's
+fig's (the repository root's): the nu dependency tree has no business in that workspace's
 `cargo test --workspace`.
 Its dependency on fig is the one thing that does follow fig's version: the
 `fig = { path, version }` pin and the fig crates in `Cargo.lock` are moved by
-`zig build version-sync`, which `dx release` runs, and checked by
-`zig build version-check`.
+`cargo xtask version-sync`, which `dx release` runs, and checked by
+`cargo xtask version-check`.
 
 ## Building
 
-Needs no Zig toolchain: fig's core and the figl language are pure Rust
-(`fig-core`), compiled with the plugin.
+Needs nothing but Rust: fig's core and the figl language are pure Rust
+(`fig-core`, `fig-figl`), compiled with the plugin.
 
 ```nu
 > cargo test          # 10 behavioural tests, in-process via nu-plugin-test-support

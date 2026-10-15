@@ -1,5 +1,17 @@
 #pragma once
 
+// fig's C ABI. The library is built from fig's Cargo workspace, at the
+// repository root:
+//
+//   cargo rustc -p fig-capi --release --crate-type staticlib
+//
+// which writes it as target/release/libfig_capi.a: libfig.a, by another name.
+// It carries no language. Each of fig's languages is a library of its own,
+// libfig_<name>.a with its header <fig/<name>.h> (languages/<name>/include),
+// built from rust/fig-lang-export with the language's feature. Both are Rust
+// static libraries: link the system libraries
+// `cargo rustc ... -- --print native-static-libs` names beside them.
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -32,8 +44,8 @@ extern "C" {
 // releases and moves only on a true break. A host that dynamically loads libfig
 // can compare fig_abi_version() against the FIG_ABI_VERSION it compiled with: a
 // runtime value LOWER than the compile-time one means missing ABI it may rely
-// on; a HIGHER value is an incompatible ABI it was not built for. (`zig build
-// abi-check` pins this macro to the library; `zig build semver-check` requires
+// on; a HIGHER value is an incompatible ABI it was not built for. (`cargo xtask
+// abi-check` pins this macro to the library; `cargo xtask semver-check` requires
 // it to increment whenever the ABI diff against the last release is breaking.)
 //
 // History: 1 — core 2.0 through 2.9. 2 — core 3.0: FigEmbedType folded into
@@ -583,7 +595,7 @@ typedef struct FigKeyValue {
 
 // Format-specific scalar kinds (TOML datetimes, ZON enum/char literals, JSON5
 // non-finite numbers, plist dates and data). Mirrors the core's `ExtKind`;
-// `zig build abi-check` holds this enum, the Rust `ExtKind` and the TypeScript
+// `cargo xtask abi-check` holds this enum, the Rust `ExtKind` and the TypeScript
 // `ExtKind` to it name-for-name.
 typedef enum FigExtKind {
     FIG_EXT_OFFSET_DATETIME = 0,
@@ -1362,8 +1374,8 @@ FigStatus fig_value_warning(FigValue *value, size_t index, FigWarning *out);
 //
 // How a number's lexeme is spelled for a format, which datetime a bare
 // token is, what a bare token means, and how a string is quoted as JSON:
-// the rules fig's own languages are written with, for a language that is
-// not Zig (one written in C, Rust, or a runner's JavaScript or Lua). The same
+// the rules fig's own languages are written with, for a language written
+// outside fig (in C, Zig, Rust, or a runner's JavaScript or Lua). The same
 // functions, under the same names, are the exports of the kit's WebAssembly
 // module (`fig-kit.wasm`), which the TypeScript binding's kit answers
 // through. Each reads `len` bytes at `raw` and keeps nothing.

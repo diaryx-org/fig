@@ -18,16 +18,16 @@ on). They capture the same nodes; a grammar change has to land in both.
 The Tree-sitter grammar is deliberately **shallow and lexical**. It recognizes
 token *shapes* for coloring and nothing more. It does **not** reimplement fig's
 semantics — depth-by-`>`-count, literal-else-string sniffing, baseline
-re-anchoring, skipped-level / duplicate-key / closed-flow errors all live in the
-Zig parser (`src/fig/parser.zig`), which stays authoritative.
+re-anchoring, skipped-level / duplicate-key / closed-flow errors all live in
+figl's parser (`languages/figl/rust/parser.rs`), which stays authoritative.
 
-Consequence: if the grammar and the Zig parser ever disagree, the worst outcome
+Consequence: if the grammar and the parser ever disagree, the worst outcome
 is a **cosmetic mis-color**, never wrong behavior. That is what lets the grammar
 be approximate (and therefore cheap to maintain). Known intentional
 approximations are listed at the top of `tree-sitter-fig/grammar.js`.
 
 For real diagnostics / formatting / hover, there is an **LSP server** that wraps
-the Zig parser — a separate track from highlighting. It is implemented and wired
+that parser — a separate track from highlighting. It is implemented and wired
 into the Zed extension (see "The language server" below).
 
 ## Working on the grammar
@@ -45,7 +45,7 @@ on purpose so Zed can build the grammar without running codegen.
 Sanity-check against the canonical feature dump (should print no `ERROR` nodes):
 
 ```sh
-npx tree-sitter parse ../../languages/figl/src/testdata/kitchen_sink.figl | grep -c ERROR
+npx tree-sitter parse ../../languages/figl/tests/kitchen_sink.figl | grep -c ERROR
 ```
 
 To render highlighting in the terminal, add this directory to your
@@ -73,25 +73,26 @@ Iterating on the grammar afterward = re-commit, bump `rev`, re-run
 
 ## The language server
 
-`fig-lsp` (built from `src/lsp/main.zig`) speaks LSP over stdio. Right now it
+`fig-lsp` (built from `rust/fig-cli/src/bin/fig-lsp.rs`) speaks LSP over stdio. Right now it
 does one thing: re-parse on every open/change and publish the fig parser's
-teaching diagnostics (`src/fig/parser.zig` → `Diagnostic`/`describe`) as editor
-squiggles. It is a thin shell — the Zig parser stays the source of truth.
+teaching diagnostics (`languages/figl/rust/parser.rs`) as editor
+squiggles. It is a thin shell — the parser stays the source of truth.
 
-Build it (part of a normal build):
+Build it (it comes with the CLI):
 
 ```sh
-zig build            # produces zig-out/bin/fig-lsp
-zig build run-lsp    # run it standalone on stdio (for manual testing)
+cargo build --release -p fig-cli   # produces target/release/fig-lsp
+target/release/fig-lsp             # run it standalone on stdio (for manual testing)
 ```
 
 The Zed extension launches it via the Rust shim in `zed-fig/src/lib.rs`
 (`language_server_command`), which finds `fig-lsp` on your `PATH`
-(`worktree.which`) and otherwise falls back to `zig-out/bin/fig-lsp`. To use the
-`PATH` route, symlink it once:
+(`worktree.which`) and otherwise falls back to a hard-coded development path
+(`DEV_FALLBACK`, this checkout's `target/release/fig-lsp` on the machine it
+was written on). Anywhere else, use the `PATH` route; symlink it once:
 
 ```sh
-ln -sf "$PWD/zig-out/bin/fig-lsp" ~/.local/bin/fig-lsp   # or anywhere on PATH
+ln -sf "$PWD/target/release/fig-lsp" ~/.local/bin/fig-lsp   # or anywhere on PATH
 ```
 
 The `[language_servers.fig-lsp]` table is already in `zed-fig/extension.toml`.
@@ -105,7 +106,7 @@ Manual smoke test without Zed (drives the server over stdio):
 ```sh
 python3 - <<'PY'
 import subprocess, json
-p = subprocess.Popen(["zig-out/bin/fig-lsp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+p = subprocess.Popen(["target/release/fig-lsp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 def send(m):
     d = json.dumps(m).encode()
     p.stdin.write(b"Content-Length: %d\r\n\r\n" % len(d) + d); p.stdin.flush()
@@ -168,7 +169,7 @@ indent/marker mismatch), published together (warnings collected before a failure
 still show). Deliberately not yet done, in rough priority order:
 
 - **Formatting** (`textDocument/formatting`) → call the fig printer
-  (`src/fig/printer.zig`) and return a whole-document edit; this is the natural
+  (`languages/figl/rust/printer.rs`) and return a whole-document edit; this is the natural
   next feature and reuses existing code.
 - **Multiple diagnostics** — the parser stops at the first error today; surfacing
   more needs parser support for error recovery.

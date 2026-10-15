@@ -24,7 +24,8 @@ whose source the twin cannot parse (`ParseError` on each case), where fig's
 native YAML matches all 4377.
 
 **Cause.** 0f784cb fixed the Zig parser (`landContinuations` in
-`languages/yaml/src/parser.zig`, and the tokenizer's dedent to any `- `
+`languages/yaml/src/parser.zig`, now `land_continuations` in
+`languages/yaml/rust/parser.rs`, and the tokenizer's dedent to any `- `
 content column on a dash line) so that a line under compact nested items
 belongs to the item that begins at its column. `bindings/typescript/js/yaml.js`
 reads compact items the way the Zig parser did before.

@@ -1,10 +1,10 @@
 # fig language design
 
-Two text surfaces sit over one AST (`kit/src/ast/ast.zig`). They optimize for
+Two text surfaces sit over one AST (`rust/fig-kit/src/ast/`). They optimize for
 opposite things, so they are kept as separate surfaces rather than one
 compromise format.
 
-| | **canonical form** (`src/canonical/`, formerly "native") | **fig authoring dialect** (`languages/figl/`) |
+| | **canonical form** (`rust/fig-core/src/canonical/`, formerly "native") | **fig authoring dialect** (`languages/figl/`) |
 |---|---|---|
 | Audience | machines / the test oracle | humans writing config by hand |
 | Goal | totality + a single spelling per document | memorability, typeability, ergonomics |
@@ -375,7 +375,7 @@ rest — so any two documents that build the same tree normalize to the same scr
 Canonical is the diff oracle, but the authoring dialect needs a *house style* so a
 fmt'd repo reads consistently (many spellings → one predictable form; the reader
 learns *this rule*, not each author's taste). The decision procedure below is
-**implemented** (`languages/figl/src/printer.zig`); the numbers are defaults, not law.
+**implemented** (`languages/figl/rust/printer.rs`); the numbers are defaults, not law.
 
 - **Markers:** spaced runs (`> > key`), zero leading indentation. The spaced run
   recreates indentation's column geometry (two columns per level) out of the
@@ -653,7 +653,7 @@ servers
   coercion (`as_f64()`, `as_i64()`) as an explicitly *lossy accessor*, never as
   the stored value. This is the guarantee that stops a `float()`-based
   reimplementation from silently mangling versions and significant figures — it
-  is a property of *the format*, not merely of the reference Zig library (whose
+  is a property of *the format*, not merely of the reference library (whose
   `Number { raw, kind }` is where it happens to live today). Two numbers are
   equal iff their lexemes match byte-for-byte and their kinds agree.
 - **Keys** are strings (bare or quoted). A **bare key may not contain a structural
@@ -1236,7 +1236,7 @@ and the `type` set.
 
 ## AST fit
 
-Checked against `kit/src/ast/ast.zig`: the authoring dialect is a **subset of what
+Checked against the AST (then `kit/src/ast/ast.zig`, now `rust/fig-kit/src/ast/`): the authoring dialect is a **subset of what
 the AST already represents** — no new `Node.Kind` is required to hold a fig
 document. (Expected — canonical is a total bijection with the AST, and fig is a
 friendlier surface over the same tree.)

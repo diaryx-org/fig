@@ -7,6 +7,7 @@ contents
 > * [CONTRIBUTING](CONTRIBUTING.md)
 > * [Testing](testing.md)
 > * [VERSIONING](VERSIONING.md)
+> * [Migrating to 7.0](/docs/migrating-to-7.md)
 > * [Migrating to 6.0](migrating-to-6.md)
 > * [Migrating to 5.0](migrating-to-5.md)
 > * [CHANGELOG](CHANGELOG.md)
@@ -16,7 +17,6 @@ contents
 > * [fig CLI via npm/npx](npm-wasi.md)
 > * [fig in Rust](rust.md)
 > * [fig in Typescript](typescript.md)
-> * [fig in Zig](zig.md)
 > * [Helper protocol](/docs/helper-protocol.md)
 ```
 

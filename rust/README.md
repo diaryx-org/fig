@@ -1,7 +1,7 @@
 ```fig
 title = fig in Rust
 part_of = [fig docs](/docs/docs.md)
-description = The Rust port of fig's core, kit, languages, editor and CLI, and how it is held to the Zig implementation
+description = fig's implementation in Rust: the crates of the workspace, and how the port from Zig was held to the Zig before it replaced it
 author = adammharris
 created = 2026-10-15
 updated = 2026-10-15
@@ -9,40 +9,51 @@ updated = 2026-10-15
 
 # fig in Rust
 
-This directory, with each language's `rust/` beside its Zig, is a port
-of fig from Zig to Rust, following [the proposal](/docs/proposals/rust-core.md).
-The port is file for file: every `.rs` file starts with
-`//! Port of <zig path>`, keeps the Zig file's names and doc comments, and
-does what it does, byte for byte. It needs no Zig and no C to build, and
-uses no crates outside `std` but one: `fig-cli` reads its command line
-with clap, so its usage errors and `--help` pages are clap's (the rules
-they enforce, and everything else the CLI prints, are the Zig's).
+This directory, with each language's `rust/` in its package under
+`languages/`, is fig. It began as a port of fig from Zig to Rust, following
+[the proposal](/docs/proposals/rust-core.md), and replaced the Zig in 7.0,
+when the Zig was deleted. The port was file for file: many `.rs` files still
+start with `//! Port of <zig path>`, naming a file that is now only in the
+history, and keep the Zig file's names and doc comments. It needs no C to
+build, and uses no crates outside `std` but one: `fig-cli` reads its command
+line with clap, so its usage errors and `--help` pages are clap's (the rules
+they enforce, and everything else the CLI prints, were the Zig's).
 
-| Crate | Where | Ports | Lines |
+| Crate | Where | What it is (and what it ported) | Lines |
 |---|---|---|---|
 | `fig-kit` | `rust/fig-kit` | `kit/` (the node table, AST, `Document`, the `Language` trait, the shared rules) and fig's error type; depends on nothing | 10,600 |
 | `fig-json`, `fig-yaml`, … (ten) | `languages/<name>/rust` | each language's `languages/<name>/src/`, on `fig-kit` alone; its `fig` binding API behind its default `fig` feature | 35,300 |
 | `fig-core` | `rust/fig-core` | `src/editor*`, `src/serialize.zig`, `src/canonical/`, `src/materialize.zig`, `src/lossless.zig`, `src/flat_strip.zig`, `src/diagnostics.zig`, `src/patch.zig`, `src/contract/` (the registry, the helper wire, the host), and the logic of `src/c_api.zig` (`api`), on `fig-kit` (re-exported as `fig_core::kit`); it carries no language | 18,400 |
 | `fig-cli` | `rust/fig-cli` | `src/cli/*.zig` (the `fig` binary) and `src/lsp/main.zig` (`fig-lsp`) | 9,600 |
 | `fig-conform` | `rust/fig-conform` | new: fig-conformance's JSON-lines adapter over `fig-core` | 1,000 |
-| `fig-capi` | `rust/fig-capi` | the C ABI: every function in `bindings/c/include/fig.h`, as a static and shared library and as the wasm module the TypeScript binding loads | 4,800 |
+| `fig-capi` | `rust/fig-capi` | the C ABI: every function in `bindings/c/include/fig.h`, as a static and shared library (`libfig`) and as the wasm module the TypeScript binding loads | 4,800 |
+| `fig-abi` | `rust/fig-abi` | new: `fig.h`'s records, shared by the C ABI's crates | 600 |
+| `fig-kit-capi` | `rust/fig-kit-capi` | the kit's `fig_kit_*` exports; built alone for wasm32 it is `fig-kit.wasm`, which the JavaScript kit answers through (`bindings/typescript/kit/rules.js`) | 300 |
+| `fig-lang-export` | `rust/fig-lang-export` | one language as a library of its own: `libfig_<name>.a` with `fig_<name>_register`, or the wasm module its `@diaryx/fig-<name>` package inlines | 1,100 |
+| `xtask` | `rust/xtask` | fig's own tasks, `cargo xtask <task>`: the pre-release gate (`ci`) and the release guards | 2,500 |
 
-Every crate is a member of one Cargo workspace, `bindings/rust/Cargo.toml`,
-with the published binding (`fig`, `fig-macros`), at fig's one version.
+Every crate is a member of one Cargo workspace, the repository root's
+`Cargo.toml`, with the published binding (`fig`, `fig-macros`, in
+`bindings/rust/`), at fig's one version.
 `fig-core`'s registry starts empty: the CLI, the conformance adapter and
 `fig-capi`'s `bundle` feature register the ten language crates at startup
 (`registry::register_bundle`), and the `fig` binding registers each from
 its crate (`fig_yaml::register()`). A program that wants a language alone
 takes its crate with `default-features = false`, and gets no `fig` binding.
 `fig-sys`, its thirteen prebuilt payload crates and `fig-language-build`
-are gone: nothing needs Zig on any target.
+are gone.
 
-`src/deserialize.zig` is not ported: it reads a document into a Zig type
+`src/deserialize.zig` was not ported: it reads a document into a Zig type
 by reflection, which in Rust is serde's job, in the `fig` crate.
 
-## How it is held to the Zig
+## How it was held to the Zig
 
-Nothing below imports either implementation: each check runs both through
+This is the record of how the port was verified before it replaced the Zig.
+The Zig is gone, so the comparisons can no longer be rerun; the suites that
+stand on their own (fig-conformance, the edit fixtures, the probes, the
+bindings' tests) still run, against the Rust alone, in `cargo xtask ci`.
+
+Nothing below imported either implementation: each check runs both through
 an interface they share and compares what comes out.
 
 | Check | What it compares | Rust vs Zig |
@@ -70,29 +81,30 @@ full node table. Where they differ, the Zig crashed.
 
 ## Reproducing
 
-```sh
-cd bindings/rust
-cargo test --workspace --all-features        # 1,158 tests: the port's 959 and the binding's 199
-cargo build --release -p fig-cli -p fig-conform
-cd ../..
+From the repository root:
 
-# The edit fixtures, from the repository root:
-node tools/edit-fixtures.mjs --command bindings/rust/target/release/fig-conform
+```sh
+cargo test --workspace --all-features
+cargo build --release -p fig-cli -p fig-conform
+
+# The edit fixtures:
+node tools/edit-fixtures.mjs --command target/release/fig-conform
 
 # fig-conformance (https://github.com/diaryx-org/fig-conformance), from its checkout:
-node runner/edits.mjs --command <fig>/bindings/rust/target/release/fig-conform
-node runner/parse.mjs --command <fig>/bindings/rust/target/release/fig-conform
+node runner/edits.mjs --command <fig>/target/release/fig-conform
+node runner/parse.mjs --command <fig>/target/release/fig-conform
 
-# The CLI against a Zig build of fig (`zig build -Doptimize=ReleaseSafe`):
-node rust/parity/cli-diff.mjs --reference zig-out/bin/fig --candidate bindings/rust/target/release/fig
+# The CLI against another build of fig, such as a 6.x release (the Zig):
+node rust/parity/cli-diff.mjs --reference <a 6.x fig> --candidate target/release/fig
 ```
 
-CI's `rust-port` job runs the port's tests and the edit fixtures on every
-push, and its `rust` job the whole workspace, with no Zig installed.
+`cargo xtask ci` runs the tests and the edit fixtures, and CI runs it on
+every push.
 
 ## Zig bugs the port found
 
-Differential testing turned up these in the Zig, none of them fixed here:
+Differential testing turned up these in the Zig, none of them fixed in it
+before it was removed (6.x releases still carry them):
 
 - **TOML tokenizer reads past the end.** A string opener in the last two
   bytes of a file (`a = "`, `a = ''`) panics in `lexStringValue`, and

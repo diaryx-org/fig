@@ -33,7 +33,7 @@ describing what `fig` already does — so this folder is where an idea is discus
 It is deliberately not a to-do list, and not a source of truth:
 
 - Behavior that shipped is documented in the format guides ([Rust](/docs/rust.md),
-  [TypeScript](/docs/typescript.md), [Zig](/docs/zig.md)) and the
+  [TypeScript](/docs/typescript.md), C in `fig.h`) and the
   [spec](/docs/spec.md) — never here.
 - A breaking change that is *coming* is a `Behavioural-change:` trailer on the
   commit that lands it, gathered into the [CHANGELOG](/docs/CHANGELOG.md)'s

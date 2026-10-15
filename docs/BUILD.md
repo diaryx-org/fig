@@ -10,58 +10,59 @@ part_of = [fig docs](/docs/docs.md)
 
 You will need:
 - [Access to a terminal](https://share.google/CzgpcLKGi8PKS4q7G)
-- [Zig toolchain version 0.17.0](https://ziglang.org/download/)
+- [Rust](https://rustup.rs), 1.88 or newer
 - [Git](https://git-scm.com/install)
 
 You will:
 1. Use Git to download the code for `fig`
 2. Go into the downloaded code folder
-3. Use Zig to compile the code into an executable
+3. Use Cargo, Rust's build tool, to compile the code into an executable
 
 Put these commands into the terminal and run them:
 
 ```bash
 git clone https://github.com/diaryx-org/fig
 cd fig
-zig build
+cargo build --release -p fig-cli
 ```
 
-Now the code is compiled!
+Now the code is compiled! Nothing else is needed: fig is Rust throughout, with
+no C compiler or other toolchain behind it.
 
 <details>
   <summary>Extra details about compilation</summary>
-  <p>By default, <code>fig</code> compiles in "Debug" mode, which essentially means "as quickly as possible." There are lots of different ways to compile `fig`. The default build command gives you everything you need, but you can make the binary smaller with <code>zig build -Doptimize=ReleaseSmall</code>, or faster with <code>zig build -Doptimize=ReleaseFast</code>. The binary distributed to users through packages like Homebrew are compiled with <code>zig build -Doptimize=ReleaseSafe</code>, which provides extra safety in case of bugs or crashes, and a good balance of binary size and speed.</p>
+  <p><code>--release</code> compiles with optimizations, which takes longer but gives a much faster binary; leave it off for a quicker "debug" build while you are changing the code, which lands in <code>target/debug</code> instead. The binaries distributed through Homebrew and GitHub Releases are release builds.</p>
 </details>
 
 <details>
-  <summary>Leaving formats out</summary>
+  <summary>The formats in the build</summary>
 
-Each format is a build flag, so a build can carry only the formats it needs —
-useful for a smaller binary or a smaller audit surface. Every one of them can be
-turned off independently:
-
-```sh
-zig build -Dyaml=false -Dtoml=false -Dnestedtext=false
-```
-
-A format left out is not built at all, not merely hidden: its parser and
-printer never compile, nothing registers it, `fig_format_by_name` finds no
-handle for it over the C ABI, and the CLI refuses a file of its extension
-unless a `languages.figl` configures a language by that name. `zig build -h`
-lists the full set with their defaults — note that `canonical` is
-opt-**in** (`-Dcanonical=true`), and that `-Dfigl=false` also drops
-`fig-lsp`, which is a language server for figl and has nothing to serve
-without it.
+The `fig` command line always carries all ten built-in formats. The C library
+carries none: a program registers the formats it uses, and each language
+builds as a library of its own (see [Languages](../languages/README.md)), so a
+program that wants a smaller audit surface links only those. One format is
+opt-**in** on the CLI: `canonical`, fig's oracle format for testing
+(`cargo build --release -p fig-cli --features canonical`).
 </details>
 
-In the `fig` folder, a new folder called `zig-out` has been created.
-- The command-line tool is at `zig-out/bin/fig`.
-- The library file is at `zig-out/bin/libfig.a`.
+In the `fig` folder, a new folder called `target` has been created.
+- The command-line tool is at `target/release/fig`.
+- `fig-lsp`, the language server for figl, is beside it.
+
+The C library is built separately, from the `fig-capi` crate:
+
+```bash
+cargo rustc -p fig-capi --release --crate-type staticlib
+```
+
+Cargo names it after the crate, `target/release/libfig_capi.a`; it is the
+library [`fig.h`](../bindings/c/include/fig.h) describes, `libfig.a`, under
+another name, and `cargo xtask abi-check` copies it to that name.
 
 You can run the command-line tool where it is:
 
 ```bash
-./zig-out/bin/fig
+./target/release/fig
 ```
 
 It should print helpful instructions on how to use it.
@@ -73,13 +74,13 @@ If you want easy access to the command-line tool without having to navigate to t
 To install for just your user:
 
 ```bash
-mv zig-out/bin/fig ~/.local/bin/
+mv target/release/fig ~/.local/bin/
 ```
 
 To install for for all users in the computer (this requires an admin password):
 
 ```bash
-sudo mv zig-out/bin/fig /usr/local/bin
+sudo mv target/release/fig /usr/local/bin
 ```
 
 `fig` does not update itself to new versions automatically. To get the latest version, you will have to download the latest changes and repeat the above steps again:
@@ -87,8 +88,8 @@ sudo mv zig-out/bin/fig /usr/local/bin
 ```bash
 cd fig
 git pull
-zig build
-mv zig-out/bin/fig ~/.local/bin
+cargo build --release -p fig-cli
+mv target/release/fig ~/.local/bin
 ```
 
 You can use a **package manager** to make updating easier. Right now, `fig` only supports Homebrew for macOS:
@@ -119,8 +120,9 @@ homebrew = {
 # Changing Code
 
 If you want,
-you can make changes to the code in the `src` folder
-and then run `zig build` again to see how your changes affected the `fig` binary.
+you can make changes to the code (the core is in `rust/fig-core`, the command
+line in `rust/fig-cli`, each format in `languages/<name>/rust`)
+and then run `cargo build --release -p fig-cli` again to see how your changes affected the `fig` binary.
 
 If you make changes and want to share them with me,
 be sure to follow the instructions [here](CONTRIBUTING.md).

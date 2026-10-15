@@ -1,10 +1,10 @@
 /* dotenv, written in C against fig.h: the twin of fig's compiled `dotenv`,
- * row for row, as the kit's dotenv twins are in Zig, Rust and JavaScript.
+ * row for row, as the kit's dotenv twins are in Rust and JavaScript.
  * What it uses of the kit is what C gets: rows written as the parser meets
  * them and linked, a repeated key found with fig_table_child_by_key, and
- * fig_table_finish to put them in pre-order. fig's core tests register it
- * (kit_dotenv_c_register) and hold it to the compiled dotenv table for
- * table.
+ * fig_table_finish to put them in pre-order. Until 7.0 fig's Zig core tests
+ * registered it (kit_dotenv_c_register) and held it to the compiled dotenv
+ * table for table; nothing has held it since the Zig was removed.
  *
  *   * a key is a bash identifier, [A-Za-z_][A-Za-z0-9_]*; an `export `
  *     before one is recognized and discarded;

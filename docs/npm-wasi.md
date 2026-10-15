@@ -69,12 +69,14 @@ your machine than expected; see
 
 ## How it works
 
-`zig build wasi` compiles the same `fig` CLI source to a WASI preview1 module
-(a real `_start` command, not a library). The module this package ships is
-built with no language in it (`-Dwasi-host=true`, every language off),
-and `bin/fig.mjs` runs it under Node's built-in `node:wasi`, wiring `argv`,
+`npm run build` compiles the same `fig` CLI source (`rust/fig-cli`) to a WASI
+preview1 module (a real `_start` command, not a library) with cargo, for
+`wasm32-wasip1`. The module this package ships is built with fig-cli's
+`wasi-host` feature, which carries no language, and `bin/fig.mjs` runs it under Node's built-in `node:wasi`, wiring `argv`,
 `env` and stdio straight through so piping and redirection behave like the
-native binary.
+native binary. It preopens the real working directory at its own path
+(`/cwd` on Windows) and passes it as `PWD`, which the CLI changes into before
+reading its arguments, so a relative path names the file it names natively.
 
 The formats are `@diaryx/fig`'s JavaScript languages, the ones the library
 package's callers import, copied into this package's `lib/` at build time.
@@ -84,7 +86,8 @@ answers in-process through the same wire a helper process speaks. That is
 also what keeps the module small: the whole CLI with no format in it, and
 the languages as JavaScript Node already runs. The standalone `fig-wasi.wasm`
 on GitHub Releases, for `wasmtime` and `wasmer`, is built the ordinary way,
-with every Zig language built in.
+with every language compiled in, and runs as
+`wasmtime run --dir=. fig-wasi.wasm get config.yaml`.
 
 ## Known limitations
 
@@ -93,9 +96,8 @@ real sharp edges — several of them not merely theoretical, but bugs that took
 real debugging to find:
 
 - **Absolute paths on Windows** are not resolved. WASI paths are POSIX-style;
-  there's no single filesystem root to preopen the way POSIX gets `/`. Only
-  paths under the current working directory are guaranteed to work on
-  Windows. On macOS/Linux, both relative and absolute paths work.
+  there's no single filesystem root to preopen the way POSIX gets `/`. Use
+  paths relative to the current working directory on Windows. On macOS/Linux, both relative and absolute paths work.
 - **No TTY detection — output is always treated as "not a terminal."** This
   is deliberate, not just a missing feature: handing `node:wasi` a real TTY
   fd directly causes `fig`'s own terminal/color detection to fail outright
@@ -146,6 +148,6 @@ patterns than fig's, may surface more.
 
 ## See also
 
-- [The Zig CLI / library](/README.md) — install via Homebrew or a release binary.
+- [The CLI / library](/README.md) — install via Homebrew or a release binary.
 - [fig in TypeScript](typescript.md) — the `@diaryx/fig` *library*
   package (parse/edit/serialize as a JS API), not a CLI.

@@ -14,6 +14,19 @@ Thank you for your interest in `fig`!
 
 There are good instructions on this topic [on the Github website](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request) if you don't already know how to do this.
 
+## Before you send it
+
+fig is Rust throughout, so building and testing it needs only a Rust
+toolchain (see [Building](BUILD.md)). Run the gate a release runs:
+
+```bash
+cargo xtask ci
+```
+
+It runs the workspace's tests and every release guard (`cargo xtask help`
+lists them). The TypeScript and WASI suites skip with a note unless Node 24
+and each package's `node_modules` are installed; CI runs them either way.
+
 ## Commit messages
 
 Subjects follow Conventional Commits — `type(scope): subject`. `fig` accepts

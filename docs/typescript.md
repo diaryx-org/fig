@@ -17,7 +17,7 @@ deep in a YAML or TOML file and every comment, blank line, key order, and quotin
 style elsewhere stays byte-for-byte identical. It also converts losslessly
 between formats.
 
-The core is a Zig library compiled to WebAssembly and embedded directly in the
+The core is fig's Rust library compiled to WebAssembly and embedded directly in the
 package, so there is **no native build step and no separate `.wasm` file to
 serve** — it runs in Node, Bun, Deno, and the browser. Each format is a
 JavaScript module beside it that you import and register, so a page that
@@ -130,9 +130,9 @@ from then on too (`yaml.format`), and every dialect is found by its name
 (`formatByName("jsonc")`).
 A format you don't import costs nothing.
 
-Each is fig's own Zig parser and printer — the code the `fig` command line,
+Each is fig's own Rust parser and printer — the code the `fig` command line,
 the Rust crates and the C library run, in fig's `languages/<name>/` —
-compiled to a WebAssembly module of its own, 28 to 69 KB gzipped. A parse writes its node table in the
+compiled to a WebAssembly module of its own, 38 to 74 KB gzipped. A parse writes its node table in the
 language's module and the table crosses into fig's as its rows, so a
 document parses at native speed. The same formats written in JavaScript are
 at `@diaryx/fig/js/<name>` ([Runtime languages](#runtime-languages)).
@@ -158,7 +158,7 @@ its **name**, never the number, and resolve it with `formatByName(name)`
 which throws instead. `formatName(format)` goes the other way.
 
 Every language reads, edits and serializes. Each is held by the package's
-tests to fig's Zig language of the same name: the same tree for every
+tests to fig's Rust language of the same name: the same tree for every
 fixture, and the same bytes printed.
 
 Register at startup, before the first call that uses the format. Registering
@@ -617,7 +617,7 @@ for your own formats too:
 - `@diaryx/fig/kit/number`, `/datetime`, `/literal` and `/json-string`: how
   a number is spelled for a format, which datetime a bare token is, what a
   bare token means (`null`, `true`, a number, a datetime, or a string), and
-  a string quoted as JSON. These are the Zig kit's own rules, a 7 KB
+  a string quoted as JSON. These are the Rust kit's own rules, a 26 KB
   WebAssembly module the kit compiles the first time one is asked, so a
   language written in JavaScript spells a number and reads a datetime
   exactly as fig's own languages do; `kit/testdata/rules/` holds every
@@ -625,7 +625,7 @@ for your own formats too:
 
 The rest is plain JavaScript that runs unchanged in Node, the browser, and
 the QuickJS that `fig-quickjs` embeds. A host with no WebAssembly, as
-QuickJS has none, replaces `kit/zig.js`, the one file that loads the
+QuickJS has none, replaces `kit/rules.js`, the one file that loads the
 module. `js/json.js` in the package is the one to read first.
 
 **The same object is a CLI helper.** `serve(lang)` runs the wire over a
@@ -653,11 +653,11 @@ language[]
 ```sh
 fig get settings.tkv
 fig lang check tinykv                          # the same harness registration runs
-fig lang check js-dotenv --against dotenv *.env # a twin, held to its Zig sibling row for row
+fig lang check js-dotenv --against dotenv *.env # a twin, held to its Rust sibling row for row
 ```
 
-`bindings/typescript/test/languages/dotenv.ts` in the repository is a complete twin of the Zig
-`dotenv` language — parser and printer, held by the test suite to the Zig
+`bindings/typescript/test/languages/dotenv.ts` in the repository is a complete twin of the Rust
+`dotenv` language — parser and printer, held by the test suite to the Rust
 parser's tables and to its edits — and is what a new language is best written
 against. `handle(lang, requestLine)` is the wire itself, one JSON line to one,
 if you want to carry it over something other than a pipe.
@@ -800,33 +800,40 @@ TypeScript `enum`, a `namespace` or a parameter property — but stripping
 leaves the tests' `using` declarations as they are, and Node runs `using`
 natively only from 24.
 
+The build needs Rust with the WebAssembly target as well as Node:
+`npm run build` compiles fig's core (`rust/fig-capi`), the kit's rules
+(`rust/fig-kit-capi`) and each language (`rust/fig-lang-export`) with
+`cargo rustc --profile wasm --target wasm32-unknown-unknown`, the size-first
+profile in the root `Cargo.toml`, and inlines each module.
+
 ```sh
+rustup target add wasm32-unknown-unknown
 cd bindings/typescript
 npm ci
-npm run build   # builds the wasm module, then compiles with tsc
+npm run build   # builds the wasm modules with cargo, then compiles with tsc
 npm test
 ```
 
 The module the package ships, and the one `npm run build` builds, has no
 language in it. The tests register the package's languages, and
-`test/twins.test.ts` holds them to fig's Zig languages through what those
+`test/twins.test.ts` holds them to fig's Rust languages through what those
 recorded for every fixture: the tables `fig lang table` prints, and the
 `.printed` and `.converted` files `scripts/record-compiled.mjs` writes from a
-module with every Zig language built in (`FIG_WASM_LANGUAGES=all npm run
-build:wasm`). Rerun it when a Zig printer changes.
+module with every language compiled in (`FIG_WASM_LANGUAGES=all npm run
+build:wasm`). Rerun it when a printer in `languages/<name>/rust` changes.
 
 This is a test-time requirement only. The published package stays at
 `"engines": { "node": ">=22" }`, because `tsc` downlevels `using` in the shipped
 `dist/` output. Don't raise `engines` to match the dev floor.
 
-`zig build check` runs this suite as part of the pre-release gate and skips it
+`cargo xtask ci` runs this suite as part of the pre-release gate and skips it
 with a note — rather than failing — when Node is older than 24, when `npm` is
 missing, or when `node_modules` hasn't been populated. CI pins Node 24, so there
 it always runs for real.
 
 ## See also
 
-- [The Zig CLI / library](/README.md) — install via Homebrew or a release binary.
+- [The CLI / library](/README.md) — install via Homebrew or a release binary.
 - [fig CLI via npm/npx](npm-wasi.md) (experimental) — the
   `@diaryx/fig-wasi` *CLI* package (same actions as the native binary,
   running under Node's WASI support), not a JS library — if you want to

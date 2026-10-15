@@ -8,7 +8,7 @@ part_of = [fig](/README.md)
 Every format fig reads is a language, and fig itself carries none: a
 program registers the languages it uses, and each brings its formats.
 Each language fig ships is a package of its own, in a folder of its own
-here: the language written in Zig, and beside it its bindings for C, Rust
+here: the language written in Rust, and from it its bindings for C, Rust
 and JavaScript.
 
 | Folder                       | Dialects                         | Rust crate       | npm package              |
@@ -24,11 +24,11 @@ and JavaScript.
 | [plist](plist/)              | `plist`                          | `fig-plist`      | `@diaryx/fig-plist`      |
 | [nestedtext](nestedtext/)    | `nestedtext`                     | `fig-nestedtext` | `@diaryx/fig-nestedtext` |
 
-Each folder is also a worked example of writing a language for fig in a
-compiled language and binding it for three more. A language depends on
-fig's kit (`kit/`) and on nothing else of fig's, and the build holds it
-to that: the package has no path into fig, so a language that reached
-for fig's internals would not compile.
+Each folder is also a worked example of writing a language for fig and
+binding it for three more. A language depends on fig's kit (`fig-kit`, in
+`rust/fig-kit/`) and on nothing else of fig's, and the build holds it to
+that: without its default features the crate's one dependency is the kit,
+so a language that reached for fig's internals would not compile.
 
 ## A language's folder
 
@@ -36,120 +36,109 @@ YAML's, for one:
 
 ```
 yaml/
-  build.zig            the Zig package: `language` from the kit
-  build.zig.zon        its one dependency, the kit
-  src/
-    yaml.zig           the language: `Language`, and its tests
-    tokenizer.zig      …
-    parser.zig         …and the rest of the language
-    printer.zig
-    c.zig              the root of its C library
-    wasm.zig           the root of its WebAssembly module
-  include/fig/yaml.h   its C header
   Cargo.toml           its Rust crate, fig-yaml
   rust/
-    lib.rs             the language in Rust, and its `fig` binding API
-    tokenizer.rs       …a port of src/, file for file
-    parser.rs
+    lib.rs             the language: `LANGUAGE`, and its `fig` binding API
+    tokenizer.rs       …
+    parser.rs          …and the rest of the language
     printer.rs
+  include/fig/yaml.h   its C header
   package.json         its npm package, @diaryx/fig-yaml
   js/
     build.mjs
     yaml.d.ts
-  tests/editor.zig     fig's editor over the language
+  tests/edits.json     fig's editor over the language, as fixtures
   README.md            for the folder, the crate and the npm package
 ```
 
-In the folder, `zig build test` runs the language's tests, `zig build c`
-builds its C library and header into `zig-out/`, and `zig build wasm` its
-WebAssembly module. None of them builds fig.
+From the repository root, `cargo test -p fig-yaml` runs the language's
+tests. Its C library and its WebAssembly module are built from
+`rust/fig-lang-export`, which wraps any one of the languages (below).
 
 ## The language
 
-`src/<name>.zig` declares `Language`, the language's half of fig's
-contract. It must declare `Type` (its dialects, as an enum), `Parser`,
-`Printer`, `default_type`, `parse`, `print`, `name`, `extensions`, `caps`
-and `dialects`, and `syntax` if it can be edited: how fig's editor writes
-it, as values (its comment markers, its key–value separator, the literal
-an empty mapping is spelled with, and so on). It may declare
-`parseTable`, a parse that writes its rows into the table fig hands it;
-`samples`, small documents fig's checks parse, print, reparse and edit
-when the language registers; and, where it spells a fragment in a way no
-`syntax` value covers, a renderer: `renderValue`, `renderEntry`,
-`renderItem`, `renderTail`, `renderKey`, `renderKeyName` or `renderString`,
-each a pure function to a string fig splices. fig's
-`src/contract/language.zig` holds the full list, and why each is there.
+`rust/lib.rs` declares `LANGUAGE`, a value implementing the kit's
+`Language` trait (`rust/fig-kit/src/language.rs`), the language's half of
+fig's contract. It must say its `name`, `extensions`, `caps` and
+`dialects`, parse (`parse_table`) and print, and give its `syntax` if it
+can be edited: how fig's editor writes it, as values (its comment markers,
+its key–value separator, the literal an empty mapping is spelled with, and
+so on). It may give `samples`, small documents fig's checks parse, print,
+reparse and edit when the language registers; and, where it spells a
+fragment in a way no `syntax` value covers, a renderer: `render_value`,
+`render_entry`, `render_item`, `render_tail`, `render_key`,
+`render_key_name` or `render_string`, each a pure function to a string fig
+splices. The trait's doc comments hold the full list, and why each is
+there.
 
 The parser writes a node table — a row per node, in pre-order, and
 sparse side facts such as comments and the spans of separators — through
-the kit's `RowWriter`; the printer reads the tree back. dotenv's
-`src/dotenv.zig` and `.properties`' `src/properties.zig` are the smallest
-whole `Language`s here.
+the kit's row writer; the printer reads the tree back. dotenv's
+`rust/` and `.properties`' are the smallest whole languages here.
 
 ## C
 
-`src/c.zig` is the C library's root, three lines:
+`rust/fig-lang-export` builds a language as a C library, the language's
+feature naming which:
 
-```zig
-comptime {
-    _ = @import("kit").c_language.Exports(@import("yaml.zig").Language, "yaml");
-}
+```sh
+cargo rustc -p fig-lang-export --release --features yaml --crate-type staticlib
 ```
 
-The kit's `c_language.Exports` gives the library one export,
+Cargo writes it as `target/release/libfig_lang_export.a`, whatever the
+language; copy it to `libfig_yaml.a`. It has one export,
 `fig_yaml_register`, which `include/fig/yaml.h` declares. A C program
 links `libfig_yaml.a` beside fig's own `libfig.a`, calls it, and uses the
 format it hands back with the rest of `fig.h`. The library carries its own
 copy of the kit, so a parse writes its own table and copies its rows into
-fig's through `fig_table_extend`.
+fig's through `fig_table_extend`. `cargo xtask abi-check` builds the yaml
+and json libraries and links them beside a libfig that names neither.
 
 ## Rust
 
-The crate is the same folder: `Cargo.toml` beside `build.zig`, with its
-source in `rust/` beside the Zig in `src/`. It is the language itself, in
-pure Rust — a port of `src/`, file for file — written on fig's kit
-(`fig-kit`, in `rust/fig-kit/` at the repository's root) alone, with no
-build script, no Zig and no C. `rust/lib.rs` is the crate root: the
-language's `LANGUAGE` and its modules (`fig_yaml::parser`, …), and, behind
-the crate's default `fig` feature, `register()`, which registers it with
-the `fig` binding and hands back its first `fig::Format`, with the serde
+The crate is the same folder: `Cargo.toml`, with its source in `rust/`.
+It is the language itself, in pure Rust, written on fig's kit alone, with
+no build script and no C. `rust/lib.rs` is the crate root: the language's
+`LANGUAGE` and its modules (`fig_yaml::parser`, …), and, behind the
+crate's default `fig` feature, `register()`, which registers it with the
+`fig` binding and hands back its first `fig::Format`, with the serde
 functions (`from_str`, `to_string`, …) behind its default `serde`
 feature. Without its default features the crate is the language alone,
-which fig's CLI and core tests take and register with `fig-core`
-themselves. Every crate is a member of the one Rust workspace,
-`bindings/rust/Cargo.toml`.
+which fig's CLI, its C library and its core tests take and register with
+`fig-core` themselves. Every crate is a member of the one Cargo workspace
+at the repository root.
 
 ## JavaScript
 
-`src/wasm.zig` is the WebAssembly module's root, the same three lines with
-the kit's `wasm_language.Exports`. `npm run build` builds the module and
-runs `js/build.mjs`, which wraps it as `js/<name>.js`: the module, base64,
-under the language's name — what `registerLanguage` from `@diaryx/fig`
-takes. `js/<name>.d.ts` types it. The package pins `@diaryx/fig` as a
-peer at its own version, since the two modules share the table's layout.
+`npm run build` in the folder runs `js/build.mjs`, which builds the
+language's WebAssembly module with cargo (`fig-lang-export` with the
+language's feature, `--crate-type cdylib --target wasm32-unknown-unknown`,
+the size-first `wasm` profile) and wraps it as `js/<name>.js`: the module,
+base64, under the language's name — what `registerLanguage` from
+`@diaryx/fig` takes. `js/<name>.d.ts` types it. The package pins
+`@diaryx/fig` as a peer at its own version, since the two modules share
+the table's layout. The build needs
+`rustup target add wasm32-unknown-unknown`.
 
 ## Tests
 
-`zig build test` in a folder runs the language's own tests, which need
-only the kit. The editor tests in `tests/editor.zig` drive fig's editor
-over the language, so they need fig — and a language fig ships cannot
-depend on fig, which depends on it: Zig refuses the cycle. fig's own
-`zig build test` compiles them, with fig and the language, and runs each
-language's own tests too.
+`cargo test -p <crate>` runs the language's own tests. `tests/edits.json`
+holds fig's editor over the language: each case an edit and the exact bytes
+(or the refusal) it must give. `cargo xtask ci` runs every language's
+fixtures through the Rust editor, behind fig-conformance's adapter
+(`rust/fig-conform`), and again through the TypeScript binding, so the
+JavaScript packages are held to the same bytes.
 
 ## A language outside fig
 
 A Rust crate written elsewhere is written as fig's own are: on
 `fig-kit`, implementing its `Language` trait, and registered with the
-`fig` binding (`fig::language::register_core`). A Zig package written
-elsewhere depends on the kit as fig's own do. `zig build` in the package
-itself reaches the kit as its own `build.zig.zon` says, by path to a
-checkout of fig's `kit/`: Zig fetches a package by URL only at a
-repository's root, and the kit is a directory of fig's.
+`fig` binding (`fig::language::register_core`).
 
-A language written in another language altogether — JavaScript, or
-anything that speaks fig's helper protocol — registers through the same
-contract at runtime; see [fig in TypeScript](../docs/typescript.md) and
+A language written in another language altogether — C, Zig, JavaScript,
+or anything that speaks fig's helper protocol — registers through the same
+contract at runtime; see `fig.h`'s runtime section,
+[fig in TypeScript](../docs/typescript.md) and
 [the helper protocol](../docs/helper-protocol.md). The kit's number and
 datetime rules reach it too, so it spells a number and reads a datetime
 as these languages do: `fig_kit_*` in `fig.h`, `fig::kit` in Rust, and
@@ -157,24 +146,22 @@ as these languages do: `fig_kit_*` in `fig.h`, `fig::kit` in Rust, and
 
 ## Writing a language in another binding
 
-The languages here are written in Zig and bound for C, Rust and
+The languages here are written in Rust and bound for C, Rust and
 JavaScript. A language can as well be written in any of them, with the
 same kit: the rules (`number`, `datetime`, `literal`, `json_string`,
 `xml`), a row writer that takes rows in any order and finishes them into
 pre-order, and, where the binding's idiom has room for one, a tree, a
 scanner, grammar combinators and a printer's writer. `kit/testdata/` in
 the repository holds every binding's kit to the same answers, and each
-binding has dotenv written with its kit, held to the dotenv here table for
-table:
+binding has dotenv written with its kit:
 
 | Binding    | The kit                                  | dotenv written with it                    | Held to `dotenv` by |
 | ---------- | ---------------------------------------- | ----------------------------------------- | ------------------- |
-| Zig        | `kit` (`kit/src/kit.zig`)                | `kit/examples/dotenv.zig`                 | `src/kit_twins_test.zig` |
-| C          | `fig_kit_*`, `fig_table_*` (`fig.h`)     | `bindings/c/examples/dotenv.c`            | `src/kit_twins_test.zig` |
+| C          | `fig_kit_*`, `fig_table_*` (`fig.h`)     | `bindings/c/examples/dotenv.c`            | nothing yet: the Zig test that held it (`src/kit_twins_test.zig`) went with the Zig |
 | Rust       | `fig::kit`                               | `bindings/rust/fig/examples/kit_dotenv_helper` | `tests/kit_dotenv.rs`, and `fig lang check` in `tools/cli-lang-check.sh` |
 | JavaScript | `@diaryx/fig/kit`                        | `bindings/typescript/js/dotenv.js`        | `test/twins.test.ts` |
 
-A language written outside Zig is registered at run time
+A language written outside this repository is registered at run time
 (`fig_language_register`, `fig::language::register`, `registerLanguage`)
 or served to the `fig` command line as a helper; `fig lang check <name>
 --against <format>` holds it to a compiled sibling.
